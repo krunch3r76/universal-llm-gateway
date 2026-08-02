@@ -232,6 +232,10 @@ class McpRequestEventsMiddleware:
             jsonrpc_id = _extract_jsonrpc_id(body)
             mcp_method, tool_name, tool_args = _extract_call_metadata(body)
             request_tool_context = _extract_request_tool_context(tool_name, tool_args)
+            if surface == "life" and mcp_method == "tools/call":
+                from middleware.drain import note_life_tools_activity  # noqa: PLC0415
+
+                note_life_tools_activity()
             orig_receive = receive
             body_sent = False
 

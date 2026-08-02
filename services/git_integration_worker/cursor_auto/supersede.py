@@ -24,12 +24,12 @@ from services.git_integration_worker.cursor_auto.handler_terminal import (
 )
 from services.git_integration_worker.cursor_auto.queue import AutoJob, AutoJobQueue
 from services.git_integration_worker.cursor_bus import CursorBusClient
+from services.git_integration_worker.cursor_sdk_cancel_events import (
+    emit_sdk_worker_cancelled,
+)
 from services.git_integration_worker.cursor_sdk_revert import (
     RevertReport,
     revert_dispatch_writes,
-)
-from services.git_integration_worker.cursor_sdk_cancel_events import (
-    emit_sdk_worker_cancelled,
 )
 from services.git_integration_worker.cursor_sdk_supersede import (
     escalate_supersede_abort,

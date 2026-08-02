@@ -174,3 +174,74 @@ def test_admit_queues_behind_prior_queued_rows(
     assert result is not None
     assert result.status == "queued"
     assert result.queue_position == 2
+
+
+def test_demote_admitted_to_queued_restores_fifo_head(
+    ledger: CursorDispatchLedger,
+) -> None:
+    repo = "/mnt/torus/projects/universal-llm-gateway"
+    holder = CursorDispatchRequest(
+        thread_id="1",
+        model="cursor/composer-2.5",
+        dispatch_id="holder-demote",
+        execution_id="exec-holder",
+        message="holder",
+    )
+    successor = CursorDispatchRequest(
+        thread_id="2",
+        model="cursor/composer-2.5",
+        dispatch_id="queued-head",
+        execution_id="exec-1",
+        message="successor",
+    )
+    admission = CursorDispatchResponse(
+        admitted=True,
+        dispatch_id=successor.dispatch_id,
+        thread_id=successor.thread_id,
+        model_id="cursor/composer-2.5",
+    )
+    ledger.admit(
+        req=holder,
+        fingerprint=ledger.fingerprint(holder),
+        execution_id=holder.execution_id,
+        caller_agent=None,
+        resolved_model="cursor/composer-2.5",
+        admission=admission,
+        source_repo=repo,
+        worker_instance="worker-a",
+    )
+    ledger.mark_running(dispatch_id=holder.dispatch_id)
+    ledger.admit(
+        req=successor,
+        fingerprint=ledger.fingerprint(successor),
+        execution_id=successor.execution_id,
+        caller_agent=None,
+        resolved_model="cursor/composer-2.5",
+        admission=admission,
+        source_repo=repo,
+        worker_instance="worker-a",
+    )
+    ledger.mark_terminal(dispatch_id=holder.dispatch_id, terminal_status="completed")
+    promoted = ledger.promote_next_queued(
+        source_repo=repo, worker_instance="worker-b"
+    )
+    assert promoted is not None
+    assert promoted.dispatch_id == "queued-head"
+
+    restored = ledger.demote_admitted_to_queued(dispatch_id="queued-head")
+    assert restored is True
+
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT status, terminal_status FROM cursor_sdk_dispatches "
+            "WHERE dispatch_id=?",
+            ("queued-head",),
+        ).fetchone()
+    assert row["status"] == "queued"
+    assert row["terminal_status"] is None
+
+    repromoted = ledger.promote_next_queued(
+        source_repo=repo, worker_instance="worker-c"
+    )
+    assert repromoted is not None
+    assert repromoted.dispatch_id == "queued-head"

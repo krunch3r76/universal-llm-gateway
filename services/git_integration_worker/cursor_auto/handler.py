@@ -58,12 +58,19 @@ from services.git_integration_worker.cursor_auto.propagate_admission import (
     PROPAGATE_CONTRACT,
 )
 from services.git_integration_worker.cursor_auto.queue import AutoJob, get_queue
+from services.git_integration_worker.cursor_auto.reflex_events import (
+    maybe_emit_premium_bind,
+)
+from services.git_integration_worker.cursor_auto.reflex_read import (
+    maybe_run_second_read,
+)
 from services.git_integration_worker.cursor_auto.supersede import (
     compose_supersede_preamble,
     post_superseded_terminal,
     settle_supersede,
 )
 from services.git_integration_worker.cursor_auto.wire_map import (
+    compose_model_knobs,
     resolve_contract_disposition,
     resolve_desired_effort,
     resolve_desired_model,
@@ -235,13 +242,24 @@ async def process_job(
             job, client=client, queue=queue, dispatch_id=None
         )
 
+    knobs = compose_model_knobs(model, effort)
     submit = await submit_nested_dispatch(
         job,
         model_id=str(model["resolved_model_id"]),
         handoff_contract=handoff_contract,
         message=message,
         nest_under=nest_under,
-        model_knobs=model.get("model_knobs"),
+        model_knobs=knobs or None,
+    )
+    # Auto POSTs the worker directly, so Stargate's sdk_cost_risk guard never sees
+    # this bind — announce it here or premium spend on this lane stays invisible.
+    maybe_emit_premium_bind(
+        thread_id=job.thread_id,
+        dispatch_id=str(submit.get("dispatch_id") or ""),
+        model=str(model["resolved_model_id"]),
+        handoff_contract=handoff_contract,
+        lane="cursor-auto-executor",
+        knobs=knobs,
     )
     if not submit.get("ok"):
         return await terminal_failed(
@@ -294,6 +312,18 @@ async def process_job(
             terminal_status=terminal_status,
         )
 
+    second_read = await maybe_run_second_read(
+        job,
+        contract=contract,
+        terminal_status=terminal_status,
+        sdk_body=sdk_body,
+        executor_model=str(model["resolved_model_id"]),
+        executor_dispatch_id=dispatch_id,
+        density=directive.density if directive is not None else None,
+        bus=client,
+        superseded=lambda: queue.is_superseded(job.job_id),
+    )
+
     return await relay_closeout_outcome(
         job,
         client=client,
@@ -307,6 +337,7 @@ async def process_job(
         terminal_status=terminal_status,
         nest_under=nest_under,
         execution_id=str(submit.get("execution_id") or f"exec-{dispatch_id}"),
+        second_read=second_read,
     )
 
 

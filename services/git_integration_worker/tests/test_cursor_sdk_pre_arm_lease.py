@@ -213,10 +213,10 @@ async def test_reconcile_reap_only_releases_without_promoting(
 
     promoted: list[str] = []
 
-    async def _fake_promote(*, source_repo: str, controller, request=None) -> None:
-        promoted.append(source_repo)
+    async def _fake_promote(*, lease_key: str, controller, request=None) -> None:
+        promoted.append(lease_key)
 
-    monkeypatch.setattr(route, "_promote_queued_for_repo", _fake_promote)
+    monkeypatch.setattr(route, "_promote_queued_for_lease", _fake_promote)
     monkeypatch.setattr(route, "_SDK_ARM_TIMEOUT_S", ARMING_S)
 
     await route.reconcile_stale_leases(_controller(), reap_only=True)
@@ -245,10 +245,10 @@ async def test_reconcile_promotes_when_not_draining(
 
     promoted: list[str] = []
 
-    async def _fake_promote(*, source_repo: str, controller, request=None) -> None:
-        promoted.append(source_repo)
+    async def _fake_promote(*, lease_key: str, controller, request=None) -> None:
+        promoted.append(lease_key)
 
-    monkeypatch.setattr(route, "_promote_queued_for_repo", _fake_promote)
+    monkeypatch.setattr(route, "_promote_queued_for_lease", _fake_promote)
     monkeypatch.setattr(route, "_SDK_ARM_TIMEOUT_S", ARMING_S)
 
     await route.reconcile_stale_leases(_controller())

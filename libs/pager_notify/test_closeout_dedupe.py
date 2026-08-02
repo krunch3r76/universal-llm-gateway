@@ -68,3 +68,29 @@ async def test_notify_closeout_complete_dedupes_pager(
 
     assert pager.await_count == 1
     assert fetch.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_notify_closeout_complete_uses_job_subject_when_no_so_what(
+    pager_state_dir, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fetch = AsyncMock(return_value="")
+    patch = AsyncMock()
+    pager = AsyncMock(return_value=True)
+    monkeypatch.setattr("pager_notify.closeout._fetch_summary", fetch)
+    monkeypatch.setattr("pager_notify.closeout._patch_summary", patch)
+    monkeypatch.setattr("pager_notify.closeout.notify_pager", pager)
+
+    assert (
+        await notify_closeout_complete(
+            thread_id="6655",
+            status="complete",
+            dispatch_id="auto-xyz",
+            job_subject="fix ledger age race",
+        )
+        is True
+    )
+    subject, body = pager.await_args.args[:2]
+    assert subject.startswith("fix ledger age race — CLOSEOUT complete")
+    assert "fix ledger age race" in body
+    patch.assert_not_awaited()

@@ -2377,7 +2377,6 @@ def _assert_one_terminal_before_lease(
     [
         "home_config",
         "venv_config",
-        "draining_promote",
         "stale_reclaim",
         "nest_park_transfer_fail",
     ],
@@ -2388,8 +2387,6 @@ async def test_failure_paths_emit_one_terminal_before_lease(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from services.git_integration_worker.admission import Draining503
-    from services.git_integration_worker.cursor_dispatch_ledger import PromotedDispatch
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
     events = _install_event_recorder(monkeypatch)
@@ -2438,56 +2435,6 @@ async def test_failure_paths_emit_one_terminal_before_lease(
             dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
             bus=bus,
             controller=_make_controller(),
-        )
-    elif scenario == "draining_promote":
-        req = CursorDispatchRequest(
-            thread_id="t-promote",
-            model="cursor/composer-2.5",
-            dispatch_id=dispatch_id,
-            execution_id=f"exec-{dispatch_id}",
-            message="queued",
-        )
-        ledger = CursorDispatchLedger.instance()
-        ledger.admit(
-            req=req,
-            fingerprint=ledger.fingerprint(req),
-            execution_id=req.execution_id,
-            caller_agent=None,
-            resolved_model="composer-2.5",
-            admission=CursorDispatchResponse(
-                admitted=True,
-                dispatch_id=dispatch_id,
-                thread_id=req.thread_id,
-                model_id="composer-2.5",
-            ),
-            source_repo=str(route_mod._CONFIG.source_repo.resolve()),
-            contract="consult",
-        )
-        promoted = PromotedDispatch(
-            dispatch_id=dispatch_id,
-            thread_id=req.thread_id,
-            execution_id=req.execution_id,
-            caller_agent=None,
-            resolved_model="composer-2.5",
-            source_repo=str(route_mod._CONFIG.source_repo.resolve()),
-            contract="consult",
-            read_only=False,
-            record_json='{"model":"cursor/composer-2.5","message":"queued"}',
-            lease_key=str(route_mod._CONFIG.source_repo.resolve()),
-        )
-        controller = _make_controller()
-
-        def _draining(*_args: object, **_kwargs: object) -> object:
-            raise Draining503("draining")
-
-        monkeypatch.setattr(
-            "services.git_integration_worker.admission.WorkAdmissionController.try_admit",
-            _draining,
-        )
-        await route_mod._start_promoted_dispatch(
-            promoted=promoted,
-            controller=controller,
-            request=None,
         )
     elif scenario == "stale_reclaim":
         req = CursorDispatchRequest(
@@ -2562,6 +2509,242 @@ async def test_failure_paths_emit_one_terminal_before_lease(
         assert resp.status_code == 503
 
     _assert_one_terminal_before_lease(events, dispatch_id)
+
+
+@pytest.mark.asyncio
+async def test_start_promoted_dispatch_draining503_demotes_to_queued(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Race fallback: promoted head survives drain as queued, not terminal failed."""
+    from services.git_integration_worker.admission import Draining503
+    from services.git_integration_worker.cursor_dispatch_ledger import PromotedDispatch
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    events = _install_event_recorder(monkeypatch)
+    dispatch_id = "disp-draining-demote"
+    req = CursorDispatchRequest(
+        thread_id="t-promote",
+        model="cursor/composer-2.5",
+        dispatch_id=dispatch_id,
+        execution_id=f"exec-{dispatch_id}",
+        message="queued",
+    )
+    ledger = CursorDispatchLedger.instance()
+    repo = str(route_mod._CONFIG.source_repo.resolve())
+    ledger.admit(
+        req=req,
+        fingerprint=ledger.fingerprint(req),
+        execution_id=req.execution_id,
+        caller_agent=None,
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=dispatch_id,
+            thread_id=req.thread_id,
+            model_id="composer-2.5",
+        ),
+        source_repo=repo,
+        contract="consult",
+    )
+    promoted = PromotedDispatch(
+        dispatch_id=dispatch_id,
+        thread_id=req.thread_id,
+        execution_id=req.execution_id,
+        caller_agent=None,
+        resolved_model="composer-2.5",
+        source_repo=repo,
+        contract="consult",
+        read_only=False,
+        record_json='{"model":"cursor/composer-2.5","message":"queued"}',
+        lease_key=repo,
+    )
+    controller = _make_controller()
+
+    def _draining(*_args: object, **_kwargs: object) -> object:
+        raise Draining503("draining")
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.admission.WorkAdmissionController.try_admit",
+        _draining,
+    )
+    await route_mod._start_promoted_dispatch(
+        promoted=promoted,
+        controller=controller,
+        request=None,
+    )
+
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT status, terminal_status FROM cursor_sdk_dispatches "
+            "WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    assert row["status"] == "queued"
+    assert row["terminal_status"] is None
+    assert _worker_terminals_for(events, dispatch_id) == []
+
+
+@pytest.mark.asyncio
+async def test_mark_terminal_and_promote_skips_promote_while_draining(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Holder closeout during drain leaves queued successors on the ledger."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    ledger = CursorDispatchLedger.instance()
+    repo = str(route_mod._CONFIG.source_repo.resolve())
+    holder = CursorDispatchRequest(
+        thread_id="t-holder",
+        model="cursor/composer-2.5",
+        dispatch_id="holder-drain",
+        execution_id="exec-holder-drain",
+        message="holder",
+    )
+    successor = CursorDispatchRequest(
+        thread_id="t-successor",
+        model="cursor/composer-2.5",
+        dispatch_id="successor-drain",
+        execution_id="exec-successor-drain",
+        message="successor",
+    )
+    ledger.admit(
+        req=holder,
+        fingerprint=ledger.fingerprint(holder),
+        execution_id=holder.execution_id,
+        caller_agent=None,
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=holder.dispatch_id,
+            thread_id=holder.thread_id,
+            model_id="composer-2.5",
+        ),
+        source_repo=repo,
+        contract="implement",
+        worker_instance="test-worker",
+    )
+    ledger.mark_running(dispatch_id=holder.dispatch_id)
+    queued = ledger.admit(
+        req=successor,
+        fingerprint=ledger.fingerprint(successor),
+        execution_id=successor.execution_id,
+        caller_agent=None,
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=successor.dispatch_id,
+            thread_id=successor.thread_id,
+            model_id="composer-2.5",
+        ),
+        source_repo=repo,
+        contract="implement",
+        worker_instance="test-worker",
+    )
+    assert queued is not None
+    assert queued.status == "queued"
+
+    controller = _make_controller()
+    controller.begin_drain(
+        reason="test",
+        intent_id="drain-test",
+        drain_epoch=1,
+    )
+    promoted: list[str] = []
+
+    async def _track_promote(*, lease_key: str, controller, request=None) -> None:
+        promoted.append(lease_key)
+
+    monkeypatch.setattr(route_mod, "_promote_queued_for_lease", _track_promote)
+    await route_mod._mark_terminal_and_promote(
+        dispatch_id=holder.dispatch_id,
+        terminal_status="completed",
+        controller=controller,
+        emit_tag="CURSOR_TEST_DRAIN",
+    )
+
+    assert promoted == []
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (successor.dispatch_id,),
+        ).fetchone()
+    assert row["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_mark_terminal_and_promote_promotes_after_drain_clears(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Post-drain holder closeout still promotes the FIFO head."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    ledger = CursorDispatchLedger.instance()
+    repo = str(route_mod._CONFIG.source_repo.resolve())
+    holder = CursorDispatchRequest(
+        thread_id="t-holder-live",
+        model="cursor/composer-2.5",
+        dispatch_id="holder-live",
+        execution_id="exec-holder-live",
+        message="holder",
+    )
+    successor = CursorDispatchRequest(
+        thread_id="t-successor-live",
+        model="cursor/composer-2.5",
+        dispatch_id="successor-live",
+        execution_id="exec-successor-live",
+        message="successor",
+    )
+    ledger.admit(
+        req=holder,
+        fingerprint=ledger.fingerprint(holder),
+        execution_id=holder.execution_id,
+        caller_agent=None,
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=holder.dispatch_id,
+            thread_id=holder.thread_id,
+            model_id="composer-2.5",
+        ),
+        source_repo=repo,
+        contract="implement",
+        worker_instance="test-worker",
+    )
+    ledger.mark_running(dispatch_id=holder.dispatch_id)
+    queued = ledger.admit(
+        req=successor,
+        fingerprint=ledger.fingerprint(successor),
+        execution_id=successor.execution_id,
+        caller_agent=None,
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=successor.dispatch_id,
+            thread_id=successor.thread_id,
+            model_id="composer-2.5",
+        ),
+        source_repo=repo,
+        contract="implement",
+        worker_instance="test-worker",
+    )
+    assert queued is not None
+    assert queued.status == "queued"
+
+    controller = _make_controller()
+    promoted: list[str] = []
+
+    async def _track_promote(*, lease_key: str, controller, request=None) -> None:
+        promoted.append(lease_key)
+
+    monkeypatch.setattr(route_mod, "_promote_queued_for_lease", _track_promote)
+    await route_mod._mark_terminal_and_promote(
+        dispatch_id=holder.dispatch_id,
+        terminal_status="completed",
+        controller=controller,
+        emit_tag="CURSOR_TEST_LIVE",
+    )
+
+    assert promoted == [repo]
 
 
 @pytest.mark.asyncio

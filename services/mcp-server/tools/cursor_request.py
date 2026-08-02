@@ -156,6 +156,22 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         | propagate | propagation ledger + drain-gated restart status |
         | seed | todo slug + consult URI (if any) + /layer entry gate |
 
+        **Second read (advisory — may appear on any nested-contract CLOSEOUT)**
+
+        On implement | investigate | verify, Auto may append a ``## SECOND READ``
+        block: a bounded read-only pass by ``cursor/claude-opus-5`` over the
+        executor's own §2 closeout, answering evidence / likeliest-error /
+        what's-missing. It is stamped ``second_read(by=…, ref=…, trigger=…)``
+        and is an OBSERVATION, never a ratification — it does not raise or lower
+        the envelope ``status:`` and carries no gate authority. Absent block ⇒
+        no trigger fired or budget spent, ¬ a clean bill of health.
+
+        Triggers: executor failed · partial/blocked status · ac_verdict miss ·
+        non-empty open forks · sensitive paths (libs/, .cursor/, cursor-plugins/,
+        config/*.yaml) on write contracts · sparse DIRECTIVE density · every Nth
+        job. Per-thread budget caps spend. Knobs: ``CURSOR_AUTO_REFLEX_ENABLED``,
+        ``_BUDGET``, ``_SAMPLE_EVERY``, ``_MODEL``, ``_EFFORT``, ``_TIMEOUT_S``.
+
         Returns ``{thread, turn, handler_status, poll_hint}``. Poll terminal status
         via returned ``poll_hint`` — not a client loop.
 

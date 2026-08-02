@@ -237,6 +237,7 @@ async def test_active_work_snapshot_observed_population_limits(
     snap = await store.active_work_snapshot()
     assert snap["running_count"] == 0
     assert snap["live_cse_count"] == 7
+    assert snap["busy"] is True
     assert snap["free_slots"] == 0
     assert snap["at_hard_limit"] is True
 

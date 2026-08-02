@@ -21,7 +21,7 @@ hit() {
 
 # Skills census must not exist under hub .cursor/skills (Cursor discovery)
 # OR under hub .claude/skills (shared_sync Customize staging is out-of-tree at
-# ~/.gateway/claude-ai-sync/skills/ — in-repo .claude census = duplex regression).
+# /mnt/torus/gateway/claude-ai-sync/skills/ — in-repo .claude census = duplex regression).
 # life_local SOT under .claude/skills/ is allowed and is NOT in SKILLS_CENSUS.
 if [[ -f "${PLUGIN_SRC}/SKILLS_CENSUS.txt" ]]; then
   while IFS= read -r line || [[ -n "$line" ]]; do

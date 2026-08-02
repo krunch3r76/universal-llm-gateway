@@ -5,10 +5,10 @@ from __future__ import annotations
 import re
 
 from services.git_integration_worker.cursor_auto.closeout_relay_common import (
-    RELAY_JUDGMENT_CLAMP_FIELDS,
-    CloseoutRelayPayload,
-    RELAY_PARSE_FAILED_STATUS,
     _VALID_WRAPPER_STATUSES,
+    RELAY_JUDGMENT_CLAMP_FIELDS,
+    RELAY_PARSE_FAILED_STATUS,
+    CloseoutRelayPayload,
     is_degenerate_fence_cell,
     looks_fenced,
     merge_relay_notes,
@@ -30,12 +30,12 @@ from services.git_integration_worker.cursor_auto.closeout_relay_reporting import
     amend_reporting_field_gaps,
     stamp_model_actual,
 )
+from services.git_integration_worker.cursor_auto.episode_residue import (
+    residue_for_closeout,
+)
 from services.git_integration_worker.cursor_auto.relay_trust import (
     enforce_synthesized_partial,
     synthesized_relay_note,
-)
-from services.git_integration_worker.cursor_auto.episode_residue import (
-    residue_for_closeout,
 )
 from services.git_integration_worker.cursor_sdk_deliverables import (
     sidecar_workspaces_ref,

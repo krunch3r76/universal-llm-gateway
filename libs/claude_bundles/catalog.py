@@ -204,11 +204,35 @@ def _plugin_census_slugs(repo_root: Path) -> set[str]:
     return out
 
 
+def _is_retired_sot(path: Path) -> bool:
+    """True when a SOT body carries ``lifecycle: retired`` in its frontmatter.
+
+    A retired body stays on disk as a tombstone but must drop out of the catalog,
+    otherwise its row keeps the slug in ``cursor_indexed_slugs()`` and the entity
+    reconcile check demands a live ``agent_skill`` the retirement removed.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    if not text.startswith("---"):
+        return False
+    _, _, rest = text.partition("\n")
+    block, sep, _ = rest.partition("\n---")
+    if not sep:
+        return False
+    try:
+        front = yaml.safe_load(block) or {}
+    except yaml.YAMLError:
+        return False
+    return isinstance(front, dict) and str(front.get("lifecycle", "")) == "retired"
+
+
 def _active_sot_slugs(repo_root: Path) -> set[str]:
     cursor = {
         path.parent.name
         for path in (repo_root / ".cursor" / "skills").glob("*/SKILL.md")
-        if path.parent.name != "README"
+        if path.parent.name != "README" and not _is_retired_sot(path)
     }
     # Plugin census is Cursor-indexed via the installed plugin, not .cursor/skills.
     return cursor | _plugin_census_slugs(repo_root)

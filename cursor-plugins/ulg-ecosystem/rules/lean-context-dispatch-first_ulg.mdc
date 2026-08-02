@@ -31,9 +31,9 @@ trivial/local or latency-sensitive tight-loop debugging.
 ## Read-side: Explore-first (recon)
 
 Dispatch is the **write**-side lean move; **Explore** is the **read**-side one.
-`Task(subagent_type="explore", …)` — Cursor's built-in **Explore** subagent — is
-read-only, runs a fast model, and returns a summary instead of raw search spray.
-In-seat Grep/Read is what the UI calls "Exploring"; that is **not** Explore.
+**Explore ≡ Cursor subagent** — call it only as `Task(subagent_type="explore", …)`.
+It is **not** a standalone Explore tool, and in-seat Grep/Read (UI "Exploring") is **not** Explore.
+The Explore subagent is read-only, runs a fast model, and returns a summary instead of raw search spray.
 
 **Fire Explore autonomously when ANY:**
 

@@ -91,7 +91,7 @@ Both pins **default-on** for bundled `judgment_required` arcs — skip only the 
 
 | Phase | Executor | Model (post-Fable window) | Sidecar |
 |---|---|---|---|
-| 0 Recon | **Orchestrated by lead** — pick executor = in-seat **or** `team_dispatch(seat=cursor-sdk, contract=light-bounded)`; adjudicate sidecar. Lead MAY keep thin Tier-1 greps in-seat when cheap; default posture for non-trivial breadth = **dispatch** (lead stays orchestrator, ¬ conflate lead≡recon worker). `rag(op=recon)` optional. | **Dispatched:** pure mechanical inventory → `cursor/composer-2.5`; investigate/judgment/root-cause → `cursor/grok-4.5` (¬ default Composer on investigate). **In-seat (narrow):** current lead model when lead elects not to dispatch. | `cortex://notes/system/recon/{slug}/…` (Tier-1 anchors required when breadth/unknown locus) |
+| 0 Recon | **Orchestrated by lead** — breadth default = **Explore subagent** (`Task(subagent_type="explore")`; ¬ Explore tool; UI "Exploring" ≠ Explore). Adjudicate anchors sidecar. Narrow known-locus Greps MAY stay in-seat. If Task unavailable → `team_dispatch(seat=cursor-sdk, contract=light-bounded)` per model split. `rag(op=recon)` optional. | **Explore subagent** for breadth/unknown locus. **Dispatched fallback:** investigate/judgment → `cursor/grok-4.5`; pure mechanical inventory only → `cursor/composer-2.5`. **¬** Composer as default recon. | `cortex://notes/system/recon/{slug}/…` (Tier-1 anchors required when breadth/unknown locus) |
 | 1 Q (L0) | **Lead fires CDP Fable** — default bundled/full arc. Primary: `team_dispatch(model=cdp/fable, contract=light-bounded, …)` (Use the `claude-ai-cdp-navigation` skill · consult-routing Anthropic substrate). Escape: `project_ask` / CLI with `model=fable-5`. Operator-framed only via **positive attestation** (`operator_framed` + `pinned_question` + resolvable `frame_uri`) ⇒ **bounded adopt-or-contradict Q** (`frame_verdict` + `frame_delta`) then A — **¬** `q_skipped`, **¬** frame-as-Q. Unframed/isolated ⇒ normal **Fable Q** → Grok A — ¬ escalate to human (§ L0 / Q pairing). **Downgrade Q to Grok** only under closed detent (§ Closed-detent quick recipe) or explicit operator skip. **¬** default Q to Opus CDP (R-admit owns Opus — keep Q≠R seats). | Fable Max (CDP) | `cortex://notes/system/threads/path-sim-{slug}-fable-l0-q.md` |
 | 2 A (L1+L2) | **`team_dispatch(op=generate, seat=cursor-sdk, model=cursor/grok-4.5, contract=light-bounded, …)`** — **halts at admit-gate, ¬ implement** | Grok-4.5 High | `…/path-sim-{slug}-grok-a-l1l2.md` |
 | 3 R-admit | **LEAD fires CDP `project-ask` bus-nudge** (Use the `claude-ai-cdp-navigation` skill) | web-anthropic **Opus 5** | **default-on, lead-owned** — skip only closed set |
@@ -103,10 +103,11 @@ Both pins **default-on** for bundled `judgment_required` arcs — skip only the 
 
 SOT for the ladder: Use the `cheap-recon-before-escalation` skill. Path-sim does **not** invent a separate recon doctrine.
 
-**Lead ≠ recon executor (by default).** Lead **orchestrates** phase 0 (pick in-seat vs dispatch, adjudicate sidecar). Non-trivial breadth ⇒ prefer `team_dispatch(seat=cursor-sdk, contract=light-bounded)` with model split below — keep lead context lean. Narrow one-shot greps MAY stay in-seat. “Lead = Auto” names the **orchestrator seat across the arc**, not “Auto hand-runs Tier-1.”
+**Lead ≠ recon executor (by default).** Lead **orchestrates** phase 0 — fire **Explore subagent** (`Task(subagent_type="explore")`) for breadth/unknown locus, adjudicate sidecar. Explore = Cursor **subagent**, ¬ a tool, ¬ UI "Exploring". Narrow one-shot greps MAY stay in-seat when loci known. Task unavailable ⇒ `team_dispatch(seat=cursor-sdk, contract=light-bounded)` with model split below. “Lead = Auto” names the **orchestrator seat across the arc**, not “Auto hand-runs Tier-1.”
 
 ```
 path-sim phase 0 ≡ durable Tier-1 anchors sidecar when breadth / unknown locus
+Explore ≡ Task(subagent_type="explore")  — subagent, ¬ tool, ¬ UI Exploring
 rag(op=recon, durable_sink=cortex) ≡ optional iff a named corpus scope is known to cover the concern
 ¬ RAG ⇒ ¬ block Q dispatch
 ¬ (lead seat ≡ recon worker) — orchestration ≠ authorship
@@ -114,7 +115,7 @@ rag(op=recon, durable_sink=cortex) ≡ optional iff a named corpus scope is know
 
 | Do | Don't |
 |---|---|
-| Dispatch mechanical inventory → Composer; investigate → Grok (`cheap-recon` / consult-routing split) | Equate “lead runs path-sim” with “lead hand-runs all greps” |
+| Breadth → Explore subagent; judgment residual → Grok; mechanical inventory-only / no-Task → Composer (`cheap-recon`) | Equate “lead runs path-sim” with “lead hand-runs all greps” or Composer-as-recon |
 | Greps, source reads, Event Service gaps → `cortex://notes/system/recon/{slug}/tier1-anchors.md` (or theme) | Treat `rag(op=recon)` as a Q-gate |
 | Call RAG when the domain is actually indexed for the question (research / known scope) | Cargo-cult RAG on code-local Stargate/MCP frictions when Tier-1 already pins loci |
 | Discard noisy RAG hits in `## Discards` and bind on Tier-1 | Equate “path-sim without RAG” with incomplete cascade |

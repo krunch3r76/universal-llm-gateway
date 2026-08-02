@@ -2,6 +2,7 @@
 
 ``ThreadDetail.summary`` is the SMS-safe ULG outcome line — not a slug, not
 telemetry. Mint intends; CLOSEOUT / charter close refresh or compose DONE —.
+CLOSEOUT pager falls back to the DIRECTIVE/job subject when so-what is absent.
 """
 
 from __future__ import annotations
@@ -70,19 +71,26 @@ def format_closeout_pager(
     thread_id: str,
     summary: str | None,
     dispatch_id: str = "",
+    fallback_subject: str = "",
 ) -> tuple[str, str]:
-    """SMS subject/body for CLOSEOUT — lead with so-what, not DIRECTIVE subject."""
+    """SMS subject/body for CLOSEOUT — so-what first; else job/DIRECTIVE title."""
     so_what = (summary or "").strip()
+    fallback = clip((fallback_subject or "").strip(), SMS_SUBJECT_MAX)
     status_token = (status or "complete").strip() or "complete"
     if so_what:
+        lead = so_what
         subject = clip(f"{so_what} — CLOSEOUT {status_token}", SMS_SUBJECT_MAX)
+    elif fallback:
+        lead = fallback
+        subject = clip(f"{fallback} — CLOSEOUT {status_token}", SMS_SUBJECT_MAX)
     else:
+        lead = ""
         subject = clip(f"CLOSEOUT {status_token} bus:{thread_id}", SMS_SUBJECT_MAX)
     parts = [f"bus:{thread_id}", f"status={status_token}"]
     if dispatch_id:
         parts.append(f"id={dispatch_id}")
-    if so_what:
-        parts.append(clip(so_what, 80))
+    if lead:
+        parts.append(clip(lead, 80))
     body = clip(" · ".join(parts), SMS_BODY_MAX)
     return subject, body
 

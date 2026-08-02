@@ -273,8 +273,34 @@ def test_format_closeout_pager_leads_with_so_what() -> None:
         thread_id="6075",
         summary="ULG: operator-proxy posture accelerates vision",
         dispatch_id="abc",
+        fallback_subject="ignored when so-what present",
     )
     assert subject.startswith("ULG: operator-proxy")
     assert "CLOSEOUT complete" in subject
     assert "bus:6075" in body
     assert "ULG: operator-proxy" in body
+    assert "ignored when so-what" not in subject
+
+
+def test_format_closeout_pager_falls_back_to_job_subject() -> None:
+    subject, body = format_closeout_pager(
+        status="complete",
+        thread_id="6655",
+        summary=None,
+        dispatch_id="auto-abc",
+        fallback_subject="fix ledger age race",
+    )
+    assert subject.startswith("fix ledger age race — CLOSEOUT complete")
+    assert "bus:6655" in body
+    assert "fix ledger age race" in body
+
+
+def test_format_closeout_pager_machine_fallback_when_empty() -> None:
+    subject, body = format_closeout_pager(
+        status="complete",
+        thread_id="6655",
+        summary="",
+        dispatch_id="auto-abc",
+    )
+    assert subject == "CLOSEOUT complete bus:6655"
+    assert "bus:6655" in body

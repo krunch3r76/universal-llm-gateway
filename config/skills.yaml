@@ -274,9 +274,6 @@ skills:
   lawyer-stance-code:
     surface_class: cursor_only
     mcp_surface_required: code
-  lead-agent-git-integration:
-    surface_class: cursor_only
-    mcp_surface_required: none
   lead-seat-boot:
     surface_class: shared_sync
     mcp_surface_required: life

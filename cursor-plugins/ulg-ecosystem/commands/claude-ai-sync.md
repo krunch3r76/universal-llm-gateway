@@ -10,7 +10,7 @@ Keep **claude.ai Customize → Skills** aligned with local `CLAUDE_BUNDLE_SLUGS`
 |---|---|
 | `/claude-ai-sync` | Default: **status** — regen check + UI parity scan |
 | `/claude-ai-sync status` | Drift scan only (Chrome CDP required) |
-| `/claude-ai-sync regen` | Render shared_sync to `~/.gateway/claude-ai-sync/skills/` + validate |
+| `/claude-ai-sync regen` | Render shared_sync to `/mnt/torus/gateway/claude-ai-sync/skills/` + validate |
 | `/claude-ai-sync upload` | Upload **NEW** slugs (skip table hits) |
 | `/claude-ai-sync replace` | Re-upload **all** slugs (content refresh) |
 

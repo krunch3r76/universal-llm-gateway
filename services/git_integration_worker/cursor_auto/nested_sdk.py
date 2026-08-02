@@ -67,8 +67,14 @@ async def submit_nested_dispatch(
     message: str,
     nest_under: str | None = None,
     model_knobs: dict[str, str] | None = None,
+    read_only: bool | None = None,
 ) -> dict[str, Any]:
-    """POST ``/api/v1/cursor/dispatch`` for one nested SDK run."""
+    """POST ``/api/v1/cursor/dispatch`` for one nested SDK run.
+
+    *read_only* must be passed explicitly for lease-exempt legs: the route infers
+    ``read_only=False`` for ``light-bounded``, so an advisory reader that never
+    writes would otherwise contend for the write lease like an implement run.
+    """
     dispatch_id = f"auto-{uuid.uuid4().hex[:12]}"
     execution_id = f"exec-{dispatch_id}"
     payload: dict[str, Any] = {
@@ -88,6 +94,8 @@ async def submit_nested_dispatch(
         payload["nest_under"] = nest_under
     if model_knobs:
         payload["model_knobs"] = model_knobs
+    if read_only is not None:
+        payload["read_only"] = read_only
     url = _dispatch_url()
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:

@@ -1,4 +1,4 @@
-"""CLOSEOUT pager — prefer thread so-what title over DIRECTIVE subject."""
+"""CLOSEOUT pager — so-what first; DIRECTIVE/job subject when so-what missing."""
 
 from __future__ import annotations
 
@@ -68,6 +68,7 @@ async def notify_closeout_complete(
     dispatch_id: str = "",
     closeout_body: str = "",
     sdk_body: str = "",
+    job_subject: str = "",
     mark_done: bool = False,
 ) -> bool:
     """Refresh so-what when present; page with outcome-led subject/body."""
@@ -85,6 +86,7 @@ async def notify_closeout_complete(
         thread_id=thread_id,
         summary=achieved or prior,
         dispatch_id=dispatch_id,
+        fallback_subject=job_subject,
     )
     if not claim_closeout_page(thread_id, status):
         return False

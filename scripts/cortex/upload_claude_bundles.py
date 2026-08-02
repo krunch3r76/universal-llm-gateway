@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Export or upload Customize Skills bundles for claude.ai parity.
 
-Shared_sync renders live under ``~/.gateway/claude-ai-sync/skills/`` (override:
+Shared_sync renders live under ``/mnt/torus/gateway/claude-ai-sync/skills/`` (override:
 ``CLAUDE_AI_SKILLS_STAGING``). life_local SOT remains ``<repo>/.claude/skills/``.
 
 Two stores — do not conflate:

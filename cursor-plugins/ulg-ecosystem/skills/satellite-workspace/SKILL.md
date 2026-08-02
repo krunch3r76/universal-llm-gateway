@@ -14,7 +14,7 @@ trigger_match_terms: ["satellite-workspace", "satellite", "email-bridge", "journ
 | 2 | **Checkout-local** surface stays in `{repo}/.cursor/` (`*_ws.mdc` rules, local non-census skills). |
 | 3 | **Venv** = `$HOME/.venvs/universal` only (∀ satellite, including claudeburst). sitecustomize injects ULG `libs/`. Agent/Glass shells: always use `$HOME/.venvs/universal/bin/python` — see `python-universal-venv_ulg.mdc`. |
 | 4 | **MCP** = `vortex-code` (user-global `~/.cursor/mcp.json`). ¬ invent a per-satellite MCP server. |
-| 5 | **Sharing API** = Cursor plugin. **¬** hardlink commands into each satellite; **¬** `config/skills.yaml` as satellite API; **¬** re-add census skills under hub `.cursor/skills/` or `.claude/skills/`; **¬** shared commands under `projects/.cursor/commands/` (install duplex guard fails closed). Shared_sync Customize staging = `~/.gateway/claude-ai-sync/skills/`. |
+| 5 | **Sharing API** = Cursor plugin. **¬** hardlink commands into each satellite; **¬** `config/skills.yaml` as satellite API; **¬** re-add census skills under hub `.cursor/skills/` or `.claude/skills/`; **¬** shared commands under `projects/.cursor/commands/` (install duplex guard fails closed). Shared_sync Customize staging = `/mnt/torus/gateway/claude-ai-sync/skills/`. |
 | 6 | **Pin drift** = corrected by re-running `install-ecosystem-plugin.sh` (roster `SATELLITES.txt` + templates). |
 | 7 | **Code cascade** = `vortex-code` on a satellite ⇒ full leverage of census-shipped cascade skills (`path-sim`, `consult-posture`, `claude-ai-cdp-navigation`). `config/skills.yaml` `cursor_only` means ¬Claude.ai Customize slug — **not** hub-exclusive. Skill body presence (census) is independent of whether Jupiter `project-ask` is an MCP endpoint yet. |
 

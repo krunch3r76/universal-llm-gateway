@@ -83,7 +83,7 @@ Runbook detail: Use the `claude-ai-bundle-sync` skill. Doctrine:
 
 ¬ re-add census skills under hub `.cursor/skills/` or `.claude/skills/` — that
 duplexes the plugin picker. SoT = plugin tree only for census slugs.
-Shared_sync Customize Skills staging = `~/.gateway/claude-ai-sync/skills/`
+Shared_sync Customize Skills staging = `/mnt/torus/gateway/claude-ai-sync/skills/`
 (`CLAUDE_AI_SKILLS_STAGING` override); ¬ repo `.claude/skills/` for census.
 `life_local` SOT may live under `.claude/skills/` (not in `SKILLS_CENSUS`).
 ¬ edit ecosystem SoT and stop without install (plugin) and/or Customize

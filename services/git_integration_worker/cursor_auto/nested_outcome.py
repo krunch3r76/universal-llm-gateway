@@ -46,6 +46,10 @@ from services.git_integration_worker.cursor_auto.nested_sdk import (
     post_operator_wake,
 )
 from services.git_integration_worker.cursor_auto.queue import AutoJob
+from services.git_integration_worker.cursor_auto.reflex_packet import (
+    inject_second_read_block,
+)
+from services.git_integration_worker.cursor_auto.reflex_read import ReflexOutcome
 from services.git_integration_worker.cursor_auto.substrate_feedback import (
     maybe_post_substrate_feedback,
 )
@@ -200,6 +204,7 @@ async def relay_closeout_outcome(
     terminal_status: str,
     nest_under: str | None,
     execution_id: str | None = None,
+    second_read: ReflexOutcome | None = None,
 ) -> dict[str, Any]:
     """Select the closeout payload, relay it, then WAKE + substrate feedback."""
     sidecar_text = read_repo_closeout_sidecar(dispatch_id)
@@ -227,6 +232,14 @@ async def relay_closeout_outcome(
         dispatch_id=dispatch_id,
     )
     relay_body = inject_checkpoint_line(relay_body, value=checkpoint_value)
+    if second_read is not None:
+        relay_body = inject_second_read_block(
+            relay_body,
+            text=second_read.text,
+            model=second_read.model,
+            reflex_dispatch_id=second_read.dispatch_id,
+            reason=second_read.reason,
+        )
     checkpoint_verdict = validate_lane_a_closeout_checkpoint(
         body=relay_body,
         require_closeout_type=False,
@@ -286,6 +299,11 @@ async def relay_closeout_outcome(
             "terminal_status": terminal_status,
             "nest_under": nest_under,
             "request_id": job.request_id,
+            "second_read": (
+                f"{second_read.model}@{second_read.dispatch_id}:{second_read.reason}"
+                if second_read is not None
+                else None
+            ),
             "tree_residue_before": residue_before.count,
             "tree_residue_after": derive_tree_residue(
                 source_repo=source_repo,
@@ -324,6 +342,7 @@ async def relay_closeout_outcome(
                 dispatch_id=str(dispatch_id),
                 closeout_body=str(payload.body or ""),
                 sdk_body=str(sdk_body or ""),
+                job_subject=str(job.subject or ""),
             )
         except Exception:
             pass
@@ -355,4 +374,5 @@ async def relay_closeout_outcome(
         "model": model,
         "effort": effort,
         "gate_plan": gate_plan,
+        "second_read": second_read.dispatch_id if second_read is not None else None,
     }

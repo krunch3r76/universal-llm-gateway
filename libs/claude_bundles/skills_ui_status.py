@@ -6,6 +6,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from claude_bundles.catalog import get_skill_catalog
 from claude_bundles.resolver import claude_ai_target_slugs
 from claude_bundles.skills_api import validate_bundle_dir
 from claude_bundles.skills_ui_panel import (
@@ -14,6 +15,18 @@ from claude_bundles.skills_ui_panel import (
     open_skills_panel,
 )
 from claude_bundles.staging_paths import claude_ai_bundle_dir
+
+
+def _missing_bundle_hint(slug: str, md: Path) -> str:
+    """Remedy line for an absent bundle — names the resolved path it looked at.
+
+    The scan runs on the upload seat, which may not be the seat that rendered
+    the bundle. Quoting the path makes a host or root mismatch visible instead
+    of pointing at a generator that would write somewhere the scan never reads.
+    """
+    if get_skill_catalog().surface_class_for(slug) == "life_local":
+        return f"no life_local SOT at {md} — hand-authored, not rendered"
+    return f"no rendered bundle at {md} — run gen_claude_bundles.py"
 
 
 @dataclass(frozen=True)
@@ -55,13 +68,7 @@ async def scan_ui_parity(
         )
         md = bundle_dir / "SKILL.md"
         if not md.is_file():
-            invalid.append(
-                (
-                    slug,
-                    "missing local bundle — run gen_claude_bundles "
-                    "(shared_sync → ~/.gateway/claude-ai-sync/skills/)",
-                )
-            )
+            invalid.append((slug, _missing_bundle_hint(slug, md)))
             continue
         try:
             validate_bundle_dir(slug, bundle_dir)

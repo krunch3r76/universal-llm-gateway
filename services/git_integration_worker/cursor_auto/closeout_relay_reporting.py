@@ -149,7 +149,6 @@ def amend_reporting_field_gaps(
         return CloseoutRelayPayload(body=body, status=status, source=source)
     from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
         _append_deviation_tokens,
-        _rewrite_relay_status,
     )
 
     amended_body = _append_deviation_tokens(body, deviations)

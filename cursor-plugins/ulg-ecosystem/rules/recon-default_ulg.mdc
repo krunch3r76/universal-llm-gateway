@@ -10,7 +10,7 @@ Full ladder + skeptic mechanism: Use the `cheap-recon-before-escalation` skill (
 
 ## Invariant (one line)
 
-∀ code-work intake — friction classed **feature/bug**, or todo seeded **sparse/early** (`density_triage` unset or `recon_pending`) — the **default front-half is recon** (axis-1 cost ladder; axis-2 skeptic on material) **before** implement.
+∀ code-work intake — friction classed **feature/bug**, or todo seeded **sparse/early** (`density_triage` unset or `recon_pending`) — the **default front-half is recon** (axis-1 cost ladder; axis-2 skeptic on material) **before** implement. Tier-1 breadth = **Explore subagent** (`Task(subagent_type="explore")`; ¬ tool) per `cheap-recon`.
 
 ## Trigger → action
 

@@ -28,7 +28,7 @@ required. Same class of duty as plugin install after census SoT edits
 | **Catalog** | `config/skills.yaml` | Sole placement authority — desired UI set is derived, ¬ a parallel slug list |
 | **SOT (edit)** | `cursor-plugins/ulg-ecosystem/skills/{slug}/` when census · else `.cursor/skills/{slug}/` (shared_sync) · `.claude/skills/{slug}/` (life_local) | Authoritative body — hand-edit SoT only; catalog `resolve_sot` picks path |
 | **Entity** | `agent_skill:{slug}` via `source_uri` | Points at SOT; ¬ a parallel body store |
-| **Generated** | `~/.gateway/claude-ai-sync/skills/{slug}/SKILL.md` (shared_sync only; override `CLAUDE_AI_SKILLS_STAGING`) | `gen_claude_bundles.py` render — **NEVER** hand-edit |
+| **Generated** | `/mnt/torus/gateway/claude-ai-sync/skills/{slug}/SKILL.md` (shared_sync only; override `CLAUDE_AI_SKILLS_STAGING`) | `gen_claude_bundles.py` render — **NEVER** hand-edit |
 | **UI** | claude.ai Customize → Skills | This runbook: regen → status → upload |
 
 Cross-ref: `agent_skill:skill-document-writing` § SOT authority chain. Cross-ref: `agent_skill:claude-ai-skill-uninstall` for `extra_on_ui` drift. Incident class: patching a shared-sync `.claude/skills` render during an incident creates silent drift until the next regen overwrites it.

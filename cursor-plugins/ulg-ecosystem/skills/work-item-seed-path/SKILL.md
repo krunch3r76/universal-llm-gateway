@@ -105,7 +105,7 @@ Classify kind · channel · subsumption.
 
 **Fire:** locus unknown ∨ root cause open ∨ sparse idea/bug ∨ would be `recon_pending`.  
 **Skip:** mechanical/trivial ∨ loci known ∨ `recon_waived`.  
-**Do:** Use the `cheap-recon-before-escalation` skill.  
+**Do:** Use the `cheap-recon-before-escalation` skill. When S2 fires ∧ loci unknown / breadth open ⇒ **Explore subagent first** (`Task(subagent_type="explore")` per cheap-recon Tier-1) — ¬ Composer recon; ¬ in-seat Grep spray. Judgment residual after anchors → Grok / S3, not Explore.  
 **Exit:** facts-only anchors + open forks. ¬ mint while ≥2 architecture rivals unranked.
 
 ### S3 Architecture? (optional)
@@ -169,6 +169,7 @@ Name: `todo:{slug}` · entry gate · consult URI · recon URI.
 | S3 fired ∧ no Fable harvest | Minting or `/layer` — harvest consult first |
 | Announce Mode B / "staging Fable" then end turn with no admit | Same-turn admit (`execution_id`+`poll_hint`) or named halt |
 | Existing todo + Mode B ask → divert to bare `/layer` | Mode B on existing slug · attach · `/layer` G2 |
+| S2 breadth via Composer or in-seat Grep spray | Explore subagent first (cheap-recon Tier-1) |
 
 ## Entry surfaces
 

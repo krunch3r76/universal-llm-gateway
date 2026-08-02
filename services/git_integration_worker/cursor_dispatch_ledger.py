@@ -1127,6 +1127,16 @@ class CursorDispatchLedger:
             record_json=head["record_json"] or "{}",
         )
 
+    def demote_admitted_to_queued(self, *, dispatch_id: str) -> bool:
+        """Restore a promoted-but-not-started row to FIFO queue during drain."""
+        with self._connect() as conn:
+            updated = conn.execute(
+                "UPDATE cursor_sdk_dispatches SET status=?, queued_at=COALESCE(queued_at, ?) "
+                "WHERE dispatch_id=? AND status=?",
+                (_STATUS_QUEUED, _now(), dispatch_id, _STATUS_ADMITTED),
+            )
+            return updated.rowcount == 1
+
     def stale_writers(
         self,
         *,
@@ -1273,6 +1283,32 @@ class CursorDispatchLedger:
                 "FROM cursor_sdk_dispatches WHERE thread_id=? "
                 "ORDER BY COALESCE(started_at, queued_at) DESC, rowid DESC LIMIT 1",
                 (thread_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "dispatch_id": row["dispatch_id"],
+            "status": row["status"],
+            "execution_id": row["execution_id"],
+            "started_at": row["started_at"],
+            "last_heartbeat_at": row["last_heartbeat_at"],
+            "read_only": bool(row["read_only"]),
+            "queued_at": row["queued_at"],
+        }
+
+    def dispatch_status_by_id(self, *, dispatch_id: str) -> dict[str, Any] | None:
+        """Status projection for one dispatch row, or None when unknown.
+
+        The by-thread variant returns only the newest row, so a poller waiting on
+        a specific dispatch can miss its terminal entirely once a sibling admits
+        on the same thread. Pollers that know their id should use this instead.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT dispatch_id, status, execution_id, started_at, "
+                "last_heartbeat_at, COALESCE(read_only,0) AS read_only, queued_at "
+                "FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (dispatch_id,),
             ).fetchone()
         if row is None:
             return None

@@ -35,7 +35,7 @@ Entry-gate chooser (architecture / frame / densify / check / implement, incl. th
 
 ## Lead obligations
 
-Load the skill and follow it in order: no todo yet ⇒ `/work-item-seed` first → § Stage 0 attrs/attach → § Recon (Tier-1 anchors when locus unknown) → § The arc / § Gate obligations (per-gate seat, contract, exit artifact) → § Auto-advance between hops → § Tick enrollment (+ L3 annex template when riding the tick). Ratification is inherited from the gate above — ¬ open R-admit / R-after path-sim windows on a codework arc; G6 verify is mechanical. Widen only under the skill's escalation predicate, re-entering at the highest re-opened gate.
+Load the skill and follow it in order: no todo yet ⇒ `/work-item-seed` first → § Stage 0 attrs/attach → § Recon (**Explore subagent** Tier-1 when locus unknown — `Task(subagent_type="explore")` per `cheap-recon`) → § The arc / § Gate obligations (per-gate seat, contract, exit artifact) → § Auto-advance between hops → § Tick enrollment (+ L3 annex template when riding the tick). Ratification is inherited from the gate above — ¬ open R-admit / R-after path-sim windows on a codework arc; G6 verify is mechanical. Widen only under the skill's escalation predicate, re-entering at the highest re-opened gate.
 
 ## Skills
 

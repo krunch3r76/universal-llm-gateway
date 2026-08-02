@@ -61,8 +61,10 @@ SoT: `config/routing/route_policy.yaml`. Substrate-derived — ¬ role prolifera
 | **code** | `cursor-sdk` | `generate seat=cursor-sdk` | recon, implement, light-bounded |
 | **non-code** | API roles | `generate role=…` or handoff | adversarial, life-domain, analysis |
 
-Settled implement/recon/review → `cursor-sdk` (R2). **Model split:** `implement` → Composer; recon+investigate →
-`cursor/grok-4.5` + `light-bounded`; pure inventory → Composer. `cursor/*` only on `cursor-sdk` → else `422`.
+Settled implement/recon/review → `cursor-sdk` (R2). **Model split:** `implement` → Composer;
+IDE/Task breadth recon → **Explore subagent** (`Task(subagent_type="explore")`; ¬ tool);
+recon+investigate judgment residual → `cursor/grok-4.5` + `light-bounded`; pure inventory /
+Task-unavailable fallback → Composer. `cursor/*` only on `cursor-sdk` → else `422`.
 
 ## Bind-then-compose split (judgment closed → nested Composer)
 

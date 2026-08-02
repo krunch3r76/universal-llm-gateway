@@ -2,7 +2,7 @@
 
 User-scoped Cursor plugin that delivers **shared ecosystem skills + commands + `_ulg` rules** to every workspace under `/mnt/torus/projects/` (and any other root on this machine).
 
-**Invariant:** this plugin is the **sole Cursor discovery** surface for census skills and `_ulg` rules. Do **not** also keep those under hub `.cursor/skills/`, hub `.claude/skills/` (census), or parent `projects/.cursor/rules/*_ulg.mdc` — that duplexes the picker / always-on rules. Shared_sync Customize Skills renders land out-of-tree at `~/.gateway/claude-ai-sync/skills/` (`gen_claude_bundles.py`); `life_local` SOT may remain under `.claude/skills/`.
+**Invariant:** this plugin is the **sole Cursor discovery** surface for census skills and `_ulg` rules. Do **not** also keep those under hub `.cursor/skills/`, hub `.claude/skills/` (census), or parent `projects/.cursor/rules/*_ulg.mdc` — that duplexes the picker / always-on rules. Shared_sync Customize Skills renders land out-of-tree at `/mnt/torus/gateway/claude-ai-sync/skills/` (`gen_claude_bundles.py`); `life_local` SOT may remain under `.claude/skills/`.
 
 ## Install
 

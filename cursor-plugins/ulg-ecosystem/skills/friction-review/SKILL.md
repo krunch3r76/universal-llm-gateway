@@ -56,7 +56,7 @@ Examples: "report this as a friction, the boot card is stale" → `friction(boot
 ## Codified bug ticket (investigate→execute fix cycle)
 
 A codified bug ticket follows **recon → investigate/settle → densify → check → execute**.
-**Recon is the named default first hop** for feature/bug frictions: load `cheap-recon-before-escalation` and run the axis-1 cost ladder (pure mechanical inventory → Composer; **investigate-emphasis** recon → `team_dispatch(op=generate, seat=cursor-sdk, model=cursor/grok-4.5, contract=light-bounded)` → GPT cross-family filter → Opus/Fable for hard residual).
+**Recon is the named default first hop** for feature/bug frictions: load `cheap-recon-before-escalation` and run the axis-1 cost ladder (**Tier-1 breadth → Explore subagent** `Task(subagent_type="explore")` — ¬ tool, ¬ UI Exploring, ¬ Composer-as-recon; judgment residual → `team_dispatch(op=generate, seat=cursor-sdk, model=cursor/grok-4.5, contract=light-bounded)`; Task unavailable / pure mechanical inventory-only → Composer fallback → GPT cross-family filter → Opus/Fable for hard residual).
 
 **Spine vs attended fork (bind before transport):** After a code-lane bug-fix `todo:` exists with `density_triage=judgment_required`, the default is the **autonomous work-item spine** (`decision:autonomous-work-item-spine`; consult-routing § Autonomous work-item spine; todo-lifecycle Gates 3–4):
 

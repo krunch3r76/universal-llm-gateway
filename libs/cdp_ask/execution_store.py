@@ -125,9 +125,9 @@ class ExecutionStore:
     async def active_work_snapshot(self) -> dict[str, Any]:
         """Aggregate pending/running executions for drain + lane-admission probes.
 
-        ``busy`` is restart-drain semantics (any in-flight work) — NOT lane-full.
-        Seats admit a new CDP lane from ``free_slots`` / ``at_hard_limit``
-        (soft=2 prefer, hard=3 ceiling; friction a:25814).
+        ``busy`` is restart-drain semantics (any in-flight **or** observed live CSE)
+        — NOT lane-full. Seats admit a new CDP lane from ``free_slots`` /
+        ``at_hard_limit`` (soft=2 prefer, hard=3 ceiling; friction a:25814).
         """
         async with self._lock:
             active = [
@@ -150,8 +150,12 @@ class ExecutionStore:
         live_cse_count = self._live_cse_count()
         effective = max(running_count, live_cse_count)
         free_slots = max(0, LANE_HARD_LIMIT - effective)
+        # Restart drain must treat an observed live CSE as in-flight work even
+        # when no project-ask execution is recorded: Cowork keeps the life MCP
+        # connector hot between tool POSTs, and killing MCP (or cdp_ask) mid-turn
+        # drops that session. Lane admission still uses free_slots / at_hard_limit.
         return {
-            "busy": running_count > 0,
+            "busy": effective > 0,
             "running_count": running_count,
             "running_count_authority": "recorded",
             "live_cse_count": live_cse_count,

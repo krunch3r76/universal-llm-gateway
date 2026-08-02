@@ -1,13 +1,24 @@
-"""cdp-ask remote lifecycle — SSH control on the CDP host from master manage."""
+"""cdp-ask remote lifecycle — SSH start/stop/restart on the CDP host from master manage.
+
+Exports hub ``EVENTS_INGEST_TCP`` on remote start so Jupiter followup observation
+events reach the hub Event Service (UDS is local-only on the satellite).
+"""
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import os
+import socket
 from pathlib import Path
 
 from universal_logging import get_logger
 
-from ..service_config import cdp_ask_url_config, resolve_cdp_ask_remote_target
+from ..service_config import (
+    cdp_ask_url_config,
+    load_event_service_config,
+    resolve_cdp_ask_remote_target,
+)
 
 logger = get_logger(__name__)
 
@@ -22,6 +33,49 @@ _CDP_ASK_PATHS = (
 )
 # Bound remote lifecycle SSH so a stuck session cannot pin fleet_deploy forever.
 _SSH_TIMEOUT_S = 30.0
+_DEFAULT_INGEST_TCP_PORT = 7101
+
+
+def _hub_ingest_tcp_port() -> int:
+    """Port for hub Event Service TCP ingest (yaml / env / 7101)."""
+    cfg = load_event_service_config()
+    if cfg is not None:
+        return int(cfg.tcp_ingest_port)
+    raw = os.environ.get("EVENT_INGEST_TCP_PORT", "").strip()
+    if raw.isdigit():
+        return int(raw)
+    return _DEFAULT_INGEST_TCP_PORT
+
+
+def _hub_lan_ipv4() -> str:
+    """Outbound IPv4 of this manage host — Jupiter has no hub UDS; needs LAN reachability."""
+    with contextlib.suppress(OSError):
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            return sock.getsockname()[0]
+    with contextlib.suppress(OSError):
+        return socket.gethostname()
+    return "127.0.0.1"
+
+
+def resolve_hub_events_ingest_tcp() -> str:
+    """Resolve ``host:port`` for remote cdp-ask → hub Event Service TCP ingest.
+
+    Order: ``EVENTS_INGEST_TCP`` ≺ ``EVENT_SERVICE_INGEST_HOST``/``EVENTS_INGEST_HOST``
+    + port ≺ this manage host's LAN IPv4 — avoid hardcoding a fleet IP.
+    """
+    explicit = os.environ.get("EVENTS_INGEST_TCP", "").strip()
+    if explicit:
+        return explicit
+    host = (
+        os.environ.get("EVENT_SERVICE_INGEST_HOST", "").strip()
+        or os.environ.get("EVENTS_INGEST_HOST", "").strip()
+    )
+    port_s = os.environ.get("EVENTS_INGEST_PORT", "").strip()
+    port = int(port_s) if port_s.isdigit() else _hub_ingest_tcp_port()
+    if not host:
+        host = _hub_lan_ipv4()
+    return f"{host}:{port}"
 
 
 def _ssh_target() -> tuple[str, str] | None:
@@ -89,12 +143,16 @@ async def start_cdp_ask_remote(root: Path) -> str:  # noqa: ARG001
     ``setsid`` + closed stdin fully detaches from the SSH session.
     """
     port = _port()
+    # Export hub TCP ingest so Jupiter followup events land in hub Event Service
+    # (local UDS on Jupiter does not exist; silent drop otherwise — MONITOR AC-2).
+    ingest_tcp = resolve_hub_events_ingest_tcp()
     cmd = (
         "mkdir -p /tmp/logs/cdp-ask ~/.gateway; "
         f"REPO={_REMOTE_REPO}; "
         'test -f "$REPO/scripts/cdp-ask" || exit 1; '
         f"setsid env CORTEX_FILES_ROOT={_REMOTE_FILES_ROOT} "
-        "\"$HOME/.venvs/universal/bin/python\" \"$REPO/scripts/cdp-ask\" "
+        f"EVENTS_INGEST_TCP={ingest_tcp} "
+        '"$HOME/.venvs/universal/bin/python" "$REPO/scripts/cdp-ask" '
         f"--port {port} </dev/null >/tmp/logs/cdp-ask/remote-start.log 2>&1 & "
         "echo $! > ~/.gateway/cdp-ask.pid; "
         "echo started"
@@ -106,6 +164,7 @@ async def start_cdp_ask_remote(root: Path) -> str:  # noqa: ARG001
 
 
 async def stop_cdp_ask_remote(root: Path) -> str:  # noqa: ARG001
+    """Stop remote cdp-ask via pidfile kill and port ``fuser``; returns SSH status text."""
     port = _port()
     cmd = (
         "if test -f ~/.gateway/cdp-ask.pid; then "
@@ -122,6 +181,7 @@ async def stop_cdp_ask_remote(root: Path) -> str:  # noqa: ARG001
 
 
 async def restart_cdp_ask_remote(root: Path) -> str:
+    """Stop then start remote cdp-ask; concatenates both SSH status messages."""
     stop_msg = await stop_cdp_ask_remote(root)
     await asyncio.sleep(1.0)
     start_msg = await start_cdp_ask_remote(root)

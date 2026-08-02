@@ -8,7 +8,9 @@ window to finish.
 from __future__ import annotations
 
 import json
+import os
 import threading
+import time
 from typing import TYPE_CHECKING, Any
 
 from mcp_events import record
@@ -21,10 +23,17 @@ RESTART_ERROR_REASON = "server_restarting"
 RESTART_ERROR_MESSAGE = "MCP server is restarting; retry in 30s"
 RETRY_AFTER_S = 30
 
+_PROBE_PATHS = frozenset({"/health", "/active-work"})
+
 _DRAINING = threading.Event()
 _STATE_LOCK = threading.Lock()
 _IN_FLIGHT = 0
 _DRAIN_STARTED = False
+# Life-surface tools/call timestamps — Cowork is "hot" between POSTs, so HTTP
+# in-flight alone undercounts. A short TTL bridges the thinking gap without
+# parking MCP restarts for an entire CSE lifetime (cdp_ask covers that).
+_LIFE_ACTIVITY_TTL_S = float(os.environ.get("MCP_LIFE_ACTIVITY_TTL_S", "180"))
+_LAST_LIFE_TOOLS_MONO: float | None = None
 
 
 def is_draining() -> bool:
@@ -36,6 +45,38 @@ def in_flight_count() -> int:
     """Return the current count of requests already admitted by the middleware."""
     with _STATE_LOCK:
         return _IN_FLIGHT
+
+
+def note_life_tools_activity() -> None:
+    """Record that a life-surface ``tools/call`` was admitted (session still hot)."""
+    global _LAST_LIFE_TOOLS_MONO
+    with _STATE_LOCK:
+        _LAST_LIFE_TOOLS_MONO = time.monotonic()
+
+
+def active_work_snapshot() -> dict[str, Any]:
+    """Restart-drain projection for manage ``busy_status`` / MCP restart gate."""
+    with _STATE_LOCK:
+        in_flight = _IN_FLIGHT
+        last_life = _LAST_LIFE_TOOLS_MONO
+        draining = _DRAINING.is_set()
+    now = time.monotonic()
+    life_idle_s: float | None
+    life_hot = False
+    if last_life is None:
+        life_idle_s = None
+    else:
+        life_idle_s = max(0.0, now - last_life)
+        life_hot = life_idle_s < _LIFE_ACTIVITY_TTL_S
+    busy = in_flight > 0 or life_hot
+    return {
+        "busy": busy,
+        "in_flight": in_flight,
+        "life_hot": life_hot,
+        "life_idle_s": None if life_idle_s is None else round(life_idle_s, 1),
+        "life_activity_ttl_s": _LIFE_ACTIVITY_TTL_S,
+        "draining": draining,
+    }
 
 
 def begin_drain(*, reason: str, timeout_s: float) -> None:
@@ -68,11 +109,12 @@ def complete_drain(*, timed_out: bool = False) -> None:
 
 def reset_drain_for_tests() -> None:
     """Reset module state for isolated ASGI tests."""
-    global _IN_FLIGHT, _DRAIN_STARTED
+    global _IN_FLIGHT, _DRAIN_STARTED, _LAST_LIFE_TOOLS_MONO
     with _STATE_LOCK:
         _DRAINING.clear()
         _IN_FLIGHT = 0
         _DRAIN_STARTED = False
+        _LAST_LIFE_TOOLS_MONO = None
 
 
 def restart_error_payload(jsonrpc_id: Any) -> dict[str, Any]:
@@ -179,7 +221,12 @@ class DrainMiddleware:
                 _IN_FLIGHT += 1
 
         if draining:
-            if path == "/health":
+            if path in _PROBE_PATHS:
+                if path == "/active-work":
+                    payload = active_work_snapshot()
+                    payload["status"] = "draining"
+                    await _send_json(send, status=200, payload=payload)
+                    return
                 await _send_json(send, status=200, payload={"status": "draining"})
                 return
 
@@ -203,13 +250,24 @@ class DrainMiddleware:
                 )
                 return
 
-            # Non-MCP-endpoint, non-/health request during drain — close politely.
+            # Non-MCP-endpoint, non-probe request during drain — close politely.
             await _send_json(
                 send,
                 status=503,
                 payload=restart_error_payload(None),
                 retry_after=True,
             )
+            return
+
+        # Probe endpoints must not inflate the in-flight counter that gates stop.
+        if path in _PROBE_PATHS and method == "GET":
+            with _STATE_LOCK:
+                _IN_FLIGHT -= 1
+            if path == "/active-work":
+                await _send_json(send, status=200, payload=active_work_snapshot())
+                return
+            # /health continues into AuthMiddleware's short-circuit payload.
+            await self._app(scope, receive, send)
             return
 
         try:

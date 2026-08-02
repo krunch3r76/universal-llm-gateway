@@ -15,6 +15,9 @@ trigger_match_terms:
  - active-work
  - landed-not-live
  - wait_healthy
+ - mcp restart
+ - life surface
+ - live_cse
 ---
 # Restart drain discipline
 
@@ -43,11 +46,28 @@ MCP agents and the TUI get the same guard. Two shapes:
 | Service | Behavior on busy |
 |---|---|
 | `git_integration_worker` | Durable **drain supervision** — worker stops accepting new mutating work, existing dispatches run to completion, SIGTERM only after `active_count == 0`. Returns `status=deferred, state=draining` with a `restart_intent_id`. Deadline is days, not seconds: drain is assumed inevitable |
+| `mcp` | Busy-probe deferral — **not** NullBusyProbe. Defers when `cdp_ask` reports live CSE / running project-ask **or** MCP `/active-work` reports in-flight HTTP or recent life `tools/call` (TTL). Container SIGTERM HTTP drain alone does **not** protect Cowork between POSTs |
+| `cdp_ask` | Busy when `effective_count > 0` (`max(running, live_cse)`) — observed CSE counts even with no recorded execution |
 | everything else | Busy-probe deferral — `status=deferred, state ∈ {busy, in_progress, probe_error}` with `retry_after_s` |
 
 Read state without touching the gate: `manage(action="busy_status")` — returns
 `busy`, `restart_would_defer`, `active_work_summary` (one-line holder identity —
 prefer it), and `restart_intent` per service. Safe to poll live.
+
+## MCP / life-surface seat discipline (BINDING)
+
+`mcp.busy=false` historically meant "no probe," not "Cowork idle." Before any
+`sync_restart`/`restart`/`stop` of **mcp**:
+
+1. Read `busy_status` — check **`mcp`** and **`cdp_ask`**.
+2. If `cdp_ask.live_cse_count > 0` or `mcp.busy=true` or `restart_would_defer` —
+   **arm/accept deferral**; do not `force=true` to clear a mid-mission life write.
+3. Descriptor-only MCP edits can wait until CSE clears; GIW code pickup does **not**
+   require MCP restart.
+4. `force=true` on mcp while life is hot is operator-only (same narrow force rule).
+
+Anti-pattern: treat `mcp.busy=false` + `in_flight=0` on drain start as proof that
+Claude's life connector is idle.
 
 ## Procedure (binding)
 

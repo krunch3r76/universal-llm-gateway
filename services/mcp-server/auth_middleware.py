@@ -173,6 +173,15 @@ class AuthMiddleware:
             await response(scope, receive, send)
             return
 
+        # Manage restart probe — also short-circuited by DrainMiddleware, but keep
+        # an auth-layer mirror so a mis-ordered stack still answers without token.
+        if path == "/active-work":
+            from middleware.drain import active_work_snapshot
+
+            response = JSONResponse(active_work_snapshot())
+            await response(scope, receive, send)
+            return
+
         # Artifact proxy — origin-validated, no bearer token required
         if path.startswith("/artifact/cortex"):
             if request.method == "OPTIONS":

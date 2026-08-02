@@ -106,9 +106,9 @@ class BusyProbe(Protocol):
 class NullBusyProbe:
     """Probe for services with no long-running, cancel-on-restart work.
 
-    Used for services that either self-drain on SIGTERM (mcp container stop -t 30)
-    at a layer below the gate, or whose requests are
-    sub-second (cortex_api, agent_bus, event_service).
+    Used for sub-second request services (cortex_api, agent_bus, event_service).
+    MCP is **not** NullBusyProbe — see ``mcp_restart_probe.McpBusyProbe``; the
+    container's SIGTERM HTTP drain alone does not cover Cowork life sessions.
     """
 
     async def snapshot(self) -> ActiveWork:
@@ -136,6 +136,8 @@ class HttpActiveWorkProbe:
 
 def _default_probes() -> dict[str, BusyProbe]:
     """Service → busy probe. Unlisted services default to NullBusyProbe."""
+    from .mcp_restart_probe import build_mcp_busy_probe
+
     probes: dict[str, BusyProbe] = {
         "stargate": HttpActiveWorkProbe(
             STARGATE_PROBE_URL, "/api/v1/admin/active-work"
@@ -143,6 +145,7 @@ def _default_probes() -> dict[str, BusyProbe]:
         "git_integration_worker": HttpActiveWorkProbe(
             GIT_INTEGRATION_WORKER_URL, "/api/v1/git/active-work"
         ),
+        "mcp": build_mcp_busy_probe(),
     }
     cfg = cdp_ask_url_config()
     if cfg is not None:

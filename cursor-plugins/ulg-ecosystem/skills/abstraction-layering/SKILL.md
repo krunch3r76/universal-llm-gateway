@@ -160,8 +160,9 @@ agent” and re-risks a duplicate G1.
 
 ## Recon
 
-Use the `cheap-recon-before-escalation` skill. Tier-1 →
-`cortex://notes/system/recon/{slug}/tier1-anchors.md`. ¬ lead-as-recon-worker.
+Use the `cheap-recon-before-escalation` skill. Tier-1 breadth → **Explore subagent**
+(`Task(subagent_type="explore")`); ¬ Composer as recon worker; ¬ lead-as-recon-worker.
+Tier-1 → `cortex://notes/system/recon/{slug}/tier1-anchors.md`.
 
 ## Gates
 

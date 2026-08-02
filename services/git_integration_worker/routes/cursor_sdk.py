@@ -980,7 +980,7 @@ async def _mark_terminal_and_promote(
         # Parked parent regained capacity — siblings stay queued (Q4).
         return
     emit_write_lease_released(dispatch_id=dispatch_id, source_repo=lease_key)
-    if lease_key:
+    if lease_key and not controller.is_draining():
         await _promote_queued_for_lease(
             lease_key=lease_key,
             controller=controller,
@@ -1038,13 +1038,11 @@ async def _start_promoted_dispatch(
             route="/api/v1/cursor/dispatch",
         )
     except Draining503:
+        # Race: promote_next_queued ran before drain flipped; restore FIFO head.
         await release_or_restore_for_child(dispatch_id=promoted.dispatch_id)
-        await _mark_terminal_and_promote(
+        await asyncio.to_thread(
+            ledger.demote_admitted_to_queued,
             dispatch_id=promoted.dispatch_id,
-            terminal_status="failed",
-            controller=controller,
-            request=request,
-            emit_tag="CURSOR_DRAINING503_PROMOTE",
         )
         return
     bus = CursorBusClient()

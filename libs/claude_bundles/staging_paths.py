@@ -1,7 +1,15 @@
 """Out-of-tree staging for shared_sync Customize Skills renders.
 
 Cursor indexes ``<repo>/.claude/skills/``. Shared_sync renders must not land
-there (L2-b / agent-bus:5291). Staging lives under ``~/.gateway/claude-ai-sync/``.
+there (L2-b / agent-bus:5291), so staging lives outside the checkout.
+
+The staging root must be **host-independent**: ``gen_claude_bundles.py`` renders
+on whichever seat holds the repo, while the upload/status seat runs on Jupiter
+over SSH. A ``$HOME``-relative root resolves to a different directory on each
+host, so renders never reach the uploader. The default therefore sits on the
+same NFS export that carries the checkout, at an identical path on both hosts.
+There is deliberately no ``$HOME`` fallback — a silent per-host root is the
+failure this default exists to prevent.
 
 ``life_local`` SOT remains ``<repo>/.claude/skills/`` — not this module.
 """
@@ -14,7 +22,7 @@ from pathlib import Path
 from claude_bundles.catalog import get_skill_catalog
 
 _ENV_STAGING = "CLAUDE_AI_SKILLS_STAGING"
-_DEFAULT_REL = Path(".gateway") / "claude-ai-sync" / "skills"
+_DEFAULT_ROOT = Path("/mnt/torus/gateway/claude-ai-sync/skills")
 
 
 def shared_sync_staging_root() -> Path:
@@ -22,7 +30,7 @@ def shared_sync_staging_root() -> Path:
     override = os.environ.get(_ENV_STAGING, "").strip()
     if override:
         return Path(override).expanduser().resolve()
-    return (Path.home() / _DEFAULT_REL).resolve()
+    return _DEFAULT_ROOT
 
 
 def shared_sync_bundle_dir(slug: str) -> Path:
