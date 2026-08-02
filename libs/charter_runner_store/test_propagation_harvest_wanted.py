@@ -159,7 +159,7 @@ async def test_consume_closes_on_proof_observed(tmp_path, monkeypatch) -> None:
     assert outcome_path.is_file()
     lines = outcome_path.read_text(encoding="utf-8").strip().splitlines()
     record = json.loads(lines[-1])
-    assert record["outcome"] == "closed"
+    assert record["outcome"] == "proven"
     assert record["service"] == "mcp"
 
 
@@ -206,3 +206,149 @@ async def test_consume_failed_outcome_distinct(tmp_path, monkeypatch) -> None:
     assert row["status"] == "failed"
     record = json.loads(propagation_outcomes_path().read_text().strip().splitlines()[-1])
     assert record["outcome"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_declined_manage_deferred_keeps_harvest_wanted_pool(
+    tmp_path, monkeypatch
+) -> None:
+    """AC-2: declined fire leaves row open with defer_reason=harvest_wanted."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    row_id = upsert_open_rows([_mcp_row()])[0]
+    mark_harvest_wanted(row_id)
+    ctl = MagicMock()
+    install_propagation_context(ctl, event_bus=None)
+
+    with (
+        patch(
+            "scripts.model_manager.ui.controller.charter_runner.propagation_harvest_wanted.dispatch_for_projection",
+            return_value=ProbeDispatchResult(
+                payload={"code_version": _SHA},
+                proof_class_requested="client_visible",
+                proof_class_executed="client_visible",
+                error=None,
+            ),
+        ),
+        patch(
+            "scripts.model_manager.ui.api_dispatch.sync_restart_charter_harvest",
+            new=AsyncMock(
+                return_value={
+                    "status": "deferred",
+                    "state": "busy",
+                    "reason": "cdp_ask_live",
+                    "outcome": "declined",
+                }
+            ),
+        ),
+    ):
+        results = await consume_harvest_wanted_at_tick(
+            tick_index=3,
+            service_controller=ctl,
+        )
+
+    assert results["deferred"]
+    assert results["deferred"][0]["outcome"] == "declined"
+    assert results["closed"] == []
+    row = list_open_rows()[0]
+    assert row.defer_reason == DEFER_HARVEST_WANTED
+    assert row.consumption_token is None
+    assert list_harvest_wanted_rows()
+    assert try_claim_for_consumption(row_id, "next-tick-token")
+
+
+@pytest.mark.asyncio
+async def test_attempted_unproven_ejects_from_harvest_wanted_pool(
+    tmp_path, monkeypatch
+) -> None:
+    """AC-3: genuine attempted-but-unproven restart still ejects the marker."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    row_id = upsert_open_rows([_mcp_row()])[0]
+    mark_harvest_wanted(row_id)
+    ctl = MagicMock()
+    install_propagation_context(ctl, event_bus=None)
+
+    before = {"code_version": "oldsha", "proof_class_executed": "client_visible"}
+    after = {"code_version": "oldsha", "proof_class_executed": "client_visible"}
+    dispatch_results = [
+        ProbeDispatchResult(
+            payload=before,
+            proof_class_requested="client_visible",
+            proof_class_executed="client_visible",
+            error=None,
+        ),
+        ProbeDispatchResult(
+            payload=after,
+            proof_class_requested="client_visible",
+            proof_class_executed="client_visible",
+            error=None,
+        ),
+    ]
+
+    with (
+        patch(
+            "scripts.model_manager.ui.controller.charter_runner.propagation_harvest_wanted.dispatch_for_projection",
+            side_effect=dispatch_results,
+        ),
+        patch(
+            "scripts.model_manager.ui.controller.charter_runner.propagation_harvest_wanted.proof_matches",
+            return_value=False,
+        ),
+        patch(
+            "scripts.model_manager.ui.api_dispatch.sync_restart_charter_harvest",
+            new=AsyncMock(
+                return_value={"status": "ok", "service": "mcp", "outcome": "proven"}
+            ),
+        ),
+    ):
+        results = await consume_harvest_wanted_at_tick(
+            tick_index=4,
+            service_controller=ctl,
+        )
+
+    assert results["deferred"]
+    assert results["deferred"][0]["outcome"] == "attempted_unproven"
+    assert results["deferred"][0]["defer_reason"] == "proof_not_observed_after_restart"
+    assert list_harvest_wanted_rows() == []
+    row = list_open_rows()[0]
+    assert row.defer_reason == "proof_not_observed_after_restart"
+    assert row.consumption_token is None
+
+
+@pytest.mark.asyncio
+async def test_decline_reclaim_idempotent_across_ticks(tmp_path, monkeypatch) -> None:
+    """AC-5: claim → decline → re-claim across ticks does not grow unbound."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    row_id = upsert_open_rows([_mcp_row()])[0]
+    mark_harvest_wanted(row_id)
+    ctl = MagicMock()
+    install_propagation_context(ctl, event_bus=None)
+    deferred_manage = {
+        "status": "deferred",
+        "state": "busy",
+        "reason": "cdp_ask_live",
+        "outcome": "declined",
+    }
+
+    with (
+        patch(
+            "scripts.model_manager.ui.controller.charter_runner.propagation_harvest_wanted.dispatch_for_projection",
+            return_value=ProbeDispatchResult(
+                payload={"code_version": _SHA},
+                proof_class_requested="client_visible",
+                proof_class_executed="client_visible",
+                error=None,
+            ),
+        ),
+        patch(
+            "scripts.model_manager.ui.api_dispatch.sync_restart_charter_harvest",
+            new=AsyncMock(return_value=deferred_manage),
+        ),
+    ):
+        for tick in range(1, 6):
+            await consume_harvest_wanted_at_tick(tick_index=tick, service_controller=ctl)
+
+    assert len(list_open_rows()) == 1
+    assert len(list_harvest_wanted_rows()) == 1
+    outcome_path = propagation_outcomes_path()
+    assert not outcome_path.is_file() or len(outcome_path.read_text().strip().splitlines()) == 0
+

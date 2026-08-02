@@ -7,6 +7,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from charter_runner_store.propagation_ledger import (
+    DEFER_HARVEST_WANTED,
     close_row,
     fail_row,
     list_harvest_wanted_rows,
@@ -98,10 +99,16 @@ async def consume_harvest_wanted_at_tick(
         may_fire, window_reason = row_may_fire_at_harvest(row)
         i2_ok, i2_reason = giw_restart_precondition(row)
         if not may_fire or not i2_ok:
-            defer = i2_reason if not i2_ok else window_reason
+            decline_reason = i2_reason if not i2_ok else window_reason
             release_consumption_claim(row.row_id, token)
-            set_defer_reason(row.row_id, defer)
-            deferred.append({**projection, "defer_reason": defer})
+            deferred.append(
+                {
+                    **projection,
+                    "outcome": "declined",
+                    "decline_reason": decline_reason,
+                    "defer_reason": DEFER_HARVEST_WANTED,
+                }
+            )
             continue
 
         try:
@@ -144,9 +151,20 @@ async def consume_harvest_wanted_at_tick(
 
         if manage_status == "deferred":
             release_consumption_claim(row.row_id, token)
-            defer = str(outcome_manage.get("reason") or outcome_manage.get("state") or "manage_deferred")
-            set_defer_reason(row.row_id, defer)
-            deferred.append({**projection, "defer_reason": defer, "manage": outcome_manage})
+            decline_reason = str(
+                outcome_manage.get("reason")
+                or outcome_manage.get("state")
+                or "manage_deferred"
+            )
+            deferred.append(
+                {
+                    **projection,
+                    "outcome": "declined",
+                    "decline_reason": decline_reason,
+                    "defer_reason": DEFER_HARVEST_WANTED,
+                    "manage": outcome_manage,
+                }
+            )
             continue
 
         dispatch_after = dispatch_for_projection(row)
@@ -186,7 +204,7 @@ async def consume_harvest_wanted_at_tick(
             close_row(row.row_id, proof_payload=close_payload)
             outcome = {
                 **projection,
-                "outcome": "closed",
+                "outcome": "proven",
                 "proof": live_after,
                 "proof_before": before,
                 "tick_index": tick_index,
@@ -198,14 +216,17 @@ async def consume_harvest_wanted_at_tick(
             release_consumption_claim(row.row_id, token)
             defer = "proof_not_observed_after_restart"
             set_defer_reason(row.row_id, defer)
-            deferred.append(
-                {
-                    **projection,
-                    "defer_reason": defer,
-                    "proof": live_after,
-                    "proof_before": before,
-                }
-            )
+            outcome = {
+                **projection,
+                "outcome": "attempted_unproven",
+                "defer_reason": defer,
+                "proof": live_after,
+                "proof_before": before,
+                "tick_index": tick_index,
+                "consumption_token": token,
+            }
+            append_propagation_outcome(outcome)
+            deferred.append(outcome)
 
     return {
         "status": "ok",

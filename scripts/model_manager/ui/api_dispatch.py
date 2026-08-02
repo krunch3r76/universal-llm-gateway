@@ -353,6 +353,8 @@ async def sync_restart_charter_harvest(
             no_cache=False,
         )
         if result.get("status") == "deferred":
+            return {**result, "service": service, "outcome": "declined"}
+        if result.get("status") == "ok":
             try:
                 waited = await _wait_healthy(
                     ctl.service_state, "mcp", _CHARTER_HARVEST_WAIT_HEALTHY_S
@@ -363,12 +365,13 @@ async def sync_restart_charter_harvest(
                     "service": service,
                     "reason": str(exc),
                     "scheduled": result,
+                    "outcome": "attempted_unproven",
                 }
             return {
-                "status": "ok",
+                **result,
                 "service": service,
-                "message": "mcp sync_restart completed",
                 "wait_healthy_s": waited,
+                "outcome": "proven",
             }
         return result
 
