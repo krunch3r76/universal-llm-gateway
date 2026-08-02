@@ -198,6 +198,50 @@ def test_execution_for_manage_deferred_without_intent_is_harvest_wanted() -> Non
     mock_mark.assert_called_once_with("mcp:deadbeef:sync_restart")
 
 
+def test_deferred_is_self_preemptable_for_mcp_cdp_ask_busy() -> None:
+    from services.git_integration_worker.cursor_auto.handler_propagation import (
+        deferred_is_self_preemptable,
+    )
+
+    assert deferred_is_self_preemptable(
+        "mcp",
+        {"status": "deferred", "reason": "service has in-flight work; pass force=true"},
+    )
+    assert deferred_is_self_preemptable(
+        "cdp_ask",
+        {"status": "deferred", "active_work": {"busy_reasons": ["cdp_ask_live"]}},
+    )
+    assert not deferred_is_self_preemptable(
+        "gateway",
+        {"status": "deferred", "reason": "service has in-flight work; pass force=true"},
+    )
+    assert not deferred_is_self_preemptable(
+        "mcp",
+        {"status": "deferred", "restart_intent_id": "intent-1", "reason": "draining"},
+    )
+
+
+def test_summary_propagated_self_preempt_includes_mcp_disconnect_advisory() -> None:
+    from services.git_integration_worker.cursor_auto.handler_propagation import (
+        MCP_DISCONNECT_ADVISORY,
+        _summary_for,
+    )
+
+    summary = _summary_for(
+        "propagated",
+        [
+            {
+                "service": "mcp",
+                "status": "executed",
+                "self_preempt_applied": True,
+                "advisory": MCP_DISCONNECT_ADVISORY,
+            }
+        ],
+    )
+    assert "self-preempt" in summary.lower()
+    assert "disconnect momentarily" in summary.lower()
+
+
 def test_execution_for_manage_deferred_with_intent_is_queued() -> None:
     row = PropagationRow(
         service="git_integration_worker",

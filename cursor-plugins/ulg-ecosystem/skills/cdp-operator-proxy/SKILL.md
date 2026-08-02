@@ -70,8 +70,9 @@ When mcp is restarted to refresh the **tooling / descriptor / connector surface*
 changed tools, OpenAPI, life connector behavior), this seat **must** rebind via the
 **continuity protocol** — not a same-CSE warm follow-up. Ordered sequence is binding:
 
-1. Land the restart (`contract: propagate`, with `force: true` on mcp only when the
-   self-preempt carve-out applies).
+1. Land the restart (`contract: propagate` on mcp/cdp_ask). `force: true` is
+   **optional** — cursor-auto auto-applies self-preempt force when the busy reason
+   is this CSE and advises MCP disconnect in the closeout.
 2. **Wait until mcp is healthy** — commission cursor (code-seat `manage`) for
    `wait_healthy(service=mcp)` or an equivalent live probe; do **not** proceed on
    restart-admit alone or on a deferred/queued closeout.
@@ -150,14 +151,17 @@ When blocked on a fact this seat cannot settle from tools alone:
 **Code-seat ops are always step 2:** `manage` / `charter_reload` / manage quit-start / service
 lifecycle / tree contradiction / any tool on vortex-code but not life. **Service restart:**
 `agent_bus.request` with `contract: propagate` (drain-gated), ¬ tier-M `execute` + `manage.*`.
-**mcp self-preempt (BINDING — operator 2026-08-02):** when `manage busy_status` shows mcp
-deferred solely because **this** operator-proxy CSE is `cdp_ask_live`, you **MAY** commission
-`contract: propagate` with `force: true` on the **mcp** row — that override is yours; the
-connection blocking the drain is yours. ¬ force GIW under this carve-out. If the restart is
-for **tooling / descriptor surface**, follow the ordered sequence under Refresh ≠ follow-up:
-restart → **wait mcp healthy** (cursor/`manage`) → **then** commission cursor-auto for the
-continuity hop — never hop before healthy. Force lands the container; it does not refresh
-this stream's MCP binding.
+**mcp self-preempt (BINDING — operator 2026-08-02, strengthened same day):** when
+`manage busy_status` shows mcp deferred solely because **this** operator-proxy CSE is
+`cdp_ask_live`, commission `contract: propagate` on the **mcp** row. **You need not pass
+`force: true`** — cursor-auto **auto-applies** self-preempt force on that deferral and
+advises in the closeout that **MCP will disconnect momentarily** (force lands the
+container; it does not refresh this stream's MCP binding). ¬ force GIW under this
+carve-out. Same auto-force applies to **cdp_ask** when the busy reason is this CSE —
+auto must not harvest_wanted-pushback an operator-proxy restart of either service.
+If the restart is for **tooling / descriptor surface**, follow the ordered sequence
+under Refresh ≠ follow-up: restart → **wait mcp healthy** (cursor/`manage`) → **then**
+commission cursor-auto for the continuity hop — never hop before healthy.
 (`charter_reload` restarts the tick loop and returns `count=0`; it does not re-import modules,
 so charter-runner code changes need a manage quit/start.) Prefer conferring with cursor on
 *operational* "what's optimal next"; operator gates stay for proceed / implement / irreversible
@@ -413,7 +417,8 @@ propagation:
     code_ref: <sha>
     safe_window: drain_required
     proof_class: client_visible
-    force: true   # only when busy reason is THIS CSE (cdp_ask_live self-preempt)
+    # force: true  — optional; cursor-auto auto-applies on self-preempt deferral
+    # and advises "MCP will disconnect momentarily" in the closeout.
 ```
 
 **Tier-M scope (no file scope):** clear the gate with `tool_op: <tool>.<op>` +

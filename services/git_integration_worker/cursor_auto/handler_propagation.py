@@ -32,10 +32,40 @@ DEFER_MANAGE_QUEUED_DRAIN = "manage_queued_drain"
 DEFER_MANAGE_BUSY_DEFER = "manage_busy_defer"
 DEFER_HARVEST_WANTED = "harvest_wanted"
 
+# Operator bind 2026-08-02: cursor-auto executes operator-proxy self-preempt
+# restarts rather than harvest_wanted pushback. force remains mcp|cdp_ask only.
+_FORCE_ALLOWED_SERVICES = frozenset({"mcp", "cdp_ask"})
+_SELF_PREEMPT_MARKERS = (
+    "cdp_ask_live",
+    "mcp_session_hot",
+    "in-flight work",
+    "pass force=true",
+)
+MCP_DISCONNECT_ADVISORY = (
+    "MCP will disconnect momentarily — operator-proxy self-preempt; "
+    "reconnect after healthy (force lands the container, it does not refresh "
+    "the live CSE MCP binding)."
+)
+
 
 def restart_intent_persisted(manage_result: dict[str, Any]) -> bool:
     """True when manage deferred with a durable restart intent that will be consumed."""
     return bool(manage_result.get("restart_intent_id"))
+
+
+def deferred_is_self_preemptable(
+    service: str, manage_result: dict[str, Any]
+) -> bool:
+    """True when a busy deferral is the commissioning seat's own CSE/MCP heat.
+
+    Durable drain intents (GIW-style) are not self-preempt — those stay queued.
+    """
+    if service not in _FORCE_ALLOWED_SERVICES:
+        return False
+    if restart_intent_persisted(manage_result):
+        return False
+    blob = str(manage_result).lower()
+    return any(marker in blob for marker in _SELF_PREEMPT_MARKERS)
 
 
 def execution_for_manage_deferred(
@@ -116,7 +146,9 @@ async def run_propagation_in_seat(
     row_ids = upsert_open_rows(list(stamped))
     executions: list[dict[str, Any]] = []
     for row, row_id in zip(stamped, row_ids, strict=True):
-        executions.append(await _execute_row(row, row_id=row_id))
+        executions.append(
+            await _execute_row(row, row_id=row_id, from_agent=job.from_agent)
+        )
 
     disposition = _disposition_for(executions)
     summary = _summary_for(disposition, executions)
@@ -143,7 +175,12 @@ async def run_propagation_in_seat(
     )
 
 
-async def _execute_row(row: PropagationRow, *, row_id: str) -> dict[str, Any]:
+async def _execute_row(
+    row: PropagationRow,
+    *,
+    row_id: str,
+    from_agent: str = "",
+) -> dict[str, Any]:
     from scripts.model_manager.ui.controller.charter_runner.propagation_execute import (
         dispatch_proof_probe,
     )
@@ -169,20 +206,21 @@ async def _execute_row(row: PropagationRow, *, row_id: str) -> dict[str, Any]:
             "proof_class_executed": dispatch_before.proof_class_executed,
         }
     before = dispatch_before.payload
-    if row.force and row.service != "mcp":
+    force = bool(row.force)
+    if force and row.service not in _FORCE_ALLOWED_SERVICES:
         fail_row(
             row_id,
             proof_payload={
                 "proof_class_requested": dispatch_before.proof_class_requested,
                 "proof_class_executed": dispatch_before.proof_class_executed,
             },
-            reason="force_only_allowed_for_mcp",
+            reason="force_only_allowed_for_mcp_or_cdp_ask",
         )
         return {
             "service": row.service,
             "row_id": row_id,
             "status": "failed",
-            "reason": "force_only_allowed_for_mcp",
+            "reason": "force_only_allowed_for_mcp_or_cdp_ask",
             "proof_class_requested": dispatch_before.proof_class_requested,
             "proof_class_executed": dispatch_before.proof_class_executed,
         }
@@ -190,13 +228,33 @@ async def _execute_row(row: PropagationRow, *, row_id: str) -> dict[str, Any]:
         sync_restart_service,
         row.service,
         reason=(
-            "operator-proxy mcp self-preempt (own cdp_ask_live)"
-            if row.force
+            "operator-proxy self-preempt (own cdp_ask_live)"
+            if force
             else "operator propagate via cursor-auto"
         ),
-        force=bool(row.force),
+        force=force,
     )
     status = str(manage_result.get("status") or "unknown")
+    # Operator bind: do not harvest_wanted-pushback a self-preemptable mcp/cdp_ask
+    # restart — retry once with force and advise disconnect (mcp).
+    self_preempt_applied = False
+    if (
+        status == "deferred"
+        and not force
+        and deferred_is_self_preemptable(row.service, manage_result)
+    ):
+        force = True
+        self_preempt_applied = True
+        manage_result = await asyncio.to_thread(
+            sync_restart_service,
+            row.service,
+            reason=(
+                "operator-proxy self-preempt auto (cursor-auto; "
+                f"from_agent={from_agent or 'unknown'})"
+            ),
+            force=True,
+        )
+        status = str(manage_result.get("status") or "unknown")
     if status == "deferred":
         return execution_for_manage_deferred(
             row, row_id=row_id, manage_result=manage_result
@@ -227,6 +285,11 @@ async def _execute_row(row: PropagationRow, *, row_id: str) -> dict[str, Any]:
             "manage": manage_result,
         }
     after = after_dispatch.payload
+    advisory = (
+        MCP_DISCONNECT_ADVISORY
+        if force and row.service == "mcp"
+        else None
+    )
     if proof_observed(row, after, before=before):
         close_row(
             row_id,
@@ -236,7 +299,7 @@ async def _execute_row(row: PropagationRow, *, row_id: str) -> dict[str, Any]:
                 "proof_class_executed": after_dispatch.proof_class_executed,
             },
         )
-        return {
+        out: dict[str, Any] = {
             "service": row.service,
             "row_id": row_id,
             "status": "executed",
@@ -245,16 +308,26 @@ async def _execute_row(row: PropagationRow, *, row_id: str) -> dict[str, Any]:
             "proof_before": before,
             "proof_class_requested": after_dispatch.proof_class_requested,
             "proof_class_executed": after_dispatch.proof_class_executed,
+            "force": force,
+            "self_preempt_applied": self_preempt_applied,
         }
+        if advisory:
+            out["advisory"] = advisory
+        return out
     set_defer_reason(row_id, "proof_pending")
-    return {
+    out = {
         "service": row.service,
         "row_id": row_id,
         "status": "submitted",
         "manage": manage_result,
         "proof": after,
         "proof_before": before,
+        "force": force,
+        "self_preempt_applied": self_preempt_applied,
     }
+    if advisory:
+        out["advisory"] = advisory
+    return out
 
 
 # Weakest per-row status floors the envelope disposition (a:27414 derive-from-executions).
@@ -322,8 +395,30 @@ def _disposition_for(executions: list[dict[str, Any]]) -> str:
 
 def _summary_for(disposition: str, executions: list[dict[str, Any]]) -> str:
     services = ", ".join(str(item.get("service") or "?") for item in executions)
-    if disposition == "executed":
-        return f"Auto executed propagation restart for {services}; proof-of-live observed."
+    advisories = [
+        str(item["advisory"])
+        for item in executions
+        if item.get("advisory")
+    ]
+    advisory_suffix = f" {advisories[0]}" if advisories else ""
+    if disposition in {"executed", "propagated"}:
+        preempt = any(item.get("self_preempt_applied") for item in executions)
+        base = (
+            f"Auto propagated restart for {services}; proof-of-live observed."
+            if disposition == "propagated"
+            else f"Auto executed propagation restart for {services}; proof-of-live observed."
+        )
+        if preempt:
+            base = (
+                f"Auto propagated restart for {services} via self-preempt force; "
+                "proof-of-live observed."
+                if disposition == "propagated"
+                else (
+                    f"Auto executed propagation restart for {services} via "
+                    "self-preempt force; proof-of-live observed."
+                )
+            )
+        return base + advisory_suffix
     if disposition == "queued":
         reasons = ", ".join(str(item.get("reason") or "?") for item in executions)
         return (
@@ -359,12 +454,11 @@ def _summary_for(disposition: str, executions: list[dict[str, Any]]) -> str:
             )
         return f"Auto propagation restart failed for {_format_failed_services(failed or executions)}."
     if disposition == "submitted":
-        return (
+        base = (
             f"Auto submitted propagation restart for {services} — restart handed off; "
             "ledger row open until proof closes."
         )
-    if disposition == "propagated":
-        return f"Auto propagated restart for {services}; proof-of-live observed."
+        return base + advisory_suffix
     return (
         f"Auto propagation restart for {services} — status={disposition}; "
         "see executions[] for per-service detail."
@@ -375,6 +469,8 @@ __all__ = [
     "DEFER_HARVEST_WANTED",
     "DEFER_MANAGE_BUSY_DEFER",
     "DEFER_MANAGE_QUEUED_DRAIN",
+    "MCP_DISCONNECT_ADVISORY",
+    "deferred_is_self_preemptable",
     "execution_for_manage_deferred",
     "restart_intent_persisted",
     "run_propagation_in_seat",

@@ -59,8 +59,9 @@ def sync_restart_service(
 ) -> dict[str, Any]:
     """Request drain-gated sync_restart for one service slug.
 
-    ``force=True`` is the operator-proxy mcp self-preempt path (own CSE); manage
-    still owns the gate — this only forwards the flag.
+    ``force=True`` is the operator-proxy self-preempt path (own CSE). cursor-auto
+    may auto-set this on mcp/cdp_ask when manage first returns a self-preemptable
+    busy deferral — manage still owns the gate; this only forwards the flag.
     """
     params: dict[str, Any] = {"service": service}
     if reason:

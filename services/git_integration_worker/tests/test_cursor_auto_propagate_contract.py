@@ -139,7 +139,8 @@ async def test_run_propagation_queues_when_manage_defers() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_propagation_blocked_when_manage_defers_without_intent() -> None:
+async def test_run_propagation_self_preempts_mcp_busy_deferral() -> None:
+    """Operator bind: mcp busy=own CSE → auto force once; advise disconnect."""
     from services.git_integration_worker.cursor_auto.handler_propagation import (
         run_propagation_in_seat,
     )
@@ -168,6 +169,19 @@ async def test_run_propagation_blocked_when_manage_defers_without_intent() -> No
         async def reply(self, **kwargs):  # type: ignore[no-untyped-def]
             return type("R", (), {"status_code": 200, "body": ""})()
 
+    manage_calls: list[dict[str, object]] = []
+
+    def _manage(service: str, *, reason: str = "", force: bool = False):
+        manage_calls.append({"service": service, "force": force, "reason": reason})
+        if not force:
+            return {
+                "status": "deferred",
+                "state": "busy",
+                "reason": "cdp_ask_live",
+                "retry_after_s": 30,
+            }
+        return {"status": "ok", "service": service}
+
     with (
         patch(
             "services.git_integration_worker.cursor_auto.handler_propagation.upsert_open_rows",
@@ -175,15 +189,43 @@ async def test_run_propagation_blocked_when_manage_defers_without_intent() -> No
         ),
         patch(
             "services.git_integration_worker.cursor_auto.handler_propagation.sync_restart_service",
-            return_value={
-                "status": "deferred",
-                "state": "busy",
-                "reason": "cdp_ask_live",
-                "retry_after_s": 30,
-            },
+            side_effect=_manage,
         ),
         patch(
-            "services.git_integration_worker.cursor_auto.handler_propagation.set_defer_reason",
+            "scripts.model_manager.ui.controller.charter_runner.propagation_execute.dispatch_proof_probe",
+            side_effect=[
+                type(
+                    "P",
+                    (),
+                    {
+                        "error": None,
+                        "payload": {"code_version": "cafebabe", "pid": 1},
+                        "proof_class_requested": "client_visible",
+                        "proof_class_executed": "client_visible",
+                    },
+                )(),
+                type(
+                    "P",
+                    (),
+                    {
+                        "error": None,
+                        "payload": {
+                            "code_version": "cafebabe",
+                            "pid": 2,
+                            "process_start_time": "t2",
+                        },
+                        "proof_class_requested": "client_visible",
+                        "proof_class_executed": "client_visible",
+                    },
+                )(),
+            ],
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.handler_propagation.proof_observed",
+            return_value=True,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.handler_propagation.close_row",
         ),
     ):
         result = await run_propagation_in_seat(
@@ -194,7 +236,11 @@ async def test_run_propagation_blocked_when_manage_defers_without_intent() -> No
             effort={"requested": None, "resolved_effort": "medium"},
             gate_plan={"action": "in_seat"},
         )
-    assert result["disposition"] == "blocked"
+    assert result["disposition"] == "propagated"
+    assert len(manage_calls) == 2
+    assert manage_calls[0]["force"] is False
+    assert manage_calls[1]["force"] is True
     summary = str(result.get("summary") or "")
-    assert "nothing will fire" in summary.lower()
-    assert "will fire after drain" not in summary.lower()
+    assert "self-preempt" in summary.lower()
+    assert "disconnect momentarily" in summary.lower()
+    assert "MCP will disconnect momentarily" in summary
