@@ -487,46 +487,12 @@ def merge_stream_cortex_entries(
     manifest: EffectsManifest | None,
     tool_calls: tuple[ToolCallObservation, ...],
 ) -> EffectsManifest | None:
-    """Fold stream-observed cortex write acks when conversation omitted results (AC-9j)."""
-    if manifest is None or not tool_calls:
-        return manifest
-    existing_assertions = set(harvest_cortex_assertion_ids(manifest))
-    existing_identities: set[str] = set()
-    cortex_section = manifest.surfaces.get("cortex")
-    if cortex_section is not None:
-        for entry in cortex_section.entries:
-            if entry.identity:
-                existing_identities.add(entry.identity)
-    new_entries: list[EffectEntry] = []
-    for obs in tool_calls:
-        if obs.status != "completed":
-            continue
-        entry = _cortex_entry_from_stream_observation(obs)
-        if entry is None:
-            continue
-        if entry.identity and entry.identity in existing_identities:
-            continue
-        if entry.identity and entry.identity.startswith("assertion:"):
-            aid = entry.identity.split(":", 1)[1]
-            if aid in existing_assertions:
-                continue
-        new_entries.append(entry)
-    if not new_entries:
-        return manifest
-    if cortex_section is None:
-        cortex_section = SurfaceSection(surface="cortex", source="stream", entries=[])
-    merged_entries = list(cortex_section.entries)
-    merged_entries.extend(new_entries)
-    merged_surfaces = dict(manifest.surfaces)
-    merged_surfaces["cortex"] = cortex_section.model_copy(
-        update={"entries": merged_entries, "source": "stream"}
+    """Fold stream-observed cortex write acks when conversation omitted results (AC-9j/18)."""
+    from services.git_integration_worker.cursor_sdk_cortex_identity import (
+        merge_stream_cortex_entries as _merge_stream_cortex_entries,
     )
-    sources = list(dict.fromkeys([*manifest.capture_sources, "stream"]))
-    coverage = dict(manifest.coverage)
-    coverage["cortex"] = "complete"
-    return manifest.model_copy(
-        update={"surfaces": merged_surfaces, "capture_sources": sources, "coverage": coverage}
-    )
+
+    return _merge_stream_cortex_entries(manifest, tool_calls)
 
 
 def _cortex_entry_from_stream_observation(

@@ -7,6 +7,9 @@ from typing import Any
 
 from implement_admission.closeout_models import EffectsManifest
 
+from services.git_integration_worker.cursor_sdk_cortex_identity import (
+    merge_stream_cortex_entries,
+)
 from services.git_integration_worker.cursor_sdk_nested_attribution import (
     fold_nested_boundary_effects,
 )
@@ -32,6 +35,8 @@ def finalize_boundary_manifest(
     """Apply AC-9e/f/g post-capture passes; return manifest + deviation tokens."""
     if manifest is None:
         return None, []
+    if tool_calls:
+        manifest = merge_stream_cortex_entries(manifest, tool_calls) or manifest
     folded = fold_nested_boundary_effects(
         manifest,
         parent_dispatch_id=parent_dispatch_id or manifest.dispatch_id,
