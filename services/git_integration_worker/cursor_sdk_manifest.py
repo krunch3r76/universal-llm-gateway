@@ -36,6 +36,9 @@ from services.git_integration_worker.cursor_sdk_tool_result import (
     assertion_id_from_payload as _assertion_id_from_payload,
     unwrap_tool_result as _unwrap_tool_result,
 )
+from services.git_integration_worker.cursor_sdk_toolcall_retention import (
+    harvest_result_from_observation,
+)
 
 CaptureBranch = Literal["A", "B", "NO_CAPTURE"]
 
@@ -511,7 +514,9 @@ def _cortex_entry_from_stream_observation(
     if op not in _CORTEX_WRITE_OPS:
         return None
     detail = _bounded_detail(effective) if effective else None
-    assertion_id = _cortex_result_assertion_id(obs.tool_name, effective, obs.result)
+    assertion_id = _cortex_result_assertion_id(
+        obs.tool_name, effective, harvest_result_from_observation(obs)
+    )
     identity = (
         f"assertion:{assertion_id}"
         if assertion_id is not None

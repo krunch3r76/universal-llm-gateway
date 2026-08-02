@@ -22,6 +22,9 @@ from services.git_integration_worker.cursor_sdk_stream_capture import (
 from services.git_integration_worker.cursor_sdk_surface_authority import (
     label_manifest_authority,
 )
+from services.git_integration_worker.cursor_sdk_toolcall_retention import (
+    hydrate_tool_calls_for_boundary_harvest,
+)
 
 
 def finalize_boundary_manifest(
@@ -35,15 +38,18 @@ def finalize_boundary_manifest(
     """Apply AC-9e/f/g post-capture passes; return manifest + deviation tokens."""
     if manifest is None:
         return None, []
-    if tool_calls:
-        manifest = merge_stream_cortex_entries(manifest, tool_calls) or manifest
+    hydrated_calls = (
+        hydrate_tool_calls_for_boundary_harvest(tool_calls) if tool_calls else tool_calls
+    )
+    if hydrated_calls:
+        manifest = merge_stream_cortex_entries(manifest, hydrated_calls) or manifest
     folded = fold_nested_boundary_effects(
         manifest,
         parent_dispatch_id=parent_dispatch_id or manifest.dispatch_id,
         source_repo=source_repo,
         ledger=ledger,
     )
-    reconciled, divergences = reconcile_observed_vs_committed(folded, tool_calls)
+    reconciled, divergences = reconcile_observed_vs_committed(folded, hydrated_calls)
     labeled = label_manifest_authority(reconciled)
     return labeled, divergences
 

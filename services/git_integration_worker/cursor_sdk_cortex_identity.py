@@ -30,6 +30,9 @@ from services.git_integration_worker.cursor_sdk_tool_result import (
 from services.git_integration_worker.cursor_sdk_tool_result import (
     unwrap_tool_result as _unwrap_tool_result,
 )
+from services.git_integration_worker.cursor_sdk_toolcall_retention import (
+    harvest_result_from_observation,
+)
 
 _ASSERTION_IDENTITY_RE = re.compile(r"^assertion:(\d+)$")
 _CORTEX_TOOLS = frozenset({"cortex", "cortex_brief"})
@@ -106,7 +109,7 @@ def assertion_id_from_cortex_observation(obs: ToolCallObservation) -> int | None
     op = _cortex_op_from_args(effective)
     if op not in _CORTEX_WRITE_OPS:
         return None
-    payload = _unwrap_tool_result(obs.result)
+    payload = _unwrap_tool_result(harvest_result_from_observation(obs))
     if payload is None:
         return None
     return _assertion_id_from_payload(payload)

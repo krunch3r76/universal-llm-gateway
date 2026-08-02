@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from universal_event_bus import Event, event_factory
@@ -71,6 +71,9 @@ class ToolCallObservation:
     subagent_type: str | None = None
     args: Mapping[str, Any] | None = None
     result: object | None = None
+    # Retained at terminal emit (item 22); consumed at boundary closeout harvest (item 18).
+    result_body: object | None = None
+    result_body_status: str | None = None
 
     @property
     def truncated_any(self) -> bool:
@@ -297,7 +300,6 @@ def observe_run_stream(
 
     def _emit(call_id: str, message: Any) -> None:
         observation = _observation_from_message(message)
-        emitted[call_id] = observation
         if on_tool_call is not None:
             try:
                 on_tool_call(observation)
@@ -313,6 +315,12 @@ def observe_run_stream(
             result_bytes=observation.result_bytes,
             status=observation.status,
         )
+        observation = replace(
+            observation,
+            result_body=retention.result_body,
+            result_body_status=retention.result_body_status,
+        )
+        emitted[call_id] = observation
         emit_frontier_event(
             FrontierSdkWorkerToolCall(
                 dispatch_id=dispatch_id,

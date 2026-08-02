@@ -146,6 +146,44 @@ def retention_window_past_policy() -> str:
     return _PAST_RETENTION
 
 
+def harvest_result_from_observation(obs: object) -> object | None:
+    """Return the tool result boundary harvest should consume.
+
+    Prefer ``obs.result`` when it unwraps to a harvestable payload; otherwise
+    fall back to the retained ``result_body`` wired at terminal emit (item 18←22).
+    """
+    from services.git_integration_worker.cursor_sdk_tool_result import (
+        assertion_id_from_payload,
+        unwrap_tool_result,
+    )
+
+    result = getattr(obs, "result", None)
+    if result is not None:
+        payload = unwrap_tool_result(result)
+        if payload is not None and assertion_id_from_payload(payload) is not None:
+            return result
+    body = getattr(obs, "result_body", None)
+    status = getattr(obs, "result_body_status", None)
+    if status == RESULT_BODY_PRESENT and body is not None:
+        return body
+    return result
+
+
+def hydrate_tool_calls_for_boundary_harvest(
+    tool_calls: tuple[Any, ...],
+) -> tuple[Any, ...]:
+    """Wire retained ``result_body`` onto ``result`` before boundary merge."""
+    from dataclasses import replace
+
+    hydrated: list[object] = []
+    for obs in tool_calls:
+        effective = harvest_result_from_observation(obs)
+        if effective is not None and effective is not getattr(obs, "result", None):
+            obs = replace(obs, result=effective)
+        hydrated.append(obs)
+    return tuple(hydrated)
+
+
 # AC-22d — sibling factories audited for metadata-without-payload (item 21 clause).
 EVENT_PAYLOAD_DROP_AUDIT: tuple[dict[str, str], ...] = (
     {
@@ -192,6 +230,8 @@ __all__ = [
     "RESULT_RETENTION_WINDOW_S",
     "ToolcallResultRetention",
     "prepare_toolcall_result_retention",
+    "harvest_result_from_observation",
+    "hydrate_tool_calls_for_boundary_harvest",
     "result_body_from_toolcall_payload",
     "retention_window_past_policy",
 ]

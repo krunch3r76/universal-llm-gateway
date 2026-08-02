@@ -31,6 +31,14 @@ from services.git_integration_worker.cursor_sdk_stream_capture import (
     _json_bytes,
 )
 from services.git_integration_worker.cursor_sdk_tool_result import unwrap_tool_result
+from services.git_integration_worker.cursor_sdk_toolcall_retention import (
+    RESULT_BODY_PRESENT,
+    harvest_result_from_observation,
+    hydrate_tool_calls_for_boundary_harvest,
+)
+from services.git_integration_worker.cursor_sdk_boundary_finalize import (
+    finalize_boundary_manifest,
+)
 
 pytestmark = pytest.mark.offline
 
@@ -155,4 +163,33 @@ def test_ac_h4_h5_captured_fixture_clears_divergence_and_assertion_identity() ->
     assert entry.identity == f"assertion:{_LIVE_ASSERTION_ID}"
     assert harvest_cortex_assertion_ids(merged) == [str(_LIVE_ASSERTION_ID)]
     _, divs = reconcile_observed_vs_committed(merged, (obs,))
+    assert divs == []
+
+
+def test_ac_w3_retained_body_wires_to_boundary_finalize_without_stream_result() -> None:
+    """Consumption path: result_body reaches merge at closeout when stream result is absent."""
+    body = _load_live_obs_result_body()
+    obs = _live_stream_obs(result=None)
+    obs = ToolCallObservation(
+        call_id=obs.call_id,
+        tool_name=obs.tool_name,
+        status=obs.status,
+        arg_bytes=obs.arg_bytes,
+        result_bytes=_json_bytes(body),
+        truncated_fields=obs.truncated_fields,
+        args=obs.args,
+        result=None,
+        result_body=body,
+        result_body_status=RESULT_BODY_PRESENT,
+    )
+    assert harvest_result_from_observation(obs) == body
+    hydrated = hydrate_tool_calls_for_boundary_harvest((obs,))
+    assert hydrated[0].result == body
+    finalized, divs = finalize_boundary_manifest(
+        _conversation_manifest(),
+        tool_calls=hydrated,  # type: ignore[arg-type]
+    )
+    assert finalized is not None
+    entry = finalized.surfaces["cortex"].entries[0]
+    assert entry.identity == f"assertion:{_LIVE_ASSERTION_ID}"
     assert divs == []
