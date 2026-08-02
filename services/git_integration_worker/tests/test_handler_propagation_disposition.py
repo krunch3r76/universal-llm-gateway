@@ -73,12 +73,12 @@ def test_disposition_mixed_executed_submitted_queued_floors_to_queued() -> None:
     assert _disposition_for(executions) == "queued"
 
 
-def test_disposition_mixed_executed_and_submitted_floors_to_propagated() -> None:
+def test_disposition_mixed_executed_and_submitted_floors_to_submitted() -> None:
     executions = [
         _exec("mcp", "executed"),
         _exec("gateway", "submitted"),
     ]
-    assert _disposition_for(executions) == "propagated"
+    assert _disposition_for(executions) == "submitted"
 
 
 def test_disposition_mixed_executed_and_failed_floors_to_failed() -> None:
@@ -104,8 +104,26 @@ def test_disposition_empty_executions_returns_failed() -> None:
     assert _disposition_for([]) == "failed"
 
 
-def test_disposition_all_executed_unchanged() -> None:
-    assert _disposition_for([_exec("mcp", "executed")]) == "executed"
+def test_disposition_all_executed_maps_to_propagated() -> None:
+    assert _disposition_for([_exec("mcp", "executed")]) == "propagated"
+
+
+def test_disposition_all_submitted_returns_submitted() -> None:
+    assert _disposition_for([_exec("mcp", "submitted")]) == "submitted"
+
+
+def test_disposition_submitted_never_propagated_while_proof_pending() -> None:
+    """AC-1: open-row (submitted) executions must not yield propagated envelope."""
+    executions = [
+        _exec(
+            "mcp",
+            "submitted",
+            manage={"status": "ok", "message": "restart scheduled"},
+        ),
+    ]
+    disposition = _disposition_for(executions)
+    assert disposition == "submitted"
+    assert disposition != "propagated"
 
 
 def test_disposition_all_queued_unchanged() -> None:
@@ -187,10 +205,6 @@ def test_summary_blocked_does_not_claim_will_fire() -> None:
     assert "will fire after drain" not in summary.lower()
 
 
-def test_disposition_all_submitted_returns_propagated() -> None:
-    assert _disposition_for([_exec("mcp", "submitted")]) == "propagated"
-
-
 # --- AC3: D7/turn-27 payload replay ---
 
 
@@ -237,7 +251,14 @@ def test_summary_mixed_executed_and_failed_surfaces_partial_and_failure() -> Non
     assert "partial progress" in summary.lower()
 
 
-def test_summary_propagated_without_failures_keeps_submitted_wording() -> None:
+def test_summary_submitted_names_open_ledger() -> None:
     executions = [_exec("mcp", "submitted")]
+    summary = _summary_for("submitted", executions)
+    assert "submitted" in summary.lower()
+    assert "ledger row open" in summary.lower()
+
+
+def test_summary_propagated_claims_proof_observed() -> None:
+    executions = [_exec("mcp", "executed")]
     summary = _summary_for("propagated", executions)
-    assert "submitted or queued" in summary.lower()
+    assert "proof-of-live observed" in summary.lower()

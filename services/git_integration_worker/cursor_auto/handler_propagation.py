@@ -268,8 +268,8 @@ _ENVELOPE_FROM_ROW: dict[str, str] = {
     "failed": "failed",
     "blocked": "blocked",
     "queued": "queued",
-    "submitted": "propagated",
-    "executed": "executed",
+    "submitted": "submitted",
+    "executed": "propagated",
 }
 
 
@@ -349,9 +349,16 @@ def _summary_for(disposition: str, executions: list[dict[str, Any]]) -> str:
                 f"{ok_services}; failed: {_format_failed_services(failed)}."
             )
         return f"Auto propagation restart failed for {_format_failed_services(failed or executions)}."
+    if disposition == "submitted":
+        return (
+            f"Auto submitted propagation restart for {services} — restart handed off; "
+            "ledger row open until proof closes."
+        )
+    if disposition == "propagated":
+        return f"Auto propagated restart for {services}; proof-of-live observed."
     return (
-        f"Auto propagated restart for {services} — drain/restart submitted or queued; "
-        "ledger row open until proof closes."
+        f"Auto propagation restart for {services} — status={disposition}; "
+        "see executions[] for per-service detail."
     )
 
 
