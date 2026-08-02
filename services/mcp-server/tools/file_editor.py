@@ -10,7 +10,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from tools._durable_write import durable_write_text, verify_persisted
-from tools.filesystem._overwrite_retain import retain_before_overwrite
 
 
 def perform_edit(
@@ -91,6 +90,10 @@ def perform_edit(
                 f"Unknown operation: {operation!r}. Must be one of: prepend, append, "
                 + "insert_at_line, replace."
             )
+
+    # Lazy import: filesystem.__init__ pulls _ops_text → file_editor; a top-level
+    # import of _overwrite_retain re-enters that cycle and crash-loops mcp.
+    from tools.filesystem._overwrite_retain import retain_before_overwrite
 
     replaced_sha256 = retain_before_overwrite(path)
     written_sha256 = durable_write_text(path, modified)
