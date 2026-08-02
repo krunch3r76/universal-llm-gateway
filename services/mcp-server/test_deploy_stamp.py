@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -47,6 +48,25 @@ def test_health_json_includes_stamp(
     assert payload["deploy_mode"] == "source_synced"
     assert "code_version" in payload
     assert isinstance(payload["code_version"], str)
+    assert payload["pid"] == os.getpid()
+
+
+def test_health_json_pid_binds_strong_process_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """MCP /health pid matches GIW identity shape for strong_process_identity."""
+    from services.git_integration_worker.cursor_auto.propagation_probe import (
+        process_identity,
+        strong_process_identity,
+    )
+
+    stamp = tmp_path / ".source_sync_stamp"
+    stamp.write_text("2026-06-02T21:30:00Z\n", encoding="utf-8")
+    monkeypatch.setattr("_deploy_stamp._STAMP_PATH", stamp)
+    payload = health_json()
+    assert payload["pid"] == os.getpid()
+    assert strong_process_identity(payload)
+    assert process_identity(payload) == f"pid:{os.getpid()}"
 
 
 def test_health_json_code_version_from_stamp_sha(
