@@ -173,6 +173,9 @@ def _terminal_failure(snapshot: dict[str, Any]) -> bool:
     return False
 
 
+terminal_failure = _terminal_failure
+
+
 def _post_idle(snapshot: dict[str, Any]) -> bool:
     """Whether the snapshot sits in a phase whose progress signal is unobservable."""
     return str(snapshot.get("completion_phase") or "") in POST_IDLE_PHASES

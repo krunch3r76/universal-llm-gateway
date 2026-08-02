@@ -312,17 +312,82 @@ async def test_delivery_fail_no_reproof(
     assert leg.delivered is False
 
 
+def test_classify_horizon_probe() -> None:
+    assert reconcile.classify_horizon_probe(_running_snapshot()) == "alive"
+    assert (
+        reconcile.classify_horizon_probe({"status": "failed", "error": "boom"})
+        == "confirmed_dead"
+    )
+    assert reconcile.classify_horizon_probe({"error": "unreachable"}) == "unverifiable"
+    assert reconcile.classify_horizon_probe(None) == "unverifiable"
+
+
 @pytest.mark.asyncio
-async def test_abandonment_emits_reconcile_abandoned(
+async def test_horizon_live_leg_not_abandoned(monkeypatch: pytest.MonkeyPatch) -> None:
+    published: list[str] = []
+    monkeypatch.setattr(
+        reconcile,
+        "publish_cdp_kwargs",
+        lambda factory, **kwargs: published.append(factory.__name__),
+    )
+    monkeypatch.setattr(
+        reconcile,
+        "poll_satellite_snapshot",
+        AsyncMock(return_value=_running_snapshot()),
+    )
+    upsert_inflight_leg(
+        execution_id="exec-live-horizon",
+        request_id="req-1",
+        thread_id="5583",
+        pointer_turn=1,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    reconcile.attach_satellite_execution_id(
+        execution_id="exec-live-horizon",
+        satellite_execution_id="sat-live",
+    )
+    old = (
+        datetime.now(UTC) - timedelta(seconds=max_open_leg_s(1800.0) + 10)
+    ).isoformat()
+    conn = _connect()
+    try:
+        conn.execute(
+            "UPDATE cdp_inflight_leg SET admitted_at=? WHERE execution_id=?",
+            (old, "exec-live-horizon"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    await reconcile.reconcile_cdp_inflight_legs()
+
+    assert published == []
+    leg = reconcile.read_inflight_leg("exec-live-horizon")
+    assert leg is not None
+    assert leg.abandoned is False
+
+
+@pytest.mark.asyncio
+async def test_abandonment_emits_reconcile_abandoned_confirmed_dead(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     stalled: list[str | None] = []
+    errors: list[str] = []
 
     def _capture(factory: Any, **kwargs: Any) -> None:
         if factory.__name__ == "CdpGenerateStalled":
             stalled.append(kwargs.get("stall_stage"))
+            errors.append(str(kwargs.get("error") or ""))
 
     monkeypatch.setattr(reconcile, "publish_cdp_kwargs", _capture)
+    monkeypatch.setattr(
+        reconcile,
+        "poll_satellite_snapshot",
+        AsyncMock(return_value={"status": "failed", "error": "satellite dead"}),
+    )
     monkeypatch.setattr(
         "systems.frontier_consult.cdp_generate_worker.deliver_cdp_result_turn",
         AsyncMock(return_value=True),
@@ -336,6 +401,10 @@ async def test_abandonment_emits_reconcile_abandoned(
         prompt_uri="cortex://p.md",
         model_id="cdp/opus-5",
         max_wall_s=1800.0,
+    )
+    reconcile.attach_satellite_execution_id(
+        execution_id="exec-abandon",
+        satellite_execution_id="sat-dead",
     )
     old = (
         datetime.now(UTC) - timedelta(seconds=max_open_leg_s(1800.0) + 10)
@@ -351,8 +420,66 @@ async def test_abandonment_emits_reconcile_abandoned(
         conn.close()
 
     await reconcile.reconcile_cdp_inflight_legs()
-    assert stalled == ["reconcile_abandoned"]
+    assert stalled == [reconcile.STALL_RECONCILE_ABANDONED_CONFIRMED]
+    assert errors == ["satellite confirmed dead at horizon (status='failed')"]
     leg = reconcile.read_inflight_leg("exec-abandon")
+    assert leg is not None
+    assert leg.abandoned is True
+
+
+@pytest.mark.asyncio
+async def test_horizon_unreachable_probe_abandons_unverifiable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stalled: list[str | None] = []
+    errors: list[str] = []
+
+    def _capture(factory: Any, **kwargs: Any) -> None:
+        if factory.__name__ == "CdpGenerateStalled":
+            stalled.append(kwargs.get("stall_stage"))
+            errors.append(str(kwargs.get("error") or ""))
+
+    monkeypatch.setattr(reconcile, "publish_cdp_kwargs", _capture)
+    monkeypatch.setattr(
+        reconcile,
+        "poll_satellite_snapshot",
+        AsyncMock(return_value={"error": "unreachable"}),
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.deliver_cdp_result_turn",
+        AsyncMock(return_value=True),
+    )
+    upsert_inflight_leg(
+        execution_id="exec-unreachable",
+        request_id="req-1",
+        thread_id="5583",
+        pointer_turn=1,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    reconcile.attach_satellite_execution_id(
+        execution_id="exec-unreachable",
+        satellite_execution_id="sat-unreachable",
+    )
+    old = (
+        datetime.now(UTC) - timedelta(seconds=max_open_leg_s(1800.0) + 10)
+    ).isoformat()
+    conn = _connect()
+    try:
+        conn.execute(
+            "UPDATE cdp_inflight_leg SET admitted_at=? WHERE execution_id=?",
+            (old, "exec-unreachable"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    await reconcile.reconcile_cdp_inflight_legs()
+    assert stalled == [reconcile.STALL_RECONCILE_ABANDONED_UNVERIFIABLE]
+    assert errors == ["horizon crossed; liveness unverifiable: unreachable"]
+    leg = reconcile.read_inflight_leg("exec-unreachable")
     assert leg is not None
     assert leg.abandoned is True
 

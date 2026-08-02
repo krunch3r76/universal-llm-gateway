@@ -10,6 +10,24 @@ from services.git_integration_worker.models.cursor_api import CursorDispatchRequ
 _BEFORE_SUBJECT = "cursor-sdk dispatch {dispatch_id}"
 
 
+def test_build_sdk_closeout_subject_investigate_handoff_leg() -> None:
+    req = CursorDispatchRequest(
+        thread_id="472",
+        model="cursor/composer-2.5",
+        dispatch_id="auto-472",
+        execution_id="exec-472",
+        message="TYPE: DIRECTIVE\ncontract: investigate\nhandoff=light-bounded\n",
+        handoff_contract="light-bounded",
+        admitted_via="cursor-auto",
+        caller_agent="cursor-auto",
+    )
+    subject = build_sdk_closeout_subject(req, contract="light-bounded")
+    assert subject == (
+        "cursor-sdk CLOSEOUT auto-472 contract=investigate handoff=light-bounded "
+        "admitted_via=cursor-auto caller=cursor-auto"
+    )
+
+
 def test_build_sdk_closeout_subject_implement_leg() -> None:
     req = CursorDispatchRequest(
         thread_id="440",
