@@ -42,6 +42,16 @@ def test_case_i_exact_match() -> None:
     assert "proven" in result.reader_entitlement
 
 
+def test_case_i_short_ref_exact_match() -> None:
+    """Short code_ref against its own full observed SHA must be case (i), not (ii)."""
+    head = _head()
+    short = head[:8]
+    result = classify_version_satisfaction(short, head)
+    assert result.case == "exact_match"
+    assert result.relation == "equal"
+    assert result.case != "ancestry_satisfied"
+
+
 def test_case_ii_ancestry_satisfied() -> None:
     ancestor = _ancestor_of_head()
     head = _head()

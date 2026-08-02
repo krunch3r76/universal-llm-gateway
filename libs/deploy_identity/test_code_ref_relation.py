@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import subprocess
 
+import pytest
+
 from deploy_identity.code_ref_relation import (
+    _resolve_commit_sha,
     code_ref_relation,
     code_ref_satisfied,
 )
@@ -58,3 +61,31 @@ def test_code_ref_relation_descendant_of_observed_fail() -> None:
     head = _head()
     assert code_ref_relation(head, ancestor) == "descendant-of-observed"
     assert not code_ref_satisfied(head, ancestor)
+
+
+def test_code_ref_relation_short_ref_equal_to_full_observed() -> None:
+    """Unambiguous abbreviated ref of observed SHA must classify as equal, not ancestor."""
+    head = _head()
+    short = head[:8]
+    assert _resolve_commit_sha(short) == head
+    assert code_ref_relation(short, head) == "equal"
+    assert code_ref_satisfied(short, head)
+
+
+def test_code_ref_relation_ambiguous_prefix_not_equal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prefix that does not resolve unambiguously must not classify as equal."""
+    head = _head()
+    short = head[:8]
+
+    def _ambiguous_ref(value: str) -> str | None:
+        if value == short:
+            return None
+        return _resolve_commit_sha(value)
+
+    monkeypatch.setattr(
+        "deploy_identity.code_ref_relation._resolve_commit_sha",
+        _ambiguous_ref,
+    )
+    assert code_ref_relation(short, head) == "unrelated"
