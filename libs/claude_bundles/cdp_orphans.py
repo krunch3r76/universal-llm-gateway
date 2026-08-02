@@ -1,4 +1,4 @@
-"""Observation plane for live CDP ports — reads ground truth; never writes registry."""
+"""Observation plane for live CDP ports — reads ground truth; logs scan outcomes."""
 
 from __future__ import annotations
 
@@ -59,6 +59,12 @@ class OrphanScanResult:
     matched: tuple[Orphan, ...]
     rejected: tuple[RejectedPort, ...]
     unevaluable: tuple[UnevaluablePort, ...]
+    ports_live: int
+    ports_skipped_registered: int
+
+    @property
+    def ports_examined(self) -> int:
+        return self.ports_live - self.ports_skipped_registered
 
 
 def is_primary_profile(profile: Path) -> bool:
@@ -175,11 +181,14 @@ def find_orphans() -> OrphanScanResult:
     same outward shape (zero-found vs zero-examined).
     """
     registered = _registered_ports()
+    live_ports = probe_live_ports()
     matched: list[Orphan] = []
     rejected: list[RejectedPort] = []
     unevaluable: list[UnevaluablePort] = []
-    for live in probe_live_ports():
+    skipped_registered = 0
+    for live in live_ports:
         if live.port in registered:
+            skipped_registered += 1
             continue
         pid = _pid_listening_on(live.port)
         if live.profile is None:
@@ -223,11 +232,15 @@ def find_orphans() -> OrphanScanResult:
                 uptime_s=_process_uptime_s(pid) if pid is not None else None,
             )
         )
-    return OrphanScanResult(
+    result = OrphanScanResult(
         matched=tuple(sorted(matched, key=lambda o: o.port)),
         rejected=tuple(sorted(rejected, key=lambda r: r.port)),
         unevaluable=tuple(sorted(unevaluable, key=lambda u: u.port)),
+        ports_live=len(live_ports),
+        ports_skipped_registered=skipped_registered,
     )
+    cdp_registry.log_orphan_scan(result)
+    return result
 
 
 def orphan_as_dict(orphan: Orphan) -> dict[str, Any]:
@@ -246,6 +259,12 @@ def _rejected_as_dict(item: RejectedPort) -> dict[str, Any]:
 
 def orphan_scan_as_dict(scan: OrphanScanResult) -> dict[str, Any]:
     return {
+        "ports_live": scan.ports_live,
+        "ports_skipped_registered": scan.ports_skipped_registered,
+        "ports_examined": scan.ports_examined,
+        "matched_count": len(scan.matched),
+        "rejected_count": len(scan.rejected),
+        "unevaluable_count": len(scan.unevaluable),
         "matched": [orphan_as_dict(o) for o in scan.matched],
         "rejected": [_rejected_as_dict(r) for r in scan.rejected],
         "unevaluable": [asdict(u) for u in scan.unevaluable],

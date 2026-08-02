@@ -27,8 +27,19 @@ def _live(
     )
 
 
-def _empty_scan() -> OrphanScanResult:
-    return OrphanScanResult(matched=(), rejected=(), unevaluable=())
+def _empty_scan(*, ports_live: int = 0, ports_skipped_registered: int = 0) -> OrphanScanResult:
+    return OrphanScanResult(
+        matched=(),
+        rejected=(),
+        unevaluable=(),
+        ports_live=ports_live,
+        ports_skipped_registered=ports_skipped_registered,
+    )
+
+
+@pytest.fixture(autouse=True)
+def _suppress_orphan_scan_log(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cdp_orphans.cdp_registry, "log_orphan_scan", lambda _scan: None)
 
 
 def _patch_proc_cmdline(
@@ -143,7 +154,7 @@ def test_find_orphans_excludes_registered_port(
     monkeypatch.setattr(cdp_orphans, "_registered_ports", lambda: {9229})
 
     scan = cdp_orphans.find_orphans()
-    assert scan == _empty_scan()
+    assert scan == _empty_scan(ports_live=1, ports_skipped_registered=1)
 
 
 def test_find_orphans_surfaces_unresolvable_profile_as_unevaluable(
@@ -171,3 +182,53 @@ def test_probe_live_ports_degrades_on_connection_error(
 ) -> None:
     monkeypatch.setattr(cdp_orphans, "_fetch_json", lambda _url: None)
     assert cdp_orphans.probe_live_ports(port_range=range(9223, 9225)) == []
+
+
+def test_find_orphans_zero_live_vs_all_registered_produce_different_shapes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    reg_profile = tmp_path / "claude-ai-chrome-profile-reg-live01"
+    monkeypatch.setattr(
+        cdp_orphans,
+        "probe_live_ports",
+        lambda port_range=None: [],
+    )
+    monkeypatch.setattr(cdp_orphans, "_registered_ports", lambda: set())
+    no_live = cdp_orphans.find_orphans()
+
+    monkeypatch.setattr(
+        cdp_orphans,
+        "probe_live_ports",
+        lambda port_range=None: [_live(9229, reg_profile)],
+    )
+    monkeypatch.setattr(cdp_orphans, "_registered_ports", lambda: {9229})
+    all_registered = cdp_orphans.find_orphans()
+
+    assert no_live.ports_live == 0
+    assert no_live.ports_skipped_registered == 0
+    assert all_registered.ports_live == 1
+    assert all_registered.ports_skipped_registered == 1
+    assert cdp_orphans.orphan_scan_as_dict(no_live) != cdp_orphans.orphan_scan_as_dict(
+        all_registered
+    )
+
+
+def test_find_orphans_docstring_invariant_skip_is_counted_not_absence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Registered skip must appear in ports_skipped_registered, not as silent absence."""
+    reg_profile = tmp_path / "claude-ai-chrome-profile-reg-live01"
+    monkeypatch.setattr(
+        cdp_orphans,
+        "probe_live_ports",
+        lambda port_range=None: [_live(9229, reg_profile)],
+    )
+    monkeypatch.setattr(cdp_orphans, "_registered_ports", lambda: {9229})
+
+    scan = cdp_orphans.find_orphans()
+    assert scan.matched == ()
+    assert scan.rejected == ()
+    assert scan.unevaluable == ()
+    assert scan.ports_live == 1
+    assert scan.ports_skipped_registered == 1
+    assert scan.ports_examined == 0

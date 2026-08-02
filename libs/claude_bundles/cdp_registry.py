@@ -504,7 +504,12 @@ def hygiene_reclaim_extended(
                         "hygiene_reclaim",
                         {
                             "registration_id": rid,
-                            **row,
+                            "port": row["port"],
+                            "profile_suffix": row.get("profile_suffix"),
+                            "profile": row.get("profile"),
+                            "holder": row.get("holder"),
+                            "status": "reclaimed",
+                            "reclaim_outcome": outcome,
                             "profile_removed": outcome == "success",
                         },
                     )
@@ -530,6 +535,13 @@ def hygiene_reclaim_extended(
 def reclaim_best_effort() -> None:
     with contextlib.suppress(Exception):
         hygiene_reclaim_extended(include_stale_active=False)
+
+
+def log_orphan_scan(scan: Any) -> None:
+    """Append orphan-scan outcome to registry.jsonl on every scan."""
+    from claude_bundles import cdp_orphans
+
+    _store.append_log("orphan_scan", cdp_orphans.orphan_scan_as_dict(scan))
 
 
 def hygiene_reclaim_released() -> HygieneReclaimResult:

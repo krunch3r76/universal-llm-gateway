@@ -420,7 +420,13 @@ def test_list_cli_emits_object_not_bare_array(
 ) -> None:
     monkeypatch.setattr(
         "claude_bundles.cdp_orphans.find_orphans",
-        lambda: cdp_orphans.OrphanScanResult(matched=(), rejected=(), unevaluable=()),
+        lambda: cdp_orphans.OrphanScanResult(
+            matched=(),
+            rejected=(),
+            unevaluable=(),
+            ports_live=0,
+            ports_skipped_registered=0,
+        ),
     )
     cli = (
         Path(__file__).resolve().parents[2]
@@ -440,3 +446,107 @@ def test_list_cli_emits_object_not_bare_array(
     assert data["liveness_authority"] == "attachment_only"
     assert isinstance(data["lanes"], list)
     assert isinstance(data["orphans"], list)
+
+
+def test_orphan_scan_appended_to_registry_log_every_scan(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    reg_profile = tmp_path / "claude-ai-chrome-profile-reg-deadbeef"
+    monkeypatch.setattr(
+        cdp_orphans,
+        "probe_live_ports",
+        lambda port_range=None: [
+            cdp_orphans.LivePort(
+                port=9229,
+                profile=reg_profile,
+                page_urls=(),
+                has_live_cse=False,
+            )
+        ],
+    )
+    monkeypatch.setattr(cdp_orphans, "_registered_ports", lambda: set())
+    monkeypatch.setattr(cdp_orphans, "_pid_listening_on", lambda _p: 4242)
+    monkeypatch.setattr(cdp_orphans, "_process_uptime_s", lambda _p: 1.0)
+    monkeypatch.setattr(cdp_orphans.cdp_registry, "log_orphan_scan", reg.log_orphan_scan)
+
+    cdp_orphans.find_orphans()
+    lines = (isolated_registry / "registry.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert record["event"] == "orphan_scan"
+    assert record["ports_live"] == 1
+    assert record["ports_skipped_registered"] == 0
+    assert record["matched_count"] == 1
+
+
+def test_orphan_scan_log_distinguishes_no_live_from_all_registered(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    reg_profile = tmp_path / "claude-ai-chrome-profile-reg-live01"
+    monkeypatch.setattr(cdp_orphans.cdp_registry, "log_orphan_scan", reg.log_orphan_scan)
+
+    monkeypatch.setattr(cdp_orphans, "probe_live_ports", lambda port_range=None: [])
+    monkeypatch.setattr(cdp_orphans, "_registered_ports", lambda: set())
+    cdp_orphans.find_orphans()
+
+    monkeypatch.setattr(
+        cdp_orphans,
+        "probe_live_ports",
+        lambda port_range=None: [
+            cdp_orphans.LivePort(
+                port=9229,
+                profile=reg_profile,
+                page_urls=(),
+                has_live_cse=False,
+            )
+        ],
+    )
+    monkeypatch.setattr(cdp_orphans, "_registered_ports", lambda: {9229})
+    cdp_orphans.find_orphans()
+
+    log_path = isolated_registry / "registry.jsonl"
+    lines = log_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 2
+    no_live_record = json.loads(lines[0])
+    all_registered_record = json.loads(lines[1])
+    assert no_live_record != all_registered_record
+    assert no_live_record["ports_live"] == 0
+    assert all_registered_record["ports_live"] == 1
+    assert all_registered_record["ports_skipped_registered"] == 1
+
+
+def test_hygiene_reclaim_success_log_carries_reclaimed_not_stale_status(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    trash = tmp_path / "reclaim-trash"
+    monkeypatch.setattr(reg, "RECLAIM_TRASH_DIR", trash)
+    profiles = reg.cdp_lane.profile_for("x").parent
+    profile = profiles / "claude-ai-chrome-profile-reg-stalebeef"
+    profile.mkdir(parents=True)
+    monkeypatch.setattr(
+        reg.cdp_lane,
+        "profile_for",
+        lambda suffix: profiles / f"claude-ai-chrome-profile-{suffix}",
+    )
+    monkeypatch.setattr(reg.cdp_lane, "chrome_port_for_profile", lambda _p: None)
+
+    with reg._store.ports_lock():
+        active = reg._store.load_active()
+        active["stale"] = {
+            "registration_id": "stale",
+            "port": 9224,
+            "profile_suffix": "reg-stalebeef",
+            "profile": str(profile),
+            "holder": "a",
+            "status": "orphaned_retry",
+        }
+        reg._store.write_active(active)
+
+    reg.hygiene_reclaim_released()
+    lines = (isolated_registry / "registry.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    reclaim_lines = [json.loads(line) for line in lines if json.loads(line)["event"] == "hygiene_reclaim"]
+    assert len(reclaim_lines) == 1
+    record = reclaim_lines[0]
+    assert record["status"] == "reclaimed"
+    assert record["profile_removed"] is True
+    assert "orphaned_retry" not in record.values()
