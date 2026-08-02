@@ -258,6 +258,32 @@ def test_missing_stream_method_degrades_to_empty_capture(
     assert _capture_emitted == []
 
 
+def test_mcp_wire_name_resolves_to_logical_tool_in_observation(
+    _capture_emitted: list[Any],
+) -> None:
+    """Production stream shape: message.name=mcp, logical tool in args.toolName."""
+    run = _FakeRun(
+        messages=[
+            _FakeToolCallMessage(
+                call_id="c-mcp-cortex",
+                name="mcp",
+                status="completed",
+                args={
+                    "providerIdentifier": "user-vortex",
+                    "toolName": "cortex",
+                    "args": {"tool": "assert", "entity_id": "todo:ac9g-live-falsifier"},
+                },
+                result={"status": "success", "value": {"item": {"id": 27486}}},
+            ),
+        ]
+    )
+    result = observe_run_stream(
+        run, dispatch_id="d1", thread_id="t1", resolved_model="composer-2.5"
+    )
+    assert result.tool_calls[0].tool_name == "cortex"
+    assert _capture_emitted[0].payload["tool_name"] == "cortex"
+
+
 def test_target_path_parsed_from_write_args() -> None:
     run = _FakeRun(
         messages=[

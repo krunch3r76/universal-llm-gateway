@@ -48,6 +48,7 @@ __all__ = [
     "normalize_usage_map",
     "observe_run_stream",
     "request_id_from_sdk_error",
+    "resolve_stream_tool_name",
 ]
 
 logger = get_logger(__name__)
@@ -143,6 +144,28 @@ def FrontierSdkWorkerToolCall(  # noqa: N802
 
 
 _READ_FAMILY_FS_OPS = frozenset({"read", "md_read", "list", "glob", "grep", "search"})
+_MCP_WIRE_NAME = "mcp"
+
+
+def resolve_stream_tool_name(tool_name: str, args: Any) -> str:
+    """Map MCP wire ``name=mcp`` to the logical tool in ``args.toolName``.
+
+    Production ``run.events()`` tool calls carry the MCP server name on
+    ``message.name``; the logical tool (``cortex``, ``fs``, …) sits in
+    ``args.toolName``. Conversation capture already unwraps via
+    ``cursor_sdk_manifest._entry_from_tool_call`` — stream capture must
+    match so downstream gates (cortex enrich, reconcile, deliverable truth)
+    see the same name shape.
+    """
+    name = (tool_name or "").strip()
+    if name.lower() != _MCP_WIRE_NAME:
+        return name
+    if not isinstance(args, Mapping):
+        return name
+    logical = args.get("toolName") or args.get("tool_name")
+    if isinstance(logical, str) and logical.strip():
+        return logical.strip()
+    return name
 
 
 def _string_stream_arg(args: Mapping[str, Any], *keys: str) -> str | None:
@@ -174,7 +197,8 @@ def _target_path_from_stream_args(tool_name: str, args: Any) -> str | None:
 def _observation_from_message(message: Any) -> ToolCallObservation:
     truncated = getattr(message, "truncated", None) or {}
     args = getattr(message, "args", None)
-    tool_name = getattr(message, "name", "") or ""
+    wire_name = getattr(message, "name", "") or ""
+    tool_name = resolve_stream_tool_name(wire_name, args)
     from services.git_integration_worker.cursor_sdk_subagent_capture import (
         subagent_type_from_stream_args,
     )
