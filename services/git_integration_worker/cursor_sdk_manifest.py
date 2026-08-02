@@ -32,6 +32,10 @@ from services.git_integration_worker.cursor_sdk_subagent_capture import (
     entry_from_subagent_message,
     is_subagent_tool_call,
 )
+from services.git_integration_worker.cursor_sdk_tool_result import (
+    assertion_id_from_payload as _assertion_id_from_payload,
+    unwrap_tool_result as _unwrap_tool_result,
+)
 
 CaptureBranch = Literal["A", "B", "NO_CAPTURE"]
 
@@ -832,39 +836,6 @@ def cortex_surface_has_write_op(manifest: EffectsManifest | None) -> bool:
 
 def _cortex_op_from_args(args: Mapping[str, Any]) -> str | None:
     return _string_arg(args, "tool", "op")
-
-
-def _unwrap_tool_result(result: object) -> object | None:
-    if not isinstance(result, Mapping):
-        return result
-    if result.get("status") == "error":
-        return None
-    value = result.get("value")
-    if value is not None:
-        if isinstance(value, str):
-            try:
-                return json.loads(value)
-            except (json.JSONDecodeError, TypeError, ValueError):
-                return value
-        return value
-    return result
-
-
-def _assertion_id_from_payload(payload: object) -> int | None:
-    if not isinstance(payload, Mapping):
-        return None
-    item = payload.get("item")
-    if isinstance(item, Mapping):
-        id_val = item.get("id")
-        if isinstance(id_val, int) and not isinstance(id_val, bool):
-            return id_val
-    for key in ("id", "assertion_id"):
-        id_val = payload.get(key)
-        if isinstance(id_val, int) and not isinstance(id_val, bool):
-            return id_val
-        if isinstance(id_val, str) and id_val.isdigit():
-            return int(id_val)
-    return None
 
 
 def _cortex_result_assertion_id(

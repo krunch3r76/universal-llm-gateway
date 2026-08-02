@@ -24,6 +24,12 @@ from services.git_integration_worker.cursor_sdk_stream_capture import (
 from services.git_integration_worker.cursor_sdk_surface_authority import (
     mixed_source_cross_check,
 )
+from services.git_integration_worker.cursor_sdk_tool_result import (
+    assertion_id_from_payload as _assertion_id_from_payload,
+)
+from services.git_integration_worker.cursor_sdk_tool_result import (
+    unwrap_tool_result as _unwrap_tool_result,
+)
 
 _ASSERTION_IDENTITY_RE = re.compile(r"^assertion:(\d+)$")
 _CORTEX_TOOLS = frozenset({"cortex", "cortex_brief"})
@@ -66,37 +72,28 @@ def _cortex_op_from_args(args: Mapping[str, Any]) -> str | None:
     return _string_arg(args, "tool", "op")
 
 
-def _unwrap_tool_result(result: object) -> object | None:
-    if not isinstance(result, Mapping):
-        return result
-    if result.get("status") == "error":
-        return None
-    value = result.get("value")
-    if value is not None:
-        if isinstance(value, str):
-            try:
-                return json.loads(value)
-            except (json.JSONDecodeError, TypeError, ValueError):
-                return value
-        return value
-    return result
+def _cortex_write_stream_observations(
+    tool_calls: tuple[ToolCallObservation, ...],
+) -> tuple[ToolCallObservation, ...]:
+    observed: list[ToolCallObservation] = []
+    for obs in tool_calls:
+        if obs.status != "completed":
+            continue
+        if obs.tool_name.lower() not in _CORTEX_TOOLS:
+            continue
+        raw_args = obs.args if isinstance(obs.args, Mapping) else {}
+        nested = (
+            raw_args.get("args") if isinstance(raw_args.get("args"), Mapping) else raw_args
+        )
+        effective = _effective_mcp_args(nested) if nested else {}
+        if _cortex_op_from_args(effective) in _CORTEX_WRITE_OPS:
+            observed.append(obs)
+    return tuple(observed)
 
 
-def _assertion_id_from_payload(payload: object) -> int | None:
-    if not isinstance(payload, Mapping):
-        return None
-    item = payload.get("item")
-    if isinstance(item, Mapping):
-        id_val = item.get("id")
-        if isinstance(id_val, int) and not isinstance(id_val, bool):
-            return id_val
-    for key in ("id", "assertion_id"):
-        id_val = payload.get(key)
-        if isinstance(id_val, int) and not isinstance(id_val, bool):
-            return id_val
-        if isinstance(id_val, str) and id_val.isdigit():
-            return int(id_val)
-    return None
+def _stamp_stream_capture_source(manifest: EffectsManifest) -> EffectsManifest:
+    sources = list(dict.fromkeys([*manifest.capture_sources, "stream"]))
+    return manifest.model_copy(update={"capture_sources": sources})
 
 
 def assertion_id_from_cortex_observation(obs: ToolCallObservation) -> int | None:
@@ -186,10 +183,14 @@ def enrich_cortex_identities_from_stream(
         return manifest
     section = manifest.surfaces.get("cortex")
     if section is None or not section.entries:
+        if _cortex_write_stream_observations(tool_calls):
+            return _stamp_stream_capture_source(manifest)
         return manifest
 
     index = build_boundary_assertion_index(tool_calls)
     if not index:
+        if _cortex_write_stream_observations(tool_calls):
+            return _stamp_stream_capture_source(manifest)
         return manifest
 
     obs_by_entity: dict[str, ToolCallObservation] = {}
@@ -230,6 +231,8 @@ def enrich_cortex_identities_from_stream(
         changed = True
 
     if not changed:
+        if _cortex_write_stream_observations(tool_calls):
+            return _stamp_stream_capture_source(manifest)
         return manifest
 
     updated_section = section.model_copy(update={"entries": patched})
@@ -311,6 +314,8 @@ def merge_stream_cortex_entries(
         new_entries.append(entry)
 
     if not new_entries and not in_place_patched:
+        if _cortex_write_stream_observations(tool_calls):
+            return _stamp_stream_capture_source(manifest)
         return manifest
 
     if cortex_section is None:
