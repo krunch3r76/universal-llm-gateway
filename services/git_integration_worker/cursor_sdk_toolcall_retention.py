@@ -151,7 +151,11 @@ def harvest_result_from_observation(obs: object) -> object | None:
 
     Prefer ``obs.result`` when it unwraps to a harvestable payload; otherwise
     fall back to the retained ``result_body`` wired at terminal emit (item 18←22).
+    Validates at the unwrap boundary emit (item 17).
     """
+    from services.git_integration_worker.cursor_sdk_boundary_unwrap import (
+        emit_unwrap_boundary,
+    )
     from services.git_integration_worker.cursor_sdk_tool_result import (
         assertion_id_from_payload,
         unwrap_tool_result,
@@ -159,12 +163,14 @@ def harvest_result_from_observation(obs: object) -> object | None:
 
     result = getattr(obs, "result", None)
     if result is not None:
+        emit_unwrap_boundary(result)
         payload = unwrap_tool_result(result)
         if payload is not None and assertion_id_from_payload(payload) is not None:
             return result
     body = getattr(obs, "result_body", None)
     status = getattr(obs, "result_body_status", None)
     if status == RESULT_BODY_PRESENT and body is not None:
+        emit_unwrap_boundary(body)
         return body
     return result
 

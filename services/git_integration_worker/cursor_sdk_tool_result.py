@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from typing import Any
 
 
 def _json_loads_text(text: str) -> object | None:
@@ -14,23 +13,37 @@ def _json_loads_text(text: str) -> object | None:
         return None
 
 
-def _payload_from_mcp_content_blocks(content: object) -> object | None:
+def _text_parts_from_content_blocks(content: object, *, sdk_double_wrap: bool) -> list[str]:
     if not isinstance(content, list):
-        return None
+        return []
     parts: list[str] = []
     for block in content:
         if not isinstance(block, Mapping):
             continue
-        if str(block.get("type") or "") != "text":
-            continue
-        text = block.get("text")
+        text: object | None
+        if sdk_double_wrap:
+            text_obj = block.get("text")
+            text = text_obj.get("text") if isinstance(text_obj, Mapping) else None
+        else:
+            if str(block.get("type") or "") != "text":
+                continue
+            text = block.get("text")
         if isinstance(text, str) and text.strip():
             parts.append(text)
+    return parts
+
+
+def _payload_from_content_blocks(content: object, *, sdk_double_wrap: bool) -> object | None:
+    parts = _text_parts_from_content_blocks(content, sdk_double_wrap=sdk_double_wrap)
     if not parts:
         return None
     joined = "\n".join(parts)
     parsed = _json_loads_text(joined)
     return parsed if parsed is not None else joined
+
+
+def _payload_from_mcp_content_blocks(content: object) -> object | None:
+    return _payload_from_content_blocks(content, sdk_double_wrap=False)
 
 
 def unwrap_tool_result(result: object) -> object | None:
@@ -52,6 +65,13 @@ def unwrap_tool_result(result: object) -> object | None:
         if isinstance(value, str):
             parsed = _json_loads_text(value)
             return parsed if parsed is not None else value
+        if isinstance(value, Mapping):
+            from_sdk = _payload_from_content_blocks(value.get("content"), sdk_double_wrap=True)
+            if from_sdk is not None:
+                return from_sdk
+            from_mcp = _payload_from_mcp_content_blocks(value.get("content"))
+            if from_mcp is not None:
+                return from_mcp
         return value
     from_content = _payload_from_mcp_content_blocks(result.get("content"))
     if from_content is not None:
