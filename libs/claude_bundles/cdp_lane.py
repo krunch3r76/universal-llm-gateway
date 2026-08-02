@@ -160,12 +160,15 @@ def parse_chrome_lane(cmdline: str) -> tuple[int | None, str | None]:
     """
     port: int | None = None
     udd: str | None = None
-    for tok in cmdline.replace("\x00", " ").split():
+    tokens = cmdline.replace("\x00", " ").split()
+    for idx, tok in enumerate(tokens):
         if tok.startswith("--remote-debugging-port="):
             with contextlib.suppress(ValueError):
                 port = int(tok.split("=", 1)[1])
         elif tok.startswith("--user-data-dir="):
             udd = tok.split("=", 1)[1]
+        elif tok == "--user-data-dir" and idx + 1 < len(tokens):
+            udd = tokens[idx + 1]
     return port, udd
 
 

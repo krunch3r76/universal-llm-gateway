@@ -84,6 +84,17 @@ def test_parse_chrome_lane_nul_separated():
     assert udd == "/x/y"
 
 
+def test_parse_chrome_lane_space_separated():
+    blob = (
+        "/opt/google/chrome/chrome --remote-debugging-port=9223 "
+        "--user-data-dir /home/k/.gateway/claude-ai-chrome-profile-ask "
+        "--no-first-run"
+    )
+    port, udd = cdp_lane.parse_chrome_lane(blob)
+    assert port == 9223
+    assert udd.endswith("-ask")
+
+
 def test_parse_chrome_lane_absent():
     assert cdp_lane.parse_chrome_lane("chrome --type=renderer") == (None, None)
 

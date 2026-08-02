@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from claude_bundles import cdp_registry
+from claude_bundles import cdp_lane, cdp_registry
 
 LIVENESS_AUTHORITY_ATTACHMENT_ONLY = "attachment_only"
 LIVENESS_AUTHORITY_OBSERVED = "observed"
@@ -35,6 +35,30 @@ class Orphan:
     profile: Path | None
     has_live_cse: bool
     uptime_s: float | None
+
+
+@dataclass(frozen=True)
+class RejectedPort:
+    port: int
+    pid: int | None
+    profile: Path | None
+    has_live_cse: bool
+    reason: str
+
+
+@dataclass(frozen=True)
+class UnevaluablePort:
+    port: int
+    pid: int | None
+    has_live_cse: bool
+    reason: str
+
+
+@dataclass(frozen=True)
+class OrphanScanResult:
+    matched: tuple[Orphan, ...]
+    rejected: tuple[RejectedPort, ...]
+    unevaluable: tuple[UnevaluablePort, ...]
 
 
 def is_primary_profile(profile: Path) -> bool:
@@ -67,15 +91,13 @@ def _pid_listening_on(port: int) -> int | None:
 
 
 def _profile_from_pid(pid: int) -> Path | None:
+    """Resolve Chrome profile from /proc cmdline via shared lane token parser."""
     try:
-        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+        blob = Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace")
     except OSError:
         return None
-    parts = raw.decode(errors="replace").split("\0")
-    for idx, arg in enumerate(parts):
-        if arg == "--user-data-dir" and idx + 1 < len(parts):
-            return Path(parts[idx + 1])
-    return None
+    _, udd = cdp_lane.parse_chrome_lane(blob)
+    return Path(udd) if udd else None
 
 
 def _process_uptime_s(pid: int) -> float | None:
@@ -145,21 +167,54 @@ def _registered_ports() -> set[int]:
     return {reg.port for reg in cdp_registry.list_active()}
 
 
-def find_orphans() -> list[Orphan]:
-    """Listening gateway reg-profile Chromes with no registry row for their port."""
+def find_orphans() -> OrphanScanResult:
+    """Classify listening CDP ports without a registry row.
+
+    Every unregistered candidate lands in ``matched``, ``rejected``, or
+    ``unevaluable`` — skipped and examined-and-rejected must never share the
+    same outward shape (zero-found vs zero-examined).
+    """
     registered = _registered_ports()
-    orphans: list[Orphan] = []
+    matched: list[Orphan] = []
+    rejected: list[RejectedPort] = []
+    unevaluable: list[UnevaluablePort] = []
     for live in probe_live_ports():
         if live.port in registered:
             continue
+        pid = _pid_listening_on(live.port)
         if live.profile is None:
+            unevaluable.append(
+                UnevaluablePort(
+                    port=live.port,
+                    pid=pid,
+                    has_live_cse=live.has_live_cse,
+                    reason="profile_unresolved",
+                )
+            )
             continue
         if is_primary_profile(live.profile):
+            rejected.append(
+                RejectedPort(
+                    port=live.port,
+                    pid=pid,
+                    profile=live.profile,
+                    has_live_cse=live.has_live_cse,
+                    reason="primary_profile",
+                )
+            )
             continue
         if not _is_gateway_reg_profile(live.profile):
+            rejected.append(
+                RejectedPort(
+                    port=live.port,
+                    pid=pid,
+                    profile=live.profile,
+                    has_live_cse=live.has_live_cse,
+                    reason="non_reg_profile",
+                )
+            )
             continue
-        pid = _pid_listening_on(live.port)
-        orphans.append(
+        matched.append(
             Orphan(
                 port=live.port,
                 pid=pid,
@@ -168,7 +223,11 @@ def find_orphans() -> list[Orphan]:
                 uptime_s=_process_uptime_s(pid) if pid is not None else None,
             )
         )
-    return sorted(orphans, key=lambda o: o.port)
+    return OrphanScanResult(
+        matched=tuple(sorted(matched, key=lambda o: o.port)),
+        rejected=tuple(sorted(rejected, key=lambda r: r.port)),
+        unevaluable=tuple(sorted(unevaluable, key=lambda u: u.port)),
+    )
 
 
 def orphan_as_dict(orphan: Orphan) -> dict[str, Any]:
@@ -176,6 +235,21 @@ def orphan_as_dict(orphan: Orphan) -> dict[str, Any]:
     if orphan.profile is not None:
         d["profile"] = str(orphan.profile)
     return d
+
+
+def _rejected_as_dict(item: RejectedPort) -> dict[str, Any]:
+    d = asdict(item)
+    if item.profile is not None:
+        d["profile"] = str(item.profile)
+    return d
+
+
+def orphan_scan_as_dict(scan: OrphanScanResult) -> dict[str, Any]:
+    return {
+        "matched": [orphan_as_dict(o) for o in scan.matched],
+        "rejected": [_rejected_as_dict(r) for r in scan.rejected],
+        "unevaluable": [asdict(u) for u in scan.unevaluable],
+    }
 
 
 def _registration_as_dict(reg: cdp_registry.Registration) -> dict[str, Any]:
@@ -206,8 +280,10 @@ def registered_lane_dicts() -> list[dict[str, Any]]:
 
 
 def list_surface_payload() -> dict[str, Any]:
+    scan = find_orphans()
     return {
         "lanes": registered_lane_dicts(),
-        "orphans": [orphan_as_dict(o) for o in find_orphans()],
+        "orphans": [orphan_as_dict(o) for o in scan.matched],
+        "orphan_scan": orphan_scan_as_dict(scan),
         "liveness_authority": LIVENESS_AUTHORITY_ATTACHMENT_ONLY,
     }

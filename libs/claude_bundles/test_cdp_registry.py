@@ -420,7 +420,7 @@ def test_list_cli_emits_object_not_bare_array(
 ) -> None:
     monkeypatch.setattr(
         "claude_bundles.cdp_orphans.find_orphans",
-        lambda: [],
+        lambda: cdp_orphans.OrphanScanResult(matched=(), rejected=(), unevaluable=()),
     )
     cli = (
         Path(__file__).resolve().parents[2]
@@ -436,7 +436,7 @@ def test_list_cli_emits_object_not_bare_array(
     )
     data = json.loads(proc.stdout)
     assert isinstance(data, dict)
-    assert set(data) == {"lanes", "orphans", "liveness_authority"}
+    assert set(data) == {"lanes", "orphans", "orphan_scan", "liveness_authority"}
     assert data["liveness_authority"] == "attachment_only"
     assert isinstance(data["lanes"], list)
     assert isinstance(data["orphans"], list)
