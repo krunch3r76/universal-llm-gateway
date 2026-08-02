@@ -140,7 +140,6 @@ from services.git_integration_worker.cursor_sdk_manifest import (
     build_effects_manifest,
     classify_mcp_capture_branch,
     merge_artifact_paths,
-    merge_stream_subagent_calls,
     merge_stream_tool_calls,
 )
 from services.git_integration_worker.cursor_sdk_nest_depth import (
@@ -176,6 +175,9 @@ from services.git_integration_worker.cursor_sdk_stream_capture import (
     finalize_request_id_capture,
     observe_run_stream,
     request_id_from_sdk_error,
+)
+from services.git_integration_worker.cursor_sdk_subagent_capture import (
+    merge_stream_subagent_calls,
 )
 from services.git_integration_worker.cursor_sdk_supersede import (
     register_live_run,
