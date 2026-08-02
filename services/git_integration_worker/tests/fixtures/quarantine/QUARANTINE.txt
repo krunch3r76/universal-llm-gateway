@@ -1,0 +1,10 @@
+QUARANTINED — item18_attempt9 falsified 2709-byte reconstruction (removed 2026-08-02)
+
+Prior tests synthesized obs.result by padding _next until _json_bytes == 2709.
+That matched MCP content[] envelope shape but mis-modeled inner payload: cortex
+advisory fields (_next, write_discipline) inside the assert response blob.
+
+Authoritative captured artifact: ../item18_attempt9_live_obs_result.json
+(assertion 27489, nested-child attempt 9, commit 5b672820).
+
+Do not recreate synthetic bodies from metadata or byte counts for this arc.
