@@ -20,11 +20,15 @@ from charter_runner_store.propagation_terminal import (
 
 
 def _row(**kwargs: object) -> PropagationRow:
-    base = {
+    base: dict[str, object] = {
         "service": "git_integration_worker",
         "code_ref": "abc1230000000000000000000000000000000000",
     }
     base.update(kwargs)
+    # Flat ``code_version`` probes exercise process_live settlement — not giw's
+    # default served_artifact predicate, which requires ``surfaces``.
+    if "proof_class" not in kwargs and base.get("service") == "git_integration_worker":
+        base["proof_class"] = "process_live"
     return PropagationRow(**base)
 
 
@@ -472,3 +476,76 @@ def test_client_visible_mcp_flat_payload_does_not_close_satisfied(
     assert "unevaluable" in result.detail.lower()
     assert len(list_open_rows()) == 1
     assert list_open_rows()[0].defer_reason == "proof_unevaluable_payload_shape"
+
+
+def test_served_artifact_flat_code_version_only_unevaluable(
+    tmp_path, monkeypatch,
+) -> None:
+    """Open fork closed: flat code_version-only is unevaluable for served_artifact."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    sha = "abc1230000000000000000000000000000000000"
+    upsert_open_rows(
+        [
+            _row(
+                service="rag",
+                code_ref=sha,
+                proof_class="served_artifact",
+            ),
+        ]
+    )
+    row = list_open_rows()[0]
+
+    def flat_probe(_service: str) -> dict[str, str]:
+        return {"code_version": sha}
+
+    result = settle_open_row(row, flat_probe, defer_if_unreachable=True)
+    assert result.outcome == "deferred"
+    assert "unevaluable" in result.detail.lower()
+    assert list_open_rows()[0].defer_reason == "proof_unevaluable_payload_shape"
+
+
+def test_served_artifact_proper_shape_passes_evaluable_gate(
+    tmp_path, monkeypatch,
+) -> None:
+    """Same gate path: proper served_artifact shape is evaluable (not unevaluable)."""
+    from deploy_identity.code_ref_relation import code_ref_relation_from_observed
+    from charter_runner_store.propagation_determination import proof_evaluable
+
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    sha = "abc1230000000000000000000000000000000000"
+    upsert_open_rows(
+        [
+            _row(
+                service="rag",
+                code_ref=sha,
+                proof_class="served_artifact",
+            ),
+        ]
+    )
+    row = list_open_rows()[0]
+    surface = {
+        "url": "http://127.0.0.1/openapi.json",
+        "x_mcp_count": 7,
+        "bytes_sha256": "deadbeef",
+        "bytes_len": 100,
+    }
+    payload = {
+        "proof_class": "served_artifact",
+        "surfaces": {"uds": surface},
+        "byte_identical": True,
+        "x_mcp_count": 7,
+        "expected_x_mcp_count": 7,
+        "code_version": None,
+        "code_ref": sha,
+        "code_ref_relation": code_ref_relation_from_observed(sha, None),
+    }
+    assert proof_evaluable(payload, proof_class="served_artifact")
+
+    monkeypatch.setattr(
+        "charter_runner_store.propagation_terminal._probe_for_projection",
+        lambda _row: payload,
+    )
+    from charter_runner_store.propagation_terminal import default_probe
+
+    result = settle_open_row(row, default_probe, defer_if_unreachable=True)
+    assert "unevaluable" not in result.detail.lower()

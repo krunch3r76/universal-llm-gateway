@@ -220,15 +220,7 @@ def settle_open_row(
             detail="probe from outgoing generation",
         )
 
-    if (
-        row.proof_class == "client_visible"
-        and row.service == "mcp"
-        and not proof_evaluable(
-            payload,
-            proof_class=row.proof_class,
-            service=row.service,
-        )
-    ):
+    if not proof_evaluable(payload, proof_class=row.proof_class):
         detail = (
             "proof predicate unevaluable on payload shape — "
             "declared proof class cannot run against this probe"
@@ -298,6 +290,24 @@ def settle_open_row(
             code_ref=row.code_ref,
             outcome="deferred" if defer_if_unreachable else "unsettled",
             detail=detail,
+        )
+
+    if proof_passes and row.proof_class in ("served_artifact", "client_visible"):
+        close_payload = {
+            **payload,
+            "code_ref_relation": relation,
+            "version_satisfaction_case": satisfaction.case,
+            "proof_predicate_satisfied": True,
+        }
+        close_row(row.row_id, proof_payload=close_payload)
+        return SettleResult(
+            row_id=row.row_id,
+            service=row.service,
+            code_ref=row.code_ref,
+            outcome="closed",
+            detail=(
+                f"proof predicate satisfied for proof_class={row.proof_class}"
+            ),
         )
 
     ruled_out = outgoing_generation_ruled_out(

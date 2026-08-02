@@ -230,6 +230,7 @@ def test_proof_matches_code_version() -> None:
         proof_class="client_visible",
         hazard=None,
         reason=None,
+        settle_boundary_monotonic=None,
     )
     both_match = {
         "mcp_health": {"code_version": _SHA},
@@ -257,6 +258,7 @@ def test_proof_matches_process_live_requires_identity_delta() -> None:
         proof_class="process_live",
         hazard=None,
         reason=None,
+        settle_boundary_monotonic=None,
     )
     before = {"code_version": _SHA_OTHER, "pid": 10}
     after = {"code_version": _SHA, "pid": 10}

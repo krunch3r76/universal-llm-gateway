@@ -87,25 +87,40 @@ def classify_probe(
     return "contradicted"
 
 
+def proof_payload_requirements(proof_class: str) -> frozenset[str]:
+    """Structured payload sections a ``proof_class`` predicate reads.
+
+    Mirrors ``proof_observed`` — not parsed from row ``proof`` prose. Each
+    proof class names a fixed evidence shape; ``client_visible`` requires
+    composite health sections, ``served_artifact`` requires per-surface
+    artifact results, ``process_live`` requires a readable ``code_version``.
+    """
+    if proof_class == "client_visible":
+        return frozenset({"mcp_health", "cortex_api"})
+    if proof_class == "served_artifact":
+        return frozenset({"surfaces"})
+    return frozenset({"code_version"})
+
+
 def proof_evaluable(
     payload: dict[str, Any] | None,
     *,
     proof_class: str,
-    service: str,
 ) -> bool:
-    """True when payload shape allows the row's declared proof predicate to run.
+    """True when payload contains sections the row's proof predicate can read.
 
-    A flat ``code_version`` on a ``client_visible`` mcp row is not evaluable —
-    the predicate requires ``mcp_health`` and ``cortex_api`` sections. Closing
-    on ancestry via top-level ``code_version`` alone is absent evidence read as
-    satisfaction.
+    Discriminator is ``proof_class``, not service: a flat top-level
+    ``code_version`` is valid evidence for ``process_live`` and insufficient
+    for ``client_visible`` (needs ``mcp_health`` + ``cortex_api``) or
+    ``served_artifact`` (needs ``surfaces`` with byte-identity fields).
     """
     if not isinstance(payload, dict):
         return False
-    if proof_class == "client_visible" and service == "mcp":
-        mcp_health = payload.get("mcp_health")
-        cortex_health = payload.get("cortex_api")
-        return isinstance(mcp_health, dict) and isinstance(cortex_health, dict)
+    required = proof_payload_requirements(proof_class)
+    if proof_class == "client_visible":
+        return all(
+            isinstance(payload.get(key), dict) for key in required
+        )
     if proof_class == "served_artifact":
         surfaces = payload.get("surfaces")
         return isinstance(surfaces, dict) and bool(surfaces)
@@ -140,4 +155,5 @@ __all__ = [
     "observed_code_versions",
     "outgoing_generation_ruled_out",
     "proof_evaluable",
+    "proof_payload_requirements",
 ]
