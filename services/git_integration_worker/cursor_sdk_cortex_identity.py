@@ -122,22 +122,47 @@ def _entity_key_from_observation(obs: ToolCallObservation) -> str | None:
     return _string_arg(effective, "entity_id", "assertion_id", "id")
 
 
-def _build_boundary_assertion_index(
+def _patch_entry_with_assertion(
+    entry: EffectEntry,
+    *,
+    aid: str,
+    obs: ToolCallObservation | None = None,
+) -> EffectEntry:
+    detail = dict(entry.detail or {})
+    detail["identity_harvest_source"] = "boundary_response"
+    if entry.identity:
+        detail["prior_identity"] = entry.identity
+    if obs is not None and obs.call_id:
+        detail["boundary_call_id"] = obs.call_id
+    return entry.model_copy(
+        update={
+            "identity": f"assertion:{aid}",
+            "detail": detail,
+        }
+    )
+
+
+def build_boundary_assertion_index(
     tool_calls: tuple[ToolCallObservation, ...],
 ) -> dict[str, str]:
-    """Map entity/call_id keys to assertion id strings from boundary responses."""
+    """Map entity slug and boundary call_id keys to assertion id strings."""
     index: dict[str, str] = {}
     for obs in tool_calls:
         aid = assertion_id_from_cortex_observation(obs)
         if aid is None:
             continue
         aid_str = str(aid)
-        entity = _entity_key_from_observation(obs)
+        entity = entity_key_from_observation(obs)
         if entity:
             index[entity] = aid_str
         if obs.call_id:
             index[obs.call_id] = aid_str
     return index
+
+
+def entity_key_from_observation(obs: ToolCallObservation) -> str | None:
+    """Entity slug from a stream observation's MCP args (request side)."""
+    return _entity_key_from_observation(obs)
 
 
 def _entry_write_entity_key(entry: EffectEntry) -> str | None:
@@ -163,9 +188,15 @@ def enrich_cortex_identities_from_stream(
     if section is None or not section.entries:
         return manifest
 
-    index = _build_boundary_assertion_index(tool_calls)
+    index = build_boundary_assertion_index(tool_calls)
     if not index:
         return manifest
+
+    obs_by_entity: dict[str, ToolCallObservation] = {}
+    for obs in tool_calls:
+        entity = entity_key_from_observation(obs)
+        if entity and entity not in obs_by_entity:
+            obs_by_entity[entity] = obs
 
     patched: list[EffectEntry] = []
     changed = False
@@ -175,21 +206,27 @@ def enrich_cortex_identities_from_stream(
             continue
         entity_key = _entry_write_entity_key(entry)
         aid = index.get(entity_key or "") if entity_key else None
+        matching_obs = obs_by_entity.get(entity_key or "") if entity_key else None
+        if aid is None and entity_key and len(section.entries) == 1:
+            unclaimed_aids = {
+                v
+                for k, v in index.items()
+                if k.startswith("tool_") or k.startswith("stream-")
+            }
+            if len(unclaimed_aids) == 1:
+                aid = next(iter(unclaimed_aids))
+                matching_obs = next(
+                    (
+                        obs
+                        for obs in tool_calls
+                        if str(assertion_id_from_cortex_observation(obs) or "") == aid
+                    ),
+                    None,
+                )
         if aid is None:
             patched.append(entry)
             continue
-        detail = dict(entry.detail or {})
-        detail["identity_harvest_source"] = "boundary_response"
-        if entry.identity:
-            detail["prior_identity"] = entry.identity
-        patched.append(
-            entry.model_copy(
-                update={
-                    "identity": f"assertion:{aid}",
-                    "detail": detail,
-                }
-            )
-        )
+        patched.append(_patch_entry_with_assertion(entry, aid=aid, obs=matching_obs))
         changed = True
 
     if not changed:
@@ -228,27 +265,56 @@ def merge_stream_cortex_entries(
             if entry.identity:
                 existing_identities.add(entry.identity)
 
+    merged_entries = list(cortex_section.entries) if cortex_section else []
     new_entries: list[EffectEntry] = []
+    in_place_patched = False
     for obs in tool_calls:
         if obs.status != "completed":
             continue
         entry = _cortex_entry_from_stream_observation(obs)
         if entry is None:
             continue
+        stream_assertion = (
+            entry.identity.split(":", 1)[1]
+            if entry.identity and entry.identity.startswith("assertion:")
+            else None
+        )
+        entity = entity_key_from_observation(obs)
+        if entity and stream_assertion:
+            for idx, existing in enumerate(merged_entries):
+                existing_key = _entry_write_entity_key(existing)
+                if (
+                    existing_key == entity
+                    and existing.identity
+                    and not _ASSERTION_IDENTITY_RE.match(existing.identity)
+                ):
+                    merged_entries[idx] = _patch_entry_with_assertion(
+                        existing, aid=stream_assertion, obs=obs
+                    )
+                    existing_identities.add(f"assertion:{stream_assertion}")
+                    existing_assertions.add(stream_assertion)
+                    in_place_patched = True
+                    break
+            else:
+                pass
+            if any(
+                _entry_write_entity_key(e) == entity
+                and e.identity
+                and _ASSERTION_IDENTITY_RE.match(e.identity)
+                for e in merged_entries
+            ):
+                continue
         if entry.identity and entry.identity in existing_identities:
             continue
-        if entry.identity and entry.identity.startswith("assertion:"):
-            aid = entry.identity.split(":", 1)[1]
-            if aid in existing_assertions:
-                continue
+        if stream_assertion and stream_assertion in existing_assertions:
+            continue
         new_entries.append(entry)
 
-    if not new_entries:
+    if not new_entries and not in_place_patched:
         return manifest
 
     if cortex_section is None:
         cortex_section = SurfaceSection(surface="cortex", source="stream", entries=[])
-    merged_entries = list(cortex_section.entries)
     merged_entries.extend(new_entries)
     cross = mixed_source_cross_check(cortex_section, "stream")
     merged_surfaces = dict(manifest.surfaces)
@@ -294,6 +360,8 @@ def surfaces_with_request_response_identity_gap() -> dict[str, str]:
 
 __all__ = [
     "assertion_id_from_cortex_observation",
+    "build_boundary_assertion_index",
+    "entity_key_from_observation",
     "enrich_cortex_identities_from_stream",
     "merge_stream_cortex_entries",
     "surfaces_with_request_response_identity_gap",

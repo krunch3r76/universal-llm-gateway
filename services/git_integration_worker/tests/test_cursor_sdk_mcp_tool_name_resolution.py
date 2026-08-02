@@ -122,6 +122,87 @@ def test_ac_n4_production_shape_merges_stream_cortex_entry() -> None:
     assert entry.identity == f"assertion:{_ASSERTION_ID}"
 
 
+def test_ac_j3_production_shape_clears_both_divergence_lines() -> None:
+    """After enrich+reconcile join, seat and boundary keys must clear together (AC-J3)."""
+    manifest = EffectsManifest(
+        dispatch_id="child-live-7",
+        thread_id="t1",
+        capture_sources=["conversation"],
+        surfaces={
+            "cortex": SurfaceSection(
+                surface="cortex",
+                source="conversation",
+                entries=[
+                    EffectEntry(
+                        op="cortex",
+                        target=_LIVE_ENTITY,
+                        identity=_LIVE_ENTITY,
+                    )
+                ],
+            )
+        },
+    )
+    call_id = "tool_a57a9066-82f0-43d1-b626-bdc3452edc6"
+    obs = _production_mcp_cortex_stream_obs(call_id=call_id)
+    obs = obs.__class__(
+        **{
+            **obs.__dict__,
+            "result": {"status": "success", "value": {"item": {"id": 27487}}},
+        }
+    )
+    merged = merge_stream_cortex_entries(manifest, (obs,))
+    assert merged is not None
+    entry = merged.surfaces["cortex"].entries[0]
+    assert entry.identity == "assertion:27487"
+    _, divs = reconcile_observed_vs_committed(merged, (obs,))
+    assert divs == []
+
+
+def test_ac_j2_child_closeout_envelope_lists_assertion_id() -> None:
+    from services.git_integration_worker.cursor_sdk_closeout import (
+        SdkRunOutcome,
+        build_implement_closeout_body,
+    )
+
+    manifest = EffectsManifest(
+        dispatch_id="child-live-7",
+        thread_id="t1",
+        capture_sources=["conversation", "stream"],
+        surfaces={
+            "cortex": SurfaceSection(
+                surface="cortex",
+                source="conversation",
+                entries=[
+                    EffectEntry(
+                        op="cortex",
+                        target=_LIVE_ENTITY,
+                        identity="assertion:27487",
+                    )
+                ],
+            )
+        },
+    )
+    body = build_implement_closeout_body(
+        dispatch_id="child-live-7",
+        outcome=SdkRunOutcome(
+            body="done",
+            status="finished",
+            duration_ms=100,
+            tool_call_count=1,
+            effects_manifest=manifest,
+        ),
+        degraded_reason=None,
+        sidecar_ref="workspaces://repo/sidecar.md",
+        result_bytes=10,
+        thread_id="t1",
+        work_item_ref="todo:x",
+        effects_manifest=manifest,
+        capture_status="complete",
+    )
+    payload = json.loads(body)
+    assert payload["evidence_uris"]["cortex_assertions"] == ["27487"]
+
+
 def test_ac_n3_reconcile_retires_phantom_seat_claimed_unobserved() -> None:
     """Mis-keyed ``tool_name=mcp`` caused phantom ``seat_claimed_unobserved`` divergences."""
     manifest = EffectsManifest(
@@ -158,4 +239,4 @@ def test_ac_n3_reconcile_retires_phantom_seat_claimed_unobserved() -> None:
     merged = merge_stream_cortex_entries(manifest, (post_fix_obs,))
     assert merged is not None
     _, post_divs = reconcile_observed_vs_committed(merged, (post_fix_obs,))
-    assert not any("seat_claimed_unobserved" in d for d in post_divs)
+    assert post_divs == []
