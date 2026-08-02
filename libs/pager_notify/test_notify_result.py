@@ -47,7 +47,7 @@ class _FakeClient:
 
 @pytest.mark.asyncio
 async def test_notify_pager_sent_truthy(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("pager_notify.client.pager_enabled", lambda: True)
+    monkeypatch.setenv("PAGER_NOTIFY_ENABLED", "1")
     resp = _FakeResp(payload={"status": "sent"})
     monkeypatch.setattr(
         "pager_notify.client.make_async_client",
@@ -65,7 +65,7 @@ async def test_notify_pager_sent_truthy(monkeypatch: pytest.MonkeyPatch) -> None
 async def test_notify_pager_http_error_surfaces_reason(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("pager_notify.client.pager_enabled", lambda: True)
+    monkeypatch.setenv("PAGER_NOTIFY_ENABLED", "1")
     resp = _FakeResp(status_code=503, text="email-bridge unavailable")
     monkeypatch.setattr(
         "pager_notify.client.make_async_client",
@@ -84,7 +84,7 @@ async def test_notify_pager_http_error_surfaces_reason(
 async def test_notify_pager_exception_surfaces_reason(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("pager_notify.client.pager_enabled", lambda: True)
+    monkeypatch.setenv("PAGER_NOTIFY_ENABLED", "1")
 
     class _RaisingClient:
         async def post(self, *_a: object, **_k: object) -> _FakeResp:
@@ -112,7 +112,7 @@ async def test_notify_pager_exception_surfaces_reason(
 async def test_notify_pager_disabled_returns_reason(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("pager_notify.client.pager_enabled", lambda: False)
+    monkeypatch.setenv("PAGER_NOTIFY_ENABLED", "0")
 
     result = await notify_pager("ULG test", "body", tag="t")
 
@@ -121,8 +121,11 @@ async def test_notify_pager_disabled_returns_reason(
     assert bool(result) is False
 
 
-def test_notify_tool_failed_includes_reason() -> None:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "services" / "mcp-server"))
+def test_notify_tool_failed_includes_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PAGER_NOTIFY_ENABLED", "1")
+    sys.path.insert(
+        0, str(Path(__file__).resolve().parents[2] / "services" / "mcp-server")
+    )
     from request_profile import bind_request
     from tools.notify import register_notify_tools
 
@@ -141,14 +144,13 @@ def test_notify_tool_failed_includes_reason() -> None:
 
     failed = NotifyResult.failed("HTTP 503", error="bridge down")
     with bind_request("default", surface="life"):
-        with (
-            patch("tools.notify.pager_enabled", return_value=True),
-            patch(
-                "tools.notify.notify_pager",
-                new=AsyncMock(return_value=failed),
-            ),
+        with patch(
+            "pager_notify.life_notify.notify_pager",
+            new=AsyncMock(return_value=failed),
         ):
-            out = cap_mcp.fn(subject="ULG test", body="awareness ping", ref="agent-bus:1")
+            out = cap_mcp.fn(
+                subject="ULG test", body="awareness ping", ref="agent-bus:1"
+            )
 
     assert out["status"] == "failed"
     assert out["reason"] == "HTTP 503"

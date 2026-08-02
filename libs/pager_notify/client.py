@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from dataclasses import dataclass
 from typing import Literal
 
@@ -40,9 +41,27 @@ class NotifyResult:
         return cls(status="failed", reason=reason, error=error)
 
 
+def _pytest_detected() -> bool:
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return True
+    return "pytest" in sys.modules
+
+
+def _pager_disabled_reason() -> str | None:
+    """Return a stable failure reason when pager is off, else ``None``."""
+    raw = os.environ.get("PAGER_NOTIFY_ENABLED")
+    if raw is not None:
+        if raw.strip().lower() in {"0", "false", "no", "off"}:
+            return "PAGER_NOTIFY_ENABLED=0"
+        return None
+    if _pytest_detected():
+        return "pytest"
+    return None
+
+
 def pager_enabled() -> bool:
-    raw = os.environ.get("PAGER_NOTIFY_ENABLED", "1").strip().lower()
-    return raw not in {"0", "false", "no", "off"}
+    """Pager on/off — explicit env beats inference; fail-closed under pytest."""
+    return _pager_disabled_reason() is None
 
 
 async def notify_pager(
@@ -52,8 +71,9 @@ async def notify_pager(
     tag: str = "",
 ) -> NotifyResult:
     """Fire Fi SMS pager. Returns sent/failed with machine-readable reason."""
-    if not pager_enabled():
-        return NotifyResult.failed("PAGER_NOTIFY_ENABLED=0")
+    disabled_reason = _pager_disabled_reason()
+    if disabled_reason is not None:
+        return NotifyResult.failed(disabled_reason)
     payload = {
         "subject": (subject or "ULG")[:SMS_SUBJECT_MAX],
         "body": (body or "")[:SMS_BODY_MAX],

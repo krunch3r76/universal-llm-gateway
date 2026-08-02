@@ -4,26 +4,46 @@ from __future__ import annotations
 
 import json
 import os
+import pwd
 import time
 from pathlib import Path
 
-_STATE_DIR = Path(
-    os.environ.get(
-        "PAGER_NOTIFY_STATE_DIR",
-        str(Path.home() / ".local" / "share" / "pager-notify"),
-    )
-)
-_STATE_FILE = _STATE_DIR / "bus_cursor.json"
-_CLOSEOUT_DEDUPE_FILE = _STATE_DIR / "closeout_pager_dedupe.json"
-_TICK_STANDING_FILE = _STATE_DIR / "tick_standing_pager.json"
+
+def _passwd_login_home() -> Path:
+    """Login-directory home from passwd — immune to process ``HOME`` overlay leaks."""
+    try:
+        return Path(pwd.getpwuid(os.getuid()).pw_dir).expanduser()
+    except (KeyError, OSError):
+        return Path.home()
+
+
+def state_dir() -> Path:
+    """Resolve pager state directory lazily (honors ``PAGER_NOTIFY_STATE_DIR`` per call)."""
+    override = os.environ.get("PAGER_NOTIFY_STATE_DIR")
+    if override:
+        return Path(override)
+    return _passwd_login_home() / ".local" / "share" / "pager-notify"
+
+
+def _state_file() -> Path:
+    return state_dir() / "bus_cursor.json"
+
+
+def _closeout_dedupe_file() -> Path:
+    return state_dir() / "closeout_pager_dedupe.json"
+
+
+def _tick_standing_file() -> Path:
+    return state_dir() / "tick_standing_pager.json"
 
 
 def load_last_turns() -> dict[str, int]:
     """Load per-thread last-notified turn ids from ``bus_cursor.json``."""
-    if not _STATE_FILE.is_file():
+    path = _state_file()
+    if not path.is_file():
         return {}
     try:
-        raw = json.loads(_STATE_FILE.read_text(encoding="utf-8"))
+        raw = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(raw, dict):
             return {str(k): int(v) for k, v in raw.items()}
     except (OSError, ValueError, TypeError):
@@ -38,15 +58,17 @@ def save_last_turn(thread_id: str, turn_id: int) -> None:
     if turn_id <= prev:
         return
     state[thread_id] = turn_id
-    _STATE_DIR.mkdir(parents=True, exist_ok=True)
-    _STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    root = state_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    _state_file().write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
 def _load_closeout_dedupe() -> dict[str, float]:
-    if not _CLOSEOUT_DEDUPE_FILE.is_file():
+    path = _closeout_dedupe_file()
+    if not path.is_file():
         return {}
     try:
-        raw = json.loads(_CLOSEOUT_DEDUPE_FILE.read_text(encoding="utf-8"))
+        raw = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(raw, dict):
             return {str(k): float(v) for k, v in raw.items()}
     except (OSError, ValueError, TypeError):
@@ -55,8 +77,9 @@ def _load_closeout_dedupe() -> dict[str, float]:
 
 
 def _save_closeout_dedupe(state: dict[str, float]) -> None:
-    _STATE_DIR.mkdir(parents=True, exist_ok=True)
-    _CLOSEOUT_DEDUPE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    root = state_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    _closeout_dedupe_file().write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
 def claim_closeout_page(
@@ -85,10 +108,11 @@ def claim_closeout_page(
 
 
 def _load_tick_standing() -> dict[str, str]:
-    if not _TICK_STANDING_FILE.is_file():
+    path = _tick_standing_file()
+    if not path.is_file():
         return {}
     try:
-        raw = json.loads(_TICK_STANDING_FILE.read_text(encoding="utf-8"))
+        raw = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(raw, dict):
             return {str(k): str(v) for k, v in raw.items()}
     except (OSError, ValueError, TypeError):
@@ -110,6 +134,7 @@ def claim_tick_standing_page(signature: str) -> bool:
     if state.get("standing") == sig:
         return False
     state["standing"] = sig
-    _STATE_DIR.mkdir(parents=True, exist_ok=True)
-    _TICK_STANDING_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    root = state_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    _tick_standing_file().write_text(json.dumps(state, indent=2), encoding="utf-8")
     return True

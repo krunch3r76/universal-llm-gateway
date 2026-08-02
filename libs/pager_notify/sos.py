@@ -9,19 +9,11 @@ from pathlib import Path
 
 from pager_notify.client import notify_pager
 from pager_notify.so_what import SMS_BODY_MAX, SMS_SUBJECT_MAX, clip
-
-
-def _state_dir() -> Path:
-    return Path(
-        os.environ.get(
-            "PAGER_NOTIFY_STATE_DIR",
-            str(Path.home() / ".local" / "share" / "pager-notify"),
-        )
-    )
+from pager_notify.state import state_dir
 
 
 def _sos_dedupe_file() -> Path:
-    return _state_dir() / "tick_sos_dedupe.json"
+    return state_dir() / "tick_sos_dedupe.json"
 
 
 def _sos_enabled() -> bool:

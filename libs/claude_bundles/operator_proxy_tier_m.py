@@ -142,7 +142,16 @@ deferred **with a persisted restart intent** (``restart_intent_id`` present — 
 owns the queue and will fire after drain); ``blocked`` when manage deferred busy
 with **no** persisted intent (nothing will fire automatically); ``submitted`` when
 restart kicked but proof pending. Retired tokens: ``scheduled``, ``parked`` (lied as
-in-flight / dead-end). Live only when ``code_version`` matches ``code_ref``."""
+in-flight / dead-end). Live only when ``code_version`` matches ``code_ref``.
+
+**Nesting ban (closeout_relay):** do **not** fire ``contract:propagate`` from inside a
+GIW write-lease-holding nested dispatch whose parent closeout must relay
+dispositions. Thread 6692 (``failed/dead_on_giw_restart``) is the observed failure:
+nesting propagate inside such a dispatch **loses the parent closeout when the
+restart lands** — AutoJobQueue is process-local and a GIW drain/restart wipes
+in-flight jobs (dead, not expired). The nested seat cannot observe the restart it
+blocks. Fire propagate from a seat outside the GIW lease (parent cursor-auto after
+nested exit, or operator-proxy top-level)."""
 
 _DEGRADE_LADDER = """\
 - `auto-admit-armed` — Auto is running it; poll the returned `poll_hint` in short

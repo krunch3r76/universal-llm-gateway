@@ -86,3 +86,11 @@ def pytest_collectstart(collector: pytest.Collector) -> None:
     if node_path is None:
         return
     _configure_for_path(str(node_path).replace("\\", "/"))
+
+
+@pytest.fixture(autouse=True)
+def _pager_notify_isolated_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep pager dedupe/cursor state out of the operator's real home during tests."""
+    monkeypatch.setenv("PAGER_NOTIFY_STATE_DIR", str(tmp_path / "pager-notify"))

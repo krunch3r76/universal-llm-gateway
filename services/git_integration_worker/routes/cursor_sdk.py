@@ -66,6 +66,9 @@ from services.git_integration_worker.cursor_models import (
 from services.git_integration_worker.cursor_sdk_association import (
     build_dispatch_association_fields,
 )
+from services.git_integration_worker.cursor_sdk_closeout_subject import (
+    build_sdk_closeout_subject,
+)
 from services.git_integration_worker.cursor_sdk_closeout import (
     SdkRunOutcome,
     capture_wt_baseline_with_hashes,
@@ -1288,11 +1291,12 @@ async def _deliver_sdk_closeout(
         "admitted_via": req.admitted_via,
     }
 
+    closeout_contract = (req.handoff_contract or "consult").lower()
     bus_result = await bus.reply(
         thread_id=req.thread_id,
         to_agent=reply_to,
         from_agent="cursor-sdk",
-        subject=f"cursor-sdk dispatch {req.dispatch_id}",
+        subject=build_sdk_closeout_subject(req, contract=closeout_contract),
         body=delivery.body,
         allow_long_body=True,
     )

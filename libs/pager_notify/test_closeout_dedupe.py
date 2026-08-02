@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -12,11 +13,7 @@ from pager_notify.state import claim_closeout_page
 
 @pytest.fixture
 def pager_state_dir(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("pager_notify.state._STATE_DIR", tmp_path)
-    monkeypatch.setattr(
-        "pager_notify.state._CLOSEOUT_DEDUPE_FILE",
-        tmp_path / "closeout_pager_dedupe.json",
-    )
+    monkeypatch.setenv("PAGER_NOTIFY_STATE_DIR", str(tmp_path))
     return tmp_path
 
 
@@ -43,6 +40,19 @@ def test_claim_closeout_page_after_ttl_expiry_true(pager_state_dir) -> None:
 def test_claim_closeout_page_normalizes_status(pager_state_dir) -> None:
     assert claim_closeout_page("5899", " CLOSED ", now=1000.0) is True
     assert claim_closeout_page("5899", "closed", now=1001.0) is False
+
+
+def test_closeout_dedupe_shared_across_dispatch_home_overlay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dedupe state must not be scoped to per-dispatch HOME overlay."""
+    shared = tmp_path / "shared-pager-state"
+    monkeypatch.setenv("PAGER_NOTIFY_STATE_DIR", str(shared))
+    monkeypatch.setenv("HOME", "/tmp/fake/cursor-dispatch-homes/auto-x-home")
+    assert claim_closeout_page("6692-overlay", "closed", now=1000.0) is True
+    monkeypatch.setenv("HOME", "/tmp/fake/cursor-dispatch-homes/auto-y-home")
+    assert claim_closeout_page("6692-overlay", "closed", now=1001.0) is False
 
 
 @pytest.mark.asyncio
