@@ -68,6 +68,27 @@ def cdp_port_exit_kill_decision(
 
 
 @event_factory
+def cdp_port_orphaned_alive_reaped(
+    *,
+    registration_id: str,
+    port: int,
+    trigger: str,
+    reaped_orphaned_alive: str | None,
+) -> Event:
+    return Event(
+        signal="cdp.port.orphaned_alive_reaped",
+        role="observation",
+        scope="node",
+        payload={
+            "registration_id": registration_id,
+            "port": port,
+            "trigger": trigger,
+            "reaped_orphaned_alive": reaped_orphaned_alive,
+        },
+    )
+
+
+@event_factory
 def cdp_port_orphan_scan(
     *,
     ports_live: int,

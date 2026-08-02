@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from claude_bundles import cdp_lane
+from claude_bundles import cdp_lane, cdp_lane_reaper
 from claude_bundles import cdp_registry_events as _events
 from claude_bundles import cdp_registry_store as _store
 
@@ -479,6 +479,12 @@ def hygiene_reclaim_extended(
         active = _store.load_active()
         if include_stale_active:
             _reap_stale_active_rows(active, listen)
+        cdp_lane_reaper.reap_orphaned_alive_rows(
+            active,
+            listen,
+            kill_listener=_kill_listener,
+            include_ttl_reap=include_stale_active,
+        )
         keep: dict[str, dict[str, Any]] = {}
         for rid, row in active.items():
             status = row.get("status")
