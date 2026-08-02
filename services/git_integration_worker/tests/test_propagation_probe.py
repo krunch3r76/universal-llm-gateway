@@ -9,6 +9,7 @@ from implement_admission.propagation_row import PropagationRow
 from services.git_integration_worker.cursor_auto.propagation_probe import (
     process_identity,
     proof_observed,
+    strong_process_identity,
 )
 
 _SHA_A = "abc1230000000000000000000000000000000000"
@@ -149,10 +150,48 @@ def test_proof_observed_post_restart_boundary_closes_young_process() -> None:
 
     row = _row("git_integration_worker", _SHA_A, proof_class="process_live")
     settle_not_before = time.monotonic() - 30.0
-    after = {"code_version": _SHA_A, "uptime_s": 2.0}
+    after = {"code_version": _SHA_A, "uptime_s": 2.0, "pid": 526100}
     assert proof_observed(
         row,
         after,
+        settle_not_before_monotonic=settle_not_before,
+    )
+
+
+def test_ac_d3_drain_propagation_uptime_only_cannot_bind_process_identity() -> None:
+    """Drain settle path: pre-fix liveness shape (no pid) fails strong identity."""
+    import os
+    import time
+    from unittest.mock import patch
+
+    from services.git_integration_worker.cursor_auto.liveness import AutoLivenessRegistry
+
+    row = _row("git_integration_worker", _SHA_A, proof_class="process_live")
+    settle_not_before = time.monotonic() - 30.0
+
+    pre_fix_liveness = {"code_version": _SHA_A, "uptime_s": 2.0}
+    assert pre_fix_liveness.get("pid") is None
+    assert process_identity(pre_fix_liveness) == "uptime:2.000000"
+    assert not strong_process_identity(pre_fix_liveness)
+    assert not proof_observed(
+        row,
+        pre_fix_liveness,
+        settle_not_before_monotonic=settle_not_before,
+    )
+
+    reg = AutoLivenessRegistry()
+    reg.register("probe-handler")
+    with patch(
+        "services.git_integration_worker.cursor_auto.liveness.resolve_code_version",
+        return_value=_SHA_A,
+    ):
+        post_fix = reg.snapshot()
+    assert post_fix["pid"] == os.getpid()
+    assert strong_process_identity(post_fix)
+    assert process_identity(post_fix) == f"pid:{os.getpid()}"
+    assert proof_observed(
+        row,
+        post_fix,
         settle_not_before_monotonic=settle_not_before,
     )
 

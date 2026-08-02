@@ -109,6 +109,16 @@ def process_identity(payload: dict[str, Any]) -> str | None:
     return None
 
 
+def strong_process_identity(payload: dict[str, Any]) -> bool:
+    """True when identity binds a specific OS process, not uptime alone."""
+    if payload.get("pid") is not None:
+        return True
+    start = payload.get("process_start_time")
+    if isinstance(start, str) and start.strip():
+        return True
+    return isinstance(payload.get("process_age_s"), (int, float))
+
+
 def _process_live_identity_delta(
     before: dict[str, Any],
     after: dict[str, Any],
@@ -197,7 +207,7 @@ def proof_observed(
             payload, settle_not_before_monotonic=settle_not_before_monotonic
         ):
             return False
-        return process_identity(payload) is not None
+        return strong_process_identity(payload)
     return False
 
 
@@ -208,4 +218,5 @@ __all__ = [
     "process_identity",
     "proof_observed",
     "row_key",
+    "strong_process_identity",
 ]

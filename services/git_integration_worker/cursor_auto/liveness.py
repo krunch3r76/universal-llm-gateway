@@ -6,6 +6,7 @@ successful turn write alone is not arm evidence (R-admit HIGH / F1).
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -80,6 +81,7 @@ class AutoLivenessRegistry:
             "handlers": handlers,
             "heartbeat_ttl_s": self.heartbeat_ttl_s,
             "uptime_s": round(now - self._started_at, 3),
+            "pid": os.getpid(),
             "code_version": resolve_code_version(),
             "wire_skew_aggregate": get_wire_skew_aggregate(),
         }
