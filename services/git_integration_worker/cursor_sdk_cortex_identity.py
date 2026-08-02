@@ -157,6 +157,11 @@ def build_boundary_assertion_index(
             index[entity] = aid_str
         if obs.call_id:
             index[obs.call_id] = aid_str
+    from services.git_integration_worker.cursor_sdk_boundary_join_key import (
+        emit_join_key_boundary,
+    )
+
+    emit_join_key_boundary(index, source_observations=tool_calls)
     return index
 
 

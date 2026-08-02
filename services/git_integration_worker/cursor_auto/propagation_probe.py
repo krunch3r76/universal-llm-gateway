@@ -144,7 +144,24 @@ def proof_observed(
     *,
     before: dict[str, Any] | None = None,
     settle_not_before_monotonic: float | None = None,
+    probed_surface: str | None = None,
 ) -> bool:
+    from services.git_integration_worker.cursor_sdk_boundary_deployment_identity import (
+        DeploymentIdentityEmit,
+        emit_deployment_identity_boundary,
+    )
+
+    surface = probed_surface or row.service
+    emit_deployment_identity_boundary(
+        DeploymentIdentityEmit(
+            expected_executor=row.service,
+            probed_surface=surface,
+            payload=payload,
+            code_ref=row.code_ref,
+            before_payload=before,
+            settle_not_before_monotonic=settle_not_before_monotonic,
+        )
+    )
     if payload is None:
         return False
     if row.proof_class == "served_artifact":

@@ -175,6 +175,10 @@ def resolve_stream_tool_name(tool_name: str, args: Any) -> str:
     match so downstream gates (cortex enrich, reconcile, deliverable truth)
     see the same name shape.
     """
+    from services.git_integration_worker.cursor_sdk_boundary_name_gate import (
+        emit_name_gate_boundary,
+    )
+
     name = (tool_name or "").strip()
     if name.lower() != _MCP_WIRE_NAME:
         return name
@@ -182,7 +186,10 @@ def resolve_stream_tool_name(tool_name: str, args: Any) -> str:
         return name
     logical = args.get("toolName") or args.get("tool_name")
     if isinstance(logical, str) and logical.strip():
-        return logical.strip()
+        resolved = logical.strip()
+        emit_name_gate_boundary(name, args, resolved_name=resolved)
+        return resolved
+    emit_name_gate_boundary(name, args, resolved_name=name)
     return name
 
 
@@ -312,6 +319,15 @@ def observe_run_stream(
         retention = prepare_toolcall_result_retention(
             observation.result,
             truncated_fields=observation.truncated_fields,
+            result_bytes=observation.result_bytes,
+            status=observation.status,
+        )
+        from services.git_integration_worker.cursor_sdk_boundary_retention import (
+            emit_retention_boundary,
+        )
+
+        emit_retention_boundary(
+            retention,
             result_bytes=observation.result_bytes,
             status=observation.status,
         )
