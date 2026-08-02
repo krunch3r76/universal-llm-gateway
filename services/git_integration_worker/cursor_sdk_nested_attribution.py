@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,8 @@ from implement_admission.closeout_models import (
 
 _BOUNDARY_SURFACES = frozenset({"cortex", "fs", "agent_bus"})
 _SIDECAR_REL = "tmp/reviews/closeouts/{dispatch_id}.md"
+_EFFECTS_MANIFEST_HEADING = "## effects_manifest"
+_JSON_OBJECT_TAIL_RE = re.compile(r"\{[\s\S]*\}\s*$")
 
 
 def _parse_closeout_json(sidecar_text: str) -> dict[str, Any] | None:
@@ -27,6 +30,34 @@ def _parse_closeout_json(sidecar_text: str) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _raw_effects_manifest_from_sidecar(sidecar_text: str) -> dict[str, Any] | None:
+    """Extract effects_manifest dict from closeout sidecar — JSON body or appendix (AC-9k)."""
+    payload = _parse_closeout_json(sidecar_text)
+    if payload is not None:
+        raw = payload.get("effects_manifest")
+        if isinstance(raw, dict):
+            return raw
+    marker_idx = sidecar_text.find(_EFFECTS_MANIFEST_HEADING)
+    if marker_idx < 0:
+        return None
+    tail = sidecar_text[marker_idx + len(_EFFECTS_MANIFEST_HEADING) :].strip()
+    match = _JSON_OBJECT_TAIL_RE.search(tail)
+    if match is None:
+        return None
+    try:
+        parsed = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    nested = parsed.get("effects_manifest")
+    if isinstance(nested, dict):
+        return nested
+    if "schema_version" in parsed and "surfaces" in parsed:
+        return parsed
+    return None
+
+
 def _child_manifest_from_sidecar(
     source_repo: Path,
     child_dispatch_id: str,
@@ -34,11 +65,8 @@ def _child_manifest_from_sidecar(
     path = source_repo / _SIDECAR_REL.format(dispatch_id=child_dispatch_id)
     if not path.is_file():
         return None
-    payload = _parse_closeout_json(path.read_text(encoding="utf-8"))
-    if payload is None:
-        return None
-    raw = payload.get("effects_manifest")
-    if not isinstance(raw, dict):
+    raw = _raw_effects_manifest_from_sidecar(path.read_text(encoding="utf-8"))
+    if raw is None:
         return None
     try:
         return EffectsManifest.model_validate(raw)

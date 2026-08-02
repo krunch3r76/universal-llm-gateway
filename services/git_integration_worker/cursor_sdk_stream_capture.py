@@ -65,6 +65,8 @@ class ToolCallObservation:
     truncated_fields: tuple[str, ...]
     target_path: str | None = None
     subagent_type: str | None = None
+    args: Mapping[str, Any] | None = None
+    result: object | None = None
 
     @property
     def truncated_any(self) -> bool:
@@ -186,6 +188,8 @@ def _observation_from_message(message: Any) -> ToolCallObservation:
         truncated_fields=tuple(sorted(k for k, v in truncated.items() if v)),
         target_path=_target_path_from_stream_args(tool_name, args),
         subagent_type=subagent_type_from_stream_args(tool_name, args),
+        args=args if isinstance(args, Mapping) else None,
+        result=getattr(message, "result", None),
     )
 
 

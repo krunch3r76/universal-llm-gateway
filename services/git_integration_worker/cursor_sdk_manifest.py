@@ -90,6 +90,11 @@ _SERVICE_TOOLS = frozenset(
     }
 )
 _PLUMBING_SURFACES = frozenset({"cortex", "agent_bus", "service"})
+# Boundary surfaces preserved when git diff is empty — plumbing collapse must not
+# erase nested/cortex-only capture (AC-9j).
+_PRESERVE_ON_NO_CODE_CHANGE_SURFACES = frozenset(
+    {"cortex", "fs", "agent_bus", "rag", SUBAGENTS_SURFACE}
+)
 _SURFACE_ORDER = ("repo", "cortex", "agent_bus", "fs", "rag", "service", "subagents")
 
 
@@ -469,11 +474,85 @@ def merge_stream_tool_calls(
 ) -> EffectsManifest | None:
     """Fold stream-observed write paths missing from the conversation manifest."""
     paths = [tc.target_path for tc in tool_calls if tc.target_path]
-    return merge_repo_paths_into_manifest(
+    merged = merge_repo_paths_into_manifest(
         manifest,
         paths,
         source_repo=source_repo,
         source_label="stream",
+    )
+    return merge_stream_cortex_entries(merged, tool_calls)
+
+
+def merge_stream_cortex_entries(
+    manifest: EffectsManifest | None,
+    tool_calls: tuple[ToolCallObservation, ...],
+) -> EffectsManifest | None:
+    """Fold stream-observed cortex write acks when conversation omitted results (AC-9j)."""
+    if manifest is None or not tool_calls:
+        return manifest
+    existing_assertions = set(harvest_cortex_assertion_ids(manifest))
+    existing_identities: set[str] = set()
+    cortex_section = manifest.surfaces.get("cortex")
+    if cortex_section is not None:
+        for entry in cortex_section.entries:
+            if entry.identity:
+                existing_identities.add(entry.identity)
+    new_entries: list[EffectEntry] = []
+    for obs in tool_calls:
+        if obs.status != "completed":
+            continue
+        entry = _cortex_entry_from_stream_observation(obs)
+        if entry is None:
+            continue
+        if entry.identity and entry.identity in existing_identities:
+            continue
+        if entry.identity and entry.identity.startswith("assertion:"):
+            aid = entry.identity.split(":", 1)[1]
+            if aid in existing_assertions:
+                continue
+        new_entries.append(entry)
+    if not new_entries:
+        return manifest
+    if cortex_section is None:
+        cortex_section = SurfaceSection(surface="cortex", source="stream", entries=[])
+    merged_entries = list(cortex_section.entries)
+    merged_entries.extend(new_entries)
+    merged_surfaces = dict(manifest.surfaces)
+    merged_surfaces["cortex"] = cortex_section.model_copy(
+        update={"entries": merged_entries, "source": "stream"}
+    )
+    sources = list(dict.fromkeys([*manifest.capture_sources, "stream"]))
+    coverage = dict(manifest.coverage)
+    coverage["cortex"] = "complete"
+    return manifest.model_copy(
+        update={"surfaces": merged_surfaces, "capture_sources": sources, "coverage": coverage}
+    )
+
+
+def _cortex_entry_from_stream_observation(
+    obs: ToolCallObservation,
+) -> EffectEntry | None:
+    if obs.tool_name.lower() not in _CORTEX_TOOLS:
+        return None
+    raw_args = obs.args if isinstance(obs.args, Mapping) else {}
+    nested = raw_args.get("args") if isinstance(raw_args.get("args"), Mapping) else raw_args
+    effective = _effective_mcp_args(nested) if nested else {}
+    op = _cortex_op_from_args(effective)
+    if op not in _CORTEX_WRITE_OPS:
+        return None
+    detail = _bounded_detail(effective) if effective else None
+    assertion_id = _cortex_result_assertion_id(obs.tool_name, effective, obs.result)
+    identity = (
+        f"assertion:{assertion_id}"
+        if assertion_id is not None
+        else _mcp_identity(obs.tool_name, effective)
+    )
+    target = _mcp_target(obs.tool_name, effective)
+    return EffectEntry(
+        op=obs.tool_name,
+        target=target,
+        detail=detail,
+        identity=identity,
     )
 
 
@@ -563,12 +642,20 @@ def merge_wrapper_manifest(
     if is_genuinely_no_code_change(git_change_set=resolved_git, base=base):
         sources = list(base.capture_sources) if base else []
         sources = list(dict.fromkeys([*sources, "wrapper"]))
+        preserved: dict[str, SurfaceSection] = {}
+        preserved_coverage: dict[str, str] = {}
+        if base is not None:
+            for name, section in base.surfaces.items():
+                if name in _PRESERVE_ON_NO_CODE_CHANGE_SURFACES:
+                    preserved[name] = section
+                    if name in base.coverage:
+                        preserved_coverage[name] = base.coverage[name]
         return EffectsManifest(
             dispatch_id=dispatch_id,
             thread_id=thread_id,
             capture_sources=sources,
-            surfaces={},
-            coverage={},
+            surfaces=preserved,
+            coverage=preserved_coverage,
         )
     wrapper = build_effects_manifest(
         dispatch_id=dispatch_id,
@@ -698,14 +785,15 @@ def serialize_effects_manifest_for_body(
 ) -> EffectsManifest | dict[str, Any] | None:
     if manifest is None:
         return None
+    manifest_json = json.dumps(manifest.model_dump(mode="json"), indent=2)
+    if sidecar_appendix is not None:
+        sidecar_appendix.append(manifest_json)
     probe = json.dumps(
         {"effects_manifest": manifest.model_dump(mode="json")},
         separators=(",", ":"),
     )
     if len(probe) <= MAX_MANIFEST_BODY_PROBE:
         return manifest
-    if sidecar_appendix is not None:
-        sidecar_appendix.append(json.dumps(manifest.model_dump(mode="json"), indent=2))
     return compact_manifest_for_body(manifest)
 
 

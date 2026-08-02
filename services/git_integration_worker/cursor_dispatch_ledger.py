@@ -877,7 +877,7 @@ class CursorDispatchLedger:
             rows = conn.execute(
                 "SELECT dispatch_id, record_json FROM cursor_sdk_dispatches "
                 "WHERE record_json LIKE ?",
-                (f'%"nest_under": "{parent_dispatch_id}"%',),
+                ('%"nest_under"%',),
             ).fetchall()
         child_ids: list[str] = []
         for row in rows:
