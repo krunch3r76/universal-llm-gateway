@@ -41,6 +41,7 @@ from services.git_integration_worker.cursor_auto.handler_propagation import (
     run_propagation_in_seat,
 )
 from services.git_integration_worker.cursor_auto.handler_terminal import (
+    post_terminal_status,
     terminal_failed,
     terminal_in_seat,
     terminal_needs_attended,
@@ -70,10 +71,11 @@ from services.git_integration_worker.cursor_auto.supersede import (
     settle_supersede,
 )
 from services.git_integration_worker.cursor_auto.wire_map import (
+    admit_model_pin_flags,
+    assess_model_pin,
     compose_model_knobs,
     resolve_contract_disposition,
     resolve_desired_effort,
-    resolve_desired_model,
     resolve_handoff_contract,
 )
 from services.git_integration_worker.cursor_bus import CursorBusClient
@@ -114,7 +116,28 @@ async def process_job(
     expired = await deadline_terminal(job, client=client, queue=queue)
     if expired is not None:
         return expired
-    model = resolve_desired_model(job.desired_model, contract=contract)
+    model, model_block = assess_model_pin(
+        job.desired_model,
+        contract=contract,
+        body=job.body,
+    )
+    if model_block is not None:
+        return await post_terminal_status(
+            job,
+            client=client,
+            queue=queue,
+            summary=model_block,
+            disposition="blocked",
+            contract=contract,
+            terminal_status="status:blocked",
+            payload={
+                "summary": model_block,
+                "reason": "model_pin_refused",
+                "requested_model": model.get("requested"),
+                "bindable": list(model.get("bindable") or ()),
+            },
+            failed=True,
+        )
     effort = resolve_desired_effort(job.desired_effort)
     contract_info = resolve_contract_disposition(contract)
     handoff_contract = resolve_handoff_contract(contract)
@@ -138,6 +161,7 @@ async def process_job(
         "Auto admitted lane:cursor-auto request.\n"
         f"requested_model={model['requested']} "
         f"resolved={model['resolved_model_id']}\n"
+        f"model_honored={model['honored']}\n"
         f"requested_effort={effort['requested']} "
         f"resolved={effort['resolved_effort']}\n"
         f"contract={contract_info['contract']} "
@@ -145,6 +169,9 @@ async def process_job(
         f"gate_plan={gate_plan['action']}\n"
         f"directive={directive is not None}"
     )
+    pin_flags = admit_model_pin_flags(model, effort)
+    if pin_flags:
+        base_admit_body += "\nflags: " + "; ".join(pin_flags)
     briefing = await maybe_briefing_for_admit(job.thread_id, contract=contract)
     admit = await client.reply(
         thread_id=job.thread_id,

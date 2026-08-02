@@ -24,6 +24,9 @@ class ParsedDirective:
 _TYPE_RE = re.compile(r"^TYPE:\s*(\S+)", re.MULTILINE | re.IGNORECASE)
 _DENSITY_RE = re.compile(r"^density:\s*(\S+)", re.MULTILINE | re.IGNORECASE)
 _CONTRACT_RE = re.compile(r"^contract:\s*(\S+)", re.MULTILINE | re.IGNORECASE)
+_DESIRED_MODEL_RE = re.compile(
+    r"^desired_model:\s*(\S+)", re.MULTILINE | re.IGNORECASE
+)
 _REQUIRE_ATTENDED_RE = re.compile(
     r"^[ \t]*(?:[-*][ \t]+)?require_attended:\s*(true|yes|1)\b",
     re.MULTILINE | re.IGNORECASE,
@@ -187,6 +190,14 @@ def has_actionable_scope(body: str) -> bool:
 def body_has_contract_override(body: str) -> bool:
     """True when the DIRECTIVE body declares an explicit ``contract:`` line."""
     return _CONTRACT_RE.search(body or "") is not None
+
+
+def body_desired_model(body: str) -> str | None:
+    """Return body-level ``desired_model:`` value when present (wire-only contract)."""
+    match = _DESIRED_MODEL_RE.search(body or "")
+    if match is None:
+        return None
+    return match.group(1).strip().lower()
 
 
 def has_vision_field(body: str) -> bool:

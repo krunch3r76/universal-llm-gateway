@@ -15,6 +15,8 @@ from services.git_integration_worker.cursor_auto.gate_serialize import (
 )
 from services.git_integration_worker.cursor_auto.liveness import AutoLivenessRegistry
 from services.git_integration_worker.cursor_auto.wire_map import (
+    admit_model_pin_flags,
+    assess_model_pin,
     resolve_contract_disposition,
     resolve_desired_effort,
     resolve_desired_model,
@@ -38,6 +40,118 @@ def test_wire_map_auto_by_contract():
     )
     assert resolve_handoff_contract("implement") == "pure-mechanical"
     assert resolve_handoff_contract("investigate") == "light-bounded"
+
+
+def test_wire_map_accepts_cursor_prefixed_model():
+    assert (
+        resolve_desired_model("cursor/grok-4.5")["resolved_model_id"]
+        == "cursor/grok-4.5"
+    )
+    assert resolve_desired_model("cursor/grok-4.5")["honored"] is True
+    assert (
+        resolve_desired_model("cursor/composer-2.5")["resolved_model_id"]
+        == "cursor/composer-2.5"
+    )
+
+
+def test_wire_map_rejects_unknown_model():
+    out = resolve_desired_model("cursor/claude-sonnet-4")
+    assert out["rejected"] is True
+    assert out["honored"] is False
+    assert out["resolved_model_id"] is None
+    assert "bindable" in out["notes"]
+
+
+def test_assess_model_pin_blocks_body_desired_model():
+    model, block = assess_model_pin(
+        "grok-4.5",
+        contract="investigate",
+        body="TYPE: DIRECTIVE\ndesired_model: grok-4.5\n",
+    )
+    assert block is not None
+    assert "wire-only" in block
+    assert model["resolved_model_id"] == "cursor/grok-4.5"
+
+
+def test_admit_model_pin_flags_surfaces_effort_clamp():
+    model = resolve_desired_model("grok-4.5")
+    effort = resolve_desired_effort("bogus")
+    flags = admit_model_pin_flags(model, effort)
+    assert any("effort_clamped" in flag for flag in flags)
+
+
+def test_process_job_blocks_unknown_model_pin(monkeypatch):
+    import asyncio
+    import json
+    from unittest.mock import AsyncMock, MagicMock
+
+    from services.git_integration_worker.cursor_auto.handler import process_job
+    from services.git_integration_worker.cursor_auto.queue import AutoJob
+
+    bus = AsyncMock()
+    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+
+    job = AutoJob(
+        job_id="j-bad-model",
+        thread_id="6654",
+        turn_number=1,
+        subject="bad model",
+        body="TYPE: DIRECTIVE\ndensity: dense\n## Scope\nfoo\nvision: test\n",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="cursor/claude-sonnet-4",
+        desired_effort="medium",
+        contract="investigate",
+    )
+
+    result = asyncio.run(process_job(job, bus=bus))
+    assert result["terminal_status"] == "status:blocked"
+    payload = json.loads(bus.reply.await_args.kwargs["body"])
+    assert payload["reason"] == "model_pin_refused"
+    assert "bindable" in payload["summary"]
+
+
+def test_process_job_admit_surfaces_model_honored(monkeypatch):
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    from services.git_integration_worker.cursor_auto.handler import process_job
+    from services.git_integration_worker.cursor_auto.queue import AutoJob
+
+    bus = AsyncMock()
+    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.handler.submit_nested_dispatch",
+        AsyncMock(return_value={"ok": False, "error": "stop"}),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.gate_serialize.sdk_dispatch_gate_stats",
+        lambda **_: {"active": 0, "queued": 0, "limit": 1},
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.admit_gates.fetch_thread_turns",
+        AsyncMock(return_value=[]),
+    )
+
+    job = AutoJob(
+        job_id="j-admit-flags",
+        thread_id="6654",
+        turn_number=1,
+        subject="admit flags",
+        body="TYPE: DIRECTIVE\ndensity: dense\n## Scope\nfoo\nvision: test\n",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="cursor/grok-4.5",
+        desired_effort="bogus",
+        contract="investigate",
+    )
+
+    asyncio.run(process_job(job, bus=bus))
+    admit_call = bus.reply.await_args_list[0]
+    assert admit_call.kwargs["subject"].startswith("status:admitted")
+    admit_body = admit_call.kwargs["body"]
+    assert "model_honored=True" in admit_body
+    assert "effort_clamped" in admit_body
 
 
 def test_wire_map_effort_xhigh_and_aliases():

@@ -31,6 +31,25 @@ _MODEL_TABLE: dict[str, str] = {
     "grok-4.5": "cursor/grok-4.5",
     "opus-5": "cursor/claude-opus-5",
 }
+BINDABLE_WIRE_IDS: tuple[str, ...] = tuple(sorted(_MODEL_TABLE))
+_BINDABLE_MODEL_IDS: frozenset[str] = frozenset(_MODEL_TABLE.values())
+
+
+def format_bindable_models() -> str:
+    """Human-readable bindable set for operator-facing refusal text."""
+    wire = ", ".join(BINDABLE_WIRE_IDS)
+    prefixed = ", ".join(sorted(_BINDABLE_MODEL_IDS))
+    return f"{wire} (or prefixed: {prefixed})"
+
+
+def _lookup_explicit_model(raw: str) -> str | None:
+    """Map bare or ``cursor/``-prefixed hint → canonical ``model_id``."""
+    bare = _MODEL_TABLE.get(raw)
+    if bare is not None:
+        return bare
+    if raw.startswith("cursor/") and raw in _BINDABLE_MODEL_IDS:
+        return raw
+    return None
 # Canonical wire vocabulary (cursor knobs + frontier reasoning_effort).
 # Aliases: CDP UI "Extra" / Cursor "Extra High" / GPT "extra-high" → xhigh.
 _EFFORT_LADDER: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
@@ -74,13 +93,17 @@ def resolve_desired_model(
             "honored": True,
             "notes": f"auto chose {model_id} for contract={contract}",
         }
-    model_id = _MODEL_TABLE.get(raw)
+    model_id = _lookup_explicit_model(raw)
     if model_id is None:
         return {
             "requested": raw,
-            "resolved_model_id": "cursor/composer-2.5",
+            "resolved_model_id": None,
             "honored": False,
-            "notes": f"unknown desired_model={raw!r}; clamped to composer-2.5",
+            "rejected": True,
+            "bindable": BINDABLE_WIRE_IDS,
+            "notes": (
+                f"unknown desired_model={raw!r}; bindable: {format_bindable_models()}"
+            ),
         }
     knobs: dict[str, str] = {}
     if model_id == "cursor/claude-opus-5":
@@ -92,6 +115,54 @@ def resolve_desired_model(
         "model_knobs": knobs,
         "notes": "honored explicit desired_model",
     }
+
+
+def assess_model_pin(
+    wire_desired_model: str | None,
+    *,
+    contract: str,
+    body: str,
+) -> tuple[dict[str, Any], str | None]:
+    """Resolve wire model pin and return ``(model, block_reason)``.
+
+    ``block_reason`` is set when admit must refuse: unknown wire pin, or a body-level
+    ``desired_model:`` line (wire-only contract — body form is not honored).
+    """
+    from services.git_integration_worker.cursor_auto.directive import (
+        body_desired_model,
+    )
+
+    body_pin = body_desired_model(body)
+    if body_pin is not None:
+        model = resolve_desired_model(wire_desired_model, contract=contract)
+        return (
+            model,
+            (
+                f"body desired_model:{body_pin!r} ignored — model pin is wire-only; "
+                f"set desired_model on agent_bus.request "
+                f"(bindable: {format_bindable_models()})"
+            ),
+        )
+    model = resolve_desired_model(wire_desired_model, contract=contract)
+    if model.get("rejected"):
+        return (
+            model,
+            f"unknown desired_model={model['requested']!r}; bindable: {format_bindable_models()}",
+        )
+    return model, None
+
+
+def admit_model_pin_flags(
+    model: dict[str, Any],
+    effort: dict[str, Any],
+) -> tuple[str, ...]:
+    """Operator-visible admit flags when a pin was not fully honored."""
+    flags: list[str] = []
+    if not model.get("honored"):
+        flags.append(f"model_pin_dropped: {model.get('notes', 'unhonored')}")
+    if effort.get("clamped"):
+        flags.append(f"effort_clamped: {effort.get('notes', 'clamped')}")
+    return tuple(flags)
 
 
 def resolve_desired_effort(desired_effort: str | None) -> dict[str, Any]:
