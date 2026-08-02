@@ -450,6 +450,40 @@ def test_list_cli_emits_object_not_bare_array(
     assert isinstance(data["orphans"], list)
 
 
+def test_list_surface_orphan_scan_distinguishes_empty_triples_on_stdout(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """AC-1: list-lanes orphan_scan stdout distinguishes zero-live vs all-registered."""
+    reg_profile = tmp_path / "claude-ai-chrome-profile-reg-live01"
+
+    monkeypatch.setattr(cdp_orphans, "probe_live_ports", lambda port_range=None: [])
+    monkeypatch.setattr(cdp_orphans, "_registered_ports", lambda: set())
+    no_live = cdp_orphans.list_surface_payload()
+
+    monkeypatch.setattr(
+        cdp_orphans,
+        "probe_live_ports",
+        lambda port_range=None: [
+            cdp_orphans.LivePort(
+                port=9229,
+                profile=reg_profile,
+                page_urls=(),
+                has_live_cse=False,
+            )
+        ],
+    )
+    monkeypatch.setattr(cdp_orphans, "_registered_ports", lambda: {9229})
+    all_registered = cdp_orphans.list_surface_payload()
+
+    assert no_live["orphan_scan"] != all_registered["orphan_scan"]
+    assert no_live["orphan_scan"]["ports_live"] == 0
+    assert no_live["orphan_scan"]["ports_skipped_registered"] == 0
+    assert all_registered["orphan_scan"]["ports_live"] == 1
+    assert all_registered["orphan_scan"]["ports_skipped_registered"] == 1
+    assert no_live["orphans"] == []
+    assert all_registered["orphans"] == []
+
+
 def test_orphan_scan_emits_event_every_scan(
     isolated_registry: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

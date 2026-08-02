@@ -39,6 +39,14 @@ def run_hygiene_once() -> dict[str, Any]:
     }
 
 
+def run_orphan_scan_once() -> dict[str, Any]:
+    """Sync observation-only orphan scan — emits event; never mutates registry."""
+    from claude_bundles import cdp_orphans
+
+    scan = cdp_orphans.find_orphans()
+    return cdp_orphans.orphan_scan_as_dict(scan)
+
+
 class RegistryHygieneLoop:
     """Background extended hygiene while the cdp-ask satellite is up."""
 
@@ -74,6 +82,13 @@ class RegistryHygieneLoop:
                         "cdp registry hygiene reclaimed_ports=%s removed=%d",
                         summary["reclaimed_ports"],
                         len(summary["removed_profiles"]),
+                    )
+                scan_summary = await asyncio.to_thread(run_orphan_scan_once)
+                if scan_summary["matched_count"]:
+                    logger.info(
+                        "cdp registry orphan_scan matched_count=%s ports_examined=%s",
+                        scan_summary["matched_count"],
+                        scan_summary["ports_examined"],
                     )
             except asyncio.CancelledError:
                 raise

@@ -13,7 +13,6 @@ from typing import Any
 from claude_bundles import cdp_lane, cdp_registry
 
 LIVENESS_AUTHORITY_ATTACHMENT_ONLY = "attachment_only"
-LIVENESS_AUTHORITY_OBSERVED = "observed"
 
 _CSE_URL_MARKER = "claude.ai/cowork/cse_"
 _REG_PROFILE_PREFIX = "claude-ai-chrome-profile-reg-"
