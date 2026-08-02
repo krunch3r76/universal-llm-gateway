@@ -258,6 +258,8 @@ def test_drain_state_shape(events: SimpleNamespace) -> None:
         "active_count",
         "active_ops",
         "deadline_at",
+        "drain_started_at",
+        "drain_started_monotonic",
     }
     assert state["draining"] is False
     assert state["active_count"] == 0
@@ -269,6 +271,8 @@ def test_drain_state_shape(events: SimpleNamespace) -> None:
     assert after["drain_epoch"] == 5
     assert after["intent_id"] == "i9"
     assert after["deadline_at"] is not None
+    assert after["drain_started_at"] is not None
+    assert isinstance(after["drain_started_monotonic"], float)
 
 
 # --------------------------------------------------------------------- AC-7

@@ -19,6 +19,7 @@ closeout. State is therefore never mutated from a worker thread.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -102,6 +103,7 @@ class WorkAdmissionController:
     _drain_epoch: int = 0
     _intent_id: str | None = None
     _drain_started_at: datetime | None = None
+    _drain_started_monotonic: float | None = None
     _deadline_at: datetime | None = None
     _tickets: dict[str, Ticket] = field(default_factory=dict)
     _tracked_tasks: set[asyncio.Task[Any]] = field(default_factory=set)
@@ -219,6 +221,7 @@ class WorkAdmissionController:
         self._drain_epoch = drain_epoch
         self._intent_id = intent_id
         self._drain_started_at = datetime.now(UTC)
+        self._drain_started_monotonic = time.monotonic()
         self._deadline_at = (
             self._drain_started_at + _timedelta_s(deadline_s)
             if deadline_s is not None
@@ -284,6 +287,10 @@ class WorkAdmissionController:
             "active_count": self.active_count(),
             "active_ops": self.active_ops(),
             "deadline_at": self._deadline_at.isoformat() if self._deadline_at else None,
+            "drain_started_at": (
+                self._drain_started_at.isoformat() if self._drain_started_at else None
+            ),
+            "drain_started_monotonic": self._drain_started_monotonic,
         }
 
     async def wait_idle(self, timeout_s: float) -> bool:

@@ -323,3 +323,48 @@ def test_reconcile_reuses_stored_epoch_no_extra_begin(
     assert kill.calls == 1
     got = store.get(intent.intent_id)
     assert got is not None and got.status == STATUS_COMPLETED
+
+
+def test_settle_uses_drain_start_boundary_not_completion(
+    tmp_path: Any, events_log: list[tuple[str, dict[str, Any]]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-17: propagation settle receives drain-start monotonic, not post-restart now()."""
+    captured: list[float | None] = []
+
+    def _fake_settle(
+        service: str,
+        probe: Any,
+        *,
+        defer_if_unreachable: bool = True,
+        settle_not_before_monotonic: float | None = None,
+    ) -> list[Any]:
+        captured.append(settle_not_before_monotonic)
+        return []
+
+    monkeypatch.setattr(
+        "charter_runner_store.propagation_terminal.settle_open_rows_for_service",
+        _fake_settle,
+    )
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE, action="restart", deadline_at="d", reason="r"
+    )
+    drain_started_mono = 1000.0
+    worker = _Worker(
+        drain_states=[
+            _snap(draining=False, epoch=0, active=1),
+            _snap(draining=True, epoch=1, active=0),
+        ],
+        begin_snap={
+            **_snap(draining=True, epoch=1, active=0),
+            "drain_started_monotonic": drain_started_mono,
+        },
+    )
+    kill = _Kill()
+    sup = _supervisor(
+        store, worker, _Feed([_drain_completed(epoch=1, worker_id="w1")]), kill
+    )
+
+    _run(sup.supervise(intent))
+
+    assert captured == [drain_started_mono]

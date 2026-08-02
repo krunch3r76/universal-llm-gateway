@@ -21,6 +21,7 @@ from .propagation_ledger import (
     fail_row,
     list_open_rows,
     set_defer_reason,
+    set_settle_boundary,
 )
 
 logger = get_logger(__name__)
@@ -115,6 +116,16 @@ def _fresh_projection(row: OpenPropagationProjection) -> OpenPropagationProjecti
     return row
 
 
+def _effective_settle_boundary(
+    row: OpenPropagationProjection,
+    settle_not_before_monotonic: float | None,
+) -> float | None:
+    """Caller boundary wins; else use the boundary persisted at defer time."""
+    if settle_not_before_monotonic is not None:
+        return settle_not_before_monotonic
+    return row.settle_boundary_monotonic
+
+
 def settle_open_row(
     row: OpenPropagationProjection,
     probe: ProbeFn,
@@ -128,6 +139,11 @@ def settle_open_row(
     )
 
     row = _fresh_projection(row)
+    boundary = _effective_settle_boundary(row, settle_not_before_monotonic)
+    if settle_not_before_monotonic is not None:
+        set_settle_boundary(row.row_id, settle_not_before_monotonic)
+        row = _fresh_projection(row)
+        boundary = _effective_settle_boundary(row, settle_not_before_monotonic)
     unsupported = reconcile_unsupported_proof_class(row)
     if unsupported is not None:
         return SettleResult(
@@ -171,13 +187,15 @@ def settle_open_row(
         )
 
     if (
-        settle_not_before_monotonic is not None
+        boundary is not None
         and _probe_is_outgoing_generation(
-            payload, settle_not_before_monotonic=settle_not_before_monotonic
+            payload, settle_not_before_monotonic=boundary
         )
     ):
         if defer_if_unreachable:
             set_defer_reason(row.row_id, _OUTGOING_DEFER)
+            if boundary is not None:
+                set_settle_boundary(row.row_id, boundary)
             return SettleResult(
                 row_id=row.row_id,
                 service=row.service,
@@ -197,7 +215,7 @@ def settle_open_row(
         _proof_matches_projection(
             row,
             payload,
-            settle_not_before_monotonic=settle_not_before_monotonic,
+            settle_not_before_monotonic=boundary,
         )
         if probe is default_probe
         else proof_matches_row(row, payload)
@@ -221,7 +239,7 @@ def settle_open_row(
     )
     ruled_out = outgoing_generation_ruled_out(
         payload,
-        settle_not_before_monotonic=settle_not_before_monotonic,
+        settle_not_before_monotonic=boundary,
         now_monotonic=time.monotonic(),
     )
     if determination == "contradicted" and ruled_out:

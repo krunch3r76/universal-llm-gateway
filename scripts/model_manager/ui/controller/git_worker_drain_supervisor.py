@@ -105,9 +105,11 @@ class GitWorkerDrainSupervisor:
     deadline_s: float = _DEFAULT_DEADLINE_S
     reconcile_interval_s: float = _DEFAULT_RECONCILE_INTERVAL_S
     progress_interval_s: float = _DEFAULT_PROGRESS_INTERVAL_S
+    _settle_boundary_monotonic: float | None = None
 
     async def supervise(self, intent: Intent) -> None:
         """Drive one intent from begin-drain to SIGTERM (or alert-only timeout)."""
+        self._settle_boundary_monotonic = None
         t0 = time.monotonic()
         deadline = t0 + self.deadline_s
         try:
@@ -170,6 +172,11 @@ class GitWorkerDrainSupervisor:
         intent.drain_epoch = epoch
         intent.worker_id = worker_id
         intent.worker_started_at = worker_started_at
+        started_mono = snapshot.get("drain_started_monotonic")
+        if isinstance(started_mono, (int, float)):
+            self._settle_boundary_monotonic = float(started_mono)
+        elif self._settle_boundary_monotonic is None:
+            self._settle_boundary_monotonic = time.monotonic()
         await events.emit_manage_restart_deferred(
             intent_id=intent.intent_id,
             service=intent.service,
@@ -266,7 +273,8 @@ class GitWorkerDrainSupervisor:
             intent_id=intent.intent_id, duration_s=time.monotonic() - t0
         )
         await self._settle_propagation_ledger(
-            intent.service, settle_not_before_monotonic=time.monotonic()
+            intent.service,
+            settle_not_before_monotonic=self._settle_boundary_monotonic,
         )
 
     # --------------------------------------------------------------- step 5
@@ -303,7 +311,8 @@ class GitWorkerDrainSupervisor:
                 intent.intent_id,
             )
             await self._settle_propagation_ledger(
-                intent.service, settle_not_before_monotonic=time.monotonic()
+                intent.service,
+                settle_not_before_monotonic=self._settle_boundary_monotonic,
             )
             return
         self.store.advance(intent.intent_id, status=STATUS_FAILED)

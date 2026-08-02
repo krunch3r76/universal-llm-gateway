@@ -30,6 +30,7 @@ class OpenPropagationProjection:
     proof_class: str
     hazard: str | None
     reason: str | None
+    settle_boundary_monotonic: float | None
 
 
 def _row_key(row: PropagationRow) -> str:
@@ -109,7 +110,8 @@ def list_open_rows(*, conn: sqlite3.Connection | None = None) -> list[OpenPropag
         cur = db.execute(
             """
             SELECT row_id, service, code_ref, safe_window, age_in_harvests,
-                   mint_thread, mint_turn, defer_reason, proof_class, hazard, reason
+                   mint_thread, mint_turn, defer_reason, proof_class, hazard, reason,
+                   settle_boundary_monotonic
             FROM propagation_ledger
             WHERE status='open'
             ORDER BY age_in_harvests DESC, service ASC
@@ -128,6 +130,7 @@ def list_open_rows(*, conn: sqlite3.Connection | None = None) -> list[OpenPropag
                 proof_class=str(row["proof_class"]),
                 hazard=row["hazard"],
                 reason=row["reason"],
+                settle_boundary_monotonic=row["settle_boundary_monotonic"],
             )
             for row in cur.fetchall()
         ]
@@ -202,6 +205,61 @@ def set_proof_class(
             """,
             (proof_class, now, row_id),
         )
+    finally:
+        if own_conn:
+            db.close()
+
+
+def set_settle_boundary(
+    row_id: str,
+    settle_boundary_monotonic: float,
+    *,
+    conn: sqlite3.Connection | None = None,
+) -> None:
+    """Persist the drain/restart boundary used when this row was deferred."""
+    own_conn = conn is None
+    db = conn or open_ledger_db()
+    now = time.time()
+    try:
+        execute_with_retry(
+            db,
+            """
+            UPDATE propagation_ledger
+            SET settle_boundary_monotonic = ?, updated_at = ?
+            WHERE row_id = ? AND status='open'
+            """,
+            (settle_boundary_monotonic, now, row_id),
+        )
+    finally:
+        if own_conn:
+            db.close()
+
+
+def reopen_failed_row(
+    row_id: str,
+    *,
+    reason: str,
+    conn: sqlite3.Connection | None = None,
+) -> bool:
+    """Revert a wrongly failed row to open — clears terminal proof, keeps history in reason."""
+    own_conn = conn is None
+    db = conn or open_ledger_db()
+    now = time.time()
+    try:
+        cur = execute_with_retry(
+            db,
+            """
+            UPDATE propagation_ledger
+            SET status='open',
+                proof_payload=NULL,
+                closed_at=NULL,
+                defer_reason=?,
+                updated_at=?
+            WHERE row_id=? AND status='failed'
+            """,
+            (reason, now, row_id),
+        )
+        return cur.rowcount > 0
     finally:
         if own_conn:
             db.close()
@@ -297,8 +355,10 @@ __all__ = [
     "fail_row",
     "list_open_rows",
     "mint_row_id",
+    "reopen_failed_row",
     "scoreboard_projection",
     "set_defer_reason",
     "set_proof_class",
+    "set_settle_boundary",
     "upsert_open_rows",
 ]

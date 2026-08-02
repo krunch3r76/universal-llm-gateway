@@ -265,3 +265,56 @@ def test_probe_is_outgoing_generation_guard_condition() -> None:
     assert not _probe_is_outgoing_generation(
         {"code_version": "sha"}, settle_not_before_monotonic=settle_not_before
     )
+
+
+def test_ac17_completion_boundary_prevents_first_pass_close(
+    tmp_path, monkeypatch
+) -> None:
+    """Regression: production passed completion monotonic — rows never close on first settle."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    sha = "abc1230000000000000000000000000000000000"
+    upsert_open_rows([_row(code_ref=sha)])
+    row = list_open_rows()[0]
+    drain_start_boundary = time.monotonic() - 30.0
+    completion_boundary = time.monotonic()
+
+    def probe(_service: str) -> dict[str, float | int | str]:
+        return {"code_version": sha, "uptime_s": 2.0, "pid": 526100}
+
+    broken = settle_open_row(
+        row,
+        probe,
+        defer_if_unreachable=True,
+        settle_not_before_monotonic=completion_boundary,
+    )
+    assert broken.outcome == "deferred"
+    assert "outgoing generation" in broken.detail
+    assert len(list_open_rows()) == 1
+
+    fixed = settle_open_row(
+        list_open_rows()[0],
+        probe,
+        defer_if_unreachable=True,
+        settle_not_before_monotonic=drain_start_boundary,
+    )
+    assert fixed.outcome == "closed"
+    assert list_open_rows() == []
+
+
+def test_reconcile_uses_persisted_row_boundary(tmp_path, monkeypatch) -> None:
+    """Deferred rows reconcile with stored boundary — no wall-clock re-derivation."""
+    from charter_runner_store.propagation_ledger import set_settle_boundary
+
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    sha = "abc1230000000000000000000000000000000000"
+    upsert_open_rows([_row(code_ref=sha)])
+    row = list_open_rows()[0]
+    drain_start_boundary = time.monotonic() - 30.0
+    set_settle_boundary(row.row_id, drain_start_boundary)
+
+    def probe(_service: str) -> dict[str, float | int | str]:
+        return {"code_version": sha, "uptime_s": 2.0, "pid": 526100}
+
+    report = reconcile_all_open_rows(probe)
+    assert report["closed"] == 1
+    assert report["after_open"] == 0
