@@ -55,6 +55,48 @@ def cdp_ask_followup_paste_verified(
     )
 
 
+@event_factory
+def cdp_ask_followup_reattach_attempt(
+    *,
+    chat_url: str,
+    holder: str,
+    purpose: str | None,
+) -> Event:
+    """Emit when opt-in warm reattach starts navigating to a CSE URL."""
+    return Event(
+        signal="cdp_ask.followup.reattach_attempt",
+        role="observation",
+        scope="node",
+        payload={
+            "chat_url": chat_url,
+            "holder": holder,
+            "purpose": purpose,
+        },
+    )
+
+
+@event_factory
+def cdp_ask_followup_reattach_result(
+    *,
+    registration_id: str | None,
+    lane_created: bool,
+    ok: bool,
+    error_code: str | None,
+) -> Event:
+    """Emit after warm reattach completes (lane reused, launched, or typed failure)."""
+    return Event(
+        signal="cdp_ask.followup.reattach_result",
+        role="observation",
+        scope="node",
+        payload={
+            "registration_id": registration_id,
+            "lane_created": lane_created,
+            "ok": ok,
+            "error_code": error_code,
+        },
+    )
+
+
 def emit(event: Event) -> None:
     """Best-effort UDS ingest — never raises."""
     sock_path = os.environ.get(

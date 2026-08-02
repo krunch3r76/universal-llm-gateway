@@ -112,6 +112,28 @@ ensure_chrome(port, profile) ⇒ attach_cdp
 
 `/new` converse: `--converse --no-uuid` (not `--no-uuid` alone — 24611). Mechanics: `libs/claude_bundles/chat_cowork_mode.py`.
 
+### Cowork is multitask — mid-run context does NOT interrupt (operator bind 2026-08-01)
+
+```
+∀ live Cowork CSE mid-run:
+  send(context) ⇏ interrupt(agent)          # queues; agent picks up
+  agent MAY: read → judge relevance → act ∨ defer
+  ⇒ ¬ withhold(correction) on "don't interrupt" grounds
+```
+
+A message delivered into a running Cowork session is **not** a preemption. The
+seat reads it, decides whether it bears on the current task, and either folds it
+in or defers it. Cowork is a multitask surface by design.
+
+**Consequence for seats:** "I'll wait for harvest so I don't derail the run" is
+**not** a valid reason to hold a correction, a falsifier, or newly-bound operator
+context. That reasoning treats a live CSE as an archive, which § Warm follow-up
+duty already forbids. Deliver it; let the seat triage.
+
+Still true, and not in tension: **rate and form** govern (observation-shaped, not
+verdict-shaped), and a *fresh* dispatch is a different act with real cost. This
+clause removes the interruption objection only.
+
 ## web-anthropic-cdp dispatch constraints (BINDING — 24906)
 
 ```
@@ -189,6 +211,20 @@ A retained operator-proxy CSE is a **live correspondent**, not an archive. Reach
 | Audit trail for either | bus turn **accompanies** — ¬ substitutes |
 
 `in_chat_delivery ≻ bus_NOTE` · identity ladder `chat_url ≻ registration_id ≻ execution_id` · **v1 = attached lane only** (no post-deregister reattach).
+
+#### Followup failure triage (2026-08-01 — do not misread the error)
+
+| Error | What it actually means | Next move |
+|---|---|---|
+| `lane_not_attached` after passing **only** `execution_id` | Often **wrong id space**. A `cdp/*` `team_dispatch` returns a **Stargate** id; the satellite mints its own (see harvest archive `execution_id:`). The resolver maps exe→registration and **bails before scanning any lane** when that lookup misses — so this error does **not** prove the CSE is gone | Retry with `chat_url` (highest precedence — skips the mapping and scans all lanes), or with the **satellite** id from the archive |
+| `cse_not_found_on_lane` | Lanes were scanned; the page is **not open** on any attached lane. The URL may still be perfectly valid | Honest dead end for v1 — see below |
+| Both, with `list_active()` empty | No attached Chrome lane at all; the lane was torn down after harvest | Fresh `team_dispatch(model=cdp/…)` |
+
+**Why a valid URL is not enough:** warm followup drives a browser page that is
+**already open** on an attached lane. `followup_resolve` "never registers lanes,
+opens profiles, or navigates to CSE URLs" — by design. So reattach is blocked by a
+missing *navigate-an-attached-lane-to-a-known-CSE-URL* step, not by the chat
+expiring. `¬` report this to an operator as "the session is gone."
 
 **Anti-patterns:** bus NOTE + operator push reminder standing in as the *delivery* of a wake the seat could have read in chat; reaching SSH-first for `cowork_chat_followup.py` from an IDE seat that holds the MCP (CLI is the escape, for hub checkout / no attached lane); `op=submit` onto `/new` for a turn that belongs on a retained CSE; describing shipped followup as an "MCP gap" or "feature candidate".
 

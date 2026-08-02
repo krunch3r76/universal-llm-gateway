@@ -11,6 +11,9 @@ trigger_match_terms:
   - cursor-sdk
   - CDP escalate
   - project_ask
+  - explore
+  - Explore subagent
+  - recon
 ---
 # Lean Context = Dispatch-First — Stub
 
@@ -24,6 +27,28 @@ ladder, CDP predicate, and guardrails only.
 stays orchestrator.` Pre-action gate: before any non-trivial implement or breadth
 investigation, ask **"can this be a dispatch?"** — default **yes**, unless
 trivial/local or latency-sensitive tight-loop debugging.
+
+## Read-side: Explore-first (recon)
+
+Dispatch is the **write**-side lean move; **Explore** is the **read**-side one.
+`Task(subagent_type="explore", …)` — Cursor's built-in **Explore** subagent — is
+read-only, runs a fast model, and returns a summary instead of raw search spray.
+In-seat Grep/Read is what the UI calls "Exploring"; that is **not** Explore.
+
+**Fire Explore autonomously when ANY:**
+
+- loci **unknown** — you cannot name the file(s) that answer the question
+- the question spans **≥3 files** or an unfamiliar subsystem
+- you are about to run a **2nd speculative** `Grep`/`Glob` round to locate something
+- **≥2 independent** recon questions — launch them in **parallel** (one message)
+
+**Anti-trigger (stay in-seat):** loci known (path in hand ∨ one grep away) ·
+you need file contents **verbatim** in main context because you are about to edit
+them · latency-sensitive tight-loop debugging.
+
+Cheap ∧ read-only ⇒ **¬ operator-gated**, **¬ announce line** required. Omit
+`model=` (Explore's own default is the workflow-primary; an explicit slug re-enters
+the non-primary gate below). Full gate + verification: `subagent-strategy`.
 
 ## Escalation ladder
 

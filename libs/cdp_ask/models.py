@@ -302,6 +302,8 @@ class FollowupProjectAskRequest(BaseModel):
     prompt_uri: str | None = None
     prompt_path: str | None = None
     timeout_s: int = 60
+    reattach: bool = False
+    retain_lane: bool = False
 
 
 class FollowupProjectAskResponse(BaseModel):
@@ -317,3 +319,5 @@ class FollowupProjectAskResponse(BaseModel):
     error: str | None = None
     detail: str | None = None
     candidates: list[FollowupCandidateInfo] | None = None
+    reattach_used: bool = False
+    lane_created: bool = False

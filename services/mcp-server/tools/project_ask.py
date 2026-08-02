@@ -103,6 +103,8 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
         expected_size: Literal["small", "large", "auto"] = "auto",
         harvest_source: Literal["chat", "output-file", "auto"] = "auto",
         download_output: bool = False,
+        reattach: bool = False,
+        retain_lane: bool = False,
     ) -> dict[str, Any]:
         """Submit, poll, abort, followup, or list active CDP project-ask work.
 
@@ -136,7 +138,9 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
             for large advisories. ``timeout_s`` on followup is the relay paste
             budget (recommend 60); v2 fallback is async followup id + poll if
             pastes exceed synchronous relay (not implemented in v1). CLI escape:
-            ``scripts/cortex/cowork_chat_followup.py``.
+            ``scripts/cortex/cowork_chat_followup.py``. ``reattach=true`` with
+            ``chat_url`` navigates an attached lane when the CSE tab is closed;
+            ``retain_lane=true`` keeps a newly registered lane after paste.
 
         ``purpose``: default ``ask``. For operator-proxy missions prefer
         ``team_dispatch(model=cdp/…, purpose=operator-proxy|mission)`` —
@@ -224,7 +228,8 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
             active_work: {busy, running_count, execution_ids, rows, soft_limit,
                 hard_limit, free_slots, at_soft_limit, at_hard_limit}
             followup: {ok, url?, registration_id?, execution_id?, pasted_at?,
-                send_verified, streaming_at_paste?, error?, detail?, candidates?}
+                send_verified, streaming_at_paste?, error?, detail?, candidates?,
+                reattach_used?, lane_created?}
         """
         if op == "followup":
             identity = any(
@@ -256,8 +261,10 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
                     "prompt_uri": prompt_uri,
                     "prompt_path": prompt_path,
                     "timeout_s": int(paste_budget),
+                    "reattach": reattach,
+                    "retain_lane": retain_lane,
                 }.items()
-                if v is not None and v != ""
+                if v is not None and v != "" and v is not False
             }
             result = _relay(
                 "POST",
