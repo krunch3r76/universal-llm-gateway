@@ -282,6 +282,7 @@ def test_mcp_wire_name_resolves_to_logical_tool_in_observation(
     )
     assert result.tool_calls[0].tool_name == "cortex"
     assert _capture_emitted[0].payload["tool_name"] == "cortex"
+    assert _capture_emitted[0].payload["result_body_status"] == "present"
 
 
 def test_target_path_parsed_from_write_args() -> None:

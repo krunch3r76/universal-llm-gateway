@@ -24,6 +24,9 @@ from universal_event_bus import Event, event_factory
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_sdk_events import emit_frontier_event
+from services.git_integration_worker.cursor_sdk_toolcall_retention import (
+    prepare_toolcall_result_retention,
+)
 from services.git_integration_worker.cursor_sdk_usage_extract import (
     finalize_dispatch_usage,
 )
@@ -116,6 +119,10 @@ def FrontierSdkWorkerToolCall(  # noqa: N802
     truncated: list[str],
     truncated_any: bool,
     execution_id: str | None = None,
+    result_body: object | None = None,
+    result_body_status: str | None = None,
+    result_retention_window_s: int | None = None,
+    result_retention_expires_at_unix_ms: int | None = None,
 ) -> Event:
     # Per-tool-call detail from run.stream() — a channel distinct from the
     # finalized run.conversation() RPC. A call the runtime truncates/rejects
@@ -135,6 +142,14 @@ def FrontierSdkWorkerToolCall(  # noqa: N802
     }
     if execution_id:
         payload["execution_id"] = execution_id
+    if result_body_status is not None:
+        payload["result_body_status"] = result_body_status
+    if result_retention_window_s is not None:
+        payload["result_retention_window_s"] = result_retention_window_s
+    if result_retention_expires_at_unix_ms is not None:
+        payload["result_retention_expires_at_unix_ms"] = result_retention_expires_at_unix_ms
+    if result_body is not None:
+        payload["result_body"] = result_body
     return Event(
         signal="frontier.sdk.worker.toolcall",
         payload=payload,
@@ -292,6 +307,12 @@ def observe_run_stream(
                     dispatch_id,
                     exc_info=True,
                 )
+        retention = prepare_toolcall_result_retention(
+            observation.result,
+            truncated_fields=observation.truncated_fields,
+            result_bytes=observation.result_bytes,
+            status=observation.status,
+        )
         emit_frontier_event(
             FrontierSdkWorkerToolCall(
                 dispatch_id=dispatch_id,
@@ -305,6 +326,7 @@ def observe_run_stream(
                 truncated=list(observation.truncated_fields),
                 truncated_any=observation.truncated_any,
                 execution_id=execution_id,
+                **retention.as_event_fields(),
             )
         )
 
