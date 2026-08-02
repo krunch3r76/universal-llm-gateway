@@ -96,7 +96,7 @@ def test_half_unreachable_composite_probe_is_indeterminate(tmp_path, monkeypatch
         settle_not_before_monotonic=time.monotonic() - 30.0,
     )
     assert result.outcome == "deferred"
-    assert "no readable code_version" in result.detail
+    assert "unevaluable" in result.detail.lower()
     assert len(list_open_rows()) == 1
 
 
@@ -166,13 +166,13 @@ def test_reconcile_before_after_counts(tmp_path, monkeypatch) -> None:
     sha_b = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     upsert_open_rows(
         [
-            _row(service="mcp", code_ref=sha_a),
-            _row(service="mcp", code_ref=sha_b),
+            _row(service="git_integration_worker", code_ref=sha_a),
+            _row(service="git_integration_worker", code_ref=sha_b),
         ]
     )
 
     def probe(service: str) -> dict[str, str] | None:
-        if service == "mcp":
+        if service == "git_integration_worker":
             return {"code_version": sha_a}
         return None
 
@@ -444,3 +444,31 @@ def test_reconcile_sweep_ancestry_row_stays_open(tmp_path, monkeypatch) -> None:
     assert report["closed"] == 0
     assert report["failed"] == 0
     assert report["after_open"] == 1
+
+
+def test_client_visible_mcp_flat_payload_does_not_close_satisfied(
+    tmp_path, monkeypatch,
+) -> None:
+    """76776b54-class: flat payload must not close client_visible mcp as satisfied."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    sha = "76776b540b00d9c704d5a231f93c70bdc0a78c2c"
+    upsert_open_rows(
+        [
+            _row(
+                service="mcp",
+                code_ref=sha,
+                proof_class="client_visible",
+            ),
+        ]
+    )
+    row = list_open_rows()[0]
+
+    def flat_probe(_service: str) -> dict[str, str]:
+        return {"code_version": sha}
+
+    result = settle_open_row(row, flat_probe, defer_if_unreachable=True)
+    assert result.outcome == "deferred"
+    assert result.outcome != "closed"
+    assert "unevaluable" in result.detail.lower()
+    assert len(list_open_rows()) == 1
+    assert list_open_rows()[0].defer_reason == "proof_unevaluable_payload_shape"

@@ -13,7 +13,11 @@ from deploy_identity.code_ref_relation import (
 from implement_admission.propagation_row import PropagationRow, default_proof
 from universal_logging import get_logger
 
-from .propagation_determination import classify_probe, outgoing_generation_ruled_out
+from .propagation_determination import (
+    classify_probe,
+    outgoing_generation_ruled_out,
+    proof_evaluable,
+)
 from .propagation_ledger import (
     OpenPropagationProjection,
     close_row,
@@ -37,6 +41,7 @@ _UNCHECKABLE_HEAD = "code_ref is literal HEAD — permanently uncheckable"
 _OUTGOING_DEFER = "proof_pending_outgoing_generation"
 _UNATTRIBUTED_CONTRADICTION = "proof_contradicted_generation_unverified"
 _INDETERMINATE_PROBE = "proof_indeterminate_probe_unreadable"
+_UNEVALUABLE_PAYLOAD = "proof_unevaluable_payload_shape"
 
 
 def _probe_is_outgoing_generation(
@@ -213,6 +218,36 @@ def settle_open_row(
             code_ref=row.code_ref,
             outcome="unsettled",
             detail="probe from outgoing generation",
+        )
+
+    if (
+        row.proof_class == "client_visible"
+        and row.service == "mcp"
+        and not proof_evaluable(
+            payload,
+            proof_class=row.proof_class,
+            service=row.service,
+        )
+    ):
+        detail = (
+            "proof predicate unevaluable on payload shape — "
+            "declared proof class cannot run against this probe"
+        )
+        if defer_if_unreachable:
+            set_defer_reason(row.row_id, _UNEVALUABLE_PAYLOAD)
+            return SettleResult(
+                row_id=row.row_id,
+                service=row.service,
+                code_ref=row.code_ref,
+                outcome="deferred",
+                detail=detail,
+            )
+        return SettleResult(
+            row_id=row.row_id,
+            service=row.service,
+            code_ref=row.code_ref,
+            outcome="unsettled",
+            detail=detail,
         )
 
     observed = payload.get("code_version")

@@ -89,6 +89,32 @@ def test_disposition_mixed_executed_and_failed_floors_to_failed() -> None:
     assert _disposition_for(executions) == "failed"
 
 
+def test_disposition_any_failed_row_never_propagated() -> None:
+    """Failed-axis: no execution set containing failed may yield propagated."""
+    failed_variants = [
+        _exec("mcp", "failed", manage={"reason": "socket refused"}),
+        _exec("cortex-api", "failed", manage={"status": "error", "reason": "manage_rpc_error"}),
+        _exec("gateway", "failed", reason="proof_class_unsupported"),
+        _exec("stargate", "submitted", manage={"status": "error", "reason": "manage_rpc_error"}),
+        _exec("rag", "executed", manage={"status": "error", "reason": "manage_error"}),
+        _exec("mcp", "unknown_status_not_in_map"),
+    ]
+    ok_variants = [
+        _exec("mcp", "executed"),
+        _exec("gateway", "submitted"),
+        _exec("stargate", "queued", reason="draining"),
+        _exec("git_integration_worker", "blocked", reason="busy"),
+    ]
+    for failed in failed_variants:
+        for ok in ok_variants:
+            disposition = _disposition_for([ok, failed])
+            assert disposition != "propagated", (
+                f"failed={failed!r} mixed with ok={ok!r} yielded propagated"
+            )
+        assert _disposition_for([failed]) != "propagated"
+        assert _disposition_for([failed, failed]) != "propagated"
+
+
 # --- uniform sets ---
 
 

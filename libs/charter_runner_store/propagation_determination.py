@@ -87,6 +87,31 @@ def classify_probe(
     return "contradicted"
 
 
+def proof_evaluable(
+    payload: dict[str, Any] | None,
+    *,
+    proof_class: str,
+    service: str,
+) -> bool:
+    """True when payload shape allows the row's declared proof predicate to run.
+
+    A flat ``code_version`` on a ``client_visible`` mcp row is not evaluable —
+    the predicate requires ``mcp_health`` and ``cortex_api`` sections. Closing
+    on ancestry via top-level ``code_version`` alone is absent evidence read as
+    satisfaction.
+    """
+    if not isinstance(payload, dict):
+        return False
+    if proof_class == "client_visible" and service == "mcp":
+        mcp_health = payload.get("mcp_health")
+        cortex_health = payload.get("cortex_api")
+        return isinstance(mcp_health, dict) and isinstance(cortex_health, dict)
+    if proof_class == "served_artifact":
+        surfaces = payload.get("surfaces")
+        return isinstance(surfaces, dict) and bool(surfaces)
+    return observed_code_versions(payload) is not None
+
+
 def outgoing_generation_ruled_out(
     payload: dict[str, Any] | None,
     *,
@@ -114,4 +139,5 @@ __all__ = [
     "classify_probe",
     "observed_code_versions",
     "outgoing_generation_ruled_out",
+    "proof_evaluable",
 ]
