@@ -80,6 +80,17 @@ def _finalize_search_response(
     warning = build_search_warnings(state, wall_truncated=wall_truncated)
     if warning:
         response["_warning"] = warning
+    matches = response.get("matches")
+    if isinstance(matches, list) and not matches:
+        response["status"] = "no_matches"
+        response["observation"] = (
+            "Search completed successfully and found no regex line matches "
+            "in the scanned scope. Zero matches ≠ tool failure."
+        )
+    else:
+        response["status"] = "ok"
+        if isinstance(matches, list):
+            response["match_count"] = len(matches)
     return response
 
 

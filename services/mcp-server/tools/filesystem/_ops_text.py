@@ -322,11 +322,18 @@ def edit_file_impl(
         raise
 
 
-def list_files_impl(directory: str = "") -> dict[str, list[str]]:
+def list_files_impl(directory: str = "") -> dict[str, list[str] | str | int]:
     """List files in *directory* within the sandboxed files directory."""
     target = safe_path(directory) if directory else SANDBOX_ROOT
     if not target.exists():
-        return {"files": []}
+        return {
+            "files": [],
+            "status": "path_not_found",
+            "observation": (
+                f"Path does not exist: {directory or '.'!r}. "
+                "Listing succeeded with zero entries — not an empty directory."
+            ),
+        }
     if not target.is_dir():
         raise ValueError(f"Path is not a directory: {directory!r}")
 
@@ -338,4 +345,14 @@ def list_files_impl(directory: str = "") -> dict[str, list[str]]:
     )
     record("mcp.tool.file.listed", directory=directory or ".", count=len(files))
     logger.debug("list_files: %s → %d files", target, len(files))
-    return {"files": files}
+    if not files:
+        return {
+            "files": [],
+            "status": "empty_directory",
+            "count": 0,
+            "observation": (
+                "Directory exists and contains no files (excluding generated images). "
+                "Listing succeeded with zero entries."
+            ),
+        }
+    return {"files": files, "status": "ok", "count": len(files)}

@@ -30,6 +30,9 @@ from services.git_integration_worker.cursor_auto.closeout_relay_reporting import
     amend_reporting_field_gaps,
     stamp_model_actual,
 )
+from services.git_integration_worker.cursor_sdk_breadth_recon import (
+    amend_breadth_recon_gaps,
+)
 from services.git_integration_worker.cursor_auto.episode_residue import (
     residue_for_closeout,
 )
@@ -361,8 +364,14 @@ def finalize_relay_payload(
         caller_auditable=caller_auditable,
         model_substitution=model_substitution,
     )
+    breadth = amend_breadth_recon_gaps(
+        reporting.body,
+        status=authored_status,
+        source=reporting.source,
+        wrapper_text=wrapper_text,
+    )
     relay_note = merge_relay_notes(
-        _merge_payload_notes(amended, overclaim, reporting),
+        _merge_payload_notes(amended, overclaim, reporting, breadth),
         synthesized_relay_note(
             closeout_source=reporting.source,
             status=authored_status,
@@ -372,9 +381,9 @@ def finalize_relay_payload(
     # git context is unavailable here; computing landed from wrapper alone caused
     # landed-not-live vs uncommitted checkpoint contradictions (arc 550).
     processed = CloseoutRelayPayload(
-        body=reporting.body,
+        body=breadth.body,
         status=authored_status,
-        source=reporting.source,
+        source=breadth.source,
         relay_note=relay_note,
         deployment_state=None,
     )

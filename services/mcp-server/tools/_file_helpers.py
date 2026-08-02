@@ -368,6 +368,17 @@ def read_file_result(
         content, range_meta = apply_line_range(content, offset, limit)
         result["content"] = content
         result.update(range_meta)
+        returned = range_meta.get("line_range", {})
+        if isinstance(returned, dict) and returned.get("returned") == 0:
+            result["observation"] = (
+                "Read succeeded; the requested line window returned zero lines "
+                f"(offset={offset}, limit={limit}, total_lines={range_meta.get('total_lines')}). "
+                "Empty content ≠ missing file."
+            )
+    elif content == "":
+        result["observation"] = (
+            "Read succeeded; file decoded to empty text (zero-byte or whitespace-only content)."
+        )
     result["read_sha256"] = read_sha256
     return result
 

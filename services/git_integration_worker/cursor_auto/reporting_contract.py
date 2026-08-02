@@ -21,6 +21,7 @@ Checklist — name each explicitly in §2:
 - **ACCESS** — what you could and could not reach (stated separately from result)
 - **COVERAGE** — for every retrieval: corpus, count, actual date/ID range
 - **MODEL ACTUAL** — resolved model when it differs from requested (in artifact body)
+- **RECON METHOD** — when breadth recon was owed or taken: `explore` | `in-seat` + anti-trigger reason | `waived` + cite; omit only when pure-mechanical/implement with loci known upfront
 
 Mechanical rules (1–4, 11):
 1. SUFFICIENCY — do enough to answer what was asked; subset OK, subset-as-whole is not

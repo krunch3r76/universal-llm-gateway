@@ -32,6 +32,22 @@ _DELIVERABLE_ROUTING_PREAMBLE = (
     "instead of silently truncating durable binds."
 )
 
+_BREADTH_RECON_PREAMBLE = (
+    "BREADTH RECON — EXPLORE DEFAULT (mandatory when owed):\n"
+    "When breadth recon is owed — loci unknown, question spans ≥3 files or an "
+    "unfamiliar subsystem, you are about a 2nd speculative Grep/Glob round, or "
+    "the packet contract is investigate/light-bounded recon — your default read "
+    "move is Task(subagent_type=\"explore\", …). Explore is the Cursor subagent "
+    "(¬ in-seat Grep spray, ¬ a separate tool).\n"
+    "Anti-triggers (in-seat Grep/Read OK): loci known (path in hand ∨ one grep "
+    "away); you need file contents verbatim because you are about to edit them; "
+    "latency-sensitive tight-loop debugging.\n"
+    "Closeout MUST include a recon_method line: "
+    "`recon_method: explore` | `recon_method: in-seat` + one-line anti-trigger reason "
+    "| `recon_method: waived` + packet cite. Omitting recon_method when breadth recon "
+    "was owed is a scope-delta defect the relay may flag (advisory)."
+)
+
 _IMPLEMENT_PREAMBLE = (
     "Execute this task NOW using your tools. Make the code/file changes the packet "
     "specifies. If you are blocked, reply with `status: blocked` and the specific "
@@ -100,7 +116,7 @@ def resolve_prompt_preamble(
     else:
         preamble = ""
 
-    parts = [_DELIVERABLE_ROUTING_PREAMBLE]
+    parts = [_DELIVERABLE_ROUTING_PREAMBLE, _BREADTH_RECON_PREAMBLE]
     if preamble:
         parts.append(preamble.strip())
     return "\n\n".join(parts) + "\n\n"

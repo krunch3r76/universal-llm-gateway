@@ -57,6 +57,18 @@ Irreversible ops (cortex supersede, file overwrite, entity delete) require an in
 
 **Upstream dispatch terminal (lead/orchestrator):** before dedup/prune/trash/move/rename on paths a prior dispatch may still write, confirm that dispatch is TERMINAL (`consult-routing` § Post-dispatch output mutation gate). Partial completion (downloads done, indexing pending) does not satisfy the precondition — friction 23842.
 
+## D-recon — Breadth recon Explore-default (cursor-sdk executor)
+
+When the packet owes **breadth recon** (loci unknown, ≥3 files / unfamiliar subsystem, investigate/light-bounded recon, or recon-default front-half), the default read move is **`Task(subagent_type="explore", …)`** — not in-seat Grep/Glob spray. The bridge injects this via `cursor_sdk_packet._BREADTH_RECON_PREAMBLE` on every dispatch; packet authors mirror triggers here.
+
+| Owed | Default | Anti-trigger (document in closeout) |
+|---|---|---|
+| Loci unknown | Explore subagent | Path in hand ∨ one grep away |
+| ≥3 files / unfamiliar subsystem | Explore subagent | About to edit — need verbatim in main context |
+| 2nd speculative Grep/Glob round | Explore subagent | Latency-sensitive tight-loop debug |
+
+**Closeout register:** include `recon_method: explore` | `recon_method: in-seat` + one-line reason | `recon_method: waived` + cite. Relay may append advisory `recon:breadth_explore_not_used` when contract/heuristic says breadth was owed, subagents surface lacks `explore`, and closeout omits `recon_method` — **advisory only** (anti-triggers are valid; blocking would false-positive).
+
 ## Pre-dispatch checklist
 
 - [ ] Implement contract: `entity_get(todo:{slug})`; confirm `workflow_state ∈ {open,in_progress}`. Entity is canonical; boot-card/bus rows may be stale.

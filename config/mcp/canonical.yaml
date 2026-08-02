@@ -1059,12 +1059,13 @@ tools:
   flat_call_shape:
     tool: cortex_search
     substrate_qualified: user-vortex__cortex_search
-  fol_descriptor: 'Hybrid search: FTS5 fulltext + vector similarity, CombMAX score fusion; search_mode
-    in response.
+  fol_descriptor: "Hybrid search: FTS5 fulltext + vector similarity, CombMAX score fusion; search_mode
+    in response. total=0 ⟹ items=[] with explicit total — zero hits ≠ retrieval failure; check search_mode
+    and query bounds before inferring absence (ACI observation hygiene).
 
     See agent_skill:cortex.
 
-    '
+    "
   json_schema:
     type: object
     properties:
@@ -2346,9 +2347,7 @@ tools:
   flat_call_shape:
     tool: fs_read
     substrate_qualified: user-vortex__fs_read
-  fol_descriptor: "∀ path ∈ str: fs(read, …) routes by sandbox∨Share URI.\nsandbox optional when path
-    carries Share URI; on /mcp/life blank sandbox + relative path defaults to cortex. On /mcp/code bare
-    paths still need sandbox or Share URI. See agent_skill:fs.\n"
+  fol_descriptor: "∀ path ∈ str: fs(read, …) routes by sandbox∨Share URI.\nOptional offset/limit window (ACI): response includes line_range + total_lines + truncated; returned=0 carries observation explaining empty window ≠ missing file.\nEmpty decoded text carries observation (success, zero content). See agent_skill:fs.\n"
   json_schema:
     type: object
     properties:
@@ -2410,9 +2409,7 @@ tools:
   flat_call_shape:
     tool: fs_list
     substrate_qualified: user-vortex__fs_list
-  fol_descriptor: "∀ path ∈ str: fs(list, …) routes by sandbox∨Share URI.\nsandbox optional when path
-    carries Share URI; on /mcp/life blank sandbox + relative path defaults to cortex. On /mcp/code bare
-    paths still need sandbox or Share URI. See agent_skill:fs.\n"
+  fol_descriptor: "∀ path ∈ str: fs(list, …) routes by sandbox∨Share URI.\nZero files: status ∈ {path_not_found, empty_directory, ok} + observation — empty list ≠ silent success (ACI empty-success hygiene).\nSee agent_skill:fs.\n"
   json_schema:
     type: object
     properties:
@@ -2602,7 +2599,9 @@ tools:
     tool: fs_search
     substrate_qualified: user-vortex__fs_search
   fol_descriptor: "∀ sandbox ∈ {\"cortex\",\"workspaces\"} ∧ path ∈ str ∧ content ∈ str:\n  fs_search(sandbox,
-    path, content) ⟹\n    result.mode ∈ {\"file\",\"directory\"} ∧ matches are regex line hits.\nmode
+    path, content) ⟹\n    result.mode ∈ {\"file\",\"directory\"} ∧ matches are regex line hits.\nCapped
+    at max_results (default 50); truncated=true when cap hit. matches=[] ⟹ status=no_matches + observation
+    (successful search, zero line hits — ACI empty-success hygiene).\nmode
     ∈ {\"auto\",\"content\",\"filename\"} (default auto = annotated filename\nheuristic; content forces
     content regex search; filename = glob find,\nworkspaces only — cortex rejects it). Invalid mode ⟹
     structured error.\nConversion-aware (PDF/DOCX/ODT/EML/HTML). Read-only. See agent_skill:fs.\n"
@@ -3000,7 +2999,8 @@ tools:
     substrate_qualified: user-vortex__rag_search
   fol_descriptor: "∀ query ∈ str ∧ scope ∈ RAGScope:\n  rag_search(query, scope) ⟹\n    result ∈ List[Chunk]
     ∧ ∀ c ∈ result: c.score ≥ 0.\n  mapped=true ⇒ exact (scope,query) durable-pack hit via
-    config/mcp/rag_mapped_index.yaml (identical envelope) ∨ live rag-context fallback.\nRead-only.
+    config/mcp/rag_mapped_index.yaml (identical envelope) ∨ live rag-context fallback.\nEmpty content
+    ⟹ error envelope {\"error\": \"Pipeline returned empty results.\"} — not silent ok (ACI).\nRead-only.
     Semantic + keyword. ¬side-effects. See agent_skill:rag.\n"
   json_schema:
     type: object
@@ -3392,7 +3392,8 @@ tools:
     tool: observability_query
     substrate_qualified: user-vortex__observability_query
   fol_descriptor: "∀ op_name ∈ str: observability_query(op_name, params) ⟹\n  result ∈ List[Event].\n\
-    Read-only. Event Service parameterized query. See agent_skill:observability.\n"
+    Zero events ⟹ empty list with query metadata — distinguish from probe_error via status fields;
+    empty ≠ \"service down\" without checking error envelope (ACI).\nRead-only. Event Service parameterized query. See agent_skill:observability.\n"
   json_schema:
     type: object
     properties:
@@ -3631,7 +3632,8 @@ tools:
     tool: tool_search
     substrate_qualified: user-vortex__tool_search
   fol_descriptor: "∀ query ∈ str: tool_search_query(query) ⟹\n  results ∈ List[ManifestEntry]\n  ∧ ∀ e
-    ∈ results: e ∉ PrimaryTools.\nRead-only. Keyword ranking over overflow manifest. See agent_skill:tool_search.\n"
+    ∈ results: e ∉ PrimaryTools.\ntotal_matches=0 ⟹ results=[] + _next explaining zero overflow hits
+    (may be expected for server-primary names) — not silent empty (ACI).\nRead-only. Keyword ranking over overflow manifest. See agent_skill:tool_search.\n"
   json_schema:
     type: object
     properties:
