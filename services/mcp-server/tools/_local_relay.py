@@ -38,9 +38,9 @@ _ROUTE_TIMEOUTS: dict[tuple[str, str, str], float] = {
 # review_dismiss has no LLM stage and stays on the default budget.
 _ROUTE_SUFFIX_TIMEOUTS: list[tuple[str, str, str, float]] = [
     ("email-bridge", "POST", "/extract", 200.0),
-    # Handoff wait long-polls server-side up to MAX_WAIT_SECONDS (60); the relay
+    # Handoff wait long-polls server-side up to MAX_WAIT_SECONDS (300); the relay
     # budget must exceed it or the client aborts a still-blocking wait.
-    ("agent-bus", "GET", "/wait", 75.0),
+    ("agent-bus", "GET", "/wait", 320.0),
 ]
 
 _SERVICES: dict[str, dict[str, str]] = {

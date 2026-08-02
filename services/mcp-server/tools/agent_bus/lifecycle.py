@@ -6,6 +6,7 @@ import logging
 from typing import Any
 from urllib.parse import urlencode
 
+from agent_bus_store.routes.wait import MAX_WAIT_SECONDS
 from mcp_events import record
 
 from .._agent_bus_author import resolve_dispatch_from_agent
@@ -306,7 +307,7 @@ def _wait_dispatch(
             ),
             "reason": "unknown_completion_mode",
         }
-    wait_clamped = max(0.0, min(wait_seconds, 60.0))
+    wait_clamped = max(0.0, min(wait_seconds, MAX_WAIT_SECONDS))
     params: list[tuple[str, str]] = [
         ("after_turn", str(after_turn)),
         ("wait", str(wait_clamped)),

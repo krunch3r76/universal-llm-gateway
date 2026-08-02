@@ -181,25 +181,39 @@ after abort/conclude is not a live session — paste does **not** reactivate, re
 recommission a dead CSE (continuity hop / new window / reattach is a separate path).
 
 **Pre-paste liveness probe (BINDING — simple test first).** Before fire-or-paste, MONITOR
-confirms the target CSE is still streaming/attached (e.g. `manage busy_status` →
-`cdp_ask.live_cse_count` / registration row `status=running`, or a CDP page probe that the
-session is live). If the probe fails: **disenroll the break-in paste target** — NOTE on the
-MONITOR sibling (`break_in_target_disenrolled`), stop cadence fires against that CSE, do
-**not** paste. Re-enroll only when a new live CSE is attached (continuity hop / reattach).
+confirms the target is **paste-eligible**, not merely "busy":
+
+| Signal | Proves | Enough to paste? |
+|---|---|---|
+| `busy_status` / `live_cse_count` / execution `running` | Observed CSE tab and/or recorded exec | **No** alone — observation ≠ registry attach |
+| `cdp_registry` active lane + open CSE page on that lane | Followup can resolve without `lane_not_attached` | Preferred |
+| Jupiter CDP port probe (`/json/list` has `/cowork/cse_…`) | Tab exists; use with `chat_url` + `reattach=true` | Escape when registry empty |
+
+If no attach path and no live CSE tab: **disenroll** the paste target — NOTE on the MONITOR
+sibling (`break_in_target_disenrolled`), stop cadence fires against that CSE, do **not** paste.
+Re-enroll only when a new live CSE is attached (continuity hop / reattach).
 **NOT-NOW residual:** heal the dead CSE or post a notice for a healer to pick up — park on
-`decision:operator-proxy-seat-posture`; ¬ invent heal in this hop.
+`decision:operator-proxy-seat-posture`; ¬ invent heal in this hop. **Attach-aware busy_status
+fields** (`followup_eligible`) are a follow-on — until then, do not equate busy with pasteable.
+
+**CLI escape:** `scripts/cortex/cowork_chat_followup.py --paste-only --timeout-s N` against the
+CSE's CDP port — paste-only skips assistant-reply wait (BREAK_IN must not hang on Opus
+streaming); process hard-walls at `timeout_s+slack`. Default (no `--paste-only`) still waits
+for a reply and can refresh idle clocks while streaming.
 
 **Anti-triggers:** every notify · every CLOSEOUT · idle tick with no land · mechanical
 verify-only legs · dead/disenrolled paste target.
 
-**Read-back is the sole honesty gate.** With no human in the loop, `send_verified=true` is not
-delivery evidence (a:27502 class — false paste claim at 6661 t41, retracted t42). Claim delivery
-only after CDP conversation read-back shows the markers (`TYPE: BREAK_IN`, model attribution,
-suggestion text); absent them log `break_in_delivery_unverified` and retry or hop. Never narrate
-delivery from the MCP return. Prefer **#2-unique** markers when a prior break-in is already in
-the CSE (do not mistake break-in #1 text for #2). Mid-stream CSE UI may nest a delivered
-`user-message` under `aria-label="Currently streaming message"` — page text can be present while
-the human view looks empty; scroll/expand before declaring unverified.
+**Read-back is the sole honesty gate for BREAK_IN claims.** MCP `send_verified` is now
+**fail-closed on marker presence** (prefer `#N-unique:…` in prompt; count growth alone is
+rejected — a:27502 / 6661#4 false-OK class), but it is still **not** sufficient to narrate
+delivery. Claim delivery only after CDP conversation read-back shows the markers
+(`TYPE: BREAK_IN`, `#N-unique`, suggestion text); absent them log
+`break_in_delivery_unverified` and retry or hop. Never narrate delivery from the MCP return
+alone. Prefer **#N-unique** markers when a prior break-in is already in the CSE (do not
+mistake break-in #1 text for #2). Mid-stream CSE UI may nest a delivered `user-message` under
+`aria-label="Currently streaming message"` — page text can be present while the human view
+looks empty; scroll/expand before declaring unverified.
 
 **`NO_BREAK_IN` is licensed.** The packet MUST permit a null verdict. A cadence obliged to
 produce a suggestion will produce one, and the lane becomes noise the operator learns to skip —

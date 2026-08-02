@@ -226,11 +226,7 @@ async def test_notify_tick_complete_dedupes_standing_blocked(
     from pager_notify import tick as tick_mod
     from pager_notify.state import claim_tick_standing_page
 
-    monkeypatch.setattr("pager_notify.state._STATE_DIR", tmp_path)
-    monkeypatch.setattr(
-        "pager_notify.state._TICK_STANDING_FILE",
-        tmp_path / "tick_standing_pager.json",
-    )
+    monkeypatch.setenv("PAGER_NOTIFY_STATE_DIR", str(tmp_path))
     pager = AsyncMock(return_value=True)
     monkeypatch.setattr(tick_mod, "notify_pager", pager)
 

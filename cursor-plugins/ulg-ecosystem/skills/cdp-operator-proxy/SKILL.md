@@ -295,7 +295,7 @@ let it close and amend afterwards — supersede voids the episode's work by desi
 | 6b | **Attended executor bind:** wire `require_attended=true` **or** body `require_attended: true` / `executor_bind: attended` (OR — either suffices); unattended nest/in-seat is then refused with `status:needs-attended` + `reason=operator_require_attended` |
 | 7 | Fetch the `status:admitted` turn; read the inline `TYPE: BRIEFING` before holding `wait` |
 | 7b | **Before every next `request` after an inbound burst:** `mark_read(through_turn=N)` — unread addressed turns ⇒ HTTP 409 `unread_turns_exist` |
-| 8 | `agent_bus(wait, poll_hint, completion=status:done)` until `TYPE: CLOSEOUT` — **Cowork ceiling `wait_seconds ≤ 45`**; long jobs ⇒ short re-polls (120 s holds kill the life MCP connection) |
+| 8 | `agent_bus(wait, poll_hint, completion=status:done)` until `TYPE: CLOSEOUT` — **Cowork continuous ceiling `wait_seconds ≤ 300`** (Anthropic MCP client hard wall, a:5129 / operator bind 2026-08-02); re-arm only after empty return or nests that outlast one hold. Park-on-WAKE remains the beyond-300s path when that todo lands — ¬ short ≤45s re-poll chains as the default |
 | 8b | On `status:blocked` + `pending_synthesized_closeout`: read in full → ack → re-deliver |
 | 8c | Long corpus ⇒ `sidecar_content` (+ optional `sidecar_slug`); keep the ten §2 fields in `body`. **`allow_long_body` is rejected on `request`** — do not invent it |
 | 9 | `TYPE: DISPOSITION` — `verdict:` on line 2; ¬ `wait(first_reply_from)` after it |
@@ -429,7 +429,7 @@ substantive answer content. **Wire-neutral authoring** (pending ratification): w
 effective contract while every admission gate still runs.
 
 **Degrade ladder (`handler_status` → move):** `auto-admit-armed` → poll `poll_hint` in short
-holds (≤45 s) · `no-auto-handler` → re-`request` after liveness · `status:blocked` → fix per
+holds (≤300 s) · `no-auto-handler` → re-`request` after liveness · `status:blocked` → fix per
 `fix_hint` · `status:needs-attended` → surface reason · `status:done` + `disposition: declined` →
 follow `routing_hint` · `disposition: propagated` / `executed` / `queued` → read `executions[]`
 (`queued` = manage drain accepted; poll liveness). Negative statuses are **claims** — observe
@@ -452,7 +452,7 @@ before re-issuing. Full templates arrive in the mission briefing inject.
 | Mint a per-mission scheduled watchdog to "remember" to harvest | Structural wake path on close — ¬ babysitters |
 | Restart `git_integration_worker` inside a dispatch whose CLOSEOUT you need | `contract: propagate` restart-only DIRECTIVE, or defer to RESIDUE + separate propagate |
 | `contract: execute` + `tool_op: manage.sync_restart` | Denied at the tier-M manifest — use `contract: propagate` |
-| `wait_seconds=120` (or an unbounded hold) on Cowork / life MCP | `wait_seconds ≤ 45` + short re-polls |
+| `wait_seconds` above 300 (or unbounded) on Cowork / life MCP | `wait_seconds ≤ 300` (client hard ceiling); re-arm after empty return |
 | Next `request` without `mark_read` after a cursor-auto burst | `mark_read(through_turn=N)` first — avoids 409 `unread_turns_exist` |
 | `allow_long_body=true` on `agent_bus.request` | Rejected on `request`; use `sidecar_content`, keep the ten §2 fields in `body` |
 | Operational choice defaulted to an operator gate | Confer with cursor first; operator for proceed / implement / irreversible only |

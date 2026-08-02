@@ -6,19 +6,34 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from claude_bundles.project_ask_conversation import send_followup_paste_half
+from claude_bundles.project_ask_conversation import (
+    send_followup_paste_half,
+    verification_marker,
+)
 
 pytestmark = pytest.mark.offline
 
 
+def test_verification_marker_prefers_unique_token() -> None:
+    prompt = (
+        "TYPE: BREAK_IN\n"
+        "#4-unique: force-not-wait-2026-08-02T10:21Z\n"
+        "primary suggestion: Force now\n"
+    )
+    assert verification_marker(prompt) == "#4-unique: force-not-wait-2026-08-02T10:21Z"
+
+
 @pytest.mark.asyncio
-async def test_send_verified_true_when_transcript_grows() -> None:
+async def test_send_verified_true_when_marker_in_growing_transcript() -> None:
     page = AsyncMock()
     page.url = "https://claude.ai/cowork/cse_test"
+    marker = "#4-unique: force-not-wait-2026-08-02T10:21Z"
+    prompt = f"TYPE: BREAK_IN\n{marker}\nForce now\n"
     page.evaluate = AsyncMock(
         side_effect=[
             {"count": 1, "last_len": 10, "last_snippet": "old"},
-            {"count": 2, "last_len": 20, "last_snippet": "hello world"},
+            {"count": 2, "last_len": 80, "last_snippet": prompt[:400]},
+            True,  # body_has
         ]
     )
     with (
@@ -32,10 +47,48 @@ async def test_send_verified_true_when_transcript_grows() -> None:
             return_value={"streaming": False, "url": page.url},
         ),
     ):
-        result = await send_followup_paste_half(page, "hello world")
+        result = await send_followup_paste_half(page, prompt)
     send_mock.assert_awaited_once()
     assert result["send_verified"] is True
     assert result["error"] is None
+    assert result["verification_marker"] == marker
+
+
+@pytest.mark.asyncio
+async def test_send_unverified_when_count_grows_without_marker() -> None:
+    """Reattach race / wrong-packet: DOM grew but unique marker absent."""
+    page = AsyncMock()
+    page.url = "https://claude.ai/cowork/cse_test"
+    prompt = (
+        "TYPE: BREAK_IN\n"
+        "#4-unique: force-not-wait-2026-08-02T10:21Z\n"
+        "primary suggestion: Force now\n"
+    )
+    page.evaluate = AsyncMock(
+        side_effect=[
+            {"count": 1, "last_len": 10, "last_snippet": "old"},
+            {
+                "count": 3,
+                "last_len": 200,
+                "last_snippet": "TYPE: BREAK_IN\n#3-unique: ask-ladder-…",
+            },
+            False,  # body_has
+        ]
+    )
+    with (
+        patch(
+            "claude_bundles.project_ask_conversation.send_prompt",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "claude_bundles.chat_reply_wait.harvest_assistant",
+            new_callable=AsyncMock,
+            return_value={"streaming": False, "url": page.url},
+        ),
+    ):
+        result = await send_followup_paste_half(page, prompt)
+    assert result["send_verified"] is False
+    assert result["error"] == "send_unverified"
 
 
 @pytest.mark.asyncio
@@ -46,6 +99,7 @@ async def test_send_unverified_when_no_transcript_delta() -> None:
         side_effect=[
             {"count": 2, "last_len": 20, "last_snippet": "same"},
             {"count": 2, "last_len": 20, "last_snippet": "same"},
+            False,
         ]
     )
     with (
@@ -59,7 +113,7 @@ async def test_send_unverified_when_no_transcript_delta() -> None:
             return_value={"streaming": True, "url": page.url},
         ),
     ):
-        result = await send_followup_paste_half(page, "ignored")
+        result = await send_followup_paste_half(page, "ignored prompt text here")
     assert result["send_verified"] is False
     assert result["error"] == "send_unverified"
     assert result["streaming_at_paste"] is True
@@ -72,7 +126,8 @@ async def test_no_wait_assistant_reply_or_resolve_harvest_body() -> None:
     page.evaluate = AsyncMock(
         side_effect=[
             {"count": 0, "last_len": 0, "last_snippet": ""},
-            {"count": 1, "last_len": 5, "last_snippet": "hi"},
+            {"count": 1, "last_len": 17, "last_snippet": "hi there mid body"},
+            True,
         ]
     )
     with (
@@ -94,6 +149,6 @@ async def test_no_wait_assistant_reply_or_resolve_harvest_body() -> None:
             new_callable=AsyncMock,
         ) as resolve_mock,
     ):
-        await send_followup_paste_half(page, "hi")
+        await send_followup_paste_half(page, "hi there mid body")
     wait_mock.assert_not_called()
     resolve_mock.assert_not_called()

@@ -50,11 +50,11 @@ def test_build_result_handle_after_turn_default_and_override() -> None:
 
 
 def test_resolve_poll_wait_seconds_seat_aware() -> None:
-    # Default web/API poller keeps the 60s server-side block.
-    assert resolve_poll_wait_seconds() == 60
-    assert resolve_poll_wait_seconds(caller_agent="claude-web") == 60
-    assert resolve_poll_wait_seconds(caller_agent="web-anthropic") == 60
-    assert resolve_poll_wait_seconds(caller_agent=None) == 60
+    # Default web/API poller keeps the 300s server-side block (a:5129 ceiling).
+    assert resolve_poll_wait_seconds() == 300
+    assert resolve_poll_wait_seconds(caller_agent="claude-web") == 300
+    assert resolve_poll_wait_seconds(caller_agent="web-anthropic") == 300
+    assert resolve_poll_wait_seconds(caller_agent=None) == 300
     # Any Cursor-IDE-platform seat gets a 0s snapshot (friction 24081 / Fable F1).
     assert resolve_poll_wait_seconds(caller_agent="cursor") == 0
     assert resolve_poll_wait_seconds(caller_agent="Cursor") == 0
@@ -70,7 +70,7 @@ def test_resolve_poll_wait_seconds_seat_aware() -> None:
 
 def test_build_poll_hint_wait_respects_wait_seconds() -> None:
     default = build_poll_hint_wait(thread_id="t9", from_agent="reviewer")
-    assert default["arguments"]["wait_seconds"] == 60
+    assert default["arguments"]["wait_seconds"] == 300
     snap = build_poll_hint_wait(thread_id="t9", from_agent="reviewer", wait_seconds=0)
     assert snap["arguments"]["wait_seconds"] == 0
     # arguments_json (the MCP wire form) must carry the same value.
@@ -79,7 +79,7 @@ def test_build_poll_hint_wait_respects_wait_seconds() -> None:
 
 def test_build_handoff_result_forwards_poll_wait_seconds() -> None:
     web = build_handoff_result(thread_id="t10", to_agent="reviewer")
-    assert web["poll_hint"]["arguments"]["wait_seconds"] == 60
+    assert web["poll_hint"]["arguments"]["wait_seconds"] == 300
     cursor = build_handoff_result(
         thread_id="t10",
         to_agent="cursor-sdk",

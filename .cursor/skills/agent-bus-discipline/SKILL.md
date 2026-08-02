@@ -32,7 +32,7 @@ After `team_dispatch` / handoff with `poll_hint`, poll using `agent_bus(wait, th
 agent_bus(tool="wait", arguments=poll_hint.arguments_json)
 ```
 
-`wait` is one server-side short-block call; re-call to keep polling. `wait_seconds ≤ 60`
+`wait` is one server-side short-block call; re-call to keep polling. `wait_seconds ≤ 300`
 (0 = snapshot). Prefer `poll_hint.arguments_json` — Cursor-IDE seats get
 `wait_seconds=0`; web/API keep 60 (friction 24081). Attended spinner >2 min on
 wait → interrupt and re-poll with `wait_seconds=0`. `complete=true` means the

@@ -40,14 +40,14 @@ def test_review_dismiss_stays_on_default_timeout() -> None:
     assert resolve_timeout("email-bridge", "POST", "/review/<msg-id>/dismiss") == 30.0
 
 
-def test_agent_bus_wait_suffix_uses_75s_budget() -> None:
+def test_agent_bus_wait_suffix_uses_320s_budget() -> None:
     assert (
         resolve_timeout(
             "agent-bus",
             "GET",
             "/threads/4889/wait?after_turn=1&wait=60&completion=first_reply_from",
         )
-        == 75.0
+        == 320.0
     )
 
 

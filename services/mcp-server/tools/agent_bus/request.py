@@ -26,7 +26,7 @@ from .send import _send_dispatch
 
 _LANE_TAG = "lane:cursor-auto"
 _SUGGESTED_INTERVAL_S = 2
-_MAX_EXPECTED_LATENCY_S = 120
+_MAX_EXPECTED_LATENCY_S = 300
 
 
 def _merge_lane_tags(tags: list[str] | None) -> list[str]:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 
 from claude_bundles.chat_reply_wait import harvest_assistant, wait_assistant_reply
@@ -26,6 +27,9 @@ from claude_bundles.project_ask import (
 from claude_bundles.project_chrome import project_url
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp
 
+# Prefer BREAK_IN / MONITOR unique markers over shared headers (TYPE: BREAK_IN).
+_UNIQUE_MARKER_RE = re.compile(r"#\d+-unique:\s*\S+")
+
 _TRANSCRIPT_MARKER_JS = """
 () => {
   const selectors = [
@@ -48,32 +52,64 @@ _TRANSCRIPT_MARKER_JS = """
       }
     }
   }
-  return { count, last_len: last.length, last_snippet: last.slice(0, 120) };
+  return { count, last_len: last.length, last_snippet: last.slice(0, 400) };
 }
 """
+
+
+def verification_marker(prompt: str) -> str:
+    """Distinctive substring that must appear in the CSE after paste.
+
+    Count-only DOM growth is not delivery proof (reattach races + wrong-packet
+    re-pastes). Prefer ``#N-unique:…``; else a mid-body slice so shared headers
+    alone cannot verify.
+    """
+    text = (prompt or "").strip()
+    if not text:
+        return ""
+    match = _UNIQUE_MARKER_RE.search(text)
+    if match:
+        return match.group(0)
+    if len(text) >= 120:
+        return text[40:120].strip()
+    return text[:80]
+
+
+def _transcript_grew(before: dict, after: dict) -> bool:
+    return after.get("count", 0) > before.get("count", 0) or (
+        after.get("last_len", 0) > before.get("last_len", 0)
+    )
 
 
 async def send_followup_paste_half(page, prompt: str) -> dict:
     """Paste *prompt* into a live CSE and verify the user turn — no reply wait.
 
-    Send-only contract: calls ``send_prompt`` and checks transcript delta for
-    the user turn. Does **not** call ``wait_assistant_reply`` or
-    ``resolve_harvest_body``. Mid-turn ``streaming_at_paste`` is reported
-    (allow + report); callers decide whether to retry later.
+    Send-only contract: calls ``send_prompt`` then **fail-closed** on marker
+    presence (not count growth alone). Does **not** call
+    ``wait_assistant_reply`` or ``resolve_harvest_body``. Mid-turn
+    ``streaming_at_paste`` is reported (allow + report); callers decide whether
+    to retry later.
     """
     import time
 
     from claude_bundles.chat_reply_wait import harvest_assistant
 
     url = page.url or ""
+    marker = verification_marker(prompt)
     before = await page.evaluate(_TRANSCRIPT_MARKER_JS)
     await send_prompt(page, prompt)
     after = await page.evaluate(_TRANSCRIPT_MARKER_JS)
-    snippet = (prompt or "").strip()[:80]
-    send_verified = after.get("count", 0) > before.get("count", 0) or (
-        after.get("last_len", 0) > before.get("last_len", 0)
-        and snippet
-        and snippet in (after.get("last_snippet") or "")
+    body_has = False
+    if marker:
+        body_has = bool(
+            await page.evaluate(
+                "(m) => ((document.body && document.body.innerText) || '').includes(m)",
+                marker,
+            )
+        )
+    in_snippet = bool(marker) and marker in (after.get("last_snippet") or "")
+    send_verified = bool(marker) and _transcript_grew(before, after) and (
+        in_snippet or body_has
     )
     state = await harvest_assistant(page)
     pasted_at = time.time()
@@ -82,6 +118,7 @@ async def send_followup_paste_half(page, prompt: str) -> dict:
         "streaming_at_paste": bool(state.get("streaming")),
         "url": str(state.get("url") or page.url or url),
         "pasted_at": pasted_at,
+        "verification_marker": marker,
         "error": None if send_verified else "send_unverified",
     }
 
