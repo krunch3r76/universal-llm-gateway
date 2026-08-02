@@ -55,7 +55,7 @@ def test_unguarded_mismatch_leaves_row_open(tmp_path, monkeypatch) -> None:
 
     result = settle_open_row(row, probe)
     assert result.outcome == "unsettled"
-    assert "not attributable" in result.detail
+    assert "unrelated or unresolvable" in result.detail
     assert len(list_open_rows()) == 1
 
 
@@ -210,17 +210,35 @@ def test_outgoing_generation_probe_defers_on_mismatch(tmp_path, monkeypatch) -> 
     assert len(list_open_rows()) == 1
 
 
-def test_genuine_post_restart_mismatch_fails(tmp_path, monkeypatch) -> None:
+def test_genuine_post_restart_stale_code_fails(tmp_path, monkeypatch) -> None:
+    """Stale observed code (older than row target) fails when attribution holds."""
+    import subprocess
+
+    from universal_workspace import get_workspace_root
+
+    root = get_workspace_root()
+    head = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    ancestor = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD~1"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
-    expected = "abc1230000000000000000000000000000000000"
-    upsert_open_rows([_row(code_ref=expected)])
+    upsert_open_rows([_row(code_ref=head)])
     row = list_open_rows()[0]
     settle_not_before = time.monotonic() - 30.0
 
     def probe(_service: str) -> dict[str, float | str]:
         return {
-            "code_version": "other0000000000000000000000000000000000",
+            "code_version": ancestor,
             "uptime_s": 2.0,
+            "pid": 4242,
         }
 
     result = settle_open_row(
@@ -230,7 +248,7 @@ def test_genuine_post_restart_mismatch_fails(tmp_path, monkeypatch) -> None:
         settle_not_before_monotonic=settle_not_before,
     )
     assert result.outcome == "failed"
-    assert "mismatch" in result.detail
+    assert "stale code" in result.detail
     assert list_open_rows() == []
 
 
@@ -318,3 +336,111 @@ def test_reconcile_uses_persisted_row_boundary(tmp_path, monkeypatch) -> None:
     report = reconcile_all_open_rows(probe)
     assert report["closed"] == 1
     assert report["after_open"] == 0
+
+
+def test_ancestry_satisfied_descendant_version_defers_not_closed(
+    tmp_path, monkeypatch
+) -> None:
+    """Case (ii): newer live code must not close or fail the row."""
+    import subprocess
+
+    from charter_runner_store.propagation_version_satisfaction import (
+        DEFER_ANCESTRY_SATISFIED,
+    )
+    from universal_workspace import get_workspace_root
+
+    root = get_workspace_root()
+    head = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    ancestor = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD~1"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    upsert_open_rows([_row(code_ref=ancestor)])
+    row = list_open_rows()[0]
+    settle_not_before = time.monotonic() - 30.0
+
+    def probe(_service: str) -> dict[str, float | int | str]:
+        return {"code_version": head, "uptime_s": 2.0, "pid": 9001}
+
+    result = settle_open_row(
+        row,
+        probe,
+        defer_if_unreachable=True,
+        settle_not_before_monotonic=settle_not_before,
+    )
+    assert result.outcome == "deferred"
+    assert result.outcome != "closed"
+    assert result.outcome != "failed"
+    assert "ancestry satisfied" in result.detail
+    refreshed = list_open_rows()[0]
+    assert refreshed.defer_reason == DEFER_ANCESTRY_SATISFIED
+
+
+def test_unrelated_sweep_does_not_fail_with_boundary(tmp_path, monkeypatch) -> None:
+    """Case (iii): unrelated ref must not terminally fail even with attribution."""
+    from charter_runner_store.propagation_version_satisfaction import (
+        DEFER_UNRELATED_OR_UNRESOLVABLE,
+    )
+
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    expected = "abc1230000000000000000000000000000000000"
+    upsert_open_rows([_row(code_ref=expected)])
+    row = list_open_rows()[0]
+    settle_not_before = time.monotonic() - 30.0
+
+    def probe(_service: str) -> dict[str, float | str]:
+        return {
+            "code_version": "other0000000000000000000000000000000000",
+            "uptime_s": 2.0,
+            "pid": 9002,
+        }
+
+    result = settle_open_row(
+        row,
+        probe,
+        defer_if_unreachable=True,
+        settle_not_before_monotonic=settle_not_before,
+    )
+    assert result.outcome == "deferred"
+    assert result.outcome != "failed"
+    assert len(list_open_rows()) == 1
+    assert list_open_rows()[0].defer_reason == DEFER_UNRELATED_OR_UNRESOLVABLE
+
+
+def test_reconcile_sweep_ancestry_row_stays_open(tmp_path, monkeypatch) -> None:
+    """Sweep against ancestry-satisfied row must not produce closed or failed."""
+    import subprocess
+
+    from universal_workspace import get_workspace_root
+
+    root = get_workspace_root()
+    head = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    ancestor = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD~1"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    upsert_open_rows([_row(code_ref=ancestor)])
+
+    def probe(_service: str) -> dict[str, str]:
+        return {"code_version": head}
+
+    report = reconcile_all_open_rows(probe)
+    assert report["closed"] == 0
+    assert report["failed"] == 0
+    assert report["after_open"] == 1

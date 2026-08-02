@@ -265,6 +265,36 @@ def reopen_failed_row(
             db.close()
 
 
+def reopen_closed_row(
+    row_id: str,
+    *,
+    reason: str,
+    conn: sqlite3.Connection | None = None,
+) -> bool:
+    """Revert a wrongly closed row to open — clears terminal proof, keeps history in reason."""
+    own_conn = conn is None
+    db = conn or open_ledger_db()
+    now = time.time()
+    try:
+        cur = execute_with_retry(
+            db,
+            """
+            UPDATE propagation_ledger
+            SET status='open',
+                proof_payload=NULL,
+                closed_at=NULL,
+                defer_reason=?,
+                updated_at=?
+            WHERE row_id=? AND status='closed'
+            """,
+            (reason, now, row_id),
+        )
+        return cur.rowcount > 0
+    finally:
+        if own_conn:
+            db.close()
+
+
 def fail_row(
     row_id: str,
     *,
@@ -355,6 +385,7 @@ __all__ = [
     "fail_row",
     "list_open_rows",
     "mint_row_id",
+    "reopen_closed_row",
     "reopen_failed_row",
     "scoreboard_projection",
     "set_defer_reason",

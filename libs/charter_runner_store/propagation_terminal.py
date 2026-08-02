@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from deploy_identity.code_ref_relation import (
-    code_ref_relation_from_observed,
     code_ref_satisfied,
 )
 from implement_admission.propagation_row import PropagationRow, default_proof
@@ -22,6 +21,11 @@ from .propagation_ledger import (
     list_open_rows,
     set_defer_reason,
     set_settle_boundary,
+)
+from .propagation_version_satisfaction import (
+    DEFER_ANCESTRY_SATISFIED,
+    DEFER_UNRELATED_OR_UNRESOLVABLE,
+    classify_version_satisfaction,
 )
 
 logger = get_logger(__name__)
@@ -211,43 +215,68 @@ def settle_open_row(
             detail="probe from outgoing generation",
         )
 
-    matches = (
+    observed = payload.get("code_version")
+    observed_str = observed if isinstance(observed, str) else None
+    satisfaction = classify_version_satisfaction(row.code_ref, observed_str)
+    relation = satisfaction.relation
+
+    exact_match = satisfaction.case == "exact_match"
+    proof_passes = (
         _proof_matches_projection(
             row,
             payload,
             settle_not_before_monotonic=boundary,
         )
         if probe is default_probe
-        else proof_matches_row(row, payload)
+        else proof_matches_row(row, payload) and exact_match
     )
-    determination = classify_probe(payload, code_ref=row.code_ref, matched=matches)
-    if determination == "matched":
-        close_row(row.row_id, proof_payload=payload)
+    determination = classify_probe(
+        payload, code_ref=row.code_ref, matched=exact_match and proof_passes
+    )
+
+    if determination == "matched" and satisfaction.case == "exact_match":
+        close_payload = {
+            **payload,
+            "code_ref_relation": relation,
+            "version_satisfaction_case": satisfaction.case,
+        }
+        close_row(row.row_id, proof_payload=close_payload)
         return SettleResult(
             row_id=row.row_id,
             service=row.service,
             code_ref=row.code_ref,
             outcome="closed",
-            detail=f"proof matched code_ref={row.code_ref}",
+            detail=f"exact match: code_version equals code_ref={row.code_ref}",
         )
 
-    observed = payload.get("code_version")
-    relation = (
-        payload.get("code_ref_relation")
-        if isinstance(payload.get("code_ref_relation"), str)
-        else code_ref_relation_from_observed(row.code_ref, observed)
-    )
+    if satisfaction.case == "ancestry_satisfied":
+        detail = (
+            f"ancestry satisfied: newer code live "
+            f"(expected {row.code_ref} observed {observed!r}; "
+            f"relation={relation}) — {satisfaction.reader_entitlement}"
+        )
+        if defer_if_unreachable:
+            set_defer_reason(row.row_id, DEFER_ANCESTRY_SATISFIED)
+        return SettleResult(
+            row_id=row.row_id,
+            service=row.service,
+            code_ref=row.code_ref,
+            outcome="deferred" if defer_if_unreachable else "unsettled",
+            detail=detail,
+        )
+
     ruled_out = outgoing_generation_ruled_out(
         payload,
         settle_not_before_monotonic=boundary,
         now_monotonic=time.monotonic(),
     )
-    if determination == "contradicted" and ruled_out:
+    if satisfaction.case == "stale_code" and determination == "contradicted" and ruled_out:
         fail_payload = {
             **payload,
             "expected_code_ref": row.code_ref,
             "observed_code_version": observed,
             "code_ref_relation": relation,
+            "version_satisfaction_case": satisfaction.case,
         }
         fail_row(
             row.row_id,
@@ -259,13 +288,31 @@ def settle_open_row(
             service=row.service,
             code_ref=row.code_ref,
             outcome="failed",
-            detail=f"mismatch: expected {row.code_ref} observed {observed!r}",
+            detail=f"stale code: expected {row.code_ref} observed {observed!r}",
         )
 
-    # Either the probe did not answer (unreadable or half-unreachable payload),
-    # or it contradicted the target but cannot be attributed to the incoming
-    # generation. Failing here is terminal and unrecoverable, so the row stays
-    # open and correctable instead.
+    if satisfaction.case == "unrelated_or_unresolvable":
+        if determination == "indeterminate":
+            reason = _INDETERMINATE_PROBE
+            detail = "probe carried no readable code_version — row left open"
+        else:
+            reason = DEFER_UNRELATED_OR_UNRESOLVABLE
+            detail = (
+                f"unrelated or unresolvable "
+                f"(expected {row.code_ref} observed {observed!r}; "
+                f"relation={relation}) — {satisfaction.reader_entitlement}"
+            )
+        if defer_if_unreachable:
+            set_defer_reason(row.row_id, reason)
+        return SettleResult(
+            row_id=row.row_id,
+            service=row.service,
+            code_ref=row.code_ref,
+            outcome="deferred" if defer_if_unreachable else "unsettled",
+            detail=detail,
+        )
+
+    # Stale or contradicted reading without attribution — non-terminal.
     if determination == "contradicted":
         reason = _UNATTRIBUTED_CONTRADICTION
         detail = (
