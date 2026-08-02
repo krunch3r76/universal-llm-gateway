@@ -1,0 +1,172 @@
+---
+description: Workspace rule catalog — rule placement, always-apply rules, glob-matched rules, commands, workflow, architecture docs, where to find rules, rule discovery
+alwaysApply: false
+---
+# Rules
+
+**Base rules** at `../../.cursor/rules/` (parent workspace) — shared across all workspaces via Cursor parent-directory traversal.
+**Workspace `_ws` rules** here — project-specific extensions.
+
+## Rule Placement
+
+| Content | Location | Naming | Apply mode |
+|---------|----------|--------|------------|
+| Language patterns (Python, JS, PHP) | `/mnt/torus/projects/.cursor/rules/` | `{topic}.mdc` | Glob-matched |
+| Universal workflow/quality | `/mnt/torus/projects/.cursor/rules/` | `{topic}.mdc` | Always apply |
+| Project topology, services, hosts | Workspace `.cursor/rules/` | `{topic}_ws.mdc` | Always apply |
+| Project-specific domain patterns | Workspace `.cursor/rules/` | `{topic}_ws.mdc` | Glob-matched |
+
+**Decision**: generic (any project) ⟹ parent `../../.cursor/rules/`. References this project's services/hosts/domain ⟹ workspace `_ws.mdc`.
+
+Base (from parent): `../.cursor/rules/index.mdc` — see parent "Always Applied" (7 rules: `system`, `provenance-discipline`, `advisor-timing`, `model-tier-stub`, `modularization`, `operator-posture`, `no-automatic-summaries`).
+
+## Always Applied — Workspace
+
+| Rule | Purpose |
+|------|---------|
+| `core_ws.mdc` | Environment, logs, ecosystem, workflow extensions |
+| `agent-identity-signoff.mdc` | Endpoint provenance — no sign-offs, no "you are X" injection |
+| `commit-and-git-scope_ws.mdc` | Commit optionality + Cursor IDE git-tool prohibition (guard-rail stub) |
+| `skill-surface_ws.mdc` | Cursor native skill surface — stubs + rules primary; native skill discovery only |
+| `recon-default_ws.mdc` | Recon-default invariant — code-work intake defaults recon-first; blocks direct implement on sparse/early todos; waiver via `recon_waived` attr |
+
+## On-Demand — Cortex / agent-bus / team-collab stack
+
+These rules are `alwaysApply: false`. Default Cursor sessions stay code-focused;
+this stack loads only when explicitly invoked.
+
+### Load on `/cortex-brief` (or first `/agent-bus` invocation per session)
+
+Workspace:
+- `cursor-environment_ws.mdc` — IDE environment briefing
+- `mcp-tool-awareness_ws.mdc` — `CallMcpTool` / fs md ops conventions
+- `awareness_ws.mdc` — todo + vision + discovery awareness
+- `mcp-debugging-ux_ws.mdc` — Event Service / observability UX
+- `agent-skills_ws.mdc` — skill registry — check before non-standard document/tool patterns
+- `md-navigation_ws.mdc` — md_list/md_read before large `.md`/`.mdc` reads
+- `handoff-pickup_ws.mdc` — transcript handoff pickup gate (entity_get first)
+- `agent-bus-push-reminder_ws.mdc` — push reminder when open web thread expects web
+- `bus-monitor-silence_ws.mdc` — MONITOR / monitoring-only seat: chat report only; ¬ bus post/reply/mark-read (temp)
+
+Parent:
+- `../.cursor/rules/cortex-essentials.mdc` — cortex CRUD basics
+- `../.cursor/rules/architecture-handoff-protocol.mdc` — handoff packet contract (~34KB — **alwaysApply: false**; md_read one `##` only)
+- `../.cursor/rules/handoff-dispatchers.mdc` — dispatcher capability matrix (~48KB — **alwaysApply: false**; md_read one `##` only)
+
+### Load on `/session-end`
+
+- `../.cursor/rules/session-close.mdc`
+- `../.cursor/rules/session-transcript-fidelity.mdc`
+- `.cursor/rules/session-transcript-fidelity_ws.mdc`
+- `../.cursor/rules/cortex-essentials.mdc` (if not yet loaded)
+- `../.cursor/rules/cortex-deep-ref.mdc`
+
+### Load on Plan-mode entry / Task subagent launch
+
+- `../.cursor/rules/testing-discipline.mdc` — when checklist includes migration/registry pytest deliverables
+- `../.cursor/rules/testing_ws.mdc` — same session if ULG paths/commands needed
+- `../.cursor/rules/plan-mode.mdc` — entering Plan mode
+- `../.cursor/rules/subagent-strategy.mdc` — before launching a Task subagent
+
+## Glob-Matched — Base (from parent)
+
+| Rule | Purpose | Triggers on |
+|------|---------|-------------|
+| `doc-patterns.mdc` | README_AI.md conventions | docs, READMEs |
+| `uml.mdc` | PlantUML guidelines | docs |
+| `testing-discipline.mdc` | Pytest commit policy, agent test gate, verify discipline | `test_*.py`, `*_test.py`, `migrations/*`, `tmp/prompts/**/phase*.md` |
+| `javascript-modern.mdc` | ES6+ patterns, async/await | `*.js`, `*.ts`, `*.tsx` |
+| `pwa-patterns.mdc` | Service worker, offline, IndexedDB | `sw.js`, `manifest.json` |
+| `php-modern.mdc` | PHP 8.3+ features, types, security | `*.php` |
+| `php-api.mdc` | REST API patterns, HTTP, CORS | `*.php` |
+
+## Glob-Matched — Workspace
+
+| Rule | Purpose | Triggers on |
+|------|---------|-------------|
+| `federation_ws.mdc` | Federation architecture | federation code, config |
+| `routing_ws.mdc` | Request routing, feasibility | routing, proxy code |
+| `pipeline_ws.mdc` | Pipeline development, versioning | pipelines.local |
+| `pipeline_patterns_ws.mdc` | Consensus, verification patterns | pipelines.local |
+| `consensus_metrics_ws.mdc` | Consensus v7 metrics-first debugging | `pipelines/consensus/v7`, pipeline event files |
+| `pipeline_viewer_ws.mdc` | StepOutput.json viewer conventions | pipelines, pipelines.local |
+| `json_schema_ws.mdc` | JSON schema (llama.cpp; vLLM TBD) | pipelines.local |
+| `doc-patterns_ws.mdc` | Source pattern examples (FOL, invariants) | docs, READMEs |
+| `arch-docs-maintenance_ws.mdc` | Architecture doc staleness checks on commit/journal | `docs/architecture/**`, services, libs, tools |
+| `docs-write-guard_ws.mdc` | Prevent writing to `docs/` outside designated workflows | `docs/**` |
+| `mcp-selector-naming_ws.mdc` | MCP selector naming for dispatch vs semantic surfaces | `services/mcp-server/**`, `docs/mcp-integration.md`, `docs/cortex-v2.md` |
+| `pipeline_test_ws.mdc` | Pipeline testing infrastructure (snapshot, replay, compare) | `pipelines/**`, `tools/pipeline_test/**` |
+| `testing_ws.mdc` | ULG `pytest.ini`, verify commands, CI gap | `test_*.py`, `*_test.py`, `migrations/*`, `libs/**` |
+| `modularize_ws.mdc` | SLOC/SRP awareness, modularize trigger | `**/*.py` |
+| `todo_ws.mdc` | Todo lifecycle, seed contract, todo-close | On demand — todo entities |
+| `plan-slug-coherence_ws.mdc` | Slug binding for plan/todo/task specs | On demand — plan/todo/task seeding |
+
+## On-Demand — Frontier / cloud model work
+
+| Rule | Purpose | Load when |
+|------|---------|-----------|
+| `capability-dispatch_ws.mdc` | Cursor stub → shared `docs/agent-guides/rules/capability-dispatch.md` | Adding cloud models, frontier knob resolution, dispatch specs |
+| `cloud-model-routing_ws.mdc` | Stargate routing, provider/model ID formats | Cloud inference routing |
+| `frontier-model-context_ws.mdc` | Frontier `max_tokens` policy (generous defaults) | Pipeline YAML generation_parameters |
+
+## Deep Reference (not auto-injected, read on demand)
+
+| Document | Content |
+|----------|---------|
+| `docs/architecture/README_AI.md` | Architecture doc index — route to the right file |
+| `docs/architecture/overview.md` | System-level architecture (services, roles, request flow) |
+| `docs/event-service.md` | Event Service: architecture, named operations, CLI, MCP tool, publishers |
+| `docs/mcp-integration.md` | MCP Server: available tools, pipeline iteration loop, config, architecture |
+| `systems/federation/TOPOLOGY.md` | Full topology architecture (851 lines) |
+| `tmp/prompts/handoff-onboarding-tui.md` | TUI architecture, config scheme, catalog V3 |
+
+## Workflow
+
+Base (from parent): `plan-mode.mdc`, `phase-policy.mdc`, `subagent-strategy.mdc`
+Workspace: workflow extensions inlined into command files (`create-implementation-plan.md`, `implement-plan.md`, `review-prompt.md`, `review.md`)
+
+## Commands
+
+Shared commands live at `/mnt/torus/projects/.cursor/commands/` (inherited by all workspaces via parent-directory traversal). Workspace-specific commands stay here.
+
+### Shared (from parent — available in all workspaces)
+
+Generic: `ask`, `apply-ask`, `ask-http`, `prompt-code-responsibility-check`
+Workflow: `review`, `apply-review`, `review-prompt`, `commit`, `create-implementation-plan`, `implement-plan`, `verify-implementation`, `create-phase-chain`
+Packet-pattern review: `diff-review`, `diff-review-mcp`, `diff-review-apply`, `review-plan`, `review-arch-doc`
+Knowledge: `journal-entry`, `insight`, `vision`, `todo`
+Docs: `doc-check`, `check-doc-opportunities`
+
+Many shared commands load `@{name}_ws.mdc` if it exists for workspace-specific extensions.
+
+## Prompt-Facing Invariants
+
+`.cursor/invariants/` contains compact markdown invariant blocks for tools and
+frontier prompts. Cursor rules remain canonical; invariant files are
+repo-relative prompt inputs.
+
+| File | Used by |
+|---|---|
+| `modularize.md` | `scripts/modularize plan` default `--invariants-file` |
+| `review.md` | Review and diff-review handoff packets |
+| `handoff.md` | Agent-to-agent packet construction |
+
+### Workspace-Specific (gateway only)
+
+Consult: `consult-plan`, `consult-implement`, `consult-review`, `consult-research`, `consult-architect`
+Pipeline: `pipeline-refine`, `docstring-enhance`, `modularize`
+Quality: `overhaul`, `overhaul-file`, `review-phase`, `check-redundancy_ws`
+
+### Command Extension Rules (`_ws.mdc`)
+
+| Command | Extension Rule | Content |
+|---|---|---|
+| `/review` | *(inlined)* | Event-driven checks, patterns, error envelope |
+| `/commit` | `commit_ws.mdc` | Journal awareness, doc-check, RAG indexing |
+| `/create-implementation-plan` | *(inlined)* | Event vocabulary, async, architecture docs |
+| `/implement-plan` | *(inlined)* | Event vocabulary, patterns, docs |
+| `/review-prompt` | *(inlined)* | Event system, error handling, architecture docs |
+| `/journal-entry` | `journal-entry_ws.mdc` | Domain list, architecture doc check, RAG |
+| `/insight` | `insight_ws.mdc` | Domain list, engram docs, RAG |
+| `/vision` | `vision_ws.mdc` | Domain list, RAG |
+| `/doc-check` | `doc-check_ws.mdc` | Architecture doc-to-directory mapping |

@@ -1,0 +1,188 @@
+---
+description: Load when manage.sock is down, manage quit/start or charter_reload/charter_runner recycle is needed, or any service start/stop/sync_restart/wait_healthy via manage MCP or ./manage TUI (tmux 0:0).
+alwaysApply: false
+rule_category: domain-ulg
+apply_tier: catalog
+trigger_match_terms:
+  - service
+  - manage
+  - manage.sock
+  - tmux
+  - 0:0
+  - charter_pause
+  - charter_block_root
+  - charter_unblock_root
+  - charter_root_status
+  - safe_to_quit
+  - charter_reload
+  - charter_runner
+  - quit/start
+  - restart
+  - lifecycle
+  - sync_restart
+  - testing
+---
+# Services (Workspace)
+
+**Workspace-specific**: No base rule (project-only patterns)
+
+## Architecture
+
+| Service | Port | Role |
+|---------|------|------|
+| Stargate | 9999 | Client endpoint, orchestration — sole inference endpoint for both local and cloud models |
+| Gateway | container-internal | Inference engine. Runs inside edge container; Edge Stargate reaches it on `localhost:9998` or UDS within the container. Never reachable from host or clients |
+| RAG | UDS (default) | Semantic search + knowledge management. ChromaDB vectors, SQLite property index, `articles` table (metadata enriched at query time via `source_hash` join). Article upsert API (`POST /article`) + MCP tool `rag(op="upsert_article", ...)`. Default UDS `/tmp/universal-protocol/rag.sock`, overrideable via `RAG_SOCKET_PATH`; TCP via `rag.host`/`rag.port` in stargate.yaml |
+| Cloud Proxy | UDS (default) | OpenRouter relay; default UDS `/tmp/universal-protocol/cloud-proxy.sock`, overrideable via `CLOUD_PROXY_SOCKET_PATH`. Stargate passthrough: `GET /api/models`, `POST /api/select` on :9999 |
+| Event Service | UDS | Centralized event store (SQLite). Host subprocess via `./manage`. Ingest: default `/tmp/universal-protocol/events.sock` via `EVENTS_INGEST_SOCK`. Query+Subscribe: default `/tmp/universal-protocol/events-query.sock` via `EVENTS_QUERY_SOCK` (HTTP `POST /v1/query` + WebSocket `GET /v1/subscribe`). Library: `libs/event_store/` |
+| MCP Server | 443 (TLS) | Tool server for Cursor + Claude API + xAI Grok agents. Container managed by `./manage` |
+| Cortex API | UDS | REST gateway to cortex.db. Host subprocess via `./manage`. Library: `libs/cortex_store/`. Default UDS `/tmp/universal-protocol/cortex-api.sock`, overrideable via `CORTEX_API_SOCK` |
+| Agent Bus | UDS | Inter-agent message bus (threads + turns). Host subprocess via `./manage`. Library: `libs/agent_bus_store/`. Default UDS at `/tmp/universal-protocol/agent-bus.sock`, overrideable via `AGENT_BUS_SOCK` |
+| Git integration worker | `127.0.0.1:8091` TCP (default) | Git integrate/land/status/diff; host uvicorn subprocess via `./manage`. Stargate forwards `/api/v1/git/*`. Override via `GIT_INTEGRATION_WORKER_HOST` / `GIT_INTEGRATION_WORKER_PORT` |
+| Manage controller | UDS | `./manage` TUI + JSON-RPC lifecycle API. Default UDS `/tmp/universal-protocol/manage.sock`, overrideable via `MANAGE_SOCKET`; code SOT: `transport_utils.MANAGE_SOCKET`. Also in `~/.gateway/topology.yaml` → `manage_socket`. Agents: MCP `manage(action="status")` — ¬ probe repo root or `~/.gateway/manage.sock` |
+
+Three roles: **Master** (host, orchestrator), **Relay** (host, forwarding), **Edge** (container, execution).
+Default: `Master(host:9999) → Edge(container, Unix socket) + Relay(TCP) → Edge`
+
+Deploy/manage via `./manage` (TUI). Config at `~/.gateway/stargate.yaml`.
+See: `topology_ws.mdc`, `systems/federation/TOPOLOGY.md`
+
+### Manage process recycle — tmux `0:0` (seat op)
+
+**Invariant:** `manage.sock` absent ∨ long-lived manage must reload (e.g. edits under
+`scripts/model_manager/ui/controller/charter_runner/`) ⇒ **seat** recycles manage
+via tmux — ¬ park on the operator (`judgment-escalation-ladder`).
+
+`./manage` on this host usually lives in **tmux session 0 / window 0** (`0:0`).
+Confirm with `tmux capture-pane -t 0:0 -p` before sending keys.
+
+| Need | Path |
+|---|---|
+| Service start/stop/sync_restart (sock up) | MCP `manage(...)` only — Use the `service-lifecycle` skill |
+| Manage process itself down / code pickup | tmux `0:0` quit/start recipe below |
+| `charter_reload` | Loop bounce only — **not** Python re-import; charter-runner edits still need quit/start |
+
+**Safe quit/start recipe** (fleet stays up across the quit when hold is used):
+
+1. `manage(action="charter_pause", …)` when a tick may be live
+2. Poll `manage(action="charter_hold_status")` until `safe_to_quit=true`
+3. `tmux send-keys -t 0:0 'q' Enter` (or type `q` in the TUI) — wait for shell prompt
+4. `tmux send-keys -t 0:0 'cd /mnt/torus/projects/universal-llm-gateway && ./manage' Enter`
+5. Wait until MCP `manage(action="status")` works again (`manage.sock` live)
+6. `manage(action="charter_resume")` if a hold was set
+7. Re-`start` / `sync_restart` any services that stayed down (e.g. GIW)
+
+**Forbidden:** ask the operator to quit/start manage; `systemctl` / `pkill` / raw
+docker kill for lifecycle. **Permitted:** tmux drive of `0:0` for the manage
+process; MCP `manage` for everything else once the sock is up.
+
+### Charter control — global vs per-root
+
+| Need | Action | Effect |
+|---|---|---|
+| Stop **all** admits (fleet) | `charter_pause` / `charter_resume` / `charter_hold_status` | Durable `tick-hold.json` — orthogonal to ledger |
+| Hold **one** enrolled root | `charter_block_root(root_id, reason?, clear_wip?)` | Ledger `BLOCKED` + receipt tip + unenroll (default); stops **new** admits only |
+| Clear per-root hold | `charter_unblock_root(root_id, reenroll?)` | `BLOCKED` → `IDLE`; re-enroll only when `reenroll=true` |
+| Read one root | `charter_root_status(root_id)` | status / enrolled / wip / last_error / operator_hold |
+
+**Invariant:** bus NOTE / WAKE / CHECKPOINT prose alone **never** arms or clears a hold
+(6489). Tip `BLOCKED`/`NOTE` posted by `charter_block_root` is a **receipt**, not the
+source of truth. In-flight `cursor-sdk` on a blocked root keeps running — cancel still
+needs operator auth (`session-abort-authorization`). Spec:
+`cortex://notes/system/specs/charter-runner-root-control.md`.
+
+## Service Documentation
+
+∀ service investigation or modification: read the README first.
+
+| Service | README | Deep Reference |
+|---------|--------|----------------|
+| Stargate | `services/universal-stargate/README.md` | `docs/architecture/stargate.md` |
+| Gateway | `services/_universal-llm-gateway/README.md` | `docs/architecture/gateway.md` |
+| RAG | `services/rag/README.md` | `.cursor/rules/rag_ws.mdc` |
+| Cloud Proxy | `services/universal_cloud_proxy/README.md` | — |
+| Event Service | `services/event-service/README.md` | `docs/event-service.md`, `cortex://notes/system/specs/event-service.md` |
+| MCP Server | `services/mcp-server/README.md` | `docs/mcp-integration.md` |
+| Cortex API | — | `cortex-essentials.mdc` (parent), `cortex-deep-ref.mdc` (parent, on-demand) |
+| Agent Bus | `services/agent-bus/README.md` | — |
+
+## Scripts (CRITICAL)
+
+**NEVER** `systemctl start/restart/enable`
+**NEVER** `pkill -f "universal-"` or `docker restart`/`docker stop` (bypasses lifecycle management)
+**ONLY** `./manage` (TUI, human) or `manage` MCP tool (agent)
+
+The agent MAY start, stop, restart, and rebuild services via `manage`.
+Human-initiated operations: always via `./manage` (TUI).
+
+## Commands
+
+```bash
+# Stop (human/emergency only — agents use manage)
+pkill -f "universal-"; rm -f /tmp/universal-protocol/*.sock /tmp/process_ipc/*.sock
+
+# Status
+lsof -i:9998,9999
+docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "mcp-server"
+manage(action="status")  # agent: all managed services including host subprocesses
+
+# Test inference
+curl -X POST http://localhost:9999/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "model-id", "messages": [{"role": "user", "content": "Hello"}]}'
+
+# Event Service health
+nc -U "${EVENTS_INGEST_SOCK:-/tmp/universal-protocol/events.sock}" < /dev/null && echo "ingest: ok"
+scripts/query-events --op noise-profile --minutes 1
+
+# MCP Server health
+curl -sk https://<mcp-host>/health
+```
+
+## Service Deployment Model
+
+| Service | Deployment | Managed by | Source library |
+|---------|-----------|------------|----------------|
+| Stargate | Host process | `./manage` | `services/universal-stargate/` |
+| Gateway | Container (edge) | `./manage` | `services/_universal-llm-gateway/` |
+| RAG | Host process | `./manage` | `services/rag/` |
+| Cloud Proxy | Host subprocess | `./manage` | `services/universal_cloud_proxy/` |
+| Event Service | Host subprocess | `./manage` | `libs/event_store/` |
+| MCP Server | **Container** | `./manage` | `services/mcp-server/` |
+| Cortex API | Host subprocess | `./manage` | `libs/cortex_store/` |
+| Agent Bus | Host subprocess | `./manage` | `libs/agent_bus_store/` |
+| Email Bridge | Host subprocess | `./manage` | external (`EMAIL_BRIDGE_ROOT`) |
+| Git integration worker | Host uvicorn (TCP `:8091`) | `./manage` | `services/git_integration_worker/` |
+
+All services are managed through `./manage`. There are no standalone/docker-compose-only services.
+
+**Invariant**: default deployment uses `./manage` host subprocess lifecycle (PID files under `~/.gateway/`). Unit files under `services/*/systemd/` are optional operator-installed artifacts — ¬ the default ULG deploy shape. Agents must not instruct `systemctl` unless the operator explicitly runs that shape.
+
+## Source-edit → Deploy action
+
+∀ source file change: use this table. Do NOT infer the service from the tool/API surface — the MCP tools are served by the `mcp` container even when they call into the Cortex API.
+
+| Changed files in | Service | Action |
+|---|---|---|
+| `libs/cortex_store/` | `cortex_api` | `manage(action="sync_restart", service="cortex_api")` |
+| `libs/agent_bus_store/` | `agent_bus` | `manage(action="sync_restart", service="agent_bus")` |
+| `libs/event_store/` | `event_service` | `manage(action="sync_restart", service="event_service")` |
+| `services/mcp-server/` | `mcp` | `manage(action="sync_restart", service="mcp")` — cached source-sync (~20s); `rebuild mcp` is FORBIDDEN (full `--no-cache` is TUI-only: ./manage → Build Image) |
+| `services/_universal-llm-gateway/` | `gateway` | `manage(action="sync_restart", service="gateway")` |
+| `services/universal-stargate/` | `stargate` | `manage(action="sync_restart", service="stargate")` |
+| `services/rag/` | `rag` | `manage(action="sync_restart", service="rag")` |
+| `services/git_integration_worker/`, `libs/git_integrate/` | `git_integration_worker` | `manage(action="sync_restart", service="git_integration_worker")` |
+| `services/mcp-server/tools/git_integrate.py` | `mcp` **and** `git_integration_worker` | MCP catalog relay + worker routes — restart **both** after land/diff tool changes |
+
+**MCP container invariant**: `services/mcp-server/` is baked into `universal-mcp-server:local` at build time (`/app/services/mcp-server/`). The NFS bind mount `/mnt/torus/projects:/data/project` does **not** reach `/app/` — source edits are invisible to the running container until rebuilt. `sync_restart cortex_api` restarts only the Cortex API host subprocess; it has no effect on the MCP container.
+
+```bash
+# Health checks
+curl -sf --unix-socket "${CORTEX_API_SOCK:-/tmp/universal-protocol/cortex-api.sock}" http://localhost/health
+curl -sf --unix-socket "${AGENT_BUS_SOCK:-/tmp/universal-protocol/agent-bus.sock}" http://localhost/health
+curl -sf --unix-socket "${EVENTS_INGEST_SOCK:-/tmp/universal-protocol/events.sock}" http://localhost/health 2>/dev/null || nc -U "${EVENTS_INGEST_SOCK:-/tmp/universal-protocol/events.sock}" < /dev/null && echo "ok"
+```
+
+## Pipeline Validation
+
+Before commit: `python scripts/validate-pipeline.py pipelines.local/`

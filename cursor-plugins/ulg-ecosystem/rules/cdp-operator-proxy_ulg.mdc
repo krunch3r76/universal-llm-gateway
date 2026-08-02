@@ -38,7 +38,7 @@ trigger_match_terms:
 
 `CSE retain` (navigation) ≠ `streaming-stop authorization` (operator-proxy inv 30). Diagnosing "stream stopped mid-mission" ⇒ load **both**: navigation for harness/poller, operator-proxy for leg-vs-mission and exception notify.
 
-**Operator identity (BINDING):** `default(operator) = model_seat` — assume **non-human** unless Kaywan **explicitly declares** human operator (skill invariant 0). Cowork CSE presence alone ≠ human operator.
+**Operator identity (BINDING):** `default(operator) = model_seat` — assume **non-human** unless operator **explicitly declares** human operator (skill invariant 0). Cowork CSE presence alone ≠ human operator.
 
 **Streaming stop (BINDING — inv 30):** `end(stream) ⇔ continuity_handoff ∨ TYPE:MISSION_CLOSEOUT`. A leg DISPOSITION does **not** authorize stopping. Unexpected stop ⇒ awareness `notify` tag `cse-stream-stop` (cursor fires if operator seat already quiet).
 
@@ -66,7 +66,7 @@ Mechanism (turn shapes, boot checklist, anti-patterns): Use the `cdp-operator-pr
 - Authoring or reviewing `TYPE: DIRECTIVE` / `TYPE: DISPOSITION` turns
 - cursor-auto nested dispatch arcs (5867-class dogfood)
 - Blocked on a human/cursor fact — skill § Blocked → ask ladder (observe → cursor → Cowork Ask/push); ¬ silent stop
-- Life missing a code-seat tool (`manage`, reload, …) — request **cursor**, ¬ park on Kaywan
+- Life missing a code-seat tool (`manage`, reload, …) — request **cursor**, ¬ park on the operator
 - **CSE stream stopped / mid-mission idle** — load this skill (inv 30) **and** `claude-ai-cdp-navigation` (poller retain)
 
 ¬ load for IDE cursor lead orchestration (use `lean-context-dispatch-first` + `operator-posture` instead).

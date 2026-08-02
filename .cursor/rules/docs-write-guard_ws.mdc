@@ -1,0 +1,119 @@
+---
+description: Prevents agents from writing to docs/ outside of designated workflows
+globs:
+  - "docs/**"
+---
+
+# Docs Write Guard (Workspace)
+
+## Invariant
+
+**∀ agent actions: ¬write to `docs/` unless the active workflow explicitly requires it.**
+
+## What Gets Committed
+
+The gitignore blocks everything in `docs/` except `docs/architecture/**/*.md`
+**and a small allowlist of public-promoted reference docs** (below). Those
+allowlisted paths are the only places under `docs/` outside `docs/architecture/`
+where agent writes can leak into a commit.
+
+The rest of `docs/` is personal/internal reference (research corpus, engram,
+vision docs) — gitignored, RAG-indexed, but never committed. Agents must not
+create new files there either; it adds workspace clutter for no benefit.
+
+### Public-promoted reference docs (committed, README-linked)
+
+These specific files are whitelisted in `.gitignore` because the public `README.md`
+links to them. They are public artifacts, not internal reference:
+
+| Path | Purpose |
+|---|---|
+| `docs/agm-compliance-report.md` | AGM postulate test report (25/25) |
+| `docs/tool-reference.md` | MCP tool signatures + dispatch catalog |
+| `docs/cortex-spec.md` | Cortex read-model spec (resolution target for `spec:cortex-v2.4` / `document:cortex-v3-spec`) |
+| `docs/event-contracts.md` | Canonical event-vocabulary contract reference (catalog regions generated via `scripts/gen-event-catalog`; contract prose curated) |
+| `docs/cursor/cortex-registry.md` | Cortex feature registry |
+
+Edits to these are permitted under **manual user instruction** or when keeping
+them in sync with a README link. New additions to this allowlist require a
+matching `.gitignore` whitelist entry **and** a row in this table — do not
+silently promote other `docs/` files to public.
+
+## Allowed Workflows
+
+### Public-promoted reference docs — regeneration workflow
+
+| Workflow | Scope |
+|---|---|
+| `gen-event-catalog` (regenerate marker regions) | Regenerate `<!-- GENERATED -->` table regions in `docs/event-contracts.md` from `@event_factory` call sites. ¬StrReplace inside GENERATED regions. |
+
+`/doc-check`: GENERATED regions in `docs/event-contracts.md` are off-limits to `StrReplace`; staleness inside markers ⇒ run `gen-event-catalog`, never hand-edit.
+
+### Subsystem docs (`docs/architecture/*.md`) — overhaul-only
+
+| Workflow | Scope |
+|---|---|
+| `/overhaul` steps 10–12 | Generate + review architecture doc for the overhaul target directory |
+| `doc_generate` pipeline (via API) | Pipeline output — must pass review before replacing existing doc |
+| `/check-doc-opportunities` | Propose new architecture docs (user approval required) |
+| Manual user instruction | User explicitly says "write this to docs/..." |
+
+¬`/doc-check` edits. Staleness noted in commit body only.
+
+### Appendices (`docs/architecture/appendices/`) — factual corrections
+
+| Workflow | Scope |
+|---|---|
+| `/doc-check` (standalone or via `/commit`) | Targeted `StrReplace` for stale paths, config keys, signals |
+| Manual user instruction | User explicitly says "write this to docs/..." |
+
+### Design docs (`docs/architecture/design/`) — user-directed only
+
+| Workflow | Scope |
+|---|---|
+| Manual user instruction | User explicitly directs edits |
+
+∀ other contexts: **do not write to `docs/`.**
+
+## Where Content Goes Instead
+
+| Content type | Correct location |
+|---|---|
+| Session investigation notes | `tmp/` |
+| Consultation/review output | `tmp/` or `tasks/` |
+| Response letters / integration guides | `tmp/` |
+| Journal entries | `tasks/journal/` |
+| Fix descriptions | `tmp/` or commit message |
+| Implementation notes for a handler/module | In-source README or `tmp/` |
+| Pipeline architecture comparisons | `tmp/prompts/` |
+
+## `docs/architecture/` Quality Bar
+
+This directory is the **canonical AI-readable architecture reference** (see
+`arch-docs-maintenance_ws.mdc`). It is RAG-indexed and consumed by consultation
+models.
+
+- Every factual claim must trace to source code
+- **Honest guarantee:** generated content reflects what source *declares*
+  (docstrings/signatures/imports), verified for doc<->docstring consistency — NOT
+  docstring<->behavior truth. Generated blocks carry an inline provenance disclaimer
+  + `inventory_sha`/`generated` stamp (injected deterministically by the doc-generate
+  `enforce` step).
+- Generated sections wrapped in `<!-- GENERATED:START inventory_sha=… generated=… -->`
+  / `<!-- GENERATED:END -->`
+- AUTHORED regions are preserved by a deterministic string-equality guard, never by
+  an LLM; a dropped AUTHORED region fails the run (`authored_loss`).
+- No raw `doc_generate` output without review (step 11 of `/overhaul`)
+- No inventories of non-architecture subsystems (e.g., pipeline handler dirs
+  are implementation details, not architecture)
+
+## Self-Check
+
+Before writing any file under `docs/`:
+
+1. **Is a qualifying workflow active?** → if not, stop
+2. **Is the content durable and curated?** → if ephemeral, route to `tmp/`
+3. **Is it `docs/architecture/`?** → source-traceable, reviewed, not raw output
+4. **Is it a public-promoted reference doc?** → only the allowlisted paths above,
+   only under manual user instruction or README-sync; never silently promote
+   another `docs/` file

@@ -1,0 +1,51 @@
+---
+description: Gateway commit extensions — journal awareness, doc-check, RAG indexing
+alwaysApply: false
+globs: []
+---
+# Commit Extensions (Workspace)
+
+## Pre-Commit: Event Catalog Sync
+
+When changed files (from step 1: staged + unstaged + untracked) touch `@event_factory`
+sources (`**/events.py`, `**/events/*.py` under `services/`, `libs/`, `systems/`) or
+`docs/event-contracts.md`:
+
+1. Regenerate: `scripts/gen-event-catalog sync` (or `generate` — equivalent full regen)
+2. Include `docs/event-contracts.md` in the commit (step 3 `git add`)
+3. Before `git commit`: `scripts/gen-event-catalog check` must pass
+
+The installed pre-commit hook runs `sync --staged` + re-stages the doc + `check --staged`
+as a safety net when hooks are present. Run step 1–3 explicitly anyway so the commit
+is self-contained without relying on the hook mutating the index mid-commit.
+
+Skip when the commit touches neither event sources nor `docs/event-contracts.md`.
+
+## Pre-Commit: Journal Cross-Reference
+
+Before writing commit messages, surface relevant journal entries from `tasks/journal/index.yaml`:
+1. **Timestamp**: `git log -1 --format="%ct"` → include entries where `opened_ts` > last commit timestamp
+2. **File overlap**: include entries whose `files` list intersects staged files (secondary signal)
+
+Union both sets; prefer timestamp as the primary signal.
+
+## Pre-Commit: Architecture Doc Check
+
+Follow the `/doc-check` procedure. Use changed files already collected — no re-run.
+- STALE/GAP findings: apply doc updates and stage with this commit
+- BROKEN references: fix and stage
+- Uncertain: note in commit body: "docs/architecture/{file}.md may need updating"
+
+Skip for documentation-only or config-only changes.
+
+## Post-Commit: Journal Back-References
+
+For each overlapping journal entry:
+- Append to `## Commits` section: `- {hash}: {one-line summary}`
+- Best-effort RAG re-index:
+  ```bash
+  curl -sf -X POST http://localhost:8100/index \
+    -H 'Content-Type: application/json' \
+    -d '{"path": "ABSOLUTE_PATH_TO_JOURNAL_FILE"}'
+  ```
+  If RAG is down, note and move on. Files on disk are ground truth.

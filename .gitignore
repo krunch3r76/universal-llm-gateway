@@ -237,3 +237,41 @@ libs/cortex_store/migrations/
 !.github/
 !.github/workflows/
 !.github/workflows/*.yml
+
+# ---------------------------------------------------------------------------
+# Agent guidance substrate — tracked (operator bind 2026-08-01)
+#
+# Rules/skills/commands are a common target of agent reasoning; leaving them
+# untracked made every cross-seat claim about guidance unverifiable from the
+# repo. Tracking here is NOT publication — this repo is private, and the
+# pre-publication scrub (operator name, /home/* paths, `jupiter` hostname,
+# private MCP host) is tracked separately as a residual.
+#
+# Life-domain skills stay ignored: they carry real names, probate/APN numbers,
+# account identifiers, and psych/relationship material. `.claude/skills/`
+# (life seat) remains fully ignored by the `.*` rule above.
+# ---------------------------------------------------------------------------
+!.cursor/
+.cursor/*
+!.cursor/rules/
+!.cursor/rules/**
+!.cursor/skills/
+!.cursor/skills/**
+!.cursor/commands/
+!.cursor/commands/**
+
+# Life/legal/tax/psych domain — real matters, not engineering guidance
+.cursor/skills/tax/
+.cursor/skills/lawyer-stance/
+.cursor/skills/lawyer-stance-code/
+.cursor/skills/psych-framework-counsel/
+.cursor/skills/crypto-trading-research/
+.cursor/skills/corpus-cross-reference-discipline/
+.cursor/skills/case-evidence-retrieval/
+.cursor/skills/legal-opinion-corpus-ingestion/
+.cursor/skills/w2-ingestion/
+.cursor/skills/messages-check/
+
+# Ecosystem plugin SoT — skills, commands, seat overlays (markdown re-included)
+!cursor-plugins/**
+cursor-plugins/**/.cursor-plugin/

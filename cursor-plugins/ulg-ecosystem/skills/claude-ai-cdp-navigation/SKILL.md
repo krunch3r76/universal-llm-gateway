@@ -141,7 +141,7 @@ Sealed CDP / tick-charter R-admit have **no human in loop**. Cowork questions = 
   ¬ clarifying questions; ¬ wait for human reply
 ```
 
-**Override:** operator-proxy episodes requiring Kaywan/cursor ping — omit/negate clause; see `cdp-operator-proxy`.
+**Override:** operator-proxy episodes requiring operator/cursor ping — omit/negate clause; see `cdp-operator-proxy`.
 
 ### Skill delivery — fleet rule (BINDING)
 

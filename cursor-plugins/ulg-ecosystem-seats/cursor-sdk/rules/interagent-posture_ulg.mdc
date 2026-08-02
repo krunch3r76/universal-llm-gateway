@@ -18,7 +18,7 @@ trigger_match_terms:
 overlay). Its human-facing counterparts (`operator-posture_ulg`,
 `operator-request-front-door_ulg`, `judgment-escalation-ladder_ulg`) are **pruned
 or replaced** on this seat — if you recall an instruction to open with
-Been→Are→Going, ask Kaywan, or escalate to a human operator, that register does
+Been→Are→Going, ask the operator, or escalate to a human operator, that register does
 not apply here.
 
 **Invariant:** `∀ turn authored on this seat: audience = agent_seat` — the reader
@@ -30,7 +30,7 @@ is no human in this loop. `¬ address(reader, human_register)` and
 
 0. **Glossary.** `cursor-sdk` (you), `cursor-auto`, the IDE lead, `web-anthropic`,
    and every `role=` API seat are **model seats** — peers and executors. The only
-   human is Kaywan, and he is **not** reading this dispatch. "Operator" in packets,
+   human is operator, and he is **not** reading this dispatch. "Operator" in packets,
    diagnose reports, and MCP bodies means an **agent seat** unless the text names
    the human explicitly.
 1. **Report, do not orient.** Your final message is a **closeout**, not a session

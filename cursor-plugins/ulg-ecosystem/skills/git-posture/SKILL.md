@@ -1,0 +1,167 @@
+---
+description: "On coding sessions — file existence, canonicality, authorship, done-ness, git CLI, or cursor-sdk implement substrate truth before inferring state."
+---
+
+# Git Posture & Truth Substrate
+
+## When to read
+
+Read on:
+- "does X exist / is X canonical / is this mine / is this done?"
+- before git CLI or `git_*` MCP on the shared checkout;
+- before inferring service failure from uncommitted or dirty git state;
+- before cursor-sdk implement dispatch or git-integration-worker diagnostics;
+- when handoffs, consults, reviews, or packets touch repo state.
+
+Default substrate: attended Cursor IDE editing and cursor-sdk implement both land on the live shared checkout (default `universal-llm-gateway`). These rules bind unless the operator directs otherwise.
+
+**Sole-checkout corollary:** this seat assumes one live shared `master`
+working tree and **¬intersecting parallel writers**. Do **not** `git stash`
+or otherwise isolate the tree to A/B against clean HEAD or to “protect”
+phantom peers — read the on-disk tree; treat out-of-scope test/git noise as
+pre-existing.
+
+## Invariant — truth substrate is on-disk tree + Cortex + live process, not git
+
+- What exists / what file says: on-disk working tree.
+- Provenance / decisions: Cortex/RAG.
+- What is live: running process, verified by load-event + probe.
+- Git: checkpoint/transport layer, not project index.
+
+This repo is gitignore-heavy by design: `tasks/` and most `docs/` are intentionally untracked. `not_git_tracked ⇏ unreal ∨ noncanonical ∨ undone`.
+
+`question ∈ {exists, canonical, mine, done} ⇒ answer_from(tree_read ∨ cortex_read ∨ live_probe) ∧ ¬answer_from(git ls-files/status/log)`.
+
+Inferring existence/canonicality from git state is a category error. No established git workflow is the default; this is not an omission to patch.
+
+## Positive corollaries
+
+- Commit = optional bookkeeping, never a gate. On-disk is done for handoff; commit is load-bearing only for rebuild-persistence of a git-tracked config/source file. `¬gate ∧ ¬wait ∧ ¬handoff_to_commit`.
+- Liveness = loaded in running process. Verify with load-event + probe, not tree or commit.
+- Probe by reading, never mutating. Decide "mine vs pre-existing" from file/traceback, not `git stash` / `checkout` / `reset`.
+- Revert is scoped + explicit. One owned path per call; never `checkout -- .`, `restore .`, or `reset --hard` in shared checkout. Attended editor ⇒ prefer undo/revert UI.
+
+## Deploy / live vs commit (BINDING — operator 2026-08-01)
+
+**Commit status is not what makes code executable at any stage.** Propagation /
+`sync_restart` of **non-committed** working-tree edits **is live** on this fleet
+when the process has been restarted — the load event reads filesystem source, not
+`git checkout`.
+
+| Stage | What actually runs |
+|---|---|
+| **cursor-sdk dispatch** | Live shared checkout on disk |
+| **Host services** (`git_integration_worker`, `cortex_api`, `stargate`, `rag`, …) | `sync_restart` respawns a subprocess with `PYTHONPATH` pointed at the checkout |
+| **Gateway** | Bind-mounted source in the container |
+| **MCP** | `docker cp` from workspace into `/app`, then restart — still filesystem source, not `git checkout` |
+
+`landed ≠ live` means **the process has not been restarted yet** — **not** “the
+change isn’t committed.” A `sync_restart` picks up whatever is on disk at restart
+time, committed or not.
+
+Commit enters only for explicit git workflow (`git_integrate` / `git_land`, arc
+worktrees, closeout HEAD attribution). It is **not** the gate between “edited”
+and “running.”
+
+**Anti-patterns this kills:** treating uncommitted-but-restarted code as illicit
+“live-ahead-of-HEAD”; refusing to propagate because tree is dirty; building FATAL
+gates that equate `served ≠ git HEAD` with a broken fleet when the shared
+checkout is intentionally dirty and was restarted. Served-vs-HEAD deltas on a
+dirty live checkout are **topology-expected**; ownership / handoff of foreign WIP
+is a separate courtesy problem, not proof that live-without-commit is defective.
+
+Doctrine: `decision:checkout-disk-is-executable`.
+
+## Default implement lane
+
+| Surface | Where work lands | Git protocol |
+|---|---|---|
+| cursor-sdk + attended Cursor IDE | Live shared checkout (`GIT_INTEGRATION_SOURCE_REPO`, default `universal-llm-gateway`) | No standing workflow. On-disk tree = truth. Commits sporadic; `git diff` unreliable. |
+
+## `git_*` MCP (headless only)
+
+`seat ∈ Cursor_IDE ⇒ ¬git_*_mcp` — editor apply + routine commits instead.
+
+When the operator directs headless `git_*` tools (relay → `git-integration-worker`):
+
+| Tool | Use |
+|---|---|
+| `git_commit` | **Default.** Path-explicit commit on the live shared checkout. Never `--all`. |
+| `git_status` / `git_diff` | Fingerprints / dirty check when needed for a gated call |
+| `git_integrate` / `git_land` | Operator-gated merge primitives only when the operator has an arc to land — not the default implement path |
+
+**`git_commit` recipe (live checkout):**
+1. `git_commit(worktree_path=<live master checkout>, expected_branch="master", paths=[…], dry_run=True)` → `expected_paths_sha256` + numstat
+2. Operator reviews → `git_commit(…, approval, expected_paths_sha256, commit_message=…)`
+
+`approval ⇔ fingerprint`. Re-run dry_run if paths/diff changed. `¬git_land` / `¬git_integrate` for ordinary master checkout work — those verbs are merge primitives, not “commit on master.”
+
+Authority: `decision:lead-agent-git-integration` (atomic gated primitive). Routine IDE/shell commits of reviewed work remain ungated policy (`core_ws` §User Approval).
+
+## Commit posture
+
+Commits happen only when operator asks, an agent chooses to checkpoint, or a
+named workflow defines commit/merge/release. Absence of commit does not mean
+incomplete, undeployed, or unsafe to build on. Sporadic master commits make
+`git diff` unreliable as a task/session summary.
+
+**Named workflow — lane A regular commit (6642):** cursor-auto ↔ operator-proxy
+closeouts carry a fail-closed ``checkpoint:`` disposition
+(``committed <sha> paths=N`` | ``nothing_authored`` | ``deferred: <reason>``).
+Commit is the attribution-clearing act: path-explicit from the episode
+authored-path set (dispatch ``wt_baseline`` delta), never ``--all``, never
+foreign WIP. ``tree_residue: N`` counts dirty paths not in that set. Commit
+is disclosure on closeout, not a propagate/restart/done gate; ``deferred:`` stays
+legal forever.
+
+## What not to infer
+
+- ¬ uncommitted code ⇒ broken deploy or dead listener
+- ¬ must commit before re-dispatch
+- ¬ git-tracked ⇒ canonical
+- ¬ dirty `git status` ⇒ reload failed because of pending edits
+- ¬ `git diff` on master ⇒ accurate task/session scope
+- ¬ need `git stash` / clean-HEAD compare to diagnose a test or peer conflict
+
+Use tree reads + Cortex + logs/events/live probes instead.
+
+## Git diff reliability
+
+On the live shared checkout, `git diff` is **not** a reliable task/session summary — uncommitted edits, recent commits, and older `HEAD` mix. Answer "what changed?" by reading files and Cortex provenance.
+
+Never submit git diffs, unified patches, or `git diff` output to LLMs for handoffs, consults, reviews, implement packets, or dispatch context.
+
+Provide whole files when bounded or relevant sections:
+
+```text
+fs(sandbox="workspaces", op="read", path="universal-llm-gateway/…")
+fs(sandbox="workspaces", op="md_read", path="universal-llm-gateway/…", section="…")
+```
+
+`git_diff` MCP is for operator approval fingerprints on gated `git_*` flows (`include_full_diff=false` when only hashes are needed) — not for model context or master change-scope reconstruction.
+
+## Git CLI allowed only when
+
+operator asks to commit/branch/PR; a named workflow defines commit/merge/release; or staging deliberate tracked-config/source change for rebuild-persistence. Otherwise do not reach for git.
+
+## Cursor IDE seat scope (folded from `commit-and-git-scope`)
+
+`seat ∈ Cursor_IDE ⇒ ¬use(git_* MCP tools ∨ raw git CLI)` in normal work. Those are for headless seats when the operator directs them.
+
+| Bad (Cursor IDE) | Good |
+|---|---|
+| `git stash` / `git checkout -- <file>` to inspect/revert | read traceback; editor undo / revert UI |
+| `git stash` to A/B vs clean HEAD | read the tree; sole shared `master` |
+| `git_commit` / `git_land` mid-session | operator-attended apply; commit only if asked |
+
+`∀ seat: ¬{git checkout -- ., git checkout -- <dir>, git reset --hard, git clean -fd, git stash(unowned_work)}`.
+No-force: `¬push --force` and `¬history_rewrite` on shared branches unless operator explicitly requests.
+
+**Anti-pattern — "uncommitted" as a risk trigger.** Hearing "uncommitted" / "dirty working tree" is NOT a durability signal — on-disk is already real/durable/done. Do NOT reach for `git_status` / `git_diff` / `git_*` to "check working-tree state" on that basis. Read this skill FIRST whenever git state is mentioned, before touching any git tool.
+
+## Related skills
+
+- `architecture-invariants` — `[universal:git-posture]` one-liner in handoff Block 2
+- `shared-checkout-housekeeping` — parallel dirty/WIP on sole shared `master` is baseline noise, not disposable; closeout dual-channel deviations surface census without false partial (friction a:25030)
+- Former `commit-and-git-scope` — **merged here** 2026-07-11 (`todo:skill-pool-dedupe`)
+- Former `lead-agent-git-integration` — **retired** 2026-07-15; `git_*` MCP discipline lives in this skill

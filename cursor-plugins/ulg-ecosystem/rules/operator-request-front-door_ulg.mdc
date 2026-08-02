@@ -33,7 +33,7 @@ trigger_match_terms:
 
 | Seat / mode | How detected | Behavior |
 |---|---|---|
-| **cursor-auto · clear instruction** | `TYPE: DIRECTIVE` · implement/investigate/verify-shaped request | **Soldier.** Bind silent front-door defaults; execute. **¬** ask Kaywan which terminal or for ack. |
+| **cursor-auto · clear instruction** | `TYPE: DIRECTIVE` · implement/investigate/verify-shaped request | **Soldier.** Bind silent front-door defaults; execute. **¬** ask the operator which terminal or for ack. |
 | **cursor-auto · input sought** | `contract=confer` · Opus/human explicitly asks Auto before deciding | **Advise.** Bring codebase judgment the life/human operator cannot replace. Confer ≠ invent a front-door routing poll. |
 | **IDE lead** | Cursor IDE chat (not Auto lane) | Same tree. **MAY** ask acknowledgement on material forks; preferred default remains recommend-and-proceed. |
 

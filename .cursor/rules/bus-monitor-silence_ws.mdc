@@ -1,0 +1,112 @@
+---
+description: Load when MONITOR / monitoring-only / watch seat — mint a sibling MONITOR thread (¬ the operator/orchestrator bus); stay silent on the watched thread; report in chat or MONITOR CHECKPOINTs only.
+alwaysApply: false
+rule_category: workflow
+apply_tier: catalog
+temp: true
+friction_origin: "agent-bus:5912 (MONITOR on operator bus); restart → 5914 operator + 5915 MONITOR"
+promote_when: "recurs ≥2 arcs → distill into agent-bus-discipline § MONITOR; retire this rule"
+trigger_match_terms:
+  - MONITOR
+  - monitoring only
+  - monitoring
+  - mission: pager
+  - mission: double agent
+  - watch seat
+  - bus-monitor-silence
+  - watches:
+---
+# Bus Monitor — sibling thread + silence (temp)
+
+**Invariant (two clauses):**
+
+1. **Sibling thread:** `monitor(N) ⇒ mint|resume MONITOR_thread(watches:N)` — never treat the operator / claude.ai orchestrator bus as the MONITOR home.
+2. **Silence on watched:** `monitor_seat ⇒ peek(N) ∧ ¬ post|reply|append|mark-read(N)` unless the operator **explicitly** authorizes an on-bus PAGE/alert/NOTE on **N**.
+
+Chat to the operator is always allowed. Continuity CHECKPOINTs belong on the **MONITOR** thread, not on **N**.
+
+Temp checkout-local (`_ws`). Distilled from 5912 MONITOR over-posting (t12/t13/t17) + operator bind that monitoring must be separate from the orchestrator bus (sibling **5913** `pager-5912-monitor`). Promote into `agent-bus-discipline` § MONITOR when the pattern recurs; then delete this file.
+
+## SOP — establish / resume
+
+| Step | Do |
+|---|---|
+| Intake `/agent-bus N monitoring` (or `mission: …` watch) | If no sibling MONITOR thread tagged `type:monitor` + `watches:N`, **mint one** (`new_slug` e.g. `<mission>-N-monitor`, `to=cursor`, tags as below) with CHECKPOINT 0 sidecar. Do **not** post that checkpoint onto **N**. |
+| Already have sibling | Resume **that** thread id for continuity; peek **N** only. |
+| Fresh Cursor session | Open `/agent-bus <MONITOR_id> monitoring` — reconstitute from latest CHECKPOINT sidecar; then peek **N**. |
+| Closability / design discussion | Happens in chat and/or on the MONITOR thread — **¬** on the web-anthropic operator bus. |
+
+### MONITOR thread tags (required)
+
+- `type:monitor`
+- `watches:<N>` (the operator/orchestrator thread id)
+- mission/project tags as appropriate (`mission:pager`, …)
+
+### Watched thread **N** (operator / CDP proxy bus)
+
+- Protocol actors only: DIRECTIVE / CLOSEOUT / DISPOSITION / executor admit.
+- MONITOR may **peek** (`fetch` / `get` / `--compact`) with **¬ `--mark-read`**.
+- Unread stays for the executor / auto admit path.
+
+## When
+
+Fires when the operator (or prior turn) frames the seat as:
+- `MONITOR` / `monitoring` / `monitoring only`
+- `mission: pager` / `mission: double agent` (or sibling mission-watch labels)
+- watch / observe / pager-monitor without executor remit
+- thread tagged `type:monitor` (this seat is already on the sibling)
+
+¬ fires for ordinary `/agent-bus` handle-and-reply on an executor/operator seat, DIRECTIVE execution, or CLOSEOUT authorship.
+
+## Forbidden
+
+| Action | Why |
+|---|---|
+| Posting MONITOR status / PAGE / CHECKPOINT onto watched **N** | Contaminates operator/orchestrator bus; wakes web-anthropic; confuses CLOSEOUT waiters |
+| `post` / `reply` / `append` / MCP `send` on **N** while MONITOR | Same |
+| `--mark-read` / `fetch-unread … --mark-read` on **N** | Steals unread from executor / auto |
+| Using **N** as the fresh-context home because "that's the mission" | Mission *execution* is on **N**; *watch continuity* is the sibling |
+| Impersonating executor / re-dispatch / aborting live lanes "to help" | MONITOR observes; does not steer |
+
+## Permitted
+
+| Action | When |
+|---|---|
+| Mint / CHECKPOINT / short notes on the **MONITOR** sibling | Continuity for the operator↔cursor (this is the bus home for watch) |
+| Peek **N** without mark-read | Always |
+| Event / `project_ask` poll / observability | Always |
+| Read cortex/workspaces artifacts the arc already produced | Always |
+| Chat orientation to operator (Been→Are→Going, gates, URIs) | Always — primary deliverable |
+| `tmp/thread-state/{N}.md` local scratch labeled informational only | OK |
+| On-bus write to **N** | **Only** if operator authorizes e.g. "PAGE on 5912" / "alert web-anthropic" |
+
+## If an on-bus write to **N** is authorized (or was already made)
+
+Subject **and** body open must carry an explicit informational marker, e.g.:
+- subject: `NOTE (informational only) — …`
+- body first line: `TYPE: NOTE` + `informational_only: true`
+
+Retroactive: if this seat already posted onto **N** while MONITOR, `append` that marker — do **not** invent a second status turn.
+
+## Anti-patterns
+
+| Bad | Good |
+|---|---|
+| `/agent-bus 5912 monitoring` then post PAGE onto 5912 | Mint/resume `watches:5912` MONITOR thread; tell the operator in chat; peek 5912 silent |
+| CHECKPOINT on the operator bus "so Cowork sees it" | CHECKPOINT on MONITOR sibling; Cowork stays on **N** for protocol only |
+| MONITOR mark-read on **N** | Peek only |
+| Treating monitoring intake as handle-each-unread-and-reply on **N** | Watch predicates; no protocol replies on **N** |
+
+## Worked example
+
+- Operator bus: **5914** (`operator-messages-web-bridge`) — web-anthropic; Messages scrape/ingest (email-bridge class). Cowork phone-ping = separate session.
+- MONITOR sibling: **5915** (`monitor-messages-web-bridge`) — tags `type:monitor`, `watches:5914`
+- Fresh MONITOR session: `/agent-bus 5915 monitoring` → `cortex://notes/system/threads/5915-checkpoint-0.md`
+- Prior PAGER operator **5912** + MONITOR **5913** parked/closed with pointers here (2026-07-26 restart)
+
+## Composition
+
+- Does **not** waive `/agent-bus` Step 0 continuity brief when that command is the intake (run it against the **MONITOR** thread id when resuming watch).
+- Overrides `/agent-bus` default `--mark-read` **on watched N** while MONITOR.
+- Executor / operator-proxy seats on **N** still follow `cdp-operator-proxy` + normal bus reply rules.
+- Push reminders: irrelevant for MONITOR→web on **N** (no open web-expecting reply from this seat on **N**).

@@ -1,0 +1,224 @@
+---
+name: checkpoint-discipline
+description: "Author/resume CHECKPOINTs on standing roots (spine=root): profile pick tick_charter vs orchestrator_continuity, tip supersede + lean resume, role:root stamp, RESUME footer, scoreboard birth."
+skill_category: orchestration
+trigger_match_terms: ["checkpoint-discipline", "CHECKPOINT", "tick_charter", "orchestrator_continuity", "tip supersede", "lean resume", "role:root", "RESUME footer", "scoreboard birth", "standing root"]
+---
+
+# Checkpoint Discipline
+
+`∀ spine=root: tip_hygiene ∧ lean_resume`; enrollment picks **body profile only**.
+
+**Schema SOT (field IDs):** `cortex://notes/system/specs/checkpoint-schema-profiles.md` — B1–B5 / T1–T9 live there; ¬ copy defs into this skill.
+
+## When to load
+
+About to post, supersede, or resume a CHECKPOINT; standing-root continuity; charter-runner enroll; operator `resume`/`checkpoint <thread#>`.
+
+## Invariant
+
+```
+CHECKPOINT := reconstitution index ∧ deliberative steering
+¬ completeness authority
+empty(Next-pickup) ⇏ arc_complete
+```
+
+Done/close-arc claims: also load `agent-bus-discipline` § R12.
+
+## Spine vs enrollment
+
+| Axis | Values | Note |
+|---|---|---|
+| Spine | `root` \| `work` | Tip discipline binds **root** only |
+| Enrollment | `charter-runner` \| none | Enrolled ⇒ root (auto-stamp). Profile: enrolled → `tick_charter`; else → `orchestrator_continuity` |
+
+`profile=` HTML is descriptive only. Classification recognition: `agent-bus-discipline` § Thread classification (thin).
+
+## Profile discriminator
+
+Enrollment tag is SOT. `tick_charter` = machine consumer (base + T extras; malformed → tick skip). `orchestrator_continuity` = index-thin human/agent index + handoff pointer. ¬ full tick ceremony on non-enrolled roots. Field presence → schema §3/§5/§6.
+
+## Writer conventions
+
+| Rule | Binding |
+|---|---|
+| Subject | Prefix `CHECKPOINT` (wave/seam). Other verbs: WIP/DONE/BLOCKED/SPAWN/reconcile |
+| Body | WIP + pointers; Next-pickup = gated G-rows only; tangent by pointer |
+| Primary OPEN vs WIP | Name G-rows separately from seat WIP; divergence without bind/child = named fork |
+| Delta gate board | Carry settled `[x]` by reference; emit open/delta rows; evidence in sidecar |
+| Scoreboard birth | **Chartered root** (`charter-runner` enrolled): mint `cortex://notes/system/threads/<id>-charter-scoreboard.md` from template **before** first CP if absent. `Scoreboard: none` = violation. **Unchartered orchestrator_continuity root**: omit scoreboard birth — no charter scoreboard path required |
+| Scoreboard write-back | `retract ∨ flip(status) ⇒ update scoreboard BEFORE next CP` (chartered roots only; unchartered roots have no standing scoreboard file) |
+| Terminal-block coherence | Appending a terminal verdict block (`ARC COMPLETE`, closure table) ⇒ refresh the file's `RESUME` / next-actor footer in the **same** write. A footer naming actors the block just closed makes the file contradict itself, and R12 computes against the **file**, not the newest block — either verdict is pickable (friction `27099`) |
+| Side-quest | Multi-step ∉ OPEN G-row ⇒ operator bind or child thread before act |
+| Residual sweep | Checkpoint-time: named residuals still in chat only? → Use the `residual-imprint` skill |
+
+## Tip hygiene (spine=root)
+
+| Rule | Binding |
+|---|---|
+| `role:root` stamp | CP **author** stamps via `update_thread` / `add_tags` on **first** continuity CP if absent when ``AGENT_BUS_CHECKPOINT_AUTO_STAMP`` is on (default off). Manual: `add_tags` / `remove_tags` (or CLI `--add-tag` / `--remove-tag`). Enrolled roots auto-stamp. Legacy read: `CHECKPOINT ∧ ¬type:monitor` ⇒ treat as root until stamped |
+| `supersedes_turn` | Target prior **CHECKPOINT** **turn_number** (same thread). Index-level — prior CPs remain audit. Response echoes `{superseded_turn_number, superseded_turn_id}`. Deprecated alias `supersedes_turn_id` (row id) one release cycle |
+| `mark_read` | `true` only for **self→self** continuity tips. ¬ mark CPs addressed to another seat/operator |
+
+## Resume (lean default)
+
+1. Detect root: `role:root` ∨ legacy CHECKPOINT read ∨ enrollment.
+2. Tip body: `fetch(thread, compact=true, last=K)` → subject index → `get(turn_number=<latest subject starting with CHECKPOINT>)`. **¬** `last=1` as tip (latest turn may be closeout).
+3. Other unread: compact subjects only; ¬ auto-widen on `has_earlier_turns`.
+4. Child lanes (`watches:*`): pointer IDs only — ¬ fetch child history on parent resume.
+5. Then: tip → scoreboard if named → roadmap if named → Cortex cards. Mid-tier: ≤3 further sidecars before drafting.
+
+| Widen when | Fetch |
+|---|---|
+| Operator asks / `--all` / `--context N` | As asked |
+| Unread `from≠self` ∧ subject ¬CHECKPOINT | That body (+ optional context) |
+| Tip lacks Next-pickup / Anchor / stale vs known child activity | Prior 2–3 CPs or named sidecar |
+| Execute on child lane | Open **that** thread separately |
+
+**Operator-facing:** `orchestrator_continuity` → Been→Are→Going → `In one line:` → charter · settled·live·next · next (`operator-posture` Rule 3). `tick_charter` → wave · in-flight · next pickup only.
+
+**Vocabulary:** `resume <n>` → this section; `checkpoint <n>` → post per profile + tip hygiene.
+
+**Mid-tier / B6:** scoreboard gated lane + tip first. Charter-health dispatch only when densified Next/WIP ∉ OPEN G-row or operator asks how-are-we-doing (≤15 lines).
+
+## Autonomous tick runtime (compressed)
+
+Enrolled roots only. Design SOT: `cortex://notes/system/specs/autonomous-path-sim-charter.md` · `charter-runner-tick`.
+
+| Contract | Consequence |
+|---|---|
+| `no_gated_pickup` | `root_skipped` → state-close → unenroll (≤1/tick) |
+| `checkpoint_missing` | No heal — author reseed |
+| `executor_mismatch` | Refuse ADMIT_WORKER until tip reauthored |
+| `stale_r_corpus_sha` | R-admit fail-closed — refresh Sidecars `spec_sha256:` |
+| Arc-close | Sidecar ≠ done — `workflow_state=done` on parent+children |
+
+## RESUME footer (canonical — paste byte-identical)
+
+Prefix must stay `— RESUME (any seat, no command):` (parser T8).
+
+```
+— RESUME (any seat, no command): load checkpoint-discipline (tip resume + author workflow; done/close claims also load agent-bus-discipline § R12 completeness gate; cursor coding arc may add orchestrator-workflow) → read <continuity-source URI/path> [+ scoreboard gated lane if named] → this is the latest CHECKPOINT (wave/in-flight/next above). Do not read the thread linearly. empty Next-pickup ≠ arc complete.
+```
+
+`<continuity-source URI/path>` = the durable roadmap or reconstitution index named in the CHECKPOINT body (e.g. `cortex://notes/system/roadmaps/<slug>.md` or a workspaces share path). Parameterize per arc — do not hardcode a single global path.
+
+## Related
+
+- `agent-bus-discipline` — send/reply/lifecycle; R12 done/close; thread classification
+- `orchestrator-workflow` — coding-arc R12
+- `operator-posture` — Rule 3 resume ceremony
+- path-sim `tick-enrollment-annex` — enroll template
+- Schema URI above
+---
+name: checkpoint-discipline
+description: "Author/resume CHECKPOINTs on standing roots (spine=root): profile pick tick_charter vs orchestrator_continuity, tip supersede + lean resume, role:root stamp, RESUME footer, scoreboard birth."
+skill_category: orchestration
+trigger_match_terms: ["checkpoint-discipline", "CHECKPOINT", "tick_charter", "orchestrator_continuity", "tip supersede", "lean resume", "role:root", "RESUME footer", "scoreboard birth", "standing root"]
+---
+
+# Checkpoint Discipline
+
+`∀ spine=root: tip_hygiene ∧ lean_resume`; enrollment picks **body profile only**.
+
+**Schema SOT (field IDs):** `cortex://notes/system/specs/checkpoint-schema-profiles.md` — B1–B5 / T1–T9 live there; ¬ copy defs into this skill.
+
+## When to load
+
+About to post, supersede, or resume a CHECKPOINT; standing-root continuity; charter-runner enroll; operator `resume`/`checkpoint <thread#>`.
+
+## Invariant
+
+```
+CHECKPOINT := reconstitution index ∧ deliberative steering
+¬ completeness authority
+empty(Next-pickup) ⇏ arc_complete
+```
+
+Done/close-arc claims: also load `agent-bus-discipline` § R12.
+
+## Spine vs enrollment
+
+| Axis | Values | Note |
+|---|---|---|
+| Spine | `root` \| `work` | Tip discipline binds **root** only |
+| Enrollment | `charter-runner` \| none | Enrolled ⇒ root (auto-stamp). Profile: enrolled → `tick_charter`; else → `orchestrator_continuity` |
+
+`profile=` HTML is descriptive only. Classification recognition: `agent-bus-discipline` § Thread classification (thin).
+
+## Profile discriminator
+
+Enrollment tag is SOT. `tick_charter` = machine consumer (base + T extras; malformed → tick skip). `orchestrator_continuity` = index-thin human/agent index + handoff pointer. ¬ full tick ceremony on non-enrolled roots. Field presence → schema §3/§5/§6.
+
+## Writer conventions
+
+| Rule | Binding |
+|---|---|
+| Subject | Prefix `CHECKPOINT` (wave/seam). Other verbs: WIP/DONE/BLOCKED/SPAWN/reconcile |
+| Body | WIP + pointers; Next-pickup = gated G-rows only; tangent by pointer |
+| Primary OPEN vs WIP | Name G-rows separately from seat WIP; divergence without bind/child = named fork |
+| Delta gate board | Carry settled `[x]` by reference; emit open/delta rows; evidence in sidecar |
+| Scoreboard birth | **Chartered root** (`charter-runner` enrolled): mint `cortex://notes/system/threads/<id>-charter-scoreboard.md` from template **before** first CP if absent. `Scoreboard: none` = violation. **Unchartered orchestrator_continuity root**: omit scoreboard birth — no charter scoreboard path required |
+| Scoreboard write-back | `retract ∨ flip(status) ⇒ update scoreboard BEFORE next CP` (chartered roots only; unchartered roots have no standing scoreboard file) |
+| Terminal-block coherence | Appending a terminal verdict block (`ARC COMPLETE`, closure table) ⇒ refresh the file's `RESUME` / next-actor footer in the **same** write. A footer naming actors the block just closed makes the file contradict itself, and R12 computes against the **file**, not the newest block — either verdict is pickable (friction `27099`) |
+| Side-quest | Multi-step ∉ OPEN G-row ⇒ operator bind or child thread before act |
+| Residual sweep | Checkpoint-time: named residuals still in chat only? → Use the `residual-imprint` skill |
+
+## Tip hygiene (spine=root)
+
+| Rule | Binding |
+|---|---|
+| `role:root` stamp | CP **author** stamps via `update_thread` / `add_tags` on **first** continuity CP if absent when ``AGENT_BUS_CHECKPOINT_AUTO_STAMP`` is on (default off). Manual: `add_tags` / `remove_tags` (or CLI `--add-tag` / `--remove-tag`). Enrolled roots auto-stamp. Legacy read: `CHECKPOINT ∧ ¬type:monitor` ⇒ treat as root until stamped |
+| `supersedes_turn` | Target prior **CHECKPOINT** **turn_number** (same thread). Index-level — prior CPs remain audit. Response echoes `{superseded_turn_number, superseded_turn_id}`. Deprecated alias `supersedes_turn_id` (row id) one release cycle |
+| `mark_read` | `true` only for **self→self** continuity tips. ¬ mark CPs addressed to another seat/operator |
+
+## Resume (lean default)
+
+1. Detect root: `role:root` ∨ legacy CHECKPOINT read ∨ enrollment.
+2. Tip body: `fetch(thread, compact=true, last=K)` → subject index → `get(turn_number=<latest subject starting with CHECKPOINT>)`. **¬** `last=1` as tip (latest turn may be closeout).
+3. Other unread: compact subjects only; ¬ auto-widen on `has_earlier_turns`.
+4. Child lanes (`watches:*`): pointer IDs only — ¬ fetch child history on parent resume.
+5. Then: tip → scoreboard if named → roadmap if named → Cortex cards. Mid-tier: ≤3 further sidecars before drafting.
+
+| Widen when | Fetch |
+|---|---|
+| Operator asks / `--all` / `--context N` | As asked |
+| Unread `from≠self` ∧ subject ¬CHECKPOINT | That body (+ optional context) |
+| Tip lacks Next-pickup / Anchor / stale vs known child activity | Prior 2–3 CPs or named sidecar |
+| Execute on child lane | Open **that** thread separately |
+
+**Operator-facing:** `orchestrator_continuity` → Been→Are→Going → `In one line:` → charter · settled·live·next · next (`operator-posture` Rule 3). `tick_charter` → wave · in-flight · next pickup only.
+
+**Vocabulary:** `resume <n>` → this section; `checkpoint <n>` → post per profile + tip hygiene.
+
+**Mid-tier / B6:** scoreboard gated lane + tip first. Charter-health dispatch only when densified Next/WIP ∉ OPEN G-row or operator asks how-are-we-doing (≤15 lines).
+
+## Autonomous tick runtime (compressed)
+
+Enrolled roots only. Design SOT: `cortex://notes/system/specs/autonomous-path-sim-charter.md` · `charter-runner-tick`.
+
+| Contract | Consequence |
+|---|---|
+| `no_gated_pickup` | `root_skipped` → state-close → unenroll (≤1/tick) |
+| `checkpoint_missing` | No heal — author reseed |
+| `executor_mismatch` | Refuse ADMIT_WORKER until tip reauthored |
+| `stale_r_corpus_sha` | R-admit fail-closed — refresh Sidecars `spec_sha256:` |
+| Arc-close | Sidecar ≠ done — `workflow_state=done` on parent+children |
+
+## RESUME footer (canonical — paste byte-identical)
+
+Prefix must stay `— RESUME (any seat, no command):` (parser T8).
+
+```
+— RESUME (any seat, no command): load checkpoint-discipline (tip resume + author workflow; done/close claims also load agent-bus-discipline § R12 completeness gate; cursor coding arc may add orchestrator-workflow) → read <continuity-source URI/path> [+ scoreboard gated lane if named] → this is the latest CHECKPOINT (wave/in-flight/next above). Do not read the thread linearly. empty Next-pickup ≠ arc complete.
+```
+
+`<continuity-source URI/path>` = the durable roadmap or reconstitution index named in the CHECKPOINT body (e.g. `cortex://notes/system/roadmaps/<slug>.md` or a workspaces share path). Parameterize per arc — do not hardcode a single global path.
+
+## Related
+
+- `agent-bus-discipline` — send/reply/lifecycle; R12 done/close; thread classification
+- `orchestrator-workflow` — coding-arc R12
+- `operator-posture` — Rule 3 resume ceremony
+- path-sim `tick-enrollment-annex` — enroll template
+- Schema URI above

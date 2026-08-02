@@ -1,0 +1,35 @@
+---
+description: Gateway journal-entry extensions — domain list, architecture doc check, RAG indexing
+alwaysApply: false
+globs: []
+---
+# Journal Entry Extensions (Workspace)
+
+## Domain List
+
+Valid domains for this workspace:
+`routing | federation | events | rag | pipeline | tooling | tui | catalog | measurement`
+
+## Architecture Doc Check
+
+If the entry's domain ∈ {routing, federation, events, pipeline, rag} and it captures
+an **architectural decision** (not just a bug fix):
+1. Identify the relevant `docs/architecture/` file
+2. Check if the doc reflects the decision
+3. If not → note "docs/architecture/{file}.md may need updating"
+
+Do not block the journal entry on doc updates — just flag it.
+
+## RAG Indexing
+
+```bash
+curl -sf -X POST http://localhost:8100/index \
+  -H 'Content-Type: application/json' \
+  -d '{"path": "ABSOLUTE_PATH_TO_JOURNAL_FILE"}'
+
+curl -sf -X POST http://localhost:8100/index \
+  -H 'Content-Type: application/json' \
+  -d '{"path": "/mnt/torus/projects/universal-llm-gateway/tasks/journal/index.yaml"}'
+```
+
+If RAG service is down, note and move on. Files on disk are ground truth.

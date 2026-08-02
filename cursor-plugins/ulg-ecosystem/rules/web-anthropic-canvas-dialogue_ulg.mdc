@@ -1,5 +1,5 @@
 ---
-description: Load when Kaywan wants chat→web-anthropic relay rendered in a Canvas panel (type in chat, seat rewrites bus + refreshes canvas). Soft ≤3 Jupiter converse batching is in claude-ai-cdp-navigation.
+description: Load when the operator wants chat→web-anthropic relay rendered in a Canvas panel (type in chat, seat rewrites bus + refreshes canvas). Soft ≤3 Jupiter converse batching is in claude-ai-cdp-navigation.
 alwaysApply: false
 rule_category: cortex-bus
 apply_tier: catalog

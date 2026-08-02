@@ -1,7 +1,7 @@
 """Fail-closed wake-path gate for operator-proxy mission closeouts.
 
 A mission may not close over an outstanding commission without a named wake
-path (collector, scheduled followup, charter enrollment, or kaywan_gate).
+path (collector, scheduled followup, charter enrollment, or operator_gate).
 ``commissioned, in flight`` alone is an invalid close state — instance 8 of
 the success-shaped-return class (agent-bus:6576 t67).
 """
@@ -15,7 +15,7 @@ BEYOND_HEADING = "## Work beyond this close"
 BEYOND_NOTIFY_PREFIX = "Beyond this close:"
 
 _WAKE_TOKEN_RE = re.compile(
-    r"(?i)\b(collector|followup|charter_enrolled|kaywan_gate)\s*:"
+    r"(?i)\b(collector|followup|charter_enrolled|operator_gate)\s*:"
 )
 _OUTSTANDING_RE = re.compile(r"(?i)\b(in[-\s]?flight|commissioned)\b")
 _MISSION_CLOSEOUT_TYPE_RE = re.compile(r"(?i)^TYPE:\s*MISSION_CLOSEOUT\b", re.M)
@@ -39,7 +39,7 @@ MISSION_CLOSE_WAKE_FIX_HINT = (
     "will produce a result after close. Otherwise list each residual as a "
     "bullet (`- …`) with a wake token anywhere in that bullet: "
     "`collector: <seat>` · `followup: <how>` · `charter_enrolled: <root>` · "
-    "or `kaywan_gate: <reason>`. One bullet = one residual; hard-wrapped "
+    "or `operator_gate: <reason>`. One bullet = one residual; hard-wrapped "
     "continuation lines fold into the bullet. Non-bullet prose under the "
     "heading is ignored. A prose-only section (no bullets) refuses. "
     "Example: `- D10 spec — collector: web-anthropic · followup: poll 6576`. "
@@ -164,7 +164,7 @@ def validate_mission_close_wake(
                 ok=False,
                 reason="mission_close_uncollected_commission",
                 missed_tokens=(
-                    "wake_path (collector:|followup:|charter_enrolled:|kaywan_gate:)",
+                    "wake_path (collector:|followup:|charter_enrolled:|operator_gate:)",
                 ),
             )
         return MissionCloseWakeVerdict(ok=True)
@@ -247,7 +247,7 @@ def validate_mission_debrief_notify(
                 ok=False,
                 reason="mission_debrief_uncollected_commission",
                 missed_tokens=(
-                    "wake_path (collector:|followup:|charter_enrolled:|kaywan_gate:)",
+                    "wake_path (collector:|followup:|charter_enrolled:|operator_gate:)",
                 ),
             )
         return MissionCloseWakeVerdict(ok=True)
@@ -256,7 +256,7 @@ def validate_mission_debrief_notify(
             ok=False,
             reason="mission_debrief_wake_path_incomplete",
             missed_tokens=(
-                "wake_path (collector:|followup:|charter_enrolled:|kaywan_gate:)",
+                "wake_path (collector:|followup:|charter_enrolled:|operator_gate:)",
             ),
         )
     return MissionCloseWakeVerdict(ok=True)
