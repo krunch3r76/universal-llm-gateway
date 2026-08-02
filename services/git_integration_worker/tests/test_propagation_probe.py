@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from implement_admission.propagation_row import PropagationRow
 
 from services.git_integration_worker.cursor_auto.propagation_probe import (
@@ -32,6 +34,50 @@ def _row(
 
 def test_process_identity_prefers_pid() -> None:
     assert process_identity({"pid": 42, "process_age_s": 1.0}) == "pid:42"
+
+
+def test_ac17p_proof_observed_reaches_deployment_identity_emit() -> None:
+    """Pre-fix: TypeError on settle_not_before_monotonic kwarg blocked emit entirely."""
+    row = _row("git_integration_worker", _SHA_A, proof_class="process_live")
+    before = {"code_version": _SHA_OLD, "pid": 100}
+    after = {"code_version": _SHA_A, "pid": 200}
+    emit_path = (
+        "services.git_integration_worker.cursor_sdk_boundary_deployment_identity"
+        ".emit_deployment_identity_boundary"
+    )
+    with patch(emit_path, wraps=__import__(
+        "services.git_integration_worker.cursor_sdk_boundary_deployment_identity",
+        fromlist=["emit_deployment_identity_boundary"],
+    ).emit_deployment_identity_boundary) as emit_mock:
+        assert proof_observed(row, after, before=before) is True
+        emit_mock.assert_called_once()
+        emit_arg = emit_mock.call_args[0][0]
+        assert emit_arg.expected_executor == "git_integration_worker"
+        assert emit_arg.probed_surface == "git_integration_worker"
+        assert emit_arg.landed_at_monotonic is None
+
+
+def test_ac17p_proof_observed_maps_settle_not_before_to_landed_at_monotonic() -> None:
+    """Post-restart propagation path must pass landed_at_monotonic, not settle_not_before."""
+    import time
+
+    row = _row("git_integration_worker", _SHA_A, proof_class="process_live")
+    settle_not_before = time.monotonic() - 30.0
+    after = {"code_version": _SHA_A, "uptime_s": 2.0, "pid": 526100}
+    emit_path = (
+        "services.git_integration_worker.cursor_sdk_boundary_deployment_identity"
+        ".emit_deployment_identity_boundary"
+    )
+    with patch(emit_path) as emit_mock:
+        assert proof_observed(
+            row,
+            after,
+            settle_not_before_monotonic=settle_not_before,
+        )
+        emit_mock.assert_called_once()
+        emit_arg = emit_mock.call_args[0][0]
+        assert emit_arg.landed_at_monotonic == settle_not_before
+        assert not hasattr(emit_arg, "settle_not_before_monotonic")
 
 
 def test_proof_observed_process_live_without_before_is_false() -> None:

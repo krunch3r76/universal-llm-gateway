@@ -159,7 +159,7 @@ def proof_observed(
             payload=payload,
             code_ref=row.code_ref,
             before_payload=before,
-            settle_not_before_monotonic=settle_not_before_monotonic,
+            landed_at_monotonic=settle_not_before_monotonic,
         )
     )
     if payload is None:
