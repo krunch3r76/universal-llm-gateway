@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -22,11 +22,23 @@ def fast_store() -> ExecutionStore:
 @pytest.mark.asyncio
 async def test_boot_reconcile_reaps_orphaned_lanes(fast_store: ExecutionStore) -> None:
     deregistered: list[str] = []
-    fast_store.bind_deregister(lambda rid: deregistered.append(rid))
-    fake_reg = MagicMock(registration_id="orphan-1")
 
-    with patch("claude_bundles.cdp_registry.list_active", return_value=[fake_reg]):
-        reaped = await fast_store.boot_reconcile()
+    def _deregister(rid: str, **kwargs: object) -> None:
+        deregistered.append(rid)
+
+    fake_active = {
+        "orphan-1": {
+            "registration_id": "orphan-1",
+            "port": 9229,
+            "profile_suffix": "reg-orphan01",
+            "holder": "a",
+            "status": "active",
+        }
+    }
+
+    with patch("claude_bundles.cdp_registry._load_active", return_value=fake_active):
+        with patch("claude_bundles.cdp_registry.deregister_lane", side_effect=_deregister):
+            reaped = await fast_store.boot_reconcile()
 
     assert reaped == ["orphan-1"]
     assert deregistered == ["orphan-1"]
@@ -37,13 +49,24 @@ async def test_boot_reconcile_keeps_live_execution_lane(
     fast_store: ExecutionStore,
 ) -> None:
     deregistered: list[str] = []
-    fast_store.bind_deregister(lambda rid: deregistered.append(rid))
     record = await fast_store.create(holder="seat", purpose="ask")
     await fast_store.set_registration_id(record.execution_id, "live-1")
-    fake_reg = MagicMock(registration_id="live-1")
+    fake_active = {
+        "live-1": {
+            "registration_id": "live-1",
+            "port": 9229,
+            "profile_suffix": "reg-live01",
+            "holder": "a",
+            "status": "active",
+        }
+    }
 
-    with patch("claude_bundles.cdp_registry.list_active", return_value=[fake_reg]):
-        reaped = await fast_store.boot_reconcile()
+    with patch("claude_bundles.cdp_registry._load_active", return_value=fake_active):
+        with patch(
+            "claude_bundles.cdp_registry.deregister_lane",
+            side_effect=lambda rid, **kw: deregistered.append(rid),
+        ):
+            reaped = await fast_store.boot_reconcile()
 
     assert reaped == []
     assert deregistered == []
@@ -52,13 +75,16 @@ async def test_boot_reconcile_keeps_live_execution_lane(
 @pytest.mark.asyncio
 async def test_execution_ttl_reaper_marks_failed(fast_store: ExecutionStore) -> None:
     deregistered: list[str] = []
-    fast_store.bind_deregister(lambda rid: deregistered.append(rid))
     record = await fast_store.create(holder="seat", purpose="ask")
     await fast_store.set_registration_id(record.execution_id, "lane-1")
     await fast_store.attach_task(record.execution_id, asyncio.create_task(asyncio.sleep(60)))
 
-    await asyncio.sleep(0.12)
-    await fast_store._reap_once()
+    with patch(
+        "claude_bundles.cdp_registry.deregister_lane",
+        side_effect=lambda rid, **kw: deregistered.append(rid),
+    ):
+        await asyncio.sleep(0.12)
+        await fast_store._reap_once()
 
     updated = await fast_store.get(record.execution_id)
     assert updated is not None

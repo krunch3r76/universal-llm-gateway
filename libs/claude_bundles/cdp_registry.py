@@ -17,7 +17,7 @@ import shutil
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +33,9 @@ PORTS_LOCK = _store.PORTS_LOCK
 REGISTRATIONS_DIR = _store.REGISTRATIONS_DIR
 
 PORT_RANGE = range(9223, 9350)
-_RESERVED_STATUSES = frozenset({"allocating", "active", "released", "orphaned_retry"})
+_RESERVED_STATUSES = frozenset(
+    {"allocating", "active", "released", "orphaned_retry", "orphaned_alive"}
+)
 _RECLAIMABLE_STATUSES = frozenset({"released", "orphaned_retry"})
 RECLAIM_TRASH_DIR = Path.home() / ".gateway" / ".reclaim-trash"
 STALE_ACTIVE_TTL_S = 6 * 3600
@@ -275,17 +277,25 @@ def reattach(registration_id: str, *, holder: str) -> Registration:
 def deregister_lane(
     registration_id: str,
     *,
-    kill: bool = False,
+    kill: bool | None = None,
+    reason: str = "released",
+    keep_alive_reason: str | None = None,
     is_listening: _ListenFn | None = None,
 ) -> None:
-    """Mark released (not free). Optional --kill of Chrome listener."""
+    """Release or orphan-alive a lane; error paths never kill Chrome."""
     listen = is_listening or cdp_lane.is_listening
+    error_release = keep_alive_reason is not None or reason in {
+        "cse_not_found",
+        "probe_failed",
+    }
+    if kill is None:
+        kill = reason == "released" and not error_release
     with _store.ports_lock():
         active = _store.load_active()
         row = active.get(registration_id)
         if row is None:
             raise RegistryError(f"unknown registration_id: {registration_id!r}")
-        if row.get("status") == "released":
+        if row.get("status") in {"released", "orphaned_alive"}:
             _release_driver_lock(registration_id)
             return
 
@@ -294,8 +304,13 @@ def deregister_lane(
             _kill_listener(port)
 
         row = dict(row)
-        row["status"] = "released"
-        row["released_at"] = time.time()
+        if error_release:
+            row["status"] = "orphaned_alive"
+            row["orphaned_at"] = time.time()
+            row["orphan_reason"] = keep_alive_reason or reason
+        else:
+            row["status"] = "released"
+            row["released_at"] = time.time()
         active[registration_id] = row
         _store.write_active(active)
         _store.append_log("deregister", row)
@@ -309,7 +324,7 @@ def list_active() -> list[Registration]:
     out = [
         _row_to_registration(row)
         for row in active.values()
-        if row.get("status") == "active"
+        if row.get("status") in ("active", "orphaned_alive")
     ]
     return sorted(out, key=lambda r: r.port)
 
@@ -324,7 +339,7 @@ def _profile_path_from_row(row: dict[str, Any]) -> Path | None:
     return None
 
 
-def _is_primary_profile(profile: Path) -> bool:
+def is_primary_profile(profile: Path) -> bool:
     return profile.resolve() == cdp_lane.PRIMARY_PROFILE.resolve()
 
 
@@ -345,7 +360,7 @@ def _reclaim_profile_to_trash(
     probe = chrome_port_for_profile or cdp_lane.chrome_port_for_profile
     if not profile.exists():
         return "missing"
-    if _is_primary_profile(profile):
+    if is_primary_profile(profile):
         return "skipped_primary"
     if probe(profile) is not None:
         return "skipped_live"
@@ -383,16 +398,19 @@ def _orphan_profile_sweep(
     }
     removed: list[str] = []
     for path in parent.glob(f"{profile_prefix}*"):
-        if _is_primary_profile(path):
+        if is_primary_profile(path):
             continue
         suffix = path.name.removeprefix(f"{cdp_lane.PRIMARY_PROFILE.name}-")
         if suffix in registered_suffixes:
             continue
         if probe(path) is not None:
             continue
-        if _reclaim_profile_to_trash(
-            path, f"orphan-{suffix}", chrome_port_for_profile=probe
-        ) == "success":
+        if (
+            _reclaim_profile_to_trash(
+                path, f"orphan-{suffix}", chrome_port_for_profile=probe
+            )
+            == "success"
+        ):
             removed.append(str(path))
     return removed
 
@@ -556,29 +574,6 @@ def is_driver_lock_held(registration_id: str) -> bool:
 def process_holds_driver_lock(registration_id: str) -> bool:
     """True iff this process claimed the driver lock via register/reattach."""
     return registration_id in _HELD_LOCKS
-
-
-def registration_as_dict(reg: Registration) -> dict[str, Any]:
-    d = asdict(reg)
-    d["profile"] = str(reg.profile)
-    return d
-
-
-def active_registration_dicts() -> list[dict[str, Any]]:
-    """List projection for CLI — includes driver_pid, attached, chrome_pid."""
-    active = _store.load_active()
-    out: list[dict[str, Any]] = []
-    for rid, row in active.items():
-        if row.get("status") != "active":
-            continue
-        d = registration_as_dict(_row_to_registration(row))
-        holder_pid = row.get("holder_pid")
-        d["driver_pid"] = holder_pid if isinstance(holder_pid, int) else None
-        d["attached"] = is_driver_lock_held(rid)
-        chrome_pid = row.get("chrome_pid")
-        d["chrome_pid"] = chrome_pid if isinstance(chrome_pid, int) else None
-        out.append(d)
-    return sorted(out, key=lambda item: int(item["port"]))
 
 
 # Test helpers — load active via store (kept for monkeypatched paths).

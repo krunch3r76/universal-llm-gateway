@@ -75,8 +75,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "list":
-        rows = cdp_registry.active_registration_dicts()
-        print(json.dumps(rows, indent=2))
+        from claude_bundles import cdp_orphans
+
+        print(json.dumps(cdp_orphans.list_surface_payload(), indent=2))
         return 0
 
     if args.cmd == "hygiene-reclaim":

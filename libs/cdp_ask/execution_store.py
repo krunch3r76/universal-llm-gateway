@@ -19,6 +19,7 @@ DeregisterFn = Callable[[str], None]
 # independent: any pending/running work defers restart.
 LANE_SOFT_LIMIT = 2
 LANE_HARD_LIMIT = 3
+_LIVE_CSE_CACHE_TTL_S = 10.0
 
 
 @dataclass
@@ -62,6 +63,7 @@ class ExecutionStore:
         self._lock = asyncio.Lock()
         self._reaper_task: asyncio.Task[None] | None = None
         self._deregister: DeregisterFn | None = None
+        self._live_cse_cache: tuple[float, int] | None = None
 
     def bind_deregister(self, fn: DeregisterFn) -> None:
         self._deregister = fn
@@ -109,6 +111,17 @@ class ExecutionStore:
                 if rec.registration_id and rec.status in {"pending", "running"}
             }
 
+    def _live_cse_count(self) -> int:
+        now = time.time()
+        cached = self._live_cse_cache
+        if cached is not None and now - cached[0] < _LIVE_CSE_CACHE_TTL_S:
+            return cached[1]
+        from claude_bundles import cdp_orphans
+
+        count = sum(1 for port in cdp_orphans.probe_live_ports() if port.has_live_cse)
+        self._live_cse_cache = (now, count)
+        return count
+
     async def active_work_snapshot(self) -> dict[str, Any]:
         """Aggregate pending/running executions for drain + lane-admission probes.
 
@@ -134,17 +147,24 @@ class ExecutionStore:
                 for rec in active
             ]
         running_count = len(execution_ids)
-        free_slots = max(0, LANE_HARD_LIMIT - running_count)
+        live_cse_count = self._live_cse_count()
+        effective = max(running_count, live_cse_count)
+        free_slots = max(0, LANE_HARD_LIMIT - effective)
         return {
             "busy": running_count > 0,
             "running_count": running_count,
+            "running_count_authority": "recorded",
+            "live_cse_count": live_cse_count,
+            "live_cse_count_authority": "observed",
+            "effective_count": effective,
+            "effective_count_authority": "max(recorded, observed)",
             "execution_ids": execution_ids,
             "rows": rows,
             "soft_limit": LANE_SOFT_LIMIT,
             "hard_limit": LANE_HARD_LIMIT,
             "free_slots": free_slots,
-            "at_soft_limit": running_count >= LANE_SOFT_LIMIT,
-            "at_hard_limit": running_count >= LANE_HARD_LIMIT,
+            "at_soft_limit": effective >= LANE_SOFT_LIMIT,
+            "at_hard_limit": effective >= LANE_HARD_LIMIT,
         }
 
     async def attach_task(self, execution_id: str, task: asyncio.Task[Any]) -> None:
@@ -260,14 +280,14 @@ class ExecutionStore:
         reaped: list[str] = []
         from claude_bundles import cdp_registry
 
-        for reg in cdp_registry.list_active():
-            if reg.registration_id in live:
+        active_rows = cdp_registry._load_active()
+        for registration_id, row in active_rows.items():
+            if row.get("status") != "active":
                 continue
-            if self._deregister is not None:
-                self._deregister(reg.registration_id)
-            else:
-                cdp_registry.deregister_lane(reg.registration_id, kill=True)
-            reaped.append(reg.registration_id)
+            if registration_id in live:
+                continue
+            cdp_registry.deregister_lane(registration_id, reason="probe_failed")
+            reaped.append(registration_id)
         return reaped
 
     async def _reaper_loop(self) -> None:
@@ -303,10 +323,7 @@ class ExecutionStore:
                 self._safe_deregister(rec.registration_id)
 
     def _safe_deregister(self, registration_id: str) -> None:
-        if self._deregister is not None:
-            self._deregister(registration_id)
-            return
         from claude_bundles import cdp_registry
 
         with contextlib.suppress(Exception):
-            cdp_registry.deregister_lane(registration_id, kill=True)
+            cdp_registry.deregister_lane(registration_id, reason="probe_failed")

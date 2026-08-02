@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 import threading
 from pathlib import Path
 
 import pytest
 
+from claude_bundles import cdp_orphans
 from claude_bundles import cdp_registry as reg
 
 pytestmark = pytest.mark.offline
@@ -116,10 +120,52 @@ def test_deregister_marks_released_not_free(isolated_registry: Path) -> None:
         launch_chrome=_noop_launch,
         is_listening=lambda _p: False,
     )
-    reg.deregister_lane(r.registration_id)
+    reg.deregister_lane(r.registration_id, is_listening=lambda _p: False)
     active = reg._load_active()
     assert active[r.registration_id]["status"] == "released"
-    assert r.registration_id not in {x.registration_id for x in reg.list_active()}
+    assert r.registration_id not in {
+        x.registration_id
+        for x in reg.list_active()
+        if reg._load_active()[x.registration_id]["status"] == "active"
+    }
+
+
+def test_deregister_voluntary_default_kills_listener(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    killed: list[int] = []
+    monkeypatch.setattr(reg, "_kill_listener", lambda port: killed.append(port))
+    r = reg.register_lane(
+        holder="a",
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    reg.deregister_lane(r.registration_id, is_listening=lambda _p: True)
+    assert killed == [r.port]
+    assert reg._load_active()[r.registration_id]["status"] == "released"
+
+
+def test_deregister_cse_not_found_never_kills(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    killed: list[int] = []
+    monkeypatch.setattr(reg, "_kill_listener", lambda port: killed.append(port))
+    r = reg.register_lane(
+        holder="a",
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    reg.deregister_lane(
+        r.registration_id,
+        reason="cse_not_found",
+        is_listening=lambda _p: True,
+    )
+    assert killed == []
+    row = reg._load_active()[r.registration_id]
+    assert row["status"] == "orphaned_alive"
+    assert row["orphan_reason"] == "cse_not_found"
+    visible = cdp_orphans.registered_lane_dicts()
+    assert any(item["registration_id"] == r.registration_id for item in visible)
 
 
 def test_reattach_same_holder_ok(isolated_registry: Path) -> None:
@@ -245,7 +291,7 @@ def test_is_driver_lock_held_reflects_peer(isolated_registry: Path) -> None:
     assert not reg.is_driver_lock_held(r.registration_id)
 
 
-def test_active_registration_dicts_enriched_fields(
+def test_registered_lane_dicts_enriched_fields(
     isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     r = reg.register_lane(
@@ -254,7 +300,7 @@ def test_active_registration_dicts_enriched_fields(
         launch_chrome=_noop_launch,
         is_listening=lambda _p: False,
     )
-    rows = reg.active_registration_dicts()
+    rows = cdp_orphans.registered_lane_dicts()
     assert len(rows) == 1
     row = rows[0]
     assert row["registration_id"] == r.registration_id
@@ -367,3 +413,30 @@ def test_hygiene_skips_live_profile_keeps_orphaned_retry(
     active = reg._load_active()
     assert "live" in active
     assert active["live"]["status"] == "orphaned_retry"
+
+
+def test_list_cli_emits_object_not_bare_array(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "claude_bundles.cdp_orphans.find_orphans",
+        lambda: [],
+    )
+    cli = (
+        Path(__file__).resolve().parents[2]
+        / "scripts"
+        / "cortex"
+        / "cdp_registry_cli.py"
+    )
+    proc = subprocess.run(
+        [sys.executable, str(cli), "list"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    data = json.loads(proc.stdout)
+    assert isinstance(data, dict)
+    assert set(data) == {"lanes", "orphans", "liveness_authority"}
+    assert data["liveness_authority"] == "attachment_only"
+    assert isinstance(data["lanes"], list)
+    assert isinstance(data["orphans"], list)
