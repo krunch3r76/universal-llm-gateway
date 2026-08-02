@@ -225,9 +225,11 @@ def test_abort_cleanup_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
         "_load_active",
         lambda: {"abc123": {"status": "active", "port": 9234}},
     )
-    monkeypatch.setattr(
-        paa, "bounded_stop_via_cdp", lambda _url: stops.__setitem__("n", stops["n"] + 1)
-    )
+    def _fake_stop(_url: str) -> paa.AttestResult:
+        stops["n"] += 1
+        return paa.AttestResult(has_stop=False, probe_ok=True)
+
+    monkeypatch.setattr(paa, "bounded_stop_via_cdp", _fake_stop)
     monkeypatch.setattr(
         paa,
         "deregister_on_exit",
