@@ -1,4 +1,4 @@
-"""Observation plane for live CDP ports — reads ground truth; logs scan outcomes."""
+"""Observation plane for live CDP ports — reads ground truth; emits scan events."""
 
 from __future__ import annotations
 

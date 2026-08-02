@@ -46,6 +46,31 @@ def cdp_port_reattached(reg: Registration) -> Event:
     )
 
 
+@event_factory
+def cdp_port_orphan_scan(
+    *,
+    ports_live: int,
+    ports_skipped_registered: int,
+    ports_examined: int,
+    matched_count: int,
+    rejected_count: int,
+    unevaluable_count: int,
+) -> Event:
+    return Event(
+        signal="cdp.port.orphan_scan",
+        role="observation",
+        scope="node",
+        payload={
+            "ports_live": ports_live,
+            "ports_skipped_registered": ports_skipped_registered,
+            "ports_examined": ports_examined,
+            "matched_count": matched_count,
+            "rejected_count": rejected_count,
+            "unevaluable_count": unevaluable_count,
+        },
+    )
+
+
 def _payload(reg: Registration) -> dict:
     return {
         "registration_id": reg.registration_id,

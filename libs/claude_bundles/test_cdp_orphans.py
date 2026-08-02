@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -10,6 +11,8 @@ from claude_bundles import cdp_orphans
 from claude_bundles.cdp_orphans import LivePort, Orphan, OrphanScanResult, RejectedPort
 
 pytestmark = pytest.mark.offline
+
+_ORIGINAL_LOG_ORPHAN_SCAN = cdp_orphans.cdp_registry.log_orphan_scan
 
 
 def _live(
@@ -182,6 +185,41 @@ def test_probe_live_ports_degrades_on_connection_error(
 ) -> None:
     monkeypatch.setattr(cdp_orphans, "_fetch_json", lambda _url: None)
     assert cdp_orphans.probe_live_ports(port_range=range(9223, 9225)) == []
+
+
+def test_orphan_scan_events_distinguish_zero_live_from_all_registered(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """AC-2: two empty scan outcomes emit different observation events."""
+    from claude_bundles import cdp_registry_events
+
+    reg_profile = tmp_path / "claude-ai-chrome-profile-reg-live01"
+    captured: list[Any] = []
+
+    def _capture(event: Any) -> None:
+        captured.append(event)
+
+    monkeypatch.setattr(cdp_registry_events, "emit", _capture)
+    monkeypatch.setattr(
+        cdp_orphans.cdp_registry, "log_orphan_scan", _ORIGINAL_LOG_ORPHAN_SCAN
+    )
+
+    monkeypatch.setattr(cdp_orphans, "probe_live_ports", lambda port_range=None: [])
+    monkeypatch.setattr(cdp_orphans, "_registered_ports", lambda: set())
+    cdp_orphans.find_orphans()
+
+    monkeypatch.setattr(
+        cdp_orphans,
+        "probe_live_ports",
+        lambda port_range=None: [_live(9229, reg_profile)],
+    )
+    monkeypatch.setattr(cdp_orphans, "_registered_ports", lambda: {9229})
+    cdp_orphans.find_orphans()
+
+    assert len(captured) == 2
+    assert captured[0].payload != captured[1].payload
+    assert captured[0].signal == "cdp.port.orphan_scan"
+    assert captured[1].signal == "cdp.port.orphan_scan"
 
 
 def test_find_orphans_zero_live_vs_all_registered_produce_different_shapes(

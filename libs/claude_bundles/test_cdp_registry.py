@@ -8,6 +8,8 @@ import sys
 import threading
 from pathlib import Path
 
+from typing import Any
+
 import pytest
 
 from claude_bundles import cdp_orphans
@@ -448,10 +450,16 @@ def test_list_cli_emits_object_not_bare_array(
     assert isinstance(data["orphans"], list)
 
 
-def test_orphan_scan_appended_to_registry_log_every_scan(
+def test_orphan_scan_emits_event_every_scan(
     isolated_registry: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     reg_profile = tmp_path / "claude-ai-chrome-profile-reg-deadbeef"
+    captured: list[Any] = []
+    monkeypatch.setattr(
+        reg._events,
+        "emit",
+        lambda event: captured.append(event),
+    )
     monkeypatch.setattr(
         cdp_orphans,
         "probe_live_ports",
@@ -467,23 +475,33 @@ def test_orphan_scan_appended_to_registry_log_every_scan(
     monkeypatch.setattr(cdp_orphans, "_registered_ports", lambda: set())
     monkeypatch.setattr(cdp_orphans, "_pid_listening_on", lambda _p: 4242)
     monkeypatch.setattr(cdp_orphans, "_process_uptime_s", lambda _p: 1.0)
-    monkeypatch.setattr(cdp_orphans.cdp_registry, "log_orphan_scan", reg.log_orphan_scan)
 
     cdp_orphans.find_orphans()
-    lines = (isolated_registry / "registry.jsonl").read_text(encoding="utf-8").strip().splitlines()
-    assert len(lines) == 1
-    record = json.loads(lines[0])
-    assert record["event"] == "orphan_scan"
-    assert record["ports_live"] == 1
-    assert record["ports_skipped_registered"] == 0
-    assert record["matched_count"] == 1
+    assert len(captured) == 1
+    event = captured[0]
+    assert event.signal == "cdp.port.orphan_scan"
+    assert event.role == "observation"
+    assert event.payload == {
+        "ports_live": 1,
+        "ports_skipped_registered": 0,
+        "ports_examined": 1,
+        "matched_count": 1,
+        "rejected_count": 0,
+        "unevaluable_count": 0,
+    }
+    assert not (isolated_registry / "registry.jsonl").exists()
 
 
-def test_orphan_scan_log_distinguishes_no_live_from_all_registered(
-    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_orphan_scan_events_distinguish_no_live_from_all_registered(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     reg_profile = tmp_path / "claude-ai-chrome-profile-reg-live01"
-    monkeypatch.setattr(cdp_orphans.cdp_registry, "log_orphan_scan", reg.log_orphan_scan)
+    captured: list[Any] = []
+
+    def _capture(event: Any) -> None:
+        captured.append(event)
+
+    monkeypatch.setattr(reg._events, "emit", _capture)
 
     monkeypatch.setattr(cdp_orphans, "probe_live_ports", lambda port_range=None: [])
     monkeypatch.setattr(cdp_orphans, "_registered_ports", lambda: set())
@@ -504,15 +522,14 @@ def test_orphan_scan_log_distinguishes_no_live_from_all_registered(
     monkeypatch.setattr(cdp_orphans, "_registered_ports", lambda: {9229})
     cdp_orphans.find_orphans()
 
-    log_path = isolated_registry / "registry.jsonl"
-    lines = log_path.read_text(encoding="utf-8").strip().splitlines()
-    assert len(lines) == 2
-    no_live_record = json.loads(lines[0])
-    all_registered_record = json.loads(lines[1])
-    assert no_live_record != all_registered_record
-    assert no_live_record["ports_live"] == 0
-    assert all_registered_record["ports_live"] == 1
-    assert all_registered_record["ports_skipped_registered"] == 1
+    assert len(captured) == 2
+    no_live_event, all_registered_event = captured
+    assert no_live_event.signal == "cdp.port.orphan_scan"
+    assert all_registered_event.signal == "cdp.port.orphan_scan"
+    assert no_live_event.payload != all_registered_event.payload
+    assert no_live_event.payload["ports_live"] == 0
+    assert all_registered_event.payload["ports_live"] == 1
+    assert all_registered_event.payload["ports_skipped_registered"] == 1
 
 
 def test_hygiene_reclaim_success_log_carries_reclaimed_not_stale_status(

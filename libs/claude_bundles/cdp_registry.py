@@ -538,10 +538,17 @@ def reclaim_best_effort() -> None:
 
 
 def log_orphan_scan(scan: Any) -> None:
-    """Append orphan-scan outcome to registry.jsonl on every scan."""
-    from claude_bundles import cdp_orphans
-
-    _store.append_log("orphan_scan", cdp_orphans.orphan_scan_as_dict(scan))
+    """Emit orphan-scan observation event on every scan."""
+    _events.emit(
+        _events.cdp_port_orphan_scan(
+            ports_live=scan.ports_live,
+            ports_skipped_registered=scan.ports_skipped_registered,
+            ports_examined=scan.ports_examined,
+            matched_count=len(scan.matched),
+            rejected_count=len(scan.rejected),
+            unevaluable_count=len(scan.unevaluable),
+        )
+    )
 
 
 def hygiene_reclaim_released() -> HygieneReclaimResult:
