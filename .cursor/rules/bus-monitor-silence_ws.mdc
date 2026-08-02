@@ -67,6 +67,7 @@ Fires when the operator (or prior turn) frames the seat as:
 | `--mark-read` / `fetch-unread … --mark-read` on **N** | Steals unread from executor / auto |
 | Using **N** as the fresh-context home because "that's the mission" | Mission *execution* is on **N**; *watch continuity* is the sibling |
 | Impersonating executor / re-dispatch / aborting live lanes "to help" | MONITOR observes; does not steer |
+| DIRECTIVE-shaped or commissioning content in a break-in paste | The standing paste license covers **advisory** only — break-in steers nothing |
 
 ## Permitted
 
@@ -77,6 +78,7 @@ Fires when the operator (or prior turn) frames the seat as:
 | Event / `project_ask` poll / observability | Always |
 | Read cortex/workspaces artifacts the arc already produced | Always |
 | Chat orientation to operator (Been→Are→Going, gates, URIs) | Always — primary deliverable |
+| Fire + deliver a `TYPE: BREAK_IN` outside review into the mission **CSE** | **Standing license** (operator bind 2026-08-02, 6661 t53 supersedes t43) — advisory only, CDP read-back verified, NOTE on the MONITOR sibling. **Pre-paste liveness probe first**; if CSE not streaming/attached → **disenroll paste target** (NOTE + stop cadence; ¬ paste; heal/healer-notice = NOT-NOW). Delivery into the CSE is ¬ a bus write to **N**; silence on **N** is unchanged. Mechanism: `operator-proxy-substrate` § Mission break-in |
 | `tmp/thread-state/{N}.md` local scratch labeled informational only | OK |
 | On-bus write to **N** | **Only** if operator authorizes e.g. "PAGE on 5912" / "alert web-anthropic" |
 

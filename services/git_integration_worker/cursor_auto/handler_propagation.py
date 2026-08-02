@@ -120,10 +120,32 @@ async def _execute_row(row: PropagationRow, *, row_id: str) -> dict[str, Any]:
             "proof_class_executed": dispatch_before.proof_class_executed,
         }
     before = dispatch_before.payload
+    if row.force and row.service != "mcp":
+        fail_row(
+            row_id,
+            proof_payload={
+                "proof_class_requested": dispatch_before.proof_class_requested,
+                "proof_class_executed": dispatch_before.proof_class_executed,
+            },
+            reason="force_only_allowed_for_mcp",
+        )
+        return {
+            "service": row.service,
+            "row_id": row_id,
+            "status": "failed",
+            "reason": "force_only_allowed_for_mcp",
+            "proof_class_requested": dispatch_before.proof_class_requested,
+            "proof_class_executed": dispatch_before.proof_class_executed,
+        }
     manage_result = await asyncio.to_thread(
         sync_restart_service,
         row.service,
-        reason="operator propagate via cursor-auto",
+        reason=(
+            "operator-proxy mcp self-preempt (own cdp_ask_live)"
+            if row.force
+            else "operator propagate via cursor-auto"
+        ),
+        force=bool(row.force),
     )
     status = str(manage_result.get("status") or "unknown")
     if status == "deferred":

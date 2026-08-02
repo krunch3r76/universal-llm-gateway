@@ -114,6 +114,9 @@ contract: never place a GIW restart AC inside a DIRECTIVE whose §2 CLOSEOUT is 
 
 The relay-trust gate itself is **bus-only** — it blocks cursor-auto admission, not restarts.
 `contract: propagate` mints propagation ledger rows and coordinates drain-gated `sync_restart`
+via manage.sock. **mcp force carve-out:** when the operator-proxy CSE is the sole
+`cdp_ask_live` blocker, a propagation row MAY set `force: true` (mcp only) — seat discipline
+in `restart-drain-discipline` + `cdp-operator-proxy`; GIW force is refused at admit/execute.
 via manage.sock; tier-M `execute` + `manage.*` stays denied at the manifest.
 
 ## Packet skill delivery (BINDING — CDP)
@@ -141,6 +144,82 @@ is **silently skipped**, and the inline body in the prompt is the fail-closed de
 **Forbidden:** Auto improvising tip enqueue; `enroll_rows` onto throwaway
 `ensure_conveyor_root` roots that state_close; re-enrolling closed conveyor roots to park work;
 B2 admit without the nest/release handoff.
+
+## Mission break-in — cadenced outside review (BINDING)
+
+Operator bind 2026-08-02 (`agent-bus:6661` t53, supersedes t43): the paste is **not**
+human-gated. Cursor fires and delivers without per-shot approval. Commission still belongs to
+the operator lane — **paste ≠ commission**. Operator-facing contract: `cdp-operator-proxy` inv 34.
+
+| Element | Value |
+|---|---|
+| Default reviewer | `cursor/gpt-5.6-terra` — family independence **and** live checkout sight |
+| Escalation | local `cursor/claude-opus-5` only when grok already escalated for checkout depth; Fable only for frame/doctrine meta — ¬ local Fable for this lane |
+| Fire | `team_dispatch(op=generate, seat=cursor-sdk, model=cursor/gpt-5.6-terra, contract=light-bounded, skills=["reasoning-posture","frontier-reasoning-discipline"])` — queues behind the live holder, ¬ contend |
+| Deliver | `project_ask(op=followup)` into the attached CSE |
+| Log | NOTE on the **MONITOR sibling** — silence on the watched lane |
+
+**Skills pair is MANDATORY on cursor-sdk break-in (BINDING).** Pass
+`skills=["reasoning-posture","frontier-reasoning-discipline"]` on every terra (or Opus)
+break-in `team_dispatch`. CDP generate auto-merges that pair
+(`decision:reasoning-frontier-skill-pair` / `cdp_model_endpoint_staging`); **cursor-sdk does
+not** — omitting `skills=` is how fire #2a (`c9501ca9ebe7-5bbda0e8`) fell into a model-tier
+`NOT SUITABLE` halt instead of Question/OOS rails. Packet body SHOULD also open with
+`Use the reasoning-posture skill` + `Use the frontier-reasoning-discipline skill` as belt-and-
+suspenders for seats that ignore the wire `skills=` list.
+
+**Proceed-anyway pin (BINDING).** The packet MUST forbid a model-tier halt that escalates away
+from terra. Terra is the bound default for family independence vs an Anthropic operator seat;
+switching to Opus collapses the lane's point. Explicit line required, e.g. `Proceed anyway —
+terra is the bound break-in reviewer; emit TYPE: BREAK_IN or NO_BREAK_IN only.`
+
+**Triggers (S0 — any):** operator call · mission open > ~60 min with ≥1 material land since
+the last break-in · continuity hop just completed · pre-propagate/restart of a bind that
+terminalizes fleet state · `MISSION_CLOSEOUT` intent.
+**Delivery target:** break-in pastes only into an **attached live CSE**. A persisted chat URL
+after abort/conclude is not a live session — paste does **not** reactivate, reopen, or
+recommission a dead CSE (continuity hop / new window / reattach is a separate path).
+
+**Pre-paste liveness probe (BINDING — simple test first).** Before fire-or-paste, MONITOR
+confirms the target CSE is still streaming/attached (e.g. `manage busy_status` →
+`cdp_ask.live_cse_count` / registration row `status=running`, or a CDP page probe that the
+session is live). If the probe fails: **disenroll the break-in paste target** — NOTE on the
+MONITOR sibling (`break_in_target_disenrolled`), stop cadence fires against that CSE, do
+**not** paste. Re-enroll only when a new live CSE is attached (continuity hop / reattach).
+**NOT-NOW residual:** heal the dead CSE or post a notice for a healer to pick up — park on
+`decision:operator-proxy-seat-posture`; ¬ invent heal in this hop.
+
+**Anti-triggers:** every notify · every CLOSEOUT · idle tick with no land · mechanical
+verify-only legs · dead/disenrolled paste target.
+
+**Read-back is the sole honesty gate.** With no human in the loop, `send_verified=true` is not
+delivery evidence (a:27502 class — false paste claim at 6661 t41, retracted t42). Claim delivery
+only after CDP conversation read-back shows the markers (`TYPE: BREAK_IN`, model attribution,
+suggestion text); absent them log `break_in_delivery_unverified` and retry or hop. Never narrate
+delivery from the MCP return. Prefer **#2-unique** markers when a prior break-in is already in
+the CSE (do not mistake break-in #1 text for #2). Mid-stream CSE UI may nest a delivered
+`user-message` under `aria-label="Currently streaming message"` — page text can be present while
+the human view looks empty; scroll/expand before declaring unverified.
+
+**`NO_BREAK_IN` is licensed.** The packet MUST permit a null verdict. A cadence obliged to
+produce a suggestion will produce one, and the lane becomes noise the operator learns to skip —
+the first break-in was consumed (6655 t358) because it was material and rare.
+
+**Packet shape:** ≤ ~15 delivered lines · one primary suggestion · `observed:` / `check:` /
+`why now (urgency)` with fact-vs-inference labels · ≤2 one-line runners-up · an explicit *what
+you would not change* · skills Use-lines · proceed-anyway pin. Sidecars:
+`tmp/reviews/{lane}-terra-breakin-review*.md`.
+
+**Not automated yet — S1/S2 held.** Clock is a proxy for shape. S1 replaces it with structural
+predicates read from bus metadata: `supersedes_turn` density on one lane, counts that will not
+reconcile across legs, unresolved fork age, pre-terminalizing intent. **Do not rebuild
+text-similarity classification** — the diagnosis-churn classifier is already falsified
+(`assumed_state` text 97–100 % distinct, a:27498). S2 hosts the fire on the **charter-runner
+tick** with a memoized observation JSON plus cooldown and adaptive backoff (two consecutive
+nulls lengthen, a consumed break-in shortens), under one constraint: **the seat under review
+must not own its reviewer's cadence**, which rules out Cowork Upcoming self-schedule and
+cursor-auto in-mission fire. Hold S1 until ≥3 fires produce consumption data; that data also
+feeds the `todo:mission-observer-seat` reopen criterion without reopening it.
 
 ## Admit-gate enforcement — scope, vision, fix hints
 

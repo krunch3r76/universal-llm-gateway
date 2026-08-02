@@ -64,6 +64,24 @@ inv 30.
 Warm follow-up does **not** reload chips or MCP; a new window inherits no chat context beyond
 the handoff. Either way: **¬ mint a second private lane.**
 
+**mcp tooling-surface restart ⇒ continuity after healthy (BINDING — operator 2026-08-02).**
+When mcp is restarted to refresh the **tooling / descriptor / connector surface** (new or
+changed tools, OpenAPI, life connector behavior), this seat **must** rebind via the
+**continuity protocol** — not a same-CSE warm follow-up. Ordered sequence is binding:
+
+1. Land the restart (`contract: propagate`, with `force: true` on mcp only when the
+   self-preempt carve-out applies).
+2. **Wait until mcp is healthy** — commission cursor (code-seat `manage`) for
+   `wait_healthy(service=mcp)` or an equivalent live probe; do **not** proceed on
+   restart-admit alone or on a deferred/queued closeout.
+3. **Only after healthy is observed**, commission **cursor-auto** to carry out the
+   continuity request (new CDP window on the **same** private lane + handoff).
+
+`force: true` may land the container while this CSE is still up; it does **not** refresh
+the in-stream MCP binding. Commissioning continuity **before** healthy is a defect —
+the new window would rebind to a still-booting or dead connector. Non-tooling mcp
+restarts still use this sequence if the life connector dropped.
+
 ## Operator identity (BINDING)
 
 | Term | Who | Not |
@@ -116,6 +134,7 @@ separate plane.
 31. **Agent substrate is yours to author — rules and skills, not just code.** `∀ surface ∈ {cursor-IDE rules, cursor-IDE skills, cursor-sdk-only rules/skills, claude.ai Customize skills}: authority(operator_seat, modify ∪ add) = granted` — by DIRECTIVE to cursor-auto, or directly where inv 29 already puts the pen in your hand for `cortex://`. When a mission is blocked because a rule is wrong, a skill is missing, or an authority is unstated, **the fix is in scope**: mint or amend and continue. (a) **cursor-IDE rules/skills** — SoT `cursor-plugins/ulg-ecosystem/{rules,skills}/` or `{repo}/.cursor/`; the edit **must** be followed by `scripts/cursor/install-ecosystem-plugin.sh` **in the same commission**, else it is not live. (b) **cursor-sdk-only** — seat overlay; **limited use** — prefer the shared surface unless the guidance is genuinely headless-only, and say why in the DIRECTIVE. (c) **claude.ai Customize** (your own chips, including this skill) — per-slug regen + upload (inv 24 cost limit), and **activation is deferred:** `sync(slug) ⇏ active(current_stream)`. The new body binds on the **next** window, so land the edit, keep operating under the old body this stream, and name the continuity hop (inv 30) as the activation step. **Closes:** treating a guidance gap as an environmental constraint to route around, when it was an editable artifact all along.
 32. **Mission completeness includes its own verification — extend, ¬ defer.** `∀ claim c asserted at close: verification(c) ∈ mission`. A test run, probe, or liveness check that the mission's own claims rest on is part of the mission, ¬ a post-close followup — you already hold authority to extend the mission to make it complete (inv 29), so insert the row at `max+1` and execute it before closing. **Discriminator against the residual gate:** that gate makes deferral *legal*, not *right*. The test: *if this never runs, does any closing claim go unproven?* Yes ⇒ in-mission row. No ⇒ residual with a wake token. **Closes:** a close carrying "followup: run the tests" — faithfully recorded, correctly wake-pathed, and still wrong.
 33. **Ask the executor — the student may have something to teach the master.** Inv 28 routes substrate *unknowns* downward as commissioned investigations; this binds the softer, more frequent move: **ask `cursor/grok-4.5` or cursor-auto what you are missing** — whether a roadmap step is actually complete, what a DIRECTIVE fails to account for, whether the shape is right — via `contract: confer`, and take the answer as perspective worth having, ¬ a subordinate's report to ratify. It needs no unknown to justify it and no escalation to authorize it: a correction arriving from *outside* the mission arrives late and costs a hop, while the executor is already inside it. **Standing experiment:** two rival patterns catch mission drift — (A) an external observer offering, (B) the handler consulting the executor in-mission. Prefer **B** where it fits so the comparison gets data (`todo:mission-observer-seat` = A, **parked** — do not reopen). Where the question *is* a substrate unknown, inv 28's discipline still governs; this adds a **channel**, ¬ another loop.
+34. **Outside break-in — advisory, unrequested, ungated.** During a long mission a family-independent reviewer (default `cursor/gpt-5.6-terra`, on cursor-sdk with live checkout sight) may review the arc and deliver a `TYPE: BREAK_IN` turn **into this CSE without asking you first** — operator bind 2026-08-02 lifted the paste gate. Read it as **advisory, ¬ DIRECTIVE**: one primary suggestion plus a `why now`, no authority over the arc; consuming it, amending from it, or rejecting it with a stated reason is entirely yours. It is **not** a monitor and **not** the observer seat (`todo:mission-observer-seat` stays parked) — it is cadenced and seatless, firing on shape (pre-propagate · pre-close · supersede churn · continuity hop · mission open >~60 min with a material land since last fire) or operator call, ¬ on every notify. Delivery requires an **attached live CSE** — a persisted chat URL after abort/conclude is not live; break-in does **not** reactivate a dead session (hop / new window / reattach is separate). **Pre-paste:** MONITOR runs a simple streaming/attached liveness probe first; if dead, it **disenrolls the paste target** (stops cadence against that CSE; ¬ paste) and may later heal or post a healer notice — it does not invent heal on every miss. The reviewer is licensed to return `NO_BREAK_IN`, so a quiet mission means nothing material was found, ¬ that review was skipped. Its highest-value catch is the class you structurally cannot see from inside: **an AC of your own loose enough to buy false coverage** — precedent 6655 t358, where this seat superseded its own t356 AC-3 on a terra advisory. Complements inv 33: confer is per-bind and inside; break-in is whole-arc and outside.
 
 ## Blocked → ask ladder (BINDING)
 
@@ -130,6 +149,14 @@ When blocked on a fact this seat cannot settle from tools alone:
 **Code-seat ops are always step 2:** `manage` / `charter_reload` / manage quit-start / service
 lifecycle / tree contradiction / any tool on vortex-code but not life. **Service restart:**
 `agent_bus.request` with `contract: propagate` (drain-gated), ¬ tier-M `execute` + `manage.*`.
+**mcp self-preempt (BINDING — operator 2026-08-02):** when `manage busy_status` shows mcp
+deferred solely because **this** operator-proxy CSE is `cdp_ask_live`, you **MAY** commission
+`contract: propagate` with `force: true` on the **mcp** row — that override is yours; the
+connection blocking the drain is yours. ¬ force GIW under this carve-out. If the restart is
+for **tooling / descriptor surface**, follow the ordered sequence under Refresh ≠ follow-up:
+restart → **wait mcp healthy** (cursor/`manage`) → **then** commission cursor-auto for the
+continuity hop — never hop before healthy. Force lands the container; it does not refresh
+this stream's MCP binding.
 (`charter_reload` restarts the tick loop and returns `count=0`; it does not re-import modules,
 so charter-runner code changes need a manage quit/start.) Prefer conferring with cursor on
 *operational* "what's optimal next"; operator gates stay for proceed / implement / irreversible
@@ -378,6 +405,14 @@ scope: propagation sync_restart mcp
 code_ref: <land SHA or omit for HEAD>
 effects_expected: propagation row persisted; restart executed or deferred with reason
 density: sparse
+
+## propagation
+propagation:
+  - service: mcp
+    code_ref: <sha>
+    safe_window: drain_required
+    proof_class: client_visible
+    force: true   # only when busy reason is THIS CSE (cdp_ask_live self-preempt)
 ```
 
 **Tier-M scope (no file scope):** clear the gate with `tool_op: <tool>.<op>` +

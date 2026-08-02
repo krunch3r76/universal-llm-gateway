@@ -54,11 +54,19 @@ def call_manage(
     return result if isinstance(result, dict) else {"status": "ok", "result": result}
 
 
-def sync_restart_service(service: str, *, reason: str = "") -> dict[str, Any]:
-    """Request drain-gated sync_restart for one service slug."""
+def sync_restart_service(
+    service: str, *, reason: str = "", force: bool = False
+) -> dict[str, Any]:
+    """Request drain-gated sync_restart for one service slug.
+
+    ``force=True`` is the operator-proxy mcp self-preempt path (own CSE); manage
+    still owns the gate — this only forwards the flag.
+    """
     params: dict[str, Any] = {"service": service}
     if reason:
         params["reason"] = reason
+    if force:
+        params["force"] = True
     return call_manage("sync_restart", params)
 
 

@@ -96,6 +96,8 @@ class PropagationRow(BaseModel):
     expected_x_mcp_count: int | None = None
     mint_thread: str | None = None
     mint_turn: int | None = None
+    # mcp-only: operator-proxy self-preempt of own cdp_ask_live CSE (restart-drain carve-out)
+    force: bool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -141,6 +143,17 @@ def default_proof_class(service: str) -> ProofClass:
     return _DEFAULT_PROOF_CLASS.get(service, "process_live")
 
 
+def coerce_force_flag(raw: Any) -> bool:
+    """Parse YAML/JSON ``force`` — only explicit truthy values count."""
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, (int, float)):
+        return raw == 1
+    if isinstance(raw, str):
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return False
+
+
 def row_from_mapping(raw: dict[str, Any]) -> PropagationRow:
     """Parse one structured propagation mapping into a row."""
     service = str(raw["service"])
@@ -159,6 +172,7 @@ def row_from_mapping(raw: dict[str, Any]) -> PropagationRow:
         expected_x_mcp_count=raw.get("expected_x_mcp_count"),
         mint_thread=raw.get("mint_thread"),
         mint_turn=raw.get("mint_turn"),
+        force=coerce_force_flag(raw.get("force")),
     )
 
 
@@ -181,6 +195,9 @@ def row_from_mapping_strict(raw: dict[str, Any]) -> tuple[PropagationRow | None,
         return None, proof_class_error
     safe_window = raw.get("safe_window") or default_safe_window(service)
     proof = raw.get("proof") or default_proof(service)
+    force = coerce_force_flag(raw.get("force"))
+    if force and service != "mcp":
+        return None, "force_only_allowed_for_mcp"
     return (
         PropagationRow(
             service=service,
@@ -194,6 +211,7 @@ def row_from_mapping_strict(raw: dict[str, Any]) -> tuple[PropagationRow | None,
             expected_x_mcp_count=raw.get("expected_x_mcp_count"),
             mint_thread=raw.get("mint_thread"),
             mint_turn=raw.get("mint_turn"),
+            force=force,
         ),
         None,
     )
@@ -418,6 +436,7 @@ def rows_from_closeout_payload(payload: dict[str, Any]) -> tuple[list[Propagatio
 
 __all__ = [
     "PropagationRow",
+    "coerce_force_flag",
     "default_proof",
     "default_proof_class",
     "default_safe_window",

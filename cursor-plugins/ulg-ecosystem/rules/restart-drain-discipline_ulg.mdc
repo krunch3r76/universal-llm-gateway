@@ -64,7 +64,20 @@ prefer it), and `restart_intent` per service. Safe to poll live.
    **arm/accept deferral**; do not `force=true` to clear a mid-mission life write.
 3. Descriptor-only MCP edits can wait until CSE clears; GIW code pickup does **not**
    require MCP restart.
-4. `force=true` on mcp while life is hot is operator-only (same narrow force rule).
+4. `force=true` on mcp while life is hot is **narrow** — see carve-out below
+   (not a general IDE license to preempt other seats' work).
+
+**Carve-out (operator bind 2026-08-02):** the **operator-proxy seat** (`cdp/opus-5`
+/ web-anthropic on a `purpose=operator-proxy` CSE) **MAY** override the mcp restart
+drain guard with `force=true` when the busy reason is **its own** MCP/CSE connection
+(`busy_reasons` contains `cdp_ask_live` for that seat's registration/execution).
+It is preempting itself to land mcp code, not another seat's work. Exercise via
+`contract: propagate` with `force: true` on the **mcp** row (cursor-auto → manage.sock);
+¬ GIW force through this carve-out; ¬ IDE inventing force on someone else's CSE.
+If the restart is for **tooling / descriptor surface**: ordered sequence is restart →
+**wait mcp healthy** → **then** continuity hop (operator-proxy commissions cursor-auto
+only after healthy). Force does not refresh the in-stream MCP connection
+(`cdp-operator-proxy` Refresh ≠ follow-up).
 
 Anti-pattern: treat `mcp.busy=false` + `in_flight=0` on drain start as proof that
 Claude's life connector is idle.
@@ -91,9 +104,15 @@ Claude's life connector is idle.
 
 ## `force=true` — narrow
 
-Permitted only when the operator explicitly authorizes preempting in-flight work,
-or the in-flight work is provably this seat's own and abandonable. Never as a
-reaction to latency, and never to make a deferral go away.
+Permitted when **any**:
+
+- the human operator explicitly authorizes preempting in-flight work, **or**
+- the in-flight work is provably this seat's own and abandonable, **or**
+- **operator-proxy carve-out:** `cdp/opus` forces **mcp** `sync_restart` while the
+  only blocker is its own `cdp_ask_live` CSE (see MCP section above)
+
+Never as a reaction to latency alone, and never to make an unrelated seat's
+deferral go away. ¬ `force=true` on `git_integration_worker` under this carve-out.
 
 Killing a bridge or worker process directly (`pkill`, `kill`, `docker stop`) is
 forbidden for lifecycle — `services_ws.mdc` § Scripts.
