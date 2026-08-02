@@ -193,7 +193,18 @@ def clamp_relay_body(body: str, *, pointer: str | None) -> tuple[str, bool]:
     if budget < 0:
         budget = 0
 
-    value_budgets = _allocate_cell_budgets([field for field, _ in table_rows], budget)
+    # Prefer intact ac_verdict over mid-ellipsis when other §2 cells bloat —
+    # harvest seats were forced into a second sidecar read every leg.
+    other_fields = [field for field, _ in table_rows if field.casefold() != "ac_verdict"]
+    other_floor = 40 * len(other_fields)
+    ac_want = sum(
+        len(value) for field, value in table_rows if field.casefold() == "ac_verdict"
+    )
+    ac_reserved = min(ac_want, max(budget - other_floor, 0))
+    value_budgets = _allocate_cell_budgets(other_fields, max(budget - ac_reserved, 0))
+    for field, value in table_rows:
+        if field.casefold() == "ac_verdict":
+            value_budgets[field] = ac_reserved if ac_want else 0
     shrunk_rows = [
         (
             field,

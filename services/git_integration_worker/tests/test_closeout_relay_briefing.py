@@ -273,6 +273,31 @@ def test_clamp_judgment_fields_get_larger_cell_budget() -> None:
     assert len(ac_cell) > len(effects_cell)
 
 
+def test_clamp_preserves_short_ac_verdict_when_effects_bloat() -> None:
+    """ac_verdict must not mid-ellipsis when other §2 cells exhaust the budget."""
+    verdict = (
+        "AC1=pass closed; AC2=pass dropped; AC3=pass landed; "
+        "AC4=pass agree-unlanded; AC5=pass named-gap"
+    )
+    body = (
+        "TYPE: CLOSEOUT\nstatus: complete\n\n"
+        "| Field | Value |\n|---|---|\n"
+        "| status | complete |\n"
+        f"| ac_verdict | {verdict} |\n"
+        "| deltas_to_spec | none |\n"
+        "| decisions_taken | none |\n"
+        f"| effects | {'bloated-evidence-token ' * 200} |\n"
+        f"| evidence | {'more-evidence-token ' * 200} |\n"
+        "| next | none |\n"
+        "| open forks | none |\n"
+    )
+    clamped, was_clamped = clamp_relay_body(body, pointer=sidecar_workspaces_ref(_DISPATCH))
+    assert was_clamped
+    ac_cell = clamped.split("| ac_verdict | ", 1)[1].split(" |", 1)[0]
+    assert ac_cell == verdict
+    assert "AC5=pass named-gap" in ac_cell
+
+
 def test_envelope_status_matches_body_complete_c4_regression() -> None:
     """AC1/C4 — payload.status tracks §2 body when sidecar says complete."""
     sidecar = """\
