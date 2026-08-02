@@ -38,6 +38,10 @@ from .migrations.migration_007_settle_boundary import (
     MIGRATION_ID as MIGRATION_007_ID,
     migrate as migrate_007,
 )
+from .migrations.migration_008_harvest_wanted import (
+    MIGRATION_ID as MIGRATION_008_ID,
+    migrate as migrate_008,
+)
 
 logger = get_logger(__name__)
 
@@ -101,6 +105,7 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
         (MIGRATION_005_ID, migrate_005),
         (MIGRATION_006_ID, migrate_006),
         (MIGRATION_007_ID, migrate_007),
+        (MIGRATION_008_ID, migrate_008),
     ]
     for mig_id, migrate_fn in pending:
         if mig_id in applied:

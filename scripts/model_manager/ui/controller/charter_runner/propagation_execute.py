@@ -503,7 +503,9 @@ async def execute_propagation_plan(
         upsert_open_rows(plan.rows)
 
     bump_age_for_open_rows()
-    open_rows = list_open_rows()
+    open_rows = [
+        row for row in list_open_rows() if row.defer_reason != "harvest_wanted"
+    ]
     queue_snapshot = _fetch_json(_GIW_QUEUE_URL)
 
     closed: list[dict[str, Any]] = []

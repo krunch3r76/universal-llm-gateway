@@ -34,8 +34,11 @@ from services.git_integration_worker.cursor_auto.directive import (
     corpus_guard_uris,
     parse_request_body,
 )
+from services.git_integration_worker.cursor_auto.closeout_tree_state import (
+    compute_closeout_tree_state,
+    strip_deployment_state_line,
+)
 from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
-    compute_lane_a_checkpoint_value,
     derive_tree_residue,
     inject_checkpoint_line,
     inject_tree_residue_line,
@@ -226,12 +229,14 @@ async def relay_closeout_outcome(
         source_repo=source_repo,
         dispatch_id=dispatch_id,
     )
-    relay_body = inject_tree_residue_line(payload.body, count=residue_before.count)
-    checkpoint_value = compute_lane_a_checkpoint_value(
+    relay_body = strip_deployment_state_line(payload.body)
+    relay_body = inject_tree_residue_line(relay_body, count=residue_before.count)
+    tree_state = compute_closeout_tree_state(
         source_repo=source_repo,
         dispatch_id=dispatch_id,
+        wrapper_text=sdk_body,
     )
-    relay_body = inject_checkpoint_line(relay_body, value=checkpoint_value)
+    relay_body = inject_checkpoint_line(relay_body, value=tree_state.checkpoint)
     if second_read is not None:
         relay_body = inject_second_read_block(
             relay_body,
@@ -293,7 +298,7 @@ async def relay_closeout_outcome(
         closeout_body=relay_body,
         closeout_source=payload.source,
         relay_note=payload.relay_note,
-        deployment_state=payload.deployment_state,
+        deployment_state=tree_state.deployment_state,
         extra={
             "gate_plan": gate_plan,
             "terminal_status": terminal_status,

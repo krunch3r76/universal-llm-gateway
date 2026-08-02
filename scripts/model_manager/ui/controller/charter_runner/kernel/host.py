@@ -155,6 +155,7 @@ class CharterRunnerTickLoop:
         self._unattended_stale_override = unattended_stale_s
         self._loop_task: asyncio.Task[None] | None = None
         self._held_heartbeat_at: float = 0.0
+        self._tick_counter: int = 0
         self._wake_hub = None
         self._wake_consumer = None
 
@@ -351,6 +352,23 @@ class CharterRunnerTickLoop:
                 )
         except Exception:  # noqa: BLE001 — shadow must not abort tick
             logger.exception("charter-runner shadow pass failed")
+        self._tick_counter += 1
+        try:
+            if self._service_controller is not None:
+                from ..propagation_harvest_wanted import consume_harvest_wanted_at_tick
+
+                hw_results = await consume_harvest_wanted_at_tick(
+                    tick_index=self._tick_counter,
+                    service_controller=self._service_controller,
+                    event_bus=self._event_bus,
+                )
+                if hw_results.get("closed") or hw_results.get("failed"):
+                    await events.emit_manage_charter_tick_harvest_wanted_consumed(
+                        tick_index=self._tick_counter,
+                        results=hw_results,
+                    )
+        except Exception:  # noqa: BLE001 — harvest_wanted must not abort tick
+            logger.exception("charter-runner harvest_wanted consumption failed")
         await events.emit_manage_charter_tick_scanned(
             roots=len(roots),
             admitted=admitted,

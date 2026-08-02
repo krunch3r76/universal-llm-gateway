@@ -357,13 +357,15 @@ def finalize_relay_payload(
             status=authored_status,
         ),
     )
-    deployment_state = _deployment_state_from_wrapper(wrapper_text)
+    # deployment_state is derived with checkpoint in nested_outcome relay path —
+    # git context is unavailable here; computing landed from wrapper alone caused
+    # landed-not-live vs uncommitted checkpoint contradictions (arc 550).
     processed = CloseoutRelayPayload(
         body=reporting.body,
         status=authored_status,
         source=reporting.source,
         relay_note=relay_note,
-        deployment_state=deployment_state,
+        deployment_state=None,
     )
     if guard_uris:
         processed = apply_write_fence(

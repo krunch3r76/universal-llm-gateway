@@ -567,6 +567,25 @@ async def emit_manage_charter_tick_propagation_escalated(
     )
 
 
+async def emit_manage_charter_tick_harvest_wanted_consumed(
+    *,
+    tick_index: int,
+    results: dict,
+) -> None:
+    """Post-hoc event when between-window harvest_wanted rows close or fail."""
+    await _emit(
+        "manage.charter.tick.harvest_wanted_consumed",
+        {
+            "tick_index": tick_index,
+            "attempted": results.get("attempted"),
+            "closed": results.get("closed"),
+            "failed": results.get("failed"),
+            "deferred": results.get("deferred"),
+            "reclaimed_stale_claims": results.get("reclaimed_stale_claims"),
+        },
+    )
+
+
 async def emit_manage_charter_root_blocked(
     *,
     root: str,

@@ -31,10 +31,16 @@ class OpenPropagationProjection:
     hazard: str | None
     reason: str | None
     settle_boundary_monotonic: float | None
+    consumption_token: str | None = None
+    consumption_claimed_at: float | None = None
 
 
 def _row_key(row: PropagationRow) -> str:
     return f"{row.service}:{normalize_code_ref(row.code_ref)}:{row.action}"
+
+
+DEFER_HARVEST_WANTED = "harvest_wanted"
+STALE_CONSUMPTION_CLAIM_S = 600.0
 
 
 def _mint_row(row: PropagationRow) -> PropagationRow:
@@ -111,7 +117,7 @@ def list_open_rows(*, conn: sqlite3.Connection | None = None) -> list[OpenPropag
             """
             SELECT row_id, service, code_ref, safe_window, age_in_harvests,
                    mint_thread, mint_turn, defer_reason, proof_class, hazard, reason,
-                   settle_boundary_monotonic
+                   settle_boundary_monotonic, consumption_token, consumption_claimed_at
             FROM propagation_ledger
             WHERE status='open'
             ORDER BY age_in_harvests DESC, service ASC
@@ -131,6 +137,8 @@ def list_open_rows(*, conn: sqlite3.Connection | None = None) -> list[OpenPropag
                 hazard=row["hazard"],
                 reason=row["reason"],
                 settle_boundary_monotonic=row["settle_boundary_monotonic"],
+                consumption_token=row["consumption_token"],
+                consumption_claimed_at=row["consumption_claimed_at"],
             )
             for row in cur.fetchall()
         ]
@@ -378,18 +386,155 @@ def mint_row_id() -> str:
     return str(uuid.uuid4())
 
 
+def mark_harvest_wanted(
+    row_id: str,
+    *,
+    conn: sqlite3.Connection | None = None,
+) -> bool:
+    """Persist harvest-wanted marker on an open row — charter tick will consume."""
+    own_conn = conn is None
+    db = conn or open_ledger_db()
+    now = time.time()
+    try:
+        cur = execute_with_retry(
+            db,
+            """
+            UPDATE propagation_ledger
+            SET defer_reason = ?, updated_at = ?
+            WHERE row_id = ? AND status = 'open'
+            """,
+            (DEFER_HARVEST_WANTED, now, row_id),
+        )
+        return cur.rowcount > 0
+    finally:
+        if own_conn:
+            db.close()
+
+
+def list_harvest_wanted_rows(
+    *,
+    conn: sqlite3.Connection | None = None,
+) -> list[OpenPropagationProjection]:
+    """Open rows waiting for between-window charter tick consumption."""
+    return [
+        row
+        for row in list_open_rows(conn=conn)
+        if row.defer_reason == DEFER_HARVEST_WANTED
+    ]
+
+
+def reclaim_stale_consumption_claims(
+    *,
+    stale_after_s: float = STALE_CONSUMPTION_CLAIM_S,
+    conn: sqlite3.Connection | None = None,
+) -> int:
+    """Release claims held by a crashed consumer — row stays open, not dropped."""
+    own_conn = conn is None
+    db = conn or open_ledger_db()
+    cutoff = time.time() - stale_after_s
+    now = time.time()
+    try:
+        cur = execute_with_retry(
+            db,
+            """
+            UPDATE propagation_ledger
+            SET consumption_token = NULL,
+                consumption_claimed_at = NULL,
+                defer_reason = ?,
+                updated_at = ?
+            WHERE status = 'open'
+              AND consumption_token IS NOT NULL
+              AND consumption_claimed_at IS NOT NULL
+              AND consumption_claimed_at < ?
+            """,
+            (DEFER_HARVEST_WANTED, now, cutoff),
+        )
+        return int(cur.rowcount)
+    finally:
+        if own_conn:
+            db.close()
+
+
+def try_claim_for_consumption(
+    row_id: str,
+    token: str,
+    *,
+    conn: sqlite3.Connection | None = None,
+) -> bool:
+    """Exactly-once claim — second caller gets False, row stays open."""
+    own_conn = conn is None
+    db = conn or open_ledger_db()
+    now = time.time()
+    try:
+        cur = execute_with_retry(
+            db,
+            """
+            UPDATE propagation_ledger
+            SET consumption_token = ?,
+                consumption_claimed_at = ?,
+                updated_at = ?
+            WHERE row_id = ?
+              AND status = 'open'
+              AND consumption_token IS NULL
+            """,
+            (token, now, now, row_id),
+        )
+        return cur.rowcount > 0
+    finally:
+        if own_conn:
+            db.close()
+
+
+def release_consumption_claim(
+    row_id: str,
+    token: str,
+    *,
+    conn: sqlite3.Connection | None = None,
+) -> bool:
+    """Return an unclosed row to the harvest-wanted pool after a deferral."""
+    own_conn = conn is None
+    db = conn or open_ledger_db()
+    now = time.time()
+    try:
+        cur = execute_with_retry(
+            db,
+            """
+            UPDATE propagation_ledger
+            SET consumption_token = NULL,
+                consumption_claimed_at = NULL,
+                defer_reason = ?,
+                updated_at = ?
+            WHERE row_id = ?
+              AND status = 'open'
+              AND consumption_token = ?
+            """,
+            (DEFER_HARVEST_WANTED, now, row_id, token),
+        )
+        return cur.rowcount > 0
+    finally:
+        if own_conn:
+            db.close()
+
+
 __all__ = [
+    "DEFER_HARVEST_WANTED",
     "OpenPropagationProjection",
+    "STALE_CONSUMPTION_CLAIM_S",
     "bump_age_for_open_rows",
     "close_row",
     "fail_row",
+    "list_harvest_wanted_rows",
     "list_open_rows",
+    "mark_harvest_wanted",
     "mint_row_id",
+    "reclaim_stale_consumption_claims",
+    "release_consumption_claim",
     "reopen_closed_row",
     "reopen_failed_row",
     "scoreboard_projection",
     "set_defer_reason",
     "set_proof_class",
     "set_settle_boundary",
+    "try_claim_for_consumption",
     "upsert_open_rows",
 ]

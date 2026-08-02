@@ -173,7 +173,7 @@ def test_restart_intent_persisted_requires_intent_id() -> None:
     assert restart_intent_persisted({"status": "deferred", "restart_intent_id": "x"}) is True
 
 
-def test_execution_for_manage_deferred_without_intent_is_blocked() -> None:
+def test_execution_for_manage_deferred_without_intent_is_harvest_wanted() -> None:
     row = PropagationRow(
         service="mcp",
         code_ref="deadbeef",
@@ -181,8 +181,9 @@ def test_execution_for_manage_deferred_without_intent_is_blocked() -> None:
         proof_class="client_visible",
     )
     with patch(
-        "services.git_integration_worker.cursor_auto.handler_propagation.set_defer_reason",
-    ) as mock_set:
+        "services.git_integration_worker.cursor_auto.handler_propagation.mark_harvest_wanted",
+        return_value=True,
+    ) as mock_mark:
         result = execution_for_manage_deferred(
             row,
             row_id="mcp:deadbeef:sync_restart",
@@ -192,9 +193,9 @@ def test_execution_for_manage_deferred_without_intent_is_blocked() -> None:
                 "reason": "cdp_ask_live",
             },
         )
-    assert result["status"] == "blocked"
-    assert "nothing will fire" in result["next"].lower()
-    mock_set.assert_called_once_with("mcp:deadbeef:sync_restart", "manage_busy_defer")
+    assert result["status"] == "harvest_wanted"
+    assert "charter tick will consume" in result["next"].lower()
+    mock_mark.assert_called_once_with("mcp:deadbeef:sync_restart")
 
 
 def test_execution_for_manage_deferred_with_intent_is_queued() -> None:
@@ -224,11 +225,15 @@ def test_execution_for_manage_deferred_with_intent_is_queued() -> None:
     )
 
 
-def test_summary_blocked_does_not_claim_will_fire() -> None:
-    executions = [_exec("mcp", "blocked", reason="cdp_ask_live")]
-    summary = _summary_for("blocked", executions)
-    assert "nothing will fire" in summary.lower()
-    assert "will fire after drain" not in summary.lower()
+def test_disposition_all_harvest_wanted_returns_harvest_wanted() -> None:
+    assert _disposition_for([_exec("mcp", "harvest_wanted", reason="cdp_ask_live")]) == "harvest_wanted"
+
+
+def test_summary_harvest_wanted_claims_charter_tick() -> None:
+    executions = [_exec("mcp", "harvest_wanted", reason="cdp_ask_live")]
+    summary = _summary_for("harvest_wanted", executions)
+    assert "charter tick will consume" in summary.lower()
+    assert "nothing will fire" not in summary.lower()
 
 
 # --- AC3: D7/turn-27 payload replay ---

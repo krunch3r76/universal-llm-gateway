@@ -8,6 +8,7 @@ from typing import Any
 from charter_runner_store.propagation_ledger import (
     close_row,
     fail_row,
+    mark_harvest_wanted,
     set_defer_reason,
     upsert_open_rows,
 )
@@ -29,6 +30,7 @@ from services.git_integration_worker.cursor_bus import CursorBusClient
 
 DEFER_MANAGE_QUEUED_DRAIN = "manage_queued_drain"
 DEFER_MANAGE_BUSY_DEFER = "manage_busy_defer"
+DEFER_HARVEST_WANTED = "harvest_wanted"
 
 
 def restart_intent_persisted(manage_result: dict[str, Any]) -> bool:
@@ -61,17 +63,16 @@ def execution_for_manage_deferred(
                 "code_version and process identity change"
             ),
         }
-    set_defer_reason(row_id, DEFER_MANAGE_BUSY_DEFER)
+    mark_harvest_wanted(row_id)
     return {
         "service": row.service,
         "row_id": row_id,
-        "status": "blocked",
+        "status": "harvest_wanted",
         "reason": reason,
         "manage": manage_result,
         "next": (
-            "manage deferred with no persisted restart intent — nothing will fire "
-            "automatically; retry propagate after busy clears or use force when "
-            "authorized"
+            "manage busy deferral with no restart_intent — harvest_wanted marker "
+            "persisted; charter tick will consume at next between-window pass"
         ),
     }
 
@@ -260,6 +261,7 @@ async def _execute_row(row: PropagationRow, *, row_id: str) -> dict[str, Any]:
 _ROW_RANK: dict[str, int] = {
     "failed": 0,
     "blocked": 1,
+    "harvest_wanted": 2,
     "queued": 2,
     "submitted": 3,
     "executed": 4,
@@ -267,6 +269,7 @@ _ROW_RANK: dict[str, int] = {
 _ENVELOPE_FROM_ROW: dict[str, str] = {
     "failed": "failed",
     "blocked": "blocked",
+    "harvest_wanted": "harvest_wanted",
     "queued": "queued",
     "submitted": "submitted",
     "executed": "propagated",
@@ -328,6 +331,12 @@ def _summary_for(disposition: str, executions: list[dict[str, Any]]) -> str:
             f"(reason={reasons}). Restart will fire after drain — not ledger-only. "
             "Live only when code_ref ancestry is satisfied and process identity changed."
         )
+    if disposition == "harvest_wanted":
+        reasons = ", ".join(str(item.get("reason") or "?") for item in executions)
+        return (
+            f"Auto propagation harvest_wanted for {services} (reason={reasons}). "
+            "Open ledger row marked — charter tick will consume at between-window pass."
+        )
     if disposition == "blocked":
         reasons = ", ".join(str(item.get("reason") or "?") for item in executions)
         return (
@@ -363,6 +372,7 @@ def _summary_for(disposition: str, executions: list[dict[str, Any]]) -> str:
 
 
 __all__ = [
+    "DEFER_HARVEST_WANTED",
     "DEFER_MANAGE_BUSY_DEFER",
     "DEFER_MANAGE_QUEUED_DRAIN",
     "execution_for_manage_deferred",
