@@ -43,6 +43,9 @@ def test_start_command_detaches_with_setsid_not_ampersand_and_chain() -> None:
     assert cmd.index("setsid") < cmd.index("&")
     # Hub Event Service TCP ingest must be exported for Jupiter followup AC-2.
     assert "EVENTS_INGEST_TCP=" in cmd
+    # Seal process code_version at start so /health is not permanently unknown.
+    assert "ULG_CODE_VERSION=" in cmd
+    assert 'git -C "$REPO" rev-parse HEAD' in cmd
 
 
 def test_run_ssh_has_bounded_timeout_constant() -> None:

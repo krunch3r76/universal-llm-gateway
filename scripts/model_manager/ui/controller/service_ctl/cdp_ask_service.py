@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import subprocess
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -24,6 +25,27 @@ _PID_FILE = GATEWAY_DIR / "cdp-ask.pid"
 _LOCK_FILE = GATEWAY_DIR / "cdp-ask.lock"
 _LOG_DIR = Path("/tmp/logs/cdp-ask")
 _SERVICE_NAME = "cdp-ask"
+
+
+def _spawn_code_version(root: Path) -> str | None:
+    """Return checkout HEAD for the child env, or None when git is unavailable.
+
+    Fresh ``git rev-parse`` — do not reuse manage-process ``resolve_code_version``
+    (import-time LRU + attribution window describe the parent, not the child).
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning("%s spawn code_version unavailable: %s", _SERVICE_NAME, exc)
+        return None
+    sha = proc.stdout.strip()
+    return sha or None
 
 
 def _bind_config() -> tuple[str, int] | None:
@@ -73,6 +95,9 @@ async def start_cdp_ask(
     apply_host_service_logging_env(
         env, log_dir=_LOG_DIR, log_filename="cdp-ask.log"
     )
+    code_version = _spawn_code_version(root)
+    if code_version:
+        env["ULG_CODE_VERSION"] = code_version
     libs_path = str(root / "libs")
     existing_pythonpath = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = (

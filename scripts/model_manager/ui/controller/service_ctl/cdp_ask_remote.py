@@ -2,6 +2,10 @@
 
 Exports hub ``EVENTS_INGEST_TCP`` on remote start so Jupiter followup observation
 events reach the hub Event Service (UDS is local-only on the satellite).
+
+Also exports ``ULG_CODE_VERSION`` from the shared NFS checkout HEAD at start so
+``resolve_code_version`` seals an attributable SHA instead of falling through to
+``unknown`` (no deploy stamp on the satellite host process).
 """
 
 from __future__ import annotations
@@ -146,12 +150,16 @@ async def start_cdp_ask_remote(root: Path) -> str:  # noqa: ARG001
     # Export hub TCP ingest so Jupiter followup events land in hub Event Service
     # (local UDS on Jupiter does not exist; silent drop otherwise — MONITOR AC-2).
     ingest_tcp = resolve_hub_events_ingest_tcp()
+    # Seal ULG_CODE_VERSION from NFS checkout HEAD at start (repo is on the
+    # remote path; git is available there — same shared tree as scripts/cdp-ask).
     cmd = (
         "mkdir -p /tmp/logs/cdp-ask ~/.gateway; "
         f"REPO={_REMOTE_REPO}; "
         'test -f "$REPO/scripts/cdp-ask" || exit 1; '
+        'ULG_CODE_VERSION=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || true); '
         f"setsid env CORTEX_FILES_ROOT={_REMOTE_FILES_ROOT} "
         f"EVENTS_INGEST_TCP={ingest_tcp} "
+        'ULG_CODE_VERSION="$ULG_CODE_VERSION" '
         '"$HOME/.venvs/universal/bin/python" "$REPO/scripts/cdp-ask" '
         f"--port {port} </dev/null >/tmp/logs/cdp-ask/remote-start.log 2>&1 & "
         "echo $! > ~/.gateway/cdp-ask.pid; "
