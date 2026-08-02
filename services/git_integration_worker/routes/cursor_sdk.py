@@ -126,6 +126,7 @@ from services.git_integration_worker.cursor_sdk_gate import (
     acquire_sdk_dispatch_slot,
     sdk_dispatch_gate_stats,
     sdk_dispatch_lane,
+    SdkSlotAcquireStallError,
 )
 from services.git_integration_worker.cursor_sdk_implement_gate import (
     implement_gate_bypass_deviations,
@@ -1089,6 +1090,13 @@ async def reconcile_stale_leases(
         reap_stale_land_leases,
     )
 
+    from services.git_integration_worker.cursor_sdk_gate import (
+        reclaim_cross_lane_phantom_holders,
+    )
+
+    reclaimed = await reclaim_cross_lane_phantom_holders()
+    if reclaimed:
+        logger.info("cross-lane phantom gate holders reclaimed=%s", reclaimed)
     await asyncio.to_thread(reap_stale_land_leases)
     cfg = worker_cfg or _CONFIG
     removed = await asyncio.to_thread(
@@ -1168,6 +1176,13 @@ async def startup_ledger_reconcile(app: FastAPI) -> None:
     )
     if wt_removed:
         logger.info("startup orphan worktree prune removed=%d", wt_removed)
+    from services.git_integration_worker.cursor_sdk_gate import (
+        reclaim_cross_lane_phantom_holders,
+    )
+
+    reclaimed = await reclaim_cross_lane_phantom_holders()
+    if reclaimed:
+        logger.info("startup cross-lane phantom gate holders reclaimed=%s", reclaimed)
     ledger = CursorDispatchLedger.instance()
     controller = app.state.admission_controller
     # Snapshot before startup_reconcile mutates status — survivors it marks
@@ -1504,6 +1519,33 @@ async def _run_sdk_dispatch_gated(
             timeout=_SDK_SLOT_ACQUIRE_TIMEOUT_S,
             on_wait=_emit_capacity_wait,
         )
+    except SdkSlotAcquireStallError as exc:
+        logger.error(
+            "cursor sdk capacity slot stalled on cross-lane phantom holder(s): "
+            "dispatch_id=%s lane=%s waited=%.0fs misplaced=%s gate=%s",
+            req.dispatch_id,
+            exc.lane,
+            exc.waited_s,
+            exc.misplaced_holders,
+            exc.gate_stats,
+        )
+        await _finalize_failed(
+            req=req,
+            bus=bus,
+            reply_to=reply_to,
+            controller=controller,
+            code="CURSOR_SDK_SLOT_ACQUIRE_STALL",
+            message=str(exc),
+            subject_suffix="FAILED (slot acquire stall — cross-lane gate holder)",
+            error="capacity slot acquire stall",
+            retryable=True,
+            data={
+                "gate": exc.gate_stats,
+                "lane": exc.lane,
+                "misplaced_holders": exc.misplaced_holders,
+            },
+        )
+        return
     except TimeoutError:
         logger.error(
             "cursor sdk capacity slot unavailable to the ledger's lease holder: "

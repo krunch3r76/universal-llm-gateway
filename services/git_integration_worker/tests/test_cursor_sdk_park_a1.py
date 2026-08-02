@@ -61,7 +61,11 @@ async def test_a1_finally_release_restores_parent_not_sibling(
     # Isolate capacity on a fresh gate so process-global _GATE state cannot leak.
     isolated = FifoCapacityGate(limit=1, gate_id="a1-test")
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_gate._GATE", isolated
+        "services.git_integration_worker.cursor_sdk_gate._STANDARD_GATE", isolated
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_gate._LANE_GATES",
+        {"standard": isolated, "operator": isolated},
     )
 
     ledger = CursorDispatchLedger.instance()

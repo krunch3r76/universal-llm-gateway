@@ -464,13 +464,18 @@ async def get_active_work(request: Request):
     from services.git_integration_worker.cursor_dispatch_ledger import (
         CursorDispatchLedger,
     )
-    from services.git_integration_worker.cursor_sdk_gate import sdk_dispatch_gate_stats
+    from services.git_integration_worker.cursor_sdk_gate import (
+        reclaim_cross_lane_phantom_holders,
+        sdk_dispatch_gate_holder_detail,
+        sdk_dispatch_gate_stats,
+    )
 
     controller = _controller(request)
     running = _GATE.active_count
     queued = _GATE.queue_length
     cursor = CursorDispatchLedger.instance().active_snapshot()
     sdk_gate = sdk_dispatch_gate_stats()
+    sdk_gate["holders"] = sdk_dispatch_gate_holder_detail()
     lease = CursorDispatchLedger.instance().lease_snapshot(
         source_repo=str(getattr(request.app.state, "worker_config", _CONFIG).source_repo.resolve())
         if getattr(request.app.state, "worker_config", None) is not None

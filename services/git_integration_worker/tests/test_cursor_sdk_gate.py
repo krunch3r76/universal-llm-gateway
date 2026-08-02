@@ -17,7 +17,7 @@ from concurrent.futures import Future
 import pytest
 
 from services.git_integration_worker.cursor_sdk_gate import (
-    _GATE,
+    _STANDARD_GATE,
     acquire_sdk_dispatch_slot,
     release_sdk_dispatch_slot,
     release_sdk_dispatch_slot_sync,
@@ -123,8 +123,8 @@ async def test_orphan_holds_slot_until_finally() -> None:
     loop = asyncio.get_running_loop()
 
     # Drain any stale gate state (other tests may have left it non-zero).
-    for holder in list(_GATE.holders):
-        await _GATE.force_release(holder)
+    for holder in list(_STANDARD_GATE.holders):
+        await _STANDARD_GATE.force_release(holder)
 
     worker_started = asyncio.Event()
     worker_unblock: Future[None] = Future()
@@ -140,18 +140,18 @@ async def test_orphan_holds_slot_until_finally() -> None:
             loop.call_soon_threadsafe(slot_released.set)
 
     await acquire_sdk_dispatch_slot(dispatch_id=orphan_id)
-    assert _GATE.active_count == 1
+    assert _STANDARD_GATE.active_count == 1
 
     t = threading.Thread(target=worker_thread, daemon=True)
     t.start()
     await worker_started.wait()
 
     # Outer coroutine times out — slot still held by thread.
-    assert _GATE.active_count == 1, "slot must remain active while thread runs"
+    assert _STANDARD_GATE.active_count == 1, "slot must remain active while thread runs"
 
     # Unblock the thread so its finally fires.
     worker_unblock.set_result(None)
     await asyncio.wait_for(slot_released.wait(), timeout=5.0)
 
-    assert _GATE.active_count == 0, "slot must be released after thread finally fires"
+    assert _STANDARD_GATE.active_count == 0, "slot must be released after thread finally fires"
     t.join(timeout=2.0)

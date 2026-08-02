@@ -12,12 +12,13 @@ Nest park/restore uses ``transfer_holder`` so siblings cannot steal the slot.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import uuid
 from collections.abc import Callable
 from typing import Literal
 
-from universal_concurrency import FifoCapacityGate
+from universal_concurrency import CrossLaneTransferError, FifoCapacityGate, TransferHolderError
 
 from services.git_integration_worker.cursor_sdk_workspace import write_lease_slots
 
@@ -38,6 +39,34 @@ _STANDARD_GATE = FifoCapacityGate(limit=_standard_limit, gate_id="cursor-sdk-dis
 _OPERATOR_GATE = FifoCapacityGate(
     limit=_operator_limit, gate_id="cursor-sdk-operator-dispatch"
 )
+_LANE_GATES: dict[GateLane, FifoCapacityGate] = {
+    "standard": _STANDARD_GATE,
+    "operator": _OPERATOR_GATE,
+}
+
+
+class SdkSlotAcquireStallError(TimeoutError):
+    """Capacity acquire timed out due to unreleasable or cross-lane gate holders."""
+
+    def __init__(
+        self,
+        *,
+        dispatch_id: str,
+        lane: GateLane,
+        waited_s: float,
+        gate_stats: dict[str, int | dict[str, int]],
+        misplaced_holders: list[dict[str, str]],
+    ) -> None:
+        self.dispatch_id = dispatch_id
+        self.lane = lane
+        self.waited_s = waited_s
+        self.gate_stats = gate_stats
+        self.misplaced_holders = misplaced_holders
+        detail = (
+            f"cursor-sdk slot acquire stalled on {lane} lane after {waited_s:.0f}s; "
+            f"misplaced_holders={misplaced_holders!r}"
+        )
+        super().__init__(detail)
 
 
 def is_operator_sdk_dispatch(
@@ -57,19 +86,88 @@ def is_operator_sdk_dispatch(
     return cell is not None and cell[1] == "cursor"
 
 
-def sdk_dispatch_lane(
+def _direct_sdk_dispatch_lane(
     *,
     caller_agent: str | None = None,
     dispatch_id: str | None = None,
 ) -> GateLane:
-    """Resolve which capacity lane owns a dispatch."""
+    """Resolve lane from dispatch id / caller_agent only (no nest inheritance)."""
     if is_operator_sdk_dispatch(caller_agent=caller_agent, dispatch_id=dispatch_id):
         return "operator"
     return "standard"
 
 
+def _read_nest_under(dispatch_id: str) -> str | None:
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+
+    with CursorDispatchLedger.instance()._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    if row is None or not row["record_json"]:
+        return None
+    try:
+        data = json.loads(row["record_json"])
+    except json.JSONDecodeError:
+        return None
+    parent = data.get("nest_under") if isinstance(data, dict) else None
+    return str(parent) if parent else None
+
+
+def sdk_dispatch_lane(
+    *,
+    caller_agent: str | None = None,
+    dispatch_id: str | None = None,
+) -> GateLane:
+    """Resolve which capacity lane owns a dispatch.
+
+    Nested dispatches inherit the parent's lane so park/restore never crosses gates.
+    """
+    if dispatch_id:
+        parent_id = _read_nest_under(dispatch_id)
+        if parent_id:
+            return sdk_dispatch_lane(
+                dispatch_id=parent_id,
+                caller_agent=_caller_agent_for_dispatch(parent_id),
+            )
+    return _direct_sdk_dispatch_lane(
+        caller_agent=caller_agent, dispatch_id=dispatch_id
+    )
+
+
 def _gate_for_lane(lane: GateLane) -> FifoCapacityGate:
-    return _OPERATOR_GATE if lane == "operator" else _STANDARD_GATE
+    return _LANE_GATES[lane]
+
+
+def _gate_holding_holder(holder_id: str) -> tuple[FifoCapacityGate, GateLane] | None:
+    """Return the gate that currently holds ``holder_id``, if any."""
+    for lane, gate in _LANE_GATES.items():
+        if holder_id in gate.holders:
+            return gate, lane
+    return None
+
+
+def _misplaced_holders(*, gate_lane: GateLane) -> list[dict[str, str]]:
+    """Holders on ``gate_lane`` whose direct lane resolution differs (phantoms)."""
+    gate = _LANE_GATES[gate_lane]
+    misplaced: list[dict[str, str]] = []
+    for holder_id in gate.holders:
+        direct = _direct_sdk_dispatch_lane(
+            dispatch_id=holder_id,
+            caller_agent=_caller_agent_for_dispatch(holder_id),
+        )
+        if direct != gate_lane:
+            misplaced.append(
+                {
+                    "holder_id": holder_id,
+                    "gate_lane": gate_lane,
+                    "direct_lane": direct,
+                }
+            )
+    return misplaced
 
 
 def _caller_agent_for_dispatch(dispatch_id: str) -> str | None:
@@ -116,13 +214,24 @@ async def acquire_sdk_dispatch_slot(
     lease wedge, dispatch 38611b297c16-4a1462e7).
     """
     req_id = dispatch_id or str(uuid.uuid4())
-    gate = _gate_for_dispatch(req_id, caller_agent=caller_agent)
+    lane = sdk_dispatch_lane(caller_agent=caller_agent, dispatch_id=req_id)
+    gate = _gate_for_lane(lane)
     try:
         await gate.acquire(req_id, timeout=timeout, on_wait=on_wait)
     except TimeoutError:
         # Close the grant/cancel race: release() may have handed us the slot
         # and registered us as holder between the deadline and the raise.
         await gate.force_release(req_id)
+        misplaced = _misplaced_holders(gate_lane=lane)
+        if misplaced:
+            await reclaim_cross_lane_phantom_holders()
+            raise SdkSlotAcquireStallError(
+                dispatch_id=req_id,
+                lane=lane,
+                waited_s=float(timeout or 0),
+                gate_stats=sdk_dispatch_gate_stats(),
+                misplaced_holders=misplaced,
+            ) from None
         raise
     return req_id
 
@@ -163,8 +272,26 @@ def force_release_sdk_dispatch_slot_sync(
 
 
 async def transfer_sdk_dispatch_slot(*, from_id: str, to_id: str) -> None:
-    """Park/restore capacity handoff — no waiter wake; ``active_count`` unchanged."""
-    gate = _gate_for_dispatch(from_id)
+    """Park/restore capacity handoff — no waiter wake; ``active_count`` unchanged.
+
+    Uses the gate where ``from_id`` is actually held (not inferred from id prefix
+    alone) and rejects transfers that would install ``to_id`` on a different lane.
+    """
+    held = _gate_holding_holder(from_id)
+    if held is None:
+        raise TransferHolderError(
+            f"transfer_sdk_dispatch_slot: from_id={from_id!r} holds no capacity slot"
+        )
+    gate, from_gate_lane = held
+    to_lane = sdk_dispatch_lane(
+        dispatch_id=to_id,
+        caller_agent=_caller_agent_for_dispatch(to_id),
+    )
+    if to_lane != from_gate_lane:
+        raise CrossLaneTransferError(
+            f"transfer_sdk_dispatch_slot {from_id!r}→{to_id!r}: holder on "
+            f"{from_gate_lane} gate but to_id resolves to {to_lane} lane"
+        )
     await gate.transfer_holder(from_id=from_id, to_id=to_id)
 
 
@@ -217,3 +344,26 @@ def sdk_dispatch_gate_holders(*, lane: GateLane | None = None) -> frozenset[str]
     if lane == "operator":
         return _OPERATOR_GATE.holders
     return _STANDARD_GATE.holders | _OPERATOR_GATE.holders
+
+
+def sdk_dispatch_gate_holder_detail() -> dict[str, list[str]]:
+    """Per-lane holder ids for live probes (manage busy_status / active-work)."""
+    return {
+        "standard": sorted(_STANDARD_GATE.holders),
+        "operator": sorted(_OPERATOR_GATE.holders),
+    }
+
+
+async def reclaim_cross_lane_phantom_holders() -> list[str]:
+    """Force-release holders installed on a gate belonging to a different lane."""
+    reclaimed: list[str] = []
+    for gate_lane, gate in _LANE_GATES.items():
+        for holder_id in list(gate.holders):
+            direct = _direct_sdk_dispatch_lane(
+                dispatch_id=holder_id,
+                caller_agent=_caller_agent_for_dispatch(holder_id),
+            )
+            if direct != gate_lane:
+                if await gate.force_release(holder_id):
+                    reclaimed.append(holder_id)
+    return reclaimed
