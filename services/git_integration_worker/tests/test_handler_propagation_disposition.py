@@ -224,22 +224,47 @@ def test_deferred_is_self_preemptable_for_mcp_cdp_ask_busy() -> None:
 def test_summary_propagated_self_preempt_includes_mcp_disconnect_advisory() -> None:
     from services.git_integration_worker.cursor_auto.handler_propagation import (
         MCP_DISCONNECT_ADVISORY,
+        _self_preempt_escalations_for,
         _summary_for,
     )
 
-    summary = _summary_for(
-        "propagated",
-        [
-            {
-                "service": "mcp",
-                "status": "executed",
-                "self_preempt_applied": True,
-                "advisory": MCP_DISCONNECT_ADVISORY,
-            }
-        ],
-    )
+    executions = [
+        {
+            "service": "mcp",
+            "status": "executed",
+            "self_preempt_applied": True,
+            "preempted": "cdp_ask_live",
+            "advisory": MCP_DISCONNECT_ADVISORY,
+        }
+    ]
+    summary = _summary_for("propagated", executions)
     assert "self-preempt" in summary.lower()
+    assert "cdp_ask_live" in summary
     assert "disconnect momentarily" in summary.lower()
+    assert "MCP will disconnect momentarily" in summary
+    escalations = _self_preempt_escalations_for(executions)
+    assert escalations == [
+        {"service": "mcp", "preempted": "cdp_ask_live", "force": "true"}
+    ]
+
+
+def test_summary_harvest_wanted_self_preempt_vetoed() -> None:
+    from services.git_integration_worker.cursor_auto.handler_propagation import (
+        _summary_for,
+    )
+
+    executions = [
+        {
+            "service": "mcp",
+            "status": "harvest_wanted",
+            "reason": "cdp_ask_live",
+            "self_preempt_suppressed": True,
+            "would_preempt": "cdp_ask_live",
+        }
+    ]
+    summary = _summary_for("harvest_wanted", executions)
+    assert "self-preempt vetoed" in summary.lower()
+    assert "cdp_ask_live" in summary
 
 
 def test_execution_for_manage_deferred_with_intent_is_queued() -> None:

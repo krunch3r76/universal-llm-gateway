@@ -70,9 +70,11 @@ When mcp is restarted to refresh the **tooling / descriptor / connector surface*
 changed tools, OpenAPI, life connector behavior), this seat **must** rebind via the
 **continuity protocol** — not a same-CSE warm follow-up. Ordered sequence is binding:
 
-1. Land the restart (`contract: propagate` on mcp/cdp_ask). `force: true` is
-   **optional** — cursor-auto auto-applies self-preempt force when the busy reason
-   is this CSE and advises MCP disconnect in the closeout.
+1. Land the restart (`contract: propagate` on mcp/cdp_ask). Set
+   `allow_self_preempt: false` on the row to veto auto force; `force: true` is
+   **optional** explicit force — cursor-auto auto-applies self-preempt force when
+   `allow_self_preempt` is true (default) and the busy reason is this CSE, and
+   advises MCP disconnect in the closeout.
 2. **Wait until mcp is healthy** — commission cursor (code-seat `manage`) for
    `wait_healthy(service=mcp)` or an equivalent live probe; do **not** proceed on
    restart-admit alone or on a deferred/queued closeout.
@@ -417,9 +419,27 @@ propagation:
     code_ref: <sha>
     safe_window: drain_required
     proof_class: client_visible
-    # force: true  — optional; cursor-auto auto-applies on self-preempt deferral
+    # allow_self_preempt: true  — default; auto-escalates to force on own CSE/MCP busy deferral
+    # allow_self_preempt: false — machine-read veto; suppresses auto force (use instead of authority: prose)
+    # force: true  — optional explicit force; cursor-auto also auto-applies when allow_self_preempt is true
     # and advises "MCP will disconnect momentarily" in the closeout.
 ```
+
+**Machine-read vs advisory:** per-row `allow_self_preempt` and `force` are the contract fields
+cursor-auto parses. `authority:` prose in the DIRECTIVE body is **advisory to the executor**
+— it is not parsed for restart policy. To veto auto force, set `allow_self_preempt: false` on
+the propagation row (not prose alone).
+
+**Authoring (a:27541):** `out-of-scope:` must appear on its **own line** — the scope regex is
+EOL-anchored and inline placement is silently ignored.
+
+**Classifier note (a:27543):** a propagate refusal from the local classifier is not structural —
+this seat fired three successful propagates on 2026-08-02; re-issue on the same thread after
+fixing `missed_tokens` / `fix_hint`.
+
+**Closeout visibility:** when self-preempt force fires, the envelope carries top-level
+`self_preempt_escalations[]` (service + preempted work label) and the `summary` names what
+was preempted — not only nested `executions[]` fields.
 
 **Tier-M scope (no file scope):** clear the gate with `tool_op: <tool>.<op>` +
 `effects_expected: <observable result>` — first-class scope tokens; `files_expected: none` alone

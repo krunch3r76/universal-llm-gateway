@@ -98,6 +98,8 @@ class PropagationRow(BaseModel):
     mint_turn: int | None = None
     # mcp-only: operator-proxy self-preempt of own cdp_ask_live CSE (restart-drain carve-out)
     force: bool = False
+    # When False, suppress auto-escalation to force on self-preemptable busy deferrals.
+    allow_self_preempt: bool = True
 
     @model_validator(mode="before")
     @classmethod
@@ -154,6 +156,19 @@ def coerce_force_flag(raw: Any) -> bool:
     return False
 
 
+def coerce_allow_self_preempt_flag(raw: Any) -> bool:
+    """Parse ``allow_self_preempt`` — default True when absent; explicit false only."""
+    if raw is None:
+        return True
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, (int, float)):
+        return raw != 0
+    if isinstance(raw, str):
+        return raw.strip().lower() not in {"0", "false", "no", "off"}
+    return True
+
+
 def row_from_mapping(raw: dict[str, Any]) -> PropagationRow:
     """Parse one structured propagation mapping into a row."""
     service = str(raw["service"])
@@ -173,6 +188,7 @@ def row_from_mapping(raw: dict[str, Any]) -> PropagationRow:
         mint_thread=raw.get("mint_thread"),
         mint_turn=raw.get("mint_turn"),
         force=coerce_force_flag(raw.get("force")),
+        allow_self_preempt=coerce_allow_self_preempt_flag(raw.get("allow_self_preempt")),
     )
 
 
@@ -212,6 +228,9 @@ def row_from_mapping_strict(raw: dict[str, Any]) -> tuple[PropagationRow | None,
             mint_thread=raw.get("mint_thread"),
             mint_turn=raw.get("mint_turn"),
             force=force,
+            allow_self_preempt=coerce_allow_self_preempt_flag(
+                raw.get("allow_self_preempt")
+            ),
         ),
         None,
     )
@@ -436,6 +455,7 @@ def rows_from_closeout_payload(payload: dict[str, Any]) -> tuple[list[Propagatio
 
 __all__ = [
     "PropagationRow",
+    "coerce_allow_self_preempt_flag",
     "coerce_force_flag",
     "default_proof",
     "default_proof_class",

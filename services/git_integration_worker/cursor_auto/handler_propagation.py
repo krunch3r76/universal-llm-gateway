@@ -48,6 +48,20 @@ MCP_DISCONNECT_ADVISORY = (
 )
 
 
+def _preempted_work_label(manage_result: dict[str, Any]) -> str:
+    """Human-readable label for work preempted by self-preempt force."""
+    reason = str(manage_result.get("reason") or "")
+    active = manage_result.get("active_work")
+    if isinstance(active, dict):
+        busy = active.get("busy_reasons")
+        if isinstance(busy, list) and busy:
+            return str(busy[0])
+    for marker in _SELF_PREEMPT_MARKERS:
+        if marker in reason.lower():
+            return marker
+    return reason or "in-flight work"
+
+
 def restart_intent_persisted(manage_result: dict[str, Any]) -> bool:
     """True when manage deferred with a durable restart intent that will be consumed."""
     return bool(manage_result.get("restart_intent_id"))
@@ -152,6 +166,7 @@ async def run_propagation_in_seat(
 
     disposition = _disposition_for(executions)
     summary = _summary_for(disposition, executions)
+    escalations = _self_preempt_escalations_for(executions)
     payload: dict[str, Any] = {
         "summary": summary,
         "disposition": disposition,
@@ -164,6 +179,8 @@ async def run_propagation_in_seat(
         "gate_plan": gate_plan,
         "request_turn": job.turn_number,
     }
+    if escalations:
+        payload["self_preempt_escalations"] = escalations
     return await post_terminal_status(
         job,
         client=client,
@@ -238,27 +255,37 @@ async def _execute_row(
     # Operator bind: do not harvest_wanted-pushback a self-preemptable mcp/cdp_ask
     # restart — retry once with force and advise disconnect (mcp).
     self_preempt_applied = False
-    if (
+    self_preempt_suppressed = False
+    preempted_label: str | None = None
+    deferred_preemptable = (
         status == "deferred"
         and not force
         and deferred_is_self_preemptable(row.service, manage_result)
-    ):
+    )
+    if deferred_preemptable and not row.allow_self_preempt:
+        self_preempt_suppressed = True
+    elif deferred_preemptable:
         force = True
         self_preempt_applied = True
+        preempted_label = _preempted_work_label(manage_result)
         manage_result = await asyncio.to_thread(
             sync_restart_service,
             row.service,
             reason=(
                 "operator-proxy self-preempt auto (cursor-auto; "
-                f"from_agent={from_agent or 'unknown'})"
+                f"from_agent={from_agent or 'unknown'}; preempted={preempted_label})"
             ),
             force=True,
         )
         status = str(manage_result.get("status") or "unknown")
     if status == "deferred":
-        return execution_for_manage_deferred(
+        deferred_out = execution_for_manage_deferred(
             row, row_id=row_id, manage_result=manage_result
         )
+        if self_preempt_suppressed:
+            deferred_out["self_preempt_suppressed"] = True
+            deferred_out["would_preempt"] = _preempted_work_label(manage_result)
+        return deferred_out
     if status == "error":
         set_defer_reason(row_id, str(manage_result.get("reason") or "manage_error"))
         return {
@@ -311,6 +338,8 @@ async def _execute_row(
             "force": force,
             "self_preempt_applied": self_preempt_applied,
         }
+        if self_preempt_applied and preempted_label:
+            out["preempted"] = preempted_label
         if advisory:
             out["advisory"] = advisory
         return out
@@ -325,6 +354,8 @@ async def _execute_row(
         "force": force,
         "self_preempt_applied": self_preempt_applied,
     }
+    if self_preempt_applied and preempted_label:
+        out["preempted"] = preempted_label
     if advisory:
         out["advisory"] = advisory
     return out
@@ -393,6 +424,27 @@ def _disposition_for(executions: list[dict[str, Any]]) -> str:
     return _ENVELOPE_FROM_ROW[weakest]
 
 
+def _self_preempt_escalations_for(
+    executions: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    """Surface self-preempt force escalations at the closeout envelope layer."""
+    escalations: list[dict[str, str]] = []
+    for item in executions:
+        if not item.get("self_preempt_applied"):
+            continue
+        escalations.append(
+            {
+                "service": str(item.get("service") or "?"),
+                "preempted": str(
+                    item.get("preempted")
+                    or _preempted_work_label(item.get("manage") or {})
+                ),
+                "force": "true",
+            }
+        )
+    return escalations
+
+
 def _summary_for(disposition: str, executions: list[dict[str, Any]]) -> str:
     services = ", ".join(str(item.get("service") or "?") for item in executions)
     advisories = [
@@ -402,20 +454,27 @@ def _summary_for(disposition: str, executions: list[dict[str, Any]]) -> str:
     ]
     advisory_suffix = f" {advisories[0]}" if advisories else ""
     if disposition in {"executed", "propagated"}:
-        preempt = any(item.get("self_preempt_applied") for item in executions)
+        preempt_items = [
+            item for item in executions if item.get("self_preempt_applied")
+        ]
         base = (
             f"Auto propagated restart for {services}; proof-of-live observed."
             if disposition == "propagated"
             else f"Auto executed propagation restart for {services}; proof-of-live observed."
         )
-        if preempt:
+        if preempt_items:
+            preempt_detail = "; ".join(
+                f"{item.get('service') or '?'} preempted "
+                f"{item.get('preempted') or _preempted_work_label(item.get('manage') or {})}"
+                for item in preempt_items
+            )
             base = (
-                f"Auto propagated restart for {services} via self-preempt force; "
-                "proof-of-live observed."
+                f"Auto propagated restart for {services} via self-preempt force "
+                f"({preempt_detail}); proof-of-live observed."
                 if disposition == "propagated"
                 else (
                     f"Auto executed propagation restart for {services} via "
-                    "self-preempt force; proof-of-live observed."
+                    f"self-preempt force ({preempt_detail}); proof-of-live observed."
                 )
             )
         return base + advisory_suffix
@@ -428,10 +487,27 @@ def _summary_for(disposition: str, executions: list[dict[str, Any]]) -> str:
         )
     if disposition == "harvest_wanted":
         reasons = ", ".join(str(item.get("reason") or "?") for item in executions)
-        return (
+        suppressed = [
+            item
+            for item in executions
+            if item.get("self_preempt_suppressed")
+        ]
+        base = (
             f"Auto propagation harvest_wanted for {services} (reason={reasons}). "
             "Open ledger row marked — charter tick will consume at between-window pass."
         )
+        if suppressed:
+            veto_detail = "; ".join(
+                f"{item.get('service') or '?'} (would_preempt="
+                f"{item.get('would_preempt') or 'in-flight work'})"
+                for item in suppressed
+            )
+            base = (
+                f"Auto propagation harvest_wanted for {services} — "
+                f"self-preempt vetoed ({veto_detail}); reason={reasons}. "
+                "Open ledger row marked — charter tick will consume at between-window pass."
+            )
+        return base
     if disposition == "blocked":
         reasons = ", ".join(str(item.get("reason") or "?") for item in executions)
         return (
