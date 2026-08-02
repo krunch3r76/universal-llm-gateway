@@ -171,12 +171,38 @@ Name: `todo:{slug}` · entry gate · consult URI · recon URI.
 | Existing todo + Mode B ask → divert to bare `/layer` | Mode B on existing slug · attach · `/layer` G2 |
 | S2 breadth via Composer or in-seat Grep spray | Explore subagent first (cheap-recon Tier-1) |
 
+## Commissioning register (operator bind 2026-08-02)
+
+This path is the **default shape for handing an idea to `cursor/grok-4.5` as sub-PM** —
+grok receives the idea in the register a lead receives it and drives S1–S6 itself,
+fanning out to Explore (S2 breadth), Composer (mechanical leg), Opus/Fable (S3 fork it
+cannot rank), and grok again (parallel seeds). `¬` a hard rule — an emergent shape; the
+commissioner keeps judgment on when to bind directly.
+
+`commission(idea) ≻ commission(decomposition)` — the commissioner's job is **enablement**:
+
+| Field on the commission | Why |
+|---|---|
+| `Use the work-item-seed-path skill` | headless entry surface — ¬ the IDE command |
+| kind: `feature-add` \| `investigate+fix` | sets the S2 default (investigate+fix is recon-on) |
+| known anchors / loci | lets S2 be legitimately **skipped** ¬ re-derived |
+| S3 Mode B mandatory? | if yes, the admit-proof rule binds (same-turn admit or halt) |
+| expected S6 entry gate + harvest shape | makes the closeout adjudicable |
+
+Cadence: fewer, fatter commissions amortize round-trip latency vs. paying it per
+micro-step. Dispatch shape: `seat=cursor-sdk` · `model=cursor/grok-4.5` ·
+`model_knobs={"effort":"high","fast":"false"}` (catalog default is **`fast=true`**;
+`reasoning_effort` is rejected 422 on `seat=cursor-sdk`). Life seats cannot call
+`team_dispatch` — commission via `agent_bus.request` and name the knobs in the body.
+Operator-proxy SOT: `libs/claude_bundles/operator_proxy_mission.py` § Idea commissioning.
+
 ## Entry surfaces
 
 | Surface | Form |
 |---|---|
 | Cursor IDE | `/work-item-seed …` (thin command) |
 | Headless / Auto / CDP | Use the `work-item-seed-path` skill |
+| Commissioned to grok sub-PM | `agent_bus.request` (life) or `team_dispatch` (code) — see § Commissioning register |
 
 ```
 /work-item-seed {idea}
