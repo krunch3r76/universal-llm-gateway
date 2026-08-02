@@ -99,6 +99,9 @@ from services.git_integration_worker.cursor_sdk_repo_precedence import (
 from services.git_integration_worker.cursor_sdk_stream_capture import (
     ToolCallObservation,
 )
+from services.git_integration_worker.cursor_sdk_subagent_capture import (
+    ensure_subagents_surface,
+)
 
 logger = get_logger(__name__)
 
@@ -854,7 +857,9 @@ def build_implement_closeout_body(
         status = project_status_from_work_outcome(resolved_work_outcome, degraded_reason)
     elif verification and any(v.exit_code for v in verification):
         status = CloseoutStatus.PARTIAL
-    manifest_source = effects_manifest or outcome.effects_manifest
+    manifest_source = ensure_subagents_surface(
+        effects_manifest or outcome.effects_manifest
+    )
     manifest_payload = serialize_effects_manifest_for_body(
         manifest_source,
         sidecar_appendix=sidecar_appendix,

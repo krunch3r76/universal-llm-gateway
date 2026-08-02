@@ -64,6 +64,7 @@ class ToolCallObservation:
     result_bytes: int
     truncated_fields: tuple[str, ...]
     target_path: str | None = None
+    subagent_type: str | None = None
 
     @property
     def truncated_any(self) -> bool:
@@ -172,6 +173,10 @@ def _observation_from_message(message: Any) -> ToolCallObservation:
     truncated = getattr(message, "truncated", None) or {}
     args = getattr(message, "args", None)
     tool_name = getattr(message, "name", "") or ""
+    from services.git_integration_worker.cursor_sdk_subagent_capture import (
+        subagent_type_from_stream_args,
+    )
+
     return ToolCallObservation(
         call_id=getattr(message, "call_id", "") or "",
         tool_name=tool_name,
@@ -180,6 +185,7 @@ def _observation_from_message(message: Any) -> ToolCallObservation:
         result_bytes=_json_bytes(getattr(message, "result", None)),
         truncated_fields=tuple(sorted(k for k, v in truncated.items() if v)),
         target_path=_target_path_from_stream_args(tool_name, args),
+        subagent_type=subagent_type_from_stream_args(tool_name, args),
     )
 
 

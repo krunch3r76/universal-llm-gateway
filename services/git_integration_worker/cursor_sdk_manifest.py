@@ -26,6 +26,13 @@ from services.git_integration_worker.cursor_sdk_capture_status import (
 from services.git_integration_worker.cursor_sdk_stream_capture import (
     ToolCallObservation,
 )
+from services.git_integration_worker.cursor_sdk_subagent_capture import (
+    SUBAGENTS_SURFACE,
+    ensure_subagents_surface,
+    entry_from_subagent_message,
+    is_subagent_tool_call,
+    merge_stream_subagent_calls,
+)
 
 CaptureBranch = Literal["A", "B", "NO_CAPTURE"]
 
@@ -84,7 +91,7 @@ _SERVICE_TOOLS = frozenset(
     }
 )
 _PLUMBING_SURFACES = frozenset({"cortex", "agent_bus", "service"})
-_SURFACE_ORDER = ("repo", "cortex", "agent_bus", "fs", "rag", "service")
+_SURFACE_ORDER = ("repo", "cortex", "agent_bus", "fs", "rag", "service", "subagents")
 
 
 def _git_change_set_empty(change_set: ChangeSet) -> bool:
@@ -196,13 +203,14 @@ def build_effects_manifest(
         entry.op == "dispatch" for entry in service_section.entries
     ):
         coverage["service"] = "partial"
-    return EffectsManifest(
+    manifest = EffectsManifest(
         dispatch_id=dispatch_id,
         thread_id=thread_id,
         capture_sources=sources,
         surfaces={k: v for k, v in surfaces.items() if v.entries},
         coverage=coverage,
     )
+    return ensure_subagents_surface(manifest)
 
 
 def manifest_repo_write_paths(
@@ -861,6 +869,8 @@ def _entry_from_tool_call(message: Mapping[str, Any]) -> EffectEntry | None:
     if tool_type == _REPO_SHELL_OP:
         command = _string_arg(args, "command")
         return EffectEntry(op="shell", target=command, detail=detail, identity=command)
+    if is_subagent_tool_call(tool_type=tool_type):
+        return entry_from_subagent_message(message)
     return EffectEntry(op=tool_type, target=_string_arg(args, "path"), detail=detail)
 
 
@@ -870,6 +880,8 @@ def _surface_for_tool_call(
     tool_type = str(message.get("type") or "")
     if tool_type in _REPO_FILE_OPS or tool_type == _REPO_SHELL_OP:
         return "repo"
+    if is_subagent_tool_call(tool_type=tool_type):
+        return SUBAGENTS_SURFACE
     if tool_type != _MCP_OP:
         return None
     tool_name = entry.op

@@ -140,6 +140,7 @@ from services.git_integration_worker.cursor_sdk_manifest import (
     build_effects_manifest,
     classify_mcp_capture_branch,
     merge_artifact_paths,
+    merge_stream_subagent_calls,
     merge_stream_tool_calls,
 )
 from services.git_integration_worker.cursor_sdk_nest_depth import (
@@ -842,6 +843,10 @@ def _run_sdk_sync(
                     effects_manifest,
                     stream_capture.tool_calls,
                     source_repo=source_repo,
+                )
+                effects_manifest = merge_stream_subagent_calls(
+                    effects_manifest,
+                    stream_capture.tool_calls,
                 )
                 if artifact_paths:
                     effects_manifest = merge_artifact_paths(
