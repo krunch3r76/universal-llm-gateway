@@ -38,6 +38,9 @@ from services.git_integration_worker.cursor_auto.episode_residue import (
 )
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_ambient import ambient_deviation_token
+from services.git_integration_worker.cursor_sdk_boundary_finalize import (
+    finalize_boundary_manifest,
+)
 from services.git_integration_worker.cursor_sdk_capture_status import (
     ChangeSet,
     attribution_effects_paths,
@@ -865,8 +868,17 @@ def build_implement_closeout_body(
         sidecar_appendix=sidecar_appendix,
     )
     cortex_assertions = harvest_cortex_assertion_ids(manifest_source)
-    cortex_writes_unattributed = not cortex_assertions and cortex_surface_has_write_op(
-        manifest_source
+    cortex_section = (
+        manifest_source.surfaces.get("cortex") if manifest_source else None
+    )
+    cortex_self_reported = (
+        cortex_section is not None
+        and cortex_section.authority_class == "self_reported"
+    )
+    cortex_writes_unattributed = (
+        cortex_self_reported
+        and not cortex_assertions
+        and cortex_surface_has_write_op(manifest_source)
     )
     if cortex_writes_unattributed:
         cortex_assertions = None
@@ -1162,6 +1174,13 @@ def _assemble_closeout_delivery(
         cortex_artifact_paths=cortex_artifact_paths,
         git_change_set=git_change_set,
     )
+    manifest, boundary_deviations = finalize_boundary_manifest(
+        manifest,
+        tool_calls=outcome.tool_calls,
+        source_repo=source_repo,
+        ledger=CursorDispatchLedger.instance(),
+        parent_dispatch_id=dispatch_id,
+    )
     offgit_uris = manifest_offgit_deliverable_uris(manifest, sidecar_ref=sidecar_ref)
     mount = resolve_mount_root(source_repo)
     manifest_cs, manifest_outside, dropped_non_file_entries = (
@@ -1265,6 +1284,11 @@ def _assemble_closeout_delivery(
         deviations = [
             *deviations,
             *(d for d in outcome.stream_only_deviations if d not in deviations),
+        ]
+    if boundary_deviations:
+        deviations = [
+            *deviations,
+            *(d for d in boundary_deviations if d not in deviations),
         ]
     for reason in outcome.degraded_reasons:
         token = f"degraded:{reason}"

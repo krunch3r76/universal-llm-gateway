@@ -219,6 +219,7 @@ def _dispatch_record_json(req: CursorDispatchRequest) -> str:
         "worktree_isolated": req.worktree_isolated,
         "worktree_path": req.worktree_path,
         "admitted_via": req.admitted_via,
+        "nest_under": req.nest_under,
     }
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
@@ -869,6 +870,27 @@ class CursorDispatchLedger:
         if row is None:
             return None
         return row["dispatch_id"], row["source_repo"]
+
+    def list_nested_children(self, *, parent_dispatch_id: str) -> list[str]:
+        """Return dispatch ids admitted with ``nest_under=parent_dispatch_id``."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT dispatch_id, record_json FROM cursor_sdk_dispatches "
+                "WHERE record_json LIKE ?",
+                (f'%"nest_under": "{parent_dispatch_id}"%',),
+            ).fetchall()
+        child_ids: list[str] = []
+        for row in rows:
+            dispatch_id = row["dispatch_id"]
+            if dispatch_id == parent_dispatch_id:
+                continue
+            try:
+                data = json.loads(row["record_json"] or "{}")
+            except json.JSONDecodeError:
+                continue
+            if isinstance(data, dict) and data.get("nest_under") == parent_dispatch_id:
+                child_ids.append(dispatch_id)
+        return child_ids
 
     def has_parked_parent(
         self, *, lease_key: str | None = None, source_repo: str | None = None

@@ -6,9 +6,19 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
-from implement_admission.closeout_models import EffectEntry, EffectsManifest, SurfaceSection
+from implement_admission.closeout_models import (
+    EffectEntry,
+    EffectsManifest,
+    SurfaceSection,
+)
 
-from services.git_integration_worker.cursor_sdk_stream_capture import ToolCallObservation
+from services.git_integration_worker.cursor_sdk_stream_capture import (
+    ToolCallObservation,
+)
+from services.git_integration_worker.cursor_sdk_surface_authority import (
+    authority_for_surface_source,
+    mixed_source_cross_check,
+)
 
 SUBAGENTS_SURFACE = "subagents"
 _SUBAGENT_TOOL_NAMES = frozenset({"task"})
@@ -135,17 +145,26 @@ def merge_stream_subagent_calls(
     merged_surfaces = dict(manifest.surfaces) if manifest else {}
     existing = merged_surfaces.get(SUBAGENTS_SURFACE)
     if existing is None:
+        auth = authority_for_surface_source(SUBAGENTS_SURFACE, "stream")
         merged_surfaces[SUBAGENTS_SURFACE] = SurfaceSection(
             surface=SUBAGENTS_SURFACE,
             source="stream",
             entries=new_entries,
+            authority_class=auth[0],
+            absence_semantics=auth[1],
         )
     else:
+        cross = mixed_source_cross_check(existing, "stream")
+        auth = authority_for_surface_source(
+            SUBAGENTS_SURFACE, existing.source, entry_count=len(existing.entries)
+        )
         merged_surfaces[SUBAGENTS_SURFACE] = SurfaceSection(
             surface=SUBAGENTS_SURFACE,
             source=existing.source,
             entries=[*existing.entries, *new_entries],
-            cross_check=existing.cross_check,
+            cross_check=cross or existing.cross_check,
+            authority_class=auth[0],
+            absence_semantics=auth[1],
         )
     sources = list(manifest.capture_sources) if manifest else []
     sources = list(dict.fromkeys([*sources, "stream"]))
@@ -168,10 +187,18 @@ def ensure_subagents_surface(manifest: EffectsManifest | None) -> EffectsManifes
     if SUBAGENTS_SURFACE in manifest.surfaces:
         return manifest
     merged = dict(manifest.surfaces)
+    if "stream" in manifest.capture_sources:
+        auth: tuple[str, str] = ("observed", "absence=zero")
+        source = "stream"
+    else:
+        auth = authority_for_surface_source(SUBAGENTS_SURFACE, "capture", entry_count=0)
+        source = "capture"
     merged[SUBAGENTS_SURFACE] = SurfaceSection(
         surface=SUBAGENTS_SURFACE,
-        source="capture",
+        source=source,
         entries=[],
+        authority_class=auth[0],  # type: ignore[arg-type]
+        absence_semantics=auth[1],  # type: ignore[arg-type]
     )
     coverage = dict(manifest.coverage)
     coverage[SUBAGENTS_SURFACE] = "complete"

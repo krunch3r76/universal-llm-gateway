@@ -10,6 +10,8 @@ from implement_admission.propagation_row import PropagationRow
 from implement_admission.spec import CloseoutStatus, WorkOutcome
 
 CoverageStatus = Literal["complete", "partial", "unavailable"]
+AuthorityClass = Literal["ledger_attested", "observed", "self_reported"]
+AbsenceSemantics = Literal["absence=zero", "absence=unknown"]
 
 AmbientRepoCause = Literal[
     "ambient:concurrent_commit",
@@ -36,6 +38,16 @@ class SurfaceSection(BaseModel):
     source: str
     entries: list[EffectEntry] = Field(default_factory=list)
     cross_check: str | None = None
+    authority_class: AuthorityClass | None = None
+    absence_semantics: AbsenceSemantics | None = None
+
+
+class ObservedReconciliation(BaseModel):
+    """Stream/conversation vs commit-ack divergence (item 9 / AC-9f)."""
+
+    surface: str
+    seat_claimed_unobserved: list[str] = Field(default_factory=list)
+    observed_unclaimed: list[str] = Field(default_factory=list)
 
 
 class EffectsManifest(BaseModel):
@@ -46,6 +58,7 @@ class EffectsManifest(BaseModel):
     surfaces: dict[str, SurfaceSection] = Field(default_factory=dict)
     coverage: dict[str, CoverageStatus] = Field(default_factory=dict)
     external_effects: Literal["scoped_out"] = "scoped_out"
+    reconciliation: list[ObservedReconciliation] = Field(default_factory=list)
 
 
 class Verification(BaseModel):
