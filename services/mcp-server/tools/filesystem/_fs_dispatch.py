@@ -35,6 +35,7 @@ OP_SANDBOXES: dict[str, frozenset[str]] = {
     "search": frozenset({"cortex", "workspaces"}),
     "write_binary": frozenset({"cortex"}),
     "append_binary": frozenset({"cortex"}),
+    "resolve_sha256": frozenset({"cortex"}),
 }
 
 
@@ -76,6 +77,10 @@ OP_DOC: dict[str, tuple[str, str]] = {
     ),
     "write_binary": ("(path, content)", "write base64-encoded binary"),
     "append_binary": ("(path, content)", "append base64 chunk to binary file"),
+    "resolve_sha256": (
+        "(content)",
+        "check whether a cited sha256 digest resolves in the content store",
+    ),
 }
 
 
@@ -121,6 +126,7 @@ OP_CONSUMES: dict[str, frozenset[str]] = {
     "write": frozenset(),
     "write_binary": frozenset(),
     "append_binary": frozenset(),
+    "resolve_sha256": frozenset(),
     "append": frozenset(),
     "prepend": frozenset(),
     "replace": frozenset({"target", "all_occurrences"}),

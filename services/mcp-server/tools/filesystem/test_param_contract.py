@@ -24,6 +24,7 @@ _DEFAULTS: dict[str, object] = {
     "level": 0,
     "position": "",
     "all_occurrences": False,
+    "mode": "",
 }
 
 # A non-default value per contract param, for the "provided" assertions.
@@ -35,6 +36,7 @@ _PROVIDED: dict[str, object] = {
     "level": 2,
     "position": "after",
     "all_occurrences": True,
+    "mode": "content",
 }
 
 

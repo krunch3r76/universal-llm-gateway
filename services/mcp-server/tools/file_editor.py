@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from tools._durable_write import durable_write_text, verify_persisted
+from tools.filesystem._overwrite_retain import retain_before_overwrite
 
 
 def perform_edit(
@@ -91,6 +92,7 @@ def perform_edit(
                 + "insert_at_line, replace."
             )
 
+    replaced_sha256 = retain_before_overwrite(path)
     written_sha256 = durable_write_text(path, modified)
     verify_persisted(path, written_sha256)
 
@@ -99,6 +101,8 @@ def perform_edit(
         "path": str(path),
         "written_sha256": written_sha256,
     }
+    if replaced_sha256 is not None:
+        result["replaced_sha256"] = replaced_sha256
     if operation == "replace":
         result["replacements_made"] = replacements_made
     return result

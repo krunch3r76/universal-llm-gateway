@@ -30,6 +30,7 @@ from ._paths import (
     sha256_hex_of_file,
     sha256_of_file,
 )
+from ._overwrite_retain import retain_before_overwrite
 from ._share_uri_response import attach_dual_carry
 
 logger = logging.getLogger(__name__)
@@ -100,13 +101,16 @@ def write_file_impl(
     Intermediate directories are created automatically.
 
     CAS semantics (cortex sandbox; see friction-13695 sidecar):
-      - ``expected_sha256`` absent → legacy create-or-overwrite.
+      - ``expected_sha256`` absent → create-or-overwrite; overwrites echo
+        ``replaced_sha256`` (bare hex of prior bytes) and retain prior content
+        in ``.content-store/sha256/`` (item-15 / AC-15a–b).
       - ``expected_sha256`` present → file must exist and hash must match.
       - ``if_absent=True`` → create-only; fails when the path already exists.
       - Both guard params together → ``ValueError``.
 
     On success, response includes ``written_sha256``: bare lowercase hex of the
-    resulting file bytes. ``expected_sha256`` accepts bare hex (``read_sha256``
+    resulting file bytes. Overwrites also include ``replaced_sha256`` when prior
+    bytes existed. ``expected_sha256`` accepts bare hex (``read_sha256``
     round-trip) or ``sha256:`` / ``spec_sha256:`` citation prefixes.
     """
     if expected_sha256 is not None and if_absent:
@@ -143,6 +147,7 @@ def write_file_impl(
                 expected_sha256=expected_echo,
                 actual_sha256=actual_echo,
             )
+        replaced_sha256 = retain_before_overwrite(dest)
         try:
             written_sha256 = _write_content_durable(dest, content)
         except WriteVerifyError as exc:
@@ -159,17 +164,24 @@ def write_file_impl(
             logger.exception("write_file: OS error writing %s", dest)
             raise
 
-    record("mcp.tool.file.written", path=path, resolved=str(dest), chars=len(content))
+    event_payload: dict[str, Any] = {
+        "path": path,
+        "resolved": str(dest),
+        "chars": len(content),
+        "written_sha256": written_sha256,
+    }
+    if replaced_sha256 is not None:
+        event_payload["replaced_sha256"] = replaced_sha256
+    record("mcp.tool.file.written", **event_payload)
     logger.debug("write_file: wrote %s (%d chars)", dest, len(content))
     rel = path.lstrip("/")
-    return attach_dual_carry(
-        {
-            "status": "written",
-            "written_sha256": written_sha256,
-        },
-        sandbox="cortex",
-        rel_path=rel,
-    )
+    result: dict[str, Any] = {
+        "status": "written",
+        "written_sha256": written_sha256,
+    }
+    if replaced_sha256 is not None:
+        result["replaced_sha256"] = replaced_sha256
+    return attach_dual_carry(result, sandbox="cortex", rel_path=rel)
 
 
 def read_file_impl(

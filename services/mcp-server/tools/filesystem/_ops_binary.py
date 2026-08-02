@@ -15,7 +15,8 @@ from .._durable_write import (
     verify_persisted,
     write_verify_error_dict,
 )
-from ._paths import BINARY_MAX_BYTES, reject_template_tokens, safe_path
+from ._overwrite_retain import retain_before_overwrite
+from ._paths import BINARY_MAX_BYTES, path_write_lock, reject_template_tokens, safe_path
 
 logger = logging.getLogger(__name__)
 
@@ -44,26 +45,34 @@ def write_binary_impl(rel_path: str, content_base64: str) -> dict[str, Any]:
             f"{BINARY_MAX_BYTES // (1024 * 1024)}MB limit"
         )
 
-    try:
-        written_sha256 = durable_write_bytes(dest, raw)
-        verify_persisted(dest, written_sha256)
-    except WriteVerifyError as exc:
-        return write_verify_error_dict(exc)
+    with path_write_lock(dest):
+        replaced_sha256 = retain_before_overwrite(dest)
+        try:
+            written_sha256 = durable_write_bytes(dest, raw)
+            verify_persisted(dest, written_sha256)
+        except WriteVerifyError as exc:
+            return write_verify_error_dict(exc)
 
-    record(
-        "mcp.tool.file.written",
-        path=rel_path,
-        resolved=str(dest),
-        bytes=len(raw),
-        binary=True,
-    )
+    event_payload: dict[str, Any] = {
+        "path": rel_path,
+        "resolved": str(dest),
+        "bytes": len(raw),
+        "binary": True,
+        "written_sha256": written_sha256,
+    }
+    if replaced_sha256 is not None:
+        event_payload["replaced_sha256"] = replaced_sha256
+    record("mcp.tool.file.written", **event_payload)
     logger.debug("write_binary: wrote %s (%d bytes)", dest, len(raw))
-    return {
+    result: dict[str, Any] = {
         "status": "written",
         "path": str(dest),
         "bytes": len(raw),
         "written_sha256": written_sha256,
     }
+    if replaced_sha256 is not None:
+        result["replaced_sha256"] = replaced_sha256
+    return result
 
 
 def append_binary_impl(rel_path: str, content_base64: str) -> dict[str, Any]:
@@ -92,31 +101,33 @@ def append_binary_impl(rel_path: str, content_base64: str) -> dict[str, Any]:
             f"would exceed {BINARY_MAX_BYTES // (1024 * 1024)}MB limit"
         )
 
-    try:
-        written_sha256 = durable_write_bytes(dest, combined)
-        verify_persisted(dest, written_sha256)
-    except WriteVerifyError as exc:
-        return write_verify_error_dict(exc)
+    with path_write_lock(dest):
+        replaced_sha256 = retain_before_overwrite(dest) if dest.exists() else None
+        try:
+            written_sha256 = durable_write_bytes(dest, combined)
+            verify_persisted(dest, written_sha256)
+        except WriteVerifyError as exc:
+            return write_verify_error_dict(exc)
 
-    record(
-        "mcp.tool.file.written",
-        path=rel_path,
-        resolved=str(dest),
-        bytes=len(raw),
-        total_bytes=len(combined),
-        binary=True,
-        append=True,
-    )
-    logger.debug(
-        "append_binary: appended %d bytes to %s (total %d)",
-        len(raw),
-        dest,
-        len(combined),
-    )
-    return {
+    event_payload: dict[str, Any] = {
+        "path": rel_path,
+        "resolved": str(dest),
+        "bytes": len(raw),
+        "total_bytes": len(combined),
+        "binary": True,
+        "append": True,
+        "written_sha256": written_sha256,
+    }
+    if replaced_sha256 is not None:
+        event_payload["replaced_sha256"] = replaced_sha256
+    record("mcp.tool.file.written", **event_payload)
+    result: dict[str, Any] = {
         "status": "appended",
         "path": str(dest),
         "bytes_appended": len(raw),
         "total_bytes": len(combined),
         "written_sha256": written_sha256,
     }
+    if replaced_sha256 is not None:
+        result["replaced_sha256"] = replaced_sha256
+    return result

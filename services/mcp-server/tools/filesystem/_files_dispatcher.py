@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ._fs_dispatch import sandbox_op_names
+from ._content_store import resolve_sha256_impl
 from ._ops_binary import append_binary_impl, write_binary_impl
 from ._ops_paths import copy_file_impl, delete_file_impl, move_file_impl
 from ._ops_search import search_path_impl
@@ -231,4 +232,11 @@ def register_files_tool(mcp: FastMCP) -> None:
             result = delete_file_impl(path)
             result["_next"] = FS_WORKFLOW_HINTS["delete"]
             return result
+        if op == "resolve_sha256":
+            if not content:
+                raise ValueError(
+                    "'content' is required for resolve_sha256 and holds the bare "
+                    "hex or sha256:-prefixed digest to resolve"
+                )
+            return resolve_sha256_impl(content)
         raise ValueError(f"Unknown op: {op!r}. Use: {sandbox_op_names('cortex')}")
