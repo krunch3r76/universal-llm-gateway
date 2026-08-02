@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from claude_bundles import cdp_registry
+from claude_bundles import cdp_registry_events as _events
 
 _ABORT_STOP_TIMEOUT_S = 5.0
 _ATTEST_POLL_INTERVAL_S = 0.25
@@ -111,7 +112,7 @@ def registration_owns_port(registration_id: str, expected_port: int) -> bool:
 
 
 def purpose_kill_default(purpose: str | None) -> bool:
-    return (purpose or "") == "ask"
+    return (purpose or "") in ("ask", "operator-proxy")
 
 
 def emit_detached_status(registration_id: str) -> None:
@@ -138,7 +139,18 @@ def _process_owns_driver(registration_id: str) -> bool:
 def deregister_on_exit(reg: cdp_registry.Registration, *, purpose: str | None) -> None:
     if not registration_owns_port(reg.registration_id, reg.port):
         return
-    kill = purpose_kill_default(purpose or reg.purpose)
+    effective_purpose = purpose or reg.purpose
+    kill = purpose_kill_default(effective_purpose)
+    if cdp_registry.is_primary_profile(reg.profile):
+        kill = False
+    _events.emit(
+        _events.cdp_port_exit_kill_decision(
+            purpose=effective_purpose,
+            registration_id=reg.registration_id,
+            port=reg.port,
+            kill=kill,
+        )
+    )
     cdp_registry.deregister_lane(reg.registration_id, kill=kill)
     cdp_registry.reclaim_best_effort()
 

@@ -47,6 +47,27 @@ def cdp_port_reattached(reg: Registration) -> Event:
 
 
 @event_factory
+def cdp_port_exit_kill_decision(
+    *,
+    purpose: str | None,
+    registration_id: str,
+    port: int,
+    kill: bool,
+) -> Event:
+    return Event(
+        signal="cdp.port.exit_kill_decision",
+        role="observation",
+        scope="node",
+        payload={
+            "purpose": purpose,
+            "registration_id": registration_id,
+            "port": port,
+            "kill": kill,
+        },
+    )
+
+
+@event_factory
 def cdp_port_orphan_scan(
     *,
     ports_live: int,
