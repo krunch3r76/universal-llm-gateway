@@ -793,7 +793,9 @@ def test_prepare_closeout_delivery_writes_sidecar_and_bounds_body(
     )
     assert len(delivery.body) <= MAX_TURN_BODY_CHARS
     assert delivery.sidecar_ref == sidecar_workspaces_ref("disp-big")
-    assert delivery.sidecar_path.read_text(encoding="utf-8") == outcome.body
+    sidecar_text = delivery.sidecar_path.read_text(encoding="utf-8")
+    assert sidecar_text.startswith(outcome.body)
+    assert "## structured_closeout_full" in sidecar_text
     assert delivery.sidecar_ref in delivery.body
 
 
@@ -1993,6 +1995,52 @@ def test_prepare_closeout_delivery_normal_size_has_no_body_relocated(
     assert len(delivery.body) <= MAX_TURN_BODY_CHARS
     assert "body_relocated" not in payload
     assert payload["status"] == "complete"
+    sidecar_text = delivery.sidecar_path.read_text(encoding="utf-8")
+    assert "## structured_closeout_full" in sidecar_text
+    full_json = sidecar_text.split("## structured_closeout_full\n\n", 1)[1]
+    full_payload = json.loads(full_json)
+    assert full_payload["schema_version"] == 1
+    assert "files_ambient_repo_movement" in full_payload
+
+
+def test_prepare_closeout_delivery_structured_receipt_write_failure_is_loud(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outcome = SdkRunOutcome(
+        body="done",
+        status="finished",
+        duration_ms=50,
+        tool_call_count=2,
+    )
+    emit_mock = MagicMock()
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_events.emit_sdk_closeout_sidecar_receipt_failed",
+        emit_mock,
+    )
+
+    def _fail_append(sidecar_path: Path, full_body: str) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_deliverables.append_structured_closeout_full_to_repo_sidecar",
+        _fail_append,
+    )
+    delivery = prepare_closeout_delivery(
+        source_repo=tmp_path,
+        dispatch_id="disp-receipt-fail",
+        outcome=outcome,
+        degraded_reason=None,
+        thread_id="t-fail",
+        work_item_ref=None,
+    )
+    payload = json.loads(delivery.body)
+    assert any(
+        str(d).startswith("closeout:structured_receipt_sidecar_failed:")
+        for d in (payload.get("deviations") or [])
+    )
+    assert payload["capture_status"] == "partial"
+    emit_mock.assert_called_once()
 
 
 def test_reconcile_segregates_outside_repo_from_modified(tmp_path: Path) -> None:

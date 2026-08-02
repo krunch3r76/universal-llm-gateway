@@ -137,15 +137,75 @@ def body_relocated_meta(
     }
 
 
+STRUCTURED_CLOSEOUT_FULL_HEADING = "## structured_closeout_full"
+STRUCTURED_CLOSEOUT_FULL_MARKER = f"\n{STRUCTURED_CLOSEOUT_FULL_HEADING}"
+
+
+def sidecar_has_structured_closeout_full(sidecar_text: str) -> bool:
+    return STRUCTURED_CLOSEOUT_FULL_MARKER in sidecar_text
+
+
 def append_structured_closeout_full_to_repo_sidecar(
     sidecar_path: Path,
     full_body: str,
 ) -> None:
     existing = sidecar_path.read_text(encoding="utf-8")
+    if sidecar_has_structured_closeout_full(existing):
+        return
     sidecar_path.write_text(
-        existing + "\n\n## structured_closeout_full\n\n" + full_body,
+        existing + f"\n\n{STRUCTURED_CLOSEOUT_FULL_HEADING}\n\n" + full_body,
         encoding="utf-8",
     )
+
+
+def persist_structured_closeout_full_to_repo_sidecar(
+    *,
+    sidecar_path: Path,
+    full_body: str,
+    dispatch_id: str,
+    thread_id: str,
+) -> str | None:
+    """Append full ImplementCloseout JSON to repo sidecar; return deviation if failed."""
+    from services.git_integration_worker.cursor_sdk_events import (
+        emit_sdk_closeout_sidecar_receipt_failed,
+    )
+
+    try:
+        pretty_body = pretty_relocated_closeout_body(full_body)
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        reason = f"serialize:{type(exc).__name__}"
+        emit_sdk_closeout_sidecar_receipt_failed(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            reason=reason,
+            sidecar_path=str(sidecar_path),
+        )
+        logger.error(
+            "structured closeout receipt serialize failed: dispatch_id=%s reason=%s",
+            dispatch_id,
+            reason,
+        )
+        return f"closeout:structured_receipt_sidecar_failed:{reason}"
+
+    try:
+        append_structured_closeout_full_to_repo_sidecar(sidecar_path, pretty_body)
+    except OSError as exc:
+        reason = f"write:{type(exc).__name__}"
+        emit_sdk_closeout_sidecar_receipt_failed(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            reason=reason,
+            sidecar_path=str(sidecar_path),
+        )
+        logger.error(
+            "structured closeout receipt write failed: dispatch_id=%s path=%s reason=%s",
+            dispatch_id,
+            sidecar_path,
+            reason,
+        )
+        return f"closeout:structured_receipt_sidecar_failed:{reason}"
+
+    return None
 
 
 async def post_closeout_sidecar(

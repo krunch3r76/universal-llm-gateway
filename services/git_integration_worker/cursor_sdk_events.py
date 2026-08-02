@@ -1191,6 +1191,52 @@ def emit_sdk_closeout_reconciled(
 
 
 @event_factory
+def FrontierSdkCloseoutSidecarReceiptFailed(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    reason: str,
+    sidecar_path: str,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.closeout.sidecar_receipt_failed",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "reason": reason,
+            "sidecar_path": sidecar_path,
+        },
+        scope="node",
+        role="observation",
+    )
+
+
+def emit_sdk_closeout_sidecar_receipt_failed(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    reason: str,
+    sidecar_path: str,
+) -> None:
+    """Emit when repo sidecar cannot persist parseable structured_closeout_full."""
+    _emit(
+        FrontierSdkCloseoutSidecarReceiptFailed(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            reason=reason,
+            sidecar_path=sidecar_path,
+        )
+    )
+    logger.error(
+        "cursor sdk closeout sidecar receipt failed: dispatch_id=%s thread_id=%s "
+        "reason=%s sidecar_path=%s",
+        dispatch_id,
+        thread_id,
+        reason,
+        sidecar_path,
+    )
+
+
+@event_factory
 def FrontierSdkCloseoutRelayed(  # noqa: N802
     dispatch_id: str,
     thread_id: str,

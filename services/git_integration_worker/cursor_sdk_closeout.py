@@ -57,6 +57,7 @@ from services.git_integration_worker.cursor_sdk_deliverables import (
     artifact_paths_for_closeout,
     cortex_expected_rels,
     full_result_text,
+    persist_structured_closeout_full_to_repo_sidecar,
     relocate_oversize_closeout_body_async,
     relocate_oversize_closeout_body_sync,
     resolve_cortex_pinned_deliverables,
@@ -1363,6 +1364,22 @@ def _assemble_closeout_delivery(
         )
         result_bytes = len(sidecar_path.read_text(encoding="utf-8").encode("utf-8"))
     full_body = body
+    receipt_deviation = persist_structured_closeout_full_to_repo_sidecar(
+        sidecar_path=sidecar_path,
+        full_body=full_body,
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+    )
+    if receipt_deviation:
+        payload = json.loads(full_body)
+        payload_deviations = list(payload.get("deviations") or [])
+        if receipt_deviation not in payload_deviations:
+            payload_deviations.append(receipt_deviation)
+        payload["deviations"] = payload_deviations
+        if payload.get("status") != "failed":
+            payload["capture_status"] = "partial"
+        full_body = json.dumps(payload, separators=(",", ":"))
+        body = full_body
     if len(full_body) > MAX_TURN_BODY_CHARS and finalize_oversize:
         body_relocated, tier = relocate_oversize_closeout_body_sync(
             full_body=full_body,
