@@ -99,7 +99,11 @@ def append_bus_lifecycle_tags(
 
 
 def _has_delivered_result_turn(turns: list[dict[str, Any]]) -> bool:
-    """True when a closeout/result turn exists after the pointer (turn >= 2)."""
+    """True when a dispatch closeout turn exists after the pointer (turn >= 2).
+
+    Only ``cursor-sdk`` (base seat) closeouts count — bare ``cursor`` /
+    ``cursor-auto`` notes must not satisfy the pointer geometry alone.
+    """
     if len(turns) < 2:
         return False
     pointer = turns[0]
@@ -112,7 +116,10 @@ def _has_delivered_result_turn(turns: list[dict[str, Any]]) -> bool:
     for turn in turns[1:]:
         if int(turn.get("turn_number") or 0) < 2:
             continue
-        if agents_match(str(turn.get("from_agent")), expected_role) and agents_match(
+        from_agent = str(turn.get("from_agent") or "")
+        if normalize_bus_address(_dispatch_base_seat(from_agent)) != "cursor-sdk":
+            continue
+        if agents_match(from_agent, expected_role) and agents_match(
             str(turn.get("to_agent")), expected_caller
         ):
             return True
@@ -130,10 +137,10 @@ def maybe_auto_close_after_dispatch_terminate(
     thread = get_thread(thread_id)
     if thread is None or thread.get("status") == ThreadStatus.CLOSED:
         return None
-    if (
-        resolve_bus_lifecycle(thread.get("tags"), explicit=explicit_bus_lifecycle)
-        == "persistent"
-    ):
+    tags = thread.get("tags") or []
+    if "lane:cursor-auto" in tags:
+        return None
+    if resolve_bus_lifecycle(tags, explicit=explicit_bus_lifecycle) == "persistent":
         return None
     turns = get_thread_turns_asc(thread_id)
     if not _has_delivered_result_turn(turns):

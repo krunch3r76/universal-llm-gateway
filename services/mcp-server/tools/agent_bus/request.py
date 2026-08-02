@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent_bus_store.disposition import append_bus_lifecycle_tags
 from mcp_events import record
 
 from .._agent_bus_author import resolve_dispatch_from_agent
@@ -31,7 +32,8 @@ _MAX_EXPECTED_LATENCY_S = 120
 def _merge_lane_tags(tags: list[str] | None) -> list[str]:
     merged: list[str] = []
     seen: set[str] = set()
-    for t in list(tags or []) + [_LANE_TAG]:
+    stamped = append_bus_lifecycle_tags(list(tags or []), bus_lifecycle="persistent")
+    for t in stamped + [_LANE_TAG]:
         if t not in seen:
             merged.append(t)
             seen.add(t)
@@ -352,9 +354,7 @@ def _request_dispatch(
     if has_new_slug == has_thread:
         record("mcp.agentbus.request.rejected", reason="xor")
         return {
-            "error": (
-                "request: exactly one of thread or new_slug is required"
-            ),
+            "error": ("request: exactly one of thread or new_slug is required"),
             "reason": "request_xor_violation",
         }
     if not subject or not body:

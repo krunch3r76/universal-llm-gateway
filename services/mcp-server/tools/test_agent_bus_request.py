@@ -20,8 +20,11 @@ def test_merge_lane_tags_dedupes():
     assert _merge_lane_tags(["lane:cursor-auto", "x"]) == [
         "lane:cursor-auto",
         "x",
+        "bus_lifecycle:persistent",
     ]
-    assert "lane:cursor-auto" in _merge_lane_tags(None)
+    merged = _merge_lane_tags(None)
+    assert "lane:cursor-auto" in merged
+    assert "bus_lifecycle:persistent" in merged
     assert "lane:life-to-code" not in _merge_lane_tags(["foo"])
 
 
@@ -226,11 +229,20 @@ def test_request_transient_probe_then_arms():
         patch("tools.agent_bus.request._send_dispatch", return_value=send_payload),
         patch(
             "tools.agent_bus.request.probe_auto_liveness",
-            return_value={"live": True, "reason": "ok", "attempts": 2, "elapsed_s": 1.0},
+            return_value={
+                "live": True,
+                "reason": "ok",
+                "attempts": 2,
+                "elapsed_s": 1.0,
+            },
         ),
         patch(
             "tools.agent_bus.request.enqueue_auto_job",
-            return_value={"ok": True, "handler_status": "auto-admit-armed", "enqueue": {"ok": True}},
+            return_value={
+                "ok": True,
+                "handler_status": "auto-admit-armed",
+                "enqueue": {"ok": True},
+            },
         ),
         patch("tools.agent_bus.request.record") as record_mock,
     ):

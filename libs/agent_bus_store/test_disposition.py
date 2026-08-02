@@ -49,9 +49,7 @@ def test_summary_for_auto_close_rejects_machine_junk() -> None:
     assert summary_for_auto_close(None) is None
     assert summary_for_auto_close("") is None
     assert (
-        summary_for_auto_close(
-            "Dispatch completed — auto-closed (ephemeral default)."
-        )
+        summary_for_auto_close("Dispatch completed — auto-closed (ephemeral default).")
         is None
     )
     assert (
@@ -340,3 +338,90 @@ def test_maybe_auto_close_skips_failed(bus_db) -> None:
         maybe_auto_close_after_dispatch_terminate(thread_id, terminal_status="failed")
         is None
     )
+
+
+def test_historical_cursor_note_not_dispatch_result(bus_db) -> None:
+    """AC-1: cursor→web notes must not alone trigger auto-close on terminate."""
+    thread_row, *_ = create_thread_with_turn(
+        slug="proxy-false-pos",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        subject="DIRECTIVE",
+        body="operator proxy pointer",
+        lifecycle_state="pending",
+    )
+    thread_id = thread_row["id"]
+    with connect() as conn:
+        set_thread_tags(conn, thread_id, append_bus_lifecycle_tags([]))
+    bus_db.post(
+        "/turns",
+        json={
+            "thread": thread_id,
+            "from": "cursor",
+            "to": "web-anthropic",
+            "subject": "monitor note",
+            "body": "status update",
+            "after_turn": 1,
+        },
+    )
+    admit_dispatch(
+        thread_id=thread_id,
+        execution_id="exec-proxy-fp",
+        pipeline_id="cursor-sdk-generate",
+    )
+    bus_db.post(
+        "/turns",
+        json={
+            "thread": thread_id,
+            "from": "cursor-sdk",
+            "to": "web-anthropic",
+            "subject": "cursor-sdk dispatch closeout",
+            "body": "nested sdk done",
+            "after_turn": 2,
+        },
+    )
+
+    resp = bus_db.post(
+        f"/threads/{thread_id}/dispatch-terminate",
+        json={"terminal_status": "completed", "execution_id": "exec-proxy-fp"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == ThreadStatus.ACTIVE
+
+
+def test_lane_cursor_auto_exempt_from_auto_close(bus_db) -> None:
+    """AC-2: lane:cursor-auto threads never auto-close on nested SDK terminate."""
+    thread_row, *_ = create_thread_with_turn(
+        slug="cursor-auto-lane",
+        from_agent="dispatch",
+        to_agent="cursor-sdk",
+        subject="implement",
+        body="generate-shaped pointer on auto lane",
+        lifecycle_state="pending",
+    )
+    thread_id = thread_row["id"]
+    with connect() as conn:
+        set_thread_tags(conn, thread_id, ["lane:cursor-auto"])
+    admit_dispatch(
+        thread_id=thread_id,
+        execution_id="exec-auto-lane",
+        pipeline_id="cursor-sdk-generate",
+    )
+    bus_db.post(
+        "/turns",
+        json={
+            "thread": thread_id,
+            "from": "cursor-sdk",
+            "to": "dispatch",
+            "subject": "cursor-sdk dispatch closeout",
+            "body": "done",
+            "after_turn": 1,
+        },
+    )
+
+    resp = bus_db.post(
+        f"/threads/{thread_id}/dispatch-terminate",
+        json={"terminal_status": "completed", "execution_id": "exec-auto-lane"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == ThreadStatus.ACTIVE
