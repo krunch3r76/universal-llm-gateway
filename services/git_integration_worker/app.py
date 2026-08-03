@@ -23,9 +23,6 @@ from services.git_integration_worker.config import WorkerConfig, load_config
 from services.git_integration_worker.cursor_auto.closeout_outbox import (
     CloseoutOutboxStore,
 )
-from services.git_integration_worker.cursor_auto.closeout_replay import (
-    startup_closeout_outbox_replay,
-)
 from services.git_integration_worker.cursor_auto.execute_runner import (
     clear_tool_op_invoker,
 )
@@ -34,7 +31,6 @@ from services.git_integration_worker.cursor_auto.execute_tool_op_invoker import 
 )
 from services.git_integration_worker.cursor_auto.job_reconcile import (
     shutdown_auto_jobs,
-    startup_auto_job_reconcile,
 )
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
@@ -68,11 +64,13 @@ from services.git_integration_worker.routes.cursor_sdk import (
 )
 from services.git_integration_worker.routes.cursor_sdk import (
     stale_lease_sweeper,
-    startup_ledger_reconcile,
 )
 from services.git_integration_worker.routes.health import router as health_router
 from services.git_integration_worker.routes.integrate import router as integrate_router
 from services.git_integration_worker.routes.triggers import router as triggers_router
+from services.git_integration_worker.startup_persistence import (
+    schedule_startup_persistence,
+)
 from services.git_integration_worker.trigger_service.loop import trigger_fire_loop
 from services.git_integration_worker.ulg_story_projector import ulg_story_projector_loop
 
@@ -126,9 +124,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.worker_config = cfg
     app.state.worker_version = _resolve_version()
     app.state.worker_started_at = time.monotonic()
-    await startup_ledger_reconcile(app)
-    await startup_closeout_outbox_replay(app)
-    await startup_auto_job_reconcile(app)
+    # Bind-first: persistence reconcile/replay must not hold the health port
+    # off the wire (2026-08-03 boot hang — unbounded pre-yield work).
+    schedule_startup_persistence(app)
     register_production_invoker()
     sweeper = asyncio.create_task(stale_lease_sweeper(app))
     app.state.stale_lease_sweeper = sweeper
@@ -144,7 +142,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.lane_b_sweeper = lane_b_sweeper
     logger.info(
         "git-integration-worker started: version=%s port=%d source_repo=%s "
-        "worker_id=%s",
+        "worker_id=%s startup_persistence=background",
         app.state.worker_version,
         cfg.port,
         cfg.source_repo,
@@ -171,6 +169,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         shutdown_active_bridges()
         await shutdown_auto_jobs(app)
         for attr in (
+            "startup_persistence_task",
             "stale_lease_sweeper",
             "cursor_auto_worker",
             "cursor_auto_orphan_scanner",
