@@ -182,6 +182,7 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     suppress_cost_warning: bool = False
     cost_intent_reason: str | None = None
     nest_under: str | None = None
+    lane: Literal["A", "B"] | None = None
     read_only: bool = False
     refuse_if_lease_held: bool = False
     # CDP registry / mission tag (model=cdp/… only). Default ask when omitted;

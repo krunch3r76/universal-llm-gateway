@@ -75,6 +75,7 @@ async def dispatch_prepared_cursor_sdk(
             read_only=handle.read_only,
             dispatch_id=handle.dispatch_id,
             nest_under=handle.nest_under,
+            lane=handle.lane,
             refuse_if_lease_held=handle.refuse_if_lease_held,
         )
     else:
@@ -89,6 +90,7 @@ async def dispatch_prepared_cursor_sdk(
             read_only=handle.read_only,
             dispatch_id=handle.dispatch_id,
             nest_under=handle.nest_under,
+            lane=handle.lane,
             refuse_if_lease_held=handle.refuse_if_lease_held,
         )
 
@@ -186,6 +188,7 @@ async def dispatch_cursor_sdk_generate(
     source_ref: str | None = None,
     dispatch_lane: str | None = None,
     nest_under: str | None = None,
+    lane: Literal["A", "B"] | None = None,
     refuse_if_lease_held: bool = False,
 ) -> dict[str, Any]:
     """Execute cursor-sdk generate with to_thread default delivery.
@@ -224,6 +227,7 @@ async def dispatch_cursor_sdk_generate(
         source_ref=source_ref,
         dispatch_lane=dispatch_lane,
         nest_under=nest_under,
+        lane=lane,
         refuse_if_lease_held=refuse_if_lease_held,
     )
     return await dispatch_prepared_cursor_sdk(handle)

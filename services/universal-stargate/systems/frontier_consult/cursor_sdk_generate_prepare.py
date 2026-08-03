@@ -76,6 +76,7 @@ async def prepare_cursor_sdk_generate(
     source_ref: str | None = None,
     dispatch_lane: str | None = None,
     nest_under: str | None = None,
+    lane: Literal["A", "B"] | None = None,
     refuse_if_lease_held: bool = False,
 ) -> PreparedCursorSdkHandle:
     """Validate, mint/reuse IDs, create pending thread; do not POST the worker."""
@@ -390,5 +391,6 @@ async def prepare_cursor_sdk_generate(
         alignment_warnings=tuple(alignment.warnings_as_dicts()),
         knob_resolution=tuple(alignment.knob_resolution_as_dicts()),
         nest_under=nest_under,
+        lane=lane,
         refuse_if_lease_held=refuse_if_lease_held,
     )

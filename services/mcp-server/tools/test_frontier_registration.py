@@ -852,3 +852,91 @@ def test_team_dispatch_nest_under_rejects_non_sdk_seat() -> None:
         )
     )
     assert result["error"]["code"] == "nest_under_sdk_only"
+
+
+def test_team_dispatch_lane_param_present() -> None:
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    sig = inspect.signature(recorder.functions["team_dispatch"])
+    assert "lane" in sig.parameters
+
+
+def test_team_dispatch_generate_forwards_lane() -> None:
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    team_dispatch_fn = recorder.functions["team_dispatch"]
+    relay_calls: list[dict[str, Any]] = []
+
+    async def _fake_relay(
+        *, endpoint: str, body: dict[str, Any], record_prefix: str
+    ) -> dict[str, Any]:
+        relay_calls.append({"endpoint": endpoint, "body": body})
+        return {"execution_id": "exec-test", "dispatch_id": "child-b"}
+
+    def _fake_record(event: str, **kwargs: Any) -> None:
+        return None
+
+    with (
+        patch("tools.frontier._relay", side_effect=_fake_relay),
+        patch("tools.frontier.record", side_effect=_fake_record),
+    ):
+        asyncio.run(
+            team_dispatch_fn(
+                op="generate",
+                seat="cursor-sdk",
+                contract="implement",
+                dispatch_thread_id="5777",
+                lane="B",
+            )
+        )
+
+    assert len(relay_calls) == 1
+    assert relay_calls[0]["body"]["lane"] == "B"
+
+
+def test_team_dispatch_generate_omits_lane_when_unset() -> None:
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    team_dispatch_fn = recorder.functions["team_dispatch"]
+    relay_calls: list[dict[str, Any]] = []
+
+    async def _fake_relay(
+        *, endpoint: str, body: dict[str, Any], record_prefix: str
+    ) -> dict[str, Any]:
+        relay_calls.append({"endpoint": endpoint, "body": body})
+        return {"execution_id": "exec-test", "dispatch_id": "child-default"}
+
+    def _fake_record(event: str, **kwargs: Any) -> None:
+        return None
+
+    with (
+        patch("tools.frontier._relay", side_effect=_fake_relay),
+        patch("tools.frontier.record", side_effect=_fake_record),
+    ):
+        asyncio.run(
+            team_dispatch_fn(
+                op="generate",
+                seat="cursor-sdk",
+                contract="implement",
+                dispatch_thread_id="5777",
+            )
+        )
+
+    assert len(relay_calls) == 1
+    assert "lane" not in relay_calls[0]["body"]
+
+
+def test_team_dispatch_lane_rejects_non_sdk_seat() -> None:
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    team_dispatch_fn = recorder.functions["team_dispatch"]
+    result = asyncio.run(
+        team_dispatch_fn(
+            op="generate",
+            role="reviewer",
+            contract="light-bounded",
+            dispatch_thread_id="5777",
+            lane="B",
+        )
+    )
+    assert result["error"]["code"] == "lane_sdk_only"

@@ -316,6 +316,18 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 ),
             ),
         ] = None,
+        lane: Annotated[
+            Literal["A", "B"] | None,
+            Field(
+                description=(
+                    "Optional GIW checkout-isolation lane ('A' | 'B'). "
+                    "Distinct from dispatch_lane (path-sim routing). "
+                    "cursor-sdk-seat-only: valid only for seat='cursor-sdk' "
+                    "generate/to_thread; other seats → 422 lane_sdk_only. "
+                    "Omit for default regime/scope selection."
+                ),
+            ),
+        ] = None,
         purpose: Annotated[
             str | None,
             Field(
@@ -568,6 +580,11 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         (``seat="cursor-sdk"`` generate/to_thread); other seats → 422
         ``nest_under_sdk_only``. LIFO park stack hard-caps at **depth 10**
         (11th nest → 422 ``CURSOR_NEST_DEPTH_EXCEEDED``, ``retryable=false``).
+
+        ``lane`` — optional checkout-isolation lane (``"A"`` | ``"B"``) for GIW
+        worktree selection. **Distinct from** ``dispatch_lane`` (path-sim /
+        todo routing). **cursor-sdk-seat-only**; other seats → 422
+        ``lane_sdk_only``. Omit for default ``select_lane`` behavior.
         """
         prompt_input_err = validate_inline_prompt_inputs(
             op, contract, packet_path, source_ref, prompt, sidecar_ref
@@ -722,6 +739,17 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 },
                 "field": "nest_under",
             }
+        if lane is not None and seat != "cursor-sdk":
+            return {
+                "error": {
+                    "code": "lane_sdk_only",
+                    "message": (
+                        "lane is only valid for seat='cursor-sdk' generate/"
+                        "to_thread dispatches (explicit checkout isolation A|B)"
+                    ),
+                },
+                "field": "lane",
+            }
         if role == "cursor-sdk":
             return {
                 "error": {
@@ -834,6 +862,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 body["reuse_thread"] = reuse_thread
             if nest_under is not None:
                 body["nest_under"] = nest_under
+            if lane is not None:
+                body["lane"] = lane
             if purpose is not None:
                 body["purpose"] = purpose
         else:

@@ -209,6 +209,7 @@ async def dispatch_cursor_sdk_worker(
     close_contract: CloseContract = "auto",
     dispatch_id: str | None = None,
     nest_under: str | None = None,
+    lane: Literal["A", "B"] | None = None,
     refuse_if_lease_held: bool = False,
 ) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/cursor/dispatch``; return structured ``(ok, detail)``.
@@ -240,6 +241,8 @@ async def dispatch_cursor_sdk_worker(
         payload["close_contract"] = close_contract
     if nest_under:
         payload["nest_under"] = nest_under
+    if lane:
+        payload["lane"] = lane
     if refuse_if_lease_held:
         payload["refuse_if_lease_held"] = True
     try:
@@ -288,6 +291,7 @@ async def dispatch_cursor_sdk_worker_message(
     read_only: bool = False,
     dispatch_id: str | None = None,
     nest_under: str | None = None,
+    lane: Literal["A", "B"] | None = None,
     refuse_if_lease_held: bool = False,
 ) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/cursor/dispatch`` with ``message`` (consult path)."""
@@ -307,6 +311,8 @@ async def dispatch_cursor_sdk_worker_message(
         payload["read_only"] = True
     if nest_under:
         payload["nest_under"] = nest_under
+    if lane:
+        payload["lane"] = lane
     if refuse_if_lease_held:
         payload["refuse_if_lease_held"] = True
     try:

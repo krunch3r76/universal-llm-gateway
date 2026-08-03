@@ -41,6 +41,7 @@ class PreparedCursorSdkHandle:
     alignment_warnings: tuple[dict[str, Any], ...]
     knob_resolution: tuple[dict[str, Any], ...]
     nest_under: str | None = None
+    lane: Literal["A", "B"] | None = None
     refuse_if_lease_held: bool = False
 
 
@@ -93,6 +94,7 @@ def handle_to_dict(handle: PreparedCursorSdkHandle) -> dict[str, Any]:
         "alignment_warnings": list(handle.alignment_warnings),
         "knob_resolution": list(handle.knob_resolution),
         "nest_under": handle.nest_under,
+        "lane": handle.lane,
         "refuse_if_lease_held": handle.refuse_if_lease_held,
     }
 
@@ -130,5 +132,6 @@ def handle_from_dict(data: dict[str, Any]) -> PreparedCursorSdkHandle:
         alignment_warnings=tuple(data.get("alignment_warnings") or ()),
         knob_resolution=tuple(data.get("knob_resolution") or ()),
         nest_under=data.get("nest_under"),
+        lane=data.get("lane"),
         refuse_if_lease_held=bool(data.get("refuse_if_lease_held", False)),
     )
