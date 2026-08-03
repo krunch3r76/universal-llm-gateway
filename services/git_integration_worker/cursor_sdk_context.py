@@ -23,6 +23,11 @@ from cursor_sdk.types import (
     StdioMcpServerConfig,
 )
 
+from services.git_integration_worker.cursor_sdk_substrate_tools import (
+    SubstrateDispatchContext,
+    merge_substrate_tools,
+)
+
 _VORTEX_MCP_SERVER = "user-vortex"
 _MCP_BRIDGE_RELPATH = Path("scripts/mcp-fastmcp-remote-bridge.py")
 _FASTMCP_REMOTE_CMD = "fastmcp-remote"
@@ -203,11 +208,14 @@ def build_agent_options(
     model: ModelSelection,
     *,
     real_home: Path | str | None = None,
+    substrate_ctx: SubstrateDispatchContext | None = None,
 ) -> AgentOptions:
     """Full create_agent options for IDE-parity cursor-sdk dispatch."""
+    local = build_local_agent_options(dispatch_workspace)
+    local = merge_substrate_tools(local, substrate_ctx)
     return AgentOptions(
         model=model,
         mode="agent",
-        local=build_local_agent_options(dispatch_workspace),
+        local=local,
         mcp_servers=build_mcp_servers(source_repo, real_home=real_home),
     )
