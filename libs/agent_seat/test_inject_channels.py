@@ -18,8 +18,6 @@ from agent_seat.inject_channels import (
 def test_web_orientation_includes_web_only_blocks() -> None:
     web_slugs = set(web_orientation_inject_skill_slugs("claude-web"))
     cursor_slugs = set(web_orientation_inject_skill_slugs("claude-cursor"))
-    assert "model-tier-awareness-web" in web_slugs
-    assert "model-tier-awareness-web" not in cursor_slugs
     assert "session-close" in web_slugs
     assert "session-close" not in cursor_slugs
     # Web renders operator-posture doctrine inline only (skill is cursor_only —
@@ -65,8 +63,8 @@ def test_web_and_api_orientation_selection_carry_full_doctrine() -> None:
     assert full_doctrine <= api_keys
     # Web-only blocks ride on web, never on api (api has no resident rules but
     # also no claude.ai connector lifecycle / session-close-kernel surface).
-    assert {"tier-selection-block", "session-close-web-block"} <= web_keys
-    assert not ({"tier-selection-block", "session-close-web-block"} & api_keys)
+    assert {"session-close-web-block"} <= web_keys
+    assert "session-close-web-block" not in api_keys
 
 
 @pytest.mark.offline
@@ -94,8 +92,7 @@ def test_web_seat_injected_unions_channel_one_live() -> None:
 @pytest.mark.offline
 def test_orientation_block_map_has_expected_web_blocks() -> None:
     web_keys = orientation_block_keys_for_agent("claude-web")
-    assert "tier-selection-block" in web_keys
-    assert "tier-selection-block" not in orientation_block_keys_for_agent("claude-cursor")
+    assert "session-close-web-block" in web_keys
     assert ORIENTATION_BLOCK_SKILL_MAP["dispatch-consult-block"] == (
         "consult-routing",
         "dispatch-shape",

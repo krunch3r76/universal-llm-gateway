@@ -48,11 +48,6 @@ MUST_INLINE_POLICIES: tuple[MustInlinePolicy, ...] = (
         justification="Universal provenance gate — required before completion claims",
     ),
     MustInlinePolicy(
-        entity_id="rule:model-tier-awareness-web",
-        max_bytes=8_000,
-        justification="Web seat has no model-tier-stub.mdc auto-load",
-    ),
-    MustInlinePolicy(
         entity_id="rule:orchestrator-core",
         max_bytes=10_000,
         justification="Lead orchestrator core — lifecycle gate for dispatch fan-out",
@@ -166,14 +161,6 @@ INJECT_REGISTRY: tuple[InjectEntry, ...] = (
         platform_predicate="*",
         profile_applicability=frozenset({"*"}),
         priority=20,
-        inline_tier=InlineTier.MUST_INLINE,
-    ),
-    InjectEntry(
-        entity_id="rule:model-tier-awareness-web",
-        scope=InjectScope.UNIVERSAL,
-        platform_predicate="web",
-        profile_applicability=frozenset({"*"}),
-        priority=25,
         inline_tier=InlineTier.MUST_INLINE,
     ),
     InjectEntry(

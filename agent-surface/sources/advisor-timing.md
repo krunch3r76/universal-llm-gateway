@@ -49,7 +49,7 @@ second opinion, hand off reasoning, **or hand off a bound implementation**.
 
    The protocol files live at **project** `.cursor/rules/` (no
    `universal-llm-gateway/` prefix), NOT under the repo's `.cursor/rules/`.
-   Cursor IDE may also load `.cursor/skills/consult-routing/SKILL.md` (stub).
+   Cursor IDE may also load `consult-routing` (plugin skill).
 3. **Standard openers** (code surface only — on life: `agent_bus` a code seat to fire transport; see consult-routing decision table):
    - **web-anthropic** → `team_dispatch(op=handoff, role=web-consult, packet_path=…)` + six-block packet
    - **cursor** (fresh tier / IDE) → `team_dispatch(op=handoff, role=cursor-consult, …)`
@@ -107,9 +107,6 @@ steelman in-seat + `agent_bus` a code seat, or stamp `steelman-only`) when a har
 
 **What to do at this checkpoint**:
 - State the approach explicitly before acting (even a one-sentence plan)
-- Apply the model-tier awareness check (`model-tier-awareness.mdc`) — if
-  the task hits an escalate-to-Opus or step-down-to-Sonnet trigger,
-  surface a tier note now (over-flag bias on escalation)
 - If the approach has non-obvious trade-offs or touches >3 files: consult
   (`advisor`, Plan mode, or `/consult-implement`)
 - If the approach is mechanical and obvious: proceed, noting you assessed and
@@ -141,8 +138,7 @@ bouncing between two incompatible approaches.
 - ¬ try a third variant of the same idea
 - Instead: consult (`advisor` or `/consult-implement`) with the full failure
   context — what was tried, what failed, what the error says
-- Surface a tier-escalation note per `model-tier-awareness.mdc` — prefer
-  **`team_dispatch(op="handoff", role="cursor-consult")`** (code surface only — on life: `agent_bus` a code seat) (fresh IDE thread + Opus)
+- Prefer **`team_dispatch(op="handoff", role="cursor-consult")`** (code surface only — on life: `agent_bus` a code seat) (fresh IDE thread + Opus)
   over re-reasoning in the same polluted executor thread when MCP + IDE access matters
 - The value here is escaping the executor's framing trap: a packet-booted consult
   pass often identifies root causes the executor missed
@@ -202,9 +198,6 @@ bouncing between two incompatible approaches.
   while retaining control.
 - **Plan mode**: advisor timing checkpoint 1 is a micro-version of Plan mode.
   Switch to full Plan mode when the decision is large enough to warrant it.
-- **Model tier awareness** (`model-tier-awareness.mdc`): governs *resident
-  tier choice* — when to recommend switching Cursor between Sonnet 4.6 and
-  Opus 5. Fires at the same junctures as advisor-timing checkpoints 1 and 3.
 - **Reasoning posture** (skill `reasoning-posture`) **paired with**
   **frontier-reasoning-discipline**: resident *Question/OOS/detent* rails +
   epistemic quality — thinking-off does not waive; referenced by consult-posture.

@@ -170,15 +170,16 @@ the operator lane — **paste ≠ commission**. Operator-facing contract: `cdp-o
 `skills=["reasoning-posture","frontier-reasoning-discipline"]` on every terra (or Opus)
 break-in `team_dispatch`. CDP generate auto-merges that pair
 (`decision:reasoning-frontier-skill-pair` / `cdp_model_endpoint_staging`); **cursor-sdk does
-not** — omitting `skills=` is how fire #2a (`c9501ca9ebe7-5bbda0e8`) fell into a model-tier
-`NOT SUITABLE` halt instead of Question/OOS rails. Packet body SHOULD also open with
+not** — omitting `skills=` is how fire #2a (`c9501ca9ebe7-5bbda0e8`) skipped Question/OOS
+rails instead of binding them. Packet body SHOULD also open with
 `Use the reasoning-posture skill` + `Use the frontier-reasoning-discipline skill` as belt-and-
 suspenders for seats that ignore the wire `skills=` list.
 
-**Proceed-anyway pin (BINDING).** The packet MUST forbid a model-tier halt that escalates away
-from terra. Terra is the bound default for family independence vs an Anthropic operator seat;
-switching to Opus collapses the lane's point. Explicit line required, e.g. `Proceed anyway —
-terra is the bound break-in reviewer; emit TYPE: BREAK_IN or NO_BREAK_IN only.`
+**Proceed-anyway pin (BINDING).** The packet MUST require terra to answer on the bound break-in
+review contract — emit `TYPE: BREAK_IN` or `TYPE: NO_BREAK_IN` only; ¬ halt for a different model.
+Terra is the bound default for family independence vs an Anthropic operator seat; switching to
+Opus collapses the lane's point. Explicit line required, e.g. `Proceed anyway — terra is the
+bound break-in reviewer; emit TYPE: BREAK_IN or NO_BREAK_IN only.`
 
 **Triggers (S0 — any):** operator call · mission open > ~60 min with ≥1 material land since
 the last break-in · continuity hop just completed · pre-propagate/restart of a bind that

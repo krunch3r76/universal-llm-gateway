@@ -314,9 +314,6 @@ skills:
   mcp-tool-loop-trace-matrix:
     surface_class: cursor_only
     mcp_surface_required: code
-  model-tier-awareness-web:
-    surface_class: shared_sync
-    mcp_surface_required: none
   modularize-discipline:
     surface_class: cursor_only
     mcp_surface_required: none

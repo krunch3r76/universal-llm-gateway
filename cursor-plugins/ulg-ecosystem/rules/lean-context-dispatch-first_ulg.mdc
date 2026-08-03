@@ -15,11 +15,10 @@ trigger_match_terms:
   - Explore subagent
   - recon
 ---
-# Lean Context = Dispatch-First — Stub
+# Lean Context = Dispatch-First
 
 Resident home for the cursor-seat generate-default lock (operator 2026-06-29 /
-2026-07-21). Mechanism tables live in composed SOT — this stub carries the gate,
-ladder, CDP predicate, and guardrails only.
+2026-07-21). Gate, ladder, CDP predicate, and guardrails below.
 
 ## Invariant (one line)
 
@@ -120,6 +119,5 @@ carrying implement acceptance. Full gate: `bind-then-compose-dispatch_ulg.mdc` �
 
 - `bind-then-compose-dispatch` — judgment closed → nested Composer
 - `consult-routing` — surface / role routing
-- `model-tier-awareness` — escalation tier taxonomy
 - `anthropic-dispatch-authorization` — Anthropic-family substrate house rules
 - `orchestrator-workflow` — why lean = context conservation; stub points here for generate-default

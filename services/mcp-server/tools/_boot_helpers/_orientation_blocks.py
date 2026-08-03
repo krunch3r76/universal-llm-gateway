@@ -239,14 +239,8 @@ def _session_close_web_body() -> str:
     return block
 
 
-# Web seats have NO always-applied rule mechanism (Cursor carries
-# model-tier-stub.mdc, which fires the tier-fit check at every session start).
-# This boot block is the card-level reminder; the full protocol body auto-injects
-# via `agent_skill:model-tier-awareness-web` (UNIVERSAL/web, MUST_INLINE).
-# inject-channel block key: tier-selection-block
-_TIER_SELECTION_POINTER = """\
-## Model tier — full protocol auto-injects
-`agent_skill:model-tier-awareness-web` auto-injects on web boot (INJECT_REGISTRY / seat_preloaded). When the operator declares model identity or a task-class trigger fires, follow the **auto-injected** full protocol — do NOT re-derive tier rules from this pointer. Canonical slug: `model-tier-awareness-web`."""
+# Web seats have no always-applied rule mechanism (Cursor carries resident
+# plugin rules). Session-close and terminal-facts pointers remain on the card.
 
 # inject-channel block key: terminal-facts-pointer-block
 _TERMINAL_FACTS_POINTER = """\
@@ -355,7 +349,6 @@ def _orientation_block_bodies(surface: Literal["life", "code"]) -> dict[str, str
         "entity-hierarchy-block": _ENTITY_HIERARCHY_BLOCK,
         "capability-verify-block": _SEAT_CAPABILITY_VERIFY_BLOCK,
         "session-close-web-block": _session_close_web_body(),
-        "tier-selection-block": _TIER_SELECTION_POINTER,
         "terminal-facts-pointer-block": _TERMINAL_FACTS_POINTER,
     }
 
@@ -393,8 +386,8 @@ def render_orientation_blocks(
     core_order = _CORE_BLOCK_ORDER.get(domain_key, _CORE_BLOCK_ORDER["mixed-minimal"])
 
     blocks: list[str] = [_render_gates_strip(selected)]
-    # Web-only "top" blocks: tier pointer + capability-verify pair with GATES.
-    for key in ("tier-selection-block", "capability-verify-block"):
+    # Web-only "top" blocks: capability-verify pairs with GATES.
+    for key in ("capability-verify-block",):
         if key in selected:
             blocks.append(f"\n{bodies[key]}")
     blocks.extend(f"\n{bodies[key]}" for key in core_order if key in selected)

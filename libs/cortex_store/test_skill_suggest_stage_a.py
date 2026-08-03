@@ -370,8 +370,6 @@ def test_web_loaded_set_unions_orientation_and_opcontext_channels() -> None:
     )
     for slug in channel_slugs:
         terms = [slug.replace("-", " "), slug]
-        if slug == "model-tier-awareness-web":
-            terms.extend(["model tier", "tier"])
         _insert(
             conn,
             f"agent_skill:{slug}",
@@ -401,7 +399,6 @@ def test_web_loaded_set_unions_orientation_and_opcontext_channels() -> None:
     assert "boot-execution-discipline" in suggested
     assert "operator-posture" not in omitted
     assert "consult-routing" in omitted
-    assert "model-tier-awareness-web" in omitted
     assert "frontier-reasoning-discipline" in omitted
     assert "reasoning-posture" in omitted
     assert "operator-posture" not in suggested

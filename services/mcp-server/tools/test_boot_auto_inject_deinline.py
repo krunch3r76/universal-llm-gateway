@@ -32,7 +32,6 @@ _LARGE_INJECT_BODY = (
 )
 _STUB_INJECTED = [
     {"id": "agent_skill:orchestrator-core", "digest": "d1", "bytes": 1000},
-    {"id": "agent_skill:model-tier-awareness-web", "digest": "d2", "bytes": 900},
 ]
 _WIRE_HEADROOM_BUDGET = 110 * 1024
 
@@ -120,7 +119,7 @@ def test_build_auto_inject_skills_ref_shape() -> None:
     assert ref["inline"] is False
     assert ref["byte_count"] == len(_LARGE_INJECT_BODY.strip().encode())
     assert len(ref["sha256"]) == 64
-    assert ref["skills"] == ["orchestrator-core", "model-tier-awareness-web"]
+    assert ref["skills"] == ["orchestrator-core"]
     assert ref["delivery"] == "web_system_prompt_append"
     assert ref["ref"] == "mcp_executor._append_web_invariant_bodies"
 

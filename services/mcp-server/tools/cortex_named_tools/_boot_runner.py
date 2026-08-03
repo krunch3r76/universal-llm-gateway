@@ -120,7 +120,7 @@ def _gate_only_skills_card(
     header points at native discovery rather than a ``skills_index_ref`` that is
     always ``None`` for those seats.
     NOTE: this trims the skills DIRECTORY only — the operational orientation blocks
-    (operator-posture, model-tier, consult-routing, dispatch) are separate ``##``
+    (operator-posture, consult-routing, dispatch) are separate ``##``
     sections and are NOT touched here (that thinning is the panel-gated P1 work).
     """
     if not card_md:

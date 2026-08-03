@@ -150,8 +150,8 @@ implementation-intent todos. Keeps `workflow_state` for execution progress only
 **Staging-tier triage (declared-state, ¬ inferred).** Deciding "densify by a
 reasoning tier vs stage mechanically" is an **escalation** decision — the tier that
 would need to escalate (Composer at staging) is empirically the one that won't
-(`model-tier-awareness.mdc`, thread 807). So it is **declared**, not heuristically
-inferred: an authorized reasoner/operator sets `density_triage` before staging.
+(agent-bus thread 807). So it is **declared**, not heuristically inferred: an authorized
+reasoner/operator sets `density_triage` before staging.
 - `judgment_required` ⟹ reasoning-authorized tier densifies (web-consult / cursor-consult / Opus); ¬ mechanical stage.
 - `mechanical` ⟹ bounded mechanical path admissible iff preconditions hold (dense source, `required_skills`, context edge, no open forks).
 - `unknown` / unset ⟹ implement dispatch **blocked**; only consult/densify admissible.

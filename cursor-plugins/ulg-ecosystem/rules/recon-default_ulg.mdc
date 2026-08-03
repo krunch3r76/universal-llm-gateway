@@ -4,9 +4,7 @@ alwaysApply: true
 rule_category: workflow
 apply_tier: required_gate
 ---
-# Recon-Default Invariant — Stub
-
-Full ladder + skeptic mechanism: Use the `cheap-recon-before-escalation` skill (on trigger).
+# Recon-Default Invariant
 
 ## Invariant (one line)
 
@@ -16,9 +14,9 @@ Full ladder + skeptic mechanism: Use the `cheap-recon-before-escalation` skill (
 
 | Condition | Action |
 |---|---|
-| Operator says "address friction N" where N is a feature/bug | Run recon front-half — Use the `cheap-recon-before-escalation` skill; ¬ jump to implement |
+| Operator says "address friction N" where N is a feature/bug | Run recon front-half per `cheap-recon-before-escalation`; ¬ jump to implement |
 | Pickup a todo whose `density_triage` is unset or `recon_pending` | Run recon front-half before drafting implement spec |
-| Material todo (`judgment_required`) without `skeptic_ratified` attestation | Axis-2 skeptic is binding — Use the `cheap-recon-before-escalation` skill §Axis-2 |
+| Material todo (`judgment_required`) without `skeptic_ratified` attestation | Axis-2 skeptic is binding — `cheap-recon-before-escalation` §Axis-2 |
 | `recon_waived="<reason>"` present on entity attrs | Waiver granted — skip axis-2 skeptic only; dense-spec / `files_expected` / acceptance checks still required |
 
 ## Exempt set (no recon required)
@@ -27,8 +25,4 @@ Full ladder + skeptic mechanism: Use the `cheap-recon-before-escalation` skill (
 - `density_triage == "mechanical"` or `"trivial"` scope
 - Todo already carries a **dense implement spec** with `files_expected` + `acceptance_criteria`
 
-## Use the full skill when ANY trigger fires
-
-Use the `cheap-recon-before-escalation` skill
-
-Cross-refs: `friction-review_ws.mdc` (investigate→execute lane), `advisor-timing.mdc` (pause before first write), `reasoning-posture` + `frontier-reasoning-discipline` (paired — pin Question/OOS before merits, then steelman / calibrate on material judgment).
+Cross-refs: `friction-review_ws.mdc`, `advisor-timing.mdc`, `reasoning-posture` + `frontier-reasoning-discipline`.

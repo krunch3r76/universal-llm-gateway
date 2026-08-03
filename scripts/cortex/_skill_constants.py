@@ -92,7 +92,7 @@ def paired_rule_exists(slug: str, repo_root: Path) -> bool:
         repo_root / ".cursor" / "rules",
         repo_root.parent / ".cursor" / "rules",
     )
-    names = (f"{slug}.mdc", f"{slug}-stub.mdc")
+    names = (f"{slug}.mdc",)
     for rules_dir in candidates:
         if not rules_dir.is_dir():
             continue

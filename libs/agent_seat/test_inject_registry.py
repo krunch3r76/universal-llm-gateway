@@ -150,11 +150,9 @@ def test_api_boot_injects_universal_static(
 def test_web_boot_skips_static_registry_inject(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    tier_marker = "MODEL_TIER_AWARENESS_WEB_MUST_INLINE_MARKER"
     bodies = {
         "agent_skill:cortex-orientation": "orientation",
         "agent_skill:cortex-provenance-discipline": "provenance",
-        "agent_skill:model-tier-awareness-web": tier_marker,
         "agent_skill:orchestrator-core": "orch",
     }
     _body_map(monkeypatch, bodies)
@@ -172,7 +170,6 @@ def test_union_matrix_no_duplicates(monkeypatch: pytest.MonkeyPatch) -> None:
     bodies = {
         "agent_skill:cortex-orientation": "orientation",
         "agent_skill:cortex-provenance-discipline": "provenance",
-        "agent_skill:model-tier-awareness-web": "tier-web",
         "agent_skill:orchestrator-core": "orchestrator-core",
         "agent_skill:orchestrator-workflow": "orchestrator-workflow",
         "agent_skill:architecture-invariants": "arch",
@@ -474,11 +471,9 @@ async def test_lead_web_boot_skips_static_auto_inject(
 ) -> None:
     """Standard web lead boot: skills operator-attached in claude.ai UI."""
     orch_marker = "ORCHESTRATOR_CORE_LEAD_INJECT_MARKER"
-    tier_marker = "MODEL_TIER_AWARENESS_WEB_LEAD_BOOT_MARKER"
     bodies = {
         "agent_skill:cortex-orientation": "orientation",
         "agent_skill:cortex-provenance-discipline": "provenance",
-        "agent_skill:model-tier-awareness-web": tier_marker,
         "agent_skill:orchestrator-core": orch_marker,
     }
     _body_map(monkeypatch, bodies)

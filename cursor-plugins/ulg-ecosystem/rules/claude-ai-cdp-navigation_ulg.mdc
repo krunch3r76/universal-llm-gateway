@@ -17,9 +17,7 @@ trigger_match_terms:
 ---
 # Claude.ai CDP Navigation (trigger)
 
-**Invariant:** `web-anthropic ∨ jupiter-cdp ∨ Cowork ∨ project-ask ∨ bus-nudge in scope ⇒ Use the claude-ai-cdp-navigation skill before advising manual operator push or transport.`
-
-Mechanics (FOL, lane, harvest, converse batching, Cowork multitask, **web-anthropic-cdp dispatch constraints**): Use the `claude-ai-cdp-navigation` skill — not this stub.
+**Invariant:** `web-anthropic ∨ jupiter-cdp ∨ Cowork ∨ project-ask ∨ bus-nudge in scope ⇒ apply CDP navigation discipline (skill + standing constraints below) before advising manual operator push or transport.`
 
 ## Skill homes (BINDING)
 

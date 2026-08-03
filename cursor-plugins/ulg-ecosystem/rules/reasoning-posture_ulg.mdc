@@ -11,9 +11,7 @@ trigger_match_terms:
   - cascade
   - thinking-off
 ---
-# Reasoning Posture — Stub
-
-Full body: Use the `reasoning-posture` skill — not this stub.
+# Reasoning Posture
 
 ## Invariant
 
@@ -25,8 +23,8 @@ Full body: Use the `reasoning-posture` skill — not this stub.
 ## Pairing (BINDING)
 
 `material_judgment_injection ⇒ pair(reasoning-posture, frontier-reasoning-discipline)` —
-scope rails alone are incomplete. On substantive turns also:
-**Use the `frontier-reasoning-discipline` skill** (steelman / calibration /
+scope rails alone are incomplete. On substantive turns also apply
+**`frontier-reasoning-discipline`** (steelman / calibration /
 courage / framing / one-determinate-step). Carve-out: mechanical executor
 against a dense pre-staged spec (dispatcher owns discipline).
 

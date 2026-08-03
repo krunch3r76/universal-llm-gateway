@@ -18,7 +18,7 @@ alwaysApply: false
 
 **Decision**: generic (any project) ⟹ parent `../../.cursor/rules/`. References this project's services/hosts/domain ⟹ workspace `_ws.mdc`.
 
-Base (from parent): `../.cursor/rules/index.mdc` — see parent "Always Applied" (7 rules: `system`, `provenance-discipline`, `advisor-timing`, `model-tier-stub`, `modularization`, `operator-posture`, `no-automatic-summaries`).
+Base (from parent): `../.cursor/rules/index.mdc` — see parent "Always Applied" (6 rules: `system`, `provenance-discipline`, `advisor-timing`, `modularization`, `operator-posture`, `no-automatic-summaries`).
 
 ## Always Applied — Workspace
 
@@ -27,7 +27,7 @@ Base (from parent): `../.cursor/rules/index.mdc` — see parent "Always Applied"
 | `core_ws.mdc` | Environment, logs, ecosystem, workflow extensions |
 | `agent-identity-signoff.mdc` | Endpoint provenance — no sign-offs, no "you are X" injection |
 | `commit-and-git-scope_ws.mdc` | Commit optionality + Cursor IDE git-tool prohibition (guard-rail stub) |
-| `skill-surface_ws.mdc` | Cursor native skill surface — stubs + rules primary; native skill discovery only |
+| `skill-surface_ws.mdc` | Cursor native skill surface — rules primary; native skill discovery for extended playbooks |
 | `recon-default_ws.mdc` | Recon-default invariant — code-work intake defaults recon-first; blocks direct implement on sparse/early todos; waiver via `recon_waived` attr |
 
 ## On-Demand — Cortex / agent-bus / team-collab stack

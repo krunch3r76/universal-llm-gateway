@@ -296,10 +296,8 @@ def check_claimed_on_demand_unreferenced(report: AuditReport) -> None:
     know the path. Boot's section manifest is what makes a file a known
     quantity for an agent reading the boot output cold.
 
-    First-run expectation: this fires on `notes/system/shared/model-tier-awareness.md`,
-    which is referenced from `operational-lessons.md` as the canonical
-    taxonomy for the model-tier protocol but is not listed in the renderer's
-    pointer block. The protocol's effective dormancy (Discovery Finding F3)
+    First-run expectation: shared operational docs that point at on-demand targets
+    absent from `_ON_DEMAND_POINTERS` — effective dormancy (Discovery Finding F3)
     is downstream of this discoverability gap.
     """
     pointer_paths = {ref for ref, _target in extract_on_demand_pointers()}

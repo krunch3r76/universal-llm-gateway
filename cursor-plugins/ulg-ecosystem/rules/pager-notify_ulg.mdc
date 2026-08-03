@@ -13,10 +13,18 @@ trigger_match_terms:
   - email-bridge
   - operator notify
 ---
-# Operator Pager — Stub
+# Operator Pager
 
-**Invariant:** `operator asked to be woken ∨ long away-from-chat wait complete ⇒ Use the pager-notify skill` · `¬ put personal phone/email in skills/rules/packets`.
+**Invariant:** `operator asked to be woken ∨ long away-from-chat wait complete ⇒ POST email-bridge /pager/notify` · `¬ put personal phone/email in skills/rules/packets`.
 
-Mechanics (UDS curl, payload caps, watch-script pattern, anti-patterns): Use the `pager-notify` skill — not this stub.
+```bash
+SOCK="${EMAIL_BRIDGE_SOCK:-/tmp/universal-protocol/email-bridge.sock}"
+curl -sS --unix-socket "$SOCK" \
+  -H 'Content-Type: application/json' \
+  -d '{"subject":"<≤120>","body":"<≤4000>","tag":"<≤40>"}' \
+  http://localhost/pager/notify
+```
+
+Success: JSON `"status":"sent"`. Subject ≤120 · body ≤4000 · tag ≤40. Awareness pages welcome; interrupt subject **`COME TO IDE`** only when options exhausted.
 
 email-bridge is ULG fleet infra (`/tmp/universal-protocol/email-bridge.sock`). Mailbox IMAP/`dispatch(tool="email")` stays on `email-tool-dispatch` — do not conflate.

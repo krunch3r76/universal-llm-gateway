@@ -50,7 +50,7 @@ confirmation before advancing. Pointer-only `agent_bus` posts (≤25 lines); pac
 live under `tmp/`.
 
 **Model routing SOT:** `.cursor/commands/overhaul.md` § Model routing +
-`decision:overhaul-model-routing-grok-fable-2026-07`. Knobs: `model-tier-awareness`.
+`decision:overhaul-model-routing-grok-fable-2026-07`. Knobs: `consult-routing`, `lean-context-dispatch-first`.
 
 ## Program state pointers
 

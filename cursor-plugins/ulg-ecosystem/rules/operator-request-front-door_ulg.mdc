@@ -13,7 +13,7 @@ trigger_match_terms:
   - B-mech
   - off-tick
 ---
-# Operator-Request Front Door — Stub
+# Operator-Request Front Door
 
 **SOT:** `decision:operator-request-front-door` · Fable AMEND
 `cortex://notes/system/threads/6163-fable-front-door-router-answer.md` · Auto mechanics

@@ -15,10 +15,9 @@ trigger_match_terms:
   - executor_override
   - light-bounded implement
 ---
-# Bind-Then-Compose Dispatch — Stub
+# Bind-Then-Compose Dispatch
 
-**SOT:** Use the `consult-routing` skill § Bind-then-compose split — transport shapes,
-`nest_under`, packet scoping. This stub is the resident gate.
+Transport shapes, `nest_under`, packet scoping: `consult-routing` § Bind-then-compose split.
 
 ## Invariant (one line)
 
@@ -80,4 +79,3 @@ Chained hops (CDP → auto → specialist) **must** `nest_under` the live lease 
 - `lean-context-dispatch-first` — dispatch-first + non-primary model gate
 - `consult-routing` — implement lane, model split, surface gate
 - `path-sim` — bundled Q→A→R→implement cascade (compose = Stage-B)
-- `model-tier-stub` — reasoning→mechanical transition downgrade note

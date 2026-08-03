@@ -54,7 +54,7 @@ For `A→B`:
 | clear green-lit PR execution | Sonnet 4.6 medium, thinking on |
 | cross-agent protocol, rule changes, architecture | Opus low, thinking on |
 
-Escalate/downgrade at natural pause points per `model-tier-awareness`. `cross_agent_protocol_scope ⇒ Opus`, regardless of edit size.
+Escalate at natural pause points per `judgment-escalation-ladder` when a fork remains after recon.
 
 ## Boot overhead
 

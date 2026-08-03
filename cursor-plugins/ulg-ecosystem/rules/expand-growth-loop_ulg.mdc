@@ -12,9 +12,9 @@ trigger_match_terms:
   - L2
   - architecture suitability
 ---
-# Expand Growth Loop — Stub
+# Expand Growth Loop
 
-Machinery (L0/L1/L2, detents, cascade): Use the `path-sim` skill — not this stub.
+L0/L1/L2 machinery lives in `path-sim`.
 
 ## Invariant (two composed loops)
 
@@ -50,11 +50,11 @@ Frontier reasoning does **not** natively widen: baseline self-verification/backt
 | Treat path-sim as transport-only Q→A→ship | Path-sim is the expand engine for the growth loop |
 | Map all four steps onto inference-time layers (one loop) | Inner (run/reflect, fixed substrate) vs outer (optimize/expand, substrate edit); **distill** links them |
 | Fold repeated search into nothing (no amortization) | Recurring inner-loop pattern → distill into a minted skill / rule edit |
-| Copy L0/L1/L2 tables into this rule | Defer to `path-sim` SOT |
+| Copy L0/L1/L2 tables into this rule | `path-sim` owns L-layer tables |
 
-## Blend surfaces (stubs point; do not fork SOT)
+## Blend surfaces (do not fork SOT)
 
-Standing priority is ranked by the G4/G5 criteria on `decision:distill-trigger` + `decision:verifier-detent`; this stub points, it does not own them. Ranking rationale: `cortex://notes/system/threads/expand-growth-loop-l0-fable/b-leg-blend-answer.md` (bus 5267 G6).
+Standing priority is ranked by the G4/G5 criteria on `decision:distill-trigger` + `decision:verifier-detent`; this rule points, it does not own them. Ranking rationale: `cortex://notes/system/threads/expand-growth-loop-l0-fable/b-leg-blend-answer.md` (bus 5267 G6).
 
 | Disposition | Surface | When (step · detent · verifier) |
 |---|---|---|

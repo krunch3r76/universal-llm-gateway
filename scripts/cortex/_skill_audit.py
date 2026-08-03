@@ -47,7 +47,6 @@ _PARITY_ALLOWLIST: dict[str, dict[str, str]] = {
     "jupiter-browser-via-mcp": _meta("browser automation via web MCP"),
     "lead-agent-git-integration": _meta("arc worktree Lane B (web/API only)"),
     "mode-b-web-orchestrator": _meta("web orchestrator (web-only)"),
-    "model-tier-awareness-web": _meta("web-seat tier awareness (cursor has own rule)"),
     "web-transcript-preprocessing": _meta("web-only transcript pre-processing"),
     "agent-build": _meta(
         "RETIRED 2026-06-16 (grok-build/cursor-build removed)",

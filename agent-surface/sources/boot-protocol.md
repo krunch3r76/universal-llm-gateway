@@ -63,11 +63,6 @@ When Universal Mode activates:
 2. Render `briefing_card` and surface open_items as agenda
 3. Pull deeper sections on demand via manifest hints (todos, sessions, bus, etc.)
 4. Operational context available at `operational_context_ref` — read sections via `fs md_read` when needed
-5. Apply boot-time tier check — assess first queued task from the agenda against
-   escalation triggers. Load `model-tier-awareness.mdc` on demand (already available
-   via `model-tier-stub.mdc` always-applied rule). Emit advisory tier note if any
-   trigger fires; if the opening message contained a user-supplied model identity,
-   apply the blocking protocol instead.
 
 ## Session Close — MANDATORY on "close session" / "session end" / "/session-end"
 

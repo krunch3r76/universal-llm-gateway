@@ -24,9 +24,9 @@ trigger_match_terms:
   - cse-stream-stop
   - Work beyond this close
 ---
-# CDP Operator Proxy — Stub
+# CDP Operator Proxy
 
-**Invariant:** `operator-proxy episode ∧ agent_bus.request from Cowork ⇒ Use the cdp-operator-proxy skill before authoring DIRECTIVE bodies or dispositing CLOSEOUTs.`
+**Invariant:** `operator-proxy episode ∧ agent_bus.request from Cowork ⇒ follow this rule before authoring DIRECTIVE bodies or dispositing CLOSEOUTs.`
 
 **Skill homes (BINDING — do not mix planes):**
 
@@ -44,11 +44,9 @@ trigger_match_terms:
 
 **Mission default (BINDING):** CDP Opus mission launch (`purpose=operator-proxy|mission` via `team_dispatch(model=cdp/…, purpose=…)` primary; `project_ask(purpose=…)` escape) ⇒ **Opus = operator · Fable = advisor · cursor/grok-4.5 = reasoner · cursor-auto = executor · tick = admitter**. Auto-inject on mission submit. Substrate hypotheses → reasoner (`contract: investigate`, inv 28). Fable escalate: prefer `team_dispatch(model=cdp/fable)`. Tick posting + B1/B2 nest stall: `cortex://notes/system/specs/cursor-auto-tick-work-posting.md`.
 
-**Thread privacy:** operator-proxy DIRECTIVE/CLOSEOUT/DISPOSITION live on a **private `request` thread** — ¬ the IDE orchestrator’s endeavor root (cite root in `arc:` only). Skill invariant 11.
+**Thread privacy:** operator-proxy DIRECTIVE/CLOSEOUT/DISPOSITION live on a **private `request` thread** — ¬ the IDE orchestrator’s endeavor root (cite root in `arc:` only).
 
-Mechanism (turn shapes, boot checklist, anti-patterns): Use the `cdp-operator-proxy` skill — not this stub.
-
-**Two slugs (BINDING — `decision:operator-proxy-skill-surface-split`):** `cdp-operator-proxy` (`shared_sync`) is the **operator contract** — what the operator seat executes and must expect; it is the slug to cite in operator-facing hints. **Cursor seats** additionally Use the `operator-proxy-substrate` skill (`cursor_only`) for the **mechanism**: admit gates (scope / `vision:` / fix hints), `nest_under` + lease, auth-gate budget enforcement, supersede revert, GIW drain hazard, and CDP packet + chip delivery. Carve rule: `shared_body ⇒ observable behavior` · `code_body ⇒ mechanism`.
+**Two slugs (BINDING — `decision:operator-proxy-skill-surface-split`):** `cdp-operator-proxy` (`shared_sync`) = **operator contract** — what the operator seat executes. **Cursor seats** additionally bind `operator-proxy-substrate` (`cursor_only`) for admit gates, `nest_under` + lease, chip delivery, and CDP packet mechanics. Carve rule: `shared_body ⇒ observable behavior` · `code_body ⇒ mechanism`.
 
 **Protocol SOT:** `cortex://notes/system/specs/cdp-operator-proxy-v0.md` (field tables, transport).  
 **Doctrine:** `decision:operator-proxy-seat-posture`.  
@@ -67,7 +65,7 @@ Mechanism (turn shapes, boot checklist, anti-patterns): Use the `cdp-operator-pr
 - cursor-auto nested dispatch arcs (5867-class dogfood)
 - Blocked on a human/cursor fact — skill § Blocked → ask ladder (observe → cursor → Cowork Ask/push); ¬ silent stop
 - Life missing a code-seat tool (`manage`, reload, …) — request **cursor**, ¬ park on the operator
-- **CSE stream stopped / mid-mission idle** — load this skill (inv 30) **and** `claude-ai-cdp-navigation` (poller retain)
+- **CSE stream stopped / mid-mission idle** — this rule (inv 30) **and** `claude-ai-cdp-navigation` (poller retain)
 
-¬ load for IDE cursor lead orchestration (use `lean-context-dispatch-first` + `operator-posture` instead).
-IDE wakes/corrections to a live CSE: Use the `claude-ai-cdp-navigation` skill § Warm follow-up (CDP into chat; ¬ bus-only + push).
+¬ load for IDE cursor lead orchestration (`lean-context-dispatch-first` + `operator-posture` instead).
+IDE warm follow-up into live CSE: `claude-ai-cdp-navigation` § Warm follow-up (CDP into chat; ¬ bus-only + push).

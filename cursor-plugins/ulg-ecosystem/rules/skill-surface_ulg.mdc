@@ -73,7 +73,7 @@ Runbook detail: Use the `claude-ai-bundle-sync` skill. Doctrine:
 ## Domain-shift invariant (binding)
 
 ∀ domain shift — new service, new tool surface, new operational domain — BEFORE advising or acting:
-1. Scan `<available_skills>` by description; Read any matching stub; follow its deferral
+1. Scan `<available_skills>` by description; follow matching skill or rule binding directly
 2. Load description-gated `.mdc` rules when matched
 3. THEN advise or act
 

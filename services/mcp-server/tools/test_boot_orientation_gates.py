@@ -1,4 +1,4 @@
-"""Boot orientation GATES strip, model-tier pointer, domain axis, sparse manifest."""
+"""Boot orientation GATES strip, domain axis, sparse manifest."""
 
 from __future__ import annotations
 
@@ -6,8 +6,6 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from agent_seat.inject_registry import INJECT_REGISTRY
 
 from tools._boot_helpers._briefing_card import render_briefing_card
 from tools._boot_helpers._manifest import build_manifest
@@ -56,7 +54,6 @@ def test_cursor_orientation_thinned_to_gates_plus_rag() -> None:
     # Web-only blocks never appear on cursor.
     assert "Capability verify (web)" not in joined
     assert "## Session Close" not in joined
-    assert "## Model tier" not in joined
 
 
 def test_web_orientation_retains_full_doctrine_coverage() -> None:
@@ -76,25 +73,8 @@ def test_web_orientation_retains_full_doctrine_coverage() -> None:
         "## Entity granularity",
         "## Seat capability verify",
         "## Session Close",
-        "## Model tier",
     ):
         assert heading in joined, heading
-
-
-def test_model_tier_pointerized_not_full_body_on_web() -> None:
-    card, _ = render_briefing_card(family="claude", agent="claude-web")
-    assert "Model tier — full protocol auto-injects" in card
-    assert "3-axis tuple" not in card
-    assert "model-tier-awareness-web" in card
-
-
-def test_model_tier_in_inject_registry_only_double_inject() -> None:
-    web_tier = [
-        e.entity_id
-        for e in INJECT_REGISTRY
-        if e.entity_id == "rule:model-tier-awareness-web"
-    ]
-    assert web_tier == ["rule:model-tier-awareness-web"]
 
 
 def test_sparse_manifest_omits_zero_audit_row() -> None:
