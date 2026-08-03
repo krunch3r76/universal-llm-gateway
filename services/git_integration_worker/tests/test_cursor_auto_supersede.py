@@ -162,7 +162,7 @@ def test_process_job_superseded_before_submit_posts_superseded_terminal(monkeypa
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.gate_serialize."
         "sdk_dispatch_gate_stats",
-        lambda: {"active": 0, "queued": 0, "limit": 1},
+        lambda **_kw: {"active": 0, "queued": 0, "limit": 1},
     )
 
     queue = get_queue()
@@ -208,7 +208,7 @@ def test_process_job_superseded_mid_poll_skips_closeout_relay(monkeypatch):
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.gate_serialize."
         "sdk_dispatch_gate_stats",
-        lambda: {"active": 0, "queued": 0, "limit": 1},
+        lambda **_kw: {"active": 0, "queued": 0, "limit": 1},
     )
 
     job = _enqueue(get_queue(), thread_id="5867", turn_number=9)
@@ -240,7 +240,7 @@ def test_revert_settles_even_when_superseding_job_is_refused(monkeypatch):
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.gate_serialize."
         "sdk_dispatch_gate_stats",
-        lambda: {"active": 0, "queued": 0, "limit": 1},
+        lambda **_kw: {"active": 0, "queued": 0, "limit": 1},
     )
 
     job = _enqueue(get_queue(), thread_id="5867", turn_number=10)

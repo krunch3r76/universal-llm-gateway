@@ -17,6 +17,7 @@ from mcp_events import record
 
 from .._agent_bus_author import resolve_dispatch_from_agent
 from .park_hint import build_poll_hint as _build_poll_hint
+from .park_hint import is_chat_delivery_capable
 from .request_intake import (
     resolve_contract_intake,
     resolve_request_id_intake,
@@ -118,6 +119,8 @@ def _request_impl(
     request_id: str | None,
     after_turn: int,
     summary: str | None = None,
+    cse_chat_url: str | None = None,
+    cse_registration_id: str | None = None,
 ) -> dict[str, Any]:
     """Write turn via send path, then arm/enqueue Auto when live."""
     from pager_notify.so_what import resolve_so_what_summary
@@ -213,6 +216,7 @@ def _request_impl(
             degraded["request_id"] = request_id
         return degraded
 
+    capture_identity = is_chat_delivery_capable(from_agent)
     enq = enqueue_auto_job(
         thread_id=thread_id,
         turn_number=turn_number,
@@ -225,6 +229,8 @@ def _request_impl(
         contract=contract,
         require_attended=require_attended,
         request_id=request_id,
+        cse_chat_url=cse_chat_url if capture_identity else None,
+        cse_registration_id=cse_registration_id if capture_identity else None,
     )
     if not enq.get("ok"):
         reason = _enqueue_failure_reason(enq)
@@ -313,6 +319,8 @@ def _request_dispatch(
     request_id: str | None = None,
     after_turn: int = 0,
     summary: str | None = None,
+    cse_chat_url: str | None = None,
+    cse_registration_id: str | None = None,
 ) -> dict[str, Any]:
     """Validate + dispatch ``agent_bus.request``.
 
@@ -394,5 +402,7 @@ def _request_dispatch(
         request_id=rid_intake.request_id,
         after_turn=after_turn,
         summary=summary,
+        cse_chat_url=cse_chat_url,
+        cse_registration_id=cse_registration_id,
     )
     return stamp_contract_deprecation(result, intake)

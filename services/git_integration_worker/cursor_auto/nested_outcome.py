@@ -30,13 +30,16 @@ from services.git_integration_worker.cursor_auto.closeout_relay_common import (
 from services.git_integration_worker.cursor_auto.closeout_relay_cortex_spill import (
     promote_clamped_closeout_to_cortex,
 )
-from services.git_integration_worker.cursor_auto.directive import (
-    corpus_guard_uris,
-    parse_request_body,
-)
 from services.git_integration_worker.cursor_auto.closeout_tree_state import (
     compute_closeout_tree_state,
     strip_deployment_state_line,
+)
+from services.git_integration_worker.cursor_auto.cse_wake_delivery import (
+    maybe_deliver_cse_wake,
+)
+from services.git_integration_worker.cursor_auto.directive import (
+    corpus_guard_uris,
+    parse_request_body,
 )
 from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
     derive_tree_residue,
@@ -151,6 +154,16 @@ async def relay_confer_outcome(
         if relay.get("ok")
         else {"ok": False, "skipped": True, "reason": "confer_not_ok"}
     )
+    delivery = (
+        await maybe_deliver_cse_wake(
+            job,
+            dispatch_id=dispatch_id,
+            request_turn=str(job.turn_number),
+            closeout_status=payload.status,
+        )
+        if wake.get("ok")
+        else {"ok": False, "skipped": True, "reason": "wake_not_ok"}
+    )
     return {
         "ok": not failed,
         "phase": "nested_confer",
@@ -160,6 +173,7 @@ async def relay_confer_outcome(
         "dispatch_id": dispatch_id,
         "relay": relay,
         "wake": wake,
+        "delivery": delivery,
         "model": model,
         "effort": effort,
         "gate_plan": gate_plan,
@@ -332,6 +346,16 @@ async def relay_closeout_outcome(
             closeout_status=payload.status,
             bus=client,
         )
+        delivery = (
+            await maybe_deliver_cse_wake(
+                job,
+                dispatch_id=dispatch_id,
+                request_turn=str(job.turn_number),
+                closeout_status=payload.status,
+            )
+            if wake.get("ok")
+            else {"ok": False, "skipped": True, "reason": "wake_not_ok"}
+        )
         await maybe_post_substrate_feedback(
             job,
             sdk_body=sdk_body,
@@ -353,6 +377,7 @@ async def relay_closeout_outcome(
             pass
     else:
         wake = {"ok": False, "skipped": True, "reason": "closeout_not_ok"}
+        delivery = {"ok": False, "skipped": True, "reason": "closeout_not_ok"}
     failed = not relay.get("ok") or terminal_status == "failed"
     append_journal_entry(
         thread_id=job.thread_id,
@@ -376,6 +401,7 @@ async def relay_closeout_outcome(
         "dispatch_id": dispatch_id,
         "relay": relay,
         "wake": wake,
+        "delivery": delivery,
         "model": model,
         "effort": effort,
         "gate_plan": gate_plan,

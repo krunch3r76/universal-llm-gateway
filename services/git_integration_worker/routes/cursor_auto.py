@@ -47,6 +47,8 @@ class EnqueueBody(BaseModel):
     require_attended: bool = False
     # Idempotency key minted or validated at MCP intake; echoed on the closeout.
     request_id: str | None = None
+    cse_chat_url: str | None = None
+    cse_registration_id: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -103,6 +105,8 @@ async def enqueue(body: EnqueueBody):
         contract=body.contract,
         require_attended=body.require_attended,
         request_id=body.request_id,
+        cse_chat_url=body.cse_chat_url,
+        cse_registration_id=body.cse_registration_id,
     )
     logger.info(
         "cursor-auto enqueued job=%s thread=%s turn=%s request_id=%s",

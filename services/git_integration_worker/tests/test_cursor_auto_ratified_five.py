@@ -241,7 +241,7 @@ def test_process_job_confer_nested(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.gate_serialize.sdk_dispatch_gate_stats",
-        lambda: {"active": 0, "queued": 0, "limit": 1},
+        lambda **_kw: {"active": 0, "queued": 0, "limit": 1},
     )
 
     job = AutoJob(
@@ -375,7 +375,7 @@ def test_process_job_blocks_directive_after_synthesized_closeout(monkeypatch):
     )
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.gate_serialize.sdk_dispatch_gate_stats",
-        lambda: {"active": 0, "queued": 0, "limit": 1},
+        lambda **_kw: {"active": 0, "queued": 0, "limit": 1},
     )
 
     job = AutoJob(
@@ -411,7 +411,7 @@ def test_process_job_blocks_directive_when_relay_trust_unverifiable(monkeypatch)
     )
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.gate_serialize.sdk_dispatch_gate_stats",
-        lambda: {"active": 0, "queued": 0, "limit": 1},
+        lambda **_kw: {"active": 0, "queued": 0, "limit": 1},
     )
 
     job = AutoJob(

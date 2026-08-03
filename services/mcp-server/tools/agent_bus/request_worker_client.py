@@ -222,6 +222,8 @@ def enqueue_auto_job(
     contract: str,
     require_attended: bool = False,
     request_id: str | None = None,
+    cse_chat_url: str | None = None,
+    cse_registration_id: str | None = None,
     base_url: str | None = None,
     timeout_s: float = 10.0,
 ) -> dict[str, Any]:
@@ -241,6 +243,10 @@ def enqueue_auto_job(
     }
     if request_id:
         payload["request_id"] = request_id
+    if cse_chat_url:
+        payload["cse_chat_url"] = cse_chat_url
+    if cse_registration_id:
+        payload["cse_registration_id"] = cse_registration_id
     try:
         with httpx.Client(timeout=timeout_s) as client:
             resp = client.post(url, json=payload)

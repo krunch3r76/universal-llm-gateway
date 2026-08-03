@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -14,7 +13,6 @@ from services.git_integration_worker.cursor_auto.queue import AutoJob
 from services.git_integration_worker.cursor_auto.wire_map import (
     resolve_contract_disposition,
 )
-
 
 _DIRECTIVE_MECHANICAL = (
     "TYPE: DIRECTIVE\ndensity: mechanical\nscope: libs/foo\nImplement the thing."
@@ -82,7 +80,7 @@ def test_process_job_directive_answer_upgrades_to_nested(monkeypatch: pytest.Mon
     )
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.gate_serialize.sdk_dispatch_gate_stats",
-        lambda: {"active": 0, "queued": 0, "limit": 1},
+        lambda **_kw: {"active": 0, "queued": 0, "limit": 1},
     )
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.handler.CursorDispatchLedger.instance",

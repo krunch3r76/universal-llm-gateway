@@ -28,7 +28,7 @@ def test_process_job_require_attended_wire_short_circuits(monkeypatch):
     )
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.gate_serialize.sdk_dispatch_gate_stats",
-        lambda: {"active": 0, "queued": 0, "limit": 1},
+        lambda **_kw: {"active": 0, "queued": 0, "limit": 1},
     )
 
     job = AutoJob(
@@ -73,7 +73,7 @@ def test_process_job_require_attended_body_short_circuits(monkeypatch):
     )
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.gate_serialize.sdk_dispatch_gate_stats",
-        lambda: {"active": 0, "queued": 0, "limit": 1},
+        lambda **_kw: {"active": 0, "queued": 0, "limit": 1},
     )
 
     job = AutoJob(
@@ -114,7 +114,7 @@ def test_process_job_require_attended_precedence_at_capacity(monkeypatch):
     )
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.gate_serialize.sdk_dispatch_gate_stats",
-        lambda: {"active": 1, "queued": 0, "limit": 1},
+        lambda **_kw: {"active": 1, "queued": 0, "limit": 1},
     )
 
     job = AutoJob(
@@ -150,7 +150,7 @@ def test_process_job_gate_fallback_without_require_attended(monkeypatch):
 
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.gate_serialize.sdk_dispatch_gate_stats",
-        lambda: {"active": 1, "queued": 0, "limit": 1},
+        lambda **_kw: {"active": 1, "queued": 0, "limit": 1},
     )
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.handler.CursorDispatchLedger.instance",
@@ -189,7 +189,7 @@ def test_process_job_require_attended_gate_counters_unchanged(monkeypatch):
 
     stats = {"active": 0, "queued": 0, "limit": 1}
 
-    def _stats():
+    def _stats(**_kw):
         return dict(stats)
 
     monkeypatch.setattr(gate_serialize, "sdk_dispatch_gate_stats", _stats)
@@ -248,6 +248,8 @@ def test_process_job_nested_implement_dispatches(monkeypatch):
     sdk_body = AsyncMock(return_value='{"status":"complete"}')
     relay = AsyncMock(return_value={"ok": True, "status_code": 200})
     wake = AsyncMock(return_value={"ok": True, "status_code": 200})
+    delivery = AsyncMock(return_value={"ok": True, "send_verified": True})
+    delivery = AsyncMock(return_value={"ok": True, "send_verified": True})
 
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.handler.submit_nested_dispatch",
@@ -270,6 +272,10 @@ def test_process_job_nested_implement_dispatches(monkeypatch):
         wake,
     )
     monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.nested_outcome.maybe_deliver_cse_wake",
+        delivery,
+    )
+    monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.handler.CursorDispatchLedger.instance",
         lambda: MagicMock(lease_snapshot=MagicMock(return_value={})),
     )
@@ -285,6 +291,7 @@ def test_process_job_nested_implement_dispatches(monkeypatch):
         desired_model="composer-2.5",
         desired_effort="medium",
         contract="implement",
+        cse_chat_url="https://claude.ai/chat/test",
     )
 
     result = asyncio.run(process_job(job, bus=bus))
@@ -294,9 +301,8 @@ def test_process_job_nested_implement_dispatches(monkeypatch):
     assert submit.await_args.kwargs["handoff_contract"] == "pure-mechanical"
     relay.assert_awaited_once()
     wake.assert_awaited_once()
-    wake_kwargs = wake.await_args.kwargs
-    assert wake_kwargs["dispatch_id"] == "auto-abc123"
-    assert wake_kwargs["request_turn"] == "8"
+    delivery.assert_awaited_once()
+    assert delivery.await_args.kwargs["dispatch_id"] == "auto-abc123"
 
 
 def test_process_job_nested_skips_wake_when_closeout_fails(monkeypatch):
@@ -368,6 +374,11 @@ def test_process_job_nested_skips_wake_when_closeout_fails(monkeypatch):
     result = asyncio.run(process_job(job, bus=bus))
     assert result["ok"] is False
     assert result["wake"] == {
+        "ok": False,
+        "skipped": True,
+        "reason": "closeout_not_ok",
+    }
+    assert result["delivery"] == {
         "ok": False,
         "skipped": True,
         "reason": "closeout_not_ok",

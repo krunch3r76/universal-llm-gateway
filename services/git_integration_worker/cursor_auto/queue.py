@@ -26,6 +26,9 @@ class AutoJob:
     require_attended: bool = False
     # Caller-supplied idempotency key, echoed enqueue→closeout (Fable §5).
     request_id: str | None = None
+    # Captured attached-lane identity for park-on-WAKE leg (b) delivery (B1).
+    cse_chat_url: str | None = None
+    cse_registration_id: str | None = None
     enqueued_at: float = field(default_factory=time.monotonic)
     status: str = "queued"  # queued | claimed | done | failed | superseded
     superseded_by: str | None = None
