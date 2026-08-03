@@ -165,8 +165,14 @@ def validate_dispatch_context(
 
 
 def _resolve_mcp_token_env(*, real_home: Path | str | None = None) -> dict[str, str]:
-    """Env vars for the stdio MCP bridge (HOME may be dispatch-isolated)."""
-    env: dict[str, str] = {}
+    """Env for the stdio MCP bridge subprocess.
+
+    cursor-sdk passes ``StdioMcpServerConfig.env`` as the *complete* subprocess
+    environment (not a merge). A token-only dict breaks bridge startup: the
+    launcher imports ``services.*`` and ``transport_utils``, which require the
+    universal venv ``sitecustomize`` / ``PYTHONPATH`` from the parent env.
+    """
+    env = {k: v for k, v in os.environ.items() if isinstance(v, str)}
     mcp_url = os.environ.get("MCP_URL", "").strip()
     if mcp_url:
         env["MCP_URL"] = mcp_url

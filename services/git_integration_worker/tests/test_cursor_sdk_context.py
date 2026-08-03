@@ -139,9 +139,11 @@ def test_mcp_token_env_mirrors_auth_token(
     repo = _stub_repo(tmp_path)
     monkeypatch.delenv("MCP_TOKEN", raising=False)
     monkeypatch.setenv("MCP_AUTH_TOKEN", "tok-from-auth")
+    monkeypatch.setenv("PROBE_PARENT_ENV", "parent-survives")
 
     env = build_mcp_servers(repo)["user-vortex"].env or {}
     assert env.get("MCP_TOKEN") == "tok-from-auth"
+    assert env.get("PROBE_PARENT_ENV") == "parent-survives"
 
 
 def test_mcp_token_from_yaml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -101,6 +101,9 @@ from services.git_integration_worker.cursor_sdk_context import (
     build_agent_options,
     validate_dispatch_context,
 )
+from services.git_integration_worker.cursor_sdk_substrate_tools import (
+    SubstrateDispatchContext,
+)
 from services.git_integration_worker.cursor_sdk_deliverable_truth import (
     LIGHT_BOUNDED_CONTRACT,
     light_bounded_deliverable_reason,
@@ -747,7 +750,17 @@ def _run_sdk_sync(
             knob_summary,
             parity,
         )
-        agent_options = build_agent_options(source_repo, dispatch_workspace, selection)
+        substrate_ctx = SubstrateDispatchContext(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+        )
+        agent_options = build_agent_options(
+            source_repo,
+            dispatch_workspace,
+            selection,
+            real_home=real_home,
+            substrate_ctx=substrate_ctx,
+        )
 
         with _dispatch_home_overlay(
             dispatch_home,
