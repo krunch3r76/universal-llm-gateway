@@ -5,15 +5,25 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 from universal_logging import get_logger
 
+from services.git_integration_worker.admission import (
+    Draining503,
+    WorkAdmissionController,
+)
+from services.git_integration_worker.cursor_auto.closeout_outbox import get_outbox_store
+from services.git_integration_worker.cursor_auto.closeout_outbox_events import (
+    emit_closeout_persisted,
+)
 from services.git_integration_worker.cursor_auto.closeout_relay import (
     ledger_status_to_closeout,
 )
@@ -24,6 +34,14 @@ from services.git_integration_worker.cursor_auto.closeout_relay_common import (
 from services.git_integration_worker.cursor_auto.episode_residue import (
     compose_closeout_body,
     resolve_relay_residue,
+)
+from services.git_integration_worker.cursor_auto.job_ledger import (
+    RELAY_PHASE_CLOSEOUT_POSTED,
+    RELAY_PHASE_DISPATCHED,
+    get_ledger,
+)
+from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
+    extract_authored_checkpoint,
 )
 from services.git_integration_worker.cursor_auto.queue import AutoJob
 from services.git_integration_worker.cursor_bus import CursorBusClient
@@ -42,6 +60,24 @@ _MAX_WAKE_SUBJECT_LEN = 80
 _DEFAULT_DISPATCH_URL = "http://127.0.0.1:8091"
 _POLL_INTERVAL_S = 2.0
 _DEFAULT_TIMEOUT_S = 3600.0
+_TREE_RESIDUE_RE = re.compile(r"(?im)^tree_residue:\s*(\d+)\b")
+
+
+@dataclass(frozen=True, slots=True)
+class CloseoutRelayContext:
+    """Write-ahead outbox + admission context for one nested dispatch episode."""
+
+    worker_id: str
+    worker_started_at: str
+    admission_controller: WorkAdmissionController | None = None
+    skip_outbox: bool = False
+
+
+def _relay_pause_s() -> float:
+    raw = os.environ.get("CURSOR_AUTO_RELAY_PAUSE_S", "").strip()
+    if not raw:
+        return 0.0
+    return max(0.0, float(raw))
 
 
 def _dispatch_url() -> str:
@@ -68,6 +104,7 @@ async def submit_nested_dispatch(
     nest_under: str | None = None,
     model_knobs: dict[str, str] | None = None,
     read_only: bool | None = None,
+    relay_ctx: CloseoutRelayContext | None = None,
 ) -> dict[str, Any]:
     """POST ``/api/v1/cursor/dispatch`` for one nested SDK run.
 
@@ -77,6 +114,26 @@ async def submit_nested_dispatch(
     """
     dispatch_id = f"auto-{uuid.uuid4().hex[:12]}"
     execution_id = f"exec-{dispatch_id}"
+    get_ledger().bind_dispatch(
+        job.job_id,
+        dispatch_id=dispatch_id,
+        relay_phase=RELAY_PHASE_DISPATCHED,
+    )
+    if relay_ctx is not None and relay_ctx.admission_controller is not None:
+        try:
+            relay_ctx.admission_controller.try_admit(
+                "cursor-auto",
+                op_id=dispatch_id,
+                route="cursor-auto/nested",
+            )
+        except Draining503 as exc:
+            return {
+                "ok": False,
+                "dispatch_id": dispatch_id,
+                "execution_id": execution_id,
+                "error": str(exc),
+                "reason": "worker_draining",
+            }
     payload: dict[str, Any] = {
         "thread_id": job.thread_id,
         "model": model_id,
@@ -262,6 +319,9 @@ async def post_operator_closeout(
     closeout_source: str | None = None,
     relay_note: str | None = None,
     deployment_state: str | None = None,
+    relay_ctx: CloseoutRelayContext | None = None,
+    skip_outbox_persist: bool = False,
+    replay_mode: bool = False,
 ) -> dict[str, Any]:
     """Post ``TYPE: CLOSEOUT`` to the operator seat (``job.from_agent``).
 
@@ -322,6 +382,43 @@ async def post_operator_closeout(
             "closeout_source": closeout_source,
             "reason": envelope_verdict.reason,
         }
+
+    ctx = relay_ctx
+    outbox_skip = skip_outbox_persist or (ctx.skip_outbox if ctx else False)
+    if not outbox_skip and ctx is not None and not replay_mode:
+        checkpoint_value = extract_authored_checkpoint(body)
+        tree_match = _TREE_RESIDUE_RE.search(body)
+        tree_residue = int(tree_match.group(1)) if tree_match else None
+        subject = f"status:done — {job.subject[:60]}"
+        row = get_outbox_store().persist_pending(
+            dispatch_id=dispatch_id,
+            job_id=job.job_id,
+            thread_id=job.thread_id,
+            to_agent=job.from_agent,
+            from_agent="cursor-auto",
+            subject=subject,
+            envelope_body=body,
+            closeout_status=envelope_status,
+            request_turn=job.turn_number,
+            worker_id=ctx.worker_id,
+            worker_started_at=ctx.worker_started_at,
+            closeout_source=closeout_source,
+            request_id=job.request_id,
+            checkpoint_value=checkpoint_value,
+            tree_residue=tree_residue,
+        )
+        emit_closeout_persisted(
+            dispatch_id=dispatch_id,
+            job_id=job.job_id,
+            thread_id=job.thread_id,
+            envelope_sha256=row.envelope_sha256,
+            closeout_status=envelope_status,
+        )
+
+    pause_s = _relay_pause_s()
+    if pause_s > 0 and not replay_mode:
+        await asyncio.sleep(pause_s)
+
     resp = await client.reply(
         thread_id=job.thread_id,
         to_agent=job.from_agent,
@@ -330,8 +427,15 @@ async def post_operator_closeout(
         body=body,
         allow_long_body=True,
     )
+    ok = resp.status_code < 400
+    if ok and not outbox_skip and ctx is not None and not replay_mode:
+        get_outbox_store().mark_posted(dispatch_id)
+        get_ledger().set_relay_phase(
+            job.job_id,
+            relay_phase=RELAY_PHASE_CLOSEOUT_POSTED,
+        )
     return {
-        "ok": resp.status_code < 400,
+        "ok": ok,
         "status_code": resp.status_code,
         "body": resp.body,
         "closeout_source": closeout_source,

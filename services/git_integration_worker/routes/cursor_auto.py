@@ -155,7 +155,15 @@ async def auto_worker_loop(app: Any) -> None:
             if job is not None:
                 hb_task = asyncio.create_task(_heartbeat_while_busy(job.job_id))
                 try:
-                    result = await process_job(job)
+                    controller = getattr(app.state, "admission_controller", None)
+                    result = await process_job(
+                        job,
+                        admission_controller=controller,
+                        worker_id=str(getattr(app.state, "worker_id", "") or ""),
+                        worker_started_at=str(
+                            getattr(app.state, "worker_boot_ts", "") or ""
+                        ),
+                    )
                     logger.info(
                         "cursor-auto job=%s result ok=%s terminal=%s",
                         job.job_id,

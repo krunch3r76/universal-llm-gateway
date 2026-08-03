@@ -22,6 +22,11 @@ logger = get_logger(__name__)
 
 TERMINAL_REASON_QUEUE_OWNER_RESTART = "queue_owner_restart"
 
+RELAY_PHASE_NONE = "none"
+RELAY_PHASE_DISPATCHED = "dispatched"
+RELAY_PHASE_SDK_TERMINAL = "sdk_terminal"
+RELAY_PHASE_CLOSEOUT_POSTED = "closeout_posted"
+
 _OPEN_STATUSES = ("queued", "claimed")
 _TERMINAL_STATUSES = ("done", "failed", "superseded")
 
@@ -107,6 +112,22 @@ class AutoJobLedger:
         self._db_path = _ledger_path()
         with self._connect() as conn:
             conn.executescript(_DDL)
+            self._ensure_relay_columns(conn)
+
+    @staticmethod
+    def _ensure_relay_columns(conn: sqlite3.Connection) -> None:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(cursor_auto_jobs)")}
+        if "dispatch_id" not in cols:
+            conn.execute("ALTER TABLE cursor_auto_jobs ADD COLUMN dispatch_id TEXT")
+        if "relay_phase" not in cols:
+            conn.execute(
+                "ALTER TABLE cursor_auto_jobs ADD COLUMN relay_phase TEXT "
+                "DEFAULT 'none'"
+            )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_auto_jobs_dispatch "
+            "ON cursor_auto_jobs (dispatch_id)"
+        )
 
     def _connect(self) -> sqlite3.Connection:
         return _connect(self._db_path)
@@ -202,6 +223,50 @@ class AutoJobLedger:
                 "ORDER BY enqueued_at ASC"
             ).fetchall()
         return [_job_from_row(row) for row in rows]
+
+    def bind_dispatch(
+        self,
+        job_id: str,
+        *,
+        dispatch_id: str,
+        relay_phase: str = RELAY_PHASE_DISPATCHED,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE cursor_auto_jobs SET dispatch_id=?, relay_phase=? "
+                "WHERE job_id=?",
+                (dispatch_id, relay_phase, job_id),
+            )
+
+    def set_relay_phase(self, job_id: str, *, relay_phase: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE cursor_auto_jobs SET relay_phase=? WHERE job_id=?",
+                (relay_phase, job_id),
+            )
+
+    def read_relay_state(self, job_id: str) -> dict[str, str | None]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT dispatch_id, relay_phase, status FROM cursor_auto_jobs "
+                "WHERE job_id=?",
+                (job_id,),
+            ).fetchone()
+        if row is None:
+            return {"dispatch_id": None, "relay_phase": None, "status": None}
+        return {
+            "dispatch_id": row["dispatch_id"],
+            "relay_phase": row["relay_phase"] or RELAY_PHASE_NONE,
+            "status": row["status"],
+        }
+
+    def get_by_dispatch_id(self, dispatch_id: str) -> AutoJob | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM cursor_auto_jobs WHERE dispatch_id=? LIMIT 1",
+                (dispatch_id,),
+            ).fetchone()
+        return _job_from_row(row) if row is not None else None
 
     def status_counts(self) -> dict[str, int]:
         with self._connect() as conn:

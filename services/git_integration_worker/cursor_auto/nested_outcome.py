@@ -47,6 +47,7 @@ from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
     inject_tree_residue_line,
 )
 from services.git_integration_worker.cursor_auto.nested_sdk import (
+    CloseoutRelayContext,
     post_operator_closeout,
     post_operator_confer,
     post_operator_wake,
@@ -222,6 +223,8 @@ async def relay_closeout_outcome(
     nest_under: str | None,
     execution_id: str | None = None,
     second_read: ReflexOutcome | None = None,
+    relay_ctx: CloseoutRelayContext | None = None,
+    admission_controller: Any | None = None,
 ) -> dict[str, Any]:
     """Select the closeout payload, relay it, then WAKE + substrate feedback."""
     sidecar_text = read_repo_closeout_sidecar(dispatch_id)
@@ -294,6 +297,8 @@ async def relay_closeout_outcome(
             dispatch_id=dispatch_id,
         )
         queue.mark_done(job.job_id, failed=True)
+        if admission_controller is not None and dispatch_id:
+            admission_controller.close_ticket(dispatch_id, terminal_status="failed")
         return {
             "ok": False,
             "phase": "nested_dispatch",
@@ -330,6 +335,7 @@ async def relay_closeout_outcome(
             ).count,
         },
         bus=client,
+        relay_ctx=relay_ctx,
     )
     resolved_execution_id = execution_id or f"exec-{dispatch_id}"
     await _emit_closeout_relayed_observation(
@@ -392,6 +398,11 @@ async def relay_closeout_outcome(
         },
     )
     queue.mark_done(job.job_id, failed=failed)
+    if admission_controller is not None:
+        admission_controller.close_ticket(
+            dispatch_id,
+            terminal_status="failed" if failed else "completed",
+        )
     return {
         "ok": not failed,
         "phase": "nested_dispatch",

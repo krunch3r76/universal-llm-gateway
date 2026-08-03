@@ -20,6 +20,12 @@ from universal_logging import get_logger
 
 from services.git_integration_worker.admission import WorkAdmissionController
 from services.git_integration_worker.config import WorkerConfig, load_config
+from services.git_integration_worker.cursor_auto.closeout_outbox import (
+    CloseoutOutboxStore,
+)
+from services.git_integration_worker.cursor_auto.closeout_replay import (
+    startup_closeout_outbox_replay,
+)
 from services.git_integration_worker.cursor_auto.execute_runner import (
     clear_tool_op_invoker,
 )
@@ -102,6 +108,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # before any per-dispatch HOME swap, so the cursor_sdk_dispatches table
     # exists regardless of which dispatch op touches the ledger first.
     ledger = CursorDispatchLedger.instance()
+    CloseoutOutboxStore.instance()
     # Worker generation identity: fresh uuid + wall-clock boot ts per process.
     # Drain events carry these so a Phase-2 manage supervisor can detect a
     # stale-epoch event emitted by a prior worker generation across a restart.
@@ -120,6 +127,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.worker_version = _resolve_version()
     app.state.worker_started_at = time.monotonic()
     await startup_ledger_reconcile(app)
+    await startup_closeout_outbox_replay(app)
     await startup_auto_job_reconcile(app)
     register_production_invoker()
     sweeper = asyncio.create_task(stale_lease_sweeper(app))

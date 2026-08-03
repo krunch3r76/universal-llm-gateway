@@ -46,11 +46,16 @@ from services.git_integration_worker.cursor_auto.handler_terminal import (
     terminal_in_seat,
     terminal_needs_attended,
 )
+from services.git_integration_worker.cursor_auto.job_ledger import (
+    RELAY_PHASE_SDK_TERMINAL,
+    get_ledger,
+)
 from services.git_integration_worker.cursor_auto.nested_outcome import (
     relay_closeout_outcome,
     relay_confer_outcome,
 )
 from services.git_integration_worker.cursor_auto.nested_sdk import (
+    CloseoutRelayContext,
     fetch_sdk_closeout_body,
     poll_dispatch_terminal,
     submit_nested_dispatch,
@@ -89,10 +94,24 @@ _FROM_AUTO = "cursor-auto"
 _NESTED_CONTRACTS = frozenset({"confer", "implement", "investigate", "verify"})
 
 
+def _close_dispatch_ticket(
+    admission_controller: Any | None,
+    dispatch_id: str | None,
+    *,
+    terminal_status: str,
+) -> None:
+    if admission_controller is None or not dispatch_id:
+        return
+    admission_controller.close_ticket(dispatch_id, terminal_status=terminal_status)
+
+
 async def process_job(
     job: AutoJob,
     *,
     bus: CursorBusClient | None = None,
+    admission_controller: Any | None = None,
+    worker_id: str = "",
+    worker_started_at: str = "",
 ) -> dict[str, Any]:
     """Process one Auto job: admit → nested SDK (when armed) → terminal reply.
 
@@ -270,6 +289,12 @@ async def process_job(
         )
 
     knobs = compose_model_knobs(model, effort)
+    relay_ctx = CloseoutRelayContext(
+        worker_id=worker_id,
+        worker_started_at=worker_started_at,
+        admission_controller=admission_controller,
+        skip_outbox=queue.is_superseded(job.job_id),
+    )
     submit = await submit_nested_dispatch(
         job,
         model_id=str(model["resolved_model_id"]),
@@ -277,7 +302,16 @@ async def process_job(
         message=message,
         nest_under=nest_under,
         model_knobs=knobs or None,
+        relay_ctx=relay_ctx,
     )
+    if submit.get("reason") == "worker_draining":
+        return await terminal_failed(
+            job,
+            client=client,
+            queue=queue,
+            summary="git_integration_worker draining — re-send DIRECTIVE after restart",
+            extra=submit,
+        )
     # Auto POSTs the worker directly, so Stargate's sdk_cost_risk guard never sees
     # this bind — announce it here or premium spend on this lane stays invisible.
     maybe_emit_premium_bind(
@@ -306,10 +340,16 @@ async def process_job(
         on_tick=progress.maybe_emit,
     )
     if polled.get("superseded"):
+        _close_dispatch_ticket(
+            admission_controller, dispatch_id, terminal_status="superseded"
+        )
         return await post_superseded_terminal(
             job, client=client, queue=queue, dispatch_id=dispatch_id
         )
     if not polled.get("terminal"):
+        _close_dispatch_ticket(
+            admission_controller, dispatch_id, terminal_status="failed"
+        )
         return await terminal_failed(
             job,
             client=client,
@@ -320,6 +360,7 @@ async def process_job(
         )
 
     terminal_status = str(polled.get("status") or "failed")
+    get_ledger().set_relay_phase(job.job_id, relay_phase=RELAY_PHASE_SDK_TERMINAL)
     sdk_body = await fetch_sdk_closeout_body(
         thread_id=job.thread_id,
         dispatch_id=dispatch_id,
@@ -365,6 +406,8 @@ async def process_job(
         nest_under=nest_under,
         execution_id=str(submit.get("execution_id") or f"exec-{dispatch_id}"),
         second_read=second_read,
+        relay_ctx=relay_ctx,
+        admission_controller=admission_controller,
     )
 
 

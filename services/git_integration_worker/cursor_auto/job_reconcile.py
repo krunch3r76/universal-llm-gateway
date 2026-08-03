@@ -7,6 +7,11 @@ from typing import Any
 
 from universal_logging import get_logger
 
+from services.git_integration_worker.cursor_auto.closeout_replay import (
+    is_never_dispatched,
+    job_has_pending_outbox,
+    job_should_skip_loss_report,
+)
 from services.git_integration_worker.cursor_auto.handler_terminal import (
     post_queue_owner_restart_terminal,
 )
@@ -51,6 +56,24 @@ async def _terminalize_job(
     client: CursorBusClient,
     post_bus: bool,
 ) -> AutoJob | None:
+    if job_has_pending_outbox(job.job_id):
+        return None
+    if job_should_skip_loss_report(job.job_id):
+        terminal = ledger.mark_terminal(job.job_id, status="done", terminal_reason=None)
+        if terminal is None:
+            return None
+        queue.mark_done(job.job_id, failed=False)
+        return terminal
+    if not is_never_dispatched(job.job_id):
+        terminal = ledger.mark_terminal(
+            job.job_id,
+            status="failed",
+            terminal_reason=None,
+        )
+        if terminal is None:
+            return None
+        queue.mark_done(job.job_id, failed=True)
+        return terminal
     terminal = ledger.mark_terminal(
         job.job_id,
         status="failed",
