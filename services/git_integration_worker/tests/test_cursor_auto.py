@@ -15,6 +15,7 @@ from services.git_integration_worker.cursor_auto.gate_serialize import (
 )
 from services.git_integration_worker.cursor_auto.liveness import AutoLivenessRegistry
 from services.git_integration_worker.cursor_auto.wire_map import (
+    admit_model_override_rule_line,
     admit_model_pin_flags,
     assess_model_pin,
     resolve_contract_disposition,
@@ -71,6 +72,113 @@ def test_assess_model_pin_blocks_body_desired_model():
     assert block is not None
     assert "wire-only" in block
     assert model["resolved_model_id"] == "cursor/grok-4.5"
+
+
+def test_admit_model_override_rule_line_auto_ladder():
+    model = resolve_desired_model("auto", contract="investigate")
+    line = admit_model_override_rule_line(model)
+    assert line is not None
+    assert line.startswith("model_override_rule:")
+    assert model["notes"] in line
+    assert "auto chose cursor/grok-4.5 for contract=investigate" in line
+
+
+def test_admit_model_override_rule_line_honored_explicit_bare_pin():
+    model = resolve_desired_model("grok-4.5")
+    line = admit_model_override_rule_line(model)
+    assert line is not None
+    assert model["notes"] in line
+    assert "honored explicit desired_model" in line
+
+
+def test_admit_model_override_rule_line_unchanged_when_requested_equals_resolved():
+    model = resolve_desired_model("cursor/grok-4.5")
+    assert model["requested"] == model["resolved_model_id"]
+    assert admit_model_override_rule_line(model) is None
+
+
+def test_process_job_admit_surfaces_model_override_rule_auto(monkeypatch):
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    from services.git_integration_worker.cursor_auto.handler import process_job
+    from services.git_integration_worker.cursor_auto.queue import AutoJob
+
+    bus = AsyncMock()
+    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.handler.submit_nested_dispatch",
+        AsyncMock(return_value={"ok": False, "error": "stop"}),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.gate_serialize.sdk_dispatch_gate_stats",
+        lambda **_: {"active": 0, "queued": 0, "limit": 1},
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.admit_gates.fetch_thread_turns",
+        AsyncMock(return_value=[]),
+    )
+
+    job = AutoJob(
+        job_id="j-admit-override-rule",
+        thread_id="6654",
+        turn_number=1,
+        subject="admit override rule",
+        body="TYPE: DIRECTIVE\ndensity: dense\n## Scope\nfoo\nvision: test\n",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="investigate",
+    )
+
+    asyncio.run(process_job(job, bus=bus))
+    admit_body = bus.reply.await_args_list[0].kwargs["body"]
+    model = resolve_desired_model("auto", contract="investigate")
+    assert "model_override_rule:" in admit_body
+    assert model["notes"] in admit_body
+
+
+def test_process_job_admit_omits_override_rule_when_requested_matches_resolved(
+    monkeypatch,
+):
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    from services.git_integration_worker.cursor_auto.handler import process_job
+    from services.git_integration_worker.cursor_auto.queue import AutoJob
+
+    bus = AsyncMock()
+    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.handler.submit_nested_dispatch",
+        AsyncMock(return_value={"ok": False, "error": "stop"}),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.gate_serialize.sdk_dispatch_gate_stats",
+        lambda **_: {"active": 0, "queued": 0, "limit": 1},
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.admit_gates.fetch_thread_turns",
+        AsyncMock(return_value=[]),
+    )
+
+    job = AutoJob(
+        job_id="j-admit-no-override-rule",
+        thread_id="6654",
+        turn_number=1,
+        subject="admit no override rule",
+        body="TYPE: DIRECTIVE\ndensity: dense\n## Scope\nfoo\nvision: test\n",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="cursor/grok-4.5",
+        desired_effort="medium",
+        contract="investigate",
+    )
+
+    asyncio.run(process_job(job, bus=bus))
+    admit_body = bus.reply.await_args_list[0].kwargs["body"]
+    assert "model_override_rule:" not in admit_body
 
 
 def test_admit_model_pin_flags_surfaces_effort_clamp():

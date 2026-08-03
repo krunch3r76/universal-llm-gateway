@@ -152,6 +152,24 @@ def assess_model_pin(
     return model, None
 
 
+def admit_model_override_rule_line(model: dict[str, Any]) -> str | None:
+    """Surface resolve-path ``notes`` when requested model id ≠ resolved id.
+
+    Reads ``model["notes"]`` authored by ``resolve_desired_model`` — never
+    reconstructs rule text at print time (roadmap item 6 / D1).
+    """
+    requested = str(model.get("requested") or "").strip()
+    resolved = str(model.get("resolved_model_id") or "").strip()
+    if not requested or not resolved:
+        return None
+    if requested.casefold() == resolved.casefold():
+        return None
+    notes = model.get("notes")
+    if not notes:
+        return None
+    return f"model_override_rule: {notes}"
+
+
 def admit_model_pin_flags(
     model: dict[str, Any],
     effort: dict[str, Any],

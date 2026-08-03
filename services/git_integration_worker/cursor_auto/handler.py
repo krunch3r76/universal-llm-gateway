@@ -76,6 +76,7 @@ from services.git_integration_worker.cursor_auto.supersede import (
     settle_supersede,
 )
 from services.git_integration_worker.cursor_auto.wire_map import (
+    admit_model_override_rule_line,
     admit_model_pin_flags,
     assess_model_pin,
     compose_model_knobs,
@@ -188,6 +189,9 @@ async def process_job(
         f"gate_plan={gate_plan['action']}\n"
         f"directive={directive is not None}"
     )
+    override_rule = admit_model_override_rule_line(model)
+    if override_rule is not None:
+        base_admit_body += f"\n{override_rule}"
     pin_flags = admit_model_pin_flags(model, effort)
     if pin_flags:
         base_admit_body += "\nflags: " + "; ".join(pin_flags)
