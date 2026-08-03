@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "71078c6f2d79fb5e9679e836c8200f65dbf748fa173d1df236145084a88119ce"
+OPENAPI_SHA256 = "a77c09f986b8a119e293602ec4d35ac2b50c8e0947bf86d1683daccfdd206212"
 FACADE_TOOL = "cortex"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "activate": {
@@ -170,6 +170,26 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "path": "/assertions/search",
         "operation_id": "search_assertions_assertions_search_get",
     },
+    "seat_claim": {
+        "method": "POST",
+        "path": "/seat-claims/claim",
+        "operation_id": "seat_claim_route_seat_claims_claim_post",
+    },
+    "seat_claims_list": {
+        "method": "GET",
+        "path": "/seat-claims",
+        "operation_id": "seat_claims_list_route_seat_claims_get",
+    },
+    "seat_heartbeat": {
+        "method": "POST",
+        "path": "/seat-claims/heartbeat",
+        "operation_id": "seat_heartbeat_route_seat_claims_heartbeat_post",
+    },
+    "seat_release": {
+        "method": "POST",
+        "path": "/seat-claims/release",
+        "operation_id": "seat_release_route_seat_claims_release_post",
+    },
     "session_close": {
         "method": "POST",
         "path": "/session-journals/close",
@@ -242,7 +262,7 @@ SERVED_OPS: dict[str, dict[str, str]] = {
     },
 }
 NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
-    "@components": "9cc2efb12ce1983f733c15b84427ffd2646e7cc9e21a4962717657cc6ad82c76",
+    "@components": "ad2f9be75bbf9dcd58055c30943dd27829918be0b191d491d4de5999912588f2",
     "@info": "1418971c74f9954e15f6a10ac814a7e27ff9889aca5f2d640c51dbeb6be527e4",
     "DELETE /tags/{tag_name}": "9fbd9e2ed8d290a1c189d7b3e47d6c8afcfddd1d9dbdf534d33e95f1fc39fb59",
     "GET /api/v1/doctrine/vision-digest": "f161fc294c23139d04ed3d22bb992f730e4987e6b862e0d7258d278091a52dae",
@@ -254,7 +274,7 @@ NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
     "GET /boot-principal-context": "8b286d3c009dfbc2d09c0ca21c7a1bc5efb2acfefa5014b8091f55f6cf3e5033",
     "GET /boot-recent-mentions": "a74f53b425bde854dc64f07962dbda0dac7f818aae9bed566a8c8a578c144ce4",
     "GET /boot-recent-work": "b8679b32afbf7ff7f6abba6212e67244567b81757c9e9bb2014756a828cc8f27",
-    "GET /boot-reflective": "97e75d1d85243e654e1228109c8e5a3e79c15010af912ff0c5ab4f584f58402f",
+    "GET /boot-reflective": "abdca3c780a13b0f0a59496cc7882f053e9a644480215d5992e7fe8dec4d161c",
     "GET /boot-sections": "e7591dc21d07fd51d50eebe40c85361d2f5d479879d6ad99b206ea9a4c7dc4f4",
     "GET /boot-temporal": "21ee716b5fc4e08c210ec84ace1d78ea0bd16d9b82a701bc2b5b9fba4e4ee049",
     "GET /boot-todos": "7d8d1f541af882068ec2c5c7a6696e65bf23a097bc9a77b97c86ff7ebb31f32d",
@@ -263,7 +283,7 @@ NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
     "GET /entities/source-paths": "e67cc7bdb6c3e0485521102ad543dc0e6897cb5df65440f04a4f169c90fb9e94",
     "GET /entity-status/{entity_id}": "1650d15ebd156deaa97d804f053e77a62cd50515cbbe3689e2a874140bd6ff53",
     "GET /extraction-runs": "ffc2620ad7a69d00010c58fa7bacc7cf034563728eb85c46fbd2c08bb90ac320",
-    "GET /health": "f9c23407b220a14c487e04c08992b0d63d7705a3ba34a60793cd15503fbf50b2",
+    "GET /health": "21989e2b6cca65135eca71d36eb223b0a748c249c8d88cdce6a4d8fdf1fca998",
     "GET /reaper/preview": "f610989a334525b989e0063c7cf917fd3f14989ae6388ae662f4a3aecb7351e0",
     "GET /salience": "013dfe36e4cbf8e883b7a23bb4399cedf4304d811d80010472d06061a666464a",
     "GET /skills": "9eb361655689256711ddb3332cd6c6bc95e745f0b4afc8a1ebc06f1595141706",

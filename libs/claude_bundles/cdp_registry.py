@@ -329,6 +329,21 @@ def list_active() -> list[Registration]:
     return sorted(out, key=lambda r: r.port)
 
 
+def list_capacity() -> list[Registration]:
+    """Lanes that consume ``LANE_HARD_LIMIT`` — ``active`` only, not ghosts."""
+    active = _store.load_active()
+    out = [
+        _row_to_registration(row)
+        for row in active.values()
+        if row.get("status") == "active"
+    ]
+    return sorted(out, key=lambda r: r.port)
+
+
+def count_capacity_lanes() -> int:
+    return len(list_capacity())
+
+
 def _profile_path_from_row(row: dict[str, Any]) -> Path | None:
     raw = row.get("profile")
     if raw:

@@ -200,8 +200,9 @@ def normalize_agent_slug(slug: str) -> str:
     """
     if not isinstance(slug, str):
         slug = str(slug)
+    cleaned = slug.strip().lower()
     norm = _normalize_agent_key(slug)
-    return _dispatch_aliases().get(norm, norm)
+    return _dispatch_aliases().get(norm, cleaned)
 
 
 def is_lead_agent(slug: str) -> bool:
@@ -210,7 +211,10 @@ def is_lead_agent(slug: str) -> bool:
     The folded bus address ``cursor`` alone is never lead — lead-ness is a
     capability-cell property (``claude-cursor``, ``gpt-cursor``, …).
     """
-    if _normalize_agent_key(slug) == "cursor" and normalize_bus_address(slug) == "cursor":
+    if (
+        _normalize_agent_key(slug) == "cursor"
+        and normalize_bus_address(slug) == "cursor"
+    ):
         return False
     return normalize_agent_slug(slug) in load_lead_agent_slugs()
 

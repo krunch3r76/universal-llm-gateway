@@ -107,6 +107,19 @@ from .reflective import (
     ReflectiveEntryList,
     ReflectiveKind,
 )
+from .seat_claims import (
+    SeatClaimEndReason,
+    SeatClaimHolder,
+    SeatClaimRequest,
+    SeatClaimResponse,
+    SeatClaimRow,
+    SeatClaimStatus,
+    SeatClaimsListResponse,
+    SeatHeartbeatRequest,
+    SeatHeartbeatResponse,
+    SeatReleaseRequest,
+    SeatReleaseResponse,
+)
 from .relationships import (
     RelationshipCreate,
     RelationshipCreateResponse,
@@ -228,6 +241,18 @@ __all__ = [
     "ReflectiveEntryItem",
     "ReflectiveEntryList",
     "ReflectiveKind",
+    # seat_claims
+    "SeatClaimEndReason",
+    "SeatClaimHolder",
+    "SeatClaimRequest",
+    "SeatClaimResponse",
+    "SeatClaimRow",
+    "SeatClaimStatus",
+    "SeatClaimsListResponse",
+    "SeatHeartbeatRequest",
+    "SeatHeartbeatResponse",
+    "SeatReleaseRequest",
+    "SeatReleaseResponse",
     # relationships
     "RelationshipCreate",
     "RelationshipCreateResponse",

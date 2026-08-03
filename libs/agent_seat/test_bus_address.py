@@ -124,3 +124,17 @@ def test_disposition_equivalence_old_new() -> None:
 
     assert agents_match("claude-web", "web-anthropic")
     assert agents_match("claude-cursor", "cursor")
+
+
+@pytest.mark.parametrize(
+    ("slug", "expected"),
+    [
+        ("cursor-auto", "cursor-auto"),
+        ("cursor-monitor-6661", "cursor-monitor-6661"),
+        ("grok-direct", "grok-direct"),
+        ("CURSOR-SDK", "cursor-sdk"),
+    ],
+)
+def test_unregistered_slug_preserves_hyphens(slug: str, expected: str) -> None:
+    assert normalize_agent_slug(slug) == expected
+    assert normalize_bus_address(slug) == expected

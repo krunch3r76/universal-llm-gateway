@@ -26,6 +26,10 @@ from services.git_integration_worker.cursor_auto.execute_runner import (
 from services.git_integration_worker.cursor_auto.execute_tool_op_invoker import (
     register_production_invoker,
 )
+from services.git_integration_worker.cursor_auto.job_reconcile import (
+    shutdown_auto_jobs,
+    startup_auto_job_reconcile,
+)
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
 )
@@ -41,8 +45,8 @@ from services.git_integration_worker.git_worker_lifecycle_events import (
     emit_git_worker_started,
     register_git_worker_lifecycle_event_publisher,
 )
-from services.git_integration_worker.routes.admin import router as admin_router
 from services.git_integration_worker.lane_b_sweeper import lane_b_sweeper_loop
+from services.git_integration_worker.routes.admin import router as admin_router
 from services.git_integration_worker.routes.cursor_auto import (
     auto_worker_loop,
     orphan_scanner_loop,
@@ -116,6 +120,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.worker_version = _resolve_version()
     app.state.worker_started_at = time.monotonic()
     await startup_ledger_reconcile(app)
+    await startup_auto_job_reconcile(app)
     register_production_invoker()
     sweeper = asyncio.create_task(stale_lease_sweeper(app))
     app.state.stale_lease_sweeper = sweeper
@@ -156,6 +161,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         clear_tool_op_invoker()
         shutdown_active_bridges()
+        await shutdown_auto_jobs(app)
         for attr in (
             "stale_lease_sweeper",
             "cursor_auto_worker",

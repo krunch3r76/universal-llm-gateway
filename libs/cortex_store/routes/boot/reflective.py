@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent_seat.registry import normalize_bus_address
 from fastapi import APIRouter, Query
 
 from ...db import cortex_conn
@@ -23,7 +24,9 @@ _BOOT_REFLECTIVE_SQL = """
 
 @router.get("/boot-reflective")
 def get_boot_reflective(
-    agent: str = Query("web", description="Agent whose reflective entries to surface"),
+    agent: str = Query(
+        "web-anthropic", description="Agent whose reflective entries to surface"
+    ),
     limit: int = Query(5, ge=1, le=20, description="Max entries"),
 ) -> dict[str, Any]:
     """Recent reflective journal entries for boot briefings.
@@ -36,11 +39,12 @@ def get_boot_reflective(
     try:
         if not _table_exists(conn, "reflective_journal"):
             return {"items": [], "total": 0}
-        rows = db_query(conn, _BOOT_REFLECTIVE_SQL, (agent, limit))
+        canonical_agent = normalize_bus_address(agent)
+        rows = db_query(conn, _BOOT_REFLECTIVE_SQL, (canonical_agent, limit))
         total_row = db_query(
             conn,
             "SELECT COUNT(*) AS cnt FROM reflective_journal WHERE agent = ?",
-            (agent,),
+            (canonical_agent,),
         )
         total = total_row[0]["cnt"] if total_row else 0
     finally:

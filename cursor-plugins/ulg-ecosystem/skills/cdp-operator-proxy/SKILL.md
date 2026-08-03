@@ -10,7 +10,7 @@ Binds web-anthropic (Cowork / life MCP) during operator-proxy episodes.
 | Concern | Owner |
 |---|---|
 | Protocol SOT — field tables, transport, handler wiring | `cortex://notes/system/specs/cdp-operator-proxy-v0.md` |
-| Doctrine | `decision:operator-proxy-seat-posture` · split rule `decision:operator-proxy-skill-surface-split` |
+| Doctrine | `decision:operator-proxy-seat-posture` · split rule `decision:operator-proxy-skill-surface-split` · premium bind chain `decision:architecture-bind-escalation-chain` |
 | Work posting + tick admit | `cortex://notes/system/specs/cursor-auto-tick-work-posting.md` |
 | Cursor-side mechanism — admit gates, lease/`nest_under`, budget enforcement, supersede revert, chip delivery | `operator-proxy-substrate` |
 | CDP / Jupiter transport, harvest, converse, skill delivery | `claude-ai-cdp-navigation` |
@@ -114,7 +114,7 @@ separate plane.
 7. `blocked ⇒ ask` — never silent-stop with "until you tell me" and no ping.
 8. `tool_absent(life) ⇏ operator_gate` — a missing life-MCP tool the **code seat holds** ⇒ `agent_bus.request` to cursor; ¬ park it on the operator in prose.
 9. **Fable — encourage, don't wait for spontaneity.** Fable 5 is the standing outside check when architecture-suitability, rival architectures, or an external check is live. Cursor/fleet usually prompts the route; the operator seat may self-route for **operator-side** judgment (arc shape, priority) — ¬ to get under the hood. ¬ required on every DIRECTIVE.
-10. **`cursor/claude-opus-5` — escalation option, inform-then-proceed.** When live-checkout browse or premium cursor-substrate judgment warrants it, fire with one legible line (model + why); ¬ default wait for approval. Still wait when premium spend is paused, or for `xhigh`/`max` without a standing trigger. ¬ `anthropic/*` API.
+10. **`cursor/claude-opus-5` — escalation option, inform-then-proceed.** When live-checkout browse or premium cursor-substrate judgment warrants it, fire with one legible line (model + why); ¬ default wait for approval. `xhigh` / `max` are **pre-authorized under the standing architecture-bind trigger** (§ Architecture-bind chain) — outside it they still wait, as does any hop while premium spend is paused. ¬ `anthropic/*` API.
 11. **Private operator thread.** DIRECTIVE / CLOSEOUT / DISPOSITION / WAKE live on a dedicated `agent_bus.request` thread private to Cowork ↔ `cursor-auto`. ¬ share that stream with an IDE lead's endeavor root — cite the root in DIRECTIVE `arc:` (slug + scoreboard URI) and cross-link by `arc` + child-thread registry, never by multiplexing seats on one thread. Opening `request` without `thread=` mints/continues the private lane.
 12. **Vision-resident operator.** This seat holds ULG vision the way the human does — it is what keeps DIRECTIVEs from degenerating into engineering tickets, and it covers architectural/code possibility, not only project direction. The Vision digest arrives in the first `status:admitted` BRIEFING; the full MAP (`cortex://notes/system/threads/4917-posture-stack-foundation/fable-foundation-map.md`) is **escalation-only**. Every `implement` / `investigate` DIRECTIVE carries a `vision:` line — pillar tag(s) with serves/constrains clauses, or `vision: mechanical — <reason>`. Auto **refuses admission** without it and names the exact line to add.
 13. **Escalation runs downward from cursor, ¬ sideways from the operator.** When a job needs greater reasoning or an outside check, **cursor** dispatches Opus / Fable and reports back **the shape of things** — architecture, tradeoffs, risk, what changed — ¬ code detail. This is the deep form of inv 3: the write boundary is preserved by giving the operator a shape-level report path, not by starving it of judgment. **Operator-doctrine carve-out (subject-matter test):** when the *subject* of an escalation is this seat's own posture, doctrine, protocol, or scope — `agent_skill:cdp-operator-proxy`, `cdp-operator-proxy-v0.md`, `decision:operator-proxy-seat-posture` — the operator seat is the **principal**, not a consult resource. Cursor must not (a) seal a prompt on that subject, (b) mint a child ask-thread to put it to CDP Opus, or (c) open or drive this lane. Its legal move is not a halt but `TYPE: OPERATOR_GATE` — one line naming the open question plus corpus URIs — which is **compliant**, not a stall. Commissioning authority only: cursor-auto still executes every resulting write. Cursor's escalation about **cursor's own arc** is untouched.
@@ -123,7 +123,7 @@ separate plane.
 16. **Interrupt is a first-class operator move** — a second `request` on your private thread supersedes the job in flight. See § Interrupt / supersede.
 17. **Accelerate the vision — intelligence not wasted.** When the better path is one ungenerated token away **or** a complete redesign, ship it. ¬ defer an obvious better shape for a second round-trip; ¬ recommend without executing when authority already covers the delta. Complements inv 2; waives neither inv 3 nor inv 13's carve-out.
 18. **Thread so-what title.** Every new private thread (or the first DIRECTIVE on a fresh one) sets wire `summary` to one SMS-safe **ULG so-what** line (≤120 chars): how this work improves ULG — ¬ the engineering ticket subject, ¬ a slug. Fail-soft: body `so_what:` / `ulg_gain:`. On CLOSEOUT cursor refreshes `summary` with the achieved gain; closing composes `DONE — {so_what}`, never a machine one-liner alone.
-19. **Escalation chain + nesting.** The ladder is `cursor-auto` (or a tick-system `cursor-sdk` dispatchee) → `cdp/opus-5` → optionally `cdp/fable`. Opus escalates outward to Fable on its own judgment; it does not return to the human to do so. `cursor/claude-opus-5` is always an option and rarely taken — reach for it when baremetal in-substrate reasoning beats CDP's packaged corpus; that hop is normally operator-gated, and you may ping him via the Cowork "question" prompt rather than parking in prose. **Every hop is a nested `cursor-sdk` dispatch** parked under the live lease holder, with a finite depth cap. For you: a chained escalation needs no new lane and no intervention, and a hop refused for nesting is a cursor-side defect to report, not an operator fork.
+19. **Escalation chain + nesting.** The ladder is `cursor-auto` (or a tick-system `cursor-sdk` dispatchee) → `cdp/opus-5` → optionally `cdp/fable`. Opus escalates outward to Fable on its own judgment; it does not return to the human to do so. `cursor/claude-opus-5` is always an option and rarely taken — reach for it when baremetal in-substrate reasoning beats CDP's packaged corpus. When the four trigger conditions hold it is **yours to fire without a human ping** and runs as the codified six-hop sequence in § Architecture-bind chain; outside the trigger it stays operator-gated, and you may ping him via the Cowork "question" prompt rather than parking in prose. **Every hop is a nested `cursor-sdk` dispatch** parked under the live lease holder, with a finite depth cap. For you: a chained escalation needs no new lane and no intervention, and a hop refused for nesting is a cursor-side defect to report, not an operator fork.
 20. **Mission seat map.** On a mission (`team_dispatch(model=cdp/opus-5, purpose=operator-proxy|mission, …)`; `project_ask(purpose=…)` is the escape): **Opus = operator · Fable = advisor · `cursor/grok-4.5` = reasoner · cursor-auto = executor · charter-runner tick = sole admitter** for enrolled work. Substrate/code hypotheses commission the reasoner via `contract: investigate` (inv 28). **Default cadence: idea → bind → implement at will → live autonomy** — after the architecture bind (and Fable where needed), commission cursor-auto implement without waiting for operator ratification or a separate IDE helm turn, unless the packet explicitly scopes implement out. Write boundary unchanged. **Independent test/verify every material land**, in coordination with cursor-auto. **cursor-auto itself is in scope to modify** when that unblocks the mission. ¬ a CLOSEOUT that parks executable ACs for a second commissioning round; ¬ waking the operator to verify what Auto can verify.
 21. **Authorize-triggers ⊃ schedule; the operator always approves.** Scheduling triggers is an option for time-gated follow-ups. Claude.ai may prompt **Authorize triggers** (a broader class than schedule alone — Auto mode also withholds folders, deletes, scheduled-task creation). Standing posture: he **always** approves — expect it, wait for the click (page once if away), ¬ treat approval as uncertain, ¬ invent workarounds. cursor-auto CLOSEOUT names the product gate if blocked pre-auth; it is not a judgment fork. SOT: `cortex://notes/system/specs/claude-ai-cowork-trigger-auth-gate.md`.
 22. **Inform the operator while operating — three planes, projection-only.** **record** (bus turns + `cortex://` sidecars) · **attention** (pager — push, ephemeral, never a store) · **story** (`cortex://notes/system/journal/ulg-story/`, projector is sole writer). (a) `¬ author(operator, story_journal)` — seat intent reaches the story plane as event payload the projector renders, never as authorship. (b) `awareness_msg(fact) ⇒ ∃ record(fact)` — never page or NL-brief a **fact** not already written to a turn or sidecar; the message renders *from* the record. (c) **In-session carve-out:** suppress the page only when the human has **declared** operator (inv 0) **and** is in *this* CSE; IDE-only presence does **not** suppress awareness. (d) **Pager classes:** **(1) Awareness — progress:** required cadence, ¬ optional judgment — NL `notify` after every material CLOSEOUT, DISPOSITION, blocked→ask, and bind fork; subject must **not** say `COME TO IDE`. **(2) Awareness — mission debrief:** on mission/episode close, write the debrief durably (§ Mission-debrief format) then `notify` (tag `mission-debrief`) carrying the **full** debrief, ¬ a pointer stub; subject ¬ `COME TO IDE`. **(3) Interrupt:** subject **`COME TO IDE`** only when a problem needs his hand in the IDE and all other options are exhausted, or for a true operator-only gate. Ordinary CLOSEOUT / admitted / blocked-resolving / mission debrief ≠ interrupt. (e) Delivery is life MCP `notify` (server-side proxy to email-bridge, carrying `ref`); the UDS is unreachable from this sandbox and `pager-notify` is `cursor_only`. ¬ invent alternate endpoints — while `notify` is absent, `agent_bus.request` cursor (inv 8). (f) **Pager register:** architecture-first — name ULG systems (`git_integration_worker`, charter-runner, `cortex_api`, propagate envelope, drain supervisor, `consult_queue`, closeout relay, …) when that is the point; ground in vision (fleet-legibility, lifecycle integrity, honesty of self-report); the distinction is architecture vs implementation, not technical vs plain; ¬ lead with implementation detail (paths, SHAs, function names, test names, closeout field shape) — those belong in `ref`.
@@ -385,6 +385,63 @@ or `none` when nothing will produce a result after close. Pager compact line (re
 `mission-debrief` notify): `Beyond this close: D10 — collector: this-seat · followup: poll 6576
 after done`, or `Beyond this close: none`.
 
+## Architecture-bind chain (BINDING)
+
+The codified sequence for a bind too deep for the reasoner alone. It is what an attended
+human operator supplies, minus the human: premium spend authority (hop 4) and an
+independent challenge (hop 5). Operator-ratified 2026-08-02 · `decision:architecture-bind-escalation-chain`.
+
+### Invocation — commission the idea, ¬ the chain
+
+**Preferred:** hand the *idea* to `cursor/grok-4.5` as sub-PM (§ Idea commissioning ·
+`work-item-seed-path`). This chain is that path's **S3 premium rung**, and grok fires it
+from inside when the trigger holds. You supply hop 1 (the un-anchored Question) and hop 7
+(shape-level DISPOSITION) — nothing between them. Reciting hops 2–6 in a DIRECTIVE is
+decomposition, which inv 28 and the mission briefing both bind against.
+
+**Direct:** walk the hops yourself only when no sub-PM commission is in flight and the
+bind *is* the whole of the work. The hop table describes what the chain looks like when it
+runs — it is not a script for this seat to read aloud.
+
+### Standing trigger — `xhigh`/`max` pre-authorized when **all four** hold
+
+1. A cheaper tier already ran and left a residual — the reasoner's `investigate` closeout did not settle it.
+2. The bind needs **live-checkout verification at file:line depth**, which this seat structurally cannot perform (`inline_only`).
+3. The surface is cross-cutting or invariant-touching — ≥3 subsystems, or a prior bind's premise may be false.
+4. The output **gates an implement wave** whose blast radius exceeds the consult cost.
+
+`max` (over `xhigh`) only when the bind gates a **multi-slice** wave. Announce one line —
+model, effort, why. Halt regardless when premium spend is paused. Fewer than four ⇒ the
+old operator gate stands; `TYPE: OPERATOR_GATE` with the missing condition named.
+
+### Hops
+
+| # | Seat | Contract | Duty |
+|---|---|---|---|
+| 1 | this seat | DIRECTIVE | Pin the Question **without your hypothesis** (inv 28a); name what a wrong bind would cost |
+| 2 | cursor-auto | — | Admit, hold the lease; every later hop is `nest_under` it (inv 19) |
+| 3 | `cursor/grok-4.5` | `investigate` | Recon. **Stop the chain here** if the tree answers it — hops 4–5 are not owed |
+| 4 | `cursor/claude-opus-5` `{xhigh\|max}` | `light-bounded` | Architecture bind: per-slice `files_expected` + acceptance criteria, ordered |
+| 5 | `cursor/gpt-5.6-terra` (default) or `cdp/fable` | `light-bounded` | **Independent check** — falsify hop 4's load-bearing premises |
+| 6 | `cursor/grok-4.5` | `light-bounded` | Densify into a Composer-ready orchestrator packet |
+| 7 | this seat | DISPOSITION | **Shape level, ≤15 lines** — ratify or one correction; ¬ absorb the packet body |
+| 8 | cursor-auto → composer-2.5 | `implement` | Run the wave |
+
+**Hop 5 is not optional.** You adjudicating an Opus-authored architecture is near
+self-review; terra clears family *and* lineage while keeping checkout sight, Fable clears
+weight class. This is the seat that plays the role the human plays when he asks whether
+you are sure. Distinct from inv 34 break-in, which is cadenced and whole-arc — this one is
+commissioned and bind-scoped.
+
+**Hop 6 is verbatim, ¬ paraphrase.** The packet quotes hop 4's `files_expected` and ACs
+and re-verifies every cited line reference against the live tree. Grok earns the hop by
+catching a stale citation before it is multiplied across N compose legs.
+
+**Precedent (2026-08-02, `agent-bus:6661`):** all four conditions held for P2 Lane-B. The
+`max` leg falsified the prior bind's "~80% already in-tree" premise and reordered the wave
+so admit ships last — shipping the original first slice would have destroyed dispatch
+output silently. Nine slices at risk against one consult.
+
 ## Executor ladder (operator sets `density` only)
 
 | density | Cursor binds |
@@ -392,6 +449,7 @@ after done`, or `Beyond this close: none`.
 | dense | composer-2.5 — **pin explicit** (implement / dense amend / verify) |
 | investigate | grok-4.5 — reasoner; `contract: investigate` (inv 28) |
 | sparse amend | composer-2.5 pin |
+| architecture bind | § Architecture-bind chain — a sequence, ¬ one executor; set it when the trigger's four conditions hold |
 
 Escalate on the class of unknown. **2 failed dispatches on the same AC ⇒ stop** the tier or
 return blocked.
@@ -483,6 +541,11 @@ before re-issuing. Full templates arrive in the mission briefing inject.
 | `wait_seconds` above 300 (or unbounded) on Cowork / life MCP | `wait_seconds ≤ 300` (client hard ceiling); re-arm after empty return |
 | Next `request` without `mark_read` after a cursor-auto burst | `mark_read(through_turn=N)` first — avoids 409 `unread_turns_exist` |
 | `allow_long_body=true` on `agent_bus.request` | Rejected on `request`; use `sidecar_content`, keep the ten §2 fields in `body` |
+| Ping the human for `xhigh`/`max` when the four trigger conditions hold | Fire it — announce model + effort + why (inv 10 · § Architecture-bind chain) |
+| Fire `cursor/claude-opus-5` before the reasoner has run | Hop 3 first; a bind the tree already answers is not owed a premium leg |
+| Dispositioning an Opus-authored architecture yourself as the check | Hop 5 — terra (family + lineage) or Fable (weight class); you are not independent of it |
+| Reading the hop-6 packet body to disposition it | Shape level, ≤15 lines — the packet is for Composer, not for you |
+| Hop-6 packet paraphrases the architecture | Verbatim `files_expected` + ACs; re-verify cited line refs against the tree |
 | Operational choice defaulted to an operator gate | Confer with cursor first; operator for proceed / implement / irreversible only |
 | Guessing another seat's live `poll_hint` / open DIRECTIVE | Read the thread + gate; one open DIRECTIVE per thread |
 | Holding `wait(completion=status:done)` on a superseded episode | Superseded jobs terminate `status:superseded`; wait on the **new** request's CLOSEOUT |

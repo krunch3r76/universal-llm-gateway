@@ -104,13 +104,20 @@ ack.
 
 ## GIW drain vs CLOSEOUT relay (mechanism)
 
-`git_integration_worker` hosts **cursor-auto**, the process-local **AutoJobQueue**, and the
-**poll→relay loop**. Any drain / restart of that process risks losing the CLOSEOUT relay
-**regardless of which service name was passed to `manage`** — drain defers the restart to
-dispatch exit and wins over `post_operator_closeout`. Charter tick windows share the gate, so
-tick-initiated GIW restarts can eat unrelated operator dispatches' relays. Hence the operator
-contract: never place a GIW restart AC inside a DIRECTIVE whose §2 CLOSEOUT is awaited — use a
-`contract: propagate` restart-only DIRECTIVE, or defer to RESIDUE and fire propagate separately.
+`git_integration_worker` hosts **cursor-auto**, the **AutoJobQueue**, and the
+**poll→relay loop**. Any drain / restart of the **queue-owning process**
+(`git_integration_worker`, including manage-driven lifecycle refresh — not only
+operator-initiated GIW restarts) risks losing in-flight Auto work unless the
+durable job ledger terminalizes it: open jobs (`queued`/`claimed`) must land
+`status=failed` with `terminal_reason=queue_owner_restart` and a bus terminal
+(`dead_on_giw_restart`) so waiters unblock instead of polling a dead lane.
+**CLOSEOUT relay** loss remains a separate hazard when restart happens mid-nested
+SDK — drain defers the restart to dispatch exit and wins over
+`post_operator_closeout`. Charter tick windows share the gate, so tick-initiated
+GIW restarts can eat unrelated operator dispatches' relays. Hence the operator
+contract: never place a GIW restart AC inside a DIRECTIVE whose §2 CLOSEOUT is
+awaited — use a `contract: propagate` restart-only DIRECTIVE, or defer to RESIDUE
+and fire propagate separately.
 
 The relay-trust gate itself is **bus-only** — it blocks cursor-auto admission, not restarts.
 `contract: propagate` mints propagation ledger rows and coordinates drain-gated `sync_restart`

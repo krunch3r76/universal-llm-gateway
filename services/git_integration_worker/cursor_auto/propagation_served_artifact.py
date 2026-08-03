@@ -87,7 +87,7 @@ SERVED_ARTIFACT_DESCRIPTORS: dict[str, ServedArtifactDescriptor] = {
     ),
     "cortex_api": ServedArtifactDescriptor(
         surfaces=_cortex_surfaces(),
-        expected_x_mcp_count=46,
+        expected_x_mcp_count=50,
     ),
     "agent_bus": ServedArtifactDescriptor(
         surfaces=(

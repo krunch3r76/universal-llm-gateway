@@ -106,7 +106,7 @@ async def ensure_cse_attached(
             pw=pw,
         )
 
-    if len(lanes) >= LANE_HARD_LIMIT:
+    if cdp_registry.count_capacity_lanes() >= LANE_HARD_LIMIT:
         return ReattachOutcome(ok=False, error="lane_capacity_exhausted")
 
     reg = cdp_registry.register_lane(holder=holder, purpose=purpose)

@@ -204,6 +204,39 @@ async def terminal_expired(
     )
 
 
+async def post_queue_owner_restart_terminal(
+    job: AutoJob,
+    *,
+    client: CursorBusClient,
+    queue: Any,
+) -> dict[str, Any]:
+    """Notify waiters that the queue owner restarted before this job finished."""
+    summary = (
+        "Auto job lost when git_integration_worker restarted "
+        "(dead_on_giw_restart); re-issue the DIRECTIVE."
+    )
+    payload: dict[str, Any] = {
+        "summary": summary,
+        "reason": "queue_owner_restart",
+        "legacy_reason": "dead_on_giw_restart",
+        "job_id": job.job_id,
+        "request_turn": job.turn_number,
+    }
+    if job.request_id:
+        payload["request_id"] = job.request_id
+    return await post_terminal_status(
+        job,
+        client=client,
+        queue=queue,
+        summary=summary,
+        disposition="failed",
+        contract=job.contract,
+        terminal_status="status:failed",
+        payload=payload,
+        failed=True,
+    )
+
+
 async def terminal_failed(
     job: AutoJob,
     *,

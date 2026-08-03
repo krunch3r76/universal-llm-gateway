@@ -7,7 +7,6 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
-
 from typing import Any
 
 import pytest
@@ -168,6 +167,22 @@ def test_deregister_cse_not_found_never_kills(
     assert row["orphan_reason"] == "cse_not_found"
     visible = cdp_orphans.registered_lane_dicts()
     assert any(item["registration_id"] == r.registration_id for item in visible)
+
+
+def test_list_capacity_excludes_orphaned_alive(isolated_registry: Path) -> None:
+    r = reg.register_lane(
+        holder="a",
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    reg.deregister_lane(
+        r.registration_id,
+        reason="cse_not_found",
+        is_listening=lambda _p: True,
+    )
+    assert [x.registration_id for x in reg.list_active()] == [r.registration_id]
+    assert reg.list_capacity() == []
+    assert reg.count_capacity_lanes() == 0
 
 
 def test_reattach_same_holder_ok(isolated_registry: Path) -> None:

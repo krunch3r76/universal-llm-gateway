@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from agent_seat.registry import normalize_bus_address
 from fastapi import APIRouter, HTTPException, Query, status
 from openapi_mcp.binding import x_mcp
 from universal_logging import get_logger
@@ -74,6 +75,7 @@ def _insert_reflective_entry_tx(
         )
         if not exists:
             raise ValueError(f"revises target {revises} not found")
+    agent = normalize_bus_address(agent)
     cur = conn.execute(  # type: ignore[union-attr]
         "INSERT INTO reflective_journal "
         "(agent, register, entry, kind, session_id, revises, consolidation_data) "
@@ -199,7 +201,7 @@ def list_entries(
     params: list[str | int] = []
     if agent:
         clauses.append("agent = ?")
-        params.append(agent)
+        params.append(normalize_bus_address(agent))
     if kind:
         if kind not in _VALID_KINDS:
             raise HTTPException(
@@ -237,7 +239,9 @@ def list_entries(
     return ReflectiveEntryList(items=items, total=total)
 
 
-@router.get("/{entry_id}", response_model=ReflectiveEntryItem, openapi_extra=x_mcp("rj_read"))
+@router.get(
+    "/{entry_id}", response_model=ReflectiveEntryItem, openapi_extra=x_mcp("rj_read")
+)
 def get_entry(entry_id: int) -> ReflectiveEntryItem:
     """Get a single reflective journal entry with its links."""
     conn = cortex_conn()
@@ -285,34 +289,22 @@ def create_entry(body: ReflectiveEntryCreate) -> ReflectiveEntryItem:
 
     conn = cortex_conn()
     try:
-        if body.revises is not None:
-            exists = query(
+        try:
+            entry_id = _insert_reflective_entry_tx(
                 conn,
-                "SELECT 1 FROM reflective_journal WHERE id = ?",
-                (body.revises,),
+                agent=body.agent,
+                register=body.register,
+                entry=body.entry,
+                kind=body.kind,
+                session_id=body.session_id,
+                revises=body.revises,
+                consolidation_data_json=consolidation_json,
             )
-            if not exists:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"revises target {body.revises} not found",
-                )
-
-        cur = conn.execute(
-            "INSERT INTO reflective_journal "
-            "(agent, register, entry, kind, session_id, revises, consolidation_data) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                body.agent,
-                body.register,
-                body.entry,
-                body.kind,
-                body.session_id,
-                body.revises,
-                consolidation_json,
-            ),
-        )
-        entry_id = cur.lastrowid
-        assert entry_id is not None
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
 
         if body.links:
             for lnk in body.links:
@@ -328,7 +320,7 @@ def create_entry(body: ReflectiveEntryCreate) -> ReflectiveEntryItem:
 
         rows = query(conn, "SELECT * FROM reflective_journal WHERE id = ?", (entry_id,))
         links_by_entry = _fetch_links(conn, [entry_id])
-        suggestions = _suggest_links(conn, entry_id, body.agent, body.entry)
+        suggestions = _suggest_links(conn, entry_id, rows[0]["agent"], body.entry)
     finally:
         conn.close()
 

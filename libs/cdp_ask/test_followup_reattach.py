@@ -207,6 +207,10 @@ async def test_hard_limit_skips_register(monkeypatch: pytest.MonkeyPatch) -> Non
         "claude_bundles.cdp_registry.list_active",
         lambda: lanes,
     )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.count_capacity_lanes",
+        lambda: LANE_HARD_LIMIT,
+    )
     register = MagicMock()
     monkeypatch.setattr(
         "cdp_ask.followup_reattach.cdp_registry.register_lane", register
@@ -220,6 +224,38 @@ async def test_hard_limit_skips_register(monkeypatch: pytest.MonkeyPatch) -> Non
     assert outcome.ok is False
     assert outcome.error == "lane_capacity_exhausted"
     register.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_orphan_only_discovery_does_not_exhaust_capacity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lanes = [_reg(f"orphan-{i}") for i in range(LANE_HARD_LIMIT)]
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.list_active",
+        lambda: lanes,
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.count_capacity_lanes",
+        lambda: 0,
+    )
+    fake_reg = _reg("reg-new")
+    register = MagicMock(return_value=fake_reg)
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.register_lane", register
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.deregister_lane", MagicMock()
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.connect_cdp",
+        _connect_factory(fail=True),
+    )
+
+    outcome = await ensure_cse_attached(CSE_A, holder="h")
+    assert outcome.error != "lane_capacity_exhausted"
+    assert outcome.error == "reattach_navigate_failed"
+    register.assert_called_once_with(holder="h", purpose=None)
 
 
 @pytest.mark.asyncio

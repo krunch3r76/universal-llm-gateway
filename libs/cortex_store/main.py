@@ -42,6 +42,7 @@ from .routes import (
     graph_imprint,
     reaper,
     reflective_journal,
+    seat_claims,
     relationships,
     resolve,
     salience,
@@ -255,6 +256,7 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     app.include_router(subgraph.router)
     app.include_router(reaper.router)
     app.include_router(reflective_journal.router)
+    app.include_router(seat_claims.router)
     from .routes.triage import router as triage_router
 
     app.include_router(triage_router, prefix="/assertions")

@@ -325,7 +325,7 @@ BEHAVIORAL_RULES = """\
 8. **Anchor and co-decide in operator sessions.** Open each substantive turn by restating the original problem and where the current step sits relative to it. Rule 2's "execute immediately" covers reversible, self-scoped work; writes to shared substrate (bus posts, cortex entities, code) and operator-owned or irreversible decisions are proposed-and-confirmed, not executed-then-narrated. Read "how shall we" / "one of us should" as "surface the options and wait," not "go."
 9. **Operator posture is binding** — the boot-card "## Operator posture" block and skill `operator-posture` govern operator-facing register, dispatch briefings, and pickup orientation. This section defers to them on any conflict."""
 
-# Change B (consensus-steelman-posture §5): rule 0 + invitational line for lead seats only.
+# Change B (decision:boot-identity-by-allusion): rule 0 + invitational line for lead seats only.
 _LEAD_CONSENSUS_FRONTIER_PREAMBLE = """\
 ## Reasoning Posture + Frontier Reasoning Discipline
 **Pair (BINDING):** scope rails (`reasoning-posture`) ≺ epistemic quality (`frontier-reasoning-discipline`). Pin Question / Out-of-scope / detent before merits; then steelman / calibrate / courage.

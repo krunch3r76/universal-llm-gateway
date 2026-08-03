@@ -114,6 +114,14 @@ Classify kind · channel · subsumption.
 **Skip:** single obvious shape ∨ mechanical.  
 **Do:** CDP architecture consult (`team_dispatch(model=cdp/fable|cdp/opus-5)` per consult-routing). Harvest to cortex.
 
+**Premium rung:** fork needs live-checkout verification at file:line depth a CDP seat
+structurally cannot perform ⇒ escalate to `cursor/claude-opus-5` `{xhigh|max}`,
+**pre-authorized — ¬ operator ping** — under the four-condition trigger in
+`decision:architecture-bind-escalation-chain` (`cdp-operator-proxy` § Architecture-bind
+chain). Announce model + effort + why. That SOT also binds the **mandatory** independent
+check (`cursor/gpt-5.6-terra` default, `cdp/fable` alternate — an Opus-authored
+architecture is not self-ratifiable) and verbatim densify. ¬ fork those rules here.
+
 | Mode | Sequence | Choose when |
 |---|---|---|
 | **A** seed→layer-G1 | S4 rich-seed → `/layer` G1 → harvest → S5 → G2 | Problem clear; stable slug; arch is layer-G1 concern |
@@ -170,6 +178,8 @@ Name: `todo:{slug}` · entry gate · consult URI · recon URI.
 | Announce Mode B / "staging Fable" then end turn with no admit | Same-turn admit (`execution_id`+`poll_hint`) or named halt |
 | Existing todo + Mode B ask → divert to bare `/layer` | Mode B on existing slug · attach · `/layer` G2 |
 | S2 breadth via Composer or in-seat Grep spray | Explore subagent first (cheap-recon Tier-1) |
+| S3 fork needs checkout depth → park on the operator for premium approval | Pre-authorized under the four-condition trigger — fire and announce |
+| Premium S3 bind ratified by the seat that commissioned it | Independent check is mandatory (terra/Fable) — see the chain SOT |
 
 ## Commissioning register (operator bind 2026-08-02)
 

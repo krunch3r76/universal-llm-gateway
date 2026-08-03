@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "7e9553b58ad1b23c9e5f6bd58dc52074211b0fe180c35a9624d0950c92ac792a"
+OPENAPI_SHA256 = "622e2f7239f28ac7653dc024b7343cc9a90ba3177422f3ca02b347dbe35f6e2f"
 FACADE_TOOL = "giw"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "cancel": {
@@ -66,9 +66,10 @@ SERVED_OPS: dict[str, dict[str, str]] = {
     },
 }
 NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
-    "@components": "00c389d74572d5f25f38635281cb111a0d94cf3043821a7a1ad2760c3e4c896b",
+    "@components": "b3682799f4b3fee61b16d4281b360bd49606f1b90cf25e1d4fb8fc30bd8f37a4",
     "@info": "ccfaa10f2c9b783c227fbd0286149ff177219e19207a5632fda5bd9fd68ce6d4",
     "GET /api/v1/cursor/catalog": "422c5cb1b562e05a1155b577da110a8c4563a5c55c9e8f9aaff2ff98a58b1990",
+    "GET /api/v1/cursor/concurrency-stats": "83a8d8e0bcd07908c1338e4c11f1f7f59a41e332fb66d23a61a6adcbf75e2ff2",
     "GET /api/v1/git/active-work": "4d4a866e3c0dcff6b7982dffb3dfd3b5fa7a1cb5111683626fc5105a4403f7c6",
     "GET /api/v1/git/admin/dispatch-status": "7384a344be9e60ed3cb48acbfc6ae7833e588c9405e9be0c929e486a28e1864c",
     "GET /api/v1/git/admin/drain-state": "61b348f13c41e2159d14ac253069fc20ac3f8adc77fde502d0aac2cc9b7fba44",

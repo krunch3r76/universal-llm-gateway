@@ -77,6 +77,24 @@ Enrollment tag is SOT. `tick_charter` = machine consumer (base + T extras; malfo
 
 **Operator-facing:** `orchestrator_continuity` → Been→Are→Going → `In one line:` → charter · settled·live·next · next (`operator-posture` Rule 3). `tick_charter` → wave · in-flight · next pickup only.
 
+## MONITOR / mission resume — fast successor (BINDING — 2026-08-02)
+
+Waiting for `live_cse=0` × idle confirmations after a CHECKPOINT that already names a
+**rewritten commission_seq** is a stall, not discipline. On tip resume / CP authoring when:
+
+`commission_seq > last_summoned_seq ∧ running_count=0 ∧ arc_complete=false`
+
+⇒ **fire the successor now** (`team_dispatch(model=cdp/…, purpose=operator-proxy,
+sidecar_ref=commission)` or re-arm watchdog with the fast path). Do **not** wait for a
+lingering CSE to die. Prefer warm follow-up into a live CSE when the departing seat is
+still correspondent; otherwise a new window on the **same** private lane.
+
+Fold gates that wait on passive traffic (e.g. N≥20) ⇒ prefer the named **backfill /
+instrument** shortcut in the commission before parking another episode on accrual.
+
+Watchdog SOT: `scripts/opus-summons-watchdog.py` (`successor_fast` when seq advanced +
+`running_count=0`).
+
 **Vocabulary:** `resume <n>` → this section; `checkpoint <n>` → post per profile + tip hygiene.
 
 **Mid-tier / B6:** scoreboard gated lane + tip first. Charter-health dispatch only when densified Next/WIP ∉ OPEN G-row or operator asks how-are-we-doing (≤15 lines).
@@ -188,6 +206,24 @@ Enrollment tag is SOT. `tick_charter` = machine consumer (base + T extras; malfo
 | Execute on child lane | Open **that** thread separately |
 
 **Operator-facing:** `orchestrator_continuity` → Been→Are→Going → `In one line:` → charter · settled·live·next · next (`operator-posture` Rule 3). `tick_charter` → wave · in-flight · next pickup only.
+
+## MONITOR / mission resume — fast successor (BINDING — 2026-08-02)
+
+Waiting for `live_cse=0` × idle confirmations after a CHECKPOINT that already names a
+**rewritten commission_seq** is a stall, not discipline. On tip resume / CP authoring when:
+
+`commission_seq > last_summoned_seq ∧ running_count=0 ∧ arc_complete=false`
+
+⇒ **fire the successor now** (`team_dispatch(model=cdp/…, purpose=operator-proxy,
+sidecar_ref=commission)` or re-arm watchdog with the fast path). Do **not** wait for a
+lingering CSE to die. Prefer warm follow-up into a live CSE when the departing seat is
+still correspondent; otherwise a new window on the **same** private lane.
+
+Fold gates that wait on passive traffic (e.g. N≥20) ⇒ prefer the named **backfill /
+instrument** shortcut in the commission before parking another episode on accrual.
+
+Watchdog SOT: `scripts/opus-summons-watchdog.py` (`successor_fast` when seq advanced +
+`running_count=0`).
 
 **Vocabulary:** `resume <n>` → this section; `checkpoint <n>` → post per profile + tip hygiene.
 

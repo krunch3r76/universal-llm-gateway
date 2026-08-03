@@ -5471,6 +5471,364 @@
         "title": "RelationshipUpdate",
         "type": "object"
       },
+      "SeatClaimHolder": {
+        "properties": {
+          "age_s": {
+            "title": "Age S",
+            "type": "number"
+          },
+          "claimed_at": {
+            "title": "Claimed At",
+            "type": "string"
+          },
+          "expires_in_s": {
+            "title": "Expires In S",
+            "type": "number"
+          },
+          "holder_id": {
+            "title": "Holder Id",
+            "type": "string"
+          },
+          "last_heartbeat_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Heartbeat At"
+          },
+          "seat": {
+            "title": "Seat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seat",
+          "holder_id",
+          "claimed_at",
+          "age_s",
+          "expires_in_s"
+        ],
+        "title": "SeatClaimHolder",
+        "type": "object"
+      },
+      "SeatClaimRequest": {
+        "properties": {
+          "claim_key": {
+            "title": "Claim Key",
+            "type": "string"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "seat": {
+            "title": "Seat",
+            "type": "string"
+          },
+          "ttl_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ttl S"
+          }
+        },
+        "required": [
+          "claim_key",
+          "seat"
+        ],
+        "title": "SeatClaimRequest",
+        "type": "object"
+      },
+      "SeatClaimResponse": {
+        "properties": {
+          "claim_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claim Key"
+          },
+          "claimed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claimed At"
+          },
+          "granted": {
+            "title": "Granted",
+            "type": "boolean"
+          },
+          "holder": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SeatClaimHolder"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "holder_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Holder Id"
+          },
+          "seat": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seat"
+          },
+          "ttl_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ttl S"
+          }
+        },
+        "required": [
+          "granted"
+        ],
+        "title": "SeatClaimResponse",
+        "type": "object"
+      },
+      "SeatClaimRow": {
+        "properties": {
+          "claim_key": {
+            "title": "Claim Key",
+            "type": "string"
+          },
+          "claimed_at": {
+            "title": "Claimed At",
+            "type": "string"
+          },
+          "end_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "released",
+                  "stale",
+                  "superseded"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Reason"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "holder_id": {
+            "title": "Holder Id",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "last_heartbeat_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Heartbeat At"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "seat": {
+            "title": "Seat",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "held",
+              "released",
+              "reclaimed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "ttl_s": {
+            "title": "Ttl S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "claim_key",
+          "seat",
+          "holder_id",
+          "status",
+          "claimed_at",
+          "ttl_s"
+        ],
+        "title": "SeatClaimRow",
+        "type": "object"
+      },
+      "SeatClaimsListResponse": {
+        "properties": {
+          "claims": {
+            "items": {
+              "$ref": "#/components/schemas/SeatClaimRow"
+            },
+            "title": "Claims",
+            "type": "array"
+          }
+        },
+        "title": "SeatClaimsListResponse",
+        "type": "object"
+      },
+      "SeatHeartbeatRequest": {
+        "properties": {
+          "holder_id": {
+            "title": "Holder Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "holder_id"
+        ],
+        "title": "SeatHeartbeatRequest",
+        "type": "object"
+      },
+      "SeatHeartbeatResponse": {
+        "properties": {
+          "expires_in_s": {
+            "default": 0.0,
+            "title": "Expires In S",
+            "type": "number"
+          },
+          "last_heartbeat_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Heartbeat At"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "SeatHeartbeatResponse",
+        "type": "object"
+      },
+      "SeatReleaseRequest": {
+        "properties": {
+          "holder_id": {
+            "title": "Holder Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "holder_id"
+        ],
+        "title": "SeatReleaseRequest",
+        "type": "object"
+      },
+      "SeatReleaseResponse": {
+        "properties": {
+          "end_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "released",
+                  "stale",
+                  "superseded"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Reason"
+          },
+          "released": {
+            "title": "Released",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "released"
+        ],
+        "title": "SeatReleaseResponse",
+        "type": "object"
+      },
       "SessionCloseRequest": {
         "description": "Session-close input contract.\n\nAtomic assembly is server-side: the handler reads the JSONL (or\naccepts inline ``transcript_md`` for the Web seat), builds the\nverbatim layer, appends ``session_summary_md``, writes the file,\nand commits the DB transaction.\n\n``transcript_depth`` (default ``\"verbatim\"``) selects what gets\narchived:\n\n  - ``verbatim`` \u2014 full dual-layer transcript (verbatim turns +\n    structural layer); transcript entity created; enrichment-eligible.\n    Transcript source (``transcript_jsonl_path`` or ``transcript_md``)\n    is required. Current behavior; backward-compatible default.\n  - ``light``    \u2014 structural-layer-only file written; transcript\n    entity created with ``attributes.transcript_depth=\"light\"``;\n    NOT enrichment-eligible (no verbatim turns to walk). File content\n    is ``session_summary_md``; no ``transcript_md`` / JSONL required.\n  - ``none``     \u2014 no file, no transcript entity; journal row +\n    ``continues`` edge only. NOT enrichment-eligible. Incompatible\n    with ``handoff_prompt`` / ``handoff_source_path`` (422).\n\nContinuity (journal row, prior_session_id linkage, open_items) is\nwritten for all depths. Only the transcript archival layer varies.\n\nRequired fields:\n  session_id:         ``{agent}-YYYY-MM-DD-HHMMSS-{3hex}`` (UTC at session **start**;\n    boot ``session_id`` or JSONL birth time for Cursor \u2014 not close time).\n  agent:              agent slug (cursor / web / orion / \u2026).\n  session_summary_md: agent-composed structural layer.  Non-empty; a\n    ``## Session Summary`` heading is normalized in (prepended or\n    rewritten from a near-miss) when absent \u2014 see\n    ``normalize_session_summary_heading``. A Decisions list is\n    recommended but not enforced. May be omitted when\n    ``session_summary_md_path`` is set (path wins if both set).\n  session_summary_md_path: optional CORTEX_FILES_ROOT-relative path to\n    the structural summary file; contents populate ``session_summary_md``.\n  summary:            \u226520 chars synthesis used for the entity name\n    and journal row.\n\nRequired conditionally on ``transcript_depth``:\n  transcript_jsonl_path / transcript_md: required iff\n    ``transcript_depth == \"verbatim\"``. Cursor passes the path;\n    web passes the markdown. ``light`` uses ``session_summary_md`` only.\n\nOptional fields:\n  transcript_depth:   one of {\"verbatim\", \"light\", \"none\"}; default\n    ``\"verbatim\"``.\n  domains / decisions / open_items / entity_ids: journal metadata.\n  prior_session_id:   creates a ``continues`` edge.\n  handoff_prompt:     forward-pickup narrative for the next session;\n    persisted on the ``session_journals`` row in the\n    ``handoff_prompt`` column (added in migration 044) and mirrored to\n    ``transcript:{session_id}`` entity attributes for explicit retrieval\n    via ``entity_get``. Boot omits handoffs (see\n    ``decision:transcript-scoped-handoff-explicit-load``). Replaces the\n    prior write path through ``reflective_journal`` (retired per\n    ``decision:rj-handoff-kind-retirement``, agent-bus thread 1107).\n  handoff_source_path / handoff_source_section: when ``handoff_source_path``\n    is set, the server derives ``handoff_prompt`` from HTML-comment marker\n    pairs in the file (2-A v2, agent-bus 1188). ``handoff_source_section``\n    names an optional marker label; null uses ``<!-- handoff:start/end -->``.\n  expected_handoff_prompt / expected_derived_handoff_prompt_sha256 /\n    expected_source_file_sha256: assertion / TOCTOU guards after ``dry_run``.\n  assistant_label:    H3 heading label for assistant blocks in the\n    assembled verbatim layer (default ``\"Assistant\"``).\n  source_ref:         optional canonical admission ref (``todo:|plan:|plan_phase:``\n    grammar); canonicalized server-side via ``parse_source_ref``; stamped on\n    ``transcript:{session_id}.attributes.source_ref`` and the journal row.\n  source_ref_derivation: optional provenance tag from the IDE capture door\n    (e.g. ``ide-todo-pickup``, ``ide-implement-plan-executor``).",
         "properties": {
@@ -9020,7 +9378,7 @@
             "name": "agent",
             "required": false,
             "schema": {
-              "default": "web",
+              "default": "web-anthropic",
               "description": "Agent whose reflective entries to surface",
               "title": "Agent",
               "type": "string"
@@ -10039,7 +10397,11 @@
         "summary": "List Edges",
         "tags": [
           "edges"
-        ]
+        ],
+        "x-mcp": {
+          "op": "edges",
+          "tool": "cortex"
+        }
       },
       "post": {
         "description": "Create a new active session edge after validating edge_type and endpoints.\n\nBoth ``from_node`` and ``to_node`` MUST resolve per v2.3 \u00a73.4: either an\n``entity_id`` (any prefix, looked up in the ``entities`` table) or\n``assertion:N`` (looked up in the ``assertions`` table). Unresolved\nendpoints are rejected with HTTP 422 and ``reason: \"dangling_edge\"``.\n\nDistinct from the referential check in ``POST /relationships``, which\nrestricts to entities only \u2014 relationships are structural; edges are\nreasoning links and may target specific historical assertions.",
@@ -10081,7 +10443,7 @@
           "edges"
         ],
         "x-mcp": {
-          "op": "edges",
+          "op": "edge_create",
           "tool": "cortex"
         }
       }
@@ -11339,6 +11701,12 @@
                         "type": "string"
                       },
                       {
+                        "type": "number"
+                      },
+                      {
+                        "type": "integer"
+                      },
+                      {
                         "type": "null"
                       }
                     ]
@@ -12139,6 +12507,224 @@
         "tags": [
           "salience"
         ]
+      }
+    },
+    "/seat-claims": {
+      "get": {
+        "description": "List seat claims; reclaims stale rows first.",
+        "operationId": "seat_claims_list_route_seat_claims_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "claim_key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Claim Key"
+            }
+          },
+          {
+            "in": "query",
+            "name": "seat",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Seat"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_ended",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Ended",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeatClaimsListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Seat Claims List Route",
+        "tags": [
+          "seat-claims"
+        ],
+        "x-mcp": {
+          "op": "seat_claims_list",
+          "tool": "cortex"
+        }
+      }
+    },
+    "/seat-claims/claim": {
+      "post": {
+        "description": "Claim exclusive hold on a contended key for a seat.",
+        "operationId": "seat_claim_route_seat_claims_claim_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SeatClaimRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeatClaimResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Seat Claim Route",
+        "tags": [
+          "seat-claims"
+        ],
+        "x-mcp": {
+          "op": "seat_claim",
+          "tool": "cortex"
+        }
+      }
+    },
+    "/seat-claims/heartbeat": {
+      "post": {
+        "description": "Refresh liveness for an held claim.",
+        "operationId": "seat_heartbeat_route_seat_claims_heartbeat_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SeatHeartbeatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeatHeartbeatResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Seat Heartbeat Route",
+        "tags": [
+          "seat-claims"
+        ],
+        "x-mcp": {
+          "op": "seat_heartbeat",
+          "tool": "cortex"
+        }
+      }
+    },
+    "/seat-claims/release": {
+      "post": {
+        "description": "Release an held claim cleanly.",
+        "operationId": "seat_release_route_seat_claims_release_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SeatReleaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeatReleaseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Seat Release Route",
+        "tags": [
+          "seat-claims"
+        ],
+        "x-mcp": {
+          "op": "seat_release",
+          "tool": "cortex"
+        }
       }
     },
     "/session-journals": {

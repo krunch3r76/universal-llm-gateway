@@ -74,7 +74,7 @@ The default `role=skeptic` model (xai/grok-4.5) is **MCP-capable**, and `team_di
 |---|---|---|---|
 | Axis-2 densify/ratification citing live files | **MCP-ON** (default) | `mcp=true`, `max_tool_turns≥15` | Explicit `mcp=true` (not silent omit) so intent is visible in the transcript; keep the fat design as the **latest** admit-time turn on the dispatch thread; pre-stage `FILE_EVIDENCE_PATHS` candidates; the skeptic may `fs`-verify/extend them. |
 | Self-contained inline packet (4728 shape) | MCP-OFF | `mcp=false` | Entire decision in the admit-time latest turn; forbid "read thread"/`agent_bus(get)` instructions there; pre-stage evidence paths for echo (no live discovery). |
-| Non-code personal/legal/financial lane | MCP-OFF | `mcp=false` **always** | `consensus-steelman-posture` §8; the personal corpus must not gain tools. |
+| Non-code personal/legal/financial lane | MCP-OFF | `mcp=false` **always** | `consensus-steelman-posture` §5; the personal corpus must not gain tools. |
 
 Default (MCP-ON): `team_dispatch(op=generate, role=skeptic, dispatch_thread_id=<thread>, mcp=true, max_tool_turns=15, contract=light-bounded)`.
 

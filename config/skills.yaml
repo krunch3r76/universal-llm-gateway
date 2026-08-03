@@ -92,7 +92,10 @@ skills:
     surface_class: cursor_only
     mcp_surface_required: none
   consensus-steelman-posture:
-    surface_class: shared_sync
+    # Demoted from shared_sync 2026-08-02 — not default Customize; panel
+    # disposition SoT retained on-demand. Excise overlap vs escalation ladder:
+    # todo:excise-consensus-steelman-redundancies.
+    surface_class: cursor_only
     mcp_surface_required: life
   consult-posture:
     surface_class: shared_sync
@@ -269,7 +272,9 @@ skills:
     surface_class: shared_sync
     mcp_surface_required: none
   lawyer-stance:
-    surface_class: shared_sync
+    # Demoted from shared_sync 2026-08-02 — legal domain on-demand, ¬ every
+    # web/Customize open (opening-context cost).
+    surface_class: cursor_only
     mcp_surface_required: none
   lawyer-stance-code:
     surface_class: cursor_only
@@ -458,7 +463,9 @@ skills:
     mcp_surface_required: none
     delivery_priority: 1
   writing-with-provenance:
-    surface_class: shared_sync
+    # Demoted from shared_sync 2026-08-02 — claim-record drafting on-demand,
+    # ¬ every web/Customize open (opening-context cost).
+    surface_class: cursor_only
     mcp_surface_required: none
   w2-ingestion:
     surface_class: cursor_only

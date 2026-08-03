@@ -138,9 +138,10 @@ async def auto_worker_loop(app: Any) -> None:
     registry.register(_HANDLER_ID)
     logger.info("cursor-auto worker loop started handler_id=%s", _HANDLER_ID)
 
-    async def _heartbeat_while_busy() -> None:
+    async def _heartbeat_while_busy(job_id: str) -> None:
         while True:
             registry.heartbeat(_HANDLER_ID)
+            get_queue().bump_heartbeat(job_id)
             await asyncio.sleep(min(5.0, _WORKER_INTERVAL_S * 4))
 
     try:
@@ -148,7 +149,7 @@ async def auto_worker_loop(app: Any) -> None:
             registry.heartbeat(_HANDLER_ID)
             job = get_queue().claim_next()
             if job is not None:
-                hb_task = asyncio.create_task(_heartbeat_while_busy())
+                hb_task = asyncio.create_task(_heartbeat_while_busy(job.job_id))
                 try:
                     result = await process_job(job)
                     logger.info(
