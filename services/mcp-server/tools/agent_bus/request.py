@@ -16,6 +16,7 @@ from agent_bus_store.disposition import append_bus_lifecycle_tags
 from mcp_events import record
 
 from .._agent_bus_author import resolve_dispatch_from_agent
+from .park_hint import build_poll_hint as _build_poll_hint
 from .request_intake import (
     resolve_contract_intake,
     resolve_request_id_intake,
@@ -25,8 +26,6 @@ from .request_worker_client import enqueue_auto_job, probe_auto_liveness
 from .send import _send_dispatch
 
 _LANE_TAG = "lane:cursor-auto"
-_SUGGESTED_INTERVAL_S = 2
-_MAX_EXPECTED_LATENCY_S = 300
 
 
 def _merge_lane_tags(tags: list[str] | None) -> list[str]:
@@ -38,25 +37,6 @@ def _merge_lane_tags(tags: list[str] | None) -> list[str]:
             merged.append(t)
             seen.add(t)
     return merged
-
-
-def _build_poll_hint(*, thread_id: str, after_turn: int) -> dict[str, Any]:
-    return {
-        "tool": "wait",
-        "arguments_json": {
-            "thread": str(thread_id),
-            "after_turn": after_turn,
-            "completion": "status:done",
-            "wait_seconds": 0,
-        },
-        "suggested_interval_s": _SUGGESTED_INTERVAL_S,
-        "max_expected_latency_s": _MAX_EXPECTED_LATENCY_S,
-        "alternate_completions": [
-            "status:failed",
-            "status:needs-attended",
-            "status:blocked",
-        ],
-    }
 
 
 def _annotate_poll_hint_no_producer(poll_hint: dict[str, Any]) -> dict[str, Any]:
@@ -212,7 +192,11 @@ def _request_impl(
             "turn": turn_obj,
             "handler_status": "no-auto-handler",
             "poll_hint": _annotate_poll_hint_no_producer(
-                _build_poll_hint(thread_id=thread_id, after_turn=turn_number)
+                _build_poll_hint(
+                    thread_id=thread_id,
+                    after_turn=turn_number,
+                    from_agent=from_agent,
+                )
             ),
             "liveness": liveness,
             "enqueue_failure": _build_enqueue_failure(
@@ -261,7 +245,11 @@ def _request_impl(
             "turn": turn_obj,
             "handler_status": "no-auto-handler",
             "poll_hint": _annotate_poll_hint_no_producer(
-                _build_poll_hint(thread_id=thread_id, after_turn=turn_number)
+                _build_poll_hint(
+                    thread_id=thread_id,
+                    after_turn=turn_number,
+                    from_agent=from_agent,
+                )
             ),
             "enqueue": enq,
             "enqueue_failure": _build_enqueue_failure(
@@ -292,7 +280,11 @@ def _request_impl(
         "thread": thread_obj,
         "turn": turn_obj,
         "handler_status": handler_status,
-        "poll_hint": _build_poll_hint(thread_id=thread_id, after_turn=turn_number),
+        "poll_hint": _build_poll_hint(
+            thread_id=thread_id,
+            after_turn=turn_number,
+            from_agent=from_agent,
+        ),
         "enqueue": enq,
         "tags": merged_tags,
         "sidecar_uri": sidecar_uri,
