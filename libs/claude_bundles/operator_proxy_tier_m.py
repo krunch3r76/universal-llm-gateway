@@ -155,7 +155,7 @@ nested exit, or operator-proxy top-level)."""
 
 _DEGRADE_LADDER = """\
 - `auto-admit-armed` — Auto is running it; poll the returned `poll_hint` in one
-  continuous hold up to `wait_seconds ≤ 300` (Anthropic MCP client ceiling);
+  continuous hold up to `wait_seconds ≤ 60` (life MCP client ceiling);
   re-arm only after an empty return or for nests that outlast one hold.
 - `no-auto-handler` — the turn was written but nothing will act on it; the ask is
   parked. Re-`request` after liveness returns, or `send` + park. Never long-wait.

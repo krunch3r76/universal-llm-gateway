@@ -51,6 +51,33 @@ def normalize_picker_request(model: str) -> str:
     return key
 
 
+def compose_cdp_model_with_effort(
+    model: str, reasoning_effort: str | None
+) -> str:
+    """Fold ``reasoning_effort`` into ``cdp/<family>-<effort>`` for the picker.
+
+    Bare ``cdp/opus-5`` + ``reasoning_effort=max`` must become ``cdp/opus-5-max``
+    so ``select_model`` attests Max — otherwise sealed-ask defaults Opus to High
+    (operator observation 2026-08-03). Effort already on the model string wins.
+    Unknown / empty effort leaves ``model`` unchanged. ``xhigh`` → ``extra``.
+    """
+    raw = (model or "").strip()
+    if not raw:
+        return raw
+    effort = (reasoning_effort or "").strip().lower() or None
+    if effort == "xhigh":
+        effort = "extra"
+    if effort not in _EFFORT_TOKENS:
+        return raw
+    picker = normalize_picker_request(raw)
+    family, existing = parse_model_request(picker)
+    if existing or family in _LEAVE:
+        return raw
+    if "/" in raw and raw.split("/", 1)[0] == "cdp":
+        return f"cdp/{family}-{effort}"
+    return f"{family}-{effort}"
+
+
 def parse_model_request(requested: str) -> tuple[str, str | None]:
     """Split ``requested`` into (family_key, effort|None).
 

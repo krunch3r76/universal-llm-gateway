@@ -34,10 +34,12 @@ from ..wait_status import (
 
 router = APIRouter(dependencies=[Depends(require_token)])
 
-# Operator bind 2026-08-02 (agent-bus:6661): continuous Cowork wait up to the
-# Anthropic MCP client hard ceiling (constraint:mcp-client-300s-ceiling / a:5129).
-# Prior 60s was a self-imposed fleet clamp, not a substrate law.
-MAX_WAIT_SECONDS = 300.0
+# Life / Cowork MCP client continuous-hold ceiling for agent_bus.wait is 60s
+# (Fable live observation 2026-08-03 on toys connector — "Client ceiling here
+# is 60s, not 300"). The 2026-08-02 raise to 300 contradicted the client and
+# forced seats to re-arm after false 300s budgets. constraint:mcp-client-300s-ceiling
+# remains a separate historical SSE/tools ceiling — do not conflate with wait.
+MAX_WAIT_SECONDS = 60.0
 _POLL_INTERVAL_SECONDS = 1.0
 
 

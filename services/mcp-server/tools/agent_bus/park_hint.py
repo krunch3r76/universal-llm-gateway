@@ -1,7 +1,7 @@
 """Advisory ``park_hint`` nested under ``agent_bus.request`` poll_hint (B3).
 
 Cowork / life web seats may park after a bounded poll window instead of
-re-arming empty ≤300s holds for nests that outlast one continuous hold.
+re-arming empty ≤60s holds for nests that outlast one continuous hold.
 No server behaviour keys off ``park_hint`` — seat protocol only.
 """
 
@@ -11,9 +11,9 @@ from typing import Any
 
 from agent_seat.registry import normalize_bus_address
 
-# Align with poll_hint.max_expected_latency_s and Cowork continuous hold (I1/P2b).
-PARK_AFTER_S = 300
-_MAX_EXPECTED_LATENCY_S = 300
+# Align with poll_hint.max_expected_latency_s and Cowork continuous hold (60s).
+PARK_AFTER_S = 60
+_MAX_EXPECTED_LATENCY_S = 60
 _SUGGESTED_INTERVAL_S = 2
 
 _DEFAULT_PARK_HINT: dict[str, Any] = {

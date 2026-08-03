@@ -23,6 +23,7 @@ from claude_bundles.cdp_model_endpoint_staging import (
     CdpStagingError,
     stage_cdp_prompt_with_skills,
 )
+from claude_bundles.chat_model_match import compose_cdp_model_with_effort
 from model_id import ModelId
 
 from .admission import FrontierEndpointError
@@ -173,7 +174,10 @@ async def dispatch_cdp_generate(
     response: Response,
 ) -> dict[str, Any]:
     """Admit CDP generate: return poll_hint immediately; proof posts later."""
-    model = body.model
+    model = compose_cdp_model_with_effort(
+        str(body.model or ""),
+        getattr(body, "reasoning_effort", None),
+    )
     if not is_cdp_model(model):
         raise FrontierEndpointError(
             request_id=request_id,

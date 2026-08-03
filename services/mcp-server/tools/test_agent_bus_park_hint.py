@@ -26,10 +26,10 @@ def test_build_poll_hint_includes_park_hint_for_cowork():
         after_turn=3,
         from_agent="web-anthropic",
     )
-    assert hint["max_expected_latency_s"] == 300
+    assert hint["max_expected_latency_s"] == 60
     park = hint.get("park_hint")
     assert park == default_park_hint()
-    assert park["park_after_s"] == 300
+    assert park["park_after_s"] == 60
     assert park["wake"] == "chat_delivery"
     assert park["fallback"] == "bus_wake+pager"
     assert park["record"] == "PARKED"

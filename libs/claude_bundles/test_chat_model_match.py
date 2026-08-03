@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from claude_bundles.chat_model_match import (
+    compose_cdp_model_with_effort,
     family_nested_in_more_models,
     label_satisfies_request,
     normalize_picker_request,
@@ -43,6 +44,26 @@ def test_normalize_picker_request_strips_cdp_prefix() -> None:
     assert normalize_picker_request("cdp/fable") == "fable-5"
     assert normalize_picker_request("fable") == "fable-5"
     assert normalize_picker_request("opus-5") == "opus-5"
+
+
+@pytest.mark.offline
+@pytest.mark.parametrize(
+    ("model", "effort", "expected"),
+    [
+        ("cdp/opus-5", "max", "cdp/opus-5-max"),
+        ("cdp/opus-5", "extra", "cdp/opus-5-extra"),
+        ("cdp/opus-5", "xhigh", "cdp/opus-5-extra"),
+        ("cdp/opus-5", "high", "cdp/opus-5-high"),
+        ("cdp/opus-5", None, "cdp/opus-5"),
+        ("cdp/opus-5", "", "cdp/opus-5"),
+        ("cdp/opus-5-max", "high", "cdp/opus-5-max"),
+        ("cdp/fable", "max", "cdp/fable-5-max"),
+    ],
+)
+def test_compose_cdp_model_with_effort(
+    model: str, effort: str | None, expected: str
+) -> None:
+    assert compose_cdp_model_with_effort(model, effort) == expected
 
 
 @pytest.mark.offline

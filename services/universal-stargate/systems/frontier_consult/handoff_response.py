@@ -75,8 +75,9 @@ def build_result_handle(*, thread_id: str, after_turn: int = 1) -> dict[str, Any
 # enough to orphan; re-polling is instant. Web/API seats do not share this
 # transport failure mode and keep the 60s server-side block (fewer round-trips).
 _CURSOR_IDE_POLL_WAIT_SECONDS = 0
-# Web/Cowork continuous hold — Anthropic MCP client ceiling (a:5129); was 60.
-_DEFAULT_POLL_WAIT_SECONDS = 300
+# Web/Cowork continuous hold — life MCP client ceiling is 60s (Fable 2026-08-03;
+# agent-bus-discipline / dispatch-shape). Not the historical 300s SSE constraint.
+_DEFAULT_POLL_WAIT_SECONDS = 60
 
 
 def _caller_is_cursor_ide_poller(caller_agent: str | None) -> bool:
@@ -102,7 +103,7 @@ def resolve_poll_wait_seconds(
     """Wait window to recommend to the polling seat via ``poll_hint``.
 
     Cursor-IDE-platform pollers get a 0s snapshot; every other seat keeps the
-    300s server-side block (Cowork/life MCP client ceiling). ``poller_is_cursor_ide``
+    60s server-side block (Cowork/life MCP client ceiling). ``poller_is_cursor_ide``
     forces the snapshot for surfaces whose poller is definitionally the Cursor
     IDE lead (e.g. cursor-sdk generate) regardless of the agent-supplied
     ``caller_agent``.
