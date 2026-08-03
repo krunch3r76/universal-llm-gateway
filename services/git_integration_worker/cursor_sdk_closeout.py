@@ -484,14 +484,27 @@ def merge_degraded_reasons(
 
 
 def degraded_reasons_from_exception(exc: BaseException) -> tuple[str, ...]:
-    """Map SDK/bridge failures to ``degraded_reasons[]`` tokens (A sidecar §A4)."""
+    """Map SDK/bridge failures to class-derived ``degraded_reasons[]`` tokens.
+
+    Tokens derive from the exception **class** (roadmap item 4), not
+    stringified ``exc.code``.  Subclass-before-parent ``isinstance`` order
+    respects the ``cursor_sdk.errors`` hierarchy.
+    """
     from cursor_sdk.errors import (
         AgentBusyError,
+        AgentNotFoundError,
         APITimeoutError,
         AuthenticationError,
+        BadRequestError,
+        ConfigurationError,
         CursorSDKError,
+        IntegrationNotConnectedError,
+        InternalServerError,
+        NetworkError,
         NotFoundError,
+        PermissionDeniedError,
         RateLimitError,
+        UnsupportedRunOperationError,
     )
 
     from services.git_integration_worker.cursor_home import (
@@ -499,20 +512,33 @@ def degraded_reasons_from_exception(exc: BaseException) -> tuple[str, ...]:
         CursorVenvConfigError,
     )
 
-    if isinstance(exc, RateLimitError):
-        return ("sdk_rate_limited",)
-    if isinstance(exc, AgentBusyError):
-        return ("sdk_agent_busy",)
-    if isinstance(exc, AuthenticationError):
-        return ("sdk_auth_failed",)
-    if isinstance(exc, NotFoundError):
-        return ("sdk_run_not_found",)
-    if isinstance(exc, APITimeoutError):
-        return ("sdk_timeout",)
+    _sdk_class_tokens: tuple[tuple[type[BaseException], str], ...] = (
+        (RateLimitError, "sdk_rate_limited"),
+        (AgentBusyError, "sdk_agent_busy"),
+        (AuthenticationError, "sdk_auth_failed"),
+        (PermissionDeniedError, "sdk_permission_denied"),
+        (AgentNotFoundError, "sdk_agent_not_found"),
+        (NotFoundError, "sdk_run_not_found"),
+        (APITimeoutError, "sdk_timeout"),
+        (IntegrationNotConnectedError, "sdk_integration_not_connected"),
+        (UnsupportedRunOperationError, "sdk_unsupported_run_operation"),
+        (BadRequestError, "sdk_bad_request"),
+        (ConfigurationError, "sdk_configuration"),
+        (InternalServerError, "sdk_internal_server"),
+        (NetworkError, "sdk_network"),
+    )
+    for exc_type, token in _sdk_class_tokens:
+        if isinstance(exc, exc_type):
+            return (token,)
     if isinstance(exc, CursorSDKError):
         code = getattr(exc, "code", None) or "unknown"
         return (f"sdk_error:{code}",)
     if type(exc).__name__ == "SdkRunAbortedError":
+        cause = exc.__cause__
+        if cause is not None:
+            inner = degraded_reasons_from_exception(cause)
+            if inner != ("worker_dispatch_failed",):
+                return inner
         return ("bridge_read_timeout",)
     if isinstance(exc, CursorHomeConfigError):
         return ("bridge_env_config",)

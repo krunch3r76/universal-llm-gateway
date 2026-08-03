@@ -2762,11 +2762,86 @@ def test_merge_degraded_reasons_singular_first() -> None:
 
 
 def test_degraded_reasons_from_exception_taxonomy() -> None:
-    from cursor_sdk.errors import RateLimitError
+    from cursor_sdk.errors import (
+        AgentBusyError,
+        AgentNotFoundError,
+        APITimeoutError,
+        AuthenticationError,
+        BadRequestError,
+        ConfigurationError,
+        CursorSDKError,
+        IntegrationNotConnectedError,
+        InternalServerError,
+        NetworkError,
+        NotFoundError,
+        PermissionDeniedError,
+        RateLimitError,
+        UnsupportedRunOperationError,
+    )
 
     assert degraded_reasons_from_exception(RateLimitError("slow")) == (
         "sdk_rate_limited",
     )
+    assert degraded_reasons_from_exception(AgentBusyError("wait")) == ("sdk_agent_busy",)
+    assert degraded_reasons_from_exception(AuthenticationError("nope")) == (
+        "sdk_auth_failed",
+    )
+    assert degraded_reasons_from_exception(NotFoundError("gone")) == (
+        "sdk_run_not_found",
+    )
+    assert degraded_reasons_from_exception(APITimeoutError("late")) == ("sdk_timeout",)
+    assert degraded_reasons_from_exception(PermissionDeniedError("denied")) == (
+        "sdk_permission_denied",
+    )
+    assert degraded_reasons_from_exception(BadRequestError("bad")) == (
+        "sdk_bad_request",
+    )
+    assert degraded_reasons_from_exception(
+        IntegrationNotConnectedError("x", provider="gh", help_url="https://h")
+    ) == ("sdk_integration_not_connected",)
+    assert degraded_reasons_from_exception(
+        UnsupportedRunOperationError("cancel")
+    ) == ("sdk_unsupported_run_operation",)
+    assert degraded_reasons_from_exception(ConfigurationError("cfg")) == (
+        "sdk_configuration",
+    )
+    assert degraded_reasons_from_exception(InternalServerError("500")) == (
+        "sdk_internal_server",
+    )
+    assert degraded_reasons_from_exception(NetworkError("net")) == ("sdk_network",)
+    assert degraded_reasons_from_exception(AgentNotFoundError("missing")) == (
+        "sdk_agent_not_found",
+    )
+    bare = CursorSDKError("opaque", code="weird_code")
+    assert degraded_reasons_from_exception(bare) == ("sdk_error:weird_code",)
+
+
+def test_degraded_reasons_collapsed_subclasses_are_distinct() -> None:
+    """Roadmap item 4 falsifier: class-distinct failures → distinct tokens."""
+    from cursor_sdk.errors import BadRequestError, PermissionDeniedError
+
+    bad_req = degraded_reasons_from_exception(BadRequestError("invalid arg"))
+    perm = degraded_reasons_from_exception(PermissionDeniedError("forbidden"))
+    assert bad_req != perm
+    assert bad_req == ("sdk_bad_request",)
+    assert perm == ("sdk_permission_denied",)
+
+
+def test_degraded_reasons_sdk_run_aborted_unwraps_typed_cause() -> None:
+    from cursor_sdk.errors import APITimeoutError
+
+    from services.git_integration_worker.routes.cursor_sdk import SdkRunAbortedError
+
+    wrapped = SdkRunAbortedError("abort", forensics={"cause": "x"})
+    wrapped.__cause__ = APITimeoutError("read timeout")
+    assert degraded_reasons_from_exception(wrapped) == ("sdk_timeout",)
+
+
+def test_degraded_reasons_sdk_run_aborted_without_typed_cause() -> None:
+    from services.git_integration_worker.routes.cursor_sdk import SdkRunAbortedError
+
+    wrapped = SdkRunAbortedError("abort", forensics={"cause": "x"})
+    assert degraded_reasons_from_exception(wrapped) == ("bridge_read_timeout",)
 
 
 def test_extract_sdk_git_snapshot() -> None:

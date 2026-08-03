@@ -76,6 +76,7 @@ from services.git_integration_worker.cursor_sdk_closeout import (
     capture_wt_baseline_with_hashes,
     count_tool_calls,
     degraded_implement_reason,
+    degraded_reasons_from_exception,
     empty_assistant_turn_reason,
     empty_output_degraded_reason,
     format_delivery_fallback_body,
@@ -1837,6 +1838,7 @@ async def _run_sdk_dispatch_gated(
             message=str(exc),
             subject_suffix="FAILED",
             error=f"{type(exc).__name__}: {exc}",
+            exc=exc,
             data=forensics if isinstance(forensics, dict) else None,
         )
         return
@@ -1887,20 +1889,30 @@ async def _finalize_failed(
     error: str | None = None,
     retryable: bool = False,
     data: dict[str, Any] | None = None,
+    exc: BaseException | None = None,
 ) -> None:
     """Single failure-finalize path: emit, deliver an error envelope, terminate,
     and mark terminal ``failed`` + promote. Guarantees no silent orphan.
     """
     effective_error = error if error is not None else f"{code}: {message}"
+    degraded_reasons = degraded_reasons_from_exception(exc) if exc is not None else ()
     emit_sdk_worker_failed(
         dispatch_id=req.dispatch_id,
         thread_id=req.thread_id,
         execution_id=req.execution_id,
         error=effective_error,
         worker_error_code=code,
+        degraded_reasons=list(degraded_reasons) if degraded_reasons else None,
     )
+    env_data = dict(data) if data else {}
+    if degraded_reasons:
+        env_data["degraded_reasons"] = list(degraded_reasons)
     env = error_envelope(
-        code=code, message=message, source="gateway", retryable=retryable, data=data
+        code=code,
+        message=message,
+        source="gateway",
+        retryable=retryable,
+        data=env_data if env_data else None,
     )
     await bus.reply(
         thread_id=req.thread_id,

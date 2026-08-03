@@ -327,6 +327,7 @@ def FrontierSdkWorkerFailed(  # noqa: N802
     worker_error_code: str | None = None,
     transport_error_kind: str | None = None,
     detail_summary: str | None = None,
+    degraded_reasons: list[str] | None = None,
 ) -> Event:
     payload: dict[str, object] = {
         "dispatch_id": dispatch_id,
@@ -346,6 +347,8 @@ def FrontierSdkWorkerFailed(  # noqa: N802
         payload["transport_error_kind"] = transport_error_kind
     if detail_summary is not None:
         payload["detail_summary"] = detail_summary
+    if degraded_reasons is not None:
+        payload["degraded_reasons"] = degraded_reasons
     return Event(
         signal="frontier.sdk.worker.failed",
         payload=payload,
@@ -1291,6 +1294,7 @@ def emit_sdk_worker_failed(
     failure_layer: str = "worker_runtime",
     worker_error_code: str | None = None,
     detail_summary: str | None = None,
+    degraded_reasons: list[str] | None = None,
 ) -> None:
     """Publish structured worker-runtime failure with layer and error code detail."""
     _emit(
@@ -1302,6 +1306,7 @@ def emit_sdk_worker_failed(
             failure_layer=failure_layer,
             worker_error_code=worker_error_code,
             detail_summary=detail_summary or error,
+            degraded_reasons=degraded_reasons,
         )
     )
     _register_terminal_emitted(dispatch_id)

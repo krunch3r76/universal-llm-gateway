@@ -878,6 +878,68 @@ async def test_dispatch_exception_posts_failure_turn_and_event(
     assert "CURSOR_SDK_DISPATCH" in call.kwargs["body"]
     assert failed[0]["error"] == "RuntimeError: bridge died"
     assert failed[0]["execution_id"] == "exec-fail"
+    assert failed[0]["degraded_reasons"] == ["worker_dispatch_failed"]
+
+
+@pytest.mark.asyncio
+async def test_finalize_failed_sdk_exceptions_emit_class_derived_reasons(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Roadmap item 4: two class-distinct SDK failures → distinguishable tokens."""
+    from cursor_sdk.errors import BadRequestError, PermissionDeniedError
+
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    req_a = CursorDispatchRequest(
+        thread_id="t-bad-req",
+        model="cursor/composer-2.5",
+        dispatch_id="disp-bad-req",
+        execution_id="exec-bad-req",
+        message="hello",
+    )
+    req_b = CursorDispatchRequest(
+        thread_id="t-perm",
+        model="cursor/composer-2.5",
+        dispatch_id="disp-perm",
+        execution_id="exec-perm",
+        message="hello",
+    )
+    _seed_running_row(req_a)
+    _seed_running_row(req_b)
+    bus = _mock_bus()
+    failed: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        route_mod,
+        "emit_sdk_worker_failed",
+        lambda **kwargs: failed.append(dict(kwargs)),
+    )
+
+    await route_mod._finalize_failed(
+        req=req_a,
+        bus=bus,
+        reply_to="dispatch",
+        controller=_make_controller(),
+        code="CURSOR_SDK_DISPATCH",
+        message="bad",
+        subject_suffix="FAILED",
+        exc=BadRequestError("invalid"),
+    )
+    await route_mod._finalize_failed(
+        req=req_b,
+        bus=bus,
+        reply_to="dispatch",
+        controller=_make_controller(),
+        code="CURSOR_SDK_DISPATCH",
+        message="denied",
+        subject_suffix="FAILED",
+        exc=PermissionDeniedError("forbidden"),
+    )
+
+    reasons_a = failed[0]["degraded_reasons"]
+    reasons_b = failed[1]["degraded_reasons"]
+    assert reasons_a == ["sdk_bad_request"]
+    assert reasons_b == ["sdk_permission_denied"]
+    assert reasons_a != reasons_b
 
 
 @patch(

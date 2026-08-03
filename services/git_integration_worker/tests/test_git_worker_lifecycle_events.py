@@ -65,7 +65,9 @@ def test_frontier_sdk_worker_failed_worker_origin() -> None:
         failure_layer="worker_runtime",
         worker_error_code="CURSOR_SDK_DISPATCH",
         detail_summary="RuntimeError: bridge died",
+        degraded_reasons=["worker_dispatch_failed"],
     )
     assert event.signal == "frontier.sdk.worker.failed"
     assert event.payload["origin_service"] == "git_worker"
     assert event.payload["failure_layer"] == "worker_runtime"
+    assert event.payload["degraded_reasons"] == ["worker_dispatch_failed"]
