@@ -29,12 +29,13 @@ from typing import Any
 
 import httpx
 from cursor_sdk import Client
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 from implement_admission.closeout_helpers import cortex_files_root
 from universal_logging import get_logger
 from universal_protocol import error_envelope
 
+from implement_admission.normalize import _files_from_packet
 from services.git_integration_worker.admission import (
     Draining503,
     WorkAdmissionController,
@@ -66,8 +67,9 @@ from services.git_integration_worker.cursor_models import (
 from services.git_integration_worker.cursor_sdk_association import (
     build_dispatch_association_fields,
 )
-from services.git_integration_worker.cursor_sdk_closeout_subject import (
-    build_sdk_closeout_subject,
+from services.git_integration_worker.cursor_sdk_capture_binding import (
+    CaptureBinding,
+    binding_for_dispatch,
 )
 from services.git_integration_worker.cursor_sdk_closeout import (
     SdkRunOutcome,
@@ -83,6 +85,9 @@ from services.git_integration_worker.cursor_sdk_closeout import (
     resolve_completion_outcome,
     resolve_run_outcome_label,
     stream_only_effect_deviations,
+)
+from services.git_integration_worker.cursor_sdk_closeout_subject import (
+    build_sdk_closeout_subject,
 )
 from services.git_integration_worker.cursor_sdk_closeout_trigger import (
     build_closeout_idempotency_key,
@@ -105,6 +110,9 @@ from services.git_integration_worker.cursor_sdk_deliverables import (
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_closeout_reconciled,
     emit_sdk_implement_unresolved_source_ref,
+    emit_sdk_lane_b_minted,
+    emit_sdk_lane_b_mint_rolled_back,
+    emit_sdk_lane_selected,
     emit_sdk_restart_bridge_reap_failed,
     emit_sdk_worker_completed,
     emit_sdk_worker_delivery_failed,
@@ -126,13 +134,19 @@ from services.git_integration_worker.cursor_sdk_feature_probe import (
     probe_run_git_info,
 )
 from services.git_integration_worker.cursor_sdk_gate import (
+    SdkSlotAcquireStallError,
     acquire_sdk_dispatch_slot,
     sdk_dispatch_gate_stats,
     sdk_dispatch_lane,
-    SdkSlotAcquireStallError,
 )
 from services.git_integration_worker.cursor_sdk_implement_gate import (
     implement_gate_bypass_deviations,
+)
+from services.git_integration_worker.cursor_sdk_lane_regime import lane_b_regime_active
+from services.git_integration_worker.cursor_sdk_lane_select import (
+    LaneScopeRefused,
+    select_lane,
+    wire_lane_explicit,
 )
 from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
     extract_instructed_paths,
@@ -173,6 +187,7 @@ from services.git_integration_worker.cursor_sdk_park import (
 from services.git_integration_worker.cursor_sdk_restart_orphan import (
     emit_restart_survivor_terminal,
     load_ledger_row,
+    salvage_restart_survivor_worktree,
 )
 from services.git_integration_worker.cursor_sdk_stream_capture import (
     StreamCapture,
@@ -200,6 +215,12 @@ from services.git_integration_worker.cursor_sdk_worktree import (
     maybe_prune_worktree_on_terminal,
     reap_orphan_worktrees,
     resolve_admit_binding,
+)
+from services.git_integration_worker.cursor_sdk_worktree_prune import (
+    prune_dispatch_worktree,
+)
+from services.git_integration_worker.cursor_sdk_worktree_registry import (
+    lookup_dispatch_worktree,
 )
 from services.git_integration_worker.git_worker_lifecycle_events import (
     FailureLayer,
@@ -484,12 +505,37 @@ def _read_packet_text(req: CursorDispatchRequest, source_repo: Path) -> str:
 def _resolve_prompt(req: CursorDispatchRequest, source_repo: Path) -> str:
     packet_text = _read_packet_text(req, source_repo)
     inferred_contract = None if req.message else infer_contract_from_text(packet_text)
+    lane = "B" if wire_lane_explicit(req) == "B" else None
     preamble = resolve_prompt_preamble(
         handoff_contract=req.handoff_contract,
         prompt_preamble=req.prompt_preamble,
         inferred_contract=inferred_contract,
+        lane=lane,
     )
     return f"{preamble}{packet_text}"
+
+
+async def _rollback_lane_b_mint_if_needed(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    source_repo: Path,
+    minted_lane_b: bool,
+    reason: str,
+) -> None:
+    if not minted_lane_b:
+        return
+    await asyncio.to_thread(
+        prune_dispatch_worktree,
+        dispatch_id=dispatch_id,
+        source_repo=source_repo,
+    )
+    if lookup_dispatch_worktree(dispatch_id=dispatch_id) is None:
+        emit_sdk_lane_b_mint_rolled_back(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            reason=reason,
+        )
 
 
 _dispatch_env = threading.local()
@@ -666,6 +712,7 @@ def _start_heartbeat(
 def _run_sdk_sync(
     *,
     source_repo: Path,
+    binding: CaptureBinding | None = None,
     dispatch_workspace: Path,
     prompt: str,
     config_model_id: str,
@@ -1026,6 +1073,10 @@ async def _start_promoted_dispatch(
     req = ledger.load_promoted_request(promoted)
     cfg = _config(request) if request is not None else _CONFIG
     contract = (promoted.contract or "consult").lower()
+    binding = binding_for_dispatch(
+        cfg=cfg,
+        lease_key=promoted.lease_key or promoted.source_repo,
+    )
     dispatch_workspace = resolve_promoted_workspace(
         lease_key=promoted.lease_key or promoted.source_repo,
         source_repo=cfg.source_repo,
@@ -1054,6 +1105,7 @@ async def _start_promoted_dispatch(
             _run_sdk_dispatch_gated(
                 req=req,
                 source_repo=cfg.source_repo,
+                binding=binding,
                 dispatch_workspace=dispatch_workspace,
                 bus=bus,
                 controller=controller,
@@ -1087,12 +1139,11 @@ async def reconcile_stale_leases(
     finish, but starting its queued successor would admit new work into a
     worker that is shutting down.
     """
-    from services.git_integration_worker.cursor_sdk_land_lease import (
-        reap_stale_land_leases,
-    )
-
     from services.git_integration_worker.cursor_sdk_gate import (
         reclaim_cross_lane_phantom_holders,
+    )
+    from services.git_integration_worker.cursor_sdk_land_lease import (
+        reap_stale_land_leases,
     )
 
     reclaimed = await reclaim_cross_lane_phantom_holders()
@@ -1100,13 +1151,21 @@ async def reconcile_stale_leases(
         logger.info("cross-lane phantom gate holders reclaimed=%s", reclaimed)
     await asyncio.to_thread(reap_stale_land_leases)
     cfg = worker_cfg or _CONFIG
-    removed = await asyncio.to_thread(
+    sweep = await asyncio.to_thread(
         reap_orphan_worktrees,
         source_repo=cfg.source_repo,
         worktree_root=cfg.worktree_root,
     )
-    if removed:
-        logger.info("orphan worktree reaper removed=%d", removed)
+    if sweep.reaped:
+        logger.info(
+            "orphan worktree reaper reaped=%d salvaged=%d branches_retained=%d "
+            "branches_gc=%d stale_metadata_pruned=%s",
+            sweep.reaped,
+            sweep.salvaged,
+            sweep.branches_retained,
+            sweep.branches_gc,
+            sweep.stale_metadata_pruned,
+        )
     ledger = CursorDispatchLedger.instance()
     orphan_ids = await asyncio.to_thread(
         ledger.orphan_holders,
@@ -1123,6 +1182,21 @@ async def reconcile_stale_leases(
         lease_key = await reclaim_orphan_holder(ledger, dispatch_id=dispatch_id)
         if lease_key:
             repos.add(lease_key)
+            prune_result = await asyncio.to_thread(
+                salvage_restart_survivor_worktree,
+                dispatch_id=dispatch_id,
+                source_repo=cfg.source_repo,
+            )
+            if prune_result.pruned and (
+                prune_result.salvaged or prune_result.branch_retained
+            ):
+                logger.info(
+                    "stale-lease survivor worktree salvaged dispatch_id=%s "
+                    "salvaged=%s branch_retained=%s",
+                    dispatch_id,
+                    prune_result.salvaged,
+                    prune_result.branch_retained,
+                )
             if orphan_row is not None and not terminal_emitted(dispatch_id):
                 emit_restart_survivor_terminal(orphan_row, bridge_aborted=False)
             emit_write_lease_released(
@@ -1170,13 +1244,19 @@ async def startup_ledger_reconcile(app: FastAPI) -> None:
     if removed:
         logger.info("startup dispatch_home prune removed=%d", removed)
     cfg: WorkerConfig = app.state.worker_config
-    wt_removed = await asyncio.to_thread(
+    wt_sweep = await asyncio.to_thread(
         reap_orphan_worktrees,
         source_repo=cfg.source_repo,
         worktree_root=cfg.worktree_root,
     )
-    if wt_removed:
-        logger.info("startup orphan worktree prune removed=%d", wt_removed)
+    if wt_sweep.reaped:
+        logger.info(
+            "startup orphan worktree reaper reaped=%d salvaged=%d "
+            "branches_retained=%d",
+            wt_sweep.reaped,
+            wt_sweep.salvaged,
+            wt_sweep.branches_retained,
+        )
     from services.git_integration_worker.cursor_sdk_gate import (
         reclaim_cross_lane_phantom_holders,
     )
@@ -1202,6 +1282,21 @@ async def startup_ledger_reconcile(app: FastAPI) -> None:
                 thread_id=orphan.thread_id,
             )
         await release_or_restore_for_child(dispatch_id=orphan.dispatch_id)
+        survivor_prune = await asyncio.to_thread(
+            salvage_restart_survivor_worktree,
+            dispatch_id=orphan.dispatch_id,
+            source_repo=cfg.source_repo,
+        )
+        if survivor_prune.pruned and (
+            survivor_prune.salvaged or survivor_prune.branch_retained
+        ):
+            logger.info(
+                "startup survivor worktree salvaged dispatch_id=%s salvaged=%s "
+                "branch_retained=%s",
+                orphan.dispatch_id,
+                survivor_prune.salvaged,
+                survivor_prune.branch_retained,
+            )
         lease_key = await asyncio.to_thread(
             ledger.mark_terminal,
             dispatch_id=orphan.dispatch_id,
@@ -1236,6 +1331,7 @@ async def _deliver_sdk_closeout(
     *,
     req: CursorDispatchRequest,
     source_repo: Path,
+    binding: CaptureBinding | None = None,
     outcome: SdkRunOutcome,
     degraded_reason: str | None,
     bus: CursorBusClient,
@@ -1254,6 +1350,7 @@ async def _deliver_sdk_closeout(
     )
     delivery = await prepare_closeout_delivery_async(
         source_repo=source_repo,
+        binding=binding,
         dispatch_id=req.dispatch_id,
         outcome=outcome,
         degraded_reason=degraded_reason,
@@ -1469,6 +1566,7 @@ async def _run_sdk_dispatch_gated(
     *,
     req: CursorDispatchRequest,
     source_repo: Path,
+    binding: CaptureBinding | None = None,
     dispatch_workspace: Path,
     bus: CursorBusClient,
     controller: WorkAdmissionController,
@@ -1580,8 +1678,12 @@ async def _run_sdk_dispatch_gated(
     # cursor-auto maps operator implement → handoff_contract pure-mechanical
     # (wire_map.resolve_handoff_contract); both need admit_head for lane git_refs.
     if contract in ("implement", "pure-mechanical"):
+        write_tree = binding.write_tree if binding else source_repo
         baseline_map = await asyncio.to_thread(
-            capture_wt_baseline_with_hashes, source_repo
+            capture_wt_baseline_with_hashes,
+            write_tree,
+            mount_root=binding.mount_root if binding else None,
+            repo_roots=binding.repo_roots if binding else None,
         )
         if baseline_map is not None:
             await asyncio.to_thread(
@@ -1596,6 +1698,7 @@ async def _run_sdk_dispatch_gated(
         asyncio.to_thread(
             _run_sdk_sync,
             source_repo=source_repo,
+            binding=binding,
             dispatch_workspace=dispatch_workspace,
             prompt=prompt,
             config_model_id=req.model,
@@ -1742,6 +1845,7 @@ async def _run_sdk_dispatch_gated(
         await _finalize_success(
             req=req,
             source_repo=source_repo,
+            binding=binding,
             outcome=outcome,
             bus=bus,
             reply_to=reply_to,
@@ -1818,6 +1922,7 @@ async def _finalize_success(
     *,
     req: CursorDispatchRequest,
     source_repo: Path,
+    binding: CaptureBinding | None = None,
     outcome: SdkRunOutcome,
     bus: CursorBusClient,
     reply_to: str,
@@ -1919,6 +2024,7 @@ async def _finalize_success(
     await _deliver_sdk_closeout(
         req=req,
         source_repo=source_repo,
+        binding=binding,
         outcome=outcome,
         degraded_reason=degraded_reason,
         bus=bus,
@@ -2013,6 +2119,15 @@ async def cursor_dispatch(
     )
     contract = (req.handoff_contract or inferred_contract or "consult").lower()
     effective_read_only = _effective_read_only(req, contract)
+    if effective_read_only and wire_lane_explicit(req) == "B":
+        return _reject_pre_admission(
+            req,
+            worker_error_code="CURSOR_LANE_B_READ_ONLY",
+            failure_layer="validation",
+            http_status=422,
+            detail_summary="read_only=true is incompatible with lane='B'",
+            invalid_fields=["read_only", "lane"],
+        )
     if effective_read_only and contract == "implement":
         return _reject_pre_admission(
             req,
@@ -2036,15 +2151,64 @@ async def cursor_dispatch(
             thread_id=req.thread_id,
             execution_id=req.execution_id,
         )
-    source_repo_str = str(cfg.source_repo.resolve())
+    files_expected = _files_from_packet(packet_text) if packet_text else []
     try:
+        selected_lane, lane_advisories, lane_reason = select_lane(
+            req=req,
+            regime_active=lane_b_regime_active(),
+            source_repo=cfg.source_repo,
+            files_expected=files_expected,
+        )
+    except LaneScopeRefused as exc:
+        return _reject_pre_admission(
+            req,
+            worker_error_code="CURSOR_LANE_B_SCOPE_REFUSED",
+            failure_layer="validation",
+            http_status=422,
+            detail_summary=str(exc),
+            invalid_fields=["lane", "files_expected"],
+        )
+    req.lane = selected_lane
+    if effective_read_only:
+        lane_reason = "read_only"
+    if lane_advisories:
+        logger.info(
+            "cursor sdk lane advisories dispatch_id=%s advisories=%s",
+            req.dispatch_id[:8],
+            lane_advisories,
+        )
+    source_repo_str = str(cfg.source_repo.resolve())
+    minted_lane_b = False
+    mint_wait_ms = 0.0
+    try:
+        mint_started = time.monotonic()
         dispatch_workspace, lease_key = await asyncio.to_thread(
             resolve_admit_binding,
             req=req,
             source_repo=cfg.source_repo,
             worktree_root=cfg.worktree_root,
             dispatch_workspace_default=cfg.dispatch_workspace,
+            lane=selected_lane,
         )
+        mint_wait_ms = (time.monotonic() - mint_started) * 1000.0
+        minted_lane_b = (
+            selected_lane == "B" and not req.nest_under and req.worktree_path is None
+        )
+        if minted_lane_b:
+            from services.git_integration_worker.cursor_sdk_worktree_registry import (
+                lookup_dispatch_worktree,
+            )
+
+            record = lookup_dispatch_worktree(dispatch_id=req.dispatch_id)
+            if record is not None:
+                emit_sdk_lane_b_minted(
+                    dispatch_id=req.dispatch_id,
+                    thread_id=req.thread_id,
+                    worktree_path=str(record.worktree_path),
+                    branch=record.branch_name,
+                    branch_point=record.branch_point,
+                    mint_wait_ms=round(mint_wait_ms, 1),
+                )
     except WorktreeMintError as exc:
         return _reject_pre_admission(
             req,
@@ -2055,6 +2219,7 @@ async def cursor_dispatch(
             retryable=True,
             validation_stage="worktree_mint",
         )
+    binding = binding_for_dispatch(cfg=cfg, lease_key=lease_key)
     try:
         cached = await asyncio.to_thread(
             ledger.admit,
@@ -2076,6 +2241,13 @@ async def cursor_dispatch(
             refuse_if_lease_held=req.refuse_if_lease_held,
         )
     except WriteLeaseHeld as exc:
+        await _rollback_lane_b_mint_if_needed(
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            source_repo=cfg.source_repo,
+            minted_lane_b=minted_lane_b,
+            reason="write_lease_held",
+        )
         return _reject_pre_admission(
             req,
             worker_error_code="CURSOR_WRITE_LEASE_HELD",
@@ -2092,6 +2264,13 @@ async def cursor_dispatch(
             },
         )
     except SourceRefConflict as exc:
+        await _rollback_lane_b_mint_if_needed(
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            source_repo=cfg.source_repo,
+            minted_lane_b=minted_lane_b,
+            reason="source_ref_conflict",
+        )
         return _reject_pre_admission(
             req,
             worker_error_code="CURSOR_SOURCE_REF_IN_FLIGHT",
@@ -2108,6 +2287,13 @@ async def cursor_dispatch(
             },
         )
     except DispatchConflict as exc:
+        await _rollback_lane_b_mint_if_needed(
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            source_repo=cfg.source_repo,
+            minted_lane_b=minted_lane_b,
+            reason="dispatch_conflict",
+        )
         return _reject_pre_admission(
             req,
             worker_error_code="CURSOR_DISPATCH_CONFLICT",
@@ -2118,6 +2304,13 @@ async def cursor_dispatch(
             validation_stage="ledger_dedup",
         )
     except NestDepthExceeded as exc:
+        await _rollback_lane_b_mint_if_needed(
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            source_repo=cfg.source_repo,
+            minted_lane_b=minted_lane_b,
+            reason="nest_depth_exceeded",
+        )
         return _reject_pre_admission(
             req,
             worker_error_code="CURSOR_NEST_DEPTH_EXCEEDED",
@@ -2128,6 +2321,13 @@ async def cursor_dispatch(
             validation_stage="ledger_nest_depth",
         )
     except NestParentNotLive as exc:
+        await _rollback_lane_b_mint_if_needed(
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            source_repo=cfg.source_repo,
+            minted_lane_b=minted_lane_b,
+            reason="nest_parent_not_live",
+        )
         return _reject_pre_admission(
             req,
             worker_error_code="CURSOR_NEST_PARENT_NOT_LIVE",
@@ -2148,6 +2348,14 @@ async def cursor_dispatch(
                 lease_key=lease_key or source_repo_str,
             )
         return JSONResponse(status_code=status_code, content=cached.model_dump())
+
+    emit_sdk_lane_selected(
+        dispatch_id=req.dispatch_id,
+        thread_id=req.thread_id,
+        lane=selected_lane,
+        reason=lane_reason,
+        regime_active=lane_b_regime_active(),
+    )
 
     # Nest park: ledger already moved parent → parked_waiting; transfer capacity
     # to the child before the gated run (child acquire is idempotent if holding).
@@ -2209,6 +2417,13 @@ async def cursor_dispatch(
             route="/api/v1/cursor/dispatch",
         )
     except Draining503 as exc:
+        await _rollback_lane_b_mint_if_needed(
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            source_repo=cfg.source_repo,
+            minted_lane_b=minted_lane_b,
+            reason="draining503",
+        )
         await release_or_restore_for_child(dispatch_id=req.dispatch_id)
         await _mark_terminal_and_promote(
             dispatch_id=req.dispatch_id,
@@ -2225,11 +2440,12 @@ async def cursor_dispatch(
             _run_sdk_dispatch_gated(
                 req=req,
                 source_repo=cfg.source_repo,
+                binding=binding,
                 dispatch_workspace=dispatch_workspace,
                 bus=bus,
                 controller=controller,
                 contract=contract,
-                worktree_isolated=req.worktree_isolated,
+                worktree_isolated=req.lane == "B" or req.worktree_isolated,
             ),
             controller=controller,
             op_id=req.dispatch_id,
@@ -2241,3 +2457,32 @@ async def cursor_dispatch(
     await asyncio.to_thread(ledger.mark_running, dispatch_id=req.dispatch_id)
     _maybe_emit_giw_dispatched(req=req, packet_text=packet_text)
     return JSONResponse(status_code=200, content=admission.model_dump())
+
+
+@router.get(
+    "/concurrency-stats",
+    summary="Rolling-window write-implement overlap + post-floor ambient:* census.",
+)
+async def cursor_concurrency_stats(
+    request: Request,
+    window_start: str | None = Query(None, description="ISO window start (inclusive)."),
+    window_end: str | None = Query(None, description="ISO window end (inclusive)."),
+) -> dict:
+    from services.git_integration_worker.cursor_sdk_concurrency_meter import (
+        active_work_lane_fields,
+        concurrency_stats,
+    )
+
+    cfg = _config(request)
+    closeout_root = cfg.source_repo / "tmp" / "reviews" / "closeouts"
+    payload = await asyncio.to_thread(
+        concurrency_stats,
+        closeout_root=closeout_root,
+        source_repo=cfg.source_repo,
+        window_start=window_start,
+        window_end=window_end,
+    )
+    payload.update(
+        await asyncio.to_thread(active_work_lane_fields, source_repo=cfg.source_repo)
+    )
+    return payload

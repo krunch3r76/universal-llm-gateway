@@ -815,6 +815,7 @@ def resolve_closeout_capture_fields(
     read_only: bool = False,
     dispatch_id: str | None = None,
     thread_id: str | None = None,
+    lane: str | None = None,
 ) -> tuple[CaptureStatus | None, str | None, list[str], EffectsManifest | None]:
     from services.git_integration_worker.cursor_sdk_capture_divergence import (
         apply_surface_cross_checks,
@@ -889,6 +890,9 @@ def resolve_closeout_capture_fields(
         files_untracked_or_ignored=files_untracked_or_ignored,
         worktree_isolated=worktree_isolated,
         read_only=read_only,
+        lane=lane,
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
     )
     if read_only and divergence_reason and dispatch_id and thread_id:
         observe_read_only_repo_diff_violation(

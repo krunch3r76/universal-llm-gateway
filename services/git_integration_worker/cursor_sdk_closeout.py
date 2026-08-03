@@ -41,6 +41,7 @@ from services.git_integration_worker.cursor_sdk_ambient import ambient_deviation
 from services.git_integration_worker.cursor_sdk_boundary_finalize import (
     finalize_boundary_manifest,
 )
+from services.git_integration_worker.cursor_sdk_capture_binding import CaptureBinding
 from services.git_integration_worker.cursor_sdk_capture_status import (
     ChangeSet,
     attribution_effects_paths,
@@ -212,7 +213,12 @@ def capture_wt_baseline(source_repo: Path) -> dict[str, str] | None:
     return _parse_porcelain_z(proc.stdout)
 
 
-def capture_wt_baseline_with_hashes(source_repo: Path) -> dict[str, Any] | None:
+def capture_wt_baseline_with_hashes(
+    source_repo: Path,
+    *,
+    mount_root: Path | None = None,
+    repo_roots: list[Path] | tuple[Path, ...] | None = None,
+) -> dict[str, Any] | None:
     """Porcelain codes plus content hashes and outside-repo census at admit."""
     codes = capture_wt_baseline(source_repo)
     if codes is None:
@@ -222,8 +228,13 @@ def capture_wt_baseline_with_hashes(source_repo: Path) -> dict[str, Any] | None:
         digest = _hash_worktree_file(source_repo, path)
         if digest is not None:
             hashes[path] = digest
-    mount = resolve_mount_root(source_repo)
-    outside = sorted(snapshot_outside_repo_paths(mount, registered_repo_roots(mount)))
+    mount = (mount_root or resolve_mount_root(source_repo)).resolve()
+    roots = (
+        list(repo_roots)
+        if repo_roots is not None
+        else registered_repo_roots(mount)
+    )
+    outside = sorted(snapshot_outside_repo_paths(mount, roots))
     return {
         "codes": codes,
         "hashes": hashes,
@@ -359,12 +370,17 @@ def reconcile_workspace_changes(
     baseline: dict[str, Any] | None,
     manifest: EffectsManifest | None = None,
     mount_root: Path | None = None,
+    repo_roots: list[Path] | tuple[Path, ...] | None = None,
 ) -> tuple[ChangeSet, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
     """Multi-root disk reconciliation: git diff + outside-repo paths + gitignored."""
     from services.git_integration_worker.cursor_sdk_manifest import resolve_mount_root
 
     mount = (mount_root or resolve_mount_root(source_repo)).resolve()
-    repos = registered_repo_roots(mount)
+    repos = (
+        list(repo_roots)
+        if repo_roots is not None
+        else registered_repo_roots(mount)
+    )
     if baseline is None:
         git_change = ChangeSet(created=(), modified=(), deleted=())
         polarity_deviations: tuple[str, ...] = ()
@@ -806,6 +822,12 @@ def build_implement_closeout_body(
     files_expected: list[str] | None = None,
     baseline: dict[str, Any] | None = None,
     deliverables_expected: bool = False,
+    lane: str | None = None,
+    branch: str | None = None,
+    branch_point: str | None = None,
+    head_sha: str | None = None,
+    commits_ahead: int | None = None,
+    landed: bool | None = None,
 ) -> str:
     """Build a compact, valid ImplementCloseout JSON turn body.
 
@@ -971,6 +993,18 @@ def build_implement_closeout_body(
             manifest_value, EffectsManifest
         ):
             payload["effects_manifest"] = manifest_value
+        if lane is not None:
+            payload["lane"] = lane
+        if branch is not None:
+            payload["branch"] = branch
+        if branch_point is not None:
+            payload["branch_point"] = branch_point
+        if head_sha is not None:
+            payload["head_sha"] = head_sha
+        if commits_ahead is not None:
+            payload["commits_ahead"] = commits_ahead
+        if landed is not None:
+            payload["landed"] = landed
         effects = attribution_effects_paths(
             created=repo_files.created,
             modified=repo_files.modified,
@@ -1009,9 +1043,19 @@ def build_implement_closeout_body(
     return body
 
 
+def _capture_trees(
+    source_repo: Path,
+    binding: CaptureBinding | None,
+) -> tuple[Path, Path, Path]:
+    if binding is None:
+        return source_repo, source_repo, resolve_mount_root(source_repo)
+    return binding.write_tree, binding.receipt_tree, binding.mount_root
+
+
 def prepare_closeout_delivery(
     *,
     source_repo: Path,
+    binding: CaptureBinding | None = None,
     dispatch_id: str,
     outcome: SdkRunOutcome,
     degraded_reason: str | None,
@@ -1030,6 +1074,7 @@ def prepare_closeout_delivery(
     """Sync closeout assembly (tests). Production uses ``prepare_closeout_delivery_async``."""
     return _assemble_closeout_delivery(
         source_repo=source_repo,
+        binding=binding,
         dispatch_id=dispatch_id,
         outcome=outcome,
         degraded_reason=degraded_reason,
@@ -1050,6 +1095,7 @@ def prepare_closeout_delivery(
 async def prepare_closeout_delivery_async(
     *,
     source_repo: Path,
+    binding: CaptureBinding | None = None,
     dispatch_id: str,
     outcome: SdkRunOutcome,
     degraded_reason: str | None,
@@ -1065,6 +1111,7 @@ async def prepare_closeout_delivery_async(
     worktree_isolated: bool = False,
 ) -> CloseoutDelivery:
     """Write sidecar, resolve pinned cortex deliverables, build closeout JSON."""
+    write_tree, _, _ = _capture_trees(source_repo, binding)
     files_expected = _files_expected_for_pinning(
         packet_text,
         deliverables_expected,
@@ -1074,7 +1121,7 @@ async def prepare_closeout_delivery_async(
     pinned = await resolve_cortex_pinned_deliverables(
         files_expected=files_expected,
         full_text=text,
-        source_repo=source_repo,
+        source_repo=write_tree,
         dispatch_id=dispatch_id,
         thread_id=thread_id,
     )
@@ -1089,6 +1136,7 @@ async def prepare_closeout_delivery_async(
         degraded_reason = degraded_reason or pin_reason
     return await _assemble_closeout_delivery_async(
         source_repo=source_repo,
+        binding=binding,
         dispatch_id=dispatch_id,
         outcome=outcome,
         degraded_reason=degraded_reason,
@@ -1112,6 +1160,7 @@ async def prepare_closeout_delivery_async(
 def _assemble_closeout_delivery(
     *,
     source_repo: Path,
+    binding: CaptureBinding | None = None,
     dispatch_id: str,
     outcome: SdkRunOutcome,
     degraded_reason: str | None,
@@ -1139,9 +1188,11 @@ def _assemble_closeout_delivery(
     Lane-B isolation semantics. Isolated hard-fail paths activate only when a
     future Lane-B caller explicitly sets ``worktree_isolated=True``.
     """
+    write_tree, receipt_tree, mount = _capture_trees(source_repo, binding)
+    repo_roots = list(binding.repo_roots) if binding is not None else None
     text = full_result_text(outcome.body, degraded_reason)
     sidecar_appendix: list[str] = []
-    sidecar_path = write_repo_sidecar(source_repo, dispatch_id, text)
+    sidecar_path = write_repo_sidecar(receipt_tree, dispatch_id, text)
     sidecar_ref = sidecar_workspaces_ref(dispatch_id)
     result_bytes = len(text.encode("utf-8"))
     files_expected = (
@@ -1161,9 +1212,11 @@ def _assemble_closeout_delivery(
             outside_repo_paths,
             polarity_deviations,
         ) = reconcile_workspace_changes(
-            source_repo=source_repo,
+            source_repo=write_tree,
             baseline=baseline,
             manifest=outcome.effects_manifest,
+            mount_root=mount,
+            repo_roots=repo_roots,
         )
         baseline_deviations = list(polarity_deviations)
         if "outside_repo" not in baseline:
@@ -1178,17 +1231,17 @@ def _assemble_closeout_delivery(
     manifest, boundary_deviations = finalize_boundary_manifest(
         manifest,
         tool_calls=outcome.tool_calls,
-        source_repo=source_repo,
+        source_repo=receipt_tree,
         ledger=CursorDispatchLedger.instance(),
         parent_dispatch_id=dispatch_id,
     )
     offgit_uris = manifest_offgit_deliverable_uris(manifest, sidecar_ref=sidecar_ref)
-    mount = resolve_mount_root(source_repo)
     manifest_cs, manifest_outside, dropped_non_file_entries = (
         repo_change_set_from_manifest(
             manifest,
-            source_repo=source_repo,
+            source_repo=write_tree,
             mount_root=mount,
+            repo_roots=repo_roots,
         )
     )
     if manifest_cs is None:
@@ -1197,24 +1250,24 @@ def _assemble_closeout_delivery(
         resolve_repo_change_set(
             manifest=manifest,
             git_change_set=git_change_set,
-            source_repo=source_repo,
+            source_repo=write_tree,
             mount_root=mount,
             baseline=baseline,
             files_expected=files_expected,
-            current_porcelain=capture_wt_baseline(source_repo),
+            current_porcelain=capture_wt_baseline(write_tree),
             admit_head=(
                 baseline.get("admit_head")
                 if isinstance(baseline, dict)
                 and isinstance(baseline.get("admit_head"), str)
                 else None
             ),
-            closeout_head=resolve_git_head(source_repo),
+            closeout_head=resolve_git_head(write_tree),
             dispatch_id=dispatch_id,
         )
     )
     repo_change_set, files_untracked_or_ignored = partition_gitignored_from_change_set(
         repo_change_set,
-        source_repo=source_repo,
+        source_repo=write_tree,
         existing_untracked=(*files_untracked_or_ignored, *manifest_extra_untracked),
     )
     repo_change_set = ChangeSet(
@@ -1236,10 +1289,10 @@ def _assemble_closeout_delivery(
             sidecar_path=sidecar_path,
             files_expected=files_expected,
             baseline=baseline,
-            source_repo=source_repo,
+            source_repo=write_tree,
         )
         lint_verification, lint_deviation = run_touched_files_lint(
-            source_repo, repo_change_set
+            write_tree, repo_change_set
         )
         verification = [*verification, lint_verification]
         if lint_deviation:
@@ -1252,7 +1305,7 @@ def _assemble_closeout_delivery(
             degraded_reason=degraded_reason,
             change_set=git_change_set,
             divergent_rels=divergent_rels,
-            source_repo=source_repo,
+            source_repo=write_tree,
             cortex_root=cortex_files_root(),
             manifest=manifest,
             outside_repo_paths=all_outside_repo,
@@ -1265,6 +1318,7 @@ def _assemble_closeout_delivery(
             ),
             dispatch_id=dispatch_id,
             thread_id=thread_id,
+            lane=binding.lane if binding is not None else None,
         )
     )
     # Caller-supplied tokens lead: oversize bodies keep only the first few
@@ -1320,8 +1374,56 @@ def _assemble_closeout_delivery(
     ambient_token = ambient_deviation_token(ambient_movements)
     if ambient_token and ambient_token not in deviations:
         deviations = [*(deviations or []), ambient_token]
+    lane_b_lane: str | None = None
+    lane_b_branch: str | None = None
+    lane_b_branch_point: str | None = None
+    lane_b_head_sha: str | None = None
+    lane_b_commits_ahead: int | None = None
+    lane_b_landed: bool | None = None
+    if binding is not None and binding.lane == "B":
+        from services.git_integration_worker.cursor_sdk_lane_b_commit import (
+            branch_state,
+            commit_on_terminal,
+        )
+        from services.git_integration_worker.cursor_sdk_worktree import (
+            lookup_dispatch_worktree,
+        )
+
+        record = lookup_dispatch_worktree(dispatch_id=dispatch_id)
+        if record is not None:
+            commit_result = commit_on_terminal(
+                dispatch_id=dispatch_id,
+                worktree_path=write_tree,
+                branch_name=record.branch_name,
+            )
+            state = branch_state(
+                binding.receipt_tree,
+                branch_name=record.branch_name,
+                branch_point=record.branch_point,
+            )
+            if commit_result.committed and commit_result.head_sha:
+                from services.git_integration_worker.cursor_sdk_events import (
+                    emit_sdk_lane_b_committed,
+                )
+
+                files_committed = len(repo_change_set.created) + len(
+                    repo_change_set.modified
+                )
+                emit_sdk_lane_b_committed(
+                    dispatch_id=dispatch_id,
+                    thread_id=thread_id,
+                    head_sha=commit_result.head_sha,
+                    commits_ahead=state.commits_ahead,
+                    files_committed=files_committed,
+                )
+            lane_b_lane = "B"
+            lane_b_branch = record.branch_name
+            lane_b_branch_point = record.branch_point
+            lane_b_head_sha = state.head_sha
+            lane_b_commits_ahead = state.commits_ahead
+            lane_b_landed = False
     cortex_authoritative = bool(gate_d_created_rels)
-    closeout_head = resolve_git_head(source_repo)
+    closeout_head = resolve_git_head(write_tree)
     body = build_implement_closeout_body(
         dispatch_id=dispatch_id,
         outcome=outcome,
@@ -1349,12 +1451,18 @@ def _assemble_closeout_delivery(
         ),
         closeout_head=closeout_head,
         files_ambient_repo_movement=ambient_movements,
-        source_repo=source_repo,
+        source_repo=write_tree,
         cortex_root=cortex_files_root(),
         light_bounded_expected_paths=light_bounded_expected_paths,
         files_expected=files_expected,
         baseline=baseline,
         deliverables_expected=deliverables_expected,
+        lane=lane_b_lane,
+        branch=lane_b_branch,
+        branch_point=lane_b_branch_point,
+        head_sha=lane_b_head_sha,
+        commits_ahead=lane_b_commits_ahead,
+        landed=lane_b_landed,
     )
     if sidecar_appendix:
         appendix = "\n\n## effects_manifest\n\n" + "\n".join(sidecar_appendix)
@@ -1411,6 +1519,7 @@ def _assemble_closeout_delivery(
 async def _assemble_closeout_delivery_async(
     *,
     source_repo: Path,
+    binding: CaptureBinding | None = None,
     dispatch_id: str,
     outcome: SdkRunOutcome,
     degraded_reason: str | None,
@@ -1431,6 +1540,7 @@ async def _assemble_closeout_delivery_async(
 ) -> CloseoutDelivery:
     delivery = _assemble_closeout_delivery(
         source_repo=source_repo,
+        binding=binding,
         dispatch_id=dispatch_id,
         outcome=outcome,
         degraded_reason=degraded_reason,

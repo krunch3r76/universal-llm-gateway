@@ -646,6 +646,312 @@ def emit_sdk_implement_unresolved_source_ref(
 
 
 @event_factory
+def SdkLaneSelected(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    lane: str,
+    reason: str,
+    regime_active: bool,
+) -> Event:
+    return Event(
+        signal="sdk.lane.selected",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "lane": lane,
+            "reason": reason,
+            "regime_active": regime_active,
+        },
+        scope="node",
+    )
+
+
+def emit_sdk_lane_selected(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    lane: str,
+    reason: str,
+    regime_active: bool,
+) -> None:
+    """Emit on every admit with the resolved lane and selection reason (S7)."""
+    _emit(
+        SdkLaneSelected(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            lane=lane,
+            reason=reason,
+            regime_active=regime_active,
+        )
+    )
+    logger.info(
+        "sdk lane selected: dispatch_id=%s lane=%s reason=%s regime_active=%s",
+        dispatch_id[:8],
+        lane,
+        reason,
+        regime_active,
+    )
+
+
+@event_factory
+def SdkLaneBMinted(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    worktree_path: str,
+    branch: str,
+    branch_point: str,
+    mint_wait_ms: float,
+) -> Event:
+    return Event(
+        signal="sdk.lane_b.minted",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "worktree_path": worktree_path,
+            "branch": branch,
+            "branch_point": branch_point,
+            "mint_wait_ms": mint_wait_ms,
+        },
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_minted(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    worktree_path: str,
+    branch: str,
+    branch_point: str,
+    mint_wait_ms: float,
+) -> None:
+    """Emit after a Lane-B worktree mint completes."""
+    _emit(
+        SdkLaneBMinted(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            worktree_path=worktree_path,
+            branch=branch,
+            branch_point=branch_point,
+            mint_wait_ms=mint_wait_ms,
+        )
+    )
+
+
+@event_factory
+def SdkLaneBMintRolledBack(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    reason: str,
+) -> Event:
+    return Event(
+        signal="sdk.lane_b.mint_rolled_back",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "reason": reason,
+            "reason_code": reason,
+        },
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_mint_rolled_back(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    reason: str,
+) -> None:
+    """Post-mint admit rejection pruned the minted Lane-B tree in the same request."""
+    _emit(
+        SdkLaneBMintRolledBack(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            reason=reason,
+        )
+    )
+    logger.info(
+        "sdk lane_b mint rolled back: dispatch_id=%s thread_id=%s reason=%s",
+        dispatch_id[:8],
+        thread_id,
+        reason,
+    )
+
+
+@event_factory
+def SdkLaneBCommitted(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    head_sha: str,
+    commits_ahead: int,
+    files_committed: int,
+) -> Event:
+    return Event(
+        signal="sdk.lane_b.committed",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "head_sha": head_sha,
+            "commits_ahead": commits_ahead,
+            "files_committed": files_committed,
+        },
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_committed(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    head_sha: str,
+    commits_ahead: int,
+    files_committed: int,
+) -> None:
+    """Emit after commit-on-terminal on a Lane-B worktree."""
+    _emit(
+        SdkLaneBCommitted(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            head_sha=head_sha,
+            commits_ahead=commits_ahead,
+            files_committed=files_committed,
+        )
+    )
+
+
+@event_factory
+def SdkLaneBSalvaged(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    head_sha: str | None,
+    trigger: str,
+) -> Event:
+    return Event(
+        signal="sdk.lane_b.salvaged",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "head_sha": head_sha,
+            "trigger": trigger,
+        },
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_salvaged(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    head_sha: str | None,
+    trigger: str,
+) -> None:
+    """Emit when a salvage commit runs during reap/restart/prune."""
+    _emit(
+        SdkLaneBSalvaged(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            head_sha=head_sha,
+            trigger=trigger,
+        )
+    )
+
+
+@event_factory
+def SdkLaneBBranchRetained(  # noqa: N802
+    dispatch_id: str,
+    branch: str,
+    commits_ahead: int,
+) -> Event:
+    return Event(
+        signal="sdk.lane_b.branch_retained",
+        payload={
+            "dispatch_id": dispatch_id,
+            "branch": branch,
+            "commits_ahead": commits_ahead,
+        },
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_branch_retained(
+    *,
+    dispatch_id: str,
+    branch: str,
+    commits_ahead: int,
+) -> None:
+    """Emit when prune retains an unmerged dispatch branch."""
+    _emit(
+        SdkLaneBBranchRetained(
+            dispatch_id=dispatch_id,
+            branch=branch,
+            commits_ahead=commits_ahead,
+        )
+    )
+
+
+@event_factory
+def SdkLaneBReaped(  # noqa: N802
+    dispatch_id: str,
+    branch_deleted: bool,
+) -> Event:
+    return Event(
+        signal="sdk.lane_b.reaped",
+        payload={
+            "dispatch_id": dispatch_id,
+            "branch_deleted": branch_deleted,
+        },
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_reaped(
+    *,
+    dispatch_id: str,
+    branch_deleted: bool,
+) -> None:
+    """Emit when a dispatch worktree is pruned by the reaper."""
+    _emit(
+        SdkLaneBReaped(
+            dispatch_id=dispatch_id,
+            branch_deleted=branch_deleted,
+        )
+    )
+
+
+@event_factory
+def SdkLaneBWorkspacesWriteRefused(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    uri: str,
+) -> Event:
+    return Event(
+        signal="sdk.lane_b.workspaces_write_refused",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "uri": uri,
+        },
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_workspaces_write_refused(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    uri: str,
+) -> None:
+    """Emit when the Lane-B MCP workspaces:// write fence fires."""
+    _emit(
+        SdkLaneBWorkspacesWriteRefused(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            uri=uri,
+        )
+    )
+
+
+@event_factory
 def FrontierWriteLeaseAcquired(  # noqa: N802
     dispatch_id: str,
     source_repo: str | None,

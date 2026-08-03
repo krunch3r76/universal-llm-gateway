@@ -24,6 +24,7 @@ from services.git_integration_worker.cursor_sdk_orphan import (
 from services.git_integration_worker.cursor_sdk_restart_orphan import (
     emit_restart_survivor_terminal,
 )
+from services.git_integration_worker.cursor_sdk_worktree_prune import ReapSweepResult
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
     CursorDispatchResponse,
@@ -224,7 +225,11 @@ async def test_startup_ledger_reconcile_emits_restart_survivor(
         )
     )
     monkeypatch.setattr(route_mod, "prune_stale_dispatch_homes", lambda: 0)
-    monkeypatch.setattr(route_mod, "reap_orphan_worktrees", lambda **_k: 0)
+    monkeypatch.setattr(
+        route_mod,
+        "reap_orphan_worktrees",
+        lambda **_k: ReapSweepResult(),
+    )
     monkeypatch.setattr(
         route_mod,
         "reap_orphan_bridge_os",

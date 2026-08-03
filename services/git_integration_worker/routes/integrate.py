@@ -464,8 +464,11 @@ async def get_active_work(request: Request):
     from services.git_integration_worker.cursor_dispatch_ledger import (
         CursorDispatchLedger,
     )
+    from services.git_integration_worker.cursor_sdk_concurrency_meter import (
+        active_work_lane_fields,
+        concurrency_stats,
+    )
     from services.git_integration_worker.cursor_sdk_gate import (
-        reclaim_cross_lane_phantom_holders,
         sdk_dispatch_gate_holder_detail,
         sdk_dispatch_gate_stats,
     )
@@ -482,6 +485,16 @@ async def get_active_work(request: Request):
         else None
     )
     active_count = controller.active_count()
+    cfg = getattr(request.app.state, "worker_config", _CONFIG)
+    closeout_root = cfg.source_repo / "tmp" / "reviews" / "closeouts"
+    meter = await asyncio.to_thread(
+        concurrency_stats,
+        closeout_root=closeout_root,
+        source_repo=cfg.source_repo,
+    )
+    lane_fields = await asyncio.to_thread(
+        active_work_lane_fields, source_repo=cfg.source_repo
+    )
     return JSONResponse(
         status_code=200,
         content={
@@ -493,6 +506,8 @@ async def get_active_work(request: Request):
             "active_count": active_count,
             "active_ops": controller.active_ops(),
             "busy": active_count > 0,
+            "concurrency_stats": meter,
+            **lane_fields,
         },
     )
 

@@ -66,6 +66,10 @@ _DEVIATION_REGISTRY: dict[str, tuple[DeviationDisposition, DegradeTarget]] = {
         DeviationDisposition.HARD_FAIL,
         DegradeTarget.WORK,
     ),
+    "divergence:lane_b_workspaces_write:": (
+        DeviationDisposition.HARD_FAIL,
+        DegradeTarget.WORK,
+    ),
 }
 
 

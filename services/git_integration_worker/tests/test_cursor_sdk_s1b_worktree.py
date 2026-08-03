@@ -96,6 +96,7 @@ def test_s1b_lane_b_resolve_admit_binding_mints(
         source_repo=source_repo,
         worktree_root=worktree_root,
         dispatch_workspace_default=source_repo.parent,
+        lane="B",
     )
     assert workspace.is_dir()
     assert str(workspace.resolve()) == lease_key
@@ -112,11 +113,33 @@ def test_s1b_prune_on_terminal(source_repo: Path, tmp_path: Path) -> None:
         dispatch_id=dispatch_id,
     )
     assert wt.is_dir()
-    assert maybe_prune_worktree_on_terminal(
+    result = maybe_prune_worktree_on_terminal(
         dispatch_id=dispatch_id,
         source_repo=source_repo,
     )
+    assert result.pruned
     assert not wt.exists()
+
+
+def test_s1b_prune_retains_branch_when_dirty(source_repo: Path, tmp_path: Path) -> None:
+    """S3: dirty prune retains unmerged dispatch branch."""
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "prune-dirty"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    (wt / "dirty.py").write_text("x\n", encoding="utf-8")
+    branch = f"cursor-sdk/{dispatch_id}"
+    result = maybe_prune_worktree_on_terminal(
+        dispatch_id=dispatch_id,
+        source_repo=source_repo,
+    )
+    assert result.pruned
+    assert result.branch_retained
+    assert result.salvaged
+    assert branch in _git("branch", "--list", branch, cwd=source_repo).stdout
 
 
 def test_s1b_reaper_clears_orphan_registry_row(
@@ -154,7 +177,7 @@ def test_s1b_reaper_clears_orphan_registry_row(
         source_repo=source_repo,
         worktree_root=worktree_root,
     )
-    assert removed == 1
+    assert removed.reaped == 1
     assert not wt.exists()
 
 
@@ -176,6 +199,7 @@ def test_s1b_lane_a_binding_unchanged(source_repo: Path, tmp_path: Path) -> None
         source_repo=source_repo,
         worktree_root=tmp_path / "worktrees",
         dispatch_workspace_default=shared,
+        lane="A",
     )
     assert workspace == shared
     assert lease_key == str(source_repo.resolve())

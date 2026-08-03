@@ -20,7 +20,14 @@ from typing import Literal
 
 from universal_concurrency import CrossLaneTransferError, FifoCapacityGate, TransferHolderError
 
-from services.git_integration_worker.cursor_sdk_workspace import write_lease_slots
+from services.git_integration_worker.cursor_sdk_capacity_invariant import (
+    active_by_lane_counts,
+    evaluate_i1,
+)
+from services.git_integration_worker.cursor_sdk_workspace import (
+    default_write_path_is_lane_a,
+    write_lease_slots,
+)
 
 GateLane = Literal["standard", "operator"]
 
@@ -313,7 +320,49 @@ def _lane_stats(gate: FifoCapacityGate) -> dict[str, int]:
     }
 
 
-def sdk_dispatch_gate_stats(*, lane: GateLane | None = None) -> dict[str, int | dict[str, int]]:
+def _active_by_lane() -> dict[str, int]:
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+
+    with CursorDispatchLedger.instance()._connect() as conn:
+        rows = conn.execute(
+            "SELECT record_json, lease_key, source_repo FROM cursor_sdk_dispatches "
+            "WHERE COALESCE(read_only,0)=0 AND status IN ('admitted','running')"
+        ).fetchall()
+    return active_by_lane_counts([dict(row) for row in rows])
+
+
+def _write_capacity_fields(
+    *,
+    standard: dict[str, int],
+    operator: dict[str, int],
+) -> dict[str, int | str | dict[str, dict[str, int]]]:
+    std_lim = int(standard["limit"])
+    op_lim = int(operator["limit"])
+    configured = std_lim + op_lim
+    lane_a_slots = write_lease_slots("A", gate_limit=configured)
+    lane_b_slots = write_lease_slots("B", gate_limit=configured)
+    write_capacity_detail: dict[str, dict[str, int]] = {
+        "lane_a": {"slots": lane_a_slots},
+        "lane_b": {"slots": lane_b_slots},
+    }
+    if default_write_path_is_lane_a():
+        headroom = lane_a_slots
+        write_capacity = min(configured, headroom)
+    else:
+        headroom = lane_b_slots
+        write_capacity = configured
+    return {
+        "write_capacity": write_capacity,
+        "capacity_disposition": evaluate_i1(std_lim, op_lim, headroom),
+        "write_capacity_detail": write_capacity_detail,
+    }
+
+
+def sdk_dispatch_gate_stats(
+    *, lane: GateLane | None = None
+) -> dict[str, int | str | dict[str, int | dict[str, int]]]:
     """Return active/queued/limit counters for cursor-sdk capacity gates.
 
     ``lane=None`` (default) returns combined totals plus per-lane breakdown.
@@ -324,14 +373,13 @@ def sdk_dispatch_gate_stats(*, lane: GateLane | None = None) -> dict[str, int | 
         return standard
     if lane == "operator":
         return operator
+    capacity = _write_capacity_fields(standard=standard, operator=operator)
     return {
         "active": int(standard["active"]) + int(operator["active"]),
         "queued": int(standard["queued"]) + int(operator["queued"]),
         "limit": int(standard["limit"]) + int(operator["limit"]),
-        "write_capacity": min(
-            int(standard["limit"]) + int(operator["limit"]),
-            write_lease_slots(),
-        ),
+        **capacity,
+        "active_by_lane": _active_by_lane(),
         "standard": standard,
         "operator": operator,
     }

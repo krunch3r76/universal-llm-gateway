@@ -48,6 +48,14 @@ _BREADTH_RECON_PREAMBLE = (
     "was owed is a scope-delta defect the relay may flag (advisory)."
 )
 
+_LANE_B_REPO_EDIT_PREAMBLE = (
+    "LANE-B REPO EDITS (mandatory): Make repository source edits with native file "
+    "tools (Read, Write, StrReplace) in your isolated worktree — not via MCP "
+    'fs(op="write"|"append"|"replace"|...) on workspaces:// paths (those writes '
+    "hard-fail capture). Use cortex:// via fs only for durable deliverables "
+    "(sidecars, specs, reviews)."
+)
+
 _IMPLEMENT_PREAMBLE = (
     "Execute this task NOW using your tools. Make the code/file changes the packet "
     "specifies. If you are blocked, reply with `status: blocked` and the specific "
@@ -107,6 +115,7 @@ def resolve_prompt_preamble(
     handoff_contract: str | None,
     prompt_preamble: str | None,
     inferred_contract: str | None,
+    lane: str | None = None,
 ) -> str:
     contract = (handoff_contract or inferred_contract or "consult").lower()
     if prompt_preamble:
@@ -117,6 +126,8 @@ def resolve_prompt_preamble(
         preamble = ""
 
     parts = [_DELIVERABLE_ROUTING_PREAMBLE, _BREADTH_RECON_PREAMBLE]
+    if lane == "B":
+        parts.append(_LANE_B_REPO_EDIT_PREAMBLE)
     if preamble:
         parts.append(preamble.strip())
     return "\n\n".join(parts) + "\n\n"

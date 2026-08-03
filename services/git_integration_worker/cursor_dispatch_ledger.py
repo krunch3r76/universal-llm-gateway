@@ -216,6 +216,7 @@ def _dispatch_record_json(req: CursorDispatchRequest) -> str:
         "prompt_preamble": req.prompt_preamble,
         "model_knobs": req.model_knobs,
         "read_only": req.read_only,
+        "lane": req.lane,
         "worktree_isolated": req.worktree_isolated,
         "worktree_path": req.worktree_path,
         "admitted_via": req.admitted_via,
@@ -1384,6 +1385,7 @@ class CursorDispatchLedger:
             prompt_preamble=data.get("prompt_preamble"),
             model_knobs=data.get("model_knobs"),
             read_only=bool(data.get("read_only", promoted.read_only)),
+            lane=data.get("lane"),
             worktree_isolated=bool(data.get("worktree_isolated", False)),
             worktree_path=data.get("worktree_path"),
             admitted_via=data.get("admitted_via"),
@@ -1455,3 +1457,27 @@ class CursorDispatchLedger:
                 }
             )
         return out
+
+    def interval_rows_in_window(
+        self,
+        *,
+        window_start: str | None = None,
+        window_end: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Dispatch rows with both interval endpoints — read-only overlap census input."""
+        sql = (
+            "SELECT dispatch_id, contract, COALESCE(read_only, 0) AS read_only, "
+            "started_at, terminal_at, record_json, lease_key, source_repo "
+            "FROM cursor_sdk_dispatches "
+            "WHERE started_at IS NOT NULL AND terminal_at IS NOT NULL"
+        )
+        params: list[Any] = []
+        if window_start is not None:
+            sql += " AND terminal_at >= ?"
+            params.append(window_start)
+        if window_end is not None:
+            sql += " AND started_at <= ?"
+            params.append(window_end)
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]

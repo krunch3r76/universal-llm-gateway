@@ -9,47 +9,36 @@ using the same sweeper shape as ``stale_lease_sweeper``.
 from __future__ import annotations
 
 import re
-import sqlite3
 import subprocess
 import time
-from datetime import UTC, datetime
 from pathlib import Path
-
-from universal_logging import get_logger
+from typing import Literal
 
 from services.git_integration_worker.cursor_dispatch_ledger import _connect
+from services.git_integration_worker.cursor_sdk_worktree_prune import (
+    PruneResult,
+    ReapSweepResult,
+    maybe_prune_worktree_on_terminal,
+    prune_dispatch_worktree,
+    reap_orphan_worktrees,
+)
+from services.git_integration_worker.cursor_sdk_worktree_registry import (
+    DispatchWorktreeRecord,
+    acquire_mint_mutex_blocking,
+    lookup_dispatch_worktree,
+    master_mint_mutex_key,
+    register_dispatch_worktree,
+    release_mint_mutex,
+)
 from services.git_integration_worker.models.cursor_api import CursorDispatchRequest
 
-logger = get_logger(__name__)
-
-_MINT_MUTEX_DDL = """
-CREATE TABLE IF NOT EXISTS cursor_sdk_mint_mutex (
-    mutex_key     TEXT PRIMARY KEY,
-    holder_id     TEXT NOT NULL,
-    acquired_at   TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS cursor_sdk_dispatch_worktrees (
-    dispatch_id   TEXT PRIMARY KEY,
-    worktree_path TEXT NOT NULL,
-    branch_name   TEXT NOT NULL,
-    branch_point  TEXT NOT NULL,
-    minted_at     TEXT NOT NULL
-);
-"""
-
 _MINT_LOCK_POLL_S = 0.02
-_MINT_LOCK_TIMEOUT_S = 120.0
 _GIT_TIMEOUT_S = 60.0
 _BRANCH_SAFE = re.compile(r"[^A-Za-z0-9._/-]+")
 
 
 class WorktreeMintError(RuntimeError):
     """Raised when ``git worktree add`` fails after mutex acquisition."""
-
-
-def master_mint_mutex_key(source_repo: Path) -> str:
-    """Master-keyed mutex identity for serialized ``git worktree add``."""
-    return str(source_repo.resolve())
 
 
 def is_managed_worktree(path: Path, worktree_root: Path) -> bool:
@@ -59,14 +48,6 @@ def is_managed_worktree(path: Path, worktree_root: Path) -> bool:
         return True
     except ValueError:
         return False
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
-
-
-def _ensure_worktree_schema(conn: sqlite3.Connection) -> None:
-    conn.executescript(_MINT_MUTEX_DDL)
 
 
 def _branch_name(dispatch_id: str) -> str:
@@ -96,83 +77,6 @@ def resolve_master_branch_point(source_repo: Path, *, ref: str = "refs/heads/mas
     if not sha:
         raise WorktreeMintError(f"empty rev-parse for {ref!r} on {source_repo}")
     return sha
-
-
-def _try_acquire_mint_mutex(*, mutex_key: str, holder_id: str) -> bool:
-    with _connect() as conn:
-        _ensure_worktree_schema(conn)
-        conn.execute("BEGIN IMMEDIATE")
-        row = conn.execute(
-            "SELECT holder_id FROM cursor_sdk_mint_mutex WHERE mutex_key=?",
-            (mutex_key,),
-        ).fetchone()
-        if row is None:
-            conn.execute(
-                "INSERT INTO cursor_sdk_mint_mutex (mutex_key, holder_id, acquired_at) "
-                "VALUES (?, ?, ?)",
-                (mutex_key, holder_id, _now()),
-            )
-            return True
-        return row["holder_id"] == holder_id
-
-
-def _release_mint_mutex(*, mutex_key: str, holder_id: str) -> None:
-    with _connect() as conn:
-        _ensure_worktree_schema(conn)
-        conn.execute(
-            "DELETE FROM cursor_sdk_mint_mutex WHERE mutex_key=? AND holder_id=?",
-            (mutex_key, holder_id),
-        )
-
-
-def acquire_mint_mutex_blocking(
-    *,
-    source_repo: Path,
-    holder_id: str,
-    timeout_s: float = _MINT_LOCK_TIMEOUT_S,
-) -> str:
-    """Block until the master mint mutex is held; return mutex key."""
-    mutex_key = master_mint_mutex_key(source_repo)
-    deadline = time.monotonic() + timeout_s
-    while True:
-        try:
-            if _try_acquire_mint_mutex(mutex_key=mutex_key, holder_id=holder_id):
-                return mutex_key
-        except sqlite3.OperationalError as exc:
-            # Transient SQLite busy during concurrent mint connect/BEGIN — poll again.
-            if "locked" not in str(exc).lower() and "busy" not in str(exc).lower():
-                raise
-        if time.monotonic() >= deadline:
-            raise TimeoutError(
-                f"mint mutex unavailable for {mutex_key!r} after {timeout_s:.0f}s"
-            )
-        time.sleep(_MINT_LOCK_POLL_S)
-
-
-def _register_worktree(
-    *,
-    dispatch_id: str,
-    worktree_path: Path,
-    branch_name: str,
-    branch_point: str,
-) -> None:
-    with _connect() as conn:
-        _ensure_worktree_schema(conn)
-        conn.execute(
-            "INSERT OR REPLACE INTO cursor_sdk_dispatch_worktrees "
-            "(dispatch_id, worktree_path, branch_name, branch_point, minted_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (dispatch_id, str(worktree_path.resolve()), branch_name, branch_point, _now()),
-        )
-
-
-def _unregister_worktree(*, dispatch_id: str) -> None:
-    with _connect() as conn:
-        _ensure_worktree_schema(conn)
-        conn.execute(
-            "DELETE FROM cursor_sdk_dispatch_worktrees WHERE dispatch_id=?",
-            (dispatch_id,),
-        )
 
 
 def _git_worktree_add_with_retry(
@@ -236,7 +140,7 @@ def mint_dispatch_worktree(
             branch_name=branch,
             branch_point=commit,
         )
-        _register_worktree(
+        register_dispatch_worktree(
             dispatch_id=dispatch_id,
             worktree_path=wt_path,
             branch_name=branch,
@@ -244,7 +148,7 @@ def mint_dispatch_worktree(
         )
         return wt_path.resolve()
     finally:
-        _release_mint_mutex(mutex_key=mutex_key, holder_id=dispatch_id)
+        release_mint_mutex(mutex_key=mutex_key, holder_id=dispatch_id)
 
 
 def accept_dispatch_worktree(
@@ -278,110 +182,13 @@ def accept_dispatch_worktree(
     )
     branch = branch_proc.stdout.strip() or _branch_name(dispatch_id)
     commit = resolve_master_branch_point(source_repo)
-    _register_worktree(
+    register_dispatch_worktree(
         dispatch_id=dispatch_id,
         worktree_path=resolved,
         branch_name=branch,
         branch_point=commit,
     )
     return resolved
-
-
-def prune_dispatch_worktree(
-    *,
-    dispatch_id: str,
-    source_repo: Path,
-) -> bool:
-    """Remove a registered dispatch worktree and drop its branch."""
-    with _connect() as conn:
-        _ensure_worktree_schema(conn)
-        row = conn.execute(
-            "SELECT worktree_path, branch_name FROM cursor_sdk_dispatch_worktrees "
-            "WHERE dispatch_id=?",
-            (dispatch_id,),
-        ).fetchone()
-    if row is None:
-        return False
-    wt_path = Path(row["worktree_path"])
-    branch = row["branch_name"]
-    if wt_path.is_dir():
-        proc = subprocess.run(
-            ["git", "-C", str(source_repo.resolve()), "worktree", "remove", "--force", str(wt_path)],
-            capture_output=True,
-            text=True,
-            timeout=_GIT_TIMEOUT_S,
-            check=False,
-        )
-        if proc.returncode != 0:
-            logger.warning(
-                "worktree remove failed dispatch_id=%s path=%s err=%s",
-                dispatch_id,
-                wt_path,
-                proc.stderr.strip(),
-            )
-    subprocess.run(
-        ["git", "-C", str(source_repo.resolve()), "branch", "-D", branch],
-        capture_output=True,
-        text=True,
-        timeout=_GIT_TIMEOUT_S,
-        check=False,
-    )
-    _unregister_worktree(dispatch_id=dispatch_id)
-    return True
-
-
-def maybe_prune_worktree_on_terminal(
-    *,
-    dispatch_id: str,
-    source_repo: Path,
-) -> bool:
-    """Prune-on-terminal for minted Lane-B worktrees."""
-    return prune_dispatch_worktree(dispatch_id=dispatch_id, source_repo=source_repo)
-
-
-def active_managed_worktree_paths(*, worktree_root: Path) -> set[str]:
-    """Resolved worktree paths for non-terminal dispatches under ``worktree_root``."""
-    root = str(worktree_root.resolve())
-    active: set[str] = set()
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT lease_key, source_repo, status FROM cursor_sdk_dispatches "
-            "WHERE status IN ('admitted','running','queued','parked_waiting')"
-        ).fetchall()
-    for row in rows:
-        key = row["lease_key"] or row["source_repo"]
-        if not key:
-            continue
-        if key.startswith(root):
-            active.add(str(Path(key).resolve()))
-    return active
-
-
-def reap_orphan_worktrees(
-    *,
-    source_repo: Path,
-    worktree_root: Path,
-) -> int:
-    """Drop worktrees whose dispatch is terminal or missing (orphan recovery)."""
-    reaped = 0
-    active = active_managed_worktree_paths(worktree_root=worktree_root)
-    with _connect() as conn:
-        _ensure_worktree_schema(conn)
-        rows = conn.execute(
-            "SELECT w.dispatch_id, w.worktree_path, d.status "
-            "FROM cursor_sdk_dispatch_worktrees w "
-            "LEFT JOIN cursor_sdk_dispatches d ON d.dispatch_id = w.dispatch_id"
-        ).fetchall()
-    terminal = {"completed", "failed", "cancelled"}
-    for row in rows:
-        wt_path = str(Path(row["worktree_path"]).resolve())
-        status = row["status"]
-        if wt_path in active:
-            continue
-        if status is None or status in terminal:
-            if prune_dispatch_worktree(dispatch_id=row["dispatch_id"], source_repo=source_repo):
-                reaped += 1
-    return reaped
 
 
 def _lookup_parent_lease_key(parent_id: str) -> str | None:
@@ -401,6 +208,7 @@ def resolve_admit_binding(
     source_repo: Path,
     worktree_root: Path,
     dispatch_workspace_default: Path,
+    lane: Literal["A", "B"],
 ) -> tuple[Path, str]:
     """Return ``(dispatch_workspace, lease_key)`` for ledger admit."""
     if req.nest_under:
@@ -410,16 +218,16 @@ def resolve_admit_binding(
         workspace = Path(parent_key).resolve()
         return workspace, str(workspace)
 
-    if req.worktree_path:
-        workspace = accept_dispatch_worktree(
-            worktree_path=Path(req.worktree_path),
-            worktree_root=worktree_root,
-            dispatch_id=req.dispatch_id,
-            source_repo=source_repo,
-        )
-        return workspace, str(workspace)
+    if lane == "B":
+        if req.worktree_path:
+            workspace = accept_dispatch_worktree(
+                worktree_path=Path(req.worktree_path),
+                worktree_root=worktree_root,
+                dispatch_id=req.dispatch_id,
+                source_repo=source_repo,
+            )
+            return workspace, str(workspace)
 
-    if req.worktree_isolated:
         workspace = mint_dispatch_worktree(
             source_repo=source_repo,
             worktree_root=worktree_root,
@@ -444,3 +252,22 @@ def workspace_from_promoted_lease(
         return Path(lease_key).resolve()
     _ = source_repo
     return dispatch_workspace_default
+
+
+__all__ = [
+    "DispatchWorktreeRecord",
+    "PruneResult",
+    "ReapSweepResult",
+    "WorktreeMintError",
+    "accept_dispatch_worktree",
+    "is_managed_worktree",
+    "lookup_dispatch_worktree",
+    "master_mint_mutex_key",
+    "maybe_prune_worktree_on_terminal",
+    "mint_dispatch_worktree",
+    "prune_dispatch_worktree",
+    "reap_orphan_worktrees",
+    "resolve_admit_binding",
+    "resolve_master_branch_point",
+    "workspace_from_promoted_lease",
+]

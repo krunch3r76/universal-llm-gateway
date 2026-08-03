@@ -376,7 +376,24 @@ def closeout_divergence_reason(
     files_untracked_or_ignored: tuple[str, ...] = (),
     worktree_isolated: bool = False,
     read_only: bool = False,
+    lane: str | None = None,
+    dispatch_id: str | None = None,
+    thread_id: str | None = None,
 ) -> str | None:
+    workspaces_violation = lane_b_workspaces_write_violation(manifest, lane)
+    if workspaces_violation is not None:
+        if lane == "B" and dispatch_id and thread_id:
+            from services.git_integration_worker.cursor_sdk_events import (
+                emit_sdk_lane_b_workspaces_write_refused,
+            )
+
+            uri = workspaces_violation.split(":", 2)[-1]
+            emit_sdk_lane_b_workspaces_write_refused(
+                dispatch_id=dispatch_id,
+                thread_id=thread_id,
+                uri=uri,
+            )
+        return workspaces_violation
     read_only_violation = read_only_repo_diff_violation(
         read_only=read_only,
         change_set=change_set,
@@ -439,6 +456,25 @@ def closeout_divergence_reason(
         section = checked.surfaces.get(name)
         if section and section.cross_check:
             return section.cross_check
+    return None
+
+
+def lane_b_workspaces_write_violation(
+    manifest: EffectsManifest | None,
+    lane: str | None,
+) -> str | None:
+    """Hard-fail Lane-B dispatches that mutate the shared tree via MCP fs workspaces://."""
+    if lane != "B" or manifest is None:
+        return None
+    from services.git_integration_worker.cursor_sdk_manifest import (
+        _normalize_offgit_uri,
+        manifest_fs_write_targets,
+    )
+
+    for sandbox, path in manifest_fs_write_targets(manifest):
+        uri = _normalize_offgit_uri(sandbox, path)
+        if uri.lower().startswith("workspaces://"):
+            return f"divergence:lane_b_workspaces_write:{uri}"
     return None
 
 

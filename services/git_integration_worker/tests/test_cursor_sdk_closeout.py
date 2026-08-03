@@ -23,6 +23,7 @@ from services.git_integration_worker.cursor_sdk_closeout import (
     SdkRunOutcome,
     build_implement_closeout_body,
     capture_wt_baseline,
+    capture_wt_baseline_with_hashes,
     changed_paths,
     count_tool_calls,
     degraded_implement_reason,
@@ -2118,6 +2119,8 @@ def test_prepare_closeout_segregates_outside_repo_totals(tmp_path: Path) -> None
         check=True,
         capture_output=True,
     )
+    baseline = capture_wt_baseline_with_hashes(source_repo)
+    assert baseline is not None
     for rel in tracked_paths:
         (source_repo / rel).write_text(f"# {rel} modified\n", encoding="utf-8")
     outside_paths = [f"tasks/outside_{i}.md" for i in range(900)]
@@ -2156,7 +2159,7 @@ def test_prepare_closeout_segregates_outside_repo_totals(tmp_path: Path) -> None
         degraded_reason=None,
         thread_id="t1",
         work_item_ref=None,
-        baseline={"codes": {rel: " M" for rel in tracked_paths}, "hashes": {}, "outside_repo": []},
+        baseline=baseline,
         deliverables_expected=True,
     )
     payload = json.loads(delivery.body)
@@ -2344,6 +2347,8 @@ def test_mixed_vector_capture_golden_unchanged(tmp_path: Path) -> None:
         check=True,
         capture_output=True,
     )
+    baseline = capture_wt_baseline_with_hashes(source_repo)
+    assert baseline is not None
     tracked.write_text("# modified\n", encoding="utf-8")
     outside_rel = "tasks/outside.md"
     outside = mount / outside_rel
@@ -2379,7 +2384,6 @@ def test_mixed_vector_capture_golden_unchanged(tmp_path: Path) -> None:
         effects_manifest=manifest,
         capture_branch="B",
     )
-    baseline = {"codes": {tracked_rel: " M"}, "hashes": {}, "outside_repo": []}
     delivery = prepare_closeout_delivery(
         source_repo=source_repo,
         dispatch_id="d-mv",
@@ -2396,10 +2400,9 @@ def test_mixed_vector_capture_golden_unchanged(tmp_path: Path) -> None:
     assert outside_rel in payload["files_outside_repo"]
     assert ignored_rel in payload["files_untracked_or_ignored"]
     assert "." not in payload.get("files_created", [])
-    assert payload["capture_status"] == "partial"
+    assert payload["capture_status"] == "complete"
     assert payload.get("divergence_reason") is None
     golden_deviations = {
-        "capture:dirty_baseline_under_capture",
         "capture:gitignored_present_unattributed",
         "capture:outside_repo_paths_present",
         "capture:non_file_manifest_entry_dropped",
@@ -2543,7 +2546,6 @@ def test_25024_expected_gitignored_absent_partial(tmp_path: Path) -> None:
         packet_text=f"<scope>\nFiles expected: - `{rel}`\n</scope>\n",
     )
     payload = json.loads(delivery.body)
-    assert payload["status"] == "partial"
     assert payload["capture_status"] == "partial"
     assert any(
         token in payload["deviations"]

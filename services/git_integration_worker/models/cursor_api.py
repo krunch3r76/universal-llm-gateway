@@ -28,6 +28,7 @@ class CursorDispatchRequest(BaseModel):
     source_ref: str | None = None
     nest_under: str | None = None
     refuse_if_lease_held: bool = False
+    lane: Literal["A", "B"] | None = None
     worktree_isolated: bool = False
     worktree_path: str | None = None
     admitted_via: Literal["cursor-auto", "stargate"] | None = None
@@ -39,6 +40,14 @@ class CursorDispatchRequest(BaseModel):
         has_message = bool(self.message)
         if has_packet == has_message:
             raise ValueError("exactly one of packet_path or message is required")
+        return self
+
+    @model_validator(mode="after")
+    def _lane_wire_consistency(self) -> CursorDispatchRequest:
+        if self.lane == "A" and (self.worktree_isolated or self.worktree_path):
+            raise ValueError(
+                "lane='A' is incompatible with worktree_isolated/worktree_path"
+            )
         return self
 
 

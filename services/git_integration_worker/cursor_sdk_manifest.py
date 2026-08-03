@@ -285,6 +285,7 @@ def repo_change_set_from_manifest(
     *,
     source_repo: Path | None = None,
     mount_root: Path | None = None,
+    repo_roots: list[Path] | tuple[Path, ...] | None = None,
 ) -> tuple[ChangeSet | None, tuple[str, ...], list[DroppedNonFileEntry]]:
     """Manifest op-intent projection — cross-check input for closeout files_* categories.
 
@@ -305,11 +306,13 @@ def repo_change_set_from_manifest(
     deleted: list[str] = []
     outside_repo: list[str] = []
     dropped: list[DroppedNonFileEntry] = []
+    roots = list(repo_roots) if repo_roots is not None else None
     for entry in section.entries:
         classification = _classify_manifest_repo_entry(
             entry.target,
             source_repo=source_repo,
             mount_root=mount,
+            repo_roots=roots,
         )
         if classification is None:
             raw_target = str(entry.target or "").strip()
@@ -351,6 +354,7 @@ def _classify_manifest_repo_entry(
     *,
     source_repo: Path | None,
     mount_root: Path | None,
+    repo_roots: list[Path] | None = None,
 ) -> tuple[Literal["repo", "outside_repo"], str] | None:
     """Return repo/outside_repo classification, or None when the entry is non-file."""
     if not raw or not str(raw).strip() or str(raw).strip() == ".":
@@ -376,7 +380,15 @@ def _classify_manifest_repo_entry(
             rel = mount_relative_path(mount_root, resolved)
             if rel is not None:
                 return ("outside_repo", rel)
-        return None
+        roots_resolved = {repo.resolve() for repo in (repo_roots or ())}
+        if roots_resolved:
+            for repo in roots_resolved:
+                try:
+                    resolved.relative_to(repo)
+                    return None
+                except ValueError:
+                    continue
+        return ("outside_repo", resolved.as_posix())
 
     path = canon.canonical_path
     if not path or path == ".":
@@ -391,20 +403,34 @@ def _classify_manifest_repo_entry(
         if mount_root is None:
             return None
         try:
-            resolved = (source_repo / path).resolve()
+            path_obj = Path(path)
+            resolved = (
+                path_obj.resolve()
+                if path_obj.is_absolute()
+                else (source_repo / path).resolve()
+            )
         except OSError:
             return None
         rel = mount_relative_path(mount_root, resolved)
-        if rel is None:
-            return None
-        try:
-            abs_path = (mount_root / rel).resolve()
-            if abs_path.is_dir():
+        if rel is not None:
+            try:
+                abs_path = (mount_root / rel).resolve()
+                if abs_path.is_dir():
+                    return None
+                if abs_path.is_file():
+                    return ("outside_repo", rel)
+            except OSError:
                 return None
-            if abs_path.is_file():
-                return ("outside_repo", rel)
-        except OSError:
-            return None
+        roots_resolved = {repo.resolve() for repo in (repo_roots or ())}
+        if roots_resolved:
+            for repo in roots_resolved:
+                try:
+                    resolved.relative_to(repo)
+                    return None
+                except ValueError:
+                    continue
+        if resolved.is_file():
+            return ("outside_repo", resolved.as_posix())
         return None
     return ("repo", path)
 
@@ -1348,7 +1374,10 @@ def snapshot_outside_repo_paths(
 ) -> frozenset[str]:
     """Workspaces-relative paths under *mount_root* but outside every registered repo."""
     roots = repo_roots or registered_repo_roots(mount_root)
+    mount_resolved = mount_root.resolve()
     roots_resolved = {repo.resolve() for repo in roots}
+    if roots_resolved == {mount_resolved}:
+        return frozenset()
 
     def _under_repo(candidate: Path) -> bool:
         resolved = candidate.resolve()
@@ -1361,7 +1390,6 @@ def snapshot_outside_repo_paths(
         return False
 
     found: set[str] = set()
-    mount_resolved = mount_root.resolve()
     if not mount_resolved.is_dir():
         return frozenset()
     for path in mount_resolved.rglob("*"):

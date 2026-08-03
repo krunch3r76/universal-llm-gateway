@@ -107,3 +107,10 @@ class ImplementCloseout(BaseModel):
     usage_capture_status: Literal["captured", "partial", "missing", "reconciled_delta"] | None = (
         None
     )
+    # Lane-B worktree closeout fields (S3) — optional; Lane-A omits.
+    lane: Literal["A", "B"] | None = None
+    branch: str | None = None
+    branch_point: str | None = None
+    head_sha: str | None = None
+    commits_ahead: int | None = None
+    landed: bool | None = None

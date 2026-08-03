@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
     LedgerRow,
 )
 from services.git_integration_worker.cursor_sdk_events import emit_sdk_worker_orphaned
+from services.git_integration_worker.cursor_sdk_worktree_prune import (
+    PruneResult,
+    maybe_prune_worktree_on_terminal,
+)
 
 _RESTART_SURVIVOR_TIMEOUT_S = 0.0
 
@@ -26,6 +32,18 @@ def load_ledger_row(
     if row is None:
         return None
     return LedgerRow(**{k: row[k] for k in row.keys()})
+
+
+def salvage_restart_survivor_worktree(
+    *,
+    dispatch_id: str,
+    source_repo: Path,
+) -> PruneResult:
+    """Salvage dirty Lane-B trees before marking restart survivors terminal (S6)."""
+    return maybe_prune_worktree_on_terminal(
+        dispatch_id=dispatch_id,
+        source_repo=source_repo,
+    )
 
 
 def emit_restart_survivor_terminal(
