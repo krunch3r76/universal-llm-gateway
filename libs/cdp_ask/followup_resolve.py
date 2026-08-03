@@ -187,6 +187,8 @@ def conflicting_keys(
     """True when supplied identity keys disagree on the chosen lane target."""
     chat_url, registration_id, execution_id = identity_keys(req)
     if chat_url and registration_id and chosen.registration_id != registration_id:
+        if stale_registration_id_conflict(req, chosen):
+            return False
         return True
     if (
         chat_url
@@ -203,6 +205,25 @@ def conflicting_keys(
     ):
         return True
     return False
+
+
+def stale_registration_id_conflict(
+    req: FollowupProjectAskRequest,
+    chosen: FollowupCandidate,
+) -> bool:
+    """True when chat_url uniquely identifies ``chosen`` but ``registration_id`` is stale.
+
+    Arm-time registration can rot across idle windows; fire-time ``chat_url``
+    discovery with exactly one live candidate is authoritative.
+    """
+    chat_url, registration_id, execution_id = identity_keys(req)
+    if not chat_url or not registration_id:
+        return False
+    if chosen.registration_id == registration_id:
+        return False
+    if execution_id:
+        return False
+    return True
 
 
 async def resolve_followup_target(

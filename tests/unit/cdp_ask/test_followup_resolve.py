@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from cdp_ask.execution_store import ExecutionStore
@@ -124,11 +124,14 @@ async def test_ambiguous_identity_two_candidates(
 
 
 @pytest.mark.asyncio
-async def test_conflicting_keys_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_stale_registration_id_proceeds_when_chat_url_unique(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F1 (b): arm-time registration_id rot with one live chat_url candidate."""
     store = ExecutionStore()
     monkeypatch.setattr(
         "cdp_ask.followup_resolve.cdp_registry.list_active",
-        lambda: [_reg("reg-1")],
+        lambda: [_reg("reg-live")],
     )
     monkeypatch.setattr(
         "cdp_ask.followup_resolve.scan_lane_cse_urls",
@@ -136,7 +139,36 @@ async def test_conflicting_keys_fail_closed(monkeypatch: pytest.MonkeyPatch) -> 
     )
     req = FollowupProjectAskRequest(
         chat_url=CSE_A,
-        registration_id="reg-2",
+        registration_id="reg-stale-arm-time",
+        prompt_text="x",
+    )
+    target, err, path = await resolve_followup_target(req, store)
+    assert err is None
+    assert target is not None
+    assert target.registration_id == "reg-live"
+    assert target.chat_url == CSE_A
+    assert path == "chat_url"
+
+
+@pytest.mark.asyncio
+async def test_execution_id_registration_conflict_still_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ExecutionStore()
+    rec = await store.create(holder="h", purpose="ask")
+    await store.set_registration_id(rec.execution_id, "reg-mapped")
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.cdp_registry.list_active",
+        lambda: [_reg("reg-live")],
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(return_value=[CSE_A]),
+    )
+    req = FollowupProjectAskRequest(
+        chat_url=CSE_A,
+        registration_id="reg-other",
+        execution_id=rec.execution_id,
         prompt_text="x",
     )
     _target, err, _path = await resolve_followup_target(req, store)
@@ -255,6 +287,52 @@ async def test_send_unverified_when_verification_fails(
     assert resp.ok is False
     assert resp.error == "send_unverified"
     assert resp.send_verified is False
+
+
+@pytest.mark.asyncio
+async def test_stale_registration_id_execute_followup_proceeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: stale arm-time registration_id still pastes on unique chat_url."""
+    store = ExecutionStore()
+    reg = _reg("reg-live")
+    monkeypatch.setattr("cdp_ask.followup_resolve.cdp_registry.list_active", lambda: [reg])
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(return_value=[CSE_A]),
+    )
+    page = MagicMock()
+    page.url = CSE_A
+    pw = AsyncMock()
+    pw.stop = AsyncMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup._find_page_on_lane",
+        AsyncMock(return_value=(page, pw)),
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup.send_followup_paste_half",
+        AsyncMock(
+            return_value={
+                "send_verified": True,
+                "streaming_at_paste": True,
+                "url": CSE_A,
+                "pasted_at": 2.0,
+                "error": None,
+            }
+        ),
+    )
+    monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            chat_url=CSE_A,
+            registration_id="reg-stale-arm-time",
+            prompt_text="wake",
+        ),
+        store,
+    )
+    assert resp.ok is True
+    assert resp.send_verified is True
+    assert resp.url == CSE_A
 
 
 @pytest.mark.asyncio
