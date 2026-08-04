@@ -345,23 +345,19 @@ async def relay_closeout_outcome(
         closeout_status=payload.status,
     )
     if relay.get("ok"):
-        wake = await post_operator_wake(
+        from services.git_integration_worker.cursor_auto.cse_wake_delivery import (
+            pay_wake_unit,
+        )
+
+        unit = await pay_wake_unit(
             job,
             dispatch_id=dispatch_id,
             request_turn=str(job.turn_number),
             closeout_status=payload.status,
             bus=client,
         )
-        delivery = (
-            await maybe_deliver_cse_wake(
-                job,
-                dispatch_id=dispatch_id,
-                request_turn=str(job.turn_number),
-                closeout_status=payload.status,
-            )
-            if wake.get("ok")
-            else {"ok": False, "skipped": True, "reason": "wake_not_ok"}
-        )
+        wake = unit.get("wake") or {"ok": unit.get("wake_ok", False)}
+        delivery = unit.get("delivery") or {"ok": unit.get("followup_ok", False)}
         await maybe_post_substrate_feedback(
             job,
             sdk_body=sdk_body,

@@ -113,6 +113,84 @@ def cdp_port_orphan_scan(
     )
 
 
+@event_factory
+def cdp_protocol_parked(
+    *,
+    cse_id: str,
+    registration_id: str | None,
+    thread: str,
+    turn_id: int,
+    obligation_id: str,
+    wake_channel: str,
+    fallback: str,
+) -> Event:
+    """Transition-class: PARKED mirror opens wake_owed obligation."""
+    return Event(
+        signal="cdp.protocol.parked",
+        role="coordination",
+        scope="node",
+        payload={
+            "cse_id": cse_id,
+            "registration_id": registration_id,
+            "thread": thread,
+            "turn_id": turn_id,
+            "obligation_id": obligation_id,
+            "wake_channel": wake_channel,
+            "fallback": fallback,
+        },
+    )
+
+
+@event_factory
+def cdp_wake_delivered(
+    *,
+    cse_id: str,
+    registration_id: str | None,
+    thread: str | None,
+    obligation_id: str,
+    send_verified: bool,
+) -> Event:
+    """Transition-class: followup success discharges wake_owed."""
+    return Event(
+        signal="cdp.wake.delivered",
+        role="coordination",
+        scope="node",
+        payload={
+            "cse_id": cse_id,
+            "registration_id": registration_id,
+            "thread": thread,
+            "obligation_id": obligation_id,
+            "send_verified": send_verified,
+        },
+    )
+
+
+@event_factory
+def cdp_wake_alarm_fired(
+    *,
+    cse_id: str,
+    registration_id: str | None,
+    thread: str | None,
+    obligation_id: str,
+    fallback: str,
+    outcome_code: str,
+) -> Event:
+    """Transition-class: TTL alarm on unpaid wake_owed."""
+    return Event(
+        signal="cdp.wake.alarm_fired",
+        role="coordination",
+        scope="node",
+        payload={
+            "cse_id": cse_id,
+            "registration_id": registration_id,
+            "thread": thread,
+            "obligation_id": obligation_id,
+            "fallback": fallback,
+            "outcome_code": outcome_code,
+        },
+    )
+
+
 def _payload(reg: Registration) -> dict:
     return {
         "registration_id": reg.registration_id,
@@ -125,6 +203,20 @@ def _payload(reg: Registration) -> dict:
 
 def emit(event: Event) -> None:
     """Best-effort UDS ingest — never raises."""
+    _mirror_to_event_service(event)
+
+
+def emit_transition(event: Event, *, transition_record: dict) -> None:
+    """ACK'd durable transition: fsync log + fold projection, then best-effort mirror.
+
+    Raises ``RegistryStoreError`` when local durability fails.
+    """
+    from claude_bundles.cse_session_fold import append_session_transition_locked
+
+    append_session_transition_locked(transition_record, event=event)
+
+
+def _mirror_to_event_service(event: Event) -> None:
     sock_path = os.environ.get(
         "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
     )

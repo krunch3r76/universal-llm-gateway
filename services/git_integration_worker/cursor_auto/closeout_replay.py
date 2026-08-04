@@ -47,7 +47,6 @@ from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
 from services.git_integration_worker.cursor_auto.nested_sdk import (
     fetch_sdk_closeout_body,
     post_operator_closeout,
-    post_operator_wake,
 )
 from services.git_integration_worker.cursor_auto.queue import get_queue
 from services.git_integration_worker.cursor_bus import CursorBusClient
@@ -195,7 +194,11 @@ async def _replay_one_row(
         recomputed_tree_residue=recomputed_tr,
     )
     if job is not None:
-        await post_operator_wake(
+        from services.git_integration_worker.cursor_auto.cse_wake_delivery import (
+            pay_wake_unit,
+        )
+
+        await pay_wake_unit(
             job,
             dispatch_id=row.dispatch_id,
             request_turn=str(row.request_turn),

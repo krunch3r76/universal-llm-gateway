@@ -282,6 +282,14 @@ def _request_impl(
         desired_model=desired_model,
         contract=contract,
     )
+    if capture_identity and (cse_chat_url or cse_registration_id):
+        from claude_bundles.cse_session_obligations import stamp_session_ids
+
+        stamp_session_ids(
+            lane_thread=str(thread_id),
+            chat_url=cse_chat_url,
+            registration_id=cse_registration_id,
+        )
     result = {
         "thread": thread_obj,
         "turn": turn_obj,

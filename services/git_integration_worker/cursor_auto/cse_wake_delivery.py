@@ -135,13 +135,15 @@ async def maybe_deliver_cse_wake(
     request_turn: str,
     closeout_status: str,
     post: HttpPoster | None = None,
+    chat_url: str | None = None,
+    registration_id: str | None = None,
 ) -> dict[str, Any]:
     """Leg (b): fire followup after bus WAKE; skip IDE-class or missing identity."""
     if not is_chat_delivery_capable(job.from_agent):
         return {"ok": False, "skipped": True, "reason": "not_chat_delivery_capable"}
 
-    chat_url = getattr(job, "cse_chat_url", None)
-    registration_id = getattr(job, "cse_registration_id", None)
+    chat_url = chat_url or getattr(job, "cse_chat_url", None)
+    registration_id = registration_id or getattr(job, "cse_registration_id", None)
     prompt = build_wake_prompt_text(
         dispatch_id=dispatch_id,
         thread_id=str(job.thread_id),
@@ -157,9 +159,100 @@ async def maybe_deliver_cse_wake(
     )
 
 
+def _map_followup_code(result: dict[str, Any]) -> str:
+    if result.get("skipped"):
+        reason = str(result.get("reason") or result.get("error") or "skipped")
+        if reason == "not_chat_delivery_capable":
+            return "csr.wake.followup_failed"
+        return "csr.wake.no_identity"
+    if result.get("error") == "no_identity":
+        return "csr.wake.no_identity"
+    if result.get("error") == "send_unverified" or result.get("send_verified") is False:
+        return "csr.wake.send_unverified"
+    if not result.get("ok"):
+        return "csr.wake.followup_failed"
+    return "csr.wake.unit_ok"
+
+
+async def pay_wake_unit(
+    job: AutoJob,
+    *,
+    dispatch_id: str,
+    request_turn: str,
+    closeout_status: str,
+    bus: Any | None = None,
+    post: HttpPoster | None = None,
+) -> dict[str, Any]:
+    """Transactional pay unit — followup first, then bus WAKE; unified outcome."""
+    from claude_bundles.cdp_registry_store import load_sessions
+    from claude_bundles.cse_session_obligations import (
+        get_open_wake_owed,
+        record_wake_posted,
+        resolve_payment_channel,
+    )
+
+    from services.git_integration_worker.cursor_auto.nested_sdk import (
+        post_operator_wake,
+    )
+
+    sessions = load_sessions()
+    channel = resolve_payment_channel(sessions, thread=str(job.thread_id))
+    chat_url = channel.get("chat_url")
+    registration_id = channel.get("registration_id")
+    if not chat_url and not registration_id:
+        chat_url = getattr(job, "cse_chat_url", None)
+        registration_id = getattr(job, "cse_registration_id", None)
+
+    delivery = await maybe_deliver_cse_wake(
+        job,
+        dispatch_id=dispatch_id,
+        request_turn=request_turn,
+        closeout_status=closeout_status,
+        post=post,
+        chat_url=chat_url,
+        registration_id=registration_id,
+    )
+    followup_ok = bool(delivery.get("ok"))
+    followup_code = _map_followup_code(delivery)
+
+    wake = await post_operator_wake(
+        job,
+        dispatch_id=dispatch_id,
+        request_turn=request_turn,
+        closeout_status=closeout_status,
+        bus=bus,
+    )
+    wake_ok = bool(wake.get("ok"))
+
+    ob = get_open_wake_owed(load_sessions(), thread=str(job.thread_id))
+    if wake_ok and ob:
+        record_wake_posted(
+            thread=str(job.thread_id),
+            obligation_id=str(ob.get("obligation_id") or ""),
+        )
+
+    if followup_ok and wake_ok:
+        code = "csr.wake.unit_ok"
+    elif not followup_ok:
+        code = followup_code if followup_code != "csr.wake.unit_ok" else "csr.wake.followup_failed"
+    else:
+        code = "csr.wake.bus_wake_failed"
+
+    ok = followup_ok and wake_ok
+    return {
+        "ok": ok,
+        "followup_ok": followup_ok,
+        "wake_ok": wake_ok,
+        "code": code,
+        "delivery": delivery,
+        "wake": wake,
+    }
+
+
 __all__ = [
     "build_wake_prompt_text",
     "deliver_cse_wake",
     "is_chat_delivery_capable",
     "maybe_deliver_cse_wake",
+    "pay_wake_unit",
 ]

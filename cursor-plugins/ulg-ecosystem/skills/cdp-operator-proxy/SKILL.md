@@ -360,25 +360,40 @@ human acts, product prompts he must click (inv 21). Drain restart ⇒ `contract:
 test is not *does this touch a UI* — it is *can Auto reach it*. Spec:
 `cortex://notes/system/specs/mission-disposition-residual-commission.md`.
 
+**Land collector (BINDING):** ¬ `collector: cursor lead|IDE|MONITOR` for Auto-runnable
+land/merge/uncommitted/worktree residuals — `collector: cursor-auto` (or `followup:` that
+commissions cursor-auto); substrate refuses `mission_close_ide_collector_for_land`.
+
 ### Mission-debrief format (BINDING)
 
 Awareness class — the one pager that earns length. Same audience as every `notify` (inv 22(g)):
 the **human principal**, phone-testable — ¬ a CDP status channel. Architecture-first human
 register: name ULG systems and where they sit when that is the point; ground in vision (what
-this serves). The distinction is architecture vs implementation — ¬ lead with file paths,
-SHAs, function names, test names, thread ids, contract tokens, or closeout field shape (those
-belong in `ref`); metrics in plain language ("eleven items to two"). Subject must **not**
-say `COME TO IDE`.
+this serves). **Growth map (BINDING — operator 2026-08-04 · so-what 2026-08-04):** the
+phone must answer **all three** — (1) what this means for the **future of ULG and its
+capabilities**, (2) what is **improved since before**, (3) how this **affects consumers of
+the repo** (humans *and agents* — APIs, skills, bus/MCP surfaces, invariants). Name the
+systems that grew (e.g. CSE Session Registry, `project_ask`, cdp-registry, agent-bus,
+cortex, git_integration_worker). **Vision** opens from **ULG vision statement(s)**
+(`cortex://notes/system/cortex-vision.md` · cognitive-platform · architectural-vision) —
+**¬** the current mission’s local narrative. Ticket/slug/DISPOSITION telegrams and
+mission-recap-only pages refuse the bar. MISSION_CLOSEOUT bodies that omit `## Vision` /
+`## Architecture` (or labeled equivalents) cause auto-debrief notify to **refuse** rather
+than invent a hollow page — author the slots, or call `notify` yourself with the
+growth-map body. The distinction is architecture vs implementation — ¬ lead with file
+paths, SHAs, function names, test names, thread ids, contract tokens, or closeout field
+shape (those belong in `ref`); metrics in plain language ("eleven items to two"). Subject
+must **not** say `COME TO IDE`.
 
 **0. Stream-end (BINDING when this debrief accompanies ending the Cowork stream):** first
 sentence or subject clause must state that the stream is ending **now** and **why**
 (episode close · continuity hop to successor). Without it, silence looks like a hang
 even when `TYPE: MISSION_CLOSEOUT` is correct (inv 30).
 
-1. Open on the **vision it served** — what this fixes about how the fleet knows things, ¬ what was built; name the gap the system used to leave.
+1. Open on the **ULG vision it served** (vision-statement ground, ¬ mission story) — what this fixes about how the fleet knows / acts going forward; name the gap closed (**improved since before**); imply who consumes the gain (agents + humans on this repo).
 2. Enumerate accomplishments **by importance, ¬ chronology** — each leads with the idea; the artifact is incidental.
 3. State the **reframe** when the diagnosis moved — what we thought the problem was vs what it turned out to be.
-4. Name the load-bearing **architectural distinction** in one sentence a non-engineer can hold.
+4. Name the load-bearing **architectural distinction** in one sentence a non-engineer can hold — **and name the ULG systems** that grew or were added.
 5. Say what makes it **structurally safe**, ¬ merely working — the property that cannot be violated, not the rule that must be remembered.
 6. Include the **challenge beat** when a premise was tested: what threatened it, how it was settled, the evidence.
 7. **Own failures plainly** with the generalizable lesson — ¬ apology cascade.
@@ -570,6 +585,7 @@ before re-issuing. Full templates arrive in the mission briefing inject.
 | Bulk-syncing the whole skill census to claude.ai to be safe | Per-slug sync, named bodies only (inv 24 cost limit) |
 | A ticket/slug dump as the "debrief" on the pager | Architecture-first — named ULG systems, vision, what he can trust now |
 | Progress `notify` that only another CDP seat could unpack (item-N · disposition · auto-id lead) | Phone-test human so-what; dense ids in `ref` only (inv 22(g)) |
+| Mission debrief / progress page that never names which ULG systems grew | Growth map: vision + Architecture naming CSE Session Registry / project_ask / cdp-registry / … |
 | Paging every DISPOSITION that only advances a conveyor ordinal | Page when fleet trust/capability moved; batch conveyor noise (inv 22(d)(1)) |
 | Treating the pager as an interagent status channel because this seat is operator | Pager = human principal; bus = interagent (inv 22(g)) |
 | Ending the Cowork stream on MISSION_CLOSEOUT without saying so on the pager | Debrief/subject opens with stream-end + why (inv 22(d)(2) · inv 30) |

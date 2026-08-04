@@ -107,9 +107,15 @@ def test_prose_only_section_refused() -> None:
 
 
 def test_debrief_notify_requires_beyond_line() -> None:
+    body = (
+        "The fleet used to lose track of wake debt after PARKED closes.\n\n"
+        "Looking back: We treated wake as courtesy.\n\n"
+        "Architecture: CSE Session Registry on cdp-registry + project_ask followup.\n\n"
+        "Looking ahead: Enter /layer on the obligations todo.\n"
+    )
     verdict = validate_mission_debrief_notify(
         subject="ULG mission debrief — 6576",
-        body="We healed the charter kernel and the fleet is up.",
+        body=body,
         tag="mission-debrief",
     )
     assert verdict.ok is False
@@ -118,7 +124,10 @@ def test_debrief_notify_requires_beyond_line() -> None:
 
 def test_debrief_notify_with_wake_passes() -> None:
     body = (
-        "Charter heal landed.\n"
+        "The fleet used to lose track of wake debt after PARKED closes.\n\n"
+        "Looking back: We treated wake as courtesy.\n\n"
+        "Architecture: CSE Session Registry on cdp-registry + project_ask followup.\n\n"
+        "Looking ahead: Enter /layer on the obligations todo.\n\n"
         f"{BEYOND_NOTIFY_PREFIX} D10 — collector: this-seat · "
         "followup: poll 6576 after done"
     )
@@ -128,6 +137,23 @@ def test_debrief_notify_with_wake_passes() -> None:
         tag="mission-debrief",
     )
     assert verdict.ok is True
+
+
+def test_debrief_notify_rejects_unnamed_systems() -> None:
+    body = (
+        "Something important about how the fleet knows what happened landed.\n\n"
+        "Looking back: Prior shape was wrong.\n\n"
+        "Architecture: A new projection holds session state somehow.\n\n"
+        "Looking ahead: Keep going.\n\n"
+        f"{BEYOND_NOTIFY_PREFIX} none"
+    )
+    verdict = validate_mission_debrief_notify(
+        subject="ULG mission debrief",
+        body=body,
+        tag="mission-debrief",
+    )
+    assert verdict.ok is False
+    assert verdict.reason == "mission_debrief_systems_unnamed"
 
 
 # --- AC1 reproduction tests (correct behavior after bullet-item fix) ---
@@ -164,6 +190,37 @@ def test_ac1_mid_bullet_token_passes() -> None:
         f"{BEYOND_HEADING}\n"
         "- D10 B-iii thin spec — commissioned, collector: web-anthropic · "
         "followup: poll agent-bus:6576 after status:done\n"
+    )
+    verdict = validate_mission_close_wake(body=body)
+    assert verdict.ok is True
+
+
+def test_land_residual_ide_collector_refused() -> None:
+    body = (
+        "TYPE: MISSION_CLOSEOUT\n\n"
+        f"{BEYOND_HEADING}\n"
+        "- CSR gapless unlanded on master — collector: cursor lead\n"
+    )
+    verdict = validate_mission_close_wake(body=body)
+    assert verdict.ok is False
+    assert verdict.reason == "mission_close_ide_collector_for_land"
+
+
+def test_land_residual_cursor_auto_collector_ok() -> None:
+    body = (
+        "TYPE: MISSION_CLOSEOUT\n\n"
+        f"{BEYOND_HEADING}\n"
+        "- CSR gapless land on master — collector: cursor-auto\n"
+    )
+    verdict = validate_mission_close_wake(body=body)
+    assert verdict.ok is True
+
+
+def test_non_land_ide_collector_still_ok() -> None:
+    body = (
+        "TYPE: MISSION_CLOSEOUT\n\n"
+        f"{BEYOND_HEADING}\n"
+        "- D10 B-iii thin spec — collector: cursor lead · followup: poll 6576\n"
     )
     verdict = validate_mission_close_wake(body=body)
     assert verdict.ok is True

@@ -17,6 +17,12 @@ BEYOND_NOTIFY_PREFIX = "Beyond this close:"
 _WAKE_TOKEN_RE = re.compile(
     r"(?i)\b(collector|followup|charter_enrolled|operator_gate)\s*:"
 )
+_LAND_CLASS_RE = re.compile(
+    r"(?i)\b(land|merge|uncommitted|worktree|hook-blocked|commits_ahead|unlanded|fast-?forward)\b"
+)
+_IDE_COLLECTOR_RE = re.compile(
+    r"(?i)collector:\s*(cursor\s*lead|ide(\s*lead)?|monitor\b|human\b)"
+)
 _OUTSTANDING_RE = re.compile(r"(?i)\b(in[-\s]?flight|commissioned)\b")
 _MISSION_CLOSEOUT_TYPE_RE = re.compile(r"(?i)^TYPE:\s*MISSION_CLOSEOUT\b", re.M)
 _MISSION_CLOSEOUT_SUBJECT_RE = re.compile(r"(?i)\bMISSION\s+CLOSEOUT\b")
@@ -45,6 +51,12 @@ MISSION_CLOSE_WAKE_FIX_HINT = (
     "Example: `- D10 spec — collector: web-anthropic · followup: poll 6576`. "
     "`commissioned, in flight` without a wake token is an invalid close state. "
     "Pager compact form: `Beyond this close: <none|item — collector: …>`."
+)
+
+LAND_IDE_COLLECTOR_FIX_HINT = (
+    "Auto-runnable land/merge must use `collector: cursor-auto` "
+    "(or `followup:` that is an `agent_bus.request` to cursor-auto / "
+    "`contract: implement|propagate`) — never park on IDE/cursor lead/MONITOR."
 )
 
 
@@ -194,6 +206,14 @@ def validate_mission_close_wake(
             reason="mission_close_wake_path_incomplete",
             missed_tokens=tuple(bad_items),
         )
+    for item in items:
+        if _LAND_CLASS_RE.search(item) and _IDE_COLLECTOR_RE.search(item):
+            return MissionCloseWakeVerdict(
+                ok=False,
+                reason="mission_close_ide_collector_for_land",
+                missed_tokens=(_truncate_offending(item),),
+                fix_hint=LAND_IDE_COLLECTOR_FIX_HINT,
+            )
     return MissionCloseWakeVerdict(ok=True)
 
 
@@ -221,26 +241,62 @@ def validate_mission_debrief_notify(
     body: str = "",
     tag: str = "",
 ) -> MissionCloseWakeVerdict:
-    """Refuse mission-debrief pager bodies that omit the beyond-this-close line."""
+    """Refuse mission-debrief pages missing Beyond, Architecture, or named systems.
+
+    Growth-map bar (operator 2026-08-04): the phone must show vision + architecture
+    with specific ULG systems named — ¬ a bus/status telegram.
+    """
     if not is_mission_debrief_notify(subject=subject, tag=tag):
         return MissionCloseWakeVerdict(ok=True)
     text = body or ""
-    match = re.search(
-        rf"(?im)^{re.escape(BEYOND_NOTIFY_PREFIX)}\s*(.+)$",
-        text,
-    )
-    if match is None:
-        # Allow the durable heading form inside longer notify bodies.
-        section = _section_body(text, BEYOND_HEADING)
-        if section is None:
-            return MissionCloseWakeVerdict(
-                ok=False,
-                reason="mission_debrief_beyond_missing",
-                missed_tokens=(BEYOND_NOTIFY_PREFIX,),
-            )
-        payload = section
-    else:
-        payload = match.group(1).strip()
+
+    from pager_notify.mission_page import extract_awareness_slots, named_ulg_systems
+
+    slots = extract_awareness_slots(text)
+    # Composed bodies always stamp ``Architecture: …``; also accept ATX.
+    has_architecture_label = bool(
+        re.search(r"(?im)^(?:architecture|##\s*architecture)\s*:", text)
+    ) or bool(slots.architecture)
+    if not has_architecture_label:
+        return MissionCloseWakeVerdict(
+            ok=False,
+            reason="mission_debrief_architecture_missing",
+            missed_tokens=("Architecture: <named ULG systems>",),
+        )
+    arch_text = slots.architecture or text
+    vision_text = slots.vision or ""
+    if not vision_text:
+        # Opening paragraph before Looking back / Architecture counts as vision.
+        opener = re.split(
+            r"(?im)^(?:Looking back:|Architecture:|Looking ahead:|Beyond this close:)",
+            text,
+            maxsplit=1,
+        )[0].strip()
+        vision_text = " ".join(opener.split())
+    if len(vision_text) < 40:
+        return MissionCloseWakeVerdict(
+            ok=False,
+            reason="mission_debrief_vision_missing",
+            missed_tokens=("Vision: <fleet gap this work closes>",),
+        )
+    systems = named_ulg_systems(f"{arch_text}\n{vision_text}")
+    if not systems:
+        return MissionCloseWakeVerdict(
+            ok=False,
+            reason="mission_debrief_systems_unnamed",
+            missed_tokens=(
+                "name concrete ULG systems (e.g. CSE Session Registry, "
+                "project_ask, cdp-registry, agent-bus, cortex)",
+            ),
+        )
+
+    payload = _beyond_notify_payload(text)
+    if payload is None:
+        return MissionCloseWakeVerdict(
+            ok=False,
+            reason="mission_debrief_beyond_missing",
+            missed_tokens=(BEYOND_NOTIFY_PREFIX,),
+        )
     if payload.casefold() in _NONE_VALUES:
         if _OUTSTANDING_RE.search(text):
             return MissionCloseWakeVerdict(
@@ -260,6 +316,44 @@ def validate_mission_debrief_notify(
             ),
         )
     return MissionCloseWakeVerdict(ok=True)
+
+
+def _beyond_notify_payload(text: str) -> str | None:
+    """Extract Beyond payload from same-line or multi-line notify forms."""
+    # Compact same-line only (do not let \\s eat the newline into the next bullet):
+    # ``Beyond this close: none`` / ``Beyond this close: D10 — collector: …``
+    match = re.search(
+        rf"(?im)^{re.escape(BEYOND_NOTIFY_PREFIX)}[ \t]+(.+)$",
+        text or "",
+    )
+    if match and match.group(1).strip():
+        return match.group(1).strip()
+    # Multi-line block from format_mission_awareness_page:
+    # Beyond this close:\n- bullet\n- bullet
+    block = re.search(
+        rf"(?im)^{re.escape(BEYOND_NOTIFY_PREFIX)}\s*\n(.*?)(?=^##\s|\Z)",
+        text or "",
+        re.DOTALL,
+    )
+    if block is not None:
+        items, _ = _parse_bullet_items(block.group(1))
+        if items:
+            return " · ".join(items)
+        substantive = _lines_substantive(block.group(1))
+        if substantive:
+            return " ".join(substantive)
+        return "none"
+    # Durable closeout heading inside a longer notify body.
+    section = _section_body(text or "", BEYOND_HEADING)
+    if section is None:
+        return None
+    if _section_is_none(section):
+        return "none"
+    items, _ = _parse_bullet_items(section)
+    if items:
+        return " · ".join(items)
+    compact = " ".join(_lines_substantive(section))
+    return compact if compact else "none"
 
 
 def refusal_envelope(verdict: MissionCloseWakeVerdict) -> dict[str, object]:

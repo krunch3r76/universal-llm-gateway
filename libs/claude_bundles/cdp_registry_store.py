@@ -13,6 +13,8 @@ from typing import Any
 REGISTRY_DIR = Path.home() / ".gateway" / "cdp-registry"
 REGISTRY_LOG = REGISTRY_DIR / "registry.jsonl"
 ACTIVE_JSON = REGISTRY_DIR / "active.json"
+SESSIONS_JSON = REGISTRY_DIR / "sessions.json"
+SESSION_TRANSITIONS_JSONL = REGISTRY_DIR / "session_transitions.jsonl"
 PORTS_LOCK = REGISTRY_DIR / "ports.lock"
 REGISTRATIONS_DIR = REGISTRY_DIR / "registrations"
 
@@ -68,6 +70,51 @@ def append_log(event: str, record: dict[str, Any]) -> None:
         fh.write(line + "\n")
         fh.flush()
         os.fsync(fh.fileno())
+
+
+def load_sessions() -> dict[str, dict[str, Any]]:
+    """Load obligation projection — empty dict when absent."""
+    if not SESSIONS_JSON.exists():
+        return {}
+    try:
+        data = json.loads(SESSIONS_JSON.read_text(encoding="utf-8") or "{}")
+    except json.JSONDecodeError as exc:
+        raise RegistryStoreError(f"corrupt sessions.json: {exc}") from exc
+    if not isinstance(data, dict):
+        raise RegistryStoreError("sessions.json must be a JSON object")
+    return data
+
+
+def write_sessions(sessions: dict[str, dict[str, Any]]) -> None:
+    """Atomic replace for obligation projection."""
+    ensure_dirs()
+    tmp = SESSIONS_JSON.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(sessions, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, SESSIONS_JSON)
+
+
+def append_session_transition(record: dict[str, Any]) -> None:
+    """Append one fsync'd transition line — raises on I/O failure."""
+    ensure_dirs()
+    line = json.dumps(record, sort_keys=True)
+    with SESSION_TRANSITIONS_JSONL.open("a", encoding="utf-8") as fh:
+        fh.write(line + "\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+
+
+def read_session_transitions() -> list[dict[str, Any]]:
+    """Read all transition records from the durable log."""
+    if not SESSION_TRANSITIONS_JSONL.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for raw in SESSION_TRANSITIONS_JSONL.read_text(encoding="utf-8").splitlines():
+        if not raw.strip():
+            continue
+        row = json.loads(raw)
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
 
 
 def registration_lock_path(registration_id: str) -> Path:
