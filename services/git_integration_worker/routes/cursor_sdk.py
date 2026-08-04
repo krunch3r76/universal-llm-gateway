@@ -32,10 +32,10 @@ from cursor_sdk import Client
 from fastapi import APIRouter, FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 from implement_admission.closeout_helpers import cortex_files_root
+from implement_admission.normalize import _files_from_packet
 from universal_logging import get_logger
 from universal_protocol import error_envelope
 
-from implement_admission.normalize import _files_from_packet
 from services.git_integration_worker.admission import (
     Draining503,
     WorkAdmissionController,
@@ -101,9 +101,6 @@ from services.git_integration_worker.cursor_sdk_context import (
     build_agent_options,
     validate_dispatch_context,
 )
-from services.git_integration_worker.cursor_sdk_substrate_tools import (
-    SubstrateDispatchContext,
-)
 from services.git_integration_worker.cursor_sdk_deliverable_truth import (
     LIGHT_BOUNDED_CONTRACT,
     light_bounded_deliverable_reason,
@@ -114,8 +111,8 @@ from services.git_integration_worker.cursor_sdk_deliverables import (
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_closeout_reconciled,
     emit_sdk_implement_unresolved_source_ref,
-    emit_sdk_lane_b_minted,
     emit_sdk_lane_b_mint_rolled_back,
+    emit_sdk_lane_b_minted,
     emit_sdk_lane_selected,
     emit_sdk_restart_bridge_reap_failed,
     emit_sdk_worker_completed,
@@ -202,6 +199,9 @@ from services.git_integration_worker.cursor_sdk_stream_capture import (
 )
 from services.git_integration_worker.cursor_sdk_subagent_capture import (
     merge_stream_subagent_calls,
+)
+from services.git_integration_worker.cursor_sdk_substrate_tools import (
+    SubstrateDispatchContext,
 )
 from services.git_integration_worker.cursor_sdk_supersede import (
     register_live_run,

@@ -21,7 +21,7 @@ LaneSelectionReason = Literal[
 _IMPLEMENT_CLASS_CONTRACTS = frozenset({"implement", "light-bounded"})
 
 
-class LaneScopeRefused(Exception):
+class LaneScopeRefused(Exception):  # noqa: N818
     """Raised when explicit ``lane='B'`` is incompatible with ``files_expected`` scope."""
 
 

@@ -359,7 +359,9 @@ def test_ac_s2_7_nest_under_lane_b_inherits_parent_tree(
     git_repo: Path,
 ) -> None:
     """AC-S2.7: nest_under Lane-B parent inherits lease_key; no second mint."""
-    from services.git_integration_worker.cursor_sdk_worktree import resolve_admit_binding
+    from services.git_integration_worker.cursor_sdk_worktree import (
+        resolve_admit_binding,
+    )
     from services.git_integration_worker.models.cursor_api import CursorDispatchResponse
 
     parent_req = CursorDispatchRequest(
