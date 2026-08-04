@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from universal_logging import get_logger
 
 from .events import _emit_event_safe
+from .wait_continuation import ContinuationMode, continuation_still_transient
 from .wait_emit import build_exit_constraint_summary
 
 if TYPE_CHECKING:
@@ -243,6 +244,7 @@ async def _wait_and_retry_selection(
     routing_key_tracker: "RoutingKeyTracker | None" = None,
     starvation_drain_threshold_s: float = DEFAULT_STARVATION_DRAIN_THRESHOLD_S,
     drain_duration_s: float = DEFAULT_DRAIN_DURATION_S,
+    continuation_mode: ContinuationMode = "busy_block",
 ) -> tuple[Any, Any, int]:
     """
     Wait for federated state changes, then retry selection until success or timeout.
@@ -332,12 +334,8 @@ async def _wait_and_retry_selection(
                     )
                 return selected, trace, waited_ms
 
-            still_transient = any(
-                any(
-                    f.constraint == "eviction_blocked_by_busy_models"
-                    for f in c.constraints_failed
-                )
-                for c in (trace.candidates if trace else [])
+            still_transient = continuation_still_transient(
+                trace, mode=continuation_mode
             )
             if not still_transient:
                 # First-iteration (or later) bail: wait entered because the

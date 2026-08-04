@@ -9,7 +9,6 @@ and raises the appropriate structured selection error. Supporting pure helpers
 are in sibling modules within the rejection package.
 """
 
-import time
 from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
@@ -26,6 +25,7 @@ from ....events import (
     _emit_routing_model_infeasible_event,
     _emit_routing_resource_gap_event,
 )
+from ....wait_continuation import clamp_eviction_wait_timeout
 from ....wait_logic import _wait_and_retry_selection
 from .capacity_details import _build_capacity_details
 from .terminal_events import _emit_terminal_failure_events
@@ -104,22 +104,22 @@ async def handle_selection_rejection(
 
     queue_timeout_info: dict[str, Any] | None = None
     if trace and trace.candidates:
-        has_busy_block = any(
+        has_transient_capacity = any(
             any(
-                failure.constraint == "eviction_blocked_by_busy_models"
+                failure.constraint in _TRANSIENT_CAPACITY_CONSTRAINTS
                 for failure in candidate.constraints_failed
             )
             for candidate in trace.candidates
         )
-        if has_busy_block:
+        if has_transient_capacity:
             if event_bus:
                 await _emit_eviction_classification_event(
                     event_bus=event_bus,
                     request_id=context.request_id,
                     model_id=context.selected_model,
                     trace=trace,
-                    classification="busy_blocked",
-                    failure_reason="No idle models to evict; entering wait queue",
+                    classification="transient_capacity",
+                    failure_reason="Transient capacity contention; entering wait queue",
                 )
             rc = routing_config or {}
             config_timeout = float(rc.get("eviction_wait_timeout_s", 300.0))
@@ -127,11 +127,7 @@ async def handle_selection_rejection(
                 rc.get("starvation_drain_threshold_s", 15.0)
             )
             drain_duration_s = float(rc.get("drain_duration_s", 30.0))
-            deadline = getattr(context, "_capacity_deadline_mono", None)
-            if deadline is not None:
-                timeout_s = min(config_timeout, max(0.0, deadline - time.monotonic()))
-            else:
-                timeout_s = config_timeout
+            timeout_s = clamp_eviction_wait_timeout(context, config_timeout)
             selected_gateway, trace, waited_ms = await _wait_and_retry_selection(
                 federated_manager=federated_manager,
                 decision_engine=decision_engine,
@@ -144,6 +140,7 @@ async def handle_selection_rejection(
                 routing_key_tracker=routing_key_tracker,
                 starvation_drain_threshold_s=starvation_drain_threshold_s,
                 drain_duration_s=drain_duration_s,
+                continuation_mode="transient_capacity",
             )
             if selected_gateway is None:
                 queue_timeout_info = {"waited_ms": waited_ms}

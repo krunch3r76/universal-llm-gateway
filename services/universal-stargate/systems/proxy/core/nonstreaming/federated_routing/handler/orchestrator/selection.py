@@ -17,6 +17,7 @@ from .....endpoint_category import derive_endpoint_category
 from ....selection_errors import (
     raise_all_gateways_excluded_error,
     raise_inference_banned_error,
+    raise_model_unavailable_error,
     raise_no_gateways_error,
 )
 from ...wait_logic import (
@@ -219,6 +220,12 @@ async def run_initial_selection(
             )
             if recovered:
                 federated_gateways = federated_manager.get_healthy_gateways()
+
+    model_in_any_catalog = any(
+        model_id in g.available_models for g in all_gateways
+    )
+    if federated_gateways and not model_in_any_catalog:
+        raise_model_unavailable_error(str(model_id))
 
     gateways_for_routing = federated_gateways_to_routing_candidates(
         [g for g in federated_gateways if g.dispatchable]

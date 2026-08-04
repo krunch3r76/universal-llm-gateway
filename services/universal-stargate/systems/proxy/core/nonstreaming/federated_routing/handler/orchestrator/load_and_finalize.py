@@ -15,8 +15,8 @@ from universal_protocol import ErrorCode
 from ....selection_errors import (
     raise_capacity_error,
     raise_eviction_blocked_error,
-    raise_eviction_failed_error,
 )
+from ...wait_continuation import clamp_eviction_wait_timeout
 from ...wait_logic import _wait_and_retry_selection
 
 if TYPE_CHECKING:
@@ -147,6 +147,25 @@ async def finalize_selection_and_load(
                 )
 
         if trace.selection_tier == FeasibilityTier.T2_FEASIBLE_EVICT:
+            if (
+                plan
+                and plan.models_to_evict
+                and capacity_pool is not None
+            ):
+                rc = routing_config or {}
+                pause_duration_s = float(
+                    rc.get(
+                        "eviction_victim_pause_s",
+                        rc.get("drain_duration_s", 30.0),
+                    )
+                )
+                for evict_model in plan.models_to_evict:
+                    capacity_pool.pause_admission(
+                        evict_model.routing_key,
+                        duration_s=pause_duration_s,
+                        reason="eviction_execute_victim_pin",
+                    )
+
             eviction_result = await execute_master_eviction(
                 federation_forwarder=federation_forwarder,
                 federated_manager=federated_manager,
@@ -202,10 +221,99 @@ async def finalize_selection_and_load(
                             timestamp=time.time(),
                         )
                     )
-                raise_eviction_failed_error(
-                    str(model_id),
-                    selected_gateway.name,
-                    gateway_url=selected_gateway.ref.remote_stargate_url,
+
+                if (
+                    optimistic_mark_gateway_id
+                    and optimistic_mark_model_id
+                    and federated_manager
+                ):
+                    federated_manager.clear_model_loading_optimistic(
+                        optimistic_mark_gateway_id, optimistic_mark_model_id
+                    )
+                    optimistic_mark_gateway_id = None
+                    optimistic_mark_model_id = None
+                    marked_loading = False
+
+                if context.capacity_token:
+                    await context.capacity_token.release()
+                    context.capacity_token = None
+
+                rc = routing_config or {}
+                config_timeout = float(rc.get("eviction_wait_timeout_s", 300.0))
+                timeout_s = clamp_eviction_wait_timeout(context, config_timeout)
+                starvation_drain_threshold_s = float(
+                    rc.get("starvation_drain_threshold_s", 15.0)
+                )
+                drain_duration_s = float(rc.get("drain_duration_s", 30.0))
+
+                selected_gateway, trace, waited_ms = await _wait_and_retry_selection(
+                    federated_manager=federated_manager,
+                    decision_engine=decision_engine,
+                    placement=placement,
+                    context=context,
+                    event_bus=event_bus,
+                    timeout_s=timeout_s,
+                    stability_tracker=stability_tracker,
+                    capacity_pool=capacity_pool,
+                    routing_key_tracker=routing_key_tracker,
+                    starvation_drain_threshold_s=starvation_drain_threshold_s,
+                    drain_duration_s=drain_duration_s,
+                    continuation_mode="execution_failure",
+                )
+                if selected_gateway is None:
+                    raise_capacity_error(
+                        str(model_id),
+                        {
+                            "reason": "eviction_execute_failure_queue_timeout",
+                            "waited_ms": waited_ms,
+                        },
+                    )
+
+                from systems.routing.selection.stargate_collector import (
+                    federated_gateways_to_routing_candidates,
+                )
+
+                from .admission import acquire_admission_token
+
+                fresh_gateways = [
+                    g
+                    for g in federated_manager.get_all_gateways()
+                    if g.dispatchable
+                ]
+                gateways_for_routing = [
+                    g
+                    for g in federated_gateways_to_routing_candidates(fresh_gateways)
+                    if g.name not in (context.excluded_gateway_ids or set())
+                ]
+                selected_gateway = await acquire_admission_token(
+                    context=context,
+                    selected_gateway=selected_gateway,
+                    gateways_for_routing=gateways_for_routing,
+                    routing_config=routing_config,
+                    event_bus=event_bus,
+                    capacity_pool=capacity_pool,
+                    stability_tracker=stability_tracker,
+                    allowed_gateway_ids_override=None,
+                    overflow_origin_gateway=None,
+                    overflow_depth_before=0,
+                )
+
+                return await finalize_selection_and_load(
+                    context=context,
+                    selected_gateway=selected_gateway,
+                    trace=trace,
+                    event_bus=event_bus,
+                    federated_manager=federated_manager,
+                    federated_load_orchestrator=federated_load_orchestrator,
+                    federation_forwarder=federation_forwarder,
+                    routing_config=routing_config,
+                    decision_engine=decision_engine,
+                    placement=placement,
+                    stability_tracker=stability_tracker,
+                    routing_start_time=routing_start_time,
+                    eviction_cooldown_s=eviction_cooldown_s,
+                    capacity_pool=capacity_pool,
+                    routing_key_tracker=routing_key_tracker,
                 )
 
         if federated_load_orchestrator:
