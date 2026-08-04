@@ -561,6 +561,7 @@ def test_write_consult_provenance_four_fields(
     data_dir.mkdir()
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(data_dir))
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path / "cortex-files"))
     (tmp_path / "home" / ".local" / "share").mkdir(parents=True)
 
     from scripts.model_manager.ui.controller.charter_runner.consult_lane import (
@@ -585,6 +586,44 @@ def test_write_consult_provenance_four_fields(
     assert loaded["consultant_family"] == "anthropic"
     assert loaded["consultant_substrate"] == "web-anthropic"
     assert uri.startswith("cortex://notes/system/threads/charter-consult-provenance/")
+
+
+@pytest.mark.offline
+def test_write_consult_provenance_home_only_quarantines_pointer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    data_dir = tmp_path / "charter-runner"
+    data_dir.mkdir()
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.charter_runner.consult_lane._write_consult_provenance_to_shared_root",
+        lambda _uri, _content: False,
+    )
+
+    from scripts.model_manager.ui.controller.charter_runner.consult_lane import (
+        ConsultProvenanceRecord,
+        load_consult_provenance,
+    )
+
+    uri = write_consult_provenance(
+        ConsultProvenanceRecord(
+            consult_thread="agent-bus:9004",
+            verdict="ADMIT",
+            consultant_family="anthropic",
+            consultant_substrate="web-anthropic",
+            consultant_model="cdp/opus-5",
+        ),
+        root_id="5976",
+    )
+    assert uri == ""
+    assert load_consult_provenance("5976") is not None
+    home_mirror = (
+        tmp_path
+        / "home"
+        / ".local/share/cortex/notes/system/threads/charter-consult-provenance/5976.json"
+    )
+    assert home_mirror.is_file()
 
 
 @pytest.mark.offline

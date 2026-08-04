@@ -10,9 +10,11 @@ import pytest
 from libs.charter_runner_store.db import apply_migrations, open_ledger_db
 from scripts.model_manager.ui.controller.charter_runner.root_ledger import (
     RootStatus,
+    RootLedgerRow,
     SeedConfirm,
     load_all_roots,
     seed_from_confirm,
+    write_cortex_mirror,
 )
 
 
@@ -129,3 +131,48 @@ def test_ensure_root_ledger_seed_unknown_without_default(
         assert load_all_roots(conn) == []
     finally:
         conn.close()
+
+
+def _sample_row(root_id: str = "5975") -> RootLedgerRow:
+    return RootLedgerRow(
+        root_id=root_id,
+        status=RootStatus.IDLE,
+        pickup_gid="G1",
+        pickup_lane="B",
+        pickup_executor="cursor-sdk",
+        attendance="autonomous",
+        scoreboard_uri="cortex://notes/system/threads/5975-charter-scoreboard.md",
+    )
+
+
+@pytest.mark.offline
+def test_write_cortex_mirror_shared_root_returns_uri(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Entity write path fails closed; shared CORTEX_FILES_ROOT still emits cortex://."""
+    cortex_root = tmp_path / "cortex-files"
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(cortex_root))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    uri = write_cortex_mirror(_sample_row())
+    assert uri == "cortex://notes/system/threads/charter-ledger/5975.json"
+    mirror = cortex_root / "notes/system/threads/charter-ledger/5975.json"
+    assert mirror.is_file()
+
+
+@pytest.mark.offline
+def test_write_cortex_mirror_home_only_quarantines_pointer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HOME-only fallback must not mint a cortex:// delivery pointer."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.charter_runner.root_ledger._write_mirror_to_shared_root",
+        lambda _uri, _content: False,
+    )
+    uri = write_cortex_mirror(_sample_row())
+    assert uri == ""
+    home_mirror = (
+        home / ".local/share/cortex/notes/system/threads/charter-ledger/5975.json"
+    )
+    assert home_mirror.is_file()

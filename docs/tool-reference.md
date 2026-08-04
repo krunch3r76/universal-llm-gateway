@@ -905,6 +905,10 @@ unchanged — converted ≠ truly-binary, narrowing decision:mcp-list-include-bi
 
 ### Markdown section ops (for large docs >5k chars)
 
+**Sandbox:** `md_*` ops are available on **`workspaces` only** (including `/mcp/life`
+read-only workspaces). They are **not** permitted on `sandbox="cortex"` — use
+`fs(op="read")` for cortex files.
+
 PDF, DOCX, ODT, and EML files are auto-converted to markdown for read ops
 (`md_list`, `md_read`). Write ops (`md_replace`, `md_append`, `md_insert`,
 `md_delete`) work only on natively text files — converted formats are rejected.
@@ -951,7 +955,7 @@ rewrite the whole file) to add one.
   anchor each return a clear error. The body obeys the heading-less-content contract above.
 
 ```text
-fs(op="md_insert", sandbox="cortex", path="notes/plan.md",
+fs(op="md_insert", sandbox="workspaces", path="universal-llm-gateway/notes/plan.md",
    heading="Risks", level=2, position="after", section="Overview",
    content="- latency under load\n")
 # → "## Risks" inserted after the Overview subtree; {status: inserted, ...}

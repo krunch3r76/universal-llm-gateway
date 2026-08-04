@@ -24,6 +24,29 @@ PinnedWriteResult = dict[str, Any]
 PinnedWriteFn = Callable[..., Coroutine[Any, Any, PinnedWriteResult | None]]
 
 
+def pinned_write_digest(result: PinnedWriteResult | None) -> str | None:
+    """Extract a non-empty digest from a pinned/cortex write ack, if present."""
+    if not result or "error" in result:
+        return None
+    for key in ("written_sha256", "sha256"):
+        val = result.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return None
+
+
+def cortex_promote_ack(result: PinnedWriteResult | None) -> str | None:
+    """Return cortex:// uri only when the ack includes uri + digest (fail-closed)."""
+    if not result or "error" in result:
+        return None
+    uri = result.get("uri")
+    if not isinstance(uri, str) or not uri.startswith("cortex://"):
+        return None
+    if not pinned_write_digest(result):
+        return None
+    return uri
+
+
 @dataclass(frozen=True)
 class PinnedResolution:
     uris: list[str]
@@ -246,14 +269,13 @@ async def relocate_oversize_closeout_body_async(
         thread_id=thread_id,
         post_pinned=post_closeout_sidecar_fn,
     )
-    if result and "error" not in result and isinstance(result.get("uri"), str):
+    promote_uri = cortex_promote_ack(result)
+    if promote_uri:
         return (
             body_relocated_meta(
                 pretty_body,
-                result["uri"],
-                sha256=result.get("sha256")
-                if isinstance(result.get("sha256"), str)
-                else None,
+                promote_uri,
+                sha256=pinned_write_digest(result),
             ),
             "cortex",
         )
@@ -277,14 +299,13 @@ def relocate_oversize_closeout_body_sync(
             dispatch_id=dispatch_id,
             thread_id=thread_id,
         )
-        if result and "error" not in result and isinstance(result.get("uri"), str):
+        promote_uri = cortex_promote_ack(result)
+        if promote_uri:
             return (
                 body_relocated_meta(
                     pretty_body,
-                    result["uri"],
-                    sha256=result.get("sha256")
-                    if isinstance(result.get("sha256"), str)
-                    else None,
+                    promote_uri,
+                    sha256=pinned_write_digest(result),
                 ),
                 "cortex",
             )
@@ -391,7 +412,7 @@ async def resolve_cortex_pinned_deliverables(
             divergent.append(f"pinned_deliverable_write_failed:{rel}")
             continue
         uri = result.get("uri")
-        if isinstance(uri, str) and uri.startswith("cortex://"):
+        if isinstance(uri, str) and uri.startswith("cortex://") and pinned_write_digest(result):
             uris.append(uri)
             if f"pinned_deliverable_wrong_sandbox:{rel}" not in divergent:
                 satisfied.append(rel)

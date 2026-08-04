@@ -291,6 +291,22 @@ def test_life_fs_cortex_md_list_refused_by_permissions(life_server: dict) -> Non
     assert "md_list" in result["error"]
     assert "/mcp/life surface" in result["error"]
     assert "sandbox='cortex'" in result["error"]
+    assert "op_not_permitted" in result["error"]
+    assert 'fs(op="read")' in result["error"]
+
+
+def test_code_fs_cortex_md_list_refused_by_permissions(code_server: dict) -> None:
+    fs_fn, _ = _fs_tool_fn(code_server)
+    result = fs_fn(
+        op="md_list",
+        sandbox="cortex",
+        path="notes/system/specs/cdp-operator-proxy-v0.md",
+    )
+    assert "error" in result
+    assert "md_list" in result["error"]
+    assert "sandbox='cortex'" in result["error"]
+    assert "op_not_permitted" in result["error"]
+    assert 'fs(op="read")' in result["error"]
 
 
 def test_life_overflow_excludes_project_write_tools(life_server: dict) -> None:
@@ -393,7 +409,9 @@ def test_life_dispatch_email_list_returns_catalog(life_server: dict) -> None:
     assert "live_ops" in payload
     assert "list" in payload["live_ops"]
     assert "move" not in payload["live_ops"]
-    assert payload.get("surface_policy") == "tier-R read ops only"
+    assert "send" in payload["live_ops"]
+    assert "draft_new" in payload["live_ops"]
+    assert payload.get("surface_policy") == "tier-R read + tier-D/O outbound"
 
 
 def test_life_dispatch_email_blocks_mutating_op(life_server: dict) -> None:

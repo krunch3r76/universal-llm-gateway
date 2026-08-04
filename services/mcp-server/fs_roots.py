@@ -119,6 +119,17 @@ def permission_refusal(
                 f"{', '.join(sorted(write_lease))} only."
             )
         }
+    if root_id == "cortex":
+        readable = ", ".join(sorted(allowed))
+        return {
+            "error": (
+                f"op={op!r} is not available for sandbox='cortex' on the "
+                f"/mcp/{surface} surface. "
+                f"Permitted ops: {readable}. "
+                'Path may still exist — try fs(op="read"). '
+                "Refusal is op_not_permitted, not path_absent."
+            )
+        }
     return {
         "error": (
             f"op={op!r} is not available for sandbox={root_id!r} on the "

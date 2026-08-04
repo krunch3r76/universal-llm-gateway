@@ -169,7 +169,7 @@ def test_fs_query_emits_primary_tool_hint() -> None:
 
     hint = primary_tool_hint_for_search("fs agent-skills md_list", [])
     assert hint is not None
-    assert 'fs(sandbox="cortex"' in hint
+    assert 'fs(sandbox="workspaces"' in hint
     assert "overflow only" in hint
 
 

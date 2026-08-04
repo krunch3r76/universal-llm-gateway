@@ -9,6 +9,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
 
+from universal_logging import get_logger
+
 from libs.charter_runner_store.db import (
     default_ledger_path,
     execute_with_retry,
@@ -22,6 +24,8 @@ from .admission.typed_work_item import (
     typed_record_valid,
     validate_typed_admit,
 )
+
+logger = get_logger(__name__)
 
 ConveyorPhase = Literal["dormant", "active"]
 
@@ -335,17 +339,39 @@ def write_cortex_mirror(row: RootLedgerRow) -> str:
         "pickup_append_cursor": row.pickup_append_cursor,
         "updated_at": row.updated_at,
     }
+    content = json.dumps(payload, indent=2, sort_keys=True)
     try:
         from cortex_store.dispatch_ops.ops_entities import _op_entity_write_json
 
         _op_entity_write_json(
             entity_id=f"charter-ledger/{row.root_id}",
-            content=json.dumps(payload, indent=2, sort_keys=True),
+            content=content,
             entity_type="artifact",
         )
-    except Exception:  # noqa: BLE001 — mirror is best-effort derived
-        _write_mirror_via_fs(uri, payload)
-    return uri
+        return uri
+    except Exception:  # noqa: BLE001 — fall through to shared-root / HOME mirror
+        pass
+    if _write_mirror_to_shared_root(uri, content):
+        return uri
+    _write_mirror_via_fs(uri, payload)
+    logger.warning(
+        "charter ledger mirror HOME-only for root_id=%s; not emitting cortex://",
+        row.root_id,
+    )
+    return ""
+
+
+def _write_mirror_to_shared_root(uri: str, content: str) -> bool:
+    from implement_admission.closeout_helpers import cortex_files_root
+
+    rel = uri.removeprefix("cortex://")
+    target = cortex_files_root() / rel
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    except OSError:
+        return False
+    return True
 
 
 def _write_mirror_via_fs(uri: str, payload: dict[str, Any]) -> None:

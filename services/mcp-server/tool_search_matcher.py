@@ -90,7 +90,10 @@ _CORTEX_BRIEF_PRIMARY_HINT = (
 )
 _CORTEX_BRIEF_QUERY_TOKENS: frozenset[str] = frozenset({"cortex_brief"})
 
-_FS_PRIMARY_CALL = 'fs(sandbox="cortex", op="md_list", path="agent-skills/<slug>.md")'
+_FS_PRIMARY_CALL = (
+    'fs(sandbox="workspaces", op="md_list", '
+    'path="universal-llm-gateway/.cursor/skills/<slug>/SKILL.md")'
+)
 _FS_PRIMARY_HINT = (
     "fs is a server-primary tool — call directly (e.g. "
     f"{_FS_PRIMARY_CALL}). Server tool_search indexes overflow only; "

@@ -39,9 +39,11 @@ CallMcpTool(server="vortex-code", toolName="agent_bus", arguments={
   "arguments": "{\"thread\": \"111\", \"last\": 3, \"compact\": true}"
 })
 ```
-## fs — Markdown Ops (PRIMARY)
+## fs — Markdown Ops (workspaces only)
 
-For large markdown files, prefer section-level access over full reads:
+For large markdown files under **`sandbox="workspaces"`**, prefer section-level access
+over full reads. **`md_*` is not available on `sandbox="cortex"`** — use `fs(op="read")`
+for cortex paths; a denied `md_*` on cortex means **op_not_permitted**, not path_absent.
 
 | Op | Purpose | Extra args |
 |---|---|---|

@@ -440,7 +440,7 @@ async def test_promote_clamped_closeout_cortex_pointer() -> None:
 
     async def _mock_post_pinned(**kwargs: object) -> dict[str, str]:
         assert kwargs["content"] == payload.body_full
-        return {"uri": _CORTEX_POINTER}
+        return {"uri": _CORTEX_POINTER, "sha256": "abc123digest"}
 
     promoted = await promote_clamped_closeout_to_cortex(
         payload,
@@ -463,6 +463,26 @@ async def test_promote_clamped_closeout_cortex_pointer() -> None:
         "open forks",
     ):
         assert f"| {field} |" in promoted.body
+
+
+@pytest.mark.asyncio
+async def test_promote_clamped_uri_only_keeps_workspace_pointer() -> None:
+    """Uri-only cortex ack must not rewrite Full closeout pointer (M-CLOSEOUT-NO-CORTEX-LAND)."""
+    payload = _clamped_relay_payload()
+    assert payload.clamped
+
+    async def _uri_only(**kwargs: object) -> dict[str, str]:
+        return {"uri": _CORTEX_POINTER}
+
+    promoted = await promote_clamped_closeout_to_cortex(
+        payload,
+        dispatch_id=_DISPATCH,
+        thread_id="6329",
+        post_closeout_sidecar_fn=_uri_only,
+    )
+    assert promoted.body == payload.body
+    assert sidecar_workspaces_ref(_DISPATCH) in promoted.body
+    assert _CORTEX_POINTER not in promoted.body
 
 
 @pytest.mark.asyncio

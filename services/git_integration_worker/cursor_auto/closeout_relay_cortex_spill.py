@@ -10,6 +10,7 @@ from services.git_integration_worker.cursor_auto.closeout_relay_common import (
 )
 from services.git_integration_worker.cursor_sdk_deliverables import (
     PinnedWriteFn,
+    cortex_promote_ack,
     post_closeout_sidecar,
 )
 
@@ -31,11 +32,7 @@ async def promote_clamped_closeout_to_cortex(
         thread_id=thread_id,
         post_pinned=post_closeout_sidecar_fn,
     )
-    cortex_uri = (
-        result.get("uri")
-        if result and "error" not in result and isinstance(result.get("uri"), str)
-        else None
-    )
+    cortex_uri = cortex_promote_ack(result)
     if not cortex_uri:
         return payload
 

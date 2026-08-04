@@ -12,7 +12,10 @@ Secondary reference. Canonical MCP boot surface: `docs/tool-reference.md`. Use t
 
 `large_doc_edit ⇒ md_* server_side_edit ∧ ¬whole_file_rewrite` unless the edit genuinely spans the whole file.
 
-## Primary interface: `fs` `md_*`
+## Primary interface: `fs` `md_*` (workspaces only)
+
+Markdown section ops are **not** available on `sandbox="cortex"`. Use `fs(op="read")`
+for cortex files.
 
 | Op | Required args | Use |
 |---|---|---|
@@ -29,7 +32,7 @@ Secondary reference. Canonical MCP boot surface: `docs/tool-reference.md`. Use t
 
 | Sandbox | Root | Example |
 |---|---|---|
-| `cortex` | `/data/files/` | `notes/research.md` |
+| `cortex` | `/data/files/` | `notes/research.md` — use `read`, not `md_*` |
 | `workspaces` | `/mnt/torus/projects/` | `universal-llm-gateway/docs/tool-reference.md` |
 
 `workspaces` paths MUST include repo prefix: `universal-llm-gateway/...`.
@@ -75,10 +78,10 @@ Use `chars` from `md_list` to decide whether to read a section directly or desce
 ## Quick examples
 
 ```text
-fs(op="md_list", sandbox="cortex", path="notes/research.md")
-fs(op="md_read", sandbox="cortex", path="notes/research.md", section="Background")
-fs(op="md_replace", sandbox="cortex", path="notes/research.md", section="Background", content="Updated text.\n")
-fs(op="md_insert", sandbox="cortex", path="notes/research.md", heading="Risks", level=2, position="after", section="Background", content="- risk\n")
-fs(op="md_delete", sandbox="cortex", path="notes/research.md", section="Scratch")
+fs(op="md_list", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md")
+fs(op="md_read", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md", section="fs")
+fs(op="md_replace", sandbox="workspaces", path="universal-llm-gateway/notes/research.md", section="Background", content="Updated text.\n")
+fs(op="md_insert", sandbox="workspaces", path="universal-llm-gateway/notes/research.md", heading="Risks", level=2, position="after", section="Background", content="- risk\n")
+fs(op="md_delete", sandbox="workspaces", path="universal-llm-gateway/notes/research.md", section="Scratch")
 fs(op="md_read", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md", section="fs")
 ```

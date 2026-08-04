@@ -1,11 +1,11 @@
 ---
 trigger_match_terms: ["call", "write", "ops", "tooling-observability", "list", "search", "markdown", "section", "binary", "fs"]
-description: On any fs(...) call — read, write, list, search, markdown section ops (md_list/md_read), or binary ops across cortex, workspaces, or context sandboxes.
+description: On any fs(...) call — read, write, list, search across cortex or workspaces sandboxes; markdown section ops (md_list/md_read) are workspaces-only.
 ---
 
 # Skill: MCP fs Tool
 
-**Trigger:** On any `fs(...)` call: read, write, list, search, markdown section ops, binary ops.
+**Trigger:** On any `fs(...)` call: read, write, list, search, binary ops. Markdown section ops (`md_*`) are **workspaces-only** — not on `sandbox="cortex"`.
 
 ## Sandboxes and paths
 
@@ -47,7 +47,8 @@ File mode omits match `file`. Invalid regex returns `Invalid regex pattern: ...`
 
 ## Read and markdown ops
 
-`read` and `md_*` both convert supported document formats, but PDF extraction differs: `read` may use pymupdf4llm layout; `search` uses sidecar or layout-free plaintext. `read(search_target) ≠ search(extraction)` in all cases.
+`read` converts supported document formats on both sandboxes. **`md_*` section ops
+are workspaces-only** — not permitted on `sandbox="cortex"`.
 
 Markdown section writes are text-file-only; converted formats reject.
 

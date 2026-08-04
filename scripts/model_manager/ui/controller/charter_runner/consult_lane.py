@@ -13,7 +13,6 @@ from universal_logging import get_logger
 from libs.charter_runner_store.db import charter_runner_data_dir, execute_with_retry
 
 from . import bus_client
-from .work_key import compute_work_key
 from .checkpoint_schema import ParsedCheckpoint
 from .harvest_attribution import consult_role_from_pickup
 from .root_ledger import (
@@ -24,6 +23,7 @@ from .root_ledger import (
     upsert_root,
     write_cortex_mirror,
 )
+from .work_key import compute_work_key
 
 logger = get_logger(__name__)
 
@@ -269,14 +269,35 @@ def write_consult_provenance(record: ConsultProvenanceRecord, *, root_id: str) -
         "evidence_uri": record.evidence_uri,
         "written_at": time.time(),
     }
+    content = json.dumps(payload, indent=2, sort_keys=True)
     path = _provenance_path(root_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    path.write_text(content, encoding="utf-8")
     uri = f"cortex://notes/system/threads/charter-consult-provenance/{root_id}.json"
-    mirror = Path.home() / ".local" / "share" / "cortex" / uri.removeprefix("cortex://")
+    if _write_consult_provenance_to_shared_root(uri, content):
+        return uri
+    rel = uri.removeprefix("cortex://")
+    mirror = Path.home() / ".local" / "share" / "cortex" / rel
     mirror.parent.mkdir(parents=True, exist_ok=True)
-    mirror.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-    return uri
+    mirror.write_text(content, encoding="utf-8")
+    logger.warning(
+        "consult provenance HOME-only mirror for root_id=%s; not emitting cortex://",
+        root_id,
+    )
+    return ""
+
+
+def _write_consult_provenance_to_shared_root(uri: str, content: str) -> bool:
+    from implement_admission.closeout_helpers import cortex_files_root
+
+    rel = uri.removeprefix("cortex://")
+    target = cortex_files_root() / rel
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    except OSError:
+        return False
+    return True
 
 
 def load_consult_provenance(root_id: str) -> dict[str, Any] | None:
