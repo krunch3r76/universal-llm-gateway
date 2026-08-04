@@ -1,4 +1,7 @@
-"""Lane selection at cursor-sdk admit (S2 + row-10 default-routing)."""
+"""Lane selection at cursor-sdk admit (S2 + row-10 default-routing).
+
+# row10-probe-B: branch-isolation window — no behavior change
+"""
 
 from __future__ import annotations
 

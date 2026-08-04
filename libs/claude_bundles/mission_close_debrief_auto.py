@@ -1,4 +1,9 @@
-"""Auto mission-debrief pager after durable MISSION_CLOSEOUT bus posts."""
+"""Auto mission-debrief pager after durable MISSION_CLOSEOUT bus posts.
+
+Composes the growth-map pager (vision → look-back → architecture → look-ahead
+→ Beyond) from closeout slots. Hollow closeouts (no Vision/Architecture, no
+named ULG systems) are **rejected** — fail closed rather than SMS a status telegram.
+"""
 
 from __future__ import annotations
 
@@ -6,20 +11,19 @@ import re
 from typing import Any, Callable
 
 from pager_notify.life_notify import deliver_pager_notify
-from pager_notify.so_what import SMS_BODY_MAX, SMS_SUBJECT_MAX, clip, extract_so_what_from_body
+from pager_notify.mission_page import (
+    extract_awareness_slots,
+    format_mission_awareness_page,
+    named_ulg_systems,
+)
+from pager_notify.so_what import SMS_SUBJECT_MAX, clip
 
 from claude_bundles.mission_close_wake import (
-    BEYOND_HEADING,
-    BEYOND_NOTIFY_PREFIX,
     format_beyond_notify_line,
     validate_mission_debrief_notify,
 )
 
 _MISSION_DEBRIEF_TAG = "mission-debrief"
-_LAYMAN_MAX = 800
-_TYPE_LINE_RE = re.compile(r"(?im)^TYPE:\s*.*$")
-_LANE_LINE_RE = re.compile(r"(?im)^lane:\s*.*$")
-_HEADING_LINE_RE = re.compile(r"(?im)^##\s+.*$")
 
 
 def _default_record(name: str, **kwargs: Any) -> None:
@@ -29,36 +33,20 @@ def _default_record(name: str, **kwargs: Any) -> None:
     record(name, **kwargs)
 
 
-def _strip_beyond_section(body: str) -> str:
-    pattern = re.compile(
-        rf"(?im)^{re.escape(BEYOND_HEADING)}\s*\n.*?(?=^##\s|\Z)",
-        re.DOTALL,
-    )
-    return pattern.sub("", body or "")
+def _beyond_bullets_from_closeout(body: str) -> list[str]:
+    payload = format_beyond_notify_line(body)
+    if payload is None:
+        return []
+    if payload.casefold() == "none":
+        return ["none"]
+    return [part.strip() for part in payload.split(" · ") if part.strip()]
 
 
-def _compress_closeout_prose(body: str) -> str:
-    """Layman outcome line — strip TYPE/inventory noise, keep one clear outcome."""
-    so_what = extract_so_what_from_body(body)
-    if so_what:
-        return clip(so_what, _LAYMAN_MAX)
-
-    lines: list[str] = []
-    for raw in _strip_beyond_section(body).splitlines():
-        line = raw.strip()
-        if not line or line.startswith("<!--"):
-            continue
-        if _TYPE_LINE_RE.match(line) or _LANE_LINE_RE.match(line):
-            continue
-        if _HEADING_LINE_RE.match(line):
-            continue
-        line = re.sub(r"\*\*([^*]+)\*\*", r"\1", line)
-        line = re.sub(r"`([^`]+)`", r"\1", line)
-        if line:
-            lines.append(line)
-
-    prose = clip(" ".join(" ".join(lines).split()), _LAYMAN_MAX)
-    return prose or "Mission closed."
+def _fallback_looking_ahead(beyond_bullets: list[str]) -> str:
+    if not beyond_bullets or beyond_bullets == ["none"]:
+        return "Nothing further is owed from this close."
+    first = beyond_bullets[0]
+    return f"Next concrete move: {first}"
 
 
 def compose_mission_debrief_from_closeout(
@@ -67,25 +55,96 @@ def compose_mission_debrief_from_closeout(
     body: str,
     thread_id: str,
 ) -> dict[str, str]:
-    """Build pager-ready mission debrief fields from a closeout turn."""
+    """Build growth-map pager fields from a closeout turn.
+
+    Requires Vision + Architecture (labeled or ATX) naming concrete ULG systems.
+    Missing slots produce a body that ``validate_mission_debrief_notify`` refuses
+    — auto path never invents hollow architecture.
+    """
     del subject  # awareness subject is synthesized; closeout subject may say CLOSEOUT
     thread = (thread_id or "").strip() or "unknown"
-    debrief_subject = clip(f"Mission debrief — bus:{thread}", SMS_SUBJECT_MAX)
-    layman = _compress_closeout_prose(body)
-    beyond_payload = format_beyond_notify_line(body)
-    if beyond_payload is None:
-        pager_body = clip(layman, SMS_BODY_MAX - 40)
+    slots = extract_awareness_slots(body)
+    beyond_bullets = _beyond_bullets_from_closeout(body)
+
+    vision = slots.vision.strip()
+    architecture = slots.architecture.strip()
+    looking_back = slots.looking_back.strip() or (
+        "Episode closed; the Architecture line is what landed in the fleet."
+    )
+    looking_ahead = slots.looking_ahead.strip() or _fallback_looking_ahead(
+        beyond_bullets
+    )
+
+    systems = named_ulg_systems(f"{architecture}\n{vision}\n{body}")
+    so_what = slots.so_what
+    if so_what:
+        debrief_subject = clip(so_what, SMS_SUBJECT_MAX)
+    elif systems:
+        debrief_subject = clip(
+            f"ULG grew — {', '.join(systems[:3])}",
+            SMS_SUBJECT_MAX,
+        )
     else:
-        beyond_line = f"{BEYOND_NOTIFY_PREFIX} {beyond_payload}"
-        reserve = len(beyond_line) + 1 + 40
-        layman_clipped = clip(layman, max(SMS_BODY_MAX - reserve, 80))
-        pager_body = f"{layman_clipped}\n{beyond_line}"
-        if len(pager_body) > SMS_BODY_MAX:
-            pager_body = pager_body[: SMS_BODY_MAX - 1] + "…"
+        debrief_subject = clip(
+            f"ULG mission debrief — name systems (bus:{thread})",
+            SMS_SUBJECT_MAX,
+        )
+
+    # Fail closed: do not invent Architecture/Vision. Incomplete closeouts
+    # produce a stub that validation refuses (no lexicon false-pass).
+    if not vision or not architecture:
+        beyond_line = (
+            f"Beyond this close: {beyond_bullets[0]}"
+            if beyond_bullets
+            else ""
+        )
+        stub = "Closeout omitted Vision/Architecture growth-map slots."
+        if beyond_line:
+            stub = f"{stub}\n\n{beyond_line}"
+        return {
+            "subject": debrief_subject,
+            "body": stub,
+            "tag": _MISSION_DEBRIEF_TAG,
+        }
+
+    # Do not invent ``Beyond this close: none`` when the closeout omitted the
+    # section — leave it absent so validation returns beyond_missing.
+    if not beyond_bullets:
+        _subject, pager_body, tag = format_mission_awareness_page(
+            subject=debrief_subject,
+            vision=vision,
+            looking_back=looking_back,
+            architecture=architecture,
+            looking_ahead=looking_ahead,
+            beyond_bullets=["none"],
+            tag=_MISSION_DEBRIEF_TAG,
+        )
+        # Strip the invented Beyond block.
+        pager_body = re.sub(
+            r"(?im)\n*Beyond this close:.*\Z",
+            "",
+            pager_body,
+            flags=re.DOTALL,
+        ).rstrip()
+        return {
+            "subject": _subject,
+            "body": pager_body,
+            "tag": tag,
+        }
+
+    _subject, pager_body, tag = format_mission_awareness_page(
+        subject=debrief_subject,
+        vision=vision,
+        looking_back=looking_back,
+        architecture=architecture,
+        looking_ahead=looking_ahead,
+        beyond_bullets=beyond_bullets,
+        tag=_MISSION_DEBRIEF_TAG,
+    )
     return {
-        "subject": debrief_subject,
+        "subject": _subject,
         "body": pager_body,
-        "tag": _MISSION_DEBRIEF_TAG,
+        "tag": tag,
     }
 
 
@@ -117,6 +176,7 @@ def deliver_mission_debrief_auto(
             thread=thread_id,
             reason=reason,
             tag=composed["tag"],
+            missed_tokens=list(verdict.missed_tokens),
         )
         return {
             "status": "rejected",

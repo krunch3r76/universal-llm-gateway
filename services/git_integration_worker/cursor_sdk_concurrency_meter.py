@@ -1,4 +1,7 @@
-"""Standing concurrency + ambient census meter for fold-2 falsifier telemetry."""
+"""Standing concurrency + ambient census meter for fold-2 falsifier telemetry.
+
+# row10-probe-A: branch-isolation window — no behavior change
+"""
 
 from __future__ import annotations
 

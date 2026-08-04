@@ -3,19 +3,65 @@
 Mission-debrief SOT remains ``cdp-operator-proxy`` § Mission-debrief format.
 This module is the mechanical composer for host-side scripts (summons watchdog,
 watch scripts) that cannot load that skill at page time.
+
+Growth-map so-what (operator 2026-08-04): awareness pages must answer (1) future
+of ULG capabilities, (2) improved since before, (3) effect on repo consumers
+(humans *and agents*); name **vision** (ULG vision statements, ¬ mission
+narrative), **architecture**, and **specific ULG systems** — ¬ a bus/status
+telegram.
 """
 
 from __future__ import annotations
 
-from pager_notify.so_what import SMS_BODY_MAX, SMS_SUBJECT_MAX, clip
+import re
+from dataclasses import dataclass
+
+from pager_notify.so_what import (
+    SMS_BODY_MAX,
+    SMS_SUBJECT_MAX,
+    clip,
+    extract_so_what_from_body,
+)
 
 __all__ = [
     "SUMMONS_ARCH_ONE_LINER",
+    "ULG_SYSTEM_LEXICON",
+    "AwarenessSlots",
+    "extract_awareness_slots",
     "format_mission_awareness_page",
     "format_summons_stop_page",
+    "named_ulg_systems",
     "summons_look_ahead",
     "summons_look_back",
 ]
+
+# Concrete ULG surfaces the phone should be able to recognize as "what grew".
+# Matching is case-insensitive substring; keep entries specific enough that
+# generic words ("bus", "code") do not false-pass alone.
+ULG_SYSTEM_LEXICON: tuple[str, ...] = (
+    "agent-bus",
+    "agent_bus",
+    "cdp-registry",
+    "cdp_ask",
+    "cdp-ask",
+    "charter-runner",
+    "closeout relay",
+    "consult_queue",
+    "cortex",
+    "cortex_api",
+    "cse session registry",
+    "cse_session",
+    "cursor-auto",
+    "cursor-sdk",
+    "drain supervisor",
+    "email-bridge",
+    "git_integration_worker",
+    "giw",
+    "pager",
+    "project_ask",
+    "stargate",
+    "sms-bridge",
+)
 
 SUMMONS_ARCH_ONE_LINER = (
     "The summons loop only keeps continuity; the commission's finish line is "
@@ -93,6 +139,93 @@ def summons_look_ahead(reason: str) -> str:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class AwarenessSlots:
+    """Parsed growth-map slots from a closeout or hand-authored notify body."""
+
+    vision: str = ""
+    looking_back: str = ""
+    architecture: str = ""
+    looking_ahead: str = ""
+    so_what: str = ""
+
+
+_LABEL_RE = {
+    "vision": re.compile(r"(?im)^(?:vision|##\s*vision)\s*[:\-]?\s*(.*)$"),
+    "looking_back": re.compile(
+        r"(?im)^(?:looking back|##\s*looking back)\s*[:\-]?\s*(.*)$"
+    ),
+    "architecture": re.compile(
+        r"(?im)^(?:architecture|##\s*architecture)\s*[:\-]?\s*(.*)$"
+    ),
+    "looking_ahead": re.compile(
+        r"(?im)^(?:looking ahead|##\s*looking ahead)\s*[:\-]?\s*(.*)$"
+    ),
+}
+_ATX_SECTION_RE = re.compile(
+    r"(?im)^##\s+(Vision|Looking back|Architecture|Looking ahead)\s*\n(.*?)(?=^##\s|\Z)",
+    re.DOTALL,
+)
+
+
+def named_ulg_systems(text: str) -> list[str]:
+    """Return lexicon hits present in ``text`` (deduped, longest-first preference)."""
+    hay = (text or "").casefold()
+    hits: list[str] = []
+    for token in sorted(ULG_SYSTEM_LEXICON, key=len, reverse=True):
+        if token.casefold() in hay and token not in hits:
+            # Prefer canonical display form for compound names.
+            hits.append(token)
+    return hits
+
+
+def extract_awareness_slots(body: str) -> AwarenessSlots:
+    """Pull vision/architecture slots from labeled lines or ATX sections."""
+    text = body or ""
+    found: dict[str, str] = {}
+    for match in _ATX_SECTION_RE.finditer(text):
+        key = match.group(1).strip().casefold().replace(" ", "_")
+        if key == "looking_back" or key == "looking_ahead" or key in {
+            "vision",
+            "architecture",
+        }:
+            prose = " ".join(match.group(2).split()).strip()
+            if prose:
+                found[key] = prose
+    for key, pattern in _LABEL_RE.items():
+        if key in found:
+            continue
+        match = pattern.search(text)
+        if not match:
+            continue
+        remainder = (match.group(1) or "").strip()
+        if remainder:
+            found[key] = " ".join(remainder.split())
+            continue
+        # Label-only line — take following non-empty paragraph.
+        after = text[match.end() :]
+        for raw in after.splitlines():
+            line = raw.strip()
+            if not line:
+                if found.get(key):
+                    break
+                continue
+            if line.startswith("#") or line.lower().startswith(
+                ("vision", "looking back", "architecture", "looking ahead", "beyond")
+            ):
+                break
+            found[key] = " ".join(line.split())
+            break
+    so_what = extract_so_what_from_body(text) or ""
+    return AwarenessSlots(
+        vision=found.get("vision", ""),
+        looking_back=found.get("looking_back", ""),
+        architecture=found.get("architecture", ""),
+        looking_ahead=found.get("looking_ahead", ""),
+        so_what=so_what,
+    )
+
+
 def format_mission_awareness_page(
     *,
     subject: str,
@@ -107,18 +240,22 @@ def format_mission_awareness_page(
 
     Order is binding: vision → look-back → architecture → look-ahead → Beyond.
     Layman prose — caller owns that; this only structures the slots.
+    Architecture must name concrete ULG systems (growth map); validation lives
+    in ``validate_mission_debrief_notify``.
     """
     beyond = _beyond_block(beyond_bullets)
     body = "\n\n".join(
         [
-            vision.strip(),
-            f"Looking back: {looking_back.strip()}",
-            f"Architecture: {architecture.strip()}",
-            f"Looking ahead: {looking_ahead.strip()}",
+            " ".join(vision.strip().split()),
+            f"Looking back: {' '.join(looking_back.strip().split())}",
+            f"Architecture: {' '.join(architecture.strip().split())}",
+            f"Looking ahead: {' '.join(looking_ahead.strip().split())}",
             beyond,
         ]
     )
-    return clip(subject, SMS_SUBJECT_MAX), clip(body, SMS_BODY_MAX), tag[:40]
+    if len(body) > SMS_BODY_MAX:
+        body = body[: SMS_BODY_MAX - 1] + "…"
+    return clip(subject, SMS_SUBJECT_MAX), body, tag[:40]
 
 
 def format_summons_stop_page(

@@ -22,7 +22,13 @@ def test_life_blocks_mutating_ops() -> None:
         assert not email_op_allowed_on_surface("pull")
         assert not email_op_allowed_on_surface("ingest_one")
         assert not email_op_allowed_on_surface("move")
-        assert not email_op_allowed_on_surface("send")
+
+
+def test_life_allows_outbound_ops() -> None:
+    with bind_request("default", surface="life"):
+        assert email_op_allowed_on_surface("send")
+        assert email_op_allowed_on_surface("draft_new")
+        assert email_op_allowed_on_surface("draft_update")
 
 
 def test_code_allows_all_tiers() -> None:

@@ -23,6 +23,34 @@ Dual-completion unchanged: `archive_uri` and `content_proof_sha256` attest the *
 
 MCP: `project_ask(op=submit, expected_size=…, harvest_source=…, download_output=…)`.
 
+### File-card / artifact chrome ≠ deliverable location (BINDING — 2026-08-04)
+
+Cowork often renders a created MD as an **artifact/canvas** or **Outputs** row.
+The card toolbar may show **Google Drive** (and a dropdown that also lists
+**Download**). Drive is an **open-with option**, frequently shown even when
+Drive is not connected — **¬** proof the model wrote to Drive, and **¬** proof
+the deliverable is missing. The bytes live in Cowork **Outputs** / the artifact
+panel; automation already downloads that surface (`cowork_output_download` /
+filename-button preview) when harvest knobs request it.
+
+| Misread | Correct harvest |
+|---|---|
+| "Google Drive" on the card ⇒ file is in Drive / lost | Card is Cowork-local (**Outputs** / artifact). Prefer automated **Download**/Output harvest: `expected_size=large` ∨ `download_output=true` ∨ `harvest_source=output-file`; else followup paste of artifact body |
+| Chat says "delivered above" + thin scrape ⇒ re-dispatch | Re-harvest the **existing** CSE Output/artifact first; ¬ treat chrome as absence |
+| `harvest_provenance=chat` alone on a large structured ask | Prefer Outputs-first knobs on admit; name explicit `harvest_uri` / `cortex://…` in the sealed prompt |
+
+**Lead admit duty (`team_dispatch(model=cdp/…)` / `project_ask`):** structured
+commission / packet / seed drafts ⇒ set Outputs-first knobs on admit
+(`expected_size=large` and/or `download_output=true` via `generation_options`
+on CDP generate, or the same fields on `project_ask`). Default `auto`+chat
+scrape collapses artifact cards to chrome ("Google Drive") and loses the body.
+
+**Prompt duty (sealed body):** name **where harvest comes from** — preferred
+order: (1) write full body to named `cortex://…` via fs when tools exist,
+(2) else Cowork **Output**/artifact + one-line chat pointer (filename + sha),
+(3) else full inline chat markdown. Explicitly: "Drive/open-with chrome is not
+a deliverable; Download/Outputs is."
+
 ## Completion predicate — detail
 
 **Cowork `/cowork/cse_` fallback (24864):** Chat paths keep global `cur_n > base_n`. On Cowork CSE URLs only, `wait_assistant_reply` may also complete when:

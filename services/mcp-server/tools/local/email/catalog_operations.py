@@ -46,7 +46,7 @@ def op_list(**_: object) -> dict[str, Any]:
     }
     if surface == "life":
         payload["surface"] = "life"
-        payload["surface_policy"] = "tier-R read ops only"
+        payload["surface_policy"] = "tier-R read + tier-D/O outbound"
     return payload
 
 

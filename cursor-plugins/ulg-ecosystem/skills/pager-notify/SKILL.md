@@ -52,21 +52,43 @@ Env kill-switch: `PAGER_NOTIFY_ENABLED=0` disables the lib client.
 | `body` | 4000 | Full awareness NL — **vision/architecture-shaped**, not a status dump; no secrets, no PII |
 | `tag` | 40 | Machine label for logs (`giw-clear`, `admit-gate-live`) |
 
-### Body shape (BINDING — operator 2026-08-02)
+### Body shape (BINDING — operator 2026-08-02 · growth-map 2026-08-04 · so-what 2026-08-04)
 
-Generality is welcome; **hollowness is not**. Every awareness page (progress *and* mission-debrief) must be readable as: what this means for how the fleet works, what just changed, what happens next — not a slug/status telegram.
+Generality is welcome; **hollowness is not**. Every awareness page (progress *and*
+mission-debrief) must be readable as a **growth map**: what this means for how the
+fleet works, **which ULG systems grew or were added**, what just changed, what
+happens next — not a slug/status telegram.
+
+**So-what bar (BINDING — the page must answer all three):**
+
+1. **Future of ULG** — what does this mean for ULG’s capabilities going forward?
+2. **Delta since before** — what is improved relative to the prior state (the gap closed)?
+3. **Consumers of the repo** — how does this affect people *and agents* that consume
+   this checkout (APIs, skills, bus protocol, MCP surface, invariants they must honor)?
 
 | Slot | Required? | What it is |
 |---|---|---|
-| **Vision** | **Always** (open the body) | What this is *for* in how the fleet knows / acts — the gap it closes; ¬ what was built |
-| **Looking back** | Mission-debrief **always**; progress **when a premise moved** or a false finish almost landed | What we thought vs what held; the correction |
-| **Architecture** | **Always** (one sentence) | The load-bearing distinction a non-engineer can hold |
-| **Looking ahead** | **Always** | The next concrete move that advances the *mission*, not “check the logs” |
+| **Vision** | **Always** (open the body) | Grounded in **ULG vision statement(s)** (`cortex-vision.md` / cognitive-platform / architectural-vision) — what this is *for* in how the fleet knows / acts; **¬** the current mission’s local narrative; ¬ what was built |
+| **Looking back** | Mission-debrief **always**; progress **when a premise moved** or a false finish almost landed | What we thought vs what held; the correction (**delta since before**) |
+| **Architecture** | **Always** (one sentence) | The load-bearing distinction a non-engineer can hold — **must name concrete ULG systems** (`CSE Session Registry`, `project_ask`, `cdp-registry`, `agent-bus`, `cortex`, `git_integration_worker`, …) |
+| **Looking ahead** | **Always** | Next concrete capability / consumer-facing consequence for ULG — not “check the logs”; mission choreography alone is insufficient |
 | **Beyond this close** | Mission-debrief **always** (wake tokens); progress when residuals exist | Who collects what next |
 
-Host composers: `libs/pager_notify/mission_page.py` (`format_mission_awareness_page` / `format_summons_stop_page`). Mission-debrief prose SOT: `cdp-operator-proxy` § Mission-debrief format (vision → accomplishments by importance → reframe → architecture → …).
+**Growth-map phone test:** after reading the page, can you answer the three so-what
+questions above **and** name systems ULG gained? If the answer is only a
+ticket/slug/DISPOSITION or a mission recap, rewrite.
 
-**Anti-patterns:** “loop stopped — reason=X · lane=N” · subject-only so-what with empty body · forward-looking that is only “read the sidecar” · debrief with no vision sentence.
+Host composers: `libs/pager_notify/mission_page.py` (`format_mission_awareness_page` /
+`format_summons_stop_page` / `extract_awareness_slots`). Auto MISSION_CLOSEOUT
+debrief refuses hollow bodies (`mission_debrief_architecture_missing` /
+`mission_debrief_systems_unnamed`). Mission-debrief prose SOT:
+`cdp-operator-proxy` § Mission-debrief format (vision → accomplishments by
+importance → reframe → architecture → …).
+
+**Anti-patterns:** “loop stopped — reason=X · lane=N” · `Mission debrief — bus:N`
+with stripped AC inventory · subject-only so-what with empty body · forward-looking
+that is only “read the sidecar” · debrief with no vision sentence · architecture
+sentence with no named ULG system.
 
 ### CDP mission runners (BINDING — operator 2026-08-03)
 
@@ -127,8 +149,9 @@ Example already used this session: `/tmp/watch-giw-clear-and-page.sh` (predicate
 | Page on every tick refuse / log line | Page on operator-requested milestones |
 | Conflate with Outlook/Graph or IMAP search | Separate surfaces; this skill = Fi notify |
 | Status/reason telegram with no vision or next | Vision → (look-back) → architecture → look-ahead → Beyond |
-| Mission-debrief that never says what changed about knowing | Open on the gap the system used to leave |
-| CDP progress page that reads as the mission talking to itself | Phone-test human so-what; ids in `ref` (`cdp-operator-proxy` inv 22(g)) |
+| Mission-debrief that never says what changed about knowing | Open on the ULG vision gap closed + consumer effect |
+| CDP progress page that reads as the mission talking to itself | Phone-test: future capability · delta · repo consumers (agents incl.); ids in `ref` |
+| Vision slot that narrates the mission episode | Ground in ULG vision statements; mission facts stay in look-back / architecture |
 
 ## Composes with
 

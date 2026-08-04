@@ -41,14 +41,20 @@ def register_notify_tools(mcp: FastMCP) -> None:
         AUDIENCE — human register binds on this path (and only paths like it): the
         reader is the human principal, so write human register here even when a
         CDP model seat holds operator (web automation ⇏ agent audience — the path
-        decides, not the session). Phone test: subject+body must read without the
-        bus open. Architecture-first: name ULG systems and where they sit when
-        that is the point; ground in vision (what this serves); so-what first.
-        ¬ lead with roadmap ordinals, ``DISPOSITION``/``CLOSEOUT`` tokens,
-        ``auto-*`` ids, contract names, turn numbers, file paths, SHAs, or
-        interagent closeout shape — those belong in ``ref``. Progress pages need
-        a human-facing premise move; ¬ conveyor-only disposition bursts.
-        Subject ``COME TO IDE`` = interrupt (problem, options exhausted); any
+        decides, not the session).         Phone test: subject+body must read without the
+        bus open. **Growth map (BINDING):** every awareness page names
+        **vision** (fleet gap), **architecture** (load-bearing distinction),
+        and **specific ULG systems** being grown or added (e.g. CSE Session
+        Registry, ``project_ask``, cdp-registry, agent-bus, cortex) so the
+        phone shows what is changing in ULG — ¬ slug/status telegrams.
+        Architecture-first: name systems and where they sit; ground in vision;
+        so-what first. ¬ lead with roadmap ordinals, ``DISPOSITION``/``CLOSEOUT``
+        tokens, ``auto-*`` ids, contract names, turn numbers, file paths, SHAs,
+        or interagent closeout shape — those belong in ``ref``. Progress pages
+        need a human-facing premise move; ¬ conveyor-only disposition bursts.
+        Mission-debrief tag ``mission-debrief`` refuses bodies missing
+        Architecture / named systems / ``Beyond this close:``. Subject
+        ``COME TO IDE`` = interrupt (problem, options exhausted); any
         other subject is awareness and ¬ implies he must open Cursor. Inverse:
         ¬ human register on bus turns, packets, or bodies addressed to model seats.
         See ``agent_skill:cdp-operator-proxy`` inv 22(d)–(g) · ``pager-notify``.

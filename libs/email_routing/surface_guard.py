@@ -28,6 +28,11 @@ def _normalize_addr(value: str) -> str:
     return value.strip().lower()
 
 
+def load_m365_upns() -> frozenset[str]:
+    """Registered M365 mailbox UPNs from operator overlay."""
+    return frozenset(_load_m365_upns())
+
+
 def _load_m365_upns() -> set[str]:
     if not _M365_REGISTRY.is_file():
         return set()
