@@ -507,3 +507,62 @@ async def test_promote_clamped_cortex_failure_keeps_workspace_pointer() -> None:
     assert promoted.body == payload.body
     assert sidecar_workspaces_ref(_DISPATCH) in promoted.body
     assert status_from_section2(promoted.body) in {None, "partial", "complete", "blocked"}
+
+
+# --- row 11 — fenced appendix ellipsis + AC-1 alias theft (6655 bind) ---
+
+_ROW11_FENCED_EVIDENCE_BLOCK = (
+    "```python\n"
+    + ("    observed_line = 'payload'\n" * 120)
+    + "```"
+)
+
+
+def test_row11_fenced_evidence_appendix_does_not_zero_ac_verdict() -> None:
+    """AC-ellipsis — large ### evidence (full) appendix must not collapse ac_verdict to …."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+        _extract_table_cell,
+    )
+
+    dispatch_id = "auto-row11-ellipsis"
+    sidecar = f"""\
+TYPE: CLOSEOUT
+status: complete
+
+**ac_verdict:**
+
+| AC | Verdict |
+|---|---|
+| AC1 | **PASS** — table escape landed |
+| AC2 | **PASS** — clamp preserves verdict rows |
+
+**deltas_to_spec:** none
+
+**decisions_taken:** row 11 ellipsis bind
+
+**effects:** none
+
+**evidence:**
+{_ROW11_FENCED_EVIDENCE_BLOCK}
+
+**next:** none
+
+**open forks:** none
+
+## effects_manifest
+
+{_WRAPPER}
+"""
+    payload = select_closeout_relay_payload(
+        sdk_body=_WRAPPER,
+        sidecar_text=sidecar,
+        ledger_status="completed",
+        dispatch_id=dispatch_id,
+        caller_auditable=True,
+    )
+    ac_cell = _extract_table_cell(payload.body, "ac_verdict") or ""
+    assert ac_cell.strip() != "…"
+    assert "AC1" in ac_cell
+    assert "AC2" in ac_cell
+    assert "table escape landed" in ac_cell or "clamp preserves" in ac_cell
+

@@ -11,7 +11,6 @@ _FIELD_HEADING_ALIASES: dict[str, tuple[str, ...]] = {
         "ac verdict",
         "verdict",
         "ac1 per-site disposition",
-        "ac1",
     ),
     "deltas_to_spec": ("deltas_to_spec", "deltas to spec", "delta to spec", "scope delta", "scope_delta"),
     "decisions_taken": ("decisions_taken", "decisions taken"),
@@ -49,6 +48,11 @@ def _normalize_heading_key(text: str) -> str:
     return re.sub(r"[_\-\s]+", "", text.casefold())
 
 
+def _ac_subsection_heading(normalized_heading: str) -> bool:
+    """True when *normalized_heading* is an AC-n subsection label, not §2 ac_verdict."""
+    return bool(re.fullmatch(r"ac\d+.*", normalized_heading))
+
+
 def _heading_matches_field(heading: str, field: str, *, exact_only: bool = False) -> bool:
     """Match an authored heading to a §2 field.
 
@@ -58,6 +62,8 @@ def _heading_matches_field(heading: str, field: str, *, exact_only: bool = False
     ``exact_only`` pass first.
     """
     normalized_heading = _normalize_heading_key(heading)
+    if field == "ac_verdict" and _ac_subsection_heading(normalized_heading):
+        return False
     for alias in _FIELD_HEADING_ALIASES[field]:
         normalized_alias = _normalize_heading_key(alias)
         if normalized_heading == normalized_alias:

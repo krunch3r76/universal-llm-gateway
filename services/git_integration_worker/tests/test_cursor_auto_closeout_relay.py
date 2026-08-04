@@ -2006,3 +2006,57 @@ def test_table_escape_failed_extract_not_header_only_success() -> None:
         "relay could not locate" in ac_cell.lower()
         or "parse_failed" in ac_cell.lower()
     )
+
+
+# --- row 11 — AC-1 alias theft (6655 bind) ---
+
+_ROW11_ALIAS_THEFT_SIDECAR = """\
+TYPE: CLOSEOUT
+status: partial
+
+**ac_verdict:**
+
+**deltas_to_spec:** none
+
+**decisions_taken:** none
+
+**effects:** none
+
+**evidence:** none
+
+**next:** none
+
+**open forks:** none
+
+**AC-1 (verbatim):** stolen verdict line must not bind ac_verdict
+"""
+
+
+def test_row11_ac1_verbatim_heading_does_not_steal_ac_verdict() -> None:
+    """AC-alias — ``**AC-1 (verbatim):**`` must not extract as ac_verdict via ac1 alias."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
+        extract_field_section,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+        _extract_table_cell,
+    )
+
+    stolen = extract_field_section(_ROW11_ALIAS_THEFT_SIDECAR, "ac_verdict")
+    assert stolen is None or "stolen verdict line" not in stolen
+
+    dispatch_id = "auto-row11-alias"
+    payload = select_closeout_relay_payload(
+        sdk_body=_WRAPPER,
+        sidecar_text=_ROW11_ALIAS_THEFT_SIDECAR,
+        ledger_status="completed",
+        dispatch_id=dispatch_id,
+        caller_auditable=True,
+    )
+    ac_cell = _extract_table_cell(payload.body, "ac_verdict") or ""
+    assert "stolen verdict line" not in ac_cell
+    assert (
+        "relay could not locate" in ac_cell.lower()
+        or "parse_failed" in ac_cell.lower()
+        or ac_cell.strip() == ""
+    )
+

@@ -58,6 +58,7 @@ _PRESERVED_HEADER_PREFIXES = (
 _TABLE_ROW_RE = re.compile(r"^\|\s*(?P<field>[^|]+?)\s*\|\s*(?P<value>.*?)\s*\|\s*$")
 _TABLE_SEP_RE = re.compile(r"^\|\s*[-:]+\s*\|")
 _TABLE_HEADER_FIELDS = frozenset({"field"})
+_FENCED_FULL_APPENDIX_RE = re.compile(r"^###\s+.+\s+\(full\)\s*$", re.IGNORECASE)
 
 
 def _is_table_header_row(field: str, value: str) -> bool:
@@ -67,6 +68,31 @@ def _is_table_header_row(field: str, value: str) -> bool:
 def _is_table_row(line: str) -> bool:
     stripped = line.strip()
     return stripped.startswith("|") and stripped.endswith("|")
+
+
+def _is_fenced_full_appendix_heading(line: str) -> bool:
+    return bool(_FENCED_FULL_APPENDIX_RE.match(line.strip()))
+
+
+def _drop_fenced_full_appendix(post_table: list[str]) -> list[str]:
+    """Strip ``### <label> (full)`` appendix blocks — table cells already pointerize."""
+    result: list[str] = []
+    index = 0
+    while index < len(post_table):
+        line = post_table[index]
+        if _is_fenced_full_appendix_heading(line):
+            index += 1
+            while index < len(post_table):
+                next_line = post_table[index]
+                if next_line.strip().startswith("### ") and not _is_fenced_full_appendix_heading(
+                    next_line
+                ):
+                    break
+                index += 1
+            continue
+        result.append(line)
+        index += 1
+    return result
 
 
 def _split_body(body: str) -> tuple[list[str], list[tuple[str, str]], list[str]]:
@@ -187,6 +213,7 @@ def clamp_relay_body(body: str, *, pointer: str | None) -> tuple[str, bool]:
         return body, False
 
     pre_table, table_rows, post_table = _split_body(body)
+    post_table = _drop_fenced_full_appendix(post_table)
     post_len = sum(len(line) + 1 for line in post_table)
     pre_len = sum(len(line) + 1 for line in pre_table)
     table_shell = _render_table([(field, "") for field, _ in table_rows])
