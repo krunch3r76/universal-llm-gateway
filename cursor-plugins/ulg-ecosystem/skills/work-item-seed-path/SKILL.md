@@ -69,12 +69,21 @@ Skips are stage skips on **one** path.
 
 **Before S4 mint:** publish a stage disposition table (S1–S6 rows, FIRE/SKIP + one-line why).
 **Halt:** if S3 mode B is required (below) and no harvested consult URI exists → **¬ S4**;
-fire `team_dispatch(model=cdp/fable|cdp/opus-5)` first, harvest, then resume.
+fire Mode B transport (below) first, harvest, then resume.
+
+**Mode B transport (BINDING — live CSE ≻ fresh generate; friction a:27616 / bus 6737):**
+when an **attached live operator-proxy CSE** exists (identity ladder
+`chat_url ≻ registration_id ≻ execution_id`), Mode B / CDP architecture consult MUST use
+`project_ask(op=followup, purpose=operator-proxy, …)` into that CSE —
+**¬** fresh `team_dispatch(model=cdp/fable|cdp/opus-5)`. Fresh `team_dispatch(model=cdp/…)`
+only when no live attached CSE (continuity hop / new window / Customize refresh).
+Compose `cdp-operator-proxy` inv 23.
 
 **Mode B admit-proof (BINDING — friction announce-without-admit):** when Mode B is mandatory,
-the same turn that claims Mode B disposition MUST end with either (a) `team_dispatch` admit
-fields `execution_id` + `poll_hint` quoted from the tool response, or (b) an honest halt naming
-the blocker. **Forbidden:** "staging then firing" / intent prose with no admit and no halt.
+the same turn that claims Mode B disposition MUST end with either (a) transport admit —
+`team_dispatch` `execution_id`+`poll_hint` **or** `project_ask(followup)` admit fields
+quoted from the tool response — or (b) an honest halt naming the blocker.
+**Forbidden:** "staging then firing" / intent prose with no admit and no halt.
 Poll/harvest may continue on later turns; **admit itself is same-turn.**
 
 **S3 mode B mandatory when ANY** (even if `mode=` omitted):
@@ -112,7 +121,9 @@ Classify kind · channel · subsumption.
 
 **Fire:** rival shapes / detent≥wide ∨ invariant-touching ∨ consult-before-seed asked ∨ recon left ≥2 co-primaries.  
 **Skip:** single obvious shape ∨ mechanical.  
-**Do:** CDP architecture consult (`team_dispatch(model=cdp/fable|cdp/opus-5)` per consult-routing). Harvest to cortex.
+**Do:** CDP architecture consult per Mode B transport above — followup into live
+operator-proxy CSE when attached; else `team_dispatch(model=cdp/fable|cdp/opus-5)`
+(consult-routing). Harvest to cortex.
 
 **Premium rung:** fork needs live-checkout verification at file:line depth a CDP seat
 structurally cannot perform ⇒ escalate to `cursor/claude-opus-5` `{xhigh|max}`,
@@ -175,7 +186,8 @@ Name: `todo:{slug}` · entry gate · consult URI · recon URI.
 | Non-code Q on this path | Divert `/path-sim` at S1 |
 | Bare `/work-item-seed` with no idea, or mint before stage table | Halt — need idea text; publish disposition; run S3 when mandatory |
 | S3 fired ∧ no Fable harvest | Minting or `/layer` — harvest consult first |
-| Announce Mode B / "staging Fable" then end turn with no admit | Same-turn admit (`execution_id`+`poll_hint`) or named halt |
+| Announce Mode B / "staging Fable" then end turn with no admit | Same-turn admit (`execution_id`+`poll_hint` or followup admit) or named halt |
+| Mode B under live operator-proxy CSE via fresh `team_dispatch(cdp/…)` | `project_ask(op=followup)` into attached CSE (inv 23); fresh CDP only if no live CSE |
 | Existing todo + Mode B ask → divert to bare `/layer` | Mode B on existing slug · attach · `/layer` G2 |
 | S2 breadth via Composer or in-seat Grep spray | Explore subagent first (cheap-recon Tier-1) |
 | S3 fork needs checkout depth → park on the operator for premium approval | Pre-authorized under the four-condition trigger — fire and announce |

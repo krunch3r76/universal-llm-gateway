@@ -24,6 +24,13 @@ trigger_match_terms:
 
 **Invariant:** `seat_unsure ⇒ consult(independent_binder)` · `binder_unsure ⇒ consult(human_operator)` (rare).
 
+**CDP operator-seat stuck (BINDING — operator 2026-08-03):** when the unsure seat **is**
+`cdp/opus-5` or `cdp/fable` (operator-proxy), do **not** Cowork-Ask the human for judgment.
+Transport: **`cursor-auto` → nested `cursor-sdk`** with `model=cursor/gpt-5.6-terra`
+(default) or `model=cursor/claude-opus-5` (live checkout / premium; inform-then-proceed).
+Human principal only for **true operator-only gates**. SOT detail: `cdp-operator-proxy`
+blocked→ask **2b** · inv 19.
+
 **Independence is the load-bearing property, not human-ness** (operator bind
 2026-07-28 · `decision:gate-independence-not-human-ness`). A gate is honest when the
 checking seat is independent of the producing seat on **weight class ∨ family** —
@@ -63,7 +70,7 @@ already covers.
 |---|---|---|---|
 | 1 | **Cursor** (IDE lead, cursor-sdk, subagents, **`cursor/*` including Opus**) | Default — execute, orchestrate, dispatch | In-seat + `team_dispatch` / `Task` per `lean-context-dispatch-first` |
 | 2 | **Independent binder** — pick a family ≠ producer (table below) | **Any** cursor step-1 seat is **unsure** — including when that seat is already `cursor/claude-opus-5` | Anthropic: **`team_dispatch(model=cdp/opus-5)`** · **encourage Fable** via **`team_dispatch(model=cdp/fable)`** (`project_ask` = escape only) · lane `agent_bus:6006`. OpenAI (code lane): **`team_dispatch(op=generate, seat=cursor-sdk, model=cursor/gpt-5.6-terra, contract=light-bounded)`**; **`cursor/gpt-5.6-sol`** for **targeted low-token** consults — per `consult-routing` + `claude-ai-cdp-navigation`. **`openai/gpt-5.6-*` API** only for **life / checkout-free** non-code (¬ code-lane default; `decision:code-review-panel-cursor-substrate`) |
-| 3 | **Human operator** | The step-2 binder is **unsure** OR true operator-only gate (credentials, irreversible non-revertible act, spend pause, genuine *what we want* ambiguity the binder cannot resolve) | Cowork Ask / direct — **rare**; one question + recommended answer |
+| 3 | **Human operator** | True operator-only gate (credentials, irreversible non-revertible act, spend pause, IDE restart) **or** binders exhausted after CDP-stuck path (`cursor-auto` → terra/cursor-opus) still cannot bind a genuine *what we want* ambiguity | Cowork Ask / direct — **rare**; one question + recommended answer |
 
 ### Step-2 binder order (operator bind 2026-07-28)
 
@@ -90,9 +97,11 @@ standing authorization — fire without re-asking; still announce the slug + why
 **genuine fork** remains after recon and the seat lacks authority or evidence to bind —
 **regardless of whether the active model is Composer, Grok, or cursor/opus**.
 
-`binder_unsure` ≠ cursor relaying every closeout. It means the step-2 binder exhausted
-self-resolution under sealed-unattended rules and needs a human bind (or an `ESCALATE`
-flag with `minimal_question` per `cdp-operator-proxy`).
+`binder_unsure` ≠ cursor relaying every closeout. It means independent binders were
+exhausted under sealed-unattended rules. When the stuck seat was **CDP Opus/Fable**,
+exhaustion requires the **cursor-auto → terra / cursor-opus** leg first — only then
+may a human bind (or an `ESCALATE` flag with `minimal_question` per `cdp-operator-proxy`)
+fire. Human is not the first escape from a stuck CDP operator seat.
 
 ## Anti-patterns
 
@@ -103,6 +112,7 @@ flag with `minimal_question` per `cdp-operator-proxy`).
 | Park on the operator for `manage` / `charter_reload` / manage quit-start / git-tracked implement | Seat executes; operator only on operator-only gates. (`charter_reload` = loop bounce only; charter-runner / manage recycle recipe → hub `services_ws.mdc` § Manage process recycle — tmux `0:0`, ¬ ask the operator) |
 | Treat every consult as operator-gated | CDP consult is **autonomous** under `lean-context-dispatch-first` CDP trigger |
 | Skip CDP and go straight to human on judgment forks | Cursor (incl. cursor/opus) → CDP/Fable first; human only when CDP/Fable flags `ESCALATE` or operator-only |
+| CDP Opus/Fable stuck → Ask the human | `cursor-auto` → `cursor/gpt-5.6-terra` or `cursor/claude-opus-5` (`cdp-operator-proxy` 2b) |
 | Treat `cursor/claude-opus-5` as ladder-top — ask human when Opus is unsure | Opus-in-cursor is step 1; consult an independent binder (step 2) before human |
 | `cdp/opus-5` ratifies its own output at the same tier | Escalate that artifact to **Fable** (2b) — weight-class independence |
 | Treat any two Anthropic seats as self-review and skip straight to GPT | Opus→**Fable** is a genuine check; 2b **precedes** 2c |

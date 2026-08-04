@@ -39,17 +39,19 @@ def register_notify_tools(mcp: FastMCP) -> None:
         never in agent prose.
 
         AUDIENCE — human register binds on this path (and only paths like it): the
-        reader is the human operator, so write human register here even when the
-        session is agent-operated (web automation ⇏ agent audience — the path
-        decides, not the session). Architecture-first: name ULG systems and where
-        they sit when that is the point; ground in vision (what this serves);
-        so-what first. The distinction is architecture vs implementation — ¬ lead
-        with file paths, SHAs, function names, test names, or interagent closeout
-        shape (``status:``, paths, evidence); those belong in ``ref``. Subject
-        ``COME TO IDE`` = interrupt (problem, options exhausted); any other
-        subject is awareness and ¬ implies he must open Cursor. Inverse binds: ¬
-        human register on bus turns, packets, or bodies addressed to model seats.
-        See ``agent_skill:pager-notify`` (when-to-page classes).
+        reader is the human principal, so write human register here even when a
+        CDP model seat holds operator (web automation ⇏ agent audience — the path
+        decides, not the session). Phone test: subject+body must read without the
+        bus open. Architecture-first: name ULG systems and where they sit when
+        that is the point; ground in vision (what this serves); so-what first.
+        ¬ lead with roadmap ordinals, ``DISPOSITION``/``CLOSEOUT`` tokens,
+        ``auto-*`` ids, contract names, turn numbers, file paths, SHAs, or
+        interagent closeout shape — those belong in ``ref``. Progress pages need
+        a human-facing premise move; ¬ conveyor-only disposition bursts.
+        Subject ``COME TO IDE`` = interrupt (problem, options exhausted); any
+        other subject is awareness and ¬ implies he must open Cursor. Inverse:
+        ¬ human register on bus turns, packets, or bodies addressed to model seats.
+        See ``agent_skill:cdp-operator-proxy`` inv 22(d)–(g) · ``pager-notify``.
         """
         from_agent, err = resolve_dispatch_from_agent("")
         if err is not None:

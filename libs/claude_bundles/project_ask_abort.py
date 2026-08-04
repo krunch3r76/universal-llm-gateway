@@ -112,7 +112,13 @@ def registration_owns_port(registration_id: str, expected_port: int) -> bool:
 
 
 def purpose_kill_default(purpose: str | None) -> bool:
-    return (purpose or "") in ("ask", "operator-proxy")
+    """Whether exit deregister should kill Chrome / drop the CSE.
+
+    Single-shot ``ask`` kills on exit. ``operator-proxy`` and ``mission`` must
+    retain the CSE after first-leg content_proof (detach/orphan-alive OK) so
+    nested Mode B can ``project_ask(op=followup)`` into the live window.
+    """
+    return (purpose or "") == "ask"
 
 
 def emit_detached_status(registration_id: str) -> None:

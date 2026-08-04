@@ -98,6 +98,7 @@ Retroactive: if this seat already posted onto **N** while MONITOR, `append` that
 | CHECKPOINT on the operator bus "so Cowork sees it" | CHECKPOINT on MONITOR sibling; Cowork stays on **N** for protocol only |
 | MONITOR mark-read on **N** | Peek only |
 | Treating monitoring intake as handle-each-unread-and-reply on **N** | Watch predicates; no protocol replies on **N** |
+| Watching `MISSION_CLOSEOUT` + named continuity residual, then waiting for the human to ask why it went quiet | Inform in chat **and** ensure a dispatch-capable seat fires the continuity hop promptly (`cdp-operator-proxy` inv 30) — human is not the wake path |
 
 ## Worked example
 

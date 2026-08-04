@@ -68,6 +68,21 @@ Host composers: `libs/pager_notify/mission_page.py` (`format_mission_awareness_p
 
 **Anti-patterns:** “loop stopped — reason=X · lane=N” · subject-only so-what with empty body · forward-looking that is only “read the sidecar” · debrief with no vision sentence.
 
+### CDP mission runners (BINDING — operator 2026-08-03)
+
+Life-seat `cdp/opus-5` / `cdp/fable` operator-proxy missions bind the same register via
+`agent_skill:cdp-operator-proxy` inv 22(d)–(g). This skill is `cursor_only` (UDS recipes);
+the **audience rule is shared**:
+
+| Rule | Binding |
+|---|---|
+| Audience | Human principal — even when a model seat holds operator |
+| Phone test | Readable without the bus open; so-what lead |
+| Cadence | Progress pages need a human-facing premise move; ¬ conveyor-only DISPOSITION bursts |
+| Forbidden lead | Item ordinals · `DISPOSITION`/`CLOSEOUT` tokens · `auto-*` · contract names · turn numbers |
+
+SOT for mission-runner prose + debrief length: `cdp-operator-proxy` inv 22 + § Mission-debrief format.
+
 ## When to page (operator-facing)
 
 Three classes — **do not conflate**:
@@ -84,7 +99,8 @@ Three classes — **do not conflate**:
 | Operator said “ping me when X” / “wake me” | **Yes** — on X true | Usually awareness; interrupt only if X was “come to IDE when…” |
 | Mission/episode close — debrief | **Yes** — **full** one-paragraph body + `Beyond this close: …`; subject **¬** `COME TO IDE`; tag `mission-debrief` (life `notify` refuses without the beyond line) | Awareness — mission debrief |
 | All other options exhausted (fleet cannot clear) / problem needs IDE | **Yes** — subject **`COME TO IDE`** | Interrupt |
-| Ordinary CLOSEOUT / admitted / blocked-resolving | Awareness OK; **¬** `COME TO IDE` | Awareness — progress |
+| Ordinary CLOSEOUT / admitted / blocked-resolving with a plain fleet so-what | Awareness OK; **¬** `COME TO IDE` | Awareness — progress |
+| Conveyor-only DISPOSITION (ordinal bump / wave admitted / ratify-without-reframe) | **No** — batch into the next human-facing page | — |
 | Multi-minute wait they left (queue, rebuild) | **Yes** on terminal — interrupt only if they must act in IDE | Per predicate |
 | Every status poll / debug mailbox | **No** | — |
 
@@ -112,6 +128,7 @@ Example already used this session: `/tmp/watch-giw-clear-and-page.sh` (predicate
 | Conflate with Outlook/Graph or IMAP search | Separate surfaces; this skill = Fi notify |
 | Status/reason telegram with no vision or next | Vision → (look-back) → architecture → look-ahead → Beyond |
 | Mission-debrief that never says what changed about knowing | Open on the gap the system used to leave |
+| CDP progress page that reads as the mission talking to itself | Phone-test human so-what; ids in `ref` (`cdp-operator-proxy` inv 22(g)) |
 
 ## Composes with
 
