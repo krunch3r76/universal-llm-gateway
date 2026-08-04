@@ -33,7 +33,7 @@ _TABLE_SEP_RE = re.compile(r"^\|\s*[-:]+\s*\|")
 
 _ATX_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
 _BOLD_FIELD_LINE_RE = re.compile(
-    r"(?im)^\*\*(?P<heading>[^*\n]+?):\*\*\s*(?P<rest>.*)$",
+    r"(?im)^\*\*(?P<heading>[^*\n]+?):\*\*[ \t]*(?P<rest>.*)$",
 )
 _BOLD_HEADING_ONLY_RE = re.compile(
     r"(?im)^\*\*(?P<heading>[^*\n]+?)\*\*\s*$",
@@ -133,11 +133,31 @@ def _plain_field_line_spans(body: str) -> list[tuple[int, int, str, str]]:
     return spans
 
 
+def _is_canonical_section2_heading(heading: str) -> bool:
+    """True when *heading* names a §2 relay field (not nested subsection labels)."""
+    normalized_heading = _normalize_heading_key(heading)
+    if re.fullmatch(r"ac\d+.*", normalized_heading):
+        return False
+    return any(
+        _heading_matches_field(heading, field, exact_only=True)
+        for field in _FIELD_HEADING_ALIASES
+    )
+
+
+def _canonical_bold_field_spans(body: str) -> list[tuple[int, int, str, str]]:
+    """Bold §2 field lines only — excludes nested ``**AC-n …:**`` subsection labels."""
+    return [
+        span
+        for span in _field_line_spans(body)
+        if _is_canonical_section2_heading(span[2])
+    ]
+
+
 def _next_field_boundary(body: str, start: int) -> int:
     for line_start, _, _, _ in _plain_field_line_spans(body):
         if line_start >= start:
             return line_start
-    for line_start, _, _, _ in _field_line_spans(body):
+    for line_start, _, _, _ in _canonical_bold_field_spans(body):
         if line_start >= start:
             return line_start
     for match in _ATX_HEADING_RE.finditer(body):
@@ -307,7 +327,7 @@ def extract_field_section(body: str, field: str) -> str | None:
         return plain_section
     for exact_only in (True, False):
         same_line = _extract_bold_same_line(body, field, exact_only=exact_only)
-        if same_line:
+        if same_line is not None and same_line.strip():
             return same_line
         for extractor in (_extract_bold_section, _extract_atx_section):
             section = extractor(body, field, exact_only=exact_only)

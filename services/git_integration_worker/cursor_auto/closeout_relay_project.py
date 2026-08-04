@@ -34,6 +34,108 @@ _RELAY_PARSE_MISS_RE = re.compile(
     r"relay could not locate\s+`[^`]+`\s*[—-]\s*see source_ref:",
     re.IGNORECASE,
 )
+_MD_TABLE_ROW_RE = re.compile(
+    r"^\|\s*(?P<c1>[^|]*?)\s*\|\s*(?P<c2>[^|]*?)\s*(?:\|\s*(?P<c3>[^|]*?)\s*)?\|\s*$",
+    re.MULTILINE,
+)
+_MD_TABLE_SEP_RE = re.compile(r"^\|\s*[-:\s|]+\|\s*$")
+_MD_TABLE_HEADER_KEYS = frozenset(
+    {"ac", "field", "class", "verdict", "value", "disposition", "evidence"}
+)
+
+
+def _normalize_heading_cell(text: str) -> str:
+    return re.sub(r"[*`_]+", "", text.strip()).casefold()
+
+
+def _is_md_table_header_row(c1: str, c2: str, c3: str | None = None) -> bool:
+    h1 = _normalize_heading_cell(c1)
+    h2 = _normalize_heading_cell(c2)
+    if h1 in _MD_TABLE_HEADER_KEYS and h2 in _MD_TABLE_HEADER_KEYS:
+        return True
+    if c3 is not None and h1 in _MD_TABLE_HEADER_KEYS and _normalize_heading_cell(c3) in _MD_TABLE_HEADER_KEYS:
+        return True
+    return False
+
+
+def _split_md_table_line(line: str) -> list[str]:
+    """Split a markdown table row on unescaped pipe boundaries."""
+    inner = line.strip()
+    if inner.startswith("|"):
+        inner = inner[1:]
+    if inner.endswith("|"):
+        inner = inner[:-1]
+    cells: list[str] = []
+    current: list[str] = []
+    i = 0
+    while i < len(inner):
+        ch = inner[i]
+        if ch == "\\" and i + 1 < len(inner) and inner[i + 1] == "|":
+            current.append("|")
+            i += 2
+            continue
+        if ch == "|":
+            cells.append("".join(current).strip())
+            current = []
+            i += 1
+            continue
+        current.append(ch)
+        i += 1
+    cells.append("".join(current).strip())
+    return cells
+
+
+def _md_table_to_compact_list(table_text: str) -> str:
+    """Render nested markdown table rows as a single-cell ordered list."""
+    raw_lines = [
+        line.strip()
+        for line in table_text.splitlines()
+        if line.strip().startswith("|")
+    ]
+    if len(raw_lines) < 2:
+        return table_text.strip()
+
+    header_cells = _split_md_table_line(raw_lines[0])
+    column_count = len(header_cells)
+    items: list[str] = []
+    for line in raw_lines[1:]:
+        if _MD_TABLE_SEP_RE.match(line):
+            continue
+        cells = _split_md_table_line(line)
+        if len(cells) < column_count:
+            continue
+        if _is_md_table_header_row(cells[0], cells[1], cells[2] if len(cells) > 2 else None):
+            continue
+        if len(cells) > column_count:
+            cells = cells[: column_count - 1] + [" | ".join(cells[column_count - 1 :])]
+        label = cells[0]
+        if column_count == 2:
+            items.append(f"{label}: {cells[1]}")
+        elif column_count >= 3:
+            items.append(f"{label}: {cells[1]} ({cells[2]})")
+        else:
+            items.append(label)
+    return "; ".join(items) if items else table_text.strip()
+
+
+def normalize_relay_field_value(value: str) -> str:
+    """Turn multi-row / nested-table values into a compact list before table escaping."""
+    stripped = value.strip()
+    if not stripped:
+        return stripped
+    if "|" in stripped and _MD_TABLE_ROW_RE.search(stripped):
+        compact = _md_table_to_compact_list(stripped)
+        if compact != stripped.strip():
+            return compact
+    if "\n" in stripped:
+        lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+        if len(lines) > 1 and not any(line.startswith("|") for line in lines):
+            return "; ".join(lines)
+    return stripped
+
+
+def _render_table_cell(value: str) -> str:
+    return _table_cell(normalize_relay_field_value(value))
 
 
 def count_unclassified_fields(body: str) -> int:
@@ -106,7 +208,7 @@ def project_section2_table(
         "|---|---|",
     ]
     for field, value in rows:
-        lines.append(f"| {field} | {_table_cell(value)} |")
+        lines.append(f"| {field} | {_render_table_cell(value)} |")
     _append_fenced_sections(lines, fenced_appendix)
     return "\n".join(lines), status
 
@@ -114,5 +216,6 @@ def project_section2_table(
 __all__ = [
     "count_relay_parse_miss_fields",
     "count_unclassified_fields",
+    "normalize_relay_field_value",
     "project_section2_table",
 ]

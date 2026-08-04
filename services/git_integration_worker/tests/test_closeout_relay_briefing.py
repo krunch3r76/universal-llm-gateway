@@ -437,15 +437,20 @@ async def test_promote_clamped_closeout_cortex_pointer() -> None:
     assert payload.clamped
     assert payload.body_full
     assert sidecar_workspaces_ref(_DISPATCH) in payload.body
+    raw_sidecar = (
+        "## §2 CLOSEOUT\n\n**status:** complete\n\n"
+        "**ac_verdict:**\n\n| AC | Verdict |\n|---|---|\n| AC1 | pass |\n"
+    )
 
     async def _mock_post_pinned(**kwargs: object) -> dict[str, str]:
-        assert kwargs["content"] == payload.body_full
+        assert kwargs["content"] == raw_sidecar
         return {"uri": _CORTEX_POINTER, "sha256": "abc123digest"}
 
     promoted = await promote_clamped_closeout_to_cortex(
         payload,
         dispatch_id=_DISPATCH,
         thread_id="6329",
+        sidecar_text=raw_sidecar,
         post_closeout_sidecar_fn=_mock_post_pinned,
     )
     assert _CORTEX_POINTER in promoted.body

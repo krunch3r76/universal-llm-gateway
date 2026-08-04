@@ -1801,3 +1801,208 @@ def test_arc6637_g7_overclaim_substring_relay_parse_failed_not_status_downgrade(
         "arc6637 relay tests pass."
     )
     assert _cell_claims_unclassified_or_hard_unauthored(cell) is False
+
+
+# --- M-RELAY-TABLE-ESCAPE (F4 + F1 + F6) ---
+
+_TABLE_ESCAPE_SPECIMEN_IDS = (
+    "auto-9f736ae407c2",
+    "auto-8be6a2c80163",
+    "auto-75becf82fc0c",
+)
+
+
+def _load_specimen_sidecar(dispatch_id: str) -> str:
+    path = Path("tmp/reviews/closeouts") / f"{dispatch_id}.md"
+    if not path.is_file():
+        pytest.skip(f"fixture sidecar missing: {path}")
+    return path.read_text(encoding="utf-8")
+
+
+def _extract_ac_verdict_section(sidecar: str) -> str:
+    from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+        strip_machine_tail,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
+        extract_field_section,
+    )
+
+    prose = strip_machine_tail(sidecar)
+    value = extract_field_section(prose, "ac_verdict")
+    assert value is not None
+    return value
+
+
+def _extract_evidence_section(sidecar: str) -> str:
+    from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+        strip_machine_tail,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
+        extract_field_section,
+    )
+
+    prose = strip_machine_tail(sidecar)
+    value = extract_field_section(prose, "evidence")
+    assert value is not None
+    return value
+
+
+def _projected_ac_verdict_cell(sidecar: str, *, dispatch_id: str) -> str:
+    from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+        strip_machine_tail,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+        _extract_table_cell,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_project import (
+        project_section2_table,
+    )
+    from services.git_integration_worker.cursor_sdk_deliverables import (
+        sidecar_workspaces_ref,
+    )
+
+    prose = strip_machine_tail(sidecar)
+    body, _status = project_section2_table(
+        prose,
+        provenance=sidecar_workspaces_ref(dispatch_id),
+    )
+    return _extract_table_cell(body, "ac_verdict") or ""
+
+
+@pytest.mark.parametrize("dispatch_id", _TABLE_ESCAPE_SPECIMEN_IDS)
+def test_table_escape_specimen_ac_verdict_recovers_full_table(dispatch_id: str) -> None:
+    """AC-1 — archived specimens recover complete ac_verdict, not header-only."""
+    sidecar = _load_specimen_sidecar(dispatch_id)
+    extracted = _extract_ac_verdict_section(sidecar)
+    assert extracted != "| AC | Verdict |"
+    assert "AC-0" in extracted or "AC1" in extracted or "AC-1" in extracted or "AC-A1" in extracted
+    assert "PASS" in extracted or "pass" in extracted
+
+
+@pytest.mark.parametrize("dispatch_id", _TABLE_ESCAPE_SPECIMEN_IDS)
+def test_table_escape_specimen_evidence_not_header_only(dispatch_id: str) -> None:
+    """AC-1 — evidence section is not reduced to the first subheading line."""
+    sidecar = _load_specimen_sidecar(dispatch_id)
+    extracted = _extract_evidence_section(sidecar)
+    assert extracted != "**AC-0 (verbatim):**"
+    assert len(extracted) > 40
+
+
+def test_table_escape_same_line_bold_field_still_same_line() -> None:
+    """AC-2 — legitimate same-line values still extract inline."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
+        extract_field_section,
+    )
+
+    body = "**status:** complete\n\n**deltas_to_spec:** none\n"
+    assert extract_field_section(body, "status") == "complete"
+    assert extract_field_section(body, "deltas_to_spec") == "none"
+
+
+def test_table_escape_empty_same_line_falls_through_to_section() -> None:
+    """AC-3 — empty same-line capture falls through to section extraction."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
+        _extract_bold_same_line,
+        _extract_bold_section,
+        extract_field_section,
+    )
+
+    body = (
+        "**ac_verdict:**\n\n"
+        "| AC | Verdict |\n"
+        "|---|---|\n"
+        "| AC1 | **PASS** — pipe in verdict: a|b |\n"
+    )
+    assert _extract_bold_same_line(body, "ac_verdict") is None
+    section = _extract_bold_section(body, "ac_verdict")
+    assert section is not None
+    assert "AC1" in section
+    assert "a|b" in section
+    assert extract_field_section(body, "ac_verdict") == section
+
+
+def test_table_escape_f1_readable_ac_verdict_cell_no_table_soup() -> None:
+    """AC-4 — projected ac_verdict is a compact list without escaped-pipe soup."""
+    dispatch_id = "auto-9f736ae407c2"
+    sidecar = _load_specimen_sidecar(dispatch_id)
+    cell = _projected_ac_verdict_cell(sidecar, dispatch_id=dispatch_id)
+    assert "\\|" not in cell
+    assert "<br>" not in cell
+    assert "AC-0" in cell
+    assert "AC-B-live" in cell or "AC1" in cell
+    assert "PASS" in cell
+
+
+def test_table_escape_f1_preserves_literal_pipe_in_verdict() -> None:
+    """AC-4 — literal pipe characters inside verdict text survive as content."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+        strip_machine_tail,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_project import (
+        project_section2_table,
+    )
+    from services.git_integration_worker.cursor_sdk_deliverables import (
+        sidecar_workspaces_ref,
+    )
+
+    dispatch_id = "auto-table-pipe-content"
+    sidecar = (
+        "**status:** complete\n\n"
+        "**ac_verdict:**\n\n"
+        "| AC | Verdict |\n"
+        "|---|---|\n"
+        "| AC1 | pass — observed a|b in output |\n\n"
+        "**deltas_to_spec:** none\n"
+    )
+    body, _status = project_section2_table(
+        strip_machine_tail(sidecar),
+        provenance=sidecar_workspaces_ref(dispatch_id),
+    )
+    ac_cell = body.split("| ac_verdict | ", 1)[1].split(" |", 1)[0]
+    assert "\\|" in ac_cell
+    assert "a" in ac_cell and "b" in ac_cell
+    assert "\\| AC \\|" not in ac_cell
+
+
+def test_table_escape_unclamped_workspaces_source_ref_readable() -> None:
+    """AC-5b — unclamped relay keeps readable workspaces source_ref with nested rows."""
+    dispatch_id = "auto-9f736ae407c2"
+    sidecar = _load_specimen_sidecar(dispatch_id)
+    payload = select_closeout_relay_payload(
+        sdk_body=_WRAPPER,
+        sidecar_text=sidecar,
+        ledger_status="completed",
+        dispatch_id=dispatch_id,
+        caller_auditable=True,
+    )
+    ref = f"workspaces://universal-llm-gateway/tmp/reviews/closeouts/{dispatch_id}.md"
+    assert ref in payload.body
+    cell = _projected_ac_verdict_cell(sidecar, dispatch_id=dispatch_id)
+    assert "AC-0" in cell
+    assert payload.clamped is False or ref in (payload.body_full or payload.body)
+
+
+def test_table_escape_failed_extract_not_header_only_success() -> None:
+    """AC-6 — parse miss voice when heading exists but section is empty noise."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+        strip_machine_tail,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_project import (
+        project_section2_table,
+    )
+    from services.git_integration_worker.cursor_sdk_deliverables import (
+        sidecar_workspaces_ref,
+    )
+
+    dispatch_id = "auto-empty-ac"
+    sidecar = "**status:** partial\n\n**ac_verdict:**\n\n**deltas_to_spec:** none\n"
+    body, _status = project_section2_table(
+        strip_machine_tail(sidecar),
+        provenance=sidecar_workspaces_ref(dispatch_id),
+    )
+    ac_cell = body.split("| ac_verdict | ", 1)[1].split(" |", 1)[0]
+    assert ac_cell != "| AC | Verdict |"
+    assert (
+        "relay could not locate" in ac_cell.lower()
+        or "parse_failed" in ac_cell.lower()
+    )

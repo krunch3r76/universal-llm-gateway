@@ -20,14 +20,18 @@ async def promote_clamped_closeout_to_cortex(
     *,
     dispatch_id: str,
     thread_id: str,
+    sidecar_text: str | None = None,
     post_closeout_sidecar_fn: PinnedWriteFn | None = None,
 ) -> CloseoutRelayPayload:
-    """Write unclamped relay body to cortex and prefer cortex:// in the inline pointer."""
+    """Write raw executor closeout prose to cortex and prefer cortex:// in the inline pointer."""
     if not payload.clamped or not payload.body_full:
         return payload
 
+    raw_closeout = sidecar_text if sidecar_text is not None else payload.body_full
+    if not raw_closeout:
+        return payload
     result = await post_closeout_sidecar(
-        full_body=payload.body_full,
+        full_body=raw_closeout,
         dispatch_id=dispatch_id,
         thread_id=thread_id,
         post_pinned=post_closeout_sidecar_fn,

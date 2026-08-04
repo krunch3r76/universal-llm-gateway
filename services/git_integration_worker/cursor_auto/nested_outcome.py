@@ -117,6 +117,7 @@ async def relay_confer_outcome(
         payload,
         dispatch_id=dispatch_id,
         thread_id=job.thread_id,
+        sidecar_text=read_repo_closeout_sidecar(dispatch_id),
     )
     fence_violation = "fence_violation:" in payload.body.lower()
     relay = await post_operator_confer(
@@ -240,6 +241,7 @@ async def relay_closeout_outcome(
         payload,
         dispatch_id=dispatch_id,
         thread_id=job.thread_id,
+        sidecar_text=sidecar_text,
     )
     source_repo = load_config().source_repo
     residue_before = derive_tree_residue(
