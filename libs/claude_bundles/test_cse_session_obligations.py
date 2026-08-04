@@ -126,7 +126,7 @@ def test_ac2_ep15_fixture_alarm_before_diagnose(isolated_obligations: Path) -> N
 def test_ac3_failed_followup_leaves_obligation_open(
     isolated_obligations: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """AC3: failed followup does not discharge wake_owed."""
+    """AC3: failed followup does not discharge wake_owed; bus WAKE degrades."""
     stamp_session_ids(lane_thread="6655", registration_id="reg-6655")
     append_session_transition_locked(
         {
@@ -182,6 +182,7 @@ def test_ac3_failed_followup_leaves_obligation_open(
         )
     assert unit["followup_ok"] is False
     assert unit["code"].startswith("csr.wake.")
+    assert unit["wake_ok"] is True
     sessions = load_sessions()
     ob = get_open_wake_owed(sessions, thread="6655")
     assert ob is not None

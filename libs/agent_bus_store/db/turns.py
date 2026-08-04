@@ -274,6 +274,15 @@ def insert_turn(
         subject=subject,
         created_at=ts,
     )
+    from claude_bundles.cse_session_obligations import maybe_mirror_protocol_turn
+
+    maybe_mirror_protocol_turn(
+        thread=thread,
+        turn_id=turn_id,
+        turn_number=turn_number,
+        created_at=ts,
+        body=body,
+    )
     return turn_id, ts, turn_number
 
 

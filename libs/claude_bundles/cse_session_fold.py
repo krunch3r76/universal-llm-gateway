@@ -74,6 +74,7 @@ def _fold_one(
         "cdp.wake.delivered": _fold_wake_delivered,
         "cdp.wake.alarm_fired": _fold_wake_alarm,
         "cse.wake.posted": _fold_wake_posted,
+        "cse.wake.claimed": _fold_wake_claimed,
     }
     handler = handlers.get(event)
     if handler is None:
@@ -231,4 +232,27 @@ def _fold_wake_posted(
                 ob["payment"] = payment
                 sessions[key] = row
                 return sessions, True
+    return sessions, False
+
+
+def _fold_wake_claimed(
+    record: dict[str, Any],
+    sessions: dict[str, dict[str, Any]],
+    payload: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], bool]:
+    obligation_id = str(payload.get("obligation_id") or "")
+    for key, row in sessions.items():
+        for ob in row.get("obligations") or []:
+            if ob.get("obligation_id") != obligation_id:
+                continue
+            if ob.get("status") not in (STATUS_OPEN, STATUS_ALARMED):
+                return sessions, True
+            payment = dict(ob.get("payment") or {})
+            if payment.get("claimed"):
+                return sessions, True
+            payment["claimed"] = True
+            payment["claimed_at"] = float(record.get("ts") or time.time())
+            ob["payment"] = payment
+            sessions[key] = row
+            return sessions, True
     return sessions, False

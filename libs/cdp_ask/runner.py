@@ -17,6 +17,7 @@ from claude_bundles.project_ask import (
     run_project_ask,
 )
 from claude_bundles.project_ask_abort import abort_cleanup, deregister_on_exit
+from claude_bundles.cse_wake_retain import registration_has_wake_debt
 from claude_bundles.project_ask_conversation import run_project_conversation
 from claude_bundles.project_ask_prompt_files import (
     project_root_base,
@@ -207,6 +208,12 @@ def _result_dict(result: ProjectAskResult) -> dict[str, Any]:
     return result.as_dict()
 
 
+def _wake_debt_extras(registration_id: str, *, ok: bool) -> dict[str, bool]:
+    if ok and registration_has_wake_debt(registration_id):
+        return {"awaiting_wake_debt": True}
+    return {}
+
+
 def _path_to_cortex_uri(path: Path, root: Path) -> str:
     rel = path.resolve().relative_to(root.resolve())
     return f"cortex://{rel.as_posix()}"
@@ -360,8 +367,9 @@ async def run_execution(
             await _release_f6_and_advance_proof(
                 progress=progress, ladder=ladder, archive_uri=archive_uri
             )
+            conv_ok = all(r.ok for r in results)
             return {
-                "ok": all(r.ok for r in results),
+                "ok": conv_ok,
                 "registration_id": reg.registration_id,
                 "archive_uri": archive_uri,
                 "results": [_result_dict(r) for r in results],
@@ -375,12 +383,13 @@ async def run_execution(
                 "harvest_provenance": (
                     last.harvest_provenance if last and last.ok else None
                 ),
-                "error": None if all(r.ok for r in results) else "conversation failed",
+                "error": None if conv_ok else "conversation failed",
                 "stall_stage": (
                     classify_stall_stage(last.error if last else "conversation failed")
-                    if not all(r.ok for r in results)
+                    if not conv_ok
                     else None
                 ),
+                **_wake_debt_extras(reg.registration_id, ok=conv_ok),
             }
 
         if req.no_project_uuid and not req.converse:
@@ -430,10 +439,12 @@ async def run_execution(
             ladder=ladder,
             archive_uri=result.archive_uri if result.ok else None,
         )
+        payload.update(_wake_debt_extras(reg.registration_id, ok=result.ok))
         return payload
     finally:
         if not await abort_check():
-            deregister_on_exit(reg, purpose=req.purpose)
+            if not registration_has_wake_debt(reg.registration_id):
+                deregister_on_exit(reg, purpose=req.purpose)
 
 
 def resolve_project_root_path(raw: str) -> Path:

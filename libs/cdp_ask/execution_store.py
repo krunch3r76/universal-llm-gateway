@@ -269,6 +269,28 @@ class ExecutionStore:
             rec.tool_pause = None
             rec.liveness_observed_at = None
 
+    async def mark_awaiting_wake(
+        self,
+        execution_id: str,
+        *,
+        result: dict[str, Any],
+    ) -> None:
+        """Nonterminal harvest complete while CSR wake debt retains the lane."""
+        async with self._lock:
+            rec = self._records.get(execution_id)
+            if rec is None:
+                return
+            rec.status = "running"
+            rec.result = result
+            rec.error = None
+            rec.updated_at = time.time()
+            rec.task = None
+            rec.completion_phase = "awaiting_wake"
+            rec.streaming = None
+            rec.stop = None
+            rec.tool_pause = None
+            rec.liveness_observed_at = None
+
     async def request_abort(self, execution_id: str) -> ExecutionRecord | None:
         async with self._lock:
             rec = self._records.get(execution_id)
@@ -289,6 +311,10 @@ class ExecutionStore:
             if row.get("status") != "active":
                 continue
             if registration_id in live:
+                continue
+            from claude_bundles.cse_wake_retain import registration_has_wake_debt
+
+            if registration_has_wake_debt(registration_id):
                 continue
             cdp_registry.deregister_lane(registration_id, reason="probe_failed")
             reaped.append(registration_id)
@@ -327,6 +353,10 @@ class ExecutionStore:
                 self._safe_deregister(rec.registration_id)
 
     def _safe_deregister(self, registration_id: str) -> None:
+        from claude_bundles.cse_wake_retain import registration_has_wake_debt
+
+        if registration_has_wake_debt(registration_id):
+            return
         from claude_bundles import cdp_registry
 
         with contextlib.suppress(Exception):

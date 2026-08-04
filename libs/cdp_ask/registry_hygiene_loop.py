@@ -31,12 +31,35 @@ def hygiene_interval_s() -> float:
 def run_hygiene_once() -> dict[str, Any]:
     """Sync extended reclaim — safe to call from asyncio.to_thread."""
     from claude_bundles import cdp_registry
+    from claude_bundles.cse_session_obligations import sweep_wake_owed_ttl
 
     result = cdp_registry.hygiene_reclaim_extended()
+    wake_alarms = sweep_wake_owed_ttl(
+        notify_pager=_sync_notify_pager,
+    )
     return {
         "reclaimed_ports": list(result.reclaimed_ports),
         "removed_profiles": list(result.removed_profiles),
+        "wake_alarms": wake_alarms,
     }
+
+
+def _sync_notify_pager(subject: str, body: str) -> bool:
+    """Best-effort pager for TTL alarm — returns True when notify reports sent."""
+    try:
+        from pager_notify.client import notify_pager
+
+        import asyncio
+
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(notify_pager(subject, body, tag="wake-ttl"))
+        finally:
+            loop.close()
+        return bool(result)
+    except Exception:
+        logger.exception("wake TTL pager notify failed")
+        return False
 
 
 def run_orphan_scan_once() -> dict[str, Any]:

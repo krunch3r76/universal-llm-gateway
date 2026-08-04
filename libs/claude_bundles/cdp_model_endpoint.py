@@ -41,7 +41,7 @@ CDP_REPLY_FROM = "cdp"
 # Phases after the page goes idle: the satellite is resolving harvest (Cowork
 # Output download, archive write) and emits no per-sample progress, so the
 # no-progress fingerprint necessarily freezes. Only ``max_wall_s`` bounds these.
-POST_IDLE_PHASES = frozenset({"turn_idle", "content_proof", "archiving"})
+POST_IDLE_PHASES = frozenset({"turn_idle", "content_proof", "archiving", "awaiting_wake"})
 
 RETRYABLE_OVERLOAD_STATUS = frozenset({529, 503})
 SUBMIT_RETRY_BACKOFF_S = 5.0

@@ -207,6 +207,12 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
                     on_registered=_sync_registered,
                     ladder=ladder,
                 )
+                if payload.get("awaiting_wake_debt") and payload.get("ok"):
+                    await execution_store.mark_awaiting_wake(
+                        record.execution_id,
+                        result=payload,
+                    )
+                    return
                 status = (
                     "aborted"
                     if payload.get("status") == "aborted"

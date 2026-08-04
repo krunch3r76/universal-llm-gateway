@@ -183,62 +183,123 @@ async def pay_wake_unit(
     bus: Any | None = None,
     post: HttpPoster | None = None,
 ) -> dict[str, Any]:
-    """Transactional pay unit — followup first, then bus WAKE; unified outcome."""
+    """Transactional pay unit — followup first; bus WAKE+pager on degrade only."""
     from claude_bundles.cdp_registry_store import load_sessions
     from claude_bundles.cse_session_obligations import (
         get_open_wake_owed,
         record_wake_posted,
         resolve_payment_channel,
     )
+    from claude_bundles.cse_wake_retain import (
+        release_lane_if_debt_cleared,
+        try_claim_wake_payment,
+    )
 
     from services.git_integration_worker.cursor_auto.nested_sdk import (
         post_operator_wake,
     )
 
+    thread = str(job.thread_id)
     sessions = load_sessions()
-    channel = resolve_payment_channel(sessions, thread=str(job.thread_id))
+    ob = get_open_wake_owed(sessions, thread=thread)
+    if ob is None:
+        return {
+            "ok": True,
+            "skipped": True,
+            "code": "csr.wake.no_debt",
+            "followup_ok": False,
+            "wake_ok": False,
+        }
+
+    obligation_id = str(ob.get("obligation_id") or "")
+    wake_channel = str(ob.get("wake_channel") or "chat_delivery")
+    payment = ob.get("payment") or {}
+    if payment.get("followup_ok") or ob.get("status") == "discharged":
+        return {
+            "ok": True,
+            "skipped": True,
+            "code": "csr.wake.already_paid",
+            "followup_ok": True,
+            "wake_ok": False,
+        }
+
+    channel = resolve_payment_channel(sessions, thread=thread)
     chat_url = channel.get("chat_url")
     registration_id = channel.get("registration_id")
     if not chat_url and not registration_id:
         chat_url = getattr(job, "cse_chat_url", None)
         registration_id = getattr(job, "cse_registration_id", None)
 
-    delivery = await maybe_deliver_cse_wake(
-        job,
-        dispatch_id=dispatch_id,
-        request_turn=request_turn,
-        closeout_status=closeout_status,
-        post=post,
-        chat_url=chat_url,
-        registration_id=registration_id,
-    )
-    followup_ok = bool(delivery.get("ok"))
-    followup_code = _map_followup_code(delivery)
+    followup_ok = False
+    followup_code = "csr.wake.skipped"
+    delivery: dict[str, Any] = {"ok": False, "skipped": True}
 
-    wake = await post_operator_wake(
-        job,
-        dispatch_id=dispatch_id,
-        request_turn=request_turn,
-        closeout_status=closeout_status,
-        bus=bus,
-    )
-    wake_ok = bool(wake.get("ok"))
-
-    ob = get_open_wake_owed(load_sessions(), thread=str(job.thread_id))
-    if wake_ok and ob:
-        record_wake_posted(
-            thread=str(job.thread_id),
-            obligation_id=str(ob.get("obligation_id") or ""),
+    if wake_channel == "chat_delivery":
+        if not try_claim_wake_payment(thread=thread, obligation_id=obligation_id):
+            if payment.get("claimed"):
+                return {
+                    "ok": True,
+                    "skipped": True,
+                    "code": "csr.wake.claim_inflight",
+                    "followup_ok": False,
+                    "wake_ok": False,
+                }
+        delivery = await maybe_deliver_cse_wake(
+            job,
+            dispatch_id=dispatch_id,
+            request_turn=request_turn,
+            closeout_status=closeout_status,
+            post=post,
+            chat_url=chat_url,
+            registration_id=registration_id,
         )
+        followup_ok = bool(delivery.get("ok"))
+        followup_code = _map_followup_code(delivery)
+        if followup_ok and registration_id:
+            release_lane_if_debt_cleared(
+                str(registration_id), purpose="operator-proxy"
+            )
 
-    if followup_ok and wake_ok:
+    wake: dict[str, Any] = {"ok": False, "skipped": True}
+    wake_ok = False
+    if not followup_ok and wake_channel == "chat_delivery":
+        wake = await post_operator_wake(
+            job,
+            dispatch_id=dispatch_id,
+            request_turn=request_turn,
+            closeout_status=closeout_status,
+            bus=bus,
+        )
+        wake_ok = bool(wake.get("ok"))
+        ob = get_open_wake_owed(load_sessions(), thread=thread)
+        if wake_ok and ob:
+            record_wake_posted(
+                thread=thread,
+                obligation_id=str(ob.get("obligation_id") or obligation_id),
+            )
+        try:
+            from pager_notify.client import notify_pager
+
+            await notify_pager(
+                f"WAKE followup failed thread {thread}",
+                f"dispatch={dispatch_id} code={followup_code}",
+                tag="wake-degrade",
+            )
+        except Exception:
+            logger.warning("wake degrade pager failed thread=%s", thread)
+
+    if followup_ok:
         code = "csr.wake.unit_ok"
+    elif wake_channel != "chat_delivery":
+        code = "csr.wake.channel_skipped"
+    elif not followup_ok and wake_ok:
+        code = "csr.wake.degraded_bus_wake"
     elif not followup_ok:
         code = followup_code if followup_code != "csr.wake.unit_ok" else "csr.wake.followup_failed"
     else:
         code = "csr.wake.bus_wake_failed"
 
-    ok = followup_ok and wake_ok
+    ok = followup_ok or (wake_channel != "chat_delivery")
     return {
         "ok": ok,
         "followup_ok": followup_ok,

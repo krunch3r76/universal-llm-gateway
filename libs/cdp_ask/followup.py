@@ -267,6 +267,21 @@ async def execute_followup(
                 **extra,
             )
 
+        from claude_bundles.cse_session_obligations import (
+            emit_wake_delivered_transition,
+            resolve_wake_obligation_for_receipt,
+        )
+
+        thread, obligation_id = resolve_wake_obligation_for_receipt(
+            target.registration_id
+        )
+        emit_wake_delivered_transition(
+            registration_id=target.registration_id,
+            thread=thread,
+            obligation_id=obligation_id,
+            send_verified=True,
+        )
+
         return FollowupProjectAskResponse(
             ok=True,
             url=url,

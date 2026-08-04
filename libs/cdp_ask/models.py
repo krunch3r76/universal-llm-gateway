@@ -13,6 +13,7 @@ CompletionPhase = Literal[
     "turn_idle",
     "content_proof",
     "archiving",
+    "awaiting_wake",
     "terminal",
     "failed",
 ]

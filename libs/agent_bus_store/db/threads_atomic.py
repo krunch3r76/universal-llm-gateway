@@ -138,6 +138,15 @@ def create_thread_with_turn(
         subject=subject,
         created_at=ts,
     )
+    from claude_bundles.cse_session_obligations import maybe_mirror_protocol_turn
+
+    maybe_mirror_protocol_turn(
+        thread=thread_id,
+        turn_id=turn_id,
+        turn_number=turn_number,
+        created_at=ts,
+        body=insert_body,
+    )
     thread_detail = get_thread_with_links(thread_id)
     assert thread_detail is not None
     return thread_detail, turn_id, ts, turn_number
@@ -389,6 +398,15 @@ def claim_and_post_turn(
         to_agent=to_agent,
         subject=subject,
         created_at=ts,
+    )
+    from claude_bundles.cse_session_obligations import maybe_mirror_protocol_turn
+
+    maybe_mirror_protocol_turn(
+        thread=thread_id,
+        turn_id=turn_id,
+        turn_number=1,
+        created_at=ts,
+        body=body,
     )
     result = get_thread_with_links(thread_id)
     assert result is not None

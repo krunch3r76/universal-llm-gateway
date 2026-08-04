@@ -143,6 +143,10 @@ def _process_owns_driver(registration_id: str) -> bool:
 
 
 def deregister_on_exit(reg: cdp_registry.Registration, *, purpose: str | None) -> None:
+    from claude_bundles.cse_wake_retain import registration_has_wake_debt
+
+    if registration_has_wake_debt(reg.registration_id):
+        return
     if not registration_owns_port(reg.registration_id, reg.port):
         return
     effective_purpose = purpose or reg.purpose
@@ -306,6 +310,11 @@ def abort_cleanup(
     row = cdp_registry._load_active().get(reg.registration_id)
     if row is None or row.get("status") != "active":
         return "lane_inactive"
+
+    from claude_bundles.cse_wake_retain import registration_has_wake_debt
+
+    if registration_has_wake_debt(reg.registration_id):
+        return "still_attached"
 
     if not _process_owns_driver(reg.registration_id):
         if cdp_registry.is_driver_lock_held(reg.registration_id):
