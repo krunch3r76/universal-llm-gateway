@@ -1,4 +1,4 @@
-"""Fleet-wide Lane-B regime switch (DDL + read/write; default OFF per LB-1)."""
+"""Fleet-wide Lane-B regime switch (DDL + read/write; default ON per row-10)."""
 
 from __future__ import annotations
 
@@ -28,12 +28,12 @@ def lane_b_regime_active() -> bool:
             (_REGIME_KEY,),
         ).fetchone()
     if row is None:
-        return False
+        return True
     return str(row["value"]).lower() == "on"
 
 
 def set_lane_b_regime(*, active: bool) -> None:
-    """Persist regime switch; tests and later missions may enable fleet-wide Lane-B."""
+    """Persist regime switch; revert path is ``set_lane_b_regime(active=False)``."""
     with _connect() as conn:
         ensure_regime_schema(conn)
         conn.execute(

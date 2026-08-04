@@ -149,6 +149,7 @@ from services.git_integration_worker.cursor_sdk_implement_gate import (
 from services.git_integration_worker.cursor_sdk_lane_regime import lane_b_regime_active
 from services.git_integration_worker.cursor_sdk_lane_select import (
     LaneScopeRefused,
+    lane_selection_predicate,
     select_lane,
     wire_lane_explicit,
 )
@@ -2183,6 +2184,7 @@ async def cursor_dispatch(
             regime_active=lane_b_regime_active(),
             source_repo=cfg.source_repo,
             files_expected=files_expected,
+            contract=contract,
         )
     except LaneScopeRefused as exc:
         return _reject_pre_admission(
@@ -2380,6 +2382,12 @@ async def cursor_dispatch(
         lane=selected_lane,
         reason=lane_reason,
         regime_active=lane_b_regime_active(),
+        contract=contract,
+        selecting_predicate=lane_selection_predicate(
+            reason=lane_reason,
+            contract=contract,
+            regime_active=lane_b_regime_active(),
+        ),
     )
 
     # Nest park: ledger already moved parent → parked_waiting; transfer capacity

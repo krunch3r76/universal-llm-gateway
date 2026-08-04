@@ -206,7 +206,7 @@ def test_ac_s2_2_two_concurrent_lane_b_distinct_lease_keys(
 
 
 def test_ac_s2_3_regime_directions(git_repo: Path) -> None:
-    """AC-S2.3: regime off/on and lane='A' opt-out."""
+    """AC-S2.3 / row-10 AC5–7: regime off/on, contract_regime, lane='A' opt-out."""
     req = CursorDispatchRequest(
         thread_id="t",
         model="cursor/composer-2.5",
@@ -216,25 +216,57 @@ def test_ac_s2_3_regime_directions(git_repo: Path) -> None:
     )
     files = ["services/a.py"]
     set_lane_b_regime(active=False)
-    lane, _, _ = select_lane(
-        req=req, regime_active=lane_b_regime_active(), source_repo=git_repo, files_expected=files
+    lane, _, reason = select_lane(
+        req=req,
+        regime_active=lane_b_regime_active(),
+        source_repo=git_repo,
+        files_expected=files,
+        contract="implement",
     )
     assert lane == "A"
+    assert reason == "opt_out"
 
     set_lane_b_regime(active=True)
-    lane, _, _ = select_lane(
-        req=req, regime_active=lane_b_regime_active(), source_repo=git_repo, files_expected=files
+    lane, _, reason = select_lane(
+        req=req,
+        regime_active=lane_b_regime_active(),
+        source_repo=git_repo,
+        files_expected=files,
+        contract="implement",
     )
     assert lane == "B"
+    assert reason == "contract_regime"
+
+    lane, _, reason = select_lane(
+        req=req,
+        regime_active=lane_b_regime_active(),
+        source_repo=git_repo,
+        files_expected=files,
+        contract="light-bounded",
+    )
+    assert lane == "B"
+    assert reason == "contract_regime"
 
     req_a = req.model_copy(update={"lane": "A"})
-    lane, _, _ = select_lane(
+    lane, _, reason = select_lane(
         req=req_a,
         regime_active=lane_b_regime_active(),
         source_repo=git_repo,
         files_expected=files,
+        contract="implement",
     )
     assert lane == "A"
+    assert reason == "opt_out"
+
+    lane, _, reason = select_lane(
+        req=req,
+        regime_active=lane_b_regime_active(),
+        source_repo=git_repo,
+        files_expected=[],
+        contract="implement",
+    )
+    assert lane == "A"
+    assert reason == "opt_out"
     set_lane_b_regime(active=False)
 
 
@@ -440,8 +472,78 @@ def test_ac_s2_9_worktree_isolated_deprecated_still_lane_b(
     assert lookup_dispatch_worktree(dispatch_id="dep-b") is not None
 
 
-def test_lb1_regime_default_off() -> None:
-    """LB-1: fleet regime default remains OFF after module import."""
+def test_lb1_regime_default_on() -> None:
+    """LB-1 row-10: fleet regime default ON when DB row missing."""
+    from services.git_integration_worker.cursor_dispatch_ledger import _connect
+    from services.git_integration_worker.cursor_sdk_lane_regime import (
+        _REGIME_KEY,
+        ensure_regime_schema,
+    )
+
+    with _connect() as conn:
+        ensure_regime_schema(conn)
+        conn.execute("DELETE FROM cursor_sdk_regime WHERE key=?", (_REGIME_KEY,))
+    assert lane_b_regime_active() is True
+    assert default_write_path_is_lane_a() is False
     set_lane_b_regime(active=False)
-    assert lane_b_regime_active() is False
-    assert default_write_path_is_lane_a() is True
+
+
+@patch(
+    "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
+    return_value=MagicMock(done=lambda: False),
+)
+def test_row10_ac8_sdk_lane_selected_carries_contract(
+    _mock_task: MagicMock,
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Row-10 AC8: sdk.lane.selected carries contract + selecting_predicate."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    captured: list[dict[str, object]] = []
+
+    def _capture(**kwargs: object) -> None:
+        captured.append(dict(kwargs))
+
+    set_lane_b_regime(active=True)
+    monkeypatch.setattr(route_mod, "emit_sdk_lane_selected", _capture)
+
+    body = _body()
+    body["message"] = (
+        f"---\ncontract: implement\nsource_ref: {body.get('source_ref', 'todo:s2')}\n---\n"
+        "<scope>\nFiles expected:\n- `services/x.py`\n</scope>\nimpl"
+    )
+    resp = client.post("/api/v1/cursor/dispatch", json=body)
+    assert resp.status_code == 200
+    assert captured
+    event = captured[0]
+    assert event["contract"] == "implement"
+    assert event["lane"] == "B"
+    assert event["reason"] == "contract_regime"
+    assert "contract=implement" in str(event["selecting_predicate"])
+    assert event["regime_active"] is True
+    set_lane_b_regime(active=False)
+
+
+def test_row10_d4_non_implement_contract_keeps_regime_eligibility(
+    git_repo: Path,
+) -> None:
+    """Row-10 D4: consult with scoped files still selects Lane-B when regime ON."""
+    req = CursorDispatchRequest(
+        thread_id="t",
+        model="cursor/composer-2.5",
+        dispatch_id="d",
+        execution_id="e",
+        message="x",
+    )
+    set_lane_b_regime(active=True)
+    lane, _, reason = select_lane(
+        req=req,
+        regime_active=True,
+        source_repo=git_repo,
+        files_expected=["services/a.py"],
+        contract="consult",
+    )
+    assert lane == "B"
+    assert reason == "regime"
+    set_lane_b_regime(active=False)

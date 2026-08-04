@@ -655,6 +655,8 @@ def SdkLaneSelected(  # noqa: N802
     lane: str,
     reason: str,
     regime_active: bool,
+    contract: str,
+    selecting_predicate: str,
 ) -> Event:
     return Event(
         signal="sdk.lane.selected",
@@ -664,6 +666,9 @@ def SdkLaneSelected(  # noqa: N802
             "lane": lane,
             "reason": reason,
             "regime_active": regime_active,
+            "regime_state": "on" if regime_active else "off",
+            "contract": contract,
+            "selecting_predicate": selecting_predicate,
         },
         scope="node",
     )
@@ -676,8 +681,10 @@ def emit_sdk_lane_selected(
     lane: str,
     reason: str,
     regime_active: bool,
+    contract: str,
+    selecting_predicate: str,
 ) -> None:
-    """Emit on every admit with the resolved lane and selection reason (S7)."""
+    """Emit on every admit with resolved lane, contract, and selecting predicate (S7/D6)."""
     _emit(
         SdkLaneSelected(
             dispatch_id=dispatch_id,
@@ -685,14 +692,19 @@ def emit_sdk_lane_selected(
             lane=lane,
             reason=reason,
             regime_active=regime_active,
+            contract=contract,
+            selecting_predicate=selecting_predicate,
         )
     )
     logger.info(
-        "sdk lane selected: dispatch_id=%s lane=%s reason=%s regime_active=%s",
+        "sdk lane selected: dispatch_id=%s lane=%s reason=%s contract=%s "
+        "regime_active=%s predicate=%s",
         dispatch_id[:8],
         lane,
         reason,
+        contract,
         regime_active,
+        selecting_predicate,
     )
 
 

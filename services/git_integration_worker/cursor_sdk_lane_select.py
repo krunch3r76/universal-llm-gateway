@@ -1,4 +1,4 @@
-"""Lane selection at cursor-sdk admit (S2)."""
+"""Lane selection at cursor-sdk admit (S2 + row-10 default-routing)."""
 
 from __future__ import annotations
 
@@ -11,11 +11,14 @@ Lane = Literal["A", "B"]
 LaneSelectionReason = Literal[
     "explicit",
     "regime",
+    "contract_regime",
     "opt_out",
     "scope_veto",
     "read_only",
     "nest_inherit",
 ]
+
+_IMPLEMENT_CLASS_CONTRACTS = frozenset({"implement", "light-bounded"})
 
 
 class LaneScopeRefused(Exception):
@@ -55,14 +58,28 @@ def scope_is_single_repo(files_expected: list[str], source_repo: Path) -> bool:
     return True
 
 
+def lane_selection_predicate(
+    *,
+    reason: LaneSelectionReason,
+    contract: str | None,
+    regime_active: bool,
+) -> str:
+    """Reconstructable selecting predicate for limb-2 attribution (row-10 D6)."""
+    parts = [f"reason={reason}", f"regime_active={regime_active}"]
+    if contract:
+        parts.append(f"contract={contract}")
+    return ";".join(parts)
+
+
 def select_lane(
     *,
     req: CursorDispatchRequest,
     regime_active: bool,
     source_repo: Path,
     files_expected: list[str],
+    contract: str | None = None,
 ) -> tuple[Lane, list[str], LaneSelectionReason]:
-    """Choose admit lane; contention alone never selects Lane-B when regime is off."""
+    """Choose admit lane; row-10 routes implement-class contracts to Lane-B when regime is on."""
     advisories: list[str] = []
     if req.nest_under:
         explicit = wire_lane_explicit(req)
@@ -99,6 +116,9 @@ def select_lane(
         return "A", advisories, "scope_veto"
 
     if regime_active:
+        normalized = (contract or "").lower()
+        if normalized in _IMPLEMENT_CLASS_CONTRACTS:
+            return "B", advisories, "contract_regime"
         return "B", advisories, "regime"
 
     return "A", advisories, "opt_out"
@@ -108,6 +128,7 @@ __all__ = [
     "Lane",
     "LaneScopeRefused",
     "LaneSelectionReason",
+    "lane_selection_predicate",
     "scope_is_single_repo",
     "select_lane",
     "wire_lane_explicit",
