@@ -30,15 +30,15 @@ from services.git_integration_worker.cursor_auto.closeout_relay_reporting import
     amend_reporting_field_gaps,
     stamp_model_actual,
 )
-from services.git_integration_worker.cursor_sdk_breadth_recon import (
-    amend_breadth_recon_gaps,
-)
 from services.git_integration_worker.cursor_auto.episode_residue import (
     residue_for_closeout,
 )
 from services.git_integration_worker.cursor_auto.relay_trust import (
     enforce_synthesized_partial,
     synthesized_relay_note,
+)
+from services.git_integration_worker.cursor_sdk_breadth_recon import (
+    amend_breadth_recon_gaps,
 )
 from services.git_integration_worker.cursor_sdk_deliverables import (
     sidecar_workspaces_ref,
@@ -47,6 +47,7 @@ from services.git_integration_worker.cursor_sdk_deliverables import (
 RELAY_BODY_TARGET_CHARS = 2_000
 
 _FULL_CLOSEOUT_PREFIX = "\n\nFull closeout: "
+_TRAILING_FULL_CLOSEOUT_RE = re.compile(r"\n\nFull closeout: \S+\s*$")
 _PRESERVED_HEADER_PREFIXES = (
     "type:",
     "status:",
@@ -62,7 +63,10 @@ _FENCED_FULL_APPENDIX_RE = re.compile(r"^###\s+.+\s+\(full\)\s*$", re.IGNORECASE
 
 
 def _is_table_header_row(field: str, value: str) -> bool:
-    return field.strip().casefold() in _TABLE_HEADER_FIELDS and value.strip().casefold() == "value"
+    return (
+        field.strip().casefold() in _TABLE_HEADER_FIELDS
+        and value.strip().casefold() == "value"
+    )
 
 
 def _is_table_row(line: str) -> bool:
@@ -84,9 +88,9 @@ def _drop_fenced_full_appendix(post_table: list[str]) -> list[str]:
             index += 1
             while index < len(post_table):
                 next_line = post_table[index]
-                if next_line.strip().startswith("### ") and not _is_fenced_full_appendix_heading(
-                    next_line
-                ):
+                if next_line.strip().startswith(
+                    "### "
+                ) and not _is_fenced_full_appendix_heading(next_line):
                     break
                 index += 1
             continue
@@ -146,12 +150,17 @@ def _allocate_cell_budgets(fields: list[str], budget: int) -> dict[str, int]:
     if not fields or budget <= 0:
         return {}
     weights = [
-        3 if field.casefold() in {f.casefold() for f in RELAY_JUDGMENT_CLAMP_FIELDS} else 1
+        3
+        if field.casefold() in {f.casefold() for f in RELAY_JUDGMENT_CLAMP_FIELDS}
+        else 1
         for field in fields
     ]
     total_weight = sum(weights)
     floor = 80 if any(w == 3 for w in weights) else 40
-    shares = [max(budget * weight // total_weight, floor if weight == 3 else 40) for weight in weights]
+    shares = [
+        max(budget * weight // total_weight, floor if weight == 3 else 40)
+        for weight in weights
+    ]
     while sum(shares) > budget:
         idx = max(range(len(shares)), key=lambda i: shares[i])
         if shares[idx] <= 20:
@@ -183,7 +192,10 @@ def _shrink_pre_table_prose(pre_table: list[str], budget: int) -> list[str]:
     if budget <= 0:
         preserved: list[str] = []
         for line in pre_table:
-            if any(line.strip().lower().startswith(prefix) for prefix in _PRESERVED_HEADER_PREFIXES):
+            if any(
+                line.strip().lower().startswith(prefix)
+                for prefix in _PRESERVED_HEADER_PREFIXES
+            ):
                 preserved.append(line)
         return preserved
     result: list[str] = []
@@ -209,7 +221,7 @@ def clamp_relay_body(body: str, *, pointer: str | None) -> tuple[str, bool]:
     """Clamp relay CLOSEOUT bodies while preserving parser-survival structure."""
     if len(body) <= RELAY_BODY_TARGET_CHARS:
         return body, False
-    if _FULL_CLOSEOUT_PREFIX.strip() in body:
+    if _TRAILING_FULL_CLOSEOUT_RE.search(body):
         return body, False
 
     pre_table, table_rows, post_table = _split_body(body)
@@ -225,7 +237,9 @@ def clamp_relay_body(body: str, *, pointer: str | None) -> tuple[str, bool]:
 
     # Prefer intact ac_verdict over mid-ellipsis when other §2 cells bloat —
     # harvest seats were forced into a second sidecar read every leg.
-    other_fields = [field for field, _ in table_rows if field.casefold() != "ac_verdict"]
+    other_fields = [
+        field for field, _ in table_rows if field.casefold() != "ac_verdict"
+    ]
     other_floor = 40 * len(other_fields)
     ac_want = sum(
         len(value) for field, value in table_rows if field.casefold() == "ac_verdict"
@@ -428,7 +442,9 @@ def finalize_relay_payload(
         deployment_state=processed.deployment_state,
     )
     final_status = authored_status
-    if relay_parse_failure_detected(body_with_meta) and not _has_authored_executor_verdict(
+    if relay_parse_failure_detected(
+        body_with_meta
+    ) and not _has_authored_executor_verdict(
         source=processed.source,
         authored_status=authored_status,
     ):

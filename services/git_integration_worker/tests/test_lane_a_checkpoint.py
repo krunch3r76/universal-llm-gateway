@@ -96,6 +96,69 @@ def test_extract_authored_checkpoint_from_bold_and_plain() -> None:
     assert "checkpoint: deferred: foreign WIP" in injected
 
 
+def test_extract_authored_checkpoint_ignores_fenced_table_quote() -> None:
+    """AC-6 — fenced relay-like table rows cannot satisfy the checkpoint gate."""
+    from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
+        extract_authored_checkpoint,
+    )
+
+    body = """\
+**evidence:**
+```text
+| checkpoint | committed deadbeef paths=1 |
+```
+"""
+    assert extract_authored_checkpoint(body) is None
+
+
+def test_extract_authored_checkpoint_ignores_fenced_plain_line() -> None:
+    """AC-6 — fenced ``checkpoint:`` control lines cannot satisfy the gate."""
+    from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
+        extract_authored_checkpoint,
+    )
+
+    body = """\
+**evidence:**
+```text
+checkpoint: committed deadbeef paths=1
+```
+"""
+    assert extract_authored_checkpoint(body) is None
+
+
+def test_extract_authored_checkpoint_ignores_fenced_bold_line() -> None:
+    """AC-6 — fenced ``**checkpoint:**`` control lines cannot satisfy the gate."""
+    from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
+        extract_authored_checkpoint,
+    )
+
+    body = """\
+**evidence:**
+```text
+**checkpoint:** committed deadbeef paths=1
+```
+"""
+    assert extract_authored_checkpoint(body) is None
+
+
+def test_extract_authored_checkpoint_prefers_unfenced_over_fenced_quote() -> None:
+    """Positive path — genuine checkpoint wins when a fenced trap also quotes one."""
+    from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
+        extract_authored_checkpoint,
+    )
+
+    body = """\
+checkpoint: nothing_authored
+
+**evidence:**
+```text
+checkpoint: committed deadbeef paths=99
+| checkpoint | committed cafe paths=99 |
+```
+"""
+    assert extract_authored_checkpoint(body) == "nothing_authored"
+
+
 def test_relay_table_projection_preserves_checkpoint_for_gate() -> None:
     """Positive path: infrastructure checkpoint survives §2 table projection + gate."""
     from claude_bundles.lane_a_closeout_checkpoint import (

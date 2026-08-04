@@ -75,16 +75,12 @@ def authored_paths_for_dispatch(
     dispatch_id: str,
 ) -> tuple[str, ...]:
     """Return paths attributed to one dispatch via its admit baseline."""
-    baseline = CursorDispatchLedger.instance().read_wt_baseline(
-        dispatch_id=dispatch_id
-    )
+    baseline = CursorDispatchLedger.instance().read_wt_baseline(dispatch_id=dispatch_id)
     if baseline is None:
         return ()
     change_set, _deviations = changed_paths(source_repo, baseline)
     return tuple(
-        dict.fromkeys(
-            (*change_set.created, *change_set.modified, *change_set.deleted)
-        )
+        dict.fromkeys((*change_set.created, *change_set.modified, *change_set.deleted))
     )
 
 
@@ -103,9 +99,7 @@ def derive_tree_residue(
         authored: set[str] = set()
     else:
         change_set, _deviations = changed_paths(source_repo, baseline)
-        authored = set(
-            (*change_set.created, *change_set.modified, *change_set.deleted)
-        )
+        authored = set((*change_set.created, *change_set.modified, *change_set.deleted))
     registered = SeatWriteLedger.instance().registered_paths(
         source_repo=str(source_repo.resolve())
     )
@@ -135,25 +129,34 @@ def extract_authored_checkpoint(body: str) -> str | None:
     """Return the checkpoint disposition value from executor-authored closeout prose."""
     from claude_bundles.lane_a_closeout_checkpoint import normalize_checkpoint_value
 
-    text = body or ""
-    match = _CHECKPOINT_LINE_RE.search(text)
-    if match:
-        return normalize_checkpoint_value(match.group(1))
-    bold = _BOLD_CHECKPOINT_RE.search(text)
-    if bold:
-        return normalize_checkpoint_value(bold.group(1))
     from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
         extract_field_section,
+        fenced_spans,
+        in_fenced_span,
     )
+
+    text = body or ""
+    fenced = fenced_spans(text)
+    for match in _CHECKPOINT_LINE_RE.finditer(text):
+        if not in_fenced_span(fenced, match.start()):
+            return normalize_checkpoint_value(match.group(1))
+    for match in _BOLD_CHECKPOINT_RE.finditer(text):
+        if not in_fenced_span(fenced, match.start()):
+            return normalize_checkpoint_value(match.group(1))
 
     section = extract_field_section(text, "checkpoint")
     if section and section.strip():
         return normalize_checkpoint_value(section.strip())
-    table_match = re.search(
-        r"(?im)^\|\s*checkpoint\s*\|\s*(?P<value>.*?)\s*\|",
-        text,
+    table_row_re = re.compile(r"(?im)^\|\s*checkpoint\s*\|\s*(?P<value>.*?)\s*\|")
+    table_match = next(
+        (
+            match
+            for match in table_row_re.finditer(text)
+            if not in_fenced_span(fenced, match.start())
+        ),
+        None,
     )
-    if table_match:
+    if table_match is not None:
         value = table_match.group("value").strip()
         if value and not value.casefold().startswith("relay could not locate"):
             return normalize_checkpoint_value(value)

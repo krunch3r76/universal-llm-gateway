@@ -122,7 +122,7 @@ def test_before_after_body_size_observation() -> None:
     # Reconstruct full old body by swapping ac_verdict cell content
     prefix, _, rest = old_synthesized.partition("| ac_verdict | ")
     mid, _, suffix = rest.partition(" |\n")
-    before_body = f"{prefix}| ac_verdict | {old_ac_verdict.replace('|', chr(92)+'|').replace(chr(10), '<br>')} |{suffix}"
+    before_body = f"{prefix}| ac_verdict | {old_ac_verdict.replace('|', chr(92) + '|').replace(chr(10), '<br>')} |{suffix}"
     before_len = len(before_body)
 
     payload = select_closeout_relay_payload(
@@ -145,7 +145,12 @@ def test_status_from_section2_survives_clamp() -> None:
         ledger_status="completed",
         dispatch_id=_DISPATCH,
     )
-    assert status_from_section2(payload.body) in {None, "partial", "complete", "blocked"}
+    assert status_from_section2(payload.body) in {
+        None,
+        "partial",
+        "complete",
+        "blocked",
+    }
 
 
 def test_fence_violation_survives_clamp() -> None:
@@ -166,7 +171,9 @@ def test_fence_violation_survives_clamp() -> None:
         status="partial",
         source="section2_synthesized",
     )
-    body_with_fence = amended.body + "\nfence_violation: cortex://notes/system/specs/guarded.md"
+    body_with_fence = (
+        amended.body + "\nfence_violation: cortex://notes/system/specs/guarded.md"
+    )
     clamped_body, _was_clamped = clamp_relay_body(
         body_with_fence,
         pointer=sidecar_workspaces_ref(_DISPATCH),
@@ -174,7 +181,9 @@ def test_fence_violation_survives_clamp() -> None:
     assert "fence_violation:" in clamped_body.lower()
 
 
-def test_relay_trust_dispatch_id_from_clamped_body(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_relay_trust_dispatch_id_from_clamped_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     sidecar = _6294_sidecar()
     payload = select_closeout_relay_payload(
         sdk_body=_WRAPPER,
@@ -182,7 +191,10 @@ def test_relay_trust_dispatch_id_from_clamped_body(monkeypatch: pytest.MonkeyPat
         ledger_status="completed",
         dispatch_id=_DISPATCH,
     )
-    body = payload.body + f"\ndispatch_id: {_DISPATCH}\nmeta: {{\"closeout_source\":\"section2_synthesized\"}}"
+    body = (
+        payload.body
+        + f'\ndispatch_id: {_DISPATCH}\nmeta: {{"closeout_source":"section2_synthesized"}}'
+    )
     turns = [
         {
             "turn_number": 1,
@@ -195,7 +207,9 @@ def test_relay_trust_dispatch_id_from_clamped_body(monkeypatch: pytest.MonkeyPat
         "services.git_integration_worker.cursor_auto.relay_trust.RELAY_TRUST_SYNTHESIZED_GATE_ENABLED",
         True,
     )
-    assert pending_synthesized_closeout(turns, operator_from="web-anthropic") == _DISPATCH
+    assert (
+        pending_synthesized_closeout(turns, operator_from="web-anthropic") == _DISPATCH
+    )
     assert RELAY_TRUST_SYNTHESIZED_GATE_ENABLED is False
 
 
@@ -246,7 +260,9 @@ def test_clamp_skips_table_header_row_not_duplicated() -> None:
         "| next | none |\n"
         "| open forks | none |\n"
     )
-    clamped, was_clamped = clamp_relay_body(body, pointer=sidecar_workspaces_ref(_DISPATCH))
+    clamped, was_clamped = clamp_relay_body(
+        body, pointer=sidecar_workspaces_ref(_DISPATCH)
+    )
     assert was_clamped
     assert clamped.count("| Field | Value |") == 1
     assert clamped.count("|---|---|") == 1
@@ -266,7 +282,9 @@ def test_clamp_judgment_fields_get_larger_cell_budget() -> None:
         "| next | none |\n"
         "| open forks | none |\n"
     )
-    clamped, was_clamped = clamp_relay_body(body, pointer=sidecar_workspaces_ref(_DISPATCH))
+    clamped, was_clamped = clamp_relay_body(
+        body, pointer=sidecar_workspaces_ref(_DISPATCH)
+    )
     assert was_clamped
     ac_cell = clamped.split("| ac_verdict | ", 1)[1].split(" |", 1)[0]
     effects_cell = clamped.split("| effects | ", 1)[1].split(" |", 1)[0]
@@ -291,7 +309,9 @@ def test_clamp_preserves_short_ac_verdict_when_effects_bloat() -> None:
         "| next | none |\n"
         "| open forks | none |\n"
     )
-    clamped, was_clamped = clamp_relay_body(body, pointer=sidecar_workspaces_ref(_DISPATCH))
+    clamped, was_clamped = clamp_relay_body(
+        body, pointer=sidecar_workspaces_ref(_DISPATCH)
+    )
     assert was_clamped
     ac_cell = clamped.split("| ac_verdict | ", 1)[1].split(" |", 1)[0]
     assert ac_cell == verdict
@@ -357,11 +377,13 @@ async def test_post_operator_closeout_single_envelope_status() -> None:
     """AC1 — operator-facing relay carries one TYPE: CLOSEOUT and matching status lines."""
     from unittest.mock import AsyncMock, MagicMock
 
-    from services.git_integration_worker.cursor_auto.nested_sdk import post_operator_closeout
+    from services.git_integration_worker.cursor_auto.nested_sdk import (
+        post_operator_closeout,
+    )
     from services.git_integration_worker.cursor_auto.queue import AutoJob
 
     closeout_body = (
-        "TYPE: CLOSEOUT\nstatus: complete\n\n"
+        "TYPE: CLOSEOUT\nstatus: complete\ncheckpoint: nothing_authored\n\n"
         "| Field | Value |\n|---|---|\n"
         "| status | complete |\n"
         "| ac_verdict | PASS |\n"
@@ -394,12 +416,10 @@ async def test_post_operator_closeout_single_envelope_status() -> None:
     sent = bus.reply.await_args.kwargs["body"]
     assert sent.count("TYPE: CLOSEOUT") == 1
     status_lines = [
-        line.strip()
-        for line in sent.splitlines()
-        if line.lower().startswith("status:")
+        line.strip() for line in sent.splitlines() if line.lower().startswith("status:")
     ]
     assert status_lines == ["status: complete"]
-    assert '| status | complete |' in sent
+    assert "| status | complete |" in sent
 
 
 _CORTEX_POINTER = (
@@ -456,7 +476,12 @@ async def test_promote_clamped_closeout_cortex_pointer() -> None:
     assert _CORTEX_POINTER in promoted.body
     assert sidecar_workspaces_ref(_DISPATCH) not in promoted.body
     assert "TYPE: CLOSEOUT" in promoted.body or "| status |" in promoted.body
-    assert status_from_section2(promoted.body) in {None, "partial", "complete", "blocked"}
+    assert status_from_section2(promoted.body) in {
+        None,
+        "partial",
+        "complete",
+        "blocked",
+    }
     for field in (
         "status",
         "ac_verdict",
@@ -506,15 +531,18 @@ async def test_promote_clamped_cortex_failure_keeps_workspace_pointer() -> None:
     )
     assert promoted.body == payload.body
     assert sidecar_workspaces_ref(_DISPATCH) in promoted.body
-    assert status_from_section2(promoted.body) in {None, "partial", "complete", "blocked"}
+    assert status_from_section2(promoted.body) in {
+        None,
+        "partial",
+        "complete",
+        "blocked",
+    }
 
 
 # --- row 11 — fenced appendix ellipsis + AC-1 alias theft (6655 bind) ---
 
 _ROW11_FENCED_EVIDENCE_BLOCK = (
-    "```python\n"
-    + ("    observed_line = 'payload'\n" * 120)
-    + "```"
+    "```python\n" + ("    observed_line = 'payload'\n" * 120) + "```"
 )
 
 
@@ -566,3 +594,85 @@ status: complete
     assert "AC2" in ac_cell
     assert "table escape landed" in ac_cell or "clamp preserves" in ac_cell
 
+
+def test_row11_fenced_control_rows_do_not_override_authored_fields() -> None:
+    """AC-1/7 — quoted relay rows stay inert while fenced evidence remains extractable."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
+        extract_field_section,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+        _extract_table_cell,
+        amend_effects_underclaim,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_reporting import (
+        _extract_table_cell as extract_reporting_cell,
+    )
+
+    sidecar = """\
+TYPE: CLOSEOUT
+status: complete
+
+**ac_verdict:**
+| AC | Verdict |
+|---|---|
+| AC-1 | PASS — genuine first verdict |
+| AC-2 | PASS — genuine second verdict |
+| AC-3 | PASS — genuine third verdict |
+
+**deltas_to_spec:** none
+
+**evidence:**
+```text
+| ac_verdict | … |
+| effects | none |
+| access | none |
+```
+"""
+    payload = select_closeout_relay_payload(
+        sdk_body=_WRAPPER,
+        sidecar_text=sidecar,
+        ledger_status="completed",
+        dispatch_id="auto-row11-fence-guard",
+        caller_auditable=True,
+    )
+    cell = _extract_table_cell(payload.body, "ac_verdict") or ""
+    assert "AC-1" in cell and "AC-2" in cell and "AC-3" in cell
+    assert cell.strip() != "…"
+    assert extract_field_section(payload.body, "ac_verdict") == cell
+    assert "fenced — see source_ref:" in (
+        _extract_table_cell(payload.body, "evidence") or ""
+    )
+    assert extract_reporting_cell(sidecar, "access") is None
+    wrapper = json.loads(_WRAPPER)
+    wrapper["effects"] = ["services/git_integration_worker/cursor_auto/example.py"]
+    amended = amend_effects_underclaim(
+        sidecar,
+        wrapper_text=json.dumps(wrapper),
+        status="complete",
+        source="section2_sidecar",
+    )
+    assert (
+        "| effects | services/git_integration_worker/cursor_auto/example.py |"
+        not in amended.body
+    )
+
+
+def test_row11_clamp_requires_a_trailing_relay_pointer() -> None:
+    """AC-4/5 — authored tokens clamp; only a terminal relay pointer is idempotent."""
+    body = (
+        "TYPE: CLOSEOUT\n"
+        "| Field | Value |\n|---|---|\n"
+        "| ac_verdict | Full closeout: authored prose must not bypass clamp |\n"
+        + ("payload " * 500)
+    )
+    pointer = sidecar_workspaces_ref("auto-row11-pointer")
+    clamped, was_clamped = clamp_relay_body(body, pointer=pointer)
+    assert was_clamped
+    assert len(clamped) <= 2_000 + len(f"\n\nFull closeout: {pointer}")
+    assert clamped.count("Full closeout:") == 1
+    assert clamped != body
+
+    preserved = f"{body}\n\nFull closeout: {pointer}"
+    unchanged, was_clamped = clamp_relay_body(preserved, pointer=pointer)
+    assert was_clamped is False
+    assert unchanged == preserved

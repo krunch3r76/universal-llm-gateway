@@ -9,12 +9,18 @@ from services.git_integration_worker.cursor_auto.closeout_relay_common import (
     looks_section2,
     merge_relay_notes,
 )
+from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
+    fenced_spans,
+    in_fenced_span,
+)
 
 _REPORTING_MISSING_SCOPE_DELTA = "reporting:missing_scope_delta"
 _REPORTING_MISSING_ACCESS = "reporting:missing_access"
 _REPORTING_MISSING_COVERAGE = "reporting:missing_coverage"
 _REPORTING_MISSING_MODEL_ACTUAL = "reporting:missing_model_actual"
-_TABLE_CELL_ROW_RE = re.compile(r"(?im)^\|\s*(?P<field>[^|]+?)\s*\|\s*(?P<value>.*?)\s*\|\s*$")
+_TABLE_CELL_ROW_RE = re.compile(
+    r"(?im)^\|\s*(?P<field>[^|]+?)\s*\|\s*(?P<value>.*?)\s*\|\s*$"
+)
 _SCOPE_DELTA_ABSENT_MARKERS: tuple[str, ...] = (
     "none — field not authored in §2 sidecar",
     "none — field not authored",
@@ -32,7 +38,10 @@ _FIELD_ABSENT_MARKERS: tuple[str, ...] = (
 
 
 def _extract_table_cell(body: str, field: str) -> str | None:
+    spans = fenced_spans(body)
     for match in _TABLE_CELL_ROW_RE.finditer(body):
+        if in_fenced_span(spans, match.start()):
+            continue
         if match.group("field").strip().casefold() == field.casefold():
             return match.group("value").strip()
     return None
@@ -66,7 +75,10 @@ def _scope_delta_present(body: str) -> bool:
     section = _extract_named_section(body, "deltas_to_spec")
     if section is None:
         return False
-    if any(marker.casefold() in section.casefold() for marker in _SCOPE_DELTA_ABSENT_MARKERS):
+    if any(
+        marker.casefold() in section.casefold()
+        for marker in _SCOPE_DELTA_ABSENT_MARKERS
+    ):
         return False
     return bool(section.strip())
 

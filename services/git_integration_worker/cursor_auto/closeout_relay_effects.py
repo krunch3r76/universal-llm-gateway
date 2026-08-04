@@ -18,6 +18,8 @@ from services.git_integration_worker.cursor_auto.closeout_relay_common import (
 )
 from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
     extract_field_section,
+    fenced_spans,
+    in_fenced_span,
 )
 from services.git_integration_worker.cursor_auto.closeout_relay_project import (
     count_unclassified_fields,
@@ -161,8 +163,10 @@ def machine_write_uris(wrapper_text: str | None) -> list[str]:
 
 def _effects_cell_claims_empty(body: str) -> bool:
     """True when the §2 effects cell reads as empty/none/underclaimed."""
-    table_match = _EFFECTS_TABLE_ROW_RE.search(body)
-    if table_match is not None:
+    spans = fenced_spans(body)
+    for table_match in _EFFECTS_TABLE_ROW_RE.finditer(body):
+        if in_fenced_span(spans, table_match.start()):
+            continue
         cell = table_match.group(1).strip()
         if not cell or cell.lower() in {"none", "n/a"}:
             return True
@@ -186,12 +190,18 @@ def _format_effects_cell(uris: list[str]) -> str:
 def _rewrite_effects_cell(body: str, uris: list[str]) -> str:
     """Replace an underclaiming effects cell with the machine write union."""
     new_cell = _format_effects_cell(uris)
-    if _EFFECTS_TABLE_ROW_RE.search(body):
-        return _EFFECTS_TABLE_ROW_RE.sub(
-            lambda match: f"| effects | {_table_cell(new_cell)} |",
-            body,
-            count=1,
-        )
+    spans = fenced_spans(body)
+    table_match = next(
+        (
+            match
+            for match in _EFFECTS_TABLE_ROW_RE.finditer(body)
+            if not in_fenced_span(spans, match.start())
+        ),
+        None,
+    )
+    if table_match is not None:
+        replacement = f"| effects | {_table_cell(new_cell)} |"
+        return body[: table_match.start()] + replacement + body[table_match.end() :]
     if _EFFECTS_INLINE_RE.search(body):
         return _EFFECTS_INLINE_RE.sub(f"effects: {new_cell}", body, count=1)
     if _EFFECTS_BOLD_SAME_LINE_RE.search(body):
@@ -214,7 +224,9 @@ _OVERCLAIM_PARSE_FAILED = "overclaim:parse_failed_field"
 _OVERCLAIM_UNCLASSIFIED = "overclaim:unclassified_field"
 _OVERCLAIM_FALSE_ABSENCE = "overclaim:false_absence_unread_provenance"
 _DEVIATIONS_LINE_RE = re.compile(r"(?im)^deviations:\s*(.*)$")
-_TABLE_CELL_ROW_RE = re.compile(r"(?im)^\|\s*(?P<field>[^|]+?)\s*\|\s*(?P<value>.*?)\s*\|\s*$")
+_TABLE_CELL_ROW_RE = re.compile(
+    r"(?im)^\|\s*(?P<field>[^|]+?)\s*\|\s*(?P<value>.*?)\s*\|\s*$"
+)
 _JUDGMENT_FIELDS: tuple[str, ...] = (
     "ac_verdict",
     "deltas_to_spec",
@@ -233,14 +245,21 @@ _FALSE_ABSENCE_MARKERS: tuple[str, ...] = (
 
 
 def _extract_table_cell(body: str, field: str) -> str | None:
+    spans = fenced_spans(body)
     for match in _TABLE_CELL_ROW_RE.finditer(body):
+        if in_fenced_span(spans, match.start()):
+            continue
         if match.group("field").strip().casefold() == field.casefold():
             return match.group("value").strip()
     return None
 
 
 def _replace_table_cell(body: str, field: str, new_value: str) -> str:
+    spans = fenced_spans(body)
+
     def _rewrite(match: re.Match[str]) -> str:
+        if in_fenced_span(spans, match.start()):
+            return match.group(0)
         if match.group("field").strip().casefold() != field.casefold():
             return match.group(0)
         return f"| {field} | {_table_cell(new_value)} |"
@@ -391,7 +410,9 @@ def amend_completion_overclaim(
         if _OVERCLAIM_UNCLASSIFIED not in relay_note_parts:
             relay_note_parts.append(_OVERCLAIM_UNCLASSIFIED)
 
-    relay_note = merge_relay_notes("; ".join(relay_note_parts) if relay_note_parts else None)
+    relay_note = merge_relay_notes(
+        "; ".join(relay_note_parts) if relay_note_parts else None
+    )
 
     return CloseoutRelayPayload(
         body=amended_body,

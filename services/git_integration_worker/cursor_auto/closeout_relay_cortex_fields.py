@@ -12,7 +12,13 @@ _FIELD_HEADING_ALIASES: dict[str, tuple[str, ...]] = {
         "verdict",
         "ac1 per-site disposition",
     ),
-    "deltas_to_spec": ("deltas_to_spec", "deltas to spec", "delta to spec", "scope delta", "scope_delta"),
+    "deltas_to_spec": (
+        "deltas_to_spec",
+        "deltas to spec",
+        "delta to spec",
+        "scope delta",
+        "scope_delta",
+    ),
     "decisions_taken": ("decisions_taken", "decisions taken"),
     "next": ("next", "next steps"),
     "open forks": ("open_forks", "open forks"),
@@ -40,6 +46,42 @@ _BOLD_HEADING_ONLY_RE = re.compile(
 _PLAIN_FIELD_LINE_RE = re.compile(
     r"(?im)^(?P<field>[a-z][a-z0-9_ ]*?)\s*:\s*(?P<rest>.*)$",
 )
+_FENCE_OPEN_RE = re.compile(r"^[ \t]*(?P<marker>`{3,}|~{3,})")
+
+
+def fenced_spans(body: str) -> tuple[tuple[int, int], ...]:
+    """Return source offsets enclosed by Markdown backtick or tilde fences.
+
+    Unterminated fences intentionally extend to the end of the authored body:
+    control-token discovery must not trust content after an unclosed code fence.
+    """
+    spans: list[tuple[int, int]] = []
+    fence_start: int | None = None
+    marker_char = ""
+    marker_width = 0
+    offset = 0
+    for line in body.splitlines(keepends=True):
+        match = _FENCE_OPEN_RE.match(line)
+        if match is not None:
+            marker = match.group("marker")
+            if fence_start is None:
+                fence_start = offset
+                marker_char = marker[0]
+                marker_width = len(marker)
+            elif marker[0] == marker_char and len(marker) >= marker_width:
+                spans.append((fence_start, offset + len(line)))
+                fence_start = None
+                marker_char = ""
+                marker_width = 0
+        offset += len(line)
+    if fence_start is not None:
+        spans.append((fence_start, len(body)))
+    return tuple(spans)
+
+
+def in_fenced_span(spans: tuple[tuple[int, int], ...], offset: int) -> bool:
+    """Return whether a candidate control token starts within a fenced region."""
+    return any(start <= offset < end for start, end in spans)
 
 
 def _normalize_heading_key(text: str) -> str:
@@ -53,7 +95,9 @@ def _ac_subsection_heading(normalized_heading: str) -> bool:
     return bool(re.fullmatch(r"ac\d+.*", normalized_heading))
 
 
-def _heading_matches_field(heading: str, field: str, *, exact_only: bool = False) -> bool:
+def _heading_matches_field(
+    heading: str, field: str, *, exact_only: bool = False
+) -> bool:
     """Match an authored heading to a §2 field.
 
     Prefix matching is what lets ``Next steps`` bind to ``next``, but it also lets
@@ -89,8 +133,15 @@ def _table_heading_matches_field(heading: str, field: str) -> bool:
     return False
 
 
-def _extract_atx_section(body: str, field: str, *, exact_only: bool = False) -> str | None:
-    matches = list(_ATX_HEADING_RE.finditer(body))
+def _extract_atx_section(
+    body: str, field: str, *, exact_only: bool = False
+) -> str | None:
+    spans = fenced_spans(body)
+    matches = [
+        match
+        for match in _ATX_HEADING_RE.finditer(body)
+        if not in_fenced_span(spans, match.start())
+    ]
     for index, match in enumerate(matches):
         heading = match.group(2).strip()
         if not _heading_matches_field(heading, field, exact_only=exact_only):
@@ -119,10 +170,11 @@ def _canonical_field_for_plain_heading(raw_field: str) -> str | None:
 def _plain_field_line_spans(body: str) -> list[tuple[int, int, str, str]]:
     """Collect plain ``field: rest`` §2 lines (reporting-contract inline format)."""
     spans: list[tuple[int, int, str, str]] = []
+    fenced = fenced_spans(body)
     offset = 0
     for line in body.splitlines(keepends=True):
         stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
+        if in_fenced_span(fenced, offset) or not stripped or stripped.startswith("#"):
             offset += len(line)
             continue
         match = _PLAIN_FIELD_LINE_RE.match(stripped)
@@ -166,8 +218,9 @@ def _next_field_boundary(body: str, start: int) -> int:
     for line_start, _, _, _ in _canonical_bold_field_spans(body):
         if line_start >= start:
             return line_start
+    fenced = fenced_spans(body)
     for match in _ATX_HEADING_RE.finditer(body):
-        if match.start() >= start:
+        if match.start() >= start and not in_fenced_span(fenced, match.start()):
             return match.start()
     return len(body)
 
@@ -181,7 +234,11 @@ def _extract_plain_same_line(body: str, field: str) -> str | None:
 
 def _extract_plain_section(body: str, field: str) -> str | None:
     offset = 0
+    fenced = fenced_spans(body)
     for line in body.splitlines(keepends=True):
+        if in_fenced_span(fenced, offset):
+            offset += len(line)
+            continue
         stripped = line.strip()
         match = _PLAIN_FIELD_LINE_RE.match(stripped) if stripped else None
         if match is not None:
@@ -206,8 +263,11 @@ def field_heading_present(body: str, field: str) -> bool:
     for _start, _end, heading, _rest in _field_line_spans(body):
         if _heading_matches_field(heading, field):
             return True
+    fenced = fenced_spans(body)
     for match in _ATX_HEADING_RE.finditer(body):
-        if _heading_matches_field(match.group(2).strip(), field):
+        if not in_fenced_span(fenced, match.start()) and _heading_matches_field(
+            match.group(2).strip(), field
+        ):
             return True
     return extract_table_field(body, field) is not None
 
@@ -215,13 +275,16 @@ def field_heading_present(body: str, field: str) -> bool:
 def _field_line_spans(body: str) -> list[tuple[int, int, str, str]]:
     """Collect bold §2 field lines — ``**field:** rest`` and ``**field**`` heading-only."""
     spans: list[tuple[int, int, str, str]] = []
+    fenced = fenced_spans(body)
     for match in _BOLD_FIELD_LINE_RE.finditer(body):
+        if in_fenced_span(fenced, match.start()):
+            continue
         heading = _normalize_field_heading(match.group("heading"))
         rest = match.group("rest").strip()
         spans.append((match.start(), match.end(), heading, rest))
     colon_starts = {start for start, _, _, _ in spans}
     for match in _BOLD_HEADING_ONLY_RE.finditer(body):
-        if match.start() in colon_starts:
+        if in_fenced_span(fenced, match.start()) or match.start() in colon_starts:
             continue
         heading = _normalize_field_heading(match.group("heading"))
         spans.append((match.start(), match.end(), heading, ""))
@@ -229,20 +292,28 @@ def _field_line_spans(body: str) -> list[tuple[int, int, str, str]]:
     return spans
 
 
-def _extract_bold_same_line(body: str, field: str, *, exact_only: bool = False) -> str | None:
+def _extract_bold_same_line(
+    body: str, field: str, *, exact_only: bool = False
+) -> str | None:
     for _start, _end, heading, rest in _field_line_spans(body):
         if _heading_matches_field(heading, field, exact_only=exact_only) and rest:
             return rest
     return None
 
 
-def _extract_bold_section(body: str, field: str, *, exact_only: bool = False) -> str | None:
+def _extract_bold_section(
+    body: str, field: str, *, exact_only: bool = False
+) -> str | None:
     lines = body.splitlines(keepends=True)
-    for index, line in enumerate(lines):
+    fenced = fenced_spans(body)
+    offset = 0
+    for line in lines:
+        line_start = offset
+        offset += len(line)
+        if in_fenced_span(fenced, line_start):
+            continue
         colon_match = _BOLD_FIELD_LINE_RE.match(line)
-        heading_only_match = (
-            None if colon_match else _BOLD_HEADING_ONLY_RE.match(line)
-        )
+        heading_only_match = None if colon_match else _BOLD_HEADING_ONLY_RE.match(line)
         match = colon_match or heading_only_match
         if match is None:
             continue
@@ -252,16 +323,18 @@ def _extract_bold_section(body: str, field: str, *, exact_only: bool = False) ->
         rest = match.group("rest").strip() if colon_match else ""
         if rest:
             return rest
-        start = sum(len(lines[i]) for i in range(index + 1))
-        end = _next_field_boundary(body, start)
-        section = body[start:end].strip()
+        end = _next_field_boundary(body, offset)
+        section = body[offset:end].strip()
         return section or None
     return None
 
 
 def extract_table_field(body: str, field: str) -> str | None:
     """Extract a field value from an existing markdown table row."""
+    spans = fenced_spans(body)
     for match in _TABLE_ROW_RE.finditer(body):
+        if in_fenced_span(spans, match.start()):
+            continue
         row_field = match.group("field").strip()
         if _TABLE_SEP_RE.match(f"|{row_field}|"):
             continue
@@ -295,7 +368,9 @@ def extract_status(body: str) -> str | None:
         normalized = _normalize_status_token(table)
         if normalized is not None:
             return normalized
-    bold = _extract_bold_same_line(body, "status") or _extract_bold_section(body, "status")
+    bold = _extract_bold_same_line(body, "status") or _extract_bold_section(
+        body, "status"
+    )
     if bold:
         normalized = _normalize_status_token(bold)
         if normalized is not None:
@@ -347,5 +422,7 @@ __all__ = [
     "extract_status",
     "extract_table_field",
     "field_heading_present",
+    "fenced_spans",
+    "in_fenced_span",
     "status_from_section2",
 ]
