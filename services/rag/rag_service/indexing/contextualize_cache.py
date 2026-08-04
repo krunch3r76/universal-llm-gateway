@@ -11,8 +11,14 @@ if TYPE_CHECKING:
     from services.rag.contextualize_cache import StoredContextRow
     from services.rag.property_index import PropertyIndex
 
-from services.rag.contextualize import CONTEXTUALIZE_PROMPT_HASH
-from services.rag.contextualize_cache import StoredContextRow
+from services.rag.contextualize import (
+    CONTEXTUALIZE_PROMPT_HASH,
+    compute_neighbor_digest,
+)
+from services.rag.contextualize_cache import (
+    StoredContextRow,
+    resolve_source_identity,
+)
 from services.rag.events.indexing import (
     rag_contextualize_cache_lookup_failed,
     rag_contextualize_cache_store_completed,
@@ -34,10 +40,12 @@ async def _store_cached_contexts_best_effort(
     operation: str | None,
 ) -> None:
     """Persist contextualize cache entries; never propagate failure to caller."""
-    if state._property_index is None or not entries or not source_hash:
+    source_identity = resolve_source_identity(source)
+    if state._property_index is None or not entries or not source_identity:
         return
     try:
         stored = await state._property_index.store_cached_contexts(
+            source_identity=source_identity,
             source_hash=source_hash,
             contextualize_model=contextualize_model,
             contextualize_schema_version=CONTEXTUALIZE_PROMPT_HASH,
@@ -88,12 +96,21 @@ async def _load_cached_contexts(
 
     Returns empty dict if not available or on error (triggering full recompute).
     """
-    if prop_index is None or not source_hash:
+    source_identity = resolve_source_identity(source)
+    if prop_index is None or (not source_identity and not source_hash):
         return {}
+    chunk_hashes = [str(meta.get("chunk_hash", "")) for meta in metadatas]
+    neighbor_digests = {
+        chunk_hash: compute_neighbor_digest(chunks, index)
+        for index, chunk_hash in enumerate(chunk_hashes)
+        if chunk_hash
+    }
     try:
         return prop_index.get_cached_contexts(
+            source_identity=source_identity,
             source_hash=source_hash,
-            chunk_hashes=[str(meta.get("chunk_hash", "")) for meta in metadatas],
+            chunk_hashes=chunk_hashes,
+            neighbor_digests=neighbor_digests,
             contextualize_model=context_model,
             contextualize_schema_version=CONTEXTUALIZE_PROMPT_HASH,
         )
@@ -157,4 +174,3 @@ async def _record_partial_failure(
         return exception_id, None
     except Exception as exc:
         return None, f"{type(exc).__qualname__}: {exc}"
-

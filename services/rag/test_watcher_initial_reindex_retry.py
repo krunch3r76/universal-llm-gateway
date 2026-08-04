@@ -10,6 +10,7 @@ import pytest
 
 from services.rag.config import WatchDirectory
 from services.rag.models import IndexResult
+from services.rag.property_index import IndexingFailure
 from services.rag.watcher_manager import WatcherManager
 
 
@@ -135,3 +136,36 @@ async def test_watcher_retry_does_not_call_wait_for_model_ready(
     ) as wait_ready:
         await _run_initial_reindex(tmp_path, index_fn=index_fn)
         wait_ready.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_permanent_failure_skipped_on_reconcile_ac_b4_t5(tmp_path: Path) -> None:
+    source_path = tmp_path / "doc.md"
+    source_path.write_text("body", encoding="utf-8")
+    stat = source_path.stat()
+    prop_index = MagicMock()
+    prop_index.get_indexing_failure.return_value = IndexingFailure(
+        source=str(source_path),
+        failure_category="permanent",
+        failure_reason="http_client_error",
+        error_message="HTTPStatusError: 404",
+        error_type="HTTPStatusError",
+        first_failed_at="2026-01-01T00:00:00",
+        last_failed_at="2026-01-01T00:00:00",
+        attempt_count=1,
+        source_hash="abc",
+        source_size_bytes=stat.st_size,
+        source_mtime_ns=stat.st_mtime_ns,
+    )
+    emitted: list[object] = []
+
+    async def capture_emit(event: object) -> None:
+        emitted.append(event)
+
+    wm = WatcherManager(index_fn=AsyncMock(), property_index=prop_index)
+    wm._emit = capture_emit  # type: ignore[method-assign]
+
+    allowed = await wm._should_attempt(source_path)
+    assert allowed is False
+    skipped = [e for e in emitted if e.signal == "rag.file.indexing.failure.skipped"]
+    assert len(skipped) == 1

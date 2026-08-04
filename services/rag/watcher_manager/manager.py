@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -235,6 +236,25 @@ class WatcherManager(
                 )
             )
             return False
+        if failure.failure_category == "transient":
+            base_s = max(self._reconcile_interval_s, 60.0)
+            backoff_s = min(base_s * (2 ** max(failure.attempt_count - 1, 0)), 3600.0)
+            try:
+                last_failed = datetime.fromisoformat(failure.last_failed_at)
+                if last_failed.tzinfo is None:
+                    last_failed = last_failed.replace(tzinfo=UTC)
+            except ValueError:
+                return True
+            elapsed = (datetime.now(UTC) - last_failed).total_seconds()
+            if elapsed < backoff_s:
+                await self._emit(
+                    rag_file_indexing_failure_skipped(
+                        file=source,
+                        failure_reason=failure.failure_reason,
+                        attempt_count=failure.attempt_count,
+                    )
+                )
+                return False
         return True
 
     async def request_reindex(self, file_path: Path) -> bool:

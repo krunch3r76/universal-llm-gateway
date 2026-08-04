@@ -18,15 +18,13 @@ def migrate_chroma_source(
 ) -> int:
     """Update Chroma chunk metadata from old_source to new_source.
 
-    Fetches all chunks matching source_hash, filters those with source == old_source,
-    and updates their source field to new_source in a single collection.update() call.
-    Returns the number of chunks updated; 0 when no matching chunks exist (not an error).
-    Raises chromadb.errors.ChromaError on query or update failure.
-
-    ∀ chunk ∈ collection: source_hash matches ∧ source == old_source → source := new_source.
+    Fetches all chunks matching ``old_source``, filters those with
+    ``source == old_source``, and updates their source field to ``new_source``
+    in a single collection.update() call.
+    Returns the number of chunks updated; 0 when no matching chunks exist.
     """
     existing = collection.get(
-        where={"source_hash": source_hash},
+        where={"source": old_source},
         include=["metadatas"],
     )
     ids_to_update = []
@@ -67,7 +65,7 @@ def check_pdf_duplicate(
         existing = collection.get(
             where={"source_hash": source_hash},
             include=["metadatas"],
-            limit=1,
+            limit=10,
         )
     except chromadb.errors.ChromaError as e:
         logger.warning(

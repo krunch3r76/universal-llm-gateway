@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from services.rag.config import RagConfig
+from services.rag.contextualize import ContextualizationPhaseError
 from services.rag.indexing_failure_classifier import (
     classify_http_status_error as _classify_http_status_error,
 )
@@ -64,6 +65,28 @@ def test_http_404_not_unclassified_via_indexing_classifier() -> None:
     assert category == "permanent"
     assert reason == "http_client_error"
     assert (category, reason) != ("transient", "unclassified")
+
+
+def test_chained_cause_404_via_phase_error_t6() -> None:
+    http_exc = _http_error(404)
+    phase_exc = ContextualizationPhaseError(
+        "all contextualization failed",
+        first_failure_exc=http_exc,
+    )
+    category, reason = _classify_indexing_failure(phase_exc, chunk_count=0)
+    assert category == "permanent"
+    assert reason == "http_client_error"
+
+
+def test_precomputed_pipeline_failure_kind_t7() -> None:
+    phase_exc = ContextualizationPhaseError(
+        "all failed",
+        failure_category="permanent",
+        failure_reason="count_mismatch",
+    )
+    category, reason = _classify_indexing_failure(phase_exc, chunk_count=0)
+    assert category == "permanent"
+    assert reason == "count_mismatch"
 
 
 def test_timeout_error_branch_isolation() -> None:

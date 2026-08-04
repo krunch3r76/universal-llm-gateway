@@ -20,6 +20,27 @@ def classify_http_status_error(exc: httpx.HTTPStatusError) -> tuple[str, str]:
     return ("permanent", "http_client_error")
 
 
+def _precomputed_failure(
+    exc: BaseException,
+) -> tuple[str, str] | None:
+    category = getattr(exc, "failure_category", None)
+    reason = getattr(exc, "failure_reason", None)
+    if isinstance(category, str) and isinstance(reason, str) and category and reason:
+        return (category, reason)
+    return None
+
+
+def _classify_from_cause_chain(exc: BaseException) -> tuple[str, str] | None:
+    seen: set[int] = set()
+    cause: BaseException | None = exc
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        if isinstance(cause, httpx.HTTPStatusError):
+            return classify_http_status_error(cause)
+        cause = cause.__cause__
+    return None
+
+
 def classify_indexing_failure(
     exc: BaseException,
     *,
@@ -27,6 +48,15 @@ def classify_indexing_failure(
 ) -> tuple[str, str]:
     """Classify an indexing exception as permanent vs transient."""
     del chunk_count  # reserved for future chunk-aware rules
+
+    precomputed = _precomputed_failure(exc)
+    if precomputed is not None:
+        return precomputed
+
+    from_cause = _classify_from_cause_chain(exc)
+    if from_cause is not None:
+        return from_cause
+
     exc_type_name = type(exc).__qualname__
     msg = str(exc)
     msg_lower = msg.lower()

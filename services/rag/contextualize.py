@@ -41,6 +41,36 @@ logger = logging.getLogger(__name__)
 
 
 _NEIGHBOR_CHARS = 800
+_NEIGHBOR_DIGEST_SEP = "\x1e"
+
+
+def compute_neighbor_digest(chunks: list[Chunk], idx: int) -> str:
+    """Return SHA-256 over prev/next neighbor excerpts for G1 cache keying."""
+    prev_excerpt = chunks[idx - 1].text[-_NEIGHBOR_CHARS:] if idx > 0 else ""
+    next_excerpt = (
+        chunks[idx + 1].text[:_NEIGHBOR_CHARS] if idx < len(chunks) - 1 else ""
+    )
+    material = prev_excerpt + _NEIGHBOR_DIGEST_SEP + next_excerpt
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+class ContextualizationPhaseError(RuntimeError):
+    """All cache-miss chunks failed contextualization at the indexing phase boundary."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        first_failure_exc: BaseException | None = None,
+        failure_category: str | None = None,
+        failure_reason: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.first_failure_exc = first_failure_exc
+        self.failure_category = failure_category
+        self.failure_reason = failure_reason
+        if first_failure_exc is not None:
+            self.__cause__ = first_failure_exc
 
 
 def _build_chunk_context(
@@ -102,6 +132,9 @@ class ContextualizationResult:
     request_ids: dict[int, str]
     abandoned_indices: list[int]
     tail_idle_seconds: float | None
+    first_failure_exc: BaseException | None = None
+    failure_category: str | None = None
+    failure_reason: str | None = None
 
     @property
     def failed_count(self) -> int:
@@ -201,6 +234,7 @@ async def contextualize_chunks(
             request_ids={},
             abandoned_indices=[],
             tail_idle_seconds=None,
+            first_failure_exc=None,
         )
 
     external_indices = chunk_indices or list(range(len(chunks)))
@@ -245,6 +279,7 @@ async def contextualize_chunks(
             request_ids={idx: request_id for idx in external_indices},
             abandoned_indices=[],
             tail_idle_seconds=None,
+            first_failure_exc=exc,
         )
 
     return _parse_pipeline_response(
@@ -292,48 +327,44 @@ def _parse_pipeline_response(
             request_ids={idx: request_id for idx in external_indices},
             abandoned_indices=[],
             tail_idle_seconds=None,
+            failure_category="permanent",
+            failure_reason="response_parse_error",
         )
 
     failed_indices: list[int] = []
     first_failure: str | None = None
+    first_failure_category: str | None = None
+    first_failure_reason: str | None = None
+
+    def _record_pipeline_failure(ext_idx: int, reason: str) -> None:
+        nonlocal first_failure, first_failure_category, first_failure_reason
+        failure_reprs[ext_idx] = reason
+        request_ids[ext_idx] = request_id
+        failed_indices.append(ext_idx)
+        if first_failure is None:
+            first_failure = reason
+            first_failure_category = "permanent"
+            first_failure_reason = reason
 
     for i, ext_idx in enumerate(external_indices):
         if i >= len(items):
-            reason = "count_mismatch"
-            failure_reprs[ext_idx] = reason
-            request_ids[ext_idx] = request_id
-            failed_indices.append(ext_idx)
-            if first_failure is None:
-                first_failure = reason
+            _record_pipeline_failure(ext_idx, "count_mismatch")
             continue
 
         item = items[i]
         if item is None:
-            reason = "missing_iteration_output"
-            failure_reprs[ext_idx] = reason
-            request_ids[ext_idx] = request_id
-            failed_indices.append(ext_idx)
-            if first_failure is None:
-                first_failure = reason
+            _record_pipeline_failure(ext_idx, "missing_iteration_output")
             continue
 
         if not isinstance(item, dict):
-            reason = f"unexpected_item_type:{type(item).__name__}"
-            failure_reprs[ext_idx] = reason
-            request_ids[ext_idx] = request_id
-            failed_indices.append(ext_idx)
-            if first_failure is None:
-                first_failure = reason
+            _record_pipeline_failure(
+                ext_idx, f"unexpected_item_type:{type(item).__name__}"
+            )
             continue
 
         context = item.get("context", "")
         if not isinstance(context, str) or not context.strip():
-            reason = "empty_context"
-            failure_reprs[ext_idx] = reason
-            request_ids[ext_idx] = request_id
-            failed_indices.append(ext_idx)
-            if first_failure is None:
-                first_failure = reason
+            _record_pipeline_failure(ext_idx, "empty_context")
             continue
 
         contexts[i] = context.strip()
@@ -354,4 +385,6 @@ def _parse_pipeline_response(
         request_ids=request_ids,
         abandoned_indices=[],
         tail_idle_seconds=None,
+        failure_category=first_failure_category,
+        failure_reason=first_failure_reason,
     )

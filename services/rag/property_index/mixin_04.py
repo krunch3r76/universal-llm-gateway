@@ -190,61 +190,101 @@ class _PropertyIndexPart04:
     def get_cached_contexts(
         self,
         *,
-        source_hash: str,
+        source_identity: str = "",
+        source_hash: str = "",
         chunk_hashes: list[str],
+        neighbor_digests: dict[str, str] | None = None,
         contextualize_model: str,
         contextualize_schema_version: str,
     ) -> dict[str, str]:
-        """Return cached context prefixes for the subset of chunk hashes matching all invalidators.
+        """Return cached context prefixes for chunk hashes matching G1 + optional legacy keys.
 
         Synchronous — matches PropertyIndex read convention; safe under single-writer.
-        Returns an empty dict when source_hash is the V11 unknown-identity sentinel ('').
-        Batches the IN clause at _SQLITE_MAX_VARIABLES (999 SQLite limit minus four fixed params).
+        Returns an empty dict when source_identity is empty and legacy fallback is off
+        or source_hash is the V11 unknown-identity sentinel ('').
+        Batches the IN clause at _SQLITE_MAX_VARIABLES minus fixed params.
         """
-        if not chunk_hashes or not source_hash:
+        if not chunk_hashes:
             return {}
-
+        digests = neighbor_digests or {}
         conn = self._ensure_conn()
         out: dict[str, str] = {}
-        for start in range(0, len(chunk_hashes), _SQLITE_MAX_VARIABLES):
-            batch = chunk_hashes[start : start + _SQLITE_MAX_VARIABLES]
-            placeholders = ",".join("?" for _ in batch)
-            sql = (
-                "SELECT chunk_hash, context_prefix FROM contextualized_chunks "
-                "WHERE source_hash = ? "
-                "AND contextualize_model = ? "
-                "AND contextualize_schema_version = ? "
-                f"AND chunk_hash IN ({placeholders})"
-            )
-            params = [
-                source_hash,
-                contextualize_model,
-                contextualize_schema_version,
-                *batch,
-            ]
-            for row in conn.execute(sql, params):
-                out[str(row[0])] = _row_str(row[1])
+
+        if source_identity:
+            for start in range(0, len(chunk_hashes), _SQLITE_MAX_VARIABLES):
+                batch = chunk_hashes[start : start + _SQLITE_MAX_VARIABLES]
+                placeholders = ",".join("?" for _ in batch)
+                sql = (
+                    "SELECT chunk_hash, neighbor_digest, context_prefix "
+                    "FROM contextualized_chunks_g1 "
+                    "WHERE source_identity = ? "
+                    "AND contextualize_model = ? "
+                    "AND contextualize_schema_version = ? "
+                    f"AND chunk_hash IN ({placeholders})"
+                )
+                params = [
+                    source_identity,
+                    contextualize_model,
+                    contextualize_schema_version,
+                    *batch,
+                ]
+                for row in conn.execute(sql, params):
+                    chunk_hash = str(row[0])
+                    row_digest = str(row[1])
+                    expected = digests.get(chunk_hash)
+                    if expected is not None and row_digest != expected:
+                        continue
+                    out[chunk_hash] = _row_str(row[2])
+
+        if (
+            contextualize_cache_legacy_fallback_enabled()
+            and source_hash
+            and len(out) < len(chunk_hashes)
+        ):
+            missing = [h for h in chunk_hashes if h not in out]
+            for start in range(0, len(missing), _SQLITE_MAX_VARIABLES):
+                batch = missing[start : start + _SQLITE_MAX_VARIABLES]
+                placeholders = ",".join("?" for _ in batch)
+                sql = (
+                    "SELECT chunk_hash, context_prefix FROM contextualized_chunks "
+                    "WHERE source_hash = ? "
+                    "AND contextualize_model = ? "
+                    "AND contextualize_schema_version = ? "
+                    f"AND chunk_hash IN ({placeholders})"
+                )
+                params = [
+                    source_hash,
+                    contextualize_model,
+                    contextualize_schema_version,
+                    *batch,
+                ]
+                for row in conn.execute(sql, params):
+                    out[str(row[0])] = _row_str(row[1])
         return out
 
     async def store_cached_contexts(
         self,
         *,
-        source_hash: str,
+        source_identity: str = "",
+        source_hash: str = "",
         contextualize_model: str,
         contextualize_schema_version: str,
         entries: list[StoredContextRow],
     ) -> int:
-        """Persist non-empty context prefixes idempotently; returns rows written.
+        """Persist non-empty context prefixes to the G1 table; returns rows written.
 
-        `entries` MUST come from `build_stored_context_rows(...)` which already
-        filters empty context_prefix and empty chunk_hash. The defensive
-        re-filter below catches mis-use; the V10 CHECK constraint is the
-        final backstop. Returns 0 when source_hash is the V11 unknown-identity
-        sentinel (''). Async because writes serialize through SequentialExecutor.
+        ``entries`` MUST come from ``build_stored_context_rows(...)`` which already
+        filters empty context_prefix and empty chunk_hash. Returns 0 when
+        source_identity is empty. Legacy ``source_hash`` is accepted for call-site
+        compatibility but is not written to the V10 table.
         """
-        if not source_hash or not entries:
+        if not source_identity or not entries:
             return 0
-        filtered = [row for row in entries if row.context_prefix and row.chunk_hash]
+        filtered = [
+            row
+            for row in entries
+            if row.context_prefix and row.chunk_hash and row.neighbor_digest
+        ]
         if not filtered:
             return 0
 
@@ -252,8 +292,9 @@ class _PropertyIndexPart04:
             conn = self._ensure_conn()
             rows = [
                 (
-                    source_hash,
+                    source_identity,
                     row.chunk_hash,
+                    row.neighbor_digest,
                     contextualize_model,
                     contextualize_schema_version,
                     row.context_prefix,
@@ -261,12 +302,12 @@ class _PropertyIndexPart04:
                 for row in filtered
             ]
             conn.executemany(
-                "INSERT INTO contextualized_chunks ("
-                "  source_hash, chunk_hash, contextualize_model,"
-                "  contextualize_schema_version, context_prefix"
-                ") VALUES (?, ?, ?, ?, ?) "
-                "ON CONFLICT(source_hash, chunk_hash, contextualize_model, "
-                "            contextualize_schema_version) "
+                "INSERT INTO contextualized_chunks_g1 ("
+                "  source_identity, chunk_hash, neighbor_digest,"
+                "  contextualize_model, contextualize_schema_version, context_prefix"
+                ") VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(source_identity, chunk_hash, neighbor_digest, "
+                "            contextualize_model, contextualize_schema_version) "
                 "DO UPDATE SET "
                 "  context_prefix = excluded.context_prefix, "
                 "  cached_at = datetime('now')",
@@ -274,6 +315,24 @@ class _PropertyIndexPart04:
             )
             conn.commit()
             return len(rows)
+
+        return await self._seq.run(_write())
+
+    async def delete_cached_contexts_for_source_identity(
+        self, source_identity: str
+    ) -> int:
+        """Remove G1 cache rows for one resolved source path; returns rows deleted."""
+        if not source_identity:
+            return 0
+
+        async def _write() -> int:
+            conn = self._ensure_conn()
+            cursor = conn.execute(
+                "DELETE FROM contextualized_chunks_g1 WHERE source_identity = ?",
+                (source_identity,),
+            )
+            conn.commit()
+            return int(cursor.rowcount)
 
         return await self._seq.run(_write())
 

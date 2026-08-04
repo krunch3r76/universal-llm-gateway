@@ -104,6 +104,11 @@ class _PropertyIndexPart03:
             if remove_article:
                 conn.execute("DELETE FROM articles WHERE source_path = ?", (source,))
             conn.execute("DELETE FROM indexed_sources WHERE source = ?", (source,))
+            resolved_identity = str(Path(source).expanduser().resolve())
+            conn.execute(
+                "DELETE FROM contextualized_chunks_g1 WHERE source_identity = ?",
+                (resolved_identity,),
+            )
             if resolved_source_hash:
                 conn.execute(
                     "DELETE FROM contextualized_chunks WHERE source_hash = ?",

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,6 +19,7 @@ from services.rag.embeddings import embed_chunks
 from services.rag.events.indexing import (
     rag_chunk_noise_tagged,
     rag_embed_completed,
+    rag_embed_diff_evaluated,
     rag_embed_started,
     rag_property_write_completed,
     rag_property_write_started,
@@ -28,6 +28,14 @@ from services.rag.events.indexing import (
 from .chroma import _upsert_chroma_chunk_batches
 from .contextualize import (
     _run_contextualization_phase,
+)
+from .embed_diff import (
+    compose_chunk_id,
+    compute_chunk_hash,
+    compute_path_key,
+    compute_stale_ids,
+    partition_embed_work,
+    subset_by_indices,
 )
 
 if TYPE_CHECKING:
@@ -66,7 +74,6 @@ async def _run_embed_phase(
     config: RagConfig,
     correlation_id: str,
     operation: str | None,
-    prefix: str,
 ) -> EmbedPhaseResult:
     """Build chunk vectors, upsert to Chroma, write FTS entries.
 
@@ -74,7 +81,8 @@ async def _run_embed_phase(
     """
     texts = [c.text for c in chunks]
     metadatas = [c.metadata for c in chunks]
-    ids = [f"{prefix}-{i}" for i in range(len(chunks))]
+    path_key = compute_path_key(source)
+    ids: list[str] = []
 
     if metadata_overrides is not None:
         for metadata in metadatas:
@@ -84,13 +92,10 @@ async def _run_embed_phase(
     for chunk_index, (metadata, chunk) in enumerate(
         zip(metadatas, chunks, strict=True)
     ):
-        # Positional prefix: same text at different positions must hash
-        # differently so contextualize cache keys don't collide when
-        # neighbor context differs (Task 3.0 invariant).
-        positional_material = f"{chunk_index}|{chunk.text}".encode()
-        chunk_hash = hashlib.sha256(positional_material).hexdigest()[:16]
+        chunk_hash = compute_chunk_hash(chunk_index, chunk.text)
         metadata["chunk_hash"] = chunk_hash
         metadata["indexed_at"] = existing_timestamps.get(chunk_hash, now)
+        ids.append(compose_chunk_id(path_key, chunk_hash))
 
     for metadata in metadatas:
         metadata["source_hash"] = source_hash
@@ -117,79 +122,110 @@ async def _run_embed_phase(
 
     embed_texts = texts
     cache_rows_to_store: list = []
+    cache_hit_flags = [False] * len(chunks)
     if config.contextualize_model:
-        embed_texts, cache_rows_to_store = await _run_contextualization_phase(
+        embed_texts, cache_rows_to_store, cache_hit_flags = (
+            await _run_contextualization_phase(
+                source=source,
+                source_hash=source_hash,
+                chunks=chunks,
+                metadatas=metadatas,
+                texts=texts,
+                prop_index=prop_index,
+                context_model=config.contextualize_model,
+                context_client_timeout_s=config.contextualize_client_timeout_s,
+                correlation_id=correlation_id,
+                operation=operation,
+            )
+        )
+
+    diff = partition_embed_work(
+        ids=ids,
+        existing_ids=existing_ids,
+        cache_hit_flags=cache_hit_flags,
+    )
+    processed_indices = diff.processed_indices
+    processed_ids = subset_by_indices(ids, processed_indices)
+    processed_embed_texts = subset_by_indices(embed_texts, processed_indices)
+    processed_texts = subset_by_indices(texts, processed_indices)
+    processed_metadatas = subset_by_indices(metadatas, processed_indices)
+
+    if event_bus is not None:
+        await event_bus.publish_nowait(
+            rag_embed_diff_evaluated(
+                file=source,
+                operation_id=correlation_id,
+                total_chunks=len(ids),
+                processed_chunks=diff.processed_count,
+                skipped_chunks=diff.skipped_count,
+                legacy_id_count=diff.legacy_id_count,
+                operation=operation,
+            )
+        )
+
+    if processed_embed_texts:
+        if event_bus is not None:
+            await event_bus.publish_nowait(
+                rag_embed_started(
+                    file=source,
+                    operation_id=correlation_id,
+                    chunk_count=len(processed_embed_texts),
+                    operation=operation,
+                )
+            )
+        embeddings = await embed_chunks(processed_embed_texts)
+        if event_bus is not None:
+            await event_bus.publish_nowait(
+                rag_embed_completed(
+                    file=source,
+                    operation_id=correlation_id,
+                    chunk_count=len(processed_embed_texts),
+                    operation=operation,
+                )
+            )
+
+        await _upsert_chroma_chunk_batches(
+            chroma_client=chroma_client,
+            collection=collection,
+            event_bus=event_bus,
             source=source,
-            source_hash=source_hash,
-            chunks=chunks,
-            metadatas=metadatas,
-            texts=texts,
-            prop_index=prop_index,
-            context_model=config.contextualize_model,
-            context_client_timeout_s=config.contextualize_client_timeout_s,
             correlation_id=correlation_id,
             operation=operation,
+            ids=processed_ids,
+            embeddings=embeddings,
+            texts=processed_texts,
+            metadatas=processed_metadatas,
         )
 
-    if event_bus is not None:
-        await event_bus.publish_nowait(
-            rag_embed_started(
-                file=source,
-                operation_id=correlation_id,
-                chunk_count=len(embed_texts),
-                operation=operation,
-            )
-        )
-    embeddings = await embed_chunks(embed_texts)
-    if event_bus is not None:
-        await event_bus.publish_nowait(
-            rag_embed_completed(
-                file=source,
-                operation_id=correlation_id,
-                chunk_count=len(embed_texts),
-                operation=operation,
-            )
-        )
-
-    await _upsert_chroma_chunk_batches(
-        chroma_client=chroma_client,
-        collection=collection,
-        event_bus=event_bus,
-        source=source,
-        correlation_id=correlation_id,
-        operation=operation,
-        ids=ids,
-        embeddings=embeddings,
-        texts=texts,
-        metadatas=metadatas,
-    )
-
-    if prop_index is not None:
-        if event_bus is not None:
-            await event_bus.publish_nowait(
-                rag_property_write_started(
-                    file=source,
-                    operation_id=correlation_id,
-                    chunk_count=len(ids),
-                    property_entries=0,
-                    operation=operation,
+        if prop_index is not None:
+            if event_bus is not None:
+                await event_bus.publish_nowait(
+                    rag_property_write_started(
+                        file=source,
+                        operation_id=correlation_id,
+                        chunk_count=len(processed_ids),
+                        property_entries=0,
+                        operation=operation,
+                    )
                 )
+            await prop_index.fts.insert_batch(
+                [
+                    (cid, source, text)
+                    for cid, text in zip(processed_ids, processed_texts, strict=True)
+                ]
             )
-        await prop_index.fts.insert_batch(
-            [(cid, source, text) for cid, text in zip(ids, texts, strict=True)]
-        )
-        if event_bus is not None:
-            await event_bus.publish_nowait(
-                rag_property_write_completed(
-                    file=source,
-                    operation_id=correlation_id,
-                    chunk_count=len(ids),
-                    property_entries=0,
-                    operation=operation,
+            if event_bus is not None:
+                await event_bus.publish_nowait(
+                    rag_property_write_completed(
+                        file=source,
+                        operation_id=correlation_id,
+                        chunk_count=len(processed_ids),
+                        property_entries=0,
+                        operation=operation,
+                    )
                 )
-            )
 
-    stale_ids = list(set(existing_ids) - set(ids))
+    stale_ids = compute_stale_ids(existing_ids, ids)
     return EmbedPhaseResult(
         chunks=chunks,
         ids=ids,

@@ -16,6 +16,7 @@ from ._spec import (
     _V12_CONTEXTUALIZATION_EXCEPTIONS_SQL,
     _V14_EXTRACTION_QUEUE_EXECUTION_ID_SQL,
     _V15_SKILL_VOCABULARY_SQL,
+    _V16_CONTEXTUALIZED_CHUNKS_G1_SQL,
     Callable,
     FtsIndex,
     Path,
@@ -283,6 +284,11 @@ class _PropertyIndexPart01:
                 15,
                 "skill_vocabulary: per-skill term attribution",
                 lambda conn: conn.executescript(_V15_SKILL_VOCABULARY_SQL),
+            ),
+            (
+                16,
+                "contextualize cache G1: source_identity + neighbor_digest key",
+                lambda conn: conn.executescript(_V16_CONTEXTUALIZED_CHUNKS_G1_SQL),
             ),
         ]
         for version, description, fn in migrations:

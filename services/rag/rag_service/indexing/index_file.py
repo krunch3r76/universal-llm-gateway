@@ -27,7 +27,6 @@ from services.rag.events.indexing import (
     rag_html_normalization_started,
     rag_property_index_unavailable,
 )
-from services.rag.indexing_helpers import file_hash
 from services.rag.models import IndexResult
 
 from .. import state
@@ -158,8 +157,6 @@ async def _index_file_impl(
 
     await require_healthy()
     raw = await asyncio.to_thread(file_path.read_bytes)
-    content_hash = file_hash(raw, schema_version=schema_version)
-    prefix = content_hash[:16]
     source_hash = hashlib.sha256(raw).hexdigest()
 
     article_sync_old_path = await _run_article_sync_phase(
@@ -201,7 +198,6 @@ async def _index_file_impl(
             source=source,
             file_path=file_path,
             existing_ids=existing_ids,
-            prefix=prefix,
             prop_index=prop_index,
             source_stat=source_stat,
             source_hash=source_hash,
@@ -270,7 +266,6 @@ async def _index_file_impl(
             config=state._config,
             correlation_id=correlation_id,
             operation=operation,
-            prefix=prefix,
         )
         chunks = embed_result.chunks
         ids = embed_result.ids

@@ -16,7 +16,6 @@ from services.rag.events.articles import (
 )
 from services.rag.events.indexing import rag_file_deleted, rag_file_skipped
 from services.rag.indexing_helpers import (
-    all_ids_match_prefix,
     check_pdf_duplicate,
     migrate_chroma_source,
 )
@@ -24,6 +23,7 @@ from services.rag.models import IndexResult
 
 from .. import state
 from .delete import _enqueue_for_extraction
+from .embed_diff import is_legacy_chunk_id
 from .source_identity import _derive_subdirectory
 
 logger = get_logger(__name__)
@@ -158,7 +158,6 @@ async def _handle_unchanged_prefix_skip(
     source: str,
     file_path: Path,
     existing_ids: list[str],
-    prefix: str,
     prop_index: object,
     source_stat: object,
     source_hash: str,
@@ -169,13 +168,20 @@ async def _handle_unchanged_prefix_skip(
     correlation_id: str,
     operation: str | None,
 ) -> IndexResult | None:
-    """Return IndexResult when existing Chroma IDs already match content-hash prefix.
+    """Return IndexResult when indexed content identity is unchanged (B5 re-anchor).
 
-    Refreshes indexed_sources / article structural fields and enqueues extraction
-    when a property index is available. Returns None when the caller should continue
-    with full re-chunk/embed.
+    Uses ``indexed_sources.source_hash`` equality instead of whole-file ID prefix
+    matching. Legacy-scheme IDs still in Chroma require a full rewrite (S3 sweep).
     """
-    if force or not existing_ids or not all_ids_match_prefix(existing_ids, prefix):
+    if force or not existing_ids:
+        return None
+    if any(is_legacy_chunk_id(chunk_id) for chunk_id in existing_ids):
+        return None
+    if prop_index is not None:
+        cached = prop_index.get_indexed_source(source)
+        if cached is None or cached.source_hash != source_hash:
+            return None
+    else:
         return None
     if prop_index is not None:
         await prop_index.upsert_indexed_source(

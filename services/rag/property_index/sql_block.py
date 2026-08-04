@@ -134,6 +134,25 @@ CREATE INDEX IF NOT EXISTS idx_contextualized_source
     ON contextualized_chunks(source_hash);
 """
 
+_V16_CONTEXTUALIZED_CHUNKS_G1_SQL = """
+CREATE TABLE IF NOT EXISTS contextualized_chunks_g1 (
+    source_identity TEXT NOT NULL CHECK(source_identity <> ''),
+    chunk_hash TEXT NOT NULL CHECK(chunk_hash <> ''),
+    neighbor_digest TEXT NOT NULL CHECK(neighbor_digest <> ''),
+    contextualize_model TEXT NOT NULL CHECK(contextualize_model <> ''),
+    contextualize_schema_version TEXT NOT NULL
+        CHECK(contextualize_schema_version <> ''),
+    context_prefix TEXT NOT NULL CHECK(context_prefix <> ''),
+    cached_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (
+        source_identity, chunk_hash, neighbor_digest,
+        contextualize_model, contextualize_schema_version
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_contextualized_g1_source
+    ON contextualized_chunks_g1(source_identity);
+"""
+
 _V14_EXTRACTION_QUEUE_EXECUTION_ID_SQL = """
 ALTER TABLE extraction_queue ADD COLUMN active_execution_id TEXT;
 """
@@ -200,6 +219,7 @@ __all__ = [
     "_V8_EXTRACTION_QUEUE_SQL",
     "_V9_INDEXING_FAILURES_SQL",
     "_V10_CONTEXTUALIZED_CHUNKS_SQL",
+    "_V16_CONTEXTUALIZED_CHUNKS_G1_SQL",
     "_V12_CONTEXTUALIZATION_EXCEPTIONS_SQL",
     "_V14_EXTRACTION_QUEUE_EXECUTION_ID_SQL",
     "_V15_SKILL_VOCABULARY_SQL",

@@ -8,17 +8,23 @@ from ._spec import *  # noqa: F401,F403
 
 class _PropertyIndexPart05:
     async def garbage_collect_contextualized_chunks(self) -> int:
-        """Remove cache rows whose source_hash no longer appears in indexed_sources.
+        """Remove cache rows whose source no longer appears in indexed_sources.
 
-        Rows in `indexed_sources` with `source_hash = ''` (V11 sentinel for
-        unknown identity) are NOT considered live references — they cannot
-        be matched anyway because the V10 CHECK constraint forbids empty
-        `source_hash` in `contextualized_chunks`.
+        G1 rows are keyed by ``source_identity`` (resolved path). Legacy V10 rows
+        remain keyed by ``source_hash`` for dual-read until fallback retires.
+        Rows in ``indexed_sources`` with ``source_hash = ''`` (V11 sentinel) are
+        NOT considered live hash references for the legacy table.
         """
 
         async def _write() -> int:
             conn = self._ensure_conn()
-            cursor = conn.execute(
+            g1 = conn.execute(
+                "DELETE FROM contextualized_chunks_g1 "
+                "WHERE source_identity NOT IN ("
+                "  SELECT source FROM indexed_sources"
+                ")"
+            )
+            legacy = conn.execute(
                 "DELETE FROM contextualized_chunks "
                 "WHERE source_hash <> '' "
                 "AND source_hash NOT IN ("
@@ -26,15 +32,16 @@ class _PropertyIndexPart05:
                 ")"
             )
             conn.commit()
-            return int(cursor.rowcount)
+            return int(g1.rowcount) + int(legacy.rowcount)
 
         return await self._seq.run(_write())
 
     def count_contextualized_chunks(self) -> int:
         """Return total cached context prefix rows for operator capacity reporting."""
         conn = self._ensure_conn()
-        row = conn.execute("SELECT COUNT(*) FROM contextualized_chunks").fetchone()
-        return int(row[0]) if row is not None else 0
+        g1 = conn.execute("SELECT COUNT(*) FROM contextualized_chunks_g1").fetchone()
+        legacy = conn.execute("SELECT COUNT(*) FROM contextualized_chunks").fetchone()
+        return int(g1[0] if g1 else 0) + int(legacy[0] if legacy else 0)
 
     def get_indexed_source_hash(self, source: str) -> str | None:
         """Return the currently recorded source_hash for an indexed source path, or None."""

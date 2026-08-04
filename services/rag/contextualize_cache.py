@@ -18,11 +18,26 @@ constraint is the storage-layer backstop.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from services.rag.contextualize import compute_neighbor_digest
 
 if TYPE_CHECKING:
     from services.rag.chunkers import Chunk
+
+
+def resolve_source_identity(source: str) -> str:
+    """Return the stable path string used as G1 ``source_identity``."""
+    return str(Path(source).expanduser().resolve())
+
+
+def contextualize_cache_legacy_fallback_enabled() -> bool:
+    """Return whether legacy V10 dual-read fallback is active (default on)."""
+    raw = os.environ.get("CONTEXTUALIZE_CACHE_LEGACY_FALLBACK", "1")
+    return raw.strip().lower() not in {"0", "false", "no"}
 
 
 @dataclass(slots=True, kw_only=True, frozen=True)
@@ -32,6 +47,7 @@ class CacheMissChunk:
     index: int
     chunk: Chunk
     chunk_hash: str
+    neighbor_digest: str
 
 
 @dataclass(slots=True, kw_only=True)
@@ -54,10 +70,11 @@ class ContextCachePlan:
 
 @dataclass(slots=True, kw_only=True, frozen=True)
 class StoredContextRow:
-    """One (chunk_hash, context_prefix) pair to persist after successful contextualization."""
+    """One cache row to persist after successful contextualization."""
 
     chunk_hash: str
     context_prefix: str
+    neighbor_digest: str
 
 
 def build_context_cache_plan(
@@ -78,11 +95,17 @@ def build_context_cache_plan(
     for index, (chunk, metadata) in enumerate(zip(chunks, metadatas, strict=True)):
         chunk_hash = str(metadata.get("chunk_hash", ""))
         cached_prefix = cached_contexts.get(chunk_hash) if chunk_hash else None
+        neighbor_digest = compute_neighbor_digest(chunks, index)
         if cached_prefix:
             contexts[index] = cached_prefix
         else:
             cache_misses.append(
-                CacheMissChunk(index=index, chunk=chunk, chunk_hash=chunk_hash)
+                CacheMissChunk(
+                    index=index,
+                    chunk=chunk,
+                    chunk_hash=chunk_hash,
+                    neighbor_digest=neighbor_digest,
+                )
             )
 
     return ContextCachePlan(
@@ -142,6 +165,7 @@ def build_stored_context_rows(
             StoredContextRow(
                 chunk_hash=miss.chunk_hash,
                 context_prefix=context_prefix,
+                neighbor_digest=miss.neighbor_digest,
             )
         )
     return rows

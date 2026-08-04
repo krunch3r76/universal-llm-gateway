@@ -12,7 +12,10 @@ if TYPE_CHECKING:
     from services.rag.contextualize_cache import StoredContextRow
     from services.rag.property_index import PropertyIndex
 
-from services.rag.contextualize import contextualize_chunks
+from services.rag.contextualize import (
+    ContextualizationPhaseError,
+    contextualize_chunks,
+)
 from services.rag.contextualize_cache import (
     StoredContextRow,
     build_context_cache_plan,
@@ -27,6 +30,9 @@ from services.rag.events.indexing import (
     rag_contextualization_partial,
     rag_contextualization_started,
     rag_contextualize_cache_evaluated,
+)
+from services.rag.rag_service.indexing.embed_diff import (
+    cache_hit_flags_from_miss_indices,
 )
 
 from .. import state
@@ -50,10 +56,11 @@ async def _run_contextualization_phase(
     context_client_timeout_s: float | None,
     correlation_id: str,
     operation: str | None,
-) -> tuple[list[str], list[StoredContextRow]]:
-    """Run the contextualization phase and return (embed_texts, cache_rows_to_store).
+) -> tuple[list[str], list[StoredContextRow], list[bool]]:
+    """Run the contextualization phase and return (embed_texts, cache_rows, hit_flags).
 
     Mutates metadatas in-place to add context_prefix and contextualize_model fields.
+    The third element is a per-chunk bool: True when the contextualize cache hit.
     Raises RuntimeError if ALL cache-miss chunks fail (caller should propagate to
     failure recording).
     """
@@ -208,10 +215,14 @@ async def _run_contextualization_phase(
             )
 
     if plan.cache_misses and partial_failed_count == plan.cache_misses_count:
-        raise RuntimeError(
+        assert ctx_result is not None
+        raise ContextualizationPhaseError(
             f"All {plan.cache_misses_count} chunks failed contextualization "
             f"for {source} (first: {partial_first_failure}); "
-            "indexing_failures row preserved for reconcile retry."
+            "indexing_failures row preserved for reconcile retry.",
+            first_failure_exc=ctx_result.first_failure_exc,
+            failure_category=ctx_result.failure_category,
+            failure_reason=ctx_result.failure_reason,
         )
 
     embed_texts = [
@@ -223,5 +234,7 @@ async def _run_contextualization_phase(
             metadatas[i]["context_prefix"] = ctx
             metadatas[i]["contextualize_model"] = context_model
 
-    return embed_texts, cache_rows_to_store
+    miss_indices = {miss.index for miss in plan.cache_misses}
+    cache_hit_flags = cache_hit_flags_from_miss_indices(len(chunks), miss_indices)
+    return embed_texts, cache_rows_to_store, cache_hit_flags
 

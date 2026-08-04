@@ -202,6 +202,31 @@ def rag_hints_update_started(
 
 
 @event_factory
+def rag_embed_diff_evaluated(
+    *,
+    file: str,
+    operation_id: str,
+    total_chunks: int,
+    processed_chunks: int,
+    skipped_chunks: int,
+    legacy_id_count: int = 0,
+    operation: str | None = None,
+) -> Event:
+    """Emitted after embed diff-gate partition (aggregate skip/process counts)."""
+    payload: dict[str, str | int] = {
+        "file": file,
+        "operation_id": operation_id,
+        "total_chunks": total_chunks,
+        "processed_chunks": processed_chunks,
+        "skipped_chunks": skipped_chunks,
+        "legacy_id_count": legacy_id_count,
+    }
+    if operation is not None:
+        payload["operation"] = operation
+    return Event(signal="rag.embed.diff.evaluated", payload=payload)
+
+
+@event_factory
 def rag_hints_update_completed(
     *,
     file: str,

@@ -26,7 +26,10 @@ from pathlib import Path
 from universal_event_bus.actor.sequential import SequentialExecutor
 
 from services.rag.article_registry import ArticleEntry
-from services.rag.contextualize_cache import StoredContextRow
+from services.rag.contextualize_cache import (
+    StoredContextRow,
+    contextualize_cache_legacy_fallback_enabled,
+)
 from services.rag.fts_index import FtsIndex
 
 _SQLITE_MAX_VARIABLES = 900  # conservative bound under SQLite's 999 limit
@@ -195,6 +198,7 @@ __all__ = [  # noqa: F405
     "RecoveredExtractionClaim",
     "SequentialExecutor",
     "StoredContextRow",
+    "contextualize_cache_legacy_fallback_enabled",
     "defaultdict",
     "json",
     "shutil",
@@ -207,6 +211,7 @@ __all__ = [  # noqa: F405
     "_V12_CONTEXTUALIZATION_EXCEPTIONS_SQL",
     "_V14_EXTRACTION_QUEUE_EXECUTION_ID_SQL",
     "_V15_SKILL_VOCABULARY_SQL",
+    "_V16_CONTEXTUALIZED_CHUNKS_G1_SQL",
     "_V1_BASELINE_SQL",
     "_V2_METADATA_SQL",
     "_V4_SOURCE_CACHE_SQL",
