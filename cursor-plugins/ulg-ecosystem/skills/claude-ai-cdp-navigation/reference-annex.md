@@ -91,13 +91,23 @@ CLI SOT for path-sim phase-3 R / disposable code-review asks. Cascade policy: Us
 
 ### Simultaneous lane capacity (a:25814)
 
+SOT: `libs/cdp_ask/execution_store.py` `active_work_snapshot()`.
+
 | Field | Meaning |
 |---|---|
-| `busy` | Restart-drain only — **¬** lane-full |
-| `running_count` | In-flight executions |
+| `busy` | Restart-drain only — derived `effective_count > 0` — **¬** lane-full |
+| `running_count` | In-flight executions (`AuthorityClass.RECORDED`) |
+| `live_cse_count` | Observed live CSE pages (`AuthorityClass.OBSERVED`) |
+| `effective_count` | `max(running_count, live_cse_count)` — admission + restart-drain |
 | `soft_limit` / `hard_limit` | 2 / 3 |
-| `free_slots` | `max(0, hard_limit − running_count)` |
-| `at_hard_limit` | Lane-full for admission |
+| `free_slots` | `max(0, hard_limit − effective_count)` |
+| `at_soft_limit` / `at_hard_limit` | `effective_count >= soft_limit` / `hard_limit` |
+
+**Recorded-only vs effective (BINDING):** `list_capacity()` counts registry rows with
+`status == active` only — recorded lanes. `busy_status` / `/active-work` use
+`effective_count` because a live CSE without a recorded project-ask execution still
+blocks restart drain (Cowork keeps the life MCP connector hot between tool POSTs) and
+consumes admission headroom. Do **not** derive `free_slots` from `running_count` alone.
 
 ```
 register_lane(holder) → (registration_id, port, profile_suffix, cdp_url)
@@ -106,6 +116,25 @@ pool = 9223–9349 (:9222 excluded — attended primary)
 ∀ peer.port : ¬pkill(peer)   # kill only exact listener pid
 ∀ port ≠ 9222 : require(--profile-suffix)
 ```
+
+### Orphan scan — closable/protected observability (emit-only, S1)
+
+SOT: `libs/claude_bundles/cdp_orphans.py` `orphan_scan_as_dict()` ·
+`cdp_orphan_cse_classify.py` · event `cdp.port.orphan_scan`.
+
+Each orphan scan emits observation counts; classifications are **scan-ephemeral**
+(not persisted on registry rows; S3 reaper consumes fresh dicts when reclaim is enabled):
+
+| Field | Meaning |
+|---|---|
+| `closable_count` | CSE targets classified `closable` (idle past dwell; safe to close) |
+| `protected_count` | CSE targets classified `protected` (streaming, attach unresolved, probe fail-closed) |
+| `cse_classification` | Always `"scan_ephemeral"` in dict output |
+| `reclaim_enabled` | Always `false` until S3 flag ON |
+
+Per-orphan `matched[]` entries carry per-target `classification` on `cse_targets[]`.
+Event payload mirrors aggregate `closable_count` / `protected_count` /
+`reclaim_enabled: false`.
 
 ## OptGuide profile disk (BINDING — friction 25050)
 

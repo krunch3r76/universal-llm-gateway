@@ -187,7 +187,7 @@ complete(turn) ⇐ assistant_body ∧ ¬streaming ∧ ¬Stop ∧ stable_length
 
 ## Parallel Chrome (BINDING)
 
-**DEFAULT:** `register_lane` / `project-ask --register`. Soft=**2**, hard=**3** concurrent — use `free_slots` / `at_hard_limit`, not `busy` alone (a:25814). `--no-register --cdp-url :9222` = attended primary only. Registry + OptGuide: L3 `reference-annex.md`.
+**DEFAULT:** `register_lane` / `project-ask --register`. Soft=**2**, hard=**3** concurrent — use `free_slots` / `at_hard_limit` from `effective_count = max(running_count, live_cse_count)`, not `busy` or recorded-only counts alone (a:25814). `--no-register --cdp-url :9222` = attended primary only. Registry + OptGuide + orphan observability: L3 `reference-annex.md`.
 
 ## Entry points (bus-nudge minimum)
 
