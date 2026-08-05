@@ -29,10 +29,13 @@ def _capacity(
     return {
         "busy": busy,
         "running_count": running_count,
+        "running_count_scope": "cdp_ask execution store, pending/running records",
         "running_count_authority": "recorded",
         "live_cse_count": live_cse_count,
+        "live_cse_count_scope": "browser CSE lanes, this host",
         "live_cse_count_authority": "observed",
         "effective_count": effective,
+        "effective_count_scope": "max(running_count, live_cse_count), this host",
         "effective_count_authority": "max(recorded, observed)",
         "execution_ids": execution_ids,
         "rows": rows or [],

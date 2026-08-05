@@ -4,14 +4,13 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from admission_common.qualified_scalar import AbsenceSemantics, AuthorityClass
 from pydantic import BaseModel, Field
 
 from implement_admission.propagation_row import PropagationRow
 from implement_admission.spec import CloseoutStatus, WorkOutcome
 
 CoverageStatus = Literal["complete", "partial", "unavailable"]
-AuthorityClass = Literal["ledger_attested", "observed", "self_reported"]
-AbsenceSemantics = Literal["absence=zero", "absence=unknown"]
 
 AmbientRepoCause = Literal[
     "ambient:concurrent_commit",

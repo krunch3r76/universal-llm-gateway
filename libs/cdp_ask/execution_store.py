@@ -10,7 +10,19 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from admission_common.qualified_scalar import (
+    AuthorityClass,
+    QualifiedScalar,
+    SurfaceDecl,
+    seal,
+)
+
 from cdp_ask.models import CompletionPhase, ExecutionStatus, StallStage
+
+_ACTIVE_WORK_SNAPSHOT = "active_work_snapshot"
+_RUNNING_COUNT_SCOPE = "cdp_ask execution store, pending/running records"
+_LIVE_CSE_COUNT_SCOPE = "browser CSE lanes, this host"
+_EFFECTIVE_COUNT_SCOPE = "max(running_count, live_cse_count), this host"
 
 DeregisterFn = Callable[[str], None]
 
@@ -154,14 +166,8 @@ class ExecutionStore:
         # when no project-ask execution is recorded: Cowork keeps the life MCP
         # connector hot between tool POSTs, and killing MCP (or cdp_ask) mid-turn
         # drops that session. Lane admission still uses free_slots / at_hard_limit.
-        return {
+        payload: dict[str, Any] = {
             "busy": effective > 0,
-            "running_count": running_count,
-            "running_count_authority": "recorded",
-            "live_cse_count": live_cse_count,
-            "live_cse_count_authority": "observed",
-            "effective_count": effective,
-            "effective_count_authority": "max(recorded, observed)",
             "execution_ids": execution_ids,
             "rows": rows,
             "soft_limit": LANE_SOFT_LIMIT,
@@ -170,6 +176,35 @@ class ExecutionStore:
             "at_soft_limit": effective >= LANE_SOFT_LIMIT,
             "at_hard_limit": effective >= LANE_HARD_LIMIT,
         }
+        payload.update(
+            QualifiedScalar(
+                value=running_count,
+                scope=_RUNNING_COUNT_SCOPE,
+                authority=AuthorityClass.RECORDED,
+            ).emit("running_count")
+        )
+        payload.update(
+            QualifiedScalar(
+                value=live_cse_count,
+                scope=_LIVE_CSE_COUNT_SCOPE,
+                authority=AuthorityClass.OBSERVED,
+            ).emit("live_cse_count")
+        )
+        payload.update(
+            QualifiedScalar(
+                value=effective,
+                scope=_EFFECTIVE_COUNT_SCOPE,
+                authority=AuthorityClass.MAX_OF,
+            ).emit("effective_count")
+        )
+        decl = SurfaceDecl(_ACTIVE_WORK_SNAPSHOT)
+        decl.plain("busy", reason="derived boolean: effective_count > 0")
+        decl.plain("soft_limit", reason="configured lane admission constant")
+        decl.plain("hard_limit", reason="configured lane admission constant")
+        decl.plain("free_slots", reason="derived: hard_limit - effective_count")
+        decl.plain("at_soft_limit", reason="derived: effective >= soft_limit")
+        decl.plain("at_hard_limit", reason="derived: effective >= hard_limit")
+        return seal(payload, decl)
 
     async def attach_task(self, execution_id: str, task: asyncio.Task[Any]) -> None:
         async with self._lock:
