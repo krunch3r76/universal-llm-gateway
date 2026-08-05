@@ -212,11 +212,13 @@ commissioner keeps judgment on when to bind directly.
 | expected S6 entry gate + harvest shape | makes the closeout adjudicable |
 
 Cadence: fewer, fatter commissions amortize round-trip latency vs. paying it per
-micro-step. Dispatch shape: `seat=cursor-sdk` · `model=cursor/grok-4.5` ·
-`model_knobs={"effort":"high","fast":"false"}` (catalog default is **`fast=true`**;
-`reasoning_effort` is rejected 422 on `seat=cursor-sdk`). Life seats cannot call
-`team_dispatch` — commission via `agent_bus.request` and name the knobs in the body.
-Operator-proxy SOT: `libs/claude_bundles/operator_proxy_mission.py` § Idea commissioning.
+micro-step. **Life seats** commission via `agent_bus.request` with `desired_model` and
+`desired_effort` on the **wire** — do not pin effort in the DIRECTIVE body
+(`effort_pin_refused`). **Code-side** `team_dispatch` shape: `seat=cursor-sdk` ·
+`model=cursor/grok-4.5` · `model_knobs={"effort":"high","fast":"false"}` on the dispatch
+wire (catalog default is **`fast=true`**; `fast` has no wire param on `agent_bus.request`;
+`reasoning_effort` is rejected 422 on `seat=cursor-sdk`). Operator-proxy SOT:
+`libs/claude_bundles/operator_proxy_mission.py` § Knob relay.
 
 ## Entry surfaces
 

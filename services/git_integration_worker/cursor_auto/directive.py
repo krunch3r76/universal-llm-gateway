@@ -32,8 +32,8 @@ _REASONING_EFFORT_RE = re.compile(
     r"^reasoning_effort:\s*(\S+)", re.MULTILINE | re.IGNORECASE
 )
 _MODEL_KNOBS_EFFORT_RE = re.compile(
-    r"""model_knobs\s*=\s*\{[^}]*["']?effort["']?\s*:\s*["']?([^"'}\s,]+)""",
-    re.IGNORECASE,
+    r"""^[ \t]*(?:[-*][ \t]+)?model_knobs\s*=\s*\{[^}]*["']?effort["']?\s*:\s*["']?([^"'}\s,]+)""",
+    re.IGNORECASE | re.MULTILINE,
 )
 _REQUIRE_ATTENDED_RE = re.compile(
     r"^[ \t]*(?:[-*][ \t]+)?require_attended:\s*(true|yes|1)\b",
@@ -211,7 +211,9 @@ def body_desired_model(body: str) -> str | None:
 def body_effort_pin(body: str) -> str | None:
     """Return body-level effort hint when present (wire-only contract).
 
-    Matches ``effort:``, ``reasoning_effort:``, or ``model_knobs={\"effort\": ...}``.
+    Matches line-start authoring pins only: ``effort:``, ``reasoning_effort:``, or
+    ``model_knobs={\"effort\": ...}`` at a field/line boundary. Inline prose that
+    merely mentions those literals (e.g. defect descriptions) does not match.
     """
     text = body or ""
     for pattern in (_EFFORT_RE, _REASONING_EFFORT_RE, _MODEL_KNOBS_EFFORT_RE):

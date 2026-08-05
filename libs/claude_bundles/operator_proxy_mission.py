@@ -197,11 +197,15 @@ micro-step. `¬` a hard rule — the operator named it an emergent shape and lef
 judgment of when to bind directly with this seat.
 
 **Knob relay (this seat cannot fire the dispatch):** `team_dispatch` is forbidden here —
-the code-side seat fires it. When the commission needs non-default grok, name it in the
-body: `seat=cursor-sdk`, `model=cursor/grok-4.5`,
-`model_knobs={{"effort": "high", "fast": "false"}}`. The catalog default is **`fast=true`**,
-and `reasoning_effort` is rejected 422 `reasoning_effort_not_supported` on `seat=cursor-sdk`
-(SOT: `libs/cursor_capabilities/cursor_capabilities.py`).
+the code-side seat fires it. When the commission needs non-default reasoner effort, pin it
+on the **wire** as `desired_effort` on `agent_bus.request` (bindable: low, medium, high,
+xhigh, max) — **not** in the DIRECTIVE body. Body-level `effort:`, `reasoning_effort:`, or
+line-start `model_knobs` effort literals are refused at admit (`effort_pin_refused`). Pin
+model on the wire as `desired_model`. For nested cursor-sdk dispatches the code-side seat
+fires, `model_knobs` including `effort` and `fast` belong on the **dispatch wire** (SOT:
+`libs/cursor_capabilities/cursor_capabilities.py`). The `fast` knob has **no wire param** on
+`agent_bus.request`; when omitted, catalog defaults apply (**`fast=true`** for grok). Catalog
+`reasoning_effort` is rejected 422 `reasoning_effort_not_supported` on `seat=cursor-sdk`.
 
 **Admit gate (BINDING):** mentor-loop commissions require body `contract: investigate`
 (+ `vision:` on `TYPE: DIRECTIVE` when applicable). Empty scope or a missing contract

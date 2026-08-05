@@ -113,6 +113,112 @@ def test_assess_effort_pin_honors_wire_only():
     assert effort["resolved_effort"] == "high"
 
 
+def test_assess_effort_pin_allows_prose_mention_of_model_knobs():
+    """AC3: describing the bad pattern in prose while wire pins correctly must admit."""
+    prose = (
+        "TYPE: DIRECTIVE\ndensity: dense\n## Scope\nfix knob relay\n"
+        "intent: the chip wrongly said model_knobs={\"effort\": \"high\"} in the body\n"
+        "vision: true guidance pins on wire\n"
+    )
+    effort, block = assess_effort_pin("high", body=prose)
+    assert block is None
+    assert effort["resolved_effort"] == "high"
+
+def test_process_job_admits_prose_mention_with_wire_effort(monkeypatch):
+    """AC3 live admit: prose quotes model_knobs effort; wire desired_effort=high admits."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    from services.git_integration_worker.cursor_auto.handler import process_job
+    from services.git_integration_worker.cursor_auto.queue import AutoJob
+
+    bus = AsyncMock()
+    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.handler.submit_nested_dispatch",
+        AsyncMock(return_value={"ok": False, "error": "stop"}),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.gate_serialize.sdk_dispatch_gate_stats",
+        lambda **_: {"active": 0, "queued": 0, "limit": 1},
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.admit_gates.fetch_thread_turns",
+        AsyncMock(return_value=[]),
+    )
+
+    job = AutoJob(
+        job_id="j-prose-mention",
+        thread_id="6655",
+        turn_number=1,
+        subject="prose mention",
+        body=(
+            "TYPE: DIRECTIVE\ndensity: dense\n## Scope\nfix guidance\n"
+            "vision: test\n"
+            "intent: defect was model_knobs={\"effort\": \"high\"} in body per chip\n"
+        ),
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="high",
+        contract="investigate",
+    )
+
+    asyncio.run(process_job(job, bus=bus))
+    admit_call = bus.reply.await_args_list[0]
+    assert admit_call.kwargs["subject"].startswith("status:admitted")
+    admit_body = admit_call.kwargs["body"]
+    assert "requested_effort=high" in admit_body or "resolved=high" in admit_body
+
+
+def test_process_job_admits_wire_effort_first_attempt(monkeypatch):
+    """AC4 live admit: corrected guidance — wire desired_effort only, no body pin."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    from services.git_integration_worker.cursor_auto.handler import process_job
+    from services.git_integration_worker.cursor_auto.queue import AutoJob
+
+    bus = AsyncMock()
+    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.handler.submit_nested_dispatch",
+        AsyncMock(return_value={"ok": False, "error": "stop"}),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.gate_serialize.sdk_dispatch_gate_stats",
+        lambda **_: {"active": 0, "queued": 0, "limit": 1},
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.admit_gates.fetch_thread_turns",
+        AsyncMock(return_value=[]),
+    )
+
+    job = AutoJob(
+        job_id="j-wire-effort",
+        thread_id="6655",
+        turn_number=2,
+        subject="wire effort",
+        body=(
+            "TYPE: DIRECTIVE\ndensity: dense\n## Scope\nimplement feature\n"
+            "vision: pin effort on wire per Knob relay\n"
+            "desired_model and desired_effort belong on agent_bus.request wire only\n"
+        ),
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="cursor/grok-4.5",
+        desired_effort="high",
+        contract="implement",
+    )
+
+    asyncio.run(process_job(job, bus=bus))
+    admit_call = bus.reply.await_args_list[0]
+    assert admit_call.kwargs["subject"].startswith("status:admitted")
+    admit_body = admit_call.kwargs["body"]
+    assert "model_honored=True" in admit_body
+    assert "high" in admit_body
+
+
 def test_admit_effort_override_rule_line_alias_normalization():
     effort = resolve_desired_effort("extra")
     line = admit_effort_override_rule_line(effort)

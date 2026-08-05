@@ -165,9 +165,10 @@ def assess_effort_pin(
 ) -> tuple[dict[str, Any], str | None]:
     """Resolve wire effort pin and return ``(effort, block_reason)``.
 
-    ``block_reason`` is set when admit must refuse: a body-level effort line
-    (``effort:``, ``reasoning_effort:``, or ``model_knobs`` effort) — body form
-    is not honored; use ``desired_effort`` on ``agent_bus.request``.
+    ``block_reason`` is set when admit must refuse: a body-level effort line at an
+    authoring position (line-start ``effort:``, ``reasoning_effort:``, or line-start
+    ``model_knobs`` effort) — body form is not honored; use ``desired_effort`` on
+    ``agent_bus.request``.
     """
     from services.git_integration_worker.cursor_auto.directive import body_effort_pin
 
