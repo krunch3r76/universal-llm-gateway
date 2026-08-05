@@ -291,6 +291,30 @@ def test_f_capacity_split_live_writers_separate_from_headroom(
     assert gate["live_writers"] == 0
 
 
+def test_plan_nested_dispatch_uses_ledger_aligned_occupancy() -> None:
+    """F-gate-admit / I-gate-ledger: nest plan honors ledger live_writers over gate.active."""
+    from services.git_integration_worker.cursor_auto.gate_serialize import plan_nested_dispatch
+
+    call_idx = {"n": 0}
+
+    def _stats(*, lane: str | None = None):
+        call_idx["n"] += 1
+        if lane == "operator":
+            return {"active": 0, "queued": 0, "limit": 1}
+        return {"active": 0, "queued": 0, "limit": 1, "live_writers": 1}
+
+    with patch(
+        "services.git_integration_worker.cursor_auto.gate_serialize.sdk_dispatch_gate_stats",
+        side_effect=_stats,
+    ):
+        plan = plan_nested_dispatch(work_bounded=False)
+
+    assert plan["gate"]["active"] == 1
+    assert plan["gate"]["occupancy_source"] == "ledger_aligned"
+    assert plan["action"] == "nest_park"
+    assert call_idx["n"] >= 2
+
+
 def test_multi_holder_snapshot_when_switch_on(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CURSOR_SDK_OPERATOR_MULTI_A_ENABLED", "1")
     monkeypatch.setenv("CURSOR_SDK_OPERATOR_DISPATCH_CONCURRENCY", "3")
