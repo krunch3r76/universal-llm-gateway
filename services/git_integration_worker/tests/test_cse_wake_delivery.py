@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 
@@ -11,6 +12,7 @@ from services.git_integration_worker.cursor_auto.cse_wake_delivery import (
     deliver_cse_wake,
     is_chat_delivery_capable,
     maybe_deliver_cse_wake,
+    pay_wake_unit,
 )
 from services.git_integration_worker.cursor_auto.queue import AutoJob
 
@@ -97,3 +99,96 @@ def test_maybe_deliver_skips_ide_class():
     )
     assert result["skipped"] is True
     assert result["reason"] == "not_chat_delivery_capable"
+
+
+def test_pay_wake_unit_no_debt_still_posts_bus_wake():
+    job = AutoJob(
+        job_id="j1",
+        thread_id="6815",
+        turn_number=1,
+        subject="s",
+        body="b",
+        from_agent="web-anthropic",
+        to_agent="cursor-auto",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="implement",
+    )
+    wake_result = {"ok": True, "status_code": 200}
+    with patch(
+        "claude_bundles.cse_session_obligations.get_open_wake_owed",
+        return_value=None,
+    ), patch(
+        "services.git_integration_worker.cursor_auto.nested_sdk.post_operator_wake",
+        new_callable=AsyncMock,
+        return_value=wake_result,
+    ) as mock_wake:
+        result = asyncio.run(
+            pay_wake_unit(
+                job,
+                dispatch_id="auto-x",
+                request_turn="8",
+                closeout_status="complete",
+            )
+        )
+    mock_wake.assert_called_once()
+    assert result["code"] == "csr.wake.no_debt_bus_wake"
+    assert result["skipped"] is False
+    assert result["followup_ok"] is False
+    assert result["wake_ok"] is True
+    assert result["wake"] == wake_result
+
+
+def test_pay_wake_unit_debt_followup_ok_skips_bus_wake():
+    job = AutoJob(
+        job_id="j1",
+        thread_id="6655",
+        turn_number=8,
+        subject="s",
+        body="b",
+        from_agent="web-anthropic",
+        to_agent="cursor-auto",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="answer",
+        cse_chat_url="https://claude.ai/chat/x",
+    )
+    obligation = {
+        "obligation_id": "wake:6655:8",
+        "wake_channel": "chat_delivery",
+        "payment": {},
+        "status": "open",
+    }
+    with patch(
+        "claude_bundles.cse_session_obligations.get_open_wake_owed",
+        return_value=obligation,
+    ), patch(
+        "claude_bundles.cse_session_obligations.resolve_payment_channel",
+        return_value={
+            "chat_url": "https://claude.ai/chat/x",
+            "registration_id": "reg-6655",
+        },
+    ), patch(
+        "claude_bundles.cse_wake_retain.try_claim_wake_payment",
+        return_value=True,
+    ), patch(
+        "services.git_integration_worker.cursor_auto.cse_wake_delivery.maybe_deliver_cse_wake",
+        new_callable=AsyncMock,
+        return_value={"ok": True, "send_verified": True},
+    ), patch(
+        "claude_bundles.cse_wake_retain.release_lane_if_debt_cleared",
+    ), patch(
+        "services.git_integration_worker.cursor_auto.nested_sdk.post_operator_wake",
+        new_callable=AsyncMock,
+    ) as mock_wake:
+        result = asyncio.run(
+            pay_wake_unit(
+                job,
+                dispatch_id="auto-x",
+                request_turn="8",
+                closeout_status="complete",
+            )
+        )
+    mock_wake.assert_not_called()
+    assert result["followup_ok"] is True
+    assert result["code"] == "csr.wake.unit_ok"

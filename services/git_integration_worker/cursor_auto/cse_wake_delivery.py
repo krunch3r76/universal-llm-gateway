@@ -183,7 +183,7 @@ async def pay_wake_unit(
     bus: Any | None = None,
     post: HttpPoster | None = None,
 ) -> dict[str, Any]:
-    """Transactional pay unit — followup first; bus WAKE+pager on degrade only."""
+    """Transactional pay unit — bus WAKE is mandatory; chat followup is debt-backed."""
     from claude_bundles.cdp_registry_store import load_sessions
     from claude_bundles.cse_session_obligations import (
         get_open_wake_owed,
@@ -203,12 +203,21 @@ async def pay_wake_unit(
     sessions = load_sessions()
     ob = get_open_wake_owed(sessions, thread=thread)
     if ob is None:
+        wake = await post_operator_wake(
+            job,
+            dispatch_id=dispatch_id,
+            request_turn=request_turn,
+            closeout_status=closeout_status,
+            bus=bus,
+        )
+        wake_ok = bool(wake.get("ok"))
         return {
-            "ok": True,
-            "skipped": True,
-            "code": "csr.wake.no_debt",
+            "ok": wake_ok,
+            "skipped": False,
+            "code": "csr.wake.no_debt_bus_wake",
             "followup_ok": False,
-            "wake_ok": False,
+            "wake_ok": wake_ok,
+            "wake": wake,
         }
 
     obligation_id = str(ob.get("obligation_id") or "")
