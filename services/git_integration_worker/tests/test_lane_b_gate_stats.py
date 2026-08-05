@@ -141,7 +141,7 @@ def test_ac_s4_4_active_by_lane_matches_ledger(tmp_path: Path) -> None:
     )
 
     gate = sdk_dispatch_gate_stats()
-    assert gate["active_by_lane"] == {"A": 1, "B": 2}
+    assert gate["active_by_lane"] == {"A": 1, "B": 2, "unknown": 0}
 
 
 def test_resolve_admit_lane_from_record_json() -> None:
@@ -184,7 +184,7 @@ def test_active_by_lane_counts_helper() -> None:
             "source_repo": "/repo",
         },
     ]
-    assert active_by_lane_counts(rows) == {"A": 1, "B": 1}
+    assert active_by_lane_counts(rows) == {"A": 1, "B": 1, "unknown": 0}
 
 
 def test_evaluate_i1_ok_and_clamp() -> None:

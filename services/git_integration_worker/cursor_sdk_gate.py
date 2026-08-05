@@ -337,24 +337,28 @@ def _write_capacity_fields(
     *,
     standard: dict[str, int],
     operator: dict[str, int],
+    live_by_lane: dict[str, int],
 ) -> dict[str, int | str | dict[str, dict[str, int]]]:
     std_lim = int(standard["limit"])
     op_lim = int(operator["limit"])
-    configured = std_lim + op_lim
-    lane_a_slots = write_lease_slots("A", gate_limit=configured)
-    lane_b_slots = write_lease_slots("B", gate_limit=configured)
+    configured_headroom = std_lim + op_lim
+    lane_a_slots = write_lease_slots("A", gate_limit=configured_headroom)
+    lane_b_slots = write_lease_slots("B", gate_limit=configured_headroom)
+    live_writers = int(live_by_lane.get("A", 0)) + int(live_by_lane.get("B", 0))
     write_capacity_detail: dict[str, dict[str, int]] = {
         "lane_a": {"slots": lane_a_slots},
         "lane_b": {"slots": lane_b_slots},
     }
     if default_write_path_is_lane_a():
         headroom = lane_a_slots
-        write_capacity = min(configured, headroom)
+        write_capacity = min(configured_headroom, headroom)
     else:
         headroom = lane_b_slots
-        write_capacity = configured
+        write_capacity = configured_headroom
     return {
         "write_capacity": write_capacity,
+        "configured_headroom": configured_headroom,
+        "live_writers": live_writers,
         "capacity_disposition": evaluate_i1(std_lim, op_lim, headroom),
         "write_capacity_detail": write_capacity_detail,
     }
@@ -373,7 +377,11 @@ def sdk_dispatch_gate_stats(
         return standard
     if lane == "operator":
         return operator
-    capacity = _write_capacity_fields(standard=standard, operator=operator)
+    capacity = _write_capacity_fields(
+        standard=standard,
+        operator=operator,
+        live_by_lane=_active_by_lane(),
+    )
     return {
         "active": int(standard["active"]) + int(operator["active"]),
         "queued": int(standard["queued"]) + int(operator["queued"]),

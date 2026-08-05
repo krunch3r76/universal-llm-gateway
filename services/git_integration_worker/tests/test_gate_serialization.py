@@ -155,10 +155,12 @@ async def test_concurrent_cursor_sdk_dispatch_serializes(
     from services.git_integration_worker.cursor_sdk_park import (
         release_or_restore_for_child_sync,
     )
+    from services.git_integration_worker.cursor_sdk_lane_regime import set_lane_b_regime
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     CursorDispatchLedger._instance = None
+    set_lane_b_regime(active=False)
 
     order: list[str] = []
 
@@ -184,6 +186,7 @@ async def test_concurrent_cursor_sdk_dispatch_serializes(
             dispatch_id=req.dispatch_id,
             terminal_status="completed",
             controller=controller,
+            emit_tag="CURSOR_TEST_SERIALIZE",
         )
 
     async def fail_and_promote(*, req: Any, controller: Any, **_kwargs: Any) -> None:
@@ -191,6 +194,7 @@ async def test_concurrent_cursor_sdk_dispatch_serializes(
             dispatch_id=req.dispatch_id,
             terminal_status="failed",
             controller=controller,
+            emit_tag="CURSOR_TEST_SERIALIZE",
         )
 
     transport = ASGITransport(app=app)
@@ -199,7 +203,8 @@ async def test_concurrent_cursor_sdk_dispatch_serializes(
         "model": "cursor/composer-2.5",
         "dispatch_id": "disp-ser-1",
         "execution_id": "exec-ser-1",
-        "message": "hello",
+        "handoff_contract": "implement",
+        "message": "TYPE: DIRECTIVE\ncontract: implement\n",
     }
     body2 = {
         **body,
@@ -213,6 +218,7 @@ async def test_concurrent_cursor_sdk_dispatch_serializes(
         patch.object(
             route_mod, "validate_dispatch_context", return_value={"ok": True}
         ),
+        patch.object(route_mod, "capture_wt_baseline_with_hashes", lambda *_a, **_k: {}),
         patch.object(route_mod, "_finalize_success", side_effect=finalize_and_promote),
         patch.object(route_mod, "_finalize_failed", side_effect=fail_and_promote),
     ):

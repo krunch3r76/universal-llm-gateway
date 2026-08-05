@@ -31,6 +31,17 @@ def should_run_in_seat(*, gate_limit: int | None = None) -> bool:
     return int(stats["active"]) >= limit
 
 
+def ledger_aligned_operator_occupancy() -> int:
+    """Live write occupancy reconciled with ledger (I-gate-ledger)."""
+    stats = sdk_dispatch_gate_stats(lane="operator")
+    gate_active = int(stats["active"])
+    combined = sdk_dispatch_gate_stats()
+    live_writers = combined.get("live_writers")
+    if isinstance(live_writers, int):
+        return max(gate_active, live_writers)
+    return gate_active
+
+
 def plan_nested_dispatch(
     *, work_bounded: bool, park_available: bool = True
 ) -> dict[str, Any]:
@@ -39,10 +50,15 @@ def plan_nested_dispatch(
     Returns a disposition plan (pure decision; does not acquire the gate).
     """
     stats = sdk_dispatch_gate_stats(lane="operator")
-    active = int(stats["active"])
+    active = ledger_aligned_operator_occupancy()
     limit = int(stats["limit"])
     queued = int(stats["queued"])
-    gate = {"active": active, "queued": queued, "limit": limit}
+    gate = {
+        "active": active,
+        "queued": queued,
+        "limit": limit,
+        "occupancy_source": "ledger_aligned",
+    }
     if active >= limit:
         if park_available:
             return {

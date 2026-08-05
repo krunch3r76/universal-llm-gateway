@@ -116,9 +116,17 @@ def posture_legend(posture: SdkMultiPosture) -> str | None:
     if posture == "id_split":
         return (
             "  multi: id_split — same root dual IDs "
-            "(GHOST=Stargate exec · LIVE=worker dispatch)"
+            "(GHOST=Stargate exec · LIVE=worker dispatch; "
+            "writer count = ledger live writers, not id_split)"
         )
     return "  multi: parallel — concurrent roots (distinct WIP)"
+
+
+def live_writer_count(*, active_by_lane: dict[str, int] | None) -> int:
+    """Ledger-derived live writer census for board chrome (F-board)."""
+    if not active_by_lane:
+        return 0
+    return int(active_by_lane.get("A", 0)) + int(active_by_lane.get("B", 0))
 
 
 def sort_sdk_live(

@@ -25,6 +25,7 @@ from services.git_integration_worker.cursor_sdk_gate import (
     release_sdk_dispatch_slot,
     sdk_dispatch_gate_stats,
 )
+from services.git_integration_worker.cursor_sdk_lane_regime import set_lane_b_regime
 from services.git_integration_worker.cursor_sdk_workspace import lane_a_lease_key
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
@@ -40,8 +41,10 @@ from services.git_integration_worker.routes.cursor_sdk import (
 def _isolated_ledger(tmp_path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     CursorDispatchLedger._instance = None
+    set_lane_b_regime(active=False)
     yield
     CursorDispatchLedger._instance = None
+    set_lane_b_regime(active=False)
 
 
 def _req(**overrides: object) -> CursorDispatchRequest:

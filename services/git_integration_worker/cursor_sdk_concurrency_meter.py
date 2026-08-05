@@ -16,6 +16,13 @@ from services.git_integration_worker.cursor_sdk_capacity_invariant import (
     Lane,
     resolve_admit_lane,
 )
+
+HISTORICAL_INCLUSION_RULE = (
+    "corrected peaks: contract in {implement, light-bounded} only; "
+    "exclude contract_unknown (NULL contract); exclude lane_unknown "
+    "(NULL lease_key and source_repo); exclude reaper-inflated terminals "
+    "(terminal_at >> last_heartbeat_at); overlap pairs lane-scoped"
+)
 from services.git_integration_worker.cursor_sdk_deliverables import (
     STRUCTURED_CLOSEOUT_FULL_HEADING,
     sidecar_has_structured_closeout_full,
@@ -36,6 +43,7 @@ class DispatchInterval:
     started_at: str
     terminal_at: str
     lane: Lane = "A"
+    last_heartbeat_at: str | None = None
 
 
 def _parse_iso(ts: str) -> datetime:
@@ -43,8 +51,20 @@ def _parse_iso(ts: str) -> datetime:
     return datetime.fromisoformat(normalized)
 
 
+def is_contract_unknown(*, contract: str | None, read_only: bool) -> bool:
+    """True when contract is NULL on a non-read-only row (D1 contract_unknown bucket)."""
+    return not read_only and contract is None
+
+
+def is_declared_write_implement(*, contract: str | None, read_only: bool) -> bool:
+    """Implement-class rows with explicit contract only (D1 — no NULL fallback)."""
+    if read_only:
+        return False
+    return contract in _IMPLEMENT_CLASS_CONTRACTS
+
+
 def is_implement_class(*, contract: str | None, read_only: bool) -> bool:
-    """Implement-class rows used by fold-2 census (write-capable dispatch contracts)."""
+    """Legacy implement-class predicate (includes NULL contract — legacy peaks)."""
     if read_only:
         return False
     if contract in _IMPLEMENT_CLASS_CONTRACTS:
@@ -52,7 +72,28 @@ def is_implement_class(*, contract: str | None, read_only: bool) -> bool:
     return contract is None
 
 
-def is_write_implement(interval: DispatchInterval) -> bool:
+def is_reaper_inflated_terminal(
+    *,
+    terminal_at: str | None,
+    last_heartbeat_at: str | None,
+) -> bool:
+    """True when terminal_at is far after last heartbeat (reaper stamp, D3)."""
+    if not terminal_at or not last_heartbeat_at:
+        return False
+    gap_s = (_parse_iso(terminal_at) - _parse_iso(last_heartbeat_at)).total_seconds()
+    return gap_s > 3600.0
+
+
+def is_write_implement(interval: DispatchInterval, *, corrected: bool = False) -> bool:
+    if corrected:
+        if is_reaper_inflated_terminal(
+            terminal_at=interval.terminal_at,
+            last_heartbeat_at=interval.last_heartbeat_at,
+        ):
+            return False
+        return is_declared_write_implement(
+            contract=interval.contract, read_only=interval.read_only
+        )
     return is_implement_class(contract=interval.contract, read_only=interval.read_only)
 
 
@@ -66,13 +107,16 @@ def peak_concurrent_for_lane(
     *,
     write_only: bool,
     lane: Lane | None,
+    corrected: bool = False,
 ) -> int:
     """Peak concurrency optionally filtered to one admit lane."""
     events: list[tuple[datetime, int]] = []
     for row in intervals:
         if lane is not None and row.lane != lane:
             continue
-        if write_only and not is_write_implement(row):
+        if lane is not None and corrected and row.lane == "unknown":
+            continue
+        if write_only and not is_write_implement(row, corrected=corrected):
             continue
         start = _parse_iso(row.started_at)
         end = _parse_iso(row.terminal_at)
@@ -112,12 +156,20 @@ def _legacy_peak_concurrent(intervals: list[DispatchInterval], *, write_only: bo
     return peak
 
 
-def count_overlap_pairs(intervals: list[DispatchInterval], *, write_only: bool) -> int:
+def count_overlap_pairs(
+    intervals: list[DispatchInterval],
+    *,
+    write_only: bool,
+    lane: Lane | None = None,
+    corrected: bool = False,
+) -> int:
     """Count unordered pairs with strictly positive overlap duration."""
     selected = [
         row
         for row in intervals
-        if not write_only or is_write_implement(row)
+        if (lane is None or row.lane == lane)
+        and (not write_only or is_write_implement(row, corrected=corrected))
+        and not (corrected and row.lane == "unknown")
     ]
     total = 0
     for left in range(len(selected)):
@@ -264,6 +316,11 @@ def intervals_from_ledger_rows(rows: list[dict[str, Any]]) -> list[DispatchInter
                 started_at=str(started_at),
                 terminal_at=str(terminal_at),
                 lane=lane,
+                last_heartbeat_at=(
+                    str(row["last_heartbeat_at"])
+                    if row.get("last_heartbeat_at")
+                    else None
+                ),
             )
         )
     return out
@@ -358,17 +415,29 @@ def concurrency_stats(
     }
     repo = source_repo or closeout_root.parent.parent.parent
     lane_b_inventory = lane_b_inventory_snapshot(source_repo=repo)
+    legacy_by_lane = {
+        lane: peak_concurrent_for_lane(intervals, write_only=True, lane=lane)
+        for lane in ("A", "B")
+    }
+    corrected_by_lane = {
+        lane: peak_concurrent_for_lane(
+            intervals, write_only=True, lane=lane, corrected=True
+        )
+        for lane in ("A", "B")
+    }
     return {
         "window_start": window_start,
         "window_end": window_end,
+        "historical_inclusion_rule": HISTORICAL_INCLUSION_RULE,
         "peak_concurrent_write_implement": _legacy_peak_concurrent(
             intervals, write_only=True
         ),
-        "peak_concurrent_write_implement_by_lane": {
-            lane: peak_concurrent_for_lane(intervals, write_only=True, lane=lane)
-            for lane in ("A", "B")
-        },
+        "peak_concurrent_write_implement_by_lane": legacy_by_lane,
+        "peak_concurrent_write_implement_by_lane_corrected": corrected_by_lane,
         "write_overlap_pairs": count_overlap_pairs(intervals, write_only=True),
+        "write_overlap_pairs_corrected": count_overlap_pairs(
+            intervals, write_only=True, corrected=True
+        ),
         "ambient_cause_filtered": ambient,
         "ambient_rate_by_lane": {
             lane: ambient_by_lane[lane]["post_floor_rate"]

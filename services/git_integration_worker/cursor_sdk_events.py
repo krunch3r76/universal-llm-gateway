@@ -967,6 +967,43 @@ def emit_sdk_lane_b_workspaces_write_refused(
 
 
 @event_factory
+def SdkLaneBWorktreeMissingObserved(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    lease_key: str | None,
+    source_repo: str,
+) -> Event:
+    return Event(
+        signal="sdk.lane_b.worktree_missing_observed",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "lease_key": lease_key,
+            "source_repo": source_repo,
+        },
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_worktree_missing_observed(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    lease_key: str | None,
+    source_repo: str,
+) -> None:
+    """Observe Lane-B admit lacking materialized worktree (Leg-1 honesty signal)."""
+    _emit(
+        SdkLaneBWorktreeMissingObserved(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            lease_key=lease_key,
+            source_repo=source_repo,
+        )
+    )
+
+
+@event_factory
 def FrontierWriteLeaseAcquired(  # noqa: N802
     dispatch_id: str,
     source_repo: str | None,
@@ -1097,6 +1134,20 @@ def emit_sdk_worker_queued(
             purpose=purpose,
             story_id=story_id,
             queued_on=queued_on,
+        )
+    )
+
+
+def emit_write_lease_acquired(
+    *,
+    dispatch_id: str,
+    source_repo: str | None,
+) -> None:
+    """Publish write-lease acquisition when a write-capable dispatch becomes holder."""
+    _emit(
+        FrontierWriteLeaseAcquired(
+            dispatch_id=dispatch_id,
+            source_repo=source_repo,
         )
     )
 

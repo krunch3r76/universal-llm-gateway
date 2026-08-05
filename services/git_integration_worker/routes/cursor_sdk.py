@@ -124,10 +124,18 @@ from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_worker_queued,
     emit_sdk_worker_timeout,
     emit_sdk_worker_unclassified_terminal,
+    emit_write_lease_acquired,
     emit_write_lease_promoted,
     emit_write_lease_queue_stalled,
     emit_write_lease_released,
+    emit_sdk_lane_b_worktree_missing_observed,
     terminal_emitted,
+)
+from services.git_integration_worker.cursor_sdk_concurrency_posture import (
+    b_worktree_materialized,
+    derive_concurrency_posture,
+    refuse_b_without_worktree_enabled,
+    write_lease_slot_limit,
 )
 from services.git_integration_worker.cursor_sdk_feature_probe import (
     LOCAL_BRIDGE_PATH_LABEL,
@@ -1068,6 +1076,10 @@ async def _promote_queued_for_lease(
     if promoted is None:
         return
     emit_write_lease_promoted(
+        dispatch_id=promoted.dispatch_id,
+        source_repo=promoted.source_repo or lease_key,
+    )
+    emit_write_lease_acquired(
         dispatch_id=promoted.dispatch_id,
         source_repo=promoted.source_repo or lease_key,
     )
@@ -2247,6 +2259,53 @@ async def cursor_dispatch(
             validation_stage="worktree_mint",
         )
     binding = binding_for_dispatch(cfg=cfg, lease_key=lease_key)
+    gate_lane = sdk_dispatch_lane(
+        caller_agent=req.caller_agent,
+        dispatch_id=req.dispatch_id,
+    )
+    concurrency_posture = derive_concurrency_posture(
+        admit_lane=selected_lane,
+        gate_lane=gate_lane,
+        read_only=effective_read_only,
+        nest_under=req.nest_under,
+        worktree_path=Path(lease_key) if selected_lane == "B" else None,
+    )
+    if selected_lane == "B" and not b_worktree_materialized(
+        admit_lane=selected_lane,
+        lease_key=lease_key,
+        source_repo=source_repo_str,
+    ):
+        emit_sdk_lane_b_worktree_missing_observed(
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            lease_key=lease_key,
+            source_repo=source_repo_str,
+        )
+        if refuse_b_without_worktree_enabled():
+            await _rollback_lane_b_mint_if_needed(
+                dispatch_id=req.dispatch_id,
+                thread_id=req.thread_id,
+                source_repo=cfg.source_repo,
+                minted_lane_b=minted_lane_b,
+                reason="b_worktree_missing",
+            )
+            return _reject_pre_admission(
+                req,
+                worker_error_code="CURSOR_LANE_B_WORKTREE_MISSING",
+                failure_layer="admission",
+                http_status=422,
+                detail_summary=(
+                    "Lane-B write requires materialized worktree; "
+                    "refusal enabled via CURSOR_SDK_REFUSE_B_WITHOUT_WORKTREE"
+                ),
+                retryable=False,
+                validation_stage="lane_b_materialization",
+            )
+    slot_limit = (
+        write_lease_slot_limit(admit_lane=selected_lane, posture=concurrency_posture)
+        if concurrency_posture is not None
+        else 1
+    )
     try:
         cached = await asyncio.to_thread(
             ledger.admit,
@@ -2266,6 +2325,8 @@ async def cursor_dispatch(
             force=req.force,
             nest_under=req.nest_under,
             refuse_if_lease_held=req.refuse_if_lease_held,
+            concurrency_posture=concurrency_posture,
+            write_lease_slot_limit=slot_limit,
         )
     except WriteLeaseHeld as exc:
         await _rollback_lane_b_mint_if_needed(
@@ -2375,6 +2436,12 @@ async def cursor_dispatch(
                 lease_key=lease_key or source_repo_str,
             )
         return JSONResponse(status_code=status_code, content=cached.model_dump())
+
+    if not effective_read_only and concurrency_posture is not None:
+        emit_write_lease_acquired(
+            dispatch_id=req.dispatch_id,
+            source_repo=lease_key or source_repo_str,
+        )
 
     emit_sdk_lane_selected(
         dispatch_id=req.dispatch_id,

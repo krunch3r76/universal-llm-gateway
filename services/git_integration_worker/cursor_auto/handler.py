@@ -187,6 +187,7 @@ async def process_job(
         f"contract={contract_info['contract']} "
         f"handoff={handoff_contract}\n"
         f"gate_plan={gate_plan['action']}\n"
+        f"gate_occupancy_source={gate_plan.get('gate', {}).get('occupancy_source', 'gate_only')}\n"
         f"directive={directive is not None}"
     )
     override_rule = admit_model_override_rule_line(model)

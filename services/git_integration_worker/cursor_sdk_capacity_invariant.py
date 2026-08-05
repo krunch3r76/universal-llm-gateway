@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, Literal
 
-Lane = Literal["A", "B"]
+Lane = Literal["A", "B", "unknown"]
 
 
 def evaluate_i1(
@@ -40,12 +40,14 @@ def resolve_admit_lane(
         return lane  # type: ignore[return-value]
     if lease_key and source_repo and lease_key != source_repo:
         return "B"
+    if not lease_key and not source_repo:
+        return "unknown"
     return "A"
 
 
 def active_by_lane_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
     """Count active write dispatches grouped by admit lane."""
-    counts = {"A": 0, "B": 0}
+    counts = {"A": 0, "B": 0, "unknown": 0}
     for row in rows:
         lane = resolve_admit_lane(
             record_json=row.get("record_json"),

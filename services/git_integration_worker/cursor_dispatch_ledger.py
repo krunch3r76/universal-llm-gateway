@@ -297,6 +297,30 @@ def _fetch_active_holder_conn(
     ).fetchone()
 
 
+def _fetch_active_holders_conn(
+    conn: sqlite3.Connection, *, lease_key: str | None = None
+) -> list[dict[str, Any]]:
+    """All active write-lease holders for multi-holder Lane-A projection."""
+    if lease_key:
+        rows = conn.execute(
+            "SELECT dispatch_id, thread_id, resolved_model, status, started_at, "
+            "last_heartbeat_at, record_json, packet_path, source_repo, lease_key "
+            "FROM cursor_sdk_dispatches "
+            "WHERE lease_key=? AND COALESCE(read_only,0)=0 "
+            "AND status IN ('admitted','running') ORDER BY rowid ASC",
+            (lease_key,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT dispatch_id, thread_id, resolved_model, status, started_at, "
+            "last_heartbeat_at, record_json, packet_path, source_repo, lease_key "
+            "FROM cursor_sdk_dispatches "
+            "WHERE COALESCE(read_only,0)=0 AND status IN ('admitted','running') "
+            "ORDER BY rowid ASC"
+        ).fetchall()
+    return [_holder_projection(row) for row in rows]
+
+
 def _response_from_row(
     row: sqlite3.Row,
     *,
@@ -620,6 +644,8 @@ class CursorDispatchLedger:
         force: bool = False,
         nest_under: str | None = None,
         refuse_if_lease_held: bool = False,
+        concurrency_posture: str | None = None,
+        write_lease_slot_limit: int = 1,
     ) -> CursorDispatchResponse | None:
         """Durable idempotency (F2). Returns cached admission on hit, None on first
         admitted insert, or a queued ticket when the write-lease is held.
@@ -637,6 +663,12 @@ class CursorDispatchLedger:
 
         Raises ``DispatchConflict`` on fingerprint mismatch."""
         record_json = _dispatch_record_json(req)
+        if concurrency_posture:
+            from services.git_integration_worker.cursor_sdk_concurrency_posture import (
+                stamp_posture_on_record_json,
+            )
+
+            record_json = stamp_posture_on_record_json(record_json, concurrency_posture)  # type: ignore[arg-type]
         writer_key = _resolve_lease_key(lease_key=lease_key, source_repo=source_repo)
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -703,13 +735,27 @@ class CursorDispatchLedger:
             queued_at: str | None = None
             nested_park_parent: str | None = None
             if not read_only and writer_key:
-                conflict = conn.execute(
-                    "SELECT dispatch_id FROM cursor_sdk_dispatches "
+                active_row = conn.execute(
+                    "SELECT COUNT(*) AS n FROM cursor_sdk_dispatches "
                     "WHERE lease_key=? AND COALESCE(read_only,0)=0 "
-                    "AND status IN ('admitted','running') AND dispatch_id<>? "
-                    "LIMIT 1",
+                    "AND status IN ('admitted','running') AND dispatch_id<>?",
                     (writer_key, req.dispatch_id),
                 ).fetchone()
+                active_count = int(active_row["n"]) if active_row else 0
+                slot_limit = max(1, int(write_lease_slot_limit))
+                conflict = (
+                    active_count >= slot_limit
+                    and not nest_under
+                )
+                conflict_holder = None
+                if conflict:
+                    conflict_holder = conn.execute(
+                        "SELECT dispatch_id FROM cursor_sdk_dispatches "
+                        "WHERE lease_key=? AND COALESCE(read_only,0)=0 "
+                        "AND status IN ('admitted','running') AND dispatch_id<>? "
+                        "LIMIT 1",
+                        (writer_key, req.dispatch_id),
+                    ).fetchone()
                 prior_queued = conn.execute(
                     "SELECT dispatch_id FROM cursor_sdk_dispatches "
                     "WHERE lease_key=? AND COALESCE(read_only,0)=0 "
@@ -722,9 +768,16 @@ class CursorDispatchLedger:
                             f"nest_under must not equal child dispatch_id "
                             f"{req.dispatch_id!r}"
                         )
+                    holder_row = conn.execute(
+                        "SELECT dispatch_id FROM cursor_sdk_dispatches "
+                        "WHERE lease_key=? AND COALESCE(read_only,0)=0 "
+                        "AND status IN ('admitted','running') AND dispatch_id<>? "
+                        "LIMIT 1",
+                        (writer_key, req.dispatch_id),
+                    ).fetchone()
                     if (
-                        conflict is None
-                        or nest_under != conflict["dispatch_id"]
+                        holder_row is None
+                        or nest_under != holder_row["dispatch_id"]
                     ):
                         raise NestParentNotLive(
                             f"nest_under {nest_under!r} is not the live "
@@ -752,7 +805,7 @@ class CursorDispatchLedger:
                     nested_park_parent = nest_under
                     insert_status = _STATUS_ADMITTED
                     queued_at = None
-                elif conflict is not None or prior_queued is not None:
+                elif (conflict and conflict_holder is not None) or prior_queued is not None:
                     if refuse_if_lease_held:
                         holder = _fetch_active_holder_conn(
                             conn, lease_key=writer_key
@@ -1248,6 +1301,11 @@ class CursorDispatchLedger:
                     "WHERE COALESCE(read_only,0)=0 AND status='queued' "
                     "ORDER BY rowid ASC"
                 ).fetchall()
+            active_holders = (
+                _fetch_active_holders_conn(conn, lease_key=key)
+                if key
+                else _fetch_active_holders_conn(conn)
+            )
         projection = _holder_projection(holder)
         queued_list: list[dict[str, Any]] = []
         for position, row in enumerate(queued_rows, start=1):
@@ -1266,6 +1324,7 @@ class CursorDispatchLedger:
             )
         return {
             **projection,
+            "active_holders": active_holders,
             "holder_source_repo": (
                 holder["source_repo"]
                 if holder is not None
@@ -1467,7 +1526,7 @@ class CursorDispatchLedger:
         """Dispatch rows with both interval endpoints — read-only overlap census input."""
         sql = (
             "SELECT dispatch_id, contract, COALESCE(read_only, 0) AS read_only, "
-            "started_at, terminal_at, record_json, lease_key, source_repo "
+            "started_at, terminal_at, last_heartbeat_at, record_json, lease_key, source_repo "
             "FROM cursor_sdk_dispatches "
             "WHERE started_at IS NOT NULL AND terminal_at IS NOT NULL"
         )
