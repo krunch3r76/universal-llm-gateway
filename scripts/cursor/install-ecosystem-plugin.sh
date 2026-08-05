@@ -46,18 +46,42 @@ PYTHON="${HOME}/.venvs/universal/bin/python3"
 if [[ ! -x "$PYTHON" ]]; then
   PYTHON="python3"
 fi
-if ! "$PYTHON" "$ULG_ROOT/scripts/cortex/validate_skill_catalog.py" --root "$ULG_ROOT"; then
+SOURCE_REPO="${GIT_INTEGRATION_SOURCE_REPO:-/mnt/torus/projects/universal-llm-gateway}"
+SOURCE_REPO="$(cd "$SOURCE_REPO" 2>/dev/null && pwd || echo "$SOURCE_REPO")"
+# SOT parity must run against the live source checkout: gitignored life_local and
+# .cursor/skills bodies exist on that disk, and validate_skill_catalog must load
+# catalog.py from the same tree (worktree libs pin _REPO_ROOT to the arc checkout).
+VALIDATE_SCRIPT="$SOURCE_REPO/scripts/cortex/validate_skill_catalog.py"
+[[ -f "$VALIDATE_SCRIPT" ]] || VALIDATE_SCRIPT="$ULG_ROOT/scripts/cortex/validate_skill_catalog.py"
+if ! "$PYTHON" "$VALIDATE_SCRIPT" --root "$SOURCE_REPO"; then
   die "census↔catalog parity failed — add matching config/skills.yaml row before install"
 fi
+
+resolve_plugin_asset() {
+  local rel="$1"
+  if [[ -e "$PLUGIN_SRC/$rel" ]]; then
+    printf '%s\n' "$PLUGIN_SRC/$rel"
+  elif [[ -e "$SOURCE_REPO/cursor-plugins/ulg-ecosystem/$rel" ]]; then
+    printf '%s\n' "$SOURCE_REPO/cursor-plugins/ulg-ecosystem/$rel"
+  else
+    return 1
+  fi
+}
 
 echo "==> Assembling ulg-ecosystem from $PLUGIN_SRC"
 rm -rf "$STAGING"
 mkdir -p "$STAGING"/{.cursor-plugin,skills,commands,rules,hooks,scripts}
 
-# Static assets
-cp -a "$PLUGIN_SRC/.cursor-plugin/plugin.json" "$STAGING/.cursor-plugin/"
-cp -a "$PLUGIN_SRC/hooks/hooks.json" "$STAGING/hooks/"
-cp -a "$PLUGIN_SRC/scripts/verify-ulg-libs.sh" "$STAGING/scripts/"
+# Static assets (plugin.json is gitignored — arc worktrees fall back to source repo)
+PLUGIN_JSON="$(resolve_plugin_asset ".cursor-plugin/plugin.json")" \
+  || die "plugin manifest missing in worktree and source repo"
+cp -a "$PLUGIN_JSON" "$STAGING/.cursor-plugin/"
+HOOKS_JSON="$(resolve_plugin_asset "hooks/hooks.json")" \
+  || die "hooks.json missing in worktree and source repo"
+cp -a "$HOOKS_JSON" "$STAGING/hooks/"
+VERIFY_LIBS="$(resolve_plugin_asset "scripts/verify-ulg-libs.sh")" \
+  || die "verify-ulg-libs.sh missing in worktree and source repo"
+cp -a "$VERIFY_LIBS" "$STAGING/scripts/"
 chmod +x "$STAGING/scripts/verify-ulg-libs.sh"
 cp -a "$PLUGIN_SRC/README.md" "$STAGING/"
 cp -a "$CENSUS" "$STAGING/SKILLS_CENSUS.txt"
