@@ -78,6 +78,16 @@ def write_lease_slots(
     else:
         effective = "A" if default_write_path_is_lane_a() else "B"
     if effective == "A":
+        from services.git_integration_worker.cursor_sdk_concurrency_posture import (
+            operator_multi_a_enabled,
+            write_lease_slot_limit,
+        )
+
+        if operator_multi_a_enabled():
+            return write_lease_slot_limit(
+                admit_lane="A",
+                posture="multi_a_operator",
+            )
         return 1
     if gate_limit is not None:
         return max(1, gate_limit)

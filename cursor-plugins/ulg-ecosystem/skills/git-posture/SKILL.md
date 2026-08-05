@@ -21,6 +21,19 @@ or otherwise isolate the tree to A/B against clean HEAD or to “protect”
 phantom peers — read the on-disk tree; treat out-of-scope test/git noise as
 pre-existing.
 
+## Shared checkout concurrency (G6 — operator bind 2026-08-04)
+
+Evidence: `todo:concurrency-policy-honesty` gate refused at N=1 (agent-bus:6792).
+These binds describe **tested reality**, not aspiration.
+
+| Bind | Statement |
+|---|---|
+| **Authorized-but-off** | Operator multi-writer on Lane-A is **authorized by policy** (`CURSOR_SDK_OPERATOR_MULTI_A_ENABLED`) and **disabled in practice** — effective limit held at **1** while F-1 (collision detection), F-2 (read-isolation fence), and F-3 (sound authorship attribution) remain open. Do not blur this into “supported” or “forbidden.” |
+| **Path-explicit commit** | On the shared checkout, staging is **path-explicit** — `git_commit(paths=[…])` / path-scoped `git add`. **`git add -A` and any whole-tree stage defeat the safe API** even when `commit_paths` is correct in isolation; a safe API plus an unsafe habit is an unsafe system. Name the defeat explicitly. |
+| **Supersede under multi-writer** | When **more than one live write lease** is active, supersede **refuses to restore** peer paths and reports **`unrevertable`** — cancel is not a clean undo while peers are running. |
+| **Scoped counts** | Any scalar that is scoped or projected (**`write_capacity`**, **`tree_residue`**, closeout **`shipped`** with failing gates, propagation **`proof`** pre-filled before execution) must **publish its scope** in the same surface. A number whose evidence contradicts its label is a defect, not a display bug. |
+| **Board posture ≠ writer count** | SDK board classes **`parallel`**, **`nested`**, and **`id_split`** name **relationship among live rows**, never concurrent **writer count**. Writer census = ledger **`live_writers`** / **`active_by_lane`** only (`id_split` legend already states this — treat it as the standing rule). |
+
 ## Invariant — truth substrate is on-disk tree + Cortex + live process, not git
 
 - What exists / what file says: on-disk working tree.

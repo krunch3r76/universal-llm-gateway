@@ -105,11 +105,28 @@ def test_ac_s4_2_regime_on_write_capacity_and_detail(
     assert detail["lane_b"]["slots"] == 4
 
 
-def test_ac_s4_3_write_lease_slots_all_gate_limits() -> None:
-    """AC-S4.3: Lane-A always 1; Lane-B equals gate_limit; no NotImplementedError."""
+def test_ac_s4_3_write_lease_slots_lane_b_gate_limits() -> None:
+    """AC-S4.3: Lane-B equals gate_limit; no NotImplementedError."""
+    for n in (1, 2, 4, 7):
+        assert write_lease_slots("B", gate_limit=n) == n
+
+
+def test_write_lease_slots_lane_a_inert_when_multi_a_switch_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F-7 / AC1: switch OFF ⇒ Lane-A slots stay 1 regardless of gate_limit."""
+    monkeypatch.delenv("CURSOR_SDK_OPERATOR_MULTI_A_ENABLED", raising=False)
     for n in (1, 2, 4, 7):
         assert write_lease_slots("A", gate_limit=n) == 1
-        assert write_lease_slots("B", gate_limit=n) == n
+
+
+def test_write_lease_slots_lane_a_honors_multi_a_when_switch_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F-7 / AC1: switch ON ⇒ Lane-A slots honor operator dispatch concurrency."""
+    monkeypatch.setenv("CURSOR_SDK_OPERATOR_MULTI_A_ENABLED", "1")
+    monkeypatch.setenv("CURSOR_SDK_OPERATOR_DISPATCH_CONCURRENCY", "3")
+    assert write_lease_slots("A", gate_limit=7) == 3
 
 
 def test_ac_s4_4_active_by_lane_matches_ledger(tmp_path: Path) -> None:
