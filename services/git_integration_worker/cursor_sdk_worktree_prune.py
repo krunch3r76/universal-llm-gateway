@@ -12,6 +12,7 @@ from services.git_integration_worker.cursor_dispatch_ledger import _connect
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_lane_b_branch_retained,
     emit_sdk_lane_b_reaped,
+    emit_sdk_lane_b_salvage_failed,
     emit_sdk_lane_b_salvaged,
 )
 from services.git_integration_worker.cursor_sdk_lane_b_commit import (
@@ -40,6 +41,7 @@ class PruneResult:
     branch_retained: bool = False
     salvaged: bool = False
     head_sha: str | None = None
+    salvage_refused: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +53,7 @@ class ReapSweepResult:
     branches_retained: int = 0
     branches_gc: int = 0
     stale_metadata_pruned: bool = False
+    salvage_refused: int = 0
 
 
 def is_reapable_dispatch_status(status: str | None) -> bool:
@@ -63,7 +66,11 @@ def prune_dispatch_worktree(
     dispatch_id: str,
     source_repo: Path,
 ) -> PruneResult:
-    """Remove a registered dispatch worktree; retain unmerged branches (S3)."""
+    """Remove a registered dispatch worktree; retain unmerged branches (S3).
+
+    Fails closed: when the worktree holds work that git refused to commit, the
+    worktree is the only copy, so it is kept and the registry row is left intact.
+    """
     record = lookup_dispatch_worktree(dispatch_id=dispatch_id)
     if record is None:
         return PruneResult(pruned=False)
@@ -79,6 +86,28 @@ def prune_dispatch_worktree(
             message=f"cursor-sdk: prune salvage {dispatch_id}",
         )
         salvaged = salvage.committed
+    if salvage is not None and salvage.refused:
+        logger.error(
+            "lane_b prune aborted — unsalvaged work retained dispatch_id=%s "
+            "path=%s branch=%s err=%s",
+            dispatch_id,
+            wt_path,
+            branch,
+            salvage.error,
+        )
+        emit_sdk_lane_b_salvage_failed(
+            dispatch_id=dispatch_id,
+            branch=branch,
+            worktree_path=str(wt_path),
+            error=salvage.error,
+        )
+        return PruneResult(
+            pruned=False,
+            branch_retained=True,
+            salvaged=False,
+            head_sha=salvage.head_sha,
+            salvage_refused=True,
+        )
     if wt_path.is_dir():
         proc = subprocess.run(
             [
@@ -107,7 +136,7 @@ def prune_dispatch_worktree(
         branch_name=branch,
         branch_point=branch_point,
     )
-    branch_retained = not state.merged_into_master
+    branch_retained = not state.safe_to_delete
     if salvaged and salvage is not None and salvage.head_sha:
         emit_sdk_lane_b_salvaged(
             dispatch_id=dispatch_id,
@@ -121,7 +150,7 @@ def prune_dispatch_worktree(
             branch=branch,
             commits_ahead=state.commits_ahead,
         )
-    if state.merged_into_master:
+    if state.safe_to_delete:
         subprocess.run(
             ["git", "-C", str(repo), "branch", "-D", branch],
             capture_output=True,
@@ -132,7 +161,7 @@ def prune_dispatch_worktree(
     unregister_dispatch_worktree(dispatch_id=dispatch_id)
     emit_sdk_lane_b_reaped(
         dispatch_id=dispatch_id,
-        branch_deleted=state.merged_into_master,
+        branch_deleted=state.safe_to_delete,
     )
     return PruneResult(
         pruned=True,
@@ -237,6 +266,7 @@ def reap_orphan_worktrees(
     reaped = 0
     salvaged = 0
     branches_retained = 0
+    salvage_refused = 0
     active = active_managed_worktree_paths(worktree_root=worktree_root)
     rows = list_registered_worktrees_with_status()
     for row in rows:
@@ -250,6 +280,8 @@ def reap_orphan_worktrees(
             dispatch_id=row["dispatch_id"],
             source_repo=source_repo,
         )
+        if result.salvage_refused:
+            salvage_refused += 1
         if not result.pruned:
             continue
         reaped += 1
@@ -265,4 +297,5 @@ def reap_orphan_worktrees(
         branches_retained=branches_retained,
         branches_gc=branches_gc,
         stale_metadata_pruned=stale_metadata_pruned,
+        salvage_refused=salvage_refused,
     )

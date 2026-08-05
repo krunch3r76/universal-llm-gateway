@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 from openapi_mcp.codegen import ManifestCheckResult
 
@@ -14,17 +14,17 @@ _PIPELINE_OPS: frozenset[str] = frozenset(
 )
 _OBSERVABILITY_OPS: frozenset[str] = frozenset({"query"})
 
+# Tools whose served surface lives under a gitignored local-only tree
+# (.gitignore: services/mcp-server/tools/local/). They are absent from clean
+# checkouts, worktrees, and CI, so coverage for them is skipped rather than fatal.
+_LOCAL_ONLY_TOOLS: frozenset[str] = frozenset({"email"})
+
 
 def _ensure_mcp_server_on_path() -> None:
     repo = Path(__file__).resolve().parents[2]
     mcp_server = str(repo / "services" / "mcp-server")
     if mcp_server not in sys.path:
         sys.path.insert(0, mcp_server)
-
-_PIPELINE_OPS: frozenset[str] = frozenset(
-    {"run", "async", "result", "validate", "stats", "cancel"}
-)
-_OBSERVABILITY_OPS: frozenset[str] = frozenset({"query"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +47,6 @@ class TierMDriftReport:
 def _manifest_rows():
     from services.git_integration_worker.cursor_auto.tier_m_manifest import (
         DEFAULT_MANIFEST,
-        ManifestRow,
     )
 
     return DEFAULT_MANIFEST
@@ -61,32 +60,48 @@ def _row_covers(rows: Iterable, tool: str, op: str) -> bool:
 
 
 def collect_served_tool_ops() -> dict[str, frozenset[str]]:
-    """Return served MCP tool.op pairs for tier-M manifest tools."""
+    """Return served MCP tool.op pairs for tier-M manifest tools.
+
+    Local-only surfaces absent from this checkout are omitted; callers must
+    consult :func:`absent_local_only_tools` rather than reading an omitted tool
+    as "serves nothing".
+    """
     _ensure_mcp_server_on_path()
     from cortex_store.dispatch_ops import _OP_SPECS
     from tools.filesystem._fs_dispatch import OP_SANDBOXES
-    from tools.local._email_catalog import CATALOG
     from tools.manage import _VALID_ACTIONS
 
-    return {
+    served: dict[str, frozenset[str]] = {
         "cortex": frozenset(_OP_SPECS),
-        "email": frozenset(CATALOG),
         "fs": frozenset(OP_SANDBOXES),
         "manage": frozenset(_VALID_ACTIONS),
         "observability": _OBSERVABILITY_OPS,
         "pipeline": _PIPELINE_OPS,
     }
+    try:
+        from tools.local._email_catalog import CATALOG
+    except ImportError:
+        pass
+    else:
+        served["email"] = frozenset(CATALOG)
+    return served
+
+
+def absent_local_only_tools(served: dict[str, frozenset[str]]) -> frozenset[str]:
+    """Local-only tools that did not resolve in this checkout."""
+    return frozenset(_LOCAL_ONLY_TOOLS - served.keys())
 
 
 def check_tier_m_manifest_coverage() -> TierMDriftReport:
     """Compare tier-M manifest rows against served MCP tool ops (two-tier)."""
     rows = _manifest_rows()
     served_by_tool = collect_served_tool_ops()
+    absent = absent_local_only_tools(served_by_tool)
     manifest_tools = {row.tool for row in rows}
 
     fatal: list[str] = []
     for row in rows:
-        if row.wildcard:
+        if row.wildcard or row.tool in absent:
             continue
         served = served_by_tool.get(row.tool, frozenset())
         if row.op not in served:
@@ -94,7 +109,11 @@ def check_tier_m_manifest_coverage() -> TierMDriftReport:
                 f"FATAL: tier-M manifest row {row.tool_op!r} has no served operation"
             )
 
-    warnings: list[str] = []
+    warnings: list[str] = [
+        f"WARNING: tier-M coverage skipped for local-only tool {tool!r} "
+        "(module absent in this checkout)"
+        for tool in sorted(absent)
+    ]
     for tool, ops in sorted(served_by_tool.items()):
         if tool not in manifest_tools:
             continue

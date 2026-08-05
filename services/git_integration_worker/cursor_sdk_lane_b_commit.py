@@ -11,6 +11,7 @@ from universal_logging import get_logger
 logger = get_logger(__name__)
 
 _GIT_TIMEOUT_S = 60.0
+_ERROR_LIMIT = 500
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +22,16 @@ class BranchState:
     commits_ahead: int
     merged_into_master: bool
 
+    @property
+    def is_empty(self) -> bool:
+        """True when the branch never diverged from its mint point."""
+        return self.commits_ahead == 0
+
+    @property
+    def safe_to_delete(self) -> bool:
+        """Deletable only when it carries no work, or its work reached master."""
+        return self.is_empty or self.merged_into_master
+
 
 @dataclass(frozen=True, slots=True)
 class SalvageResult:
@@ -29,6 +40,14 @@ class SalvageResult:
     committed: bool
     head_sha: str | None
     commit_sha: str | None = None
+    refused: bool = False
+    error: str | None = None
+
+    @property
+    def short_error(self) -> str:
+        """Single-line proximate cause, safe to embed in a deviation token."""
+        lines = [ln.strip() for ln in (self.error or "").splitlines() if ln.strip()]
+        return (lines[-1] if lines else "unknown")[:120]
 
 
 def is_worktree_dirty(worktree_path: Path) -> bool:
@@ -43,6 +62,14 @@ def is_worktree_dirty(worktree_path: Path) -> bool:
     if proc.returncode != 0:
         return False
     return bool(proc.stdout.strip())
+
+
+def _truncate(text: str, *, limit: int = _ERROR_LIMIT) -> str:
+    """Keep the tail of *text*; git and hook failures name the cause last."""
+    collapsed = text.strip()
+    if len(collapsed) <= limit:
+        return collapsed
+    return "…" + collapsed[-limit:]
 
 
 def _rev_parse(repo_or_wt: Path, ref: str) -> str | None:
@@ -60,7 +87,13 @@ def _rev_parse(repo_or_wt: Path, ref: str) -> str | None:
 
 
 def salvage_commit(worktree_path: Path, *, message: str) -> SalvageResult:
-    """Commit all dirty paths in the worktree; no-op when clean."""
+    """Commit all dirty paths in the worktree; no-op when clean.
+
+    A clean tree and a git-refused commit both yield ``committed=False``; callers
+    that may destroy the worktree must branch on ``refused``, which is set only
+    when work exists and git declined to record it (for example a failing
+    pre-commit hook).
+    """
     wt = worktree_path.resolve()
     head = _rev_parse(wt, "HEAD")
     if not is_worktree_dirty(wt):
@@ -74,12 +107,14 @@ def salvage_commit(worktree_path: Path, *, message: str) -> SalvageResult:
         check=False,
     )
     if add.returncode != 0:
-        logger.warning(
-            "lane_b salvage add failed path=%s err=%s",
-            wt,
-            add.stderr.strip(),
+        err = add.stderr.strip()
+        logger.error("lane_b salvage add refused path=%s err=%s", wt, err)
+        return SalvageResult(
+            committed=False,
+            head_sha=head,
+            refused=True,
+            error=_truncate(err),
         )
-        return SalvageResult(committed=False, head_sha=head)
 
     commit = subprocess.run(
         ["git", "-C", str(wt), "commit", "-m", message],
@@ -92,8 +127,13 @@ def salvage_commit(worktree_path: Path, *, message: str) -> SalvageResult:
         err = commit.stderr.strip() or commit.stdout.strip()
         if "nothing to commit" in err.lower():
             return SalvageResult(committed=False, head_sha=_rev_parse(wt, "HEAD"))
-        logger.warning("lane_b salvage commit failed path=%s err=%s", wt, err)
-        return SalvageResult(committed=False, head_sha=_rev_parse(wt, "HEAD"))
+        logger.error("lane_b salvage commit refused path=%s err=%s", wt, err)
+        return SalvageResult(
+            committed=False,
+            head_sha=_rev_parse(wt, "HEAD"),
+            refused=True,
+            error=_truncate(err),
+        )
 
     commit_sha = _rev_parse(wt, "HEAD")
     return SalvageResult(committed=True, head_sha=commit_sha, commit_sha=commit_sha)
@@ -155,8 +195,10 @@ def branch_state(
             if name:
                 merged_names.add(name)
 
+    # A branch with no commits of its own is an ancestor of master and therefore
+    # appears in ``--merged``; that is "never diverged", not "work reached master".
     return BranchState(
         head_sha=head_sha,
         commits_ahead=commits_ahead,
-        merged_into_master=branch_name in merged_names,
+        merged_into_master=commits_ahead > 0 and branch_name in merged_names,
     )

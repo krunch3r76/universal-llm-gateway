@@ -22,12 +22,16 @@ from services.git_integration_worker.cursor_sdk_lane_b_commit import (
     SalvageResult,
     branch_state,
     commit_on_terminal,
+    salvage_commit,
 )
 from services.git_integration_worker.cursor_sdk_worktree import (
-    mint_dispatch_worktree,
     maybe_prune_worktree_on_terminal,
+    mint_dispatch_worktree,
     prune_dispatch_worktree,
     resolve_master_branch_point,
+)
+from services.git_integration_worker.cursor_sdk_worktree_registry import (
+    lookup_dispatch_worktree,
 )
 
 
@@ -316,3 +320,124 @@ def test_branch_state_counts_since_branch_point(source_repo: Path, tmp_path: Pat
     assert state.commits_ahead >= 1
     assert state.head_sha == _git("rev-parse", branch, cwd=source_repo).stdout.strip()
     assert not state.merged_into_master
+
+
+def _install_refusing_hook(repo: Path, marker: str = "hook-refused-marker") -> None:
+    """Install a pre-commit hook that rejects every commit in repo and worktrees."""
+    hooks = repo / ".git" / "hooks"
+    hooks.mkdir(parents=True, exist_ok=True)
+    hook = hooks / "pre-commit"
+    hook.write_text(f"#!/bin/sh\necho '{marker}' >&2\nexit 1\n", encoding="utf-8")
+    hook.chmod(0o755)
+
+
+def test_salvage_reports_refusal_distinctly_from_clean_tree(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    """A hook-rejected commit is `refused`, not the clean-tree no-op."""
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "s3-refused"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    clean = salvage_commit(wt, message="clean")
+    assert not clean.committed
+    assert not clean.refused
+
+    _install_refusing_hook(source_repo)
+    (wt / "at_risk.py").write_text("only copy\n", encoding="utf-8")
+    refused = salvage_commit(wt, message="dirty")
+    assert not refused.committed
+    assert refused.refused
+    assert "hook-refused-marker" in (refused.error or "")
+    assert "\n" not in refused.short_error
+
+
+def test_prune_fails_closed_when_salvage_refused(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    """Unsalvageable work is never force-removed — the worktree is the only copy."""
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "s3-failclosed"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    branch = f"cursor-sdk/{dispatch_id}"
+    _install_refusing_hook(source_repo)
+    (wt / "at_risk.py").write_text("only copy\n", encoding="utf-8")
+
+    result = prune_dispatch_worktree(
+        dispatch_id=dispatch_id,
+        source_repo=source_repo,
+    )
+    assert not result.pruned
+    assert result.salvage_refused
+    assert result.branch_retained
+    assert (wt / "at_risk.py").read_text(encoding="utf-8") == "only copy\n"
+    assert branch in _git("branch", "--list", branch, cwd=source_repo).stdout
+    assert lookup_dispatch_worktree(dispatch_id=dispatch_id) is not None
+
+
+def test_zero_commit_branch_is_empty_not_merged(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    """`git branch --merged` lists a never-committed branch; that is not merged work."""
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "s3-empty"
+    mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    branch = f"cursor-sdk/{dispatch_id}"
+    merged_listing = _git("branch", "--merged", "master", cwd=source_repo).stdout
+    assert branch in merged_listing
+
+    state = branch_state(
+        source_repo,
+        branch_name=branch,
+        branch_point=resolve_master_branch_point(source_repo),
+    )
+    assert state.is_empty
+    assert not state.merged_into_master
+    assert state.safe_to_delete
+
+
+def test_lane_b_commit_refusal_blocks_shipped_grade(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    """Closeout cannot grade shipped off a tree git refused to commit."""
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "s3-grade"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    (wt / "graded.py").write_text("payload\n", encoding="utf-8")
+    baseline = capture_wt_baseline_with_hashes(wt)
+    assert baseline is not None
+    _install_refusing_hook(source_repo)
+
+    delivery = prepare_closeout_delivery(
+        source_repo=source_repo,
+        binding=_lane_b_binding(_cfg(source_repo, worktree_root), wt),
+        dispatch_id=dispatch_id,
+        outcome=_outcome(),
+        degraded_reason=None,
+        thread_id="t-s3-grade",
+        work_item_ref=None,
+        baseline=baseline,
+        deliverables_expected=True,
+    )
+    payload = json.loads(delivery.body)
+    assert payload["commits_ahead"] == 0
+    assert payload["work_outcome"] != "shipped"
+    assert any(
+        str(token).startswith("divergence:lane_b_commit_refused")
+        for token in payload.get("deviations") or []
+    )

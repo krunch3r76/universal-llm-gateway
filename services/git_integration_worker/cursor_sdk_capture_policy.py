@@ -70,6 +70,10 @@ _DEVIATION_REGISTRY: dict[str, tuple[DeviationDisposition, DegradeTarget]] = {
         DeviationDisposition.HARD_FAIL,
         DegradeTarget.WORK,
     ),
+    "divergence:lane_b_commit_refused:": (
+        DeviationDisposition.HARD_FAIL,
+        DegradeTarget.WORK,
+    ),
 }
 
 

@@ -1442,6 +1442,15 @@ def _assemble_closeout_delivery(
                     commits_ahead=state.commits_ahead,
                     files_committed=files_committed,
                 )
+            if commit_result.refused:
+                # Work exists in the worktree but git declined to record it; the
+                # dispatch cannot be graded as shipped off an uncommitted tree.
+                refusal_token = (
+                    f"divergence:lane_b_commit_refused:{commit_result.short_error}"
+                )
+                deviations = [*(deviations or []), refusal_token]
+                if divergence_reason is None:
+                    divergence_reason = "divergence:lane_b_commit_refused"
             lane_b_lane = "B"
             lane_b_branch = record.branch_name
             lane_b_branch_point = record.branch_point

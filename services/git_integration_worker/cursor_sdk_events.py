@@ -872,6 +872,43 @@ def emit_sdk_lane_b_salvaged(
 
 
 @event_factory
+def SdkLaneBSalvageFailed(  # noqa: N802
+    dispatch_id: str,
+    branch: str,
+    worktree_path: str,
+    error: str | None,
+) -> Event:
+    return Event(
+        signal="sdk.lane_b.salvage_failed",
+        payload={
+            "dispatch_id": dispatch_id,
+            "branch": branch,
+            "worktree_path": worktree_path,
+            "error": error,
+        },
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_salvage_failed(
+    *,
+    dispatch_id: str,
+    branch: str,
+    worktree_path: str,
+    error: str | None,
+) -> None:
+    """Emit when git refuses a salvage commit, leaving work only in the worktree."""
+    _emit(
+        SdkLaneBSalvageFailed(
+            dispatch_id=dispatch_id,
+            branch=branch,
+            worktree_path=worktree_path,
+            error=error,
+        )
+    )
+
+
+@event_factory
 def SdkLaneBBranchRetained(  # noqa: N802
     dispatch_id: str,
     branch: str,
