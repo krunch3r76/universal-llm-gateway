@@ -1266,6 +1266,17 @@ class CursorDispatchLedger:
                 lease_key=row["lease_key"], source_repo=row["source_repo"]
             )
 
+    def count_active_write_leases(
+        self,
+        *,
+        lease_key: str | None = None,
+        source_repo: str | None = None,
+    ) -> int:
+        """Live write-capable dispatches holding a lease for this checkout key."""
+        key = _resolve_lease_key(lease_key=lease_key, source_repo=source_repo)
+        with self._connect() as conn:
+            return len(_fetch_active_holders_conn(conn, lease_key=key))
+
     def lease_snapshot(
         self,
         *,

@@ -266,9 +266,10 @@ def _init_repo(tmp_path: Path) -> Path:
     return repo
 
 
-def _stub_ledger(monkeypatch, baseline):
+def _stub_ledger(monkeypatch, baseline, *, live_leases: int = 1):
     ledger = MagicMock()
     ledger.read_wt_baseline.return_value = baseline
+    ledger.count_active_write_leases.return_value = live_leases
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_revert.CursorDispatchLedger."
         "instance",
@@ -300,6 +301,45 @@ def test_revert_fails_closed_without_baseline(tmp_path, monkeypatch):
     assert report.ok is False
     assert report.reason == "baseline_unavailable"
     assert report.restored == ()
+
+
+def test_revert_refuses_when_multiple_write_leases_live(tmp_path, monkeypatch):
+    from services.git_integration_worker.cursor_sdk_closeout import (
+        capture_wt_baseline_with_hashes,
+    )
+
+    repo = _init_repo(tmp_path)
+    baseline = capture_wt_baseline_with_hashes(repo)
+    assert baseline is not None
+    _stub_ledger(monkeypatch, baseline, live_leases=2)
+    (repo / "tracked.py").write_text("episode wrote this\n")
+
+    report = revert_dispatch_writes(dispatch_id="auto-live1", source_repo=repo)
+
+    assert report.ok is False
+    assert report.reason == "multiple_write_leases_live"
+    assert report.restored == ()
+    assert report.unrevertable == ("tracked.py",)
+    assert (repo / "tracked.py").read_text() == "episode wrote this\n"
+
+
+def test_revert_single_lease_equivalence_unchanged(tmp_path, monkeypatch):
+    from services.git_integration_worker.cursor_sdk_closeout import (
+        capture_wt_baseline_with_hashes,
+    )
+
+    repo = _init_repo(tmp_path)
+    baseline = capture_wt_baseline_with_hashes(repo)
+    assert baseline is not None
+    _stub_ledger(monkeypatch, baseline, live_leases=1)
+    (repo / "tracked.py").write_text("episode wrote this\n")
+
+    report = revert_dispatch_writes(dispatch_id="auto-live1", source_repo=repo)
+
+    assert report.ok is True
+    assert report.restored == ("tracked.py",)
+    assert (repo / "tracked.py").read_text() == "original\n"
+    assert report.reason is None
 
 
 def test_preamble_names_void_episode_and_residue():

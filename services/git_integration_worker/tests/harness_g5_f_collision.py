@@ -68,6 +68,7 @@ def provoke_f5() -> int:
 
         ledger = MagicMock()
         ledger.read_wt_baseline.return_value = baseline_a
+        ledger.count_active_write_leases.return_value = 2
 
         class _Ledger:
             @classmethod

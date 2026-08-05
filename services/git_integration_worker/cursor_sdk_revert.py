@@ -116,8 +116,31 @@ def revert_dispatch_writes(*, dispatch_id: str, source_repo: Path) -> RevertRepo
             unrevertable=(),
             reason="baseline_unavailable",
         )
+    live_leases = CursorDispatchLedger.instance().count_active_write_leases(
+        source_repo=str(source_repo)
+    )
     change_set, _polarity_deviations = changed_paths(source_repo, baseline)
     candidates = tuple(dict.fromkeys((*change_set.modified, *change_set.deleted)))
+    if live_leases > 1:
+        unreverted = tuple(sorted(set(candidates)))
+        report = RevertReport(
+            dispatch_id=dispatch_id,
+            ok=False,
+            restored=(),
+            created_left=tuple(change_set.created),
+            unrevertable=unreverted,
+            reason="multiple_write_leases_live",
+        )
+        logger.warning(
+            "supersede revert refused dispatch_id=%s live_leases=%d "
+            "unrevertable=%d created_left=%d reason=%s",
+            dispatch_id,
+            live_leases,
+            len(report.unrevertable),
+            len(report.created_left),
+            report.reason,
+        )
+        return report
     in_head = _paths_in_head(source_repo, candidates)
     restored: list[str] = []
     unrevertable: list[str] = [path for path in candidates if path not in in_head]
