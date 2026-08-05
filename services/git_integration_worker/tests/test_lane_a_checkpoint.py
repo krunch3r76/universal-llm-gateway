@@ -308,6 +308,31 @@ def test_compute_checkpoint_deferred_when_dirty_no_commit(
     assert value == "deferred: authored paths not yet path-explicit committed"
 
 
+def test_compute_checkpoint_committed_with_pending_after_lane_commit(
+    tmp_path: Path,
+) -> None:
+    """AC2b — lane commit plus dirty authorship yields (+M pending), not silent commit."""
+    dispatch_id = "auto-6655-mixed"
+    _init_git_repo(tmp_path)
+    admit = _commit(tmp_path, "seed.py")
+    lane_sha = _commit(tmp_path, "fix.py", dispatch_id=dispatch_id)
+    baseline = {"admit_head": admit}
+    pending_paths = ("pending.py",)
+    with patch(
+        "services.git_integration_worker.cursor_auto.lane_a_checkpoint.authored_paths_for_dispatch",
+        return_value=pending_paths,
+    ):
+        value = compute_lane_a_checkpoint_value(
+            source_repo=tmp_path,
+            dispatch_id=dispatch_id,
+            baseline=baseline,
+        )
+    path_count = len(paths_in_commit(tmp_path, lane_sha))
+    assert value == (
+        f"committed {lane_sha} paths={path_count} (+{len(pending_paths)} pending)"
+    )
+
+
 def test_authored_paths_for_dispatch_signature_unchanged() -> None:
     """AC5 — authored_paths_for_dispatch call sites and semantics unchanged."""
     import inspect
