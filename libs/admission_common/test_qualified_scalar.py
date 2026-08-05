@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+import admission_common.qualified_scalar as qualified_scalar_module
 from admission_common.qualified_scalar import (
     PUBLICATION_BUILDER_CENSUS,
     AbsenceSemantics,
@@ -123,9 +124,27 @@ def test_authority_class_closeout_values_preserved() -> None:
     assert AuthorityClass.SELF_REPORTED.value == "self_reported"
 
 
-def test_builder_census_six_builders_one_sealed_five_pending() -> None:
-    assert len(PUBLICATION_BUILDER_CENSUS) == 6
+def test_builder_census_one_sealed_eight_pending() -> None:
+    assert len(PUBLICATION_BUILDER_CENSUS) == 9
     sealed = [k for k, v in PUBLICATION_BUILDER_CENSUS.items() if v == "sealed"]
     pending = [k for k, v in PUBLICATION_BUILDER_CENSUS.items() if v == "pending"]
     assert sealed == ["execution_store.active_work_snapshot"]
-    assert len(pending) == 5
+    assert len(pending) == 8
+
+
+_KNOWN_BYPASS_BUILDERS = (
+    "mcp_drain.active_work_snapshot",
+    "giw.routes.integrate.get_active_work",
+    "giw.routes.cursor_sdk.cursor_concurrency_stats",
+)
+
+
+def test_publication_builder_census_covers_known_bypass_builders() -> None:
+    for key in _KNOWN_BYPASS_BUILDERS:
+        assert key in PUBLICATION_BUILDER_CENSUS, f"missing census entry for {key!r}"
+        assert PUBLICATION_BUILDER_CENSUS[key] == "pending"
+
+
+def test_authority_is_documented_as_producer_attested() -> None:
+    assert "producer-attested" in AuthorityClass.__doc__.lower()
+    assert "producer-attested" in qualified_scalar_module.__doc__.lower()

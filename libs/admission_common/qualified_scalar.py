@@ -1,8 +1,12 @@
 """Qualified scalar vocabulary and per-surface seal gate (default-deny).
 
 Every scoped or projected numeric/boolean on an agent-facing surface must declare
-``scope`` and ``authority``. ``seal`` is the terminal admission gate: undeclared bare
-scalars raise at build time instead of publishing an unqualified fact.
+``scope`` and ``authority``. ``authority`` labels are **producer-attested**: the
+emit site declares how the value was obtained; ``seal()`` checks sibling presence,
+not semantic truth of the label.
+
+``seal`` is the terminal admission gate: undeclared bare scalars raise at build
+time instead of publishing an unqualified fact.
 """
 
 from __future__ import annotations
@@ -13,7 +17,11 @@ from typing import Any
 
 
 class AuthorityClass(StrEnum):
-    """How a scalar's value was obtained — shared by wire scalars and closeout surfaces."""
+    """How a scalar's value was obtained — shared by wire scalars and closeout surfaces.
+
+    Labels are **producer-attested** (emit-site declaration). ``seal()`` verifies
+    qualifier siblings are present; it does not verify the authority claim is true.
+    """
 
     OBSERVED = "observed"
     RECORDED = "recorded"
@@ -122,7 +130,7 @@ def _is_bare_scalar(value: Any) -> bool:
     return isinstance(value, (int, float))
 
 
-# Six publication builders (F2 recon) — census records seal installation, does not enforce.
+# Publication builders (F2 recon + terra census amendments) — records seal installation, does not enforce.
 PUBLICATION_BUILDER_CENSUS: dict[str, str] = {
     "sdk_dispatch_gate_stats": "pending",
     "concurrency_stats": "pending",
@@ -130,4 +138,7 @@ PUBLICATION_BUILDER_CENSUS: dict[str, str] = {
     "ImplementCloseout.model_dump": "pending",
     "lane_a_checkpoint prose injectors": "pending",
     "PropagationRow._apply_defaults": "pending",
+    "mcp_drain.active_work_snapshot": "pending",
+    "giw.routes.integrate.get_active_work": "pending",
+    "giw.routes.cursor_sdk.cursor_concurrency_stats": "pending",
 }
