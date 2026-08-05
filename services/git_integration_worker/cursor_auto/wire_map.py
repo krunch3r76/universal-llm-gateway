@@ -42,6 +42,11 @@ def format_bindable_models() -> str:
     return f"{wire} (or prefixed: {prefixed})"
 
 
+def format_bindable_efforts() -> str:
+    """Human-readable bindable effort ladder for operator-facing refusal text."""
+    return ", ".join(BINDABLE_EFFORT_VALUES)
+
+
 def _lookup_explicit_model(raw: str) -> str | None:
     """Map bare or ``cursor/``-prefixed hint → canonical ``model_id``."""
     bare = _MODEL_TABLE.get(raw)
@@ -54,6 +59,7 @@ def _lookup_explicit_model(raw: str) -> str | None:
 # Aliases: CDP UI "Extra" / Cursor "Extra High" / GPT "extra-high" → xhigh.
 _EFFORT_LADDER: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
 _EFFORT_VALUES = frozenset(_EFFORT_LADDER)
+BINDABLE_EFFORT_VALUES: tuple[str, ...] = _EFFORT_LADDER
 _EFFORT_ALIASES: dict[str, str] = {
     "extra": "xhigh",
     "extra-high": "xhigh",
@@ -152,6 +158,34 @@ def assess_model_pin(
     return model, None
 
 
+def assess_effort_pin(
+    wire_desired_effort: str | None,
+    *,
+    body: str,
+) -> tuple[dict[str, Any], str | None]:
+    """Resolve wire effort pin and return ``(effort, block_reason)``.
+
+    ``block_reason`` is set when admit must refuse: a body-level effort line
+    (``effort:``, ``reasoning_effort:``, or ``model_knobs`` effort) — body form
+    is not honored; use ``desired_effort`` on ``agent_bus.request``.
+    """
+    from services.git_integration_worker.cursor_auto.directive import body_effort_pin
+
+    body_pin = body_effort_pin(body)
+    if body_pin is not None:
+        effort = resolve_desired_effort(wire_desired_effort)
+        return (
+            effort,
+            (
+                f"body effort:{body_pin!r} ignored — effort pin is wire-only; "
+                f"set desired_effort on agent_bus.request "
+                f"(bindable: {format_bindable_efforts()})"
+            ),
+        )
+    effort = resolve_desired_effort(wire_desired_effort)
+    return effort, None
+
+
 def admit_model_override_rule_line(model: dict[str, Any]) -> str | None:
     """Surface resolve-path ``notes`` when requested model id ≠ resolved id.
 
@@ -168,6 +202,24 @@ def admit_model_override_rule_line(model: dict[str, Any]) -> str | None:
     if not notes:
         return None
     return f"model_override_rule: {notes}"
+
+
+def admit_effort_override_rule_line(effort: dict[str, Any]) -> str | None:
+    """Surface resolve-path ``notes`` when requested effort ≠ resolved effort.
+
+    Reads ``effort["notes"]`` authored by ``resolve_desired_effort`` — never
+    reconstructs rule text at print time (symmetric to ``admit_model_override_rule_line``).
+    """
+    requested = str(effort.get("requested") or "").strip()
+    resolved = str(effort.get("resolved_effort") or "").strip()
+    if not requested or not resolved:
+        return None
+    if requested.casefold() == resolved.casefold():
+        return None
+    notes = effort.get("notes")
+    if not notes:
+        return None
+    return f"effort_override_rule: {notes}"
 
 
 def admit_model_pin_flags(

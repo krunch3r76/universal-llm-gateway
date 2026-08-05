@@ -27,6 +27,14 @@ _CONTRACT_RE = re.compile(r"^contract:\s*(\S+)", re.MULTILINE | re.IGNORECASE)
 _DESIRED_MODEL_RE = re.compile(
     r"^desired_model:\s*(\S+)", re.MULTILINE | re.IGNORECASE
 )
+_EFFORT_RE = re.compile(r"^effort:\s*(\S+)", re.MULTILINE | re.IGNORECASE)
+_REASONING_EFFORT_RE = re.compile(
+    r"^reasoning_effort:\s*(\S+)", re.MULTILINE | re.IGNORECASE
+)
+_MODEL_KNOBS_EFFORT_RE = re.compile(
+    r"""model_knobs\s*=\s*\{[^}]*["']?effort["']?\s*:\s*["']?([^"'}\s,]+)""",
+    re.IGNORECASE,
+)
 _REQUIRE_ATTENDED_RE = re.compile(
     r"^[ \t]*(?:[-*][ \t]+)?require_attended:\s*(true|yes|1)\b",
     re.MULTILINE | re.IGNORECASE,
@@ -198,6 +206,19 @@ def body_desired_model(body: str) -> str | None:
     if match is None:
         return None
     return match.group(1).strip().lower()
+
+
+def body_effort_pin(body: str) -> str | None:
+    """Return body-level effort hint when present (wire-only contract).
+
+    Matches ``effort:``, ``reasoning_effort:``, or ``model_knobs={\"effort\": ...}``.
+    """
+    text = body or ""
+    for pattern in (_EFFORT_RE, _REASONING_EFFORT_RE, _MODEL_KNOBS_EFFORT_RE):
+        match = pattern.search(text)
+        if match is not None:
+            return match.group(1).strip().lower()
+    return None
 
 
 def has_vision_field(body: str) -> bool:

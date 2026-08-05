@@ -15,8 +15,10 @@ from services.git_integration_worker.cursor_auto.gate_serialize import (
 )
 from services.git_integration_worker.cursor_auto.liveness import AutoLivenessRegistry
 from services.git_integration_worker.cursor_auto.wire_map import (
+    admit_effort_override_rule_line,
     admit_model_override_rule_line,
     admit_model_pin_flags,
+    assess_effort_pin,
     assess_model_pin,
     resolve_contract_disposition,
     resolve_desired_effort,
@@ -80,6 +82,122 @@ def test_assess_model_pin_blocks_body_desired_model():
     assert block is not None
     assert "wire-only" in block
     assert model["resolved_model_id"] == "cursor/grok-4.5"
+
+
+def test_assess_effort_pin_blocks_body_effort_line():
+    effort, block = assess_effort_pin(
+        "medium",
+        body="TYPE: DIRECTIVE\neffort: high\n",
+    )
+    assert block is not None
+    assert "wire-only" in block
+    assert "high" in block
+    assert effort["resolved_effort"] == "medium"
+
+
+def test_assess_effort_pin_blocks_body_model_knobs_effort():
+    effort, block = assess_effort_pin(
+        "medium",
+        body='TYPE: DIRECTIVE\nmodel_knobs={"effort": "high"}\n',
+    )
+    assert block is not None
+    assert "wire-only" in block
+
+
+def test_assess_effort_pin_honors_wire_only():
+    effort, block = assess_effort_pin(
+        "high",
+        body="TYPE: DIRECTIVE\ndensity: dense\n## Scope\nfoo\n",
+    )
+    assert block is None
+    assert effort["resolved_effort"] == "high"
+
+
+def test_admit_effort_override_rule_line_alias_normalization():
+    effort = resolve_desired_effort("extra")
+    line = admit_effort_override_rule_line(effort)
+    assert line is not None
+    assert line.startswith("effort_override_rule:")
+    assert effort["notes"] in line
+
+
+def test_admit_effort_override_rule_line_unchanged_when_requested_equals_resolved():
+    effort = resolve_desired_effort("high")
+    assert effort["requested"] == effort["resolved_effort"]
+    assert admit_effort_override_rule_line(effort) is None
+
+
+def test_process_job_blocks_body_effort_pin(monkeypatch):
+    import asyncio
+    import json
+    from unittest.mock import AsyncMock, MagicMock
+
+    from services.git_integration_worker.cursor_auto.handler import process_job
+    from services.git_integration_worker.cursor_auto.queue import AutoJob
+
+    bus = AsyncMock()
+    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+
+    job = AutoJob(
+        job_id="j-bad-effort",
+        thread_id="6655",
+        turn_number=1,
+        subject="bad effort",
+        body="TYPE: DIRECTIVE\ndensity: dense\n## Scope\nfoo\nvision: test\neffort: high\n",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="investigate",
+    )
+
+    result = asyncio.run(process_job(job, bus=bus))
+    assert result["terminal_status"] == "status:blocked"
+    payload = json.loads(bus.reply.await_args.kwargs["body"])
+    assert payload["reason"] == "effort_pin_refused"
+    assert "wire-only" in payload["summary"]
+
+
+def test_process_job_admit_surfaces_effort_override_rule(monkeypatch):
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    from services.git_integration_worker.cursor_auto.handler import process_job
+    from services.git_integration_worker.cursor_auto.queue import AutoJob
+
+    bus = AsyncMock()
+    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.handler.submit_nested_dispatch",
+        AsyncMock(return_value={"ok": False, "error": "stop"}),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.gate_serialize.sdk_dispatch_gate_stats",
+        lambda **_: {"active": 0, "queued": 0, "limit": 1},
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.admit_gates.fetch_thread_turns",
+        AsyncMock(return_value=[]),
+    )
+
+    job = AutoJob(
+        job_id="j-admit-effort-rule",
+        thread_id="6654",
+        turn_number=1,
+        subject="admit effort rule",
+        body="TYPE: DIRECTIVE\ndensity: dense\n## Scope\nfoo\nvision: test\n",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="extra",
+        contract="investigate",
+    )
+
+    asyncio.run(process_job(job, bus=bus))
+    admit_body = bus.reply.await_args_list[0].kwargs["body"]
+    effort = resolve_desired_effort("extra")
+    assert "effort_override_rule:" in admit_body
+    assert effort["notes"] in admit_body
 
 
 def test_admit_model_override_rule_line_auto_ladder():

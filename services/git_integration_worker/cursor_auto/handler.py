@@ -76,12 +76,14 @@ from services.git_integration_worker.cursor_auto.supersede import (
     settle_supersede,
 )
 from services.git_integration_worker.cursor_auto.wire_map import (
+    BINDABLE_EFFORT_VALUES,
+    admit_effort_override_rule_line,
     admit_model_override_rule_line,
     admit_model_pin_flags,
+    assess_effort_pin,
     assess_model_pin,
     compose_model_knobs,
     resolve_contract_disposition,
-    resolve_desired_effort,
     resolve_handoff_contract,
 )
 from services.git_integration_worker.cursor_bus import CursorBusClient
@@ -158,7 +160,24 @@ async def process_job(
             },
             failed=True,
         )
-    effort = resolve_desired_effort(job.desired_effort)
+    effort, effort_block = assess_effort_pin(job.desired_effort, body=job.body)
+    if effort_block is not None:
+        return await post_terminal_status(
+            job,
+            client=client,
+            queue=queue,
+            summary=effort_block,
+            disposition="blocked",
+            contract=contract,
+            terminal_status="status:blocked",
+            payload={
+                "summary": effort_block,
+                "reason": "effort_pin_refused",
+                "requested_effort": effort.get("requested"),
+                "bindable": list(BINDABLE_EFFORT_VALUES),
+            },
+            failed=True,
+        )
     contract_info = resolve_contract_disposition(contract)
     handoff_contract = resolve_handoff_contract(contract)
     if directive is not None or contract in _NESTED_CONTRACTS or contract in {
@@ -193,6 +212,9 @@ async def process_job(
     override_rule = admit_model_override_rule_line(model)
     if override_rule is not None:
         base_admit_body += f"\n{override_rule}"
+    effort_rule = admit_effort_override_rule_line(effort)
+    if effort_rule is not None:
+        base_admit_body += f"\n{effort_rule}"
     pin_flags = admit_model_pin_flags(model, effort)
     if pin_flags:
         base_admit_body += "\nflags: " + "; ".join(pin_flags)
