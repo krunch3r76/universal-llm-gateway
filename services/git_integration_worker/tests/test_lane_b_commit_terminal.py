@@ -382,6 +382,78 @@ def test_prune_fails_closed_when_salvage_refused(
     assert lookup_dispatch_worktree(dispatch_id=dispatch_id) is not None
 
 
+def _commit_branch_file(
+    source_repo: Path, worktree_root: Path, *, dispatch_id: str, name: str, body: str
+) -> tuple[str, str]:
+    """Mint a worktree, write one file, commit it; return (branch, branch_point)."""
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    branch = f"cursor-sdk/{dispatch_id}"
+    branch_point = resolve_master_branch_point(source_repo)
+    (wt / name).write_text(body, encoding="utf-8")
+    commit_on_terminal(
+        dispatch_id=dispatch_id,
+        worktree_path=wt,
+        branch_name=branch,
+    )
+    return branch, branch_point
+
+
+def test_content_landed_branch_is_reclaimable(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    """Work that reached master by cherry-pick is landed, though ancestry denies it."""
+    branch, branch_point = _commit_branch_file(
+        source_repo,
+        tmp_path / "worktrees",
+        dispatch_id="s3-cherry",
+        name="landed.py",
+        body="shipped\n",
+    )
+    tip = _git("rev-parse", branch, cwd=source_repo).stdout.strip()
+    # Master moves on first, so the replay lands under a genuinely different SHA.
+    (source_repo / "unrelated.md").write_text("moved on\n", encoding="utf-8")
+    _git("add", "unrelated.md", cwd=source_repo)
+    _git("commit", "-m", "unrelated master work", cwd=source_repo)
+    _git("cherry-pick", tip, cwd=source_repo)
+    master_tip = _git("rev-parse", "master", cwd=source_repo).stdout.strip()
+    assert master_tip != tip
+
+    state = branch_state(
+        source_repo,
+        branch_name=branch,
+        branch_point=branch_point,
+    )
+    assert not state.merged_into_master
+    assert state.content_landed
+    assert state.safe_to_delete
+
+
+def test_unique_work_branch_is_never_reclaimed(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    """A branch holding work absent from master stays retained."""
+    branch, branch_point = _commit_branch_file(
+        source_repo,
+        tmp_path / "worktrees",
+        dispatch_id="s3-unique",
+        name="only_copy.py",
+        body="not on master\n",
+    )
+    state = branch_state(
+        source_repo,
+        branch_name=branch,
+        branch_point=branch_point,
+    )
+    assert state.commits_ahead >= 1
+    assert not state.merged_into_master
+    assert not state.content_landed
+    assert not state.safe_to_delete
+
+
 def test_zero_commit_branch_is_empty_not_merged(
     source_repo: Path, tmp_path: Path
 ) -> None:

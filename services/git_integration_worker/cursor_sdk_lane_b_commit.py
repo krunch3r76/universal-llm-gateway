@@ -21,6 +21,7 @@ class BranchState:
     head_sha: str | None
     commits_ahead: int
     merged_into_master: bool
+    content_landed: bool = False
 
     @property
     def is_empty(self) -> bool:
@@ -30,7 +31,7 @@ class BranchState:
     @property
     def safe_to_delete(self) -> bool:
         """Deletable only when it carries no work, or its work reached master."""
-        return self.is_empty or self.merged_into_master
+        return self.is_empty or self.merged_into_master or self.content_landed
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,8 +198,40 @@ def branch_state(
 
     # A branch with no commits of its own is an ancestor of master and therefore
     # appears in ``--merged``; that is "never diverged", not "work reached master".
+    merged_into_master = commits_ahead > 0 and branch_name in merged_names
+
+    content_landed = False
+    if commits_ahead > 0 and not merged_into_master:
+        content_landed = _patches_present_in_master(repo, branch_name=branch_name)
+
     return BranchState(
         head_sha=head_sha,
         commits_ahead=commits_ahead,
-        merged_into_master=commits_ahead > 0 and branch_name in merged_names,
+        merged_into_master=merged_into_master,
+        content_landed=content_landed,
     )
+
+
+def _patches_present_in_master(repo: Path, *, branch_name: str) -> bool:
+    """True when every branch commit has a patch-equivalent already on master.
+
+    Ancestry alone misses work that reached master by rebase or cherry-pick: the
+    branch keeps a distinct SHA forever and would otherwise be retained for good.
+    Any error, timeout, or unrecognised line means "not proven landed", so the
+    caller retains the branch.
+    """
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "cherry", "master", branch_name],
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT_S,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return False
+
+    lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+    if not lines:
+        return False
+    # "-" marks a commit whose patch is already upstream; "+" marks unique work.
+    return all(line.startswith("- ") for line in lines)
