@@ -184,13 +184,12 @@ def _discover_private_tools(
     import inspect
     import pkgutil
 
-    from tools.local._life_private_allowlist import (  # noqa: PLC0415
-        LIFE_PRIVATE_TOOL_MODULES,
-    )
-
     registered: list[str] = []
     try:
         import tools.local as pkg  # noqa: PLC0415
+        from tools.local._life_private_allowlist import (  # noqa: PLC0415
+            LIFE_PRIVATE_TOOL_MODULES,
+        )
     except ImportError:
         logger.info("No tools.local package found — private tools disabled")
         return registered
