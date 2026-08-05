@@ -72,14 +72,14 @@ def resolve_desired_model(
 ) -> dict[str, Any]:
     """Map request ``desired_model`` hint → resolved ``model_id`` + notes.
 
-    ``auto`` (default) picks by contract: answer→composer, investigate→grok,
+    ``auto`` (default) picks by contract: answer→grok, investigate→grok,
     implement→composer, verify→composer. Explicit hints are honored and reported.
     Opus is never the auto default (lean-context implement ladder = composer).
     """
     raw = (desired_model or "auto").strip().lower() or "auto"
     if raw == "auto":
         by_contract = {
-            "answer": "cursor/composer-2.5",
+            "answer": "cursor/grok-4.5",
             "confer": "cursor/grok-4.5",
             "investigate": "cursor/grok-4.5",
             "implement": "cursor/composer-2.5",

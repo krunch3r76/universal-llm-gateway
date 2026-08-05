@@ -27,8 +27,16 @@ from services.git_integration_worker.cursor_auto.wire_map import (
 
 def test_wire_map_auto_by_contract():
     assert (
+        resolve_desired_model("auto", contract="answer")["resolved_model_id"]
+        == "cursor/grok-4.5"
+    )
+    assert (
         resolve_desired_model("auto", contract="investigate")["resolved_model_id"]
         == "cursor/grok-4.5"
+    )
+    assert (
+        resolve_desired_model("auto", contract="implement")["resolved_model_id"]
+        == "cursor/composer-2.5"
     )
     assert (
         resolve_desired_model("opus-5")["resolved_model_id"]
