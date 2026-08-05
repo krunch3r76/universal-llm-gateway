@@ -47,9 +47,9 @@ def run_hygiene_once() -> dict[str, Any]:
 def _sync_notify_pager(subject: str, body: str) -> bool:
     """Best-effort pager for TTL alarm — returns True when notify reports sent."""
     try:
-        from pager_notify.client import notify_pager
-
         import asyncio
+
+        from pager_notify.client import notify_pager
 
         loop = asyncio.new_event_loop()
         try:
@@ -107,10 +107,13 @@ class RegistryHygieneLoop:
                         len(summary["removed_profiles"]),
                     )
                 scan_summary = await asyncio.to_thread(run_orphan_scan_once)
-                if scan_summary["matched_count"]:
+                if scan_summary["matched_count"] or scan_summary.get("closable_count"):
                     logger.info(
-                        "cdp registry orphan_scan matched_count=%s ports_examined=%s",
+                        "cdp registry orphan_scan matched_count=%s closable_count=%s "
+                        "protected_count=%s ports_examined=%s",
                         scan_summary["matched_count"],
+                        scan_summary.get("closable_count", 0),
+                        scan_summary.get("protected_count", 0),
                         scan_summary["ports_examined"],
                     )
             except asyncio.CancelledError:

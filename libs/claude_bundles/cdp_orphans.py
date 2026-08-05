@@ -11,6 +11,12 @@ from pathlib import Path
 from typing import Any
 
 from claude_bundles import cdp_lane, cdp_registry
+from claude_bundles.cdp_orphan_cse_classify import (
+    CseClassification,
+    CseTarget,
+    classify_port_cse_targets,
+    normalize_cse_url,
+)
 
 LIVENESS_AUTHORITY_ATTACHMENT_ONLY = "attachment_only"
 
@@ -34,6 +40,7 @@ class Orphan:
     profile: Path | None
     has_live_cse: bool
     uptime_s: float | None
+    cse_targets: tuple[CseTarget, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -222,6 +229,13 @@ def find_orphans() -> OrphanScanResult:
                 )
             )
             continue
+        page_list = _fetch_json(f"http://127.0.0.1:{live.port}/json/list")
+        cse_targets = classify_port_cse_targets(
+            live.port,
+            profile=live.profile,
+            page_list=page_list,
+            fetch_json=_fetch_json,
+        )
         matched.append(
             Orphan(
                 port=live.port,
@@ -229,6 +243,7 @@ def find_orphans() -> OrphanScanResult:
                 profile=live.profile,
                 has_live_cse=live.has_live_cse,
                 uptime_s=_process_uptime_s(pid) if pid is not None else None,
+                cse_targets=cse_targets,
             )
         )
     result = OrphanScanResult(
@@ -242,10 +257,21 @@ def find_orphans() -> OrphanScanResult:
     return result
 
 
+def _cse_target_as_dict(target: CseTarget) -> dict[str, Any]:
+    return asdict(target)
+
+
 def orphan_as_dict(orphan: Orphan) -> dict[str, Any]:
     d = asdict(orphan)
     if orphan.profile is not None:
         d["profile"] = str(orphan.profile)
+    d["cse_targets"] = [_cse_target_as_dict(t) for t in orphan.cse_targets]
+    d["closable_count"] = sum(
+        1 for t in orphan.cse_targets if t.classification == "closable"
+    )
+    d["protected_count"] = sum(
+        1 for t in orphan.cse_targets if t.classification == "protected"
+    )
     return d
 
 
@@ -257,6 +283,9 @@ def _rejected_as_dict(item: RejectedPort) -> dict[str, Any]:
 
 
 def orphan_scan_as_dict(scan: OrphanScanResult) -> dict[str, Any]:
+    matched_dicts = [orphan_as_dict(o) for o in scan.matched]
+    closable_total = sum(d.get("closable_count", 0) for d in matched_dicts)
+    protected_total = sum(d.get("protected_count", 0) for d in matched_dicts)
     return {
         "ports_live": scan.ports_live,
         "ports_skipped_registered": scan.ports_skipped_registered,
@@ -264,7 +293,11 @@ def orphan_scan_as_dict(scan: OrphanScanResult) -> dict[str, Any]:
         "matched_count": len(scan.matched),
         "rejected_count": len(scan.rejected),
         "unevaluable_count": len(scan.unevaluable),
-        "matched": [orphan_as_dict(o) for o in scan.matched],
+        "closable_count": closable_total,
+        "protected_count": protected_total,
+        "cse_classification": "scan_ephemeral",
+        "reclaim_enabled": False,
+        "matched": matched_dicts,
         "rejected": [_rejected_as_dict(r) for r in scan.rejected],
         "unevaluable": [asdict(u) for u in scan.unevaluable],
     }
@@ -305,3 +338,22 @@ def list_surface_payload() -> dict[str, Any]:
         "orphan_scan": orphan_scan_as_dict(scan),
         "liveness_authority": LIVENESS_AUTHORITY_ATTACHMENT_ONLY,
     }
+
+
+__all__ = [
+    "CseClassification",
+    "CseTarget",
+    "LivePort",
+    "Orphan",
+    "OrphanScanResult",
+    "RejectedPort",
+    "UnevaluablePort",
+    "find_orphans",
+    "is_primary_profile",
+    "list_surface_payload",
+    "normalize_cse_url",
+    "orphan_as_dict",
+    "orphan_scan_as_dict",
+    "probe_live_ports",
+    "registered_lane_dicts",
+]

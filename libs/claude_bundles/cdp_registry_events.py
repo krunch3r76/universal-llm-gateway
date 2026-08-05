@@ -97,6 +97,8 @@ def cdp_port_orphan_scan(
     matched_count: int,
     rejected_count: int,
     unevaluable_count: int,
+    closable_count: int = 0,
+    protected_count: int = 0,
 ) -> Event:
     return Event(
         signal="cdp.port.orphan_scan",
@@ -109,6 +111,9 @@ def cdp_port_orphan_scan(
             "matched_count": matched_count,
             "rejected_count": rejected_count,
             "unevaluable_count": unevaluable_count,
+            "closable_count": closable_count,
+            "protected_count": protected_count,
+            "reclaim_enabled": False,
         },
     )
 

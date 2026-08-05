@@ -11,7 +11,6 @@ from typing import Any, Literal
 from claude_bundles.project_ask import read_archive_execution_id
 
 from cdp_ask.structural_quiet import (
-    STRUCTURAL_QUIET_SAMPLES,
     StructuralQuietTracker,
 )
 
@@ -102,11 +101,9 @@ def archive_stamp_allows_content_proof(
 
 def page_idle_from_state(state: dict[str, Any]) -> bool:
     """Derive turn-idle from a harvest triple — any active signal means not idle."""
-    return not (
-        state.get("streaming")
-        or state.get("stop")
-        or state.get("tool_pause")
-    )
+    from claude_bundles.cse_idle_probe import page_idle_from_harvest_state
+
+    return page_idle_from_harvest_state(state)
 
 
 async def advance_ladder_from_harvest(

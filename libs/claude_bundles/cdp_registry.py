@@ -559,7 +559,25 @@ def reclaim_best_effort() -> None:
 
 
 def log_orphan_scan(scan: Any) -> None:
-    """Emit orphan-scan observation event on every scan."""
+    """Emit orphan-scan observation event on every scan.
+
+    ``closable`` / ``protected`` classifications are **scan-ephemeral** (S1/S2):
+    they appear in ``orphan_scan_as_dict`` output and are not persisted on
+    registry rows. S3 ``cdp_lane_reaper`` consumes fresh scan dicts when reclaim
+    is flag-enabled; default reclaim remains OFF (AC4).
+    """
+    closable = sum(
+        1
+        for orphan in scan.matched
+        for target in getattr(orphan, "cse_targets", ())
+        if getattr(target, "classification", None) == "closable"
+    )
+    protected = sum(
+        1
+        for orphan in scan.matched
+        for target in getattr(orphan, "cse_targets", ())
+        if getattr(target, "classification", None) == "protected"
+    )
     _events.emit(
         _events.cdp_port_orphan_scan(
             ports_live=scan.ports_live,
@@ -568,6 +586,8 @@ def log_orphan_scan(scan: Any) -> None:
             matched_count=len(scan.matched),
             rejected_count=len(scan.rejected),
             unevaluable_count=len(scan.unevaluable),
+            closable_count=closable,
+            protected_count=protected,
         )
     )
 

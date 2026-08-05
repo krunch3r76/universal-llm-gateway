@@ -123,6 +123,14 @@ class ExecutionStore:
                 if rec.registration_id and rec.status in {"pending", "running"}
             }
 
+    def running_registration_ids_snapshot(self) -> set[str]:
+        """Best-effort sync read for orphan-scan attach ladder (no await)."""
+        return {
+            rec.registration_id
+            for rec in self._records.values()
+            if rec.registration_id and rec.status in {"pending", "running"}
+        }
+
     def _live_cse_count(self) -> int:
         now = time.time()
         cached = self._live_cse_cache
