@@ -93,6 +93,9 @@ def test_run_orphan_scan_once_emits_event_without_registry_mutation(
         "matched_count": 0,
         "rejected_count": 0,
         "unevaluable_count": 0,
+        "closable_count": 0,
+        "protected_count": 0,
+        "reclaim_enabled": False,
     }
     assert summary["ports_live"] == 0
     assert mutations == []

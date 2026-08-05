@@ -537,6 +537,9 @@ def test_orphan_scan_emits_event_every_scan(
         "matched_count": 1,
         "rejected_count": 0,
         "unevaluable_count": 0,
+        "closable_count": 0,
+        "protected_count": 0,
+        "reclaim_enabled": False,
     }
     assert not (isolated_registry / "registry.jsonl").exists()
 
