@@ -18,6 +18,11 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
+# Allow `python …/harness_g5_f_collision.py` from any cwd.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 
 def _init_repo(root: Path) -> Path:
     repo = root / "repo"
