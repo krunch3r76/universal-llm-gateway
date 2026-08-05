@@ -2,25 +2,61 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
+    compute_lane_a_checkpoint_value,
     derive_tree_residue,
     inject_tree_residue_line,
     probe_authored_path_baseline,
 )
+from services.git_integration_worker.cursor_home import dispatch_git_identity
 from services.git_integration_worker.cursor_sdk_closeout import (
     capture_wt_baseline_with_hashes,
 )
+from services.git_integration_worker.cursor_sdk_git_head import paths_in_commit
 
 pytestmark = pytest.mark.offline
 
 
-def _git(repo: Path, *args: str) -> None:
-    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+def _git(repo: Path, *args: str) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(repo), *args], check=True, capture_output=True
+    )
+    return proc.stdout.decode().strip()
+
+
+def _init_git_repo(path: Path) -> None:
+    _git(path, "init", "-b", "master")
+    _git(path, "config", "user.email", "test@example.com")
+    _git(path, "config", "user.name", "test")
+
+
+def _commit(repo: Path, rel: str, *, dispatch_id: str | None = None) -> str:
+    target = repo / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("# x\n", encoding="utf-8")
+    _git(repo, "add", rel)
+    env = dict(os.environ)
+    cmd = ["git", "-C", str(repo), "commit", "-m", "c"]
+    if dispatch_id is not None:
+        name, email = dispatch_git_identity(dispatch_id)
+        cmd.extend([f"--author={name} <{email}>"])
+        env.update(
+            {
+                "GIT_AUTHOR_NAME": name,
+                "GIT_AUTHOR_EMAIL": email,
+                "GIT_COMMITTER_NAME": name,
+                "GIT_COMMITTER_EMAIL": email,
+            }
+        )
+    subprocess.run(cmd, check=True, capture_output=True, env=env)
+    return _git(repo, "rev-parse", "HEAD")
 
 
 def test_probe_records_baseline_limits() -> None:
@@ -207,3 +243,79 @@ def test_relay_table_projection_preserves_checkpoint_for_gate() -> None:
         require_closeout_type=False,
     )
     assert verdict.ok, verdict.reason
+
+
+def test_compute_checkpoint_committed_when_clean_tree_after_lane_commit(
+    tmp_path: Path,
+) -> None:
+    """AC2 — empty porcelain + lane commit yields committed, not nothing_authored."""
+    dispatch_id = "auto-6655-971"
+    _init_git_repo(tmp_path)
+    admit = _commit(tmp_path, "seed.py")
+    lane_sha = _commit(tmp_path, "fix.py", dispatch_id=dispatch_id)
+    closeout = _git(tmp_path, "rev-parse", "HEAD")
+    baseline = {"admit_head": admit}
+    with patch(
+        "services.git_integration_worker.cursor_auto.lane_a_checkpoint.authored_paths_for_dispatch",
+        return_value=(),
+    ):
+        value = compute_lane_a_checkpoint_value(
+            source_repo=tmp_path,
+            dispatch_id=dispatch_id,
+            baseline=baseline,
+        )
+    path_count = len(paths_in_commit(tmp_path, lane_sha))
+    assert value == f"committed {lane_sha} paths={path_count}"
+
+
+def test_compute_checkpoint_nothing_authored_when_both_empty(
+    tmp_path: Path,
+) -> None:
+    """AC3 — no porcelain and no lane commits stays nothing_authored."""
+    dispatch_id = "auto-nothing"
+    _init_git_repo(tmp_path)
+    admit = _commit(tmp_path, "seed.py")
+    baseline = {"admit_head": admit}
+    with patch(
+        "services.git_integration_worker.cursor_auto.lane_a_checkpoint.authored_paths_for_dispatch",
+        return_value=(),
+    ):
+        value = compute_lane_a_checkpoint_value(
+            source_repo=tmp_path,
+            dispatch_id=dispatch_id,
+            baseline=baseline,
+        )
+    assert value == "nothing_authored"
+
+
+def test_compute_checkpoint_deferred_when_dirty_no_commit(
+    tmp_path: Path,
+) -> None:
+    """AC4 — dirty porcelain without lane commit stays deferred."""
+    dispatch_id = "auto-deferred"
+    _init_git_repo(tmp_path)
+    admit = _commit(tmp_path, "seed.py")
+    baseline = {"admit_head": admit}
+    with patch(
+        "services.git_integration_worker.cursor_auto.lane_a_checkpoint.authored_paths_for_dispatch",
+        return_value=("dirty.py",),
+    ):
+        value = compute_lane_a_checkpoint_value(
+            source_repo=tmp_path,
+            dispatch_id=dispatch_id,
+            baseline=baseline,
+        )
+    assert value == "deferred: authored paths not yet path-explicit committed"
+
+
+def test_authored_paths_for_dispatch_signature_unchanged() -> None:
+    """AC5 — authored_paths_for_dispatch call sites and semantics unchanged."""
+    import inspect
+
+    from services.git_integration_worker.cursor_auto import lane_a_checkpoint
+
+    sig = inspect.signature(lane_a_checkpoint.authored_paths_for_dispatch)
+    assert tuple(sig.parameters) == ("source_repo", "dispatch_id")
+    source = inspect.getsource(lane_a_checkpoint.authored_paths_for_dispatch)
+    assert "read_wt_baseline" in source
+    assert "changed_paths" in source

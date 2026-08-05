@@ -192,8 +192,6 @@ def compute_lane_a_checkpoint_value(
         source_repo=source_repo,
         dispatch_id=dispatch_id,
     )
-    if not authored:
-        return "nothing_authored"
     admit_head = None
     if isinstance(baseline, dict):
         raw_admit = baseline.get("admit_head")
@@ -210,7 +208,9 @@ def compute_lane_a_checkpoint_value(
         sha = lane_refs[0]
         path_count = len(paths_in_commit(source_repo, sha))
         return f"committed {sha} paths={path_count}"
-    return "deferred: authored paths not yet path-explicit committed"
+    if authored:
+        return "deferred: authored paths not yet path-explicit committed"
+    return "nothing_authored"
 
 
 def inject_checkpoint_line(body: str, *, value: str) -> str:
