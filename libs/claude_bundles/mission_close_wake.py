@@ -4,12 +4,21 @@ A mission may not close over an outstanding commission without a named wake
 path (collector, scheduled followup, charter enrollment, or operator_gate).
 ``commissioned, in flight`` alone is an invalid close state — instance 8 of
 the success-shaped-return class (agent-bus:6576 t67).
+
+Wake tokens establish that *someone* is named. For the auto-runnable class
+(plugin install, Customize sync, propagate/restart, continuity hop) a name
+proved insufficient — see :mod:`claude_bundles.mission_close_auto_runnable`,
+which additionally requires a fired commission and refuses ``operator_gate:``
+on work cursor-auto can reach. Only the closeout body is gated on that class;
+the compact debrief payload truncates items and would drop the reference.
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+
+from claude_bundles.mission_close_auto_runnable import check_auto_runnable_items
 
 BEYOND_HEADING = "## Work beyond this close"
 BEYOND_NOTIFY_PREFIX = "Beyond this close:"
@@ -214,6 +223,14 @@ def validate_mission_close_wake(
                 missed_tokens=(_truncate_offending(item),),
                 fix_hint=LAND_IDE_COLLECTOR_FIX_HINT,
             )
+    refusal = check_auto_runnable_items(items)
+    if refusal is not None:
+        return MissionCloseWakeVerdict(
+            ok=False,
+            reason=refusal.reason,
+            missed_tokens=(_truncate_offending(refusal.item),),
+            fix_hint=refusal.fix_hint,
+        )
     return MissionCloseWakeVerdict(ok=True)
 
 

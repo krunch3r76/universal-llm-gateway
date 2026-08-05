@@ -222,6 +222,19 @@ governs who holds the pen, ¬ what is in reach. **Anti-pattern:** closing with "
 install / Customize upload = IDE lead residual" — commission it (`cdp-operator-proxy`
 invariant 24).
 
+**Fire auto-runnable residuals BEFORE you close (BINDING — operator 2026-08-05):** a
+`collector:` label is not a dispatch, and **nothing sweeps collector labels** — so
+plugin install, Customize sync, `propagate` / `sync_restart`, `wait_healthy`, and the
+continuity hop are commissioned **while the stream is still up**, and the
+`## Work beyond this close` bullet **cites** the request turn / `dispatch_id` /
+`restart_intent_id`. Substrate refuses `mission_close_uncommissioned_auto_runnable` and
+`mission_close_operator_gate_for_auto_runnable`. Two corollaries: (1) "restarting mcp
+drops my own connector" is a **mid-mission** constraint — at close the stream ends anyway,
+so fire the restart, then hop after healthy; (2) **Reload Window refreshes the attended
+IDE picker only** — dispatch homes copy `~/.cursor/plugins/` per dispatch, so it never
+gates a plugin edit reaching seats. ¬ "nothing waits on the human except Reload Window"
+while an install sits uncommissioned.
+
 Work posting SOT: `cortex://notes/system/specs/cursor-auto-tick-work-posting.md`
 
 **Skill surface (BINDING):** the skills chipped above are the complete set attachable
