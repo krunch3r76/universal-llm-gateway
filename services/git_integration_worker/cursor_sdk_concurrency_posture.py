@@ -97,7 +97,15 @@ def b_worktree_materialized(
     lease_key: str | None,
     source_repo: str,
 ) -> bool:
-    """True when Lane-B binding has a distinct on-disk worktree path."""
+    """Whether Lane-B worktree binding is satisfied at admit.
+
+    Lane-B: ``True`` only when ``lease_key`` differs from ``source_repo`` and
+    exists on disk; ``False`` when nominal B lacks a materialized worktree.
+
+    Non-B (Lane-A): always ``True`` — vacuous pass ("B worktree gate not
+    applicable"), **not** a claim that an isolated worktree was materialized.
+    Pair with ``lane`` / ``reported_admit_lane`` to interpret stamped rows.
+    """
     if admit_lane != "B":
         return True
     if not lease_key or lease_key == source_repo:
@@ -126,6 +134,7 @@ def stamp_isolation_on_record_json(
     *,
     isolation_materialized: bool,
 ) -> str:
+    """Persist admit-time ``isolation_materialized`` on durable ``record_json``."""
     data = json.loads(record_json) if record_json else {}
     if not isinstance(data, dict):
         data = {}
@@ -134,6 +143,7 @@ def stamp_isolation_on_record_json(
 
 
 def isolation_materialized_from_record_json(record_json: str | None) -> bool | None:
+    """Return stamped ``isolation_materialized`` when present; else ``None``."""
     if not record_json:
         return None
     try:

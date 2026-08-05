@@ -16,6 +16,7 @@ from services.git_integration_worker.cursor_sdk_concurrency_meter import (
     ambient_cause_filtered_stats,
 )
 from services.git_integration_worker.cursor_sdk_concurrency_posture import (
+    b_worktree_materialized,
     reported_admit_lane,
     stamp_isolation_on_record_json,
 )
@@ -62,6 +63,20 @@ def _write_closeout(closeout_root: Path, dispatch_id: str, ambient: bool) -> Non
         f"closeout\n\n{STRUCTURED_CLOSEOUT_FULL_HEADING}\n\n"
         f"{json.dumps(payload, indent=2)}\n",
         encoding="utf-8",
+    )
+
+
+def test_b_worktree_materialized_lane_a_is_vacuous_true(tmp_path: Path) -> None:
+    """Lane-A True is non-B pass, not an on-disk worktree claim."""
+    repo = str(tmp_path / "repo")
+    Path(repo).mkdir()
+    assert (
+        b_worktree_materialized(
+            admit_lane="A",
+            lease_key=repo,
+            source_repo=repo,
+        )
+        is True
     )
 
 

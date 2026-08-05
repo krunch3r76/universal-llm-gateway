@@ -57,7 +57,17 @@ def resolve_isolation_materialized(
     lease_key: str | None = None,
     source_repo: str | None = None,
 ) -> bool:
-    """True when the dispatch ran on a materialized isolated worktree (row-16 gauge)."""
+    """Row-16 isolation gauge — stamped bool replayed for closeout/stats.
+
+    When ``record_json`` carries ``isolation_materialized``, that stamped value
+    wins. Lane-A rows are typically ``True`` (vacuous non-B pass from
+    ``b_worktree_materialized``) or ``False`` (nest on shared master); neither
+    means an on-disk worktree ran. Lane-B: ``True`` = distinct worktree path;
+    ``False`` = nominal B without materialization (reclassified to lane A).
+
+    Unstamped fallback: ``False`` on shared master or missing keys; ``True`` only
+    when ``lease_key`` is a distinct existing directory.
+    """
     from services.git_integration_worker.cursor_sdk_concurrency_posture import (
         isolation_materialized_from_record_json,
     )
