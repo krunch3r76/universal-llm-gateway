@@ -108,6 +108,7 @@ class ImplementCloseout(BaseModel):
     )
     # Lane-B worktree closeout fields (S3) — optional; Lane-A omits.
     lane: Literal["A", "B"] | None = None
+    isolation_materialized: bool | None = None
     branch: str | None = None
     branch_point: str | None = None
     head_sha: str | None = None

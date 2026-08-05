@@ -854,6 +854,7 @@ def build_implement_closeout_body(
     head_sha: str | None = None,
     commits_ahead: int | None = None,
     landed: bool | None = None,
+    isolation_materialized: bool | None = None,
 ) -> str:
     """Build a compact, valid ImplementCloseout JSON turn body.
 
@@ -1021,6 +1022,8 @@ def build_implement_closeout_body(
             payload["effects_manifest"] = manifest_value
         if lane is not None:
             payload["lane"] = lane
+        if isolation_materialized is not None:
+            payload["isolation_materialized"] = isolation_materialized
         if branch is not None:
             payload["branch"] = branch
         if branch_point is not None:
@@ -1457,6 +1460,24 @@ def _assemble_closeout_delivery(
             lane_b_head_sha = state.head_sha
             lane_b_commits_ahead = state.commits_ahead
             lane_b_landed = False
+    reported_lane = binding.lane if binding is not None else None
+    isolation_mat: bool | None = None
+    with CursorDispatchLedger.instance()._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json, lease_key, source_repo FROM cursor_sdk_dispatches "
+            "WHERE dispatch_id = ?",
+            (dispatch_id,),
+        ).fetchone()
+    if row is not None:
+        from services.git_integration_worker.cursor_sdk_capacity_invariant import (
+            resolve_isolation_materialized,
+        )
+
+        isolation_mat = resolve_isolation_materialized(
+            record_json=row["record_json"],
+            lease_key=row["lease_key"],
+            source_repo=row["source_repo"],
+        )
     cortex_authoritative = bool(gate_d_created_rels)
     closeout_head = resolve_git_head(write_tree)
     body = build_implement_closeout_body(
@@ -1492,12 +1513,13 @@ def _assemble_closeout_delivery(
         files_expected=files_expected,
         baseline=baseline,
         deliverables_expected=deliverables_expected,
-        lane=lane_b_lane,
+        lane=lane_b_lane if lane_b_lane is not None else reported_lane,
         branch=lane_b_branch,
         branch_point=lane_b_branch_point,
         head_sha=lane_b_head_sha,
         commits_ahead=lane_b_commits_ahead,
         landed=lane_b_landed,
+        isolation_materialized=isolation_mat,
     )
     if sidecar_appendix:
         appendix = "\n\n## effects_manifest\n\n" + "\n".join(sidecar_appendix)

@@ -168,7 +168,15 @@ def test_resolve_admit_lane_from_record_json() -> None:
             lease_key="/repo",
             source_repo="/repo",
         )
-        == "B"
+        == "A"
+    )
+    assert (
+        resolve_admit_lane(
+            record_json='{"lane":"B","isolation_materialized":false}',
+            lease_key="/repo/worktree",
+            source_repo="/repo",
+        )
+        == "A"
     )
     assert (
         resolve_admit_lane(

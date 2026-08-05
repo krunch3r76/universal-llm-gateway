@@ -646,6 +646,7 @@ class CursorDispatchLedger:
         refuse_if_lease_held: bool = False,
         concurrency_posture: str | None = None,
         write_lease_slot_limit: int = 1,
+        isolation_materialized: bool | None = None,
     ) -> CursorDispatchResponse | None:
         """Durable idempotency (F2). Returns cached admission on hit, None on first
         admitted insert, or a queued ticket when the write-lease is held.
@@ -669,6 +670,15 @@ class CursorDispatchLedger:
             )
 
             record_json = stamp_posture_on_record_json(record_json, concurrency_posture)  # type: ignore[arg-type]
+        if isolation_materialized is not None:
+            from services.git_integration_worker.cursor_sdk_concurrency_posture import (
+                stamp_isolation_on_record_json,
+            )
+
+            record_json = stamp_isolation_on_record_json(
+                record_json,
+                isolation_materialized=isolation_materialized,
+            )
         writer_key = _resolve_lease_key(lease_key=lease_key, source_repo=source_repo)
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")

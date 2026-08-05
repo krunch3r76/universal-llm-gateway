@@ -13,6 +13,7 @@ Posture = Literal["sole_a", "multi_a_operator", "multi_b", "nest_child"]
 GateLane = Literal["standard", "operator"]
 
 _POSTURE_KEY = "concurrency_posture"
+_ISOLATION_MATERIALIZED_KEY = "isolation_materialized"
 
 
 def operator_multi_a_enabled() -> bool:
@@ -104,14 +105,60 @@ def b_worktree_materialized(
     return Path(lease_key).is_dir()
 
 
+def reported_admit_lane(
+    *,
+    selected_lane: Lane,
+    lease_key: str | None,
+    source_repo: str,
+) -> Lane:
+    """Ledger/closeout lane label — B only when isolation is materialized on disk."""
+    if selected_lane == "B" and b_worktree_materialized(
+        admit_lane="B",
+        lease_key=lease_key,
+        source_repo=source_repo,
+    ):
+        return "B"
+    return "A"
+
+
+def stamp_isolation_on_record_json(
+    record_json: str,
+    *,
+    isolation_materialized: bool,
+) -> str:
+    data = json.loads(record_json) if record_json else {}
+    if not isinstance(data, dict):
+        data = {}
+    data[_ISOLATION_MATERIALIZED_KEY] = isolation_materialized
+    return json.dumps(data, sort_keys=True, separators=(",", ":"))
+
+
+def isolation_materialized_from_record_json(record_json: str | None) -> bool | None:
+    if not record_json:
+        return None
+    try:
+        data = json.loads(record_json)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    raw = data.get(_ISOLATION_MATERIALIZED_KEY)
+    if isinstance(raw, bool):
+        return raw
+    return None
+
+
 __all__ = [
     "GateLane",
     "Posture",
     "b_worktree_materialized",
     "derive_concurrency_posture",
+    "isolation_materialized_from_record_json",
     "operator_multi_a_enabled",
     "posture_from_record_json",
     "refuse_b_without_worktree_enabled",
+    "reported_admit_lane",
+    "stamp_isolation_on_record_json",
     "stamp_posture_on_record_json",
     "write_lease_slot_limit",
 ]

@@ -135,6 +135,7 @@ from services.git_integration_worker.cursor_sdk_concurrency_posture import (
     b_worktree_materialized,
     derive_concurrency_posture,
     refuse_b_without_worktree_enabled,
+    reported_admit_lane,
     write_lease_slot_limit,
 )
 from services.git_integration_worker.cursor_sdk_feature_probe import (
@@ -2233,6 +2234,16 @@ async def cursor_dispatch(
         minted_lane_b = (
             selected_lane == "B" and not req.nest_under and req.worktree_path is None
         )
+        isolation_materialized = b_worktree_materialized(
+            admit_lane=selected_lane,
+            lease_key=lease_key,
+            source_repo=source_repo_str,
+        )
+        req.lane = reported_admit_lane(
+            selected_lane=selected_lane,
+            lease_key=lease_key,
+            source_repo=source_repo_str,
+        )
         if minted_lane_b:
             from services.git_integration_worker.cursor_sdk_worktree_registry import (
                 lookup_dispatch_worktree,
@@ -2327,6 +2338,7 @@ async def cursor_dispatch(
             refuse_if_lease_held=req.refuse_if_lease_held,
             concurrency_posture=concurrency_posture,
             write_lease_slot_limit=slot_limit,
+            isolation_materialized=isolation_materialized,
         )
     except WriteLeaseHeld as exc:
         await _rollback_lane_b_mint_if_needed(
