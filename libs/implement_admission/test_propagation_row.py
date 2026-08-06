@@ -48,6 +48,7 @@ def test_legacy_residue_coerces_to_rows():
     assert rows[0].service == "mcp"
     assert rows[0].code_ref == "legacy-sha"
     assert rows[0].safe_window == "standalone_ok"
+    assert rows[0].reason == "path-derived obligation; liveness: unknown"
     assert skipped == []
 
 
@@ -114,7 +115,11 @@ def test_rows_from_closeout_payload_modified_lib_still_mints_consumers():
     services = {row.service for row in rows}
     assert services == {"git_integration_worker", "mcp"}
     assert all(
-        row.reason == "shared lib land: libs/deploy_identity/__init__.py"
+        row.reason
+        == (
+            "shared lib land: libs/deploy_identity/__init__.py; "
+            "path-derived obligation; liveness: unknown"
+        )
         for row in rows
     )
     assert all(row.code_ref == "land-sha" for row in rows)
@@ -138,8 +143,22 @@ def test_default_proof_strings_are_obligation_not_observation():
     ):
         proof = default_proof(service)
         assert "AFTER restart VERIFY" in proof, service
-        assert not proof_claims_performed_ancestry(proof), proof
-        assert "ancestry satisfied" not in proof.lower(), proof
+        assert not proof_claims_performed_ancestry(proof), service
+        assert "ancestry satisfied" not in proof.lower(), service
+        assert "not yet live" not in proof.lower(), service
+        assert "landed-not-live" not in proof.lower(), service
+
+
+def test_service_path_mint_labels_obligation_not_liveness():
+    from implement_admission.propagation_row import rows_from_service_paths
+
+    rows = rows_from_service_paths(
+        ["services/git_integration_worker/cursor_auto/handler.py"],
+        code_ref="mint-sha",
+    )
+    assert len(rows) == 1
+    assert rows[0].reason == "path-derived obligation; liveness: unknown"
+    assert "AFTER restart VERIFY" in rows[0].proof
 
 
 def test_compose_proof_process_live_giw_is_process_identity_not_openapi():

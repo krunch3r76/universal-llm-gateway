@@ -216,7 +216,8 @@ def build_residue_block(
 
     lines = [
         "TYPE: RESIDUE",
-        "Landed, not yet live — propagation required:",
+        # Path/CONSUMERS mint obligation only — never dress as observed not-live.
+        "Obligation — propagation owed (path-derived; liveness: unknown):",
         *[f"- {action}" for action in shown],
     ]
     if elided:
@@ -226,11 +227,37 @@ def build_residue_block(
     if truncated:
         lines.append("(paths truncated in this closeout — residue may be incomplete)")
     lines.append(
-        "Owner: charter tick executes sync_restart at harvest for non-GIW services; "
+        "Owner: path-derived obligation candidates only — fire sync_restart/propagate "
+        "after observe (code_version + code_ref_relation) or strike; "
         "git_integration_worker requires contract:propagate with relay-loss hazard; "
         "install_plugin remains manual."
     )
     return "\n".join(lines)
+
+
+def obligation_deployment_state_from_wrapper(wrapper_text: str | None) -> str | None:
+    """Summarize path-derived propagation obligation — not observed liveness.
+
+    Counts RESIDUE action lines after commit. Explicit ``liveness: unknown`` because
+    this surface never probes ``code_version`` / ``code_ref_relation``.
+    """
+    if not wrapper_text:
+        return None
+    block = residue_for_closeout(wrapper_text)
+    if block is None:
+        return None
+    action_lines = [
+        line.lstrip("- ").strip()
+        for line in block.splitlines()
+        if line.strip().startswith("- ")
+    ]
+    count = len(action_lines)
+    if count == 0:
+        return None
+    noun = "path" if count == 1 else "paths"
+    return (
+        f"{count} propagation-owed {noun} — see RESIDUE block; liveness: unknown"
+    )
 
 
 def resolve_relay_residue(*, wrapper_body: str | None, relay_body: str) -> str | None:

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from services.git_integration_worker.cursor_auto.episode_residue import (
-    residue_for_closeout,
+    obligation_deployment_state_from_wrapper,
 )
 from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
     authored_paths_for_dispatch,
@@ -27,25 +27,6 @@ class CloseoutTreeState:
 
     checkpoint: str
     deployment_state: str | None
-
-
-def _landed_deployment_state_from_wrapper(wrapper_text: str | None) -> str | None:
-    """Summarize landed-not-live propagation residue — only valid after commit."""
-    if not wrapper_text:
-        return None
-    block = residue_for_closeout(wrapper_text)
-    if block is None:
-        return None
-    action_lines = [
-        line.lstrip("- ").strip()
-        for line in block.splitlines()
-        if line.strip().startswith("- ")
-    ]
-    count = len(action_lines)
-    if count == 0:
-        return None
-    noun = "path" if count == 1 else "paths"
-    return f"{count} landed-not-live {noun} — see RESIDUE block"
 
 
 def compute_closeout_tree_state(
@@ -69,7 +50,7 @@ def compute_closeout_tree_state(
     )
     deployment_state: str | None = None
     if checkpoint.startswith("committed "):
-        deployment_state = _landed_deployment_state_from_wrapper(wrapper_text)
+        deployment_state = obligation_deployment_state_from_wrapper(wrapper_text)
     elif checkpoint != "nothing_authored":
         authored = authored_paths_for_dispatch(
             source_repo=source_repo,
@@ -93,10 +74,15 @@ def deployment_state_contradicts_checkpoint(
     checkpoint: str,
     deployment_state: str | None,
 ) -> bool:
-    """True when deployment_state claims landed while checkpoint proves uncommitted."""
+    """True when deployment_state claims post-commit obligation while uncommitted."""
     if not deployment_state:
         return False
-    if "landed-not-live" not in deployment_state:
+    # Current + legacy markers (landed-not-live retired; still detect stale prose).
+    claims_post_commit_obligation = (
+        "propagation-owed" in deployment_state
+        or "landed-not-live" in deployment_state
+    )
+    if not claims_post_commit_obligation:
         return False
     return not checkpoint.startswith("committed ")
 

@@ -31,7 +31,7 @@ from services.git_integration_worker.cursor_auto.closeout_relay_reporting import
     stamp_model_actual,
 )
 from services.git_integration_worker.cursor_auto.episode_residue import (
-    residue_for_closeout,
+    obligation_deployment_state_from_wrapper,
 )
 from services.git_integration_worker.cursor_auto.relay_trust import (
     enforce_synthesized_partial,
@@ -313,22 +313,8 @@ def _has_authored_executor_verdict(*, source: str, authored_status: str) -> bool
 
 
 def _deployment_state_from_wrapper(wrapper_text: str | None) -> str | None:
-    """Summarize landed-not-live propagation residue without mutating executor status."""
-    if not wrapper_text:
-        return None
-    block = residue_for_closeout(wrapper_text)
-    if block is None:
-        return None
-    action_lines = [
-        line.lstrip("- ").strip()
-        for line in block.splitlines()
-        if line.strip().startswith("- ")
-    ]
-    count = len(action_lines)
-    if count == 0:
-        return None
-    noun = "path" if count == 1 else "paths"
-    return f"{count} landed-not-live {noun} — see RESIDUE block"
+    """Summarize path-derived propagation obligation without mutating executor status."""
+    return obligation_deployment_state_from_wrapper(wrapper_text)
 
 
 def _append_relay_metadata_lines(
@@ -420,7 +406,7 @@ def finalize_relay_payload(
     )
     # deployment_state is derived with checkpoint in nested_outcome relay path —
     # git context is unavailable here; computing landed from wrapper alone caused
-    # landed-not-live vs uncommitted checkpoint contradictions (arc 550).
+    # propagation-owed vs uncommitted checkpoint contradictions (arc 550).
     processed = CloseoutRelayPayload(
         body=breadth.body,
         status=authored_status,

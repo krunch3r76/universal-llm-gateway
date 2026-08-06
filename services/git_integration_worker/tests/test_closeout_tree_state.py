@@ -16,7 +16,16 @@ from services.git_integration_worker.cursor_auto.closeout_tree_state import (
 pytestmark = pytest.mark.offline
 
 
-def test_deployment_state_contradicts_when_landed_without_commit() -> None:
+def test_deployment_state_contradicts_when_owed_without_commit() -> None:
+    assert deployment_state_contradicts_checkpoint(
+        checkpoint="deferred: authored paths not yet path-explicit committed",
+        deployment_state=(
+            "5 propagation-owed paths — see RESIDUE block; liveness: unknown"
+        ),
+    )
+
+
+def test_deployment_state_contradicts_legacy_landed_not_live_marker() -> None:
     assert deployment_state_contradicts_checkpoint(
         checkpoint="deferred: authored paths not yet path-explicit committed",
         deployment_state="5 landed-not-live paths — see RESIDUE block",
@@ -26,7 +35,9 @@ def test_deployment_state_contradicts_when_landed_without_commit() -> None:
 def test_deployment_state_not_contradictory_when_committed() -> None:
     assert not deployment_state_contradicts_checkpoint(
         checkpoint="committed abc1234 paths=3",
-        deployment_state="2 landed-not-live paths — see RESIDUE block",
+        deployment_state=(
+            "2 propagation-owed paths — see RESIDUE block; liveness: unknown"
+        ),
     )
 
 
@@ -59,13 +70,14 @@ def test_compute_closeout_tree_state_uncommitted_never_claims_landed() -> None:
     assert state.deployment_state is not None
     assert "authored-not-committed" in state.deployment_state
     assert "landed-not-live" not in state.deployment_state
+    assert "propagation-owed" not in state.deployment_state
     assert not deployment_state_contradicts_checkpoint(
         checkpoint=state.checkpoint,
         deployment_state=state.deployment_state,
     )
 
 
-def test_compute_closeout_tree_state_committed_allows_landed() -> None:
+def test_compute_closeout_tree_state_committed_allows_obligation() -> None:
     wrapper = (
         '{"schema_version":1,"status":"complete",'
         '"files_modified":["services/git_integration_worker/x.py"],'
@@ -81,7 +93,10 @@ def test_compute_closeout_tree_state_committed_allows_landed() -> None:
             wrapper_text=wrapper,
         )
     assert state.deployment_state is not None
-    assert "landed-not-live" in state.deployment_state
+    assert "propagation-owed" in state.deployment_state
+    assert "liveness: unknown" in state.deployment_state
+    assert "landed-not-live" not in state.deployment_state
+    assert "not yet live" not in state.deployment_state
     assert not deployment_state_contradicts_checkpoint(
         checkpoint=state.checkpoint,
         deployment_state=state.deployment_state,

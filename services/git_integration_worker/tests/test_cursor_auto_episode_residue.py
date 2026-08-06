@@ -30,6 +30,12 @@ def test_residue_sync_restart_for_giw_py_path():
     block = residue_for_closeout(payload)
     assert block is not None
     assert "sync_restart: git_integration_worker" in block
+    assert "Obligation — propagation owed" in block
+    assert "liveness: unknown" in block
+    assert "not yet live" not in block
+    assert "landed-not-live" not in block
+    assert "fire sync_restart/propagate after observe" in block
+    assert "charter tick executes sync_restart" not in block
 
 
 def test_residue_install_plugin_for_plugin_rule_path():

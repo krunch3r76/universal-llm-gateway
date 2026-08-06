@@ -1,8 +1,9 @@
 """Structured propagation rows for harvest-time restart proof closure.
 
-Rows describe landed≠live services that must restart and prove live via typed
-probes. Legacy ``propagation_residue`` prose lines coerce into rows when the
-structured ``propagation`` field is absent.
+Rows are **path-derived obligations** (owed restart + typed proof templates), not
+observed liveness. Mint-time proof text says what to VERIFY after fire; it does
+not claim the process is currently not-live. Legacy ``propagation_residue`` prose
+lines coerce into rows when the structured ``propagation`` field is absent.
 """
 
 from __future__ import annotations
@@ -82,6 +83,9 @@ _SERVED_ARTIFACT_PREFIX_BY_SERVICE: dict[str, str] = {
 
 # Past-tense claim that must never appear in mint-time / open-row proof text.
 _PERFORMED_ANCESTRY_CLAIM_RE = re.compile(r"ancestry\s+satisfied", re.IGNORECASE)
+
+# Path/CONSUMERS mint labels obligation; no process probe at this site.
+_PATH_DERIVED_OBLIGATION_REASON = "path-derived obligation; liveness: unknown"
 
 
 class MissingProofTemplateError(ValueError):
@@ -362,6 +366,7 @@ def rows_from_residue_lines(
                     safe_window=default_safe_window(slug),
                     proof=compose_proof(slug, pc),
                     proof_class=pc,
+                    reason=_PATH_DERIVED_OBLIGATION_REASON,
                 )
             )
             continue
@@ -440,7 +445,9 @@ def rows_from_lib_consumers(
                     safe_window=default_safe_window(slug),
                     proof=compose_proof(slug, pc),
                     proof_class=pc,
-                    reason=f"shared lib land: {path}",
+                    reason=(
+                        f"shared lib land: {path}; {_PATH_DERIVED_OBLIGATION_REASON}"
+                    ),
                 )
             )
     return rows
@@ -451,7 +458,7 @@ def rows_from_service_paths(
     *,
     code_ref: str,
 ) -> list[PropagationRow]:
-    """Derive sync_restart rows from touched service Python paths."""
+    """Derive sync_restart obligation rows from touched service Python paths."""
     rows: list[PropagationRow] = []
     seen: set[str] = set()
     for path in paths:
@@ -467,6 +474,7 @@ def rows_from_service_paths(
                 safe_window=default_safe_window(slug),
                 proof=compose_proof(slug, pc),
                 proof_class=pc,
+                reason=_PATH_DERIVED_OBLIGATION_REASON,
             )
         )
     return rows
