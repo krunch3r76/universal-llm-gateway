@@ -104,12 +104,16 @@ table ≠ ∅. Matching is mechanical path intersection — no NL judgment in th
 
 | Surface glob | Pillar hint |
 |---|---|
-| `services/git_integration_worker/cursor_auto/**` | pillar-1, pillar-3 |
+| `services/git_integration_worker/cursor_auto/**` | pillar-1, pillar-3, pillar-5 |
 | `services/git_integration_worker/cursor_bus*` | pillar-3 |
 | `libs/cortex_store/**` | pillar-2, pillar-3 |
 | `cursor-plugins/ulg-ecosystem/skills/**` | pillar-1 |
 | `pipelines/**/chain.yaml`, `pipelines/**/prompts.yaml` | pillar-3 |
 | `cortex://notes/system/specs/**` when named in scope | pillar-4 |
+| `libs/universal_event_bus/**`, `libs/event_store/**`, `services/event-service/**` | pillar-5 |
+| `libs/cdp_ask/**` (execution / admission state) | pillar-5 |
+| `services/universal-stargate/systems/federation/**` | pillar-5 |
+| any new cross-process state holder, projection, admission gate, lease, or drain path | pillar-5 |
 
 ### R-admit pillar disposition (when trigger fires)
 
@@ -123,9 +127,12 @@ pillar_disposition: <pillars[].id member> | n/a — <reason>
 `n/a — <reason>` nor a **member** of `pillars[].id` from GET
 `/api/v1/doctrine/vision-digest` ⇒ verdict **RETURN**.
 
-**Membership is mechanical only** — cite ∈ `{pillar-1, pillar-2, pillar-3, pillar-4}`.
-Aptness of the cite is ordinary seat contradiction; a wrong-but-present member id does
-**not** auto-RETURN (symmetric with `vision_field_missing` presence-only gate at admit).
+**Membership is mechanical only** — cite ∈ `pillars[].id` **as served** (today
+`{pillar-1, pillar-2, pillar-3, pillar-4, pillar-5}`; pillar-5 = event plane, added
+2026-08-05). The served digest is the enum, ¬ this literal — when the two disagree the
+digest wins and this line takes the patch. Aptness of the cite is ordinary seat
+contradiction; a wrong-but-present member id does **not** auto-RETURN (symmetric with
+`vision_field_missing` presence-only gate at admit).
 
 **Rubric pull:** GET `/api/v1/doctrine/vision-digest`; quote the cited pillar's
 `law_verbatim` and every `must_not_redecide[]` entry **verbatim** into the challenge

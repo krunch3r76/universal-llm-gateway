@@ -24,6 +24,7 @@ Cite applicable tags in handoff Block 2. Load deferred refs by tag when procedur
 | `[universal:modelid]` | Parse once to `ModelId` at API boundary; routing uses parsed object; `str()` is display-only | Routing, gateway calls, catalog lookup | grep `str(model_id)` in routing logic |
 | `[universal:events]` | `@event_factory` only; signal regex + role/scope taxonomy; update vocabulary same change | Adding/changing/removing observable behavior | → `architecture-invariants/events-docs.md` |
 | `[universal:obs-over-timeouts]` | Prefer lifecycle/observability events over timeouts for completion; any timeout MUST be idle timeout on absence of progress events, not wall-clock completion deadline. Caveat: gated by project event maturity; known exception to revisit: pipeline IO ops | Dispatch/worker waits, async completion, blocking wait on another process/job | Review wall-clock completion deadlines where lifecycle events exist; grep fixed `*_TIMEOUT_SECONDS` completion budgets |
+| `[universal:state-provenance]` | Shared state names one authority; new correctness-bearing authority state is journal-backed (append+fold) ∨ names recovery; ∀ authority transition ⇒ advisory event; projections name source, scope/freshness, recovery; transport never upgrades authority class — Event Service is advisory broadcast, ¬ fold substrate; replay requires a durable domain journal | Cross-process state, projections, admission gates, drain | `QualifiedScalar`/`seal` on agent-facing scalars (default-deny); restart/reconcile test; transition-emission grep on authority stores |
 | `[universal:mcp]` | Thin HTTP relay via `transport_utils`; handler ¬business logic ∧ ¬direct DB | MCP tool implementation | Review handler bodies |
 | `[universal:rest]` | `/v1/*` OpenAI-compatible only; project/admin endpoints under `/api/v1/*` or explicit namespace; prefer REST over direct catalog access | New endpoints, wire projections | Namespace grep; sole owner of API namespace rules |
 | `[universal:satellite]` | Personal microservices: own container/process, UDS at `/tmp/universal-protocol/{name}.sock`, `openapi.yaml` contract, Bearer auth | New satellite services | Contract + auth review |
@@ -42,7 +43,7 @@ Cite applicable tags in handoff Block 2. Load deferred refs by tag when procedur
 
 For any spec, consult packet, or dense spec covering new/changed behavior, include:
 
-- State from events, not manual polling or wall-clock completion deadlines — `[universal:obs-over-timeouts]`.
+- State authority, projection source, and recovery named; authority transitions emit; ¬unqualified capture — `[universal:state-provenance]`.
 - New/changed behavior → event vocabulary named — `[universal:events]`.
 - Every state transition, decision point, and failure mode observable via events.
 

@@ -58,7 +58,7 @@ Three-doc taxonomy (there is **no** single `docs/VISION.md` — that file does n
 
 | Doc | Role | Consult when |
 |---|---|---|
-| **MAP** `cortex://notes/system/threads/4917-posture-stack-foundation/fable-foundation-map.md` | Inter-agent / operational **law index** — four pillars, must-not-re-decide, falsifiers, standing debt | **default** alignment check on `judgment_required` / pillar-touching / strategic work — via `VISION-ALIGN` (`path-sim` § Vision-align flag) |
+| **MAP** `cortex://notes/system/design/posture-stack-foundation.md` | Inter-agent / operational **law index** — five pillars, must-not-re-decide, falsifiers, standing debt (RATIFIED 2026-08-05) | **default** alignment check on `judgment_required` / pillar-touching / strategic work — via `VISION-ALIGN` (`path-sim` § Vision-align flag) |
 | **Essay** `cortex://notes/system/design/ulg-architectural-vision.md` | Resonance / orientation ("feel the shape in ten minutes") — ¬ law | wide detent, onboarding, grant/public register |
 | **Cognitive-platform vision** (`decision:cortex-vision-cognitive-platform` + staged prose) | Public face / north star | outward narrative, grant alignment — ¬ day-to-day workflow choke-points |
 

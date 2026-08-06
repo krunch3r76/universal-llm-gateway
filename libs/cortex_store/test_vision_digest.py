@@ -58,6 +58,14 @@ _FIXTURE_MAP = """\
 - **SoT:** vision `cortex://notes/system/threads/5195-fable-writing-provenance/fable-vision-dialectic.md`; detector `todo:wwp-substrate-debt-gap-detector`.
 - **Child arcs must not re-decide:** r1/r2/r3; two-axis + compatibility law.
 - **Falsifier if ignored:** typed frictions recur at the pre-vision rate across ≥5 WWP-governed artifacts.
+
+### Pillar 5 — Event plane · state from events (how state propagates)
+
+**Law:** ULG is event-driven and asynchronous in philosophy — events are the primary means of communicating and updating state; every shared state key names exactly one authority, projections derive from that authority and never co-mutate beside it.
+
+- **SoT:** floor tags `[universal:state-provenance]`; Terra review `cortex://notes/system/reviews/2026-08-06-state-from-events-doctrine-review.md`.
+- **Child arcs must not re-decide:** event-primacy as the default; the advisory-vs-fold split.
+- **Falsifier if ignored:** a new correctness-bearing state holder ships that neither folds a durable domain journal nor names its recovery path.
 """
 
 _LAW_1 = (
@@ -78,12 +86,13 @@ def map_root(tmp_path: Path) -> Path:
 
 def test_parse_map_pillars_verbatim_law_excludes_amendment() -> None:
     pillars = parse_map_pillars(_FIXTURE_MAP)
-    assert len(pillars) == 4
+    assert len(pillars) == 5
     assert [p.id for p in pillars] == [
         "pillar-1",
         "pillar-2",
         "pillar-3",
         "pillar-4",
+        "pillar-5",
     ]
     assert pillars[0].law_verbatim == _LAW_1
     assert "Amendment" not in pillars[0].law_verbatim
@@ -93,12 +102,31 @@ def test_parse_map_pillars_verbatim_law_excludes_amendment() -> None:
     assert "cortex://notes/system/threads/4917-charter-scoreboard.md" in pillars[0].sot_uris
 
 
+def test_parse_map_pillars_not_capped_at_four() -> None:
+    """Pillars past the original four-pillar stack still reach the digest."""
+    pillars = parse_map_pillars(_FIXTURE_MAP)
+    fifth = pillars[-1]
+    assert fifth.id == "pillar-5"
+    assert fifth.law_verbatim.startswith("ULG is event-driven and asynchronous")
+    assert fifth.must_not_redecide == [
+        "event-primacy as the default",
+        "the advisory-vs-fold split.",
+    ]
+    assert "durable domain journal" in fifth.falsifier
+
+
+def test_parse_map_pillars_below_floor_rejected() -> None:
+    truncated = _FIXTURE_MAP.split("### Pillar 3")[0]
+    with pytest.raises(ValueError, match="expected at least 4 pillars"):
+        parse_map_pillars(truncated)
+
+
 def test_build_vision_digest_success(map_root: Path) -> None:
     digest = build_vision_digest(map_root)
     assert digest.map_uri == MAP_URI
     assert digest.source == "live"
     assert digest.stale is False
-    assert len(digest.pillars) == 4
+    assert len(digest.pillars) == 5
     rel = MAP_URI.removeprefix("cortex://")
     expected = hashlib.sha256((map_root / rel).read_bytes()).hexdigest()
     assert digest.map_sha256 == f"sha256:{expected}"

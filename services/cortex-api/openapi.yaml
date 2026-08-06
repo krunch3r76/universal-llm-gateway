@@ -99,7 +99,9 @@ components:
       properties:
         id:
           type: string
-          description: Stable pillar id (pillar-1 … pillar-4)
+          description: >-
+            Stable pillar id (pillar-1 … pillar-N; the four-pillar stack is the
+            floor, pillar-5 = event plane). Membership is served, not hardcoded.
         law_verbatim:
           type: string
           description: Byte-for-byte MAP **Law:** sentence (strip only)

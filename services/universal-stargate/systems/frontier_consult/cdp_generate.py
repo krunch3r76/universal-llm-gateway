@@ -400,8 +400,11 @@ async def dispatch_cdp_generate(
             "resolved_model": model,
             "tool_surface": "cdp",
             "substrate": CDP_SUBSTRATE,
+            # inline_only describes Stargate's relay (sealed prompt, no client-side
+            # tool loop) and does not bound the endpoint. The claude.ai session owns
+            # its own connectors, so tool access is always true for CDP models.
             "inline_only": True,
-            "tool_access": False,
+            "tool_access": True,
         },
         "terminal": False,
     }

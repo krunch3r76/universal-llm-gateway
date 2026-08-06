@@ -3,7 +3,7 @@
 **Status:** thin public pointer (organizational, not doctrinal). The doctrinal SoT is
 `decision:http-first-agent-substrate`; this page is its smallest honest public home.
 **Bound to:** `decision:http-first-agent-substrate` · posture-stack foundation map
-`cortex://notes/system/threads/4917-posture-stack-foundation/fable-foundation-map.md` (Pillar 3).
+`cortex://notes/system/design/posture-stack-foundation.md` (Pillar 3).
 **Do not restate law here** — cite the decision and the sources; patch this page when the graph changes.
 
 ---
@@ -53,4 +53,4 @@ tool families must not mint as untyped megatools.
 - Lineage memo (S16 — C1–C11 concordance, argument-grounding corpus): `cortex://notes/system/threads/4917-posture-stack-foundation/http-agent-substrate-lineage.md`.
 - Fable HTTP-substrate eval (S7 — decision-grade inline eval): `cortex://notes/system/threads/4917-posture-stack-foundation/fable-http-substrate-eval-RESULT.md`.
 - RAG scope `agent_substrate` (HTTP RFCs, Fielding dissertation, OAS 3.1.1, HATEOAS, MCP-vs-REST analyses).
-- Foundation map (Pillar 3): `cortex://notes/system/threads/4917-posture-stack-foundation/fable-foundation-map.md`.
+- Foundation map (Pillar 3): `cortex://notes/system/design/posture-stack-foundation.md`.

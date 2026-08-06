@@ -9,10 +9,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-MAP_URI = (
-    "cortex://notes/system/threads/4917-posture-stack-foundation/"
-    "fable-foundation-map.md"
-)
+MAP_URI = "cortex://notes/system/design/posture-stack-foundation.md"
 _MAP_REL = MAP_URI.removeprefix("cortex://")
 
 _PILLAR_HEADER = re.compile(r"^### Pillar (\d+)\b", re.MULTILINE)
@@ -94,13 +91,13 @@ def _section_before_amendment(section: str) -> str:
 
 
 def parse_map_pillars(text: str) -> list[VisionPillar]:
-    """Parse four pillars from MAP markdown."""
+    """Parse every pillar from MAP markdown; the four-pillar stack is the floor."""
     matches = list(_PILLAR_HEADER.finditer(text))
     if len(matches) < 4:
         raise ValueError(f"expected at least 4 pillars, found {len(matches)}")
 
     pillars: list[VisionPillar] = []
-    for index, match in enumerate(matches[:4]):
+    for index, match in enumerate(matches):
         start = match.end()
         end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
         section = _section_before_amendment(text[start:end])

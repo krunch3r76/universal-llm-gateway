@@ -145,7 +145,7 @@ shapes. All four are in the Legend. Never restate or fork those formats from her
 ULG — Universal LLM Gateway, the model-routing service this repo builds — docs/architecture/gateway.md
 CDP — Chrome DevTools Protocol, used to drive a real browser session — skill: claude-ai-cdp-navigation
 DIRECTIVE / CLOSEOUT — the order and report messages of an operator-proxy arc — skill: cdp-operator-proxy § Message shapes
-foundation MAP — the standing law index: four pillars, must-not-re-decide, falsifiers — cortex://notes/system/threads/4917-posture-stack-foundation/fable-foundation-map.md
+foundation MAP — the standing law index: five pillars, must-not-re-decide, falsifiers — cortex://notes/system/design/posture-stack-foundation.md
 
 Format authorities this skill defers to:
   dense spec (eight sections + validate_dense_spec) — skill: cursor-sdk-instruction-standard
