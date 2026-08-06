@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from agent_seat.registry import normalize_bus_address
+from claim_register import normalize_claim_bearing_payload
 
 from services.git_integration_worker.cursor_auto.queue import AutoJob
 from services.git_integration_worker.cursor_auto.work_journal import (
@@ -34,9 +35,23 @@ async def post_terminal_status(
 
     The subject carries *terminal_status* verbatim, so waiters keyed on a
     completion token see exactly the vocabulary the caller chose.
+
+    Claim-register partial guard (row 29): claim-bearing keys in *payload*
+    (today ``fix_hint``) are normalized via
+    :func:`claim_register.normalize_claim_bearing_payload` before dump.
+    Missing registers are stamped ``unknown`` and the turn still posts —
+    never fail-closed here (a dropped closeout is worse than an untyped
+    claim that announces itself). Fail-closed lives on ``Claimed``
+    construction and in unit tests only.
+
+    NAMED ABSENCE: this chokepoint does **not** cover member 2 (ledger
+    ``fail_row``), member 5 (``Verification`` packers), or member 6
+    (authoring / mission-close). See ``claim_register.wire`` docstring.
     """
     if job.request_id and "request_id" not in payload:
         payload = {**payload, "request_id": job.request_id}
+    # Partial guard — degrade, do not refuse (Packet A bind).
+    payload = normalize_claim_bearing_payload(payload)
     extra: dict[str, Any] = {"summary": summary, "request_id": job.request_id}
     if journal_extra:
         extra.update(journal_extra)

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from claim_register import claimed_derived
+
 from services.git_integration_worker.cursor_auto.auth_gate_budget import (
     count_auth_gate_failures,
     effective_auth_gate_budget,
@@ -201,10 +203,15 @@ async def blocking_admit_gate(
                 summary=summary,
                 payload={
                     "summary": summary,
+                    # reason = observed gate identity (which gate fired).
                     "reason": "vision_field_missing",
                     "contract": contract,
                     "density": density,
-                    "fix_hint": VISION_MISSING_FIX_HINT,
+                    # fix_hint = derived counsel (row 29 member 4 proof slice).
+                    "fix_hint": claimed_derived(
+                        VISION_MISSING_FIX_HINT,
+                        basis="admit_gates.vision_field_missing",
+                    ).to_wire(),
                 },
             )
     status = await fetch_thread_status(job.thread_id)
