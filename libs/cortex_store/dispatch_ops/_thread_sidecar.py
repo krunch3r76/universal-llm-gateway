@@ -1,4 +1,11 @@
-"""Render + persist thread sidecar markdown under cortex _FILES_ROOT."""
+"""Render + persist thread sidecar markdown under cortex _FILES_ROOT.
+
+Bypass note (consult-artifact URI collision bind / terra check (b)): this writer
+still uses raw ``Path.write_text`` and is listed in
+``tools.filesystem._write_authority.EXCLUDED_BYPASS_WRITERS``. It is **not** on
+the MCP retain+CAS path; migrate or keep explicitly excluded before claiming
+fleet-wide shared-document enforcement.
+"""
 
 from __future__ import annotations
 

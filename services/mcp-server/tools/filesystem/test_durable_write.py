@@ -21,6 +21,7 @@ from tools.filesystem import _ops_binary as ops_binary
 from tools.filesystem import _ops_paths as ops_paths
 from tools.filesystem import _ops_search as ops_search
 from tools.filesystem import _ops_text as ops_text
+from tools.filesystem import _ops_write as ops_write
 from tools.filesystem import _paths as paths
 
 
@@ -62,7 +63,7 @@ def test_write_file_impl_errors_on_stale_post_write_read(
     sandbox_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(ops_text, "record", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(ops_write, "record", lambda *_args, **_kwargs: None)
     rel = "notes/spec.md"
     stale_sha = "deadbeef" * 8
 
@@ -73,7 +74,7 @@ def test_write_file_impl_errors_on_stale_post_write_read(
             actual_sha256=stale_sha,
         )
 
-    monkeypatch.setattr(ops_text, "verify_persisted", _stale_verify)
+    monkeypatch.setattr(ops_write, "verify_persisted", _stale_verify)
 
     result = ops_text.write_file_impl(rel, "version-one")
     assert result["reason"] == "write_verify_failed"
@@ -164,7 +165,7 @@ def test_durable_helper_invoked_for_cortex_write(
     sandbox_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(ops_text, "record", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(ops_write, "record", lambda *_args, **_kwargs: None)
     calls: list[tuple[Path, str]] = []
     real = durable_mod.durable_write_text
 
@@ -172,7 +173,7 @@ def test_durable_helper_invoked_for_cortex_write(
         calls.append((dest, content))
         return real(dest, content)
 
-    monkeypatch.setattr(ops_text, "durable_write_text", _track)
+    monkeypatch.setattr(ops_write, "durable_write_text", _track)
     ops_text.write_file_impl("notes/new.md", "hello")
     assert calls and calls[0][1] == "hello"
 
@@ -185,7 +186,7 @@ def test_write_rejects_unsubstituted_template_token(
     sandbox_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(ops_text, "record", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(ops_write, "record", lambda *_args, **_kwargs: None)
     with pytest.raises(ValueError, match=r"\{theme\}") as exc_info:
         ops_text.write_file_impl(_RECON_THEME_PATH, "body")
     assert _RECON_THEME_PATH in str(exc_info.value)
@@ -195,7 +196,7 @@ def test_write_succeeds_on_fully_rendered_path(
     sandbox_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(ops_text, "record", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(ops_write, "record", lambda *_args, **_kwargs: None)
     result = ops_text.write_file_impl(_CLEAN_RECON_PATH, "rendered body")
     assert result["status"] == "written"
     assert (sandbox_root / _CLEAN_RECON_PATH).read_text(encoding="utf-8") == "rendered body"

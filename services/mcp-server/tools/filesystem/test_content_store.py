@@ -8,6 +8,7 @@ import pytest
 
 from tools.filesystem import _content_store as content_store
 from tools.filesystem import _ops_text as ops_text
+from tools.filesystem import _ops_write as ops_write
 from tools.filesystem import _paths as paths
 
 
@@ -23,7 +24,7 @@ def test_unguarded_overwrite_echoes_replaced_sha256(
     sandbox_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(ops_text, "record", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(ops_write, "record", lambda *_args, **_kwargs: None)
     rel = "notes/spec.md"
     first = ops_text.write_file_impl(rel, "version-one")
     replaced = first["written_sha256"]
@@ -37,7 +38,7 @@ def test_prior_content_retained_in_content_store(
     sandbox_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(ops_text, "record", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(ops_write, "record", lambda *_args, **_kwargs: None)
     rel = "notes/spec.md"
     first = ops_text.write_file_impl(rel, "version-one")
     prior_sha = first["written_sha256"]
@@ -53,7 +54,7 @@ def test_cas_success_also_echoes_replaced_sha256(
     sandbox_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(ops_text, "record", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(ops_write, "record", lambda *_args, **_kwargs: None)
     rel = "notes/spec.md"
     first = ops_text.write_file_impl(rel, "before")
     current = paths.sha256_of_file(sandbox_root / rel)
@@ -66,7 +67,7 @@ def test_resolve_sha256_stale_unknown(
     sandbox_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(ops_text, "record", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(ops_write, "record", lambda *_args, **_kwargs: None)
     missing = "ea6d4404" + "0" * 56
     resolved = content_store.resolve_sha256_impl(missing)
     assert resolved["resolved"] is False
@@ -78,7 +79,7 @@ def test_resolve_sha256_accepts_sha256_prefix(
     sandbox_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(ops_text, "record", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(ops_write, "record", lambda *_args, **_kwargs: None)
     rel = "notes/prefixed.md"
     written = ops_text.write_file_impl(rel, "payload")
     sha = written["written_sha256"]

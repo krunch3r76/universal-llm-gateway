@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
 from claude_bundles import cdp_registry
 from claude_bundles.cowork_output_download import should_attempt_output_download
+from claude_bundles.cse_wake_retain import registration_has_wake_debt
 from claude_bundles.project_ask import (
     HarvestArchiveError,
     ProjectAskResult,
@@ -17,7 +19,6 @@ from claude_bundles.project_ask import (
     run_project_ask,
 )
 from claude_bundles.project_ask_abort import abort_cleanup, deregister_on_exit
-from claude_bundles.cse_wake_retain import registration_has_wake_debt
 from claude_bundles.project_ask_conversation import run_project_conversation
 from claude_bundles.project_ask_prompt_files import (
     project_root_base,
@@ -186,21 +187,41 @@ def _load_prompt_uri(uri: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _seat_token_for_archive(req: SubmitProjectAskRequest) -> str:
+    """Derive a stable seat token from request model/purpose (trusted submit fields)."""
+    model = (req.model or "").lower()
+    if "fable" in model:
+        return "cdp-fable"
+    if "opus" in model:
+        return "cdp-opus"
+    purpose = (req.purpose or "").strip().lower()
+    if purpose in {"operator-proxy", "mission"}:
+        return "cdp-opus"
+    token = re.sub(r"[^a-z0-9]+", "-", model).strip("-")
+    return token or "cdp"
+
+
 def default_archive_path(
     req: SubmitProjectAskRequest,
     *,
     execution_id: str = "",
 ) -> str:
-    """Resolve the harvest archive filesystem path for one project-ask execution."""
+    """Resolve the harvest archive filesystem path for one project-ask execution.
+
+    Consult-class mint embeds seat + **full** execution_id (not exec8 truncation)
+    so dual-advisor answers cannot collide on a shared 8-hex prefix.
+    """
     if req.archive_path:
         return resolve_archive_path(req.archive_path)
     root = verify_harvest_root()
+    seat = _seat_token_for_archive(req)
     if req.project_uuid:
-        name = f"cdp-ask-archive-{req.project_uuid[:8]}.md"
+        # Project-scoped archives remain UUID-keyed; seat disambiguates advisors.
+        name = f"cdp-ask-archive-{seat}-{req.project_uuid}.md"
     elif execution_id:
-        name = f"cdp-ask-archive-new-{execution_id[:8]}.md"
+        name = f"cdp-ask-archive-{seat}-{execution_id}.md"
     else:
-        name = "cdp-ask-archive-new.md"
+        name = f"cdp-ask-archive-{seat}-new.md"
     return str(root / "notes/system/threads" / name)
 
 

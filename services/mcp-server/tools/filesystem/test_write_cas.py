@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from tools.filesystem import _ops_text as ops_text
+from tools.filesystem import _ops_write as ops_write
 from tools.filesystem import _paths as paths
 
 
@@ -24,7 +25,7 @@ def test_stale_expected_sha256_rejects_and_preserves_bytes(
     sandbox_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(ops_text, "record", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(ops_write, "record", lambda *_args, **_kwargs: None)
     rel = "notes/spec.md"
     first = ops_text.write_file_impl(rel, "version-one")
     assert first["status"] == "written"
@@ -47,7 +48,7 @@ def test_matching_expected_sha256_overwrites(
     sandbox_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(ops_text, "record", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(ops_write, "record", lambda *_args, **_kwargs: None)
     rel = "notes/spec.md"
     ops_text.write_file_impl(rel, "before")
     current = paths.sha256_of_file(sandbox_root / rel)
@@ -61,7 +62,7 @@ def test_bare_read_sha256_round_trips_as_expected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """fs read returns bare hex; write CAS must accept it (friction a:26153)."""
-    monkeypatch.setattr(ops_text, "record", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(ops_write, "record", lambda *_args, **_kwargs: None)
     rel = "notes/roundtrip.md"
     ops_text.write_file_impl(rel, "before")
     bare = paths.sha256_hex_of_file(sandbox_root / rel)
@@ -76,7 +77,7 @@ def test_mismatch_echo_canonicalizes_both_sides(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Rejection payload must not mix bare vs prefixed forms of the same digest."""
-    monkeypatch.setattr(ops_text, "record", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(ops_write, "record", lambda *_args, **_kwargs: None)
     rel = "notes/echo.md"
     ops_text.write_file_impl(rel, "live")
     stale = ops_text.write_file_impl(
@@ -94,7 +95,7 @@ def test_if_absent_on_existing_rejects(
     sandbox_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(ops_text, "record", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(ops_write, "record", lambda *_args, **_kwargs: None)
     rel = "notes/new.md"
     ops_text.write_file_impl(rel, "original")
     rejected = ops_text.write_file_impl(rel, "clobber", if_absent=True)
@@ -106,7 +107,7 @@ def test_if_absent_on_missing_writes(
     sandbox_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(ops_text, "record", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(ops_write, "record", lambda *_args, **_kwargs: None)
     rel = "notes/fresh.md"
     result = ops_text.write_file_impl(rel, "created", if_absent=True)
     assert result["status"] == "written"
@@ -127,7 +128,7 @@ def test_concurrent_if_absent_race_has_single_winner(
     sandbox_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(ops_text, "record", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(ops_write, "record", lambda *_args, **_kwargs: None)
     rel = "notes/race.md"
     barrier = threading.Barrier(2)
     results: list[dict] = []

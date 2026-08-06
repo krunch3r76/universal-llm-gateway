@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ._fs_dispatch import sandbox_op_names
 from ._content_store import resolve_sha256_impl
+from ._fs_dispatch import sandbox_op_names
 from ._ops_binary import append_binary_impl, write_binary_impl
 from ._ops_paths import copy_file_impl, delete_file_impl, move_file_impl
 from ._ops_search import search_path_impl
@@ -14,8 +14,8 @@ from ._ops_text import (
     list_files_impl,
     read_file_impl,
     read_files_batch_impl,
-    write_file_impl,
 )
+from ._ops_write import write_file_impl
 from ._paths import DROPBOX_COPY_WARNING, DROPBOX_READ_HINT, FS_WORKFLOW_HINTS
 
 if TYPE_CHECKING:
@@ -189,7 +189,12 @@ def register_files_tool(mcp: FastMCP) -> None:
                 raise ValueError(f"'path' is required for {op}")
             if not content:
                 raise ValueError(f"'content' is required for {op}")
-            return edit_file_impl(path, op, content)
+            return edit_file_impl(
+                path,
+                op,
+                content,
+                expected_sha256=expected_sha256 or None,
+            )
         if op == "replace":
             if not path:
                 raise ValueError("'path' is required for replace")
