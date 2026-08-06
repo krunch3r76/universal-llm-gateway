@@ -464,6 +464,7 @@ async def test_promote_clamped_closeout_cortex_pointer() -> None:
 
     async def _mock_post_pinned(**kwargs: object) -> dict[str, str]:
         assert kwargs["content"] == raw_sidecar
+        assert kwargs["write_if_absent"] is False
         return {"uri": _CORTEX_POINTER, "sha256": "abc123digest"}
 
     promoted = await promote_clamped_closeout_to_cortex(
@@ -493,6 +494,54 @@ async def test_promote_clamped_closeout_cortex_pointer() -> None:
         "open forks",
     ):
         assert f"| {field} |" in promoted.body
+
+
+@pytest.mark.asyncio
+async def test_promote_unclamped_spills_sidecar_to_cortex() -> None:
+    """Row 13: unclamped closeouts still get a durable cortex twin."""
+    payload = finalize_relay_payload(
+        CloseoutRelayPayload(
+            body=(
+                "TYPE: CLOSEOUT\nstatus: complete\n\n"
+                "| Field | Value |\n|---|---|\n"
+                "| status | complete |\n"
+                "| ac_verdict | pass |\n"
+                "| deltas_to_spec | none |\n"
+                "| decisions_taken | none |\n"
+                "| effects | none |\n"
+                "| evidence | none |\n"
+                "| next | none |\n"
+                "| open forks | none |\n"
+            ),
+            status="complete",
+            source="section2_sidecar",
+        ),
+        wrapper_text=_WRAPPER,
+        dispatch_id=_DISPATCH,
+    )
+    assert not payload.clamped
+    assert payload.body_full is None
+    raw_sidecar = (
+        "## §2 CLOSEOUT\n\n**status:** complete\n\n"
+        "**ac_verdict:**\n\n| AC | Verdict |\n|---|---|\n| AC1 | pass |\n"
+    )
+    seen: dict[str, object] = {}
+
+    async def _mock_post_pinned(**kwargs: object) -> dict[str, str]:
+        seen.update(kwargs)
+        return {"uri": _CORTEX_POINTER, "sha256": "abc123digest"}
+
+    promoted = await promote_clamped_closeout_to_cortex(
+        payload,
+        dispatch_id=_DISPATCH,
+        thread_id="6329",
+        sidecar_text=raw_sidecar,
+        post_closeout_sidecar_fn=_mock_post_pinned,
+    )
+    assert seen.get("content") == raw_sidecar
+    assert seen.get("write_if_absent") is False
+    assert _CORTEX_POINTER in promoted.body
+    assert "Full closeout:" in promoted.body
 
 
 @pytest.mark.asyncio

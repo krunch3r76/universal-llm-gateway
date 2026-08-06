@@ -237,12 +237,19 @@ async def post_closeout_sidecar(
     dispatch_id: str,
     thread_id: str,
     post_pinned: PinnedWriteFn | None = None,
+    write_if_absent: bool = True,
 ) -> PinnedWriteResult | None:
+    """Pin closeout bytes at the cortex twin URI.
+
+    Default ``write_if_absent=True`` preserves first-writer for oversize JSON
+    relocate. Acceptance-prose promote passes ``False`` so §2 evidence is not
+    trapped behind a JSON-only twin at the same path (row 13).
+    """
     writer = post_pinned or default_post_pinned_deliverable
     return await writer(
         rel_path=closeout_cortex_sidecar_rel_path(thread_id, dispatch_id),
         content=full_body,
-        write_if_absent=True,
+        write_if_absent=write_if_absent,
         dispatch_id=dispatch_id,
         thread_id=thread_id,
     )

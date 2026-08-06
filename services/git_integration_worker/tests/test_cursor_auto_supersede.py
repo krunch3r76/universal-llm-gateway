@@ -366,7 +366,12 @@ def test_preamble_names_void_episode_and_residue():
 
 
 def test_nested_sdk_finished_excludes_from_supersede_without_mark_done():
-    """Claim-window cut: finished nested work stays claimed, not supersedeable."""
+    """INV-CLAIM-WINDOW-AUTHORITY falsifier: exclude sdk_terminal without mark_done.
+
+    Removing ``not job.nested_sdk_finished`` from ``claimed_for_thread`` must fail
+    this test — otherwise ``no closeout is authoritative`` becomes a lie after
+    nested SDK terminal while CLOSEOUT still relays.
+    """
     queue = AutoJobQueue(durable=False)
     old = _enqueue(queue, thread_id="5867", turn_number=8)
     queue.claim_next()
