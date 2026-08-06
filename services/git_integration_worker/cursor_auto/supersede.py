@@ -137,6 +137,12 @@ async def settle_supersede(job: AutoJob) -> dict[str, Any] | None:
             dispatch_id=dispatch_id,
             source_repo=Path(context.source_repo),
         )
+        await asyncio.to_thread(
+            _mark_lane_b_supersede_disposition,
+            dispatch_id=dispatch_id,
+            superseded_by=job.job_id,
+            source_repo=context.source_repo,
+        )
     return {
         "mark": context.mark,
         "released": released,
@@ -152,6 +158,23 @@ async def _await_release(dispatch_id: str, grace_s: float) -> bool:
             return True
         await asyncio.sleep(_POLL_S)
     return not is_dispatch_live(dispatch_id=dispatch_id)
+
+
+def _mark_lane_b_supersede_disposition(
+    *,
+    dispatch_id: str,
+    superseded_by: str,
+    source_repo: str,
+) -> None:
+    from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
+        mark_lane_b_disposition_for_dispatch,
+    )
+
+    mark_lane_b_disposition_for_dispatch(
+        dispatch_id=dispatch_id,
+        source_repo=Path(source_repo),
+        reason=f"superseded_by:{superseded_by}",
+    )
 
 
 def compose_supersede_preamble(settlement: dict[str, Any]) -> str:

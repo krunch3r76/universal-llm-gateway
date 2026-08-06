@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -210,6 +211,93 @@ def branch_state(
         merged_into_master=merged_into_master,
         content_landed=content_landed,
     )
+
+
+def merge_base_with_master(source_repo: Path, *, branch_name: str) -> str | None:
+    """Return ``git merge-base master <branch>`` or ``None`` on failure."""
+    proc = subprocess.run(
+        ["git", "-C", str(source_repo.resolve()), "merge-base", "master", branch_name],
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT_S,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    sha = proc.stdout.strip()
+    return sha or None
+
+
+def list_cursor_sdk_branches(source_repo: Path) -> list[str]:
+    """List local ``cursor-sdk/*`` branch names."""
+    proc = subprocess.run(
+        ["git", "-C", str(source_repo.resolve()), "branch", "--list", "cursor-sdk/*"],
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT_S,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return []
+    names: list[str] = []
+    for line in proc.stdout.splitlines():
+        name = line.strip().lstrip("* ").strip()
+        if name.startswith("cursor-sdk/"):
+            names.append(name)
+    return names
+
+
+def orphan_branch_state(source_repo: Path, *, branch_name: str) -> BranchState:
+    """Evaluate branch safety for an unregistered orphan via merge-base."""
+    repo = source_repo.resolve()
+    head_sha = _rev_parse(repo, branch_name)
+    if head_sha is None:
+        return BranchState(head_sha=None, commits_ahead=0, merged_into_master=False)
+    branch_point = merge_base_with_master(repo, branch_name=branch_name)
+    if branch_point is None:
+        return BranchState(
+            head_sha=head_sha,
+            commits_ahead=1,
+            merged_into_master=False,
+            content_landed=False,
+        )
+    return branch_state(
+        repo,
+        branch_name=branch_name,
+        branch_point=branch_point,
+    )
+
+
+def branch_tip_age_s(source_repo: Path, *, branch_name: str) -> float | None:
+    """Seconds since the tip commit on *branch_name*, or ``None`` when unknown."""
+    proc = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source_repo.resolve()),
+            "log",
+            "-1",
+            "--format=%ct",
+            branch_name,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT_S,
+        check=False,
+    )
+    if proc.returncode != 0 or not proc.stdout.strip().isdigit():
+        return None
+    tip_ts = int(proc.stdout.strip())
+    return max(0.0, time.time() - float(tip_ts))
+
+
+def origin_dispatch_id_from_branch(branch_name: str) -> str | None:
+    """Extract dispatch id suffix from ``cursor-sdk/<id>`` when present."""
+    prefix = "cursor-sdk/"
+    if not branch_name.startswith(prefix):
+        return None
+    suffix = branch_name[len(prefix) :]
+    return suffix or None
 
 
 def _patches_present_in_master(repo: Path, *, branch_name: str) -> bool:

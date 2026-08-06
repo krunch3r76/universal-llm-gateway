@@ -194,6 +194,9 @@ def prune_dispatch_worktree(
     emit_sdk_lane_b_reaped(
         dispatch_id=dispatch_id,
         branch_deleted=state.safe_to_delete,
+        branch=branch if state.safe_to_delete else None,
+        tip_sha=state.head_sha if state.safe_to_delete else None,
+        reason="prune_terminal" if state.safe_to_delete else None,
     )
     return PruneResult(
         pruned=True,
@@ -258,9 +261,20 @@ def _registered_branch_names() -> set[str]:
 
 
 def gc_merged_dispatch_branches(*, source_repo: Path) -> int:
-    """Delete merged ``cursor-sdk/*`` branches with no live registry row (S6)."""
+    """Delete orphan ``cursor-sdk/*`` branches when marked or mechanically safe (S6)."""
+    from services.git_integration_worker.cursor_sdk_lane_b_commit import (
+        list_cursor_sdk_branches,
+        orphan_branch_state,
+    )
+    from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
+        clear_disposition,
+        get_disposition,
+    )
+
     repo = source_repo.resolve()
     registered = _registered_branch_names()
+    deleted = 0
+
     merged_proc = subprocess.run(
         ["git", "-C", str(repo), "branch", "--merged", "master"],
         capture_output=True,
@@ -268,25 +282,77 @@ def gc_merged_dispatch_branches(*, source_repo: Path) -> int:
         timeout=_GIT_TIMEOUT_S,
         check=False,
     )
-    if merged_proc.returncode != 0:
-        return 0
-    deleted = 0
-    for line in merged_proc.stdout.splitlines():
-        name = line.strip().lstrip("* ").strip()
-        if not name.startswith(_DISPATCH_BRANCH_PREFIX):
-            continue
+    if merged_proc.returncode == 0:
+        for line in merged_proc.stdout.splitlines():
+            name = line.strip().lstrip("* ").strip()
+            if not name.startswith(_DISPATCH_BRANCH_PREFIX):
+                continue
+            if name in registered:
+                continue
+            if _delete_orphan_branch(
+                repo=repo,
+                branch_name=name,
+                reason="ancestry_merged",
+                dispatch_id=None,
+            ):
+                clear_disposition(branch_name=name)
+                deleted += 1
+
+    for name in list_cursor_sdk_branches(repo):
         if name in registered:
             continue
-        del_proc = subprocess.run(
-            ["git", "-C", str(repo), "branch", "-D", name],
-            capture_output=True,
-            text=True,
-            timeout=_GIT_TIMEOUT_S,
-            check=False,
-        )
-        if del_proc.returncode == 0:
-            deleted += 1
+        disposition = get_disposition(branch_name=name)
+        if disposition is not None:
+            if _delete_orphan_branch(
+                repo=repo,
+                branch_name=name,
+                reason=disposition.reason,
+                dispatch_id=disposition.dispatch_id,
+                tip_sha=disposition.tip_sha,
+            ):
+                clear_disposition(branch_name=name)
+                deleted += 1
+            continue
+        state = orphan_branch_state(repo, branch_name=name)
+        if state.safe_to_delete:
+            reason = "content_landed" if state.content_landed else "mechanical_safe"
+            if _delete_orphan_branch(
+                repo=repo,
+                branch_name=name,
+                reason=reason,
+                dispatch_id=None,
+                tip_sha=state.head_sha,
+            ):
+                deleted += 1
     return deleted
+
+
+def _delete_orphan_branch(
+    *,
+    repo: Path,
+    branch_name: str,
+    reason: str,
+    dispatch_id: str | None,
+    tip_sha: str | None = None,
+) -> bool:
+    """Delete *branch_name* and emit extended ``sdk.lane_b.reaped`` on success."""
+    del_proc = subprocess.run(
+        ["git", "-C", str(repo), "branch", "-D", branch_name],
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT_S,
+        check=False,
+    )
+    if del_proc.returncode != 0:
+        return False
+    emit_sdk_lane_b_reaped(
+        dispatch_id=dispatch_id or "",
+        branch_deleted=True,
+        branch=branch_name,
+        tip_sha=tip_sha,
+        reason=reason,
+    )
+    return True
 
 
 def reap_orphan_worktrees(

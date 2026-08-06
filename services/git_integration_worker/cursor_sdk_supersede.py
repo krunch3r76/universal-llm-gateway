@@ -17,6 +17,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from universal_logging import get_logger
@@ -118,6 +119,25 @@ def clear_supersede(*, dispatch_id: str) -> None:
         _marks.pop(dispatch_id, None)
 
 
+def _maybe_mark_lane_b_supersede_disposition(
+    *,
+    dispatch_id: str,
+    superseded_by: str,
+    source_repo: str | None,
+) -> None:
+    if not source_repo:
+        return
+    from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
+        mark_lane_b_disposition_for_dispatch,
+    )
+
+    mark_lane_b_disposition_for_dispatch(
+        dispatch_id=dispatch_id,
+        source_repo=Path(source_repo),
+        reason=f"superseded_by:{superseded_by}",
+    )
+
+
 def signal_supersede(
     *, dispatch_id: str, superseded_by: str, reason: str
 ) -> dict[str, Any]:
@@ -152,6 +172,11 @@ def signal_supersede(
     )
     with _lock:
         _marks[dispatch_id] = mark
+    _maybe_mark_lane_b_supersede_disposition(
+        dispatch_id=dispatch_id,
+        superseded_by=superseded_by,
+        source_repo=record.source_repo if record is not None else None,
+    )
     logger.warning(
         "cursor-sdk supersede signalled dispatch_id=%s superseded_by=%s "
         "method=%s reason=%s error=%s",

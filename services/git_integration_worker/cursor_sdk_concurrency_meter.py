@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -31,6 +32,11 @@ from services.git_integration_worker.cursor_sdk_deliverables import (
 # Commit 10811941 — own-commit path attribution floor (fold-2 census).
 ATTRIBUTION_FLOOR_ISO = "2026-08-01T22:24:33+00:00"
 _IMPLEMENT_CLASS_CONTRACTS = frozenset({"implement", "light-bounded"})
+_orphan_aged_emitted: set[tuple[str, str]] = set()
+
+
+def _orphan_visibility_ttl_s() -> float:
+    return float(os.environ.get("CURSOR_SDK_LANE_B_ORPHAN_VISIBILITY_TTL_S", "604800"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,15 +332,32 @@ def intervals_from_ledger_rows(rows: list[dict[str, Any]]) -> list[DispatchInter
     return out
 
 
-def lane_b_inventory_snapshot(*, source_repo: Path) -> dict[str, Any]:
-    """Live Lane-B worktree / unlanded-branch counters for active-work probes."""
-    from services.git_integration_worker.cursor_dispatch_ledger import _connect
-    from services.git_integration_worker.cursor_sdk_lane_b_commit import branch_state
+def reset_orphan_aged_emitted_registry() -> None:
+    """Clear process-local orphan-aged emit dedupe (tests only)."""
+    _orphan_aged_emitted.clear()
 
+
+def lane_b_inventory_snapshot(*, source_repo: Path) -> dict[str, Any]:
+    """Live Lane-B git inventory: unlanded salvage branches and aged orphans."""
+    from services.git_integration_worker.cursor_dispatch_ledger import _connect
+    from services.git_integration_worker.cursor_sdk_lane_b_commit import (
+        branch_tip_age_s,
+        list_cursor_sdk_branches,
+        origin_dispatch_id_from_branch,
+        orphan_branch_state,
+    )
+    from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
+        get_disposition,
+    )
+    from services.git_integration_worker.cursor_sdk_events import (
+        emit_sdk_lane_b_orphan_aged,
+    )
+
+    repo = source_repo.resolve()
     worktrees_live = 0
     branches_unlanded = 0
     oldest_unlanded_age_s: float | None = None
-    now = datetime.now().astimezone()
+    aged_orphans: list[dict[str, Any]] = []
 
     with _connect() as conn:
         conn.execute(
@@ -342,34 +365,56 @@ def lane_b_inventory_snapshot(*, source_repo: Path) -> dict[str, Any]:
             "dispatch_id TEXT PRIMARY KEY, worktree_path TEXT NOT NULL, "
             "branch_name TEXT NOT NULL, branch_point TEXT NOT NULL, minted_at TEXT NOT NULL)"
         )
-        rows = conn.execute(
-            "SELECT worktree_path, branch_name, branch_point, minted_at "
-            "FROM cursor_sdk_dispatch_worktrees"
+        wt_rows = conn.execute(
+            "SELECT worktree_path, branch_name FROM cursor_sdk_dispatch_worktrees"
         ).fetchall()
-
-    repo = source_repo.resolve()
-    for row in rows:
-        wt_path = Path(row["worktree_path"])
-        if wt_path.is_dir():
+    registered_branches = {row["branch_name"] for row in wt_rows}
+    for row in wt_rows:
+        if Path(row["worktree_path"]).is_dir():
             worktrees_live += 1
-        state = branch_state(
-            repo,
-            branch_name=row["branch_name"],
-            branch_point=row["branch_point"],
-        )
-        if state.head_sha is None or state.merged_into_master:
+
+    for branch_name in list_cursor_sdk_branches(repo):
+        state = orphan_branch_state(repo, branch_name=branch_name)
+        if state.head_sha is None:
+            continue
+        if state.safe_to_delete:
             continue
         branches_unlanded += 1
-        minted_at = row["minted_at"]
-        if minted_at:
-            age_s = (now - _parse_iso(str(minted_at))).total_seconds()
-            if oldest_unlanded_age_s is None or age_s > oldest_unlanded_age_s:
-                oldest_unlanded_age_s = age_s
+        age_s = branch_tip_age_s(repo, branch_name=branch_name)
+        if age_s is not None and (
+            oldest_unlanded_age_s is None or age_s > oldest_unlanded_age_s
+        ):
+            oldest_unlanded_age_s = age_s
+        if branch_name in registered_branches:
+            continue
+        if get_disposition(branch_name=branch_name) is not None:
+            continue
+        if age_s is None or age_s < _orphan_visibility_ttl_s():
+            continue
+        origin_dispatch_id = origin_dispatch_id_from_branch(branch_name)
+        aged_orphans.append(
+            {
+                "branch": branch_name,
+                "tip_sha": state.head_sha,
+                "age_s": age_s,
+                "origin_dispatch_id": origin_dispatch_id,
+            }
+        )
+        dedupe_key = (branch_name, state.head_sha or "")
+        if dedupe_key not in _orphan_aged_emitted:
+            _orphan_aged_emitted.add(dedupe_key)
+            emit_sdk_lane_b_orphan_aged(
+                branch=branch_name,
+                tip_sha=state.head_sha or "",
+                age_s=age_s,
+                origin_dispatch_id=origin_dispatch_id,
+            )
 
     return {
         "worktrees_live": worktrees_live,
         "branches_unlanded": branches_unlanded,
         "oldest_unlanded_age_s": oldest_unlanded_age_s,
+        "aged_orphans": aged_orphans,
     }
 
 
@@ -446,4 +491,5 @@ def concurrency_stats(
         "lane_b_worktrees_live": lane_b_inventory["worktrees_live"],
         "lane_b_branches_unlanded": lane_b_inventory["branches_unlanded"],
         "lane_b_oldest_unlanded_age_s": lane_b_inventory["oldest_unlanded_age_s"],
+        "lane_b_aged_orphans": lane_b_inventory["aged_orphans"],
     }

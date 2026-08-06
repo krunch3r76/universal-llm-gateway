@@ -359,6 +359,18 @@ def _config(request: Request) -> WorkerConfig:
     return getattr(request.app.state, "worker_config", _CONFIG)
 
 
+def _mark_lane_b_abandon_disposition(*, dispatch_id: str, source_repo: Path) -> None:
+    from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
+        mark_lane_b_disposition_for_dispatch,
+    )
+
+    mark_lane_b_disposition_for_dispatch(
+        dispatch_id=dispatch_id,
+        source_repo=source_repo,
+        reason="abandoned",
+    )
+
+
 def _controller(request: Request) -> WorkAdmissionController:
     controller = getattr(request.app.state, "admission_controller", None)
     if controller is None:
@@ -1045,6 +1057,12 @@ async def _mark_terminal_and_promote(
             detail_summary=terminal_status,
         )
     cfg = _config(request) if request is not None else _CONFIG
+    if terminal_status == "failed":
+        await asyncio.to_thread(
+            _mark_lane_b_abandon_disposition,
+            dispatch_id=dispatch_id,
+            source_repo=cfg.source_repo,
+        )
     await asyncio.to_thread(
         maybe_prune_worktree_on_terminal,
         dispatch_id=dispatch_id,

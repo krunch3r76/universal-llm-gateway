@@ -27,6 +27,9 @@ def format_active_work_summary(active_work: dict[str, Any] | None) -> str:
         parts.append(holder)
     elif ops:
         parts.append(ops)
+    orphan = _lane_b_orphan_clause(active_work)
+    if orphan:
+        parts.append(orphan)
     return "; ".join(parts)
 
 
@@ -56,6 +59,37 @@ def _holder_clause(work: dict[str, Any]) -> str:
     if isinstance(status, str) and status.strip():
         bits.append(f"status={status.strip()}")
     return " ".join(bits)
+
+
+def _lane_b_orphan_clause(work: dict[str, Any]) -> str:
+    lane_b = work.get("lane_b")
+    if not isinstance(lane_b, dict):
+        stats = work.get("concurrency_stats")
+        if isinstance(stats, dict):
+            aged = stats.get("lane_b_aged_orphans")
+            if isinstance(aged, list) and aged:
+                return _format_aged_orphan_line(aged[0])
+        return ""
+    aged = lane_b.get("aged_orphans")
+    if not isinstance(aged, list) or not aged:
+        return ""
+    return _format_aged_orphan_line(aged[0])
+
+
+def _format_aged_orphan_line(entry: dict[str, Any]) -> str:
+    branch = entry.get("branch")
+    tip = entry.get("tip_sha")
+    age_s = entry.get("age_s")
+    origin = entry.get("origin_dispatch_id")
+    if not isinstance(branch, str):
+        return ""
+    tip_short = _short_id(str(tip)) if tip else "?"
+    origin_short = _short_id(str(origin)) if origin else "?"
+    age_part = f"age_s={int(age_s)}" if isinstance(age_s, (int, float)) else "age_s=?"
+    return (
+        f"lane_b_orphan branch={branch} tip={tip_short} {age_part} "
+        f"origin={origin_short}"
+    )
 
 
 def _ops_clause(work: dict[str, Any]) -> str:

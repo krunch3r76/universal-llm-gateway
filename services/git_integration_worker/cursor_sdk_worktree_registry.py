@@ -108,6 +108,11 @@ def register_dispatch_worktree(
     branch_name: str,
     branch_point: str,
 ) -> None:
+    from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
+        clear_disposition,
+    )
+
+    clear_disposition(branch_name=branch_name)
     with _connect() as conn:
         ensure_worktree_schema(conn)
         conn.execute(

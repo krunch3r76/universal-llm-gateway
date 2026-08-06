@@ -945,13 +945,23 @@ def emit_sdk_lane_b_branch_retained(
 def SdkLaneBReaped(  # noqa: N802
     dispatch_id: str,
     branch_deleted: bool,
+    branch: str | None = None,
+    tip_sha: str | None = None,
+    reason: str | None = None,
 ) -> Event:
+    payload: dict[str, Any] = {
+        "dispatch_id": dispatch_id,
+        "branch_deleted": branch_deleted,
+    }
+    if branch is not None:
+        payload["branch"] = branch
+    if tip_sha is not None:
+        payload["tip_sha"] = tip_sha
+    if reason is not None:
+        payload["reason"] = reason
     return Event(
         signal="sdk.lane_b.reaped",
-        payload={
-            "dispatch_id": dispatch_id,
-            "branch_deleted": branch_deleted,
-        },
+        payload=payload,
         scope="node",
     )
 
@@ -960,12 +970,96 @@ def emit_sdk_lane_b_reaped(
     *,
     dispatch_id: str,
     branch_deleted: bool,
+    branch: str | None = None,
+    tip_sha: str | None = None,
+    reason: str | None = None,
 ) -> None:
-    """Emit when a dispatch worktree is pruned by the reaper."""
+    """Emit when a dispatch worktree is pruned or an orphan branch is reaped."""
     _emit(
         SdkLaneBReaped(
             dispatch_id=dispatch_id,
             branch_deleted=branch_deleted,
+            branch=branch,
+            tip_sha=tip_sha,
+            reason=reason,
+        )
+    )
+
+
+@event_factory
+def SdkLaneBDispositionMarked(  # noqa: N802
+    branch: str,
+    reason: str,
+    dispatch_id: str,
+    tip_sha: str | None = None,
+) -> Event:
+    payload: dict[str, Any] = {
+        "branch": branch,
+        "reason": reason,
+        "dispatch_id": dispatch_id,
+    }
+    if tip_sha is not None:
+        payload["tip_sha"] = tip_sha
+    return Event(
+        signal="sdk.lane_b.disposition_marked",
+        payload=payload,
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_disposition_marked(
+    *,
+    branch: str,
+    reason: str,
+    dispatch_id: str,
+    tip_sha: str | None = None,
+) -> None:
+    """Emit when a seat writes a salvage-branch disposition marker."""
+    _emit(
+        SdkLaneBDispositionMarked(
+            branch=branch,
+            reason=reason,
+            dispatch_id=dispatch_id,
+            tip_sha=tip_sha,
+        )
+    )
+
+
+@event_factory
+def SdkLaneBOrphanAged(  # noqa: N802
+    branch: str,
+    tip_sha: str,
+    age_s: float,
+    origin_dispatch_id: str | None = None,
+) -> Event:
+    payload: dict[str, Any] = {
+        "branch": branch,
+        "tip_sha": tip_sha,
+        "age_s": age_s,
+    }
+    if origin_dispatch_id is not None:
+        payload["origin_dispatch_id"] = origin_dispatch_id
+    return Event(
+        signal="sdk.lane_b.orphan_aged",
+        payload=payload,
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_orphan_aged(
+    *,
+    branch: str,
+    tip_sha: str,
+    age_s: float,
+    origin_dispatch_id: str | None = None,
+) -> None:
+    """Emit once when an unmarked orphan crosses the visibility TTL."""
+    _emit(
+        SdkLaneBOrphanAged(
+            branch=branch,
+            tip_sha=tip_sha,
+            age_s=age_s,
+            origin_dispatch_id=origin_dispatch_id,
         )
     )
 

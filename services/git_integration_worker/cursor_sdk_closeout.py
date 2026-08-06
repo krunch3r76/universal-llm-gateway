@@ -1460,6 +1460,17 @@ def _assemble_closeout_delivery(
             lane_b_head_sha = state.head_sha
             lane_b_commits_ahead = state.commits_ahead
             lane_b_landed = False
+            if outcome.status != "finished" and not state.safe_to_delete:
+                from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
+                    mark_lane_b_disposition,
+                )
+
+                mark_lane_b_disposition(
+                    branch_name=record.branch_name,
+                    reason="abandoned",
+                    dispatch_id=dispatch_id,
+                    tip_sha=state.head_sha,
+                )
     reported_lane = binding.lane if binding is not None else None
     isolation_mat: bool | None = None
     with CursorDispatchLedger.instance()._connect() as conn:
