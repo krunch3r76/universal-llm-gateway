@@ -13,7 +13,8 @@ from dataclasses import dataclass
 _CLOSEOUT_TYPE_RE = re.compile(r"(?i)^TYPE:\s*CLOSEOUT\b", re.M)
 _CHECKPOINT_LINE_RE = re.compile(r"(?im)^checkpoint:\s*(.+)$")
 _CHECKPOINT_COMMITTED_RE = re.compile(
-    r"^committed\s+([0-9a-f]{7,40})\s+paths=(\d+)\s*$",
+    r"^committed\s+([0-9a-f]{7,40})\s+paths=(\d+)"
+    r"(?:\s+\(\+(\d+)\s+pending\))?\s*$",
     re.I,
 )
 _CHECKPOINT_NOTHING_RE = re.compile(r"^nothing_authored\s*$", re.I)
@@ -21,7 +22,8 @@ _CHECKPOINT_DEFERRED_RE = re.compile(r"^deferred:\s*(.+)$", re.I | re.S)
 
 LANE_A_CHECKPOINT_FIX_HINT = (
     "Add a `checkpoint:` line to the CLOSEOUT body (fail-closed). Legal values: "
-    "`checkpoint: committed <sha> paths=N` (path-explicit lane commit), "
+    "`checkpoint: committed <sha> paths=N` (path-explicit lane commit; optional "
+    "`(+M pending)` when authored paths remain dirty), "
     "`checkpoint: nothing_authored`, or `checkpoint: deferred: <reason>`. "
     "Commit clears lane authorship — never `--all`, never foreign WIP. "
     "Commit is not a live/done gate; `deferred:` is always acceptable."

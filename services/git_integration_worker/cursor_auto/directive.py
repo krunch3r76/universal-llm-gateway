@@ -315,7 +315,8 @@ def build_sdk_message(job_body: str, *, contract: str) -> str:
             [
                 "",
                 "## Lane-A checkpoint (mandatory on closeout)",
-                "Include `checkpoint: committed <sha> paths=N` after path-explicit commit,",
+                "Include `checkpoint: committed <sha> paths=N` after path-explicit commit",
+                "(optional `(+M pending)` when authored paths remain dirty),",
                 "`checkpoint: nothing_authored`, or `checkpoint: deferred: <reason>`.",
                 "Never `--all`. Commit clears lane authorship — not live/done gates.",
             ]

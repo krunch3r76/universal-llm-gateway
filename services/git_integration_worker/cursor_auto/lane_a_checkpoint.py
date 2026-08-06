@@ -207,7 +207,10 @@ def compute_lane_a_checkpoint_value(
     if lane_refs:
         sha = lane_refs[0]
         path_count = len(paths_in_commit(source_repo, sha))
-        return f"committed {sha} paths={path_count}"
+        base = f"committed {sha} paths={path_count}"
+        if authored:
+            return f"{base} (+{len(authored)} pending)"
+        return base
     if authored:
         return "deferred: authored paths not yet path-explicit committed"
     return "nothing_authored"

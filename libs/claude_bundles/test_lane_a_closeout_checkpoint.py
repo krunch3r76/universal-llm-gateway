@@ -44,6 +44,17 @@ def test_committed_passes() -> None:
     assert validate_lane_a_closeout_checkpoint(body=body).ok is True
 
 
+def test_committed_with_pending_passes() -> None:
+    """Row 18 — mixed committed+pending token must clear the fail-closed gate."""
+    body = (
+        "TYPE: CLOSEOUT\n"
+        "checkpoint: committed abc1234 paths=3 (+2 pending)\n"
+    )
+    verdict = validate_lane_a_closeout_checkpoint(body=body)
+    assert verdict.ok is True
+    assert verdict.checkpoint_value == "committed abc1234 paths=3 (+2 pending)"
+
+
 def test_nothing_authored_passes() -> None:
     body = "TYPE: CLOSEOUT\ncheckpoint: nothing_authored\n"
     assert validate_lane_a_closeout_checkpoint(body=body).ok is True
