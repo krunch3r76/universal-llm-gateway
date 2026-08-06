@@ -36,10 +36,16 @@ preflight exactly like a consult handoff.
 **Trigger**: you are about to route ANY work off-seat — consult, review,
 second opinion, hand off reasoning, **or hand off a bound implementation**.
 
+0. **Peer disclosure (second-advisor fan):** when this dispatch is a **second**
+   advisor on a fork that already has (or will have) another advisor, tell **each**
+   that the other was asked and **name the peer** (seat + role) in that packet —
+   before fire. Cost is authority mis-frame (each believes itself sole), ¬
+   duplication. CDP operator-proxy missions also bind this as inv 36 / Idea
+   commissioning peer-disclosure; this checkpoint is the non-mission reach surface.
 1. If `cortex_brief` ran this session: the briefing card **Consult routing gate**
-   (`_CONSULT_ROUTING_GATE`) is **binding**, not orientation fluff. Skipping
-   `consult-routing.md` before a dispatch is a protocol violation — the same
-   severity as skipping the packet protocol reads.
+ (`_CONSULT_ROUTING_GATE`) is **binding**, not orientation fluff. Skipping
+ `consult-routing.md` before a dispatch is a protocol violation — the same
+ severity as skipping the packet protocol reads.
 2. Complete the **mandatory preflight** (consult AND implement handoffs):
    1. **Resident rails (always):** Use the `reasoning-posture` skill **and** Use the `frontier-reasoning-discipline` skill — pin Question/OOS/detent before merits; then steelman / calibrate / courage; `thinking_off ⇏ waive`.
    2. **Operator consult token ⇒ posture before transport:** Use the `consult-posture` skill (annex URI on non-resident seats) — classify, declare detent/cascade/scope-lock BEFORE transport or packet (defers general rails to `reasoning-posture`).
@@ -49,7 +55,7 @@ second opinion, hand off reasoning, **or hand off a bound implementation**.
 
    The protocol files live at **project** `.cursor/rules/` (no
    `universal-llm-gateway/` prefix), NOT under the repo's `.cursor/rules/`.
-   Cursor IDE may also load `.cursor/skills/consult-routing/SKILL.md` (stub).
+   Cursor IDE may also load `consult-routing` (plugin skill).
 3. **Standard openers** (code surface only — on life: `agent_bus` a code seat to fire transport; see consult-routing decision table):
    - **web-anthropic** → `team_dispatch(op=handoff, role=web-consult, packet_path=…)` + six-block packet
    - **cursor** (fresh tier / IDE) → `team_dispatch(op=handoff, role=cursor-consult, …)`

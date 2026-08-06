@@ -189,6 +189,15 @@ layer handoff) including its **own** fan-out: Explore for breadth recon, Compose
 mechanical leg once judgment closes, this seat or Fable on an architecture fork it cannot
 rank, grok again for parallel seeds.
 
+**Peer disclosure when fanning a second advisor (BINDING — inv 36):** Before you (or
+the reasoner under your commission) fan one fork to a **second** advisor, tell **each**
+that the other was asked and **name the peer** (seat + role) in that advisor's packet.
+Do it at the commissioning act, not at harvest. Two independent answers are valuable;
+two answers each believing itself sole mis-frame their own authority — each authors as
+if its answer *is* the decision — and the fork then settles by which URI a later
+DIRECTIVE happens to cite. Cost is authority mis-frame, ¬ duplication. Row-27 keeps both
+answers alive; this sentence keeps each from pretending it was alone.
+
 **Command wraps skill (BINDING):** `/work-item-seed` and `/layer` are attended-IDE wrappers
 only. Headless / cursor-sdk loads **`work-item-seed-path`** then **`abstraction-layering`**
 by skill slug — ¬ slash commands. After seed S6, codework runs `Use the abstraction-layering
