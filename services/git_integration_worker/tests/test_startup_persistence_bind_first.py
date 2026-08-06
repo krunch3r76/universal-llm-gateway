@@ -62,28 +62,34 @@ async def test_run_startup_persistence_marks_done_on_success() -> None:
 
 
 @pytest.mark.asyncio
-async def test_fetch_turns_from_single_bounded_tip_window() -> None:
-    """GET /turns ignores after_turn — scan must not page-loop the tip."""
+async def test_fetch_turns_from_pages_with_after_turn() -> None:
+    """Row-9: scan pages ASC via after_turn (restored true paging)."""
     from services.git_integration_worker.cursor_auto import closeout_bus_scan as scan
 
     calls: list[dict] = []
 
     class _Resp:
-        status_code = 200
+        def __init__(self, turns: list[dict]) -> None:
+            self.status_code = 200
+            self._turns = turns
 
         def json(self) -> dict:
-            return {
-                "turns": [
-                    {"turn_number": 10, "body": "new"},
-                    {"turn_number": 5, "body": "mid"},
-                    {"turn_number": 1, "body": "old"},
-                ]
-            }
+            return {"turns": self._turns}
+
+    pages = {
+        4: [
+            {"turn_number": 5, "body": "mid"},
+            {"turn_number": 6, "body": "new"},
+        ],
+        6: [],
+    }
 
     class _Client:
         async def get(self, *args, **kwargs):
-            calls.append(kwargs.get("params") or {})
-            return _Resp()
+            params = kwargs.get("params") or {}
+            calls.append(params)
+            cursor = int(params.get("after_turn") or 0)
+            return _Resp(pages.get(cursor, []))
 
         async def __aenter__(self):
             return self
@@ -98,7 +104,7 @@ async def test_fetch_turns_from_single_bounded_tip_window() -> None:
         turns, err = await scan.fetch_turns_from("6655", after_turn=5)
     assert err is None
     assert turns is not None
-    assert [t["turn_number"] for t in turns] == [10, 5]
-    assert len(calls) == 1
-    assert "after_turn" not in calls[0]
-    assert calls[0]["last"] == scan._MAX_TIP_WINDOW
+    assert [t["turn_number"] for t in turns] == [5, 6]
+    assert len(calls) >= 1
+    assert calls[0]["after_turn"] == 4  # max(0, after_turn - 1)
+    assert calls[0]["last"] == scan._PAGE_SIZE

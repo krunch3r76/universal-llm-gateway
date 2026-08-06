@@ -296,11 +296,16 @@ def get_turns(
     compact: bool = False,
     mark_read: bool = False,
     include_superseded: bool = False,
+    after_turn: int | None = None,
 ) -> list[dict[str, Any]]:
     # include_superseded default mirrors the HTTP route's Query(False) — the route
     # is the single source of truth for this contract (F5). Superseded turns are
     # excluded from the normal fetch/mark-read path; mark-closed-read passes
     # include_superseded=True explicitly to sweep them on thread close.
+    #
+    # after_turn (row-9): when set, filter turn_number > after_turn and page ASC
+    # so callers can walk forward from a cursor. Tip fetches (after_turn omitted)
+    # keep DESC. Distinct from POST /turns after_turn unread guard.
     select = "id, thread, turn_number, from_agent, to_agent, subject, status, supersedes_turn, created_at, read_at"
     if not compact:
         select = "*"
@@ -326,9 +331,16 @@ def get_turns(
         params.append(status)
     if not include_superseded:
         clauses.append("status != 'superseded'")
+    if after_turn is not None:
+        clauses.append("turn_number > ?")
+        params.append(after_turn)
 
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    order = "ORDER BY thread, turn_number DESC"
+    # Cursor paging needs oldest-first; tip window stays newest-first.
+    if after_turn is not None:
+        order = "ORDER BY thread, turn_number ASC"
+    else:
+        order = "ORDER BY thread, turn_number DESC"
     limit = f"LIMIT {last}" if last is not None else ""
 
     sql = f"SELECT {select} FROM turns {where} {order} {limit}"

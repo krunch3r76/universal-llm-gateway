@@ -230,6 +230,14 @@ async def list_turns(
     compact: bool = Query(False),
     mark_read_flag: bool = Query(False, alias="mark_read"),
     include_superseded: bool = Query(False),
+    after_turn: int | None = Query(
+        None,
+        ge=0,
+        description=(
+            "Return turns with turn_number > after_turn, oldest-first. "
+            "Omit for tip window (newest-first). Not the POST unread guard."
+        ),
+    ),
 ) -> TurnList:
     """List turns with optional filters and optional mark-read side effects."""
     if thread is not None:
@@ -243,6 +251,7 @@ async def list_turns(
         compact=compact,
         mark_read=mark_read_flag,
         include_superseded=include_superseded,
+        after_turn=after_turn,
     )
     return TurnList(turns=[_turn_from_row(r) for r in rows])
 
