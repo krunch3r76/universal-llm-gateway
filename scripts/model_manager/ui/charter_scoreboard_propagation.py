@@ -1,4 +1,11 @@
-"""Render open propagation rows into charter scoreboard markdown."""
+"""Render open propagation *obligation* rows into charter scoreboard markdown.
+
+This table is the owed-restart worklist (open events), not a liveness board.
+Absence of an open row ≠ live; a frozen failed ledger event is invisible here
+and must not be inferred as current not-live. For ``is code_ref live on
+service?`` use
+``charter_runner_store.propagation_liveness.observe_code_ref_live``.
+"""
 
 from __future__ import annotations
 
@@ -6,14 +13,20 @@ import re
 from pathlib import Path
 from typing import Any
 
-_OPEN_ROWS_HEADING = "## Open propagation rows"
+_OPEN_ROWS_HEADING = "## Open propagation obligations"
 _NEXT_SECTION = re.compile(r"^##\s+", re.MULTILINE)
+# Prior heading kept so patch_scoreboard can replace legacy sections in place.
+_LEGACY_OPEN_ROWS_HEADING = "## Open propagation rows"
 
 
 def render_open_propagation_table(rows: list[dict[str, Any]]) -> str:
-    """Render ledger projection rows as a markdown table with age."""
+    """Render open obligation rows as a markdown table with harvest age."""
     lines = [
         _OPEN_ROWS_HEADING,
+        "",
+        "Open *obligations* only (owed sync_restart events) — not current liveness. "
+        "Liveness answers cite `observe_code_ref_live` (process probe + "
+        "`code_ref_relation`), never this table or a frozen `status=failed` row.",
         "",
         "Schema: `service · action · code_ref · safe_window · age_in_harvests · proof_class · minting thread/turn`.",
         "",
@@ -48,14 +61,21 @@ def render_open_propagation_table(rows: list[dict[str, Any]]) -> str:
 
 
 def patch_scoreboard_open_rows(markdown: str, rows: list[dict[str, Any]]) -> str:
-    """Replace or insert the open propagation rows section."""
+    """Replace or insert the open-obligation section (legacy heading accepted)."""
     rendered = render_open_propagation_table(rows)
-    if _OPEN_ROWS_HEADING in markdown:
-        start = markdown.index(_OPEN_ROWS_HEADING)
-        tail = markdown[start + len(_OPEN_ROWS_HEADING) :]
-        end_match = _NEXT_SECTION.search(tail)
-        end = start + len(_OPEN_ROWS_HEADING) + end_match.start() if end_match else len(markdown)
-        return markdown[:start].rstrip() + "\n\n" + rendered + "\n" + markdown[end:].lstrip("\n")
+    for heading in (_OPEN_ROWS_HEADING, _LEGACY_OPEN_ROWS_HEADING):
+        if heading in markdown:
+            start = markdown.index(heading)
+            tail = markdown[start + len(heading) :]
+            end_match = _NEXT_SECTION.search(tail)
+            end = start + len(heading) + end_match.start() if end_match else len(markdown)
+            return (
+                markdown[:start].rstrip()
+                + "\n\n"
+                + rendered
+                + "\n"
+                + markdown[end:].lstrip("\n")
+            )
     return markdown.rstrip() + "\n\n" + rendered + "\n"
 
 

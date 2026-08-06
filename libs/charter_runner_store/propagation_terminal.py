@@ -279,6 +279,10 @@ def settle_open_row(
         )
 
     if satisfaction.case == "ancestry_satisfied":
+        # Event outcome for this open obligation attempt — not a standing
+        # liveness answer. Seats asking "is code_ref live?" must call
+        # observe_code_ref_live (equal|ancestor → yes) rather than treat this
+        # defer token as durable state.
         detail = (
             f"ancestry satisfied: newer code live "
             f"(expected {row.code_ref} observed {observed!r}; "
@@ -318,6 +322,9 @@ def settle_open_row(
         now_monotonic=time.monotonic(),
     )
     if satisfaction.case == "stale_code" and determination == "contradicted" and ruled_out:
+        # Terminal event freeze of one settle attempt. True at write time; may
+        # become false when the world catches up. Do not present status=failed
+        # as current not-live — observe_code_ref_live cites a fresh probe.
         fail_payload = {
             **payload,
             "expected_code_ref": row.code_ref,

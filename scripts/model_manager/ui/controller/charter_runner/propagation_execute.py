@@ -27,6 +27,8 @@ from charter_runner_store.propagation_ledger import (
     set_defer_reason,
     upsert_open_rows,
 )
+from charter_runner_store.propagation_liveness import observe_code_ref_live
+from charter_runner_store.propagation_terminal import settle_open_row
 from deploy_identity.code_ref_relation import code_ref_relation
 from implement_admission.propagation_admit_validation import (
     CLIENT_VISIBLE_SERVICES,
@@ -504,6 +506,9 @@ async def execute_propagation_plan(
         upsert_open_rows(plan.rows)
 
     bump_age_for_open_rows()
+    # Open rows are the obligation fire set — not a liveness oracle. Terminal
+    # failed events stay out of this list by design; seats asking current
+    # liveness use observe_code_ref_live (does not open sqlite).
     open_rows = [
         row for row in list_open_rows() if row.defer_reason != "harvest_wanted"
     ]
@@ -550,6 +555,38 @@ async def execute_propagation_plan(
             continue
 
         before = dispatch_before.payload
+
+        # Pre-fire re-observe (F4 census #13): when a newer live version already
+        # satisfies the owed code_ref (ancestor), stop chasing this obligation
+        # without burning a restart. Exact match still fires — harvest close
+        # requires process-identity delta after sync_restart, not merely a
+        # matching code_version on the outgoing generation.
+        live = observe_code_ref_live(
+            row.service,
+            row.code_ref,
+            probe=lambda _service, _payload=before: (
+                _payload if isinstance(_payload, dict) else None
+            ),
+        )
+        if live.answer == "yes" and live.relation == "ancestor":
+            pre = settle_open_row(
+                row,
+                lambda _service, _payload=before: _payload,
+                defer_if_unreachable=True,
+            )
+            remaining.append(
+                {
+                    **projection,
+                    "defer_reason": pre.detail,
+                    "proof_class_executed": dispatch_before.proof_class_executed,
+                    "disposition": "pre_fire_ancestry_satisfied",
+                    "proof": before,
+                    "liveness": live.reason,
+                }
+            )
+            if row.age_in_harvests >= 2:
+                escalated.append({**projection, "defer_reason": pre.detail})
+            continue
 
         may_fire, window_reason = row_may_fire_at_harvest(row)
         i2_ok, i2_reason = giw_restart_precondition(row, queue_snapshot=queue_snapshot)

@@ -48,6 +48,13 @@ class OpenPropagationProjection:
 
 
 def _row_key(row: PropagationRow) -> str:
+    """Stable identity for one obligation *attempt* (event), not current liveness.
+
+    The ``service:code_ref:action`` shape reads like a state key, but the row
+    stores one harvest attempt with an outcome. Terminal ``failed``/``closed``
+    values stay frozen by design — ask :func:`observe_code_ref_live` for
+    whether that ``code_ref`` is live now (F4 / obligation ≠ liveness).
+    """
     return f"{row.service}:{normalize_code_ref(row.code_ref)}:{row.action}"
 
 
@@ -68,11 +75,15 @@ def upsert_open_rows(
     *,
     conn: sqlite3.Connection | None = None,
 ) -> list[str]:
-    """Insert or refresh open rows; return stable row ids.
+    """Insert or refresh *open* obligation rows; return stable event ids.
 
     Mint-boundary: open-row ``proof`` is an obligation. Persisting a past-tense
     performed-ancestry claim (``ancestry satisfied``) raises
     :class:`PerformedAncestryProofError` — the check has not run at queue time.
+
+    ``ON CONFLICT … WHERE status='open'`` refuses to overwrite terminal events.
+    That freeze is correct under immutable-event semantics; it is not a
+    liveness oracle — use :func:`charter_runner_store.propagation_liveness.observe_code_ref_live`.
     """
     if not rows:
         return []
@@ -336,7 +347,13 @@ def fail_row(
     reason: str,
     conn: sqlite3.Connection | None = None,
 ) -> None:
-    """Mark a row failed after observed proof mismatch — not on restart status alone."""
+    """Freeze an open obligation attempt as a failed *event* (immutable).
+
+    Records the probe snapshot that contradicted the owed ``code_ref`` at that
+    instant. ``status=failed`` must not be read as durable current not-live —
+    a later process may serve the same SHA. Liveness questions go through
+    :func:`charter_runner_store.propagation_liveness.observe_code_ref_live`.
+    """
     own_conn = conn is None
     db = conn or open_ledger_db()
     now = time.time()

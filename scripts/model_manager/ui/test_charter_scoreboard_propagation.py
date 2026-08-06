@@ -45,3 +45,12 @@ text
     assert "| old | row |" not in patched
     assert "_none open_" in patched
     assert "## Ratified correction" in patched
+    assert "## Open propagation obligations" in patched
+    assert "not current liveness" in patched
+
+
+def test_render_labels_obligations_not_liveness():
+    table = render_open_propagation_table([])
+    assert "## Open propagation obligations" in table
+    assert "observe_code_ref_live" in table
+    assert "not current liveness" in table

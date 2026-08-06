@@ -52,6 +52,8 @@ def test_unsupported_proof_class_fails_loud_not_echo() -> None:
         code_ref=_SHA,
         proof_class="served_artifact",
         proof_class_requested="served_artifact",
+        # Explicit proof: mcp×served_artifact has no compose_proof template.
+        proof="unsupported pair for dispatch fail-loud test",
     )
     result = dispatch_proof_probe(row)
     assert result.error is not None
@@ -116,6 +118,7 @@ async def test_execute_fails_unsupported_proof_class_without_restart(tmp_path, m
                 code_ref=_SHA,
                 proof_class="served_artifact",
                 proof_class_requested="served_artifact",
+                proof="unsupported pair for execute fail-loud test",
             )
         ]
     )
