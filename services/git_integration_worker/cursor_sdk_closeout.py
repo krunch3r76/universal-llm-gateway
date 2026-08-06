@@ -38,6 +38,9 @@ from services.git_integration_worker.cursor_auto.episode_residue import (
 )
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_ambient import ambient_deviation_token
+from services.git_integration_worker.cursor_sdk_authored_status_reconcile import (
+    reconcile_structured_with_authored,
+)
 from services.git_integration_worker.cursor_sdk_boundary_finalize import (
     finalize_boundary_manifest,
 )
@@ -910,6 +913,14 @@ def build_implement_closeout_body(
         status = project_status_from_work_outcome(resolved_work_outcome, degraded_reason)
     elif verification and any(v.exit_code for v in verification):
         status = CloseoutStatus.PARTIAL
+    status, resolved_work_outcome, status_authority_disagreement, deviations = (
+        reconcile_structured_with_authored(
+            status=status,
+            work_outcome=resolved_work_outcome,
+            sidecar_markdown=sidecar_markdown,
+            deviations=deviations,
+        )
+    )
     manifest_source = ensure_subagents_surface(
         effects_manifest or outcome.effects_manifest
     )
@@ -1008,6 +1019,8 @@ def build_implement_closeout_body(
             usage_capture_status=outcome.usage_capture_status,  # type: ignore[arg-type]
         )
         payload = closeout.model_dump(mode="json")
+        if status_authority_disagreement is not None:
+            payload["status_authority_disagreement"] = status_authority_disagreement
         if files_untracked_or_ignored:
             payload["files_untracked_or_ignored"] = files_untracked_or_ignored
         if files_outside_repo:
