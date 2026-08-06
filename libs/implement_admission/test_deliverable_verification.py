@@ -81,6 +81,10 @@ def test_cortex_expected_present_on_disk_uncaptured(tmp_path: Path) -> None:
     )
     assert _gate_d_reason(entries) == "expected_present_on_disk_uncaptured"
     assert entries[0].exit_code == 1
+    # Member 5: Gate-D boolean-as-exit is derived, not a process observation.
+    assert entries[0].exit_code_register == "derived"
+    assert entries[0].basis == "gate_d_boolean_pass"
+    assert entries[0].invocation_id == "gate_d:expected_present_on_disk_uncaptured"
 
 
 @pytest.mark.offline
@@ -186,3 +190,49 @@ def test_repo_path_behavior_unchanged_without_cortex(tmp_path: Path) -> None:
         source_repo=repo,
     )
     assert _gate_d_reason(entries) == "expected_present_on_disk_uncaptured"
+
+
+@pytest.mark.offline
+def test_member5_specimen_auto_00a23d2a4f45_class_distinguishable() -> None:
+    """Specimen class: prose 'All checks passed!' vs structured exit_code:1.
+
+    After Packet C, a reader must tell Gate-D (derived boolean) from a
+    process-observed ruff exit, and tell two ruff invocations apart by
+    invocation_id — a bare register without identity is not enough.
+    """
+    from implement_admission.closeout_models import (
+        Verification,
+        observed_process_verification,
+    )
+    from implement_admission.deliverable_verification import build_gate_d_verification
+
+    # Verbatim specimen shapes (auto-00a23d2a4f45 verification array):
+    #   gate_d:passed / 0   +   ruff check 8 touched files / 1
+    gate = build_gate_d_verification(reason="passed", passed=True)
+    mid_run = observed_process_verification(
+        command="ruff check 8 touched files",
+        exit_code=1,
+        invocation_id="lint:mid-run-shell-a1",
+        basis="subprocess.run.returncode",
+    )
+    later_pass = observed_process_verification(
+        command="ruff check 8 touched files",
+        exit_code=0,
+        invocation_id="lint:closeout-pack-b2",
+        basis="subprocess.run.returncode",
+    )
+
+    assert gate.exit_code_register == "derived"
+    assert gate.basis == "gate_d_boolean_pass"
+    assert mid_run.exit_code_register == "observed"
+    assert later_pass.exit_code_register == "observed"
+    assert mid_run.invocation_id != later_pass.invocation_id
+    assert mid_run.command == later_pass.command
+    assert mid_run.exit_code != later_pass.exit_code
+
+    # Legacy two-field wire still loads (phased default) but announces unknown.
+    legacy = Verification.model_validate(
+        {"command": "ruff check 8 touched files", "exit_code": 1}
+    )
+    assert legacy.exit_code_register == "unknown"
+    assert legacy.invocation_id is None

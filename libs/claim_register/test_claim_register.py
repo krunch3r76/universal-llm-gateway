@@ -79,3 +79,15 @@ def test_wire_normalize_passes_typed_fix_hint() -> None:
     out = normalize_claim_bearing_payload(payload)
     assert out["fix_hint"] is typed
     assert out["fix_hint"]["register"] == "derived"
+
+
+def test_wire_normalize_passes_typed_claim_register() -> None:
+    """Member 3 — claim_register key is in the post_terminal_status guard set."""
+    typed = claimed_derived(
+        "Episode superseded…", basis="supersede.dispositional_summary"
+    ).to_wire()
+    payload = {"claim_register": typed, "revert_disposition": "revert-pending"}
+    out = normalize_claim_bearing_payload(payload)
+    assert out["claim_register"] is typed
+    assert out["claim_register"]["register"] == "derived"
+    assert out["revert_disposition"] == "revert-pending"

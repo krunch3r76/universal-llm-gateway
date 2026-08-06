@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from implement_admission.closeout_helpers import cortex_files_root
 from implement_admission.closeout_models import (
@@ -17,6 +18,8 @@ from implement_admission.closeout_models import (
     EvidenceUris,
     ImplementCloseout,
     Verification,
+    derived_gate_verification,
+    observed_process_verification,
 )
 from implement_admission.deliverable_verification import (
     evaluate_deliverable_verification,
@@ -250,7 +253,12 @@ def run_touched_files_lint(
     source_repo: Path,
     change_set: ChangeSet,
 ) -> tuple[Verification, str | None]:
-    """Run ``ruff check`` on touched ``*.py`` paths from the git change set."""
+    """Run ``ruff check`` on touched ``*.py`` paths from the git change set.
+
+    Each call mints a fresh ``invocation_id`` so this closeout-time process
+    cannot be silently conflated with a mid-run agent shell that happened to
+    print ``All checks passed!`` (specimen auto-00a23d2a4f45).
+    """
     py_paths = [
         path
         for path in (*change_set.created, *change_set.modified)
@@ -258,11 +266,17 @@ def run_touched_files_lint(
     ]
     if not py_paths:
         return (
-            Verification(command="ruff check (no python files touched)", exit_code=0),
+            derived_gate_verification(
+                command="ruff check (no python files touched)",
+                exit_code=0,
+                basis="lint_skipped_no_python",
+                invocation_id=f"lint-skip:{uuid4().hex}",
+            ),
             None,
         )
     abs_paths = [str(source_repo / path) for path in py_paths]
     command = f"ruff check {len(py_paths)} touched files"
+    invocation_id = f"lint:{uuid4().hex}"
     try:
         proc = subprocess.run(
             ["ruff", "check", *abs_paths],
@@ -270,14 +284,34 @@ def run_touched_files_lint(
             timeout=60,
         )
     except FileNotFoundError:
-        return Verification(
-            command=command, exit_code=0
-        ), "verification:lint_unavailable"
+        return (
+            derived_gate_verification(
+                command=command,
+                exit_code=0,
+                basis="lint_unavailable_ruff_missing",
+                invocation_id=invocation_id,
+            ),
+            "verification:lint_unavailable",
+        )
     except subprocess.TimeoutExpired:
-        return Verification(
-            command=command, exit_code=0
-        ), "verification:lint_unavailable"
-    return Verification(command=command, exit_code=proc.returncode), None
+        return (
+            derived_gate_verification(
+                command=command,
+                exit_code=0,
+                basis="lint_unavailable_timeout",
+                invocation_id=invocation_id,
+            ),
+            "verification:lint_unavailable",
+        )
+    return (
+        observed_process_verification(
+            command=command,
+            exit_code=proc.returncode,
+            invocation_id=invocation_id,
+            basis="subprocess.run.returncode",
+        ),
+        None,
+    )
 
 
 def _split_baseline(

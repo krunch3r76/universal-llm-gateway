@@ -37,17 +37,18 @@ async def post_terminal_status(
     completion token see exactly the vocabulary the caller chose.
 
     Claim-register partial guard (row 29): claim-bearing keys in *payload*
-    (today ``fix_hint``) are normalized via
+    (``fix_hint``, ``claim_register``) are normalized via
     :func:`claim_register.normalize_claim_bearing_payload` before dump.
     Missing registers are stamped ``unknown`` and the turn still posts —
     never fail-closed here (a dropped closeout is worse than an untyped
     claim that announces itself). Fail-closed lives on ``Claimed``
     construction and in unit tests only.
 
-    NAMED ABSENCE: this chokepoint does **not** cover member 2 (ledger
-    ``fail_row``), member 5 (``Verification`` packers), or member 6
-    (authoring / mission-close — Packet E: skill + ``MISSION_SKILL_SLUGS``
-    chip, not this wire). See ``claim_register.wire`` docstring.
+    NAMED ABSENCE: this chokepoint does **not** cover member 1 (RESIDUE
+    markdown), member 2 (ledger ``fail_row``), member 5 (``Verification``
+    packers), or member 6 (authoring / mission-close — Packet E: skill +
+    ``MISSION_SKILL_SLUGS`` chip, not this wire). See
+    ``claim_register.wire`` docstring.
     """
     if job.request_id and "request_id" not in payload:
         payload = {**payload, "request_id": job.request_id}

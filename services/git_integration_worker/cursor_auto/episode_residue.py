@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 
+from claim_register import claimed_derived, render_claim
 from implement_admission.propagation_block_parser import (
     propagation_rows_from_markdown_sources,
 )
@@ -214,10 +215,18 @@ def build_residue_block(
     if len(shown) > budget:
         shown, elided = shown[: budget - 1], len(actions) - (budget - 1)
 
+    # Soft honesty → typed derived claim. Keep TYPE: RESIDUE + "Obligation —"
+    # prefixes (closeout_relay_briefing / tests assert those); do not rewrite
+    # the header grammar consumers regex. render_claim marks the register.
+    obligation = render_claim(
+        claimed_derived(
+            "propagation owed (path-derived; liveness: unknown)",
+            basis="path_mint_no_liveness_probe",
+        )
+    )
     lines = [
         "TYPE: RESIDUE",
-        # Path/CONSUMERS mint obligation only — never dress as observed not-live.
-        "Obligation — propagation owed (path-derived; liveness: unknown):",
+        f"Obligation — {obligation}:",
         *[f"- {action}" for action in shown],
     ]
     if elided:
@@ -255,8 +264,12 @@ def obligation_deployment_state_from_wrapper(wrapper_text: str | None) -> str | 
     if count == 0:
         return None
     noun = "path" if count == 1 else "paths"
-    return (
-        f"{count} propagation-owed {noun} — see RESIDUE block; liveness: unknown"
+    # Deployment-state summary is derived counsel (path count only; no probe).
+    return render_claim(
+        claimed_derived(
+            f"{count} propagation-owed {noun} — see RESIDUE block; liveness: unknown",
+            basis="obligation_deployment_state_from_wrapper",
+        )
     )
 
 

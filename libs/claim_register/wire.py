@@ -1,9 +1,12 @@
 """Post-time wire normalize for claim-bearing terminal payloads.
 
-NAMED ABSENCE (row 29 / Packet A — read this before extending):
+NAMED ABSENCE (row 29 — read this before extending):
 This module only covers claim-bearing keys that transit
-``post_terminal_status`` (currently ``fix_hint``). It does **not** cover:
+``post_terminal_status`` (currently ``fix_hint``, ``claim_register``).
+It does **not** cover:
 
+- member 1 — RESIDUE markdown authored via ``render_claim`` in
+  ``episode_residue`` (not this JSON chokepoint)
 - member 2 — ledger ``fail_row`` / status column (Packet D)
 - member 5 — ``Verification`` schema packing outside this chokepoint (Packet C)
 - member 6 — authoring / skill / mission-close surfaces (Packet E doctrine
@@ -27,16 +30,17 @@ import logging
 from typing import Any
 
 from claim_register.types import (
+    _VALID_REGISTERS,
     CLAIM_REGISTER_UNKNOWN,
     Claimed,
-    _VALID_REGISTERS,
 )
 
 logger = logging.getLogger(__name__)
 
 # Claim-bearing keys in cursor-auto terminal JSON that require a register.
 # Expand only when a retrofit actually emits through post_terminal_status.
-CLAIM_BEARING_KEYS: frozenset[str] = frozenset({"fix_hint"})
+# claim_register = member-3 supersede dispositional summary (Packet B).
+CLAIM_BEARING_KEYS: frozenset[str] = frozenset({"fix_hint", "claim_register"})
 
 _DEGRADE_BASIS = "post_terminal_status_untyped_claim"
 

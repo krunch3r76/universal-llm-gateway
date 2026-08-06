@@ -447,3 +447,7 @@ def test_post_superseded_terminal_payload_carries_revert_disposition():
     payload = json.loads(bus.reply.await_args.kwargs["body"])
     assert payload["revert_disposition"] == "revert-pending"
     assert "work reverted" not in payload["summary"]
+    # Member 3: additive claim_register on dispositional summary (derived).
+    assert payload["claim_register"]["register"] == "derived"
+    assert payload["claim_register"]["value"] == payload["summary"]
+    assert payload["claim_register"]["basis"] == "supersede.dispositional_summary"

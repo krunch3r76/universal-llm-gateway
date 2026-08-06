@@ -13,7 +13,11 @@ from typing import TYPE_CHECKING
 from universal_logging import get_logger
 
 from implement_admission.closeout_helpers import cortex_files_root
-from implement_admission.closeout_models import ImplementCloseout, Verification
+from implement_admission.closeout_models import (
+    ImplementCloseout,
+    Verification,
+    derived_gate_verification,
+)
 from implement_admission.scheme_resolve import parse_schemed_path
 from implement_admission.spec import ImplementSpec, Source, SourceKind
 
@@ -100,10 +104,21 @@ def gate_d_passed(closeout: ImplementCloseout) -> bool:
 def build_gate_d_verification(
     *, reason: str, passed: bool, note: str | None = None
 ) -> Verification:
+    """Pack Gate-D as a *derived* boolean wearing a process-exit shape.
+
+    ``exit_code`` here is not a subprocess returncode — it is ``0 if passed
+    else 1``. Marked ``derived`` so readers cannot treat it as an observed
+    process exit (row 29 member 5 / specimen auto-00a23d2a4f45 class).
+    """
     cmd = f"{GATE_D_PREFIX}{reason}"
     if note:
         cmd = f"{cmd};note={note}"
-    return Verification(command=cmd, exit_code=0 if passed else 1)
+    return derived_gate_verification(
+        command=cmd,
+        exit_code=0 if passed else 1,
+        basis="gate_d_boolean_pass",
+        invocation_id=f"gate_d:{reason}",
+    )
 
 
 def evaluate_deliverable_verification(

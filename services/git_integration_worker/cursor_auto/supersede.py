@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from claim_register import claimed_derived
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_auto.handler_terminal import (
@@ -265,6 +266,15 @@ async def post_superseded_terminal(
         superseded_by=job.superseded_by,
         dispatch_id=dispatch_id,
     )
+    # Member 3: dispositional summary is derived counsel (interrupt never
+    # observed a completed revert). Keep bare summary for replay/consumers;
+    # type travels on additive claim_register (wire-compatible via
+    # post_terminal_status — no schema strip). render_claim on summary would
+    # rewrite the falsifier sentence — rejected this packet.
+    summary_claim = claimed_derived(
+        summary,
+        basis="supersede.dispositional_summary",
+    )
     re_issue_subject = None
     if job.superseded_by:
         newer = queue.get(job.superseded_by) if hasattr(queue, "get") else None
@@ -277,6 +287,7 @@ async def post_superseded_terminal(
         "re_issue_subject": re_issue_subject or "(unknown)",
         "terminal_vocabulary": SUPERSEDED_TERMINAL,
         "revert_disposition": revert_disposition,
+        "claim_register": summary_claim.to_wire(),
     }
     logger.warning(
         "cursor-auto job=%s terminal=%s dispatch_id=%s",

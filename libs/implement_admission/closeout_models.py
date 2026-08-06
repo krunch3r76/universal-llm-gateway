@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Literal
+from uuid import uuid4
 
 from admission_common.qualified_scalar import AbsenceSemantics, AuthorityClass
 from pydantic import BaseModel, Field
@@ -18,6 +19,11 @@ AmbientRepoCause = Literal[
     "ambient:vanished",
     "declared_unproved",
 ]
+
+# Row 29 member 5 — exit_code claim register (mirrors claim_register.ClaimRegister
+# + unknown degrade). Kept as Literal here so closeout_models stays free of a
+# hard import cycle into claim_register from every closeout consumer.
+ExitCodeRegister = Literal["observed", "derived", "unknown"]
 
 
 class AmbientRepoMovement(BaseModel):
@@ -61,8 +67,70 @@ class EffectsManifest(BaseModel):
 
 
 class Verification(BaseModel):
+    """One verification row — process exit or derived gate boolean.
+
+    Closed ``{command, exit_code}`` collapsed mid-run capture with closeout
+    verdict (specimen ``auto-00a23d2a4f45``: prose ``All checks passed!`` vs
+    structured ``ruff check 8 touched files`` / ``exit_code: 1``). Row 29
+    member 5 opens the schema:
+
+    - ``exit_code_register`` — ``observed`` (process returncode) vs ``derived``
+      (Gate-D boolean packed as 0/1) vs ``unknown`` (legacy wire degrade).
+    - ``invocation_id`` — binds the row to one process/gate evaluation so two
+      runs of the same command are distinguishable. A register alone without
+      identity does not fix the specimen class.
+
+    Default ``unknown`` keeps historical closeout JSON loadable
+    (``ImplementCloseout.model_validate`` / pipeline apply). New packers MUST
+    set register + invocation_id via the helpers below — bare two-field
+    construction is the legacy degrade path, not the typed emit path.
+    """
+
     command: str
     exit_code: int
+    exit_code_register: ExitCodeRegister = "unknown"
+    invocation_id: str | None = None
+    basis: str | None = None
+
+
+def observed_process_verification(
+    *,
+    command: str,
+    exit_code: int,
+    invocation_id: str | None = None,
+    basis: str | None = None,
+) -> Verification:
+    """Pack a process-observed exit from ``subprocess`` / shell returncode.
+
+    Mints ``invocation_id`` when omitted so each process run stays distinct.
+    """
+    return Verification(
+        command=command,
+        exit_code=exit_code,
+        exit_code_register="observed",
+        invocation_id=invocation_id or f"proc:{uuid4().hex}",
+        basis=basis,
+    )
+
+
+def derived_gate_verification(
+    *,
+    command: str,
+    exit_code: int,
+    basis: str,
+    invocation_id: str | None = None,
+) -> Verification:
+    """Pack a derived boolean-as-exit for Gate-D and similar non-process verdicts.
+
+    ``exit_code`` is not a live process returncode — callers must pass *basis*.
+    """
+    return Verification(
+        command=command,
+        exit_code=exit_code,
+        exit_code_register="derived",
+        invocation_id=invocation_id,
+        basis=basis,
+    )
 
 
 class EvidenceUris(BaseModel):
