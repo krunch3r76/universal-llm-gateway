@@ -296,9 +296,14 @@ authorized **only** for (1) continuity handoff to a new CSE (after launch confir
 notify. A **leg** DISPOSITION ("Mission leg complete", ratify one DIRECTIVE) does **not**
 authorize stopping — keep the stream live; residuals stay in-mission as the next DIRECTIVE
 or idle wait. Forbidden: "Nothing needs you" + stop while open residuals remain without
-mission-close TYPE. If the stream stops outside those two cases, page the operator (awareness
-``notify``, tag ``cse-stream-stop``, subject ¬ ``COME TO IDE``) with stop + why — or expect
-cursor to fire that ping when you already went quiet.
+mission-close TYPE. **Persistent-lane carve-out (thread 6885):** on
+``bus_lifecycle:persistent`` + long-lived operator, ``MISSION_CLOSEOUT`` only for true
+arc end or forced CSE refresh. **Going-quiet ≡ stop** on that lane — a status report is
+not a terminal act; if a dispatch is in flight, poll/harvest/act; silent quiet with work
+in flight is the defect (name a wake token if you must park). Skill § Episode boundaries
+deciding-moment test. If the stream stops outside those two cases, page the operator
+(awareness ``notify``, tag ``cse-stream-stop``, subject ¬ ``COME TO IDE``) with stop + why
+— or expect cursor to fire that ping when you already went quiet.
 
 **In-session carve-out:** suppress ``notify`` only when the operator has **declared** human
 operator **and** is in *this* Cowork CSE — IDE-only presence does **not** suppress
