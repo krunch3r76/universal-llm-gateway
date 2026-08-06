@@ -38,6 +38,10 @@ class AutoJob:
     superseded_by: str | None = None
     supersedes: str | None = None
     superseded_dispatch_id: str | None = None
+    # Nested SDK poll reached terminal; CLOSEOUT may still be in flight.
+    # Cleared only by process death — not a success terminal (mark_done stays
+    # after closeout). Supersede must not treat this job as in-flight.
+    nested_sdk_finished: bool = False
 
 
 class AutoJobQueue:
@@ -126,12 +130,31 @@ class AutoJobQueue:
         with self._lock:
             return self._jobs.get(job_id)
 
+    def mark_nested_sdk_finished(self, job_id: str) -> None:
+        """Flag that nested SDK work ended — exclude from supersede, keep claimed.
+
+        Does **not** call ``mark_done``. Relay death must leave a noticeable
+        non-done status; only CLOSEOUT success/failure terminalizes the job.
+        """
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is not None:
+                job.nested_sdk_finished = True
+
     def claimed_for_thread(self, thread_id: str) -> AutoJob | None:
-        """Return the in-flight job on *thread_id* — the supersede candidate."""
+        """Return the in-flight supersede candidate on *thread_id*.
+
+        Jobs whose nested SDK already finished (CLOSEOUT still relaying) stay
+        ``claimed`` for restart triage but are not supersede candidates.
+        """
         with self._lock:
             for jid in self._order:
                 job = self._jobs[jid]
-                if job.thread_id == thread_id and job.status == "claimed":
+                if (
+                    job.thread_id == thread_id
+                    and job.status == "claimed"
+                    and not job.nested_sdk_finished
+                ):
                     return job
         return None
 

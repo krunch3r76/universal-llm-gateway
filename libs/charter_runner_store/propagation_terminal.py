@@ -280,9 +280,10 @@ def settle_open_row(
 
     if satisfaction.case == "ancestry_satisfied":
         # Event outcome for this open obligation attempt — not a standing
-        # liveness answer. Seats asking "is code_ref live?" must call
-        # observe_code_ref_live (equal|ancestor → yes) rather than treat this
-        # defer token as durable state.
+        # liveness answer. Leave the open row (incl. legacy premature
+        # "ancestry satisfied" proof stamps); seats asking "is code_ref
+        # live?" must call observe_code_ref_live (equal|ancestor → yes)
+        # rather than treat this defer token or proof string as durable state.
         detail = (
             f"ancestry satisfied: newer code live "
             f"(expected {row.code_ref} observed {observed!r}; "

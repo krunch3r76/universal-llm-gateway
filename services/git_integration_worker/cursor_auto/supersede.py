@@ -228,6 +228,31 @@ def compose_supersede_preamble(settlement: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def superseded_terminal_summary(
+    *,
+    superseded_by: str | None,
+    dispatch_id: str | None,
+) -> tuple[str, str]:
+    """Build observation-keyed superseded summary + revert disposition token.
+
+    Interrupt runs before successor ``settle_supersede``, so this surface must
+    never claim a completed revert (commits survive ``revert_dispatch_writes``).
+    """
+    if dispatch_id:
+        disposition = "revert-pending"
+        clause = (
+            "episode void; revert-pending (successor settle reports tree)"
+        )
+    else:
+        disposition = "revert-skipped"
+        clause = "episode void; revert-skipped"
+    summary = (
+        f"Episode superseded by a newer same-thread request "
+        f"(job {superseded_by}); {clause}; no closeout is authoritative."
+    )
+    return summary, disposition
+
+
 async def post_superseded_terminal(
     job: AutoJob,
     *,
@@ -236,9 +261,9 @@ async def post_superseded_terminal(
     dispatch_id: str | None,
 ) -> dict[str, Any]:
     """Close the displaced job as ``status:superseded`` — never success-shaped."""
-    summary = (
-        f"Episode superseded by a newer same-thread request "
-        f"(job {job.superseded_by}); work reverted, no closeout is authoritative."
+    summary, revert_disposition = superseded_terminal_summary(
+        superseded_by=job.superseded_by,
+        dispatch_id=dispatch_id,
     )
     re_issue_subject = None
     if job.superseded_by:
@@ -251,6 +276,7 @@ async def post_superseded_terminal(
         "dispatch_id": dispatch_id,
         "re_issue_subject": re_issue_subject or "(unknown)",
         "terminal_vocabulary": SUPERSEDED_TERMINAL,
+        "revert_disposition": revert_disposition,
     }
     logger.warning(
         "cursor-auto job=%s terminal=%s dispatch_id=%s",

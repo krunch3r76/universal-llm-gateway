@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import subprocess
 
+from universal_workspace import get_workspace_root
+
 from charter_runner_store.propagation_version_satisfaction import (
     DEFER_ANCESTRY_SATISFIED,
     DEFER_UNRELATED_OR_UNRESOLVABLE,
     classify_version_satisfaction,
 )
-from universal_workspace import get_workspace_root
 
 
 def _head() -> str:
@@ -60,6 +61,8 @@ def test_case_ii_ancestry_satisfied() -> None:
     assert result.relation == "ancestor"
     assert result.case != "exact_match"
     assert "never verified" in result.reader_entitlement
+    assert "READ-CAVEAT" in result.reader_entitlement
+    assert "observe_code_ref_live" in result.reader_entitlement
 
 
 def test_case_iii_unrelated_or_unresolvable() -> None:

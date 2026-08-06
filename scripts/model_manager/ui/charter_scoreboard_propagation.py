@@ -26,7 +26,11 @@ def render_open_propagation_table(rows: list[dict[str, Any]]) -> str:
         "",
         "Open *obligations* only (owed sync_restart events) — not current liveness. "
         "Liveness answers cite `observe_code_ref_live` (process probe + "
-        "`code_ref_relation`), never this table or a frozen `status=failed` row.",
+        "`code_ref_relation`), never this table or a frozen `status=failed` row. "
+        "READ-CAVEAT: open rows with `defer=version_superseded_by_newer_code` "
+        "(ancestry-satisfied, including legacy premature proof stamps) stay "
+        "listed — do not close them from the proof string; re-ask "
+        "`observe_code_ref_live`.",
         "",
         "Schema: `service · action · code_ref · safe_window · age_in_harvests · proof_class · minting thread/turn`.",
         "",

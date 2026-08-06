@@ -493,6 +493,9 @@ async def process_job(
         )
 
     terminal_status = str(polled.get("status") or "failed")
+    # Claim-window cut: exclude from supersede *without* mark_done — keep
+    # claimed so relay death stays noticeable; CLOSEOUT path terminalizes later.
+    queue.mark_nested_sdk_finished(job.job_id)
     get_ledger().set_relay_phase(job.job_id, relay_phase=RELAY_PHASE_SDK_TERMINAL)
     sdk_body = await fetch_sdk_closeout_body(
         thread_id=job.thread_id,

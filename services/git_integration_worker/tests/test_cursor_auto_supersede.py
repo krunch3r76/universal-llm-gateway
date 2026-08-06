@@ -13,7 +13,9 @@ from services.git_integration_worker.cursor_auto.queue import AutoJobQueue
 from services.git_integration_worker.cursor_auto.supersede import (
     SUPERSEDED_TERMINAL,
     compose_supersede_preamble,
+    post_superseded_terminal,
     supersede_same_thread_inflight,
+    superseded_terminal_summary,
 )
 from services.git_integration_worker.cursor_sdk_revert import revert_dispatch_writes
 from services.git_integration_worker.cursor_sdk_supersede import (
@@ -361,3 +363,82 @@ def test_preamble_names_void_episode_and_residue():
     assert "void" in text
     assert "a.py" in text and "b.py" in text and "c.py" in text
     assert "revert INCOMPLETE" in text
+
+
+def test_nested_sdk_finished_excludes_from_supersede_without_mark_done():
+    """Claim-window cut: finished nested work stays claimed, not supersedeable."""
+    queue = AutoJobQueue(durable=False)
+    old = _enqueue(queue, thread_id="5867", turn_number=8)
+    queue.claim_next()
+    queue.mark_nested_sdk_finished(old.job_id)
+    assert queue.get(old.job_id).status == "claimed"
+    assert queue.claimed_for_thread("5867") is None
+
+    new = _enqueue(queue, thread_id="5867", turn_number=9)
+    evidence = asyncio.run(supersede_same_thread_inflight(new, queue=queue))
+
+    assert evidence is None
+    assert queue.get(old.job_id).status == "claimed"
+    assert not queue.is_superseded(old.job_id)
+    assert new.supersedes is None
+
+
+def test_queued_only_still_supersedes_pre_submit_claimed_job():
+    queue = AutoJobQueue(durable=False)
+    old = _enqueue(queue, thread_id="5867", turn_number=8)
+    queue.claim_next()
+    assert queue.get(old.job_id).nested_sdk_finished is False
+
+    new = _enqueue(queue, thread_id="5867", turn_number=9)
+    evidence = asyncio.run(supersede_same_thread_inflight(new, queue=queue))
+
+    assert evidence is not None
+    assert evidence["method"] == "queued_only"
+    assert queue.is_superseded(old.job_id)
+
+
+def test_superseded_terminal_summary_replay_auto_47cdf529c125():
+    """Falsifier: live dispatch interrupt must not claim work was undone."""
+    summary, disposition = superseded_terminal_summary(
+        superseded_by="e13bae97-428c-48af-bd88-9e8beed8f28f",
+        dispatch_id="auto-47cdf529c125",
+    )
+    assert disposition == "revert-pending"
+    assert summary == (
+        "Episode superseded by a newer same-thread request "
+        "(job e13bae97-428c-48af-bd88-9e8beed8f28f); episode void; "
+        "revert-pending (successor settle reports tree); "
+        "no closeout is authoritative."
+    )
+    assert "work reverted" not in summary
+    assert "reverted-with-report" not in summary
+
+
+def test_superseded_terminal_queued_only_is_revert_skipped():
+    summary, disposition = superseded_terminal_summary(
+        superseded_by="job-new",
+        dispatch_id=None,
+    )
+    assert disposition == "revert-skipped"
+    assert "revert-skipped" in summary
+    assert "work reverted" not in summary
+
+
+def test_post_superseded_terminal_payload_carries_revert_disposition():
+    queue = AutoJobQueue(durable=False)
+    old = _enqueue(queue, thread_id="5867", turn_number=8)
+    queue.claim_next()
+    new = _enqueue(queue, thread_id="5867", turn_number=9)
+    queue.mark_superseded(old.job_id, superseded_by=new.job_id)
+    old.superseded_by = new.job_id
+
+    bus = AsyncMock()
+    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    asyncio.run(
+        post_superseded_terminal(
+            old, client=bus, queue=queue, dispatch_id="auto-47cdf529c125"
+        )
+    )
+    payload = json.loads(bus.reply.await_args.kwargs["body"])
+    assert payload["revert_disposition"] == "revert-pending"
+    assert "work reverted" not in payload["summary"]
