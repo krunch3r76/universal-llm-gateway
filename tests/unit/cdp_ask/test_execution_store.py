@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from cdp_ask.execution_store import ExecutionStore
+from cdp_ask.stop_ack_checkin import STOP_ACK_QUIET_S, is_stop_ack_candidate
 
 
 @pytest.fixture
@@ -102,3 +103,59 @@ async def test_idle_reaper_drops_terminal_records(fast_store: ExecutionStore) ->
     await fast_store._reap_once()
 
     assert await fast_store.get(record.execution_id) is None
+
+
+@pytest.mark.asyncio
+async def test_iter_stop_ack_candidates_excludes_awaiting_wake(
+    fast_store: ExecutionStore,
+) -> None:
+    record = await fast_store.create(holder="seat", purpose="operator-proxy")
+    await fast_store.set_registration_id(record.execution_id, "reg-m")
+    await fast_store.update_liveness(
+        record.execution_id,
+        streaming=False,
+        stop=True,
+        tool_pause=False,
+        liveness_observed_at=100.0,
+    )
+    await fast_store.mark_awaiting_wake(record.execution_id, result={"ok": True})
+
+    now = 100.0 + STOP_ACK_QUIET_S + 10.0
+    candidates = await fast_store.iter_stop_ack_candidates(now)
+    assert candidates == []
+
+
+@pytest.mark.asyncio
+async def test_iter_stop_ack_candidates_includes_mission_stopped(
+    fast_store: ExecutionStore,
+) -> None:
+    record = await fast_store.create(holder="seat", purpose="mission")
+    await fast_store.set_registration_id(record.execution_id, "reg-m2")
+    await fast_store.attach_task(record.execution_id, asyncio.create_task(asyncio.sleep(60)))
+    await fast_store.update_liveness(
+        record.execution_id,
+        streaming=False,
+        stop=True,
+        tool_pause=False,
+        liveness_observed_at=50.0,
+    )
+
+    now = 50.0 + STOP_ACK_QUIET_S + 1.0
+    candidates = await fast_store.iter_stop_ack_candidates(now)
+    assert len(candidates) == 1
+    assert candidates[0].execution_id == record.execution_id
+    assert is_stop_ack_candidate(candidates[0], now) is True
+
+
+@pytest.mark.asyncio
+async def test_iter_stop_ack_candidates_excludes_ask(fast_store: ExecutionStore) -> None:
+    record = await fast_store.create(holder="seat", purpose="ask")
+    await fast_store.update_liveness(
+        record.execution_id,
+        streaming=False,
+        stop=True,
+        tool_pause=False,
+        liveness_observed_at=10.0,
+    )
+    candidates = await fast_store.iter_stop_ack_candidates(1000.0)
+    assert candidates == []

@@ -662,7 +662,11 @@ def run_cdp_generate(
             body = str(snapshot.get("body") or "")
             if _proof_rejects_overload(snapshot):
                 abort_info = _abort_then_sweep(
-                    sat_id, execution_id, ask_client=relay, client=client
+                    sat_id,
+                    execution_id,
+                    ask_client=relay,
+                    client=client,
+                    retain_cse=mission_retain,
                 )
                 return CdpGenerateResult(
                     ok=False,
@@ -695,7 +699,11 @@ def run_cdp_generate(
 
         if _completed_without_proof(snapshot):
             abort_info = _abort_then_sweep(
-                sat_id, execution_id, ask_client=relay, client=client
+                sat_id,
+                execution_id,
+                ask_client=relay,
+                client=client,
+                retain_cse=mission_retain,
             )
             return CdpGenerateResult(
                 ok=False,
@@ -713,7 +721,11 @@ def run_cdp_generate(
 
         if _terminal_failure(snapshot):
             abort_info = _abort_then_sweep(
-                sat_id, execution_id, ask_client=relay, client=client
+                sat_id,
+                execution_id,
+                ask_client=relay,
+                client=client,
+                retain_cse=mission_retain,
             )
             return CdpGenerateResult(
                 ok=False,

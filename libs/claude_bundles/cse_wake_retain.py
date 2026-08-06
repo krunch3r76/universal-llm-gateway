@@ -8,6 +8,7 @@ from typing import Any
 from claude_bundles import cdp_registry
 from claude_bundles.cdp_registry_store import load_sessions
 from claude_bundles.cse_session_common import (
+    OBLIGATION_KIND_STOP_ACK_OWED,
     OBLIGATION_KIND_WAKE_OWED,
     STATUS_ALARMED,
     STATUS_OPEN,
@@ -53,12 +54,38 @@ def get_open_wake_owed_for_registration(
     return None
 
 
+def _registration_has_open_stop_ack_debt(
+    sessions: dict[str, dict[str, Any]], registration_id: str
+) -> bool:
+    """True when CSR shows open/alarmed stop_ack_owed tied to *registration_id*."""
+    reg = (registration_id or "").strip()
+    if not reg:
+        return False
+    for row in sessions.values():
+        ids = row.get("ids") or {}
+        if str(ids.get("registration_id") or "") == reg:
+            for ob in row.get("obligations") or []:
+                if ob.get("kind") != OBLIGATION_KIND_STOP_ACK_OWED:
+                    continue
+                if ob.get("status") in (STATUS_OPEN, STATUS_ALARMED):
+                    return True
+        for ob in row.get("obligations") or []:
+            if ob.get("kind") != OBLIGATION_KIND_STOP_ACK_OWED:
+                continue
+            if ob.get("status") not in (STATUS_OPEN, STATUS_ALARMED):
+                continue
+            if str(ob.get("cse_registration_id") or "") == reg:
+                return True
+    return False
+
+
 def registration_has_wake_debt(registration_id: str) -> bool:
-    """True when CSR shows unpaid wake_owed for this registration."""
+    """True when CSR shows unpaid wake_owed or open stop_ack_owed for registration."""
     fold_pending_transitions()
-    return (
-        get_open_wake_owed_for_registration(load_sessions(), registration_id) is not None
-    )
+    sessions = load_sessions()
+    if get_open_wake_owed_for_registration(sessions, registration_id) is not None:
+        return True
+    return _registration_has_open_stop_ack_debt(sessions, registration_id)
 
 
 def try_claim_wake_payment(*, thread: str, obligation_id: str) -> bool:

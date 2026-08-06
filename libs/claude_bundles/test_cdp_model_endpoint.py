@@ -22,6 +22,7 @@ from claude_bundles.cdp_model_endpoint import (
 )
 from claude_bundles.cdp_model_endpoint_staging import (
     CdpStagingError,
+    StagedPrompt,
     stage_cdp_prompt_with_skills,
     stage_prompt_uri,
     sweep_ephemeral,
@@ -257,6 +258,28 @@ class _FakeResp:
         return {k: v for k, v in self._payload.items() if not k.startswith("_")}
 
 
+def _mock_run_cdp_staging(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, execution_id: str
+) -> None:
+    """Avoid skill-catalog SOT validation in sparse git worktrees."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    monkeypatch.setenv("PROJECT_ASK_URL", "http://satellite.test")
+
+    def _fake_stage(**_kwargs: Any) -> StagedPrompt:
+        return StagedPrompt(
+            prompt_uri=(
+                f"cortex://notes/system/ephemeral/cdp-endpoint/{execution_id}/prompt.md"
+            ),
+            ephemeral_root=None,
+            staged=True,
+        )
+
+    monkeypatch.setattr(
+        "claude_bundles.cdp_model_endpoint.stage_cdp_prompt_with_skills",
+        _fake_stage,
+    )
+
+
 def test_run_cdp_generate_proof_before_complete(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -361,8 +384,7 @@ def test_run_cdp_generate_mission_wall_does_not_abort(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """purpose=operator-proxy must not Stop-click on max_wall — keep polling to proof."""
-    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
-    monkeypatch.setenv("PROJECT_ASK_URL", "http://satellite.test")
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-mission-wc")
     archive = "cortex://notes/system/threads/mission-wc.md"
     client = _FakeClient(
         [
@@ -868,3 +890,123 @@ def test_run_cdp_generate_proof_empty_body_with_archive_fail_closed(
     )
     assert result.ok is False
     assert result.stall_stage == "completed_without_proof"
+
+
+def test_run_cdp_generate_mission_completed_without_proof_retain_cse(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Mission purpose must pass retain_cse=True at completed_without_proof abort."""
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-cwp-mission")
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-cwp", "status": "running"},
+            {
+                "execution_id": "sat-cwp",
+                "status": "completed",
+                "body": "",
+                "completion_phase": "terminal",
+            },
+        ]
+    )
+    retain_calls: list[bool] = []
+    from claude_bundles import cdp_model_endpoint as mod
+
+    orig = mod._abort_then_sweep
+
+    def _track(*args, **kwargs):
+        retain_calls.append(bool(kwargs.get("retain_cse")))
+        return orig(*args, **kwargs)
+
+    monkeypatch.setattr(mod, "_abort_then_sweep", _track)
+    result = run_cdp_generate(
+        execution_id="dispatch-cwp-mission",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        purpose="operator-proxy",
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert result.ok is False
+    assert result.stall_stage == "completed_without_proof"
+    assert retain_calls == [True]
+    assert result.extras.get("abort", {}).get("abort_skipped") is True
+
+
+def test_run_cdp_generate_non_mission_completed_without_proof_aborts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Non-mission purpose still aborts+sweeps on completed_without_proof."""
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-cwp-ask")
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-ask", "status": "running"},
+            {
+                "execution_id": "sat-ask",
+                "status": "completed",
+                "body": "",
+                "completion_phase": "terminal",
+            },
+        ]
+    )
+    retain_calls: list[bool] = []
+    from claude_bundles import cdp_model_endpoint as mod
+
+    orig = mod._abort_then_sweep
+
+    def _track(*args, **kwargs):
+        retain_calls.append(bool(kwargs.get("retain_cse")))
+        return orig(*args, **kwargs)
+
+    monkeypatch.setattr(mod, "_abort_then_sweep", _track)
+    result = run_cdp_generate(
+        execution_id="dispatch-cwp-ask",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        purpose="ask",
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert result.ok is False
+    assert retain_calls == [False]
+
+
+def test_run_cdp_generate_mission_overload_retain_cse(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Overload proof-reject path passes retain_cse=mission_retain."""
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-ol-mission")
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-ol-m", "status": "running"},
+            {
+                "execution_id": "sat-ol-m",
+                "status": "running",
+                "archive_uri": "cortex://notes/system/threads/cdp-ask-archive-new.md",
+                "body": _OVERLOAD_ONLY_BODY,
+                "attested_model": "Model: Opus 4.8",
+            },
+        ]
+    )
+    retain_calls: list[bool] = []
+    from claude_bundles import cdp_model_endpoint as mod
+
+    orig = mod._abort_then_sweep
+
+    def _track(*args, **kwargs):
+        retain_calls.append(bool(kwargs.get("retain_cse")))
+        return orig(*args, **kwargs)
+
+    monkeypatch.setattr(mod, "_abort_then_sweep", _track)
+    result = run_cdp_generate(
+        execution_id="dispatch-ol-mission",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        purpose="mission",
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert result.ok is False
+    assert retain_calls == [True]

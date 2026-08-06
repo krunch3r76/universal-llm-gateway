@@ -17,11 +17,14 @@ from claude_bundles.cdp_registry_store import (
 from claude_bundles.cse_session_common import (
     DEFAULT_FALLBACK,
     DEFAULT_WAKE,
+    OBLIGATION_KIND_STOP_ACK_OWED,
     OBLIGATION_KIND_WAKE_OWED,
     STATUS_ALARMED,
     STATUS_DISCHARGED,
     STATUS_OPEN,
+    STOP_ACK_TTL_S,
     WAKE_TTL_S,
+    find_session_by_registration,
     find_session_by_thread,
     session_key,
 )
@@ -75,6 +78,9 @@ def _fold_one(
         "cdp.wake.alarm_fired": _fold_wake_alarm,
         "cse.wake.posted": _fold_wake_posted,
         "cse.wake.claimed": _fold_wake_claimed,
+        "cdp.stop_ack.opened": _fold_stop_ack_opened,
+        "cdp.stop_ack.discharged": _fold_stop_ack_discharged,
+        "cdp.stop_ack.alarm_fired": _fold_stop_ack_alarm,
     }
     handler = handlers.get(event)
     if handler is None:
@@ -255,4 +261,108 @@ def _fold_wake_claimed(
             ob["payment"] = payment
             sessions[key] = row
             return sessions, True
+    return sessions, False
+
+
+def _stop_ack_session_key(payload: dict[str, Any]) -> str:
+    registration_id = payload.get("registration_id")
+    execution_id = str(payload.get("execution_id") or "")
+    if registration_id:
+        return session_key(registration_id=str(registration_id), thread=execution_id)
+    return f"exec:{execution_id}"
+
+
+def _fold_stop_ack_opened(
+    record: dict[str, Any],
+    sessions: dict[str, dict[str, Any]],
+    payload: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], bool]:
+    execution_id = str(payload.get("execution_id") or "")
+    registration_id = payload.get("registration_id")
+    obligation_id = str(payload.get("obligation_id") or f"stop_ack:{execution_id}")
+    key = _stop_ack_session_key(payload)
+    found = (
+        find_session_by_registration(sessions, str(registration_id))
+        if registration_id
+        else None
+    )
+    if found:
+        key, row = found
+    else:
+        row = sessions.get(key) or {
+            "cse_id": registration_id or f"cse-{execution_id}",
+            "ids": {},
+            "obligations": [],
+        }
+    ids = dict(row.get("ids") or {})
+    if registration_id:
+        ids["registration_id"] = registration_id
+    row["ids"] = ids
+    since = float(payload.get("since") or record.get("ts") or time.time())
+    ob = {
+        "obligation_id": obligation_id,
+        "kind": OBLIGATION_KIND_STOP_ACK_OWED,
+        "execution_id": execution_id,
+        "since": since,
+        "ttl_deadline": float(payload.get("ttl_deadline") or since + STOP_ACK_TTL_S),
+        "status": STATUS_OPEN,
+        "cse_registration_id": registration_id,
+        "purpose": payload.get("purpose"),
+        "alarm": {"fired_at": None, "ghost_reap_candidate": False},
+    }
+    obligations = list(row.get("obligations") or [])
+    if any(o.get("obligation_id") == obligation_id for o in obligations):
+        return sessions, False
+    obligations.append(ob)
+    row["obligations"] = obligations
+    sessions[key] = row
+    return sessions, True
+
+
+def _fold_stop_ack_discharged(
+    record: dict[str, Any],
+    sessions: dict[str, dict[str, Any]],
+    payload: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], bool]:
+    obligation_id = str(payload.get("obligation_id") or "")
+    execution_id = str(payload.get("execution_id") or "")
+    changed = False
+    for key, row in sessions.items():
+        for ob in row.get("obligations") or []:
+            if ob.get("kind") != OBLIGATION_KIND_STOP_ACK_OWED:
+                continue
+            if ob.get("obligation_id") != obligation_id and str(
+                ob.get("execution_id") or ""
+            ) != execution_id:
+                continue
+            if ob.get("status") == STATUS_DISCHARGED:
+                return sessions, True
+            ob["status"] = STATUS_DISCHARGED
+            ob["discharge_reason"] = payload.get("reason")
+            if payload.get("job"):
+                ob["parked_job"] = payload.get("job")
+            sessions[key] = row
+            return sessions, True
+    return sessions, changed
+
+
+def _fold_stop_ack_alarm(
+    record: dict[str, Any],
+    sessions: dict[str, dict[str, Any]],
+    payload: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], bool]:
+    obligation_id = str(payload.get("obligation_id") or "")
+    fired_at = float(payload.get("fired_at") or record.get("ts") or time.time())
+    for key, row in sessions.items():
+        for ob in row.get("obligations") or []:
+            if ob.get("obligation_id") == obligation_id:
+                if ob.get("status") == STATUS_ALARMED:
+                    return sessions, True
+                ob["status"] = STATUS_ALARMED
+                ob["alarm"] = {
+                    "fired_at": fired_at,
+                    "ghost_reap_candidate": True,
+                }
+                sessions[key] = row
+                return sessions, True
     return sessions, False

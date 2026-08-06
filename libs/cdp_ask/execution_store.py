@@ -74,6 +74,7 @@ class ExecutionStore:
         self._reaper_interval_s = reaper_interval_s
         self._lock = asyncio.Lock()
         self._reaper_task: asyncio.Task[None] | None = None
+        self._stop_ack_task: asyncio.Task[None] | None = None
         self._deregister: DeregisterFn | None = None
         self._live_cse_cache: tuple[float, int] | None = None
 
@@ -83,8 +84,15 @@ class ExecutionStore:
     async def start(self) -> None:
         if self._reaper_task is None:
             self._reaper_task = asyncio.create_task(self._reaper_loop())
+        if self._stop_ack_task is None:
+            self._stop_ack_task = asyncio.create_task(self._stop_ack_checkin_loop())
 
     async def stop(self) -> None:
+        if self._stop_ack_task is not None:
+            self._stop_ack_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._stop_ack_task
+            self._stop_ack_task = None
         if self._reaper_task is not None:
             self._reaper_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -362,6 +370,27 @@ class ExecutionStore:
             cdp_registry.deregister_lane(registration_id, reason="probe_failed")
             reaped.append(registration_id)
         return reaped
+
+    async def iter_stop_ack_candidates(self, now: float) -> list[ExecutionRecord]:
+        """Return mission stream-stop records past quiet gate (F1 predicate)."""
+        from cdp_ask.stop_ack_checkin import is_stop_ack_candidate
+
+        async with self._lock:
+            return [
+                rec
+                for rec in self._records.values()
+                if is_stop_ack_candidate(rec, now)
+            ]
+
+    async def _stop_ack_checkin_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self._reaper_interval_s)
+            await self._stop_ack_tick_once()
+
+    async def _stop_ack_tick_once(self) -> None:
+        from cdp_ask.stop_ack_checkin import run_checkin_tick
+
+        await run_checkin_tick(self)
 
     async def _reaper_loop(self) -> None:
         while True:

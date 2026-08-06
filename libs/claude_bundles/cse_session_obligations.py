@@ -12,9 +12,11 @@ from claude_bundles.cdp_registry_store import load_sessions, ports_lock
 from claude_bundles.cse_session_common import (
     DEFAULT_FALLBACK,
     DEFAULT_WAKE,
+    OBLIGATION_KIND_STOP_ACK_OWED,
     OBLIGATION_KIND_WAKE_OWED,
     STATUS_ALARMED,
     STATUS_OPEN,
+    STOP_ACK_TTL_S,
     WAKE_TTL_S,
     find_session_by_registration,
     find_session_by_thread,
@@ -29,15 +31,20 @@ from claude_bundles.cse_session_fold import (
 
 __all__ = [
     "WAKE_TTL_S",
+    "STOP_ACK_TTL_S",
     "append_session_transition_locked",
+    "discharge_stop_ack_owed",
     "emit_wake_delivered_transition",
     "fold_pending_transitions",
+    "get_open_stop_ack_owed_for_execution",
     "get_open_wake_owed",
     "maybe_mirror_protocol_turn",
+    "mint_stop_ack_owed",
     "record_wake_posted",
     "resolve_payment_channel",
     "resolve_wake_obligation_for_receipt",
     "stamp_session_ids",
+    "sweep_stop_ack_owed_ttl",
     "sweep_wake_owed_ttl",
 ]
 
@@ -294,5 +301,134 @@ def sweep_wake_owed_ttl(
             )
             results.append(
                 {"obligation_id": obligation_id, "thread": thread, "fired_at": fired_at}
+            )
+    return results
+
+
+def get_open_stop_ack_owed_for_execution(
+    execution_id: str,
+) -> dict[str, Any] | None:
+    """Return open or alarmed stop_ack_owed for an execution_id."""
+    sessions = load_sessions()
+    eid = (execution_id or "").strip()
+    if not eid:
+        return None
+    for row in sessions.values():
+        for ob in row.get("obligations") or []:
+            if ob.get("kind") != OBLIGATION_KIND_STOP_ACK_OWED:
+                continue
+            if ob.get("status") not in (STATUS_OPEN, STATUS_ALARMED):
+                continue
+            if str(ob.get("execution_id") or "") == eid:
+                return ob
+    return None
+
+
+def mint_stop_ack_owed(
+    *,
+    execution_id: str,
+    registration_id: str | None,
+    purpose: str | None,
+    now: float | None = None,
+) -> str:
+    """Mint stop_ack_owed obligation when stream-stop candidacy is first observed."""
+    ts = now if now is not None else time.time()
+    obligation_id = f"stop_ack:{execution_id}"
+    append_session_transition_locked(
+        {
+            "event_id": f"stop_ack.opened:{execution_id}",
+            "event": "cdp.stop_ack.opened",
+            "ts": ts,
+            "payload": {
+                "execution_id": execution_id,
+                "registration_id": registration_id,
+                "purpose": purpose,
+                "obligation_id": obligation_id,
+                "since": ts,
+                "ttl_deadline": ts + STOP_ACK_TTL_S,
+            },
+        }
+    )
+    return obligation_id
+
+
+def discharge_stop_ack_owed(
+    *,
+    execution_id: str,
+    reason: str,
+    job: str | None = None,
+) -> None:
+    """Discharge stop_ack_owed after parsed ACK or legitimate park."""
+    obligation_id = f"stop_ack:{execution_id}"
+    payload: dict[str, Any] = {
+        "execution_id": execution_id,
+        "obligation_id": obligation_id,
+        "reason": reason,
+    }
+    if job is not None:
+        payload["job"] = job
+    append_session_transition_locked(
+        {
+            "event_id": f"stop_ack.discharged:{execution_id}",
+            "event": "cdp.stop_ack.discharged",
+            "ts": time.time(),
+            "payload": payload,
+        }
+    )
+
+
+def sweep_stop_ack_owed_ttl(
+    *,
+    now: float | None = None,
+    notify_pager: Callable[[str, str], bool] | None = None,
+) -> list[dict[str, Any]]:
+    """TTL alarm sweep for unpaid stop_ack_owed — report-only ghost-reap candidate."""
+    with ports_lock():
+        fold_pending_transitions()
+        sessions = load_sessions()
+    ts = now if now is not None else time.time()
+    results: list[dict[str, Any]] = []
+    for _key, row in list(sessions.items()):
+        ids = row.get("ids") or {}
+        for ob in row.get("obligations") or []:
+            if ob.get("kind") != OBLIGATION_KIND_STOP_ACK_OWED:
+                continue
+            if ob.get("status") != STATUS_OPEN:
+                continue
+            deadline = float(ob.get("ttl_deadline") or 0)
+            if ts < deadline:
+                continue
+            obligation_id = str(ob.get("obligation_id") or "")
+            exec_id = str(ob.get("execution_id") or "")
+            if notify_pager:
+                notify_pager(
+                    f"STOP-ACK unpaid TTL execution {exec_id}",
+                    f"obligation={obligation_id} ghost_reap_candidate=true",
+                )
+            fired_at = ts
+            append_session_transition_locked(
+                {
+                    "event_id": f"stop_ack.alarm:{obligation_id}",
+                    "event": "cdp.stop_ack.alarm_fired",
+                    "ts": fired_at,
+                    "payload": {
+                        "execution_id": exec_id,
+                        "obligation_id": obligation_id,
+                        "registration_id": ids.get("registration_id")
+                        or ob.get("cse_registration_id"),
+                        "fired_at": fired_at,
+                        "ghost_reap_candidate": True,
+                    },
+                }
+            )
+            results.append(
+                {
+                    "obligation_id": obligation_id,
+                    "execution_id": exec_id,
+                    "registration_id": ids.get("registration_id")
+                    or ob.get("cse_registration_id"),
+                    "fired_at": fired_at,
+                    "ghost_reap_candidate": True,
+                }
             )
     return results

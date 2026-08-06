@@ -162,3 +162,39 @@ async def test_execution_store_boot_reconcile_skips_wake_debt(
     reaped = await store.boot_reconcile()
     assert reaped == []
     deregister.assert_not_called()
+
+
+def _seed_stop_ack_debt(*, reg: str = "reg-stop") -> None:
+    from claude_bundles.cse_session_obligations import mint_stop_ack_owed
+
+    mint_stop_ack_owed(
+        execution_id="exec-stop",
+        registration_id=reg,
+        purpose="operator-proxy",
+        now=1000.0,
+    )
+
+
+def test_registration_has_wake_debt_includes_stop_ack_owed(
+    isolated_obligations: Path,
+) -> None:
+    _seed_stop_ack_debt()
+    assert registration_has_wake_debt("reg-stop") is True
+
+
+def test_release_lane_blocked_by_open_stop_ack_owed(
+    isolated_obligations: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_stop_ack_debt()
+    list_active = MagicMock(
+        return_value=[MagicMock(registration_id="reg-stop", purpose="operator-proxy")]
+    )
+    deregister = MagicMock()
+    monkeypatch.setattr(
+        "claude_bundles.cse_wake_retain.cdp_registry.list_active", list_active
+    )
+    monkeypatch.setattr(
+        "claude_bundles.project_ask_abort.cdp_registry.deregister_lane", deregister
+    )
+    assert release_lane_if_debt_cleared("reg-stop", purpose="operator-proxy") is False
+    deregister.assert_not_called()

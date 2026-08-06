@@ -284,3 +284,49 @@ def test_ac_b2_no_seat_prose_discharge_path(isolated_obligations: Path) -> None:
     assert ob is not None
     ob["status"] = "discharged"
     assert get_open_wake_owed(load_sessions(), thread="6655") is not None
+
+
+def test_stop_ack_owed_mint_and_discharge(isolated_obligations: Path) -> None:
+    from claude_bundles.cse_session_obligations import (
+        discharge_stop_ack_owed,
+        get_open_stop_ack_owed_for_execution,
+        mint_stop_ack_owed,
+    )
+
+    mint_stop_ack_owed(
+        execution_id="exec-sa",
+        registration_id="reg-sa",
+        purpose="mission",
+        now=2000.0,
+    )
+    fold_pending_transitions()
+    ob = get_open_stop_ack_owed_for_execution("exec-sa")
+    assert ob is not None
+    assert ob["kind"] == "stop_ack_owed"
+    assert ob["status"] == "open"
+
+    discharge_stop_ack_owed(execution_id="exec-sa", reason="intentional")
+    fold_pending_transitions()
+    ob = get_open_stop_ack_owed_for_execution("exec-sa")
+    assert ob is None
+
+
+def test_stop_ack_owed_ttl_alarm_persists(isolated_obligations: Path) -> None:
+    from claude_bundles.cse_session_obligations import (
+        get_open_stop_ack_owed_for_execution,
+        mint_stop_ack_owed,
+        sweep_stop_ack_owed_ttl,
+    )
+
+    mint_stop_ack_owed(
+        execution_id="exec-ttl",
+        registration_id="reg-ttl",
+        purpose="mission",
+        now=100.0,
+    )
+    sweep_stop_ack_owed_ttl(now=500.0, notify_pager=lambda _s, _b: True)
+    fold_pending_transitions()
+    ob = get_open_stop_ack_owed_for_execution("exec-ttl")
+    assert ob is not None
+    assert ob["status"] == "alarmed"
+    assert ob["alarm"]["ghost_reap_candidate"] is True

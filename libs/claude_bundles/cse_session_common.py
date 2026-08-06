@@ -6,7 +6,9 @@ import re
 from typing import Any
 
 WAKE_TTL_S = 300
+STOP_ACK_TTL_S = 300
 OBLIGATION_KIND_WAKE_OWED = "wake_owed"
+OBLIGATION_KIND_STOP_ACK_OWED = "stop_ack_owed"
 STATUS_OPEN = "open"
 STATUS_DISCHARGED = "discharged"
 STATUS_ALARMED = "alarmed"
