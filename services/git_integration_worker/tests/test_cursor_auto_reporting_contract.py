@@ -157,6 +157,8 @@ status: complete
 def test_reporting_contract_block_is_deliverable_text() -> None:
     assert REPORTING_CONTRACT_BLOCK.startswith("## REPORTING CONTRACT")
     assert "READ-ONLY TASKS STAY READ-ONLY" in REPORTING_CONTRACT_BLOCK
+    assert "completion-provenance-discipline" in REPORTING_CONTRACT_BLOCK
+    assert "positional implication" in REPORTING_CONTRACT_BLOCK
 
 
 def test_reporting_contract_enumerates_every_projector_field() -> None:

@@ -6,7 +6,9 @@ This module only covers claim-bearing keys that transit
 
 - member 2 — ledger ``fail_row`` / status column (Packet D)
 - member 5 — ``Verification`` schema packing outside this chokepoint (Packet C)
-- member 6 — authoring / skill / mission-close surfaces (Packet E)
+- member 6 — authoring / skill / mission-close surfaces (Packet E doctrine
+  lands in ``completion-provenance-discipline`` §7 + ``MISSION_SKILL_SLUGS``
+  chip + ``cdp-operator-proxy`` inv 35 — **not** this post-time wire)
 
 Do not claim a seventh arbitrary site is covered. Extend the key set when a
 family that *does* post through this chokepoint is retrofitted; leave other

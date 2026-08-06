@@ -31,6 +31,8 @@ MISSION_SKILL_SLUGS: tuple[str, ...] = (
     "cdp-operator-proxy",
     "reasoning-posture",
     "frontier-reasoning-discipline",
+    # Member 6: status/rank/liveness register at mission-close authoring.
+    "completion-provenance-discipline",
 )
 
 # Derived from config/mcp/canonical.yaml surface_primary_domains.life (A9).
@@ -278,6 +280,15 @@ with ``collector:`` · ``followup:`` · ``charter_enrolled:`` · or ``operator_g
 ``none`` when empty. ``commissioned, in flight`` alone is refused at MCP send/reply and
 cursor-auto admit. Mission-debrief ``notify`` (tag ``mission-debrief``) MUST include
 ``Beyond this close: …``. ¬ per-mission watchdog. SOT: ``mission_close_wake.py``.
+
+**Status / rank / liveness register (BINDING — member 6):** roadmap status-acts,
+rank-order claims, liveness, and "next-step" prose are ``observed`` only when quoting
+a substrate payload (tool response, row heading ``status:``, ``/health``, entity card).
+Positional implication from a rank line, ordinal adjacency, or "next open after…" is
+``derived`` and must not render in the observed register. Chip:
+``/completion-provenance-discipline`` §7. Doctrine peer of wake-path refusal — wake
+machinery does **not** AST-lint rank prose; this briefing + chip is the authoring-moment
+surface. Inv 35 on ``cdp-operator-proxy``.
 
 **Streaming stop (BINDING — 2026-08-01 · inv 30):** ending this Cowork stream / turn is
 authorized **only** for (1) continuity handoff to a new CSE (after launch confirmed) or

@@ -119,9 +119,17 @@ commissioned to write.
 | Allowlist grows by lane nickname | Allowlist entries name re-observability, not correlate labels |
 | Long reporting block executor will skim | Terse checklist + skill reference for depth |
 
+## Claim register on status language (member 6)
+
+Status / rank / liveness / next-step claims in closeout relays are `observed`
+only when quoting a substrate payload. Positional implication from a rank line,
+ordinal adjacency, or "next open after…" is `derived` — ¬ render as observed.
+SOT: `completion-provenance-discipline` §7. cursor-auto REPORTING CONTRACT
+carries the one-liner; this skill owns judgment depth.
+
 ## Composes with
 
-- `completion-provenance-discipline` — tool-response binding for completion claims
-- `cdp-operator-proxy` — operator §2 CLOSEOUT template
-- cursor-auto `reporting_contract.py` — injected L2 block
+- `completion-provenance-discipline` — tool-response binding + status/rank register (§7)
+- `cdp-operator-proxy` — operator §2 CLOSEOUT template; mission-close inv for rank acts
+- cursor-auto `reporting_contract.py` — injected L2 block (includes register one-liner)
 - `caller_auditable.py` — tiered relay enforcement on missing checklist fields

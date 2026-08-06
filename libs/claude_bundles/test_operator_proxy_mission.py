@@ -29,6 +29,8 @@ def test_purpose_recognition() -> None:
 def test_ensure_injects_chips_and_briefing() -> None:
     out = ensure_operator_proxy_mission_prompt("# Mission\nDo the thing.\n")
     assert out.startswith("/cdp-operator-proxy\n/reasoning-posture\n")
+    assert "/completion-provenance-discipline\n" in out
+    assert "Status / rank / liveness register (BINDING — member 6)" in out
     assert "## Mission seat map (BINDING" in out
     assert "cursor-auto-tick-work-posting.md" in out
     assert "# Mission\nDo the thing." in out

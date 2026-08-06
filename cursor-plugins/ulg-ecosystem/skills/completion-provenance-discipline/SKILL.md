@@ -64,6 +64,21 @@ Uncalled tool yields no error. Long-command silence is not a result. If unsure a
 
 If required payload data is absent, emit a partial/blocked report, not a done claim.
 
+### 7. Status / rank / liveness register (observed ≠ derived)
+
+Status / rank / liveness / next-step claims are `observed` only when quoting a
+substrate payload (tool response, row heading status, `/health`, etc.).
+Positional implication from a rank line, ordinal adjacency, or "next open
+after…" is `derived` and must not render in the observed register.
+
+| Register | When | May say |
+|---|---|---|
+| `observed` | Quote a substrate payload (tool response, row `status:` heading, `/health`, entity card field) | "Row 29 status=`open` (roadmap read_sha256=…)" |
+| `derived` | Rank order adjacency, "next after X", ordinal implication, inference from silence | Label explicitly as derived — ¬ "LIVE / head advances" from position alone |
+
+**Anti-pattern (member 6):** "executable rank head advances to N" because N is first
+open in `## Rank order` — that is positional implication dressed as observation.
+
 ## Family-specific prior
 
 Grok-family seats have shown higher narrative-without-execution risk; this rule is especially load-bearing there. Do not remove the payload-binding bad/good pairs as “obvious.”

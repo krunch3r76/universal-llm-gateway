@@ -38,6 +38,11 @@ Prompt-side rules (5–8) — fill in §2:
 
 Judgment rules 9–10 live in the **dispatch-report-discipline** skill only — not gated here.
 
+Status/rank/liveness/next-step claims are `observed` only when quoting a
+substrate payload; positional implication from a rank line, ordinal adjacency,
+or "next open after…" is `derived` and must not render as observed
+(`completion-provenance-discipline` §7).
+
 {section2_emit_line}\
 """
 

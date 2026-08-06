@@ -254,6 +254,7 @@ The tokens a DIRECTIVE must carry are the operator's authoring contract
 | Actionable scope | `has_actionable_scope` accepts a repo `scope:` field, a tier-M `tool_op:` + `effects_expected:` pair, or `scope: propagation …` / a `## propagation` heading. `files_expected: none` alone is **not** clearance | `missed_tokens` + `fix_hint` naming the exact lines to add |
 | Vision | `vision:` required on `implement` / `investigate` | `vision_field_missing` |
 | Mission close wake path | `TYPE: MISSION_CLOSEOUT` / subject `MISSION CLOSEOUT` must carry `## Work beyond this close` with wake tokens (`collector:` / `followup:` / `charter_enrolled:` / `operator_gate:`), or `none` when empty; `commissioned, in flight` alone refuses | `mission_close_wake_path_missing` / `mission_close_uncollected_commission` + `MISSION_CLOSE_WAKE_FIX_HINT` (`libs/claude_bundles/mission_close_wake.py`) |
+| Member 6 status/rank register | Roadmap status-acts / rank / liveness / next-step at mission-close are `observed` only with a substrate quote; positional implication is `derived` | **Doctrine, not wake refuse** — chip `completion-provenance-discipline` via `MISSION_SKILL_SLUGS` + briefing in `operator_proxy_mission.py` + `cdp-operator-proxy` inv 35. `mission_close_wake` does **not** AST-lint rank prose. |
 
 A payload naming only what was missing is a dead end for a seat that cannot read the gate's code,
 so every hint names the exact lines to add and the authoring seat re-issues without a round trip.
