@@ -113,3 +113,23 @@ def test_rows_from_closeout_payload_modified_lib_still_mints_consumers():
     assert all(row.code_ref == "land-sha" for row in rows)
     assert skipped == []
     assert prose is False
+
+
+def test_default_proof_strings_are_obligation_not_observation():
+    from implement_admission.propagation_row import (
+        default_proof,
+        proof_claims_performed_ancestry,
+    )
+
+    for service in (
+        "git_integration_worker",
+        "mcp",
+        "cortex_api",
+        "agent_bus",
+        "rag",
+        "event_service",
+    ):
+        proof = default_proof(service)
+        assert "AFTER restart VERIFY" in proof, service
+        assert not proof_claims_performed_ancestry(proof), proof
+        assert "ancestry satisfied" not in proof.lower(), proof

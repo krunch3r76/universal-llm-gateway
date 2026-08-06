@@ -48,7 +48,8 @@ _DEFAULT_SAFE_WINDOW: dict[str, SafeWindow] = {
 
 _SERVED_ARTIFACT_PROOF = (
     "served OpenAPI from every client-reachable surface → x-mcp count >= expected, "
-    "all surfaces byte-identical, document parses; liveness code_ref ancestry satisfied"
+    "all surfaces byte-identical, document parses; AFTER restart VERIFY code_ref "
+    "is ancestor-of-or-equal-to observed code_version"
 )
 
 _DEFAULT_PROOF_CLASS: dict[str, ProofClass] = {
@@ -64,21 +65,29 @@ _DEFAULT_PROOF_CLASS: dict[str, ProofClass] = {
 }
 
 _PROCESS_LIVE_PROOF = (
-    "health/liveness → code_ref is ancestor-of-or-equal-to observed code_version "
-    "AND process identity changed "
-    "(pid/process_start_time/process_age_s/uptime_s) since pre-restart probe"
+    "AFTER restart VERIFY code_ref is ancestor-of-or-equal-to observed code_version "
+    "AND VERIFY process identity changed "
+    "(pid/process_start_time/process_age_s/uptime_s) since the pre-restart probe"
 )
 
 _DEFAULT_PROOF: dict[str, str] = {
     "git_integration_worker": f"GET served OpenAPI (direct + stargate) → {_SERVED_ARTIFACT_PROOF}",
     "mcp": (
         "client_visible: GET /health AND cortex-api /health → "
-        "both code_ref ancestry satisfied"
+        "AFTER restart VERIFY both surfaces satisfy the code_ref ancestry check"
     ),
     "cortex_api": f"GET served OpenAPI (uds + http when bound) → {_SERVED_ARTIFACT_PROOF}",
     "agent_bus": f"GET served OpenAPI (uds) → {_SERVED_ARTIFACT_PROOF}",
     "rag": f"GET served OpenAPI (uds) → {_SERVED_ARTIFACT_PROOF}",
 }
+
+# Past-tense claim that must never appear in mint-time / open-row proof text.
+_PERFORMED_ANCESTRY_CLAIM_RE = re.compile(r"ancestry\s+satisfied", re.IGNORECASE)
+
+
+def proof_claims_performed_ancestry(proof: str) -> bool:
+    """True when proof text asserts a completed ancestry check (mint-time fiction)."""
+    return bool(_PERFORMED_ANCESTRY_CLAIM_RE.search(proof or ""))
 
 
 class PropagationRow(BaseModel):
@@ -462,6 +471,7 @@ __all__ = [
     "default_safe_window",
     "is_lib_test_module",
     "land_paths_for_propagation",
+    "proof_claims_performed_ancestry",
     "resolve_code_ref",
     "row_from_mapping",
     "row_from_mapping_strict",

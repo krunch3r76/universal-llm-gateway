@@ -10,9 +10,19 @@ from dataclasses import dataclass
 from typing import Any
 
 from deploy_identity.code_version import normalize_code_ref
-from implement_admission.propagation_row import PropagationRow
+from implement_admission.propagation_row import (
+    PropagationRow,
+    proof_claims_performed_ancestry,
+)
 
 from .db import execute_with_retry, open_ledger_db
+
+# Open-row proof is always an unperformed obligation (row-17 bind B).
+PROOF_KIND_OBLIGATION = "obligation"
+
+
+class PerformedAncestryProofError(ValueError):
+    """Raised when an open-row mint attempts to persist a completed-ancestry claim."""
 
 
 @dataclass(frozen=True)
@@ -31,6 +41,8 @@ class OpenPropagationProjection:
     hazard: str | None
     reason: str | None
     settle_boundary_monotonic: float | None
+    proof: str = ""
+    proof_kind: str = PROOF_KIND_OBLIGATION
     consumption_token: str | None = None
     consumption_claimed_at: float | None = None
 
@@ -56,7 +68,12 @@ def upsert_open_rows(
     *,
     conn: sqlite3.Connection | None = None,
 ) -> list[str]:
-    """Insert or refresh open rows; return stable row ids."""
+    """Insert or refresh open rows; return stable row ids.
+
+    Mint-boundary: open-row ``proof`` is an obligation. Persisting a past-tense
+    performed-ancestry claim (``ancestry satisfied``) raises
+    :class:`PerformedAncestryProofError` — the check has not run at queue time.
+    """
     if not rows:
         return []
     own_conn = conn is None
@@ -66,6 +83,12 @@ def upsert_open_rows(
     try:
         for raw in rows:
             row = _mint_row(raw)
+            if proof_claims_performed_ancestry(row.proof):
+                raise PerformedAncestryProofError(
+                    "open-row proof must be an obligation, not a performed check; "
+                    f"refusing proof containing 'ancestry satisfied' for "
+                    f"service={row.service!r} code_ref={row.code_ref!r}"
+                )
             row_id = _row_key(row)
             row_ids.append(row_id)
             execute_with_retry(
@@ -117,7 +140,8 @@ def list_open_rows(*, conn: sqlite3.Connection | None = None) -> list[OpenPropag
             """
             SELECT row_id, service, code_ref, safe_window, age_in_harvests,
                    mint_thread, mint_turn, defer_reason, proof_class, hazard, reason,
-                   settle_boundary_monotonic, consumption_token, consumption_claimed_at
+                   settle_boundary_monotonic, proof, consumption_token,
+                   consumption_claimed_at
             FROM propagation_ledger
             WHERE status='open'
             ORDER BY age_in_harvests DESC, service ASC
@@ -137,6 +161,8 @@ def list_open_rows(*, conn: sqlite3.Connection | None = None) -> list[OpenPropag
                 hazard=row["hazard"],
                 reason=row["reason"],
                 settle_boundary_monotonic=row["settle_boundary_monotonic"],
+                proof=str(row["proof"] or ""),
+                proof_kind=PROOF_KIND_OBLIGATION,
                 consumption_token=row["consumption_token"],
                 consumption_claimed_at=row["consumption_claimed_at"],
             )
@@ -376,9 +402,52 @@ def scoreboard_projection(*, conn: sqlite3.Connection | None = None) -> list[dic
             "defer_reason": row.defer_reason,
             "proof_class": row.proof_class,
             "hazard": row.hazard,
+            "proof": row.proof,
+            "proof_kind": row.proof_kind,
         }
         for row in list_open_rows(conn=conn)
     ]
+
+
+def set_open_proof_payload(
+    row_id: str,
+    *,
+    proof_payload: dict[str, Any],
+    defer_reason: str | None = None,
+    conn: sqlite3.Connection | None = None,
+) -> None:
+    """Attach an observation payload to an open row without claiming closure.
+
+    Used when a probe is recorded but the row stays open (defer/unsettled).
+    Does not rewrite ``code_ref`` or mint ``proof`` obligation text.
+    """
+    own_conn = conn is None
+    db = conn or open_ledger_db()
+    now = time.time()
+    try:
+        if defer_reason is None:
+            execute_with_retry(
+                db,
+                """
+                UPDATE propagation_ledger
+                SET proof_payload=?, updated_at=?
+                WHERE row_id=? AND status='open'
+                """,
+                (json.dumps(proof_payload), now, row_id),
+            )
+        else:
+            execute_with_retry(
+                db,
+                """
+                UPDATE propagation_ledger
+                SET proof_payload=?, defer_reason=?, updated_at=?
+                WHERE row_id=? AND status='open'
+                """,
+                (json.dumps(proof_payload), defer_reason, now, row_id),
+            )
+    finally:
+        if own_conn:
+            db.close()
 
 
 def mint_row_id() -> str:

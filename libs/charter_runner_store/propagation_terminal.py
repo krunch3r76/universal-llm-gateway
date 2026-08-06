@@ -24,6 +24,7 @@ from .propagation_ledger import (
     fail_row,
     list_open_rows,
     set_defer_reason,
+    set_open_proof_payload,
     set_settle_boundary,
 )
 from .propagation_version_satisfaction import (
@@ -347,8 +348,21 @@ def settle_open_row(
                 f"(expected {row.code_ref} observed {observed!r}; "
                 f"relation={relation}) — {satisfaction.reader_entitlement}"
             )
+        observation = {
+            **payload,
+            "expected_code_ref": row.code_ref,
+            "observed_code_version": observed,
+            "code_ref_relation": relation,
+            "version_satisfaction_case": satisfaction.case,
+        }
         if defer_if_unreachable:
-            set_defer_reason(row.row_id, reason)
+            set_open_proof_payload(
+                row.row_id,
+                proof_payload=observation,
+                defer_reason=reason,
+            )
+        else:
+            set_open_proof_payload(row.row_id, proof_payload=observation)
         return SettleResult(
             row_id=row.row_id,
             service=row.service,
