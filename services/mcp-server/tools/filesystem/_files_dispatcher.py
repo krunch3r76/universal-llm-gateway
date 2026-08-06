@@ -22,6 +22,161 @@ if TYPE_CHECKING:
     from fastmcp import FastMCP
 
 
+def dispatch_files_op(
+    op: str = "",
+    path: str = "",
+    paths: list[str] | None = None,
+    content: str = "",
+    target: str = "",
+    line: int = 0,
+    all_occurrences: bool = False,
+    binary: bool = False,
+    offset: int = 0,
+    limit: int = 0,
+    expected_sha256: str = "",
+    if_absent: bool = False,
+    mode: str = "",
+) -> dict[str, Any]:
+    """Dispatch a cortex ``files`` op (MCP tool body + unit-test entry).
+
+    Shared-document CAS (``expected_sha256``) must reach every in-place edit
+    path — including ``replace`` / ``insert_at_line`` — or the guard is
+    unsatisfiable while still mandatory.
+    """
+    if paths is None:
+        paths = []
+    if not op:
+        raise ValueError("'op' is required")
+    if op == "read":
+        if not path:
+            raise ValueError("'path' is required for read")
+        result = read_file_impl(path, binary=binary, offset=offset, limit=limit)
+        if path.startswith("dropbox/"):
+            result["_next"] = DROPBOX_READ_HINT
+        return result
+    if op == "read_multi":
+        if not paths:
+            raise ValueError("'paths' is required for read_multi")
+        return read_files_batch_impl(paths, binary=binary)
+    if op == "write":
+        if not path:
+            raise ValueError("'path' is required for write")
+        if not content:
+            raise ValueError("'content' is required for write")
+        result = write_file_impl(
+            path,
+            content,
+            expected_sha256=expected_sha256 or None,
+            if_absent=if_absent,
+        )
+        result["_next"] = FS_WORKFLOW_HINTS["write"]
+        return result
+    if op == "write_binary":
+        if not path:
+            raise ValueError("'path' is required for write_binary")
+        if not content:
+            raise ValueError("'content' (base64) is required for write_binary")
+        result = write_binary_impl(path, content)
+        result["_next"] = FS_WORKFLOW_HINTS["write_binary"]
+        return result
+    if op == "append_binary":
+        if not path:
+            raise ValueError("'path' is required for append_binary")
+        if not content:
+            raise ValueError("'content' (base64) is required for append_binary")
+        return append_binary_impl(path, content)
+    if op == "list":
+        return list_files_impl(path)
+    if op == "search":
+        if not path:
+            raise ValueError("'path' is required for search")
+        if not content:
+            raise ValueError(
+                "'content' is required for search and holds the regex "
+                "pattern. Example: fs(sandbox='cortex', op='search', "
+                "path='notes/paper.pdf', content='credibility')"
+            )
+        if mode == "filename":
+            raise ValueError(
+                "mode='filename' is not supported in the cortex sandbox — "
+                "filename glob find is workspaces-only (fs op='find', "
+                "sandbox='workspaces'). Accepted here: auto (default), "
+                "content (identical — cortex search has no filename "
+                "heuristic)."
+            )
+        result = search_path_impl(path, content)
+        result["_next"] = FS_WORKFLOW_HINTS["search"]
+        return result
+    if op in ("append", "prepend"):
+        if not path:
+            raise ValueError(f"'path' is required for {op}")
+        if not content:
+            raise ValueError(f"'content' is required for {op}")
+        return edit_file_impl(
+            path,
+            op,
+            content,
+            expected_sha256=expected_sha256 or None,
+        )
+    if op == "replace":
+        if not path:
+            raise ValueError("'path' is required for replace")
+        if not target:
+            raise ValueError("'target' is required for replace")
+        return edit_file_impl(
+            path,
+            "replace",
+            content,
+            target=target,
+            all_occurrences=all_occurrences,
+            expected_sha256=expected_sha256 or None,
+        )
+    if op == "insert_at_line":
+        if not path:
+            raise ValueError("'path' is required for insert_at_line")
+        if not line:
+            raise ValueError("'line' is required for insert_at_line")
+        return edit_file_impl(
+            path,
+            "insert_at_line",
+            content,
+            line=line,
+            expected_sha256=expected_sha256 or None,
+        )
+    if op == "move":
+        if not path:
+            raise ValueError("'path' is required for move")
+        if not target:
+            raise ValueError("'target' is required for move")
+        result = move_file_impl(path, target)
+        result["_next"] = FS_WORKFLOW_HINTS["move"]
+        return result
+    if op == "copy":
+        if not path:
+            raise ValueError("'path' is required for copy")
+        if not target:
+            raise ValueError("'target' is required for copy")
+        result = copy_file_impl(path, target)
+        result["_next"] = FS_WORKFLOW_HINTS["copy"]
+        if path.startswith("dropbox/"):
+            result["_warning"] = DROPBOX_COPY_WARNING
+        return result
+    if op == "delete":
+        if not path:
+            raise ValueError("'path' is required for delete")
+        result = delete_file_impl(path)
+        result["_next"] = FS_WORKFLOW_HINTS["delete"]
+        return result
+    if op == "resolve_sha256":
+        if not content:
+            raise ValueError(
+                "'content' is required for resolve_sha256 and holds the bare "
+                "hex or sha256:-prefixed digest to resolve"
+            )
+        return resolve_sha256_impl(content)
+    raise ValueError(f"Unknown op: {op!r}. Use: {sandbox_op_names('cortex')}")
+
+
 def register_files_tool(mcp: FastMCP) -> None:
     """Register the unified `files` tool on *mcp*."""
 
@@ -122,126 +277,18 @@ def register_files_tool(mcp: FastMCP) -> None:
         Returns:
             Operation-dependent result dict.
         """
-        if not op:
-            raise ValueError("'op' is required")
-        if op == "read":
-            if not path:
-                raise ValueError("'path' is required for read")
-            result = read_file_impl(path, binary=binary, offset=offset, limit=limit)
-            if path.startswith("dropbox/"):
-                result["_next"] = DROPBOX_READ_HINT
-            return result
-        if op == "read_multi":
-            if not paths:
-                raise ValueError("'paths' is required for read_multi")
-            return read_files_batch_impl(paths, binary=binary)
-        if op == "write":
-            if not path:
-                raise ValueError("'path' is required for write")
-            if not content:
-                raise ValueError("'content' is required for write")
-            result = write_file_impl(
-                path,
-                content,
-                expected_sha256=expected_sha256 or None,
-                if_absent=if_absent,
-            )
-            result["_next"] = FS_WORKFLOW_HINTS["write"]
-            return result
-        if op == "write_binary":
-            if not path:
-                raise ValueError("'path' is required for write_binary")
-            if not content:
-                raise ValueError("'content' (base64) is required for write_binary")
-            result = write_binary_impl(path, content)
-            result["_next"] = FS_WORKFLOW_HINTS["write_binary"]
-            return result
-        if op == "append_binary":
-            if not path:
-                raise ValueError("'path' is required for append_binary")
-            if not content:
-                raise ValueError("'content' (base64) is required for append_binary")
-            return append_binary_impl(path, content)
-        if op == "list":
-            return list_files_impl(path)
-        if op == "search":
-            if not path:
-                raise ValueError("'path' is required for search")
-            if not content:
-                raise ValueError(
-                    "'content' is required for search and holds the regex "
-                    "pattern. Example: fs(sandbox='cortex', op='search', "
-                    "path='notes/paper.pdf', content='credibility')"
-                )
-            if mode == "filename":
-                raise ValueError(
-                    "mode='filename' is not supported in the cortex sandbox — "
-                    "filename glob find is workspaces-only (fs op='find', "
-                    "sandbox='workspaces'). Accepted here: auto (default), "
-                    "content (identical — cortex search has no filename "
-                    "heuristic)."
-                )
-            result = search_path_impl(path, content)
-            result["_next"] = FS_WORKFLOW_HINTS["search"]
-            return result
-        if op in ("append", "prepend"):
-            if not path:
-                raise ValueError(f"'path' is required for {op}")
-            if not content:
-                raise ValueError(f"'content' is required for {op}")
-            return edit_file_impl(
-                path,
-                op,
-                content,
-                expected_sha256=expected_sha256 or None,
-            )
-        if op == "replace":
-            if not path:
-                raise ValueError("'path' is required for replace")
-            if not target:
-                raise ValueError("'target' is required for replace")
-            return edit_file_impl(
-                path,
-                "replace",
-                content,
-                target=target,
-                all_occurrences=all_occurrences,
-            )
-        if op == "insert_at_line":
-            if not path:
-                raise ValueError("'path' is required for insert_at_line")
-            if not line:
-                raise ValueError("'line' is required for insert_at_line")
-            return edit_file_impl(path, "insert_at_line", content, line=line)
-        if op == "move":
-            if not path:
-                raise ValueError("'path' is required for move")
-            if not target:
-                raise ValueError("'target' is required for move")
-            result = move_file_impl(path, target)
-            result["_next"] = FS_WORKFLOW_HINTS["move"]
-            return result
-        if op == "copy":
-            if not path:
-                raise ValueError("'path' is required for copy")
-            if not target:
-                raise ValueError("'target' is required for copy")
-            result = copy_file_impl(path, target)
-            result["_next"] = FS_WORKFLOW_HINTS["copy"]
-            if path.startswith("dropbox/"):
-                result["_warning"] = DROPBOX_COPY_WARNING
-            return result
-        if op == "delete":
-            if not path:
-                raise ValueError("'path' is required for delete")
-            result = delete_file_impl(path)
-            result["_next"] = FS_WORKFLOW_HINTS["delete"]
-            return result
-        if op == "resolve_sha256":
-            if not content:
-                raise ValueError(
-                    "'content' is required for resolve_sha256 and holds the bare "
-                    "hex or sha256:-prefixed digest to resolve"
-                )
-            return resolve_sha256_impl(content)
-        raise ValueError(f"Unknown op: {op!r}. Use: {sandbox_op_names('cortex')}")
+        return dispatch_files_op(
+            op=op,
+            path=path,
+            paths=paths,
+            content=content,
+            target=target,
+            line=line,
+            all_occurrences=all_occurrences,
+            binary=binary,
+            offset=offset,
+            limit=limit,
+            expected_sha256=expected_sha256,
+            if_absent=if_absent,
+            mode=mode,
+        )

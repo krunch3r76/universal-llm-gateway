@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from tools.filesystem import _files_dispatcher as files_dispatcher
 from tools.filesystem import _ops_text as ops_text
 from tools.filesystem import _ops_write as ops_write
 from tools.filesystem import _paths as paths
@@ -41,9 +42,7 @@ def test_consult_if_absent_collision_installs_pointer(
     monkeypatch.setattr(ops_write, "record", lambda *_a, **_k: None)
     rel = "notes/system/threads/6655-demo-architecture-bind.md"
     ops_text.write_file_impl(rel, "peer-a", if_absent=True, author="opus")
-    rejected = ops_text.write_file_impl(
-        rel, "peer-b", if_absent=True, author="fable"
-    )
+    rejected = ops_text.write_file_impl(rel, "peer-b", if_absent=True, author="fable")
     assert rejected["reason"] == "file_exists"
     assert rejected.get("pointer_installed") is True
     body = (sandbox_root / rel).read_text(encoding="utf-8")
@@ -60,9 +59,7 @@ def test_shared_write_requires_expected_sha256(
     monkeypatch.setattr(ops_write, "record", lambda *_a, **_k: None)
     rel = "notes/system/specs/demo-roadmap.md"
     ops_text.write_file_impl(rel, "row-1\n", artifact_class="shared")
-    rejected = ops_text.write_file_impl(
-        rel, "row-1\nrow-2\n", artifact_class="shared"
-    )
+    rejected = ops_text.write_file_impl(rel, "row-1\nrow-2\n", artifact_class="shared")
     assert rejected["reason"] == "expected_sha256.required"
     current = paths.sha256_of_file(sandbox_root / rel)
     stale = ops_text.write_file_impl(
@@ -101,6 +98,48 @@ def test_shared_append_stale_base_refuses(
     )
     assert stale["reason"] == "file_sha256.mismatch"
     assert (sandbox_root / rel).read_text(encoding="utf-8") == "head\n"
+
+
+def test_dispatch_replace_shared_expected_sha256_succeeds_and_refuses(
+    sandbox_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dispatcher must forward expected_sha256 on replace (row-27 plumbing)."""
+    monkeypatch.setattr(ops_write, "record", lambda *_a, **_k: None)
+    monkeypatch.setattr(ops_text, "record", lambda *_a, **_k: None)
+    rel = "notes/system/threads/demo-capability-roadmap.md"
+    ops_text.write_file_impl(rel, "alpha\nbeta\n", artifact_class="shared")
+    current = paths.sha256_of_file(sandbox_root / rel)
+
+    missing = files_dispatcher.dispatch_files_op(
+        op="replace",
+        path=rel,
+        target="beta",
+        content="gamma",
+    )
+    assert missing["reason"] == "expected_sha256.required"
+    assert (sandbox_root / rel).read_text(encoding="utf-8") == "alpha\nbeta\n"
+
+    wrong = files_dispatcher.dispatch_files_op(
+        op="replace",
+        path=rel,
+        target="beta",
+        content="gamma",
+        expected_sha256="0" * 64,
+    )
+    assert wrong["reason"] == "file_sha256.mismatch"
+    assert (sandbox_root / rel).read_text(encoding="utf-8") == "alpha\nbeta\n"
+
+    ok = files_dispatcher.dispatch_files_op(
+        op="replace",
+        path=rel,
+        target="beta",
+        content="gamma",
+        expected_sha256=current,
+    )
+    assert ok.get("reason") is None
+    assert "error" not in ok
+    assert (sandbox_root / rel).read_text(encoding="utf-8") == "alpha\ngamma\n"
 
 
 def test_mint_full_execution_id_not_exec8() -> None:
