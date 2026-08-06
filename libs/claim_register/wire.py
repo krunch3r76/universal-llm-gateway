@@ -7,7 +7,11 @@ It does **not** cover:
 
 - member 1 — RESIDUE markdown authored via ``render_claim`` in
   ``episode_residue`` (not this JSON chokepoint)
-- member 2 — ledger ``fail_row`` / status column (Packet D)
+- member 2 — CLOSED Packet D: ledger ``status`` is
+  ``PropagationAttemptStatus`` (``observed_of_attempt`` event) in
+  ``charter_runner_store.propagation_attempt_status``; current-state via
+  ``observe_code_ref_live``; no ``status_register`` column (consumer census
+  of ledger-status-as-liveness misreaders = 0). Not this post-time wire.
 - member 5 — ``Verification`` schema packing outside this chokepoint (Packet C)
 - member 6 — authoring / skill / mission-close surfaces (Packet E doctrine
   lands in ``completion-provenance-discipline`` §7 + ``MISSION_SKILL_SLUGS``

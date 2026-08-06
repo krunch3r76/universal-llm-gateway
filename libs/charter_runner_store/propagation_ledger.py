@@ -350,8 +350,9 @@ def fail_row(
     """Freeze an open obligation attempt as a failed *event* (immutable).
 
     Records the probe snapshot that contradicted the owed ``code_ref`` at that
-    instant. ``status=failed`` must not be read as durable current not-live —
-    a later process may serve the same SHA. Liveness questions go through
+    instant. ``status=failed`` is :data:`~.propagation_attempt_status.STATUS_FAILED`
+    (Packet D / ``STATUS_CLAIM_KIND=observed_of_attempt``) — not durable
+    current not-live. Liveness questions go through
     :func:`charter_runner_store.propagation_liveness.observe_code_ref_live`.
     """
     own_conn = conn is None

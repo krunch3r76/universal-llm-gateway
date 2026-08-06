@@ -6,7 +6,8 @@ the soft-fix failure at package boundaries (row 29 conferral).
 
 Public surface: ``ClaimRegister``, ``Claimed``, ``render_claim``, wire normalize
 for the ``post_terminal_status`` partial guard. See ``wire`` module docstring
-for the named absence (members 2, 5, 6 not covered).
+for named absence (member 2 closed Packet D via attempt-status typing;
+members 5/6 still not this wire).
 """
 
 from claim_register.render import render_claim

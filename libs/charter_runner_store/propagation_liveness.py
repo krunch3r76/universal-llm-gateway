@@ -1,14 +1,16 @@
 """Observation-cited answers to whether a ``code_ref`` is live on a service.
 
 Ledger PK rows (``service:code_ref:action``) are immutable *events* — one
-obligation attempt with an outcome. Readers who treat ``status=failed`` or
-``status=closed`` as current not-live / live inherit a state/event confusion
-that freezes the wrong answer after the world catches up (F4 specimen:
+obligation attempt with an outcome typed as
+:data:`charter_runner_store.propagation_attempt_status.PropagationAttemptStatus`
+(Packet D / member 2). Readers who treat ``status=failed`` or ``status=closed``
+as current not-live / live inherit a state/event confusion that freezes the
+wrong answer after the world catches up (F4 specimen:
 ``git_integration_worker:40f8eadd…:sync_restart``).
 
 This module never opens the ledger. Every answer cites a fresh process probe
 plus ``deploy_identity.code_ref_relation``; ``unknown`` is honest when the
-probe is missing or unreadable.
+probe is missing or unreadable. Current-state authority for the family.
 """
 
 from __future__ import annotations

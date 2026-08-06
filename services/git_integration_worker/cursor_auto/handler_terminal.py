@@ -45,10 +45,11 @@ async def post_terminal_status(
     construction and in unit tests only.
 
     NAMED ABSENCE: this chokepoint does **not** cover member 1 (RESIDUE
-    markdown), member 2 (ledger ``fail_row``), member 5 (``Verification``
-    packers), or member 6 (authoring / mission-close — Packet E: skill +
-    ``MISSION_SKILL_SLUGS`` chip, not this wire). See
-    ``claim_register.wire`` docstring.
+    markdown), member 5 (``Verification`` packers), or member 6 (authoring /
+    mission-close — Packet E: skill + ``MISSION_SKILL_SLUGS`` chip, not this
+    wire). Member 2 (ledger ``status``) closed Packet D via
+    ``propagation_attempt_status`` + ``observe_code_ref_live`` — not here.
+    See ``claim_register.wire`` docstring.
     """
     if job.request_id and "request_id" not in payload:
         payload = {**payload, "request_id": job.request_id}
