@@ -117,6 +117,41 @@ async def blocking_admit_gate(
             },
         )
 
+    from claude_bundles.pickup_awaits import (
+        PICKUP_AWAITS_STOP_FIX_HINT,
+        PICKUP_DECLARATION_FIX_HINT,
+        validate_pickup_awaits,
+    )
+
+    pickup = validate_pickup_awaits(
+        subject=job.subject or "",
+        body=job.body or "",
+        prior_turns=None,
+    )
+    if not pickup.ok:
+        reason = pickup.reason or "pickup_declaration_missing"
+        summary = (
+            "Pickup/awaits gate refused "
+            f"({reason})."
+        )
+        hint = (
+            PICKUP_AWAITS_STOP_FIX_HINT
+            if reason == "pickup_awaits_unbound"
+            else PICKUP_DECLARATION_FIX_HINT
+        )
+        return await _blocked(
+            job,
+            client=client,
+            queue=queue,
+            summary=summary,
+            payload={
+                "summary": summary,
+                "reason": reason,
+                "missed_tokens": list(pickup.missed_tokens),
+                "fix_hint": hint,
+            },
+        )
+
     contract = (job.contract or "answer").strip().lower()
     if contract == EXECUTE_CONTRACT:
         admission = admit_execute_body(job.body)

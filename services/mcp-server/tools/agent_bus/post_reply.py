@@ -103,13 +103,15 @@ def _reply_impl(
     allow_long_body: bool = False,
     supersedes_turn: int | None = None,
 ) -> dict[str, Any]:
+    from claude_bundles.lane_a_closeout_checkpoint import (
+        refusal_envelope as checkpoint_refusal_envelope,
+    )
+    from claude_bundles.lane_a_closeout_checkpoint import (
+        validate_lane_a_closeout_checkpoint,
+    )
     from claude_bundles.mission_close_wake import (
         refusal_envelope,
         validate_mission_close_wake,
-    )
-    from claude_bundles.lane_a_closeout_checkpoint import (
-        refusal_envelope as checkpoint_refusal_envelope,
-        validate_lane_a_closeout_checkpoint,
     )
 
     wake = validate_mission_close_wake(subject=subject, body=body)
@@ -119,6 +121,17 @@ def _reply_impl(
             reason=wake.reason or "mission_close_wake_path_missing",
         )
         return refusal_envelope(wake)
+
+    from .pickup_gate import refuse_if_pickup_awaits
+
+    pickup_refusal = refuse_if_pickup_awaits(
+        subject=subject,
+        body=body,
+        thread=thread,
+        event_prefix="mcp.agentbus.reply",
+    )
+    if pickup_refusal is not None:
+        return pickup_refusal
 
     checkpoint = validate_lane_a_closeout_checkpoint(subject=subject, body=body)
     if not checkpoint.ok:

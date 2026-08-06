@@ -24,7 +24,7 @@ BEYOND_HEADING = "## Work beyond this close"
 BEYOND_NOTIFY_PREFIX = "Beyond this close:"
 
 _WAKE_TOKEN_RE = re.compile(
-    r"(?i)\b(collector|followup|charter_enrolled|operator_gate)\s*:"
+    r"(?i)\b(collector|followup|charter_enrolled|operator_gate|pickup)\s*:"
 )
 _LAND_CLASS_RE = re.compile(
     r"(?i)\b(land|merge|uncommitted|worktree|hook-blocked|commits_ahead|unlanded|fast-?forward)\b"
@@ -54,7 +54,8 @@ MISSION_CLOSE_WAKE_FIX_HINT = (
     "will produce a result after close. Otherwise list each residual as a "
     "bullet (`- …`) with a wake token anywhere in that bullet: "
     "`collector: <seat>` · `followup: <how>` · `charter_enrolled: <root>` · "
-    "or `operator_gate: <reason>`. One bullet = one residual; hard-wrapped "
+    "`operator_gate: <reason>` · or `pickup: <seat>` (mid-episode awaits; "
+    "see pickup_awaits). One bullet = one residual; hard-wrapped "
     "continuation lines fold into the bullet. Non-bullet prose under the "
     "heading is ignored. A prose-only section (no bullets) refuses. "
     "Example: `- D10 spec — collector: web-anthropic · followup: poll 6576`. "
@@ -185,7 +186,7 @@ def validate_mission_close_wake(
                 ok=False,
                 reason="mission_close_uncollected_commission",
                 missed_tokens=(
-                    "wake_path (collector:|followup:|charter_enrolled:|operator_gate:)",
+                    "wake_path (collector:|followup:|charter_enrolled:|operator_gate:|pickup:)",
                 ),
             )
         return MissionCloseWakeVerdict(ok=True)
