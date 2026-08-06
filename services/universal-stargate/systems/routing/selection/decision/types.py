@@ -10,7 +10,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from model_id import ModelId
@@ -88,6 +88,10 @@ class EvictionPlanSummary:
     hardware_used_vram_mb: int | None = None
     non_evictable_vram_reserve_mb: int = 0
     hardware_correction_applied: bool = False
+    catalog_freed_ram_mb: int = 0
+    hardware_used_ram_mb: int | None = None
+    non_evictable_ram_reserve_mb: int = 0
+    ram_hardware_correction_applied: bool = False
     # Hysteresis metadata (for event emission by async caller)
     trigger_model_id: str | None = None
     cooldown_protected_count: int = 0
@@ -99,6 +103,23 @@ class EvictionPlanSummary:
     cooldown_override_pending: bool = False
     cooldown_override_victim_id: str | None = None
     cooldown_override_remaining_s: float | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class EvictionPlanAbort:
+    """Capacity abort emitted when a plan cannot meet one resource axis."""
+
+    binding_axis: Literal["vram", "ram"]
+    deficit_mb: int
+    correction_basis: Literal["catalog", "corrected"]
+    needed_mb: int
+    available_mb: int
+    reason: str
+
+
+def is_eviction_plan_actionable(plan: object) -> bool:
+    """Return whether a plan is a non-empty successful eviction summary."""
+    return isinstance(plan, EvictionPlanSummary) and bool(plan.models_to_evict)
 
 
 @dataclass(frozen=True, kw_only=True)

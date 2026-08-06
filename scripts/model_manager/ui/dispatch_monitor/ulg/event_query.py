@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from typing import Any
 
 import httpx
+
+from scripts.model_manager.ui.dispatch_monitor.core import signals
 
 _DEFAULT_QUERY_SOCK = "/tmp/universal-protocol/events-query.sock"
 
@@ -53,3 +56,50 @@ def charter_tick_audit(*, minutes: int = 60, limit: int = 200, sock: str | None 
         {"minutes": minutes, "limit": limit},
         sock=sock,
     )
+
+
+_WORKER_TERMINAL_SIGNALS: tuple[str, ...] = (
+    signals.SDK_WORKER_COMPLETED,
+    signals.SDK_WORKER_FAILED,
+    signals.SDK_WORKER_TIMEOUT,
+    signals.SDK_WORKER_ORPHANED,
+    signals.SDK_WORKER_CANCELLED,
+)
+
+
+def _payload_dict(row: dict[str, Any]) -> dict[str, Any]:
+    raw = row.get("payload") or {}
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def row_matches_dispatch(row: dict[str, Any], dispatch_id: str) -> bool:
+    """True when ES row payload names ``dispatch_id`` via dispatch or execution id."""
+    payload = _payload_dict(row)
+    for key in ("dispatch_id", "execution_id"):
+        value = payload.get(key)
+        if value is not None and str(value) == dispatch_id:
+            return True
+    return False
+
+
+def worker_terminals_for_dispatch(
+    dispatch_id: str,
+    *,
+    minutes: int = 60,
+    limit: int = 500,
+    sock: str | None = None,
+    signal_events_fn: Callable[..., list[dict[str, Any]]] = signal_events,
+) -> list[dict[str, Any]]:
+    """Fetch worker lifecycle terminals from ES for one dispatch id."""
+    matches: list[dict[str, Any]] = []
+    for signal in _WORKER_TERMINAL_SIGNALS:
+        for row in signal_events_fn(signal, minutes=minutes, limit=limit, sock=sock):
+            if row_matches_dispatch(row, dispatch_id):
+                matches.append(row)
+    return matches

@@ -2,14 +2,27 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
+from scripts.model_manager.ui.charter_scoreboard_objective import (
+    parse_original_objective,
+)
 from scripts.model_manager.ui.dispatch_monitor.core import signals
-from scripts.model_manager.ui.dispatch_monitor.core.protocols import Event
-from scripts.model_manager.ui.dispatch_monitor.core.protocols import EventRecord
-from scripts.model_manager.ui.charter_scoreboard_objective import parse_original_objective
+from scripts.model_manager.ui.dispatch_monitor.core.protocols import Event, EventRecord
+from scripts.model_manager.ui.dispatch_monitor.ulg.records import event_from_row
 
 _RECONCILED_SOURCE = "ulg://dispatch-monitor/reconciled"
+
+_ES_WORKER_TERMINAL_SIGNALS = frozenset(
+    {
+        signals.SDK_WORKER_COMPLETED,
+        signals.SDK_WORKER_FAILED,
+        signals.SDK_WORKER_TIMEOUT,
+        signals.SDK_WORKER_ORPHANED,
+        signals.SDK_WORKER_CANCELLED,
+    }
+)
 
 
 def _with_provenance(payload: dict[str, Any]) -> dict[str, Any]:
@@ -147,6 +160,35 @@ def events_from_ledger(
             subject=str(payload.get("thread_id") or subject),
         )
     ]
+
+
+def events_from_es_worker_terminals(
+    rows: list[Mapping[str, Any]],
+    *,
+    dispatch_id: str,
+) -> list[EventRecord]:
+    """Synthesize foldable worker terminals from ES rows (G4b backfill)."""
+    events: list[EventRecord] = []
+    for row in rows:
+        event = event_from_row(row)
+        if event is None or event.signal not in _ES_WORKER_TERMINAL_SIGNALS:
+            continue
+        payload = _with_provenance(dict(event.payload))
+        if not payload.get("dispatch_id"):
+            payload["dispatch_id"] = dispatch_id
+        if not payload.get("execution_id"):
+            payload["execution_id"] = dispatch_id
+        events.append(
+            Event(
+                signal=event.signal,
+                ts_unix_ms=event.ts_unix_ms,
+                payload=payload,
+                source=_RECONCILED_SOURCE,
+                subject=event.subject or dispatch_id,
+                seq=event.seq,
+            )
+        )
+    return events
 
 
 def events_from_cortex(

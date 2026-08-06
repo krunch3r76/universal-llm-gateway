@@ -69,7 +69,8 @@ Set handling:
 `event-instrumentation-discipline`) is mandatory. On `judgment_required` or
 **pillar-touching** pickups — pull rubric from GET `/api/v1/doctrine/vision-digest`;
 escalate via `sot_uris[]` / full MAP read only at wide detent — and carry a
-`VISION-ALIGN` footer per `path-sim` § Vision-align flag. This is a **choke-point cue,
+`VISION-ALIGN` footer per `cortex://notes/system/specs/vision-align-grammar.md`
+(`/layer` G6 check in `abstraction-layering`). This is a **choke-point cue,
 not a `required_skills` add**; mechanical/trivial leaves skip it. Vision digest extends
 the floor — it never replaces it.
 

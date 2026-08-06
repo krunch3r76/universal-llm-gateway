@@ -32,4 +32,5 @@ path-sim
 reasoning-posture
 residual-imprint
 satellite-workspace
+modularize-path
 work-item-seed-path

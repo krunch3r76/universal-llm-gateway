@@ -79,6 +79,14 @@ If the edge is missing, treat architecture as open even if a Fable answer exists
 **seeding duty** is to stamp the edge (below). Assertion `evidence_uris` may complement;
 they are **not** the skip signal.
 
+## Vision-align posture (`/layer`)
+
+On `judgment_required` or pillar-touching codework, compose dense specs and closeouts with
+the foundation MAP + a `VISION-ALIGN` footer. Grammar, corpus rule, note rule, and
+surface-glob table: **`cortex://notes/system/specs/vision-align-grammar.md`**. G3 emits
+the block into the dense spec; G6 checks presence + served-membership (§ Gates). Path-sim
+owns R-admit machinery only — codework does not route through path-sim process body.
+
 ## Entry
 
 | Caller | How |
@@ -95,12 +103,39 @@ Tick recognizes `[GR]\d+` only — layer names never replace G-ordinals in Steps
 
 | G | Layer | Seat | Token | Exit |
 |---|---|---|---|---|
-| 1 | Architecture | Fable/wide CDP | `[consult:judgment_gap]` | `fable-answer.md` |
-| 2 | Frame | Opus, minimal `skills=` | `[consult:judgment_gap]` | `opus-grok-instructions.md` ≤120L |
+| 1 | Architecture | Fable/wide CDP · **arch skill floor** | `[consult:judgment_gap]` | `fable-answer.md` |
+| 2 | Frame | Opus · **inherit arch floor** (¬ “skills optional”) | `[consult:judgment_gap]` | `opus-grok-instructions.md` ≤120L |
 | 3 | Densify | `cursor/grok-4.5` | `[judgment]` | `specs/{slug}.md` + Gate-2 |
 | 4 | Check | `cursor/gpt-5.6-terra` | `[judgment]` | check sidecar |
 | 5 | Implement | `cursor/composer-2.5` | `[implement]` | code + quality gate |
 | 6 | Verify | inline | `[inline]` | ACs, docstrings, close |
+
+### G1 / G2 architecture skill floor (BINDING — pre-densify)
+
+CDP architecture (G1) and frame (G2) MUST deliver architecture context **before** G3
+densify. Under-primed G1/G2 → densify hardens the wrong shape.
+
+| Gate | Required delivery |
+|---|---|
+| **G1 (incl. default Fable)** | **Always** for ULG codebase layer work: sealed delivery of **`architecture-invariants` ∧ `ulg-architecture`**. Prefer Customize attach for Claude-slug skills; **non-slugs / cursor_only must be inlined**. URI-cite alone ≠ delivery. Judgment chips (`reasoning-posture` / `frontier-reasoning-discipline`) **do not substitute** for the arch pair. **Halt** if floor missing. Compose `claude-ai-cdp-navigation` § Skill delivery. |
+| **G2** | Frame instructions inherit the G1 floor (and cite it). “Minimal `skills=`” means **minimal beyond the arch floor** — ¬ license stripping `architecture-invariants` / `ulg-architecture`. When frame touches placement/hosting, keep `[ulg:host-process]` inline. |
+
+#### Fable / CDP G1 lead preflight (BINDING — ulg-architecture check)
+
+Before `team_dispatch(model=cdp/fable|cdp/opus-5)` (or warm CSE followup) for G1 / Mode B
+architecture:
+
+1. Compose packet with arch pair inlined or Customize-attached.
+2. **Check:** confirm `ulg-architecture` is present in the sealed prompt **or** attested
+   session-skill membership (not merely listed in todo `required_skills` / chat).
+3. Same turn: admit with quoted `execution_id`+`poll_hint` (or followup admit) **or**
+   honest halt naming missing skill floor.
+
+**Falsifier:** Fable G1 fires with only judgment skills / empty arch inline → protocol
+defect (same class as announce-without-admit). Observed gap: Fable often got judgment
+chips without `ulg-architecture` — this check closes it.
+
+Same fail-closed class as `/modularize` M-Arch (`modularize-path` § Skill delivery floor).
 
 **G4 Check diversity (6524 R4, BINDING):** substrate diversity is discharged **upstream**
 at G1/G2 via ``independence_ok`` branch (A) cross-substrate consult or architecture
@@ -166,7 +201,8 @@ Tier-1 → `cortex://notes/system/recon/{slug}/tier1-anchors.md`.
 
 ## Gates
 
-1. **G1** — rival-shape only; verdict sidecar, not spec. Envelope template (four parts, pair
+1. **G1** — rival-shape only; verdict sidecar, not spec. **Skill floor** (§ G1 / G2
+   architecture skill floor) fail-closed before submit. Envelope template (four parts, pair
    rule): `cortex://notes/system/specs/contract-envelope-v0.md` — ¬ a freestanding inline template.
    Answer shape = R1 `output_envelope` (8 core + 5 conditional-by-kind + quality bar; §8 Falsifiers
    MUST open with the **Adjudication check** line):
@@ -174,11 +210,22 @@ Tier-1 → `cortex://notes/system/recon/{slug}/tier1-anchors.md`.
    envelope **R1** (semantic locator: registry URI + row id; ¬ row sha — W7); ¬ restate envelope vocabulary.
    **Exit also stamps** the architecture-consult document + `derived_from` edge (§ Stage 0 attach)
    before G1→2 — that edge is the standing skip signal for later `/layer` entry.
-2. **G2** — Opus → densifier instructions ≤120L; ¬ dense spec.
+2. **G2** — Opus → densifier instructions ≤120L; ¬ dense spec. **Inherit arch skill floor**
+   (minimal beyond floor — ¬ strip `architecture-invariants` / `ulg-architecture`).
 3. **G3** — Grok dense spec; Gate-2 (`doc_validate`, attrs, `implement_ready`, STOP).
+   **VISION-ALIGN emit (Gate-2):** when `density_triage = judgment_required` ∨
+   `files_expected ∩ surface-glob-table ≠ ∅` (table in
+   `cortex://notes/system/specs/vision-align-grammar.md` §5), dense spec MUST carry a
+   `VISION-ALIGN` block per shared grammar (hashes into `spec_sha256`). G5-entry mechanical
+   legs with no G3 densify: skip emit.
 4. **G4** — merged GPT check; fold amendments + refresh `spec_sha256`.
 5. **G5** — Composer `contract=implement`, `source_ref=todo:{slug}`.
 6. **G6** — mechanical: gates · `files_expected` · ACs · docstrings · `friction_close` · `implement-todo` §5.
+   **VISION-ALIGN check:** when trigger fires (`density_triage = judgment_required` ∨
+   `files_expected ∩ surface-glob-table ≠ ∅`), verify `(block present in dense spec) ∧
+   (pillar ∈ served pillars[].id ∪ {thesis, n/a-with-reason})`. Fail ⇒ no close, reopen G3.
+   G5-entry mechanical leg: accept `n/a — mechanical leg`. Presence/membership mechanical;
+   aptness = seat judgment.
 
 **Mechanical leg:** G5+G6 when no gate above open. **Escalate** (re-enter highest gate):
 architecture re-opens · ≥2 rivals · invariant/cross-agent · failure ≥2×.
@@ -213,7 +260,8 @@ L3 `tick-enrollment-annex.md`.
 implements · ¬ G6 review consult · frame >120L · bare tick w/o G-rows ·
 ¬ claim G1 closed from chat inform / sidecar path alone without `derived_from` →
 `consult_kind=architecture` document · ¬ mint a second Fable G1 when that edge already
-resolves.
+resolves · ¬ Fable/Opus G1 without `architecture-invariants` ∧ `ulg-architecture` sealed
+(URI-only / judgment-chips-only / announce-only) ≺ densify.
 
 ## Conformance
 

@@ -12,8 +12,9 @@ from typing import TYPE_CHECKING
 from model_id import ModelId
 from universal_logging import get_logger
 
+from .admission_verdict import evaluate_ram_reclaim
 from .eviction_hysteresis import HysteresisResult
-from .types import EvictionPlanSummary
+from .types import EvictionPlanAbort, EvictionPlanSummary
 
 if TYPE_CHECKING:
     from ..types import Gateway, Placement
@@ -47,7 +48,7 @@ def select_eviction_victims(
     resource_margins: dict[str, float] | None,
     routing_key_tracker: RoutingKeyTracker | None,
     gw_keys_in_flight: set[str] | None,
-) -> EvictionPlanSummary | None:
+) -> EvictionPlanSummary | EvictionPlanAbort:
     """Greedy minimum idle-model eviction with optional hardware freeable correction."""
     evictable_with_resources: list[tuple[ModelId, int, int]] = []
     for model_id in hyst.evictable:
@@ -89,7 +90,9 @@ def select_eviction_victims(
             break
 
     corrected_freed_vram = catalog_freed_vram
+    corrected_freed_ram = freed_ram_catalog
     hardware_used_vram_mb: int | None = None
+    hardware_used_ram_mb: int | None = None
     non_evictable_vram_reserve_mb = 0
     hardware_correction_applied = False
 
@@ -114,8 +117,23 @@ def select_eviction_victims(
             corrected_freed_vram = hardware_freeable_upper_bound
             hardware_correction_applied = True
 
+    ram_evaluation = evaluate_ram_reclaim(
+        needed_mb=ram_target,
+        catalog_freeable_mb=freed_ram_catalog,
+        ram_free_mb=gateway.ram_free_mb,
+        ram_total_mb=gateway.ram_total_mb,
+        loading_reservation_mb=max(0, gateway.ram_free_mb - effective_ram_free),
+        full_evict=bool(models_to_evict)
+        and set(models_to_evict) == set(gateway.loaded_models),
+        resource_margins=resource_margins,
+    )
+    corrected_freed_ram = ram_evaluation.freeable_mb
+    non_evictable_ram_reserve_mb = ram_evaluation.reserve_mb
+    if gateway.ram_total_mb > 0 and set(models_to_evict) == set(gateway.loaded_models):
+        hardware_used_ram_mb = max(0, gateway.ram_total_mb - gateway.ram_free_mb)
+
     total_vram = effective_vram_free + corrected_freed_vram
-    total_ram = effective_ram_free + freed_ram_catalog
+    total_ram = effective_ram_free + corrected_freed_ram
 
     logger.debug(
         f"Eviction estimate ({len(models_to_evict)}/{len(gateway.loaded_models)} "
@@ -142,15 +160,31 @@ def select_eviction_victims(
             f"can only get {total_vram}MB (free: {gateway.vram_free_mb}MB + "
             f"freeable: {corrected_freed_vram}MB from {len(models_to_evict)} models)"
         )
-        return None
+        return EvictionPlanAbort(
+            binding_axis="vram",
+            deficit_mb=vram_target - total_vram,
+            correction_basis=(
+                "corrected" if hardware_correction_applied else "catalog"
+            ),
+            needed_mb=vram_target,
+            available_mb=total_vram,
+            reason="insufficient_vram_after_eviction",
+        )
     if gw_ram_mb > 0 and total_ram < ram_target:
         logger.warning(
             f"❌ EVICTION FAILED for {placement.model_id}: "
             f"Insufficient RAM - need {ram_target}MB (incl. margin), "
             f"can only get {total_ram}MB (free: {gateway.ram_free_mb}MB + "
-            f"freeable: {freed_ram_catalog}MB from {len(models_to_evict)} models)"
+            f"freeable: {corrected_freed_ram}MB from {len(models_to_evict)} models)"
         )
-        return None
+        return EvictionPlanAbort(
+            binding_axis="ram",
+            deficit_mb=ram_target - total_ram,
+            correction_basis=ram_evaluation.correction_basis,
+            needed_mb=ram_target,
+            available_mb=total_ram,
+            reason="insufficient_ram_after_eviction",
+        )
 
     logger.info(
         f"✅ EVICTION PLAN for {placement.model_id}: "
@@ -169,7 +203,16 @@ def select_eviction_victims(
                 f"includes in-flight models {[str(m) for m in in_flight_violations]} "
                 f"on {gateway.name}. Aborting eviction to protect active generation."
             )
-            return None
+            return EvictionPlanAbort(
+                binding_axis="vram",
+                deficit_mb=0,
+                correction_basis=(
+                    "corrected" if hardware_correction_applied else "catalog"
+                ),
+                needed_mb=vram_target,
+                available_mb=total_vram,
+                reason="in_flight_eviction_prohibited",
+            )
 
     eviction_count = len(models_to_evict)
     estimated_cost = -30.0 + (-20.0 * eviction_count)
@@ -177,12 +220,16 @@ def select_eviction_victims(
     return EvictionPlanSummary(
         models_to_evict=frozenset(models_to_evict),
         freed_vram_mb=corrected_freed_vram,
-        freed_ram_mb=freed_ram_catalog,
+        freed_ram_mb=corrected_freed_ram,
         estimated_cost=estimated_cost,
         catalog_freed_vram_mb=catalog_freed_vram,
         hardware_used_vram_mb=hardware_used_vram_mb,
         non_evictable_vram_reserve_mb=non_evictable_vram_reserve_mb,
         hardware_correction_applied=hardware_correction_applied,
+        catalog_freed_ram_mb=freed_ram_catalog,
+        hardware_used_ram_mb=hardware_used_ram_mb,
+        non_evictable_ram_reserve_mb=non_evictable_ram_reserve_mb,
+        ram_hardware_correction_applied=ram_evaluation.correction_applied,
         trigger_model_id=str(placement.model_id),
         cooldown_protected_count=hyst.cooldown_protected_count,
         demand_protected_count=hyst.demand_protected_count,

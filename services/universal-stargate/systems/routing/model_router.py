@@ -402,7 +402,9 @@ class ModelRouter:
         eviction_plan = get_eviction_plan_for_gateway(trace, selected.name)
 
         # No eviction needed?
-        if eviction_plan is None or not eviction_plan.models_to_evict:
+        from .selection.decision.types import is_eviction_plan_actionable
+
+        if not is_eviction_plan_actionable(eviction_plan):
             return True
 
         # Get FederatedGateway from ref

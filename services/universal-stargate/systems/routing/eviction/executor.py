@@ -19,7 +19,10 @@ from universal_logging import get_logger
 if TYPE_CHECKING:
     from systems.federation.common.types import FederatedGateway
     from systems.federation.master.routing.forward import FederatedRequestForwarder
-    from systems.routing.selection.decision.types import EvictionPlanSummary
+    from systems.routing.selection.decision.types import (
+        EvictionPlanAbort,
+        EvictionPlanSummary,
+    )
     from systems.routing.selection.types import DecisionTrace
 
 logger = get_logger(__name__)
@@ -111,7 +114,7 @@ def _model_routing_key(model_id: ModelId) -> str:
 async def execute_eviction_plan(
     forwarder: FederatedRequestForwarder,
     federated_gateway: FederatedGateway,
-    eviction_plan: EvictionPlanSummary | None,
+    eviction_plan: EvictionPlanSummary | EvictionPlanAbort | None,
     gateway_name: str,
     request_id: str | None = None,
     event_bus=None,
@@ -142,7 +145,9 @@ async def execute_eviction_plan(
     Returns:
         EvictionOutcome with .ok True only on CONFIRMED status
     """
-    if eviction_plan is None or not eviction_plan.models_to_evict:
+    from systems.routing.selection.decision.types import is_eviction_plan_actionable
+
+    if not is_eviction_plan_actionable(eviction_plan):
         return EvictionOutcome(status=EvictionStatus.CONFIRMED)
 
     registry = inflight_registry or _inflight_registry

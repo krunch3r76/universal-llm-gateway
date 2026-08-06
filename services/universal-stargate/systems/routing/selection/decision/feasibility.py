@@ -26,7 +26,12 @@ from .resource_checks import (
     _check_resources,
     resolve_gateway_requirements,
 )
-from .types import ConstraintFailure, EvictionPlanSummary, FeasibilityTier
+from .types import (
+    ConstraintFailure,
+    EvictionPlanAbort,
+    EvictionPlanSummary,
+    FeasibilityTier,
+)
 
 if TYPE_CHECKING:
     from ..types import Gateway, Placement
@@ -36,6 +41,43 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 _COLD_LOAD_MIN_SLACK_MB = 1024
+_CAPACITY_CONSTRAINTS = frozenset(
+    {
+        "has_enough_vram",
+        "has_enough_ram",
+        "can_fit_with_eviction",
+        "eviction_blocked_by_busy_models",
+    }
+)
+
+
+def _mark_capacity_failures_structural(
+    failures: list[ConstraintFailure],
+    *,
+    binding_axis: str,
+    reclaimable: dict[str, object],
+) -> list[ConstraintFailure]:
+    """Rebuild frozen capacity failures with fail-closed retryability stamps."""
+    updated: list[ConstraintFailure] = []
+    for failure in failures:
+        if failure.constraint not in _CAPACITY_CONSTRAINTS:
+            updated.append(failure)
+            continue
+        details = {
+            **failure.details,
+            "retryable": False,
+            "binding_axis": binding_axis,
+            "classification_basis": "reclaimable_resources",
+            **reclaimable,
+        }
+        updated.append(
+            ConstraintFailure(
+                constraint=failure.constraint,
+                reason=failure.reason,
+                details=details,
+            )
+        )
+    return updated
 
 
 def evaluate_feasibility(
@@ -142,7 +184,7 @@ def evaluate_feasibility(
                     resource_margins=policy.resource_margins,
                     eviction_request_class=eviction_request_class,
                 )
-                if eviction_plan is not None:
+                if isinstance(eviction_plan, EvictionPlanSummary):
                     logger.info(
                         f"✅ FEASIBILITY T2 (low cold-load slack): "
                         f"{placement.model_id} on {gateway.name} has only "
@@ -181,7 +223,7 @@ def evaluate_feasibility(
         eviction_request_class=eviction_request_class,
     )
 
-    if eviction_plan is None:
+    if eviction_plan is None or isinstance(eviction_plan, EvictionPlanAbort):
         # If resource_failure exists, it's the primary reason for not fitting
         # without eviction.
         # We should ensure it's included, but avoid duplicating it if it's
@@ -206,7 +248,31 @@ def evaluate_feasibility(
             requirements_lookup,
             policy.resource_margins,
         )
-        verdict_class = reclaimable.get("verdict_class")
+        vram_structural = (
+            reclaimable.get("verdict_class")
+            == AdmissionVerdict.INSUFFICIENT_STRUCTURAL.value
+        )
+        ram_structural = (
+            reclaimable.get("ram_verdict_class")
+            == AdmissionVerdict.INSUFFICIENT_STRUCTURAL.value
+        )
+        structural = vram_structural or ram_structural
+        binding_axis = "ram" if ram_structural else "vram"
+        if vram_structural and ram_structural:
+            binding_axis = (
+                "ram"
+                if reclaimable.get("ram_deficit_mb", 0)
+                >= reclaimable.get("vram_deficit_mb", 0)
+                else "vram"
+            )
+        if isinstance(eviction_plan, EvictionPlanAbort):
+            binding_axis = eviction_plan.binding_axis
+            reclaimable = {
+                **reclaimable,
+                "binding_axis": eviction_plan.binding_axis,
+                "deficit_mb": eviction_plan.deficit_mb,
+                "correction_basis": eviction_plan.correction_basis,
+            }
         if can_fit_theoretically:
             failures.append(
                 ConstraintFailure(
@@ -228,7 +294,12 @@ def evaluate_feasibility(
                     },
                 )
             )
-        elif verdict_class == AdmissionVerdict.INSUFFICIENT_STRUCTURAL.value:
+        elif structural:
+            failures = _mark_capacity_failures_structural(
+                failures,
+                binding_axis=binding_axis,
+                reclaimable=reclaimable,
+            )
             failures.append(
                 ConstraintFailure(
                     constraint="can_fit_with_eviction",
@@ -245,6 +316,10 @@ def evaluate_feasibility(
                         "busy_count": len(gateway.busy_models),
                         "retryable": False,
                         "classification_basis": "reclaimable_resources",
+                        "binding_axis": binding_axis,
+                        "deficit_mb": reclaimable.get(
+                            f"{binding_axis}_deficit_mb", 0
+                        ),
                         **reclaimable,
                     },
                 )

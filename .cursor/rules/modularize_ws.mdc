@@ -1,5 +1,5 @@
 ---
-description: Modularization awareness — when to split files
+description: Modularization awareness — when to split files into package directories
 globs: ["**/*.py"]
 rule_category: quality
 apply_tier: glob
@@ -9,6 +9,7 @@ trigger_match_terms:
   - modularize
   - split
   - python
+  - package-shadow
 ---
 # Modularize (Workspace)
 
@@ -28,19 +29,16 @@ trigger_match_terms:
 ## Available Tool
 
 `scripts/modularize scan {path}` — find SLOC violations
-`scripts/modularize plan {file}` — generate a refactoring plan via consultation
-  and inject `.cursor/invariants/modularize.md` by default
-`scripts/modularize plan {file} --invariants-file {path}` — override the
-  prompt-facing invariant block for a special review context
-`/modularize` command — full orchestrated workflow
+`scripts/modularize plan {file}` — **escape only** (cheap sketch when CDP/Stargate blocked)
+`/modularize` command — primary: wraps skill `modularize-path` (file → package directory)
 
-## Default Dispatcher
+## Cascade (primary)
 
-∀ `/modularize` execution (step 3): default dispatcher is **`frontier-mcp`**
-(`gpt-5.5`). ¬ local execution fallback — if Stargate is
-unavailable, stop. `web-claude` is the explicit opt-in for multi-turn
-interactive work. See §2b in the `/modularize` command for the full
-two-phase dispatch protocol.
+∀ `/modularize` (Flow A): **CDP arch (`cdp/opus-5`) → Grok densify → Composer implement**.
+Root purpose: package-shadow (`foo.py` → `foo/`). Skill floor on M-Arch:
+`architecture-invariants` + `modularize-discipline` (+ `ulg-architecture`). Poll via
+`agent_bus(wait)` + `poll_hint` — ¬ `pipeline(result)` as primary. ¬ local execution
+fallback as default for red files. SOT: Use the `modularize-path` skill.
 
 ## When NOT to Modularize
 

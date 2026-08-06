@@ -27,6 +27,10 @@ from scripts.model_manager.ui.dispatch_monitor.ulg.seeder import seed_model
 from scripts.model_manager.ui.dispatch_monitor.ulg.subscribe_session import (
     run_live_subscribers,
 )
+from scripts.model_manager.ui.dispatch_monitor.ulg.terminal_backfill import (
+    backfill_sdk_fold,
+    lease_released_without_terminal_ids,
+)
 from scripts.model_manager.ui.dispatch_monitor.ulg.transport_events import (
     fold_status_transport_event,
     replay_truncated_event,
@@ -73,10 +77,26 @@ class MonitorController:
             self._apply(record)
 
     def seed(self) -> int:
-        return seed_model(self._apply, minutes=self.seed_minutes)
+        seeded = seed_model(
+            self._apply,
+            minutes=self.seed_minutes,
+            sdk_fold=self.model.sdk,
+            backfill_minutes=max(self.seed_minutes, 24 * 60),
+        )
+        return seeded
+
+    def _backfill_live_terminals(self) -> int:
+        """G4b: clear completed-present LIVE rows from ES when fold missed apply."""
+        return backfill_sdk_fold(
+            self._apply,
+            self.model.sdk,
+            minutes=max(self.seed_minutes, 24 * 60),
+        )
 
     def tick(self) -> bool:
         """Derive once; publish when fingerprint changes. Returns whether a frame emitted."""
+        if lease_released_without_terminal_ids(self.model.sdk):
+            self._backfill_live_terminals()
         frame = self.model.derive(self.clock.now_ms(), previous=self._last_frame)
         if self._pending_drop_hint:
             frame = hints_after_drop(frame)
@@ -133,7 +153,12 @@ class MonitorController:
                 self._last_fingerprint = None
                 self._last_frame = None
                 self.watermarks = ConnectionWatermarks.fresh()
-                seeded = seed_model(self._apply, minutes=self.seed_minutes)
+                seeded = seed_model(
+                    self._apply,
+                    minutes=self.seed_minutes,
+                    sdk_fold=self.model.sdk,
+                    backfill_minutes=max(self.seed_minutes, 24 * 60),
+                )
                 ts = self.clock.now_ms()
                 self._apply(
                     fold_status_transport_event(

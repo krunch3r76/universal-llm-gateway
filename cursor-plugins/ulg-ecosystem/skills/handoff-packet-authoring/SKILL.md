@@ -102,7 +102,9 @@ carries the load (¬ files/acceptance — that is the implement rotation). Packe
 with the **Adjudication check** line):
 `cortex://notes/system/specs/lane-architecture-consult-brief-template-v2.md` — specializes envelope
 **R1** (semantic locator: registry URI + row id; ¬ row sha — W7).
-Lane + gates: `abstraction-layering` § Gates G1. **Post-harvest seeding:** stamp
+Lane + gates: `abstraction-layering` § Gates G1 + § **Fable / CDP G1 lead preflight**.
+**Skill floor (BINDING):** sealed `architecture-invariants` ∧ `ulg-architecture` before Fable/Opus
+submit — judgment chips alone fail. **Post-harvest seeding:** stamp
 `document:{slug}-architecture-consult` (`consult_kind=architecture`) +
 `derived_from` from the work item (abstraction-layering § G1 skip / Stage 0 attach).
 

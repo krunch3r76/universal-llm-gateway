@@ -65,8 +65,9 @@ skills on top of the ULG pair.
 *code-invariant* floor (transport, REST, events, topology, service-ops). On
 `judgment_required` or **pillar-touching** todos — pull rubric from GET
 `/api/v1/doctrine/vision-digest`; escalate via `sot_uris[]` / full MAP read only at wide
-detent — and emit a `VISION-ALIGN` footer (grammar + corpus SOT: `path-sim` §
-Vision-align flag). This is a **choke-point cue, not a `required_skills` entry** — do not
+detent — and emit a `VISION-ALIGN` footer (grammar + corpus SOT:
+`cortex://notes/system/specs/vision-align-grammar.md`; `/layer` G3/G6 in
+`abstraction-layering`). This is a **choke-point cue, not a `required_skills` entry** — do not
 stuff vision digest or MAP into every leaf's skill set; mechanical/trivial leaves skip it.
 Vision digest extends the floor; it does not replace it.
 

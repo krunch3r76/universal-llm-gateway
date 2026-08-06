@@ -12,7 +12,11 @@ from typing import TYPE_CHECKING
 
 from model_id import ModelId
 
-from .admission_verdict import evaluate_vram_admission
+from .admission_verdict import (
+    AdmissionVerdict,
+    evaluate_ram_reclaim,
+    evaluate_vram_admission,
+)
 from .resource_checks import _compute_loading_reservation, resolve_gateway_requirements
 from .types import ConstraintFailure
 
@@ -25,7 +29,7 @@ def can_fit_after_eviction_including_busy(
     placement: Placement,
     requirements_lookup: Callable[[ModelId], tuple[int, int]],
     resource_margins: dict[str, float] | None = None,
-) -> tuple[bool, dict[str, int]]:
+) -> tuple[bool, dict[str, int | str | bool]]:
     """Return True iff reclaimable resources can fit target after eviction.
 
     Distinguishes transient eviction failure (capacity is reclaimable once loaded
@@ -64,7 +68,7 @@ def can_fit_after_eviction_including_busy(
     vram_needed = admission.needed_mb
 
     reclaimable_vram = effective_vram_free
-    reclaimable_ram = effective_ram_free
+    catalog_reclaimable_ram = 0
     for loaded_model_id in gateway.loaded_models:
         measured_vram = gateway.model_measured_vram.get(loaded_model_id)
         catalog_vram, catalog_ram = gateway.get_model_resource_usage(loaded_model_id)
@@ -76,10 +80,21 @@ def can_fit_after_eviction_including_busy(
         )
         effective_ram = catalog_req_ram_mb if catalog_req_ram_mb > 0 else catalog_ram
         reclaimable_vram += max(effective_vram, 0)
-        reclaimable_ram += max(effective_ram, 0)
+        catalog_reclaimable_ram += max(effective_ram, 0)
+
+    ram_admission = evaluate_ram_reclaim(
+        needed_mb=ram_needed,
+        catalog_freeable_mb=catalog_reclaimable_ram,
+        ram_free_mb=gateway.ram_free_mb,
+        ram_total_mb=gateway.ram_total_mb,
+        loading_reservation_mb=ram_reserved,
+        full_evict=bool(gateway.loaded_models),
+        resource_margins=margins,
+    )
+    reclaimable_ram = effective_ram_free + ram_admission.freeable_mb
 
     vram_ok = vram_needed <= 0 or reclaimable_vram >= vram_needed
-    ram_ok = ram_needed <= 0 or reclaimable_ram >= ram_needed
+    ram_ok = ram_admission.verdict == AdmissionVerdict.ADMIT
 
     diagnostics = {
         "max_freeable_vram": reclaimable_vram,
@@ -91,6 +106,7 @@ def can_fit_after_eviction_including_busy(
         "vram_reserved_loading": vram_reserved,
         "ram_reserved_loading": ram_reserved,
         **admission.to_payload(),
+        **ram_admission.to_payload(),
     }
     return vram_ok and ram_ok, diagnostics
 

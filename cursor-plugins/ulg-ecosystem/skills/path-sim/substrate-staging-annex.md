@@ -53,67 +53,20 @@ Window params above name **quality** (Grok-4.5 High). Transport on the code lane
 
 Detail: `consult-routing` § xAI coding-substrate · `cortex://notes/system/specs/grok-coding-consult-substrate.md`.
 
-## Vision-align flag (G4) — corpus + note rule
+## Vision-align flag (G4) — R-admit machinery
+
+Block grammar, verdict semantics, corpus rule, note rule, and surface-glob table:
+**`cortex://notes/system/specs/vision-align-grammar.md`** (shared SoT). L2 carries the
+one-line emit rule and example block.
 
 ∀ durable path-sim **Q / A / R** sidecar: emit a `VISION-ALIGN` block in the footer
-(alongside the conformance checklist). Block grammar lives in L2.
-
-**Corpus — served vision digest (default).** At review time GET
-`/api/v1/doctrine/vision-digest` — rubric fields (quote verbatim, no paraphrase):
-
-| Field | Use |
-|---|---|
-| `pillars[].id` | Closed enum for `pillar_disposition:` cites (membership check) |
-| `pillars[].law_verbatim` | Quote into R-admit challenge row |
-| `pillars[].must_not_redecide[]` | Quote each entry into R-admit challenge row |
-| `pillars[].falsifier` | Available for escalation / drift naming |
-| `pillars[].sot_uris[]` | Escalation path when digest rubric is insufficient |
-| `map_sha256`, `stale`, `map_uri` | Annotate sidecar; when `stale: true`, cite both |
-
-**Escalation-only MAP read.** Full MAP read (`md_list` / targeted `md_read` of Thesis /
-Pillars / Backlog) is for **wide detent / supersede proposals only** — not the default
-corpus at Q / A / R review time. Escalate via `sot_uris[]` before wide MAP read.
-
-**Essay is secondary (resonance, not the default corpus).**
-`cortex://notes/system/design/ulg-architectural-vision.md` — open **only** when
-detent ≥ `wide`, the register is public / grant / onboarding, or the operator asks.
-It orients ("feel the shape in ten minutes"); it is not the choke-point corpus.
-
-Neither overrides a decision card — digest `sot_uris` point at the cards, which win on
-conflict (MAP §Non-goals; essay §0).
-
-**Note rule (agent-surface work).** When substrate-shaping trigger fires (below) or
-verdict ≠ `none`, the `note` MUST cite a digest `pillars[].id` and a standing debt line
-(from `sot_uris[]` or MAP standing debt), not merely a bare local-fit verdict.
-
-| Verdict | Meaning |
-|---|---|
-| `none` | Local work is stack-compatible — still emit the block |
-| `drift` | Local patch fights a pillar; name the fight + one corrective bind or friction |
-| `opportunity` | Concrete next move that would increase resonance (not a slogan) |
-
-`judgment_required` densify closeouts (outside path-sim) use the same grammar —
-pointers live in `consult-routing` / `advisor-timing`; path-sim owns the SOT.
-
-Densify SOT: `cortex://notes/system/threads/ulg-vision-align-g4-densify.md`.
+(alongside the conformance checklist).
 
 ### Substrate-shaping trigger (R-admit — mechanical)
 
 **Trigger fires iff** `files_expected` (or the R-admit diff file list) ∩ surface-glob
-table ≠ ∅. Matching is mechanical path intersection — no NL judgment in the mechanism.
-
-| Surface glob | Pillar hint |
-|---|---|
-| `services/git_integration_worker/cursor_auto/**` | pillar-1, pillar-3, pillar-5 |
-| `services/git_integration_worker/cursor_bus*` | pillar-3 |
-| `libs/cortex_store/**` | pillar-2, pillar-3 |
-| `cursor-plugins/ulg-ecosystem/skills/**` | pillar-1 |
-| `pipelines/**/chain.yaml`, `pipelines/**/prompts.yaml` | pillar-3 |
-| `cortex://notes/system/specs/**` when named in scope | pillar-4 |
-| `libs/universal_event_bus/**`, `libs/event_store/**`, `services/event-service/**` | pillar-5 |
-| `libs/cdp_ask/**` (execution / admission state) | pillar-5 |
-| `services/universal-stargate/systems/federation/**` | pillar-5 |
-| any new cross-process state holder, projection, admission gate, lease, or drain path | pillar-5 |
+table (shared grammar doc §5) ≠ ∅. Matching is mechanical path intersection — no NL
+judgment in the mechanism.
 
 ### R-admit pillar disposition (when trigger fires)
 

@@ -282,8 +282,9 @@ Mechanics: `libs/claude_bundles/cowork_skill_delivery.py` + `composer_session_sk
 | Packet class | Claude-slug engage | Inline (not Claude slugs) |
 |---|---|---|
 | Light-bounded architect / admit bind | `reasoning-posture` + `frontier-reasoning-discipline` (+ `consult-posture` when consult-shaped) | none — **¬** `path-sim` unless this leg is a path-sim Q/A/R cascade (a:27142) |
+| **`/layer` G1 · Fable/Opus architecture** | optional judgment chips | **`architecture-invariants` + `ulg-architecture`** (fail closed — judgment chips ¬ substitute; lead preflight in `abstraction-layering`) |
 | **ULG service home / placement / extract / hosting BIND** | `reasoning-posture` + `frontier-reasoning-discipline` (+ `consult-posture` when consult-shaped) | **`architecture-invariants` + `ulg-architecture`** — and **inline** `[ulg:host-process]` when process manager / service home is load-bearing (cursor_only → local inject / excerpt) |
-| Modularize / overhaul deep split | optional chip helpers | `architecture-invariants` + `modularize-discipline` (+ `ulg-architecture`) |
+| Modularize / overhaul deep split | optional chip helpers | `architecture-invariants` + `modularize-discipline` (+ `ulg-architecture`) — `/modularize` cascade SOT: `modularize-path` (CDP M-Arch fail-closed inline) |
 | Overhaul §5.6 / `/docstring-enhance` CDP | `evidence-review-discipline`, `no-silent-inference` | short `architecture-invariants` floor |
 | Overhaul step-4 deep code review | `evidence-review-discipline`, `frontier-reasoning-discipline`, `no-silent-inference` | `architecture-invariants` + `ulg-architecture` |
 | `/review-arch-doc` CDP | same three as step-4 | `architecture-invariants` + `ulg-architecture` |
@@ -304,6 +305,7 @@ Mechanics: `libs/claude_bundles/cowork_skill_delivery.py` + `composer_session_sk
 | Omit unattended clause from sealed / charter R packets | L2 § Sealed / unattended |
 | Treat slash-manifest lines as skill delivery | Attach + channel attest before submit |
 | Architecture placement packet with only judgment skills; systemd framing from BEFORE map unchallenged | Attach/inline `ulg-architecture` + `architecture-invariants`; inline `[ulg:host-process]` when hosting is load-bearing |
+| `/layer` Fable G1 with judgment chips only (no `ulg-architecture`) | Seal arch pair; lead preflight check before admit (`abstraction-layering`) |
 
 ## Hygiene (5195)
 

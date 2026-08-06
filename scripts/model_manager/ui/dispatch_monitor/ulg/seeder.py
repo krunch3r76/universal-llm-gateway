@@ -15,11 +15,16 @@ from scripts.model_manager.ui.dispatch_monitor.ulg.event_query import (
     charter_tick_audit,
     signal_events,
 )
-from scripts.model_manager.ui.dispatch_monitor.ulg.lease_snapshot import fetch_lease_snapshot
+from scripts.model_manager.ui.dispatch_monitor.ulg.lease_snapshot import (
+    fetch_lease_snapshot,
+)
 from scripts.model_manager.ui.dispatch_monitor.ulg.records import event_from_row
 from scripts.model_manager.ui.dispatch_monitor.ulg.snapshot_events import (
     events_from_lease_snapshot,
     fold_status_failure_event,
+)
+from scripts.model_manager.ui.dispatch_monitor.ulg.terminal_backfill import (
+    backfill_sdk_fold,
 )
 
 _LIVE_FILTERS: tuple[str, ...] = (
@@ -51,6 +56,8 @@ _PRIORITY_SIGNALS: tuple[str, ...] = (
     "frontier.sdk.worker.cancelled",
     "frontier.sdk.worker.progress",
     "frontier.sdk.generate.requested",
+    "frontier.sdk.worker.lease.released",
+    "frontier.sdk.closeout.relayed",
     "pipeline.frontier.dispatch.started",
     "pipeline.frontier.dispatch.completed",
     "pipeline.frontier.dispatch.failed",
@@ -164,6 +171,8 @@ def seed_model(
     lease_snapshot_url: str | None = None,
     source_repo: str | None = None,
     lease_snapshot_fetch: Callable[..., dict | None] | None = None,
+    sdk_fold: object | None = None,
+    backfill_minutes: int | None = None,
 ) -> int:
     """Fold cold-start history into ``apply``. Returns count of records applied."""
     seen_seq: set[int] = set()
@@ -209,4 +218,7 @@ def seed_model(
     for event in pending:
         apply(event)
     _graft_charter_tips(apply, seeded_roots)
+    if sdk_fold is not None:
+        lookback = backfill_minutes if backfill_minutes is not None else max(minutes, 24 * 60)
+        backfill_sdk_fold(apply, sdk_fold, minutes=lookback)
     return len(pending)

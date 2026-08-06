@@ -123,7 +123,9 @@ Classify kind · channel · subsumption.
 **Skip:** single obvious shape ∨ mechanical.  
 **Do:** CDP architecture consult per Mode B transport above — followup into live
 operator-proxy CSE when attached; else `team_dispatch(model=cdp/fable|cdp/opus-5)`
-(consult-routing). Harvest to cortex.
+(consult-routing). **Before fire:** Fable/Opus G1 skill floor —
+`architecture-invariants` ∧ `ulg-architecture` sealed (abstraction-layering § Fable /
+CDP G1 lead preflight); judgment chips alone ≠ floor. Harvest to cortex.
 
 **Premium rung:** fork needs live-checkout verification at file:line depth a CDP seat
 structurally cannot perform ⇒ escalate to `cursor/claude-opus-5` `{xhigh|max}`,
@@ -187,6 +189,7 @@ Name: `todo:{slug}` · entry gate · consult URI · recon URI.
 | Bare `/work-item-seed` with no idea, or mint before stage table | Halt — need idea text; publish disposition; run S3 when mandatory |
 | S3 fired ∧ no Fable harvest | Minting or `/layer` — harvest consult first |
 | Announce Mode B / "staging Fable" then end turn with no admit | Same-turn admit (`execution_id`+`poll_hint` or followup admit) or named halt |
+| Fable/Opus Mode B with only judgment skills (no `ulg-architecture`) | Seal arch pair per abstraction-layering G1 preflight before admit |
 | Mode B under live operator-proxy CSE via fresh `team_dispatch(cdp/…)` | `project_ask(op=followup)` into attached CSE (inv 23); fresh CDP only if no live CSE |
 | Existing todo + Mode B ask → divert to bare `/layer` | Mode B on existing slug · attach · `/layer` G2 |
 | S2 breadth via Composer or in-seat Grep spray | Explore subagent first (cheap-recon Tier-1) |

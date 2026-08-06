@@ -11,10 +11,12 @@ Pair with Use the `architecture-invariants` skill for transport, model IDs, even
 Cite applicable `[ulg:*]` tags in handoff Block 2; load deferred refs by tag.
 
 **Posture layer above this floor (vision/MAP).** This skill + `architecture-invariants`
-are the *code-invariant* floor. On `judgment_required` / pillar-touching work (seat-lane,
-imprint/continuity, HTTP substrate, claim-record/WWP), compose with the foundation MAP +
-a `VISION-ALIGN` footer — see `path-sim` § Vision-align flag (G4). MAP is the posture
-layer *above* the floor — ¬ absorb pillar law into the `[ulg:*]` tag table.
+are the *code-invariant* floor. On `judgment_required` / pillar-touching **codework**,
+compose with the foundation MAP + a `VISION-ALIGN` footer per
+`cortex://notes/system/specs/vision-align-grammar.md` and `/layer` posture § in
+`abstraction-layering`. Non-codework Q→A path-sim sidecars use the same grammar doc;
+path-sim owns R-admit machinery only. MAP is the posture layer *above* the floor — ¬
+absorb pillar law into the `[ulg:*]` tag table.
 
 ## Tag index
 

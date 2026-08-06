@@ -122,7 +122,9 @@ async def execute_master_eviction(
     node_id = selected_gateway.node_id or gateway_name
     eviction_plan = get_eviction_plan_for_gateway(trace, gateway_name)
 
-    if eviction_plan is None or not eviction_plan.models_to_evict:
+    from systems.routing.selection.decision.types import is_eviction_plan_actionable
+
+    if not is_eviction_plan_actionable(eviction_plan):
         return MasterEvictionResult(
             outcome=MasterEvictionOutcome.NO_EVICTION_NEEDED,
             gateway_id=gateway_name,

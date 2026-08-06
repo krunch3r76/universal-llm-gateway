@@ -150,8 +150,10 @@ fingerprinted, not instruction source. `packet:{path}` trusts six-block packet; 
 
 ## Vision-align / Events-probe (pointers)
 
-Path-sim Q/A/R + `judgment_required` densify closeouts: include footers per `path-sim` § Vision-align flag /
-§ Events/gap probe. Specs: `cortex://notes/system/threads/ulg-vision-align-g4-densify.md`,
+Path-sim Q/A/R + `judgment_required` densify closeouts: include footers per
+`cortex://notes/system/specs/vision-align-grammar.md` (block grammar + globs); R-admit
+machinery remains in `path-sim/substrate-staging-annex.md`. § Events/gap probe.
+Specs: `cortex://notes/system/threads/ulg-vision-align-g4-densify.md`,
 `cortex://notes/system/threads/ulg-path-sim-events-g5-densify.md`.
 
 ## Task-class model reference

@@ -122,16 +122,17 @@ recon → Q (lead CDP Fable L0) → A (cursor-sdk Grok L1+L2 + bind) →[halt] R
 
 ## Vision-align flag (G4)
 
-∀ durable path-sim **Q / A / R** sidecar: emit a `VISION-ALIGN` block in the footer, alongside the conformance checklist.
+∀ durable path-sim **Q / A / R** sidecar: emit a `VISION-ALIGN` block in the footer, alongside the conformance checklist. Block grammar + corpus + surface globs: **`cortex://notes/system/specs/vision-align-grammar.md`** (shared SoT).
 
 ```
 VISION-ALIGN
 verdict: opportunity | drift | none
-pillar: P1-who-acts | P2-persist | P3-surfaces | P4-assert | thesis | n/a
-note: <≤25 words; cite section heading if not none>
+pillar: <member of served pillars[].id> | thesis | n/a
+note: <≤25 words; cite digest law/debt line when verdict ≠ none>
+digest_map_sha256: <map_sha256> · stale: <true|false>
 ```
 
-`none` = stack-compatible (still emit) · `drift` = names the fight + one corrective bind or friction · `opportunity` = a concrete next move, not a slogan. Verdict ≠ `none` ⇒ pull rubric from GET `/api/v1/doctrine/vision-digest`; escalate via `sot_uris[]` / full MAP read only at wide detent — corpus + note rule + R-admit `pillar_disposition:` in **annex C**.
+`none` = stack-compatible (still emit) · `drift` = names the fight + one corrective bind or friction · `opportunity` = a concrete next move, not a slogan. Verdict ≠ `none` ⇒ pull rubric from GET `/api/v1/doctrine/vision-digest`; escalate via `sot_uris[]` / full MAP read only at wide detent — R-admit `pillar_disposition:` machinery in **annex C**.
 
 ## Conformance checklist (6 binary, per path-sim turn)
 

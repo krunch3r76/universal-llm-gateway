@@ -426,7 +426,12 @@ class SdkFold:
         self._advance_progress(row, record.ts_unix_ms)
 
     def _on_lease_released(self, record: EventRecord) -> None:
-        """Write lease released for a dispatch (v3 §5)."""
+        """Write lease released for a dispatch (v3 §5).
+
+        When still LIVE, sets ``lease_released_without_terminal`` for G4 attention.
+        Clearing LIVE requires a worker terminal — applied live or via ulg backfill
+        (``terminal_backfill``); this handler never invents ``terminal_ms``.
+        """
         row = self._state(record)
         if row is None:
             return

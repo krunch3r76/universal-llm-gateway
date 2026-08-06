@@ -317,6 +317,11 @@ skills:
   modularize-discipline:
     surface_class: cursor_only
     mcp_surface_required: none
+  modularize-path:
+    # /modularize cascade: file→package-shadow via CDP arch → Grok densify → Composer.
+    # cursor_only: IDE/cursor-sdk own the path; CDP is consulted on M-Arch only.
+    surface_class: cursor_only
+    mcp_surface_required: code
   multi-model-review:
     surface_class: cursor_only
     mcp_surface_required: life

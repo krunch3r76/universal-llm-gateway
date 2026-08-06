@@ -113,7 +113,7 @@ steelman in-seat + `agent_bus` a code seat, or stamp `steelman-only`) when a har
   chose to skip consultation
 - **Vision-align (advisory, `judgment_required` only):** if upstream densify /
   path-sim sidecar lacks a `VISION-ALIGN` block, emit a one-line cue to add it
-  per `path-sim` § Vision-align flag (grammar SOT there — ¬ restated here)
+  per `cortex://notes/system/specs/vision-align-grammar.md` (grammar SOT — ¬ restated here)
 
 ### 2. Before Declaring Done
 

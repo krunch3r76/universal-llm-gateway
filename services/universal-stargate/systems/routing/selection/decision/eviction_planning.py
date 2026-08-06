@@ -19,7 +19,7 @@ from .eviction_victim_select import (
     select_eviction_victims,
 )
 from .resource_checks import _compute_loading_reservation, resolve_gateway_requirements
-from .types import ConstraintFailure, EvictionPlanSummary
+from .types import ConstraintFailure, EvictionPlanAbort, EvictionPlanSummary
 
 if TYPE_CHECKING:
     from ..types import Gateway, Placement
@@ -40,7 +40,7 @@ def _compute_eviction_plan(
     has_demand: Callable[[str], bool] | None = None,
     resource_margins: dict[str, float] | None = None,
     eviction_request_class: EvictionRequestClass = EvictionRequestClass.REQUIRED,
-) -> EvictionPlanSummary | None:
+) -> EvictionPlanSummary | EvictionPlanAbort | None:
     """Compute an eviction plan that frees enough VRAM/RAM to load a model
     with full runtime headroom margins.
 

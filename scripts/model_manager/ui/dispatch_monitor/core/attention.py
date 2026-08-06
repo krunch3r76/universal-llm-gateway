@@ -278,7 +278,7 @@ def _sdk_items(
                     since_ms=row.last_progress_ms,
                 )
             )
-        if row.lease_released_without_terminal:
+        if row.lease_released_without_terminal and row.terminal_ms is None:
             items.append(
                 AttentionItem(
                     key=f"sdk.dispatch.lease_released_without_terminal:{row.dispatch_id}",
