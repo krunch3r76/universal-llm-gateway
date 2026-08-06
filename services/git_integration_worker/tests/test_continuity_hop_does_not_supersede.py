@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -15,7 +15,6 @@ from services.git_integration_worker.cursor_auto.directive import (
 from services.git_integration_worker.cursor_auto.handler_terminal import (
     post_terminal_status,
 )
-from services.git_integration_worker.cursor_auto.queue import AutoJobQueue
 from services.git_integration_worker.cursor_auto.supersede import (
     post_superseded_terminal,
     supersede_same_thread_inflight,
@@ -134,8 +133,8 @@ async def test_hop_enqueue_leaves_claimed_job_running(live_run, monkeypatch):
 @pytest.mark.asyncio
 async def test_hop_without_scope_routes_to_cdp_not_blocked(monkeypatch):
     """F5 AC: token + no scope ⇒ CDP commission, ¬ vision/scope block."""
-    from services.git_integration_worker.cursor_auto import queue as queue_mod
     from services.git_integration_worker.cursor_auto import continuity_hop as hop_mod
+    from services.git_integration_worker.cursor_auto import queue as queue_mod
 
     q = queue_mod.reset_queue_for_tests(durable=False)
     hop_tasks: list = []
