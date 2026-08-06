@@ -295,6 +295,8 @@ async def test_execute_closes_on_proof_not_on_restart_status(tmp_path, monkeypat
         patch(
             "scripts.model_manager.ui.controller.charter_runner.propagation_execute.dispatch_for_projection",
             side_effect=[
+                # D2 ancestry pre-pass + harvest before + harvest after
+                _dispatch_result(before, requested="process_live"),
                 _dispatch_result(before, requested="process_live"),
                 _dispatch_result(after, requested="process_live"),
             ],
@@ -336,6 +338,8 @@ async def test_execute_does_not_early_close_without_identity_change(tmp_path, mo
         patch(
             "scripts.model_manager.ui.controller.charter_runner.propagation_execute.dispatch_for_projection",
             side_effect=[
+                # D2 ancestry pre-pass + harvest before + harvest after
+                _dispatch_result(payload, requested="process_live"),
                 _dispatch_result(payload, requested="process_live"),
                 _dispatch_result(payload, requested="process_live"),
             ],

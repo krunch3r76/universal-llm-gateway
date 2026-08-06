@@ -506,6 +506,25 @@ async def execute_propagation_plan(
         upsert_open_rows(plan.rows)
 
     bump_age_for_open_rows()
+    # D2: retire ancestor-satisfied rows (incl. harvest_wanted) before the fire
+    # set. Equal-ref still enters harvest — post-restart close needs a
+    # process-identity delta; settle-time equal retirement is a separate path.
+    for row in list(list_open_rows()):
+        pre_dispatch = dispatch_for_projection(row)
+        if pre_dispatch.error is not None or not isinstance(pre_dispatch.payload, dict):
+            continue
+        pre_payload = pre_dispatch.payload
+        live = observe_code_ref_live(
+            row.service,
+            row.code_ref,
+            probe=lambda _service, _payload=pre_payload: _payload,
+        )
+        if live.answer == "yes" and live.relation == "ancestor":
+            settle_open_row(
+                row,
+                lambda _service, _payload=pre_payload: _payload,
+                defer_if_unreachable=True,
+            )
     # Open rows are the obligation fire set — not a liveness oracle. Terminal
     # failed events stay out of this list by design; seats asking current
     # liveness use observe_code_ref_live (does not open sqlite).
@@ -557,10 +576,10 @@ async def execute_propagation_plan(
         before = dispatch_before.payload
 
         # Pre-fire re-observe (F4 census #13): when a newer live version already
-        # satisfies the owed code_ref (ancestor), stop chasing this obligation
-        # without burning a restart. Exact match still fires — harvest close
-        # requires process-identity delta after sync_restart, not merely a
-        # matching code_version on the outgoing generation.
+        # satisfies the owed code_ref (ancestor), retire the obligation without
+        # burning a restart. Exact match still fires — harvest close after
+        # sync_restart requires a process-identity delta, not observe(equal)
+        # alone on the outgoing generation (distinct from settle retirement).
         live = observe_code_ref_live(
             row.service,
             row.code_ref,
@@ -574,18 +593,29 @@ async def execute_propagation_plan(
                 lambda _service, _payload=before: _payload,
                 defer_if_unreachable=True,
             )
-            remaining.append(
-                {
-                    **projection,
-                    "defer_reason": pre.detail,
-                    "proof_class_executed": dispatch_before.proof_class_executed,
-                    "disposition": "pre_fire_ancestry_satisfied",
-                    "proof": before,
-                    "liveness": live.reason,
-                }
-            )
-            if row.age_in_harvests >= 2:
-                escalated.append({**projection, "defer_reason": pre.detail})
+            if pre.outcome == "closed":
+                closed.append(
+                    {
+                        **projection,
+                        "proof": before,
+                        "proof_class_executed": dispatch_before.proof_class_executed,
+                        "disposition": "pre_fire_ancestry_satisfied",
+                        "liveness": live.reason,
+                    }
+                )
+            else:
+                remaining.append(
+                    {
+                        **projection,
+                        "defer_reason": pre.detail,
+                        "proof_class_executed": dispatch_before.proof_class_executed,
+                        "disposition": "pre_fire_ancestry_satisfied",
+                        "proof": before,
+                        "liveness": live.reason,
+                    }
+                )
+                if row.age_in_harvests >= 2:
+                    escalated.append({**projection, "defer_reason": pre.detail})
             continue
 
         may_fire, window_reason = row_may_fire_at_harvest(row)

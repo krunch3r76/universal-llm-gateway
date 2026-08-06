@@ -60,7 +60,7 @@ def test_case_ii_ancestry_satisfied() -> None:
     assert result.case == "ancestry_satisfied"
     assert result.relation == "ancestor"
     assert result.case != "exact_match"
-    assert "never verified" in result.reader_entitlement
+    assert "transitively satisfied" in result.reader_entitlement
     assert "READ-CAVEAT" in result.reader_entitlement
     assert "observe_code_ref_live" in result.reader_entitlement
 

@@ -28,7 +28,6 @@ from .propagation_ledger import (
     set_settle_boundary,
 )
 from .propagation_version_satisfaction import (
-    DEFER_ANCESTRY_SATISFIED,
     DEFER_UNRELATED_OR_UNRESOLVABLE,
     classify_version_satisfaction,
 )
@@ -244,8 +243,13 @@ def settle_open_row(
             detail=detail,
         )
 
-    observed = payload.get("code_version")
-    observed_str = observed if isinstance(observed, str) else None
+    from .propagation_terminal_retire import (
+        observed_code_version_for_settle,
+        try_close_on_version_satisfaction,
+    )
+
+    observed_str = observed_code_version_for_settle(row, payload)
+    observed = observed_str
     satisfaction = classify_version_satisfaction(row.code_ref, observed_str)
     relation = satisfaction.relation
 
@@ -263,40 +267,19 @@ def settle_open_row(
         payload, code_ref=row.code_ref, matched=exact_match and proof_passes
     )
 
-    if determination == "matched" and satisfaction.case == "exact_match":
-        close_payload = {
-            **payload,
-            "code_ref_relation": relation,
-            "version_satisfaction_case": satisfaction.case,
-        }
-        close_row(row.row_id, proof_payload=close_payload)
+    retired = try_close_on_version_satisfaction(
+        row,
+        payload,
+        proof_passes=proof_passes,
+        determination=determination,
+    )
+    if retired is not None:
         return SettleResult(
             row_id=row.row_id,
             service=row.service,
             code_ref=row.code_ref,
             outcome="closed",
-            detail=f"exact match: code_version equals code_ref={row.code_ref}",
-        )
-
-    if satisfaction.case == "ancestry_satisfied":
-        # Event outcome for this open obligation attempt — not a standing
-        # liveness answer. Leave the open row (incl. legacy premature
-        # "ancestry satisfied" proof stamps); seats asking "is code_ref
-        # live?" must call observe_code_ref_live (equal|ancestor → yes)
-        # rather than treat this defer token or proof string as durable state.
-        detail = (
-            f"ancestry satisfied: newer code live "
-            f"(expected {row.code_ref} observed {observed!r}; "
-            f"relation={relation}) — {satisfaction.reader_entitlement}"
-        )
-        if defer_if_unreachable:
-            set_defer_reason(row.row_id, DEFER_ANCESTRY_SATISFIED)
-        return SettleResult(
-            row_id=row.row_id,
-            service=row.service,
-            code_ref=row.code_ref,
-            outcome="deferred" if defer_if_unreachable else "unsettled",
-            detail=detail,
+            detail=retired,
         )
 
     if proof_passes and row.proof_class in ("served_artifact", "client_visible"):
@@ -401,70 +384,12 @@ def settle_open_row(
     )
 
 
-def settle_open_rows_for_service(
-    service: str,
-    probe: ProbeFn,
-    *,
-    defer_if_unreachable: bool = True,
-    settle_not_before_monotonic: float | None = None,
-) -> list[SettleResult]:
-    """Settle all open rows for one service — drain-supervisor post-completion hook."""
-    results: list[SettleResult] = []
-    for row in list_open_rows():
-        if row.service != service:
-            continue
-        results.append(
-            settle_open_row(
-                row,
-                probe,
-                defer_if_unreachable=defer_if_unreachable,
-                settle_not_before_monotonic=settle_not_before_monotonic,
-            )
-        )
-    return results
-
-
-def reconcile_all_open_rows(
-    probe: ProbeFn,
-    *,
-    settle_not_before_monotonic: float | None = None,
-) -> dict[str, Any]:
-    """One-pass reconcile: close matching rows; fail mismatches; report unsettled.
-
-    A sweep with no known restart boundary cannot attribute a contradiction to
-    the incoming generation, so mismatches report ``unsettled`` and the rows
-    stay open. Pass ``settle_not_before_monotonic`` when reconciling after a
-    known restart to re-enable terminal failure.
-    """
-    before = len(list_open_rows())
-    results = [
-        settle_open_row(
-            row,
-            probe,
-            defer_if_unreachable=False,
-            settle_not_before_monotonic=settle_not_before_monotonic,
-        )
-        for row in list_open_rows()
-    ]
-    after = len(list_open_rows())
-    return {
-        "before_open": before,
-        "after_open": after,
-        "closed": sum(1 for item in results if item.outcome == "closed"),
-        "failed": sum(1 for item in results if item.outcome == "failed"),
-        "unsettled": sum(1 for item in results if item.outcome == "unsettled"),
-        "results": results,
-    }
-
-
-def default_probe(service: str) -> dict[str, Any] | None:
-    """Import-safe default probe for GIW and MCP liveness endpoints."""
-    from scripts.model_manager.ui.controller.charter_runner.propagation_execute import (
-        probe_process_live,
-    )
-
-    return probe_process_live(service)
-
+# Batch helpers live in propagation_terminal_batch; re-export for callers.
+from .propagation_terminal_batch import (  # noqa: E402
+    default_probe,
+    reconcile_all_open_rows,
+    settle_open_rows_for_service,
+)
 
 __all__ = [
     "SettleResult",

@@ -342,15 +342,60 @@ def test_reconcile_uses_persisted_row_boundary(tmp_path, monkeypatch) -> None:
     assert report["after_open"] == 0
 
 
-def test_ancestry_satisfied_descendant_version_defers_not_closed(
+def test_exact_match_closes_when_live_process_identity_attested(
     tmp_path, monkeypatch
 ) -> None:
-    """Case (ii): newer live code must not close or fail the row."""
+    """Equal-ref settle retires when strong identity is present without harvest delta."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    sha = "abc1230000000000000000000000000000000000"
+    upsert_open_rows([_row(code_ref=sha, proof_class="process_live")])
+    row = list_open_rows()[0]
+
+    def probe(_service: str) -> dict[str, float | int | str]:
+        return {"code_version": sha, "uptime_s": 2.0, "pid": 4242}
+
+    # Custom probe path already closes on exact match; pin identity detail.
+    result = settle_open_row(row, probe, defer_if_unreachable=True)
+    assert result.outcome == "closed"
+    assert list_open_rows() == []
+
+
+def test_mcp_client_visible_retires_on_mcp_surface_when_cortex_lags(
+    tmp_path, monkeypatch
+) -> None:
+    """D2: mcp client_visible equal-ref retires from mcp_health even if cortex lags."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    sha = "abc1230000000000000000000000000000000000"
+    other = "def4560000000000000000000000000000000000"
+    upsert_open_rows(
+        [_row(service="mcp", code_ref=sha, proof_class="client_visible")]
+    )
+    row = list_open_rows()[0]
+
+    def probe(_service: str) -> dict[str, object]:
+        return {
+            "mcp_health": {"code_version": sha, "pid": 1},
+            "cortex_api": {"code_version": other, "pid": 2},
+        }
+
+    result = settle_open_row(row, probe, defer_if_unreachable=True)
+    assert result.outcome == "closed"
+    assert "mcp surface attested" in result.detail
+    assert list_open_rows() == []
+
+
+def test_ancestry_satisfied_descendant_version_closes_not_failed(
+    tmp_path, monkeypatch
+) -> None:
+    """Case (ii): newer live code retires the ancestor row (D2); must not fail it.
+
+    Prior lock (defers_not_closed) protected: do not treat ancestry as proof of
+    *this* SHA's deploy, and do not terminal-fail a superseded obligation.
+    D2 keeps the no-fail half and retires the open row so satisfied debt stops
+    presenting as unfired propagate — equal-ref identity proof stays separate.
+    """
     import subprocess
 
-    from charter_runner_store.propagation_version_satisfaction import (
-        DEFER_ANCESTRY_SATISFIED,
-    )
     from universal_workspace import get_workspace_root
 
     root = get_workspace_root()
@@ -380,12 +425,11 @@ def test_ancestry_satisfied_descendant_version_defers_not_closed(
         defer_if_unreachable=True,
         settle_not_before_monotonic=settle_not_before,
     )
-    assert result.outcome == "deferred"
-    assert result.outcome != "closed"
+    assert result.outcome == "closed"
     assert result.outcome != "failed"
+    assert result.outcome != "deferred"
     assert "ancestry satisfied" in result.detail
-    refreshed = list_open_rows()[0]
-    assert refreshed.defer_reason == DEFER_ANCESTRY_SATISFIED
+    assert list_open_rows() == []
 
 
 def test_unrelated_sweep_does_not_fail_with_boundary(tmp_path, monkeypatch) -> None:
@@ -419,8 +463,8 @@ def test_unrelated_sweep_does_not_fail_with_boundary(tmp_path, monkeypatch) -> N
     assert list_open_rows()[0].defer_reason == DEFER_UNRELATED_OR_UNRESOLVABLE
 
 
-def test_reconcile_sweep_ancestry_row_stays_open(tmp_path, monkeypatch) -> None:
-    """Sweep against ancestry-satisfied row must not produce closed or failed."""
+def test_reconcile_sweep_ancestry_row_closes(tmp_path, monkeypatch) -> None:
+    """D2: sweep against ancestry-satisfied row retires it; must not fail."""
     import subprocess
 
     from universal_workspace import get_workspace_root
@@ -445,9 +489,9 @@ def test_reconcile_sweep_ancestry_row_stays_open(tmp_path, monkeypatch) -> None:
         return {"code_version": head}
 
     report = reconcile_all_open_rows(probe)
-    assert report["closed"] == 0
+    assert report["closed"] == 1
     assert report["failed"] == 0
-    assert report["after_open"] == 1
+    assert report["after_open"] == 0
 
 
 def test_client_visible_mcp_flat_payload_does_not_close_satisfied(
@@ -509,6 +553,7 @@ def test_served_artifact_proper_shape_passes_evaluable_gate(
 ) -> None:
     """Same gate path: proper served_artifact shape is evaluable (not unevaluable)."""
     from deploy_identity.code_ref_relation import code_ref_relation_from_observed
+
     from charter_runner_store.propagation_determination import proof_evaluable
 
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))

@@ -31,12 +31,12 @@ _CASE_READER_ENTITLEMENT: dict[VersionSatisfactionCase, str] = {
         "This row's deploy is proven: probed code_version equals the row code_ref."
     ),
     "ancestry_satisfied": (
-        "This row's own deploy was never verified; newer code is running, "
-        "so pursuit of this specific SHA stopped without a merits failure. "
-        "READ-CAVEAT: leave open ancestry-satisfied rows "
-        "(defer=version_superseded_by_newer_code) in place — do not treat "
-        "their proof strings as current liveness; ask observe_code_ref_live "
-        "(fresh process probe) for is-code_ref-live."
+        "This row's own deploy was never identity-proven; newer code is "
+        "running, so the ancestor obligation is transitively satisfied and "
+        "the open row retires without a merits failure. "
+        "READ-CAVEAT: closed ancestry rows are events, not a standing "
+        "liveness oracle — ask observe_code_ref_live (fresh process probe) "
+        "for is-code_ref-live."
     ),
     "unrelated_or_unresolvable": (
         "No git ancestry links the row code_ref to the observed version, "
