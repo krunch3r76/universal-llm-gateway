@@ -330,6 +330,7 @@ async def test_created_lane_deregistered_when_not_retained(
         AsyncMock(
             return_value={
                 "send_verified": True,
+                "receipt": "dom_paste",
                 "streaming_at_paste": False,
                 "url": CSE_A,
                 "pasted_at": 1.0,
@@ -382,6 +383,7 @@ async def test_created_lane_retained_when_retain_lane_true(
         AsyncMock(
             return_value={
                 "send_verified": True,
+                "receipt": "dom_paste",
                 "streaming_at_paste": False,
                 "url": CSE_A,
                 "pasted_at": 1.0,
@@ -434,6 +436,7 @@ async def test_reused_lane_never_deregistered(monkeypatch: pytest.MonkeyPatch) -
         AsyncMock(
             return_value={
                 "send_verified": True,
+                "receipt": "dom_paste",
                 "streaming_at_paste": False,
                 "url": CSE_A,
                 "pasted_at": 1.0,
@@ -449,3 +452,206 @@ async def test_reused_lane_never_deregistered(monkeypatch: pytest.MonkeyPatch) -
     assert resp.ok is True
     assert resp.lane_created is False
     deregister.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_human_visible_fails_before_lane_mint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ExecutionStore()
+    register = MagicMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.register_lane", register
+    )
+    monkeypatch.setattr("cdp_ask.followup.ensure_cse_attached", AsyncMock())
+    monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
+
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            chat_url=CSE_A,
+            prompt_text="x",
+            min_receipt="human_visible",
+        ),
+        store,
+    )
+    assert resp.ok is False
+    assert resp.error == "human_visible_receipt_unavailable"
+    assert resp.receipt is None
+    register.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_wake_not_emitted_when_lane_created(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ExecutionStore()
+    reg = _reg("reg-new")
+    _patch_list_active(monkeypatch, reg=reg, reattach_empty=True)
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(side_effect=[[], [CSE_A]]),
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.register_lane",
+        MagicMock(return_value=reg),
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.connect_cdp",
+        _connect_factory(),
+    )
+    monkeypatch.setattr("cdp_ask.followup.cdp_registry.deregister_lane", MagicMock())
+    page = MagicMock()
+    page.url = CSE_A
+    pw = AsyncMock()
+    pw.stop = AsyncMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup._find_page_on_lane",
+        AsyncMock(return_value=(page, pw)),
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup.send_followup_paste_half",
+        AsyncMock(
+            return_value={
+                "send_verified": True,
+                "receipt": "dom_committed",
+                "streaming_at_paste": False,
+                "url": CSE_A,
+                "pasted_at": 1.0,
+            }
+        ),
+    )
+    wake = MagicMock()
+    monkeypatch.setattr(
+        "claude_bundles.cse_session_obligations.emit_wake_delivered_transition",
+        wake,
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cse_session_obligations.resolve_wake_obligation_for_receipt",
+        MagicMock(return_value=("thread-1", "obl-1")),
+    )
+    monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
+
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            chat_url=CSE_A,
+            prompt_text="x",
+            reattach=True,
+            min_receipt="dom_committed",
+        ),
+        store,
+    )
+    assert resp.ok is True
+    assert resp.lane_created is True
+    assert resp.receipt == "dom_committed"
+    wake.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_retain_lane_keeps_page_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ExecutionStore()
+    reg = _reg("reg-new")
+    _patch_list_active(monkeypatch, reg=reg, reattach_empty=True)
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(side_effect=[[], [CSE_A]]),
+    )
+    fake_page = _FakePage()
+    fake_page.url = CSE_A
+    fake_pw = _FakePw()
+
+    async def _navigate(_lane: Any, _url: str) -> tuple[Any, Any]:
+        return fake_page, fake_pw
+
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.register_lane",
+        MagicMock(return_value=reg),
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach._navigate_new_page",
+        _navigate,
+    )
+    deregister = MagicMock()
+    monkeypatch.setattr("cdp_ask.followup.cdp_registry.deregister_lane", deregister)
+    monkeypatch.setattr(
+        "cdp_ask.followup._find_page_on_lane",
+        AsyncMock(return_value=(MagicMock(url=CSE_A), AsyncMock())),
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup.send_followup_paste_half",
+        AsyncMock(
+            return_value={
+                "send_verified": True,
+                "receipt": "dom_paste",
+                "streaming_at_paste": False,
+                "url": CSE_A,
+                "pasted_at": 1.0,
+            }
+        ),
+    )
+    monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
+
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            chat_url=CSE_A,
+            prompt_text="x",
+            reattach=True,
+            retain_lane=True,
+        ),
+        store,
+    )
+    assert resp.ok is True
+    deregister.assert_not_called()
+    assert fake_page.closed is False
+    assert fake_pw.stopped is True
+
+
+@pytest.mark.asyncio
+async def test_dom_committed_gate_fails_when_only_dom_paste(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ExecutionStore()
+    reg = _reg("reg-1")
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.list_active",
+        lambda: [reg],
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(return_value=[CSE_A]),
+    )
+    page = MagicMock()
+    page.url = CSE_A
+    pw = AsyncMock()
+    pw.stop = AsyncMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup._find_page_on_lane",
+        AsyncMock(return_value=(page, pw)),
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup.send_followup_paste_half",
+        AsyncMock(
+            return_value={
+                "send_verified": True,
+                "receipt": "dom_paste",
+                "streaming_at_paste": False,
+                "url": CSE_A,
+                "pasted_at": 1.0,
+            }
+        ),
+    )
+    monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
+
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            chat_url=CSE_A,
+            prompt_text="x",
+            min_receipt="dom_committed",
+        ),
+        store,
+    )
+    assert resp.ok is False
+    assert resp.receipt == "dom_paste"
+    assert resp.send_verified is True
+    assert resp.error == "send_unverified"

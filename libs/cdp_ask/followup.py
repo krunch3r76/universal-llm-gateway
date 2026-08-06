@@ -26,6 +26,7 @@ from cdp_ask.followup_events import (
 )
 from cdp_ask.followup_reattach import (
     ReattachOutcome,
+    _disconnect_playwright,
     _teardown_attempt,
     ensure_cse_attached,
 )
@@ -35,12 +36,45 @@ from cdp_ask.followup_resolve import (
     normalize_cse_url,
     resolve_followup_target,
 )
-from cdp_ask.models import FollowupProjectAskRequest, FollowupProjectAskResponse
+from cdp_ask.models import (
+    FollowupMinReceipt,
+    FollowupProjectAskRequest,
+    FollowupProjectAskResponse,
+    FollowupReceipt,
+)
 from cdp_ask.runner import resolve_followup_prompt
 
 _lane_locks: dict[str, asyncio.Lock] = {}
 _inflight_guard = asyncio.Lock()
 _REATTACH_ELIGIBLE_ERRORS = frozenset({"cse_not_found_on_lane", "lane_not_attached"})
+_RECEIPT_RANK: dict[str, int] = {"dom_paste": 1, "dom_committed": 2}
+_DOM_RECEIPTS = frozenset({"dom_paste", "dom_committed"})
+
+
+def _receipt_rank(receipt: FollowupReceipt | None) -> int:
+    if receipt is None:
+        return 0
+    return _RECEIPT_RANK.get(receipt, 0)
+
+
+def receipt_meets(
+    receipt: FollowupReceipt | None, min_receipt: FollowupMinReceipt
+) -> bool:
+    """True when proven *receipt* satisfies the caller gate."""
+    if min_receipt == "human_visible":
+        return False
+    return _receipt_rank(receipt) >= _RECEIPT_RANK.get(min_receipt, 0)
+
+
+def _cap_receipt_for_lane(
+    receipt: FollowupReceipt | None, *, lane_created: bool
+) -> FollowupReceipt | None:
+    """Cap receipt at DOM rungs when a satellite lane was minted (B2)."""
+    if receipt is None:
+        return None
+    if lane_created and receipt not in _DOM_RECEIPTS:
+        return "dom_committed" if _receipt_rank(receipt) >= 2 else "dom_paste"
+    return receipt
 
 
 async def _find_page_on_lane(cdp_url: str, chat_url: str) -> tuple[Any, Any] | None:
@@ -88,6 +122,48 @@ def _response_extra(
     lane_created: bool,
 ) -> dict[str, bool]:
     return {"reattach_used": reattach_used, "lane_created": lane_created}
+
+
+def _paste_response(
+    *,
+    req: FollowupProjectAskRequest,
+    target_registration_id: str,
+    url: str | None,
+    pasted_at: float | None,
+    streaming: bool | None,
+    receipt: FollowupReceipt | None,
+    lane_created: bool,
+    reattach_used: bool,
+) -> FollowupProjectAskResponse:
+    """Build followup response from proven receipt and caller gate."""
+    receipt = _cap_receipt_for_lane(receipt, lane_created=lane_created)
+    send_verified = receipt is not None
+    ok = receipt_meets(receipt, req.min_receipt)
+    extra = _response_extra(reattach_used=reattach_used, lane_created=lane_created)
+    if not ok:
+        return FollowupProjectAskResponse(
+            ok=False,
+            url=url,
+            registration_id=target_registration_id,
+            execution_id=req.execution_id,
+            pasted_at=pasted_at,
+            send_verified=send_verified,
+            receipt=receipt,
+            streaming_at_paste=streaming,
+            error="send_unverified",
+            **extra,
+        )
+    return FollowupProjectAskResponse(
+        ok=True,
+        url=url,
+        registration_id=target_registration_id,
+        execution_id=req.execution_id,
+        pasted_at=pasted_at,
+        send_verified=send_verified,
+        receipt=receipt,
+        streaming_at_paste=streaming,
+        **extra,
+    )
 
 
 async def _maybe_reattach(
@@ -139,11 +215,11 @@ async def _reattach_teardown(
         return
     if outcome.lane_created:
         if retain_lane:
-            await _teardown_attempt(outcome.page, outcome.pw)
+            await _disconnect_playwright(outcome.pw)
         else:
+            await _teardown_attempt(outcome.page, outcome.pw, close_page=True)
             with contextlib.suppress(Exception):
                 cdp_registry.deregister_lane(outcome.registration_id or "")
-            await _teardown_attempt(None, outcome.pw)
         return
     await _teardown_attempt(outcome.page, outcome.pw)
 
@@ -160,6 +236,9 @@ async def execute_followup(
 
     if req.reattach and not (req.chat_url or "").strip():
         return fail_followup("reattach_requires_chat_url")
+
+    if req.min_receipt == "human_visible":
+        return fail_followup("human_visible_receipt_unavailable")
 
     reattach_outcome: ReattachOutcome | None = None
     reattach_used = False
@@ -218,6 +297,8 @@ async def execute_followup(
                     send_verified=False,
                     streaming_at_paste=None,
                     error_code=resp.error,
+                    lane_created=lane_created,
+                    receipt=None,
                 )
             )
             return resp
@@ -234,15 +315,19 @@ async def execute_followup(
                     send_verified=False,
                     streaming_at_paste=None,
                     error_code=resp.error,
+                    lane_created=lane_created,
+                    receipt=None,
                 )
             )
             return resp
 
         paste = await send_followup_paste_half(page, prompt)
-        send_verified = bool(paste.get("send_verified"))
+        receipt = paste.get("receipt")
         streaming = paste.get("streaming_at_paste")
         url = paste.get("url") or target.chat_url
         pasted_at = paste.get("pasted_at")
+        capped = _cap_receipt_for_lane(receipt, lane_created=lane_created)
+        send_verified = capped is not None
 
         emit_followup_event(
             cdp_ask_followup_paste_verified(
@@ -251,47 +336,43 @@ async def execute_followup(
                 send_verified=send_verified,
                 streaming_at_paste=streaming,
                 error_code=None if send_verified else "send_unverified",
+                lane_created=lane_created,
+                receipt=capped,
             )
         )
 
-        if not send_verified:
-            return FollowupProjectAskResponse(
-                ok=False,
-                url=url,
-                registration_id=target.registration_id,
-                execution_id=req.execution_id,
-                pasted_at=pasted_at,
-                send_verified=False,
-                streaming_at_paste=streaming,
-                error="send_unverified",
-                **extra,
-            )
-
-        from claude_bundles.cse_session_obligations import (
-            emit_wake_delivered_transition,
-            resolve_wake_obligation_for_receipt,
-        )
-
-        thread, obligation_id = resolve_wake_obligation_for_receipt(
-            target.registration_id
-        )
-        emit_wake_delivered_transition(
-            registration_id=target.registration_id,
-            thread=thread,
-            obligation_id=obligation_id,
-            send_verified=True,
-        )
-
-        return FollowupProjectAskResponse(
-            ok=True,
+        resp = _paste_response(
+            req=req,
+            target_registration_id=target.registration_id,
             url=url,
-            registration_id=target.registration_id,
-            execution_id=req.execution_id,
             pasted_at=pasted_at,
-            send_verified=True,
-            streaming_at_paste=streaming,
-            **extra,
+            streaming=streaming,
+            receipt=receipt,
+            lane_created=lane_created,
+            reattach_used=reattach_used,
         )
+
+        if (
+            resp.ok
+            and receipt_meets(capped, "dom_committed")
+            and not lane_created
+        ):
+            from claude_bundles.cse_session_obligations import (
+                emit_wake_delivered_transition,
+                resolve_wake_obligation_for_receipt,
+            )
+
+            thread, obligation_id = resolve_wake_obligation_for_receipt(
+                target.registration_id
+            )
+            emit_wake_delivered_transition(
+                registration_id=target.registration_id,
+                thread=thread,
+                obligation_id=obligation_id,
+                send_verified=True,
+            )
+
+        return resp
     finally:
         if pw is not None:
             await pw.stop()

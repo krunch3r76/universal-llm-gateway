@@ -32,27 +32,75 @@ _UNIQUE_MARKER_RE = re.compile(r"#\d+-unique:\s*\S+")
 
 _TRANSCRIPT_MARKER_JS = """
 () => {
+  function excluded(el) {
+    if (!el) return true;
+    if (el.isContentEditable) return true;
+    if (el.closest('[contenteditable="true"]')) return true;
+    const testid = (el.getAttribute('data-testid') || '').toLowerCase();
+    if (testid.includes('composer') || testid.includes('input')) return true;
+    if (el.getAttribute('role') === 'textbox') return true;
+    return false;
+  }
+  const primarySelectors = [
+    '[data-testid="user-message"]',
+    '[data-testid="human-turn"]',
+  ];
+  const secondarySelectors = ['div[class*="font-user"]'];
+  const seen = new Set();
+  const primaryNodes = [];
+  const secondaryNodes = [];
+  for (const sel of primarySelectors) {
+    for (const el of document.querySelectorAll(sel)) {
+      if (seen.has(el) || excluded(el)) continue;
+      seen.add(el);
+      primaryNodes.push(el);
+    }
+  }
+  for (const sel of secondarySelectors) {
+    for (const el of document.querySelectorAll(sel)) {
+      if (seen.has(el) || excluded(el)) continue;
+      seen.add(el);
+      secondaryNodes.push(el);
+    }
+  }
+  const allNodes = primaryNodes.concat(secondaryNodes);
+  let last = '';
+  for (const el of allNodes) {
+    const t = (el.innerText || '').trim();
+    if (t) last = t;
+  }
+  return {
+    count: primaryNodes.length,
+    last_len: last.length,
+    last_snippet: last.slice(0, 400),
+  };
+}
+"""
+
+_MARKER_IN_COMMITTED_JS = """
+(marker) => {
+  function excluded(el) {
+    if (!el) return true;
+    if (el.isContentEditable) return true;
+    if (el.closest('[contenteditable="true"]')) return true;
+    const testid = (el.getAttribute('data-testid') || '').toLowerCase();
+    if (testid.includes('composer') || testid.includes('input')) return true;
+    if (el.getAttribute('role') === 'textbox') return true;
+    return false;
+  }
   const selectors = [
     '[data-testid="user-message"]',
     '[data-testid="human-turn"]',
-    '[data-testid*="user"]',
     'div[class*="font-user"]',
   ];
-  let count = 0;
-  let last = '';
-  const seen = new Set();
   for (const sel of selectors) {
     for (const el of document.querySelectorAll(sel)) {
-      if (seen.has(el)) continue;
-      seen.add(el);
+      if (excluded(el)) continue;
       const t = (el.innerText || '').trim();
-      if (t) {
-        count += 1;
-        last = t;
-      }
+      if (t && t.includes(marker)) return true;
     }
   }
-  return { count, last_len: last.length, last_snippet: last.slice(0, 400) };
+  return false;
 }
 """
 
@@ -76,45 +124,51 @@ def verification_marker(prompt: str) -> str:
 
 
 def _transcript_grew(before: dict, after: dict) -> bool:
-    return after.get("count", 0) > before.get("count", 0) or (
-        after.get("last_len", 0) > before.get("last_len", 0)
-    )
+    return after.get("count", 0) > before.get("count", 0)
 
 
 async def send_followup_paste_half(page, prompt: str) -> dict:
     """Paste *prompt* into a live CSE and verify the user turn — no reply wait.
 
     Send-only contract: calls ``send_prompt`` then **fail-closed** on marker
-    presence (not count growth alone). Does **not** call
-    ``wait_assistant_reply`` or ``resolve_harvest_body``. Mid-turn
-    ``streaming_at_paste`` is reported (allow + report); callers decide whether
-    to retry later.
+    presence in composer-excluded committed-turn nodes (not ``body.innerText``).
+    Does **not** call ``wait_assistant_reply`` or ``resolve_harvest_body``.
+    Mid-turn ``streaming_at_paste`` is reported (allow + report).
+
+    Returns ``receipt`` of ``dom_paste`` or ``dom_committed`` when proven;
+    ``None`` on failure. ``send_verified`` aliases ``receipt is not None``.
     """
     import time
-
-    from claude_bundles.chat_reply_wait import harvest_assistant
 
     url = page.url or ""
     marker = verification_marker(prompt)
     before = await page.evaluate(_TRANSCRIPT_MARKER_JS)
     await send_prompt(page, prompt)
     after = await page.evaluate(_TRANSCRIPT_MARKER_JS)
-    body_has = False
+    marker_in_committed = False
     if marker:
-        body_has = bool(
-            await page.evaluate(
-                "(m) => ((document.body && document.body.innerText) || '').includes(m)",
-                marker,
-            )
+        marker_in_committed = bool(
+            await page.evaluate(_MARKER_IN_COMMITTED_JS, marker)
         )
     in_snippet = bool(marker) and marker in (after.get("last_snippet") or "")
-    send_verified = bool(marker) and _transcript_grew(before, after) and (
-        in_snippet or body_has
+    count_grew = _transcript_grew(before, after)
+    dom_paste = bool(marker) and (
+        marker_in_committed or (count_grew and in_snippet)
     )
+    receipt: str | None = "dom_paste" if dom_paste else None
+    if dom_paste:
+        try:
+            await page.reload(wait_until="domcontentloaded")
+            if marker and await page.evaluate(_MARKER_IN_COMMITTED_JS, marker):
+                receipt = "dom_committed"
+        except Exception:
+            receipt = "dom_paste"
     state = await harvest_assistant(page)
     pasted_at = time.time()
+    send_verified = receipt is not None
     return {
-        "send_verified": bool(send_verified),
+        "send_verified": send_verified,
+        "receipt": receipt,
         "streaming_at_paste": bool(state.get("streaming")),
         "url": str(state.get("url") or page.url or url),
         "pasted_at": pasted_at,

@@ -190,6 +190,8 @@ CLI parity: `--keep-chat` ≡ `delete_after=false`.
 
 ## Warm follow-up — same CSE window (BINDING — 2026-07-31)
 
+**Receipt ladder (v1 live rungs):** `dom_paste` (marker in composer-excluded committed-turn nodes or count growth + snippet) → `dom_committed` (marker survives page reload in committed user-turn nodes). DOM on an automation-attached page proves **satellite-scope** rendering — never server commit, never attended-session visibility. Reserved (not implemented): `attended`, `server_transcript`, `human_visible`.
+
 ```
 ∀ follow-up on retained /cowork/cse_* ∨ /chat/* URL:
 
@@ -198,8 +200,9 @@ CLI parity: `--keep-chat` ≡ `delete_after=false`.
       chat_url=… | registration_id=… | execution_id=…,
       prompt_text=… | prompt_uri=…,
       purpose=operator-proxy,
-      timeout_s=60)
-    → paste proof (send_verified); no reply harvest
+      timeout_s=60,
+      min_receipt=dom_paste | dom_committed)  # default dom_paste
+    → paste proof (send_verified, receipt); no reply harvest
     Identity ladder: chat_url ≻ registration_id ≻ execution_id
     v1 = attached lane only
 
@@ -209,7 +212,8 @@ CLI parity: `--keep-chat` ≡ `delete_after=false`.
       --chat-url <exact URL>
       --prompt-file <Jupiter-readable path>
 
-  ¬ register-lane / new profile then page.goto(same URL)
+  Launch-path (reattach mints lane): paste proof is satellite-scope only
+  ¬ relay ok=true / send_verified=true as human/CSE delivery (a:27855)
   ¬ project_ask(op=submit, … /new) for turn on retained CSE
 ```
 

@@ -292,6 +292,10 @@ class FollowupCandidateInfo(BaseModel):
     purpose: str | None = None
 
 
+FollowupReceipt = Literal["dom_paste", "dom_committed"]
+FollowupMinReceipt = Literal["dom_paste", "dom_committed", "human_visible"]
+
+
 class FollowupProjectAskRequest(BaseModel):
     """Warm paste into a live retained Cowork CSE on an attached CDP lane."""
 
@@ -305,10 +309,31 @@ class FollowupProjectAskRequest(BaseModel):
     timeout_s: int = 60
     reattach: bool = False
     retain_lane: bool = False
+    min_receipt: FollowupMinReceipt = Field(
+        default="dom_paste",
+        description=(
+            "Caller gate for proven delivery. Default ``dom_paste`` preserves "
+            "prior wire behavior. ``human_visible`` is unsatisfiable in v1 — "
+            "fail-closed before any lane side effect."
+        ),
+    )
 
 
 class FollowupProjectAskResponse(BaseModel):
-    """Synchronous paste-proof result — ``ok=true`` only when ``send_verified``."""
+    """Synchronous paste-proof result for warm CSE followup.
+
+    **Doctrine (H1):** DOM state on an automation-attached Playwright page proves
+    rendering in that page — never server commit, never attended-session
+    visibility. Relaying paste proof as human/CSE-seat delivery is the a:27855
+    failure class.
+
+    ``receipt`` names the highest rung **actually proven** (``dom_paste`` or
+    ``dom_committed``). ``send_verified`` is a legacy alias: ``True`` iff
+    ``receipt is not None`` (``receipt >= dom_paste``). ``ok`` is ``True`` iff
+    proven ``receipt`` meets the requested ``min_receipt`` gate — relaying
+    ``ok=true`` as human delivery when ``lane_created=true`` or
+    ``receipt < dom_committed`` is the same a:27855 failure class.
+    """
 
     ok: bool
     url: str | None = None
@@ -316,6 +341,7 @@ class FollowupProjectAskResponse(BaseModel):
     execution_id: str | None = None
     pasted_at: float | None = None
     send_verified: bool = False
+    receipt: FollowupReceipt | None = None
     streaming_at_paste: bool | None = None
     error: str | None = None
     detail: str | None = None

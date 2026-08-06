@@ -74,9 +74,18 @@ async def _navigate_new_page(
         return None
 
 
-async def _teardown_attempt(page: Any | None, pw: Any | None) -> None:
+async def _disconnect_playwright(pw: Any | None) -> None:
+    """Stop Playwright without closing the navigated tab (retain_lane path)."""
+    if pw is not None:
+        with contextlib.suppress(Exception):
+            await pw.stop()
+
+
+async def _teardown_attempt(
+    page: Any | None, pw: Any | None, *, close_page: bool = True
+) -> None:
     """Close a navigated tab and disconnect Playwright without touching the lane."""
-    if page is not None:
+    if close_page and page is not None:
         with contextlib.suppress(Exception):
             await page.close()
     if pw is not None:

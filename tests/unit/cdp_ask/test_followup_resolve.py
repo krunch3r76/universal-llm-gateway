@@ -271,6 +271,7 @@ async def test_send_unverified_when_verification_fails(
         AsyncMock(
             return_value={
                 "send_verified": False,
+                "receipt": None,
                 "streaming_at_paste": False,
                 "url": CSE_A,
                 "pasted_at": 1.0,
@@ -314,6 +315,7 @@ async def test_stale_registration_id_execute_followup_proceeds(
         AsyncMock(
             return_value={
                 "send_verified": True,
+                "receipt": "dom_paste",
                 "streaming_at_paste": True,
                 "url": CSE_A,
                 "pasted_at": 2.0,
@@ -357,6 +359,7 @@ async def test_ok_requires_send_verified(monkeypatch: pytest.MonkeyPatch) -> Non
         AsyncMock(
             return_value={
                 "send_verified": True,
+                "receipt": "dom_paste",
                 "streaming_at_paste": True,
                 "url": CSE_A,
                 "pasted_at": 2.0,

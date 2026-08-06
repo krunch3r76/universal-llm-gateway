@@ -44,6 +44,8 @@ def cdp_ask_followup_paste_verified(
     send_verified: bool,
     streaming_at_paste: bool | None,
     error_code: str | None,
+    lane_created: bool = False,
+    receipt: str | None = None,
 ) -> Event:
     """Emit after paste verification completes (success or typed failure)."""
     return Event(
@@ -56,6 +58,8 @@ def cdp_ask_followup_paste_verified(
             "send_verified": send_verified,
             "streaming_at_paste": streaming_at_paste,
             "error_code": error_code,
+            "lane_created": lane_created,
+            "receipt": receipt,
         },
     )
 

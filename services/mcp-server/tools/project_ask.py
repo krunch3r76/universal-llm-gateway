@@ -105,11 +105,19 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
         download_output: bool = False,
         reattach: bool = False,
         retain_lane: bool = False,
+        min_receipt: Literal["dom_paste", "dom_committed", "human_visible"] = "dom_paste",
     ) -> dict[str, Any]:
         """Submit, poll, abort, followup, or list active CDP project-ask work.
 
         Thin relay to the ``PROJECT_ASK_URL`` satellite (``libs/cdp_ask/``).
         Use from any vortex-code seat without hub checkout SSH.
+
+        **Followup receipt doctrine (H1):** DOM state on an automation-attached
+        Playwright page proves rendering in that page — never server commit,
+        never attended-session visibility. Relaying ``ok=true`` or
+        ``send_verified=true`` as human/CSE-seat delivery when
+        ``lane_created=true`` or ``receipt < dom_committed`` is the **a:27855**
+        failure class.
 
         Ops (client must poll — no server-side wait loop):
           submit — POST execution; returns ``execution_id`` + ``status: running``
@@ -134,13 +142,18 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
             lane (``chat_url`` ≻ ``registration_id`` ≻ ``execution_id``). In-chat
             delivery ≻ bus NOTE; commission continuity stays on the private
             ``agent_bus.request`` lane (transport ≠ bus). Returns paste proof
-            (``send_verified``, ``url``) — no reply harvest. Prefer ``prompt_uri``
-            for large advisories. ``timeout_s`` on followup is the relay paste
-            budget (recommend 60); v2 fallback is async followup id + poll if
-            pastes exceed synchronous relay (not implemented in v1). CLI escape:
+            (``send_verified``, ``receipt``, ``url``) — no reply harvest.
+            ``send_verified`` aliases ``receipt >= dom_paste``; ``ok`` requires
+            proven ``receipt`` to meet ``min_receipt`` (default ``dom_paste``).
+            ``min_receipt=human_visible`` fails closed with zero side effects.
+            Prefer ``prompt_uri`` for large advisories. ``timeout_s`` on followup
+            is the relay paste budget (recommend 60); v2 fallback is async
+            followup id + poll if pastes exceed synchronous relay (not
+            implemented in v1). CLI escape:
             ``scripts/cortex/cowork_chat_followup.py``. ``reattach=true`` with
             ``chat_url`` navigates an attached lane when the CSE tab is closed;
-            ``retain_lane=true`` keeps a newly registered lane after paste.
+            ``retain_lane=true`` keeps a newly registered lane and navigated tab
+            after paste (``pw.stop()``, page stays open).
 
         ``purpose``: default ``ask``. For operator-proxy missions prefer
         ``team_dispatch(model=cdp/…, purpose=operator-proxy|mission)`` —
@@ -228,8 +241,8 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
             active_work: {busy, running_count, execution_ids, rows, soft_limit,
                 hard_limit, free_slots, at_soft_limit, at_hard_limit}
             followup: {ok, url?, registration_id?, execution_id?, pasted_at?,
-                send_verified, streaming_at_paste?, error?, detail?, candidates?,
-                reattach_used?, lane_created?}
+                send_verified, receipt?, streaming_at_paste?, error?, detail?,
+                candidates?, reattach_used?, lane_created?, min_receipt?}
         """
         if op == "followup":
             identity = any(
@@ -263,6 +276,7 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
                     "timeout_s": int(paste_budget),
                     "reattach": reattach,
                     "retain_lane": retain_lane,
+                    "min_receipt": min_receipt if min_receipt != "dom_paste" else None,
                 }.items()
                 if v is not None and v != "" and v is not False
             }
@@ -287,6 +301,8 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
                 send_verified=result.get("send_verified"),
                 streaming_at_paste=result.get("streaming_at_paste"),
                 resolution_path=resolution_path,
+                lane_created=result.get("lane_created"),
+                receipt=result.get("receipt"),
             )
             return result
 

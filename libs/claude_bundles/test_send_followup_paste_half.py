@@ -33,16 +33,18 @@ async def test_send_verified_true_when_marker_in_growing_transcript() -> None:
         side_effect=[
             {"count": 1, "last_len": 10, "last_snippet": "old"},
             {"count": 2, "last_len": 80, "last_snippet": prompt[:400]},
-            True,  # body_has
+            True,  # marker_in_committed after paste
+            True,  # marker_in_committed after reload
         ]
     )
+    page.reload = AsyncMock()
     with (
         patch(
             "claude_bundles.project_ask_conversation.send_prompt",
             new_callable=AsyncMock,
         ) as send_mock,
         patch(
-            "claude_bundles.chat_reply_wait.harvest_assistant",
+            "claude_bundles.project_ask_conversation.harvest_assistant",
             new_callable=AsyncMock,
             return_value={"streaming": False, "url": page.url},
         ),
@@ -50,8 +52,42 @@ async def test_send_verified_true_when_marker_in_growing_transcript() -> None:
         result = await send_followup_paste_half(page, prompt)
     send_mock.assert_awaited_once()
     assert result["send_verified"] is True
+    assert result["receipt"] == "dom_committed"
     assert result["error"] is None
     assert result["verification_marker"] == marker
+    page.reload.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_dom_paste_without_reload_commit() -> None:
+    """Marker in committed turns but reload drops it — stays dom_paste."""
+    page = AsyncMock()
+    page.url = "https://claude.ai/cowork/cse_test"
+    marker = "#4-unique: force-not-wait-2026-08-02T10:21Z"
+    prompt = f"TYPE: BREAK_IN\n{marker}\nForce now\n"
+    page.evaluate = AsyncMock(
+        side_effect=[
+            {"count": 1, "last_len": 10, "last_snippet": "old"},
+            {"count": 2, "last_len": 80, "last_snippet": prompt[:400]},
+            True,  # marker_in_committed after paste
+            False,  # marker gone after reload
+        ]
+    )
+    page.reload = AsyncMock()
+    with (
+        patch(
+            "claude_bundles.project_ask_conversation.send_prompt",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.harvest_assistant",
+            new_callable=AsyncMock,
+            return_value={"streaming": False, "url": page.url},
+        ),
+    ):
+        result = await send_followup_paste_half(page, prompt)
+    assert result["send_verified"] is True
+    assert result["receipt"] == "dom_paste"
 
 
 @pytest.mark.asyncio
@@ -72,7 +108,7 @@ async def test_send_unverified_when_count_grows_without_marker() -> None:
                 "last_len": 200,
                 "last_snippet": "TYPE: BREAK_IN\n#3-unique: ask-ladder-…",
             },
-            False,  # body_has
+            False,  # marker_in_committed
         ]
     )
     with (
@@ -81,13 +117,49 @@ async def test_send_unverified_when_count_grows_without_marker() -> None:
             new_callable=AsyncMock,
         ),
         patch(
-            "claude_bundles.chat_reply_wait.harvest_assistant",
+            "claude_bundles.project_ask_conversation.harvest_assistant",
             new_callable=AsyncMock,
             return_value={"streaming": False, "url": page.url},
         ),
     ):
         result = await send_followup_paste_half(page, prompt)
     assert result["send_verified"] is False
+    assert result["receipt"] is None
+    assert result["error"] == "send_unverified"
+
+
+@pytest.mark.asyncio
+async def test_composer_only_paste_does_not_verify() -> None:
+    """a:27655 regression — marker only in composer, send failed."""
+    page = AsyncMock()
+    page.url = "https://claude.ai/cowork/cse_test"
+    marker = "#4-unique: force-not-wait-2026-08-02T10:21Z"
+    prompt = f"TYPE: BREAK_IN\n{marker}\nForce now\n"
+    page.evaluate = AsyncMock(
+        side_effect=[
+            {"count": 1, "last_len": 10, "last_snippet": "old"},
+            {
+                "count": 1,
+                "last_len": 200,
+                "last_snippet": prompt[:400],
+            },
+            False,  # marker not in committed turns (composer-only)
+        ]
+    )
+    with (
+        patch(
+            "claude_bundles.project_ask_conversation.send_prompt",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.harvest_assistant",
+            new_callable=AsyncMock,
+            return_value={"streaming": False, "url": page.url},
+        ),
+    ):
+        result = await send_followup_paste_half(page, prompt)
+    assert result["send_verified"] is False
+    assert result["receipt"] is None
     assert result["error"] == "send_unverified"
 
 
@@ -108,13 +180,14 @@ async def test_send_unverified_when_no_transcript_delta() -> None:
             new_callable=AsyncMock,
         ),
         patch(
-            "claude_bundles.chat_reply_wait.harvest_assistant",
+            "claude_bundles.project_ask_conversation.harvest_assistant",
             new_callable=AsyncMock,
             return_value={"streaming": True, "url": page.url},
         ),
     ):
         result = await send_followup_paste_half(page, "ignored prompt text here")
     assert result["send_verified"] is False
+    assert result["receipt"] is None
     assert result["error"] == "send_unverified"
     assert result["streaming_at_paste"] is True
 
@@ -128,15 +201,17 @@ async def test_no_wait_assistant_reply_or_resolve_harvest_body() -> None:
             {"count": 0, "last_len": 0, "last_snippet": ""},
             {"count": 1, "last_len": 17, "last_snippet": "hi there mid body"},
             True,
+            True,
         ]
     )
+    page.reload = AsyncMock()
     with (
         patch(
             "claude_bundles.project_ask_conversation.send_prompt",
             new_callable=AsyncMock,
         ),
         patch(
-            "claude_bundles.chat_reply_wait.harvest_assistant",
+            "claude_bundles.project_ask_conversation.harvest_assistant",
             new_callable=AsyncMock,
             return_value={"streaming": False, "url": page.url},
         ),
