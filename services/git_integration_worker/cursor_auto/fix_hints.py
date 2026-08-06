@@ -25,6 +25,15 @@ VISION_MISSING_FIX_HINT = (
     f"tier-M tool ops) and re-issue. Template: {TIER_M_TEMPLATE_REF}."
 )
 
+CONTINUITY_HOP_FIX_HINT = (
+    "This body carries `TYPE: CONTINUITY_HANDOFF` — do not add `vision:` / "
+    "`scope:` / `files_expected:` to satisfy implement admit. Re-issue with "
+    "first line `TYPE: CONTINUITY_HANDOFF` and a short body (sidecar for "
+    "substance); Auto must route to CDP commission, not nest implement. "
+    "If hops still block or dispatch as implement, the F5 continuity-hop "
+    "routing path is broken — escalate, do not deepen the DIRECTIVE fields."
+)
+
 EXECUTE_TOOL_OP_FIX_HINT = (
     "`contract: execute` runs exactly one manifest-approved tier-M op. Add "
     "`tool_op: <tool>.<op>` (one line, one op) plus `tool_args: {\"k\": \"v\"}` "
@@ -63,6 +72,7 @@ DEADLINE_UNPARSEABLE_FIX_HINT = (
 )
 
 __all__ = [
+    "CONTINUITY_HOP_FIX_HINT",
     "DEADLINE_UNPARSEABLE_FIX_HINT",
     "EMPTY_SCOPE_FIX_HINT",
     "LANE_A_CHECKPOINT_FIX_HINT",

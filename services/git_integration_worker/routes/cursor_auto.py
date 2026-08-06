@@ -135,14 +135,17 @@ async def enqueue(body: EnqueueBody):
     )
     interrupt: dict[str, Any] | None = None
     if is_hop:
-        # Row 21: hop ≠ backtrack — leave the claimed commission running.
+        # Row 21: hop ≠ backtrack — leave any claimed commission running.
+        # F5: always commission CDP before serial process_job / admit gates;
+        # incumbent is optional (hop with empty lane still launches a window).
         incumbent = queue.claimed_for_thread(body.thread_id)
-        if incumbent is not None and incumbent.job_id != job.job_id:
-            asyncio.create_task(
-                run_continuity_hop_concurrent(
-                    job, queue=queue, incumbent=incumbent
-                )
+        if incumbent is not None and incumbent.job_id == job.job_id:
+            incumbent = None
+        asyncio.create_task(
+            run_continuity_hop_concurrent(
+                job, queue=queue, incumbent=incumbent
             )
+        )
     else:
         # A second request on a private thread is a backtrack, not a queue append:
         # interrupt the live episode so the new DIRECTIVE does not wait it out.

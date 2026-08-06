@@ -95,8 +95,8 @@ async def test_hop_enqueue_leaves_claimed_job_running(live_run, monkeypatch):
 
     hop_tasks: list = []
 
-    async def _capture_hop(job, *, queue, incumbent):
-        hop_tasks.append((job.job_id, incumbent.job_id))
+    async def _capture_hop(job, *, queue, incumbent=None):
+        hop_tasks.append((job.job_id, incumbent.job_id if incumbent else None))
         return {"ok": True}
 
     monkeypatch.setattr(routes_mod, "get_queue", lambda: q)
@@ -129,6 +129,129 @@ async def test_hop_enqueue_leaves_claimed_job_running(live_run, monkeypatch):
     await asyncio.sleep(0)
     assert hop_tasks and hop_tasks[0][1] == old.job_id
     live_run.cancel.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_hop_without_scope_routes_to_cdp_not_blocked(monkeypatch):
+    """F5 AC: token + no scope ⇒ CDP commission, ¬ vision/scope block."""
+    from services.git_integration_worker.cursor_auto import queue as queue_mod
+    from services.git_integration_worker.cursor_auto import continuity_hop as hop_mod
+
+    q = queue_mod.reset_queue_for_tests(durable=False)
+    hop_tasks: list = []
+
+    async def _capture_hop(job, *, queue, incumbent=None):
+        hop_tasks.append({"job_id": job.job_id, "incumbent": incumbent})
+        return {"ok": True, "reason": "continuity_hop_cdp_commissioned"}
+
+    monkeypatch.setattr(routes_mod, "get_queue", lambda: q)
+    monkeypatch.setattr(routes_mod, "get_registry", lambda: MagicMock(is_live=lambda: True))
+    monkeypatch.setattr(routes_mod, "run_continuity_hop_concurrent", _capture_hop)
+
+    body = EnqueueBody(
+        thread_id="T-hop-empty",
+        turn_number=1709,
+        subject="continuity hop thin",
+        body="TYPE: CONTINUITY_HANDOFF\n\nSidecar: cortex://notes/system/threads/x.md\n",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        contract="answer",
+    )
+    resp = await enqueue(body)
+    assert resp.status_code == 200
+    payload = json.loads(
+        resp.body.decode() if hasattr(resp.body, "decode") else resp.body
+    )
+    assert payload["continuity_hop"] is True
+    assert payload["superseded"] is None
+    await asyncio.sleep(0)
+    assert hop_tasks and hop_tasks[0]["incumbent"] is None
+
+    # Serial defense: already-claimed hop never hits admit gates.
+    q2 = queue_mod.reset_queue_for_tests(durable=False)
+    job = q2.enqueue(
+        thread_id="T-hop-serial",
+        turn_number=1,
+        subject="serial hop",
+        body="TYPE: CONTINUITY_HANDOFF\n",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="implement",
+        continuity_hop=True,
+        continuity_matched_token="TYPE:CONTINUITY_HANDOFF",
+    )
+    claimed = q2.claim_next()
+    assert claimed.job_id == job.job_id
+    commissioned: list[str] = []
+    terminal_payloads: list[dict] = []
+
+    async def _fake_commission(j, *, model, purpose):
+        commissioned.append(model)
+        return {"ok": True, "execution_id": "exec-hop-1"}
+
+    async def _fake_terminal(j, **kwargs):
+        payload = kwargs.get("payload") or {}
+        terminal_payloads.append(payload)
+        return {"ok": True, "payload": payload}
+
+    monkeypatch.setattr(hop_mod, "commission_cdp_escalation", _fake_commission)
+    monkeypatch.setattr(hop_mod, "post_terminal_status", _fake_terminal)
+    monkeypatch.setattr(hop_mod, "post_harvest_residual", AsyncMock(return_value={"ok": True}))
+    monkeypatch.setattr(hop_mod, "live_run_for_thread", lambda _t: None)
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.handler.get_queue",
+        lambda: q2,
+    )
+
+    from services.git_integration_worker.cursor_auto.handler import process_job
+
+    await process_job(claimed, bus=MagicMock())
+    assert commissioned == ["cdp/opus-5"]
+    assert terminal_payloads[0]["reason"] == "continuity_hop_cdp_commissioned"
+
+
+@pytest.mark.asyncio
+async def test_hop_with_scope_vision_still_routes_to_cdp(monkeypatch):
+    """F5 AC: token + scope/vision present ⇒ still CDP, ¬ implement nest."""
+    from services.git_integration_worker.cursor_auto import queue as queue_mod
+
+    q = queue_mod.reset_queue_for_tests(durable=False)
+    hop_tasks: list = []
+
+    async def _capture_hop(job, *, queue, incumbent=None):
+        hop_tasks.append(job.body)
+        return {"ok": True}
+
+    monkeypatch.setattr(routes_mod, "get_queue", lambda: q)
+    monkeypatch.setattr(routes_mod, "get_registry", lambda: MagicMock(is_live=lambda: True))
+    monkeypatch.setattr(routes_mod, "run_continuity_hop_concurrent", _capture_hop)
+
+    body = EnqueueBody(
+        thread_id="T-hop-rich",
+        turn_number=1711,
+        subject="continuity hop with vision",
+        body=(
+            "TYPE: CONTINUITY_HANDOFF\n"
+            "contract: implement\n"
+            "scope: launch CDP only\n"
+            "vision: episode continuity — successor must hold private state\n"
+            "files_expected: none\n"
+        ),
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        contract="implement",
+    )
+    resp = await enqueue(body)
+    assert resp.status_code == 200
+    payload = json.loads(
+        resp.body.decode() if hasattr(resp.body, "decode") else resp.body
+    )
+    assert payload["continuity_hop"] is True
+    await asyncio.sleep(0)
+    assert hop_tasks
+    assert "vision:" in hop_tasks[0]
 
 
 @pytest.mark.asyncio

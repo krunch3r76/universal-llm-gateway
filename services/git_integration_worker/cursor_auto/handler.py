@@ -15,6 +15,9 @@ from services.git_integration_worker.cursor_auto.cdp_escalation import (
     escalation_lane_refusal,
     read_cdp_lane_snapshot,
 )
+from services.git_integration_worker.cursor_auto.continuity_hop import (
+    complete_continuity_hop,
+)
 from services.git_integration_worker.cursor_auto.directive import (
     attendance_surface,
     build_sdk_message,
@@ -138,6 +141,16 @@ async def process_job(
     """
     client = bus or CursorBusClient()
     queue = get_queue()
+    # F5: hop must never enter contract grading / vision-scope admit.
+    # Concurrent enqueue task normally claims first; this is the claim-race
+    # and defense-in-depth path when the serial worker holds the hop.
+    if job.continuity_hop:
+        return await complete_continuity_hop(
+            job,
+            queue=queue,
+            incumbent=None,
+            client=client,
+        )
     directive = parse_request_body(job.body)
     contract = effective_contract(job.contract, job.body)
     # Downstream closeout/journal/meta read job.contract — stamp effective.

@@ -1,10 +1,9 @@
-"""Concurrent continuity-hop path — CDP successor launch without supersede.
+"""Continuity-hop path — CDP successor launch without supersede or implement admit.
 
 Row 21: a structural ``TYPE: CONTINUITY_HANDOFF`` must not interrupt an
-in-flight commission. The Auto worker is serial, so hop jobs with a claimed
-incumbent run on a bounded concurrent task: harvest residual → CDP commission
-→ terminal. Never calls ``supersede_same_thread_inflight``, never
-``submit_nested_dispatch`` / ``nest_under`` of the incumbent write lease.
+in-flight commission. F5: classification alone is insufficient — the hop must
+reach CDP commission **before** contract grading / vision-scope admit gates.
+A handoff has no ACs; routing it as ``contract: implement`` is a category error.
 """
 
 from __future__ import annotations
@@ -42,29 +41,48 @@ async def post_harvest_residual(
     job: AutoJob,
     *,
     client: CursorBusClient,
-    incumbent: AutoJob,
+    incumbent: AutoJob | None,
     dispatch_id: str | None,
 ) -> dict[str, Any]:
-    """Name the live commission so the successor has a harvest target."""
+    """Name any live commission so the successor has a harvest target."""
     mailbox = normalize_bus_address(job.from_agent)
-    payload = {
-        "type": "CONTINUITY_HARVEST_RESIDUAL",
-        "incumbent_job_id": incumbent.job_id,
-        "incumbent_dispatch_id": dispatch_id,
-        "incumbent_subject": incumbent.subject,
-        "hop_job_id": job.job_id,
-        "hop_matched_token": job.continuity_matched_token,
-        "re_issue_subject": incumbent.subject,
-        "note": (
-            "In-flight commission on this lane was preserved (hop≠backtrack). "
-            "Harvest its CLOSEOUT; do not treat it as superseded."
-        ),
-    }
+    if incumbent is None:
+        payload = {
+            "type": "CONTINUITY_HARVEST_RESIDUAL",
+            "incumbent_job_id": None,
+            "incumbent_dispatch_id": dispatch_id,
+            "incumbent_subject": None,
+            "hop_job_id": job.job_id,
+            "hop_matched_token": job.continuity_matched_token,
+            "re_issue_subject": None,
+            "note": (
+                "No claimed Auto commission on this lane at hop time. "
+                "CDP successor still commissioned; harvest any non-Auto "
+                "in-flight work from the lane tip."
+            ),
+        }
+    else:
+        payload = {
+            "type": "CONTINUITY_HARVEST_RESIDUAL",
+            "incumbent_job_id": incumbent.job_id,
+            "incumbent_dispatch_id": dispatch_id,
+            "incumbent_subject": incumbent.subject,
+            "hop_job_id": job.job_id,
+            "hop_matched_token": job.continuity_matched_token,
+            "re_issue_subject": incumbent.subject,
+            "note": (
+                "In-flight commission on this lane was preserved (hop≠backtrack). "
+                "Harvest its CLOSEOUT; do not treat it as superseded."
+            ),
+        }
     reply = await client.reply(
         thread_id=job.thread_id,
         to_agent=mailbox,
         from_agent=_FROM_AUTO,
-        subject=f"continuity harvest residual — {incumbent.job_id[:12]}",
+        subject=(
+            f"continuity harvest residual — "
+            f"{(incumbent.job_id if incumbent else job.job_id)[:12]}"
+        ),
         body=json.dumps(payload, indent=2),
         allow_long_body=True,
     )
@@ -76,13 +94,83 @@ async def post_harvest_residual(
     }
 
 
+async def complete_continuity_hop(
+    job: AutoJob,
+    *,
+    queue: AutoJobQueue,
+    incumbent: AutoJob | None = None,
+    client: CursorBusClient | None = None,
+) -> dict[str, Any]:
+    """Harvest residual → CDP commission → terminal (job already claimed).
+
+    Called from the concurrent enqueue task after ``claim_job``, or from
+    ``process_job`` when the serial worker won the claim race — never runs
+    ``effective_contract`` / admit gates.
+    """
+    bus = client or CursorBusClient()
+    live = live_run_for_thread(job.thread_id)
+    dispatch_id = live.dispatch_id if live else None
+    residual = await post_harvest_residual(
+        job,
+        client=bus,
+        incumbent=incumbent,
+        dispatch_id=dispatch_id,
+    )
+    model = _hop_cdp_model(job)
+    commissioned = await commission_cdp_escalation(
+        job,
+        model=model,
+        purpose="operator-proxy",
+    )
+    if not commissioned.get("ok"):
+        return await post_terminal_status(
+            job,
+            client=bus,
+            queue=queue,
+            summary=(
+                "continuity hop CDP commission failed: "
+                f"{commissioned.get('error')}"
+            ),
+            disposition="failed",
+            contract=job.contract,
+            terminal_status="status:failed",
+            failed=True,
+            payload={
+                "summary": "continuity hop CDP commission failed",
+                "continuity_hop": True,
+                "matched_token": job.continuity_matched_token,
+                "harvest_residual": residual,
+                "commission": commissioned,
+            },
+        )
+    return await post_terminal_status(
+        job,
+        client=bus,
+        queue=queue,
+        summary=f"continuity hop CDP commissioned model={model}",
+        disposition="dispatched-and-relayed",
+        contract=job.contract,
+        terminal_status="status:done",
+        payload={
+            "summary": f"continuity hop CDP commissioned model={model}",
+            "reason": "continuity_hop_cdp_commissioned",
+            "continuity_hop": True,
+            "matched_token": job.continuity_matched_token,
+            "harvest_residual": residual,
+            "execution_id": commissioned.get("execution_id"),
+            "incumbent_job_id": incumbent.job_id if incumbent else None,
+            "incumbent_dispatch_id": dispatch_id,
+        },
+    )
+
+
 async def run_continuity_hop_concurrent(
     job: AutoJob,
     *,
     queue: AutoJobQueue,
-    incumbent: AutoJob,
+    incumbent: AutoJob | None = None,
 ) -> dict[str, Any]:
-    """Claim hop, post residual, commission CDP, terminalize — leave incumbent."""
+    """Claim hop (if still queued), then commission CDP — leave any incumbent."""
     claimed = queue.claim_job(job.job_id)
     if claimed is None:
         logger.warning(
@@ -90,59 +178,8 @@ async def run_continuity_hop_concurrent(
             job.job_id,
         )
         return {"ok": False, "reason": "hop_not_queued"}
-
-    client = CursorBusClient()
-    live = live_run_for_thread(job.thread_id)
-    dispatch_id = live.dispatch_id if live else None
-    residual = await post_harvest_residual(
+    return await complete_continuity_hop(
         claimed,
-        client=client,
-        incumbent=incumbent,
-        dispatch_id=dispatch_id,
-    )
-    model = _hop_cdp_model(claimed)
-    commissioned = await commission_cdp_escalation(
-        claimed,
-        model=model,
-        purpose="operator-proxy",
-    )
-    if not commissioned.get("ok"):
-        return await post_terminal_status(
-            claimed,
-            client=client,
-            queue=queue,
-            summary=(
-                "continuity hop CDP commission failed: "
-                f"{commissioned.get('error')}"
-            ),
-            disposition="failed",
-            contract=claimed.contract,
-            terminal_status="status:failed",
-            failed=True,
-            payload={
-                "summary": "continuity hop CDP commission failed",
-                "continuity_hop": True,
-                "matched_token": claimed.continuity_matched_token,
-                "harvest_residual": residual,
-                "commission": commissioned,
-            },
-        )
-    return await post_terminal_status(
-        claimed,
-        client=client,
         queue=queue,
-        summary=f"continuity hop CDP commissioned model={model}",
-        disposition="dispatched-and-relayed",
-        contract=claimed.contract,
-        terminal_status="status:done",
-        payload={
-            "summary": f"continuity hop CDP commissioned model={model}",
-            "reason": "continuity_hop_cdp_commissioned",
-            "continuity_hop": True,
-            "matched_token": claimed.continuity_matched_token,
-            "harvest_residual": residual,
-            "execution_id": commissioned.get("execution_id"),
-            "incumbent_job_id": incumbent.job_id,
-            "incumbent_dispatch_id": dispatch_id,
-        },
+        incumbent=incumbent,
     )

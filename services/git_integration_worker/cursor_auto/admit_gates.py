@@ -20,6 +20,7 @@ from services.git_integration_worker.cursor_auto.directive import (
     empty_directive_missed_tokens,
     has_actionable_scope,
     has_vision_field,
+    is_continuity_hop_request,
     parse_request_body,
 )
 from services.git_integration_worker.cursor_auto.episode_briefing import (
@@ -34,6 +35,7 @@ from services.git_integration_worker.cursor_auto.execute_events import (
     emit_execute_admission_blocked,
 )
 from services.git_integration_worker.cursor_auto.fix_hints import (
+    CONTINUITY_HOP_FIX_HINT,
     EMPTY_SCOPE_FIX_HINT,
     MISSION_CLOSE_WAKE_FIX_HINT,
     PROPAGATE_MISSING_FIX_HINT,
@@ -70,6 +72,29 @@ async def blocking_admit_gate(
     ``None`` means all gates passed and the caller may continue to nest.
     """
     from claude_bundles.mission_close_wake import validate_mission_close_wake
+
+    # F5 defense: hops must not enter implement admit. Short-circuit in
+    # process_job is primary; if we still land here, refuse with a hint that
+    # does NOT counsel adding vision:/scope: (that deepens the misroute).
+    is_hop, _token = is_continuity_hop_request(
+        job.body, wire_flag=bool(job.continuity_hop)
+    )
+    if is_hop or job.continuity_hop:
+        summary = (
+            "Continuity hop reached implement admit — routing defect "
+            "(continuity_hop_misroute). Do not add vision/scope fields."
+        )
+        return await _blocked(
+            job,
+            client=client,
+            queue=queue,
+            summary=summary,
+            payload={
+                "summary": summary,
+                "reason": "continuity_hop_misroute",
+                "fix_hint": CONTINUITY_HOP_FIX_HINT,
+            },
+        )
 
     wake = validate_mission_close_wake(subject=job.subject or "", body=job.body or "")
     if not wake.ok:
