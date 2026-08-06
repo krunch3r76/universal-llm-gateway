@@ -199,7 +199,7 @@ def test_build_implement_closeout_body_includes_effects_manifest() -> None:
 
 def test_build_implement_closeout_body_ok() -> None:
     outcome = SdkRunOutcome(
-        body="done",
+        body="status: complete — done",
         status="finished",
         duration_ms=1500,
         tool_call_count=5,
@@ -213,6 +213,7 @@ def test_build_implement_closeout_body_ok() -> None:
         result_bytes=4,
         thread_id="t1",
         work_item_ref=None,
+        sidecar_markdown="status: complete — done",
     )
     payload = json.loads(body)
     assert payload["schema_version"] == 1
@@ -1893,7 +1894,7 @@ def test_prepare_closeout_delivery_oversize_uses_cortex_sidecar(tmp_path: Path) 
     )
     _materialize_manifest_repo_files(tmp_path, manifest)
     outcome = SdkRunOutcome(
-        body="done",
+        body="status: complete — done",
         status="finished",
         duration_ms=50,
         tool_call_count=2,
@@ -1979,7 +1980,7 @@ def test_prepare_closeout_delivery_normal_size_has_no_body_relocated(
     tmp_path: Path,
 ) -> None:
     outcome = SdkRunOutcome(
-        body="done",
+        body="status: complete — done",
         status="finished",
         duration_ms=50,
         tool_call_count=2,

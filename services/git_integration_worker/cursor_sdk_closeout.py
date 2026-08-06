@@ -919,6 +919,7 @@ def build_implement_closeout_body(
             work_outcome=resolved_work_outcome,
             sidecar_markdown=sidecar_markdown,
             deviations=deviations,
+            deliverables_expected=deliverables_expected,
         )
     )
     manifest_source = ensure_subagents_surface(

@@ -1,4 +1,4 @@
-"""Row 20 — §2 partial must not become structured shipped/complete."""
+"""Row 20 — §2 partial/absent must not become structured shipped/complete."""
 
 from __future__ import annotations
 
@@ -66,12 +66,64 @@ def test_reconcile_caps_shipped_when_section2_partial() -> None:
     assert "status_disagreement:authored_partial_vs_machine_complete" in deviations
 
 
-def test_reconcile_noop_without_section2() -> None:
+def test_reconcile_caps_shipped_when_section2_absent_no_deliverables() -> None:
+    """Absent §2 on deliverables_expected=False must not leave optimistic primaries."""
     status, work_outcome, disagreement, deviations = (
         reconcile_structured_with_authored(
             status=CloseoutStatus.COMPLETE,
             work_outcome=WorkOutcome.SHIPPED,
             sidecar_markdown="# no section2 status\n",
+            deliverables_expected=False,
+        )
+    )
+    assert status == CloseoutStatus.PARTIAL
+    assert work_outcome == WorkOutcome.NOT_SHIPPED
+    assert disagreement is not None
+    assert disagreement["authored_status"] is None
+    assert disagreement["machine_status"] == "complete"
+    assert disagreement["machine_work_outcome"] == "shipped"
+    assert "status_disagreement:authored_absent_vs_machine_complete" in deviations
+
+
+def test_reconcile_caps_when_sidecar_markdown_empty_no_deliverables() -> None:
+    status, work_outcome, disagreement, deviations = (
+        reconcile_structured_with_authored(
+            status=CloseoutStatus.COMPLETE,
+            work_outcome=WorkOutcome.SHIPPED,
+            sidecar_markdown=None,
+            deliverables_expected=False,
+        )
+    )
+    assert status == CloseoutStatus.PARTIAL
+    assert work_outcome == WorkOutcome.NOT_SHIPPED
+    assert disagreement is not None
+    assert disagreement["authored_status"] is None
+    assert "status_disagreement:authored_absent_vs_machine_complete" in deviations
+
+
+def test_reconcile_absent_noop_when_deliverables_expected() -> None:
+    """Evidence-backed implement path: absent §2 does not cap (incomplete still does)."""
+    status, work_outcome, disagreement, deviations = (
+        reconcile_structured_with_authored(
+            status=CloseoutStatus.COMPLETE,
+            work_outcome=WorkOutcome.SHIPPED,
+            sidecar_markdown="# no section2 status\n",
+            deliverables_expected=True,
+        )
+    )
+    assert status == CloseoutStatus.COMPLETE
+    assert work_outcome == WorkOutcome.SHIPPED
+    assert disagreement is None
+    assert deviations == []
+
+
+def test_reconcile_noop_when_section2_complete() -> None:
+    status, work_outcome, disagreement, deviations = (
+        reconcile_structured_with_authored(
+            status=CloseoutStatus.COMPLETE,
+            work_outcome=WorkOutcome.SHIPPED,
+            sidecar_markdown="status: complete — done\n",
+            deliverables_expected=False,
         )
     )
     assert status == CloseoutStatus.COMPLETE
@@ -123,5 +175,55 @@ def test_build_body_partial_section2_does_not_ship(
     assert payload["status_authority_disagreement"]["authored_status"] == "partial"
     assert (
         "status_disagreement:authored_partial_vs_machine_complete"
+        in payload["deviations"]
+    )
+
+
+def test_build_body_auto40eacccc1b48_absent_section2_does_not_ship(
+    tmp_path: Path,
+) -> None:
+    """Specimen auto-40eacccc1b48: no §2, empty verification, investigate."""
+    source_repo = tmp_path / "repo"
+    cortex_root = tmp_path / "cortex"
+    source_repo.mkdir()
+    cortex_root.mkdir()
+    # Narrative body with no extractable status — matches void episode prose.
+    narrative = (
+        "I'll seed row 20 as investigate+fix at G1, then recon the "
+        "closeout relay path for where work_outcome: shipped is produced.\n"
+    )
+    body = build_implement_closeout_body(
+        dispatch_id="auto-40eacccc1b48",
+        outcome=SdkRunOutcome(
+            body=narrative,
+            status="finished",
+            duration_ms=37300,
+            tool_call_count=8,
+        ),
+        degraded_reason=None,
+        sidecar_ref=sidecar_workspaces_ref("auto-40eacccc1b48"),
+        result_bytes=9050,
+        thread_id="6655",
+        work_item_ref=None,
+        verification=[],
+        deviations=[
+            "capture:outside_repo_paths_present",
+            "stream_only_effect",
+            "degraded:sdk_git_probe_absent",
+        ],
+        sidecar_markdown=narrative,
+        source_repo=source_repo,
+        cortex_root=cortex_root,
+        deliverables_expected=False,
+        landed=None,
+        isolation_materialized=True,
+    )
+    payload = json.loads(body)
+    assert payload["status"] == "partial"
+    assert payload["work_outcome"] == "not_shipped"
+    assert payload["status_authority_disagreement"]["authored_status"] is None
+    assert payload["status_authority_disagreement"]["machine_work_outcome"] == "shipped"
+    assert (
+        "status_disagreement:authored_absent_vs_machine_complete"
         in payload["deviations"]
     )
