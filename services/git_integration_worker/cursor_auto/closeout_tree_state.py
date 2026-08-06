@@ -54,10 +54,18 @@ def compute_closeout_tree_state(
     dispatch_id: str,
     wrapper_text: str | None = None,
 ) -> CloseoutTreeState:
-    """Derive checkpoint and deployment_state from one git-tree observation."""
+    """Derive checkpoint and deployment_state from one tree observation.
+
+    Git porcelain/lane-refs remain the primary probe; wrapper cortex offgit URIs
+    feed the row-19 ``authored_cortex:`` arm when the git plane is empty.
+    """
+    from implement_admission.closeout_helpers import cortex_files_root
+
     checkpoint = compute_lane_a_checkpoint_value(
         source_repo=source_repo,
         dispatch_id=dispatch_id,
+        wrapper_text=wrapper_text,
+        cortex_root=cortex_files_root(),
     )
     deployment_state: str | None = None
     if checkpoint.startswith("committed "):

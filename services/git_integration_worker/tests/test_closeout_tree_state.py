@@ -99,3 +99,30 @@ def test_compute_closeout_tree_state_nothing_authored_has_no_deployment_state() 
             wrapper_text='{"schema_version":1,"status":"complete"}',
         )
     assert state.deployment_state is None
+
+
+def test_compute_closeout_tree_state_threads_wrapper_for_authored_cortex() -> None:
+    """Row 19 — tree_state passes wrapper_text + cortex_root into compute."""
+    wrapper = (
+        '{"schema_version":1,"files_offgit_produced":'
+        '["cortex://notes/system/threads/x.md"]}'
+    )
+    with patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "compute_lane_a_checkpoint_value",
+        return_value="authored_cortex: cortex://notes/system/threads/x.md "
+        + ("e" * 64),
+    ) as compute, patch(
+        "implement_admission.closeout_helpers.cortex_files_root",
+        return_value=Path("/tmp/cortex-root"),
+    ):
+        state = compute_closeout_tree_state(
+            source_repo=Path("/tmp/unused"),
+            dispatch_id="d-cortex",
+            wrapper_text=wrapper,
+        )
+    assert state.checkpoint.startswith("authored_cortex:")
+    assert state.deployment_state is None
+    kwargs = compute.call_args.kwargs
+    assert kwargs["wrapper_text"] == wrapper
+    assert kwargs["cortex_root"] == Path("/tmp/cortex-root")

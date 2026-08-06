@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -9,11 +11,16 @@ from unittest.mock import patch
 
 import pytest
 
+from claude_bundles.lane_a_closeout_checkpoint import (
+    validate_lane_a_closeout_checkpoint,
+)
 from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
     compute_lane_a_checkpoint_value,
     derive_tree_residue,
+    inject_checkpoint_line,
     inject_tree_residue_line,
     probe_authored_path_baseline,
+    rehash_cortex_uri,
 )
 from services.git_integration_worker.cursor_home import dispatch_git_identity
 from services.git_integration_worker.cursor_sdk_closeout import (
@@ -344,3 +351,163 @@ def test_authored_paths_for_dispatch_signature_unchanged() -> None:
     source = inspect.getsource(lane_a_checkpoint.authored_paths_for_dispatch)
     assert "read_wt_baseline" in source
     assert "changed_paths" in source
+
+
+def _cortex_wrapper(*uris: str) -> str:
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "status": "complete",
+            "files_created": [],
+            "files_modified": [],
+            "files_deleted": [],
+            "files_offgit_produced": list(uris),
+            "effects": list(uris),
+        }
+    )
+
+
+def _write_cortex_fixture(cortex_root: Path, uri: str, body: str) -> str:
+    rel = uri.removeprefix("cortex://").lstrip("/")
+    path = cortex_root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+def test_compute_checkpoint_authored_cortex_when_offgit_only(
+    tmp_path: Path,
+) -> None:
+    """Row 19 AC1/2 — empty porcelain + cortex offgit must not stay nothing_authored.
+
+    Population shape: auto-6f6fbce9c3df / auto-3f9411f0bd71 / a:27652 class.
+    Against pre-fix code this assertion fails (returns nothing_authored).
+    """
+    dispatch_id = "auto-row19-cortex-only"
+    _init_git_repo(tmp_path)
+    admit = _commit(tmp_path, "seed.py")
+    cortex_root = tmp_path / "cortex-files"
+    uri = "cortex://notes/system/threads/row19-fixture.md"
+    digest = _write_cortex_fixture(cortex_root, uri, "durable sidecar\n")
+    wrapper = _cortex_wrapper(uri)
+    baseline = {"admit_head": admit}
+    with patch(
+        "services.git_integration_worker.cursor_auto.lane_a_checkpoint.authored_paths_for_dispatch",
+        return_value=(),
+    ):
+        value = compute_lane_a_checkpoint_value(
+            source_repo=tmp_path,
+            dispatch_id=dispatch_id,
+            baseline=baseline,
+            wrapper_text=wrapper,
+            cortex_root=cortex_root,
+        )
+    assert value == f"authored_cortex: {uri} {digest}"
+    assert value != "nothing_authored"
+    body = inject_checkpoint_line("status: complete\n", value=value)
+    verdict = validate_lane_a_closeout_checkpoint(
+        body=body,
+        require_closeout_type=False,
+    )
+    assert verdict.ok, verdict.reason
+
+
+def test_compute_checkpoint_authored_cortex_multi_write(
+    tmp_path: Path,
+) -> None:
+    """Row 19 AC3 — two cortex URIs → one semicolon-delimited checkpoint line."""
+    dispatch_id = "auto-row19-multi"
+    _init_git_repo(tmp_path)
+    admit = _commit(tmp_path, "seed.py")
+    cortex_root = tmp_path / "cortex-files"
+    uri_a = "cortex://notes/a.md"
+    uri_b = "cortex://notes/b.md"
+    dig_a = _write_cortex_fixture(cortex_root, uri_a, "aaa\n")
+    dig_b = _write_cortex_fixture(cortex_root, uri_b, "bbb\n")
+    wrapper = _cortex_wrapper(uri_a, uri_b)
+    with patch(
+        "services.git_integration_worker.cursor_auto.lane_a_checkpoint.authored_paths_for_dispatch",
+        return_value=(),
+    ):
+        value = compute_lane_a_checkpoint_value(
+            source_repo=tmp_path,
+            dispatch_id=dispatch_id,
+            baseline={"admit_head": admit},
+            wrapper_text=wrapper,
+            cortex_root=cortex_root,
+        )
+    assert value == f"authored_cortex: {uri_a} {dig_a}; {uri_b} {dig_b}"
+    assert validate_lane_a_closeout_checkpoint(
+        body=f"checkpoint: {value}\n",
+        require_closeout_type=False,
+    ).ok
+
+
+def test_compute_checkpoint_authored_cortex_digest_tracks_bytes(
+    tmp_path: Path,
+) -> None:
+    """Row 19 AC4 — content change changes digest; missing file → deferred."""
+    dispatch_id = "auto-row19-digest"
+    _init_git_repo(tmp_path)
+    admit = _commit(tmp_path, "seed.py")
+    cortex_root = tmp_path / "cortex-files"
+    uri = "cortex://notes/digest.md"
+    dig1 = _write_cortex_fixture(cortex_root, uri, "v1\n")
+    with patch(
+        "services.git_integration_worker.cursor_auto.lane_a_checkpoint.authored_paths_for_dispatch",
+        return_value=(),
+    ):
+        v1 = compute_lane_a_checkpoint_value(
+            source_repo=tmp_path,
+            dispatch_id=dispatch_id,
+            baseline={"admit_head": admit},
+            wrapper_text=_cortex_wrapper(uri),
+            cortex_root=cortex_root,
+        )
+        dig2 = _write_cortex_fixture(cortex_root, uri, "v2\n")
+        v2 = compute_lane_a_checkpoint_value(
+            source_repo=tmp_path,
+            dispatch_id=dispatch_id,
+            baseline={"admit_head": admit},
+            wrapper_text=_cortex_wrapper(uri),
+            cortex_root=cortex_root,
+        )
+        missing = compute_lane_a_checkpoint_value(
+            source_repo=tmp_path,
+            dispatch_id=dispatch_id,
+            baseline={"admit_head": admit},
+            wrapper_text=_cortex_wrapper("cortex://notes/missing.md"),
+            cortex_root=cortex_root,
+        )
+    assert v1 == f"authored_cortex: {uri} {dig1}"
+    assert v2 == f"authored_cortex: {uri} {dig2}"
+    assert dig1 != dig2
+    assert missing == "deferred: cortex durable write could not be rehashed"
+    assert rehash_cortex_uri(uri=uri, cortex_root=cortex_root) == dig2
+
+
+def test_compute_checkpoint_committed_senior_to_cortex_offgit(
+    tmp_path: Path,
+) -> None:
+    """Row 19 AC5 — lane commit wins over cortex URIs in the same wrapper."""
+    dispatch_id = "auto-row19-git-senior"
+    _init_git_repo(tmp_path)
+    admit = _commit(tmp_path, "seed.py")
+    lane_sha = _commit(tmp_path, "fix.py", dispatch_id=dispatch_id)
+    cortex_root = tmp_path / "cortex-files"
+    uri = "cortex://notes/also.md"
+    _write_cortex_fixture(cortex_root, uri, "also\n")
+    with patch(
+        "services.git_integration_worker.cursor_auto.lane_a_checkpoint.authored_paths_for_dispatch",
+        return_value=(),
+    ):
+        value = compute_lane_a_checkpoint_value(
+            source_repo=tmp_path,
+            dispatch_id=dispatch_id,
+            baseline={"admit_head": admit},
+            wrapper_text=_cortex_wrapper(uri),
+            cortex_root=cortex_root,
+        )
+    path_count = len(paths_in_commit(tmp_path, lane_sha))
+    assert value == f"committed {lane_sha} paths={path_count}"
+    assert not value.startswith("authored_cortex:")

@@ -60,6 +60,52 @@ def test_nothing_authored_passes() -> None:
     assert validate_lane_a_closeout_checkpoint(body=body).ok is True
 
 
+def test_authored_cortex_single_passes() -> None:
+    """Row 19 — cortex-only token clears the fail-closed gate."""
+    digest = "a" * 64
+    body = (
+        "TYPE: CLOSEOUT\n"
+        f"checkpoint: authored_cortex: cortex://notes/system/a.md {digest}\n"
+    )
+    verdict = validate_lane_a_closeout_checkpoint(body=body)
+    assert verdict.ok is True
+    assert verdict.checkpoint_value == (
+        f"authored_cortex: cortex://notes/system/a.md {digest}"
+    )
+
+
+def test_authored_cortex_multi_semicolon_passes() -> None:
+    d1 = "b" * 64
+    d2 = "c" * 64
+    body = (
+        "TYPE: CLOSEOUT\n"
+        "checkpoint: authored_cortex: "
+        f"cortex://notes/a.md {d1}; cortex://notes/b.md {d2}\n"
+    )
+    assert validate_lane_a_closeout_checkpoint(body=body).ok is True
+
+
+def test_authored_cortex_rejects_short_digest() -> None:
+    body = (
+        "TYPE: CLOSEOUT\n"
+        "checkpoint: authored_cortex: cortex://notes/a.md deadbeef\n"
+    )
+    verdict = validate_lane_a_closeout_checkpoint(body=body)
+    assert verdict.ok is False
+    assert verdict.reason == "lane_a_checkpoint_malformed"
+
+
+def test_authored_cortex_rejects_workspaces_uri() -> None:
+    digest = "d" * 64
+    body = (
+        "TYPE: CLOSEOUT\n"
+        f"checkpoint: authored_cortex: workspaces://repo/tmp/x.md {digest}\n"
+    )
+    verdict = validate_lane_a_closeout_checkpoint(body=body)
+    assert verdict.ok is False
+    assert verdict.reason == "lane_a_checkpoint_malformed"
+
+
 def test_malformed_checkpoint_refused() -> None:
     body = "TYPE: CLOSEOUT\ncheckpoint: committed-but-no-sha\n"
     verdict = validate_lane_a_closeout_checkpoint(body=body)

@@ -19,11 +19,17 @@ _CHECKPOINT_COMMITTED_RE = re.compile(
 )
 _CHECKPOINT_NOTHING_RE = re.compile(r"^nothing_authored\s*$", re.I)
 _CHECKPOINT_DEFERRED_RE = re.compile(r"^deferred:\s*(.+)$", re.I | re.S)
+_CHECKPOINT_AUTHORED_CORTEX_RE = re.compile(r"^authored_cortex:\s*(.+)$", re.I)
+_AUTHORED_CORTEX_PAIR_RE = re.compile(
+    r"^(cortex://\S+)\s+([0-9a-f]{64})$"
+)
 
 LANE_A_CHECKPOINT_FIX_HINT = (
     "Add a `checkpoint:` line to the CLOSEOUT body (fail-closed). Legal values: "
     "`checkpoint: committed <sha> paths=N` (path-explicit lane commit; optional "
     "`(+M pending)` when authored paths remain dirty), "
+    "`checkpoint: authored_cortex: <cortex-uri> <sha256>` "
+    "(semicolon-separated pairs for multi-write), "
     "`checkpoint: nothing_authored`, or `checkpoint: deferred: <reason>`. "
     "Commit clears lane authorship — never `--all`, never foreign WIP. "
     "Commit is not a live/done gate; `deferred:` is always acceptable."
@@ -63,12 +69,29 @@ def _extract_checkpoint_value(body: str) -> str | None:
     return normalize_checkpoint_value(match.group(1))
 
 
+def _authored_cortex_pairs_legal(rest: str) -> bool:
+    """True when *rest* is one or more ``cortex://… <64-hex>`` pairs (``; `` sep)."""
+    parts = [part.strip() for part in rest.split(";")]
+    if not parts or any(not part for part in parts):
+        return False
+    for part in parts:
+        match = _AUTHORED_CORTEX_PAIR_RE.match(part)
+        if match is None:
+            return False
+        if not match.group(1).casefold().startswith("cortex://"):
+            return False
+    return True
+
+
 def _checkpoint_value_legal(value: str) -> bool:
     if _CHECKPOINT_COMMITTED_RE.match(value):
         return True
     if _CHECKPOINT_NOTHING_RE.match(value):
         return True
     if _CHECKPOINT_DEFERRED_RE.match(value):
+        return True
+    authored = _CHECKPOINT_AUTHORED_CORTEX_RE.match(value)
+    if authored is not None and _authored_cortex_pairs_legal(authored.group(1)):
         return True
     return False
 
