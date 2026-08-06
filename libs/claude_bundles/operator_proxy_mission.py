@@ -17,6 +17,7 @@ from claude_bundles.cowork_skill_delivery import (
     split_leading_slash_skills,
 )
 from claude_bundles.operator_proxy_tier_m import tier_m_authoring_block
+from claude_bundles.operator_proxy_wake_brief import wake_briefing_paragraph
 
 # Superset of tier-M consumers for mission lands touching shared bundles.
 CONSUMERS: tuple[str, ...] = ("mcp",)
@@ -91,6 +92,7 @@ def _receipt_example() -> str:
 def _build_briefing_block() -> str:
     receipt_example = _receipt_example()
     tier_m_block = tier_m_authoring_block()
+    wake_block = wake_briefing_paragraph().rstrip()
     return f"""\
 ## Mission seat map (BINDING — operator-proxy mission)
 
@@ -290,26 +292,7 @@ Positional implication from a rank line, ordinal adjacency, or "next open after�
 machinery does **not** AST-lint rank prose; this briefing + chip is the authoring-moment
 surface. Inv 35 on ``cdp-operator-proxy``.
 
-**Streaming stop (BINDING — 2026-08-01 · inv 30):** ending this Cowork stream / turn is
-authorized **only** for (1) continuity handoff to a new CSE (after launch confirmed) or
-(2) true mission/episode close with ``TYPE: MISSION_CLOSEOUT`` + wake path + mission-debrief
-notify. A **leg** DISPOSITION ("Mission leg complete", ratify one DIRECTIVE) does **not**
-authorize stopping — keep the stream live; residuals stay in-mission as the next DIRECTIVE
-or idle wait. Forbidden: "Nothing needs you" + stop while open residuals remain without
-mission-close TYPE. **Persistent-lane carve-out (thread 6885):** on
-``bus_lifecycle:persistent`` + long-lived operator, ``MISSION_CLOSEOUT`` only for true
-arc end or forced CSE refresh. **Going-quiet ≡ stop** on that lane — a status report is
-not a terminal act; if a dispatch is in flight, poll/harvest/act; silent quiet with work
-in flight is the defect (name a wake token if you must park). **Self-scheduled wake
-(BINDING):** before each turn ends with work still in flight, arm-and-re-arm a Cowork
-**Monitor** heartbeat (cadence ≤ ~240s) and/or same-session **``send_later``** — the seat
-re-invokes itself; wake does not prevent the stop, it bounds silence. Reliability: Monitor
-may rate-limit/auto-stop noisy monitors; ``send_later`` can drop — bounded silence when
-armed, not a hard SLA. Cursor ``cse-stream-stop`` is the outer backstop, not the only
-wake. Skill § Episode boundaries deciding-moment test (arm-and-re-arm sits next to
-going-quiet). If the stream stops outside those two cases, page the operator
-(awareness ``notify``, tag ``cse-stream-stop``, subject ¬ ``COME TO IDE``) with stop + why
-— or expect cursor to fire that ping when you already went quiet.
+{wake_block}
 
 **In-session carve-out:** suppress ``notify`` only when the operator has **declared** human
 operator **and** is in *this* Cowork CSE — IDE-only presence does **not** suppress

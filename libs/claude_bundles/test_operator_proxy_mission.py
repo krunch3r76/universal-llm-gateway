@@ -6,9 +6,9 @@ import pytest
 
 from claude_bundles.act_receipt import parse_act_receipt
 from claude_bundles.operator_proxy_mission import (
+    _FORBIDDEN_HEADING,
     LIFE_SURFACE_FORBIDDEN_TOOLS,
     LIFE_SURFACE_LEGAL_TOOLS,
-    _FORBIDDEN_HEADING,
     ensure_operator_proxy_mission_prompt,
     is_operator_proxy_mission_purpose,
     purpose_implies_mission,
@@ -36,6 +36,20 @@ def test_ensure_injects_chips_and_briefing() -> None:
     assert "# Mission\nDo the thing." in out
     assert "## Life surface act path (BINDING)" in out
     assert "## ACT-RECEIPT (BINDING" in out
+
+
+def test_ensure_injects_self_scheduled_wake_guide() -> None:
+    """First-dispatch briefing carries wake guide operating shape + carry-items."""
+    out = ensure_operator_proxy_mission_prompt("# Mission\n")
+    assert "cdp-seat-wake-heartbeat.md" in out
+    assert "Self-scheduled wake" in out
+    assert "first dispatch" in out
+    assert "timeout_ms: 3600000" in out
+    assert "timeout ambiguity" in out
+    assert "NOT the user" in out
+    assert "does not prevent stopping" in out or "does not prevent the stop" in out
+    assert "send_later" in out
+    assert "TaskStop" in out
 
 
 def test_ensure_idempotent_when_chips_present() -> None:
