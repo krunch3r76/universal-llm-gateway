@@ -108,6 +108,38 @@ def prune_dispatch_worktree(
             head_sha=salvage.head_sha,
             salvage_refused=True,
         )
+    # Empty branch + uncommitted work is the only copy — never remove the worktree.
+    state_pre = branch_state(
+        repo,
+        branch_name=branch,
+        branch_point=branch_point,
+    )
+    if (
+        wt_path.is_dir()
+        and is_worktree_dirty(wt_path)
+        and state_pre.commits_ahead == 0
+        and (salvage is None or not salvage.committed)
+    ):
+        logger.error(
+            "lane_b prune aborted — dirty worktree on empty branch retained "
+            "dispatch_id=%s path=%s branch=%s",
+            dispatch_id,
+            wt_path,
+            branch,
+        )
+        emit_sdk_lane_b_salvage_failed(
+            dispatch_id=dispatch_id,
+            branch=branch,
+            worktree_path=str(wt_path),
+            error="uncommitted work on empty branch",
+        )
+        return PruneResult(
+            pruned=False,
+            branch_retained=True,
+            salvaged=False,
+            head_sha=salvage.head_sha if salvage is not None else state_pre.head_sha,
+            salvage_refused=True,
+        )
     if wt_path.is_dir():
         proc = subprocess.run(
             [

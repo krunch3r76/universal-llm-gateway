@@ -382,6 +382,37 @@ def test_prune_fails_closed_when_salvage_refused(
     assert lookup_dispatch_worktree(dispatch_id=dispatch_id) is not None
 
 
+def test_prune_retains_dirty_empty_branch_when_salvage_does_not_commit(
+    source_repo: Path, tmp_path: Path,
+) -> None:
+    """Dirty work on commits_ahead=0 must retain worktree even if salvage is a no-op."""
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "s3-dirty-empty"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    branch = f"cursor-sdk/{dispatch_id}"
+    (wt / "at_risk.py").write_text("only copy\n", encoding="utf-8")
+
+    with patch(
+        "services.git_integration_worker.cursor_sdk_worktree_prune.salvage_commit",
+        return_value=SalvageResult(committed=False, head_sha=None, refused=False),
+    ):
+        result = prune_dispatch_worktree(
+            dispatch_id=dispatch_id,
+            source_repo=source_repo,
+        )
+
+    assert not result.pruned
+    assert result.salvage_refused
+    assert result.branch_retained
+    assert (wt / "at_risk.py").read_text(encoding="utf-8") == "only copy\n"
+    assert branch in _git("branch", "--list", branch, cwd=source_repo).stdout
+    assert lookup_dispatch_worktree(dispatch_id=dispatch_id) is not None
+
+
 def _commit_branch_file(
     source_repo: Path, worktree_root: Path, *, dispatch_id: str, name: str, body: str
 ) -> tuple[str, str]:

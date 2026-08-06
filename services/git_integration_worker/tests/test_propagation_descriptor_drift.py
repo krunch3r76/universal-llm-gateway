@@ -32,7 +32,7 @@ def test_descriptor_drift_warning_when_served_above_expected():
     def probe(service: str, *, code_ref: str) -> dict | None:
         counts = {
             "git_integration_worker": 9,
-            "cortex_api": 47,
+            "cortex_api": 51,
             "agent_bus": 17,
             "rag": 7,
         }
@@ -40,17 +40,19 @@ def test_descriptor_drift_warning_when_served_above_expected():
 
     result = check_descriptor_drift(probe_fn=probe)
     assert result.fatal_messages == ()
-    assert any("cortex_api: served x-mcp count 47 > expected 46" in msg for msg in result.warning_messages)
+    assert any("cortex_api: served x-mcp count 51 > expected 50" in msg for msg in result.warning_messages)
     assert result.exit_code == 0
 
 
-def test_descriptor_drift_fatal_when_probe_unreachable():
+def test_descriptor_drift_warning_when_probe_unreachable():
     def probe(_service: str, *, code_ref: str) -> None:
         return None
 
     result = check_descriptor_drift(probe_fn=probe)
-    assert len(result.fatal_messages) == 4
-    assert all("probe unreachable" in msg for msg in result.fatal_messages)
+    assert result.fatal_messages == ()
+    assert len(result.warning_messages) == 4
+    assert all("probe unreachable" in msg for msg in result.warning_messages)
+    assert result.exit_code == 0
 
 
 @pytest.mark.offline

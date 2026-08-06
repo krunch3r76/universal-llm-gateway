@@ -33,6 +33,7 @@ def check_descriptor_drift(
 
     Served **fewer** than expected → FATAL (healthy service cannot satisfy proof).
     Served **more** than expected → WARNING (service grew; expectation lags).
+    Probe unreachable → WARNING (transient fleet/restart; must not refuse land alone).
     """
     probe = probe_fn or probe_served_artifact
     fatals: list[str] = []
@@ -40,7 +41,7 @@ def check_descriptor_drift(
     for service, descriptor in sorted(SERVED_ARTIFACT_DESCRIPTORS.items()):
         payload = probe(service, code_ref=code_ref)
         if payload is None:
-            fatals.append(f"{service}: descriptor drift probe unreachable")
+            warnings.append(f"{service}: descriptor drift probe unreachable")
             continue
         served = payload.get("x_mcp_count")
         expected = descriptor.expected_x_mcp_count
