@@ -5,6 +5,11 @@ in flight is read as a **backtrack**, not as a queue append: the live nested run
 is interrupted, its writes are reverted from the admit baseline, and the new
 DIRECTIVE carries a notice of what the void episode left behind.
 
+**Exception (row 21):** a structural continuity hop
+(``TYPE: CONTINUITY_HANDOFF`` / wire ``continuity_hop=true``) is **not** a
+backtrack — enqueue skips this module and runs the concurrent CDP hop path
+(``continuity_hop.py``). Ordinary unlabeled second requests keep supersede.
+
 Scope bind: same ``thread_id`` only. Cross-thread contention stays FIFO on the
 capacity gate — a request on another thread never interrupts this one.
 """
@@ -235,10 +240,16 @@ async def post_superseded_terminal(
         f"Episode superseded by a newer same-thread request "
         f"(job {job.superseded_by}); work reverted, no closeout is authoritative."
     )
+    re_issue_subject = None
+    if job.superseded_by:
+        newer = queue.get(job.superseded_by) if hasattr(queue, "get") else None
+        if newer is not None:
+            re_issue_subject = newer.subject
     payload = {
         "summary": summary,
         "superseded_by_job": job.superseded_by,
         "dispatch_id": dispatch_id,
+        "re_issue_subject": re_issue_subject or "(unknown)",
         "terminal_vocabulary": SUPERSEDED_TERMINAL,
     }
     logger.warning(

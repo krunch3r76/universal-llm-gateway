@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from agent_seat.registry import normalize_bus_address
+
 from services.git_integration_worker.cursor_auto.queue import AutoJob
 from services.git_integration_worker.cursor_auto.work_journal import (
     append_journal_entry,
@@ -48,9 +50,11 @@ async def post_terminal_status(
         disposition=disposition,
         extra=extra,
     )
+    # Row 21 / C3: cdp → web-anthropic so void notices reach a live mailbox.
+    successor_mailbox = normalize_bus_address(job.from_agent)
     terminal = await client.reply(
         thread_id=job.thread_id,
-        to_agent=job.from_agent,
+        to_agent=successor_mailbox,
         from_agent=_FROM_AUTO,
         subject=f"{terminal_status} — {job.subject[:60]}",
         body=json.dumps(payload, indent=2),

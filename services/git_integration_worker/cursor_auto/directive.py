@@ -22,6 +22,10 @@ class ParsedDirective:
 
 
 _TYPE_RE = re.compile(r"^TYPE:\s*(\S+)", re.MULTILINE | re.IGNORECASE)
+# Continuity hop: first nonblank line only (terra C1 — not anywhere-in-body).
+_FIRST_LINE_TYPE_RE = re.compile(r"^TYPE:\s*(\S+)", re.IGNORECASE)
+_CONTINUITY_HANDOFF = "CONTINUITY_HANDOFF"
+_DIRECTIVE_TYPES = frozenset({"DIRECTIVE", _CONTINUITY_HANDOFF})
 _DENSITY_RE = re.compile(r"^density:\s*(\S+)", re.MULTILINE | re.IGNORECASE)
 _CONTRACT_RE = re.compile(r"^contract:\s*(\S+)", re.MULTILINE | re.IGNORECASE)
 _DESIRED_MODEL_RE = re.compile(
@@ -272,8 +276,42 @@ def effective_contract(wire: str | None, body: str) -> str:
     return wire_norm
 
 
+def is_continuity_hop_request(
+    body: str, *, wire_flag: bool = False
+) -> tuple[bool, str]:
+    """Classify a continuity hop by structural token — never prose sniff.
+
+    Returns ``(is_hop, matched_token)`` where ``matched_token`` is one of
+    ``TYPE:CONTINUITY_HANDOFF``, ``wire:continuity_hop``, or ``none``.
+
+    Fail direction (row 21 G1): structural token present ⇒ hop (preserve
+    in-flight); absent ⇒ not hop (supersede/backtrack). Wire OR first-line
+    TYPE alone is enough; unlabeled second requests stay backtracks.
+    """
+    if wire_flag:
+        text = (body or "").strip()
+        if text:
+            first = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
+            match = _FIRST_LINE_TYPE_RE.match(first) if first else None
+            if match and match.group(1).strip().upper() == _CONTINUITY_HANDOFF:
+                return True, "TYPE:CONTINUITY_HANDOFF"
+        return True, "wire:continuity_hop"
+    text = (body or "").strip()
+    if not text:
+        return False, "none"
+    first = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
+    if not first:
+        return False, "none"
+    match = _FIRST_LINE_TYPE_RE.match(first)
+    if match is None:
+        return False, "none"
+    if match.group(1).strip().upper() == _CONTINUITY_HANDOFF:
+        return True, "TYPE:CONTINUITY_HANDOFF"
+    return False, "none"
+
+
 def parse_request_body(body: str) -> ParsedDirective | None:
-    """Return parsed directive when body declares ``TYPE: DIRECTIVE``."""
+    """Return parsed directive for ``TYPE: DIRECTIVE`` or ``CONTINUITY_HANDOFF``."""
     text = (body or "").strip()
     if not text:
         return None
@@ -281,7 +319,7 @@ def parse_request_body(body: str) -> ParsedDirective | None:
     if match is None:
         return None
     turn_type = match.group(1).strip().upper()
-    if turn_type != "DIRECTIVE":
+    if turn_type not in _DIRECTIVE_TYPES:
         return None
     density_match = _DENSITY_RE.search(text)
     density = density_match.group(1).strip().lower() if density_match else None

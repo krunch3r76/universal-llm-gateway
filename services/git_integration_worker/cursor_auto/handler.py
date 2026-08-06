@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent_seat.registry import normalize_bus_address
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_auto.admit_gates import (
@@ -236,7 +237,9 @@ async def process_job(
         f"handoff={handoff_contract}\n"
         f"gate_plan={gate_plan['action']}\n"
         f"gate_occupancy_source={gate_plan.get('gate', {}).get('occupancy_source', 'gate_only')}\n"
-        f"directive={directive is not None}"
+        f"directive={directive is not None}\n"
+        f"continuity_hop={str(bool(job.continuity_hop)).lower()} "
+        f"matched_token={job.continuity_matched_token or 'none'}"
     )
     override_rule = admit_model_override_rule_line(model)
     if override_rule is not None:
@@ -250,7 +253,7 @@ async def process_job(
     briefing = await maybe_briefing_for_admit(job.thread_id, contract=contract)
     admit = await client.reply(
         thread_id=job.thread_id,
-        to_agent=job.from_agent,
+        to_agent=normalize_bus_address(job.from_agent),
         from_agent=_FROM_AUTO,
         subject=f"status:admitted — {job.subject[:80]}",
         body=compose_admit_body(base_admit_body, briefing),

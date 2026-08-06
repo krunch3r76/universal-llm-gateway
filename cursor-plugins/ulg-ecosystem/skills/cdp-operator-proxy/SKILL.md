@@ -336,17 +336,26 @@ code surface. You author the `handoff_prompt`; Auto attaches it to the dispatch.
 1. Stage `handoff_prompt` — arc state, settled vs live, first act, open residuals
    (`cortex://…` sidecar or `sidecar_content` on the `request`; keep §2 fields in `body`).
 2. `cursor_request(thread=<private_lane>, …)` or `new_slug` only on **first** lane mint.
-3. Body `TYPE: DIRECTIVE` — intent names continuity hop; `scope:` CDP launch only;
-   `out-of-scope:` repo writes; `vision:` required on `implement`/`investigate`.
+3. Body opens with **`TYPE: CONTINUITY_HANDOFF`** on the first nonblank line (structural;
+   prose “continuity hop” inside `TYPE: DIRECTIVE` is **not** sufficient — row 21).
+   `scope:` CDP launch only; `out-of-scope:` repo writes; `vision:` when required.
 4. Quote private lane in `arc:` and tell Auto: **`dispatch_thread_id` = that lane** —
    **¬** mint a second request thread.
 5. Poll CLOSEOUT for `team_dispatch` `execution_id` + `poll_hint` (or named halt).
 6. Predecessor Cowork stream may end **after** successor launch is confirmed; page
    stream-end + why (inv 22 · inv 30).
 
+**Hop ≠ backtrack (row 21 BINDING):** a same-lane `TYPE: CONTINUITY_HANDOFF` does
+**not** supersede an in-flight commission. Auto skips same-thread supersede, posts a
+harvest residual naming the live `dispatch_id`, and commissions the successor CDP while
+the incumbent continues. True operator backtrack remains an unlabeled second
+`TYPE: DIRECTIVE` / ordinary request (supersede + successor-addressed notice via
+`normalize_bus_address`, `cdp`→`web-anthropic`).
+
 **Anti-patterns:** prose “open a new Cowork” without `cursor_request`; `team_dispatch`
 from life MCP; second private lane for continuity; warm follow-up when skills/context
-are stale; waiting for the human to notice silence instead of firing the hop (inv 30).
+are stale; waiting for the human to notice silence instead of firing the hop (inv 30);
+hopping with `TYPE: DIRECTIVE` + prose only (silent kill path — use `CONTINUITY_HANDOFF`).
 
 ## Boot checklist
 

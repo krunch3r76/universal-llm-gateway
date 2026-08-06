@@ -73,6 +73,8 @@ def _job_record(job: AutoJob) -> dict[str, Any]:  # noqa: F821
         "superseded_by": job.superseded_by,
         "supersedes": job.supersedes,
         "superseded_dispatch_id": job.superseded_dispatch_id,
+        "continuity_hop": job.continuity_hop,
+        "continuity_matched_token": job.continuity_matched_token,
     }
 
 
@@ -101,6 +103,8 @@ def _job_from_row(row: sqlite3.Row) -> AutoJob:  # noqa: F821
         superseded_by=data.get("superseded_by"),
         supersedes=data.get("supersedes"),
         superseded_dispatch_id=data.get("superseded_dispatch_id"),
+        continuity_hop=bool(data.get("continuity_hop", False)),
+        continuity_matched_token=data.get("continuity_matched_token"),
     )
 
 

@@ -30,6 +30,9 @@ class AutoJob:
     # Captured attached-lane identity for park-on-WAKE leg (b) delivery (B1).
     cse_chat_url: str | None = None
     cse_registration_id: str | None = None
+    # Row 21: structural continuity-hop classification (set at enqueue).
+    continuity_hop: bool = False
+    continuity_matched_token: str | None = None
     enqueued_at: float = field(default_factory=time.monotonic)
     status: str = "queued"  # queued | claimed | done | failed | superseded
     superseded_by: str | None = None
@@ -78,6 +81,19 @@ class AutoJobQueue:
                     break
             else:
                 return None
+        ledger = self._ledger_client()
+        if ledger is not None:
+            ledger.mark_claimed(claimed.job_id)
+        return claimed
+
+    def claim_job(self, job_id: str) -> AutoJob | None:
+        """Claim a specific queued job (continuity-hop concurrent path)."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.status != "queued":
+                return None
+            job.status = "claimed"
+            claimed = job
         ledger = self._ledger_client()
         if ledger is not None:
             ledger.mark_claimed(claimed.job_id)

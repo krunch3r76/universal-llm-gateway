@@ -11,6 +11,12 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from universal_logging import get_logger
 
+from services.git_integration_worker.cursor_auto.continuity_hop import (
+    run_continuity_hop_concurrent,
+)
+from services.git_integration_worker.cursor_auto.directive import (
+    is_continuity_hop_request,
+)
 from services.git_integration_worker.cursor_auto.handler import process_job
 from services.git_integration_worker.cursor_auto.liveness import get_registry
 from services.git_integration_worker.cursor_auto.queue import get_queue
@@ -50,6 +56,8 @@ class EnqueueBody(BaseModel):
     request_id: str | None = None
     cse_chat_url: str | None = None
     cse_registration_id: str | None = None
+    # Row 21: structural hop flag (OR with first-line TYPE: CONTINUITY_HANDOFF).
+    continuity_hop: bool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -94,6 +102,9 @@ async def enqueue(body: EnqueueBody):
             },
         )
     queue = get_queue()
+    is_hop, matched_token = is_continuity_hop_request(
+        body.body, wire_flag=bool(body.continuity_hop)
+    )
     job = queue.enqueue(
         thread_id=body.thread_id,
         turn_number=body.turn_number,
@@ -109,17 +120,33 @@ async def enqueue(body: EnqueueBody):
         request_id=body.request_id,
         cse_chat_url=body.cse_chat_url,
         cse_registration_id=body.cse_registration_id,
+        continuity_hop=is_hop,
+        continuity_matched_token=matched_token,
     )
     logger.info(
-        "cursor-auto enqueued job=%s thread=%s turn=%s request_id=%s",
+        "cursor-auto enqueued job=%s thread=%s turn=%s request_id=%s "
+        "continuity_hop=%s matched_token=%s",
         job.job_id,
         body.thread_id,
         body.turn_number,
         body.request_id,
+        is_hop,
+        matched_token,
     )
-    # A second request on a private thread is a backtrack, not a queue append:
-    # interrupt the live episode so the new DIRECTIVE does not wait it out.
-    interrupt = await supersede_same_thread_inflight(job, queue=queue)
+    interrupt: dict[str, Any] | None = None
+    if is_hop:
+        # Row 21: hop ≠ backtrack — leave the claimed commission running.
+        incumbent = queue.claimed_for_thread(body.thread_id)
+        if incumbent is not None and incumbent.job_id != job.job_id:
+            asyncio.create_task(
+                run_continuity_hop_concurrent(
+                    job, queue=queue, incumbent=incumbent
+                )
+            )
+    else:
+        # A second request on a private thread is a backtrack, not a queue append:
+        # interrupt the live episode so the new DIRECTIVE does not wait it out.
+        interrupt = await supersede_same_thread_inflight(job, queue=queue)
     return JSONResponse(
         status_code=200,
         content={
@@ -128,6 +155,8 @@ async def enqueue(body: EnqueueBody):
             "job_id": job.job_id,
             "request_id": job.request_id,
             "superseded": interrupt,
+            "continuity_hop": is_hop,
+            "matched_token": matched_token,
             "queue": queue.snapshot(),
         },
     )

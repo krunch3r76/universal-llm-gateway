@@ -45,6 +45,7 @@ async def commission_cdp_escalation(
     model: str,
     reasoning_effort: str | None = None,
     stargate_url: str | None = None,
+    purpose: str | None = None,
 ) -> dict[str, Any]:
     """POST one CDP generate leg to Stargate ``/api/v1/team/dispatch``.
 
@@ -58,6 +59,8 @@ async def commission_cdp_escalation(
         "contract": "light-bounded",
         "caller_agent": "cursor-auto",
     }
+    if purpose:
+        body["purpose"] = purpose
     effort = (reasoning_effort or "").strip().lower()
     if effort:
         body["reasoning_effort"] = effort
