@@ -57,6 +57,9 @@ HARVEST_JS = """
       if (seen.has(el)) continue;
       seen.add(el);
       const t = (el.innerText || '').trim();
+      // Temp (a:27801): Cowork [role=article] matches user turns ("You said:…").
+      // Skip those so wait keeps polling until a real assistant body appears.
+      if (/^You said:\\s*/i.test(t)) continue;
       if (t.length > minMsgChars) msgs.push(t);
     }
   }
@@ -282,8 +285,8 @@ def _cowork_complete_enough(
     """URL-guarded Cowork fallback (24864) with positive new-turn guard.
 
     Global gate ``cur_n > base_n`` is preserved on Chat paths via
-    ``_complete_enough``. This fallback is an explicit Cowork-only narrowing:
-    requires body growth OR (observed working→idle transition with growth).
+    ``_complete_enough``. Cowork completion requires ``n`` growth (S1-c) —
+    body-length growth or working→idle alone must not terminalize.
     """
     if not _is_cowork_cse_url(state.get("url", "")):
         return False
@@ -298,15 +301,13 @@ def _cowork_complete_enough(
         return False
 
     grew_n = cur_n > base_n
-    grew_len = cur_len > base_len
-    working_to_idle = (
-        saw_working
-        and state.get("task_map_present")
-        and state.get("task_map_idle")
-        and not state.get("task_map_working")
-        and cur_len > base_len
-    )
-    return bool(grew_n or grew_len or working_to_idle)
+    # Body-length / working→idle without n growth must not terminalize (S1-c).
+    return bool(grew_n)
+
+
+def _is_user_prompt_echo(body: str) -> bool:
+    """True when harvested text is the Cowork user-turn chrome (a:27801)."""
+    return (body or "").lstrip().lower().startswith("you said:")
 
 
 async def wait_assistant_reply(
@@ -342,6 +343,15 @@ async def wait_assistant_reply(
 
     while True:
         state = await harvest_assistant(page, min_msg_chars=msg_floor)
+        # Belt: even if HARVEST_JS still returns user chrome, do not complete.
+        if _is_user_prompt_echo(str(state.get("body") or "")):
+            state = {
+                **state,
+                "body": "",
+                "body_len": 0,
+                "n": base_n,
+                "user_prompt_echo": True,
+            }
         if on_harvest is not None:
             await on_harvest(state)
         structural_quiet.observe(state)

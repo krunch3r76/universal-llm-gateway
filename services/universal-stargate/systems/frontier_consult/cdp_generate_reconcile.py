@@ -25,13 +25,14 @@ from .cdp_events import (
 from .cdp_generate_inflight_ledger import (
     InflightLeg,
     attach_satellite_execution_id,
+    clear_delivery_claim,
     clear_inflight_ledger,
     list_open_inflight_legs,
     mark_abandoned,
-    mark_delivered,
     mark_proof_emitted,
     read_inflight_leg,
     terminal_event_exists,
+    try_claim_delivery,
     try_claim_proof_publish,
     upsert_inflight_leg,
 )
@@ -215,7 +216,11 @@ async def finalize_cdp_generate(
 
     leg = read_inflight_leg(result.execution_id)
     if leg is not None and leg.proof_emitted:
-        if leg.delivered:
+        return
+
+    if terminal_event_exists(result.execution_id):
+        mark_proof_emitted(result.execution_id)
+        if not try_claim_delivery(execution_id=result.execution_id):
             return
         posted = await deliver_cdp_result_turn(
             result=result,
@@ -224,21 +229,8 @@ async def finalize_cdp_generate(
             request_id=request_id,
             pointer_turn=pointer_turn,
         )
-        if posted:
-            mark_delivered(result.execution_id)
-        return
-
-    if terminal_event_exists(result.execution_id):
-        mark_proof_emitted(result.execution_id)
-        posted = await deliver_cdp_result_turn(
-            result=result,
-            thread_id=thread_id,
-            to_agent=to_agent,
-            request_id=request_id,
-            pointer_turn=pointer_turn,
-        )
-        if posted:
-            mark_delivered(result.execution_id)
+        if not posted:
+            clear_delivery_claim(result.execution_id)
         return
 
     holder = f"{via}:{uuid.uuid4().hex[:8]}"
@@ -282,6 +274,8 @@ async def finalize_cdp_generate(
             via="reconcile",
         )
 
+    if not try_claim_delivery(execution_id=result.execution_id):
+        return
     posted = await deliver_cdp_result_turn(
         result=result,
         thread_id=thread_id,
@@ -289,8 +283,8 @@ async def finalize_cdp_generate(
         request_id=request_id,
         pointer_turn=pointer_turn,
     )
-    if posted:
-        mark_delivered(result.execution_id)
+    if not posted:
+        clear_delivery_claim(result.execution_id)
 
 
 async def _reconcile_leg(leg: InflightLeg) -> None:

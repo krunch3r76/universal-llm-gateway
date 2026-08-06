@@ -1987,6 +1987,9 @@ tools:
       desired_effort:
         type: string
         description: low | medium | high | max (default medium).
+      escalation:
+        type: string
+        description: Optional CDP escalation leg — cdp/opus-5 | cdp/fable only; absent/empty ⇒ no CDP leg; orthogonal to desired_model.
       contract:
         type: string
         description: answer | confer | investigate | implement | verify | execute | propagate | seed (default answer).
@@ -2053,6 +2056,9 @@ tools:
       desired_effort:
         type: string
         description: low | medium | high | max (default medium).
+      escalation:
+        type: string
+        description: Optional CDP escalation leg — cdp/opus-5 | cdp/fable only; absent/empty ⇒ no CDP leg; orthogonal to desired_model.
       contract:
         type: string
         description: answer | confer | investigate | implement | verify | execute | propagate | seed (default answer).

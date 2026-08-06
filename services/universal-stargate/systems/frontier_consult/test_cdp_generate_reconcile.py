@@ -34,6 +34,7 @@ def _proof_snapshot() -> dict[str, Any]:
         "completion_phase": "terminal",
         "archive_uri": "cortex://notes/system/artifacts/cdp/proof.md",
         "body": "harvest",
+        "attested_model": "Model: Opus 5",
     }
 
 
@@ -520,6 +521,68 @@ async def test_worker_cancelled_error_publishes_stalled(
     finalize.assert_awaited_once()
     call_result = finalize.await_args.kwargs["result"]
     assert call_result.stall_stage == "worker_cancelled"
+
+
+@pytest.mark.asyncio
+async def test_finalize_worker_reconcile_race_single_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC-S1-e: forced worker+reconcile race yields exactly one bus delivery."""
+    publish_count = 0
+
+    def _capture(factory: Any, **kwargs: Any) -> None:
+        nonlocal publish_count
+        if factory.__name__ in {"CdpGenerateProof", "CdpGenerateStalled"}:
+            publish_count += 1
+
+    monkeypatch.setattr(reconcile, "publish_cdp_kwargs", _capture)
+    deliver = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.deliver_cdp_result_turn",
+        deliver,
+    )
+    upsert_inflight_leg(
+        execution_id="exec-race",
+        request_id="req-1",
+        thread_id="5583",
+        pointer_turn=1,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    result = CdpGenerateResult(
+        ok=True,
+        body="harvest",
+        execution_id="exec-race",
+        satellite_execution_id="sat-race",
+        prompt_uri="cortex://p.md",
+        picker_model="opus-5",
+        archive_uri="cortex://a.md",
+        content_proof_uri="cortex://proof.md",
+    )
+    import asyncio
+
+    await asyncio.gather(
+        finalize_cdp_generate(
+            result=result,
+            request_id="req-1",
+            thread_id="5583",
+            to_agent="dispatch",
+            pointer_turn=1,
+            via="worker",
+        ),
+        finalize_cdp_generate(
+            result=result,
+            request_id="req-1",
+            thread_id="5583",
+            to_agent="dispatch",
+            pointer_turn=1,
+            via="reconcile",
+        ),
+    )
+    assert publish_count == 1
+    assert deliver.await_count == 1
 
 
 @pytest.mark.asyncio

@@ -27,6 +27,7 @@ _CONTRACT_RE = re.compile(r"^contract:\s*(\S+)", re.MULTILINE | re.IGNORECASE)
 _DESIRED_MODEL_RE = re.compile(
     r"^desired_model:\s*(\S+)", re.MULTILINE | re.IGNORECASE
 )
+_ESCALATION_RE = re.compile(r"^escalation:\s*(\S+)", re.MULTILINE | re.IGNORECASE)
 _EFFORT_RE = re.compile(r"^effort:\s*(\S+)", re.MULTILINE | re.IGNORECASE)
 _REASONING_EFFORT_RE = re.compile(
     r"^reasoning_effort:\s*(\S+)", re.MULTILINE | re.IGNORECASE
@@ -203,6 +204,14 @@ def body_has_contract_override(body: str) -> bool:
 def body_desired_model(body: str) -> str | None:
     """Return body-level ``desired_model:`` value when present (wire-only contract)."""
     match = _DESIRED_MODEL_RE.search(body or "")
+    if match is None:
+        return None
+    return match.group(1).strip().lower()
+
+
+def body_escalation(body: str) -> str | None:
+    """Return body-level ``escalation:`` value when present (wire-only contract)."""
+    match = _ESCALATION_RE.search(body or "")
     if match is None:
         return None
     return match.group(1).strip().lower()

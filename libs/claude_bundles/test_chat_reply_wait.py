@@ -9,7 +9,9 @@ import pytest
 
 from claude_bundles.chat_reply_wait import (
     HarvestIncomplete,
+    _cowork_complete_enough,
     _in_flight,
+    _is_user_prompt_echo,
     wait_assistant_reply,
 )
 
@@ -459,3 +461,32 @@ async def test_structural_quiet_task_map_working_vetoes_both_tiers(
     assert tracker.quiet_satisfied
     tracker.observe(working)
     assert not tracker.quiet_satisfied
+
+
+def test_cowork_complete_enough_rejects_len_growth_without_n() -> None:
+    """AC-S1-c: body grew but n unchanged must not complete."""
+    state = {
+        "url": "https://claude.ai/cowork/cse_018abc",
+        "body_len": 500,
+        "n": 1,
+        "task_map_present": True,
+        "task_map_idle": True,
+        "task_map_working": False,
+    }
+    assert (
+        _cowork_complete_enough(
+            state,
+            base_len=100,
+            base_n=1,
+            min_growth=50,
+            min_body=200,
+            saw_working=True,
+        )
+        is False
+    )
+
+
+def test_is_user_prompt_echo_rejects_you_said_belt() -> None:
+    """AC-S1-d: echo belt rejects You said: chrome."""
+    assert _is_user_prompt_echo("You said: /reasoning-posture\n")
+    assert not _is_user_prompt_echo("Assistant analysis begins here.")

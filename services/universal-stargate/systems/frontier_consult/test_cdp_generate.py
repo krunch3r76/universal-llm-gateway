@@ -529,6 +529,79 @@ def test_team_dispatch_generate_body_purpose_optional() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dispatch_cdp_generate_forwards_generation_options(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """AC-S1-a: generation_options harvest knobs reach run_cdp_worker."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from systems.frontier_consult import cdp_generate as mod
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    monkeypatch.setattr(mod, "_stage_inputs", lambda **kw: MagicMock(
+        prompt_uri="cortex://notes/system/ephemeral/prompt.md", staged=True
+    ))
+    monkeypatch.setattr(mod, "post_pointer_turn", AsyncMock(return_value=2))
+    monkeypatch.setattr(mod, "upsert_inflight_leg", lambda **kw: None)
+    monkeypatch.setattr(mod, "emit_poll_hint_from_handoff", lambda **kw: None)
+    monkeypatch.setattr(mod, "build_handoff_result", lambda **kw: {
+        "handoff_status": "ok",
+        "poll_hint": {"thread_id": "1", "from_agent": "cdp"},
+    })
+    monkeypatch.setattr(mod, "resolve_poll_wait_seconds", lambda **kw: 5)
+
+    captured: list[dict[str, object]] = []
+    pending: list[object] = []
+
+    async def _fake_worker(**kwargs: object) -> None:
+        captured.append(dict(kwargs))
+
+    class _FakeTask:
+        def add_done_callback(self, _cb: object) -> None:
+            return None
+
+        def cancelled(self) -> bool:
+            return False
+
+        def exception(self) -> None:
+            return None
+
+    def _capture_task(coro: object, **kwargs: object) -> _FakeTask:
+        pending.append(coro)
+        return _FakeTask()
+
+    monkeypatch.setattr(mod, "run_cdp_worker", _fake_worker)
+    monkeypatch.setattr(mod.asyncio, "create_task", _capture_task)
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        contract="light-bounded",
+        dispatch_thread_id="6451",
+        model="cdp/fable",
+        prompt="consult",
+        generation_options={
+            "harvest_source": "output-file",
+            "expected_size": "large",
+            "download_output": True,
+        },
+    )
+    response = MagicMock()
+    response.status_code = 202
+    await mod.dispatch_cdp_generate(
+        request_id="req-gen-opts",
+        body=body,
+        response=response,
+    )
+    assert pending
+    await pending[0]
+    assert captured
+    kw = captured[0]
+    assert kw["harvest_source"] == "output-file"
+    assert kw["expected_size"] == "large"
+    assert kw["download_output"] is True
+
+
+@pytest.mark.asyncio
 async def test_build_dispatch_body_cdp_raises_substrate_unimplemented() -> None:
     """Pipeline admission refuses cdp/ with structured substrate error (not 404)."""
     from systems.frontier_consult.admission import FrontierEndpointError

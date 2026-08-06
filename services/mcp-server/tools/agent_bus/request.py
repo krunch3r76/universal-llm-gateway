@@ -121,6 +121,7 @@ def _request_impl(
     summary: str | None = None,
     cse_chat_url: str | None = None,
     cse_registration_id: str | None = None,
+    escalation: str | None = None,
 ) -> dict[str, Any]:
     """Write turn via send path, then arm/enqueue Auto when live."""
     from pager_notify.so_what import resolve_so_what_summary
@@ -231,6 +232,7 @@ def _request_impl(
         request_id=request_id,
         cse_chat_url=cse_chat_url if capture_identity else None,
         cse_registration_id=cse_registration_id if capture_identity else None,
+        escalation=escalation,
     )
     if not enq.get("ok"):
         reason = _enqueue_failure_reason(enq)
@@ -329,6 +331,7 @@ def _request_dispatch(
     summary: str | None = None,
     cse_chat_url: str | None = None,
     cse_registration_id: str | None = None,
+    escalation: str | None = None,
 ) -> dict[str, Any]:
     """Validate + dispatch ``agent_bus.request``.
 
@@ -412,5 +415,6 @@ def _request_dispatch(
         summary=summary,
         cse_chat_url=cse_chat_url,
         cse_registration_id=cse_registration_id,
+        escalation=escalation,
     )
     return stamp_contract_deprecation(result, intake)

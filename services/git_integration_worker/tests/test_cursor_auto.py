@@ -19,10 +19,12 @@ from services.git_integration_worker.cursor_auto.wire_map import (
     admit_model_override_rule_line,
     admit_model_pin_flags,
     assess_effort_pin,
+    assess_escalation_pin,
     assess_model_pin,
     resolve_contract_disposition,
     resolve_desired_effort,
     resolve_desired_model,
+    resolve_escalation,
     resolve_handoff_contract,
 )
 
@@ -71,6 +73,22 @@ def test_wire_map_rejects_unknown_model():
     assert out["honored"] is False
     assert out["resolved_model_id"] is None
     assert "bindable" in out["notes"]
+    assert "escalation=" in out["notes"]
+    assert "team_dispatch(model=cdp/" in out["notes"]
+
+
+def test_assess_model_pin_fable_refusal_names_escalation():
+    """AC-S1-f: unbindable fable-5 refusal names CDP escalation route."""
+    model, block = assess_model_pin(
+        "fable-5",
+        contract="investigate",
+        body="TYPE: DIRECTIVE\n## Scope\nfoo\n",
+    )
+    assert model.get("rejected") is True
+    assert block is not None
+    assert "escalation=" in block
+    assert "team_dispatch(model=cdp/" in block
+    assert "cdp/opus-5" in block
 
 
 def test_assess_model_pin_blocks_body_desired_model():

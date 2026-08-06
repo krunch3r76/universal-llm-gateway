@@ -13,7 +13,10 @@ from claude_bundles.cdp_model_endpoint import (
     SUBMIT_RETRY_BACKOFF_S,
     UPSTREAM_OVERLOADED,
     _has_proof,
+    _is_chrome_only_body,
     _is_overload_only_harvest,
+    _is_user_prompt_echo_body,
+    has_proof,
     picker_from_model_id,
     run_cdp_generate,
 )
@@ -376,6 +379,7 @@ def test_run_cdp_generate_mission_wall_does_not_abort(
                 "status": "completed",
                 "archive_uri": archive,
                 "body": "mission ok",
+                "attested_model": "Model: Opus 5",
             },
         ]
     )
@@ -478,6 +482,49 @@ def test_has_proof_archiving_phase_not_failed() -> None:
     assert not _has_proof(
         {"completion_phase": "failed", "content_proof_uri": proof_uri}
     )
+
+
+def test_has_proof_rejects_083e6e4a_echo_archive() -> None:
+    """AC-S1-b negative: prompt-echo archive with attested_model None is not proof."""
+    echo_body = (
+        "You said: /reasoning-posture /frontier-reasoning-discipline\n\n"
+        "/reasoning-posture\n/frontier-reasoning-discipline\n"
+    )
+    snap = {
+        "status": "completed",
+        "completion_phase": "terminal",
+        "archive_uri": "cortex://notes/system/threads/cdp-ask-archive-new-083e6e4a.md",
+        "body": echo_body,
+        "attested_model": None,
+        "harvest_provenance": "chat",
+    }
+    assert _is_user_prompt_echo_body(echo_body)
+    assert _is_chrome_only_body(echo_body)
+    assert has_proof(snap) is False
+
+
+def test_has_proof_accepts_assistant_with_attested_model() -> None:
+    """AC-S1-b positive: real assistant turn + attested_model is proof."""
+    snap = {
+        "status": "completed",
+        "body": "Here is the pharmacology analysis you requested.",
+        "attested_model": "Model: Fable 5 High",
+        "harvest_provenance": "chat",
+    }
+    assert has_proof(snap) is True
+
+
+def test_has_proof_outputs_path_requires_content_proof_uri() -> None:
+    """Outputs provenance without content_proof_uri is not terminal proof."""
+    snap = {
+        "harvest_provenance": "output-file",
+        "archive_uri": "cortex://notes/system/threads/out.md",
+        "body": "structured output",
+        "attested_model": "Model: Fable 5",
+    }
+    assert has_proof(snap) is False
+    snap["content_proof_uri"] = "cortex://notes/system/threads/proof.md"
+    assert has_proof(snap) is True
 
 
 def test_run_cdp_generate_stall_no_progress(
@@ -589,6 +636,7 @@ def test_run_cdp_generate_reports_satellite_id_at_submit(
                 "status": "running",
                 "archive_uri": "cortex://notes/system/threads/archive.md",
                 "body": "done",
+                "attested_model": "Model: Opus 4.8",
             },
         ]
     )
@@ -643,6 +691,7 @@ def test_run_cdp_generate_proof_short_answer_with_529_quote_succeeds(
                 "status": "running",
                 "archive_uri": "cortex://notes/system/threads/archive.md",
                 "body": short_answer,
+                "attested_model": "Model: Opus 4.8",
             },
         ]
     )
@@ -674,6 +723,7 @@ def test_run_cdp_generate_submit_529_then_success(
                 "status": "running",
                 "archive_uri": "cortex://notes/system/threads/archive.md",
                 "body": "harvested after retry",
+                "attested_model": "Model: Opus 4.8",
             },
         ]
     )
@@ -771,6 +821,7 @@ def test_run_cdp_generate_proof_overload_only_body(
                 "status": "running",
                 "archive_uri": "cortex://notes/system/threads/cdp-ask-archive-new.md",
                 "body": _OVERLOAD_ONLY_BODY,
+                "attested_model": "Model: Opus 4.8",
             },
         ]
     )
@@ -791,7 +842,7 @@ def test_run_cdp_generate_proof_overload_only_body(
 def test_run_cdp_generate_proof_empty_body_with_archive_fail_closed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """AC4/F7: empty snapshot body with archive_uri must not bypass overload gate."""
+    """Archive without assistant body or attested_model must not terminalize as success."""
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     monkeypatch.setenv("PROJECT_ASK_URL", "http://satellite.test")
     client = _FakeClient(
@@ -799,9 +850,10 @@ def test_run_cdp_generate_proof_empty_body_with_archive_fail_closed(
             {"execution_id": "sat-empty", "status": "running"},
             {
                 "execution_id": "sat-empty",
-                "status": "running",
+                "status": "completed",
                 "archive_uri": "cortex://notes/system/threads/cdp-ask-archive-new.md",
                 "body": "",
+                "completion_phase": "terminal",
             },
         ]
     )
@@ -815,5 +867,4 @@ def test_run_cdp_generate_proof_empty_body_with_archive_fail_closed(
         sleep=lambda _s: None,
     )
     assert result.ok is False
-    assert result.stall_stage == UPSTREAM_OVERLOADED
-    assert result.extras.get("reason") == UPSTREAM_OVERLOADED
+    assert result.stall_stage == "completed_without_proof"

@@ -310,18 +310,27 @@ async def dispatch_cdp_generate(
         if isinstance(purpose_raw, str) and purpose_raw.strip()
         else "ask"
     )
+    opts = getattr(body, "generation_options", None) or {}
+    worker_kwargs: dict[str, Any] = {
+        "execution_id": execution_id,
+        "model_id": str(model),
+        "thread_id": str(thread_id),
+        "caller_agent": body.caller_agent,
+        "prompt_uri": staged.prompt_uri,
+        "request_id": request_id,
+        "pointer_turn": after_turn,
+        "max_wall_s": float(timeout_seconds) if timeout_seconds else None,
+        "purpose": purpose,
+    }
+    if isinstance(opts, dict):
+        if "harvest_source" in opts:
+            worker_kwargs["harvest_source"] = opts["harvest_source"]
+        if "expected_size" in opts:
+            worker_kwargs["expected_size"] = opts["expected_size"]
+        if "download_output" in opts:
+            worker_kwargs["download_output"] = opts["download_output"]
     worker_task = asyncio.create_task(
-        run_cdp_worker(
-            execution_id=execution_id,
-            model_id=str(model),
-            thread_id=str(thread_id),
-            caller_agent=body.caller_agent,
-            prompt_uri=staged.prompt_uri,
-            request_id=request_id,
-            pointer_turn=after_turn,
-            max_wall_s=float(timeout_seconds) if timeout_seconds else None,
-            purpose=purpose,
-        ),
+        run_cdp_worker(**worker_kwargs),
         name=f"cdp-worker-{execution_id[:8]}",
     )
     _CDP_WORKER_TASKS.add(worker_task)

@@ -211,7 +211,7 @@ def mark_abandoned(execution_id: str) -> None:
 
 
 def try_claim_proof_publish(*, execution_id: str, holder: str) -> bool:
-    """Atomic claim before board-terminal publish (AC5)."""
+    """Atomic claim before board-terminal publish + on-behalf delivery (AC5/S1-e)."""
     now = _now()
     lease_until = (datetime.now(UTC) + timedelta(seconds=CLAIM_LEASE_S)).isoformat()
     conn = _connect()
@@ -219,12 +219,40 @@ def try_claim_proof_publish(*, execution_id: str, holder: str) -> bool:
         conn.execute(
             "UPDATE cdp_inflight_leg "
             "SET finalize_claim_until=?, finalize_claim_holder=? "
-            "WHERE execution_id=? AND proof_emitted=0 "
+            "WHERE execution_id=? AND proof_emitted=0 AND delivered=0 "
             "AND (finalize_claim_until IS NULL OR finalize_claim_until < ?)",
             (lease_until, holder, execution_id, now),
         )
         conn.commit()
         return conn.total_changes == 1
+    finally:
+        conn.close()
+
+
+def try_claim_delivery(*, execution_id: str) -> bool:
+    """Atomic claim before ``from=cdp`` bus delivery — one success turn per leg."""
+    conn = _connect()
+    try:
+        conn.execute(
+            "UPDATE cdp_inflight_leg SET delivered=1 "
+            "WHERE execution_id=? AND delivered=0 AND proof_emitted=1",
+            (execution_id,),
+        )
+        conn.commit()
+        return conn.total_changes == 1
+    finally:
+        conn.close()
+
+
+def clear_delivery_claim(execution_id: str) -> None:
+    """Release delivery claim after a failed on-behalf post."""
+    conn = _connect()
+    try:
+        conn.execute(
+            "UPDATE cdp_inflight_leg SET delivered=0 WHERE execution_id=?",
+            (execution_id,),
+        )
+        conn.commit()
     finally:
         conn.close()
 

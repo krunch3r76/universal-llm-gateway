@@ -47,6 +47,28 @@ def format_bindable_efforts() -> str:
     return ", ".join(BINDABLE_EFFORT_VALUES)
 
 
+def format_bindable_escalations() -> str:
+    """Human-readable bindable CDP escalation values for refusal text."""
+    return ", ".join(BINDABLE_CDP_ESCALATIONS)
+
+
+def format_cdp_escalation_hint() -> str:
+    """Human-readable CDP reachability hint for model-pin refusal text (S1-f)."""
+    values = ", ".join(BINDABLE_CDP_ESCALATIONS)
+    return (
+        f"escalation= ({values}) on agent_bus.request, or "
+        f"team_dispatch(model=cdp/…) from a code seat"
+    )
+
+
+def _model_pin_refusal(requested: str) -> str:
+    """Refusal line for unknown ``desired_model`` including CDP route naming."""
+    return (
+        f"unknown desired_model={requested!r}; bindable: {format_bindable_models()}. "
+        f"For CDP/Fable consult use {format_cdp_escalation_hint()}"
+    )
+
+
 def _lookup_explicit_model(raw: str) -> str | None:
     """Map bare or ``cursor/``-prefixed hint → canonical ``model_id``."""
     bare = _MODEL_TABLE.get(raw)
@@ -60,6 +82,7 @@ def _lookup_explicit_model(raw: str) -> str | None:
 _EFFORT_LADDER: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
 _EFFORT_VALUES = frozenset(_EFFORT_LADDER)
 BINDABLE_EFFORT_VALUES: tuple[str, ...] = _EFFORT_LADDER
+BINDABLE_CDP_ESCALATIONS: tuple[str, ...] = ("cdp/opus-5", "cdp/fable")
 _EFFORT_ALIASES: dict[str, str] = {
     "extra": "xhigh",
     "extra-high": "xhigh",
@@ -108,7 +131,8 @@ def resolve_desired_model(
             "rejected": True,
             "bindable": BINDABLE_WIRE_IDS,
             "notes": (
-                f"unknown desired_model={raw!r}; bindable: {format_bindable_models()}"
+                f"unknown desired_model={raw!r}; bindable: {format_bindable_models()}. "
+                f"For CDP/Fable consult use {format_cdp_escalation_hint()}"
             ),
         }
     knobs: dict[str, str] = {}
@@ -153,9 +177,77 @@ def assess_model_pin(
     if model.get("rejected"):
         return (
             model,
-            f"unknown desired_model={model['requested']!r}; bindable: {format_bindable_models()}",
+            _model_pin_refusal(str(model["requested"])),
         )
     return model, None
+
+
+def resolve_escalation(escalation: str | None) -> dict[str, Any]:
+    """Map wire ``escalation`` hint → resolved CDP model or absent.
+
+    Values ``cdp/opus-5`` and ``cdp/fable`` honor; absent/empty ⇒ no CDP leg;
+    unknown ⇒ ``rejected`` for admit refusal.
+    """
+    raw = (escalation or "").strip().lower()
+    if not raw:
+        return {
+            "requested": "",
+            "resolved_escalation": None,
+            "honored": False,
+            "notes": "no escalation requested",
+        }
+    if raw in BINDABLE_CDP_ESCALATIONS:
+        return {
+            "requested": raw,
+            "resolved_escalation": raw,
+            "honored": True,
+            "notes": "honored explicit escalation",
+        }
+    return {
+        "requested": raw,
+        "resolved_escalation": None,
+        "honored": False,
+        "rejected": True,
+        "bindable": BINDABLE_CDP_ESCALATIONS,
+        "notes": (
+            f"unknown escalation={raw!r}; bindable: {format_bindable_escalations()}"
+        ),
+    }
+
+
+def assess_escalation_pin(
+    wire_escalation: str | None,
+    *,
+    body: str,
+) -> tuple[dict[str, Any], str | None]:
+    """Resolve wire escalation pin and return ``(escalation, block_reason)``.
+
+    ``block_reason`` is set when admit must refuse: unknown wire pin, or a
+    body-level ``escalation:`` line (wire-only contract — body form is not honored).
+    """
+    from services.git_integration_worker.cursor_auto.directive import body_escalation
+
+    body_pin = body_escalation(body)
+    if body_pin is not None:
+        esc = resolve_escalation(wire_escalation)
+        return (
+            esc,
+            (
+                f"body escalation:{body_pin!r} ignored — escalation pin is wire-only; "
+                f"set escalation on agent_bus.request "
+                f"(bindable: {format_bindable_escalations()})"
+            ),
+        )
+    esc = resolve_escalation(wire_escalation)
+    if esc.get("rejected"):
+        return (
+            esc,
+            (
+                f"unknown escalation={esc['requested']!r}; bindable: "
+                f"{format_bindable_escalations()}"
+            ),
+        )
+    return esc, None
 
 
 def assess_effort_pin(

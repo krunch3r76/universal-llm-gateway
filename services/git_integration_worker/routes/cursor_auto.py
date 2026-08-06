@@ -43,6 +43,7 @@ class EnqueueBody(BaseModel):
     to_agent: str = "cursor"
     desired_model: str = "auto"
     desired_effort: str = "medium"
+    escalation: str | None = None
     contract: str = "answer"
     require_attended: bool = False
     # Idempotency key minted or validated at MCP intake; echoed on the closeout.
@@ -102,6 +103,7 @@ async def enqueue(body: EnqueueBody):
         to_agent=body.to_agent,
         desired_model=body.desired_model,
         desired_effort=body.desired_effort,
+        escalation=body.escalation,
         contract=body.contract,
         require_attended=body.require_attended,
         request_id=body.request_id,

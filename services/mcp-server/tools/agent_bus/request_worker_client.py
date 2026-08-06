@@ -221,6 +221,7 @@ def enqueue_auto_job(
     desired_effort: str,
     contract: str,
     require_attended: bool = False,
+    escalation: str | None = None,
     request_id: str | None = None,
     cse_chat_url: str | None = None,
     cse_registration_id: str | None = None,
@@ -241,6 +242,8 @@ def enqueue_auto_job(
         "contract": contract,
         "require_attended": bool(require_attended),
     }
+    if escalation:
+        payload["escalation"] = escalation
     if request_id:
         payload["request_id"] = request_id
     if cse_chat_url:

@@ -9,6 +9,11 @@ from universal_logging import get_logger
 from services.git_integration_worker.cursor_auto.admit_gates import (
     blocking_admit_gate,
 )
+from services.git_integration_worker.cursor_auto.cdp_escalation import (
+    commission_cdp_escalation,
+    escalation_lane_refusal,
+    read_cdp_lane_snapshot,
+)
 from services.git_integration_worker.cursor_auto.directive import (
     attendance_surface,
     build_sdk_message,
@@ -81,6 +86,7 @@ from services.git_integration_worker.cursor_auto.wire_map import (
     admit_model_override_rule_line,
     admit_model_pin_flags,
     assess_effort_pin,
+    assess_escalation_pin,
     assess_model_pin,
     compose_model_knobs,
     resolve_contract_disposition,
@@ -178,6 +184,27 @@ async def process_job(
             },
             failed=True,
         )
+    escalation, escalation_block = assess_escalation_pin(
+        job.escalation,
+        body=job.body,
+    )
+    if escalation_block is not None:
+        return await post_terminal_status(
+            job,
+            client=client,
+            queue=queue,
+            summary=escalation_block,
+            disposition="blocked",
+            contract=contract,
+            terminal_status="status:blocked",
+            payload={
+                "summary": escalation_block,
+                "reason": "escalation_refused",
+                "requested_escalation": escalation.get("requested"),
+                "bindable": list(escalation.get("bindable") or ()),
+            },
+            failed=True,
+        )
     contract_info = resolve_contract_disposition(contract)
     handoff_contract = resolve_handoff_contract(contract)
     if directive is not None or contract in _NESTED_CONTRACTS or contract in {
@@ -203,6 +230,8 @@ async def process_job(
         f"model_honored={model['honored']}\n"
         f"requested_effort={effort['requested']} "
         f"resolved={effort['resolved_effort']}\n"
+        f"requested_escalation={escalation['requested'] or '(none)'} "
+        f"resolved={escalation.get('resolved_escalation') or '(none)'}\n"
         f"contract={contract_info['contract']} "
         f"handoff={handoff_contract}\n"
         f"gate_plan={gate_plan['action']}\n"
@@ -276,7 +305,51 @@ async def process_job(
             gate_plan=gate_plan,
         )
 
+    cdp_model = escalation.get("resolved_escalation")
+    if cdp_model:
+        lane_block = await _terminalize_cdp_lane_full_if_blocked(
+            job,
+            client=client,
+            queue=queue,
+            contract=contract,
+            unattended=not effective_require_attended(job, directive),
+        )
+        if lane_block is not None:
+            return lane_block
+
     if contract not in _NESTED_CONTRACTS:
+        if cdp_model:
+            commissioned = await commission_cdp_escalation(
+                job,
+                model=str(cdp_model),
+                reasoning_effort=str(effort.get("resolved_effort") or "") or None,
+            )
+            if not commissioned.get("ok"):
+                return await terminal_failed(
+                    job,
+                    client=client,
+                    queue=queue,
+                    summary=(
+                        "cdp escalation commission failed: "
+                        f"{commissioned.get('error')}"
+                    ),
+                    extra=commissioned,
+                )
+            return await post_terminal_status(
+                job,
+                client=client,
+                queue=queue,
+                summary=f"CDP escalation commissioned model={cdp_model}",
+                disposition="dispatched-and-relayed",
+                contract=contract,
+                terminal_status="status:done",
+                payload={
+                    "summary": f"CDP escalation commissioned model={cdp_model}",
+                    "reason": "cdp_escalation_commissioned",
+                    "escalation_model": cdp_model,
+                    "execution_id": commissioned.get("execution_id"),
+                },
+            )
         return await terminal_in_seat(
             job,
             client=client,
@@ -322,6 +395,23 @@ async def process_job(
         admission_controller=admission_controller,
         skip_outbox=queue.is_superseded(job.job_id),
     )
+    if cdp_model:
+        commissioned = await commission_cdp_escalation(
+            job,
+            model=str(cdp_model),
+            reasoning_effort=str(effort.get("resolved_effort") or "") or None,
+        )
+        if not commissioned.get("ok"):
+            return await terminal_failed(
+                job,
+                client=client,
+                queue=queue,
+                summary=(
+                    "cdp escalation commission failed: "
+                    f"{commissioned.get('error')}"
+                ),
+                extra=commissioned,
+            )
     submit = await submit_nested_dispatch(
         job,
         model_id=str(model["resolved_model_id"]),
@@ -466,4 +556,39 @@ async def _resolve_nest_under(
         queue=queue,
         reason="nest_park_without_holder",
         gate_plan=gate_plan,
+    )
+
+
+async def _terminalize_cdp_lane_full_if_blocked(
+    job: AutoJob,
+    *,
+    client: CursorBusClient,
+    queue: Any,
+    contract: str,
+    unattended: bool,
+) -> dict[str, Any] | None:
+    """Refuse escalation when CDP lane is at soft (unattended) or hard limit."""
+    snap = read_cdp_lane_snapshot()
+    refuse, lane = escalation_lane_refusal(snap, unattended=unattended)
+    if not refuse:
+        return None
+    free_slots = snap.get("free_slots", 0)
+    summary = (
+        f"cdp lane full ({lane}); free_slots={free_slots} — escalation refused"
+    )
+    return await post_terminal_status(
+        job,
+        client=client,
+        queue=queue,
+        summary=summary,
+        disposition="blocked",
+        contract=contract,
+        terminal_status="status:blocked",
+        payload={
+            "summary": summary,
+            "reason": "cdp_lane_full",
+            "lane": lane,
+            "free_slots": free_slots,
+        },
+        failed=True,
     )

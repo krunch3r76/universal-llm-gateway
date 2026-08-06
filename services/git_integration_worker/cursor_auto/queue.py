@@ -23,6 +23,7 @@ class AutoJob:
     desired_model: str
     desired_effort: str
     contract: str
+    escalation: str | None = None
     require_attended: bool = False
     # Caller-supplied idempotency key, echoed enqueue→closeout (Fable §5).
     request_id: str | None = None
