@@ -74,11 +74,12 @@ def _is_literal_head(code_ref: str) -> bool:
 
 
 def _projection_to_row(row: OpenPropagationProjection) -> PropagationRow:
+    proof = row.proof or default_proof(row.service, row.proof_class)
     return PropagationRow(
         service=row.service,
         code_ref=row.code_ref,
         safe_window=row.safe_window,
-        proof=default_proof(row.service),
+        proof=proof,
         proof_class=row.proof_class,
     )
 

@@ -109,13 +109,14 @@ def _rows_from_shorthand(body: str) -> tuple[PropagationRow, ...]:
     code_ref_match = _CODE_REF_FIELD_RE.search(body)
     raw_ref = code_ref_match.group(1).strip() if code_ref_match else resolve_code_version()
     code_ref = normalize_code_ref(raw_ref)
+    proof_class = default_proof_class(service)
     return (
         PropagationRow(
             service=service,
             code_ref=code_ref,
             safe_window=default_safe_window(service),
-            proof=default_proof(service),
-            proof_class=default_proof_class(service),
+            proof_class=proof_class,
+            proof=default_proof(service, proof_class),
             reason="operator restart request via cursor-auto",
         ),
     )

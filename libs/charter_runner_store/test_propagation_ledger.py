@@ -56,7 +56,7 @@ def test_open_projection_marks_proof_obligation(tmp_path, monkeypatch) -> None:
     board = scoreboard_projection()
     assert len(board) == 1
     assert board[0]["proof_kind"] == "obligation"
-    assert board[0]["proof"] == default_proof("mcp")
+    assert board[0]["proof"] == default_proof("mcp", "client_visible")
     assert "ancestry satisfied" not in board[0]["proof"].lower()
 
 

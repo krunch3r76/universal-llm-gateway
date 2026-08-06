@@ -12,7 +12,9 @@ CONSUMERS: tuple[str, ...] = ("mcp",)
 
 TIER_M_HEADING = "## Tier-M tool ask — DIRECTIVE template (BINDING)"
 WIRE_NEUTRAL_HEADING = "## Wire-neutral authoring (BINDING)"
-DEGRADE_LADDER_HEADING = "## Degrade ladder — handler_status → prescribed move (BINDING)"
+DEGRADE_LADDER_HEADING = (
+    "## Degrade ladder — handler_status → prescribed move (BINDING)"
+)
 
 _TIER_M_TEMPLATE = """\
 ```
@@ -128,13 +130,18 @@ propagation:
   - service: mcp
     code_ref: <land SHA>
     proof_class: client_visible
+    # omitted proof → composed from proof_class (not from service default)
   - service: git_integration_worker
     code_ref: <land SHA>
     safe_window: drain_required
     proof_class: process_live
+    # omitted proof → process-identity obligation (compose_proof), never OpenAPI prose
     hazard: closeout_relay
 ```
 ```
+
+Omitted ``proof`` is composed from ``proof_class`` at mint time. ``process_live``
+yields process-identity prose; do not rely on the service's default class.
 
 Closeout carries ``propagation[]``, ``row_ids``, and ``executions[]`` per service.
 ``disposition: executed`` only when proof-of-live observed; ``queued`` when manage

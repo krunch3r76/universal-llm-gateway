@@ -451,11 +451,12 @@ def dispatch_for_projection(row: OpenPropagationProjection) -> ProbeDispatchResu
 
 
 def _projection_to_row(row: OpenPropagationProjection) -> PropagationRow:
+    proof = row.proof or default_proof(row.service, row.proof_class)
     return PropagationRow(
         service=row.service,
         code_ref=row.code_ref,
         safe_window=row.safe_window,
-        proof=default_proof(row.service),
+        proof=proof,
         proof_class=row.proof_class,  # type: ignore[arg-type]
         proof_class_requested=row.proof_class,  # type: ignore[arg-type]
     )

@@ -46,12 +46,6 @@ _DEFAULT_SAFE_WINDOW: dict[str, SafeWindow] = {
     "stargate": "harvest",
 }
 
-_SERVED_ARTIFACT_PROOF = (
-    "served OpenAPI from every client-reachable surface → x-mcp count >= expected, "
-    "all surfaces byte-identical, document parses; AFTER restart VERIFY code_ref "
-    "is ancestor-of-or-equal-to observed code_version"
-)
-
 _DEFAULT_PROOF_CLASS: dict[str, ProofClass] = {
     "git_integration_worker": "served_artifact",
     "mcp": "client_visible",
@@ -70,24 +64,81 @@ _PROCESS_LIVE_PROOF = (
     "(pid/process_start_time/process_age_s/uptime_s) since the pre-restart probe"
 )
 
-_DEFAULT_PROOF: dict[str, str] = {
-    "git_integration_worker": f"GET served OpenAPI (direct + stargate) → {_SERVED_ARTIFACT_PROOF}",
+# Optional service specialization for client_visible (class base alone is insufficient).
+_CLIENT_VISIBLE_PROOF_BY_SERVICE: dict[str, str] = {
     "mcp": (
         "client_visible: GET /health AND cortex-api /health → "
         "AFTER restart VERIFY both surfaces satisfy the code_ref ancestry check"
     ),
-    "cortex_api": f"GET served OpenAPI (uds + http when bound) → {_SERVED_ARTIFACT_PROOF}",
-    "agent_bus": f"GET served OpenAPI (uds) → {_SERVED_ARTIFACT_PROOF}",
-    "rag": f"GET served OpenAPI (uds) → {_SERVED_ARTIFACT_PROOF}",
+}
+
+# Optional service specialization prefixes for served_artifact.
+_SERVED_ARTIFACT_PREFIX_BY_SERVICE: dict[str, str] = {
+    "git_integration_worker": "GET served OpenAPI (direct + stargate) → ",
+    "cortex_api": "GET served OpenAPI (uds + http when bound) → ",
+    "agent_bus": "GET served OpenAPI (uds) → ",
+    "rag": "GET served OpenAPI (uds) → ",
 }
 
 # Past-tense claim that must never appear in mint-time / open-row proof text.
 _PERFORMED_ANCESTRY_CLAIM_RE = re.compile(r"ancestry\s+satisfied", re.IGNORECASE)
 
 
+class MissingProofTemplateError(ValueError):
+    """Raised when no compose template exists for ``(service, proof_class)``."""
+
+
 def proof_claims_performed_ancestry(proof: str) -> bool:
     """True when proof text asserts a completed ancestry check (mint-time fiction)."""
     return bool(_PERFORMED_ANCESTRY_CLAIM_RE.search(proof or ""))
+
+
+def _served_artifact_body(*, expected_x_mcp_count: int | None) -> str:
+    """Served-artifact obligation body — count clause only when a bound is present."""
+    if expected_x_mcp_count is None:
+        count_clause = ""
+    else:
+        count_clause = f"x-mcp count >= {expected_x_mcp_count}, "
+    return (
+        "served OpenAPI from every client-reachable surface → "
+        f"{count_clause}"
+        "all surfaces byte-identical, document parses; AFTER restart VERIFY code_ref "
+        "is ancestor-of-or-equal-to observed code_version"
+    )
+
+
+def compose_proof(
+    service: str,
+    proof_class: str,
+    *,
+    expected_x_mcp_count: int | None = None,
+) -> str:
+    """Compose mint-time proof obligation from ``proof_class``, with optional service specialization.
+
+    ``proof_class`` is the base; service may specialize. A missing
+    ``(service, proof_class)`` pair raises — never substitute another class's prose.
+    """
+    slug = (service or "").strip().lower()
+    pc = (proof_class or "").strip()
+    if pc == "process_live":
+        return f"service health/liveness → {_PROCESS_LIVE_PROOF} ({slug})"
+    if pc == "client_visible":
+        template = _CLIENT_VISIBLE_PROOF_BY_SERVICE.get(slug)
+        if template is None:
+            raise MissingProofTemplateError(
+                f"no proof template for (service={slug!r}, proof_class={pc!r})"
+            )
+        return template
+    if pc == "served_artifact":
+        prefix = _SERVED_ARTIFACT_PREFIX_BY_SERVICE.get(slug)
+        if prefix is None:
+            raise MissingProofTemplateError(
+                f"no proof template for (service={slug!r}, proof_class={pc!r})"
+            )
+        return prefix + _served_artifact_body(expected_x_mcp_count=expected_x_mcp_count)
+    raise MissingProofTemplateError(
+        f"no proof template for (service={slug!r}, proof_class={pc!r})"
+    )
 
 
 class PropagationRow(BaseModel):
@@ -125,7 +176,11 @@ class PropagationRow(BaseModel):
         if not data.get("safe_window"):
             data["safe_window"] = default_safe_window(service)
         if not data.get("proof"):
-            data["proof"] = default_proof(service)
+            data["proof"] = compose_proof(
+                service,
+                str(data["proof_class"]),
+                expected_x_mcp_count=data.get("expected_x_mcp_count"),
+            )
         if not data.get("action"):
             data["action"] = "sync_restart"
         return data
@@ -141,12 +196,15 @@ def default_safe_window(service: str) -> SafeWindow:
     return _DEFAULT_SAFE_WINDOW.get(service, "harvest")
 
 
-def default_proof(service: str) -> str:
-    """Return the default probe description for a service slug."""
-    return _DEFAULT_PROOF.get(
-        service,
-        f"service health/liveness → {_PROCESS_LIVE_PROOF} ({service})",
-    )
+def default_proof(
+    service: str,
+    proof_class: ProofClass | str | None = None,
+    *,
+    expected_x_mcp_count: int | None = None,
+) -> str:
+    """Return the default probe description for a service (+ optional proof_class)."""
+    pc = proof_class or default_proof_class(service)
+    return compose_proof(service, str(pc), expected_x_mcp_count=expected_x_mcp_count)
 
 
 def default_proof_class(service: str) -> ProofClass:
@@ -183,7 +241,12 @@ def row_from_mapping(raw: dict[str, Any]) -> PropagationRow:
     service = str(raw["service"])
     proof_class = raw.get("proof_class") or default_proof_class(service)
     safe_window = raw.get("safe_window") or default_safe_window(service)
-    proof = raw.get("proof") or default_proof(service)
+    expected_x_mcp_count = raw.get("expected_x_mcp_count")
+    proof = raw.get("proof") or compose_proof(
+        service,
+        str(proof_class),
+        expected_x_mcp_count=expected_x_mcp_count,
+    )
     return PropagationRow(
         service=service,
         action=raw.get("action") or "sync_restart",
@@ -193,15 +256,19 @@ def row_from_mapping(raw: dict[str, Any]) -> PropagationRow:
         reason=raw.get("reason"),
         proof=str(proof),
         proof_class=proof_class,
-        expected_x_mcp_count=raw.get("expected_x_mcp_count"),
+        expected_x_mcp_count=expected_x_mcp_count,
         mint_thread=raw.get("mint_thread"),
         mint_turn=raw.get("mint_turn"),
         force=coerce_force_flag(raw.get("force")),
-        allow_self_preempt=coerce_allow_self_preempt_flag(raw.get("allow_self_preempt")),
+        allow_self_preempt=coerce_allow_self_preempt_flag(
+            raw.get("allow_self_preempt")
+        ),
     )
 
 
-def row_from_mapping_strict(raw: dict[str, Any]) -> tuple[PropagationRow | None, str | None]:
+def row_from_mapping_strict(
+    raw: dict[str, Any],
+) -> tuple[PropagationRow | None, str | None]:
     """Parse §4-sourced row — reject when ``proof_class`` is absent or unknown."""
     proof_class = raw.get("proof_class")
     if not isinstance(proof_class, str) or not proof_class.strip():
@@ -219,7 +286,14 @@ def row_from_mapping_strict(raw: dict[str, Any]) -> tuple[PropagationRow | None,
     if proof_class_error:
         return None, proof_class_error
     safe_window = raw.get("safe_window") or default_safe_window(service)
-    proof = raw.get("proof") or default_proof(service)
+    expected_x_mcp_count = raw.get("expected_x_mcp_count")
+    pc = proof_class.strip()
+    try:
+        proof = raw.get("proof") or compose_proof(
+            service, pc, expected_x_mcp_count=expected_x_mcp_count
+        )
+    except MissingProofTemplateError as exc:
+        return None, f"missing_proof_template:{exc}"
     force = coerce_force_flag(raw.get("force"))
     if force and service != "mcp":
         return None, "force_only_allowed_for_mcp"
@@ -232,8 +306,8 @@ def row_from_mapping_strict(raw: dict[str, Any]) -> tuple[PropagationRow | None,
             hazard=raw.get("hazard"),
             reason=raw.get("reason"),
             proof=str(proof),
-            proof_class=proof_class.strip(),  # type: ignore[arg-type]
-            expected_x_mcp_count=raw.get("expected_x_mcp_count"),
+            proof_class=pc,  # type: ignore[arg-type]
+            expected_x_mcp_count=expected_x_mcp_count,
             mint_thread=raw.get("mint_thread"),
             mint_turn=raw.get("mint_turn"),
             force=force,
@@ -245,7 +319,9 @@ def row_from_mapping_strict(raw: dict[str, Any]) -> tuple[PropagationRow | None,
     )
 
 
-def rows_from_parsed_block(raw_rows: list[dict[str, Any]]) -> tuple[list[PropagationRow], list[str]]:
+def rows_from_parsed_block(
+    raw_rows: list[dict[str, Any]],
+) -> tuple[list[PropagationRow], list[str]]:
     """Materialize §4-parsed mappings with strict ``proof_class`` enforcement."""
     rows: list[PropagationRow] = []
     flags: list[str] = []
@@ -278,13 +354,14 @@ def rows_from_residue_lines(
             if slug in seen:
                 continue
             seen.add(slug)
+            pc = default_proof_class(slug)
             rows.append(
                 PropagationRow(
                     service=slug,
                     code_ref=code_ref,
                     safe_window=default_safe_window(slug),
-                    proof=default_proof(slug),
-                    proof_class=default_proof_class(slug),
+                    proof=compose_proof(slug, pc),
+                    proof_class=pc,
                 )
             )
             continue
@@ -355,13 +432,14 @@ def rows_from_lib_consumers(
             if key in seen:
                 continue
             seen.add(key)
+            pc = default_proof_class(slug)
             rows.append(
                 PropagationRow(
                     service=slug,
                     code_ref=code_ref,
                     safe_window=default_safe_window(slug),
-                    proof=default_proof(slug),
-                    proof_class=default_proof_class(slug),
+                    proof=compose_proof(slug, pc),
+                    proof_class=pc,
                     reason=f"shared lib land: {path}",
                 )
             )
@@ -381,13 +459,14 @@ def rows_from_service_paths(
         if slug is None or slug in seen:
             continue
         seen.add(slug)
+        pc = default_proof_class(slug)
         rows.append(
             PropagationRow(
                 service=slug,
                 code_ref=code_ref,
                 safe_window=default_safe_window(slug),
-                proof=default_proof(slug),
-                proof_class=default_proof_class(slug),
+                proof=compose_proof(slug, pc),
+                proof_class=pc,
             )
         )
     return rows
@@ -412,7 +491,9 @@ def resolve_code_ref(payload: dict[str, Any]) -> str:
     return "unknown"
 
 
-def rows_from_closeout_payload(payload: dict[str, Any]) -> tuple[list[PropagationRow], list[str], bool]:
+def rows_from_closeout_payload(
+    payload: dict[str, Any],
+) -> tuple[list[PropagationRow], list[str], bool]:
     """Resolve propagation rows from a closeout dict.
 
     Returns ``(rows, skipped_lines, prose_only_advisory)``. Structured
@@ -421,9 +502,7 @@ def rows_from_closeout_payload(payload: dict[str, Any]) -> tuple[list[Propagatio
     raw_structured = payload.get("propagation")
     if isinstance(raw_structured, list) and raw_structured:
         rows = [
-            row_from_mapping(item)
-            for item in raw_structured
-            if isinstance(item, dict)
+            row_from_mapping(item) for item in raw_structured if isinstance(item, dict)
         ]
         return rows, [], False
 
@@ -463,9 +542,11 @@ def rows_from_closeout_payload(payload: dict[str, Any]) -> tuple[list[Propagatio
 
 
 __all__ = [
+    "MissingProofTemplateError",
     "PropagationRow",
     "coerce_allow_self_preempt_flag",
     "coerce_force_flag",
+    "compose_proof",
     "default_proof",
     "default_proof_class",
     "default_safe_window",
