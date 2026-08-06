@@ -192,7 +192,7 @@ model-endpoint (MCP `project_ask` = escape only), invocable from any vortex-code
 # Primary
 team_dispatch(op=generate, model=cdp/opus-5, contract=light-bounded,
               sidecar_ref=cortex://…, dispatch_thread_id=…)
-agent_bus.wait(… from_agent=cdp)   # reply OR DELIVERY FAILED; long running ≠ stalled
+agent_bus.wait(… from_agent=web-anthropic)   # reply OR DELIVERY FAILED; long running ≠ stalled
 
 # Escape (IF6 / satellite-direct)
 project_ask(op=submit, prompt_uri=cortex://…, converse=true,
@@ -201,7 +201,7 @@ project_ask(op=poll, execution_id=…)
 ```
 
 Poll discipline is identical to § R-admit poll (dispatch-cascade-annex). If the window
-boundary arrives before R completes, CHECKPOINT the live `poll_hint` / `from=cdp`
+boundary arrives before R completes, CHECKPOINT the live `poll_hint` / `from=web-anthropic`
 bus-turn (primary) or `execution_id` (escape) as the next-pickup so the next window
 resumes (¬ re-fire).
 

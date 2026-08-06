@@ -349,6 +349,9 @@ skills:
   orchestrator-workflow:
     surface_class: cursor_only
     mcp_surface_required: code
+  over-refusal-prompt-framing:
+    surface_class: cursor_only
+    mcp_surface_required: none
   overhaul-program:
     surface_class: cursor_only
     mcp_surface_required: life

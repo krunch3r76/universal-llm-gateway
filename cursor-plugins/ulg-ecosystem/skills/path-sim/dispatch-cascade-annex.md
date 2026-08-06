@@ -231,7 +231,7 @@ team_dispatch(
   # or prompt=… when short
   dispatch_thread_id=<bus thread id>,
 )
-# poll: agent_bus.wait from poll_hint (from_agent=cdp)
+# poll: agent_bus.wait from poll_hint (from_agent=web-anthropic)
 ```
 
 **Escape — MCP `project_ask` / CLI** (same sealed `/new` posture as R-admit recipe; Use the `claude-ai-cdp-navigation` skill):
@@ -356,8 +356,8 @@ team_dispatch(
   # or prompt=… when short
   dispatch_thread_id=<pending-or-arc-thread>,
 )
-# poll: agent_bus.wait from poll_hint (from_agent=cdp) — reply OR DELIVERY FAILED
-# OF2 resume: CHECKPOINT Next-pickup keeps poll_hint / from=cdp bus-turn anchor
+# poll: agent_bus.wait from poll_hint (from_agent=web-anthropic) — reply OR DELIVERY FAILED
+# OF2 resume: CHECKPOINT Next-pickup keeps poll_hint / from=web-anthropic bus-turn anchor
 # (not execution_id-only — that shape belongs to the project_ask escape)
 ```
 

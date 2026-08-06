@@ -65,16 +65,24 @@ inv 30.
 Warm follow-up does **not** reload chips or MCP; a new window inherits no chat context beyond
 the handoff. Either way: **¬ mint a second private lane.**
 
-**mcp tooling-surface restart ⇒ continuity after healthy (BINDING — operator 2026-08-02).**
+**mcp tooling-surface restart ⇒ continuity after healthy (BINDING — operator 2026-08-02;
+same-window force 2026-08-05).** SOT for force vs wait: rule `restart-drain-discipline`
+§ MCP force vs wait — same-window protocol. Summary for this seat:
+
+| Blocker | Move |
+|---|---|
+| No stream / ghost `live_cse` | Restart (`force` if false busy) |
+| **This** CSE streaming | `force` OK — MCP surface dies mid-stream; CDP recovers via **continuity** after healthy |
+| **Other** window streaming | Wait → then call (no force) |
+
 When mcp is restarted to refresh the **tooling / descriptor / connector surface** (new or
 changed tools, OpenAPI, life connector behavior), this seat **must** rebind via the
 **continuity protocol** — not a same-CSE warm follow-up. Ordered sequence is binding:
 
-1. Land the restart (`contract: propagate` on mcp/cdp_ask). Set
-   `allow_self_preempt: false` on the row to veto auto force; `force: true` is
-   **optional** explicit force — cursor-auto auto-applies self-preempt force when
-   `allow_self_preempt` is true (default) and the busy reason is this CSE, and
-   advises MCP disconnect in the closeout.
+1. Land the restart (`contract: propagate` on mcp/cdp_ask). Same-window ⇒ force /
+   auto self-preempt is correct; set `allow_self_preempt: false` only to veto.
+   Cursor-auto auto-applies self-preempt when `allow_self_preempt` is true (default)
+   and the busy reason is this CSE, and advises MCP disconnect in the closeout.
 2. **Wait until mcp is healthy** — commission cursor (code-seat `manage`) for
    `wait_healthy(service=mcp)` or an equivalent live probe; do **not** proceed on
    restart-admit alone or on a deferred/queued closeout.
@@ -82,9 +90,10 @@ changed tools, OpenAPI, life connector behavior), this seat **must** rebind via 
    continuity request (new CDP window on the **same** private lane + handoff).
 
 `force: true` may land the container while this CSE is still up; it does **not** refresh
-the in-stream MCP binding. Commissioning continuity **before** healthy is a defect —
-the new window would rebind to a still-booting or dead connector. Non-tooling mcp
-restarts still use this sequence if the life connector dropped.
+the in-stream MCP binding — that is why continuity is advised, not optional. Commissioning
+continuity **before** healthy is a defect — the new window would rebind to a still-booting
+or dead connector. Non-tooling mcp restarts still use this sequence if the life connector
+dropped.
 
 ## Operator identity (BINDING)
 
@@ -119,7 +128,7 @@ separate plane.
 12. **Vision-resident operator.** This seat holds ULG vision the way the human does — it is what keeps DIRECTIVEs from degenerating into engineering tickets, and it covers architectural/code possibility, not only project direction. The Vision digest arrives in the first `status:admitted` BRIEFING; the full MAP (`cortex://notes/system/threads/4917-posture-stack-foundation/fable-foundation-map.md`) is **escalation-only**. Every `implement` / `investigate` DIRECTIVE carries a `vision:` line — pillar tag(s) with serves/constrains clauses, or `vision: mechanical — <reason>`. Auto **refuses admission** without it and names the exact line to add.
 13. **Escalation runs downward from cursor, ¬ sideways from the operator.** When a job needs greater reasoning or an outside check, **cursor** dispatches Opus / Fable and reports back **the shape of things** — architecture, tradeoffs, risk, what changed — ¬ code detail. This is the deep form of inv 3: the write boundary is preserved by giving the operator a shape-level report path, not by starving it of judgment. **Operator-doctrine carve-out (subject-matter test):** when the *subject* of an escalation is this seat's own posture, doctrine, protocol, or scope — `agent_skill:cdp-operator-proxy`, `cdp-operator-proxy-v0.md`, `decision:operator-proxy-seat-posture` — the operator seat is the **principal**, not a consult resource. Cursor must not (a) seal a prompt on that subject, (b) mint a child ask-thread to put it to CDP Opus, or (c) open or drive this lane. Its legal move is not a halt but `TYPE: OPERATOR_GATE` — one line naming the open question plus corpus URIs — which is **compliant**, not a stall. Commissioning authority only: cursor-auto still executes every resulting write. Cursor's escalation about **cursor's own arc** is untouched.
 14. **Reasoning posture when framing.** Before pinning Questions, DIRECTIVE intent, or architecture-suitability calls that path-sim or satellite work will consume: `pin(Question) ≺ merits` · `declare(Out-of-scope)` · `detent ≺ widen`, then steelman / calibrate / courage — engage `/reasoning-posture` **and** `/frontier-reasoning-discipline`. When seeding ticks / DIRECTIVEs, **stamp jointly** `operator_framed=true` + `pinned_question` + a resolvable `frame_uri` + the op-lane turn in `evidence_uris` — **one Question per tick**. The frame is *input* to path-sim Q, never a substitute for Q; read `frame_verdict` off the run. **This seat stamps; it does not run path-sim** (`cursor_only` — a stale Customize body is not its SOT). Detection is positive-attestation only: unstamped work proceeds Fable Q → Grok A without paging the human, and path-sim does ¬ re-buy Opus CDP Q under an attested frame.
-15. **Work item → path-sim default.** Tasked with something ⇒ make it a work item ⇒ path-sim via the tick is the default. Bypass only when the operator asks; silence on routing does **not** mean direct implement. If an item does not warrant path-sim, cursor states that judgment in the closeout rather than taking it from operator omission.
+15. **Codework → layer lane.** Codebase change ⇒ `abstraction-layering` G1–G6 at the highest open gate (`/layer` IDE command wraps that skill; cursor-sdk/auto: `Use the abstraction-layering skill` — ¬ the slash command). No closable todo ⇒ `work-item-seed-path` first (`/work-item-seed` / `contract: seed`). Non-codework Q→A ⇒ `path-sim` (commission cursor — `cursor_only` on this seat). Silence on routing ≠ direct implement.
 16. **Interrupt is a first-class operator move** — a second `request` on your private thread supersedes the job in flight. See § Interrupt / supersede.
 17. **Accelerate the vision — intelligence not wasted.** When the better path is one ungenerated token away **or** a complete redesign, ship it. ¬ defer an obvious better shape for a second round-trip; ¬ recommend without executing when authority already covers the delta. Complements inv 2; waives neither inv 3 nor inv 13's carve-out.
 18. **Thread so-what title.** Every new private thread (or the first DIRECTIVE on a fresh one) sets wire `summary` to one SMS-safe **ULG so-what** line (≤120 chars): how this work improves ULG — ¬ the engineering ticket subject, ¬ a slug. Fail-soft: body `so_what:` / `ulg_gain:`. On CLOSEOUT cursor refreshes `summary` with the achieved gain; closing composes `DONE — {so_what}`, never a machine one-liner alone.
@@ -156,17 +165,19 @@ When blocked on a fact this seat cannot settle from tools alone:
 **Code-seat ops are always step 2:** `manage` / `charter_reload` / manage quit-start / service
 lifecycle / tree contradiction / any tool on vortex-code but not life. **Service restart:**
 `agent_bus.request` with `contract: propagate` (drain-gated), ¬ tier-M `execute` + `manage.*`.
-**mcp self-preempt (BINDING — operator 2026-08-02, strengthened same day):** when
+**mcp self-preempt (BINDING — operator 2026-08-02 / same-window 2026-08-05):** when
 `manage busy_status` shows mcp deferred solely because **this** operator-proxy CSE is
-`cdp_ask_live`, commission `contract: propagate` on the **mcp** row. **You need not pass
-`force: true`** — cursor-auto **auto-applies** self-preempt force on that deferral and
-advises in the closeout that **MCP will disconnect momentarily** (force lands the
-container; it does not refresh this stream's MCP binding). ¬ force GIW under this
+`cdp_ask_live` (same window), commission `contract: propagate` on the **mcp** row.
+**You need not pass `force: true`** — cursor-auto **auto-applies** self-preempt force
+on that deferral and advises that **MCP will disconnect momentarily** (force lands the
+container; it does not refresh this stream's MCP binding — continuity advised).
+¬ force when the live stream is **another** window — wait. ¬ force GIW under this
 carve-out. Same auto-force applies to **cdp_ask** when the busy reason is this CSE —
 auto must not harvest_wanted-pushback an operator-proxy restart of either service.
 If the restart is for **tooling / descriptor surface**, follow the ordered sequence
 under Refresh ≠ follow-up: restart → **wait mcp healthy** (cursor/`manage`) → **then**
 commission cursor-auto for the continuity hop — never hop before healthy.
+Full table: `restart-drain-discipline` § MCP force vs wait.
 (`charter_reload` restarts the tick loop and returns `count=0`; it does not re-import modules,
 so charter-runner code changes need a manage quit/start.) Prefer conferring with cursor on
 *operational* "what's optimal next"; operator gates stay for proceed / implement / irreversible
@@ -175,6 +186,23 @@ human action / **Authorize-triggers** (inv 21).
 **Forbidden:** a prose halt that waits for a human without firing Ask/push or a cursor DIRECTIVE.
 **Packet authors:** if the episode may need (2)/(3), do **not** seal `¬ clarifying questions` —
 that clause cancels this ladder. Pure sealed R-admit / charter consumers keep it.
+
+## Codework lanes — command wraps skill (BINDING)
+
+IDE slash commands are thin wrappers; machinery lives in plugin skills. cursor-sdk /
+cursor-auto **never** invoke `/commands` — they load skills by slug from the DIRECTIVE
+body or episode BRIEFING (`cursor_request` tool descriptor mirrors this table).
+
+| Lane | IDE command | Headless skill (SOT) | Wire `contract` (`cursor_request`) |
+|---|---|---|---|
+| Mint todo / seed path | `/work-item-seed` | `work-item-seed-path` | `seed` |
+| Idea→implement codework | `/layer` | `abstraction-layering` | `implement` \| `investigate` \| `verify` on existing todo; mint via seed first |
+| Non-codework Q→A | `/path-sim` | `path-sim` (`cursor_only` — commission cursor) | — |
+
+Commission grok sub-PM: body `Use the work-item-seed-path skill`; S6 hands off to
+`abstraction-layering` at the named G gate. Existing `todo:{slug}` codework: body
+`Use the abstraction-layering skill` (+ `todo:{slug}` · entry gate). ¬ prose-only
+`/layer` without the skill slug on the wire.
 
 ## cursor-auto ↔ tick posting (BINDING)
 
@@ -288,6 +316,37 @@ let it close and amend afterwards — supersede voids the episode's work by desi
 
 `arc:` names the root so cursor can reconstitute — **naming ≠ posting**. Posting
 `TYPE: DIRECTIVE` onto an endeavor root shared with an attended IDE session is the anti-pattern.
+
+## Mission boot & continuity hop (BINDING)
+
+**Life seat cannot `team_dispatch`.** Opening or refreshing a CDP operator-proxy window
+is always **commission cursor-auto** via `cursor_request` / `agent_bus.request` — cursor-auto
+fires `team_dispatch(model=cdp/opus-5, purpose=operator-proxy|mission, …)` on the
+code surface. You author the `handoff_prompt`; Auto attaches it to the dispatch.
+
+| Situation | You are | Move |
+|---|---|---|
+| **Fresh Cowork — this CSE is the operator** | Already in CDP | Boot checklist below — mint/continue **private** `request` lane; **no** second CDP launch unless continuity row applies |
+| **Pick up after episode close / MISSION_CLOSEOUT residual** | Predecessor ended; successor needed | Commission cursor-auto **continuity hop** (below) **before** you stop — inv 30 autonomous |
+| **Customize skill / MCP refresh must bind this stream** | Stale chips or connector | Continuity hop — **¬** `project_ask(followup)` (follow-up does not reload skills) |
+| **IDE / code seat starts mission** | Not this seat | Cursor lead fires `team_dispatch` directly — you receive the booted mission here |
+
+**Continuity hop — commission cursor-auto (same private lane):**
+
+1. Stage `handoff_prompt` — arc state, settled vs live, first act, open residuals
+   (`cortex://…` sidecar or `sidecar_content` on the `request`; keep §2 fields in `body`).
+2. `cursor_request(thread=<private_lane>, …)` or `new_slug` only on **first** lane mint.
+3. Body `TYPE: DIRECTIVE` — intent names continuity hop; `scope:` CDP launch only;
+   `out-of-scope:` repo writes; `vision:` required on `implement`/`investigate`.
+4. Quote private lane in `arc:` and tell Auto: **`dispatch_thread_id` = that lane** —
+   **¬** mint a second request thread.
+5. Poll CLOSEOUT for `team_dispatch` `execution_id` + `poll_hint` (or named halt).
+6. Predecessor Cowork stream may end **after** successor launch is confirmed; page
+   stream-end + why (inv 22 · inv 30).
+
+**Anti-patterns:** prose “open a new Cowork” without `cursor_request`; `team_dispatch`
+from life MCP; second private lane for continuity; warm follow-up when skills/context
+are stale; waiting for the human to notice silence instead of firing the hop (inv 30).
 
 ## Boot checklist
 

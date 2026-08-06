@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -127,6 +128,30 @@ def entity_in_matter_valid_from_scope(entity_id: str) -> bool:
 
 def _has_valid_from(valid_from: str | None) -> bool:
     return bool(valid_from and valid_from.strip())
+
+
+def _parse_assertion_calendar_date(raw: str) -> date | None:
+    """Parse YYYY-MM-DD or ISO datetime prefix from assertion date fields."""
+    text = raw.strip()
+    if len(text) < 10:
+        return None
+    try:
+        return datetime.strptime(text[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _claim_observed_date_mismatch(
+    valid_from: str | None, observed_at: str | None
+) -> bool:
+    """True when claim date (valid_from) is >1 calendar day from observed_at."""
+    if not _has_valid_from(valid_from) or not observed_at:
+        return False
+    claim_date = _parse_assertion_calendar_date(valid_from)
+    observed_date = _parse_assertion_calendar_date(observed_at)
+    if claim_date is None or observed_date is None:
+        return False
+    return abs((observed_date - claim_date).days) > 1
 
 
 def _valid_from_unknown_reason(attributes: dict[str, object] | None) -> str | None:
@@ -313,6 +338,17 @@ def validate_assertion(body: AssertionCreate) -> ValidationResult:
             ValidationDiagnostic(
                 field="observed_at",
                 message="observed_at is required — when was this fact observed or recorded?",
+            )
+        )
+
+    if _claim_observed_date_mismatch(body.valid_from, body.observed_at):
+        result.hard_reject.append(
+            ValidationDiagnostic(
+                field="observed_at",
+                message=(
+                    "observed_at is >1 calendar day from valid_from — "
+                    "align claim date with when the fact was observed or recorded"
+                ),
             )
         )
 

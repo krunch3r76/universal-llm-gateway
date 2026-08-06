@@ -181,16 +181,22 @@ loop burns the mission. `mechanical(q) ⇒ ¬mentor_loop(q)`.
 micro-tasks. `cursor/grok-4.5` executes on ideas in the same register **this** seat
 receives them — commission the idea, ¬ its decomposition, and let grok drive
 `work-item-seed-path` S1–S6 (classify → recon → architecture fork → mint todo → attach →
-`/layer`) including its **own** fan-out: Explore for breadth recon, Composer for the
+layer handoff) including its **own** fan-out: Explore for breadth recon, Composer for the
 mechanical leg once judgment closes, this seat or Fable on an architecture fork it cannot
 rank, grok again for parallel seeds.
+
+**Command wraps skill (BINDING):** `/work-item-seed` and `/layer` are attended-IDE wrappers
+only. Headless / cursor-sdk loads **`work-item-seed-path`** then **`abstraction-layering`**
+by skill slug — ¬ slash commands. After seed S6, codework runs `Use the abstraction-layering
+skill` at the named G gate (same lane as `/layer`).
 
 Your contribution is **enablement, ¬ decomposition**. Each idea commission carries:
 `Use the work-item-seed-path skill` (headless entry surface — ¬ the `/work-item-seed` IDE
 command) · kind `feature-add | investigate+fix` (sets the S2 recon default) · known
 anchors/loci so S2 is legitimately **skipped** ¬ re-derived · whether S3 Mode B is
 mandatory (its admit-proof rule binds — the turn claiming Mode B carries a real
-`execution_id` + `poll_hint` or an honest halt) · expected S6 entry gate (G1/G2/G5).
+`execution_id` + `poll_hint` or an honest halt) · expected S6 entry gate (G1/G2/G5) ·
+post-seed skill `abstraction-layering` when codework continues on the minted todo.
 
 Cadence: fewer, fatter commissions amortize round-trip latency instead of paying it per
 micro-step. `¬` a hard rule — the operator named it an emergent shape and left the

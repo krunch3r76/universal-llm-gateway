@@ -131,8 +131,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--from-agent",
-        default="cdp",
-        help="qualifying reply from_agent (default: cdp)",
+        default="web-anthropic",
+        help="qualifying reply from_agent (default: web-anthropic)",
     )
     parser.add_argument(
         "--label",

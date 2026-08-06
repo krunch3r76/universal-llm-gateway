@@ -315,8 +315,8 @@ async def test_deliver_terminal_delivery_failed_when_posts_false(
     assert subjects[1].startswith("cdp reply —")
     assert subjects[2].startswith("cdp DELIVERY FAILED —")
     assert ONBEHALF_POST_FAILED_STALL in bodies[2]
-    # R-admit-shaped wait: a from=cdp DELIVERY FAILED turn was attempted so
-    # agent_bus.wait(from_agent=cdp) would terminalize when the bus is up.
+    # R-admit-shaped wait: a from=web-anthropic DELIVERY FAILED turn was attempted so
+    # agent_bus.wait(from_agent=web-anthropic) would terminalize when the bus is up.
     assert "DELIVERY FAILED" in subjects[2]
     crit.assert_called_once()
 
@@ -438,7 +438,7 @@ def test_unread_latest_from_409_ignores_other_errors() -> None:
 async def test_post_cdp_turn_retries_after_unread_409(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Concurrent second CDP admit leaves to=cdp unread past pointer — remake+retry."""
+    """Concurrent second CDP admit leaves endpoint unread past pointer — remake+retry."""
     from systems.frontier_consult import cdp_generate_worker as worker
 
     class _Resp:
@@ -451,12 +451,12 @@ async def test_post_cdp_turn_retries_after_unread_409(
             return self._payload
 
     posts: list[int] = []
-    marks: list[int] = []
+    marks: list[tuple[int, str]] = []
 
     class _Client:
         async def patch(self, path: str, json: dict, headers: dict) -> _Resp:
             del path, headers
-            marks.append(int(json["through_turn"]))
+            marks.append((int(json["through_turn"]), str(json["agent"])))
             return _Resp(200)
 
         async def post(self, path: str, json: dict, headers: dict) -> _Resp:
@@ -497,9 +497,16 @@ async def test_post_cdp_turn_retries_after_unread_409(
         pointer_turn=15,
     )
     assert ok is True
-    assert marks == [15, 16]
+    # Dual mark: canonical web-anthropic + legacy cdp per through_turn
+    assert marks == [
+        (15, "web-anthropic"),
+        (15, "cdp"),
+        (16, "web-anthropic"),
+        (16, "cdp"),
+    ]
     assert len(posts) == 2
-
+    # On-behalf posts as endpoint address
+    assert worker.CDP_REPLY_FROM == "web-anthropic"
 
 def test_team_dispatch_generate_body_accepts_purpose() -> None:
     from systems.frontier_consult.route import TeamDispatchGenerateBody
@@ -546,7 +553,7 @@ async def test_dispatch_cdp_generate_forwards_generation_options(
     monkeypatch.setattr(mod, "emit_poll_hint_from_handoff", lambda **kw: None)
     monkeypatch.setattr(mod, "build_handoff_result", lambda **kw: {
         "handoff_status": "ok",
-        "poll_hint": {"thread_id": "1", "from_agent": "cdp"},
+        "poll_hint": {"thread_id": "1", "from_agent": "web-anthropic"},
     })
     monkeypatch.setattr(mod, "resolve_poll_wait_seconds", lambda **kw: 5)
 

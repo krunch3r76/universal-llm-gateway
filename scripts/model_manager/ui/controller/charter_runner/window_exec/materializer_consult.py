@@ -184,7 +184,7 @@ verdict MAY be:
 Opus still answers with best judgment + provisional_verdict; ESCALATE flags
 human confirm. Do not wait for human in-window.
 [OF2-resume] if the window ends mid-poll, Next-pickup MUST keep CONSULT_PENDING +
-consult_role: judgment_gap + poll_hint / from=cdp bus-turn so the next tick
+consult_role: judgment_gap + poll_hint / from=web-anthropic bus-turn so the next tick
 re-admits.
 [window] end with exactly one CHECKPOINT on the root, then stop — no worker resume.
 - Use the `consult-routing` skill (canonical slug — seat self-fetches)
@@ -219,7 +219,7 @@ consult schema via `r_verdict_gate.consult_provenance_from_r_admit` with
 consultant_family=anthropic / consultant_substrate=web-anthropic (reviewer family,
 not this firing seat).
 [OF2-resume] if the window ends mid-poll, Next-pickup MUST keep CONSULT_PENDING +
-consult_role: r_admit + poll_hint / from=cdp bus-turn reference (replaces
+consult_role: r_admit + poll_hint / from=web-anthropic bus-turn reference (replaces
 execution_id-only resume used by project_ask escape) so the next tick re-admits.
 [IF6-escape] if cdp/ cannot resume cross-window (lost poll_hint / bus turn), surface
 IF6 and use MCP project_ask escape — holder-fired dual-host remains live; do not
@@ -255,17 +255,17 @@ def _task_guidance_judgment(
 - Before fire: confirm the CDP prompt carries the sealed unattended clause
   (best judgment · state assumptions · ¬ blocking wait on clarifying questions ·
   ESCALATE allowed when self-resolution fails).
-- If resuming: agent_bus.wait from the pinned poll_hint / from=cdp bus-turn until
+- If resuming: agent_bus.wait from the pinned poll_hint / from=web-anthropic bus-turn until
   a qualifying cdp turn lands (reply or DELIVERY FAILED). Long running ≠ stalled.
 - If fresh: team_dispatch(op=generate, model=cdp/opus-5, contract=light-bounded,
   prompt=<scope-locked Question + OOS + detent + layers + corpus>,
-  dispatch_thread_id=…) → poll via agent_bus.wait from poll_hint (from_agent=cdp).
+  dispatch_thread_id=…) → poll via agent_bus.wait from poll_hint (from_agent=web-anthropic).
 - Record on the root CHECKPOINT / todo attrs the **shared** provenance schema
   (same fields G3 R-admit writes): consult_thread, verdict, consultant_family,
   consultant_substrate (and evidence URI for the reply).
   consultant_family=anthropic / consultant_substrate=web-anthropic.
 - On incomplete poll: Next-pickup = CONSULT_PENDING + consult_role: judgment_gap +
-  poll_hint / from=cdp bus-turn anchor (OF2).
+  poll_hint / from=web-anthropic bus-turn anchor (OF2).
 
 ### Escape — MCP project_ask (IF6 / satellite-direct / holder emergency only)
 - project_ask(op=submit, prompt_uri or inline prompt, converse=true,
@@ -310,18 +310,18 @@ def _task_guidance_r_admit(
 - Before fire: confirm the R prompt carries the sealed unattended clause
   (best judgment · state assumptions · ¬ blocking wait on clarifying questions ·
   ESCALATE allowed when self-resolution fails).
-- If resuming: agent_bus.wait from the pinned poll_hint / from=cdp bus-turn until
+- If resuming: agent_bus.wait from the pinned poll_hint / from=web-anthropic bus-turn until
   a qualifying cdp turn lands (reply or DELIVERY FAILED). Long running ≠ stalled.
 - If fresh: team_dispatch(op=generate, model=cdp/opus-5, contract=light-bounded,
   prompt/sidecar_ref=<R prompt cortex URI>, dispatch_thread_id=…) → poll via
-  agent_bus.wait from poll_hint (from_agent=cdp).
+  agent_bus.wait from poll_hint (from_agent=web-anthropic).
 - Parse merits verdict with fail-closed gate (ADMIT/RATIFY advance; amendments fold first).
   Question-shaped harvest without a merits enum ⇒ incomplete / keep CONSULT_PENDING
   (a:26156) — ¬ invent a verdict; ¬ auto-reply to Cowork clarifying questions.
 - Write E2 via `consult_provenance_from_r_admit` — consultant_family=anthropic,
   consultant_substrate=web-anthropic regardless of this seat's substrate.
 - On incomplete poll: Next-pickup = CONSULT_PENDING + consult_role: r_admit +
-  poll_hint / from=cdp bus-turn anchor (OF2).
+  poll_hint / from=web-anthropic bus-turn anchor (OF2).
 
 ### Escape — MCP project_ask (IF6 / satellite-direct / holder emergency only)
 - project_ask(op=submit, prompt_uri=cortex://…, converse=true, no_project_uuid=true,
@@ -371,7 +371,7 @@ def _output_format_judgment(root_id: str, window_index: int) -> str:
 Post the CHECKPOINT on agent-bus:{root_id} with consult provenance fields filled.
 Include consult_thread URI + verdict + consultant_family + consultant_substrate.
 On incomplete poll preserve CONSULT_PENDING + consult_role: judgment_gap +
-poll_hint / from=cdp bus-turn (or execution_id when on project_ask escape).
+poll_hint / from=web-anthropic bus-turn (or execution_id when on project_ask escape).
 When self-resolution fails, emit ESCALATE(reason=…, minimal_question=…,
 provisional_verdict=…) alongside best-judgment answer — do not block in-window.
 Then stop — the next tick admits the worker resume window.
@@ -387,7 +387,7 @@ def _output_format_r_admit(root_id: str, window_index: int) -> str:
 Post the CHECKPOINT on agent-bus:{root_id} with the four shared consult provenance
 fields (consult_thread, verdict, consultant_family, consultant_substrate).
 On incomplete poll preserve CONSULT_PENDING + consult_role: r_admit + poll_hint /
-from=cdp bus-turn (or execution_id when on project_ask escape).
+from=web-anthropic bus-turn (or execution_id when on project_ask escape).
 When self-resolution fails, emit ESCALATE(reason=…, minimal_question=…,
 provisional_verdict=…) alongside best-judgment answer — do not block in-window.
 Then stop — the next tick re-admits R-admit consult or worker resume after proof.

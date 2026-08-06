@@ -135,6 +135,9 @@ def _bus_address_aliases() -> dict[str, str]:
     for alias_norm, cell in _dispatch_aliases().items():
         if cell in cell_to_addr:
             aliases[alias_norm] = cell_to_addr[cell]
+    # One-cycle compat: retired bus seat ``cdp`` → endpoint ``web-anthropic``.
+    # CDP remains substrate (model=cdp/…, web-anthropic-cdp), not a mailbox.
+    aliases[_normalize_agent_key("cdp")] = "web-anthropic"
     return aliases
 
 
@@ -143,7 +146,8 @@ def normalize_bus_address(slug: str) -> str:
 
     Canonical forms: ``cursor`` | ``web-{provider}`` | ``api-{provider}`` |
     ``api-multi-{provider}``. Old ``{family}-{platform}`` slugs and nicknames
-    (``web``, ``cursor``, ``web_claude``) alias to the same canonical. Non-endpoint
+    (``web``, ``cursor``, ``web_claude``) alias to the same canonical. Legacy
+    ``cdp`` (retired bus seat) aliases to ``web-anthropic``. Non-endpoint
     slugs (roles, ``cursor-sdk``, ``subagent-subagent``) pass through unchanged.
     """
     if not isinstance(slug, str):

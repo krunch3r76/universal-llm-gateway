@@ -36,6 +36,7 @@ from agent_seat.registry import (
         ("cursor", "cursor"),
         ("web", "web-anthropic"),
         ("web_claude", "web-anthropic"),
+        ("cdp", "web-anthropic"),  # retired bus seat → endpoint
     ],
 )
 def test_normalize_bus_address_exact(slug: str, expected: str) -> None:

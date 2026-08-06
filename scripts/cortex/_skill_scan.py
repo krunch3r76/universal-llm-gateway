@@ -135,6 +135,8 @@ def _scan_cortex_sot_skills(repo_root: Path | None = None) -> dict[str, dict[str
             print(f"ERROR: unreadable {path}", file=sys.stderr)
             continue
         fm = parse_frontmatter(text)
+        if str(fm.get("lifecycle") or "").strip() == "retired":
+            continue
         description = str(fm.get("description") or "").strip()
         found[slug] = {
             "slug": slug,
@@ -181,6 +183,8 @@ def _scan_skills(root: Path) -> dict[str, dict[str, object]]:
                 print(f"ERROR: unreadable {skill_path}", file=sys.stderr)
                 continue
             fm = parse_frontmatter(text)
+            if str(fm.get("lifecycle") or "").strip() == "retired":
+                continue
             description = str(fm.get("description") or "").strip()
             if not description:
                 print(f"WARN: missing description: {skill_path}", file=sys.stderr)

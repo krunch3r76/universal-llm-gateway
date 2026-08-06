@@ -227,6 +227,10 @@ def deadline_line(d: dict[str, Any], today: datetime) -> str:
             delta = (dl - today.date()).days
             if delta >= 0:
                 remaining = f" ({delta}d)"
+            elif abs(delta) >= 14:
+                remaining = (
+                    f" (**STALE?** — {abs(delta)}d past — verify still owed)"
+                )
             else:
                 remaining = f" (**{abs(delta)}d OVERDUE**)"
         except ValueError:

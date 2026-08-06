@@ -31,7 +31,9 @@ DEFAULT_MAX_WALL_S = 1800
 DEFAULT_NO_PROGRESS_S = 600
 DEFAULT_POLL_INTERVAL_S = 2.0
 CDP_SUBSTRATE = "web-anthropic-cdp"
-CDP_REPLY_FROM = "cdp"
+# Bus endpoint address (identity doctrine) — ¬ mint a separate "cdp" seat.
+# CDP is substrate/session association (CDP_SUBSTRATE, execution_id, registration).
+CDP_REPLY_FROM = "web-anthropic"
 
 # Operator-proxy / mission CSE must stay live across long Auto legs. Poller
 # wall / no-progress must NOT Stop-click the page. Clean CSE break is only for

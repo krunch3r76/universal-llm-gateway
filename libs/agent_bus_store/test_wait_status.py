@@ -30,6 +30,19 @@ def test_first_reply_from_matches_new_old_bus_address():
     assert is_complete(thread, turns_rev, after_turn=1, completion=comp_rev)
 
 
+def test_first_reply_from_matches_retired_cdp_seat_alias():
+    """Retired bus seat ``cdp`` aliases to endpoint ``web-anthropic``."""
+    thread = {"status": ThreadStatus.ACTIVE}
+    # Legacy poll_hint from_agent=cdp matches product/on-behalf from=web-anthropic
+    comp_legacy = {"mode": "first_reply_from", "from_agent": "cdp"}
+    turns = [_turn(1, "cursor"), _turn(2, "web-anthropic")]
+    assert is_complete(thread, turns, after_turn=1, completion=comp_legacy)
+    # Canonical poll_hint matches legacy on-behalf from=cdp still in flight
+    comp = {"mode": "first_reply_from", "from_agent": "web-anthropic"}
+    turns_legacy_from = [_turn(1, "cursor"), _turn(2, "cdp")]
+    assert is_complete(thread, turns_legacy_from, after_turn=1, completion=comp)
+
+
 def test_first_reply_from_matches_legacy_alias():
     """thread-1248 regression: hint names canonical seat, reply posts under alias."""
     thread = {"status": ThreadStatus.ACTIVE}

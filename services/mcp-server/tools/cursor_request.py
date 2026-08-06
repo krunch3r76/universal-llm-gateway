@@ -129,8 +129,16 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         Claude.ai: scheduling_trigger? = option; Authorize_prompt ⇒ operator_approves
         (⊃ schedule). Expect click — ¬ bypass.
 
-        NEW_CDP_WINDOW(web-anthropic): context_reset ∨ Customize_skills_refresh ⇒
-        handoff_prompt required; continuity on SAME private request lane — ¬ second lane.
+        NEW_CDP_WINDOW(web-anthropic): life seat **cannot** call ``team_dispatch`` —
+        commission **cursor-auto** via ``cursor_request`` (same tool as every DIRECTIVE).
+        Cursor-auto fires ``team_dispatch(model=cdp/opus-5, purpose=operator-proxy|mission,
+        dispatch_thread_id=<SAME private request lane>)`` with your ``handoff_prompt``.
+        Triggers: episode/mission continuity pickup · Customize skill body went live ·
+        stale context reset · predecessor ``MISSION_CLOSEOUT`` named next operator window.
+        **¬** mint a second private ``request`` lane. **¬** warm ``project_ask(followup)``
+        when chips/MCP/context need refresh — follow-up does not reload Customize skills.
+        CLOSEOUT must quote ``execution_id`` + ``poll_hint`` (or honest transport halt).
+        Predecessor stream may end only after successor launch is confirmed (inv 30).
 
         Sync: plugin_install ∧ per-slug Customize sync ∈ Auto capabilities — offer/fire,
         ¬ defer to IDE lead. Bulk census = slow ⇒ named slugs only. IDE restart ⇒ operator.
@@ -146,17 +154,33 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         ``contract`` ∈ answer | confer | investigate | implement | verify | execute |
         propagate | seed. Unknown ⇒ 422 before turn write. ``consult`` aliases confer.
 
+        **Codework lanes — IDE command wraps skill (BINDING)**
+
+        Slash commands are attended-IDE wrappers only. cursor-sdk / cursor-auto /
+        charter dispatches **never** invoke ``/commands`` — they load the skill slug
+        from the DIRECTIVE body or episode BRIEFING.
+
+        | IDE command | Headless skill (machinery SOT) |
+        |---|---|
+        | ``/work-item-seed`` | ``work-item-seed-path`` |
+        | ``/layer`` | ``abstraction-layering`` |
+
+        Mint path: wire ``contract=seed`` (or body ``Use the work-item-seed-path
+        skill``). Codework on an existing todo: ``implement`` | ``investigate`` |
+        ``verify`` + body ``Use the abstraction-layering skill`` at highest open
+        G1–G6 gate — same lane as ``/layer``, not a separate wire token.
+
         **Expected return shape (per contract)**
 
         | contract | CLOSEOUT carries |
         | answer | disposition:answered + inline relay |
         | confer | codebase-grounded recommendation |
         | investigate | findings / nested dispatch summary |
-        | implement | file changes + AC evidence |
-        | verify | verification verdict + evidence |
+        | implement | file changes + AC evidence (codework: ``abstraction-layering`` lane) |
+        | verify | verification verdict + evidence (codework: ``abstraction-layering`` G6) |
         | execute | one tier-M op raw payload (body: tool_op + effects_expected) |
         | propagate | propagation ledger + drain-gated restart status |
-        | seed | todo slug + consult URI (if any) + /layer entry gate |
+        | seed | todo slug + consult URI (if any) + ``abstraction-layering`` entry gate |
 
         **Second read (advisory — may appear on any nested-contract CLOSEOUT)**
 

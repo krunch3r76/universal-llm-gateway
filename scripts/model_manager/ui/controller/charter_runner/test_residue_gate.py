@@ -151,7 +151,7 @@ _EXCLUDE_CASES = {
     ),
     "from_cdp": lambda b: b.replace(
         "consult_role: r_admit",
-        "consult_role: r_admit · from=cdp:turn:88",
+        "consult_role: r_admit · from=web-anthropic:turn:88",
     ),
     "execution_id": lambda b: b.replace(
         "consult_role: r_admit",

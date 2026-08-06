@@ -136,13 +136,13 @@ def resolve_poll(state: dict[str, Any], args: argparse.Namespace) -> tuple[str, 
         or "6395"
     )
     after_turn = int(args.after_turn or state.get("poll_after_turn") or state.get("after_turn") or 5)
-    from_agent = str(args.from_agent or state.get("poll_from_agent") or state.get("from_agent") or "cdp")
+    from_agent = str(args.from_agent or state.get("poll_from_agent") or state.get("from_agent") or "web-anthropic")
 
     # Phase defaults when state still says A_DONE but we're polling R
     if phase == "R":
         thread = str(args.thread or state.get("coord_thread") or "6395")
         after_turn = int(args.after_turn or state.get("poll_after_turn") or 5)
-        from_agent = "cdp"
+        from_agent = "web-anthropic"
     elif phase == "IMPL":
         thread = str(args.thread or state.get("worker_thread") or state.get("impl_thread") or thread)
         after_turn = int(args.after_turn or state.get("impl_after_turn") or 1)

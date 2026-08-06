@@ -67,7 +67,7 @@ def test_ac4_poll_hint_cdp_only() -> None:
             1_000,
             {
                 "request_id": "cdp-x",
-                "reply_from_agent": "cdp",
+                "reply_from_agent": "web-anthropic",
                 "caller_agent": "dispatch",
                 "thread_id": "77",
             },

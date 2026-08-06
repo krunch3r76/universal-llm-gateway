@@ -4,8 +4,9 @@ Thin admit front over the native CDP API (``cdp_ask.client`` /
 ``POST /api/v1/providers/cdp/ask`` via ``claude_bundles.cdp_model_endpoint``).
 Forwards optional ``purpose`` (default ``ask``) onto the satellite submit so
 operator-proxy missions can set ``purpose=operator-proxy|mission`` without
-bare ``project_ask``. Posts on-behalf turns as ``from=cdp`` only after harvest
-proof (or failed+stall).
+bare ``project_ask``. Posts on-behalf turns as ``from=web-anthropic`` (endpoint
+address) only after harvest proof (or failed+stall). CDP is substrate/session
+association (``web-anthropic-cdp``, ``execution_id``), not a bus seat.
 """
 
 from __future__ import annotations
@@ -261,7 +262,7 @@ async def dispatch_cdp_generate(
     thread_subject = f"cdp generate — {request_id}"
     pointer_body = (
         f"CDP generate admitted (model={model}, execution_id={execution_id}). "
-        f"Poll poll_hint (from_agent=cdp). Terminal only after harvest proof."
+        f"Poll poll_hint (from_agent=web-anthropic). Terminal only after harvest proof."
     )
     thread_id = body.dispatch_thread_id
     if thread_id and str(thread_id).strip().isdigit():
@@ -282,7 +283,7 @@ async def dispatch_cdp_generate(
             pointer_body=pointer_body,
             caller_agent=body.caller_agent,
             tags=[
-                "agent:cdp",
+                "agent:web-anthropic",
                 "type:generate",
                 f"contract:{contract or 'light-bounded'}",
             ],

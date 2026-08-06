@@ -4,38 +4,47 @@ alwaysApply: true
 rule_category: engineering
 apply_tier: required_gate
 trigger_match_terms:
- - restart
- - sync_restart
- - stop service
- - force
- - drain
- - busy
- - deferred
- - in-flight
- - active-work
- - landed-not-live
- - wait_healthy
- - mcp restart
- - life surface
- - live_cse
+  - restart
+  - sync_restart
+  - stop service
+  - force
+  - drain
+  - busy
+  - deferred
+  - in-flight
+  - active-work
+  - landed-not-live
+  - wait_healthy
+  - mcp restart
+  - life surface
+  - live_cse
+  - same-window
+  - other window
+  - continuity hop
+  - ghost live_cse
+  - streaming
 ---
 # Restart drain discipline
 
 **Invariant:** `restart(service) ⇒ drain(in_flight) ∧ (wait_background ∨ wait_inwindow)` —
 never `kill(in_flight)`, and never `skip(restart)` because the service is busy.
 
-Operator bind 2026-07-31. Failure class seen on cursor-auto and cdp/opus: a seat
-facing a busy service either preempted live work with `force=true`, or abandoned
-the restart entirely and left a fix landed-not-live. Both are wrong. Busy is a
-**wait**, not a verdict.
+Operator bind 2026-07-31; MCP same-window classifier 2026-08-05. Failure class:
+a seat facing busy either (a) preempted **another** seat's live work with
+`force=true`, or (b) abandoned the restart and left a fix landed-not-live.
+Both are wrong.
+
+**Busy is a probe signal, not a wait verdict.** Classify what the probe means
+(GIW write lease vs MCP streaming vs idle/ghost CSE), then choose wait vs force.
+`busy=true` / `live_cse_count>0` alone never licenses “park forever” or “skip restart.”
 
 ## The three wrong moves
 
 | Wrong | Why | Right |
 |---|---|---|
-| `manage(..., force=true)` to get past `status=deferred` | Preempts another seat's in-flight dispatch on a shared checkout | Accept the deferral; drain runs |
-| "A dispatch is running, so I won't restart" | Leaves the fix landed-not-live; the next seat inherits stale code and a false "fixed" claim | Arm the restart; it fires when the fleet drains |
-| Sit in-window polling `wait_healthy` while holding a lease | The lease you hold is what the drain is waiting on — never converges (friction 25989) | Arm, then **exit**; probe after |
+| `force=true` to kill **another** seat's streaming / write lease | Preempts unrelated in-flight work | Wait (MCP other-window) or arm durable drain (GIW) |
+| "Busy / a dispatch is running, so I won't restart" | Leaves the fix landed-not-live | Arm the restart (or MCP-force when classifier says so) |
+| Sit in-window polling `wait_healthy` while holding a lease | The lease you hold is what the drain waits on — never converges (friction 25989) | Arm, then **exit**; probe after |
 
 ## Mechanism already exists — use it, do not reinvent
 
@@ -47,7 +56,7 @@ MCP agents and the TUI get the same guard. Two shapes:
 |---|---|
 | `git_integration_worker` | Durable **drain supervision** — worker stops accepting new mutating work, existing dispatches run to completion, SIGTERM only after `active_count == 0`. Returns `status=deferred, state=draining` with a `restart_intent_id`. Deadline is days, not seconds: drain is assumed inevitable |
 | `mcp` | Busy-probe deferral — **not** NullBusyProbe. Defers when `cdp_ask` reports live CSE / running project-ask **or** MCP `/active-work` reports in-flight HTTP or recent life `tools/call` (TTL). Container SIGTERM HTTP drain alone does **not** protect Cowork between POSTs |
-| `cdp_ask` | Busy when `effective_count > 0` (`max(running, live_cse)`) — observed CSE counts even with no recorded execution |
+| `cdp_ask` | Busy when `effective_count > 0` (`max(running, live_cse)`) — `live_cse_count` = **observed open CSE tabs** on CDP ports (`/json/list` URL match), **not** “streaming”. Product concurrency: open tabs may be many; only ≤3 may **stream** at once (`claude-ai-cdp-navigation` § Parallel Chrome) |
 | everything else | Busy-probe deferral — `status=deferred, state ∈ {busy, in_progress, probe_error}` with `retry_after_s` |
 
 Read state without touching the gate: `manage(action="busy_status")` — returns
@@ -57,37 +66,56 @@ prefer it), and `restart_intent` per service. Safe to poll live.
 ## MCP / life-surface seat discipline (BINDING)
 
 `mcp.busy=false` historically meant "no probe," not "Cowork idle." Before any
-`sync_restart`/`restart`/`stop` of **mcp**:
+`sync_restart`/`restart`/`stop` of **mcp**, read `busy_status` (`mcp` + `cdp_ask`).
+GIW code pickup does **not** require MCP restart. Descriptor / tooling MCP edits
+follow the **same-window force protocol** below (operator bind 2026-08-05).
 
-1. Read `busy_status` — check **`mcp`** and **`cdp_ask`**.
-2. If `cdp_ask.live_cse_count > 0` or `mcp.busy=true` or `restart_would_defer` —
-   **arm/accept deferral**; do not `force=true` to clear a mid-mission life write.
-3. Descriptor-only MCP edits can wait until CSE clears; GIW code pickup does **not**
-   require MCP restart.
-4. `force=true` on mcp while life is hot is **narrow** — see carve-out below
-   (not a general IDE license to preempt other seats' work).
+### MCP force vs wait — same-window protocol (BINDING — 2026-08-05)
 
-**Carve-out (operator bind 2026-08-02):** the **operator-proxy seat** (`cdp/opus-5`
-/ web-anthropic on a `purpose=operator-proxy` CSE) **MAY** override the mcp restart
-drain guard with `force=true` when the busy reason is **its own** MCP/CSE connection
-(`busy_reasons` contains `cdp_ask_live` for that seat's registration/execution).
-It is preempting itself to land mcp code, not another seat's work. Exercise via
-`contract: propagate` with `force: true` on the **mcp** row (cursor-auto → manage.sock);
-¬ GIW force through this carve-out; ¬ IDE inventing force on someone else's CSE.
-If the restart is for **tooling / descriptor surface**: ordered sequence is restart →
-**wait mcp healthy** → **then** continuity hop (operator-proxy commissions cursor-auto
-only after healthy). Force does not refresh the in-stream MCP connection
-(`cdp-operator-proxy` Refresh ≠ follow-up).
+**Narrow classifier (primary):** wait only when a CSE is **streaming** and belongs
+to **another** window. Everything else restarts.
 
-Anti-pattern: treat `mcp.busy=false` + `in_flight=0` on drain start as proof that
-Claude's life connector is idle.
+```
+[streaming]
+  same_window  ⇒ force  // after healthy: MCP tool surface dead — continuity hop advised
+  other_window ⇒ wait ≺ call  // never force
+[¬streaming]   ⇒ restart  // force=true if probe defers on idle/ghost live_cse
+```
+
+| Condition | Action |
+|---|---|
+| **¬streaming** (incl. idle CSE tabs / ghost `live_cse>0` with `running_count=0`) | Restart — `force=true` if a false busy defers |
+| Streaming ∧ **this** window (same CSE / this seat's life connection) | **`force=true` OK** — expect MCP tool surface dead mid-stream; after `wait_healthy(mcp)`, **continuity hop** (new CDP window on same private lane) — ¬ warm follow-up alone for tooling refresh |
+| Streaming ∧ **another** window | **Wait** → then call (no force) |
+
+`live_cse_count` ≠ streaming. Observed CSE pages without an active stream are
+idle/ghost — **¬** other-window wait. Open-tab count may be arbitrary; the
+streaming concurrency bound (≤3 simultaneous; >3 untested) lives in
+`claude-ai-cdp-navigation` — this rule only classifies restart force vs wait.
+
+**Same-window force** covers IDE lead and operator-proxy (`cdp/opus` / web-anthropic
+on `purpose=operator-proxy|mission`) when the busy reason is **this** seat's
+`cdp_ask_live` / MCP session. Operator-proxy often exercises via `contract: propagate`
+(cursor-auto may auto-apply self-preempt force when `allow_self_preempt` is true).
+¬ GIW force under this protocol. ¬ force to clear **another** window's stream.
+
+Tooling / descriptor restart sequence after same-window force: restart →
+**wait mcp healthy** → **continuity hop** (`cdp-operator-proxy` Refresh ≠ follow-up).
+Commissioning continuity **before** healthy is a defect.
+
+Anti-patterns:
+- treat `mcp.busy=false` + `in_flight=0` as proof Cowork life is idle
+- treat `live_cse_count>0` / `busy=true` as automatic wait (missing the streaming test)
+- treat ghost/idle `live_cse` as "other window"
 
 ## Procedure (binding)
 
-1. **Probe before deciding** — `manage(action="busy_status")`. `busy=true` is
-   information, not a stop sign; read `active_work_summary` for who holds it.
-2. **Fire the restart anyway.** A deferral is a success: the intent is durable and
-   the restart happens when work clears.
+1. **Probe before deciding** — `manage(action="busy_status")`. For **mcp** /
+   **cdp_ask**, run the streaming/window classifier above; for **GIW**, `busy`
+   means arm durable drain (¬ force).
+2. **Fire the restart anyway.** Deferral is success when the classifier says wait
+   (other-window stream / GIW drain). When the classifier says ¬streaming or
+   same-window stream, `force=true` clears false busy — do not park on `live_cse`.
 3. **Then wait, per seat:**
    - **Holding a write lease** (cursor-sdk / `cursor_sdk_gate`, or the dispatch
      whose work the drain is waiting on): the envelope's
@@ -108,11 +136,13 @@ Permitted when **any**:
 
 - the human operator explicitly authorizes preempting in-flight work, **or**
 - the in-flight work is provably this seat's own and abandonable, **or**
-- **operator-proxy carve-out:** `cdp/opus` forces **mcp** `sync_restart` while the
-  only blocker is its own `cdp_ask_live` CSE (see MCP section above)
+- **MCP same-window protocol** (above): ¬streaming / ghost `live_cse` false busy,
+  **or** this seat's streaming CSE — force (+ continuity after healthy when the
+  stream was this window); **other-window stream** ⇒ wait, never force
 
 Never as a reaction to latency alone, and never to make an unrelated seat's
-deferral go away. ¬ `force=true` on `git_integration_worker` under this carve-out.
+deferral go away. ¬ `force=true` on `git_integration_worker` under the MCP
+same-window protocol.
 
 Killing a bridge or worker process directly (`pkill`, `kill`, `docker stop`) is
 forbidden for lifecycle — `services_ws.mdc` § Scripts.

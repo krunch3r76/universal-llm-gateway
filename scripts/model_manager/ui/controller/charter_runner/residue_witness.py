@@ -26,7 +26,7 @@ _SELF_HEAL_AUTHOR_RE = re.compile(
     re.IGNORECASE,
 )
 _POLL_HINT_RE = re.compile(
-    r"(?:poll_hint|from=cdp)\s*[=:]\s*(\S+)",
+    r"(?:poll_hint|from=web-anthropic|from=cdp)\s*[=:]\s*(\S+)",
     re.IGNORECASE,
 )
 _EXECUTION_ID_RE = re.compile(r"execution_id\s*=\s*(\S+)", re.IGNORECASE)
@@ -44,8 +44,8 @@ _PROVENANCE_VERDICT_RE = re.compile(
 )
 # Strip transport resume anchors from pickup rows before fingerprinting.
 _PICKUP_STRIP_RE = re.compile(
-    r"\s*[·•]\s*(?:poll_hint|from=cdp|execution_id)\s*[=:]\s*\S+|\s*"
-    r"(?:poll_hint|from=cdp|execution_id)\s*[=:]\s*\S+|\s*"
+    r"\s*[·•]\s*(?:poll_hint|from=web-anthropic|from=cdp|execution_id)\s*[=:]\s*\S+|\s*"
+    r"(?:poll_hint|from=web-anthropic|from=cdp|execution_id)\s*[=:]\s*\S+|\s*"
     r"heal:consult_stall\s+gen=\d+",
     re.IGNORECASE,
 )

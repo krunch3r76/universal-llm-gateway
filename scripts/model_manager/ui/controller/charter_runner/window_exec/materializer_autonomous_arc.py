@@ -27,7 +27,7 @@ G2  A + Gate-2       cursor-sdk Grok — L1/L2 tables + dense spec
                      a separate holder window just to post the consult stop.
 G3  R-admit          Consult seat only (admitted by the next tick from G2's
                      CONSULT_PENDING). It owns primary
-                     team_dispatch(model=cdp/opus-5)→poll_hint (from=cdp);
+                     team_dispatch(model=cdp/opus-5)→poll_hint (from_agent=web-anthropic);
                      MCP project_ask = escape only. Consult seat writes shared
                      provenance via consult_provenance_from_r_admit
                      (consultant_family=anthropic / consultant_substrate=web-anthropic).

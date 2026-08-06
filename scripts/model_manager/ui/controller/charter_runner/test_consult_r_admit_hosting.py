@@ -202,7 +202,7 @@ def test_judgment_and_r_admit_packets_both_host_cdp() -> None:
         assert "cdp/opus-5" in packet
         assert "team_dispatch" in packet
         assert "project_ask" in packet  # escape
-        assert "poll_hint" in packet or "from=cdp" in packet
+        assert "poll_hint" in packet or "from=web-anthropic" in packet
         primary_idx = packet.find("cdp/opus-5")
         escape_idx = packet.lower().find("escape")
         submit_idx = packet.find("project_ask(op=submit")

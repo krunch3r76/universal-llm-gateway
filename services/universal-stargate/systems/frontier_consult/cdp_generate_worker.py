@@ -86,23 +86,31 @@ async def _mark_cdp_unread_through(
     through_turn: int,
     headers: dict[str, str],
 ) -> None:
-    """Mark unread turns addressed to ``cdp`` with turn_number <= through_turn."""
-    mark = await client.patch(
-        f"/threads/{thread_id}/turns/read-state",
-        json={
-            "through_turn": max(1, int(through_turn)),
-            "agent": CDP_REPLY_FROM,
-        },
-        headers=headers,
-    )
-    if mark.status_code >= 300:
-        logger.warning(
-            "cdp mark_read before post: thread=%s through=%s status=%s body=%s",
-            thread_id,
-            through_turn,
-            mark.status_code,
-            mark.text[:200],
+    """Mark unread turns for CDP endpoint through ``through_turn``.
+
+    Marks ``web-anthropic`` (canonical) and legacy ``cdp`` (one-cycle compat for
+    in-flight pointers still addressed ``to=cdp``).
+    """
+    through = max(1, int(through_turn))
+    for agent in (CDP_REPLY_FROM, "cdp"):
+        mark = await client.patch(
+            f"/threads/{thread_id}/turns/read-state",
+            json={
+                "through_turn": through,
+                "agent": agent,
+            },
+            headers=headers,
         )
+        if mark.status_code >= 300:
+            logger.warning(
+                "cdp mark_read before post: thread=%s agent=%s through=%s "
+                "status=%s body=%s",
+                thread_id,
+                agent,
+                through,
+                mark.status_code,
+                mark.text[:200],
+            )
 
 
 def _unread_latest_from_409(resp: Any) -> int | None:
@@ -133,15 +141,17 @@ async def post_cdp_turn(
     request_id: str,
     pointer_turn: int = 1,
 ) -> bool:
-    """Post on-behalf bus turn as ``from=cdp``.
+    """Post on-behalf bus turn as ``from=web-anthropic`` (endpoint address).
 
-    Marks unread turns addressed to ``cdp`` through ``pointer_turn`` before
-    posting — the admit pointer is ``to=cdp``, and agent-bus rejects posts
-    while unread (``unread_turns_exist`` 409).
+    Marks unread turns addressed to the CDP endpoint through ``pointer_turn``
+    before posting — the admit pointer is ``to=web-anthropic`` (legacy
+    ``to=cdp`` still marked during one-cycle compat), and agent-bus rejects
+    posts while unread (``unread_turns_exist`` 409).
 
-    Concurrent CDP admits on the same root (second ``to=cdp`` pointer after
-    this execution's pointer) leave later unread turns; on 409, remake through
-    ``latest_turn_number`` from the error detail and retry once.
+    Concurrent CDP admits on the same root leave later unread turns; on 409,
+    remake through ``latest_turn_number`` from the error detail and retry once.
+    CDP substrate is carried by ``execution_id`` / ``web-anthropic-cdp``, not
+    a separate bus seat.
     """
     token = _agent_bus_token()
     allow_unset = os.getenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "").strip().lower() in (

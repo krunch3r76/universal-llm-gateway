@@ -185,7 +185,7 @@ def mark_proof_emitted(execution_id: str) -> None:
 
 
 def mark_delivered(execution_id: str) -> None:
-    """Record successful on-behalf ``from=cdp`` bus delivery for the leg."""
+    """Record successful on-behalf ``from=web-anthropic`` bus delivery for the leg."""
     conn = _connect()
     try:
         conn.execute(
@@ -230,7 +230,7 @@ def try_claim_proof_publish(*, execution_id: str, holder: str) -> bool:
 
 
 def try_claim_delivery(*, execution_id: str) -> bool:
-    """Atomic claim before ``from=cdp`` bus delivery — one success turn per leg."""
+    """Atomic claim before ``from=web-anthropic`` bus delivery — one success turn per leg."""
     conn = _connect()
     try:
         conn.execute(

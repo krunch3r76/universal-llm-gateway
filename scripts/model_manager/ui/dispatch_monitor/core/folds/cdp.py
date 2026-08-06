@@ -17,7 +17,8 @@ from ..protocols import EventRecord
 #: Default wall from ``libs/claude_bundles/cdp_model_endpoint.py`` — cost ceiling, not completion.
 DEFAULT_MAX_WALL_S = 1800
 
-CDP_REPLY_FROM = "cdp"
+# Keep in sync with libs/claude_bundles/cdp_model_endpoint.CDP_REPLY_FROM
+CDP_REPLY_FROM = "web-anthropic"
 
 
 class CdpState:
