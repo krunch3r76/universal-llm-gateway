@@ -281,12 +281,21 @@ async def prepare_cursor_sdk_generate(
             reused=False,
         )
 
+    has_explicit_prompt_source = packet_path is not None or (
+        prompt_bind_mode == "explicit_inline"
+    )
     await post_coord_admit_pointer(
         coord_thread_id=parent_dispatch_thread_id,
         worker_thread_id=thread_id,
         to_agent=coord_recipient,
         caller_agent=caller_agent,
         contract=handoff_contract,
+        request_id=request_id,
+        execution_id=execution_id,
+        prompt_source_thread=dispatch_thread_id,
+        prompt_bind_mode=prompt_bind_mode,
+        prompt_turn_number=prompt_turn_number,
+        has_explicit_prompt_source=has_explicit_prompt_source,
     )
 
     from .generate_admission_context_store import write_admission_context

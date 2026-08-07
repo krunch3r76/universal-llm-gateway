@@ -818,6 +818,45 @@ def FrontierReviewChildPromptBind(  # noqa: N802
 
 
 @event_factory
+def FrontierAdmitPointerLoopClosure(  # noqa: N802
+    *,
+    request_id: str | None,
+    execution_id: str | None,
+    admit_target_thread: str,
+    prompt_source_thread: str,
+    prompt_bind_mode: str | None,
+    prompt_turn_number: int | None,
+    has_explicit_prompt_source: bool,
+    loop_closure: bool,
+    allowlisted_silent: bool,
+    would_have_refused: bool,
+    would_have_refused_total: int,
+    reason: str,
+    spawn_uses_latest_on_thread: bool,
+) -> Event:
+    """Transitional B.1 detector — joinable with review_child.prompt_bind (6655)."""
+    return Event(
+        signal="frontier.admit_pointer.loop_closure",
+        payload={
+            "request_id": request_id,
+            "execution_id": execution_id,
+            "admit_target_thread": admit_target_thread,
+            "prompt_source_thread": prompt_source_thread,
+            "prompt_bind_mode": prompt_bind_mode,
+            "prompt_turn_number": prompt_turn_number,
+            "has_explicit_prompt_source": has_explicit_prompt_source,
+            "loop_closure": loop_closure,
+            "allowlisted_silent": allowlisted_silent,
+            "would_have_refused": would_have_refused,
+            "would_have_refused_total": would_have_refused_total,
+            "reason": reason,
+            "spawn_uses_latest_on_thread": spawn_uses_latest_on_thread,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def FrontierSdkReviewChildSpawned(  # noqa: N802
     execution_id: str,
     parent_execution_id: str,

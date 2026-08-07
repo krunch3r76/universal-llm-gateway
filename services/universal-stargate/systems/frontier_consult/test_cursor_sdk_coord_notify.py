@@ -6,7 +6,16 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from .cursor_sdk_admit_loop import (
+    admit_pointer_would_have_refused_total,
+    reset_admit_pointer_would_have_refused_counter_for_tests,
+)
 from .cursor_sdk_coord_notify import post_coord_admit_pointer
+
+
+@pytest.fixture(autouse=True)
+def _reset_counter() -> None:
+    reset_admit_pointer_would_have_refused_counter_for_tests()
 
 
 @pytest.mark.asyncio
@@ -73,6 +82,79 @@ async def test_coord_admit_non_implement_omits_todo_line(
     )
     payload = post_turn.await_args.args[1]
     assert "bound todo" not in payload["body"]
+
+
+@pytest.mark.asyncio
+async def test_a6655_loop_closure_warns_but_still_posts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B.3 withheld — loop detector fires, admit still posts."""
+    post_turn = AsyncMock()
+    published: list[str] = []
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_coord_notify.make_async_client",
+        lambda *a, **k: _client_ctx(post_turn),
+    )
+    monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
+
+    def _capture(event: object) -> None:
+        published.append(getattr(event, "signal", ""))
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_coord_notify.publish_frontier_event",
+        _capture,
+    )
+
+    await post_coord_admit_pointer(
+        coord_thread_id="7031",
+        worker_thread_id="7032",
+        to_agent="dispatch",
+        caller_agent="cursor-auto",
+        contract="implement",
+        request_id="req-6655",
+        execution_id="exec-6655",
+        prompt_source_thread="7031",
+        prompt_bind_mode="latest",
+        prompt_turn_number=None,
+        has_explicit_prompt_source=False,
+    )
+    post_turn.assert_awaited_once()
+    assert "frontier.admit_pointer.loop_closure" in published
+    assert admit_pointer_would_have_refused_total() == 1
+
+
+@pytest.mark.asyncio
+async def test_a6655_frozen_same_thread_silent_no_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    post_turn = AsyncMock()
+    published: list[str] = []
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_coord_notify.make_async_client",
+        lambda *a, **k: _client_ctx(post_turn),
+    )
+    monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_coord_notify.publish_frontier_event",
+        lambda event: published.append(getattr(event, "signal", "")),
+    )
+
+    await post_coord_admit_pointer(
+        coord_thread_id="7031",
+        worker_thread_id="7032",
+        to_agent="dispatch",
+        caller_agent="cursor-auto",
+        contract="implement",
+        prompt_source_thread="7031",
+        prompt_bind_mode="frozen_turn",
+        prompt_turn_number=12,
+        has_explicit_prompt_source=False,
+    )
+    post_turn.assert_awaited_once()
+    assert published == []
+    assert admit_pointer_would_have_refused_total() == 0
 
 
 class _client_ctx:

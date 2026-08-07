@@ -9,6 +9,13 @@ import httpx
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 from universal_logging import get_logger
 
+from .cursor_sdk_admit_loop import (
+    classify_admit_pointer_loop,
+    increment_admit_pointer_would_have_refused,
+)
+from .cursor_sdk_generate_signals import publish_frontier_event
+from .events import FrontierAdmitPointerLoopClosure
+
 logger = get_logger(__name__)
 
 _ADMIT_SUBJECT = "cursor-sdk generate admitted"
@@ -40,6 +47,58 @@ def _admit_body(*, worker_thread_id: str, contract: str) -> str:
             "entity_get after worker closeout."
         )
     return "\n".join(lines)
+
+
+def _emit_loop_closure_signal(
+    *,
+    request_id: str | None,
+    execution_id: str | None,
+    admit_target_thread: str,
+    prompt_source_thread: str,
+    prompt_bind_mode: str | None,
+    prompt_turn_number: int | None,
+    has_explicit_prompt_source: bool,
+) -> None:
+    classification = classify_admit_pointer_loop(
+        admit_target_thread=admit_target_thread,
+        prompt_source_thread=prompt_source_thread,
+        prompt_bind_mode=prompt_bind_mode,
+        prompt_turn_number=prompt_turn_number,
+        has_explicit_prompt_source=has_explicit_prompt_source,
+    )
+    if not classification.loop_closure:
+        return
+    total = 0
+    if classification.would_have_refused:
+        total = increment_admit_pointer_would_have_refused()
+    logger.warning(
+        "admit_pointer loop_closure (non-refusing, B.1): "
+        "admit_target=%s prompt_source=%s mode=%s reason=%s "
+        "would_have_refused=%s total=%s",
+        admit_target_thread,
+        prompt_source_thread,
+        prompt_bind_mode,
+        classification.reason,
+        classification.would_have_refused,
+        total,
+    )
+    publish_frontier_event(
+        FrontierAdmitPointerLoopClosure(
+            request_id=request_id,
+            execution_id=execution_id,
+            admit_target_thread=admit_target_thread,
+            prompt_source_thread=prompt_source_thread,
+            prompt_bind_mode=prompt_bind_mode,
+            prompt_turn_number=prompt_turn_number,
+            has_explicit_prompt_source=has_explicit_prompt_source,
+            loop_closure=classification.loop_closure,
+            allowlisted_silent=classification.allowlisted_silent,
+            would_have_refused=classification.would_have_refused,
+            would_have_refused_total=total,
+            reason=classification.reason,
+            spawn_uses_latest_on_thread=classification.spawn_uses_latest_on_thread,
+        )
+    )
 
 
 async def _post_coord_turn(
@@ -79,9 +138,25 @@ async def post_coord_admit_pointer(
     to_agent: str,
     caller_agent: str | None,
     contract: str,
+    request_id: str | None = None,
+    execution_id: str | None = None,
+    prompt_source_thread: str | None = None,
+    prompt_bind_mode: str | None = None,
+    prompt_turn_number: int | None = None,
+    has_explicit_prompt_source: bool = False,
 ) -> None:
     if not coord_thread_id or coord_thread_id == worker_thread_id:
         return
+    if prompt_source_thread:
+        _emit_loop_closure_signal(
+            request_id=request_id,
+            execution_id=execution_id,
+            admit_target_thread=coord_thread_id,
+            prompt_source_thread=prompt_source_thread,
+            prompt_bind_mode=prompt_bind_mode,
+            prompt_turn_number=prompt_turn_number,
+            has_explicit_prompt_source=has_explicit_prompt_source,
+        )
     await _post_coord_turn(
         coord_thread_id=coord_thread_id,
         to_agent=to_agent,
