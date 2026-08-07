@@ -431,6 +431,8 @@ def attest_delivery_channels(
     *,
     attached: list[str],
     inlined: list[str],
+    execution_id: str = "",
+    satellite_execution_id: str = "",
 ) -> list[str]:
     """Fail closed when a required slug lacks the correct delivery channel.
 
@@ -448,6 +450,10 @@ def attest_delivery_channels(
     ``cdp.skill.delivery_attested`` on success **and** fail via
     ``ledger_skills_channels`` rows + ``attached``/``inlined``/``undelivered``
     — best-effort; never relaxes fail-closed raise semantics.
+
+    Correlation keys (AC-CORR): ``execution_id`` is the **Stargate** seating
+    id; ``satellite_execution_id`` is the cdp_ask admit id. Both keys are always
+    emitted (may be ``\"\"`` for non-seating harness callers).
     """
     if not required:
         return []
@@ -478,6 +484,8 @@ def attest_delivery_channels(
     rows = ledger_skills_channels(
         required, attached=attached_sorted, inlined=inlined_sorted
     )
+    stargate_id = str(execution_id or "")
+    sat_id = str(satellite_execution_id or "")
     if missing or wrong_channel:
         emit_skill_delivery_attested(
             ok=False,
@@ -486,6 +494,8 @@ def attest_delivery_channels(
             undelivered=list(missing),
             wrong_channel=list(wrong_channel),
             rows=rows,
+            execution_id=stargate_id,
+            satellite_execution_id=sat_id,
         )
         parts: list[str] = []
         if missing:
@@ -504,6 +514,8 @@ def attest_delivery_channels(
         undelivered=[],
         wrong_channel=[],
         rows=rows,
+        execution_id=stargate_id,
+        satellite_execution_id=sat_id,
     )
     return list(required)
 

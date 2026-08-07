@@ -127,7 +127,13 @@ def _transcript_grew(before: dict, after: dict) -> bool:
     return after.get("count", 0) > before.get("count", 0)
 
 
-async def send_followup_paste_half(page, prompt: str) -> dict:
+async def send_followup_paste_half(
+    page,
+    prompt: str,
+    *,
+    stargate_execution_id: str = "",
+    satellite_execution_id: str = "",
+) -> dict:
     """Paste *prompt* into a live CSE and verify the user turn — no reply wait.
 
     Send-only contract: calls ``send_prompt`` then **fail-closed** on marker
@@ -137,13 +143,20 @@ async def send_followup_paste_half(page, prompt: str) -> dict:
 
     Returns ``receipt`` of ``dom_paste`` or ``dom_committed`` when proven;
     ``None`` on failure. ``send_verified`` aliases ``receipt is not None``.
+
+    Correlation ids thread into skill-delivery attest on the send path.
     """
     import time
 
     url = page.url or ""
     marker = verification_marker(prompt)
     before = await page.evaluate(_TRANSCRIPT_MARKER_JS)
-    await send_prompt(page, prompt)
+    await send_prompt(
+        page,
+        prompt,
+        stargate_execution_id=stargate_execution_id,
+        satellite_execution_id=satellite_execution_id,
+    )
     after = await page.evaluate(_TRANSCRIPT_MARKER_JS)
     marker_in_committed = False
     if marker:
@@ -189,12 +202,22 @@ async def project_followup_on_page(
     expected_size: ExpectedSize = "auto",
     harvest_source: HarvestSource = "auto",
     download_output: bool = False,
+    stargate_execution_id: str = "",
+    satellite_execution_id: str = "",
 ) -> ProjectAskResult:
-    """Send another turn on the current chat. No navigate."""
+    """Send another turn on the current chat. No navigate.
+
+    Correlation ids thread into ``send_prompt`` → skill-delivery attest.
+    """
     dest = project_url(project_uuid) if project_uuid else "https://claude.ai/new"
     try:
         before = await harvest_assistant(page)
-        await send_prompt(page, prompt)
+        await send_prompt(
+            page,
+            prompt,
+            stargate_execution_id=stargate_execution_id,
+            satellite_execution_id=satellite_execution_id,
+        )
         state = await wait_assistant_reply(
             page,
             before=before,
@@ -269,8 +292,15 @@ async def run_project_conversation(
     expected_size: ExpectedSize = "auto",
     harvest_source: HarvestSource = "auto",
     download_output: bool = False,
+    stargate_execution_id: str = "",
+    satellite_execution_id: str = "",
 ) -> list[ProjectAskResult]:
-    """N-turn consult on one chat. First opens compose; later turns follow up."""
+    """N-turn consult on one chat. First opens compose; later turns follow up.
+
+    Production seating (``converse=True``) enters here. Correlation ids must be
+    threaded to every ``send_prompt`` / ``project_ask_on_page`` site — escape-path
+    plumbing alone leaves production attest payloads empty.
+    """
     if not prompts:
         raise ValueError("prompts required")
     pw, _browser, ctx, _page0 = await connect_cdp(cdp_url)
@@ -291,6 +321,8 @@ async def run_project_conversation(
                 expected_size=expected_size,
                 harvest_source=harvest_source,
                 download_output=download_output,
+                execution_id=satellite_execution_id or None,
+                stargate_execution_id=stargate_execution_id,
             )
         else:
             url = compose_url or "https://claude.ai/new"
@@ -315,7 +347,12 @@ async def run_project_conversation(
                     )
                 ]
             before = await harvest_assistant(page)
-            await send_prompt(page, prompts[0])
+            await send_prompt(
+                page,
+                prompts[0],
+                stargate_execution_id=stargate_execution_id,
+                satellite_execution_id=satellite_execution_id,
+            )
             state = await wait_assistant_reply(
                 page,
                 before=before,
@@ -378,6 +415,8 @@ async def run_project_conversation(
                 expected_size=expected_size,
                 harvest_source=harvest_source,
                 download_output=download_output,
+                stargate_execution_id=stargate_execution_id,
+                satellite_execution_id=satellite_execution_id,
             )
             results.append(nxt)
             if not nxt.ok:

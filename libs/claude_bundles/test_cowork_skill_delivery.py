@@ -21,6 +21,14 @@ from claude_bundles.cowork_skill_delivery import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _silence_skill_delivery_mirror(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prevent attest unit tests from leaking synthetic Event Service rows."""
+    from claude_bundles import events_skill_delivery as esd
+
+    monkeypatch.setattr(esd, "_mirror_to_event_service", lambda _event: None)
+
+
 def test_cursor_only_classifies_as_inject() -> None:
     plan = classify_skill_delivery("claude-ai-cdp-navigation")
     assert plan.surface_class == "cursor_only"
@@ -161,6 +169,8 @@ def test_attest_emits_on_success_with_channel_shape(
     assert payload["attached"] == ["reasoning-posture"]
     assert payload["inlined"] == ["path-sim"]
     assert payload["undelivered"] == []
+    assert payload["execution_id"] == ""
+    assert payload["satellite_execution_id"] == ""
     assert {row["slug"]: row["delivered_via"] for row in payload["rows"]} == {
         "reasoning-posture": "attach",
         "path-sim": "inline",
@@ -187,9 +197,32 @@ def test_attest_emits_on_fail_then_raises(
     assert payload["attached"] == []
     assert payload["inlined"] == []
     assert payload["undelivered"] == ["reasoning-posture"]
+    assert payload["execution_id"] == ""
+    assert payload["satellite_execution_id"] == ""
     assert payload["rows"] == [
         {"slug": "reasoning-posture", "delivered_via": "undelivered"}
     ]
+
+
+def test_attest_emits_correlation_keys_stargate_scoped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC-CORR CONSTRAINT: payload execution_id is Stargate, not satellite."""
+    from claude_bundles import events_skill_delivery as esd
+
+    captured: list[object] = []
+    monkeypatch.setattr(esd, "_mirror_to_event_service", captured.append)
+    attest_delivery_channels(
+        ["reasoning-posture", "path-sim"],
+        attached=["reasoning-posture"],
+        inlined=["path-sim"],
+        execution_id="sg-exec-1",
+        satellite_execution_id="sat-exec-1",
+    )
+    payload = captured[0].payload  # type: ignore[attr-defined]
+    assert payload["execution_id"] == "sg-exec-1"
+    assert payload["satellite_execution_id"] == "sat-exec-1"
+    assert payload["execution_id"] != payload["satellite_execution_id"]
 
 
 def test_cdp_inline_path_sim_is_size_gated_excerpt() -> None:

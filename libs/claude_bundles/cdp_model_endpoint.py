@@ -527,6 +527,7 @@ def run_cdp_generate(
         harvest_source=harvest_source,
         expected_size=expected_size,
         download_output=download_output,
+        stargate_execution_id=execution_id,
     )
     try:
         submitted = _submit_with_overload_retry(

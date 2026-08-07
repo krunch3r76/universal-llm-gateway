@@ -63,6 +63,14 @@ class SubmitProjectAskRequest(BaseModel):
     no_project_uuid: bool = False
     project_uuid: str = ""
     ensure_cowork_auto: bool = True
+    stargate_execution_id: str | None = Field(
+        default=None,
+        description=(
+            "Stargate CDP generate / frontier consult execution id. Dual-written "
+            "from run_cdp_generate submit; satellite threads it into skill-delivery "
+            "attest payload key execution_id (never the satellite admit id)."
+        ),
+    )
     archive_path: str | None = None
     timeout_s: int = 360
     min_body: int = 40

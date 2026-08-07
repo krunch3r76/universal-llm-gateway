@@ -211,6 +211,24 @@ def resolve_prompt(req: SubmitProjectAskRequest) -> list[str]:
     return [text]
 
 
+def resolve_stargate_execution_id(req: SubmitProjectAskRequest) -> str:
+    """Return Stargate seating id for skill-delivery attest correlation.
+
+    Prefer the explicit submit field; fall back to parsing
+    ``…/ephemeral/cdp-endpoint/<id>/…`` from ``prompt_uri`` (v1 carrier).
+    Empty when neither is available — keys still required present at emit.
+    """
+    explicit = (req.stargate_execution_id or "").strip()
+    if explicit:
+        return explicit
+    uri = (req.prompt_uri or "").strip()
+    marker = "ephemeral/cdp-endpoint/"
+    if marker not in uri:
+        return ""
+    rest = uri.split(marker, 1)[1]
+    return rest.split("/", 1)[0].strip()
+
+
 def _load_prompt_uri(uri: str) -> str:
     if not uri.startswith("cortex://"):
         raise ValueError("prompt_uri must use cortex:// scheme")
@@ -372,6 +390,7 @@ async def run_execution(
             delete_after = (
                 bool(req.delete_after) if req.delete_after is not None else False
             )
+            stargate_execution_id = resolve_stargate_execution_id(req)
             results = await run_project_conversation(
                 prompts,
                 project_uuid="" if req.no_project_uuid else req.project_uuid,
@@ -386,6 +405,8 @@ async def run_execution(
                 expected_size=req.expected_size,
                 harvest_source=req.harvest_source,
                 download_output=req.download_output,
+                stargate_execution_id=stargate_execution_id,
+                satellite_execution_id=execution_id,
             )
             if await abort_check():
                 abort_cleanup(reg, purpose=req.purpose)
@@ -490,6 +511,7 @@ async def run_execution(
             min_body=req.min_body,
             archive_path=archive,
             execution_id=execution_id or None,
+            stargate_execution_id=resolve_stargate_execution_id(req),
             on_harvest=on_harvest,
             expected_size=req.expected_size,
             harvest_source=req.harvest_source,

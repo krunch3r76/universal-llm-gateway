@@ -7,9 +7,33 @@ from pathlib import Path
 import pytest
 
 from cdp_ask.models import SubmitProjectAskRequest
-from cdp_ask.runner import default_archive_path
+from cdp_ask.runner import default_archive_path, resolve_stargate_execution_id
 
 pytestmark = pytest.mark.offline
+
+
+def test_resolve_stargate_execution_id_prefers_explicit_field() -> None:
+    req = SubmitProjectAskRequest(
+        prompt_uri=(
+            "cortex://notes/system/ephemeral/cdp-endpoint/from-uri/prompt.md"
+        ),
+        stargate_execution_id="from-field",
+    )
+    assert resolve_stargate_execution_id(req) == "from-field"
+
+
+def test_resolve_stargate_execution_id_parses_ephemeral_uri() -> None:
+    req = SubmitProjectAskRequest(
+        prompt_uri=(
+            "cortex://notes/system/ephemeral/cdp-endpoint/sg-from-uri/prompt.md"
+        ),
+    )
+    assert resolve_stargate_execution_id(req) == "sg-from-uri"
+
+
+def test_resolve_stargate_execution_id_empty_without_carrier() -> None:
+    req = SubmitProjectAskRequest(prompt_text="hello")
+    assert resolve_stargate_execution_id(req) == ""
 
 
 def test_default_archive_path_scopes_new_asks_by_execution_id(

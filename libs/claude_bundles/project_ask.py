@@ -252,7 +252,14 @@ def submit_control_names() -> tuple[str, ...]:
     return ("Start task", "Send message")
 
 
-async def _insert_prompt_text(page: Page, text: str, *, composer) -> None:
+async def _insert_prompt_text(
+    page: Page,
+    text: str,
+    *,
+    composer,
+    stargate_execution_id: str = "",
+    satellite_execution_id: str = "",
+) -> None:
     """Fill the composer: attach Claude skills via + menu, then paste body.
 
     **Canonical skill attach (operator 2026-07-26):** ``+`` → **Skills** →
@@ -275,6 +282,10 @@ async def _insert_prompt_text(page: Page, text: str, *, composer) -> None:
     After attach, channel attest verifies every **required** slug (from the
     staging ``<!--cdp-required-skills:…-->`` authority marker, not rebuilt from
     delivery channels alone) was delivered via attach ∪ inline.
+
+    ``stargate_execution_id`` / ``satellite_execution_id`` thread into the
+    ``cdp.skill.delivery_attested`` payload (Stargate id under payload key
+    ``execution_id`` — never swap scopes).
     """
     from claude_bundles.composer_skill_observe import attach_skills_verified
     from claude_bundles.cowork_skill_delivery import (
@@ -300,7 +311,13 @@ async def _insert_prompt_text(page: Page, text: str, *, composer) -> None:
             page, attach_slugs, composer=composer
         )
         attached = list(observation.observed)
-    attest_delivery_channels(required, attached=attached, inlined=inline_slugs)
+    attest_delivery_channels(
+        required,
+        attached=attached,
+        inlined=inline_slugs,
+        execution_id=str(stargate_execution_id or ""),
+        satellite_execution_id=str(satellite_execution_id or ""),
+    )
 
     if rest:
         body = rest
@@ -311,13 +328,22 @@ async def _insert_prompt_text(page: Page, text: str, *, composer) -> None:
         await page.keyboard.insert_text(body)
 
 
-async def send_prompt(page: Page, text: str) -> None:
+async def send_prompt(
+    page: Page,
+    text: str,
+    *,
+    stargate_execution_id: str = "",
+    satellite_execution_id: str = "",
+) -> None:
     """Clear the composer, attach leading slash skills, then click submit.
 
     Contract: leading ``/<slug>\\n`` tokens name Customize skills to attach via
     ``+`` → Skills → pick-each (not typed); remaining body (incl. hybrid escape
     Use-the lines / ``<skills_inline>``) pastes via insert_text. Fail-closed
     submit (no Enter fallback) via compose attestation / live_discover.
+
+    Correlation ids optional: threaded into channel-attest telemetry only;
+    empty strings are valid for non-seating harness callers.
     """
     from claude_bundles.composer_session_skills import require_compose_surface
 
@@ -329,7 +355,13 @@ async def send_prompt(page: Page, text: str) -> None:
     await page.wait_for_timeout(300)
     await page.keyboard.press("Control+A")
     await page.keyboard.press("Backspace")
-    await _insert_prompt_text(page, text, composer=composer)
+    await _insert_prompt_text(
+        page,
+        text,
+        composer=composer,
+        stargate_execution_id=stargate_execution_id,
+        satellite_execution_id=satellite_execution_id,
+    )
     await page.wait_for_timeout(600)
 
     fp = await compose_mode_fingerprint(page)
@@ -444,12 +476,18 @@ async def project_ask_on_page(
     min_body: int = 40,
     archive_path: str | None = None,
     execution_id: str | None = None,
+    stargate_execution_id: str = "",
     on_harvest: Callable[[dict], Awaitable[None]] | None = None,
     expected_size: ExpectedSize = "auto",
     harvest_source: HarvestSource = "auto",
     download_output: bool = False,
 ) -> ProjectAskResult:
-    """Run one sealed ask on an existing Playwright page."""
+    """Run one sealed ask on an existing Playwright page.
+
+    ``execution_id`` remains the **satellite** admit id (archive path only).
+    ``stargate_execution_id`` is the Stargate seating id threaded into skill
+    delivery attest (payload key ``execution_id``).
+    """
     dest = project_url(project_uuid)
     try:
         model_info = await _compose_model_selected(
@@ -470,7 +508,12 @@ async def project_ask_on_page(
                 error=f"model select failed: {model_info}",
             )
         before = await harvest_assistant(page)
-        await send_prompt(page, prompt)
+        await send_prompt(
+            page,
+            prompt,
+            stargate_execution_id=stargate_execution_id,
+            satellite_execution_id=str(execution_id or ""),
+        )
         state = await wait_assistant_reply(
             page,
             before=before,
@@ -591,12 +634,17 @@ async def run_project_ask(
     min_body: int = 40,
     archive_path: str | None = None,
     execution_id: str | None = None,
+    stargate_execution_id: str = "",
     on_harvest: Callable[[dict], Awaitable[None]] | None = None,
     expected_size: ExpectedSize = "auto",
     harvest_source: HarvestSource = "auto",
     download_output: bool = False,
 ) -> ProjectAskResult:
-    """Connect CDP, run one sealed ask, disconnect."""
+    """Connect CDP, run one sealed ask, disconnect.
+
+    ``execution_id`` = satellite admit id (archive); ``stargate_execution_id``
+    threads into skill-delivery attest correlation keys.
+    """
     pw, _browser, ctx, _page0 = await connect_cdp(cdp_url)
     try:
         page = await pick_chat_page(ctx, prefer_url_substr="/new")
@@ -611,6 +659,7 @@ async def run_project_ask(
             min_body=min_body,
             archive_path=archive_path,
             execution_id=execution_id,
+            stargate_execution_id=stargate_execution_id,
             on_harvest=on_harvest,
             expected_size=expected_size,
             harvest_source=harvest_source,

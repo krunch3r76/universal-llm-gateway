@@ -27,8 +27,15 @@ def cdp_skill_delivery_attested(
     undelivered: list[str],
     wrong_channel: list[str] | None = None,
     rows: list[dict[str, str]] | None = None,
+    execution_id: str = "",
+    satellite_execution_id: str = "",
 ) -> Event:
-    """Observation event for sealed CDP skill channel attest (success or fail)."""
+    """Observation event for sealed CDP skill channel attest (success or fail).
+
+    ``execution_id`` is the **Stargate** seating id (indexes ``$.execution_id``);
+    ``satellite_execution_id`` is the cdp_ask admit id. Keys are always present;
+    non-seating callers may leave both empty rather than inventing ids.
+    """
     return Event(
         signal="cdp.skill.delivery_attested",
         role="observation",
@@ -40,6 +47,8 @@ def cdp_skill_delivery_attested(
             "undelivered": list(undelivered),
             "wrong_channel": list(wrong_channel or []),
             "rows": list(rows or []),
+            "execution_id": str(execution_id or ""),
+            "satellite_execution_id": str(satellite_execution_id or ""),
         },
     )
 
@@ -52,11 +61,14 @@ def emit_skill_delivery_attested(
     undelivered: list[str],
     wrong_channel: list[str] | None = None,
     rows: list[dict[str, str]] | None = None,
+    execution_id: str = "",
+    satellite_execution_id: str = "",
 ) -> Event | None:
     """Build + best-effort-mirror ``cdp.skill.delivery_attested``; never raises.
 
     Returns the Event when construction succeeds (tests assert payload); returns
     None only if factory construction itself fails (should not happen in prod).
+    Payload ``execution_id`` must be Stargate-scoped (never the satellite admit id).
     """
     try:
         event = cdp_skill_delivery_attested(
@@ -66,6 +78,8 @@ def emit_skill_delivery_attested(
             undelivered=undelivered,
             wrong_channel=wrong_channel,
             rows=rows,
+            execution_id=execution_id,
+            satellite_execution_id=satellite_execution_id,
         )
     except Exception:  # noqa: BLE001 — attest path must not fail on telemetry
         return None

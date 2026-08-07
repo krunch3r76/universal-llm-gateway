@@ -170,6 +170,7 @@ async def test_handler_cdp_model_runs_adapter_not_native_loop(
 
     assert native_called is False
     assert captured["model_id"] == "cdp/opus-5"
+    assert captured["converse"] is True
     assert captured["harvest_source"] == "chat"
     assert captured["expected_size"] == "small"
     assert out.raw == "cdp body"

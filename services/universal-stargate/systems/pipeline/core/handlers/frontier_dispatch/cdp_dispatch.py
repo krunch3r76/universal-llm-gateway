@@ -280,6 +280,7 @@ async def run_cdp_dispatch(
         expected_size=harvest["expected_size"],
         download_output=harvest["download_output"],
         holder="frontier-dispatch-v1",
+        converse=True,
         on_submitted=_on_submitted,
     )
     latency_ms = (time.monotonic() - started) * 1000.0
