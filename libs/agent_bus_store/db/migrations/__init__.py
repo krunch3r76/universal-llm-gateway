@@ -8,10 +8,22 @@ from __future__ import annotations
 
 import sqlite3
 
-from . import migration_001, migration_002, migration_003, migration_004
+from . import (
+    migration_001,
+    migration_002,
+    migration_003,
+    migration_004,
+    migration_005,
+)
 
 # Ordered list — append new migration modules here.
-MIGRATIONS = [migration_001, migration_002, migration_003, migration_004]
+MIGRATIONS = [
+    migration_001,
+    migration_002,
+    migration_003,
+    migration_004,
+    migration_005,
+]
 
 
 def _ensure_migrations_table(conn: sqlite3.Connection) -> None:

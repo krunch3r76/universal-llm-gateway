@@ -1,12 +1,14 @@
 """TTL backstop watchdog for bus thread lifecycle.
 
-Runs as a background asyncio task. Three sweep paths:
+Runs as a background asyncio task. Four sweep paths:
 
   1. pending → abandoned   — thread created with intent but never admitted
   2. admitted → abandoned  — dispatch registered but first turn never posted
   3. active → abandoned    — no activity within the long-TTL window (dispatch-
                              originated threads only; user-driven active threads
                              are caller-managed and not reaped here)
+  4. quiet-with-WIP soft-actuate — seat silent with open WIP (A′ / arc 6885);
+     alarm row + event + lane turn (does not abandon the thread)
 
 Each sweep pass is synchronous (SQLite I/O); called from the async loop directly
 (no executor needed — infrequent, fast).
@@ -171,9 +173,11 @@ def _sweep() -> None:
     _reap_pending(_cutoff_for_ttl(_PENDING_TTL))
     _reap_admitted(_cutoff_for_ttl(_ADMITTED_TTL))
     _reap_active(_cutoff_for_ttl(_ACTIVE_ABANDON_TTL))
+    from .quiet_sweep import sweep_quiet_with_wip
     from .reconcile import reconcile_orphaned_dispatches
 
     reconcile_orphaned_dispatches()
+    sweep_quiet_with_wip()
 
 
 async def run_watchdog() -> None:

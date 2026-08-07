@@ -47,8 +47,12 @@ Arm **both** at the **first dispatch** of any mission with work in flight (not w
 2. **``send_later``** (backup, survives container restart) — one-shot; **re-arm every
    turn** or the backup silently expires. Carry **pointers** (lanes + standing-handoff
    URI + "READ IT"), not rotting rank/residual state.
-3. **Tear down** at true mission close (``TaskStop`` on the monitor task id) so a finished
-   mission does not keep pinging a dead lane.
+3. **Tear down Monitor** at true mission close / hop-after-admit (``TaskStop`` on the
+   monitor task id this seat armed). **``send_later``:** one-shot — self-disables
+   (``run_once_fired``); teardown usually unnecessary. If clearing a still-pending
+   self-wake, ``delete_trigger`` **only** ``trigger_id``s this seat recorded at arm —
+   **never** every pending / class-delete (shared surface with the human principal;
+   guide §14a corrected + §16 — statute reminders live there).
 4. Wake is the **net**, not the plan — poll/harvest while the stream is live.
 
 Call shapes (paste; substitute ``<LANES>`` / standing-handoff URI):
