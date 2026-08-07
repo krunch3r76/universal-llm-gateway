@@ -3,6 +3,7 @@
 import asyncio
 import time
 
+from deploy_identity.code_version import resolve_code_version
 from fastapi import APIRouter, Depends, Request
 from universal_logging import get_logger
 
@@ -26,6 +27,7 @@ async def health_check(
         if proxy.pipeline_registry is not None
         else 0
     )
+    code_version = resolve_code_version()
 
     # Router-only master: forward_request goes through model-routing which
     # requires catalog (T0: ¬catalog). Check federation liveness directly via
@@ -49,6 +51,7 @@ async def health_check(
                 "vram_total_mb": gw.vram_total_mb,
                 "timestamp": int(time.time()),
                 "version": "1.0.0",
+                "code_version": code_version,
             }
             if not pipeline_ready:
                 response["message"] = (
@@ -63,6 +66,7 @@ async def health_check(
             "message": "Stargate proxy is running but no gateway connected",
             "timestamp": int(time.time()),
             "version": "1.0.0",
+            "code_version": code_version,
         }
 
     # Edge/standalone: forward to local gateway directly
@@ -81,6 +85,8 @@ async def health_check(
             if isinstance(payload, dict):
                 payload["pipeline_system_ready"] = pipeline_ready
                 payload["pipeline_count"] = pipeline_count
+                # Stargate process identity — not the nested gateway SHA.
+                payload["code_version"] = code_version
                 if payload.get("status") == "healthy" and not pipeline_ready:
                     payload["status"] = "stargate_proxy_healthy"
                     payload["message"] = (
@@ -95,6 +101,7 @@ async def health_check(
             "pipeline_count": pipeline_count,
             "timestamp": int(time.time()),
             "version": "1.0.0",
+            "code_version": code_version,
         }
     except asyncio.CancelledError:
         raise
@@ -108,4 +115,5 @@ async def health_check(
             "unavailable",
             "timestamp": int(time.time()),
             "version": "1.0.0",
+            "code_version": code_version,
         }

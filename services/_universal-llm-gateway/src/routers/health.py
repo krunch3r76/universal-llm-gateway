@@ -1,5 +1,6 @@
 """Health check endpoint - /health"""
 
+from deploy_identity.code_version import resolve_code_version
 from fastapi import APIRouter
 from universal_logging import get_logger
 
@@ -30,4 +31,5 @@ async def health_check():
         role="gateway",
         version=__version__,
         uptime_seconds=uptime,
+        code_version=resolve_code_version(),
     )

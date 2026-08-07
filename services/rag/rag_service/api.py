@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from deploy_identity.code_version import resolve_code_version
 from fastapi import APIRouter, HTTPException
 from openapi_mcp.binding import x_mcp
 
@@ -69,6 +70,7 @@ def health() -> dict[str, object]:
         else "unavailable",
         "embedding_model": get_embed_model_id() or "unconfigured",
         "watcher": "running" if state._watcher_manager is not None else "inactive",
+        "code_version": resolve_code_version(),
         "extraction_queue": {
             "total": queue_breakdown.total if queue_breakdown is not None else 0,
             "ready": queue_breakdown.ready if queue_breakdown is not None else 0,

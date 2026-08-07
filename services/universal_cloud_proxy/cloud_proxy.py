@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from deploy_identity.code_version import resolve_code_version
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.responses import Response
@@ -559,6 +560,7 @@ async def health() -> dict[str, Any]:
         "status": "ok",
         "providers": sorted(providers),
         "model_count": len(models),
+        "code_version": resolve_code_version(),
     }
 
 

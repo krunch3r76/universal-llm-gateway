@@ -14,6 +14,7 @@ import logging
 import sqlite3
 from typing import Any
 
+from deploy_identity.code_version import resolve_code_version
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
@@ -88,7 +89,14 @@ def create_query_router(
     async def health_handler() -> JSONResponse:
         metrics = ingest.get_metrics() if ingest else {}
         subs = len(subscriber_queues)
-        return JSONResponse({"status": "ok", "subscribers": subs, **metrics})
+        return JSONResponse(
+            {
+                "status": "ok",
+                "subscribers": subs,
+                **metrics,
+                "code_version": resolve_code_version(),
+            }
+        )
 
     @router.get("/metrics")
     async def metrics_handler() -> JSONResponse:

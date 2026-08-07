@@ -18,6 +18,7 @@ class HealthResponse(BaseModel):
                 "timestamp": 1699000000,
                 "version": "1.0.0",
                 "uptime_seconds": 3600.5,
+                "code_version": "0123456789abcdef0123456789abcdef01234567",
             }
         }
     )
@@ -36,6 +37,10 @@ class HealthResponse(BaseModel):
     )
     version: str = Field(..., description="API version")
     uptime_seconds: float = Field(..., description="Server uptime in seconds")
+    code_version: str = Field(
+        ...,
+        description="Running process code SHA (deploy_identity.resolve_code_version)",
+    )
 
 
 class MetricsResponse(BaseModel):
