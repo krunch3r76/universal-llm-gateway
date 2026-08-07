@@ -44,6 +44,22 @@ operator work stopped.
 `holder`, `converse=true`) may reattach the CSE if the lane registry holds it. Authoritative
 continuity = private request thread + `mark_read` before the next `request`.
 
+### Three git planes on CLOSEOUT (a:28271 — shared vocabulary)
+
+Distinct from transport-vs-bus above. Closeout `checkpoint:` / `deployment_state:` /
+`plane:` name **which git world** a claim is true in:
+
+| Plane | Tokens |
+|---|---|
+| Commit exists (possibly Lane-B only) | `committed@lane-B(<ref>)` |
+| Local master land (what services serve) | `landed@local-master` · `NOT landed@local-master` |
+| Origin publish | `published@origin` · `NOT published@origin` |
+
+Always-present `plane:` headline makes stranding grep-visible; `@plane` qualifiers are
+additive on existing fields. `unknown@lane-B (capture head absent)` is never upgraded to a
+positive plane. `status: complete` ⊥ plane-reached. Doctrine shared with 6928/6930 inv-16
+audit — vocabulary only, not the assembler diff (`todo:closeout-plane-legibility`).
+
 **CSE lifetime (BINDING — retain):** the Cowork CSE stays live until (a) a rare human-operator
 escalation, (b) a **continuity handoff** — the old CSE breaks only after the new CSE's launch
 is *confirmed* (registration / `chat_url` observed) — which under the episodic shape is the

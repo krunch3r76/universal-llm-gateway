@@ -12,14 +12,25 @@ from dataclasses import dataclass
 
 _CLOSEOUT_TYPE_RE = re.compile(r"(?i)^TYPE:\s*CLOSEOUT\b", re.M)
 _CHECKPOINT_LINE_RE = re.compile(r"(?im)^checkpoint:\s*(.+)$")
+# Optional @plane infix (a:28271 / closeout-plane-legibility) — additive grammar.
+_PLANE_INFIX = r"(?:@[\w.-]+(?:\([^)]*\))?)?"
 _CHECKPOINT_COMMITTED_RE = re.compile(
-    r"^committed\s+([0-9a-f]{7,40})\s+paths=(\d+)"
+    rf"^committed{_PLANE_INFIX}\s+([0-9a-f]{{7,40}})\s+paths=(\d+)"
     r"(?:\s+\(\+(\d+)\s+pending\))?\s*$",
     re.I,
 )
-_CHECKPOINT_NOTHING_RE = re.compile(r"^nothing_authored\s*$", re.I)
-_CHECKPOINT_DEFERRED_RE = re.compile(r"^deferred:\s*(.+)$", re.I | re.S)
-_CHECKPOINT_AUTHORED_CORTEX_RE = re.compile(r"^authored_cortex:\s*(.+)$", re.I)
+_CHECKPOINT_NOTHING_RE = re.compile(
+    rf"^nothing_authored{_PLANE_INFIX}\s*$",
+    re.I,
+)
+_CHECKPOINT_DEFERRED_RE = re.compile(
+    rf"^deferred{_PLANE_INFIX}:\s*(.+)$",
+    re.I | re.S,
+)
+_CHECKPOINT_AUTHORED_CORTEX_RE = re.compile(
+    rf"^authored_cortex{_PLANE_INFIX}:\s*(.+)$",
+    re.I,
+)
 _AUTHORED_CORTEX_PAIR_RE = re.compile(
     r"^(cortex://\S+)\s+([0-9a-f]{64})$"
 )
@@ -27,10 +38,12 @@ _AUTHORED_CORTEX_PAIR_RE = re.compile(
 LANE_A_CHECKPOINT_FIX_HINT = (
     "Add a `checkpoint:` line to the CLOSEOUT body (fail-closed). Legal values: "
     "`checkpoint: committed <sha> paths=N` (path-explicit lane commit; optional "
-    "`(+M pending)` when authored paths remain dirty), "
+    "`(+M pending)` when authored paths remain dirty; optional `@plane` infix "
+    "e.g. `committed@local-master`), "
     "`checkpoint: authored_cortex: <cortex-uri> <sha256>` "
-    "(semicolon-separated pairs for multi-write), "
-    "`checkpoint: nothing_authored`, or `checkpoint: deferred: <reason>`. "
+    "(semicolon-separated pairs for multi-write; optional `@plane`), "
+    "`checkpoint: nothing_authored`, or `checkpoint: deferred: <reason>` "
+    "(optional `@plane` on each). "
     "Commit clears lane authorship — never `--all`, never foreign WIP. "
     "Commit is not a live/done gate; `deferred:` is always acceptable."
 )

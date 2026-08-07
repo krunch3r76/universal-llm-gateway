@@ -30,6 +30,10 @@ from services.git_integration_worker.cursor_auto.closeout_relay_common import (
 from services.git_integration_worker.cursor_auto.closeout_relay_cortex_spill import (
     promote_clamped_closeout_to_cortex,
 )
+from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+    inject_plane_discrepancy_line,
+    inject_plane_line,
+)
 from services.git_integration_worker.cursor_auto.closeout_tree_state import (
     compute_closeout_tree_state,
     strip_deployment_state_line,
@@ -256,6 +260,11 @@ async def relay_closeout_outcome(
         wrapper_text=sdk_body,
     )
     relay_body = inject_checkpoint_line(relay_body, value=tree_state.checkpoint)
+    relay_body = inject_plane_line(relay_body, value=tree_state.plane_line)
+    relay_body = inject_plane_discrepancy_line(
+        relay_body,
+        value=tree_state.plane_discrepancy,
+    )
     if second_read is not None:
         relay_body = inject_second_read_block(
             relay_body,
@@ -320,6 +329,7 @@ async def relay_closeout_outcome(
         closeout_source=payload.source,
         relay_note=payload.relay_note,
         deployment_state=tree_state.deployment_state,
+        plane_line=tree_state.plane_line,
         extra={
             "gate_plan": gate_plan,
             "terminal_status": terminal_status,

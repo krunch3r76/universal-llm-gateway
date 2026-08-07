@@ -127,6 +127,23 @@ ordinal adjacency, or "next open after…" is `derived` — ¬ render as observe
 SOT: `completion-provenance-discipline` §7. cursor-auto REPORTING CONTRACT
 carries the one-liner; this skill owns judgment depth.
 
+## Closeout git planes (a:28271 / closeout-plane-legibility)
+
+Work status has **three** git planes, not two. Any rule naming only two
+reproduces the unlabeled-provenance defect:
+
+| Plane | Token | Meaning |
+|---|---|---|
+| Commit exists | `committed@lane-B(<ref>)` | Object in ODB / Lane-B branch tip |
+| Local master land | `landed@local-master` / `NOT landed@local-master` | Ancestor of local `refs/heads/master` |
+| Origin publish | `published@origin` / `NOT published@origin` | Ancestor of local `refs/remotes/origin/master` (no fetch) |
+
+Closeouts carry an always-present `plane:` headline (grep-visible stranding —
+no cross-field join) plus `@plane` qualifiers on `checkpoint:` /
+`deployment_state:`. Degraded capture → `unknown@lane-B (capture head absent)` —
+never upgrade unknown to a positive plane. `status: complete` is independent of
+plane reached (deliberate-unlanded closeouts remain legal).
+
 ## Composes with
 
 - `completion-provenance-discipline` — tool-response binding + status/rank register (§7)

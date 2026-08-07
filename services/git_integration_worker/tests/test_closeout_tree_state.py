@@ -68,9 +68,10 @@ def test_compute_closeout_tree_state_uncommitted_never_claims_landed() -> None:
         )
     assert isinstance(state, CloseoutTreeState)
     assert state.deployment_state is not None
-    assert "authored-not-committed" in state.deployment_state
+    assert "authored-not-committed@local-master" in state.deployment_state
     assert "landed-not-live" not in state.deployment_state
     assert "propagation-owed" not in state.deployment_state
+    assert state.plane_line.startswith("plane:")
     assert not deployment_state_contradicts_checkpoint(
         checkpoint=state.checkpoint,
         deployment_state=state.deployment_state,
@@ -93,10 +94,12 @@ def test_compute_closeout_tree_state_committed_allows_obligation() -> None:
             wrapper_text=wrapper,
         )
     assert state.deployment_state is not None
-    assert "propagation-owed" in state.deployment_state
+    assert "propagation-owed@local-master" in state.deployment_state
     assert "liveness: unknown" in state.deployment_state
     assert "landed-not-live" not in state.deployment_state
     assert "not yet live" not in state.deployment_state
+    assert state.checkpoint.startswith("committed@local-master ")
+    assert state.plane_line.startswith("plane:")
     assert not deployment_state_contradicts_checkpoint(
         checkpoint=state.checkpoint,
         deployment_state=state.deployment_state,
@@ -114,6 +117,8 @@ def test_compute_closeout_tree_state_nothing_authored_has_no_deployment_state() 
             wrapper_text='{"schema_version":1,"status":"complete"}',
         )
     assert state.deployment_state is None
+    assert state.checkpoint == "nothing_authored@local-master"
+    assert state.plane_line.startswith("plane:")
 
 
 def test_compute_closeout_tree_state_threads_wrapper_for_authored_cortex() -> None:
@@ -136,8 +141,9 @@ def test_compute_closeout_tree_state_threads_wrapper_for_authored_cortex() -> No
             dispatch_id="d-cortex",
             wrapper_text=wrapper,
         )
-    assert state.checkpoint.startswith("authored_cortex:")
+    assert state.checkpoint.startswith("authored_cortex@local-master:")
     assert state.deployment_state is None
+    assert state.plane_line.startswith("plane:")
     kwargs = compute.call_args.kwargs
     assert kwargs["wrapper_text"] == wrapper
     assert kwargs["cortex_root"] == Path("/tmp/cortex-root")

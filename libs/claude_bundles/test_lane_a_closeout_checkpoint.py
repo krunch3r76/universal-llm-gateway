@@ -130,3 +130,22 @@ def test_malformed_doubled_checkpoint_normalizes() -> None:
     assert normalize_checkpoint_value(f"`{raw}`") == (
         "committed f230fa040476144e73827520ee5a78d470a24107 paths=5"
     )
+
+
+def test_plane_qualified_checkpoint_tokens_legal() -> None:
+    """closeout-plane-legibility — @plane infix is additive, not a malform."""
+    bodies = [
+        "TYPE: CLOSEOUT\ncheckpoint: committed@local-master abcdef1 paths=2\n",
+        "TYPE: CLOSEOUT\ncheckpoint: deferred@local-master: waiting on land\n",
+        "TYPE: CLOSEOUT\ncheckpoint: nothing_authored@local-master\n",
+        (
+            "TYPE: CLOSEOUT\n"
+            "checkpoint: authored_cortex@local-master: "
+            "cortex://notes/system/x.md "
+            + ("a" * 64)
+            + "\n"
+        ),
+    ]
+    for body in bodies:
+        verdict = validate_lane_a_closeout_checkpoint(body=body)
+        assert verdict.ok, (body, verdict.reason)

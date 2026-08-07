@@ -1,7 +1,9 @@
-"""Unified git-tree observation for lane-A checkpoint and deployment_state.
+"""Unified git-tree observation for lane-A checkpoint, deployment_state, and plane.
 
-Both fields derive from one probe so closeout prose cannot claim ``landed`` while
-the tree is still dirty on authored paths.
+Both disposition fields and the always-present ``plane:`` headline derive from one
+assembly-time observation so closeout prose cannot claim ``landed`` while the tree
+is still dirty on authored paths, and so stranded Lane-B commits render without a
+cross-field join (restores the one-probe invariant for the executor §2 cell).
 """
 
 from __future__ import annotations
@@ -10,6 +12,15 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+    annotate_plane_discrepancy,
+    checkpoint_claims_committed,
+    parse_capture_plane_keys,
+    probe_three_planes,
+    qualify_checkpoint_value,
+    qualify_deployment_state,
+    render_plane_headline,
+)
 from services.git_integration_worker.cursor_auto.episode_residue import (
     obligation_deployment_state_from_wrapper,
 )
@@ -27,6 +38,8 @@ class CloseoutTreeState:
 
     checkpoint: str
     deployment_state: str | None
+    plane_line: str
+    plane_discrepancy: str | None = None
 
 
 def compute_closeout_tree_state(
@@ -35,10 +48,12 @@ def compute_closeout_tree_state(
     dispatch_id: str,
     wrapper_text: str | None = None,
 ) -> CloseoutTreeState:
-    """Derive checkpoint and deployment_state from one tree observation.
+    """Derive checkpoint, deployment_state, and plane headline from one probe.
 
-    Git porcelain/lane-refs remain the primary probe; wrapper cortex offgit URIs
-    feed the row-19 ``authored_cortex:`` arm when the git plane is empty.
+    Lane-A porcelain/lane-refs remain the checkpoint authority; capture
+    ``head_sha``/``branch`` key the three-plane probe (local refs, no fetch).
+    Wrapper cortex offgit URIs feed the row-19 ``authored_cortex:`` arm when the
+    git plane is empty.
     """
     from implement_admission.closeout_helpers import cortex_files_root
 
@@ -49,7 +64,7 @@ def compute_closeout_tree_state(
         cortex_root=cortex_files_root(),
     )
     deployment_state: str | None = None
-    if checkpoint.startswith("committed "):
+    if checkpoint_claims_committed(checkpoint):
         deployment_state = obligation_deployment_state_from_wrapper(wrapper_text)
     elif checkpoint != "nothing_authored":
         authored = authored_paths_for_dispatch(
@@ -63,9 +78,25 @@ def compute_closeout_tree_state(
                 f"authored-not-committed — {count} {noun} "
                 "await path-explicit commit"
             )
+    keys = parse_capture_plane_keys(wrapper_text)
+    plane = probe_three_planes(
+        source_repo,
+        head_sha=keys.head_sha,
+        branch=keys.branch,
+    )
+    checkpoint = qualify_checkpoint_value(checkpoint)
+    deployment_state = qualify_deployment_state(deployment_state)
+    plane_line = render_plane_headline(plane)
+    discrepancy = annotate_plane_discrepancy(
+        checkpoint=checkpoint,
+        deployment_state=deployment_state,
+        plane=plane,
+    )
     return CloseoutTreeState(
         checkpoint=checkpoint,
         deployment_state=deployment_state,
+        plane_line=plane_line,
+        plane_discrepancy=discrepancy,
     )
 
 
@@ -84,7 +115,7 @@ def deployment_state_contradicts_checkpoint(
     )
     if not claims_post_commit_obligation:
         return False
-    return not checkpoint.startswith("committed ")
+    return not checkpoint_claims_committed(checkpoint)
 
 
 def strip_deployment_state_line(body: str) -> str:

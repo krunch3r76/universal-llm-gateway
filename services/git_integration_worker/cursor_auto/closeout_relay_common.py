@@ -274,7 +274,12 @@ def strip_machine_tail(text: str) -> str:
 
 
 def strip_projected_closeout_envelope(body: str) -> str:
-    """Drop inner ``TYPE: CLOSEOUT`` header lines — outer relay owns one envelope."""
+    """Drop inner ``TYPE: CLOSEOUT`` header lines — outer relay owns one envelope.
+
+    ``plane:`` / ``plane-discrepancy:`` body lines are never stripped — transport
+    preserves unknown and definite plane states verbatim
+    (``[universal:executor-rec]`` shape; closeout-plane-legibility).
+    """
     lines = body.splitlines()
     idx = 0
     while idx < len(lines):

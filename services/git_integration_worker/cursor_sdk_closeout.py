@@ -1511,7 +1511,18 @@ def _assemble_closeout_delivery(
             lane_b_branch_point = record.branch_point
             lane_b_head_sha = state.head_sha
             lane_b_commits_ahead = state.commits_ahead
-            lane_b_landed = False
+            # landed@local-master — computed from capture head vs local master
+            # (never a constant; unknown head stays False, not upgraded).
+            from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+                probe_three_planes,
+            )
+
+            plane_obs = probe_three_planes(
+                binding.receipt_tree,
+                head_sha=state.head_sha,
+                branch=record.branch_name,
+            )
+            lane_b_landed = plane_obs.landed_local_master is True
             if outcome.status != "finished" and not state.safe_to_delete:
                 from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
                     mark_lane_b_disposition,

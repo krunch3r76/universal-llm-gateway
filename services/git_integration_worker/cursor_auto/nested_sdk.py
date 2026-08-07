@@ -319,6 +319,7 @@ async def post_operator_closeout(
     closeout_source: str | None = None,
     relay_note: str | None = None,
     deployment_state: str | None = None,
+    plane_line: str | None = None,
     relay_ctx: CloseoutRelayContext | None = None,
     skip_outbox_persist: bool = False,
     replay_mode: bool = False,
@@ -327,9 +328,14 @@ async def post_operator_closeout(
 
     Prefer *closeout_body* when the caller already selected a §2 payload.
     Legacy path: fall back to *sdk_body* (wrapper) when selection was not run.
+    ``plane:`` / ``plane-discrepancy:`` lines already in *closeout_body* are
+    preserved verbatim (transport never upgrades or collapses plane states).
     """
     from services.git_integration_worker.cursor_auto.auth_gate_budget import (
         tag_gate_class_for_payload,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+        preserve_plane_lines,
     )
 
     client = bus or CursorBusClient()
@@ -354,6 +360,11 @@ async def post_operator_closeout(
         lines.append(f"relay_note: {relay_note}")
     if deployment_state:
         lines.append(f"deployment_state: {deployment_state}")
+    # Envelope plane line only when body lacks one (body injection is primary).
+    if plane_line and not preserve_plane_lines(relay_body):
+        lines.append(
+            plane_line if plane_line.startswith("plane:") else f"plane: {plane_line}"
+        )
     lines.extend(
         [
             f"dispatch_id: {dispatch_id}",
