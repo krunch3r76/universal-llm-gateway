@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from claude_bundles.catalog import get_skill_catalog
+from claude_bundles.events_skill_delivery import emit_skill_delivery_attested
 
 DeliveryChannel = Literal["inject", "customize_skills", "unavailable"]
 
@@ -442,6 +443,11 @@ def attest_delivery_channels(
     - ``surface_class`` — CDP delivery channel via ``partition_cdp_skills``
     - ``mcp_surface_required`` — runtime MCP residency signal; **not** a CDP
       ``skills=`` reject predicate (friction a:26986 / QA-1).
+
+    Side effect (G1 Option A / invariant 4): emits
+    ``cdp.skill.delivery_attested`` on success **and** fail via
+    ``ledger_skills_channels`` rows + ``attached``/``inlined``/``undelivered``
+    — best-effort; never relaxes fail-closed raise semantics.
     """
     if not required:
         return []
@@ -467,7 +473,20 @@ def attest_delivery_channels(
                 wrong_channel.append(slug)
             else:
                 missing.append(slug)
+    attached_sorted = sorted(attached_set)
+    inlined_sorted = sorted(inlined_set)
+    rows = ledger_skills_channels(
+        required, attached=attached_sorted, inlined=inlined_sorted
+    )
     if missing or wrong_channel:
+        emit_skill_delivery_attested(
+            ok=False,
+            attached=attached_sorted,
+            inlined=inlined_sorted,
+            undelivered=list(missing),
+            wrong_channel=list(wrong_channel),
+            rows=rows,
+        )
         parts: list[str] = []
         if missing:
             parts.append(f"undelivered={missing}")
@@ -475,9 +494,17 @@ def attest_delivery_channels(
             parts.append(f"wrong_channel={wrong_channel}")
         raise SkillDeliveryError(
             "required skills fail channel attest after attach + inline seal: "
-            f"{'; '.join(parts)} (attached={sorted(attached_set)}, "
-            f"inlined={sorted(inlined_set)}) — fail closed (friction a:27142)"
+            f"{'; '.join(parts)} (attached={attached_sorted}, "
+            f"inlined={inlined_sorted}) — fail closed (friction a:27142)"
         )
+    emit_skill_delivery_attested(
+        ok=True,
+        attached=attached_sorted,
+        inlined=inlined_sorted,
+        undelivered=[],
+        wrong_channel=[],
+        rows=rows,
+    )
     return list(required)
 
 

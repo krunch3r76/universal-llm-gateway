@@ -137,6 +137,61 @@ def test_attest_shared_sync_rejects_inline_only_channel() -> None:
         )
 
 
+def test_attest_emits_on_success_with_channel_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """G1 Option A — success return publishes attached/inlined/undelivered."""
+    from claude_bundles import events_skill_delivery as esd
+
+    captured: list[object] = []
+
+    def _capture(event: object) -> None:
+        captured.append(event)
+
+    monkeypatch.setattr(esd, "_mirror_to_event_service", _capture)
+    result = attest_delivery_channels(
+        ["reasoning-posture", "path-sim"],
+        attached=["reasoning-posture"],
+        inlined=["path-sim"],
+    )
+    assert result == ["reasoning-posture", "path-sim"]
+    assert len(captured) == 1
+    payload = captured[0].payload  # type: ignore[attr-defined]
+    assert payload["ok"] is True
+    assert payload["attached"] == ["reasoning-posture"]
+    assert payload["inlined"] == ["path-sim"]
+    assert payload["undelivered"] == []
+    assert {row["slug"]: row["delivered_via"] for row in payload["rows"]} == {
+        "reasoning-posture": "attach",
+        "path-sim": "inline",
+    }
+
+
+def test_attest_emits_on_fail_then_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fail path emits the same shape before fail-closed raise."""
+    from claude_bundles import events_skill_delivery as esd
+
+    captured: list[object] = []
+    monkeypatch.setattr(esd, "_mirror_to_event_service", captured.append)
+    with pytest.raises(SkillDeliveryError, match="undelivered"):
+        attest_delivery_channels(
+            ["reasoning-posture"],
+            attached=[],
+            inlined=[],
+        )
+    assert len(captured) == 1
+    payload = captured[0].payload  # type: ignore[attr-defined]
+    assert payload["ok"] is False
+    assert payload["attached"] == []
+    assert payload["inlined"] == []
+    assert payload["undelivered"] == ["reasoning-posture"]
+    assert payload["rows"] == [
+        {"slug": "reasoning-posture", "delivered_via": "undelivered"}
+    ]
+
+
 def test_cdp_inline_path_sim_is_size_gated_excerpt() -> None:
     """a:27142 — cursor_only CDP seal is excerpted, not full SKILL.md."""
     from claude_bundles.cdp_inline_excerpt import CDP_INLINE_SKILL_MAX_CHARS
