@@ -52,6 +52,17 @@ USER="${CLAUDE_AI_SSH_USER:-krunch3r}"
 SSH="${USER}@${HOST}"
 REMOTE_REPO="/mnt/torus/projects/universal-llm-gateway"
 PY='~/.venvs/universal/bin/python'
+
+# CDP Chrome display: CDP_DISPLAY > DISPLAY > :1 (must match cdp_lane.cdp_display).
+_cdp_display() {
+  if [[ -n "${CDP_DISPLAY:-}" ]]; then
+    echo "${CDP_DISPLAY}"
+  elif [[ -n "${DISPLAY:-}" ]]; then
+    echo "${DISPLAY}"
+  else
+    echo ":1"
+  fi
+}
 usage() {
   sed -n '2,24p' "$0" | sed 's/^# \?//'
   echo ""
@@ -121,9 +132,10 @@ ensure_chrome() {
   local suffix="${2:-}"
   # Expand HOME on Jupiter (never pass a local-literal '$HOME/...').
   # shellcheck disable=SC2029
-  ssh "$SSH" "PORT='${port}' SUFFIX='${suffix}' bash -s" <<'REMOTE'
+  ssh "$SSH" "PORT='${port}' SUFFIX='${suffix}' CDP_DISPLAY='$(_cdp_display)' bash -s" <<'REMOTE'
 set -e
 PORT="${PORT:-9222}"
+CDP_DISPLAY="${CDP_DISPLAY:-:1}"
 PRIMARY="${HOME}/.gateway/claude-ai-chrome-profile"
 if [[ -n "${SUFFIX}" ]]; then
   PROFILE="${PRIMARY}-${SUFFIX}"
@@ -188,7 +200,7 @@ fi
 LISTENER_PID="$(ss -ltnpH "sport = :${PORT}" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | head -n1)"
 [[ -n "${LISTENER_PID}" ]] && kill "${LISTENER_PID}" 2>/dev/null || true
 sleep 1
-DISPLAY=:1 nohup google-chrome \
+DISPLAY="${CDP_DISPLAY}" nohup google-chrome \
   --remote-debugging-port="${PORT}" \
   --remote-allow-origins=* \
   --user-data-dir="${PROFILE}" \
@@ -215,11 +227,13 @@ remote_py() {
   shift
   local qargs=()
   local a
+  local disp
+  disp="$(_cdp_display)"
   for a in "$@"; do
     qargs+=("$(printf '%q' "$a")")
   done
   # shellcheck disable=SC2029
-  ssh "$SSH" "cd ${REMOTE_REPO} && PROJECT_ROOT=${REMOTE_REPO} PYTHONPATH=${REMOTE_REPO}/libs BROWSER_CDP_URL=http://127.0.0.1:${CDP_PORT} ${PY} ${script} ${qargs[*]}"
+  ssh "$SSH" "cd ${REMOTE_REPO} && PROJECT_ROOT=${REMOTE_REPO} PYTHONPATH=${REMOTE_REPO}/libs BROWSER_CDP_URL=http://127.0.0.1:${CDP_PORT} CDP_DISPLAY=${disp} DISPLAY=${disp} ${PY} ${script} ${qargs[*]}"
 }
 
 # 24911/24976: local SSH abort trap — pre-arm reg_id capture, ownership-safe cleanup.

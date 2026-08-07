@@ -51,6 +51,20 @@ def _noop_launch(port: int, profile: Path) -> int:
     return 1
 
 
+def test_register_lane_records_display(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CDP_DISPLAY", ":7")
+    r = reg.register_lane(
+        holder="display-test",
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    assert r.display == ":7"
+    active = reg._load_active()
+    assert active[r.registration_id]["display"] == ":7"
+
+
 def test_concurrent_register_distinct_ports(isolated_registry: Path) -> None:
     start = threading.Barrier(2)
     hold = threading.Barrier(2)

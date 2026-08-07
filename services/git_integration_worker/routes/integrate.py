@@ -159,6 +159,7 @@ async def _admit_and_land_slot(
     kind: str,
     route: str,
     source_repo: str,
+    worktree_path: str,
 ) -> AsyncIterator[Ticket]:
     """Admission + integrate gate + master land lease for merge-out paths."""
     op_id = str(uuid.uuid4())
@@ -172,7 +173,11 @@ async def _admit_and_land_slot(
                 f"git-integration-worker began draining while queued "
                 f"(epoch={controller.drain_epoch})"
             )
-        async with master_land_guard(source_repo=source_repo, holder_op_id=op_id):
+        async with master_land_guard(
+            source_repo=source_repo,
+            holder_op_id=op_id,
+            worktree_path=worktree_path,
+        ):
             ticket.mark_running()
             yield ticket
     except Draining503:
@@ -355,6 +360,7 @@ async def integrate(
             kind="git_integrate",
             route="/api/v1/git/integrate",
             source_repo=str(cfg.source_repo),
+            worktree_path=req.worktree_path,
         ):
             result = await integrate_op(
                 arc=req.arc,
@@ -394,6 +400,7 @@ async def land(req: LandRequest, request: Request) -> IntegrateResponse:
             kind="git_integrate",
             route="/api/v1/git/land",
             source_repo=str(cfg.source_repo),
+            worktree_path=req.worktree_path,
         ):
             result = await land_op(
                 arc=req.arc,

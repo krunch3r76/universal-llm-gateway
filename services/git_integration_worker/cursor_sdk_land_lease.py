@@ -2,25 +2,27 @@
 
 Complements ``FifoCapacityGate(limit=1)`` on ``kind=git_integrate`` with a
 durable ledger row keyed by ``str(source_repo.resolve())``. Serializes
-merge-out + green gate; refuses dirty checked-out master; releases on terminal.
+merge-out + green gate; refuses divergent path-overlap dirt on checked-out
+master (see ``cursor_sdk_land_dirty``); releases on terminal.
 """
 
 from __future__ import annotations
 
 import asyncio
 import sqlite3
-import subprocess
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from git_integrate.git_cas import is_dirty
 from git_integrate.schema import RC_DIRTY_MASTER
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_dispatch_ledger import _connect
+from services.git_integration_worker.cursor_sdk_land_dirty import (
+    checked_out_master_dirty,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -39,9 +41,24 @@ _DEFAULT_POLL_S = 0.02
 _DEFAULT_ACQUIRE_TIMEOUT_S = 600.0
 _STALE_LAND_LEASE_S = 900.0
 
+# Re-export for callers/tests that imported the predicate from this module.
+__all__ = (
+    "DirtyMasterRefused",
+    "LandLeaseAcquireTimeout",
+    "acquire_land_lease_blocking",
+    "checked_out_master_dirty",
+    "dirty_master_envelope",
+    "ensure_land_lease_schema",
+    "master_land_guard",
+    "master_land_lease_key",
+    "reap_stale_land_leases",
+    "release_land_lease",
+    "try_acquire_land_lease",
+)
+
 
 class DirtyMasterRefused(Exception):
-    """Raised when checked-out master has staged or unstaged dirt before merge-out."""
+    """Raised when checked-out master has divergent dirt on a landing path."""
 
     def __init__(self, *, reason: str, integration_id: str) -> None:
         self.integration_id = integration_id
@@ -65,50 +82,6 @@ def ensure_land_lease_schema(conn: sqlite3.Connection) -> None:
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
-
-
-def _parse_worktree_blocks(porcelain: str) -> list[tuple[str, str]]:
-    """Return ``(worktree_path, branch_ref)`` pairs from porcelain output."""
-    blocks: list[tuple[str, str]] = []
-    path = ""
-    branch = ""
-    for line in porcelain.splitlines():
-        if line.startswith("worktree "):
-            if path:
-                blocks.append((path, branch))
-            path = line[len("worktree ") :].strip()
-            branch = ""
-        elif line.startswith("branch "):
-            branch = line[len("branch ") :].strip()
-    if path:
-        blocks.append((path, branch))
-    return blocks
-
-
-def checked_out_master_dirty(source_repo: str) -> tuple[bool, str]:
-    """True when any worktree with ``refs/heads/master`` checked out is dirty."""
-    repo = str(Path(source_repo).resolve())
-    try:
-        proc = subprocess.run(
-            ["git", "-C", repo, "worktree", "list", "--porcelain"],
-            capture_output=True,
-            text=True,
-            timeout=30.0,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return False, ""
-    if proc.returncode != 0:
-        return False, ""
-
-    for worktree_path, branch_ref in _parse_worktree_blocks(proc.stdout):
-        if branch_ref != "refs/heads/master":
-            continue
-        if is_dirty(worktree_path):
-            return True, (
-                f"checked-out master worktree is dirty: {worktree_path!r}; "
-                "refusing merge-out"
-            )
-    return False, ""
 
 
 def try_acquire_land_lease(*, lease_key: str, holder_op_id: str) -> bool:
@@ -196,15 +169,20 @@ async def master_land_guard(
     *,
     source_repo: str,
     holder_op_id: str,
+    worktree_path: str,
 ) -> AsyncIterator[None]:
-    """Acquire master land lease, refuse dirty master, release on exit.
+    """Acquire master land lease, refuse divergent path-overlap dirt, release.
 
+    ``worktree_path`` is the arc worktree about to land — required so the dirty
+    predicate can intersect porcelain paths with the landing change set.
     Lock order: caller must already hold ``FifoCapacityGate`` before entering.
     """
     lease_key = master_land_lease_key(source_repo)
     await acquire_land_lease_blocking(lease_key=lease_key, holder_op_id=holder_op_id)
     try:
-        dirty, reason = await asyncio.to_thread(checked_out_master_dirty, source_repo)
+        dirty, reason = await asyncio.to_thread(
+            checked_out_master_dirty, source_repo, worktree_path
+        )
         if dirty:
             integration_id = str(uuid.uuid4())
             raise DirtyMasterRefused(reason=reason, integration_id=integration_id)
