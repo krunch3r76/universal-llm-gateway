@@ -230,7 +230,9 @@ def compose_view(
                 "active_registrations": len(active_regs),
                 "detail": (
                     f"{live_cse} open CSE attachments vs {len(active_regs)} active "
-                    "registrations — orphaned tabs inflate live_cse_count"
+                    "registrations — orphaned Chrome tabs inflate live_cse_count; "
+                    "attachments ≠ product chats on claude.ai "
+                    "(reclaim: todo:cdp-ask-ghost-live-cse-count)"
                 ),
             }
         )
@@ -252,7 +254,12 @@ def compose_view(
         "sources": sources,
         "ontology": {
             "session": "URL-addressed CSE (durable, free)",
-            "attachment": "Chrome target / open CSE page (ephemeral, scarce)",
+            "attachment": (
+                "Chrome target / open CSE page (ephemeral, scarce) — "
+                "NOT product-chat count on claude.ai UI "
+                "(specimen 2026-08-07: 11 attachments vs 2 product chats; "
+                "agent-bus:6899)"
+            ),
             "lane": "agent-bus thread (durable)",
             "seat": "model instance on a lane (holder+purpose)",
             "registration": "time-bounded host bind (active/retained/orphaned_*)",
