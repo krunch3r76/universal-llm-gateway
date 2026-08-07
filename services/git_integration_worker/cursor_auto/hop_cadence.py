@@ -184,7 +184,15 @@ async def fire_hop_for_decision(
         continuity_hop=True,
         continuity_matched_token="cadence:auto",
     )
-    result = await run_continuity_hop_concurrent(job, queue=queue, incumbent=None)
+    # Same lookup as HTTP hop (routes/cursor_auto.py): name the live claimed
+    # commission so CONTINUITY_HARVEST_RESIDUAL is truthful. Hop still skips
+    # supersede — reporting only.
+    incumbent = queue.claimed_for_thread(decision.thread_id)
+    if incumbent is not None and incumbent.job_id == job.job_id:
+        incumbent = None
+    result = await run_continuity_hop_concurrent(
+        job, queue=queue, incumbent=incumbent
+    )
     hop_ok = result.get("reason") != "hop_not_queued"
     if hop_ok:
         mark_hop_fired(
