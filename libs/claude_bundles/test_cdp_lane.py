@@ -65,6 +65,16 @@ def test_select_free_port_exhausted():
         cdp_lane.select_free_port(lambda p: True, exclude=set())
 
 
+def test_cdp_display_prefers_cdp_display(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CDP_DISPLAY", raising=False)
+    monkeypatch.delenv("DISPLAY", raising=False)
+    assert cdp_lane.cdp_display() == ":1"
+    monkeypatch.setenv("DISPLAY", ":5")
+    assert cdp_lane.cdp_display() == ":5"
+    monkeypatch.setenv("CDP_DISPLAY", ":2")
+    assert cdp_lane.cdp_display() == ":2"
+
+
 def test_parse_chrome_lane_flattened():
     blob = (
         "/opt/google/chrome/chrome --remote-debugging-port=9223 "

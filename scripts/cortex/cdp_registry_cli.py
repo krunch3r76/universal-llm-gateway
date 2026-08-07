@@ -67,6 +67,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"port={reg.port}")
         print(f"profile_suffix={reg.profile_suffix}")
         print(f"profile={reg.profile}")
+        if reg.display:
+            print(f"display={reg.display}")
         return 0
 
     if args.cmd == "deregister":

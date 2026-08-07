@@ -70,6 +70,7 @@ class Registration:
     cdp_url: str
     holder: str
     purpose: str | None = None
+    display: str | None = None
 
 
 @dataclass(frozen=True)
@@ -163,6 +164,7 @@ def _row_to_registration(row: dict[str, Any]) -> Registration:
         cdp_url=f"http://127.0.0.1:{port}",
         holder=str(row["holder"]),
         purpose=row.get("purpose"),
+        display=row.get("display"),
     )
 
 
@@ -275,6 +277,7 @@ def register_lane(
         port = select_free_registry_port(listen, exclude=exclude)
         registration_id, profile_suffix = _mint_ids(_used_suffixes(active))
         profile = cdp_lane.profile_for(profile_suffix)
+        display = cdp_lane.cdp_display()
         row = {
             "registration_id": registration_id,
             "port": port,
@@ -282,6 +285,7 @@ def register_lane(
             "profile": str(profile),
             "holder": holder,
             "purpose": purpose,
+            "display": display,
             "status": "allocating",
             "chrome_pid": None,
             "holder_pid": os.getpid(),

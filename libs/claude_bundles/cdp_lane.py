@@ -60,6 +60,16 @@ INTENT_SUFFIX = {
 _CHROME_BIN = "google-chrome"
 _LAUNCH_WAIT_S = 20
 _POLL_MS = 250
+_DEFAULT_DISPLAY = ":1"
+
+
+def cdp_display() -> str:
+    """X display for CDP Chrome launches (``CDP_DISPLAY`` > ``DISPLAY`` > ``:1``)."""
+    for key in ("CDP_DISPLAY", "DISPLAY"):
+        val = os.environ.get(key, "").strip()
+        if val:
+            return val
+    return _DEFAULT_DISPLAY
 
 
 class LaneError(RuntimeError):
@@ -338,7 +348,8 @@ def _launch_chrome(port: int, profile: Path) -> int:
     """Launch a detached Chrome (the warm resource) and wait until it listens."""
     _seed_profile(profile)
     log = f"/tmp/chrome-cdp-claude-ai-{port}.log"
-    env = dict(os.environ, DISPLAY=os.environ.get("DISPLAY", ":1"))
+    display = cdp_display()
+    env = dict(os.environ, DISPLAY=display, CDP_DISPLAY=display)
     with open(log, "ab") as logf:
         proc = subprocess.Popen(
             chrome_launch_argv(port, profile),
