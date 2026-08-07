@@ -72,7 +72,15 @@ Operator-facing signals + `auth_gate_ack:` grammar: `cdp-operator-proxy` § Auth
 
 ## Supersede mechanism (BINDING)
 
-A second `agent_bus.request` on the **same private thread** while a job is in flight is read as a
+**One live request per private thread.** A second `agent_bus.request` on that thread
+`run_cancel`s the first whether or not it is a re-issue, duplicate, or unrelated ask
+(duplicate-protection is a special case, not the rule). Parallel asks need separate lanes or one
+bundled DIRECTIVE. Cancellation is silent at decision — visible only in the enqueue `superseded`
+block and afterwards as a `status:superseded` turn. Provenance (`observed`): `agent-bus:6655`
+turns 2005/2007/2009; `agent-bus:6885` turn 226 — see `cdp-operator-proxy` § Interrupt /
+supersede.
+
+While a job is in flight, a second request on the **same private thread** is read as a
 **backtrack**, not a queue append — no extra tool, no body token, no `manage`, no GIW restart.
 
 | # | Step | Evidence |
