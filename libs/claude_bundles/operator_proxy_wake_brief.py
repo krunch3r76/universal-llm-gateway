@@ -59,10 +59,9 @@ Call shapes (paste; substitute ``<LANES>`` / standing-handoff URI):
 
 ```
 Monitor({{
-  command: 'while true; do sleep 240; echo "HEARTBEAT — drive the mission: read bus tips <LANES>, harvest any closeout, commission the next act. Do not go quiet with work in flight."; done',
+  command: 'while true; do sleep 240; echo "HEARTBEAT — drive the mission: read bus tips <LANES>, harvest any closeout, commission the next act. Do not go quiet with work in flight. NOTE: persistent Monitor expires (~30min) — re-arm when you see a timeout event."; done',
   description: 'mission heartbeat — wakes the operator seat every 4 min to drive open work on lanes <LANES>',
   persistent: true,
-  timeout_ms: 3600000,
 }})
 ```
 
@@ -74,20 +73,24 @@ mcp__claude-code-remote__send_later({{
 ```
 
 **Carry unsmoothed (do not normalise):**
-(1) **Monitor timeout ambiguity — UNRESOLVED (deterministic and reproducible).**
-Two independent attestations (seat-internal; bus cannot witness; unwitnessed ≠ refuted):
-(a) first arming — ``persistent: true`` + ``timeout_ms: 3600000``; tool reported
-``timeout 1800000ms``; (b) second arming 2026-08-07 on lane 6655 (CSE successor of
-2026-08-07T03:44:21Z continuity hop, registration_id
-``710dc8641c5945248355485559854824``) — identical request shape → response verbatim
-``Monitor started (task bpyma6f00, timeout 1800000ms).`` (~4h apart, different CSE).
-Not transcription noise; not a one-off. Docs say timeout is ignored when persistent;
-reported number matched neither request nor doc on both arms. Do not assert which
-mechanism applies; do not assume ``persistent: true`` ⇒ unbounded — re-arm periodically
-regardless. **Discriminating probe** (Cowork-internal, CDP-seat-only, one arming, no
-network): re-arm at a requested ``timeout_ms`` that separates the two live hypotheses —
-fixed 30-min cap predicts ``600000`` → reports ``600000``; halving predicts ``600000``
-→ reports ``300000``.
+(1) **Monitor timeout — RESOLVED (observed — seat-internal; bus cannot witness;
+unwitnessed ≠ refuted).** ``persistent: true`` **ignores** ``timeout_ms`` and
+substitutes fixed ``1800000ms`` (~30 min). ``persistent: false`` honors
+``timeout_ms`` verbatim. Prior UNRESOLVED block + discriminating probe **retired as
+executed** (lane 6655 CDP CSE ~2026-08-07 03:53Z) — both hypotheses refuted
+(fixed 30-min cap; halving):
+
+| # | persistent | requested timeout_ms | reported (verbatim) |
+|---|---|---|---|
+| 1 | true | 3600000 | ``Monitor started (task bpyma6f00, timeout 1800000ms).`` |
+| 2 | true | 600000 | ``Monitor started (task boc5bdp2j, timeout 1800000ms).`` |
+| 3 | false | 600000 | ``Monitor started (task bobiguh7t, timeout 600000ms).`` |
+
+**BINDING:** a persistent heartbeat's real lifetime is ~30 min regardless of what
+was requested; the timeout event is itself the last wake — re-arm immediately; the
+echoed heartbeat text **must** carry its own re-arm instruction (see Monitor
+command above). Do not pass ``timeout_ms`` on ``persistent: true`` arms — it is
+inert and teaches a no-op.
 (2) **Wake BOUNDS silence; it does not prevent stopping.** Four minutes instead of five
 hours; the seat notices instead of the human. Any text implying prevention is overclaiming.
 (3) **The wake notification is NOT the user.** It arrives with a banner saying so — not

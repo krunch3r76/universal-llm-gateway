@@ -44,8 +44,9 @@ def test_ensure_injects_self_scheduled_wake_guide() -> None:
     assert "cdp-seat-wake-heartbeat.md" in out
     assert "Self-scheduled wake" in out
     assert "first dispatch" in out
-    assert "timeout_ms: 3600000" in out
-    assert "timeout ambiguity" in out
+    assert "persistent: true" in out
+    assert "1800000ms" in out
+    assert "Monitor timeout — RESOLVED" in out
     assert "NOT the user" in out
     assert "does not prevent stopping" in out or "does not prevent the stop" in out
     assert "send_later" in out
@@ -87,6 +88,15 @@ def test_legal_subset_forbidden_disjoint_a9() -> None:
     assert LIFE_SURFACE_LEGAL_TOOLS.isdisjoint(LIFE_SURFACE_FORBIDDEN_TOOLS)
     for tool in LIFE_SURFACE_LEGAL_TOOLS:
         assert f"`{tool}`" in ensure_operator_proxy_mission_prompt("# x\n")
+
+
+def test_operator_proxy_mission_seat_map_names_reachable_independent_check() -> None:
+    out = ensure_operator_proxy_mission_prompt("# Mission\n")
+    seat_section = out.split("## Life surface act path")[0]
+    assert "cdp/fable" in seat_section
+    assert "cursor/grok-4.5" in seat_section
+    assert "model_pin_refused" in seat_section
+    assert "prefer `cursor/gpt-5.6-terra` when bindable" not in seat_section
 
 
 def test_briefing_receipt_example_parses_d3() -> None:
