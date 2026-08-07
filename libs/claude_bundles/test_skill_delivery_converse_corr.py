@@ -65,6 +65,13 @@ async def test_converse_path_threads_correlation_ids_to_send_prompt() -> None:
             "claude_bundles.project_ask_conversation.resolve_harvest_body",
             new=AsyncMock(return_value=harvest),
         ),
+        # Peer WIP may add compose attestation; create=True keeps this green on
+        # trees that lack the symbol and on trees that call it.
+        patch(
+            "claude_bundles.project_ask_conversation._attest_model",
+            create=True,
+            return_value="Model: Opus 5",
+        ),
     ):
         results = await run_project_conversation(
             ["first prompt"],
