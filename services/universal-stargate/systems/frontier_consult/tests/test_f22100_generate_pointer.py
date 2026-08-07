@@ -115,9 +115,17 @@ async def test_f22100_api_role_generate_pointer_is_reference_not_truncation() ->
             return_value=("synthesizer", "anthropic", "api", mock_profile),
         ),
         patch(
-            "systems.frontier_consult.api_role_generate.read_latest_dispatch_thread_body",
+            "systems.frontier_consult.api_role_generate.resolve_generate_prompt_resolution",
             new_callable=AsyncMock,
-            return_value=LONG_PROMPT,
+            return_value=type(
+                "Res",
+                (),
+                {
+                    "text": LONG_PROMPT,
+                    "prompt_turn_number": 42,
+                    "prompt_bind_mode": "frozen_turn",
+                },
+            )(),
         ),
     ):
         from systems.frontier_consult.api_role_generate import (

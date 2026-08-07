@@ -28,7 +28,7 @@ from .cursor_sdk_thread_reuse import (
     resolve_generate_thread_targets,
 )
 from .densify_triage import validate_generate_density_intake
-from .dispatch_thread_context import as_user_message, resolve_generate_prompt_body
+from .dispatch_thread_context import as_user_message, resolve_generate_prompt_resolution
 from .handoff import (
     build_generate_dispatch_pointer,
     create_handoff_thread,
@@ -176,7 +176,7 @@ async def dispatch_api_role_generate(
         )
 
     packet_path = getattr(body, "packet_path", None)
-    last_user = await resolve_generate_prompt_body(
+    prompt_resolution = await resolve_generate_prompt_resolution(
         request_id=request_id,
         role=role,
         dispatch_thread_id=body.dispatch_thread_id,
@@ -184,6 +184,7 @@ async def dispatch_api_role_generate(
         prompt=getattr(body, "prompt", None),
         sidecar_ref=getattr(body, "sidecar_ref", None),
     )
+    last_user = prompt_resolution.text
 
     thread_subject = f"{role} generate — {request_id}"
     reply_subject = f"{role} reply — {request_id[:8]}"
@@ -194,6 +195,7 @@ async def dispatch_api_role_generate(
         dispatch_thread_id=body.dispatch_thread_id,
         correlation_id=request_id,
         summary=extract_generate_pointer_summary(last_user),
+        prompt_turn_number=prompt_resolution.prompt_turn_number,
     )
 
     (

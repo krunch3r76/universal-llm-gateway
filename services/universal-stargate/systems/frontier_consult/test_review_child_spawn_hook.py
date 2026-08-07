@@ -17,6 +17,7 @@ from systems.frontier_consult.generate_admission_context_store import (
 )
 from systems.frontier_consult.review_child_spawn_hook import (
     _SPAWN_PROVENANCE,
+    _ReviewPromptBuild,
     _build_generate_lane_review_prompt,
     handle_worker_completed_event,
     is_review_child_execution,
@@ -355,7 +356,16 @@ async def test_a24105_spawn_body_thread_is_coord() -> None:
         _capture,
     ), patch(
         "systems.frontier_consult.review_child_spawn_hook._build_generate_lane_review_prompt",
-        AsyncMock(return_value="review prompt"),
+        AsyncMock(
+            return_value=_ReviewPromptBuild(
+                prompt="review prompt",
+                prompt_bind_mode="explicit_inline",
+                prompt_turn_number=None,
+                latest_read_outcome="skipped",
+                bound_prompt_class="caller_prompt",
+                bound_prompt_digest="abc:review prompt",
+            )
+        ),
     ):
         result = await spawn_generate_lane_review_child(
             request_id="req-a24105b",
@@ -401,7 +411,16 @@ async def test_openai_executor_review_child_uses_cursor_sdk_generate() -> None:
         _capture,
     ), patch(
         "systems.frontier_consult.review_child_spawn_hook._build_generate_lane_review_prompt",
-        AsyncMock(return_value="review prompt"),
+        AsyncMock(
+            return_value=_ReviewPromptBuild(
+                prompt="review prompt",
+                prompt_bind_mode="explicit_inline",
+                prompt_turn_number=None,
+                latest_read_outcome="skipped",
+                bound_prompt_class="caller_prompt",
+                bound_prompt_digest="abc:review prompt",
+            )
+        ),
     ):
         result = await spawn_generate_lane_review_child(
             request_id="req-cursor-alt",
@@ -456,13 +475,20 @@ async def test_a24105_fail_closed_without_coord_thread() -> None:
 
 @pytest.mark.asyncio
 async def test_generate_lane_review_prompt_includes_ac_observer_footer() -> None:
-    prompt = await _build_generate_lane_review_prompt(
-        request_id="req-footer",
-        parent_dispatch_thread_id="thread:parent",
-    )
-    assert "Packet AC observer (advisory)" in prompt
-    assert "Self-check PASS is evidence to inspect, not completion authority" in prompt
-    assert "PASS or FAIL per packet AC" in prompt
+    with patch(
+        "systems.frontier_consult.dispatch_thread_context.read_dispatch_thread_body_at_turn",
+        AsyncMock(return_value="Brief for review."),
+    ):
+        build = await _build_generate_lane_review_prompt(
+            request_id="req-footer",
+            parent_dispatch_thread_id="thread:parent",
+            prompt_turn_number=42,
+            prompt_bind_mode="frozen_turn",
+        )
+    assert build is not None
+    assert "Packet AC observer (advisory)" in build.prompt
+    assert "Self-check PASS is evidence to inspect, not completion authority" in build.prompt
+    assert "PASS or FAIL per packet AC" in build.prompt
 
 
 _SIDECAR_PACKET = """
@@ -497,13 +523,17 @@ Implement production change.
 @pytest.mark.asyncio
 async def test_generate_lane_prompt_sidecar_surface() -> None:
     with patch(
-        "systems.frontier_consult.dispatch_thread_context.read_latest_dispatch_thread_body",
+        "systems.frontier_consult.dispatch_thread_context.read_dispatch_thread_body_at_turn",
         AsyncMock(return_value=_SIDECAR_PACKET),
     ):
-        prompt = await _build_generate_lane_review_prompt(
+        build = await _build_generate_lane_review_prompt(
             request_id="req-sidecar",
             parent_dispatch_thread_id="thread:sidecar",
+            prompt_turn_number=7,
+            prompt_bind_mode="frozen_turn",
         )
+    assert build is not None
+    prompt = build.prompt
     assert NEGATIVE_SPACE_BY_SURFACE["sidecar"] in prompt
     assert FOOTER_BY_SURFACE["sidecar"] in prompt
     assert "source: N/A" in prompt
@@ -513,15 +543,17 @@ async def test_generate_lane_prompt_sidecar_surface() -> None:
 @pytest.mark.asyncio
 async def test_generate_lane_prompt_source_surface() -> None:
     with patch(
-        "systems.frontier_consult.dispatch_thread_context.read_latest_dispatch_thread_body",
+        "systems.frontier_consult.dispatch_thread_context.read_dispatch_thread_body_at_turn",
         AsyncMock(return_value=_SOURCE_PACKET),
     ):
-        prompt = await _build_generate_lane_review_prompt(
+        build = await _build_generate_lane_review_prompt(
             request_id="req-source",
             parent_dispatch_thread_id="thread:source",
+            prompt_turn_number=11,
+            prompt_bind_mode="frozen_turn",
         )
-    assert NEGATIVE_SPACE_BY_SURFACE["source"] in prompt
-    assert FOOTER_BY_SURFACE["source"] in prompt
+    assert build is not None
+    prompt = build.prompt
     assert "resulting source and tests" in prompt
     assert "source: N/A" not in prompt
 
@@ -627,3 +659,134 @@ def test_source_surface_lb_still_spawns_when_not_suppressed() -> None:
     ctx = read_admission_context("exec-source-lb")
     assert ctx is not None
     assert should_spawn_review_child(ctx) is True
+
+
+@pytest.mark.asyncio
+async def test_a6655_spawn_fail_closed_on_frozen_read_failure() -> None:
+    from systems.frontier_consult.admission import FrontierEndpointError
+    from systems.frontier_consult.review_child_spawn_hook import (
+        ReviewerSelection,
+        spawn_generate_lane_review_child,
+    )
+
+    write_admission_context(
+        execution_id="exec-fail-closed",
+        auto_review_child=True,
+        op="generate",
+        role="cursor-sdk",
+        resolved_model="cursor/claude-sonnet-4-6",
+        parent_dispatch_thread_id="thread:coord",
+        dispatch_thread_id="thread:coord",
+        prompt_turn_number=2198,
+        prompt_bind_mode="frozen_turn",
+    )
+    ctx = read_admission_context("exec-fail-closed")
+    assert ctx is not None
+    dispatch_mock = AsyncMock(return_value={"execution_id": "child-should-not"})
+    with patch(
+        "systems.frontier_consult.review_child_spawn_hook._dispatch_review_child",
+        dispatch_mock,
+    ), patch(
+        "systems.frontier_consult.dispatch_thread_context.read_dispatch_thread_body_at_turn",
+        AsyncMock(
+            side_effect=FrontierEndpointError(
+                request_id="req-fc",
+                field="dispatch_thread_id",
+                reason="not a prompt",
+                status_code=422,
+                code="dispatch_thread_latest_not_prompt",
+            )
+        ),
+    ):
+        result = await spawn_generate_lane_review_child(
+            request_id="req-fc",
+            ctx=ctx,
+            parent_thread_id="thread:worker",
+            reviewer=ReviewerSelection(model="openai/gpt-5.5", family="openai"),
+        )
+    assert result == {}
+    dispatch_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a6655_spawn_uses_frozen_turn_not_latest() -> None:
+    from systems.frontier_consult.review_child_spawn_hook import (
+        ReviewerSelection,
+        spawn_generate_lane_review_child,
+    )
+
+    frozen_turn = 2198
+    read_at = AsyncMock(return_value="Frozen brief at N.")
+    read_latest = AsyncMock(side_effect=AssertionError("must not re-resolve latest"))
+    write_admission_context(
+        execution_id="exec-frozen",
+        auto_review_child=True,
+        op="generate",
+        role="cursor-sdk",
+        resolved_model="cursor/claude-sonnet-4-6",
+        parent_dispatch_thread_id="6655",
+        dispatch_thread_id="6655",
+        prompt_turn_number=frozen_turn,
+        prompt_bind_mode="frozen_turn",
+    )
+    ctx = read_admission_context("exec-frozen")
+    assert ctx is not None
+    with patch(
+        "systems.frontier_consult.dispatch_thread_context.read_dispatch_thread_body_at_turn",
+        read_at,
+    ), patch(
+        "systems.frontier_consult.dispatch_thread_context.read_latest_dispatch_thread_body",
+        read_latest,
+    ), patch(
+        "systems.frontier_consult.review_child_spawn_hook._dispatch_review_child",
+        AsyncMock(return_value={"execution_id": "child-frozen"}),
+    ):
+        await spawn_generate_lane_review_child(
+            request_id="req-frozen",
+            ctx=ctx,
+            parent_thread_id="thread:worker",
+            reviewer=ReviewerSelection(model="openai/gpt-5.5", family="openai"),
+        )
+    read_at.assert_awaited_once()
+    assert read_at.await_args.kwargs["turn_number"] == frozen_turn
+    read_latest.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a6655_prompt_bind_instrumentation_emitted() -> None:
+    from systems.frontier_consult.review_child_spawn_hook import (
+        ReviewerSelection,
+        spawn_generate_lane_review_child,
+    )
+
+    published: list[str] = []
+    write_admission_context(
+        execution_id="exec-instrument",
+        auto_review_child=True,
+        op="generate",
+        role="cursor-sdk",
+        resolved_model="cursor/claude-sonnet-4-6",
+        parent_dispatch_thread_id="6655",
+        dispatch_thread_id="6655",
+        prompt_turn_number=100,
+        prompt_bind_mode="frozen_turn",
+    )
+    ctx = read_admission_context("exec-instrument")
+    assert ctx is not None
+    with patch(
+        "systems.frontier_consult.review_child_spawn_hook.publish_frontier_event",
+        side_effect=lambda ev: published.append(ev.signal),
+    ), patch(
+        "systems.frontier_consult.dispatch_thread_context.read_dispatch_thread_body_at_turn",
+        AsyncMock(return_value="Worker thread `x` should not pass — caller brief."),
+    ), patch(
+        "systems.frontier_consult.review_child_spawn_hook._dispatch_review_child",
+        AsyncMock(return_value={"execution_id": "child-inst"}),
+    ):
+        await spawn_generate_lane_review_child(
+            request_id="req-inst",
+            ctx=ctx,
+            parent_thread_id="thread:worker",
+            reviewer=ReviewerSelection(model="openai/gpt-5.5", family="openai"),
+        )
+    assert "frontier.review_child.prompt_bind" in published

@@ -22,7 +22,7 @@ from .cursor_sdk_thread_reuse import (
     consolidation_split_warning,
     resolve_cursor_sdk_thread_targets,
 )
-from .dispatch_thread_context import resolve_generate_prompt_body
+from .dispatch_thread_context import resolve_generate_prompt_resolution
 from .handoff import _resolve_packet_file, _workspaces_root
 from .implement_admission_bridge import (
     StargateCortexReader,
@@ -283,17 +283,18 @@ async def dispatch_cursor_sdk_generate_route(
                 )
             wrap = GenerateWrapResult(packet_path=packet_path)
         has_packet = wrap.packet_path is not None
-        source_text = (
-            ""
-            if (body.contract == "implement" or has_packet)
-            else await resolve_generate_prompt_body(
+        prompt_resolution = None
+        if body.contract == "implement" or has_packet:
+            source_text = ""
+        else:
+            prompt_resolution = await resolve_generate_prompt_resolution(
                 request_id=request_id,
                 role=role,
                 dispatch_thread_id=body.dispatch_thread_id,
                 prompt=getattr(body, "prompt", None),
                 sidecar_ref=getattr(body, "sidecar_ref", None),
             )
-        )
+            source_text = prompt_resolution.text
         (
             reuse_thread,
             parent_dispatch_thread_id,
@@ -327,6 +328,12 @@ async def dispatch_cursor_sdk_generate_route(
             cost_intent_reason=getattr(body, "cost_intent_reason", None),
             reasoning_effort=getattr(body, "reasoning_effort", None),
             max_tool_turns=getattr(body, "max_tool_turns", None),
+            prompt_turn_number=(
+                prompt_resolution.prompt_turn_number if prompt_resolution else None
+            ),
+            prompt_bind_mode=(
+                prompt_resolution.prompt_bind_mode if prompt_resolution else None
+            ),
             source_ref=getattr(body, "source_ref", None),
             dispatch_lane=getattr(body, "dispatch_lane", None),
             nest_under=getattr(body, "nest_under", None),

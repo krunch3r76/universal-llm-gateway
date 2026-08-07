@@ -86,6 +86,6 @@ async def test_read_latest_rejects_pointer_turn(monkeypatch: pytest.MonkeyPatch)
 
     with pytest.raises(FrontierEndpointError) as excinfo:
         await dtc.read_latest_dispatch_thread_body(
-            request_id="req-guard", dispatch_thread_id="4741"
+            request_id="req-guard", dispatch_thread_id="4741", role="reviewer"
         )
     assert excinfo.value.code == "dispatch_thread_latest_is_pointer"

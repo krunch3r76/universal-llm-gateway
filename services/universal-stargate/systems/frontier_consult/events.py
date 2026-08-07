@@ -789,6 +789,35 @@ def DispatchCapabilityCardMissing(  # noqa: N802
 
 
 @event_factory
+def FrontierReviewChildPromptBind(  # noqa: N802
+    *,
+    parent_execution_id: str,
+    child_execution_id: str | None,
+    delivery_thread_id: str,
+    prompt_bind_mode: str,
+    prompt_turn_number: int | None,
+    latest_read_outcome: str,
+    bound_prompt_class: str,
+    bound_prompt_digest: str,
+) -> Event:
+    """Spawn-hook prompt bind instrumentation — Path-1 vs Path-2 discriminator (6655)."""
+    return Event(
+        signal="frontier.review_child.prompt_bind",
+        payload={
+            "parent_execution_id": parent_execution_id,
+            "child_execution_id": child_execution_id,
+            "delivery_thread_id": delivery_thread_id,
+            "prompt_bind_mode": prompt_bind_mode,
+            "prompt_turn_number": prompt_turn_number,
+            "latest_read_outcome": latest_read_outcome,
+            "bound_prompt_class": bound_prompt_class,
+            "bound_prompt_digest": bound_prompt_digest,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def FrontierSdkReviewChildSpawned(  # noqa: N802
     execution_id: str,
     parent_execution_id: str,

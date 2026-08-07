@@ -9,10 +9,13 @@ import pytest
 
 from systems.frontier_consult.admission import FrontierEndpointError
 from systems.frontier_consult.dispatch_thread_context import (
+    _ADMIT_BODY_FIRST_LINE_MARKER,
     allowed_prompt_recipients,
     is_server_dispatch_turn_body,
+    read_dispatch_thread_body_at_turn,
     read_latest_dispatch_thread_body,
     resolve_generate_prompt_body,
+    resolve_generate_prompt_resolution,
 )
 
 
@@ -32,6 +35,30 @@ def test_is_server_dispatch_turn_body_pointer() -> None:
         "`5129` (correlation `cde567c3999a`).\n\nRead full prompt: …"
     )
     assert is_server_dispatch_turn_body(body) is True
+
+
+def test_a6655_admit_body_marker_recorded_literal() -> None:
+    """AC(1): exact admit first-line marker bound for _SERVER_TURN_MARKERS."""
+    assert _ADMIT_BODY_FIRST_LINE_MARKER == "Worker thread `"
+    body = (
+        "Worker thread `6932` — poll via `poll_hint` from the 202 "
+        "response (not this coordination thread)."
+    )
+    assert is_server_dispatch_turn_body(body) is True
+
+
+def test_frozen_turn_pointer_uses_integer_not_latest() -> None:
+    from systems.frontier_consult.handoff import build_generate_dispatch_pointer
+
+    body = build_generate_dispatch_pointer(
+        lane="SDK",
+        contract="light-bounded",
+        dispatch_thread_id="6655",
+        correlation_id="exec-6655",
+        prompt_turn_number=2198,
+    )
+    assert "turn_number=2198" in body
+    assert "<latest>" not in body
 
 
 def _mock_turns_response(turn: dict[str, Any]) -> MagicMock:
@@ -189,6 +216,70 @@ async def test_sidecar_ref_bypasses_bus_read() -> None:
         )
     assert got == "Review the attached design."
     read_sidecar.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_resolve_latest_captures_turn_number() -> None:
+    turn = {
+        "from": "cursor",
+        "to": "cursor-sdk",
+        "body": "Investigate the spawn loop.",
+        "turn_number": 2198,
+    }
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(return_value=_mock_turns_response(turn))
+    mock_ctx = MagicMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_ctx.__aexit__ = AsyncMock(return_value=None)
+    with patch(
+        "systems.frontier_consult.dispatch_thread_context.make_async_client",
+        return_value=mock_ctx,
+    ):
+        resolution = await resolve_generate_prompt_resolution(
+            request_id="req-6655",
+            role="cursor-sdk",
+            dispatch_thread_id="6655",
+        )
+    assert resolution.text == "Investigate the spawn loop."
+    assert resolution.prompt_bind_mode == "frozen_turn"
+    assert resolution.prompt_turn_number == 2198
+
+
+@pytest.mark.asyncio
+async def test_read_at_turn_rejects_admit_body() -> None:
+    admit_turn = {
+        "from": "dispatch",
+        "to": "dispatch",
+        "body": (
+            "Worker thread `6932` — poll via `poll_hint` from the 202 "
+            "response (not this coordination thread)."
+        ),
+    }
+
+    class _Resp:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict:
+            return admit_turn
+
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(return_value=_Resp())
+    mock_ctx = MagicMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_ctx.__aexit__ = AsyncMock(return_value=None)
+    with patch(
+        "systems.frontier_consult.dispatch_thread_context.make_async_client",
+        return_value=mock_ctx,
+    ):
+        with pytest.raises(FrontierEndpointError) as excinfo:
+            await read_dispatch_thread_body_at_turn(
+                request_id="req-admit",
+                dispatch_thread_id="6655",
+                role="reviewer",
+                turn_number=2300,
+            )
+    assert excinfo.value.code == "dispatch_thread_latest_is_pointer"
 
 
 @pytest.mark.asyncio

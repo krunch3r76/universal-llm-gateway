@@ -43,6 +43,8 @@ class PreparedCursorSdkHandle:
     nest_under: str | None = None
     lane: Literal["A", "B"] | None = None
     refuse_if_lease_held: bool = False
+    prompt_turn_number: int | None = None
+    prompt_bind_mode: str | None = None
 
 
 def mint_cursor_sdk_ids(*, request_id: str) -> tuple[str, str]:
@@ -96,6 +98,8 @@ def handle_to_dict(handle: PreparedCursorSdkHandle) -> dict[str, Any]:
         "nest_under": handle.nest_under,
         "lane": handle.lane,
         "refuse_if_lease_held": handle.refuse_if_lease_held,
+        "prompt_turn_number": handle.prompt_turn_number,
+        "prompt_bind_mode": handle.prompt_bind_mode,
     }
 
 
@@ -134,4 +138,6 @@ def handle_from_dict(data: dict[str, Any]) -> PreparedCursorSdkHandle:
         nest_under=data.get("nest_under"),
         lane=data.get("lane"),
         refuse_if_lease_held=bool(data.get("refuse_if_lease_held", False)),
+        prompt_turn_number=data.get("prompt_turn_number"),
+        prompt_bind_mode=data.get("prompt_bind_mode"),
     )

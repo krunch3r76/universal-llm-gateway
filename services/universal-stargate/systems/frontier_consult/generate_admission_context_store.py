@@ -64,6 +64,8 @@ _MIGRATION_COLUMNS: tuple[tuple[str, str], ...] = (
     ("review_surface", "TEXT"),
     ("dispatch_lane", "TEXT"),
     ("suppress_review_spawn", "INTEGER"),
+    ("prompt_turn_number", "INTEGER"),
+    ("prompt_bind_mode", "TEXT"),
 )
 
 
@@ -101,6 +103,8 @@ class AdmissionContext:
     review_surface: str | None = None
     dispatch_lane: str | None = None
     suppress_review_spawn: bool = False
+    prompt_turn_number: int | None = None
+    prompt_bind_mode: str | None = None
     created_at: str = ""
 
 
@@ -130,6 +134,8 @@ def write_admission_context(
     review_surface: str | None = None,
     dispatch_lane: str | None = None,
     suppress_review_spawn: bool = False,
+    prompt_turn_number: int | None = None,
+    prompt_bind_mode: str | None = None,
 ) -> None:
     conn = _connect()
     try:
@@ -138,7 +144,8 @@ def write_admission_context(
             "(execution_id, auto_review_child, op, role, resolved_model, "
             "parent_dispatch_thread_id, dispatch_thread_id, spawn_template_provenance, "
             "review_surface, dispatch_lane, suppress_review_spawn, "
-            "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "prompt_turn_number, prompt_bind_mode, "
+            "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 execution_id,
                 int(auto_review_child),
@@ -151,6 +158,8 @@ def write_admission_context(
                 review_surface,
                 dispatch_lane,
                 int(suppress_review_spawn),
+                prompt_turn_number,
+                prompt_bind_mode,
                 _now(),
             ),
         )
@@ -166,6 +175,7 @@ def read_admission_context(execution_id: str) -> AdmissionContext | None:
             "SELECT execution_id, auto_review_child, op, role, resolved_model, "
             "parent_dispatch_thread_id, dispatch_thread_id, spawn_template_provenance, "
             "review_surface, dispatch_lane, suppress_review_spawn, "
+            "prompt_turn_number, prompt_bind_mode, "
             "created_at FROM generate_admission_context WHERE execution_id=?",
             (execution_id,),
         ).fetchone()
@@ -175,6 +185,14 @@ def read_admission_context(execution_id: str) -> AdmissionContext | None:
         return None
     provenance = row["spawn_template_provenance"]
     suppress_raw = row["suppress_review_spawn"]
+    prompt_turn_raw = row["prompt_turn_number"]
+    prompt_turn_number: int | None
+    try:
+        prompt_turn_number = (
+            int(prompt_turn_raw) if prompt_turn_raw is not None else None
+        )
+    except (TypeError, ValueError):
+        prompt_turn_number = None
     return AdmissionContext(
         execution_id=row["execution_id"],
         auto_review_child=bool(row["auto_review_child"]),
@@ -187,6 +205,8 @@ def read_admission_context(execution_id: str) -> AdmissionContext | None:
         review_surface=row["review_surface"],
         dispatch_lane=row["dispatch_lane"],
         suppress_review_spawn=bool(suppress_raw) if suppress_raw is not None else False,
+        prompt_turn_number=prompt_turn_number,
+        prompt_bind_mode=row["prompt_bind_mode"],
         created_at=row["created_at"],
     )
 

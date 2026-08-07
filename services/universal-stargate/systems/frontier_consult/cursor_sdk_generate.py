@@ -190,6 +190,8 @@ async def dispatch_cursor_sdk_generate(
     nest_under: str | None = None,
     lane: Literal["A", "B"] | None = None,
     refuse_if_lease_held: bool = False,
+    prompt_turn_number: int | None = None,
+    prompt_bind_mode: str | None = None,
 ) -> dict[str, Any]:
     """Execute cursor-sdk generate with to_thread default delivery.
 
@@ -229,5 +231,7 @@ async def dispatch_cursor_sdk_generate(
         nest_under=nest_under,
         lane=lane,
         refuse_if_lease_held=refuse_if_lease_held,
+        prompt_turn_number=prompt_turn_number,
+        prompt_bind_mode=prompt_bind_mode,
     )
     return await dispatch_prepared_cursor_sdk(handle)

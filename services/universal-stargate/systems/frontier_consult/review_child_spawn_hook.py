@@ -13,7 +13,11 @@ from universal_logging import get_logger
 
 from .cursor_sdk_generate_signals import publish_frontier_event
 from .densify_triage import COMPOSER_DRAFT_SENTINEL, REASONING_TRACE_SENTINEL
-from .events import FrontierReviewChildContextMissing, FrontierSdkReviewChildSpawned
+from .events import (
+    FrontierReviewChildContextMissing,
+    FrontierReviewChildPromptBind,
+    FrontierSdkReviewChildSpawned,
+)
 from .generate_admission_context_store import (
     AdmissionContext,
     delete_admission_context,
@@ -119,35 +123,112 @@ def should_spawn_review_child(ctx: AdmissionContext) -> bool:
     return True
 
 
+@dataclass(frozen=True, slots=True)
+class _ReviewPromptBuild:
+    prompt: str
+    prompt_bind_mode: str
+    prompt_turn_number: int | None
+    latest_read_outcome: str
+    bound_prompt_class: str
+    bound_prompt_digest: str
+
+
+def _emit_prompt_bind_instrumentation(
+    *,
+    parent_execution_id: str,
+    child_execution_id: str | None,
+    delivery_thread_id: str,
+    build: _ReviewPromptBuild,
+) -> None:
+    publish_frontier_event(
+        FrontierReviewChildPromptBind(
+            parent_execution_id=parent_execution_id,
+            child_execution_id=child_execution_id,
+            delivery_thread_id=delivery_thread_id,
+            prompt_bind_mode=build.prompt_bind_mode,
+            prompt_turn_number=build.prompt_turn_number,
+            latest_read_outcome=build.latest_read_outcome,
+            bound_prompt_class=build.bound_prompt_class,
+            bound_prompt_digest=build.bound_prompt_digest,
+        )
+    )
+
+
 async def _build_generate_lane_review_prompt(
     *,
     request_id: str,
     parent_dispatch_thread_id: str | None,
-) -> str:
+    prompt_turn_number: int | None = None,
+    prompt_bind_mode: str | None = None,
+) -> _ReviewPromptBuild | None:
+    """Build review-child prompt; fail closed on frozen-turn read failure (6655)."""
+    from .admission import FrontierEndpointError
+    from .dispatch_thread_context import (
+        bound_prompt_sha256_prefix,
+        classify_bound_prompt_class,
+        read_dispatch_thread_body_at_turn,
+    )
+
     thread_id = parent_dispatch_thread_id or ""
     draft_body = f"{COMPOSER_DRAFT_SENTINEL}\n# generate lane closeout for {thread_id}"
     packet_text: str | None = None
-    if thread_id:
-        from .dispatch_thread_context import read_latest_dispatch_thread_body
+    bind_mode = prompt_bind_mode or "sentinel_fallback"
+    read_outcome = "skipped"
+    bound_class = "sentinel"
+    bound_digest = bound_prompt_sha256_prefix(draft_body)
 
+    if thread_id and prompt_turn_number is not None and prompt_turn_number >= 1:
+        bind_mode = prompt_bind_mode or "frozen_turn"
         try:
-            thread_body = await read_latest_dispatch_thread_body(
+            thread_body = await read_dispatch_thread_body_at_turn(
                 request_id=request_id,
                 dispatch_thread_id=thread_id,
                 role="reviewer",
+                turn_number=prompt_turn_number,
             )
-            if thread_body.strip():
-                packet_text = thread_body
-                draft_body = f"{COMPOSER_DRAFT_SENTINEL}\n{thread_body}"
-        except Exception:
-            pass
+        except FrontierEndpointError as exc:
+            logger.warning(
+                "review_child spawn fail-closed: frozen turn read failed "
+                "thread=%s turn=%s code=%s",
+                thread_id,
+                prompt_turn_number,
+                exc.code,
+            )
+            return None
+        except Exception as exc:
+            logger.warning(
+                "review_child spawn fail-closed: frozen turn read failed "
+                "thread=%s turn=%s err=%s",
+                thread_id,
+                prompt_turn_number,
+                exc,
+            )
+            return None
+        read_outcome = "ok"
+        if thread_body.strip():
+            packet_text = thread_body
+            draft_body = f"{COMPOSER_DRAFT_SENTINEL}\n{thread_body}"
+            bound_class = classify_bound_prompt_class(thread_body)
+            bound_digest = bound_prompt_sha256_prefix(thread_body)
+    elif thread_id and prompt_bind_mode == "explicit_inline":
+        read_outcome = "skipped_explicit_inline"
+        bound_class = "caller_prompt"
+
     trace_body = (
         f"{REASONING_TRACE_SENTINEL}\n# auto review child for generate/cursor-sdk"
     )
-    return build_generate_lane_reviewer_prompt(
+    prompt = build_generate_lane_reviewer_prompt(
         packet_text=packet_text,
         staged_draft_body=draft_body,
         reasoning_trace_body=trace_body,
+    )
+    return _ReviewPromptBuild(
+        prompt=prompt,
+        prompt_bind_mode=bind_mode,
+        prompt_turn_number=prompt_turn_number,
+        latest_read_outcome=read_outcome,
+        bound_prompt_class=bound_class,
+        bound_prompt_digest=bound_digest,
     )
 
 
@@ -244,16 +325,39 @@ async def spawn_generate_lane_review_child(
             parent_thread_id,
         )
         return {}
-    prompt = await _build_generate_lane_review_prompt(
+    build = await _build_generate_lane_review_prompt(
         request_id=request_id,
         parent_dispatch_thread_id=delivery_thread,
+        prompt_turn_number=ctx.prompt_turn_number,
+        prompt_bind_mode=ctx.prompt_bind_mode,
     )
-    return await _dispatch_review_child(
+    if build is None:
+        return {}
+    _emit_prompt_bind_instrumentation(
+        parent_execution_id=ctx.execution_id,
+        child_execution_id=None,
+        delivery_thread_id=delivery_thread,
+        build=build,
+    )
+    result = await _dispatch_review_child(
         request_id=request_id,
         delivery_thread=delivery_thread,
-        prompt=prompt,
+        prompt=build.prompt,
         reviewer=reviewer,
     )
+    child_execution_id = (
+        str(result.get("execution_id"))
+        if isinstance(result, dict) and result.get("execution_id")
+        else None
+    )
+    if child_execution_id:
+        _emit_prompt_bind_instrumentation(
+            parent_execution_id=ctx.execution_id,
+            child_execution_id=child_execution_id,
+            delivery_thread_id=delivery_thread,
+            build=build,
+        )
+    return result
 
 
 def _emit_review_child_spawned(

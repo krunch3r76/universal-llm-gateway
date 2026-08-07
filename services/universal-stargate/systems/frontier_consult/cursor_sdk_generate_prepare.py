@@ -78,6 +78,8 @@ async def prepare_cursor_sdk_generate(
     nest_under: str | None = None,
     lane: Literal["A", "B"] | None = None,
     refuse_if_lease_held: bool = False,
+    prompt_turn_number: int | None = None,
+    prompt_bind_mode: str | None = None,
 ) -> PreparedCursorSdkHandle:
     """Validate, mint/reuse IDs, create pending thread; do not POST the worker."""
     from .light_bounded_ac_observer import (
@@ -174,6 +176,7 @@ async def prepare_cursor_sdk_generate(
             dispatch_thread_id=dispatch_thread_id,
             correlation_id=execution_id,
             summary=extract_generate_pointer_summary(last_user),
+            prompt_turn_number=prompt_turn_number,
         )
         worker_packet = None
         worker_message = last_user
@@ -299,6 +302,8 @@ async def prepare_cursor_sdk_generate(
         review_surface=review_surface,
         dispatch_lane=resolved_dispatch_lane,
         suppress_review_spawn=suppress_review_spawn,
+        prompt_turn_number=prompt_turn_number,
+        prompt_bind_mode=prompt_bind_mode,
     )
 
     if claimed_via_atomic:
@@ -393,4 +398,6 @@ async def prepare_cursor_sdk_generate(
         nest_under=nest_under,
         lane=lane,
         refuse_if_lease_held=refuse_if_lease_held,
+        prompt_turn_number=prompt_turn_number,
+        prompt_bind_mode=prompt_bind_mode,
     )

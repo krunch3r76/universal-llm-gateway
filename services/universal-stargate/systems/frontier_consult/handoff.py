@@ -581,20 +581,29 @@ def build_generate_dispatch_pointer(
     dispatch_thread_id: str | None,
     correlation_id: str,
     summary: str | None = None,
+    prompt_turn_number: int | None = None,
 ) -> str:
     """Short reference envelope for op=generate result-thread turn 1.
 
     Deliberately omits prompt text — the dispatch thread is the authoritative
     prompt surface (friction 22100). Mirrors the packet-path pointer form in
     ``cursor_sdk_generate`` ("SDK {contract} dispatch — see packet ...").
+
+    When ``prompt_turn_number`` is supplied (wide-(A)), the pointer carries an
+    integer turn — not ``<latest>`` — so downstream reads cannot re-subscribe.
     """
     thread_ref = dispatch_thread_id or "unknown"
+    turn_ref = (
+        str(prompt_turn_number)
+        if prompt_turn_number is not None and prompt_turn_number >= 1
+        else "<latest>"
+    )
     lines = [
         f"{lane} {contract} generate dispatch — prompt on dispatch thread "
         f"`{thread_ref}` (correlation `{correlation_id}`).",
         "",
         "Read full prompt: "
-        f"agent_bus(get, thread={thread_ref!r}, turn_number=<latest>)",
+        f"agent_bus(get, thread={thread_ref!r}, turn_number={turn_ref})",
     ]
     if summary:
         lines += ["", f"Summary: {summary}"]
