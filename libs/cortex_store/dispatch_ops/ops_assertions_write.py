@@ -228,9 +228,9 @@ def _op_assert(
                     "assertion routed to staging — to graduate to committed, "
                     "supersede with the missing reasoning_summary or chunk_id "
                     "(carryover preserves all other fields; the new row is the "
-                    "committed version). reasoning_summary is immutable "
-                    "post-creation per cortex-provenance-substrate-v1.3-additions "
-                    "§7.5.3 — assertion_update does not accept it."
+                    "committed version). For metadata-only patches on an existing "
+                    "row, assertion_update accepts reasoning_summary, "
+                    "evidence_uris, and review_notes (see dispatch op contract)."
                 )
             if has_auditor:
                 hints.append(

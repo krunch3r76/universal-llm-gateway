@@ -26,6 +26,55 @@ from ._shared import record
 
 logger = get_logger("cortex-api.dispatch_ops.assertions")
 
+_ASSERTION_UPDATE_ACCEPTED_KEYS: frozenset[str] = frozenset(
+    {
+        "superseded_by",
+        "valid_from",
+        "valid_until",
+        "confidence",
+        "confidence_score",
+        "review_status",
+        "reviewer",
+        "reviewed_at",
+        "review_notes",
+        "evidence_uris",
+        "reasoning_summary",
+        "predicate_form",
+        "prospective_summary",
+        "events_json",
+    }
+)
+
+
+def _dropped_dispatch_key_warnings(
+    dropped_keys: list[str],
+) -> list[dict[str, str]]:
+    accepted = ", ".join(sorted(_ASSERTION_UPDATE_ACCEPTED_KEYS))
+    return [
+        {
+            "category": "dispatch",
+            "field": key,
+            "message": (
+                f"Key {key!r} is not accepted by assertion_update and was "
+                f"discarded. Accepted keys: {accepted}."
+            ),
+        }
+        for key in sorted(dropped_keys)
+    ]
+
+
+def _attach_dropped_key_warnings(
+    result: dict[str, Any], dropped_keys: list[str]
+) -> dict[str, Any]:
+    if not dropped_keys:
+        return result
+    existing = result.get("validation_warnings") or []
+    result["validation_warnings"] = [
+        *existing,
+        *_dropped_dispatch_key_warnings(dropped_keys),
+    ]
+    return result
+
 
 def _op_assertion_get(assertion_id: int | None = None, **_: object) -> dict[str, Any]:
     """Read a single assertion by id.
@@ -69,8 +118,9 @@ def _op_assertion_update(
     prospective_summary: str | None = None,
     events_json: str | None = None,
     force: bool = False,
-    **_: object,
+    **extra: object,
 ) -> dict[str, Any]:
+    dropped_keys = sorted(extra.keys())
     if assertion_id is None:
         return {"error": "assertion_id is required"}
     if isinstance(evidence_uris, str):
@@ -100,7 +150,10 @@ def _op_assertion_update(
     if predicate_form is not _UNSET:
         body["predicate_form"] = predicate_form  # may be None to clear
     if not body:
-        return {"error": "No fields to update"}
+        return _attach_dropped_key_warnings(
+            {"error": "No fields to update"},
+            dropped_keys,
+        )
     if force:
         body["force"] = True
     result = _update_assertion_impl(assertion_id, body)
@@ -114,7 +167,7 @@ def _op_assertion_update(
             assertion_id=assertion_id,
             normalize_payload=result.get("predicate_form_normalize"),
         )
-    return result
+    return _attach_dropped_key_warnings(result, dropped_keys)
 
 
 def _op_supersede(

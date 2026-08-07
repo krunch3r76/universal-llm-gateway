@@ -726,12 +726,12 @@ In all three cases, calling `supersede(old, claim=new.claim, entity_id=new.entit
 
 ### 7.5.3 Per-write provenance on retirement writes (friction 10158 resolution)
 
-`assertion_update` accepts `review_notes` but **does not accept `reasoning_summary`**. Work orders that template per-write provenance as `reasoning_summary='...'` on retirement writes fail silently (the field is dropped server-side) and ship retirement writes with zero per-write provenance — only the inherited reasoning_summary on the original row.
+**Code SOT (2026-08-07):** `assertion_update` accepts `review_notes`, `reasoning_summary`, `evidence_uris`, and the other patchable metadata columns listed in `libs/cortex_store/routes/assertions/_update.py` (`_PATCHABLE_COLS`). Keys outside the dispatch whitelist are discarded but surfaced in `validation_warnings` on the response (friction 6885).
 
 The discipline:
-- Per-write retirement provenance goes in **`review_notes`** (mutable, audit-trail-preserved, accepted by `assertion_update`).
+- Per-write retirement provenance may go in **`review_notes`** (mutable, audit-trail-preserved) or, when a metadata correction is intended, via **`reasoning_summary`** / **`evidence_uris`** on `assertion_update`.
 - Batch-level provenance (work-order section reference, cluster-discovery method, canonical-selection reasoning) goes in the **§14.2(c) ledger entry** referencing the work order.
-- `reasoning_summary` is reserved for the row's original derivation reasoning, written via `cortex.assert` or `cortex.supersede` at creation. It is intentionally immutable post-creation: a retirement is not a new derivation event; the source row's reasoning still applies.
+- Prefer **`review_notes`** for retirement audit text when the write is not revising derivation reasoning; use **`reasoning_summary`** only when the stored derivation summary itself needs correction. Creation-time derivation still flows through `cortex.assert` or `cortex.supersede`.
 
 ### 7.5.4 Optional v1.4 candidate — `supersede_redirect` sugar primitive
 
