@@ -354,12 +354,12 @@ def _registration_as_dict(reg: cdp_registry.Registration) -> dict[str, Any]:
 
 
 def registered_lane_dicts() -> list[dict[str, Any]]:
-    """Registry rows visible on the list surface (active + orphaned_alive)."""
+    """Registry rows visible on the list surface (active + orphaned_alive + retained)."""
     active = cdp_registry._load_active()
     out: list[dict[str, Any]] = []
     for rid, row in active.items():
         status = row.get("status")
-        if status not in {"active", "orphaned_alive"}:
+        if status not in cdp_registry._LISTABLE_STATUSES:
             continue
         d = _registration_as_dict(cdp_registry._row_to_registration(row))
         d["status"] = status
@@ -370,6 +370,8 @@ def registered_lane_dicts() -> list[dict[str, Any]]:
         d["chrome_pid"] = chrome_pid if isinstance(chrome_pid, int) else None
         if status == "orphaned_alive":
             d["orphan_reason"] = row.get("orphan_reason")
+        if status == "retained":
+            d["retain_reason"] = row.get("retain_reason")
         out.append(d)
     return sorted(out, key=lambda item: int(item["port"]))
 

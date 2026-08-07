@@ -251,6 +251,118 @@ def test_list_capacity_excludes_orphaned_alive(isolated_registry: Path) -> None:
     assert reg.count_capacity_lanes() == 0
 
 
+def test_kill_false_exit_leaves_listable_retained(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    killed: list[int] = []
+    monkeypatch.setattr(reg, "_kill_listener", lambda port: killed.append(port))
+    r = reg.register_lane(
+        holder="cdp-model-endpoint",
+        purpose="operator-proxy",
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    reg.deregister_lane(
+        r.registration_id,
+        kill=False,
+        reason="retained",
+        is_listening=lambda _p: True,
+    )
+    assert killed == []
+    row = reg._load_active()[r.registration_id]
+    assert row["status"] == "retained"
+    assert row["retain_reason"] == "kill_false_exit"
+    assert [x.registration_id for x in reg.list_active()] == [r.registration_id]
+    assert reg.list_capacity() == []
+    visible = cdp_orphans.registered_lane_dicts()
+    assert any(
+        item["registration_id"] == r.registration_id and item["status"] == "retained"
+        for item in visible
+    )
+
+
+def test_reattach_refuses_retained_status(isolated_registry: Path) -> None:
+    r = reg.register_lane(
+        holder="seat-1",
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    reg.deregister_lane(r.registration_id, kill=False, reason="retained")
+    with pytest.raises(reg.RegistryError, match="not active"):
+        reg.reattach(r.registration_id, holder="seat-1")
+
+
+def test_hygiene_keeps_retained_live_not_orphaned_retry(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    trash = tmp_path / "reclaim-trash"
+    monkeypatch.setattr(reg, "RECLAIM_TRASH_DIR", trash)
+    profiles = reg.cdp_lane.profile_for("x").parent
+    profile = profiles / "claude-ai-chrome-profile-reg-retain01"
+    profile.mkdir(parents=True)
+    monkeypatch.setattr(
+        reg.cdp_lane,
+        "profile_for",
+        lambda suffix: profiles / f"claude-ai-chrome-profile-{suffix}",
+    )
+    monkeypatch.setattr(reg.cdp_lane, "chrome_port_for_profile", lambda p: 9225)
+
+    with reg._store.ports_lock():
+        active = reg._store.load_active()
+        active["kept"] = {
+            "registration_id": "kept",
+            "port": 9224,
+            "profile_suffix": "reg-retain01",
+            "profile": str(profile),
+            "holder": "cdp-model-endpoint",
+            "purpose": "operator-proxy",
+            "status": "retained",
+            "retain_reason": "kill_false_exit",
+        }
+        reg._store.write_active(active)
+
+    result = reg.hygiene_reclaim_released()
+    assert profile.exists()
+    assert str(profile) not in result.removed_profiles
+    assert 9224 not in result.reclaimed_ports
+    active = reg._load_active()
+    assert "kept" in active
+    assert active["kept"]["status"] == "retained"
+
+
+def test_hygiene_reclaims_dead_retained(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    trash = tmp_path / "reclaim-trash"
+    monkeypatch.setattr(reg, "RECLAIM_TRASH_DIR", trash)
+    profiles = reg.cdp_lane.profile_for("x").parent
+    profile = profiles / "claude-ai-chrome-profile-reg-retdead1"
+    profile.mkdir(parents=True)
+    monkeypatch.setattr(
+        reg.cdp_lane,
+        "profile_for",
+        lambda suffix: profiles / f"claude-ai-chrome-profile-{suffix}",
+    )
+    monkeypatch.setattr(reg.cdp_lane, "chrome_port_for_profile", lambda _p: None)
+
+    with reg._store.ports_lock():
+        active = reg._store.load_active()
+        active["dead-ret"] = {
+            "registration_id": "dead-ret",
+            "port": 9226,
+            "profile_suffix": "reg-retdead1",
+            "profile": str(profile),
+            "holder": "a",
+            "status": "retained",
+            "retain_reason": "kill_false_exit",
+        }
+        reg._store.write_active(active)
+
+    result = reg.hygiene_reclaim_released()
+    assert 9226 in result.reclaimed_ports
+    assert "dead-ret" not in reg._load_active()
+
+
 def test_reattach_same_holder_ok(isolated_registry: Path) -> None:
     r = reg.register_lane(
         holder="seat-1",
@@ -678,8 +790,17 @@ def test_hygiene_reclaim_success_log_carries_reclaimed_not_stale_status(
         reg._store.write_active(active)
 
     reg.hygiene_reclaim_released()
-    lines = (isolated_registry / "registry.jsonl").read_text(encoding="utf-8").strip().splitlines()
-    reclaim_lines = [json.loads(line) for line in lines if json.loads(line)["event"] == "hygiene_reclaim"]
+    lines = (
+        (isolated_registry / "registry.jsonl")
+        .read_text(encoding="utf-8")
+        .strip()
+        .splitlines()
+    )
+    reclaim_lines = [
+        json.loads(line)
+        for line in lines
+        if json.loads(line)["event"] == "hygiene_reclaim"
+    ]
     assert len(reclaim_lines) == 1
     record = reclaim_lines[0]
     assert record["status"] == "reclaimed"

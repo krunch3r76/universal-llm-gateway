@@ -47,7 +47,9 @@ def test_registration_owns_port_active_match(monkeypatch: pytest.MonkeyPatch) ->
     assert paa.registration_owns_port("abc123", 9234) is True
 
 
-def test_registration_owns_port_released_or_reassigned(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_registration_owns_port_released_or_reassigned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         paa.cdp_registry,
         "_load_active",
@@ -63,10 +65,17 @@ def test_registration_owns_port_released_or_reassigned(monkeypatch: pytest.Monke
     assert paa.registration_owns_port("abc123", 9234) is False
 
 
+def _capture_deregister(calls: list[tuple[str, bool, str | None]]):
+    def _fn(rid: str, *, kill: bool = False, reason: str | None = None, **_kw):
+        calls.append((rid, kill, reason))
+
+    return _fn
+
+
 def test_deregister_on_exit_skips_when_port_reassigned(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[tuple[str, bool]] = []
+    calls: list[tuple[str, bool, str | None]] = []
 
     monkeypatch.setattr(
         paa.cdp_registry,
@@ -76,7 +85,7 @@ def test_deregister_on_exit_skips_when_port_reassigned(
     monkeypatch.setattr(
         paa.cdp_registry,
         "deregister_lane",
-        lambda rid, *, kill=False: calls.append((rid, kill)),
+        _capture_deregister(calls),
     )
     paa.deregister_on_exit(_reg(port=9234), purpose="ask")
     assert calls == []
@@ -85,7 +94,7 @@ def test_deregister_on_exit_skips_when_port_reassigned(
 def test_deregister_on_exit_ask_kills_when_owner(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[tuple[str, bool]] = []
+    calls: list[tuple[str, bool, str | None]] = []
 
     monkeypatch.setattr(
         paa.cdp_registry,
@@ -95,14 +104,14 @@ def test_deregister_on_exit_ask_kills_when_owner(
     monkeypatch.setattr(
         paa.cdp_registry,
         "deregister_lane",
-        lambda rid, *, kill=False: calls.append((rid, kill)),
+        _capture_deregister(calls),
     )
     paa.deregister_on_exit(_reg(), purpose="ask")
-    assert calls == [("abc123", True)]
+    assert calls == [("abc123", True, "released")]
 
 
 def test_deregister_on_exit_fable_no_kill(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[tuple[str, bool]] = []
+    calls: list[tuple[str, bool, str | None]] = []
 
     monkeypatch.setattr(
         paa.cdp_registry,
@@ -112,17 +121,17 @@ def test_deregister_on_exit_fable_no_kill(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(
         paa.cdp_registry,
         "deregister_lane",
-        lambda rid, *, kill=False: calls.append((rid, kill)),
+        _capture_deregister(calls),
     )
     monkeypatch.setattr(paa._events, "emit", lambda _event: None)
     paa.deregister_on_exit(_reg(purpose="fable"), purpose="fable")
-    assert calls == [("abc123", False)]
+    assert calls == [("abc123", False, "retained")]
 
 
 def test_deregister_on_exit_operator_proxy_no_kill(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[tuple[str, bool]] = []
+    calls: list[tuple[str, bool, str | None]] = []
 
     monkeypatch.setattr(
         paa.cdp_registry,
@@ -132,17 +141,17 @@ def test_deregister_on_exit_operator_proxy_no_kill(
     monkeypatch.setattr(
         paa.cdp_registry,
         "deregister_lane",
-        lambda rid, *, kill=False: calls.append((rid, kill)),
+        _capture_deregister(calls),
     )
     monkeypatch.setattr(paa._events, "emit", lambda _event: None)
     paa.deregister_on_exit(_reg(purpose="operator-proxy"), purpose="operator-proxy")
-    assert calls == [("abc123", False)]
+    assert calls == [("abc123", False, "retained")]
 
 
 def test_deregister_on_exit_mission_no_kill(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[tuple[str, bool]] = []
+    calls: list[tuple[str, bool, str | None]] = []
 
     monkeypatch.setattr(
         paa.cdp_registry,
@@ -152,11 +161,11 @@ def test_deregister_on_exit_mission_no_kill(
     monkeypatch.setattr(
         paa.cdp_registry,
         "deregister_lane",
-        lambda rid, *, kill=False: calls.append((rid, kill)),
+        _capture_deregister(calls),
     )
     monkeypatch.setattr(paa._events, "emit", lambda _event: None)
     paa.deregister_on_exit(_reg(purpose="mission"), purpose="mission")
-    assert calls == [("abc123", False)]
+    assert calls == [("abc123", False, "retained")]
 
 
 def test_deregister_on_exit_operator_proxy_primary_profile_not_killed(
@@ -166,7 +175,7 @@ def test_deregister_on_exit_operator_proxy_primary_profile_not_killed(
     primary = tmp_path / "claude-ai-chrome-profile"
     primary.mkdir()
     monkeypatch.setattr(paa.cdp_registry.cdp_lane, "PRIMARY_PROFILE", primary)
-    calls: list[tuple[str, bool]] = []
+    calls: list[tuple[str, bool, str | None]] = []
     emitted: list[dict] = []
 
     monkeypatch.setattr(
@@ -177,7 +186,7 @@ def test_deregister_on_exit_operator_proxy_primary_profile_not_killed(
     monkeypatch.setattr(
         paa.cdp_registry,
         "deregister_lane",
-        lambda rid, *, kill=False: calls.append((rid, kill)),
+        _capture_deregister(calls),
     )
     monkeypatch.setattr(
         paa._events,
@@ -190,7 +199,7 @@ def test_deregister_on_exit_operator_proxy_primary_profile_not_killed(
         _reg(purpose="operator-proxy", profile=primary),
         purpose="operator-proxy",
     )
-    assert calls == [("abc123", False)]
+    assert calls == [("abc123", False, "retained")]
     assert emitted == [
         {
             "signal": "cdp.port.exit_kill_decision",
@@ -246,6 +255,7 @@ def test_abort_cleanup_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
         "_load_active",
         lambda: {"abc123": {"status": "active", "port": 9234}},
     )
+
     def _fake_stop(_url: str) -> paa.AttestResult:
         stops["n"] += 1
         return paa.AttestResult(has_stop=False, probe_ok=True)

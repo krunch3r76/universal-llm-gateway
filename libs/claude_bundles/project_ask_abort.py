@@ -161,7 +161,12 @@ def deregister_on_exit(reg: cdp_registry.Registration, *, purpose: str | None) -
             kill=kill,
         )
     )
-    cdp_registry.deregister_lane(reg.registration_id, kill=kill)
+    # kill=False ⇒ status=retained (listable intentional retention), not released.
+    cdp_registry.deregister_lane(
+        reg.registration_id,
+        kill=kill,
+        reason="retained" if not kill else "released",
+    )
     cdp_registry.reclaim_best_effort()
 
 

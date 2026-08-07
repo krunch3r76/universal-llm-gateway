@@ -8,8 +8,12 @@ Supersedes hand-picked ``--cdp-url`` / warm-reuse for automated seats.
 ``:9222`` remains the attended primary (out of pool). Persistence:
 ``cdp_registry_store``; Chrome launch/seed from ``cdp_lane``.
 
-v1: ports in ``allocating`` / ``active`` / ``released`` stay out of the free
-pool until ``hygiene_reclaim_released`` drops released rows.
+v1: ports in ``allocating`` / ``active`` / ``released`` / ``retained`` stay
+out of the free pool until ``hygiene_reclaim_released`` drops reclaimable rows.
+
+``retained`` is intentional kill=False exit (glass kept on purpose). It is
+listable and must not be collapsed into ``orphaned_retry`` — retained and
+orphaned are different states that share live-glass phenomenology.
 """
 
 from __future__ import annotations
@@ -38,9 +42,17 @@ REGISTRATIONS_DIR = _store.REGISTRATIONS_DIR
 
 PORT_RANGE = range(9223, 9350)
 _RESERVED_STATUSES = frozenset(
-    {"allocating", "active", "released", "orphaned_retry", "orphaned_alive"}
+    {
+        "allocating",
+        "active",
+        "released",
+        "retained",
+        "orphaned_retry",
+        "orphaned_alive",
+    }
 )
 _RECLAIMABLE_STATUSES = frozenset({"released", "orphaned_retry"})
+_LISTABLE_STATUSES = frozenset({"active", "orphaned_alive", "retained"})
 RECLAIM_TRASH_DIR = Path.home() / ".gateway" / ".reclaim-trash"
 STALE_ACTIVE_TTL_S = 6 * 3600
 # Chrome-host mission taxonomy (bus parent is parent_thread, not nest_under).
@@ -390,10 +402,14 @@ def deregister_lane(
     keep_alive_reason: str | None = None,
     is_listening: _ListenFn | None = None,
 ) -> None:
-    """Release or orphan-alive a lane; error paths never kill Chrome.
+    """Release, retain, or orphan-alive a lane; error paths never kill Chrome.
 
-    Explicit ``kill=True`` still kills residual Chrome on ``orphaned_alive``
-    (and on already-``released`` rows) — mission cull must not no-op.
+    ``kill=False`` (intentional retention) leaves status ``retained`` — listable,
+    reserved, and distinct from hygiene ``orphaned_retry``. ``kill=True`` leaves
+    ``released``. Error keep-alive paths leave ``orphaned_alive``.
+
+    Explicit ``kill=True`` still kills residual Chrome on ``orphaned_alive`` /
+    ``retained`` (and on already-``released`` rows) — mission cull must not no-op.
     """
     listen = is_listening or cdp_lane.is_listening
     error_release = keep_alive_reason is not None or reason in {
@@ -418,7 +434,7 @@ def deregister_lane(
                     _kill_listener(port)
             _release_driver_lock(registration_id)
             return
-        if status == "orphaned_alive" and not kill:
+        if status in {"orphaned_alive", "retained"} and not kill:
             _release_driver_lock(registration_id)
             return
 
@@ -431,6 +447,12 @@ def deregister_lane(
             row["status"] = "orphaned_alive"
             row["orphaned_at"] = time.time()
             row["orphan_reason"] = keep_alive_reason or reason
+        elif not kill:
+            row["status"] = "retained"
+            row["retained_at"] = time.time()
+            row["retain_reason"] = (
+                reason if reason not in {"released", "retained"} else "kill_false_exit"
+            )
         else:
             row["status"] = "released"
             row["released_at"] = time.time()
@@ -443,11 +465,12 @@ def deregister_lane(
 
 
 def list_active() -> list[Registration]:
+    """Listable lanes: ``active``, ``orphaned_alive``, and intentional ``retained``."""
     active = _store.load_active()
     out = [
         _row_to_registration(row)
         for row in active.values()
-        if row.get("status") in ("active", "orphaned_alive")
+        if row.get("status") in _LISTABLE_STATUSES
     ]
     return sorted(out, key=lambda r: r.port)
 
@@ -693,7 +716,45 @@ def hygiene_reclaim_extended(
         keep: dict[str, dict[str, Any]] = {}
         for rid, row in active.items():
             status = row.get("status")
-            if status in _RECLAIMABLE_STATUSES:
+            if status == "retained":
+                # Intentional retention: never stamp orphaned_retry over it.
+                # Reclaim only when glass/profile is dead (retention ended).
+                outcome, profile = _reclaim_row_profile(
+                    rid,
+                    row,
+                    chrome_port_for_profile=chrome_port_for_profile,
+                )
+                if outcome in ("skipped_live", "skipped_primary"):
+                    keep[rid] = row
+                    _store.append_log(
+                        "hygiene_retained_kept",
+                        {
+                            "registration_id": rid,
+                            **row,
+                            "skip_reason": outcome,
+                        },
+                    )
+                elif outcome in ("success", "missing"):
+                    reclaimed.append(int(row["port"]))
+                    if outcome == "success" and profile is not None:
+                        removed.append(str(profile))
+                    _store.append_log(
+                        "hygiene_reclaim",
+                        {
+                            "registration_id": rid,
+                            "port": row["port"],
+                            "profile_suffix": row.get("profile_suffix"),
+                            "profile": row.get("profile"),
+                            "holder": row.get("holder"),
+                            "status": "reclaimed",
+                            "reclaim_outcome": outcome,
+                            "profile_removed": outcome == "success",
+                            "prior_status": "retained",
+                        },
+                    )
+                else:
+                    keep[rid] = row
+            elif status in _RECLAIMABLE_STATUSES:
                 outcome, profile = _reclaim_row_profile(
                     rid,
                     row,

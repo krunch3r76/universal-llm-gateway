@@ -91,7 +91,7 @@ def build_chat_url_index(fetch_json: FetchJsonFn) -> dict[str, str]:
 def registration_id_for_profile(profile: Path) -> str | None:
     resolved = profile.resolve()
     for rid, row in cdp_registry._load_active().items():
-        if row.get("status") not in {"active", "orphaned_alive"}:
+        if row.get("status") not in cdp_registry._LISTABLE_STATUSES:
             continue
         row_profile = cdp_registry._profile_path_from_row(row)
         if row_profile is not None and row_profile.resolve() == resolved:
