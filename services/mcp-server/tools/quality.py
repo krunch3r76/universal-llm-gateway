@@ -186,13 +186,21 @@ def _run_event_catalog_gate(files: list[str]) -> dict[str, bool | str]:
 
 
 def _run_ruff(files: list[str]) -> dict[str, bool | str]:
-    """Run ruff check on files."""
+    """Run ruff check on files under the owning repo root.
+
+    ``cwd`` is pinned to ``repo_base`` (same as event-catalog / import-check
+    siblings) so first-party isort settings resolve from the project
+    ``pyproject.toml`` rather than the MCP process cwd. Measuring the same
+    absolute path from outside a project root can emit phantom I001.
+    """
+    repo_base = repo_base_for(_PROJECT_ROOT)
     try:
         result = subprocess.run(
             [sys.executable, "-m", "ruff", "check", *files],
             capture_output=True,
             text=True,
             timeout=_TIMEOUT,
+            cwd=str(repo_base),
         )
         return {
             "passed": result.returncode == 0,

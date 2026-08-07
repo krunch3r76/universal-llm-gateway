@@ -18,12 +18,27 @@ _SUBSTRATE_MARKERS = (
 )
 
 
+def _line_carries_identical_true(line: str) -> bool:
+    """True when a scraped probe line already carries ``\"identical\": true``."""
+    try:
+        payload = json.loads(line.strip())
+    except json.JSONDecodeError:
+        return False
+    return isinstance(payload, dict) and payload.get("identical") is True
+
+
 def extract_substrate_findings(text: str | None) -> list[str]:
-    """Return plain-language lines that look like substrate rot from closeout text."""
+    """Return plain-language lines that look like substrate rot from closeout text.
+
+    Lines whose JSON already marks ``identical: true`` are not findings — the
+    probe already distinguished byte-identical dirt from rot.
+    """
     if not text:
         return []
     findings: list[str] = []
     for line in text.splitlines():
+        if _line_carries_identical_true(line):
+            continue
         low = line.lower()
         if any(marker in low for marker in _SUBSTRATE_MARKERS):
             stripped = line.strip()

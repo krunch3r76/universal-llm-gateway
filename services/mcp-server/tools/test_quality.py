@@ -84,9 +84,11 @@ def test_resolves_host_absolute_path_by_repo_name(tmp_path: Path) -> None:
 
 def test_run_ruff_uses_python_module(monkeypatch: Any) -> None:
     commands: list[list[str]] = []
+    run_kwargs: list[dict[str, Any]] = []
 
     def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         commands.append(command)
+        run_kwargs.append(kwargs)
         return subprocess.CompletedProcess(command, 0, stdout="ok\n", stderr="")
 
     monkeypatch.setattr(quality.subprocess, "run", fake_run)
@@ -95,6 +97,8 @@ def test_run_ruff_uses_python_module(monkeypatch: Any) -> None:
 
     assert result == {"passed": True, "output": "ok\n"}
     assert commands == [[sys.executable, "-m", "ruff", "check", "example.py"]]
+    assert run_kwargs and "cwd" in run_kwargs[0]
+    assert run_kwargs[0]["cwd"] == str(quality.repo_base_for(quality._PROJECT_ROOT))
 
 
 def test_run_offline_tests_uses_marker_selection(monkeypatch: Any) -> None:

@@ -20,7 +20,7 @@ from services.git_integration_worker.cursor_sdk_events import (
 logger = get_logger(__name__)
 
 # method ∈ run_cancel | bridge_abort | cancel_failed | not_live |
-#           bridge_abort_escalate | queued_only
+#           bridge_abort_escalate | queued_only | pre_register_live_run
 _CANCEL_METHODS = frozenset(
     {
         "run_cancel",
@@ -29,6 +29,7 @@ _CANCEL_METHODS = frozenset(
         "not_live",
         "bridge_abort_escalate",
         "queued_only",
+        "pre_register_live_run",
     }
 )
 
@@ -71,15 +72,26 @@ def emit_sdk_worker_cancelled(
     thread_id: str | None = None,
     superseded_by: str | None = None,
     error: str | None = None,
+    terminal_status: str | None = None,
 ) -> None:
     """Publish cancel/supersede of a cursor-sdk dispatch to Event Service.
 
     ``method`` names the interrupt rung (``run_cancel``, ``bridge_abort``,
-    ``queued_only``, …). Low-frequency lifecycle edge — safe as observation.
+    ``pre_register_live_run``, …). Low-frequency lifecycle edge — safe as
+    observation. ``pre_register_live_run`` must not default to
+    ``terminal_status=cancelled`` — that vocabulary implies process stop.
     """
     cleaned = str(method or "").strip() or "not_live"
     if cleaned not in _CANCEL_METHODS:
         cleaned = "not_live"
+    if terminal_status is None:
+        status = (
+            "displaced_pre_live"
+            if cleaned == "pre_register_live_run"
+            else "cancelled"
+        )
+    else:
+        status = terminal_status
     event = FrontierSdkWorkerCancelled(
         dispatch_id=dispatch_id,
         method=cleaned,
@@ -87,6 +99,7 @@ def emit_sdk_worker_cancelled(
         thread_id=thread_id,
         superseded_by=superseded_by,
         error=error,
+        terminal_status=status,
     )
     emit_frontier_event(event)
     _register_terminal_emitted(dispatch_id)

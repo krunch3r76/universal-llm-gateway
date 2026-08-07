@@ -257,7 +257,8 @@ def run_touched_files_lint(
 
     Each call mints a fresh ``invocation_id`` so this closeout-time process
     cannot be silently conflated with a mid-run agent shell that happened to
-    print ``All checks passed!`` (specimen auto-00a23d2a4f45).
+    print ``All checks passed!`` (specimen auto-00a23d2a4f45). ``cwd`` is
+    pinned to ``source_repo`` so config discovery matches in-tree measurement.
     """
     py_paths = [
         path
@@ -278,10 +279,13 @@ def run_touched_files_lint(
     command = f"ruff check {len(py_paths)} touched files"
     invocation_id = f"lint:{uuid4().hex}"
     try:
+        # Pin cwd to the owning repo root so isort/first-party discovery matches
+        # in-tree measurement (orphan cwd → phantom I001 on otherwise-clean files).
         proc = subprocess.run(
             ["ruff", "check", *abs_paths],
             capture_output=True,
             timeout=60,
+            cwd=str(source_repo),
         )
     except FileNotFoundError:
         return (

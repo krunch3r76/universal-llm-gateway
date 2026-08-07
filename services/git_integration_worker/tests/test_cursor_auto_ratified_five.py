@@ -171,6 +171,20 @@ def test_extract_substrate_findings():
     assert extract_substrate_findings(text) == [text]
 
 
+def test_extract_substrate_findings_identical_true_yields_empty():
+    """Incomplete-check AC: identical:true probe lines are not rot findings."""
+    line = json.dumps(
+        {
+            "path": "services/git_integration_worker/cursor_auto/substrate_feedback.py",
+            "identical": True,
+        }
+    )
+    assert extract_substrate_findings(line) == []
+    assert extract_substrate_findings(f"{line}\naudit warning elsewhere") == [
+        "audit warning elsewhere"
+    ]
+
+
 def test_append_journal_entry(tmp_path):
     ok = append_journal_entry(
         thread_id="5968",

@@ -389,6 +389,14 @@ def test_nested_sdk_finished_excludes_from_supersede_without_mark_done():
 
 
 def test_queued_only_still_supersedes_pre_submit_claimed_job():
+    """Protects lane displacement for claimed-pre-live jobs (A1 honesty).
+
+    A newer same-thread request must still mark the predecessor superseded so
+    the lane progresses. It must **not** lock ``method=queued_only`` /
+    cancel-before-start vocabulary — ``¬live`` is true for never-submitted and
+    for bind→``register_live_run``, so the honest token is
+    ``pre_register_live_run``.
+    """
     queue = AutoJobQueue(durable=False)
     old = _enqueue(queue, thread_id="5867", turn_number=8)
     queue.claim_next()
@@ -398,8 +406,10 @@ def test_queued_only_still_supersedes_pre_submit_claimed_job():
     evidence = asyncio.run(supersede_same_thread_inflight(new, queue=queue))
 
     assert evidence is not None
-    assert evidence["method"] == "queued_only"
+    assert evidence["method"] == auto_supersede.PRE_REGISTER_LIVE_RUN
+    assert evidence["method"] != "queued_only"
     assert queue.is_superseded(old.job_id)
+    assert new.supersedes == old.job_id
 
 
 def test_superseded_terminal_summary_replay_auto_47cdf529c125():

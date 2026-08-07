@@ -64,6 +64,26 @@ class SupersedeContext:
 
 _PENDING: dict[str, SupersedeContext] = {}
 
+# Honesty token for claimed ∧ ¬register_live_run: names the window, does not
+# claim process stop. Distinct from ``queued_only`` (pre-mint cancel vocabulary).
+PRE_REGISTER_LIVE_RUN = "pre_register_live_run"
+
+
+def _bound_auto_dispatch_id(job_id: str) -> str | None:
+    """Return bound ``auto-*`` for *job_id* when the job ledger has one."""
+    try:
+        from services.git_integration_worker.cursor_auto.job_ledger import (
+            get_ledger,
+        )
+
+        state = get_ledger().read_relay_state(job_id)
+    except Exception:  # noqa: BLE001 — ledger optional in durable=False tests
+        return None
+    dispatch_id = state.get("dispatch_id")
+    if isinstance(dispatch_id, str) and dispatch_id.startswith("auto-"):
+        return dispatch_id
+    return None
+
 
 async def supersede_same_thread_inflight(
     new_job: AutoJob, *, queue: AutoJobQueue
@@ -72,13 +92,18 @@ async def supersede_same_thread_inflight(
 
     Returns interrupt evidence for the enqueue response, or ``None`` when the
     thread is idle and the request is a plain FIFO append.
+
+    When ``live_run_for_thread`` is ``None``, the job may be never-submitted
+    **or** already past ``bind_dispatch``/POST without ``register_live_run``.
+    That probe cannot license ``queued_only`` + ``terminal_status=cancelled``.
     """
     old_job = queue.claimed_for_thread(new_job.thread_id)
     if old_job is None or old_job.job_id == new_job.job_id:
         return None
     live = live_run_for_thread(new_job.thread_id)
     reason = f"same_thread_request_turn_{new_job.turn_number}"
-    mark: dict[str, Any] = {"method": "queued_only", "reason": reason}
+    superseded_dispatch_id: str | None = None
+    source_repo: str | None = None
     if live is not None:
         mark = await asyncio.to_thread(
             signal_supersede,
@@ -86,22 +111,29 @@ async def supersede_same_thread_inflight(
             superseded_by=new_job.job_id,
             reason=reason,
         )
+        superseded_dispatch_id = live.dispatch_id
+        source_repo = live.source_repo
     else:
-        # Claimed Auto job with no live SDK bridge — cancel before start.
+        # Pre-CancelRun window — mark displacement honestly; do not claim stop.
+        bound_dispatch = _bound_auto_dispatch_id(old_job.job_id)
+        mark = {"method": PRE_REGISTER_LIVE_RUN, "reason": reason}
+        if bound_dispatch is not None:
+            mark["dispatch_id"] = bound_dispatch
         emit_sdk_worker_cancelled(
-            dispatch_id=old_job.job_id,
-            method="queued_only",
+            dispatch_id=bound_dispatch or old_job.job_id,
+            method=PRE_REGISTER_LIVE_RUN,
             reason=reason,
             thread_id=new_job.thread_id,
             superseded_by=new_job.job_id,
         )
+        superseded_dispatch_id = bound_dispatch
     queue.mark_superseded(old_job.job_id, superseded_by=new_job.job_id)
     new_job.supersedes = old_job.job_id
-    new_job.superseded_dispatch_id = live.dispatch_id if live else None
+    new_job.superseded_dispatch_id = superseded_dispatch_id
     _PENDING[new_job.job_id] = SupersedeContext(
         superseded_job_id=old_job.job_id,
-        superseded_dispatch_id=live.dispatch_id if live else None,
-        source_repo=live.source_repo if live else None,
+        superseded_dispatch_id=superseded_dispatch_id,
+        source_repo=source_repo,
         mark=mark,
     )
     logger.warning(

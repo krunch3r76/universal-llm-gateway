@@ -126,7 +126,7 @@ def test_escalate_supersede_abort_emits(emitted, monkeypatch):
     assert emitted[0].payload["superseded_by"] == "job-new"
 
 
-def test_queued_only_supersede_emits(emitted):
+def test_pre_register_live_run_supersede_emits(emitted):
     import asyncio
 
     queue = AutoJobQueue()
@@ -137,8 +137,9 @@ def test_queued_only_supersede_emits(emitted):
     evidence = asyncio.run(supersede_same_thread_inflight(new, queue=queue))
     auto_supersede._PENDING.clear()
 
-    assert evidence["method"] == "queued_only"
+    assert evidence["method"] == auto_supersede.PRE_REGISTER_LIVE_RUN
     assert len(emitted) == 1
-    assert emitted[0].payload["method"] == "queued_only"
+    assert emitted[0].payload["method"] == "pre_register_live_run"
+    assert emitted[0].payload["terminal_status"] == "displaced_pre_live"
     assert emitted[0].payload["dispatch_id"] == old.job_id
     assert emitted[0].payload["superseded_by"] == new.job_id
