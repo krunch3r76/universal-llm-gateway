@@ -14,6 +14,11 @@ from ...db import WRITE_LOCK, cortex_conn, decode_row, json_encode, query
 from ...enrichment import reindex_assertion_fts
 from ...models import AssertionItem, AssertionUpdate, AssertionUpdateResponse
 from ...status_trait_write import materialize_graduated_lifecycle
+from ...transcript_evidence_validate import (
+    http_detail_from_transcript_error,
+    validate_transcript_evidence_uris,
+)
+from ...transcript_turn_resolve import TranscriptResolveError
 from ._shared import (
     _ASSERTION_COLS,
     _JSON_FIELDS,
@@ -219,6 +224,17 @@ def update_assertion(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="No updatable fields provided",
             )
+
+        if "evidence_uris" in update_map:
+            try:
+                validate_transcript_evidence_uris(
+                    update_map.get("evidence_uris")  # type: ignore[arg-type]
+                )
+            except TranscriptResolveError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=http_detail_from_transcript_error(exc),
+                ) from exc
 
         now = dt.datetime.now(tz=dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         sets.append("updated_at = ?")

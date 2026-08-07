@@ -160,6 +160,10 @@ def _op_resolve(
 ) -> dict[str, Any]:
     if not uri:
         return {"error": "uri is required (e.g. cortex://decision/rag-phased-rollout)"}
+    if uri.startswith("transcript:"):
+        from ..transcript_turn_resolve import resolve_transcript_turn_op
+
+        return resolve_transcript_turn_op(uri)
     return _resolve_cortex_uri_impl(uri=uri, tag=tag)
 
 

@@ -12,6 +12,7 @@ from ..events_close import close_commit_completed
 from ..models import SessionCloseRequest
 from ..routes.reflective_journal import _insert_reflective_entry_tx
 from ..routes.session_journals import _close_session_impl
+from .depth_defaults import default_depth_for_agent
 from .store import commit_draft_cas, get_draft
 from .validate import resolve_draft_paths
 
@@ -51,7 +52,7 @@ def _fields_to_close_payload(
     agent: str,
     fields: dict[str, Any],
 ) -> dict[str, Any]:
-    depth = fields.get("depth") or "light"
+    depth = fields.get("depth") or default_depth_for_agent(agent)
     body: dict[str, Any] = {
         "session_id": session_id,
         "agent": agent,
@@ -173,7 +174,7 @@ def execute_commit(*, session_id: str, checked_revision: int) -> dict[str, Any]:
         session_id=session_id,
         agent=agent,
         journal_row_id=int(result.get("journal_row_id") or 0),
-        transcript_depth=str(result.get("transcript_depth") or "light"),
+        transcript_depth=str(result.get("transcript_depth") or default_depth_for_agent(agent)),
     )
     result["stop"] = {
         "session_id": result.get("session_id"),

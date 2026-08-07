@@ -7,6 +7,7 @@ from typing import Any
 from ..dispatch_ops._session_summary_path import resolve_session_summary_md
 from ..dispatch_ops._shared import _AGENT_SLUG_RE, _SESSION_ID_RE
 from .constants import ALLOWED_FIELD_KEYS, GRAPH_WRITE_KEYS
+from .depth_defaults import default_depth_for_agent
 
 
 def reject_graph_write_keys(payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -90,7 +91,7 @@ def coalesce_draft_fields(
 
 
 def depth_cross_field_gaps(fields: dict[str, Any]) -> list[dict[str, str]]:
-    depth = str(fields.get("depth") or "light")
+    depth = str(fields.get("depth") or default_depth_for_agent(""))
     has_transcript_path = bool(fields.get("transcript_md_path"))
     gaps: list[dict[str, str]] = []
     if depth == "verbatim" and not has_transcript_path:

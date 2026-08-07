@@ -164,6 +164,7 @@ def normalize_session_summary_heading(
 _REJECT_REASONS = frozenset(
     {
         "transcript.hollow",
+        "transcript.grammar_invalid",
         "transcript.missing_structure",
         "summary.too_short",
         "session_id.invalid",

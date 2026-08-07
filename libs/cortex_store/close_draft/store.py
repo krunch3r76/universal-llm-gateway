@@ -7,6 +7,7 @@ from typing import Any
 
 from ..db import cortex_conn, json_decode, json_encode
 from .constants import LONG_STOP_DAYS, SHORT_TTL_DAYS, UNCOMMITTED_CAP
+from .depth_defaults import default_depth_for_agent
 
 
 def _now_iso() -> str:
@@ -70,7 +71,7 @@ def create_draft(
     prior_session_id: str | None = None,
 ) -> dict[str, Any]:
     now = _now_iso()
-    fields: dict[str, Any] = {"depth": "light"}
+    fields: dict[str, Any] = {"depth": default_depth_for_agent(agent)}
     if prior_session_id:
         fields["prior_session_id"] = prior_session_id
     conn.execute(  # type: ignore[union-attr]

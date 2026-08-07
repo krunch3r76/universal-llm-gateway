@@ -26,7 +26,9 @@ from ..transcript_assembly import (
     TranscriptPathError,
     assemble_verbatim_md,
     compose_full_transcript,
+    count_canonical_turn_headings,
     resolve_jsonl_path,
+    validate_transcript_turn_grammar,
 )
 from .session_close_helpers import _parse_opened_at, _raise_422
 
@@ -290,12 +292,42 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
                     ),
                     detail=f"JSONL parse error: {exc}",
                 )
+            grammar_err = validate_transcript_turn_grammar(verbatim_md)
+            if grammar_err is not None:
+                _structured_422(
+                    body,
+                    reason=grammar_err.reason,
+                    field="transcript_jsonl_path",
+                    received=body.transcript_jsonl_path,
+                    expected="turn headings matching assembly grammar ## Turn N — topic",
+                    examples=["## Turn 1 — first user message topic"],
+                    hint=(
+                        "Turn headings must match JSONL assembly output: "
+                        "'## Turn {N} — {topic}' sequential from 1."
+                    ),
+                    detail=grammar_err.detail,
+                )
         else:
             assert body.transcript_md is not None
             verbatim_md = body.transcript_md
-            turn_count = sum(
-                1 for line in verbatim_md.splitlines() if line.startswith("## Turn")
-            )
+            grammar_err = validate_transcript_turn_grammar(verbatim_md)
+            if grammar_err is not None:
+                _structured_422(
+                    body,
+                    reason=grammar_err.reason,
+                    field="transcript_md",
+                    received=verbatim_md[:120],
+                    expected="each ## Turn line matches '^## Turn (\\\\d+) — .+' sequential 1..N",
+                    examples=["## Turn 1 — topic from first user message"],
+                    hint=(
+                        "Web verbatim must use the same turn grammar as JSONL "
+                        "assembly (## Turn N — topic). Malformed headings are "
+                        "rejected at close — write-time only; existing archives "
+                        "are not retro-scanned."
+                    ),
+                    detail=grammar_err.detail,
+                )
+            turn_count = count_canonical_turn_headings(verbatim_md)
 
         transcript_md = compose_full_transcript(verbatim_md, body.session_summary_md)
 

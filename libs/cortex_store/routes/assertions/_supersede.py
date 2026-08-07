@@ -37,6 +37,11 @@ from ...models import (
 )
 from ...predicate_extract_dispatch import dispatch_predicate_extract_background
 from ...substantiation_sync import recompute_entity_substantiation_status
+from ...transcript_evidence_validate import (
+    http_detail_from_transcript_error,
+    validate_transcript_evidence_uris,
+)
+from ...transcript_turn_resolve import TranscriptResolveError
 from ._shared import (
     _ASSERTION_COLS,
     _JSON_FIELDS,
@@ -228,6 +233,14 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
         )
         validation = validate_assertion(synthetic)
         quality_validation_warnings: list[dict[str, str]] = []
+
+        try:
+            validate_transcript_evidence_uris(eff_evidence_uris)
+        except TranscriptResolveError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=http_detail_from_transcript_error(exc),
+            ) from exc
 
         if validation.rejected:
             reject_rule_ids = _hard_reject_rule_ids(validation.hard_reject)

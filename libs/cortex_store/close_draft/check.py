@@ -14,6 +14,7 @@ from ..dispatch_ops.ops_review_gate import (
 )
 from ..dispatch_ops.ops_session_close import _assemble_transcript_in_memory
 from ..session_close_validation import _validate_transcript_structure
+from .depth_defaults import default_depth_for_agent
 from .validate import depth_cross_field_gaps, resolve_draft_paths
 
 
@@ -97,7 +98,7 @@ def _structural_gaps(
 ) -> list[dict[str, str]]:
     summary_md = fields.get("session_summary_md")
     summary = fields.get("summary")
-    depth = str(fields.get("depth") or "light")
+    depth = str(fields.get("depth") or default_depth_for_agent(agent))
     if not summary_md or not summary:
         return []
     if depth == "verbatim" and not fields.get("_transcript_md_resolved"):

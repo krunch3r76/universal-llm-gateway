@@ -61,7 +61,7 @@ DEFAULT_CHECKLIST: list[dict[str, str]] = [
     },
     {
         "item": "depth",
-        "hint": "light (default) | verbatim (requires transcript_md_path) | none.",
+        "hint": "light (default via default_depth_for_agent) | verbatim (requires transcript_md_path) | none.",
     },
     {
         "item": "check",

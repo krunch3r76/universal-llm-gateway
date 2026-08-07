@@ -43,6 +43,11 @@ from ...recorder_known_state import (
 )
 from ...status_trait_write import materialize_graduated_lifecycle
 from ...substantiation_sync import recompute_entity_substantiation_status
+from ...transcript_evidence_validate import (
+    http_detail_from_transcript_error,
+    validate_transcript_evidence_uris,
+)
+from ...transcript_turn_resolve import TranscriptResolveError
 from ._shared import (
     _ASSERTION_COLS,
     _JSON_FIELDS,
@@ -98,6 +103,14 @@ def create_assertion(
                 "valid_derivation_types": DERIVATION_TYPE_TAXONOMY,
             },
         )
+
+    try:
+        validate_transcript_evidence_uris(body.evidence_uris)
+    except TranscriptResolveError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=http_detail_from_transcript_error(exc),
+        ) from exc
 
     review_status: str | None = None
     validation_warnings: list[dict[str, str]] | None = None

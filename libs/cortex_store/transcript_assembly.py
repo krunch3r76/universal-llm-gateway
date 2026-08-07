@@ -35,6 +35,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +52,70 @@ logger = get_logger("cortex-api.transcript_assembly")
 
 _DEFAULT_ASSISTANT_LABEL = "Assistant"
 _TURN_TOPIC_MAX = 60
+
+# Single source of truth for turn heading grammar — writer and validator share this.
+TURN_HEADING_RE = re.compile(r"^## Turn (\d+) — .+$")
+
+
+@dataclass(frozen=True)
+class TranscriptGrammarError:
+    """Turn-heading grammar failure on a verbatim transcript body."""
+
+    reason: str
+    detail: str
+    line_no: int | None = None
+
+
+def format_turn_heading(idx: int, topic: str) -> str:
+    """Emit a canonical ``## Turn {idx} — {topic}`` heading."""
+    return f"## Turn {idx} — {topic}"
+
+
+def count_canonical_turn_headings(verbatim_md: str) -> int:
+    """Count lines matching assembly turn-heading grammar."""
+    return sum(
+        1 for line in verbatim_md.splitlines() if TURN_HEADING_RE.match(line)
+    )
+
+
+def validate_transcript_turn_grammar(verbatim_md: str) -> TranscriptGrammarError | None:
+    """Validate verbatim turn headings match assembly grammar and sequence.
+
+    **Scope (write-time only):** invoked on session_close ingest paths only.
+    Stored transcripts closed before this gate are never re-scanned — the gate
+    does not retro-invalidate existing archive files on read/resolve.
+    """
+    indices: list[int] = []
+    for line_no, line in enumerate(verbatim_md.splitlines(), start=1):
+        if not line.startswith("## Turn"):
+            continue
+        if not TURN_HEADING_RE.match(line):
+            return TranscriptGrammarError(
+                reason="transcript.grammar_invalid",
+                detail=(
+                    f"line {line_no}: turn heading must match "
+                    f"'## Turn {{N}} — {{topic}}' (assembly grammar); got {line!r}"
+                ),
+                line_no=line_no,
+            )
+        indices.append(int(TURN_HEADING_RE.match(line).group(1)))  # type: ignore[union-attr]
+    if not indices:
+        return None
+    expected = list(range(1, len(indices) + 1))
+    if sorted(indices) != expected:
+        return TranscriptGrammarError(
+            reason="transcript.grammar_invalid",
+            detail=(
+                f"turn indices must be sequential 1..{len(indices)} without "
+                f"gaps or duplicates; found {indices}"
+            ),
+        )
+    if len(set(indices)) != len(indices):
+        return TranscriptGrammarError(
+            reason="transcript.grammar_invalid",
+            detail=f"duplicate turn indices in verbatim layer: {indices}",
+        )
+    return None
 
 
 def _default_transcripts_root() -> Path:
@@ -255,7 +321,7 @@ def assemble_verbatim_md(
     lines: list[str] = [f"# Transcript: {session_id}", ""]
     for idx, turn in enumerate(turns, start=1):
         topic = _topic_hint(turn["user"])
-        lines.append(f"## Turn {idx} — {topic}")
+        lines.append(format_turn_heading(idx, topic))
         lines.append("")
         lines.append("### User")
         lines.append("")
@@ -292,12 +358,17 @@ def compute_text_content_hash(text: str) -> str:
 
 
 __all__ = [
+    "TranscriptGrammarError",
     "TranscriptPathError",
+    "TURN_HEADING_RE",
     "assemble_verbatim_md",
     "compose_full_transcript",
     "compute_text_content_hash",
+    "count_canonical_turn_headings",
     "derive_prior_session_id_from_jsonl_path",
     "derive_session_id_from_jsonl_start",
+    "format_turn_heading",
     "resolve_jsonl_path",
     "session_id_timing_hint",
+    "validate_transcript_turn_grammar",
 ]
