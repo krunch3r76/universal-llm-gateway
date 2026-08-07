@@ -110,6 +110,7 @@ def test_unbound_pickup_fires() -> None:
     verdict = evaluate_quiet_with_wip(snap)
     assert verdict.fire is True
     assert verdict.reason == "pickup_unbound"
+    assert verdict.unbound_turn_labels == ("t1: ARCHITECTURE BIND",)
 
 
 def test_licensed_park_suppresses() -> None:

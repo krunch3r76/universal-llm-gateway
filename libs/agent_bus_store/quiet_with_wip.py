@@ -15,7 +15,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal, Sequence
 
-from claude_bundles.pickup_awaits import PriorTurn, find_unbound_pickup_turns
+from claude_bundles.pickup_awaits import (
+    PriorTurn,
+    find_unbound_pickup_turns,
+    format_unbound_pickup_labels,
+)
 
 QuietReason = Literal["wip_in_flight", "closeout_unharvested", "pickup_unbound"]
 SkipReason = Literal[
@@ -72,6 +76,7 @@ class QuietWithWipVerdict:
     reason: QuietReason | None = None
     skip_reason: SkipReason | None = None
     wip_execution_ids: tuple[str, ...] = ()
+    unbound_turn_labels: tuple[str, ...] = ()
 
 
 def parse_iso_ts(ts: str) -> datetime:
@@ -97,11 +102,15 @@ def _classify_wip(
     seat: str,
     links: Sequence[DispatchLinkView],
     turns: Sequence[LaneTurnView],
-) -> tuple[QuietReason | None, tuple[str, ...]]:
-    """Return ``(reason, execution_ids)`` for the first matching WIP class."""
+) -> tuple[QuietReason | None, tuple[str, ...], tuple[str, ...]]:
+    """Return ``(reason, execution_ids, unbound_turn_labels)`` for first WIP class."""
     in_flight = [lnk for lnk in links if lnk.terminal_status is None]
     if in_flight:
-        return "wip_in_flight", tuple(lnk.execution_id for lnk in in_flight)
+        return (
+            "wip_in_flight",
+            tuple(lnk.execution_id for lnk in in_flight),
+            (),
+        )
 
     unharvested: list[DispatchLinkView] = []
     for lnk in links:
@@ -117,6 +126,7 @@ def _classify_wip(
         return (
             "closeout_unharvested",
             tuple(lnk.execution_id for lnk in unharvested),
+            (),
         )
 
     prior = [
@@ -125,8 +135,8 @@ def _classify_wip(
     ]
     unbound = find_unbound_pickup_turns(prior, closing_text="")
     if unbound:
-        return "pickup_unbound", ()
-    return None, ()
+        return "pickup_unbound", (), format_unbound_pickup_labels(unbound)
+    return None, (), ()
 
 
 def evaluate_quiet_with_wip(snap: QuietWithWipSnapshot) -> QuietWithWipVerdict:
@@ -143,7 +153,7 @@ def evaluate_quiet_with_wip(snap: QuietWithWipSnapshot) -> QuietWithWipVerdict:
     if snap.licensed_park:
         return QuietWithWipVerdict(fire=False, skip_reason="licensed_park")
 
-    reason, exec_ids = _classify_wip(
+    reason, exec_ids, unbound_labels = _classify_wip(
         seat=snap.seat, links=snap.links, turns=snap.turns
     )
     if reason is None:
@@ -158,10 +168,12 @@ def evaluate_quiet_with_wip(snap: QuietWithWipSnapshot) -> QuietWithWipVerdict:
                 fire=False,
                 skip_reason="not_silent",
                 wip_execution_ids=exec_ids,
+                unbound_turn_labels=unbound_labels,
             )
 
     return QuietWithWipVerdict(
         fire=True,
         reason=reason,
         wip_execution_ids=exec_ids,
+        unbound_turn_labels=unbound_labels,
     )

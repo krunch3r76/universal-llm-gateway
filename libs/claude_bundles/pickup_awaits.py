@@ -142,6 +142,15 @@ def _truncate(text: str, *, limit: int = _OFFENDING_ITEM_MAX) -> str:
     return compact[: limit - 1] + "…"
 
 
+def format_unbound_pickup_labels(
+    unbound: Sequence[PriorTurn],
+) -> tuple[str, ...]:
+    """Human labels for unbound ``pickup:`` turns — shared by cease-refuse and quiet alarm."""
+    return tuple(
+        _truncate(f"t{t.turn_number}: {t.subject or '(no subject)'}") for t in unbound
+    )
+
+
 def _cites_turn(text: str, turn_number: int) -> bool:
     """True when text cites ``turn_number`` in the commission-ref family."""
     n = int(turn_number)
@@ -218,9 +227,7 @@ def validate_pickup_awaits_on_cease(
     unbound = find_unbound_pickup_turns(prior_turns, closing_text=closing)
     if not unbound:
         return PickupAwaitsVerdict(ok=True)
-    labels = tuple(
-        _truncate(f"t{t.turn_number}: {t.subject or '(no subject)'}") for t in unbound
-    )
+    labels = format_unbound_pickup_labels(unbound)
     return PickupAwaitsVerdict(
         ok=False,
         reason="pickup_awaits_unbound",

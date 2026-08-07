@@ -132,6 +132,51 @@ def test_null_lifecycle_not_in_sweep_candidacy(bus_db) -> None:
     assert thread_id not in _candidate_thread_ids()
 
 
+def test_sweep_pickup_unbound_names_turns(bus_db) -> None:
+    """pickup_unbound alarm turn names specific unbound turn numbers."""
+    seat = "web-anthropic"
+    thread_row, *_ = create_thread_with_turn(
+        slug="quiet-pickup-unbound",
+        from_agent=seat,
+        to_agent="cursor-auto",
+        subject="ARCHITECTURE BIND",
+        body="TYPE: ARCHITECTURE BIND\npickup: cursor-auto\nBind the gate.",
+        lifecycle_state="active",
+    )
+    thread_id = thread_row["id"]
+    old = (datetime.now(UTC) - timedelta(seconds=120)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with connect() as conn:
+        conn.execute(
+            "UPDATE turns SET created_at = ? WHERE thread = ?",
+            (old, thread_id),
+        )
+        conn.execute(
+            "UPDATE threads SET bus_lifecycle_state = 'active', updated_at = ? "
+            "WHERE id = ?",
+            (old, thread_id),
+        )
+
+    with patch(
+        "agent_bus_store.quiet_sweep._licensed_park",
+        return_value=False,
+    ):
+        n = sweep_quiet_with_wip(threshold_s=60.0)
+
+    assert n == 1
+    turns = get_turns(thread=thread_id, last=20)
+    quiet_turns = [
+        t
+        for t in turns
+        if (t.get("subject") or "") == "Quiet with work in flight"
+        and t.get("from_agent") == "dispatch"
+    ]
+    assert len(quiet_turns) == 1
+    body = quiet_turns[0]["body"] or ""
+    assert "reason=pickup_unbound" in body
+    assert "unbound_turns=[t1:" in body
+    assert "execution_ids=" not in body
+
+
 def test_migration_006_backfills_null_mission_lanes(bus_db) -> None:
     """Backfill enrolls lane:cursor-auto NULL rows; leaves other NULLs alone."""
     from agent_bus_store.db.migrations import migration_006

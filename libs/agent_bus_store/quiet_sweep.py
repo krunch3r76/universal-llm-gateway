@@ -129,10 +129,16 @@ def _write_alarm_and_actuate(
     seat: str,
     reason: str,
     wip_execution_ids: tuple[str, ...],
+    unbound_turn_labels: tuple[str, ...] = (),
 ) -> str:
     """Persist alarm, emit event, post WAKE-relay turn. Returns alarm_id."""
     alarm_id = f"qwa-{uuid.uuid4().hex[:12]}"
     fired_at = now()
+    detail_ids = (
+        list(unbound_turn_labels)
+        if reason == "pickup_unbound"
+        else list(wip_execution_ids)
+    )
     with connect() as conn:
         conn.execute(
             "INSERT INTO thread_quiet_alarms ("
@@ -146,7 +152,7 @@ def _write_alarm_and_actuate(
                 fired_at,
                 fired_at,
                 reason,
-                json.dumps(list(wip_execution_ids)),
+                json.dumps(detail_ids),
             ),
         )
     emit_quiet_with_wip_fired(
@@ -154,12 +160,18 @@ def _write_alarm_and_actuate(
         seat=seat,
         reason=reason,  # type: ignore[arg-type]
         alarm_id=alarm_id,
-        wip_execution_ids=list(wip_execution_ids),
+        wip_execution_ids=detail_ids,
     )
-    ids_txt = ", ".join(wip_execution_ids) if wip_execution_ids else "(none)"
+    if reason == "pickup_unbound":
+        labels_txt = ", ".join(unbound_turn_labels) if unbound_turn_labels else "(none)"
+        detail_key = "unbound_turns"
+        detail_val = labels_txt
+    else:
+        detail_val = ", ".join(wip_execution_ids) if wip_execution_ids else "(none)"
+        detail_key = "execution_ids"
     body = (
         f"Quiet with work in flight — seat={seat} reason={reason} "
-        f"execution_ids=[{ids_txt}] alarm_id={alarm_id}. "
+        f"{detail_key}=[{detail_val}] alarm_id={alarm_id}. "
         "Harvest or act; silence with WIP is the defect this turn names."
     )
     insert_turn(
@@ -210,6 +222,7 @@ def sweep_quiet_with_wip(*, threshold_s: float | None = None) -> int:
             seat=seat,
             reason=verdict.reason,
             wip_execution_ids=verdict.wip_execution_ids,
+            unbound_turn_labels=verdict.unbound_turn_labels,
         )
         fired += 1
     return fired
