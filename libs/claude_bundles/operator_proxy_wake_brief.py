@@ -60,4 +60,21 @@ use a **one-shot** harvest wake or stay in the live stream; do not invent a stan
 heartbeat fleet. Cursor ``cse-stream-stop`` remains the outer backstop for unauthorized
 stops. Full historical arm recipes live in the guide — treat them as **parked**, not
 first-dispatch defaults, until keep-alive is redesigned for primary-only.
+
+**§7 GOOD/BAD — if/when a wake is armed, carry POINTERS, not STATE (guide §7):**
+- GOOD (durable, cannot rot): lanes + standing-handoff cortex URI + "READ IT" + re-arm
+  instruction. Trust the handoff for rank/residuals, not the wake body.
+- BAD (rots between arming and firing): "next is row N" / named residual lists / ordinal
+  rank. A twelve-minute-old message will be obeyed confidently after the world moved.
+- If state must travel: stamp it and mark suspect (``state as of <ISO>, verify before acting``).
+- Sharpening (guide §10): durable addresses only (cortex URIs, thread ids) — never
+  ephemeral handles (monitor task ids, execution ids, dispatch ids).
+
+**§8 RESOLVED — ``persistent: true`` does NOT make Monitor unbounded (guide §8):**
+Observed historically: armed ``persistent: true`` + ``timeout_ms: 3600000``; tool reported
+``timeout 1800000ms``; substrate later emitted ``[Monitor timed out — re-arm if needed.]``.
+Effective lifetime ~30 min. Docs claiming timeout is ignored when persistent are wrong
+or narrower than "no timeout." When keep-alive is re-enabled: (a) arm-once silently loses
+coverage; (b) the timeout event is itself a wake — re-arm immediately; (c) ``send_later``
+is not optional during the gap. Do not assume an unbounded watch.
 """
