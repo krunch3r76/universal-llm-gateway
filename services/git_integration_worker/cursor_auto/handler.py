@@ -79,21 +79,23 @@ from services.git_integration_worker.cursor_auto.reflex_events import (
 from services.git_integration_worker.cursor_auto.reflex_read import (
     maybe_run_second_read,
 )
+from services.git_integration_worker.cursor_auto.static_pin_refusal import (
+    assess_static_pin_refusal,
+)
 from services.git_integration_worker.cursor_auto.supersede import (
     compose_supersede_preamble,
     post_superseded_terminal,
     settle_supersede,
 )
 from services.git_integration_worker.cursor_auto.wire_map import (
-    BINDABLE_EFFORT_VALUES,
     admit_effort_override_rule_line,
     admit_model_override_rule_line,
     admit_model_pin_flags,
-    assess_effort_pin,
-    assess_escalation_pin,
-    assess_model_pin,
     compose_model_knobs,
     resolve_contract_disposition,
+    resolve_desired_effort,
+    resolve_desired_model,
+    resolve_escalation,
     resolve_handoff_contract,
 )
 from services.git_integration_worker.cursor_bus import CursorBusClient
@@ -161,67 +163,28 @@ async def process_job(
     expired = await deadline_terminal(job, client=client, queue=queue)
     if expired is not None:
         return expired
-    model, model_block = assess_model_pin(
-        job.desired_model,
-        contract=contract,
+    static_refusal = assess_static_pin_refusal(
+        desired_model=job.desired_model,
+        desired_effort=job.desired_effort,
+        escalation=job.escalation,
+        contract=job.contract,
         body=job.body,
     )
-    if model_block is not None:
+    if static_refusal is not None:
         return await post_terminal_status(
             job,
             client=client,
             queue=queue,
-            summary=model_block,
+            summary=static_refusal.summary,
             disposition="blocked",
-            contract=contract,
+            contract=static_refusal.contract,
             terminal_status="status:blocked",
-            payload={
-                "summary": model_block,
-                "reason": "model_pin_refused",
-                "requested_model": model.get("requested"),
-                "bindable": list(model.get("bindable") or ()),
-            },
+            payload=static_refusal.payload,
             failed=True,
         )
-    effort, effort_block = assess_effort_pin(job.desired_effort, body=job.body)
-    if effort_block is not None:
-        return await post_terminal_status(
-            job,
-            client=client,
-            queue=queue,
-            summary=effort_block,
-            disposition="blocked",
-            contract=contract,
-            terminal_status="status:blocked",
-            payload={
-                "summary": effort_block,
-                "reason": "effort_pin_refused",
-                "requested_effort": effort.get("requested"),
-                "bindable": list(BINDABLE_EFFORT_VALUES),
-            },
-            failed=True,
-        )
-    escalation, escalation_block = assess_escalation_pin(
-        job.escalation,
-        body=job.body,
-    )
-    if escalation_block is not None:
-        return await post_terminal_status(
-            job,
-            client=client,
-            queue=queue,
-            summary=escalation_block,
-            disposition="blocked",
-            contract=contract,
-            terminal_status="status:blocked",
-            payload={
-                "summary": escalation_block,
-                "reason": "escalation_refused",
-                "requested_escalation": escalation.get("requested"),
-                "bindable": list(escalation.get("bindable") or ()),
-            },
-            failed=True,
-        )
+    model = resolve_desired_model(job.desired_model, contract=contract)
+    effort = resolve_desired_effort(job.desired_effort)
+    escalation = resolve_escalation(job.escalation)
     contract_info = resolve_contract_disposition(contract)
     handoff_contract = resolve_handoff_contract(contract)
     if directive is not None or contract in _NESTED_CONTRACTS or contract in {

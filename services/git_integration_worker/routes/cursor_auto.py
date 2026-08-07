@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from contextlib import suppress
 from typing import Any
 
@@ -18,18 +19,25 @@ from services.git_integration_worker.cursor_auto.directive import (
     is_continuity_hop_request,
 )
 from services.git_integration_worker.cursor_auto.handler import process_job
+from services.git_integration_worker.cursor_auto.handler_terminal import (
+    post_terminal_status,
+)
 from services.git_integration_worker.cursor_auto.hop_cadence import (
-    hop_cadence_loop,
+    hop_cadence_loop,  # noqa: F401 — re-export for app lifespan
     observe_lane_from_enqueue,
 )
 from services.git_integration_worker.cursor_auto.liveness import get_registry
-from services.git_integration_worker.cursor_auto.queue import get_queue
+from services.git_integration_worker.cursor_auto.queue import AutoJob, get_queue
+from services.git_integration_worker.cursor_auto.static_pin_refusal import (
+    assess_static_pin_refusal,
+)
 from services.git_integration_worker.cursor_auto.supersede import (
     supersede_same_thread_inflight,
 )
 from services.git_integration_worker.cursor_auto.wire_skew_events import (
     note_dropped_fields,
 )
+from services.git_integration_worker.cursor_bus import CursorBusClient
 
 logger = get_logger(__name__)
 
@@ -109,6 +117,58 @@ async def enqueue(body: EnqueueBody):
     is_hop, matched_token = is_continuity_hop_request(
         body.body, wire_flag=bool(body.continuity_hop)
     )
+    if not is_hop:
+        static_refusal = assess_static_pin_refusal(
+            desired_model=body.desired_model,
+            desired_effort=body.desired_effort,
+            escalation=body.escalation,
+            contract=body.contract,
+            body=body.body,
+        )
+        if static_refusal is not None:
+            job_stub = AutoJob(
+                job_id=str(uuid.uuid4()),
+                thread_id=body.thread_id,
+                turn_number=body.turn_number,
+                subject=body.subject,
+                body=body.body,
+                from_agent=body.from_agent,
+                to_agent=body.to_agent,
+                desired_model=body.desired_model,
+                desired_effort=body.desired_effort,
+                contract=static_refusal.contract,
+                escalation=body.escalation,
+                require_attended=body.require_attended,
+                request_id=body.request_id,
+            )
+            terminal = await post_terminal_status(
+                job_stub,
+                client=CursorBusClient(),
+                queue=queue,
+                summary=static_refusal.summary,
+                disposition="blocked",
+                contract=static_refusal.contract,
+                terminal_status="status:blocked",
+                payload=static_refusal.payload,
+                failed=True,
+            )
+            logger.info(
+                "cursor-auto static pin refused thread=%s turn=%s reason=%s",
+                body.thread_id,
+                body.turn_number,
+                static_refusal.reason,
+            )
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "ok": True,
+                    "handler_status": "static-pin-refused",
+                    "static_refusal": True,
+                    "terminal_status": terminal.get("terminal_status"),
+                    "reason": static_refusal.reason,
+                    "queue": queue.snapshot(),
+                },
+            )
     job = queue.enqueue(
         thread_id=body.thread_id,
         turn_number=body.turn_number,
