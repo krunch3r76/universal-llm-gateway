@@ -84,7 +84,10 @@ def test_cortex_expected_present_on_disk_uncaptured(tmp_path: Path) -> None:
     # Member 5: Gate-D boolean-as-exit is derived, not a process observation.
     assert entries[0].exit_code_register == "derived"
     assert entries[0].basis == "gate_d_boolean_pass"
-    assert entries[0].invocation_id == "gate_d:expected_present_on_disk_uncaptured"
+    # Member-8 rider: invocation_id is a unique handle, not a reason echo.
+    assert entries[0].invocation_id is not None
+    assert entries[0].invocation_id.startswith("gate_d:")
+    assert entries[0].invocation_id != entries[0].command
 
 
 @pytest.mark.offline
@@ -209,6 +212,7 @@ def test_member5_specimen_auto_00a23d2a4f45_class_distinguishable() -> None:
     # Verbatim specimen shapes (auto-00a23d2a4f45 verification array):
     #   gate_d:passed / 0   +   ruff check 8 touched files / 1
     gate = build_gate_d_verification(reason="passed", passed=True)
+    gate_again = build_gate_d_verification(reason="passed", passed=True)
     mid_run = observed_process_verification(
         command="ruff check 8 touched files",
         exit_code=1,
@@ -224,6 +228,9 @@ def test_member5_specimen_auto_00a23d2a4f45_class_distinguishable() -> None:
 
     assert gate.exit_code_register == "derived"
     assert gate.basis == "gate_d_boolean_pass"
+    assert gate.command == "gate_d:passed"
+    assert gate.invocation_id != gate.command
+    assert gate.invocation_id != gate_again.invocation_id
     assert mid_run.exit_code_register == "observed"
     assert later_pass.exit_code_register == "observed"
     assert mid_run.invocation_id != later_pass.invocation_id

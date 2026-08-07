@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from universal_logging import get_logger
 
@@ -113,11 +114,13 @@ def build_gate_d_verification(
     cmd = f"{GATE_D_PREFIX}{reason}"
     if note:
         cmd = f"{cmd};note={note}"
+    # invocation_id must be unique per capture — reason echo collides when two
+    # Gate-D rows share a reason (row 29 member-8 rider / auto-a9e3035e56b7).
     return derived_gate_verification(
         command=cmd,
         exit_code=0 if passed else 1,
         basis="gate_d_boolean_pass",
-        invocation_id=f"gate_d:{reason}",
+        invocation_id=f"gate_d:{uuid4().hex}",
     )
 
 
