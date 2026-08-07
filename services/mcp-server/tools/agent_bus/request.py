@@ -29,6 +29,37 @@ from .send import _send_dispatch
 _LANE_TAG = "lane:cursor-auto"
 
 
+def _resolve_hop_seat_request_refusal(
+    *,
+    thread_id: str | None,
+    cse_registration_id: str | None,
+) -> dict[str, Any] | None:
+    """Refuse superseded predecessor writes once successor_confirm is observed."""
+    if not (cse_registration_id or "").strip():
+        return None
+    try:
+        from cdp_ask.client import CdpAskClient
+        from claude_bundles.hop_seat_cutover import resolve_request_refusal
+
+        snap = CdpAskClient()._request("GET", "/v1/project-ask/active-work")
+    except Exception:
+        return None
+    refusal = resolve_request_refusal(
+        thread_id=thread_id,
+        cse_registration_id=cse_registration_id,
+        snap=snap if isinstance(snap, dict) else {},
+    )
+    if refusal is None:
+        return None
+    record(
+        "mcp.agentbus.request.rejected",
+        reason=str(refusal.get("reason") or "hop_seat_refusal"),
+        thread=thread_id,
+        registration_id=cse_registration_id,
+    )
+    return refusal
+
+
 def _merge_lane_tags(tags: list[str] | None) -> list[str]:
     merged: list[str] = []
     seen: set[str] = set()
@@ -399,6 +430,13 @@ def _request_dispatch(
     )
     if rid_intake.error is not None:
         return rid_intake.error
+
+    seat_refusal = _resolve_hop_seat_request_refusal(
+        thread_id=thread_hint,
+        cse_registration_id=cse_registration_id,
+    )
+    if seat_refusal is not None:
+        return seat_refusal
 
     result = _request_impl(
         new_slug=new_slug,

@@ -22,6 +22,8 @@ from typing import Any, Callable
 
 from universal_logging import get_logger
 
+from claude_bundles.hop_seat_cutover import refuse_cadence_hop_for_live_seat
+
 from services.git_integration_worker.cursor_auto.cdp_escalation import (
     escalation_lane_refusal,
     read_cdp_lane_snapshot,
@@ -124,7 +126,8 @@ async def fire_hop_for_decision(
     """Self-enqueue a continuity hop and commission CDP for one fire decision."""
     if decision.action != "fire":
         return {"ok": False, "reason": decision.reason, "action": decision.action}
-    blocked, label = capacity_blocks_hop(snapshot_reader=snapshot_reader)
+    reader = snapshot_reader or read_cdp_lane_snapshot
+    blocked, label = capacity_blocks_hop(snapshot_reader=reader)
     if blocked:
         logger.warning(
             "hop_cadence defer thread=%s reason=capacity label=%s",
@@ -136,6 +139,27 @@ async def fire_hop_for_decision(
             "reason": "capacity_blocked",
             "capacity_label": label,
             "thread_id": decision.thread_id,
+        }
+    try:
+        snap = reader()
+    except Exception as exc:  # noqa: BLE001 — cadence must not crash the worker
+        logger.warning("hop_cadence liveness probe failed: %s", exc)
+        snap = {}
+    refuse, refuse_reason, refuse_evidence = refuse_cadence_hop_for_live_seat(
+        row, snap if isinstance(snap, dict) else {}
+    )
+    if refuse:
+        logger.warning(
+            "hop_cadence refuse thread=%s reason=%s evidence=%s",
+            decision.thread_id,
+            refuse_reason,
+            refuse_evidence,
+        )
+        return {
+            "ok": False,
+            "reason": refuse_reason,
+            "thread_id": decision.thread_id,
+            "refusal": refuse_evidence,
         }
     body = build_cadence_hop_body(
         decision,

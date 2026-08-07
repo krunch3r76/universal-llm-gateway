@@ -247,17 +247,10 @@ def observe_lane_from_enqueue(
 
 
 def effective_seated_at(row: dict[str, Any]) -> float | None:
-    """Prefer live registry started_at for the row; else watch seated_at."""
-    reg_started = registry_started_at(str(row.get("registration_id") or "") or None)
-    if reg_started is not None:
-        return reg_started
-    seated = row.get("seated_at")
-    if seated is None:
-        return None
-    try:
-        return float(seated)
-    except (TypeError, ValueError):
-        return None
+    """Age source for cadence evaluate — post-hop seated_at beats stale registry."""
+    from claude_bundles.hop_seat_cutover import effective_seated_at_after_hop
+
+    return effective_seated_at_after_hop(row, registry_started_at=registry_started_at)
 
 
 def evaluate_watch(
@@ -325,11 +318,15 @@ def mark_hop_fired(
     ts = time.time() if now is None else now
     watches = load_watches(path)
     row = dict(watches.get(thread_id) or {"thread_id": thread_id})
+    predecessor_reg = str(row.get("registration_id") or "").strip() or None
     row["thread_id"] = thread_id
     row["last_hop_at"] = ts
     row["seated_at"] = ts
     row["enroll_source"] = "post_hop_reset"
+    if predecessor_reg:
+        row["superseded_registration_id"] = predecessor_reg
     if execution_id:
         row["last_hop_execution_id"] = execution_id
+        row["successor_execution_id"] = execution_id
     watches[thread_id] = row
     save_watches(watches, path)
