@@ -9,6 +9,10 @@ from claim_register import claimed_derived, render_claim
 from implement_admission.propagation_block_parser import (
     propagation_rows_from_markdown_sources,
 )
+from implement_admission.consumer_import_verify import (
+    format_verification_tags,
+    residue_actions_for_lib_consumers,
+)
 from implement_admission.propagation_row import (
     PropagationRow,
     consumers_for_lib_path,
@@ -127,8 +131,9 @@ def changed_paths_from_closeout(payload: str) -> tuple[tuple[str, ...], bool] | 
     return (tuple(sorted(paths)), truncated)
 
 
-def _sync_restart_line(slug: str) -> str:
-    return f'sync_restart: {slug} — manage(action="sync_restart", service="{slug}")'
+def _sync_restart_line(slug: str, *, tags: str | None = None) -> str:
+    base = f'sync_restart: {slug} — manage(action="sync_restart", service="{slug}")'
+    return f"{base}; {tags}" if tags else base
 
 
 def _install_plugin_line() -> str:
@@ -142,10 +147,11 @@ def _unresolved_line(path: str) -> str:
     return f"unresolved: {path} — service dir has no manage slug; lead must resolve"
 
 
-def _libs_touched_line(path: str) -> str:
-    return (
+def _libs_touched_line(path: str, *, tags: str | None = None) -> str:
+    base = (
         f"libs_touched: {path} — shared lib; lead must decide which consumers restart"
     )
+    return f"{base}; {tags}" if tags else base
 
 
 def _actions_for_path(path: str) -> tuple[str, ...]:
@@ -154,7 +160,10 @@ def _actions_for_path(path: str) -> tuple[str, ...]:
 
     for prefix, slug in _SERVICE_SLUGS.items():
         if path.startswith(prefix) and path.endswith(".py"):
-            return (_sync_restart_line(slug),)
+            tags = format_verification_tags(
+                derived="path_prefix", import_path="verified"
+            )
+            return (_sync_restart_line(slug, tags=tags),)
 
     basename = path.rsplit("/", 1)[-1]
     if path.startswith(_PLUGIN_PREFIX) or basename in _PLUGIN_CENSUS:
@@ -166,7 +175,7 @@ def _actions_for_path(path: str) -> tuple[str, ...]:
     if path.startswith("libs/") and path.endswith(".py"):
         consumers = consumers_for_lib_path(path)
         if consumers:
-            return tuple(_sync_restart_line(slug) for slug in consumers)
+            return residue_actions_for_lib_consumers(path, consumers)
         return (_libs_touched_line(path),)
 
     return ()
@@ -255,10 +264,13 @@ def obligation_deployment_state_from_wrapper(wrapper_text: str | None) -> str | 
     block = residue_for_closeout(wrapper_text)
     if block is None:
         return None
+    # Owed count = verified (or policy-included) sync_restart lines only.
+    # libs_touched / elision / contradicted demotions must not inflate owed.
     action_lines = [
         line.lstrip("- ").strip()
         for line in block.splitlines()
         if line.strip().startswith("- ")
+        and line.lstrip("- ").strip().startswith("sync_restart:")
     ]
     count = len(action_lines)
     if count == 0:

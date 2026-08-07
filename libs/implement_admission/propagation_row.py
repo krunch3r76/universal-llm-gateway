@@ -17,6 +17,10 @@ from typing import Any, Literal
 from deploy_identity.code_version import normalize_code_ref
 from pydantic import BaseModel, model_validator
 
+from implement_admission.consumer_import_verify import (
+    format_verification_tags,
+    verify_consumer_import,
+)
 from implement_admission.propagation_admit_validation import (
     validate_proof_class,
     validate_safe_window,
@@ -424,7 +428,12 @@ def rows_from_lib_consumers(
     *,
     code_ref: str,
 ) -> list[PropagationRow]:
-    """Mint one row per declared consumer for shared-lib lands."""
+    """Mint one row per **verified** CONSUMERS candidate for shared-lib lands.
+
+    Candidates come from package/module ``CONSUMERS``; owed rows require a
+    module-path import hit (``import_path:verified``). Contradicted candidates
+    are omitted (accuracy-backed); unverified are not minted as owed rows.
+    """
     rows: list[PropagationRow] = []
     seen: set[tuple[str, str]] = set()
     for path in paths:
@@ -434,11 +443,15 @@ def rows_from_lib_consumers(
         if not consumers:
             continue
         for slug in consumers:
+            status = verify_consumer_import(slug, path)
+            if status != "verified":
+                continue
             key = (slug, code_ref)
             if key in seen:
                 continue
             seen.add(key)
             pc = default_proof_class(slug)
+            tags = format_verification_tags(derived="consumers", import_path=status)
             rows.append(
                 PropagationRow(
                     service=slug,
@@ -447,7 +460,8 @@ def rows_from_lib_consumers(
                     proof=compose_proof(slug, pc),
                     proof_class=pc,
                     reason=(
-                        f"shared lib land: {path}; {_PATH_DERIVED_OBLIGATION_REASON}"
+                        f"shared lib land: {path}; {_PATH_DERIVED_OBLIGATION_REASON}; "
+                        f"{tags}"
                     ),
                 )
             )

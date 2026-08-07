@@ -180,16 +180,19 @@ def test_relay_residue_falls_back_to_relay_body_when_no_wrapper():
     assert "sync_restart: git_integration_worker" in block
 
 
-def test_structured_rows_mint_one_row_per_consumer_for_tier_m_lib():
+def test_structured_rows_tier_m_consumers_contradicted_without_import_edge():
+    """CONSUMERS names mcp, but mcp's module closure does not reach tier_m."""
     payload = _closeout_payload(
         files_modified=["libs/claude_bundles/operator_proxy_tier_m.py"],
         evidence_uris={"git_refs": ["consumer-land-sha"]},
     )
     rows = structured_propagation_rows(payload)
-    assert len(rows) == 1
-    assert rows[0].service == "mcp"
-    assert rows[0].code_ref == "consumer-land-sha"
-    assert rows[0].safe_window == "standalone_ok"
+    assert rows == ()
+    block = residue_for_closeout(payload)
+    assert block is not None
+    assert "libs_touched: libs/claude_bundles/operator_proxy_tier_m.py" in block
+    assert "import_path:contradicted" in block
+    assert "sync_restart: mcp" not in block
 
 
 def test_structured_rows_mint_deploy_identity_consumers():
@@ -266,3 +269,60 @@ def test_structured_rows_none_for_deleted_lib_with_consumers():
         evidence_uris={"git_refs": ["delete-only-sha"]},
     )
     assert structured_propagation_rows(payload) == ()
+
+
+def test_oracle_code_ref_relation_omits_contradicted_mcp():
+    """auto-8ec92394d3a1 class: package CONSUMERS over-nominated mcp for sibling module."""
+    payload = _closeout_payload(
+        files_modified=["libs/deploy_identity/code_ref_relation.py"],
+    )
+    block = residue_for_closeout(payload)
+    assert block is not None
+    assert "sync_restart: git_integration_worker" in block
+    assert "import_path:verified" in block
+    assert "sync_restart: mcp" not in block
+    assert "libs_touched" not in block  # GIW verified remains; mcp omit is earned
+
+
+def test_structured_oracle_code_ref_relation_omits_mcp():
+    payload = _closeout_payload(
+        files_modified=["libs/deploy_identity/code_ref_relation.py"],
+        evidence_uris={"git_refs": ["oracle-sha"]},
+    )
+    rows = structured_propagation_rows(payload)
+    services = {row.service for row in rows}
+    assert services == {"git_integration_worker"}
+    assert all("import_path:verified" in (row.reason or "") for row in rows)
+
+
+def test_charter_runner_store_negative_control_stays_libs_touched():
+    """No CONSUMERS → libs_touched; must not grow a spurious sync_restart nomination."""
+    payload = _closeout_payload(
+        files_modified=["libs/charter_runner_store/propagation_terminal.py"],
+    )
+    block = residue_for_closeout(payload)
+    assert block is not None
+    assert "libs_touched: libs/charter_runner_store/propagation_terminal.py" in block
+    assert "sync_restart:" not in block
+
+
+def test_structured_charter_runner_store_mints_no_consumer_rows():
+    payload = _closeout_payload(
+        files_modified=["libs/charter_runner_store/propagation_terminal.py"],
+        evidence_uris={"git_refs": ["crs-sha"]},
+    )
+    assert structured_propagation_rows(payload) == ()
+
+
+def test_obligation_deployment_state_counts_only_sync_restart():
+    from services.git_integration_worker.cursor_auto.episode_residue import (
+        obligation_deployment_state_from_wrapper,
+    )
+
+    # code_ref_relation → GIW owed only; mcp contradicted omitted from count.
+    payload = _closeout_payload(
+        files_modified=["libs/deploy_identity/code_ref_relation.py"],
+    )
+    state = obligation_deployment_state_from_wrapper(payload)
+    assert state is not None
+    assert "1 propagation-owed path" in state

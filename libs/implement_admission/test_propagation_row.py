@@ -120,13 +120,26 @@ def test_rows_from_closeout_payload_modified_lib_still_mints_consumers():
         row.reason
         == (
             "shared lib land: libs/deploy_identity/__init__.py; "
-            "path-derived obligation; liveness: unknown"
+            "path-derived obligation; liveness: unknown; "
+            "derived:consumers; import_path:verified"
         )
         for row in rows
     )
     assert all(row.code_ref == "land-sha" for row in rows)
     assert skipped == []
     assert prose is False
+
+
+def test_rows_from_lib_consumers_oracle_omits_contradicted_mcp():
+    from implement_admission.propagation_row import rows_from_lib_consumers
+
+    rows = rows_from_lib_consumers(
+        ["libs/deploy_identity/code_ref_relation.py"],
+        code_ref="oracle-sha",
+    )
+    assert [row.service for row in rows] == ["git_integration_worker"]
+    assert "import_path:verified" in (rows[0].reason or "")
+    assert "mcp" not in {row.service for row in rows}
 
 
 def test_default_proof_strings_are_obligation_not_observation():
