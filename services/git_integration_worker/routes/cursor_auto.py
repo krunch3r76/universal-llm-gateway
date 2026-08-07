@@ -216,6 +216,11 @@ async def enqueue(body: EnqueueBody):
         # A second request on a private thread is a backtrack, not a queue append:
         # interrupt the live episode so the new DIRECTIVE does not wait it out.
         interrupt = await supersede_same_thread_inflight(job, queue=queue)
+    # Peers only (exclude self): alone → 0; queued predecessors → N. Same lock
+    # as snapshot(); do not disturb supersede vocabulary beside this field.
+    lane = queue.thread_lane_counts(
+        body.thread_id, exclude_job_id=job.job_id
+    )
     return JSONResponse(
         status_code=200,
         content={
@@ -224,6 +229,8 @@ async def enqueue(body: EnqueueBody):
             "job_id": job.job_id,
             "request_id": job.request_id,
             "superseded": interrupt,
+            "same_thread_pending": lane["same_thread_pending"],
+            "same_thread_claimed": lane["same_thread_claimed"],
             "continuity_hop": is_hop,
             "matched_token": matched_token,
             "queue": queue.snapshot(),

@@ -190,6 +190,47 @@ class AutoJobQueue:
                 if job.status in ("queued", "claimed")
             ]
 
+    def _thread_lane_counts_unlocked(
+        self,
+        thread_id: str,
+        *,
+        exclude_job_id: str | None = None,
+    ) -> dict[str, int]:
+        """Peer pending/claimed on *thread_id*; caller must hold ``self._lock``."""
+        pending = 0
+        claimed = 0
+        for jid in self._order:
+            if exclude_job_id is not None and jid == exclude_job_id:
+                continue
+            job = self._jobs[jid]
+            if job.thread_id != thread_id:
+                continue
+            if job.status == "queued":
+                pending += 1
+            elif job.status == "claimed" and not job.nested_sdk_finished:
+                claimed += 1
+        return {
+            "same_thread_pending": pending,
+            "same_thread_claimed": claimed,
+        }
+
+    def thread_lane_counts(
+        self,
+        thread_id: str,
+        *,
+        exclude_job_id: str | None = None,
+    ) -> dict[str, int]:
+        """Thread-scoped pending/claimed peers (same lock as :meth:`snapshot`).
+
+        Excludes *exclude_job_id* so an admit response can report *other*
+        jobs on the lane — alone → 0; N queued predecessors → N. Claimed
+        peers match supersede candidacy (``nested_sdk_finished`` excluded).
+        """
+        with self._lock:
+            return self._thread_lane_counts_unlocked(
+                thread_id, exclude_job_id=exclude_job_id
+            )
+
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             snap = {

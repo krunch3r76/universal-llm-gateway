@@ -277,6 +277,59 @@ def test_request_transient_probe_then_arms():
     )
 
 
+def test_request_promotes_same_thread_lane_counts():
+    """Lane discriminant is reachable without digging past enqueue.enqueue."""
+    send_payload = {
+        "send_path": "new_thread",
+        "thread": {"id": "6885", "slug": "lane-count"},
+        "turn": {"id": 1, "thread": "6885", "turn_number": 2},
+    }
+    with (
+        patch("tools.agent_bus.request._send_dispatch", return_value=send_payload),
+        patch(
+            "tools.agent_bus.request.probe_auto_liveness",
+            return_value={"live": True, "reason": "ok", "attempts": 1, "elapsed_s": 0.0},
+        ),
+        patch(
+            "tools.agent_bus.request.enqueue_auto_job",
+            return_value={
+                "ok": True,
+                "handler_status": "auto-admit-armed",
+                "enqueue": {
+                    "ok": True,
+                    "superseded": None,
+                    "same_thread_pending": 1,
+                    "same_thread_claimed": 0,
+                },
+            },
+        ),
+        patch("tools.agent_bus.request.record"),
+    ):
+        result = _request_impl(
+            new_slug="lane-count",
+            thread=None,
+            to="cursor",
+            subject="DIRECTIVE",
+            body="TYPE: DIRECTIVE",
+            from_agent="web-anthropic",
+            tags=None,
+            sidecar_content=None,
+            sidecar_slug=None,
+            desired_model="auto",
+            desired_effort="medium",
+            contract="implement",
+            require_attended=False,
+            request_id=None,
+            after_turn=0,
+            summary=None,
+        )
+    assert result["same_thread_pending"] == 1
+    assert result["same_thread_claimed"] == 0
+    assert result["enqueue"]["same_thread_pending"] == 1
+    assert result["enqueue"]["enqueue"]["same_thread_pending"] == 1
+    assert result["enqueue"]["enqueue"]["superseded"] is None
+
+
 def test_request_hoists_sidecar_uri_from_send():
     """Successful sidecar write must surface on request response (a:26439 #5)."""
     send_payload = {

@@ -327,6 +327,18 @@ def _request_impl(
             chat_url=cse_chat_url,
             registration_id=cse_registration_id,
         )
+    # Promote lane discriminant out of the double-nested HTTP body so a
+    # caller of agent_bus.request need not dig to enqueue.enqueue.* —
+    # same keys remain beside superseded on the worker body for parity.
+    enqueue_body = enq.get("enqueue") if isinstance(enq.get("enqueue"), dict) else {}
+    lane_pending = enqueue_body.get("same_thread_pending")
+    lane_claimed = enqueue_body.get("same_thread_claimed")
+    if lane_pending is not None or lane_claimed is not None:
+        enq = dict(enq)
+        if lane_pending is not None:
+            enq["same_thread_pending"] = lane_pending
+        if lane_claimed is not None:
+            enq["same_thread_claimed"] = lane_claimed
     result = {
         "thread": thread_obj,
         "turn": turn_obj,
@@ -341,6 +353,10 @@ def _request_impl(
         "sidecar_uri": sidecar_uri,
         "sidecar_sha256": sidecar_sha256,
     }
+    if lane_pending is not None:
+        result["same_thread_pending"] = lane_pending
+    if lane_claimed is not None:
+        result["same_thread_claimed"] = lane_claimed
     if request_id:
         result["request_id"] = request_id
     return result
