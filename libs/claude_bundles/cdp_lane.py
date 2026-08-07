@@ -60,16 +60,32 @@ INTENT_SUFFIX = {
 _CHROME_BIN = "google-chrome"
 _LAUNCH_WAIT_S = 20
 _POLL_MS = 250
-_DEFAULT_DISPLAY = ":1"
+# Jupiter standing default is Xvfb :2 (scripts.local/jupiter-cdp-xvfb).
+# Xwayland :1 remains for legacy/attended cosmic-comp glances; MaxClients is per-server.
+_DEFAULT_DISPLAY = ":2"
+_XVFB_STATE_DIR = Path.home() / ".gateway" / "cdp-xvfb"
+_XVFB_AUTH = _XVFB_STATE_DIR / "Xauthority"
 
 
 def cdp_display() -> str:
-    """X display for CDP Chrome launches (``CDP_DISPLAY`` > ``DISPLAY`` > ``:1``)."""
+    """X display for CDP Chrome launches (``CDP_DISPLAY`` > ``DISPLAY`` > ``:2``)."""
     for key in ("CDP_DISPLAY", "DISPLAY"):
         val = os.environ.get(key, "").strip()
         if val:
             return val
     return _DEFAULT_DISPLAY
+
+
+def chrome_display_env() -> dict[str, str]:
+    """Env for a headed CDP Chrome: display + Xvfb Xauthority when managed auth exists."""
+    display = cdp_display()
+    env = dict(os.environ)
+    env["DISPLAY"] = display
+    env["CDP_DISPLAY"] = display
+    # Custom cookie from jupiter-cdp-xvfb — without it Chrome cannot open :2.
+    if display == _DEFAULT_DISPLAY and _XVFB_AUTH.is_file():
+        env["XAUTHORITY"] = str(_XVFB_AUTH)
+    return env
 
 
 class LaneError(RuntimeError):
@@ -348,8 +364,7 @@ def _launch_chrome(port: int, profile: Path) -> int:
     """Launch a detached Chrome (the warm resource) and wait until it listens."""
     _seed_profile(profile)
     log = f"/tmp/chrome-cdp-claude-ai-{port}.log"
-    display = cdp_display()
-    env = dict(os.environ, DISPLAY=display, CDP_DISPLAY=display)
+    env = chrome_display_env()
     with open(log, "ab") as logf:
         proc = subprocess.Popen(
             chrome_launch_argv(port, profile),

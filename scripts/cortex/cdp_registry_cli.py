@@ -23,6 +23,17 @@ def main(argv: list[str] | None = None) -> int:
     p_reg.add_argument("--holder", required=True)
     p_reg.add_argument("--purpose", default=None)
     p_reg.add_argument(
+        "--mission-kind",
+        default=None,
+        choices=sorted(cdp_registry.MISSION_KINDS),
+        help="Chrome-host lineage: root|hop|side|parallel",
+    )
+    p_reg.add_argument(
+        "--parent-thread",
+        default=None,
+        help="Bus private-request parent lane (hop/side parent)",
+    )
+    p_reg.add_argument(
         "--no-launch",
         action="store_true",
         help="Allocate only (no Chrome launch) — tests / dry alloc",
@@ -60,6 +71,8 @@ def main(argv: list[str] | None = None) -> int:
         reg = cdp_registry.register_lane(
             holder=args.holder,
             purpose=args.purpose,
+            mission_kind=args.mission_kind,
+            parent_thread=args.parent_thread,
             launch=not args.no_launch,
         )
         print(f"registration_id={reg.registration_id}")
@@ -69,6 +82,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"profile={reg.profile}")
         if reg.display:
             print(f"display={reg.display}")
+        if reg.mission_kind:
+            print(f"mission_kind={reg.mission_kind}")
+        if reg.parent_thread:
+            print(f"parent_thread={reg.parent_thread}")
         return 0
 
     if args.cmd == "deregister":

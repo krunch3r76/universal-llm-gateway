@@ -65,6 +65,58 @@ def test_register_lane_records_display(
     assert active[r.registration_id]["display"] == ":7"
 
 
+def test_register_lane_records_mission_lineage(isolated_registry: Path) -> None:
+    r = reg.register_lane(
+        holder="hop-test",
+        purpose="operator-proxy",
+        mission_kind="hop",
+        parent_thread="6655",
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    assert r.mission_kind == "hop"
+    assert r.parent_thread == "6655"
+    row = reg._load_active()[r.registration_id]
+    assert row["mission_kind"] == "hop"
+    assert row["parent_thread"] == "6655"
+
+
+def test_register_lane_rejects_unknown_mission_kind(isolated_registry: Path) -> None:
+    with pytest.raises(reg.RegistryError, match="mission_kind"):
+        reg.register_lane(
+            holder="bad-kind",
+            mission_kind="nested",
+            launch_chrome=_noop_launch,
+            is_listening=lambda _p: False,
+        )
+
+
+def test_deregister_kill_true_on_orphaned_alive(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    killed: list[int] = []
+    monkeypatch.setattr(reg, "_kill_listener", lambda port: killed.append(port))
+    r = reg.register_lane(
+        holder="a",
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    reg.deregister_lane(
+        r.registration_id,
+        reason="probe_failed",
+        is_listening=lambda _p: True,
+    )
+    assert reg._load_active()[r.registration_id]["status"] == "orphaned_alive"
+    assert killed == []
+    reg.deregister_lane(
+        r.registration_id,
+        kill=True,
+        is_listening=lambda _p: True,
+    )
+    assert killed == [r.port]
+    assert reg._load_active()[r.registration_id]["status"] == "released"
+
+
 def test_concurrent_register_distinct_ports(isolated_registry: Path) -> None:
     start = threading.Barrier(2)
     hold = threading.Barrier(2)

@@ -43,6 +43,8 @@ _RESERVED_STATUSES = frozenset(
 _RECLAIMABLE_STATUSES = frozenset({"released", "orphaned_retry"})
 RECLAIM_TRASH_DIR = Path.home() / ".gateway" / ".reclaim-trash"
 STALE_ACTIVE_TTL_S = 6 * 3600
+# Chrome-host mission taxonomy (bus parent is parent_thread, not nest_under).
+MISSION_KINDS = frozenset({"root", "hop", "side", "parallel"})
 
 _LaunchFn = Callable[[int, Path], int]
 _ListenFn = Callable[[int], bool]
@@ -71,6 +73,8 @@ class Registration:
     holder: str
     purpose: str | None = None
     display: str | None = None
+    mission_kind: str | None = None
+    parent_thread: str | None = None
 
 
 @dataclass(frozen=True)
@@ -153,6 +157,26 @@ def select_free_registry_port(
     )
 
 
+def _normalize_mission_kind(mission_kind: str | None) -> str | None:
+    if mission_kind is None:
+        return None
+    kind = str(mission_kind).strip().lower()
+    if not kind:
+        return None
+    if kind not in MISSION_KINDS:
+        raise RegistryError(
+            f"mission_kind must be one of {sorted(MISSION_KINDS)}; got {mission_kind!r}"
+        )
+    return kind
+
+
+def _normalize_parent_thread(parent_thread: str | None) -> str | None:
+    if parent_thread is None:
+        return None
+    thread = str(parent_thread).strip()
+    return thread or None
+
+
 def _row_to_registration(row: dict[str, Any]) -> Registration:
     suffix = str(row["profile_suffix"])
     port = int(row["port"])
@@ -165,6 +189,8 @@ def _row_to_registration(row: dict[str, Any]) -> Registration:
         holder=str(row["holder"]),
         purpose=row.get("purpose"),
         display=row.get("display"),
+        mission_kind=row.get("mission_kind"),
+        parent_thread=row.get("parent_thread"),
     )
 
 
@@ -256,6 +282,8 @@ def register_lane(
     *,
     holder: str,
     purpose: str | None = None,
+    mission_kind: str | None = None,
+    parent_thread: str | None = None,
     launch: bool = True,
     launch_chrome: _LaunchFn | None = None,
     is_listening: _ListenFn | None = None,
@@ -264,9 +292,14 @@ def register_lane(
 
     Session address is **not** known at Chrome mint — callers must
     ``bind_session_address`` when the CSE URL is first observed.
+
+    ``mission_kind`` ∈ {root, hop, side, parallel} tags Chrome-host lineage;
+    ``parent_thread`` is the bus private-request lane (not SDK ``nest_under``).
     """
     if not holder or not str(holder).strip():
         raise RegistryError("holder is required")
+    kind = _normalize_mission_kind(mission_kind)
+    parent = _normalize_parent_thread(parent_thread)
     reclaim_best_effort()
     listen = is_listening or cdp_lane.is_listening
     launch_fn = launch_chrome or cdp_lane._launch_chrome
@@ -286,6 +319,8 @@ def register_lane(
             "holder": holder,
             "purpose": purpose,
             "display": display,
+            "mission_kind": kind,
+            "parent_thread": parent,
             "status": "allocating",
             "chrome_pid": None,
             "holder_pid": os.getpid(),
@@ -355,7 +390,11 @@ def deregister_lane(
     keep_alive_reason: str | None = None,
     is_listening: _ListenFn | None = None,
 ) -> None:
-    """Release or orphan-alive a lane; error paths never kill Chrome."""
+    """Release or orphan-alive a lane; error paths never kill Chrome.
+
+    Explicit ``kill=True`` still kills residual Chrome on ``orphaned_alive``
+    (and on already-``released`` rows) — mission cull must not no-op.
+    """
     listen = is_listening or cdp_lane.is_listening
     error_release = keep_alive_reason is not None or reason in {
         "cse_not_found",
@@ -363,12 +402,23 @@ def deregister_lane(
     }
     if kill is None:
         kill = reason == "released" and not error_release
+    if kill:
+        # Explicit kill wins over probe_failed / keep-alive retain.
+        error_release = False
     with _store.ports_lock():
         active = _store.load_active()
         row = active.get(registration_id)
         if row is None:
             raise RegistryError(f"unknown registration_id: {registration_id!r}")
-        if row.get("status") in {"released", "orphaned_alive"}:
+        status = row.get("status")
+        if status == "released":
+            if kill:
+                port = int(row["port"])
+                if listen(port):
+                    _kill_listener(port)
+            _release_driver_lock(registration_id)
+            return
+        if status == "orphaned_alive" and not kill:
             _release_driver_lock(registration_id)
             return
 

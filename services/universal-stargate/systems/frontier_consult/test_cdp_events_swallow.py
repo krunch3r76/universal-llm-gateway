@@ -59,3 +59,17 @@ def test_stalled_payload_carries_progress_trace() -> None:
         progress_trace={"verdict": "frozen", "frozen_for_s": 1760.0},
     )
     assert event.payload["progress_trace"]["verdict"] == "frozen"
+
+
+def test_stalled_payload_carries_deliverable_present() -> None:
+    event = cdp_events.CdpGenerateStalled(
+        request_id="r",
+        execution_id="e",
+        satellite_execution_id="s",
+        stall_stage="completed_without_proof",
+        error="chat harvest lacks attested_model",
+        archive_uri="cortex://notes/system/threads/cdp-ask-archive-new.md",
+        deliverable_present=True,
+    )
+    assert event.payload["archive_uri"].endswith("cdp-ask-archive-new.md")
+    assert event.payload["deliverable_present"] is True

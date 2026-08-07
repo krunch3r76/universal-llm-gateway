@@ -45,7 +45,7 @@ Workspace:
 - `agent-skills_ws.mdc` — skill registry — check before non-standard document/tool patterns
 - `md-navigation_ws.mdc` — md_list/md_read before large `.md`/`.mdc` reads
 - `handoff-pickup_ws.mdc` — transcript handoff pickup gate (entity_get first)
-- `agent-bus-push-reminder_ws.mdc` — push reminder when open web thread expects web
+- `agent-bus-push-reminder_ulg.mdc` (plugin) — human push only when CDP wake unavailable; default CDP wake
 - `bus-monitor-silence_ws.mdc` — MONITOR / monitoring-only seat: chat report only; ¬ bus post/reply/mark-read (temp)
 
 Parent:

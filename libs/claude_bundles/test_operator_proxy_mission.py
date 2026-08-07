@@ -39,21 +39,19 @@ def test_ensure_injects_chips_and_briefing() -> None:
 
 
 def test_ensure_injects_self_scheduled_wake_guide() -> None:
-    """First-dispatch briefing carries wake guide operating shape + carry-items."""
+    """First-dispatch briefing suspends keep-alive; sole-wake / one-off CDP OK."""
     out = ensure_operator_proxy_mission_prompt("# Mission\n")
     assert "cdp-seat-wake-heartbeat.md" in out
-    assert "Self-scheduled wake" in out
-    assert "first dispatch" in out
-    assert "persistent: true" in out
-    assert "1800000ms" in out
-    assert "Monitor timeout — RESOLVED" in out
-    assert "NOT the user" in out
-    assert "does not prevent stopping" in out or "does not prevent the stop" in out
+    assert "Self-scheduled wake" in out or "keep-alive" in out.lower()
+    assert "SUSPENDED" in out
+    assert "Do not arm Monitor" in out
     assert "send_later" in out
     assert "TaskStop" in out
-    assert "Audit guardrails" in out
-    assert "not refuted" in out
-    assert "Before fleet codification" in out
+    assert "Sole-wake" in out or "sole-wake" in out.lower() or "PRIMARY" in out
+    # Historical arm recipes must not ship as first-dispatch defaults.
+    assert "persistent: true" not in out
+    assert "1800000ms" not in out
+    assert "while true; do sleep 240" not in out
 
 
 def test_ensure_idempotent_when_chips_present() -> None:

@@ -41,7 +41,7 @@ related_skills:
 ## When to load
 
 - Sealed ask / ralph / Fable consult via Cowork Project or `/new`
-- **web-anthropic `push_reminder`** — prefer CDP `project-ask` bus-nudge; suppress reminder when CDP started/completed (`.cursor/rules/agent-bus-push-reminder_ulg.mdc`; 24628)
+- **web-anthropic `push_reminder`** — CDP autonomous wake is default; human push reminder only when CDP unavailable/broken (`agent-bus-push-reminder_ulg.mdc`; 24628 / operator bind 2026-08-06)
 - Multi-stop bus ping-pong / empty out-dir / shell abort — L3 annexes (24831–24976)
 - Project chrome; parallel Chrome lane; harvest / model-picker failures
 - **Chat vs Cowork on `/new`** — § Chat vs Cowork (25051/25052)

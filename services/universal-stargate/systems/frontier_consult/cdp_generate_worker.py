@@ -65,9 +65,20 @@ def format_cdp_result_body(result: CdpGenerateResult) -> str:
         f"- satellite_execution_id: `{result.satellite_execution_id}`",
         f"- stall_stage: `{result.stall_stage}`",
         f"- error: {result.error}",
+        f"- body_len: {len(result.body or '')}",
         f"- substrate: `{result.substrate}`",
         f"- cost_source: `{result.cost_source}`",
     ]
+    if result.archive_uri:
+        lines.append(f"- archive_uri: `{result.archive_uri}`")
+    if result.content_proof_uri:
+        lines.append(f"- content_proof_uri: `{result.content_proof_uri}`")
+    extras = result.extras or {}
+    if extras.get("deliverable_present_unproven"):
+        lines.append("- deliverable_present_unproven: true")
+        recovery = extras.get("recovery")
+        if recovery:
+            lines.append(f"- recovery: {recovery}")
     if _upstream_overloaded(result):
         lines.extend(
             [
@@ -386,6 +397,8 @@ async def run_cdp_worker(
     expected_size: str = "auto",
     download_output: bool = False,
     purpose: str = "ask",
+    mission_kind: str | None = None,
+    parent_thread: str | None = None,
 ) -> None:
     """Stage already done at admit; run adapter and post proof/failure turn."""
     from .cdp_generate_reconcile import attach_satellite_execution_id, finalize_cdp_generate
@@ -428,6 +441,8 @@ async def run_cdp_worker(
             expected_size=expected_size,  # type: ignore[arg-type]
             download_output=download_output,
             purpose=purpose,
+            mission_kind=mission_kind,
+            parent_thread=parent_thread,
             on_submitted=_on_submitted,
         )
     except asyncio.CancelledError:

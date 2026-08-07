@@ -256,6 +256,12 @@ async def finalize_cdp_generate(
             stall_stage=result.stall_stage,
             error=result.error,
             progress_trace=(result.extras or {}).get("progress_trace"),
+            archive_uri=result.archive_uri,
+            deliverable_present=bool(
+                result.archive_uri
+                or result.content_proof_uri
+                or (result.extras or {}).get("deliverable_present_unproven")
+            ),
         )
         if _upstream_overloaded(result):
             await _emit_upstream_overload_friction(

@@ -348,7 +348,12 @@ async def run_execution(
     """Run one registry-backed project-ask and return a terminal-shaped result dict."""
     prompts = resolve_prompt(req)
     holder = req.holder.strip() or "cdp-ask-satellite"
-    reg = cdp_registry.register_lane(holder=holder, purpose=req.purpose)
+    reg = cdp_registry.register_lane(
+        holder=holder,
+        purpose=req.purpose,
+        mission_kind=req.mission_kind,
+        parent_thread=req.parent_thread,
+    )
     if on_registered is not None:
         on_registered(reg.registration_id)
     on_harvest: Callable[[dict[str, Any]], Awaitable[None]] | None = None
@@ -455,6 +460,23 @@ async def run_execution(
                         "harvest_provenance": None,
                         "stall_stage": classify_stall_stage(str(exc)),
                     }
+                if not last.archive_uri and archive_uri:
+                    backfilled = ProjectAskResult(
+                        ok=last.ok,
+                        body=last.body,
+                        url=last.url,
+                        project_uuid=last.project_uuid,
+                        project_url=last.project_url,
+                        model=last.model,
+                        body_len=last.body_len,
+                        delete_after=last.delete_after,
+                        error=last.error,
+                        archive_uri=archive_uri,
+                        attested_model=last.attested_model,
+                        harvest_provenance=last.harvest_provenance,
+                    )
+                    results[-1] = backfilled
+                    last = backfilled
             await _release_f6_and_advance_proof(
                 progress=progress, ladder=ladder, archive_uri=archive_uri
             )

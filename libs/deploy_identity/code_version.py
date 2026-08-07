@@ -28,6 +28,11 @@ _UNKNOWN = "unknown"
 _SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
 _DEFAULT_STAMP_PATH = Path("/app/.source_sync_stamp")
 
+
+def is_valid_sha40(value: str) -> bool:
+    """Return True when ``value`` is a full 40-character lowercase hex SHA."""
+    return bool(_SHA40_RE.fullmatch(str(value or "").strip().lower()))
+
 # A checkout HEAD read this long after exec is no longer evidence about the
 # loaded code. Service startup is seconds; this window is deliberately loose.
 _ATTRIBUTION_WINDOW_S = 60.0
@@ -102,12 +107,33 @@ def read_checkout_head(root: Path) -> str | None:
     return sha or None
 
 
+def _resolve_env_override() -> str | None:
+    """Return a validated SHA40 override, or None when env override is absent."""
+    if "ULG_CODE_VERSION" not in os.environ:
+        return None
+    raw = os.environ["ULG_CODE_VERSION"]
+    override = raw.strip()
+    if not override:
+        logger.error(
+            "ULG_CODE_VERSION is present but empty — cannot seal fleet identity"
+        )
+        return _UNKNOWN
+    normalized = override.lower()
+    if not is_valid_sha40(normalized):
+        logger.error(
+            "ULG_CODE_VERSION is present but not a valid 40-hex SHA: %r",
+            raw,
+        )
+        return _UNKNOWN
+    return normalized
+
+
 @lru_cache(maxsize=1)
 def resolve_code_version() -> str:
     """Return the process-start SHA or ``unknown`` when resolution fails."""
-    override = os.environ.get("ULG_CODE_VERSION", "").strip()
-    if override:
-        return override
+    env_override = _resolve_env_override()
+    if env_override is not None:
+        return env_override
     stamped = _read_stamp_sha(_stamp_path())
     if stamped:
         return stamped
@@ -147,6 +173,7 @@ resolve_code_version()
 
 
 __all__ = [
+    "is_valid_sha40",
     "normalize_code_ref",
     "process_age_s",
     "read_checkout_head",

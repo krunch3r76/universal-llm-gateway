@@ -66,8 +66,9 @@ services:
       PYTHONPATH: /app/libs
       # Host seals checkout HEAD at compose-up (manage/relay/update). Container
       # has no git binary and no .git mount — without this, resolve_code_version
-      # falls through to the "unknown" sentinel.
-      ULG_CODE_VERSION: ${ULG_CODE_VERSION:-}
+      # falls through to the "unknown" sentinel. ``:?`` fails compose when unset
+      # or empty — Docker ``:-`` would pass "" and defeat presence checks.
+      ULG_CODE_VERSION: ${ULG_CODE_VERSION:?ULG_CODE_VERSION must be sealed at compose-up}
 
       STARGATE_CONFIG: /app/config/templates/edge-stargate.yaml
       STARGATE_UNIX_SOCKET: /tmp/universal-protocol/edge-${NODE_ID}.sock

@@ -311,6 +311,18 @@ async def dispatch_cdp_generate(
         if isinstance(purpose_raw, str) and purpose_raw.strip()
         else "ask"
     )
+    mission_kind_raw = getattr(body, "mission_kind", None)
+    mission_kind = (
+        str(mission_kind_raw).strip()
+        if isinstance(mission_kind_raw, str) and mission_kind_raw.strip()
+        else None
+    )
+    parent_thread_raw = getattr(body, "parent_thread", None)
+    parent_thread = (
+        str(parent_thread_raw).strip()
+        if isinstance(parent_thread_raw, str) and parent_thread_raw.strip()
+        else None
+    )
     opts = getattr(body, "generation_options", None) or {}
     worker_kwargs: dict[str, Any] = {
         "execution_id": execution_id,
@@ -322,6 +334,8 @@ async def dispatch_cdp_generate(
         "pointer_turn": after_turn,
         "max_wall_s": float(timeout_seconds) if timeout_seconds else None,
         "purpose": purpose,
+        "mission_kind": mission_kind,
+        "parent_thread": parent_thread,
     }
     if isinstance(opts, dict):
         if "harvest_source" in opts:

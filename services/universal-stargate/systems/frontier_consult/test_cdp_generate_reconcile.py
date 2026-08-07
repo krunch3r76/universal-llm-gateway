@@ -75,6 +75,27 @@ def test_result_from_snapshot_completed_without_proof_stalls() -> None:
     assert result is not None
     assert result.ok is False
     assert result.stall_stage == "completed_without_proof"
+    assert "attested_model" in (result.error or "")
+    assert "without archive_uri" not in (result.error or "")
+
+
+def test_result_from_snapshot_completed_without_proof_carries_deliverable() -> None:
+    result = result_from_snapshot(
+        snapshot={
+            "status": "completed",
+            "completion_phase": "terminal",
+            "archive_uri": "cortex://notes/system/threads/cdp-ask-archive-new.md",
+            "body": "SKILLS_PROBE_OK",
+        },
+        execution_id="exec-2",
+        satellite_execution_id="sat-2",
+        prompt_uri="cortex://p.md",
+        picker_model="fable-5",
+    )
+    assert result is not None
+    assert result.archive_uri == "cortex://notes/system/threads/cdp-ask-archive-new.md"
+    assert result.extras.get("deliverable_present_unproven") is True
+    assert "do not blind re-dispatch" in str(result.extras.get("recovery"))
 
 
 def test_max_open_leg_s_floor() -> None:

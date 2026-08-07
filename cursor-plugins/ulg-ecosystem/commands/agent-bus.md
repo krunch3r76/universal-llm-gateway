@@ -109,8 +109,11 @@ will not auto-assign one. Always use `post` for new threads.
 
 ### 3b. Push reminder
 
-After replying, apply `agent-bus-push-reminder_ulg.mdc` when web is expected
-next actor on an open thread — do not fork the decision table into this command.
+After replying, apply `agent-bus-push-reminder_ulg.mdc`. **Default: CDP /
+operator-proxy / converse continuity wakes web** — report status only; **¬** ask
+the operator to push merely because an open thread expects web next. Human push
+reminder only when autonomous CDP wake is unavailable or broken. Do not fork the
+decision table into this command.
 
 ## Variants
 

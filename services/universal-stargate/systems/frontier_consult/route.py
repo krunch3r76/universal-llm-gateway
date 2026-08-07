@@ -188,6 +188,10 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     # CDP registry / mission tag (model=cdp/… only). Default ask when omitted;
     # operator-proxy|mission triggers skill-chip inject on the satellite.
     purpose: str | None = None
+    # Chrome-host lineage (model=cdp/… only). Distinct from purpose retain tag.
+    mission_kind: str | None = None
+    # Bus private-request parent lane (hop/side parent). Not SDK nest_under.
+    parent_thread: str | None = None
     # thread / subject MUST NOT appear — extra="forbid" rejects any caller that
     # supplies them (schema-level enforcement per Phase 0 contract).
 

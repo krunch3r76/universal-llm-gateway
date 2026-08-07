@@ -65,9 +65,10 @@ def test_stamp_still_wins_when_process_is_old(monkeypatch, tmp_path):
 
 def test_env_override_still_wins_when_process_is_old(monkeypatch):
     """ULG_CODE_VERSION is fixed at exec, so it stays attributable forever."""
-    monkeypatch.setenv("ULG_CODE_VERSION", "env-sha-override")
+    override = "b" * 40
+    monkeypatch.setenv("ULG_CODE_VERSION", override)
     monkeypatch.setattr(cv, "process_age_s", lambda: 99999.0)
-    assert cv.resolve_code_version() == "env-sha-override"
+    assert cv.resolve_code_version() == override
 
 
 def test_two_probes_of_one_process_cannot_diverge(monkeypatch):

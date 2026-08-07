@@ -25,6 +25,7 @@ async def run(
     chat_url: str,
     prompt: str,
     *,
+    model: str,
     timeout_s: int,
     paste_only: bool,
 ) -> dict:
@@ -48,6 +49,7 @@ async def run(
         result = await project_followup_on_page(
             page,
             prompt,
+            model=model,
             project_uuid="",
             timeout_s=timeout_s,
             min_growth=80,
@@ -73,6 +75,11 @@ def main() -> int:
     parser.add_argument("--out", default="")
     parser.add_argument("--timeout-s", type=int, default=600)
     parser.add_argument(
+        "--model",
+        required=True,
+        help="Picker model slug for attestation parity (e.g. opus-5, fable-5).",
+    )
+    parser.add_argument(
         "--paste-only",
         action="store_true",
         help=(
@@ -92,6 +99,7 @@ def main() -> int:
                     args.cdp_url,
                     args.chat_url,
                     prompt,
+                    model=args.model,
                     timeout_s=args.timeout_s,
                     paste_only=args.paste_only,
                 ),

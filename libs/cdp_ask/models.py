@@ -58,6 +58,20 @@ class SubmitProjectAskRequest(BaseModel):
     prompt_path: str | None = None
     holder: str = Field(default="cdp-ask-satellite")
     purpose: str = "ask"
+    mission_kind: str | None = Field(
+        default=None,
+        description=(
+            "Chrome-host mission taxonomy: root | hop | side | parallel. "
+            "Distinct from purpose (ask vs operator-proxy retain)."
+        ),
+    )
+    parent_thread: str | None = Field(
+        default=None,
+        description=(
+            "Bus private-request lane for parent mission (e.g. hop parent). "
+            "Not SDK nest_under."
+        ),
+    )
     model: str = "opus-5"
     converse: bool = False
     no_project_uuid: bool = False

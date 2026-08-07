@@ -13,8 +13,9 @@ from deploy_identity.code_version import (
 def test_env_override_wins(monkeypatch):
     """ULG_CODE_VERSION env var overrides git rev-parse for deterministic probes."""
     reset_code_version_cache_for_tests()
-    monkeypatch.setenv("ULG_CODE_VERSION", "env-sha-override")
-    assert resolve_code_version() == "env-sha-override"
+    override = "a" * 40
+    monkeypatch.setenv("ULG_CODE_VERSION", override)
+    assert resolve_code_version() == override
 
 
 def test_cache_once_per_process(monkeypatch):

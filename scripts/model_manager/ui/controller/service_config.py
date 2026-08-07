@@ -169,15 +169,29 @@ def apply_checkout_code_version(
 
     The gpu-edge container has no ``git`` binary and no ``.git`` mount; without
     this seal ``resolve_code_version()`` returns the ``unknown`` sentinel.
-    Idempotent when the caller already set a non-empty override.
-    """
-    if env.get("ULG_CODE_VERSION", "").strip():
-        return env
-    from deploy_identity.code_version import read_checkout_head
 
+    Docker Compose interpolates an undefined ``${ULG_CODE_VERSION}`` to the empty
+    string without warning, which still satisfies presence checks in the
+    container. Callers must invoke this before ``docker compose up``; an empty or
+    malformed host value is replaced, and failure to read checkout HEAD raises.
+    """
+    from deploy_identity.code_version import is_valid_sha40, read_checkout_head
+
+    existing = env.get("ULG_CODE_VERSION", "").strip()
+    if existing and is_valid_sha40(existing):
+        env["ULG_CODE_VERSION"] = existing.lower()
+        return env
+
+    env.pop("ULG_CODE_VERSION", None)
     sha = read_checkout_head(workspace_root)
-    if sha:
-        env["ULG_CODE_VERSION"] = sha
+    if not sha or not is_valid_sha40(sha):
+        msg = (
+            f"Cannot seal ULG_CODE_VERSION from checkout HEAD at {workspace_root} "
+            "(git unavailable or HEAD is not a 40-hex SHA)"
+        )
+        logger.error(msg)
+        raise RuntimeError(msg)
+    env["ULG_CODE_VERSION"] = sha.lower()
     return env
 
 

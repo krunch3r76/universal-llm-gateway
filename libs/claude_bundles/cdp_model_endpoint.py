@@ -235,6 +235,30 @@ def completed_without_proof(snapshot: dict[str, Any]) -> bool:
     return str(snapshot.get("status") or "") == "completed" and not has_proof(snapshot)
 
 
+def _missing_proof_error(snapshot: dict[str, Any]) -> str:
+    """Name the proof leg actually missing — not archive absence on chat provenance."""
+    provenance = snapshot.get("harvest_provenance")
+    if provenance in {"output-file", "cortex-uri"}:
+        return (
+            "outputs harvest lacks content_proof_uri "
+            "(harvest_provenance=output-file|cortex-uri)"
+        )
+    return "chat harvest lacks attested_model (archive_uri alone insufficient — AC-S1-b)"
+
+
+def _deliverable_unproven_extras(carry: dict[str, str | None]) -> dict[str, Any]:
+    """When proof-carry holds a deliverable URI, name recovery for harvest-not-redispatch."""
+    if carry.get("archive_uri") or carry.get("content_proof_uri"):
+        return {
+            "deliverable_present_unproven": True,
+            "recovery": (
+                "poll satellite / read archive_uri; verify body manually; "
+                "do not blind re-dispatch"
+            ),
+        }
+    return {}
+
+
 _completed_without_proof = completed_without_proof
 
 
@@ -407,10 +431,11 @@ def result_from_snapshot(
             prompt_uri=prompt_uri,
             picker_model=picker_model,
             stall_stage="completed_without_proof",
-            error="satellite completed without archive_uri or content_proof",
+            error=_missing_proof_error(snapshot),
             archive_uri=carry["archive_uri"],
             content_proof_uri=carry["content_proof_uri"],
             content_proof_sha256=carry["content_proof_sha256"],
+            extras=_deliverable_unproven_extras(carry),
         )
 
     if _terminal_failure(snapshot):
@@ -457,6 +482,8 @@ def run_cdp_generate(
     converse: bool = True,
     no_project_uuid: bool = True,
     purpose: str = "ask",
+    mission_kind: str | None = None,
+    parent_thread: str | None = None,
     holder: str = "cdp-model-endpoint",
     harvest_source: HarvestSource = "auto",
     expected_size: ExpectedSize = "auto",
@@ -478,6 +505,10 @@ def run_cdp_generate(
     ``mission`` trigger skill-chip + seat-map inject on the satellite
     (``operator_proxy_mission.purpose_implies_mission``). Also matched when the
     prompt body declares ``purpose: operator-proxy``.
+
+    ``mission_kind`` / ``parent_thread``: Chrome-host lineage on the registry
+    (root|hop|side|parallel + bus parent lane). Hop succession sets
+    ``mission_kind=hop`` and ``parent_thread=<private lane>``.
 
     ``skills`` (optional): catalog slugs prepended via
     ``stage_cdp_prompt_with_skills`` — ``shared_sync`` as leading ``/<slug>\\n``
@@ -521,6 +552,8 @@ def run_cdp_generate(
         prompt_uri=staged.prompt_uri,
         holder=holder,
         purpose=purpose,
+        mission_kind=mission_kind,
+        parent_thread=parent_thread,
         model=picker,
         converse=converse,
         no_project_uuid=no_project_uuid,
@@ -706,6 +739,9 @@ def run_cdp_generate(
                 client=client,
                 retain_cse=mission_retain,
             )
+            carry_fields = proof_carry.as_result_fields()
+            extras: dict[str, Any] = {"abort": abort_info}
+            extras.update(_deliverable_unproven_extras(carry_fields))
             return CdpGenerateResult(
                 ok=False,
                 body=str(snapshot.get("body") or ""),
@@ -714,10 +750,10 @@ def run_cdp_generate(
                 prompt_uri=staged.prompt_uri,
                 picker_model=picker,
                 stall_stage="completed_without_proof",
-                error="satellite completed without archive_uri or content_proof",
+                error=_missing_proof_error(snapshot),
                 poll_snapshots=polls,
-                extras={"abort": abort_info},
-                **proof_carry.as_result_fields(),
+                extras=extras,
+                **carry_fields,
             )
 
         if _terminal_failure(snapshot):

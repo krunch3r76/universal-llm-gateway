@@ -121,6 +121,8 @@ async def complete_continuity_hop(
         job,
         model=model,
         purpose="operator-proxy",
+        mission_kind="hop",
+        parent_thread=str(job.thread_id),
     )
     if not commissioned.get("ok"):
         return await post_terminal_status(

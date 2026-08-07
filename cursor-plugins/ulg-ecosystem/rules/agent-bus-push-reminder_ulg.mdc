@@ -1,5 +1,5 @@
 ---
-description: Agent-bus push reminder — load on turn close after agent_bus post/reply to web/web-anthropic OR team_dispatch handoff with push_reminder/open web thread. Emit reminder only when open thread expects web's next turn.
+description: Agent-bus push reminder — load on turn close after agent_bus post/reply to web/web-anthropic OR team_dispatch handoff with push_reminder/open web thread. Default CDP autonomous wake; emit human push reminder only when CDP wake is unavailable or broken.
 alwaysApply: false
 rule_category: cortex-bus
 apply_tier: catalog
@@ -15,44 +15,47 @@ trigger_match_terms:
 
 ## Invariant
 
-∀ assistant turn closure: emit the push reminder **only when** a reply/post to web-anthropic leaves an **open** thread where **web is the expected next actor**.
+∀ assistant turn closure after reply/post to web-anthropic: **prefer CDP / operator-proxy / converse continuity to wake web** — report status only; **¬** ask the operator to push merely because an open thread expects web next.
 
-¬ mechanical: posting `--to web-anthropic` alone is insufficient.
+Human push reminder is a **degraded path** so context can be removed/updated without the human as continuity hinge. Emit it **only when** autonomous CDP wake is unavailable or broken.
+
+¬ mechanical: posting `--to web-anthropic` alone is insufficient (for either wake or reminder).
+
+Wake mechanics: `claude-ai-cdp-navigation` · `cdp-operator-proxy` — this rule owns **turn-close reminder gating** only.
 
 ## Decision (apply after reply + thread-state update)
 
 | Condition | Reminder? |
 |---|---|
 | Thread **closed** in same pass (`update-thread --status closed`, or ack-only closeout) | **No** — arc complete; push would deliver noise |
-| **CDP / `project-ask` already prompting this thread** — this seat started or completed a Jupiter CDP sealed-ask / bus-nudge that tells web to handle the same thread (e.g. `claude-ai-sync-jupiter project-ask` with a prompt that cites the thread) | **No** — automation already delivered the push; operator nudge is false (friction 24628) |
-| Thread **open** AND reply asks web to act (consult, implement, ratify, read-and-close) | **Yes** |
+| CDP / `project_ask` / `team_dispatch(model=cdp/…)` / operator-proxy continuity **already waking** this thread (started or completed) | **No** — automation delivered the wake; operator nudge is false (friction 24628) |
+| Thread **open** ∧ web expected next ∧ CDP wake **can** be fired (substrate available) | **No** — fire CDP wake; status report OK; **¬** human push cue |
+| Thread **open** ∧ web expected next ∧ CDP wake **unavailable or broken** (dead CSE with no warm path; aborted poller with no reconnect; no CDP substrate; explicit operator-attended handoff that is not CDP-capable) | **Yes** — degraded path only |
 | `post`/`reply` to non-web agents (`cursor`, `grok`, …) | **No** |
 | Peek / fetch / read-only; thread-state write with no reply | **No** |
 
-**Edge — open closeout to web:** if the reply is for web to read and close (thread left open intentionally), reminder **fires** — web still needs the push to see the turn. **Exception:** when CDP/`project-ask` already prompted that same thread, keep **No** (row above wins).
+**Edge — open closeout to web:** leave thread open for web to read/close does **not** license a human push cue when CDP can wake. Same table: CDP first; reminder only if CDP wake unavailable/broken.
 
-**CDP vs manual push:** Pre-advice WHEN bind: `claude-ai-cdp-navigation_ws.mdc` (alwaysApply). This rule owns **turn-close** reminder gating only — suppress reminder when CDP/`project-ask` already prompted the same thread (row above), even if `team_dispatch` still carries `push_reminder`.
+**`team_dispatch` `push_reminder` field:** server may still return a formatted string — **do not echo it** when the table says **No**. Echo only when the degraded-path row passes.
 
 ## Lead ordering invariant (a25444)
 
 For any open web-anthropic leg that will use CDP on the **same** coordination thread:
 
 1. Stage cortex corpus + sealed prompt
-2. **`project_ask(op=submit, …)` MUST complete before assistant turn close** (after answer-3 preflight + **required** bus pointer on arc coordination legs)
-3. Only then may the turn close without push reminder
+2. **`project_ask(op=submit, …)` / CDP `team_dispatch(model=cdp/…)` MUST complete before assistant turn close** (after answer-3 preflight + **required** bus pointer on arc coordination legs)
+3. Turn closes **without** human push reminder (status report only)
 
-**Falsifier (regression):** push reminder emitted **and** CDP `project_ask` submit succeeded on the same thread in the same leg → friction a25444 class.
+**Falsifier (regression):** human push reminder emitted **and** CDP wake succeeded (or was available) on the same thread in the same leg → friction a25444 / steward-false-push class.
 
 **Root cause (5403):** `team_dispatch` handoff returned `push_reminder` before CDP submit; seat echoed reminder at turn close. Gradual `/overhaul` steps 4 (deep) and 11 must **not** default to handoff path — use CDP per `overhaul.md` + `/review-arch-doc` default.
 
-**When manual reminder is legitimate:** open web thread + web expected next actor + **no** CDP submit on that thread (CDP-down with operator-chosen legacy `web-claude` fallback only).
+## Reminder format (when degraded-path gate passes)
 
-## Reminder format (when gate passes)
-
-> **Action needed — push to web claude**: reply posted to thread {ID} turn {N}. Push the agent-bus message to trigger web claude's turn.
+> **Action needed — push to web-anthropic**: reply posted to thread {ID} turn {N}. Autonomous CDP wake unavailable — push the agent-bus message to trigger web-anthropic's turn.
 
 ## Targets (web side only)
 
 - `scripts/agent-bus reply --to web-anthropic …`
 - `scripts/agent-bus post --to web …` / `reply --to web …`
-- `team_dispatch` handoff `push_reminder` in the response (same gate: open thread → remind)
+- `team_dispatch` handoff `push_reminder` in the response (same gate: open thread ∧ CDP unavailable → remind)

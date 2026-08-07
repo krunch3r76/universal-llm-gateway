@@ -89,9 +89,17 @@ def build_cadence_hop_body(
             "Read the standing handoff URI above before trusting any wake prose.",
             "This is a CONTINUITY HOP (seat refresh) — do NOT emit MISSION_CLOSEOUT.",
             "Arc continues; predecessor wakes must be torn down only after this",
-            "successor launch is confirmed. Arm Monitor + send_later at first dispatch.",
-            "Teardown of predecessor Monitor/send_later is still an outgoing-seat duty",
-            "(cursor-auto cannot reach Cowork-internal timers).",
+            "successor launch is confirmed.",
+            "",
+            "KEEP-ALIVE / wake cycle (BINDING — 6661 sole-wake · suspended pattern):",
+            "Do NOT arm Monitor loops. Do NOT re-arm send_later for durable wake.",
+            "Wake authority is the mission PRIMARY orchestrator only (monitor 6661 ↔",
+            "mission root) — hop successors are subordinates, not peer wake servers.",
+            "If you inherit a predecessor Monitor, TaskStop it after successor admit;",
+            "delete only trigger_ids this seat recorded (never class-delete).",
+            "CDP one-off work from the mission runner remains fine; keep-alive is not",
+            "ready for fleet hops under the current pattern.",
+            "(cursor-auto cannot reach Cowork-internal timers — seat duty.)",
         ]
     )
     return "\n".join(lines) + "\n"

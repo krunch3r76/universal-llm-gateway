@@ -203,6 +203,8 @@ def _payload(reg: Registration) -> dict:
         "profile_suffix": reg.profile_suffix,
         "holder": reg.holder,
         "purpose": reg.purpose,
+        "mission_kind": reg.mission_kind,
+        "parent_thread": reg.parent_thread,
     }
 
 

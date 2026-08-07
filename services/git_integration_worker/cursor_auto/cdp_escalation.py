@@ -46,6 +46,8 @@ async def commission_cdp_escalation(
     reasoning_effort: str | None = None,
     stargate_url: str | None = None,
     purpose: str | None = None,
+    mission_kind: str | None = None,
+    parent_thread: str | None = None,
 ) -> dict[str, Any]:
     """POST one CDP generate leg to Stargate ``/api/v1/team/dispatch``.
 
@@ -61,6 +63,10 @@ async def commission_cdp_escalation(
     }
     if purpose:
         body["purpose"] = purpose
+    if mission_kind:
+        body["mission_kind"] = mission_kind
+    if parent_thread:
+        body["parent_thread"] = parent_thread
     effort = (reasoning_effort or "").strip().lower()
     if effort:
         body["reasoning_effort"] = effort

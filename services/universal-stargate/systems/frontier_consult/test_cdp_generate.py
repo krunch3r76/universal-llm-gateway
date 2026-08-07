@@ -344,6 +344,33 @@ def test_format_cdp_result_body_upstream_overloaded() -> None:
     assert "cdp FAILED" not in text
 
 
+def test_format_cdp_result_body_completed_without_proof_honest() -> None:
+    result = CdpGenerateResult(
+        ok=False,
+        body="SKILLS_PROBE_OK",
+        execution_id="abcdef0123456789",
+        satellite_execution_id="sat-1",
+        prompt_uri="cortex://notes/system/threads/r-prompt.md",
+        picker_model="fable-5",
+        stall_stage="completed_without_proof",
+        error="chat harvest lacks attested_model (archive_uri alone insufficient — AC-S1-b)",
+        archive_uri="cortex://notes/system/threads/cdp-ask-archive-new.md",
+        extras={
+            "deliverable_present_unproven": True,
+            "recovery": (
+                "poll satellite / read archive_uri; verify body manually; "
+                "do not blind re-dispatch"
+            ),
+        },
+    )
+    text = format_cdp_result_body(result)
+    assert "- archive_uri: `cortex://notes/system/threads/cdp-ask-archive-new.md`" in text
+    assert "- body_len: 15" in text
+    assert "- deliverable_present_unproven: true" in text
+    assert "do not blind re-dispatch" in text
+    assert "without archive_uri" not in text
+
+
 def test_format_onbehalf_delivery_failed_preserves_upstream_reason() -> None:
     overloaded = CdpGenerateResult(
         ok=False,
