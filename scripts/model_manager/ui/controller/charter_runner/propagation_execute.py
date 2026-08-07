@@ -32,7 +32,6 @@ from charter_runner_store.propagation_terminal import settle_open_row
 from deploy_identity.code_ref_relation import code_ref_relation
 from implement_admission.propagation_admit_validation import (
     CLIENT_VISIBLE_SERVICES,
-    MANAGE_SERVICE_SLUGS,
     SERVED_ARTIFACT_SERVICES,
 )
 from implement_admission.propagation_row import (
@@ -157,8 +156,18 @@ def _probe_served_artifact_row(row: PropagationRow) -> dict[str, Any] | None:
 
 
 def _build_proof_probe_registry() -> dict[tuple[str, str], ProbeCallable]:
+    """Register only (service, proof_class) pairs the probe can satisfy.
+
+    ``process_live`` ads derive from ``PROCESS_LIVE_FETCHERS`` — not every
+    manage slug — so unwired services fail loud at dispatch instead of
+    eternal ``submitted`` / ``proof: null``.
+    """
+    from services.git_integration_worker.cursor_auto.propagation_probe import (
+        process_live_probeable_services,
+    )
+
     registry: dict[tuple[str, str], ProbeCallable] = {}
-    for slug in MANAGE_SERVICE_SLUGS:
+    for slug in process_live_probeable_services():
         registry[(slug, "process_live")] = _probe_process_live_row
     for slug in SERVED_ARTIFACT_SERVICES:
         registry[(slug, "served_artifact")] = _probe_served_artifact_row

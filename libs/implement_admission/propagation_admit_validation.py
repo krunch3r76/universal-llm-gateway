@@ -52,9 +52,22 @@ def validate_safe_window(raw: object) -> str | None:
 
 
 def legal_proof_classes(service: str) -> frozenset[str]:
-    """Return proof classes a service can satisfy at probe time."""
+    """Return proof classes a service can satisfy at probe time.
+
+    ``process_live`` is legal only when the probe module exposes a fetcher for
+    the slug (same oracle as ``PROOF_PROBE_REGISTRY``) — never advertise a class
+    the registry refuses to register.
+    """
     slug = service.strip().lower()
-    legal: set[str] = {"process_live"}
+    legal: set[str] = set()
+    # Lazy import: avoid libs→services cycle at module load; oracle SoT is the
+    # fetcher map in propagation_probe (6907 item-2 adds unlock advertisement).
+    from services.git_integration_worker.cursor_auto.propagation_probe import (
+        process_live_probeable_services,
+    )
+
+    if slug in process_live_probeable_services():
+        legal.add("process_live")
     if slug in SERVED_ARTIFACT_SERVICES:
         legal.add("served_artifact")
     if slug in CLIENT_VISIBLE_SERVICES:

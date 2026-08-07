@@ -7,8 +7,10 @@ import pytest
 from implement_admission.propagation_row import (
     MissingProofTemplateError,
     PropagationRow,
+    coerce_allow_self_preempt_flag,
     compose_proof,
     resolve_code_ref,
+    row_from_mapping_strict,
     rows_from_closeout_payload,
     rows_from_lib_consumers,
     rows_from_residue_lines,
@@ -225,3 +227,55 @@ def test_compose_proof_matrix_present_and_absent_default_proof_services():
             compose_proof(service, "client_visible")
         assert f"service='{service}'" in str(excinfo.value)
         assert "client_visible" in str(excinfo.value)
+
+
+def test_row_from_mapping_strict_force_allows_mcp_and_cdp_ask(monkeypatch):
+    """M4: strict parse force allow-set matches handler {mcp, cdp_ask}."""
+    from services.git_integration_worker.cursor_auto import propagation_probe
+
+    # Make cdp_ask process_live legal so the force gate is reachable under M2.
+    monkeypatch.setitem(
+        propagation_probe.PROCESS_LIVE_FETCHERS,
+        "cdp_ask",
+        lambda: {"code_version": "deadbeef", "pid": 1},
+    )
+
+    mcp_row, mcp_err = row_from_mapping_strict(
+        {
+            "service": "mcp",
+            "code_ref": "abcd0001",
+            "proof_class": "client_visible",
+            "force": True,
+        }
+    )
+    assert mcp_err is None
+    assert mcp_row is not None
+    assert mcp_row.force is True
+
+    cdp_row, cdp_err = row_from_mapping_strict(
+        {
+            "service": "cdp_ask",
+            "code_ref": "abcd0001",
+            "proof_class": "process_live",
+            "force": True,
+        }
+    )
+    assert cdp_err is None
+    assert cdp_row is not None
+    assert cdp_row.force is True
+
+    other, other_err = row_from_mapping_strict(
+        {
+            "service": "cortex_api",
+            "code_ref": "abcd0001",
+            "proof_class": "served_artifact",
+            "force": True,
+        }
+    )
+    assert other is None
+    assert other_err == "force_only_allowed_for_mcp_or_cdp_ask"
+
+
+def test_coerce_allow_self_preempt_default_true():
+    """M5: default remains True; not flipped by M2–M4."""
+    assert coerce_allow_self_preempt_flag(None) is True

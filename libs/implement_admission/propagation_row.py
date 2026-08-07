@@ -299,8 +299,9 @@ def row_from_mapping_strict(
     except MissingProofTemplateError as exc:
         return None, f"missing_proof_template:{exc}"
     force = coerce_force_flag(raw.get("force"))
-    if force and service != "mcp":
-        return None, "force_only_allowed_for_mcp"
+    # Align with handler_propagation._FORCE_ALLOWED_SERVICES (SoT); ¬ narrow handler.
+    if force and service not in {"mcp", "cdp_ask"}:
+        return None, "force_only_allowed_for_mcp_or_cdp_ask"
     return (
         PropagationRow(
             service=service,

@@ -118,10 +118,16 @@ TYPE: DIRECTIVE
 contract: propagate
 scope: propagation sync_restart mcp
 code_ref: <land SHA or omit for HEAD>
+allow_self_preempt: true
 effects_expected: propagation row persisted; restart executed or deferred with reason
 density: sparse
 budget: ≤1
 ```
+
+``allow_self_preempt`` defaults **True**. When True, cursor-auto may auto-escalate
+to ``force=true`` on self-heat busy deferrals for ``mcp``/``cdp_ask``. Set
+``allow_self_preempt: false`` to veto that auto-escalation. Explicit ``force: false``
+is **not** the auto-escalation veto.
 
 **Structured (multi-service or explicit matrix):**
 
@@ -137,6 +143,7 @@ propagation:
   - service: mcp
     code_ref: <land SHA>
     proof_class: client_visible
+    allow_self_preempt: true  # default; false vetoes auto-escalation (force: false does not)
     # omitted proof → composed from proof_class (not from service default)
   - service: git_integration_worker
     code_ref: <land SHA>

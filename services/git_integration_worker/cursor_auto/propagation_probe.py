@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -20,6 +21,10 @@ _GIW_LIVENESS_URL = os.environ.get(
     "GIT_INTEGRATION_WORKER_LIVENESS_URL",
     "http://127.0.0.1:8091/api/v1/git/cursor-auto/liveness",
 )
+
+# Satisfiability oracle for process_live advertisement. Registry + legal_proof_classes
+# derive from these keys — adding a fetcher unlocks the slug without a second hardcode.
+ProcessLiveFetcher = Callable[[], dict[str, Any] | None]
 
 
 def row_key(row: PropagationRow) -> str:
@@ -64,15 +69,32 @@ def giw_i2_clear(*, queue_snapshot: dict[str, Any] | None = None) -> tuple[bool,
     return True, "ok"
 
 
+def _fetch_giw_liveness() -> dict[str, Any] | None:
+    return _fetch_json(_GIW_LIVENESS_URL)
+
+
+def _fetch_mcp_health() -> dict[str, Any] | None:
+    return _fetch_json(resolve_mcp_health_probe_url())
+
+
+PROCESS_LIVE_FETCHERS: dict[str, ProcessLiveFetcher] = {
+    "git_integration_worker": _fetch_giw_liveness,
+    "mcp": _fetch_mcp_health,
+    "cortex_api": _fetch_cortex_api_health,
+}
+
+
+def process_live_probeable_services() -> frozenset[str]:
+    """Return slugs whose process_live probe can produce a payload (fetcher map keys)."""
+    return frozenset(PROCESS_LIVE_FETCHERS)
+
+
 def probe_process_live(service: str) -> dict[str, Any] | None:
     """Fetch health/liveness JSON for proof-of-live closure."""
-    if service == "git_integration_worker":
-        return _fetch_json(_GIW_LIVENESS_URL)
-    if service == "mcp":
-        return _fetch_json(resolve_mcp_health_probe_url())
-    if service == "cortex_api":
-        return _fetch_cortex_api_health()
-    return None
+    fetcher = PROCESS_LIVE_FETCHERS.get(service)
+    if fetcher is None:
+        return None
+    return fetcher()
 
 
 def probe_for_row(row: PropagationRow) -> dict[str, Any] | None:
@@ -212,10 +234,12 @@ def proof_observed(
 
 
 __all__ = [
+    "PROCESS_LIVE_FETCHERS",
     "giw_i2_clear",
     "probe_for_row",
     "probe_process_live",
     "process_identity",
+    "process_live_probeable_services",
     "proof_observed",
     "row_key",
     "strong_process_identity",

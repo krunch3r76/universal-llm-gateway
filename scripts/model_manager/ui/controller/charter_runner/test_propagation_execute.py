@@ -10,8 +10,10 @@ import pytest
 from implement_admission.propagation_row import PropagationRow
 
 from scripts.model_manager.ui.controller.charter_runner.propagation_execute import (
+    PROOF_PROBE_REGISTRY,
     ProbeDispatchResult,
     PropagationPlan,
+    _build_proof_probe_registry,
     dispatch_proof_probe,
     execute_propagation_plan,
     giw_i2_clear,
@@ -63,6 +65,47 @@ def test_unsupported_proof_class_fails_loud_not_echo() -> None:
     assert "client_visible" in result.error
     assert result.payload is None
     assert result.proof_class_executed is None
+
+
+def test_process_live_registry_excludes_unprobeable() -> None:
+    """M2: unsatisfiable (slug, process_live) pairs are not registered."""
+    from services.git_integration_worker.cursor_auto.propagation_probe import (
+        process_live_probeable_services,
+    )
+
+    probeable = process_live_probeable_services()
+    assert "cdp_ask" not in probeable
+    assert ("cdp_ask", "process_live") not in PROOF_PROBE_REGISTRY
+    for slug in ("git_integration_worker", "mcp", "cortex_api"):
+        assert slug in probeable
+        assert (slug, "process_live") in PROOF_PROBE_REGISTRY
+
+    row = PropagationRow(
+        service="cdp_ask",
+        code_ref=_SHA,
+        proof_class="process_live",
+        proof_class_requested="process_live",
+        proof="unprobeable process_live must fail loud",
+    )
+    result = dispatch_proof_probe(row)
+    assert result.error is not None
+    assert result.error.startswith("proof_class_unsupported:")
+    assert "service=cdp_ask" in result.error
+    assert result.payload is None
+
+
+def test_process_live_registry_unlocks_when_fetcher_added(monkeypatch) -> None:
+    """M2: oracle is fetcher-map derived — adding a fetcher unlocks advertisement."""
+    from services.git_integration_worker.cursor_auto import propagation_probe
+
+    monkeypatch.setitem(
+        propagation_probe.PROCESS_LIVE_FETCHERS,
+        "cdp_ask",
+        lambda: {"code_version": "deadbeef", "pid": 9},
+    )
+    rebuilt = _build_proof_probe_registry()
+    assert ("cdp_ask", "process_live") in rebuilt
+    assert "cdp_ask" in propagation_probe.process_live_probeable_services()
 
 
 def test_served_artifact_dispatch_populates_fingerprint(monkeypatch) -> None:

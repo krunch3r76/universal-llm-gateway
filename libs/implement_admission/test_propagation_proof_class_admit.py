@@ -63,3 +63,26 @@ def test_legal_proof_classes_cortex_api_includes_served_artifact():
     assert "served_artifact" in legal
     assert "client_visible" not in legal
     assert validate_proof_class("cortex_api", "served_artifact") is None
+
+
+def test_legal_proof_classes_unprobeable_excludes_process_live():
+    """M2: process_live not legal when probe has no fetcher for the slug."""
+    from services.git_integration_worker.cursor_auto.propagation_probe import (
+        process_live_probeable_services,
+    )
+
+    assert "cdp_ask" not in process_live_probeable_services()
+    legal = legal_proof_classes("cdp_ask")
+    assert "process_live" not in legal
+    assert validate_proof_class("cdp_ask", "process_live") is not None
+
+
+def test_legal_proof_classes_probeable_includes_process_live():
+    """M2: fetcher map keys keep process_live legal (oracle, not a frozen deny list)."""
+    from services.git_integration_worker.cursor_auto.propagation_probe import (
+        process_live_probeable_services,
+    )
+
+    for slug in process_live_probeable_services():
+        assert "process_live" in legal_proof_classes(slug)
+        assert validate_proof_class(slug, "process_live") is None

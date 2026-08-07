@@ -106,3 +106,18 @@ def test_briefing_receipt_example_parses_d3() -> None:
     end = out.index("```", start + len(marker))
     fence = out[start : end + 3]
     assert parse_act_receipt(fence) is not None
+
+
+def test_propagate_contract_documents_allow_self_preempt() -> None:
+    """M3: operator briefing surfaces allow_self_preempt (skill already did)."""
+    from claude_bundles.operator_proxy_tier_m import tier_m_authoring_block
+
+    block = tier_m_authoring_block()
+    assert "allow_self_preempt" in block
+    assert "defaults **True**" in block or "defaults **True**".replace("*", "") in block.replace(
+        "*", ""
+    )
+    assert "force: false" in block.lower() or "``force: false``" in block
+    assert "not** the auto-escalation veto" in block or "not the auto-escalation veto" in block
+    # Shorthand + structured example surfaces both name the knob.
+    assert block.count("allow_self_preempt") >= 2
