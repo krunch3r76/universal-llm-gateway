@@ -234,9 +234,11 @@ def discharge_quiet_alarms_on_seat_turn(
     from_agent: str,
     created_at: str | None = None,
 ) -> int:
-    """Discharge open alarms when the quiet seat speaks again (hook helper).
+    """Discharge open alarms when the quiet seat speaks again.
 
-    Not wired into insert_turn in this land — available for a follow-up join.
+    Joined from ``insert_turn`` after orphan demote — seat-keyed only
+    (``from_agent`` must match ``thread_quiet_alarms.seat``). Does not
+    auto-discharge on CLOSEOUT; cite/harvest debt remains separate.
     Returns count discharged.
     """
     del created_at  # reserved for finer discharge rules

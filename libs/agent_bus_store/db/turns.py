@@ -263,6 +263,15 @@ def insert_turn(
         subject=subject,
         turn_id=turn_id,
     )
+    # A′ alarm lifecycle join — seat speech clears seat-keyed open quiet alarms.
+    # Lazy import: quiet_sweep imports insert_turn for alarm actuation.
+    from ..quiet_sweep import discharge_quiet_alarms_on_seat_turn
+
+    discharge_quiet_alarms_on_seat_turn(
+        thread_id=thread,
+        from_agent=from_agent,
+        created_at=ts,
+    )
     from ..events.turn_created import emit_turn_created
 
     emit_turn_created(
