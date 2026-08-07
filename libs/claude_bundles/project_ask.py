@@ -266,11 +266,17 @@ async def _insert_prompt_text(page: Page, text: str, *, composer) -> None:
     — if they do, attach is skipped (inline ``<skills_inline>`` carries delivery).
     Hybrid ``Use the … skill`` / ``<skills_inline>`` ride in ``rest`` via insert_text.
 
+    Attach is **verified against the composer DOM** before the body is pasted:
+    each required slug must appear as a skill chip, missing ones are re-attached,
+    and the run fails closed if the page still does not show them. Gating here
+    rather than after send means a partial attach costs a retry instead of a
+    skill-blind turn that has to be noticed and backtracked.
+
     After attach, channel attest verifies every **required** slug (from the
     staging ``<!--cdp-required-skills:…-->`` authority marker, not rebuilt from
     delivery channels alone) was delivered via attach ∪ inline.
     """
-    from claude_bundles.composer_session_skills import attach_session_skills
+    from claude_bundles.composer_skill_observe import attach_skills_verified
     from claude_bundles.cowork_skill_delivery import (
         attest_delivery_channels,
         extract_cdp_required_authority,
@@ -290,10 +296,11 @@ async def _insert_prompt_text(page: Page, text: str, *, composer) -> None:
 
     attached: list[str] = []
     if attach_slugs:
-        attached = await attach_session_skills(page, attach_slugs, composer=composer)
-        attest_delivery_channels(required, attached=attached, inlined=inline_slugs)
-    else:
-        attest_delivery_channels(required, attached=[], inlined=inline_slugs)
+        observation = await attach_skills_verified(
+            page, attach_slugs, composer=composer
+        )
+        attached = list(observation.observed)
+    attest_delivery_channels(required, attached=attached, inlined=inline_slugs)
 
     if rest:
         body = rest

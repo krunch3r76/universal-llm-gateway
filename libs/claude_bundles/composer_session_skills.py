@@ -45,14 +45,19 @@ _MAX_PLUS_LABEL_CHARS = 28
 
 
 def _slug_matchers(slug: str) -> list[re.Pattern[str]]:
-    """Match Customize list labels — slug, spaced, or title-ish variants."""
+    """Match Customize list labels — exact slug, then spaced/prefixed variants.
+
+    Start-anchored throughout: an unanchored substring match lets
+    ``reasoning-posture`` select the ``frontier-reasoning-discipline`` entry,
+    attaching a skill nobody asked for while the caller records a success.
+    """
     raw = slug.strip()
     spaced = raw.replace("-", " ")
     return [
         re.compile(rf"^{re.escape(raw)}$", re.I),
         re.compile(rf"^{re.escape(spaced)}$", re.I),
-        re.compile(re.escape(raw), re.I),
-        re.compile(re.escape(spaced), re.I),
+        re.compile(rf"^{re.escape(raw)}\b", re.I),
+        re.compile(rf"^{re.escape(spaced)}\b", re.I),
     ]
 
 
@@ -486,30 +491,37 @@ async def _click_skill_slug(page: Page, slug: str) -> None:
     )
 
 
+async def attach_one_session_skill(page: Page, slug: str, *, composer) -> None:
+    """Drive + → Skills → pick for one slug; raise if any step fails.
+
+    Completing without raising means the clicks landed, **not** that the skill
+    attached — confirm via ``composer_skill_observe.observe_composer_skill_chips``.
+    """
+    require_compose_surface(page)
+    await composer.click(force=True)
+    await page.wait_for_timeout(350)
+    await _open_plus_skills_menu(page)
+    await _click_skills_entry(page)
+    await page.wait_for_timeout(600)
+    await _click_skill_slug(page, slug)
+    await page.wait_for_timeout(450)
+    await page.keyboard.press("Escape")
+    await page.wait_for_timeout(250)
+
+
 async def attach_session_skills(page: Page, slugs: list[str], *, composer) -> list[str]:
     """Attach each Customize skill via + → Skills → pick.
 
-    Best-effort per slug: a missing list entry or unavailable + control is
-    skipped and omitted from the return list so callers can fail closed via
-    ``attest_delivery_channels`` for **required shared_sync** (24594). Inline
-    ``<skills_inline>`` bodies do **not** substitute for a failed required
-    attach — they deliver non-attach / ``cursor_only`` surfaces only (26986).
+    Returns the slugs whose click sequence completed — a *self-report*, not an
+    observation. Prefer ``composer_skill_observe.attach_skills_verified``, which
+    confirms each slug against the composer DOM before the prompt is pasted.
     """
     if not slugs:
         return []
     attached: list[str] = []
     for slug in slugs:
         try:
-            require_compose_surface(page)
-            await composer.click(force=True)
-            await page.wait_for_timeout(350)
-            await _open_plus_skills_menu(page)
-            await _click_skills_entry(page)
-            await page.wait_for_timeout(600)
-            await _click_skill_slug(page, slug)
-            await page.wait_for_timeout(450)
-            await page.keyboard.press("Escape")
-            await page.wait_for_timeout(250)
+            await attach_one_session_skill(page, slug, composer=composer)
         except SkillDeliveryError:
             continue
         attached.append(slug)
