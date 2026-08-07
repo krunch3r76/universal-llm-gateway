@@ -12,6 +12,10 @@ Local-only steps (any host with repo mount):
 
 On Jupiter (or via claude-ai-sync-jupiter wrapper):
   python scripts/cortex/upload_claude_bundles_ui.py --status
+  # Session-loaded skills (Context frame DOM — not model self-report):
+  python scripts/cortex/upload_claude_bundles_ui.py --loaded-skills \\
+    --chat-url 'https://claude.ai/cowork/cse_…' \\
+    --require-loaded reasoning-posture,frontier-reasoning-discipline
   python scripts/cortex/upload_claude_bundles_ui.py --preflight
   python scripts/cortex/upload_claude_bundles_ui.py --slugs SLUG --continue-on-error
   python scripts/cortex/upload_claude_bundles_ui.py --slugs SLUG --replace --continue-on-error
@@ -37,9 +41,13 @@ _REPO = Path(__file__).resolve().parent.parent.parent
 if str(_REPO / "libs") not in sys.path:
     sys.path.insert(0, str(_REPO / "libs"))
 
+from claude_bundles.chat_context_skills import (  # noqa: E402
+    emit_loaded_skills_json,
+    print_loaded_skills_report,
+    scrape_loaded_skills_cdp,
+)
 from claude_bundles.resolver import claude_ai_target_slugs  # noqa: E402
 from claude_bundles.skills_api import validate_bundle_dir  # noqa: E402
-from claude_bundles.staging_paths import claude_ai_bundle_dir  # noqa: E402
 from claude_bundles.skills_ui import (  # noqa: E402
     DEFAULT_CDP_URL,
     chrome_start_hint,
@@ -55,6 +63,7 @@ from claude_bundles.skills_ui_status import (  # noqa: E402
     scan_ui_parity,
 )
 from claude_bundles.skills_ui_uninstall import uninstall_skills  # noqa: E402
+from claude_bundles.staging_paths import claude_ai_bundle_dir  # noqa: E402
 from claude_bundles.upload_safety import reject_unsafe_replace_all  # noqa: E402
 
 logger = get_logger(__name__)
@@ -117,18 +126,26 @@ def _emit_status_json(report) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--cdp-url", default=DEFAULT_CDP_URL)
     parser.add_argument("--prepare", action="store_true")
-    parser.add_argument("--preflight", action="store_true", help="Validate CDP session and Skills panel")
+    parser.add_argument(
+        "--preflight", action="store_true", help="Validate CDP session and Skills panel"
+    )
     parser.add_argument("--print-chrome-cmd", action="store_true")
     parser.add_argument("--bundles-dir", metavar="DIR")
     parser.add_argument("--zip-dir", metavar="DIR")
     scope = parser.add_mutually_exclusive_group()
-    scope.add_argument("--all", action="store_true", help="All catalog Claude.ai targets")
+    scope.add_argument(
+        "--all", action="store_true", help="All catalog Claude.ai targets"
+    )
     parser.add_argument("--slugs", help="Comma-separated slug subset")
     parser.add_argument("--limit", type=int)
-    parser.add_argument("--sleep", type=float, default=6.0, help="Seconds between uploads (default 6)")
+    parser.add_argument(
+        "--sleep", type=float, default=6.0, help="Seconds between uploads (default 6)"
+    )
     parser.add_argument(
         "--replace",
         action="store_true",
@@ -172,11 +189,31 @@ def main() -> int:
         help="Scan local bundles vs claude.ai Skills table (no upload)",
     )
     parser.add_argument(
+        "--loaded-skills",
+        action="store_true",
+        help=(
+            "Scrape chat UI Context→Skills (DOM, non-LLM). Requires --chat-url. "
+            "Use this for post-sync session verification — not SKILLS_PROBE_OK."
+        ),
+    )
+    parser.add_argument(
+        "--chat-url",
+        help="Cowork/chat URL for --loaded-skills (e.g. https://claude.ai/cowork/cse_…)",
+    )
+    parser.add_argument(
+        "--require-loaded",
+        help="Comma-separated slugs that must appear in Context→Skills (with --loaded-skills)",
+    )
+    parser.add_argument(
         "--uninstall",
         action="store_true",
         help="Uninstall --slugs from Customize → Skills (retired extras)",
     )
-    parser.add_argument("--json", action="store_true", help="Machine-readable JSON output (with --status)")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Machine-readable JSON output (with --status or --loaded-skills)",
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--screenshots", metavar="DIR")
     parser.add_argument(
@@ -212,17 +249,23 @@ def main() -> int:
     if args.status:
         if args.bundles_dir:
             report = asyncio.run(
-                scan_ui_parity(
-                    cdp_url=args.cdp_url, bundles_dir=Path(args.bundles_dir)
-                )
+                scan_ui_parity(cdp_url=args.cdp_url, bundles_dir=Path(args.bundles_dir))
             )
         else:
-            report = asyncio.run(
-                scan_ui_parity(cdp_url=args.cdp_url, repo_root=_REPO)
-            )
+            report = asyncio.run(scan_ui_parity(cdp_url=args.cdp_url, repo_root=_REPO))
         if args.json:
             return _emit_status_json(report)
         return print_parity_report(report)
+    if args.loaded_skills:
+        if not args.chat_url:
+            parser.error("--loaded-skills requires --chat-url")
+        required = _parse_slugs(args.require_loaded) or None
+        loaded = asyncio.run(
+            scrape_loaded_skills_cdp(cdp_url=args.cdp_url, chat_url=args.chat_url)
+        )
+        if args.json:
+            return emit_loaded_skills_json(loaded, required=required)
+        return print_loaded_skills_report(loaded, required=required)
     if args.uninstall:
         slugs = _parse_slugs(args.slugs)
         if not slugs:
@@ -236,7 +279,10 @@ def main() -> int:
         )
         failed = 0
         for result in results:
-            print(f"{result.status.upper()} {result.slug}" + (f": {result.detail}" if result.detail else ""))
+            print(
+                f"{result.status.upper()} {result.slug}"
+                + (f": {result.detail}" if result.detail else "")
+            )
             if result.status == "failed":
                 failed += 1
         return 1 if failed else 0
