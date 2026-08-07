@@ -10,12 +10,18 @@ Granularity is file/module — not package. The harvest helper
 not be reused as the verifier (it would re-encode the defect one layer down).
 
 Callers: ``episode_residue`` / ``rows_from_lib_consumers``.
+
+Authorship-time check: ``check_consumers_declarations`` applies the same
+``verify_consumer_import`` predicate to every module that assigns ``CONSUMERS``,
+so a wrong slug fails when written rather than weeks later at nomination.
 """
 
 from __future__ import annotations
 
+import ast
 import re
 from collections import deque
+from collections.abc import Iterator
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -276,11 +282,105 @@ def clear_verify_caches() -> None:
     _service_dir.cache_clear()
 
 
+def _literal_str_tuple(node: ast.AST | None) -> tuple[str, ...] | None:
+    """Return string elements from a tuple/list literal, else ``None``."""
+    if not isinstance(node, (ast.Tuple, ast.List)):
+        return None
+    values: list[str] = []
+    for elt in node.elts:
+        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+            values.append(elt.value)
+        else:
+            return None
+    return tuple(values)
+
+
+def consumers_declared_in_source(text: str) -> tuple[str, ...] | None:
+    """Parse a module-level ``CONSUMERS = (…)`` / annotated assign from *text*.
+
+    Returns ``None`` when the module does not declare ``CONSUMERS``. Only the
+    declaring file's own assignment is considered — walk-up inheritance is an
+    application concern at mint time, not an authorship declaration.
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return None
+    for node in tree.body:
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if node.target.id == "CONSUMERS":
+                return _literal_str_tuple(node.value)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "CONSUMERS":
+                    return _literal_str_tuple(node.value)
+    return None
+
+
+def iter_consumers_declarations(
+    root: Path | None = None,
+) -> Iterator[tuple[str, tuple[str, ...]]]:
+    """Yield ``(libs/…path, consumers)`` for each libs module that declares CONSUMERS."""
+    base = root if root is not None else repo_root()
+    libs = base / _LIBS_DIR
+    if not libs.is_dir():
+        return
+    for path in sorted(libs.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        rel = path.relative_to(base).as_posix()
+        if is_lib_test_module_path(rel):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        consumers = consumers_declared_in_source(text)
+        if consumers is None:
+            continue
+        yield rel, consumers
+
+
+def is_lib_test_module_path(path: str) -> bool:
+    """True for ``libs/**/test_*.py`` (same skip class as propagation mint)."""
+    text = str(path or "").replace("\\", "/")
+    if not text.startswith("libs/") or not text.endswith(".py"):
+        return False
+    return text.rsplit("/", 1)[-1].startswith("test_")
+
+
+def check_consumers_declarations(
+    *,
+    root: Path | None = None,
+) -> list[str]:
+    """Return failure lines for CONSUMERS slugs that do not reach their declaring module.
+
+    Applies the same ``verify_consumer_import`` predicate used at nomination.
+    Empty list means every declared slug is ``import_path:verified`` for its
+    declaring file (package ``__init__`` grain included — that is intentional).
+    """
+    base = root if root is not None else repo_root()
+    failures: list[str] = []
+    for path, consumers in iter_consumers_declarations(base):
+        for slug in consumers:
+            status = verify_consumer_import(slug, path, root=base)
+            if status != "verified":
+                failures.append(
+                    f"{path}: CONSUMERS slug {slug!r} is import_path:{status} "
+                    f"(declaring module must be reached)"
+                )
+    return failures
+
+
 __all__ = [
     "DerivedSource",
     "ImportPathStatus",
+    "check_consumers_declarations",
     "clear_verify_caches",
+    "consumers_declared_in_source",
     "format_verification_tags",
+    "is_lib_test_module_path",
+    "iter_consumers_declarations",
     "module_for_lib_path",
     "parse_verification_tags",
     "repo_root",

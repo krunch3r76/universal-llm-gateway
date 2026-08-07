@@ -19,8 +19,8 @@ from claude_bundles.cowork_skill_delivery import (
 from claude_bundles.operator_proxy_tier_m import tier_m_authoring_block
 from claude_bundles.operator_proxy_wake_brief import wake_briefing_paragraph
 
-# Superset of tier-M consumers for mission lands touching shared bundles.
-CONSUMERS: tuple[str, ...] = ("mcp",)
+# GIW imports mission (and transitive tier_m / wake_brief); mcp never imports these.
+CONSUMERS: tuple[str, ...] = ("git_integration_worker",)
 
 OPERATOR_PROXY_MISSION_PURPOSES: frozenset[str] = frozenset(
     {"operator-proxy", "mission", "operator_proxy"}

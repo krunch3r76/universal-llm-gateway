@@ -180,19 +180,21 @@ def test_relay_residue_falls_back_to_relay_body_when_no_wrapper():
     assert "sync_restart: git_integration_worker" in block
 
 
-def test_structured_rows_tier_m_consumers_contradicted_without_import_edge():
-    """CONSUMERS names mcp, but mcp's module closure does not reach tier_m."""
+def test_structured_rows_tier_m_consumers_mint_giw_not_mcp():
+    """tier_m CONSUMERS is GIW (verified); mcp never imported these briefing modules."""
     payload = _closeout_payload(
         files_modified=["libs/claude_bundles/operator_proxy_tier_m.py"],
         evidence_uris={"git_refs": ["consumer-land-sha"]},
     )
     rows = structured_propagation_rows(payload)
-    assert rows == ()
+    assert {row.service for row in rows} == {"git_integration_worker"}
+    assert all("import_path:verified" in (row.reason or "") for row in rows)
     block = residue_for_closeout(payload)
     assert block is not None
-    assert "libs_touched: libs/claude_bundles/operator_proxy_tier_m.py" in block
-    assert "import_path:contradicted" in block
+    assert "sync_restart: git_integration_worker" in block
+    assert "import_path:verified" in block
     assert "sync_restart: mcp" not in block
+    assert "libs_touched" not in block
 
 
 def test_structured_rows_mint_deploy_identity_consumers():

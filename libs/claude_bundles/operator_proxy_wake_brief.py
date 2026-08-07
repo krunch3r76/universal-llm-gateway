@@ -16,7 +16,8 @@ re-enabled, is the mission **primary** orchestrator only — not hop successors
 from __future__ import annotations
 
 # Shared-lib propagation consumers — harvest mints one row per slug.
-CONSUMERS: tuple[str, ...] = ("mcp",)
+# GIW reaches this module via operator_proxy_mission; mcp never imports it.
+CONSUMERS: tuple[str, ...] = ("git_integration_worker",)
 
 GUIDE_URI = "cortex://notes/system/specs/cdp-seat-wake-heartbeat.md"
 

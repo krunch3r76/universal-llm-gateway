@@ -8,7 +8,8 @@ authority: Fable CDP↔cursor-auto lane consult (2026-07-29) §2, §3.2, §5.
 from __future__ import annotations
 
 # Shared-lib propagation consumers — harvest mints one row per slug (harvest-restart-propagation AC6).
-CONSUMERS: tuple[str, ...] = ("mcp",)
+# GIW reaches this module via operator_proxy_mission; mcp never imports it.
+CONSUMERS: tuple[str, ...] = ("git_integration_worker",)
 
 TIER_M_HEADING = "## Tier-M tool ask — DIRECTIVE template (BINDING)"
 WIRE_NEUTRAL_HEADING = "## Wire-neutral authoring (BINDING)"
