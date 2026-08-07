@@ -26,12 +26,12 @@ from ._friction_close_impl import (
     close_friction_assertion,
     validate_resolution_kind,
 )
-from ._write_validation import collect_missing_required, validation_error_response
 from ._shared import (
     _DEFAULT_USER_ENTITY,
     _VALID_CONFIDENCE,
     record,
 )
+from ._write_validation import collect_missing_required, validation_error_response
 from .ops_assertions_friction import _op_friction
 
 logger = get_logger("cortex-api.dispatch_ops.assertions")

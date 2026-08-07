@@ -21,8 +21,8 @@ from ._assertions_shared import (
     _emit_predicate_form_normalize_events,
     _project_seeded_by,
 )
-from ._write_validation import collect_missing_required, validation_error_response
 from ._shared import record
+from ._write_validation import collect_missing_required, validation_error_response
 
 logger = get_logger("cortex-api.dispatch_ops.assertions")
 
