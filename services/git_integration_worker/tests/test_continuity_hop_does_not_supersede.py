@@ -131,6 +131,65 @@ async def test_hop_enqueue_leaves_claimed_job_running(live_run, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_serial_hop_resolves_incumbent_via_claimed_for_thread(monkeypatch):
+    """Serial ``process_job`` path must pass claimed incumbent, not hardcoded None."""
+    from services.git_integration_worker.cursor_auto import queue as queue_mod
+
+    q = queue_mod.reset_queue_for_tests(durable=False)
+    old = q.enqueue(
+        thread_id="T-serial-hop",
+        turn_number=1,
+        subject="commission in flight",
+        body="TYPE: DIRECTIVE\ncontract: implement\n## Scope\nlibs/foo\n",
+        from_agent="cdp",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="implement",
+    )
+    assert q.claim_next().job_id == old.job_id
+
+    hop = q.enqueue(
+        thread_id="T-serial-hop",
+        turn_number=2,
+        subject="continuity hop serial",
+        body="TYPE: CONTINUITY_HANDOFF\ncontract: implement\nscope: CDP launch only\n",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="implement",
+        continuity_hop=True,
+        continuity_matched_token="TYPE:CONTINUITY_HANDOFF",
+    )
+    claimed_hop = q.claim_next()
+    assert claimed_hop.job_id == hop.job_id
+
+    captured: list = []
+
+    async def _capture_hop(job, *, queue, incumbent=None, client=None):
+        captured.append(incumbent)
+        return {"ok": True, "reason": "continuity_hop_cdp_commissioned"}
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.handler.complete_continuity_hop",
+        _capture_hop,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.handler.get_queue",
+        lambda: q,
+    )
+
+    from services.git_integration_worker.cursor_auto.handler import process_job
+
+    await process_job(claimed_hop, bus=MagicMock())
+
+    assert captured, "complete_continuity_hop was not called"
+    assert captured[0] is not None
+    assert captured[0].job_id == old.job_id
+
+
+@pytest.mark.asyncio
 async def test_hop_without_scope_routes_to_cdp_not_blocked(monkeypatch):
     """F5 AC: token + no scope ⇒ CDP commission, ¬ vision/scope block."""
     from services.git_integration_worker.cursor_auto import continuity_hop as hop_mod
