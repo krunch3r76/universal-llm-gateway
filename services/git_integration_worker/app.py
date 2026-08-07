@@ -51,6 +51,7 @@ from services.git_integration_worker.lane_b_sweeper import lane_b_sweeper_loop
 from services.git_integration_worker.routes.admin import router as admin_router
 from services.git_integration_worker.routes.cursor_auto import (
     auto_worker_loop,
+    hop_cadence_loop,
     orphan_scanner_loop,
 )
 from services.git_integration_worker.routes.cursor_auto import (
@@ -134,6 +135,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.cursor_auto_worker = auto_worker
     orphan_scanner = asyncio.create_task(orphan_scanner_loop(app))
     app.state.cursor_auto_orphan_scanner = orphan_scanner
+    hop_cadence = asyncio.create_task(hop_cadence_loop(app))
+    app.state.cursor_auto_hop_cadence = hop_cadence
     story_projector = asyncio.create_task(ulg_story_projector_loop(app))
     app.state.ulg_story_projector = story_projector
     trigger_loop = asyncio.create_task(trigger_fire_loop(app))
@@ -173,6 +176,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "stale_lease_sweeper",
             "cursor_auto_worker",
             "cursor_auto_orphan_scanner",
+            "cursor_auto_hop_cadence",
             "ulg_story_projector",
             "trigger_fire_loop",
             "lane_b_sweeper",

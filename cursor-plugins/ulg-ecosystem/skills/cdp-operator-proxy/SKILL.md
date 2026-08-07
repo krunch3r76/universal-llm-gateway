@@ -359,6 +359,15 @@ from life MCP; second private lane for continuity; warm follow-up when skills/co
 are stale; waiting for the human to notice silence instead of firing the hop (inv 30);
 hopping with `TYPE: DIRECTIVE` + prose only (silent kill path — use `CONTINUITY_HANDOFF`).
 
+**Auto-owned hop cadence (BINDING — thread 6893):** cursor-auto ages enrolled
+operator lanes and self-fires `TYPE: CONTINUITY_HANDOFF` when CSE/watch age crosses
+the threshold — the life seat is the **subject**, not the driver. Enroll happens on
+web-* Auto admits; silent/degraded seats still hop once enrolled. Threshold signal
+is **CSE/watch age** (not wake-count; §12 `#N` is backup doctrine only). Hop still
+≠ `MISSION_CLOSEOUT` (carve-out `c5e62772` preserved). Standing handoff must stay
+Leg-current — cadence hops point at it; they do not author it. Detail:
+`cortex://notes/system/specs/cdp-continuity-hop-cadence.md`.
+
 ## Boot checklist
 
 | Step | Action |

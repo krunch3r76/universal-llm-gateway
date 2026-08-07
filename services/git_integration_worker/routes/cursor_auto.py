@@ -18,6 +18,10 @@ from services.git_integration_worker.cursor_auto.directive import (
     is_continuity_hop_request,
 )
 from services.git_integration_worker.cursor_auto.handler import process_job
+from services.git_integration_worker.cursor_auto.hop_cadence import (
+    hop_cadence_loop,
+    observe_lane_from_enqueue,
+)
 from services.git_integration_worker.cursor_auto.liveness import get_registry
 from services.git_integration_worker.cursor_auto.queue import get_queue
 from services.git_integration_worker.cursor_auto.supersede import (
@@ -123,6 +127,8 @@ async def enqueue(body: EnqueueBody):
         continuity_hop=is_hop,
         continuity_matched_token=matched_token,
     )
+    # Cadence ownership: enroll/refresh CSE-age watch on web-* admits (not hops).
+    observe_lane_from_enqueue(job)
     logger.info(
         "cursor-auto enqueued job=%s thread=%s turn=%s request_id=%s "
         "continuity_hop=%s matched_token=%s",
