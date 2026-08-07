@@ -57,6 +57,20 @@ _TERMINAL = frozenset(
 )
 _ALL_STATUSES = frozenset(_NON_TERMINAL) | _TERMINAL
 
+
+class RestartIntentCancelError(Exception):
+    """Cancel refused: unknown id, already terminal (non-cancelled), or past kill commit.
+
+    ``status`` carries the row's current status when known so callers can shape a
+    structured refuse without a second store read.
+    """
+
+    def __init__(self, reason: str, *, status: str | None = None) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.status = status
+
+
 _DDL = """
 CREATE TABLE IF NOT EXISTS restart_intents (
     intent_id            TEXT PRIMARY KEY,
@@ -121,6 +135,11 @@ class Intent:
 
 
 class IntentStatusView(TypedDict):
+    """Compact live-intent fields shared by busy_status and the TUI restart pane.
+
+    Carries identity, lifecycle status, drain epoch, deadline, and elapsed time.
+    """
+
     restart_intent_id: str
     status: str
     drain_epoch: int | None
@@ -129,7 +148,7 @@ class IntentStatusView(TypedDict):
 
 
 def intent_status_view(intent: Intent, *, now: datetime) -> IntentStatusView:
-    """Five-field live-intent projection shared by busy_status and the TUI."""
+    """Project a restart intent into the five-field busy_status / TUI shape."""
     created = datetime.fromisoformat(intent.created_at)
     if created.tzinfo is None:
         created = created.replace(tzinfo=UTC)
@@ -243,6 +262,45 @@ class RestartIntentStore:
 
     def set_last_seen_seq(self, intent_id: str, seq: int) -> None:
         self._update(intent_id, last_seen_event_seq=seq)
+
+    def cancel(self, intent_id: str) -> Intent:
+        """Write ``STATUS_CANCELLED`` for a cancellable ``pending_drain`` intent.
+
+        Allowed strictly while ``status == pending_drain`` (pre-kill-commit).
+        Idempotent when already ``cancelled``. Refuses ``drained_restarting`` and
+        every other non-pending status — that is the store-side half of the
+        ``_final_epoch_check`` ok refuse boundary (survival condition 2).
+
+        Callers that set a drain epoch MUST pair this with worker
+        ``release_drain`` / ``POST .../cancel-drain`` (survival condition 1);
+        this helper only owns the store transition.
+        """
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT * FROM restart_intents WHERE intent_id=?", (intent_id,)
+            ).fetchone()
+            if row is None:
+                raise RestartIntentCancelError(
+                    f"restart intent not found: {intent_id!r}"
+                )
+            current = _row_to_intent(row)
+            if current.status == STATUS_CANCELLED:
+                return current
+            if current.status != STATUS_PENDING_DRAIN:
+                raise RestartIntentCancelError(
+                    f"cancel refused: status={current.status!r}",
+                    status=current.status,
+                )
+            now = _now()
+            conn.execute(
+                "UPDATE restart_intents SET status=?, updated_at=? WHERE intent_id=?",
+                (STATUS_CANCELLED, now, intent_id),
+            )
+            row = conn.execute(
+                "SELECT * FROM restart_intents WHERE intent_id=?", (intent_id,)
+            ).fetchone()
+        return _row_to_intent(row)
 
     def _update(self, intent_id: str, **fields: Any) -> None:
         """Patch the named columns + bump ``updated_at`` in one statement."""

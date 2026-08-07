@@ -2,9 +2,9 @@
 
 Connects to /tmp/universal-protocol/manage.sock (JSON-RPC 2.0 over UDS).
 Exposes status, health, start, stop, restart, sync_restart, rebuild,
-wait_healthy, busy_status, whoami, charter_reload, charter_pause, charter_resume,
-charter_hold_status, charter_block_root, charter_unblock_root, and
-charter_root_status for gateway-managed services.
+wait_healthy, busy_status, cancel_restart_intent, whoami, charter_reload,
+charter_pause, charter_resume, charter_hold_status, charter_block_root,
+charter_unblock_root, and charter_root_status for gateway-managed services.
 Single entry point reduces agent context overhead.
 """
 
@@ -38,6 +38,7 @@ _VALID_ACTIONS = frozenset(
         "rebuild",
         "wait_healthy",
         "busy_status",
+        "cancel_restart_intent",
         "whoami",
         "charter_reload",
         "charter_pause",
@@ -223,6 +224,7 @@ def register_manage_tools(mcp: FastMCP) -> None:
         root_id: str = "",
         clear_wip: bool = False,
         reenroll: bool = False,
+        intent_id: str = "",
     ) -> dict[str, Any]:
         """Service lifecycle — start, stop, restart, sync_restart, rebuild, health, wait_healthy.
 
@@ -231,6 +233,7 @@ def register_manage_tools(mcp: FastMCP) -> None:
         timeout: seconds to wait for wait_healthy (default 120)
         force: bypass the drain check for stop/restart/sync_restart (default False)
         reason: optional reason for charter_pause
+        intent_id: required for cancel_restart_intent (restart-intent retraction)
 
         Actions:
           status        (no service needed) — running/stopped for all services
@@ -280,6 +283,15 @@ def register_manage_tools(mcp: FastMCP) -> None:
                                              drain probes WITHOUT acquiring any
                                              restart slot — safe to poll live.
                                              Also returns charter_hold {held, …}.
+          cancel_restart_intent (intent_id, service?) — retract a deferred
+                                             restart intent: writes status=cancelled,
+                                             aborts the drain supervisor before
+                                             SIGTERM, and when a drain epoch is set
+                                             releases worker ``_draining`` via
+                                             cancel-drain (pairing required). Refused
+                                             after final epoch-check ok /
+                                             drained_restarting. Force remains a
+                                             separate affordance.
           whoami        (no service needed) — read-only identity for the manage API
                                              process that answered: {pid,
                                              code_version, process_start_time}.
@@ -375,6 +387,8 @@ def register_manage_tools(mcp: FastMCP) -> None:
             params["timeout"] = timeout
         if force and action in {"stop", "restart", "sync_restart"}:
             params["force"] = True
+        if action == "cancel_restart_intent":
+            params["intent_id"] = intent_id
         if action == "charter_pause":
             params["set_by"] = "mcp"
             if reason:

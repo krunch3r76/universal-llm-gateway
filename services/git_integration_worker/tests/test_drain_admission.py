@@ -104,6 +104,55 @@ def _admit_ledger_dispatch(ledger: CursorDispatchLedger, dispatch_id: str) -> No
     ledger.mark_running(dispatch_id=dispatch_id)
 
 
+# -------------------------------------------------------------- A′ release
+
+
+def test_release_drain_clears_flag(events: SimpleNamespace) -> None:
+    """AC3: release_drain clears _draining for the matching generation without SIGTERM."""
+    controller = _controller()
+    epoch = controller.next_epoch()
+    snap = controller.begin_drain(reason="r", intent_id="i-cancel", drain_epoch=epoch)
+    assert snap["draining"] is True
+    with pytest.raises(Draining503):
+        controller.try_admit("git_integrate", op_id="blocked", route="/r")
+
+    released = controller.release_drain(intent_id="i-cancel", drain_epoch=epoch)
+    assert released["draining"] is False
+    # Admission reopens after release.
+    ticket = controller.try_admit("git_integrate", op_id="after", route="/r")
+    assert ticket.op_id == "after"
+
+
+def test_release_drain_mismatch_is_noop(events: SimpleNamespace) -> None:
+    """release_drain with wrong intent/epoch leaves draining true (idempotent no-op)."""
+    controller = _controller()
+    epoch = controller.next_epoch()
+    controller.begin_drain(reason="r", intent_id="i1", drain_epoch=epoch)
+    noop = controller.release_drain(intent_id="other", drain_epoch=epoch)
+    assert noop["draining"] is True
+    noop2 = controller.release_drain(intent_id="i1", drain_epoch=epoch + 99)
+    assert noop2["draining"] is True
+    cleared = controller.release_drain(intent_id="i1", drain_epoch=epoch)
+    assert cleared["draining"] is False
+
+
+def test_cancel_drain_route(events: SimpleNamespace) -> None:
+    """POST /api/v1/git/admin/cancel-drain clears draining for matching body."""
+    app = create_app()
+    controller = _controller()
+    app.state.admission_controller = controller
+    epoch = controller.next_epoch()
+    controller.begin_drain(reason="r", intent_id="i-route", drain_epoch=epoch)
+    client = TestClient(app)
+
+    resp = client.post(
+        "/api/v1/git/admin/cancel-drain",
+        json={"intent_id": "i-route", "drain_epoch": epoch},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["draining"] is False
+
+
 # --------------------------------------------------------------------- AC-1
 def test_admit_rejected_when_draining(events: SimpleNamespace) -> None:
     """Mutating routes 503 while draining; read-only routes still serve 200."""

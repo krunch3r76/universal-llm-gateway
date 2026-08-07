@@ -1,9 +1,11 @@
 """Admin routes for git-integration-worker drain control.
 
-Phase 1 (worker-side): the worker is the drain authority. ``begin-drain`` is the
-one-shot, idempotent admission-close trigger; ``drain-state`` is the read-only
-snapshot Phase-2's manage supervisor consults for its final epoch-check before
-SIGTERM. Both are read-/control-plane and are NEVER gated by the drain itself.
+The worker is the drain authority. ``begin-drain`` is the one-shot, idempotent
+admission-close trigger; ``cancel-drain`` clears ``_draining`` for a matching
+``(intent_id, drain_epoch)`` without SIGTERM (manage cancel pairing);
+``drain-state`` is the read-only snapshot the manage supervisor consults for its
+final epoch-check before SIGTERM. All three are read-/control-plane and are
+NEVER gated by the drain itself.
 """
 
 from __future__ import annotations
@@ -42,10 +44,27 @@ async def dispatch_status(request: Request, thread_id: str) -> dict[str, object]
 
 
 class BeginDrainRequest(BaseModel):
+    """Request body for ``POST .../begin-drain``.
+
+    Carries the manage restart-intent identity and target drain epoch so the
+    worker can enter an idempotent drain generation.
+    """
+
     reason: str
     intent_id: str
     drain_epoch: int
     deadline_s: float | None = None
+
+
+class CancelDrainRequest(BaseModel):
+    """Request body for ``POST .../cancel-drain``.
+
+    Identifies the ``(intent_id, drain_epoch)`` pair that must match before
+    ``release_drain`` clears the worker drain flag without SIGTERM.
+    """
+
+    intent_id: str
+    drain_epoch: int
 
 
 def _controller(request: Request) -> WorkAdmissionController:
@@ -90,3 +109,20 @@ async def drain_state(request: Request) -> dict[str, Any]:
     """
     controller = _controller(request)
     return controller.drain_state()
+
+
+@router.post(
+    "/cancel-drain",
+    summary="Release drain without SIGTERM (idempotent on intent+epoch).",
+)
+async def cancel_drain(req: CancelDrainRequest, request: Request) -> dict[str, Any]:
+    """Clear ``_draining`` when the body matches the active drain generation.
+
+    Mismatch / generation-gone is an idempotent no-op returning current
+    ``drain_state``. Manage ``cancel_restart_intent`` calls this before store
+    cancel when a drain epoch is set (release-then-cancel).
+    """
+    controller = _controller(request)
+    return controller.release_drain(
+        intent_id=req.intent_id, drain_epoch=req.drain_epoch
+    )

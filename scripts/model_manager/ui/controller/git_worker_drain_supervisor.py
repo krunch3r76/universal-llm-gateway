@@ -39,6 +39,7 @@ from universal_logging import get_logger
 from scripts.model_manager import observation_event as events
 
 from .restart_intent_store import (
+    STATUS_CANCELLED,
     STATUS_COMPLETED,
     STATUS_DRAINED_RESTARTING,
     STATUS_FAILED,
@@ -66,6 +67,12 @@ BeginDrainCaller = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 DrainStateCaller = Callable[[], Awaitable[dict[str, Any]]]
 SubscribeFactory = Callable[[int], AsyncIterator[dict[str, Any]]]
 KillCaller = Callable[[], Awaitable[str]]
+# (intent_id, drain_epoch) -> drain_state snapshot after release attempt.
+CancelDrainCaller = Callable[[str, int], Awaitable[dict[str, Any]]]
+
+_AWAIT_CONVERGED = "converged"
+_AWAIT_TIMEOUT = "timeout"
+_AWAIT_CANCELLED = "cancelled"
 
 
 def _field(ev: dict[str, Any], key: str) -> Any:
@@ -102,26 +109,48 @@ class GitWorkerDrainSupervisor:
     drain_state: DrainStateCaller
     subscribe_events: SubscribeFactory
     kill: KillCaller
+    cancel_drain: CancelDrainCaller | None = None
     deadline_s: float = _DEFAULT_DEADLINE_S
     reconcile_interval_s: float = _DEFAULT_RECONCILE_INTERVAL_S
     progress_interval_s: float = _DEFAULT_PROGRESS_INTERVAL_S
     _settle_boundary_monotonic: float | None = None
 
     async def supervise(self, intent: Intent) -> None:
-        """Drive one intent from begin-drain to SIGTERM (or alert-only timeout)."""
+        """Drive one intent from begin-drain to SIGTERM (or alert-only timeout).
+
+        Cancel is observed until ``_final_epoch_check`` returns ok; after that the
+        store advances to ``drained_restarting`` (kill committed) so manage cancel
+        refuses. There is no cancel poll between drain.completed emit and kill —
+        the refuse boundary is the final-check ok commit, not a vague "during drain".
+        """
         self._settle_boundary_monotonic = None
         t0 = time.monotonic()
         deadline = t0 + self.deadline_s
         try:
             intent = await self._begin_drain(intent)
-            converged = await self._await_drain_completed(intent, deadline, t0)
-            if not converged:
+            if self._intent_cancelled(intent):
+                await self._on_cancelled(intent)
+                return
+            outcome = await self._await_drain_completed(intent, deadline, t0)
+            if outcome == _AWAIT_CANCELLED:
+                await self._on_cancelled(intent)
+                return
+            if outcome == _AWAIT_TIMEOUT:
                 await self._on_timeout(intent)
                 return
+            if self._intent_cancelled(intent):
+                await self._on_cancelled(intent)
+                return
             ok, snapshot = await self._final_epoch_check(intent)
+            if self._intent_cancelled(intent):
+                await self._on_cancelled(intent)
+                return
             if not ok:
                 await self._resolve_non_kill(intent, snapshot)
                 return
+            # Kill commit: advance BEFORE emit so cancel refuses for the entire
+            # post-final-ok window (survival condition 2).
+            self.store.advance(intent.intent_id, status=STATUS_DRAINED_RESTARTING)
             await events.emit_manage_restart_drain_completed(
                 intent_id=intent.intent_id,
                 drain_epoch=intent.drain_epoch or 0,
@@ -134,6 +163,9 @@ class GitWorkerDrainSupervisor:
             logger.exception(
                 "drain supervisor failed: intent_id=%s", intent.intent_id
             )
+            current = self.store.get(intent.intent_id)
+            if current is not None and current.status == STATUS_CANCELLED:
+                return
             self.store.advance(intent.intent_id, status=STATUS_FAILED)
             await events.emit_manage_restart_failed(
                 intent_id=intent.intent_id, reason=str(exc)
@@ -188,13 +220,15 @@ class GitWorkerDrainSupervisor:
     # --------------------------------------------------------------- step 2
     async def _await_drain_completed(
         self, intent: Intent, deadline: float, start: float
-    ) -> bool:
-        """Return True once drain converges for this intent before the deadline.
+    ) -> str:
+        """Await drain convergence, deadline timeout, or store cancel.
 
-        Unified loop: drains the (optional) event subscription for a matching
-        ``drain.completed`` AND runs the ``drain-state`` reconcile check each
-        window AND emits the periodic progress heartbeat — all deadline-bounded.
-        Degrades to pure reconcile polling if the subscription is unavailable.
+        Returns ``converged`` | ``timeout`` | ``cancelled``. Unified loop: drains
+        the (optional) event subscription for a matching ``drain.completed`` AND
+        runs the ``drain-state`` reconcile check each window AND emits the
+        periodic progress heartbeat — all deadline-bounded. Degrades to pure
+        reconcile polling if the subscription is unavailable. Cancel is polled
+        each window so manage ``cancel_restart_intent`` aborts before SIGTERM.
         """
         last_progress = start
         try:
@@ -206,15 +240,17 @@ class GitWorkerDrainSupervisor:
             agen = None
         try:
             while True:
+                if self._intent_cancelled(intent):
+                    return _AWAIT_CANCELLED
                 now = time.monotonic()
                 if now >= deadline:
-                    return False
+                    return _AWAIT_TIMEOUT
                 if now - last_progress >= self.progress_interval_s:
                     await self._emit_progress(intent, now - start)
                     last_progress = now
                 snapshot = await self._safe_drain_state()
                 if snapshot is not None and self._drain_state_matches(snapshot, intent):
-                    return True
+                    return _AWAIT_CONVERGED
                 if agen is None:
                     await asyncio.sleep(self.reconcile_interval_s)
                     continue
@@ -236,7 +272,7 @@ class GitWorkerDrainSupervisor:
                 if isinstance(seq, int):
                     self.store.set_last_seen_seq(intent.intent_id, seq)
                 if self._event_matches(ev, intent):
-                    return True
+                    return _AWAIT_CONVERGED
         finally:
             if agen is not None:
                 await _aclose(agen)
@@ -253,7 +289,12 @@ class GitWorkerDrainSupervisor:
 
     # --------------------------------------------------------------- step 4
     async def _sigterm(self, intent: Intent, t0: float) -> None:
-        self.store.advance(intent.intent_id, status=STATUS_DRAINED_RESTARTING)
+        """Deliver SIGTERM after kill-commit (``drained_restarting`` already set)."""
+        current = self.store.get(intent.intent_id)
+        if current is None or current.status == STATUS_CANCELLED:
+            return
+        if current.status != STATUS_DRAINED_RESTARTING:
+            self.store.advance(intent.intent_id, status=STATUS_DRAINED_RESTARTING)
         try:
             message = await self.kill()
         except Exception as exc:  # noqa: BLE001 — kill failure is a clean terminal
@@ -278,6 +319,22 @@ class GitWorkerDrainSupervisor:
         )
 
     # --------------------------------------------------------------- step 5
+    async def _on_cancelled(self, intent: Intent) -> None:
+        """Abort without kill after store cancel; belt-and-suspenders drain-release."""
+        if intent.drain_epoch is not None and self.cancel_drain is not None:
+            try:
+                await self.cancel_drain(intent.intent_id, intent.drain_epoch)
+            except Exception:  # noqa: BLE001 — manage owns primary release; log only
+                logger.exception(
+                    "supervisor cancel-drain release failed: intent_id=%s",
+                    intent.intent_id,
+                )
+        logger.info(
+            "deferred git-worker restart cancelled (no SIGTERM): intent_id=%s",
+            intent.intent_id,
+        )
+        await events.emit_manage_restart_cancelled(intent_id=intent.intent_id)
+
     async def _on_timeout(self, intent: Intent) -> None:
         snapshot = await self._safe_drain_state() or {}
         self.store.advance(intent.intent_id, status=STATUS_TIMEOUT)
@@ -288,7 +345,10 @@ class GitWorkerDrainSupervisor:
             stuck_ops=self._stuck_ops(snapshot),
             affordances=[
                 "inspect: manage(action='busy_status')",
-                "cancel-if-supported",
+                (
+                    "cancel: manage(action='cancel_restart_intent', "
+                    f"intent_id='{intent.intent_id}')"
+                ),
                 "explicit force: manage(action='restart', service='git_integration_worker', force=true)",
             ],
         )
@@ -322,6 +382,10 @@ class GitWorkerDrainSupervisor:
         )
 
     # ----------------------------------------------------------- predicates
+    def _intent_cancelled(self, intent: Intent) -> bool:
+        current = self.store.get(intent.intent_id)
+        return current is not None and current.status == STATUS_CANCELLED
+
     def _event_matches(self, ev: dict[str, Any], intent: Intent) -> bool:
         return (
             _field(ev, "signal") == _DRAIN_COMPLETED_SIGNAL
@@ -448,6 +512,15 @@ def build_git_worker_drain_supervisor(
             resp.raise_for_status()
             return resp.json()
 
+    async def _cancel_drain(intent_id: str, drain_epoch: int) -> dict[str, Any]:
+        async with make_async_client(worker_url, timeout=10.0) as client:
+            resp = await client.post(
+                "/api/v1/git/admin/cancel-drain",
+                json={"intent_id": intent_id, "drain_epoch": drain_epoch},
+            )
+            resp.raise_for_status()
+            return resp.json()
+
     async def _subscribe(resume_seq: int) -> AsyncIterator[dict[str, Any]]:
         import aiohttp
 
@@ -480,5 +553,6 @@ def build_git_worker_drain_supervisor(
         drain_state=_drain_state,
         subscribe_events=_subscribe,
         kill=kill,
+        cancel_drain=_cancel_drain,
         deadline_s=deadline_s,
     )

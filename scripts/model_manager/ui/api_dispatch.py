@@ -25,7 +25,13 @@ from .controller.restart_drain import (
     run_gated_drain_supervised,
     run_gated_drain_supervised_blocking,
 )
-from .controller.restart_intent_store import intent_status_view
+from .controller.restart_intent_store import (
+    STATUS_CANCELLED,
+    STATUS_PENDING_DRAIN,
+    RestartIntentCancelError,
+    RestartIntentStore,
+    intent_status_view,
+)
 from .controller.restart_window_ctl import lifecycle_with_restart_window
 
 if TYPE_CHECKING:
@@ -230,6 +236,9 @@ async def execute(
         case "busy_status":
             return await _busy_status(ctl)
 
+        case "cancel_restart_intent":
+            return await _cancel_restart_intent(ctl, params)
+
         case "whoami":
             return _whoami()
 
@@ -293,10 +302,10 @@ async def execute(
             raise ValueError(
                 f"Unknown method: '{method}'. "
                 "Valid: status, health, wait_healthy, start, stop, restart, "
-                "sync_restart, rebuild, busy_status, whoami, charter_reload, "
-                "charter_pause, charter_resume, charter_hold_status, "
-                "charter_block_root, charter_unblock_root, charter_root_status, "
-                "fleet_sync_restart, fleet_rebuild_deploy"
+                "sync_restart, rebuild, busy_status, cancel_restart_intent, "
+                "whoami, charter_reload, charter_pause, charter_resume, "
+                "charter_hold_status, charter_block_root, charter_unblock_root, "
+                "charter_root_status, fleet_sync_restart, fleet_rebuild_deploy"
             )
 
 
@@ -484,6 +493,126 @@ async def _busy_status(ctl: ServiceController) -> dict[str, Any]:
             "activities": list(snap.activities),
         },
         "charter_hold": hold_status,
+    }
+
+
+async def _cancel_restart_intent(
+    ctl: ServiceController, params: dict[str, Any]
+) -> dict[str, Any]:
+    """Release-then-cancel a deferred restart intent (A′ retraction verb).
+
+    When a drain epoch is set, worker ``POST .../cancel-drain`` runs first so a
+    crash cannot leave ``cancelled`` without drain-release. Store cancel is
+    refused after kill commit (``drained_restarting`` / other terminals).
+    """
+    intent_id = str(params.get("intent_id") or "").strip()
+    if not intent_id:
+        raise ValueError("cancel_restart_intent requires 'intent_id'")
+    service_param = str(params.get("service") or "").strip() or None
+    return await orchestrate_cancel_restart_intent(
+        ctl.restart_intent_store,
+        intent_id=intent_id,
+        service=service_param,
+        release_drain=_worker_cancel_drain,
+    )
+
+
+async def _worker_cancel_drain(intent_id: str, drain_epoch: int) -> dict[str, Any]:
+    """POST worker admin cancel-drain for the matching intent generation."""
+    from transport_utils import make_async_client
+
+    from .controller.restart_drain import GIT_INTEGRATION_WORKER_URL
+
+    async with make_async_client(GIT_INTEGRATION_WORKER_URL, timeout=10.0) as client:
+        resp = await client.post(
+            "/api/v1/git/admin/cancel-drain",
+            json={"intent_id": intent_id, "drain_epoch": drain_epoch},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def orchestrate_cancel_restart_intent(
+    store: RestartIntentStore,
+    *,
+    intent_id: str,
+    service: str | None = None,
+    release_drain: Callable[[str, int], Awaitable[dict[str, Any]]] | None = None,
+) -> dict[str, Any]:
+    """Pure cancel orchestration — release (when epoch set) then store cancel.
+
+    Extracted for unit tests that inject a fake ``release_drain`` without a live
+    worker. Fail-closed: if release raises, the store is left uncancelled.
+    """
+    intent = store.get(intent_id)
+    if intent is None:
+        return {
+            "status": "error",
+            "reason": "intent_not_found",
+            "intent_id": intent_id,
+        }
+    if service is not None and intent.service != service:
+        return {
+            "status": "error",
+            "reason": "service_mismatch",
+            "intent_id": intent_id,
+            "service": intent.service,
+            "requested_service": service,
+        }
+    if intent.status == STATUS_CANCELLED:
+        return {
+            "status": "cancelled",
+            "intent_id": intent.intent_id,
+            "service": intent.service,
+            "already_cancelled": True,
+            "drain_release": None,
+        }
+    if intent.status != STATUS_PENDING_DRAIN:
+        return {
+            "status": "refused",
+            "reason": "cancel_refused_after_final_check_or_terminal",
+            "intent_id": intent.intent_id,
+            "intent_status": intent.status,
+        }
+
+    drain_release: dict[str, Any] | None = None
+    if intent.drain_epoch is not None:
+        if release_drain is None:
+            return {
+                "status": "error",
+                "reason": "drain_release_unavailable",
+                "intent_id": intent.intent_id,
+                "drain_epoch": intent.drain_epoch,
+            }
+        try:
+            drain_release = await release_drain(intent.intent_id, intent.drain_epoch)
+        except Exception as exc:  # noqa: BLE001 — fail closed; do not cancel store
+            return {
+                "status": "error",
+                "reason": "drain_release_failed",
+                "intent_id": intent.intent_id,
+                "drain_epoch": intent.drain_epoch,
+                "error": str(exc),
+            }
+
+    try:
+        cancelled = store.cancel(intent_id)
+    except RestartIntentCancelError as exc:
+        return {
+            "status": "refused",
+            "reason": exc.reason,
+            "intent_id": intent_id,
+            "intent_status": exc.status,
+            "drain_release": drain_release,
+        }
+    return {
+        "status": "cancelled",
+        "intent_id": cancelled.intent_id,
+        "service": cancelled.service,
+        "intent_status": cancelled.status,
+        "drain_epoch": cancelled.drain_epoch,
+        "drain_release": drain_release,
+        "already_cancelled": False,
     }
 
 

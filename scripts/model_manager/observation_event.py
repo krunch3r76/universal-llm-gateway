@@ -306,6 +306,14 @@ async def emit_manage_restart_failed(*, intent_id: str, reason: str) -> None:
     )
 
 
+async def emit_manage_restart_cancelled(*, intent_id: str) -> None:
+    """Supervisor aborted a deferred restart after store cancel (no SIGTERM)."""
+    await _emit(
+        "manage.restart.cancelled",
+        {"intent_id": intent_id},
+    )
+
+
 async def emit_manage_restart_timeout(
     *,
     intent_id: str,

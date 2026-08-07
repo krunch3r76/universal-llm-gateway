@@ -204,8 +204,9 @@ class WorkAdmissionController:
         """Enter the drain epoch (idempotent on ``intent_id``+``drain_epoch``).
 
         Sets the drain flag/epoch and emits ``git_worker.drain.started`` exactly
-        once per epoch. **Never clears the flag** — in Phase 1 it clears only by
-        process restart (no un-drain admin op yet). If the worker is already
+        once per epoch. The flag clears on process restart OR via
+        ``release_drain`` / ``POST .../cancel-drain`` when manage cancels the
+        matching restart intent (survival condition 1). If the worker is already
         idle at drain start, ``git_worker.drain.completed`` is emitted promptly
         via the idle re-check (epoch-guarded), so a manage supervisor that
         begins a drain on a quiescent worker is not left waiting on an event
@@ -238,6 +239,31 @@ class WorkAdmissionController:
             active_ops=self.active_ops(),
         )
         self._maybe_emit_drain_completed()
+        return self.drain_state()
+
+    def release_drain(self, *, intent_id: str, drain_epoch: int) -> dict[str, Any]:
+        """Clear ``_draining`` when ``(intent_id, drain_epoch)`` matches current.
+
+        Idempotent no-op on mismatch or when not draining — returns the current
+        ``drain_state()`` either way. Does not SIGTERM or mutate tickets; the
+        manage cancel path calls this so admission reopens without process death
+        (pairing requirement with store ``cancel``).
+        """
+        if (
+            self._draining
+            and self._intent_id == intent_id
+            and self._drain_epoch == drain_epoch
+        ):
+            self._draining = False
+            self._intent_id = None
+            self._deadline_at = None
+            self._drain_started_at = None
+            self._drain_started_monotonic = None
+            logger.info(
+                "drain released without SIGTERM: intent_id=%s drain_epoch=%s",
+                intent_id,
+                drain_epoch,
+            )
         return self.drain_state()
 
     def close_ticket(self, op_id: str, *, terminal_status: str) -> None:
