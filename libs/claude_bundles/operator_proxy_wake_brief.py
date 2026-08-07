@@ -74,10 +74,20 @@ mcp__claude-code-remote__send_later({{
 ```
 
 **Carry unsmoothed (do not normalise):**
-(1) **Monitor timeout ambiguity — UNRESOLVED.** Armed ``persistent: true`` +
-``timeout_ms: 3600000``; tool reported ``timeout 1800000ms``; docs say timeout is ignored
-when persistent; reported number matched neither request nor doc. Do not assume an
-unbounded watch — re-arm periodically regardless.
+(1) **Monitor timeout ambiguity — UNRESOLVED (deterministic and reproducible).**
+Two independent attestations (seat-internal; bus cannot witness; unwitnessed ≠ refuted):
+(a) first arming — ``persistent: true`` + ``timeout_ms: 3600000``; tool reported
+``timeout 1800000ms``; (b) second arming 2026-08-07 on lane 6655 (CSE successor of
+2026-08-07T03:44:21Z continuity hop, registration_id
+``710dc8641c5945248355485559854824``) — identical request shape → response verbatim
+``Monitor started (task bpyma6f00, timeout 1800000ms).`` (~4h apart, different CSE).
+Not transcription noise; not a one-off. Docs say timeout is ignored when persistent;
+reported number matched neither request nor doc on both arms. Do not assert which
+mechanism applies; do not assume ``persistent: true`` ⇒ unbounded — re-arm periodically
+regardless. **Discriminating probe** (Cowork-internal, CDP-seat-only, one arming, no
+network): re-arm at a requested ``timeout_ms`` that separates the two live hypotheses —
+fixed 30-min cap predicts ``600000`` → reports ``600000``; halving predicts ``600000``
+→ reports ``300000``.
 (2) **Wake BOUNDS silence; it does not prevent stopping.** Four minutes instead of five
 hours; the seat notices instead of the human. Any text implying prevention is overclaiming.
 (3) **The wake notification is NOT the user.** It arrives with a banner saying so — not
