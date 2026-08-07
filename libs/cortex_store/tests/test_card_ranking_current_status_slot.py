@@ -13,6 +13,7 @@ import pytest
 
 from cortex_store._intent_card_test_fixtures import insert_entity
 from cortex_store.card import (
+    _fetch_current_status_row,
     _fetch_main_top_k,
     _merge_current_status_slot,
     get_entity_card,
@@ -181,3 +182,35 @@ def test_debug_surfaces_entrenchment_and_prospective_summary(
         a.get("entrenchment_score") is not None for a in card["top_k_assertions"]
     )
     assert card["debug"]["prospective_summaries"] is not None
+
+
+def test_ac4_flagged_current_status_excluded_from_fetch(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    """AC4 — flagged status(%, current) row must not pin current-status slot."""
+    entity_id = "todo:flagged-status-exclusion"
+    insert_entity(migrated_conn, entity_id=entity_id, entity_type="todo", name="Flagged")
+    status_predicate = f"status({entity_id}, operational, current)"
+    cur = migrated_conn.execute(
+        "INSERT INTO assertions (entity_id, claim, confidence, predicate_form, "
+        "review_status, review_notes, entrenchment_score, created_at, updated_at) "
+        "VALUES (?, ?, 'believed', ?, 'flagged', 'predicate normalize: requires_human_review', "
+        "0.9, datetime('now'), datetime('now'))",
+        (
+            entity_id,
+            "Synthetic flagged current-status row.",
+            status_predicate,
+        ),
+    )
+    migrated_conn.commit()
+    flagged_id = int(cur.lastrowid or 0)
+
+    e_row = _fetch_current_status_row(migrated_conn, entity_id=entity_id)
+    assert e_row is None, (
+        f"flagged row {flagged_id} must not surface via _fetch_current_status_row"
+    )
+
+    main = _fetch_main_top_k(migrated_conn, entity_id=entity_id, top_k=7)
+    merged = _merge_current_status_slot(main, e_row, top_k=7)
+    assert e_row is None and merged == main
+

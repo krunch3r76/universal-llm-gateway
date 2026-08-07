@@ -112,6 +112,7 @@ def _fetch_current_status_row(
         conn,
         f"SELECT {_CARD_ASSERTION_COLS} FROM assertions "
         "WHERE entity_id = ? AND superseded_by IS NULL "
+        "AND COALESCE(review_status, '') != 'flagged' "
         f"AND {_STATUS_CURRENT_PREDICATE_WHERE} "
         "ORDER BY created_at DESC LIMIT 1",
         (entity_id,),

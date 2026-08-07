@@ -493,3 +493,64 @@ def test_patch_decision_self_status_missing_workflow_col_is_non_fatal(
         aid, {"predicate_form": f"status({_DECISION_ID_1267}, rejected)"}
     )
     assert result["predicate_form"] == f"status({_DECISION_ID_1267}, rejected)"
+
+
+# ---------------------------------------------------------------------------
+# Invention + re-subjection guards — spec predicate-form-invention-resubjection-guards
+# ---------------------------------------------------------------------------
+
+_GUARDS_ENTITY = "todo:predicate-form-guards-fixture"
+
+
+def _seed_guards_entity(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO entities (id, type, name) VALUES (?, 'todo', ?)",
+        (_GUARDS_ENTITY, "guards-fixture"),
+    )
+    conn.commit()
+
+
+def test_ac1_patch_invention_operational_flags_row(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC1 — PATCH path: invented operational → flagged, not 422."""
+    _seed_guards_entity(conn)
+    _patch_update(monkeypatch, conn)
+    aid = _insert_assertion(
+        conn,
+        entity_id=_GUARDS_ENTITY,
+        claim="Work item is open and awaiting implement.",
+    )
+
+    result = _update_assertion_impl(
+        aid,
+        {"predicate_form": f"status({_GUARDS_ENTITY}, operational, current)"},
+    )
+
+    assert result["predicate_form"] == f"status({_GUARDS_ENTITY}, operational, current)"
+    row = _row(conn, aid)
+    assert row["review_status"] == "flagged"
+    assert row["review_notes"] and "predicate normalize" in row["review_notes"]
+
+
+def test_ac5_fire_and_forget_abstraction_flags_not_422(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC5 — compressed arg absent from claim is flagged; write succeeds."""
+    _seed_guards_entity(conn)
+    _patch_update(monkeypatch, conn)
+    aid = _insert_assertion(
+        conn,
+        entity_id=_GUARDS_ENTITY,
+        claim="The handler runs without waiting for acknowledgement.",
+    )
+
+    result = _update_assertion_impl(
+        aid,
+        {"predicate_form": f"status({_GUARDS_ENTITY}, fire_and_forget, current)"},
+    )
+
+    assert result["predicate_form"] == f"status({_GUARDS_ENTITY}, fire_and_forget, current)"
+    assert _row(conn, aid)["review_status"] == "flagged"

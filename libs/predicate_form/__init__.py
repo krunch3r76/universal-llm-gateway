@@ -66,6 +66,10 @@ from .entity_resolve import (
     StaticEntityResolver,
     bare_token_to_slug,
 )
+from .invention_resubjection_guards import (
+    check_invention,
+    check_resubjection,
+)
 from .parser import Predicate, PredicateParseError, parse, unparse
 
 NORMALIZER_VERSION = "v1.3.1"
@@ -201,7 +205,12 @@ def normalize_predicate_domain(
         entity_id, p, entity_workflow_state
     )
 
+    invention_flag = check_invention(claim_text, p)
+    resubjection_flag = check_resubjection(entity_id, p)
+
     requires_review = class_6_check(entity_id, p)
+    if invention_flag or resubjection_flag:
+        requires_review = True
     # A *faithful* decision self-status (state token == the entity's tracked
     # workflow_state) is a correct projection of a tracked state, not an
     # accidental cross-entity merge — so it is exempt from the Class 6
@@ -232,6 +241,8 @@ def normalize_predicate_domain(
         "candidate_set_fingerprint": candidate_set_fingerprint,
         "normalizer_version": NORMALIZER_VERSION,
         "decision_self_status_corrected": decision_self_status_corrected,
+        "invention_flag": invention_flag,
+        "resubjection_flag": resubjection_flag,
     }
 
 
