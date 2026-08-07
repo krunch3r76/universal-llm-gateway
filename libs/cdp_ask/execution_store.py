@@ -20,15 +20,21 @@ from admission_common.qualified_scalar import (
 from cdp_ask.models import CompletionPhase, ExecutionStatus, StallStage
 
 _ACTIVE_WORK_SNAPSHOT = "active_work_snapshot"
-_RUNNING_COUNT_SCOPE = "cdp_ask execution store, pending/running records"
-_LIVE_CSE_COUNT_SCOPE = "browser CSE lanes, this host"
-_EFFECTIVE_COUNT_SCOPE = "max(running_count, live_cse_count), this host"
+_RUNNING_COUNT_SCOPE = "cdp_ask execution store, pending/running streams"
+_LIVE_CSE_COUNT_SCOPE = "open CSE attachments (Chrome pages), this host"
+_ADMISSION_COUNT_SCOPE = "running/stream admissions, this host (soft=2 hard=3)"
+_REGISTRY_CAPACITY_SCOPE = "active registry Chrome hosts (ports/profiles), this host"
+_EFFECTIVE_COUNT_SCOPE = (
+    "restart-drain aggregate max(running_count, live_cse_count); NOT admission"
+)
 
 DeregisterFn = Callable[[str], None]
 
-# Operator bind (friction a:25814): simultaneous CDP project-ask lanes.
-# soft = prefer-not-to-add; hard = lane-full for admission. Drain `busy` stays
-# independent: any pending/running work defers restart.
+# Operator bind (friction a:25814) + ontology split (arc 6885):
+# soft/hard gate **concurrent streams** (running executions), not open tabs.
+# Open idle attachments are hygiene once chat_url is recorded.
+# Registry Chrome hosts are a separate scarce resource (count_capacity_lanes).
+# Drain `busy` stays independent: any pending/running **or** live attachment.
 LANE_SOFT_LIMIT = 2
 LANE_HARD_LIMIT = 3
 _LIVE_CSE_CACHE_TTL_S = 10.0
@@ -151,11 +157,15 @@ class ExecutionStore:
         return count
 
     async def active_work_snapshot(self) -> dict[str, Any]:
-        """Aggregate pending/running executions for drain + lane-admission probes.
+        """Aggregate pending/running executions for drain + stream-admission probes.
 
-        ``busy`` is restart-drain semantics (any in-flight **or** observed live CSE)
-        — NOT lane-full. Seats admit a new CDP lane from ``free_slots`` /
-        ``at_hard_limit`` (soft=2 prefer, hard=3 ceiling; friction a:25814).
+        Split (arc 6885):
+        - **Admission** (``free_slots`` / ``at_*_limit``): ``running_count`` only
+          (soft=2 prefer, hard=3 ceiling) — concurrent streams, not open tabs.
+        - **Attachment hygiene**: ``live_cse_count`` (open CSE pages) — disposable
+          when ``chat_url`` is recorded; does **not** fill hard limit.
+        - **Registry hosts**: ``registry_capacity_count`` — active Chrome ports.
+        - **Drain busy**: any in-flight stream **or** observed open attachment.
         """
         async with self._lock:
             active = [
@@ -176,21 +186,25 @@ class ExecutionStore:
             ]
         running_count = len(execution_ids)
         live_cse_count = self._live_cse_count()
+        admission_count = running_count
+        free_slots = max(0, LANE_HARD_LIMIT - admission_count)
+        # Restart-drain aggregate only — never drives at_hard_limit after 6885.
         effective = max(running_count, live_cse_count)
-        free_slots = max(0, LANE_HARD_LIMIT - effective)
-        # Restart drain must treat an observed live CSE as in-flight work even
-        # when no project-ask execution is recorded: Cowork keeps the life MCP
-        # connector hot between tool POSTs, and killing MCP (or cdp_ask) mid-turn
-        # drops that session. Lane admission still uses free_slots / at_hard_limit.
+        from claude_bundles import cdp_registry
+
+        registry_capacity_count = cdp_registry.count_capacity_lanes()
+        # Restart drain must treat an observed open CSE attachment as in-flight
+        # even when no project-ask execution is recorded: Cowork keeps the life
+        # MCP connector hot between tool POSTs.
         payload: dict[str, Any] = {
-            "busy": effective > 0,
+            "busy": running_count > 0 or live_cse_count > 0,
             "execution_ids": execution_ids,
             "rows": rows,
             "soft_limit": LANE_SOFT_LIMIT,
             "hard_limit": LANE_HARD_LIMIT,
             "free_slots": free_slots,
-            "at_soft_limit": effective >= LANE_SOFT_LIMIT,
-            "at_hard_limit": effective >= LANE_HARD_LIMIT,
+            "at_soft_limit": admission_count >= LANE_SOFT_LIMIT,
+            "at_hard_limit": admission_count >= LANE_HARD_LIMIT,
         }
         payload.update(
             QualifiedScalar(
@@ -201,10 +215,24 @@ class ExecutionStore:
         )
         payload.update(
             QualifiedScalar(
+                value=admission_count,
+                scope=_ADMISSION_COUNT_SCOPE,
+                authority=AuthorityClass.RECORDED,
+            ).emit("admission_count")
+        )
+        payload.update(
+            QualifiedScalar(
                 value=live_cse_count,
                 scope=_LIVE_CSE_COUNT_SCOPE,
                 authority=AuthorityClass.OBSERVED,
             ).emit("live_cse_count")
+        )
+        payload.update(
+            QualifiedScalar(
+                value=registry_capacity_count,
+                scope=_REGISTRY_CAPACITY_SCOPE,
+                authority=AuthorityClass.RECORDED,
+            ).emit("registry_capacity_count")
         )
         payload.update(
             QualifiedScalar(
@@ -214,12 +242,15 @@ class ExecutionStore:
             ).emit("effective_count")
         )
         decl = SurfaceDecl(_ACTIVE_WORK_SNAPSHOT)
-        decl.plain("busy", reason="derived boolean: effective_count > 0")
-        decl.plain("soft_limit", reason="configured lane admission constant")
-        decl.plain("hard_limit", reason="configured lane admission constant")
-        decl.plain("free_slots", reason="derived: hard_limit - effective_count")
-        decl.plain("at_soft_limit", reason="derived: effective >= soft_limit")
-        decl.plain("at_hard_limit", reason="derived: effective >= hard_limit")
+        decl.plain(
+            "busy",
+            reason="derived boolean: running_count > 0 or live_cse_count > 0",
+        )
+        decl.plain("soft_limit", reason="configured stream admission constant")
+        decl.plain("hard_limit", reason="configured stream admission constant")
+        decl.plain("free_slots", reason="derived: hard_limit - admission_count")
+        decl.plain("at_soft_limit", reason="derived: admission_count >= soft_limit")
+        decl.plain("at_hard_limit", reason="derived: admission_count >= hard_limit")
         return seal(payload, decl)
 
     async def attach_task(self, execution_id: str, task: asyncio.Task[Any]) -> None:

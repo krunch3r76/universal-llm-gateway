@@ -1,4 +1,8 @@
-"""Explicit CDP port registration — agent-bus-thread semantics for Chrome lanes.
+"""Explicit CDP Chrome-host registration (registry ports / profiles).
+
+Vocabulary (arc 6885): a **registry host** is a Chrome CDP port+profile row —
+not an agent-bus **thread**, and not a CSE **session**. Sessions are addressed
+by ``chat_url`` (bound via ``bind_session_address``). Bus threads outlive hosts.
 
 Supersedes hand-picked ``--cdp-url`` / warm-reuse for automated seats.
 ``:9222`` remains the attended primary (out of pool). Persistence:
@@ -185,6 +189,67 @@ def _rollback_allocating(registration_id: str) -> None:
     _release_driver_lock(registration_id)
 
 
+def bind_session_address(
+    registration_id: str,
+    *,
+    chat_url: str,
+    execution_id: str | None = None,
+    target_id: str | None = None,
+) -> bool:
+    """Persist CSE ``chat_url`` on the registry row (safety property — arc 6885).
+
+    Idempotent: blank *chat_url* is a no-op. Survives ``released`` /
+    ``orphaned_retry`` because those transitions copy the row dict.
+    Returns True when the row was found and updated (or already matched).
+    """
+    url = (chat_url or "").strip()
+    if not url or "/cowork/cse_" not in url:
+        return False
+    with _store.ports_lock():
+        active = _store.load_active()
+        row = active.get(registration_id)
+        if row is None:
+            return False
+        updated = dict(row)
+        prior = str(updated.get("chat_url") or "").strip()
+        if prior == url and (
+            execution_id is None
+            or str(updated.get("execution_id") or "") == str(execution_id)
+        ):
+            return True
+        updated["chat_url"] = url
+        if execution_id:
+            updated["execution_id"] = execution_id
+        if target_id:
+            updated["target_id"] = target_id
+        updated["chat_url_bound_at"] = time.time()
+        active[registration_id] = updated
+        _store.write_active(active)
+        _store.append_log(
+            "session_address_bound",
+            {
+                "registration_id": registration_id,
+                "chat_url": url,
+                "execution_id": execution_id,
+                "target_id": target_id,
+            },
+        )
+    return True
+
+
+def chat_url_for_registration(registration_id: str | None) -> str | None:
+    """Return durable ``chat_url`` for *registration_id*, or None."""
+    rid = (registration_id or "").strip()
+    if not rid:
+        return None
+    active = _store.load_active()
+    row = active.get(rid)
+    if not isinstance(row, dict):
+        return None
+    url = str(row.get("chat_url") or "").strip()
+    return url or None
+
+
 def register_lane(
     *,
     holder: str,
@@ -193,7 +258,11 @@ def register_lane(
     launch_chrome: _LaunchFn | None = None,
     is_listening: _ListenFn | None = None,
 ) -> Registration:
-    """Reserve port under lock, launch Chrome outside lock, then flip active (F1)."""
+    """Reserve port under lock, launch Chrome outside lock, then flip active (F1).
+
+    Session address is **not** known at Chrome mint — callers must
+    ``bind_session_address`` when the CSE URL is first observed.
+    """
     if not holder or not str(holder).strip():
         raise RegistryError("holder is required")
     reclaim_best_effort()
@@ -330,7 +399,7 @@ def list_active() -> list[Registration]:
 
 
 def list_capacity() -> list[Registration]:
-    """Lanes that consume ``LANE_HARD_LIMIT`` — ``active`` only, not ghosts."""
+    """Registry Chrome hosts that consume host-port capacity — ``active`` only."""
     active = _store.load_active()
     out = [
         _row_to_registration(row)
@@ -341,7 +410,74 @@ def list_capacity() -> list[Registration]:
 
 
 def count_capacity_lanes() -> int:
+    """Count active registry Chrome hosts (scarce host resource — not streams)."""
     return len(list_capacity())
+
+
+_CSE_URL_MARKER = "claude.ai/cowork/cse_"
+
+
+def _default_probe_page_urls(port: int) -> list[str]:
+    """Best-effort CDP ``/json/list`` scrape for backfill (never raises)."""
+    from claude_bundles import cdp_orphans
+
+    payload = cdp_orphans._fetch_json(f"http://127.0.0.1:{port}/json/list")
+    return list(cdp_orphans._page_urls_from_list(payload))
+
+
+def backfill_orphaned_retry_chat_urls(
+    *,
+    dry_run: bool = True,
+    probe_urls: Callable[[int], list[str]] | None = None,
+) -> dict[str, Any]:
+    """Classify + optionally bind ``chat_url`` for ``orphaned_retry`` rows.
+
+    Verdict classes (arc 6885 / census 6893):
+    - ``scrape_bound`` / ``scrape_recoverable``: live ``/cowork/cse_`` on port
+    - ``already_bound``: row already carries chat_url
+    - ``irreversible_no_url``: Chrome alive or not, no CSE URL on port and none
+      recorded — genuine irreversible population unless URL found elsewhere
+    """
+    probe = probe_urls or _default_probe_page_urls
+    active = _store.load_active()
+    classes: dict[str, list[dict[str, Any]]] = {
+        "already_bound": [],
+        "scrape_recoverable": [],
+        "scrape_bound": [],
+        "irreversible_no_url": [],
+    }
+    for rid, row in active.items():
+        if row.get("status") != "orphaned_retry":
+            continue
+        entry = {
+            "registration_id": rid,
+            "port": row.get("port"),
+            "prior_chat_url": row.get("chat_url"),
+        }
+        prior = str(row.get("chat_url") or "").strip()
+        if prior and _CSE_URL_MARKER in prior:
+            classes["already_bound"].append(entry)
+            continue
+        port = row.get("port")
+        urls: list[str] = []
+        if isinstance(port, int):
+            with contextlib.suppress(Exception):
+                urls = [u for u in probe(port) if _CSE_URL_MARKER in str(u)]
+        if urls:
+            entry["scraped_chat_url"] = urls[0]
+            if dry_run:
+                classes["scrape_recoverable"].append(entry)
+            elif bind_session_address(rid, chat_url=urls[0]):
+                classes["scrape_bound"].append(entry)
+            else:
+                classes["scrape_recoverable"].append(entry)
+        else:
+            classes["irreversible_no_url"].append(entry)
+    return {
+        "dry_run": dry_run,
+        "counts": {k: len(v) for k, v in classes.items()},
+        "rows": classes,
+    }
 
 
 def _profile_path_from_row(row: dict[str, Any]) -> Path | None:

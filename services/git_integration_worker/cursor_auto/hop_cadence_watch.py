@@ -225,8 +225,15 @@ def observe_lane_from_enqueue(
     row["from_agent"] = normalize_bus_address(job.from_agent)
     if job.cse_registration_id:
         row["registration_id"] = job.cse_registration_id
-    if job.cse_chat_url:
-        row["chat_url"] = job.cse_chat_url
+    # Bus thread watch ≠ registry Chrome host. Prefer job-supplied session
+    # address; else join from registry row (bind_session_address at birth).
+    chat_url = (job.cse_chat_url or "").strip() or None
+    if not chat_url and job.cse_registration_id:
+        from claude_bundles.cdp_registry import chat_url_for_registration
+
+        chat_url = chat_url_for_registration(job.cse_registration_id)
+    if chat_url:
+        row["chat_url"] = chat_url
     row["purpose"] = "operator-proxy"
     watches[thread_id] = row
     save_watches(watches, path)

@@ -15,10 +15,12 @@ from cdp_ask.execution_store import (
 
 pytestmark = pytest.mark.offline
 
-# Frozen from pre-seal wire shape (authority siblings) — scope keys are additive only.
+# Frozen from post-6885 wire shape (authority siblings) — scope keys additive.
 _QUALIFIED_FIELD_GOLDEN: dict[str, Any] = {
     "running_count_authority": "recorded",
+    "admission_count_authority": "recorded",
     "live_cse_count_authority": "observed",
+    "registry_capacity_count_authority": "recorded",
     "effective_count_authority": "max(recorded, observed)",
 }
 
@@ -30,27 +32,47 @@ def _capacity(
     execution_ids: list[str],
     rows: list[dict[str, object]] | None = None,
     live_cse_count: int = 0,
+    registry_capacity_count: int = 0,
 ) -> dict[str, Any]:
+    admission_count = running_count
     effective = max(running_count, live_cse_count)
     return {
         "busy": busy,
         "running_count": running_count,
-        "running_count_scope": "cdp_ask execution store, pending/running records",
+        "running_count_scope": "cdp_ask execution store, pending/running streams",
         "running_count_authority": "recorded",
+        "admission_count": admission_count,
+        "admission_count_scope": "running/stream admissions, this host (soft=2 hard=3)",
+        "admission_count_authority": "recorded",
         "live_cse_count": live_cse_count,
-        "live_cse_count_scope": "browser CSE lanes, this host",
+        "live_cse_count_scope": "open CSE attachments (Chrome pages), this host",
         "live_cse_count_authority": "observed",
+        "registry_capacity_count": registry_capacity_count,
+        "registry_capacity_count_scope": (
+            "active registry Chrome hosts (ports/profiles), this host"
+        ),
+        "registry_capacity_count_authority": "recorded",
         "effective_count": effective,
-        "effective_count_scope": "max(running_count, live_cse_count), this host",
+        "effective_count_scope": (
+            "restart-drain aggregate max(running_count, live_cse_count); NOT admission"
+        ),
         "effective_count_authority": "max(recorded, observed)",
         "execution_ids": execution_ids,
         "rows": rows or [],
         "soft_limit": LANE_SOFT_LIMIT,
         "hard_limit": LANE_HARD_LIMIT,
-        "free_slots": max(0, LANE_HARD_LIMIT - effective),
-        "at_soft_limit": effective >= LANE_SOFT_LIMIT,
-        "at_hard_limit": effective >= LANE_HARD_LIMIT,
+        "free_slots": max(0, LANE_HARD_LIMIT - admission_count),
+        "at_soft_limit": admission_count >= LANE_SOFT_LIMIT,
+        "at_hard_limit": admission_count >= LANE_HARD_LIMIT,
     }
+
+
+@pytest.fixture(autouse=True)
+def _no_registry_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.count_capacity_lanes",
+        lambda: 0,
+    )
 
 
 @pytest.mark.asyncio
@@ -99,12 +121,15 @@ async def test_seal_raises_on_injected_undeclared_bare_numeric(
     from admission_common.qualified_scalar import SurfaceDecl
 
     decl = SurfaceDecl("active_work_snapshot")
-    decl.plain("busy", reason="derived boolean: effective_count > 0")
-    decl.plain("soft_limit", reason="configured lane admission constant")
-    decl.plain("hard_limit", reason="configured lane admission constant")
-    decl.plain("free_slots", reason="derived: hard_limit - effective_count")
-    decl.plain("at_soft_limit", reason="derived: effective >= soft_limit")
-    decl.plain("at_hard_limit", reason="derived: effective >= hard_limit")
+    decl.plain(
+        "busy",
+        reason="derived boolean: running_count > 0 or live_cse_count > 0",
+    )
+    decl.plain("soft_limit", reason="configured stream admission constant")
+    decl.plain("hard_limit", reason="configured stream admission constant")
+    decl.plain("free_slots", reason="derived: hard_limit - admission_count")
+    decl.plain("at_soft_limit", reason="derived: admission_count >= soft_limit")
+    decl.plain("at_hard_limit", reason="derived: admission_count >= hard_limit")
     with pytest.raises(UnqualifiedScalarError, match="injected"):
         seal(snap, decl)
 
@@ -114,7 +139,7 @@ def test_live_cse_count_none_when_unobserved() -> None:
 
     scalar = QualifiedScalar(
         value=None,
-        scope="browser CSE lanes, this host",
+        scope="open CSE attachments (Chrome pages), this host",
         authority=AuthorityClass.OBSERVED,
     )
     emitted = scalar.emit("live_cse_count")

@@ -1,7 +1,10 @@
-"""Opt-in warm-followup reattach — navigate an attached lane to a known CSE URL.
+"""Opt-in warm-followup reattach — navigate a registry Chrome host to a CSE URL.
 
 Keeps ``followup_resolve`` pure: this module owns registry side-effects and CDP
 navigation when ``reattach=true`` and the CSE page is not already open.
+
+Vocabulary (arc 6885): *lane* here means a registry Chrome host (port/profile),
+not an agent-bus thread. Resume = ``page.goto(chat_url)``.
 """
 
 from __future__ import annotations
@@ -99,13 +102,14 @@ async def ensure_cse_attached(
     holder: str,
     purpose: str | None = None,
 ) -> ReattachOutcome:
-    """Attach a lane and navigate to *chat_url* when the CSE is not already open."""
+    """Attach a registry Chrome host and navigate to *chat_url* when needed."""
     lanes = list(cdp_registry.list_active())
     for lane in _lane_order(lanes, purpose):
         opened = await _navigate_new_page(lane, chat_url)
         if opened is None:
             continue
         page, pw = opened
+        cdp_registry.bind_session_address(lane.registration_id, chat_url=chat_url)
         return ReattachOutcome(
             ok=True,
             registration_id=lane.registration_id,
@@ -124,6 +128,7 @@ async def ensure_cse_attached(
         cdp_registry.deregister_lane(reg.registration_id)
         return ReattachOutcome(ok=False, error="reattach_navigate_failed")
     page, pw = opened
+    cdp_registry.bind_session_address(reg.registration_id, chat_url=chat_url)
     return ReattachOutcome(
         ok=True,
         registration_id=reg.registration_id,

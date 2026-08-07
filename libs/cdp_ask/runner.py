@@ -34,6 +34,45 @@ from cdp_ask.page_liveness import (
     make_harvest_ladder_hook,
 )
 
+_CSE_URL_MARKER = "claude.ai/cowork/cse_"
+
+
+def _persist_session_address(
+    registration_id: str,
+    url: str | None,
+    *,
+    execution_id: str = "",
+) -> None:
+    """Record CSE chat_url on the registry row as soon as it is observed."""
+    raw = (url or "").strip()
+    if not raw or _CSE_URL_MARKER not in raw:
+        return
+    cdp_registry.bind_session_address(
+        registration_id,
+        chat_url=raw,
+        execution_id=execution_id or None,
+    )
+
+
+def _wrap_harvest_with_address(
+    on_harvest: Callable[[dict[str, Any]], Awaitable[None]] | None,
+    *,
+    registration_id: str,
+    execution_id: str,
+) -> Callable[[dict[str, Any]], Awaitable[None]]:
+    """Compose harvest hook so first CSE URL binds at birth (not only terminal)."""
+
+    async def _hook(state: dict[str, Any]) -> None:
+        _persist_session_address(
+            registration_id,
+            str(state.get("url") or "") or None,
+            execution_id=execution_id,
+        )
+        if on_harvest is not None:
+            await on_harvest(state)
+
+    return _hook
+
 
 async def _release_f6_and_advance_proof(
     *,
@@ -323,6 +362,11 @@ async def run_execution(
         # Held-page samples only — competing connect_cdp blocked dual-completion
         # while converse held the lane (friction 25671).
         on_harvest = make_harvest_ladder_hook(callbacks=ladder, progress=progress)
+    on_harvest = _wrap_harvest_with_address(
+        on_harvest,
+        registration_id=reg.registration_id,
+        execution_id=execution_id,
+    )
     try:
         if req.converse:
             delete_after = (
@@ -369,6 +413,11 @@ async def run_execution(
                         execution_id=execution_id or None,
                     )
                 except HarvestArchiveError as exc:
+                    _persist_session_address(
+                        reg.registration_id,
+                        last.url,
+                        execution_id=execution_id,
+                    )
                     return {
                         "ok": False,
                         "registration_id": reg.registration_id,
@@ -389,6 +438,11 @@ async def run_execution(
                 progress=progress, ladder=ladder, archive_uri=archive_uri
             )
             conv_ok = all(r.ok for r in results)
+            _persist_session_address(
+                reg.registration_id,
+                last.url if last else None,
+                execution_id=execution_id,
+            )
             return {
                 "ok": conv_ok,
                 "registration_id": reg.registration_id,
@@ -451,6 +505,11 @@ async def run_execution(
             }
         payload = _result_dict(result)
         payload["registration_id"] = reg.registration_id
+        _persist_session_address(
+            reg.registration_id,
+            result.url,
+            execution_id=execution_id,
+        )
         if not result.ok:
             payload["stall_stage"] = classify_stall_stage(result.error)
         elif result.archive_uri and ladder and ladder.on_archiving:

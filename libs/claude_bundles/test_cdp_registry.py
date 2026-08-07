@@ -619,3 +619,67 @@ def test_hygiene_reclaim_success_log_carries_reclaimed_not_stale_status(
     assert record["status"] == "reclaimed"
     assert record["profile_removed"] is True
     assert "orphaned_retry" not in record.values()
+
+
+def test_bind_session_address_survives_release(isolated_registry: Path) -> None:
+    r = reg.register_lane(
+        holder="a",
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    url = "https://claude.ai/cowork/cse_bindTest001"
+    assert reg.bind_session_address(r.registration_id, chat_url=url, execution_id="e1")
+    assert reg.chat_url_for_registration(r.registration_id) == url
+    reg.deregister_lane(r.registration_id, kill=False)
+    row = reg._store.load_active()[r.registration_id]
+    assert row["status"] == "released"
+    assert row["chat_url"] == url
+    assert reg.chat_url_for_registration(r.registration_id) == url
+
+
+def test_backfill_orphaned_retry_chat_urls_verdict(
+    isolated_registry: Path,
+) -> None:
+    with reg._store.ports_lock():
+        active = reg._store.load_active()
+        active["or-scrape"] = {
+            "registration_id": "or-scrape",
+            "port": 9223,
+            "profile_suffix": "reg-or1",
+            "holder": "a",
+            "status": "orphaned_retry",
+        }
+        active["or-empty"] = {
+            "registration_id": "or-empty",
+            "port": 9224,
+            "profile_suffix": "reg-or2",
+            "holder": "a",
+            "status": "orphaned_retry",
+        }
+        active["or-bound"] = {
+            "registration_id": "or-bound",
+            "port": 9225,
+            "profile_suffix": "reg-or3",
+            "holder": "a",
+            "status": "orphaned_retry",
+            "chat_url": "https://claude.ai/cowork/cse_alreadyBound",
+        }
+        reg._store.write_active(active)
+
+    scrape_url = "https://claude.ai/cowork/cse_scraped001"
+
+    def _probe(port: int) -> list[str]:
+        if port == 9223:
+            return [scrape_url]
+        return ["chrome://newtab/"]
+
+    dry = reg.backfill_orphaned_retry_chat_urls(dry_run=True, probe_urls=_probe)
+    assert dry["counts"]["already_bound"] == 1
+    assert dry["counts"]["scrape_recoverable"] == 1
+    assert dry["counts"]["irreversible_no_url"] == 1
+    assert dry["counts"]["scrape_bound"] == 0
+
+    wet = reg.backfill_orphaned_retry_chat_urls(dry_run=False, probe_urls=_probe)
+    assert wet["counts"]["scrape_bound"] == 1
+    assert wet["counts"]["irreversible_no_url"] == 1
+    assert reg.chat_url_for_registration("or-scrape") == scrape_url

@@ -57,6 +57,31 @@ def _parked_body(**fields: str) -> str:
     return "\n".join(lines)
 
 
+def test_stamp_session_ids_prefers_url_derived_cse_id(
+    isolated_obligations: Path,
+) -> None:
+    """Arc 6885: cse_id is session address, never registration_id."""
+    url = "https://claude.ai/cowork/cse_01StampTestId0001"
+    stamp_session_ids(
+        lane_thread="6885",
+        chat_url=url,
+        registration_id="reg-not-a-session",
+    )
+    sessions = load_sessions()
+    found = next(iter(sessions.values()))
+    assert found["cse_id"] == "cse_01StampTestId0001"
+    assert found["ids"]["registration_id"] == "reg-not-a-session"
+    assert found["ids"]["chat_url"] == url
+
+
+def test_stamp_session_ids_pending_without_url(isolated_obligations: Path) -> None:
+    stamp_session_ids(lane_thread="6885", registration_id="reg-only")
+    sessions = load_sessions()
+    found = next(iter(sessions.values()))
+    assert found["cse_id"] == "pending-6885"
+    assert found["cse_id"] != "reg-only"
+
+
 def test_ac1_parked_mirror_survives_restart(isolated_obligations: Path) -> None:
     """AC1: wake_owed readable from disk after reload."""
     stamp_session_ids(

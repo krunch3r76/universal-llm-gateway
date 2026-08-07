@@ -1,4 +1,4 @@
-"""Hermetic tests for cdp-ask active-work drain + lane-admission probe."""
+"""Hermetic tests for cdp-ask active-work drain + stream-admission probe."""
 
 from __future__ import annotations
 
@@ -24,27 +24,47 @@ def _capacity(
     execution_ids: list[str],
     rows: list[dict[str, object]] | None = None,
     live_cse_count: int = 0,
+    registry_capacity_count: int = 0,
 ) -> dict[str, Any]:
+    admission_count = running_count
     effective = max(running_count, live_cse_count)
     return {
         "busy": busy,
         "running_count": running_count,
-        "running_count_scope": "cdp_ask execution store, pending/running records",
+        "running_count_scope": "cdp_ask execution store, pending/running streams",
         "running_count_authority": "recorded",
+        "admission_count": admission_count,
+        "admission_count_scope": "running/stream admissions, this host (soft=2 hard=3)",
+        "admission_count_authority": "recorded",
         "live_cse_count": live_cse_count,
-        "live_cse_count_scope": "browser CSE lanes, this host",
+        "live_cse_count_scope": "open CSE attachments (Chrome pages), this host",
         "live_cse_count_authority": "observed",
+        "registry_capacity_count": registry_capacity_count,
+        "registry_capacity_count_scope": (
+            "active registry Chrome hosts (ports/profiles), this host"
+        ),
+        "registry_capacity_count_authority": "recorded",
         "effective_count": effective,
-        "effective_count_scope": "max(running_count, live_cse_count), this host",
+        "effective_count_scope": (
+            "restart-drain aggregate max(running_count, live_cse_count); NOT admission"
+        ),
         "effective_count_authority": "max(recorded, observed)",
         "execution_ids": execution_ids,
         "rows": rows or [],
         "soft_limit": LANE_SOFT_LIMIT,
         "hard_limit": LANE_HARD_LIMIT,
-        "free_slots": max(0, LANE_HARD_LIMIT - effective),
-        "at_soft_limit": effective >= LANE_SOFT_LIMIT,
-        "at_hard_limit": effective >= LANE_HARD_LIMIT,
+        "free_slots": max(0, LANE_HARD_LIMIT - admission_count),
+        "at_soft_limit": admission_count >= LANE_SOFT_LIMIT,
+        "at_hard_limit": admission_count >= LANE_HARD_LIMIT,
     }
+
+
+@pytest.fixture(autouse=True)
+def _no_registry_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.count_capacity_lanes",
+        lambda: 0,
+    )
 
 
 @pytest.mark.asyncio
@@ -83,7 +103,7 @@ async def test_active_work_snapshot_pending_execution(
             }
         ],
     )
-    # One lane in flight must NOT read as admission-full (soft=2, hard=3).
+    # One stream in flight must NOT read as admission-full (soft=2, hard=3).
     assert snap["at_soft_limit"] is False
     assert snap["at_hard_limit"] is False
     assert snap["free_slots"] == LANE_HARD_LIMIT - 1
@@ -219,9 +239,10 @@ async def test_active_work_endpoint_busy(
 
 
 @pytest.mark.asyncio
-async def test_active_work_snapshot_observed_population_limits(
+async def test_active_work_snapshot_idle_attachments_do_not_fill_admission(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Arc 6885: open idle CSE tabs are hygiene, not stream admission."""
     from claude_bundles.cdp_orphans import LivePort
 
     monkeypatch.setattr(
@@ -239,10 +260,12 @@ async def test_active_work_snapshot_observed_population_limits(
     store = ExecutionStore()
     snap = await store.active_work_snapshot()
     assert snap["running_count"] == 0
+    assert snap["admission_count"] == 0
     assert snap["live_cse_count"] == 7
-    assert snap["busy"] is True
-    assert snap["free_slots"] == 0
-    assert snap["at_hard_limit"] is True
+    assert snap["busy"] is True  # drain still sees attachments
+    assert snap["free_slots"] == LANE_HARD_LIMIT
+    assert snap["at_soft_limit"] is False
+    assert snap["at_hard_limit"] is False
 
 
 @pytest.mark.asyncio

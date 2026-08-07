@@ -55,7 +55,12 @@ def stamp_session_ids(
     chat_url: str | None = None,
     registration_id: str | None = None,
 ) -> None:
-    """Join-stamp ids onto session projection when request captures CSE identity."""
+    """Join-stamp ids onto session projection when request captures CSE identity.
+
+    ``cse_id`` is the session address (from ``chat_url``), never the registry
+    ``registration_id`` (Chrome host bind — arc 6885).
+    """
+    from claude_bundles.cdp_reclaim_refuse import cse_id_from_url
     from claude_bundles.cdp_registry_store import write_sessions
     from claude_bundles.cse_session_common import session_key
 
@@ -66,10 +71,19 @@ def stamp_session_ids(
             found = find_session_by_registration(sessions, registration_id)
         key, row = found if found else (None, None)
         if row is None:
-            cse_id = registration_id or f"cse-{lane_thread}"
+            cse_id = cse_id_from_url(chat_url or "") or f"pending-{lane_thread}"
             key = session_key(registration_id=registration_id, thread=lane_thread)
             row = {"cse_id": cse_id, "ids": {}, "obligations": []}
             sessions[key] = row
+        else:
+            # Upgrade conflated registration-as-cse_id when URL arrives later.
+            derived = cse_id_from_url(chat_url or "")
+            if derived and (
+                not row.get("cse_id")
+                or row.get("cse_id") == registration_id
+                or str(row.get("cse_id") or "").startswith("pending-")
+            ):
+                row["cse_id"] = derived
         ids = dict(row.get("ids") or {})
         ids["lane_thread"] = lane_thread
         if chat_url:
