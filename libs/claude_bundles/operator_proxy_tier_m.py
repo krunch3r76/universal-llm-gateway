@@ -157,6 +157,12 @@ propagation:
 Omitted ``proof`` is composed from ``proof_class`` at mint time. ``process_live``
 yields process-identity prose; do not rely on the service's default class.
 
+**Derivation tags (BINDING):** a propagation row ``reason`` carries
+``derived:`` / ``import_path:`` tags **iff** a generator derived the row
+(path-prefix service mint, CONSUMERS mint, or tagged RESIDUE coerce). Hand-authored
+rows in this DIRECTIVE stay **untagged** — do not invent tags. Absence means
+seat-authored; that silence is informative only while every derived row is tagged.
+
 Closeout carries ``propagation[]``, ``row_ids``, and ``executions[]`` per service.
 ``disposition: executed`` only when proof-of-live observed; ``queued`` when manage
 deferred **with a persisted restart intent** (``restart_intent_id`` present — manage

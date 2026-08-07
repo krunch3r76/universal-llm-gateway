@@ -2,6 +2,10 @@
 
 Operators mint structured propagation rows and ULG coordinates drain-gated
 ``sync_restart`` through manage.sock — not via tier-M ``execute`` + ``manage.*``.
+
+Hand-authored rows from this admit path stay **untagged** on ``reason``
+(``derived:`` / ``import_path:`` attach only where a generator ran). Absence of
+tags means seat-authored — do not invent tags here.
 """
 
 from __future__ import annotations

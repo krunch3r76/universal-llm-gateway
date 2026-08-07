@@ -5,6 +5,8 @@ from __future__ import annotations
 from implement_admission.consumer_import_verify import (
     format_verification_tags,
     module_for_lib_path,
+    parse_verification_tags,
+    verification_tags_fragment,
     verify_consumer_import,
 )
 
@@ -43,3 +45,17 @@ def test_tags_are_machine_readable_kv():
         format_verification_tags(derived="consumers", import_path="contradicted")
         == "derived:consumers; import_path:contradicted"
     )
+
+
+def test_parse_verification_tags_round_trip_and_absence():
+    tagged = format_verification_tags(
+        derived="path_prefix", import_path="verified"
+    )
+    reason = f"path-derived obligation; liveness: unknown; {tagged}"
+    assert parse_verification_tags(reason) == {
+        "derived": "path_prefix",
+        "import_path": "verified",
+    }
+    assert verification_tags_fragment(reason) == tagged
+    assert parse_verification_tags("operator restart request via cursor-auto") is None
+    assert verification_tags_fragment("operator restart request via cursor-auto") is None

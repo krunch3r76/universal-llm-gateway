@@ -653,6 +653,10 @@ cursor-auto parses. `authority:` prose in the DIRECTIVE body is **advisory to th
 — it is not parsed for restart policy. To veto auto force, set `allow_self_preempt: false` on
 the propagation row (not prose alone).
 
+**Derivation tags (BINDING):** row `reason` carries `derived:` / `import_path:` **iff** a
+generator derived the row. Hand-authored propagate rows stay untagged — do not invent tags.
+Absence means seat-authored (silence is one meaning only when every derived row is tagged).
+
 **Authoring (a:27541):** `out-of-scope:` must appear on its **own line** — the scope regex is
 EOL-anchored and inline placement is silently ignored.
 

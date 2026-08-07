@@ -201,6 +201,36 @@ def format_verification_tags(
     return f"derived:{derived}; import_path:{import_path}"
 
 
+_VERIFICATION_TAGS_RE = re.compile(
+    r"derived:(?P<derived>consumers|path_prefix|ownership|import_graph);\s*"
+    r"import_path:(?P<import_path>verified|unverified|contradicted)"
+)
+
+
+def parse_verification_tags(text: str | None) -> dict[str, str] | None:
+    """Extract ``derived`` / ``import_path`` tags from residue or row ``reason``.
+
+    Returns ``None`` when absent — absence means seat-authored (or an untagged
+    legacy coerce), not "unknown derivation." Does not invent tags.
+    """
+    match = _VERIFICATION_TAGS_RE.search(str(text or ""))
+    if match is None:
+        return None
+    return {
+        "derived": match.group("derived"),
+        "import_path": match.group("import_path"),
+    }
+
+
+def verification_tags_fragment(text: str | None) -> str | None:
+    """Return the exact ``derived:…; import_path:…`` fragment when present.
+
+    Used by prose→row coerce to preserve tags without inventing a second dialect.
+    """
+    match = _VERIFICATION_TAGS_RE.search(str(text or ""))
+    return match.group(0) if match else None
+
+
 def residue_actions_for_lib_consumers(
     path: str,
     consumers: tuple[str, ...],
@@ -252,7 +282,9 @@ __all__ = [
     "clear_verify_caches",
     "format_verification_tags",
     "module_for_lib_path",
+    "parse_verification_tags",
     "repo_root",
     "residue_actions_for_lib_consumers",
+    "verification_tags_fragment",
     "verify_consumer_import",
 ]

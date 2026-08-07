@@ -4,6 +4,10 @@ Rows are **path-derived obligations** (owed restart + typed proof templates), no
 observed liveness. Mint-time proof text says what to VERIFY after fire; it does
 not claim the process is currently not-live. Legacy ``propagation_residue`` prose
 lines coerce into rows when the structured ``propagation`` field is absent.
+
+**Tag grammar (BINDING):** a row ``reason`` carries ``derived:`` /
+``import_path:`` tags iff a generator derived the row. Absence means a seat
+authored the row directly — never invent tags at the row layer.
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ from pydantic import BaseModel, model_validator
 
 from implement_admission.consumer_import_verify import (
     format_verification_tags,
+    verification_tags_fragment,
     verify_consumer_import,
 )
 from implement_admission.propagation_admit_validation import (
@@ -349,7 +354,11 @@ def rows_from_residue_lines(
     *,
     code_ref: str,
 ) -> tuple[list[PropagationRow], list[str]]:
-    """Coerce legacy ``propagation_residue`` lines into structured rows."""
+    """Coerce legacy ``propagation_residue`` lines into structured rows.
+
+    Preserves ``derived:`` / ``import_path:`` tags when the prose line already
+    carries them; never invents tags the line layer did not derive.
+    """
     rows: list[PropagationRow] = []
     skipped: list[str] = []
     seen: set[str] = set()
@@ -364,6 +373,12 @@ def rows_from_residue_lines(
                 continue
             seen.add(slug)
             pc = default_proof_class(slug)
+            fragment = verification_tags_fragment(text)
+            reason = (
+                f"{_PATH_DERIVED_OBLIGATION_REASON}; {fragment}"
+                if fragment
+                else _PATH_DERIVED_OBLIGATION_REASON
+            )
             rows.append(
                 PropagationRow(
                     service=slug,
@@ -371,7 +386,7 @@ def rows_from_residue_lines(
                     safe_window=default_safe_window(slug),
                     proof=compose_proof(slug, pc),
                     proof_class=pc,
-                    reason=_PATH_DERIVED_OBLIGATION_REASON,
+                    reason=reason,
                 )
             )
             continue
@@ -473,7 +488,11 @@ def rows_from_service_paths(
     *,
     code_ref: str,
 ) -> list[PropagationRow]:
-    """Derive sync_restart obligation rows from touched service Python paths."""
+    """Derive sync_restart obligation rows from touched service Python paths.
+
+    Generator-derived: stamps ``derived:path_prefix; import_path:verified`` so
+    absence of tags on other rows stays informative (seat-authored).
+    """
     rows: list[PropagationRow] = []
     seen: set[str] = set()
     for path in paths:
@@ -482,6 +501,9 @@ def rows_from_service_paths(
             continue
         seen.add(slug)
         pc = default_proof_class(slug)
+        tags = format_verification_tags(
+            derived="path_prefix", import_path="verified"
+        )
         rows.append(
             PropagationRow(
                 service=slug,
@@ -489,7 +511,7 @@ def rows_from_service_paths(
                 safe_window=default_safe_window(slug),
                 proof=compose_proof(slug, pc),
                 proof_class=pc,
-                reason=_PATH_DERIVED_OBLIGATION_REASON,
+                reason=f"{_PATH_DERIVED_OBLIGATION_REASON}; {tags}",
             )
         )
     return rows

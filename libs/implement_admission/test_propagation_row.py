@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from implement_admission.consumer_import_verify import parse_verification_tags
 from implement_admission.propagation_row import (
     MissingProofTemplateError,
     PropagationRow,
@@ -14,6 +15,7 @@ from implement_admission.propagation_row import (
     rows_from_closeout_payload,
     rows_from_lib_consumers,
     rows_from_residue_lines,
+    rows_from_service_paths,
 )
 
 
@@ -50,7 +52,29 @@ def test_legacy_residue_coerces_to_rows():
     assert rows[0].service == "mcp"
     assert rows[0].code_ref == "legacy-sha"
     assert rows[0].safe_window == "standalone_ok"
+    # Untagged prose → untagged row (do not invent tags at coerce).
     assert rows[0].reason == "path-derived obligation; liveness: unknown"
+    assert parse_verification_tags(rows[0].reason) is None
+    assert skipped == []
+
+
+def test_legacy_residue_preserves_line_tags_without_inventing():
+    rows, skipped = rows_from_residue_lines(
+        [
+            'sync_restart: mcp — manage(action="sync_restart", service="mcp"); '
+            "derived:path_prefix; import_path:verified"
+        ],
+        code_ref="tagged-legacy-sha",
+    )
+    assert len(rows) == 1
+    assert rows[0].reason == (
+        "path-derived obligation; liveness: unknown; "
+        "derived:path_prefix; import_path:verified"
+    )
+    assert parse_verification_tags(rows[0].reason) == {
+        "derived": "path_prefix",
+        "import_path": "verified",
+    }
     assert skipped == []
 
 
@@ -165,15 +189,34 @@ def test_default_proof_strings_are_obligation_not_observation():
 
 
 def test_service_path_mint_labels_obligation_not_liveness():
-    from implement_admission.propagation_row import rows_from_service_paths
-
     rows = rows_from_service_paths(
         ["services/git_integration_worker/cursor_auto/handler.py"],
         code_ref="mint-sha",
     )
     assert len(rows) == 1
-    assert rows[0].reason == "path-derived obligation; liveness: unknown"
+    assert rows[0].reason == (
+        "path-derived obligation; liveness: unknown; "
+        "derived:path_prefix; import_path:verified"
+    )
     assert "AFTER restart VERIFY" in rows[0].proof
+
+
+def test_service_path_row_tags_distinguishable_from_hand_authored():
+    """Bare (seat-authored) vs generator-derived rows parse apart programmatically."""
+    derived = rows_from_service_paths(
+        ["services/git_integration_worker/cursor_auto/handler.py"],
+        code_ref="tag-sha",
+    )
+    hand = PropagationRow(
+        service="mcp",
+        code_ref="tag-sha",
+        reason="operator restart request via cursor-auto",
+    )
+    assert parse_verification_tags(derived[0].reason) == {
+        "derived": "path_prefix",
+        "import_path": "verified",
+    }
+    assert parse_verification_tags(hand.reason) is None
 
 
 def test_compose_proof_process_live_giw_is_process_identity_not_openapi():
