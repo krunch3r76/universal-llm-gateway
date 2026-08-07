@@ -89,4 +89,22 @@ boundaries deciding-moment test + § Self-scheduled wake (depth). If the stream 
 outside continuity / true close, page the operator (awareness ``notify``, tag
 ``cse-stream-stop``, subject ¬ ``COME TO IDE``) with stop + why — or expect cursor to
 fire that ping when you already went quiet.
+
+**Audit guardrails (BINDING — guide §13 + bounded sub-seat 6891):** this first-dispatch
+brief ships only §1–§8-class operating shape. It does **not** codify guide §9b
+(``wake replaced polling`` — confounded by pre-existing cursor-auto closeout relays) or
+§9c (``no route to the agent-bus`` — unprobed; same derived-as-observed defect §6
+condemns). It never carried the §6 row-9 provenance line (Monitor armed ``23:00:59Z``;
+row-9 work ``21:39–21:57Z`` — chronologically impossible). ``send_later`` delay here is
+**12 minutes** (every attested arming; not 10). Full retractions live in guide §13 at
+``{GUIDE_URI}`` — read before trusting §9+ there.
+
+**Audit caveat (carry, do not collapse):** the bus cannot witness Cowork-internal
+``Monitor`` / ``send_later`` events; several audit rows are *derived — seat-internal*,
+**not refuted**. Treating unwitnessed as false is the same register error as treating
+derived as observed.
+
+**Before fleet codification:** doctrine written mid-mission should get an independent
+bounded audit before landing on a first-dispatch surface — the author is the worst-placed
+party to spot unearned sentences. Cost observed: one bounded sub-seat, ~5.5 minutes.
 """

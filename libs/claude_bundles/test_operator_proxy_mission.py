@@ -50,6 +50,9 @@ def test_ensure_injects_self_scheduled_wake_guide() -> None:
     assert "does not prevent stopping" in out or "does not prevent the stop" in out
     assert "send_later" in out
     assert "TaskStop" in out
+    assert "Audit guardrails" in out
+    assert "not refuted" in out
+    assert "Before fleet codification" in out
 
 
 def test_ensure_idempotent_when_chips_present() -> None:
