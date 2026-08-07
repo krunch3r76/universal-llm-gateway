@@ -403,3 +403,87 @@ def test_request_resolves_so_what_from_body_when_summary_omitted():
             summary=None,
         )
     assert captured.get("summary") == "ULG gains reliable closeout SMS"
+
+
+def test_request_new_slug_enrolls_lifecycle_active():
+    """A′ coverage: mission lane birth must pass lifecycle_state=active."""
+    captured: dict[str, object] = {}
+
+    def fake_send(**kwargs):
+        captured.update(kwargs)
+        return {
+            "send_path": "new_thread",
+            "thread": {
+                "id": "6901",
+                "slug": "mission-enroll",
+                "bus_lifecycle_state": "active",
+            },
+            "turn": {"id": 1, "thread": "6901", "turn_number": 1},
+        }
+
+    with (
+        patch("tools.agent_bus.request._send_dispatch", side_effect=fake_send),
+        patch(
+            "tools.agent_bus.request.probe_auto_liveness",
+            return_value={"live": False, "reason": "no_live_handler"},
+        ),
+    ):
+        _request_impl(
+            new_slug="mission-enroll",
+            thread=None,
+            to="cursor",
+            subject="DIRECTIVE",
+            body="TYPE: DIRECTIVE",
+            from_agent="web-anthropic",
+            tags=None,
+            sidecar_content=None,
+            sidecar_slug=None,
+            desired_model="auto",
+            desired_effort="medium",
+            contract="implement",
+            require_attended=False,
+            request_id=None,
+            after_turn=0,
+            summary=None,
+        )
+    assert captured.get("lifecycle_state") == "active"
+
+
+def test_request_continue_does_not_pass_lifecycle_state():
+    """Continue path must not send lifecycle_state (send rejects it)."""
+    captured: dict[str, object] = {}
+
+    def fake_send(**kwargs):
+        captured.update(kwargs)
+        return {
+            "send_path": "continue",
+            "thread": {"id": "6885", "slug": "existing"},
+            "turn": {"id": 2, "thread": "6885", "turn_number": 2},
+        }
+
+    with (
+        patch("tools.agent_bus.request._send_dispatch", side_effect=fake_send),
+        patch(
+            "tools.agent_bus.request.probe_auto_liveness",
+            return_value={"live": False, "reason": "no_live_handler"},
+        ),
+    ):
+        _request_impl(
+            new_slug=None,
+            thread="6885",
+            to="cursor",
+            subject="follow-up",
+            body="continue",
+            from_agent="web-anthropic",
+            tags=None,
+            sidecar_content=None,
+            sidecar_slug=None,
+            desired_model="auto",
+            desired_effort="medium",
+            contract="answer",
+            require_attended=False,
+            request_id=None,
+            after_turn=1,
+            summary=None,
+        )
+    assert captured.get("lifecycle_state") is None

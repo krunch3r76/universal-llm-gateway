@@ -130,6 +130,9 @@ def _request_impl(
 
     merged_tags = _merge_lane_tags(tags)
     resolved_summary = resolve_so_what_summary(summary, body)
+    # Mission / operator-proxy private lanes must enter A′ candidacy at birth.
+    # NULL bus_lifecycle_state means unenrolled; with-turn birth → active
+    # (legal None→active). Do not use pending — that path expects dispatch-admit.
     send_result = _send_dispatch(
         new_slug=new_slug,
         thread=thread,
@@ -139,6 +142,7 @@ def _request_impl(
         from_agent=from_agent,
         summary=resolved_summary,
         tags=merged_tags,
+        lifecycle_state="active" if new_slug is not None else None,
         after_turn=after_turn,
         sidecar_content=sidecar_content,
         sidecar_slug=sidecar_slug,

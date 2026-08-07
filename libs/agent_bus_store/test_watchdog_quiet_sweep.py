@@ -96,3 +96,81 @@ def test_sweep_emits_and_posts_once(bus_db) -> None:
     ]
     assert len(quiet_turns) == 1
     assert quiet_turns[0]["to_agent"] == seat
+
+
+def test_mission_lane_active_birth_in_sweep_candidacy(bus_db) -> None:
+    """AC: newly created mission lane with active lifecycle is A′ candidate."""
+    from agent_bus_store.quiet_sweep import _candidate_thread_ids
+
+    thread_row, *_ = create_thread_with_turn(
+        slug="mission-a-prime-cand",
+        from_agent="web-anthropic",
+        to_agent="cursor-auto",
+        subject="TYPE: DIRECTIVE",
+        body="mission lane birth",
+        tags=["lane:cursor-auto", "bus_lifecycle:persistent"],
+        lifecycle_state="active",
+    )
+    thread_id = thread_row["id"]
+    assert thread_row["bus_lifecycle_state"] == "active"
+    assert thread_id in _candidate_thread_ids()
+
+
+def test_null_lifecycle_not_in_sweep_candidacy(bus_db) -> None:
+    """NULL remains unenrolled — predicate must not widen to include it."""
+    from agent_bus_store.quiet_sweep import _candidate_thread_ids
+
+    thread_row, *_ = create_thread_with_turn(
+        slug="unenrolled-null",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        subject="plain send",
+        body="no lifecycle",
+    )
+    thread_id = thread_row["id"]
+    assert thread_row["bus_lifecycle_state"] is None
+    assert thread_id not in _candidate_thread_ids()
+
+
+def test_migration_006_backfills_null_mission_lanes(bus_db) -> None:
+    """Backfill enrolls lane:cursor-auto NULL rows; leaves other NULLs alone."""
+    from agent_bus_store.db.migrations import migration_006
+    from agent_bus_store.quiet_sweep import _candidate_thread_ids
+
+    mission, *_ = create_thread_with_turn(
+        slug="pre-enroll-mission",
+        from_agent="web-anthropic",
+        to_agent="cursor-auto",
+        subject="old mission",
+        body="unenrolled at birth",
+        tags=["lane:cursor-auto", "bus_lifecycle:persistent"],
+    )
+    other, *_ = create_thread_with_turn(
+        slug="pre-enroll-other",
+        from_agent="cursor",
+        to_agent="web-anthropic",
+        subject="standing",
+        body="not a mission lane",
+        tags=["project:ulg"],
+    )
+    mission_id = mission["id"]
+    other_id = other["id"]
+    assert mission["bus_lifecycle_state"] is None
+    assert other["bus_lifecycle_state"] is None
+
+    with connect() as conn:
+        migration_006.run(conn)
+
+    with connect() as conn:
+        m_state = conn.execute(
+            "SELECT bus_lifecycle_state FROM threads WHERE id = ?",
+            (mission_id,),
+        ).fetchone()["bus_lifecycle_state"]
+        o_state = conn.execute(
+            "SELECT bus_lifecycle_state FROM threads WHERE id = ?",
+            (other_id,),
+        ).fetchone()["bus_lifecycle_state"]
+    assert m_state == "active"
+    assert o_state is None
+    assert mission_id in _candidate_thread_ids()
+    assert other_id not in _candidate_thread_ids()
