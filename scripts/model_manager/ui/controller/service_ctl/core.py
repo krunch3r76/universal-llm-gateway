@@ -32,6 +32,7 @@ from ..restart_intent_store import RestartIntentStore
 from ..service_config import (
     GATEWAY_DIR,
     NODES_DIR,
+    apply_checkout_code_version,
     build_service_env,
     cdp_ask_manage_state,
     cdp_ask_url_config,
@@ -551,6 +552,7 @@ class ServiceController:
             return ownership_error
         env = build_service_env(self._root, node_env_path)
         env["COMPOSE_PROJECT_NAME"] = f"edge-{node_id}"
+        apply_checkout_code_version(env, self._root)
 
         result = await asyncio.create_subprocess_exec(
             "docker",

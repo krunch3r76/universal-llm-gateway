@@ -81,6 +81,27 @@ def _git_head_attributable() -> bool:
     return age <= _ATTRIBUTION_WINDOW_S
 
 
+def read_checkout_head(root: Path) -> str | None:
+    """Return checkout ``HEAD`` for sealing a child/container env, or None.
+
+    Fresh ``git rev-parse`` — do not reuse ``resolve_code_version`` (import-time
+    LRU + attribution window describe the caller process, not the child).
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning("checkout HEAD unavailable (%s): %s", root, exc)
+        return None
+    sha = proc.stdout.strip()
+    return sha or None
+
+
 @lru_cache(maxsize=1)
 def resolve_code_version() -> str:
     """Return the process-start SHA or ``unknown`` when resolution fails."""
@@ -102,18 +123,7 @@ def resolve_code_version() -> str:
     except RuntimeError as exc:
         logger.warning("code_version workspace root unavailable: %s", exc)
         return _UNKNOWN
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=5.0,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        logger.warning("code_version git rev-parse failed: %s", exc)
-        return _UNKNOWN
-    sha = proc.stdout.strip()
+    sha = read_checkout_head(root)
     return sha or _UNKNOWN
 
 
@@ -139,6 +149,7 @@ resolve_code_version()
 __all__ = [
     "normalize_code_ref",
     "process_age_s",
+    "read_checkout_head",
     "reset_code_version_cache_for_tests",
     "resolve_code_version",
 ]

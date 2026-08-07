@@ -64,6 +64,10 @@ services:
       MODEL_PATH_ROOT: /golem/models
       WORKSPACE_ROOT: /app
       PYTHONPATH: /app/libs
+      # Host seals checkout HEAD at compose-up (manage/relay/update). Container
+      # has no git binary and no .git mount — without this, resolve_code_version
+      # falls through to the "unknown" sentinel.
+      ULG_CODE_VERSION: ${ULG_CODE_VERSION:-}
 
       STARGATE_CONFIG: /app/config/templates/edge-stargate.yaml
       STARGATE_UNIX_SOCKET: /tmp/universal-protocol/edge-${NODE_ID}.sock

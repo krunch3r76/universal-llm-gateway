@@ -14,6 +14,7 @@ from universal_event_bus.events.debug import emit_debug_event
 
 from scripts.model_manager import relay_state
 from scripts.model_manager.ui.controller.service_config import (
+    apply_checkout_code_version,
     ensure_relay_dirs,
     load_env_file,
 )
@@ -207,6 +208,7 @@ def _run_start(
         return 1
     env = _build_env(node_env)
     env["COMPOSE_PROJECT_NAME"] = f"edge-{node_id}"
+    apply_checkout_code_version(env, _ROOT)
     # Stop any existing container *after* socket dir is guaranteed correct.
     # The recovery inside ensure_socket_dir() already stops the edge container
     # if needed to release the bind mount.
@@ -303,6 +305,7 @@ def _run_edge_only(node_id: str, node_env: dict[str, str]) -> int:
         return 1
     env = _build_env(node_env)
     env["COMPOSE_PROJECT_NAME"] = f"edge-{node_id}"
+    apply_checkout_code_version(env, _ROOT)
     _stop_existing_container(node_id, env)
     result = subprocess.run(
         [

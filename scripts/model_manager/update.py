@@ -26,6 +26,7 @@ from urllib.error import URLError
 from urllib.request import urlopen
 
 from scripts.model_manager.ui.controller.service_config import (
+    apply_checkout_code_version,
     build_service_env,
     ensure_bind_mount_dirs,
     ensure_node_env,
@@ -175,6 +176,7 @@ def restart_local_edge(node_id: str = "localhost") -> int:
     model_path = Path(node_env.get("MODEL_PATH", str(Path.home() / ".models")))
     env = build_service_env(_ROOT, node_env_path)
     env["COMPOSE_PROJECT_NAME"] = f"edge-{node_id}"
+    apply_checkout_code_version(env, _ROOT)
 
     # Stop before claiming bind-mount sources (same race as relay.py Fix 1).
     subprocess.run(

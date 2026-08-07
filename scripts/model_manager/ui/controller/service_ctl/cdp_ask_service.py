@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import subprocess
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -28,24 +27,10 @@ _SERVICE_NAME = "cdp-ask"
 
 
 def _spawn_code_version(root: Path) -> str | None:
-    """Return checkout HEAD for the child env, or None when git is unavailable.
+    """Return checkout HEAD for the child env, or None when git is unavailable."""
+    from deploy_identity.code_version import read_checkout_head
 
-    Fresh ``git rev-parse`` — do not reuse manage-process ``resolve_code_version``
-    (import-time LRU + attribution window describe the parent, not the child).
-    """
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=5.0,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        logger.warning("%s spawn code_version unavailable: %s", _SERVICE_NAME, exc)
-        return None
-    sha = proc.stdout.strip()
-    return sha or None
+    return read_checkout_head(root)
 
 
 def _bind_config() -> tuple[str, int] | None:

@@ -162,6 +162,25 @@ def build_service_env(
     return env
 
 
+def apply_checkout_code_version(
+    env: dict[str, str], workspace_root: Path
+) -> dict[str, str]:
+    """Seal ``ULG_CODE_VERSION`` from checkout HEAD for edge compose passthrough.
+
+    The gpu-edge container has no ``git`` binary and no ``.git`` mount; without
+    this seal ``resolve_code_version()`` returns the ``unknown`` sentinel.
+    Idempotent when the caller already set a non-empty override.
+    """
+    if env.get("ULG_CODE_VERSION", "").strip():
+        return env
+    from deploy_identity.code_version import read_checkout_head
+
+    sha = read_checkout_head(workspace_root)
+    if sha:
+        env["ULG_CODE_VERSION"] = sha
+    return env
+
+
 _MANAGE_TUI_LOG_DIR = Path("/tmp/logs/tui")
 
 
