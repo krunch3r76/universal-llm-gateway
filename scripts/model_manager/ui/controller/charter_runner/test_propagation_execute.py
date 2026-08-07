@@ -74,14 +74,25 @@ def test_process_live_registry_excludes_unprobeable() -> None:
     )
 
     probeable = process_live_probeable_services()
-    assert "cdp_ask" not in probeable
-    assert ("cdp_ask", "process_live") not in PROOF_PROBE_REGISTRY
-    for slug in ("git_integration_worker", "mcp", "cortex_api"):
+    assert "email_bridge" not in probeable
+    assert ("email_bridge", "process_live") not in PROOF_PROBE_REGISTRY
+    for slug in (
+        "git_integration_worker",
+        "mcp",
+        "cortex_api",
+        "gateway",
+        "stargate",
+        "rag",
+        "cloud_proxy",
+        "event_service",
+        "cdp_ask",
+        "agent_bus",
+    ):
         assert slug in probeable
         assert (slug, "process_live") in PROOF_PROBE_REGISTRY
 
     row = PropagationRow(
-        service="cdp_ask",
+        service="email_bridge",
         code_ref=_SHA,
         proof_class="process_live",
         proof_class_requested="process_live",
@@ -90,7 +101,7 @@ def test_process_live_registry_excludes_unprobeable() -> None:
     result = dispatch_proof_probe(row)
     assert result.error is not None
     assert result.error.startswith("proof_class_unsupported:")
-    assert "service=cdp_ask" in result.error
+    assert "service=email_bridge" in result.error
     assert result.payload is None
 
 
@@ -100,12 +111,12 @@ def test_process_live_registry_unlocks_when_fetcher_added(monkeypatch) -> None:
 
     monkeypatch.setitem(
         propagation_probe.PROCESS_LIVE_FETCHERS,
-        "cdp_ask",
+        "email_bridge",
         lambda: {"code_version": "deadbeef", "pid": 9},
     )
     rebuilt = _build_proof_probe_registry()
-    assert ("cdp_ask", "process_live") in rebuilt
-    assert "cdp_ask" in propagation_probe.process_live_probeable_services()
+    assert ("email_bridge", "process_live") in rebuilt
+    assert "email_bridge" in propagation_probe.process_live_probeable_services()
 
 
 def test_served_artifact_dispatch_populates_fingerprint(monkeypatch) -> None:

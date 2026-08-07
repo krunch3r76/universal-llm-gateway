@@ -71,10 +71,11 @@ def test_legal_proof_classes_unprobeable_excludes_process_live():
         process_live_probeable_services,
     )
 
-    assert "cdp_ask" not in process_live_probeable_services()
-    legal = legal_proof_classes("cdp_ask")
+    # email_bridge is permanently out of process_live (no fetcher / refuse).
+    assert "email_bridge" not in process_live_probeable_services()
+    legal = legal_proof_classes("email_bridge")
     assert "process_live" not in legal
-    assert validate_proof_class("cdp_ask", "process_live") is not None
+    assert validate_proof_class("email_bridge", "process_live") is not None
 
 
 def test_legal_proof_classes_probeable_includes_process_live():
