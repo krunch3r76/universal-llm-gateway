@@ -7,6 +7,7 @@ import contextlib
 import logging
 import os
 from collections.abc import AsyncIterator
+from typing import Any
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -14,6 +15,8 @@ from fastapi import FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+
+from deploy_identity.code_version import resolve_code_version
 
 from .db import init_db
 from .reconcile import reconcile_orphaned_dispatches
@@ -91,8 +94,13 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
         )
 
     @app.get("/health")
-    async def health() -> dict[str, str]:
-        return {"status": "ok"}
+    async def health() -> dict[str, Any]:
+        """Liveness + code identity for propagate verification."""
+        return {
+            "status": "ok",
+            "code_version": resolve_code_version(),
+            "pid": os.getpid(),
+        }
 
     app.include_router(messages_router)
     app.include_router(turns_router)
