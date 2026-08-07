@@ -79,13 +79,15 @@ def test_code_ref_relation_ambiguous_prefix_not_equal(
     head = _head()
     short = head[:8]
 
+    from deploy_identity.code_ref_relation import resolve_commit_sha as real_resolve
+
     def _ambiguous_ref(value: str) -> str | None:
         if value == short:
             return None
-        return _resolve_commit_sha(value)
+        return real_resolve(value)
 
     monkeypatch.setattr(
-        "deploy_identity.code_ref_relation._resolve_commit_sha",
+        "deploy_identity.code_ref_relation.resolve_commit_sha",
         _ambiguous_ref,
     )
     assert code_ref_relation(short, head) == "unrelated"

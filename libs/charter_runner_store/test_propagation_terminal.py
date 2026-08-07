@@ -47,8 +47,8 @@ def test_queued_row_closes_on_matching_probe(tmp_path, monkeypatch) -> None:
     assert list_open_rows() == []
 
 
-def test_unguarded_mismatch_leaves_row_open(tmp_path, monkeypatch) -> None:
-    """No restart boundary ⇒ a mismatch cannot be attributed to the new generation."""
+def test_unguarded_unrelated_fails_deploy_line(tmp_path, monkeypatch) -> None:
+    """Valid but unrelated ref → deploy-line fail (arc 6885 B); not eternal open."""
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
     expected = "abc1230000000000000000000000000000000000"
     upsert_open_rows([_row(code_ref=expected)])
@@ -58,13 +58,15 @@ def test_unguarded_mismatch_leaves_row_open(tmp_path, monkeypatch) -> None:
         return {"code_version": "other0000000000000000000000000000000000"}
 
     result = settle_open_row(row, probe)
-    assert result.outcome == "unsettled"
-    assert "unrelated or unresolvable" in result.detail
-    assert len(list_open_rows()) == 1
+    assert result.outcome == "failed"
+    assert "deploy-line" in result.detail
+    assert list_open_rows() == []
 
 
-def test_guarded_mismatch_without_uptime_is_not_terminal(tmp_path, monkeypatch) -> None:
-    """A boundary alone is not enough — without ``uptime_s`` the reading is unattributable."""
+def test_guarded_unrelated_fails_deploy_line_without_uptime(
+    tmp_path, monkeypatch
+) -> None:
+    """Deploy-line fail does not require generation attribution (arc 6885 B)."""
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
     expected = "abc1230000000000000000000000000000000000"
     upsert_open_rows([_row(code_ref=expected)])
@@ -79,8 +81,8 @@ def test_guarded_mismatch_without_uptime_is_not_terminal(tmp_path, monkeypatch) 
         defer_if_unreachable=True,
         settle_not_before_monotonic=time.monotonic() - 30.0,
     )
-    assert result.outcome == "deferred"
-    assert len(list_open_rows()) == 1
+    assert result.outcome == "failed"
+    assert list_open_rows() == []
 
 
 def test_half_unreachable_composite_probe_is_indeterminate(tmp_path, monkeypatch) -> None:
@@ -122,7 +124,8 @@ def test_settle_is_idempotent_on_second_pass(tmp_path, monkeypatch) -> None:
 
 def test_head_resolves_at_mint(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
-    resolved = "resolved0000000000000000000000000000000000"
+    # Valid 40-hex so env override + mint resolve both accept it.
+    resolved = "abcdef0123456789abcdef0123456789abcdef01"
     monkeypatch.setenv("ULG_CODE_VERSION", resolved)
     reset_code_version_cache_for_tests()
     row_id = upsert_open_rows([_row(code_ref="HEAD")])[0]
@@ -183,11 +186,10 @@ def test_reconcile_before_after_counts(tmp_path, monkeypatch) -> None:
     report = reconcile_all_open_rows(probe)
     assert report["before_open"] == 2
     assert report["closed"] == 1
-    # The unmatched row is NOT failed: an unguarded sweep cannot tell a genuine
-    # mismatch from a probe of the outgoing generation, and fail_row is terminal.
-    assert report["failed"] == 0
-    assert report["unsettled"] == 1
-    assert report["after_open"] == 1
+    # Unrelated resolvable tip is now a deploy-line fail (arc 6885 B), not
+    # an eternal unsettled open.
+    assert report["failed"] == 1
+    assert report["after_open"] == 0
 
 
 def test_outgoing_generation_probe_defers_on_mismatch(tmp_path, monkeypatch) -> None:
@@ -432,12 +434,8 @@ def test_ancestry_satisfied_descendant_version_closes_not_failed(
     assert list_open_rows() == []
 
 
-def test_unrelated_sweep_does_not_fail_with_boundary(tmp_path, monkeypatch) -> None:
-    """Case (iii): unrelated ref must not terminally fail even with attribution."""
-    from charter_runner_store.propagation_version_satisfaction import (
-        DEFER_UNRELATED_OR_UNRESOLVABLE,
-    )
-
+def test_unrelated_sweep_fails_deploy_line_with_boundary(tmp_path, monkeypatch) -> None:
+    """Defect B: resolvable unrelated tip fails deploy-line (not code_ref class)."""
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
     expected = "abc1230000000000000000000000000000000000"
     upsert_open_rows([_row(code_ref=expected)])
@@ -457,10 +455,9 @@ def test_unrelated_sweep_does_not_fail_with_boundary(tmp_path, monkeypatch) -> N
         defer_if_unreachable=True,
         settle_not_before_monotonic=settle_not_before,
     )
-    assert result.outcome == "deferred"
-    assert result.outcome != "failed"
-    assert len(list_open_rows()) == 1
-    assert list_open_rows()[0].defer_reason == DEFER_UNRELATED_OR_UNRESOLVABLE
+    assert result.outcome == "failed"
+    assert "deploy-line" in result.detail
+    assert list_open_rows() == []
 
 
 def test_reconcile_sweep_ancestry_row_closes(tmp_path, monkeypatch) -> None:

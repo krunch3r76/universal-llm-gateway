@@ -10,6 +10,11 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from charter_runner_store.propagation_code_ref_mint import (
+    UnresolvableCodeRefError,
+    admit_error_for_unresolvable_code_ref,
+    require_resolvable_code_ref,
+)
 from deploy_identity.code_version import normalize_code_ref, resolve_code_version
 from implement_admission.propagation_admit_validation import (
     LEGAL_SAFE_WINDOW_LIST,
@@ -108,7 +113,9 @@ def _rows_from_shorthand(body: str) -> tuple[PropagationRow, ...]:
         return ()
     code_ref_match = _CODE_REF_FIELD_RE.search(body)
     raw_ref = code_ref_match.group(1).strip() if code_ref_match else resolve_code_version()
-    code_ref = normalize_code_ref(raw_ref)
+    code_ref = require_resolvable_code_ref(
+        normalize_code_ref(raw_ref), service=service
+    )
     proof_class = default_proof_class(service)
     return (
         PropagationRow(
@@ -120,6 +127,23 @@ def _rows_from_shorthand(body: str) -> tuple[PropagationRow, ...]:
             reason="operator restart request via cursor-auto",
         ),
     )
+
+
+def _validate_admitted_rows(
+    rows: tuple[PropagationRow, ...],
+) -> tuple[tuple[PropagationRow, ...], dict[str, Any] | None]:
+    """Resolve every row's code_ref; refuse the admit on the first non-object."""
+    resolved: list[PropagationRow] = []
+    for row in rows:
+        try:
+            sha = require_resolvable_code_ref(row.code_ref, service=row.service)
+        except UnresolvableCodeRefError:
+            return (), admit_error_for_unresolvable_code_ref(row.code_ref)
+        if sha == row.code_ref:
+            resolved.append(row)
+        else:
+            resolved.append(row.model_copy(update={"code_ref": sha}))
+    return tuple(resolved), None
 
 
 def admit_propagate_body(body: str) -> PropagateAdmission:
@@ -138,9 +162,17 @@ def admit_propagate_body(body: str) -> PropagateAdmission:
         rows, flags, block_error = _rows_from_structured_block(text)
         if block_error is not None:
             return PropagateAdmission(flags=flags, error=block_error)
-        return PropagateAdmission(rows=rows, flags=flags)
+        validated, ref_error = _validate_admitted_rows(rows)
+        if ref_error is not None:
+            return PropagateAdmission(flags=flags, error=ref_error)
+        return PropagateAdmission(rows=validated, flags=flags)
 
-    shorthand_rows = _rows_from_shorthand(text)
+    try:
+        shorthand_rows = _rows_from_shorthand(text)
+    except UnresolvableCodeRefError as exc:
+        return PropagateAdmission(
+            error=admit_error_for_unresolvable_code_ref(exc.code_ref),
+        )
     if shorthand_rows:
         return PropagateAdmission(rows=shorthand_rows)
 

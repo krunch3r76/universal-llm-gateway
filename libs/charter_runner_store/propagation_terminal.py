@@ -24,13 +24,10 @@ from .propagation_ledger import (
     fail_row,
     list_open_rows,
     set_defer_reason,
-    set_open_proof_payload,
     set_settle_boundary,
 )
-from .propagation_version_satisfaction import (
-    DEFER_UNRELATED_OR_UNRESOLVABLE,
-    classify_version_satisfaction,
-)
+from .propagation_terminal_unsatisfiable import try_terminalize_unsatisfiable
+from .propagation_version_satisfaction import classify_version_satisfaction
 
 logger = get_logger(__name__)
 
@@ -329,39 +326,17 @@ def settle_open_row(
             detail=f"stale code: expected {row.code_ref} observed {observed!r}",
         )
 
-    if satisfaction.case == "unrelated_or_unresolvable":
-        if determination == "indeterminate":
-            reason = _INDETERMINATE_PROBE
-            detail = "probe carried no readable code_version — row left open"
-        else:
-            reason = DEFER_UNRELATED_OR_UNRESOLVABLE
-            detail = (
-                f"unrelated or unresolvable "
-                f"(expected {row.code_ref} observed {observed!r}; "
-                f"relation={relation}) — {satisfaction.reader_entitlement}"
-            )
-        observation = {
-            **payload,
-            "expected_code_ref": row.code_ref,
-            "observed_code_version": observed,
-            "code_ref_relation": relation,
-            "version_satisfaction_case": satisfaction.case,
-        }
-        if defer_if_unreachable:
-            set_open_proof_payload(
-                row.row_id,
-                proof_payload=observation,
-                defer_reason=reason,
-            )
-        else:
-            set_open_proof_payload(row.row_id, proof_payload=observation)
-        return SettleResult(
-            row_id=row.row_id,
-            service=row.service,
-            code_ref=row.code_ref,
-            outcome="deferred" if defer_if_unreachable else "unsettled",
-            detail=detail,
-        )
+    unsat = try_terminalize_unsatisfiable(
+        row,
+        payload=payload,
+        observed=observed,
+        satisfaction=satisfaction,
+        determination=determination,
+        defer_if_unreachable=defer_if_unreachable,
+        settle_result_cls=SettleResult,
+    )
+    if unsat is not None:
+        return unsat
 
     # Stale or contradicted reading without attribution — non-terminal.
     if determination == "contradicted":

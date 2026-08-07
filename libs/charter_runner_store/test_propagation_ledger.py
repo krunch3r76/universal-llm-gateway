@@ -90,7 +90,7 @@ def test_stale_observation_fails_without_rewriting_intent(tmp_path, monkeypatch)
     assert payload["observed_code_version"] == observed
 
 
-def test_unrelated_observation_defers_with_observed_version_payload(
+def test_unrelated_observation_fails_deploy_line_without_rewriting_intent(
     tmp_path, monkeypatch
 ) -> None:
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
@@ -103,12 +103,9 @@ def test_unrelated_observation_defers_with_observed_version_payload(
         return {"code_version": observed}
 
     result = settle_open_row(row, probe, defer_if_unreachable=True)
-    assert result.outcome == "deferred"
+    assert result.outcome == "failed"
     assert result.code_ref == intent
-    assert observed in result.detail
-    still_open = list_open_rows()
-    assert len(still_open) == 1
-    assert still_open[0].code_ref == intent
+    assert list_open_rows() == []
 
     db = open_ledger_db()
     try:
@@ -119,7 +116,9 @@ def test_unrelated_observation_defers_with_observed_version_payload(
         stored = cur.fetchone()
     finally:
         db.close()
-    assert stored["status"] == "open"
+    assert stored["status"] == "failed"
     assert stored["code_ref"] == intent
     payload = json.loads(stored["proof_payload"])
     assert payload["observed_code_version"] == observed
+    assert payload["failure_reason"] == "unsatisfiable_deploy_line"
+    assert payload["status_claim_kind"] == "observed_of_attempt"

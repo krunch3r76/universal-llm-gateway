@@ -1,8 +1,12 @@
-"""Three-case version-satisfaction machine for propagation ledger terminalization.
+"""Version-satisfaction cases for propagation ledger terminalization.
 
 Predicate cause (git relation between row ``code_ref`` and probed ``code_version``)
 is separate from gate conditions (outgoing generation, process identity). This
 module binds only the relation→case mapping; callers apply gates per case.
+
+Defect B (arc 6885): ``unresolvable`` (not a git object) is distinct from
+``unrelated`` (valid commit, no ancestry to observed). Collapsing them trained
+readers to ignore ``open``.
 """
 
 from __future__ import annotations
@@ -10,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from deploy_identity import code_ref_relation as code_ref_relation_mod
 from deploy_identity.code_ref_relation import (
     CodeRefRelation,
     code_ref_relation_from_observed,
@@ -18,13 +23,16 @@ from deploy_identity.code_ref_relation import (
 VersionSatisfactionCase = Literal[
     "exact_match",
     "ancestry_satisfied",
-    "unrelated_or_unresolvable",
+    "unresolvable",
+    "unrelated",
     "stale_code",
 ]
 
 # Defer tokens persisted on open rows — not terminal statuses.
 DEFER_ANCESTRY_SATISFIED = "version_superseded_by_newer_code"
+# Legacy token (pre-split); retained for reading older open-row defer_reason values.
 DEFER_UNRELATED_OR_UNRESOLVABLE = "version_relation_unrelated_or_unresolvable"
+DEFER_UNRELATED = "version_relation_unrelated"
 
 _CASE_READER_ENTITLEMENT: dict[VersionSatisfactionCase, str] = {
     "exact_match": (
@@ -38,9 +46,15 @@ _CASE_READER_ENTITLEMENT: dict[VersionSatisfactionCase, str] = {
         "liveness oracle — ask observe_code_ref_live (fresh process probe) "
         "for is-code_ref-live."
     ),
-    "unrelated_or_unresolvable": (
-        "No git ancestry links the row code_ref to the observed version, "
-        "or the ref could not be resolved — not a merits failure."
+    "unresolvable": (
+        "The row code_ref is not a git commit object — proof can never be met "
+        "by ordinary restart. This is an attempt defect (STATUS_CLAIM_KIND="
+        "observed_of_attempt), not pending-proof debt."
+    ),
+    "unrelated": (
+        "The row code_ref resolves but shares no git ancestry with the observed "
+        "version — typically an undeployed branch tip. Ordinary deploy-line "
+        "restarts will not satisfy it."
     ),
     "stale_code": (
         "Observed code is older than the row target — a merits mismatch "
@@ -62,20 +76,24 @@ def classify_version_satisfaction(
     code_ref: str,
     observed: str | None,
 ) -> VersionSatisfaction:
-    """Map ``(code_ref, observed)`` to one of the three terminal-policy cases.
+    """Map ``(code_ref, observed)`` to a terminal-policy case.
 
-    ``stale_code`` (observed is an ancestor of ``code_ref``) is the merits-failure
-    path and is distinct from case (iii).
+    ``unresolvable`` (expected ref is not a commit object) is distinct from
+    ``unrelated`` (valid ref, no ancestry). ``stale_code`` remains the
+    merits-failure path when observed is an ancestor of ``code_ref``.
     """
     relation = code_ref_relation_from_observed(code_ref, observed)
-    if relation == "equal":
-        case: VersionSatisfactionCase = "exact_match"
+    if code_ref_relation_mod.resolve_commit_sha(str(code_ref or "").strip()) is None:
+        case: VersionSatisfactionCase = "unresolvable"
+    elif relation == "equal":
+        case = "exact_match"
     elif relation == "ancestor":
         case = "ancestry_satisfied"
     elif relation == "descendant-of-observed":
         case = "stale_code"
     else:
-        case = "unrelated_or_unresolvable"
+        # Includes relation == "unknown" (no observed) and true unrelated.
+        case = "unrelated"
     return VersionSatisfaction(
         case=case,
         relation=relation,
@@ -85,6 +103,7 @@ def classify_version_satisfaction(
 
 __all__ = [
     "DEFER_ANCESTRY_SATISFIED",
+    "DEFER_UNRELATED",
     "DEFER_UNRELATED_OR_UNRESOLVABLE",
     "VersionSatisfaction",
     "VersionSatisfactionCase",

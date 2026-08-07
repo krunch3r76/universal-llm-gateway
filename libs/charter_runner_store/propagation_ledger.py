@@ -16,9 +16,15 @@ from implement_admission.propagation_row import (
 )
 
 from .db import execute_with_retry, open_ledger_db
+from .propagation_attempt_status import STATUS_CLAIM_KIND
+from .propagation_code_ref_mint import mint_row_with_resolved_code_ref
 
 # Open-row proof is always an unperformed obligation (row-17 bind B).
 PROOF_KIND_OBLIGATION = "obligation"
+
+# Ledger ``status`` is an attempt outcome (Packet D), not standing fleet debt.
+# Import stays local so readers see the bind next to status writers.
+_STATUS_CLAIM_KIND = STATUS_CLAIM_KIND
 
 
 class PerformedAncestryProofError(ValueError):
@@ -62,14 +68,6 @@ DEFER_HARVEST_WANTED = "harvest_wanted"
 STALE_CONSUMPTION_CLAIM_S = 600.0
 
 
-def _mint_row(row: PropagationRow) -> PropagationRow:
-    """Resolve symbolic code_ref (HEAD) before persistence."""
-    resolved = normalize_code_ref(row.code_ref)
-    if resolved == row.code_ref:
-        return row
-    return row.model_copy(update={"code_ref": resolved})
-
-
 def upsert_open_rows(
     rows: list[PropagationRow],
     *,
@@ -77,13 +75,18 @@ def upsert_open_rows(
 ) -> list[str]:
     """Insert or refresh *open* obligation rows; return stable event ids.
 
-    Mint-boundary: open-row ``proof`` is an obligation. Persisting a past-tense
+    Mint-boundary: ``code_ref`` must resolve to a git commit (HEAD → concrete
+    SHA). Non-objects raise
+    :class:`~.propagation_code_ref_mint.UnresolvableCodeRefError` — no row.
+
+    Open-row ``proof`` is an obligation. Persisting a past-tense
     performed-ancestry claim (``ancestry satisfied``) raises
     :class:`PerformedAncestryProofError` — the check has not run at queue time.
 
     ``ON CONFLICT … WHERE status='open'`` refuses to overwrite terminal events.
-    That freeze is correct under immutable-event semantics; it is not a
-    liveness oracle — use :func:`charter_runner_store.propagation_liveness.observe_code_ref_live`.
+    That freeze is correct under immutable-event semantics
+    (``STATUS_CLAIM_KIND=observed_of_attempt``); it is not a liveness oracle —
+    use :func:`charter_runner_store.propagation_liveness.observe_code_ref_live`.
     """
     if not rows:
         return []
@@ -93,7 +96,7 @@ def upsert_open_rows(
     row_ids: list[str] = []
     try:
         for raw in rows:
-            row = _mint_row(raw)
+            row = mint_row_with_resolved_code_ref(raw)
             if proof_claims_performed_ancestry(row.proof):
                 raise PerformedAncestryProofError(
                     "open-row proof must be an obligation, not a performed check; "
@@ -280,36 +283,6 @@ def set_settle_boundary(
             db.close()
 
 
-def reopen_failed_row(
-    row_id: str,
-    *,
-    reason: str,
-    conn: sqlite3.Connection | None = None,
-) -> bool:
-    """Revert a wrongly failed row to open — clears terminal proof, keeps history in reason."""
-    own_conn = conn is None
-    db = conn or open_ledger_db()
-    now = time.time()
-    try:
-        cur = execute_with_retry(
-            db,
-            """
-            UPDATE propagation_ledger
-            SET status='open',
-                proof_payload=NULL,
-                closed_at=NULL,
-                defer_reason=?,
-                updated_at=?
-            WHERE row_id=? AND status='failed'
-            """,
-            (reason, now, row_id),
-        )
-        return cur.rowcount > 0
-    finally:
-        if own_conn:
-            db.close()
-
-
 def reopen_closed_row(
     row_id: str,
     *,
@@ -351,14 +324,18 @@ def fail_row(
 
     Records the probe snapshot that contradicted the owed ``code_ref`` at that
     instant. ``status=failed`` is :data:`~.propagation_attempt_status.STATUS_FAILED`
-    (Packet D / ``STATUS_CLAIM_KIND=observed_of_attempt``) — not durable
-    current not-live. Liveness questions go through
+    — an *observed_of_attempt* outcome (``STATUS_CLAIM_KIND``), not durable
+    current not-live / standing fleet debt. Liveness questions go through
     :func:`charter_runner_store.propagation_liveness.observe_code_ref_live`.
     """
     own_conn = conn is None
     db = conn or open_ledger_db()
     now = time.time()
-    payload = {**proof_payload, "failure_reason": reason}
+    payload = {
+        **proof_payload,
+        "failure_reason": reason,
+        "status_claim_kind": _STATUS_CLAIM_KIND,
+    }
     try:
         execute_with_retry(
             db,
@@ -384,10 +361,15 @@ def close_row(
     proof_payload: dict[str, Any],
     conn: sqlite3.Connection | None = None,
 ) -> None:
-    """Close a row after observed proof — never on restart status alone."""
+    """Close a row after observed proof — never on restart status alone.
+
+    ``status=closed`` is an attempt outcome (``STATUS_CLAIM_KIND=observed_of_attempt``),
+    not a standing liveness oracle.
+    """
     own_conn = conn is None
     db = conn or open_ledger_db()
     now = time.time()
+    payload = {**proof_payload, "status_claim_kind": _STATUS_CLAIM_KIND}
     try:
         execute_with_retry(
             db,
@@ -400,7 +382,7 @@ def close_row(
                 updated_at=?
             WHERE row_id=? AND status='open'
             """,
-            (json.dumps(proof_payload), now, now, row_id),
+            (json.dumps(payload), now, now, row_id),
         )
     finally:
         if own_conn:
@@ -617,7 +599,6 @@ __all__ = [
     "reclaim_stale_consumption_claims",
     "release_consumption_claim",
     "reopen_closed_row",
-    "reopen_failed_row",
     "scoreboard_projection",
     "set_defer_reason",
     "set_proof_class",

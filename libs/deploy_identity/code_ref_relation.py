@@ -47,7 +47,7 @@ def _git_is_ancestor(ancestor: str, descendant: str) -> bool:
     return proc.returncode == 0
 
 
-def _resolve_commit_sha(value: str) -> str | None:
+def resolve_commit_sha(value: str) -> str | None:
     """Resolve a ref to a full 40-char commit SHA, or None if ambiguous/missing."""
     try:
         root = get_workspace_root()
@@ -74,14 +74,18 @@ def _resolve_commit_sha(value: str) -> str | None:
     return resolved
 
 
+# Compat alias — call sites historically used the private name.
+_resolve_commit_sha = resolve_commit_sha
+
+
 def code_ref_relation(code_ref: str, observed: str) -> CodeRefRelation:
     """Classify how ``code_ref`` relates to the live ``observed`` SHA."""
     ref = _normalize_sha(code_ref)
     live = _normalize_sha(observed)
     if not _is_sha(ref) or not _is_sha(live):
         return "unrelated"
-    resolved_ref = _resolve_commit_sha(ref)
-    resolved_live = _resolve_commit_sha(live)
+    resolved_ref = resolve_commit_sha(ref)
+    resolved_live = resolve_commit_sha(live)
     if resolved_ref is not None and resolved_live is not None:
         if resolved_ref == resolved_live:
             return "equal"
@@ -114,4 +118,5 @@ __all__ = [
     "code_ref_relation",
     "code_ref_relation_from_observed",
     "code_ref_satisfied",
+    "resolve_commit_sha",
 ]
