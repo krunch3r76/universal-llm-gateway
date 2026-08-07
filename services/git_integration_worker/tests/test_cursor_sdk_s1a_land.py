@@ -88,6 +88,7 @@ async def _land_with_master_lease(
         async with master_land_guard(
             source_repo=str(source_repo),
             holder_op_id=holder,
+            worktree_path=str(worktree),
         ):
             return await land_op(
                 arc=arc,
@@ -115,27 +116,75 @@ def event_log(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any]
 
 
 @pytest.mark.asyncio
-async def test_s1a_land_refuses_dirty_master(
+async def test_s1a_land_refuses_overlapping_divergent_dirt(
     source_repo: Path,
     tmp_path: Path,
 ) -> None:
-    """AC8: land refuses merge into a dirty checked-out master."""
+    """Overlapping path with divergent bytes must refuse (dirty_master)."""
+    wt = _arc_worktree(source_repo, tmp_path, "divergent-arc", "feature.py")
     _git("checkout", "master", cwd=source_repo)
-    (source_repo / "operator-wip.py").write_text("# wip\n")
+    (source_repo / "feature.py").write_text("# divergent local wip\n")
 
-    dirty, reason = checked_out_master_dirty(str(source_repo))
+    dirty, reason = checked_out_master_dirty(str(source_repo), str(wt))
     assert dirty is True
-    assert "dirty" in reason.lower()
+    assert "divergent" in reason.lower()
 
-    wt = _arc_worktree(source_repo, tmp_path, "clean-arc", "feature.py")
     out = await _land_with_master_lease(
         source_repo=source_repo,
-        arc="clean-arc",
+        arc="divergent-arc",
         worktree=wt,
-        holder_suffix="dirty-master",
+        holder_suffix="divergent-overlap",
     )
     assert out["status"] == "rejected"
     assert out["reason_code"] == RC_DIRTY_MASTER
+
+
+@pytest.mark.asyncio
+async def test_s1a_land_allows_disjoint_only_dirt(
+    source_repo: Path,
+    tmp_path: Path,
+) -> None:
+    """Disjoint-only dirt on checked-out master must allow land."""
+    wt = _arc_worktree(source_repo, tmp_path, "disjoint-arc", "feature.py")
+    _git("checkout", "master", cwd=source_repo)
+    (source_repo / "operator-wip.py").write_text("# unrelated wip\n")
+
+    dirty, reason = checked_out_master_dirty(str(source_repo), str(wt))
+    assert dirty is False
+    assert reason == ""
+
+    out = await _land_with_master_lease(
+        source_repo=source_repo,
+        arc="disjoint-arc",
+        worktree=wt,
+        holder_suffix="disjoint-dirt",
+    )
+    assert out["status"] == "completed"
+    assert out["master_sha"]
+
+
+@pytest.mark.asyncio
+async def test_s1a_land_allows_overlapping_byte_identical_dirt(
+    source_repo: Path,
+    tmp_path: Path,
+) -> None:
+    """Overlapping path with byte-identical content must allow land (arc case)."""
+    wt = _arc_worktree(source_repo, tmp_path, "identical-arc", "feature.py")
+    landing = (wt / "feature.py").read_text()
+    _git("checkout", "master", cwd=source_repo)
+    (source_repo / "feature.py").write_text(landing)
+
+    dirty, reason = checked_out_master_dirty(str(source_repo), str(wt))
+    assert dirty is False
+    assert reason == ""
+
+    out = await _land_with_master_lease(
+        source_repo=source_repo,
+        arc="identical-arc",
+        worktree=wt,
+        holder_suffix="identical-overlap",
+    )
+    assert out["status"] == "completed"
 
 
 @pytest.mark.asyncio

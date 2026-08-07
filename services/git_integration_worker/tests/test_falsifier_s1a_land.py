@@ -83,6 +83,7 @@ async def _land_with_master_lease(
     async with master_land_guard(
         source_repo=str(source_repo),
         holder_op_id=holder,
+        worktree_path=str(worktree),
     ):
         return await land_op(
             arc=arc,
