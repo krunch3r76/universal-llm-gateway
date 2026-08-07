@@ -145,6 +145,18 @@ def reap_orphaned_alive_rows(
                 if not include_ttl_reap or ts - float(orphaned_at) < ttl:
                     continue
 
+                # Operator-proxy false-death rows keep living CSE glass; TTL kill
+                # here would finish what satellite execution TTL started (6893).
+                from claude_bundles.operator_proxy_mission import (
+                    is_operator_proxy_mission_purpose,
+                )
+
+                purpose = row.get("purpose")
+                if is_operator_proxy_mission_purpose(
+                    purpose if isinstance(purpose, str) else None
+                ):
+                    continue
+
                 if kill_listener is not None:
                     with contextlib.suppress(Exception):
                         kill_listener(port)

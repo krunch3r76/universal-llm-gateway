@@ -99,6 +99,43 @@ def test_idle_past_dwell_is_closable(
     assert target.idle_dwell_s == pytest.approx(100.0)
 
 
+def test_by_id_refuse_protects_operator_seat_cse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """6893 safety bind: cse_016UZLY… protected in classify code, not prose."""
+    from claude_bundles import cdp_orphans
+    from claude_bundles.cdp_reclaim_refuse import guard_cse_reclaim
+
+    protected_url = "https://claude.ai/cowork/cse_016UZLY1LHLTyTQG7dAH1eW8"
+    monkeypatch.setattr(classify, "cse_idle_dwell_s", lambda: 60.0)
+    monkeypatch.setattr(
+        classify,
+        "probe_page_liveness_sync",
+        lambda _port, _ws: ({"streaming": False, "stop": False, "tool_pause": False}, True),
+    )
+    page = {"url": protected_url, "id": "p1", "webSocketDebuggerUrl": _WS}
+    key = (9247, classify.normalize_cse_url(protected_url))
+    classify._idle_since[key] = 900.0
+    target = classify.classify_cse_target(
+        page,
+        port=9247,
+        profile=None,
+        chat_url_index={},
+        running_registration_ids=set(),
+        now=1000.0,
+    )
+    assert target.classification == "protected"
+    assert target.classification_reason == (
+        "by_id_refuse:cse_016UZLY1LHLTyTQG7dAH1eW8"
+    )
+    assert guard_cse_reclaim(protected_url) == (
+        "by_id_refuse:cse_016UZLY1LHLTyTQG7dAH1eW8"
+    )
+    actuator = cdp_orphans.attempt_reclaim_cse_target(target)
+    assert actuator["reclaimed"] is False
+    assert actuator["reason"] == "by_id_refuse:cse_016UZLY1LHLTyTQG7dAH1eW8"
+
+
 def test_probe_evaluate_failed_is_protected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

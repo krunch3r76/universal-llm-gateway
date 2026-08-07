@@ -17,6 +17,7 @@ from claude_bundles.cdp_orphan_cse_classify import (
     classify_port_cse_targets,
     normalize_cse_url,
 )
+from claude_bundles.cdp_reclaim_refuse import guard_cse_reclaim
 
 LIVENESS_AUTHORITY_ATTACHMENT_ONLY = "attachment_only"
 
@@ -282,6 +283,49 @@ def _rejected_as_dict(item: RejectedPort) -> dict[str, Any]:
     return d
 
 
+def reclaim_enabled() -> bool:
+    """S3 CSE-close flag — hardcoded off until an actuator ships."""
+    return False
+
+
+def attempt_reclaim_cse_target(target: CseTarget) -> dict[str, Any]:
+    """Actuator chokepoint for closing a classified CSE target.
+
+    Always runs by-id refuse (6893) before the S3 enable flag. When reclaim is
+    disabled this is a dry refuse; when enabled, close primitives must still
+    pass ``guard_cse_reclaim`` first.
+    """
+    refuse = guard_cse_reclaim(target.url)
+    if refuse is not None:
+        return {
+            "ok": False,
+            "reclaimed": False,
+            "reason": refuse,
+            "url": target.url,
+        }
+    if not reclaim_enabled():
+        return {
+            "ok": False,
+            "reclaimed": False,
+            "reason": "reclaim_disabled",
+            "url": target.url,
+        }
+    if target.classification != "closable":
+        return {
+            "ok": False,
+            "reclaimed": False,
+            "reason": f"not_closable:{target.classification_reason}",
+            "url": target.url,
+        }
+    # S3 close primitive not implemented — fail closed.
+    return {
+        "ok": False,
+        "reclaimed": False,
+        "reason": "close_primitive_absent",
+        "url": target.url,
+    }
+
+
 def orphan_scan_as_dict(scan: OrphanScanResult) -> dict[str, Any]:
     matched_dicts = [orphan_as_dict(o) for o in scan.matched]
     closable_total = sum(d.get("closable_count", 0) for d in matched_dicts)
@@ -296,7 +340,7 @@ def orphan_scan_as_dict(scan: OrphanScanResult) -> dict[str, Any]:
         "closable_count": closable_total,
         "protected_count": protected_total,
         "cse_classification": "scan_ephemeral",
-        "reclaim_enabled": False,
+        "reclaim_enabled": reclaim_enabled(),
         "matched": matched_dicts,
         "rejected": [_rejected_as_dict(r) for r in scan.rejected],
         "unevaluable": [asdict(u) for u in scan.unevaluable],

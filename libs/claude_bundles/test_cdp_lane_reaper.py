@@ -88,6 +88,25 @@ def test_trigger_b_ttl_unattached_kills_before_release() -> None:
     assert active["orph-1"]["reaped_orphaned_alive"] == "ttl"
 
 
+def test_ttl_skips_operator_proxy_orphaned_alive() -> None:
+    """OP false-death rows must not have chrome killed by orphaned_alive TTL."""
+    row = _orphan_row(orphaned_at=_NOW - _TTL - 1)
+    row["purpose"] = "operator-proxy"
+    active = {"orph-op": row}
+    killed: list[int] = []
+    reaper.reap_orphaned_alive_rows(
+        active,
+        listen=lambda _p: True,
+        now=_NOW,
+        pid_alive=lambda _pid: True,
+        kill_listener=lambda p: killed.append(p),
+        is_attached=lambda _rid: False,
+        include_ttl_reap=True,
+    )
+    assert killed == []
+    assert active["orph-op"]["status"] == "orphaned_alive"
+
+
 def test_negative_alive_within_ttl_untouched() -> None:
     active = {"orph-1": _orphan_row(orphaned_at=_NOW - 60)}
     reaped = reaper.reap_orphaned_alive_rows(

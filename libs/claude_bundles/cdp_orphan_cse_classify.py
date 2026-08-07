@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from claude_bundles import cdp_registry
+from claude_bundles.cdp_reclaim_refuse import reclaim_refuse_reason
 from claude_bundles.cse_idle_probe import in_flight_from_state, probe_page_liveness_sync
 
 CSE_URL_MARKER = "claude.ai/cowork/cse_"
@@ -165,6 +166,21 @@ def classify_cse_target(
     url = str(page.get("url") or "")
     target_id = page.get("id")
     tid = str(target_id) if target_id is not None else None
+    # Arc 6893: by-id refuse is a code gate (not ops prose). Runs before attach
+    # so a TTL-killed / deregistered seat stays protected by CSE id alone.
+    by_id_reason = reclaim_refuse_reason(url)
+    if by_id_reason is not None:
+        return CseTarget(
+            url=url,
+            target_id=tid,
+            classification="protected",
+            attach_resolution=None,
+            attach_registration_id=None,
+            idle_probe_ok=True,
+            in_flight=None,
+            idle_dwell_s=None,
+            classification_reason=by_id_reason,
+        )
     attach_path, attach_rid = resolve_attach(
         url,
         profile=profile,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from unittest.mock import patch
 
 import pytest
@@ -92,6 +93,37 @@ async def test_execution_ttl_reaper_marks_failed(fast_store: ExecutionStore) -> 
     assert updated.status == "failed"
     assert updated.error == "execution TTL exceeded"
     assert deregistered == ["lane-1"]
+
+
+@pytest.mark.asyncio
+async def test_ttl_kills_op_while_cse_alive(fast_store: ExecutionStore) -> None:
+    """Named for the 6893 failure: OP purpose must survive execution TTL.
+
+    Pre-fix, age > execution_ttl_s cancelled operator-proxy while CSE glass
+    stayed up. Post-fix, reaper skips OP/mission purposes.
+    """
+    deregistered: list[str] = []
+    record = await fast_store.create(holder="seat", purpose="operator-proxy")
+    await fast_store.set_registration_id(record.execution_id, "op-lane-1")
+    task = asyncio.create_task(asyncio.sleep(60))
+    await fast_store.attach_task(record.execution_id, task)
+
+    with patch(
+        "claude_bundles.cdp_registry.deregister_lane",
+        side_effect=lambda rid, **kw: deregistered.append(rid),
+    ):
+        await asyncio.sleep(0.12)
+        await fast_store._reap_once()
+
+    updated = await fast_store.get(record.execution_id)
+    assert updated is not None
+    assert updated.status == "running"
+    assert updated.error is None
+    assert deregistered == []
+    assert not task.done()
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
 
 
 @pytest.mark.asyncio

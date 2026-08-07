@@ -398,6 +398,10 @@ class ExecutionStore:
             await self._reap_once()
 
     async def _reap_once(self) -> None:
+        from claude_bundles.operator_proxy_mission import (
+            is_operator_proxy_mission_purpose,
+        )
+
         now = time.time()
         expired: list[ExecutionRecord] = []
         async with self._lock:
@@ -405,6 +409,11 @@ class ExecutionStore:
                 age = now - rec.created_at
                 idle = now - rec.updated_at
                 if rec.status in {"pending", "running"} and age > self._execution_ttl_s:
+                    # Operator-proxy / mission seats outlive Stargate wall via
+                    # mission_retain; satellite TTL must not schedule false death
+                    # (arc 6893 — ttl_kills_op_while_cse_alive).
+                    if is_operator_proxy_mission_purpose(rec.purpose):
+                        continue
                     expired.append(rec)
                     continue
                 if (
