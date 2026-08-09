@@ -46,6 +46,10 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
         path_prefix="services/rag/",
         owned_libs=frozenset({"agent_bus_store", "agent_seat", "cdp_ask", "claude_bundles", "cortex_store", "cursor_capabilities", "gen_rules", "implement_admission", "llm_adapters", "markdown_fence", "markdown_sections", "markdown_xml_blocks", "model_capabilities", "model_id", "ocr_core", "predicate_form", "role_lint", "sse", "stargate_chat", "transport_utils", "universal_concurrency", "universal_event_bus", "universal_hot_reload", "universal_logging"}),
     ),
+    "cdp_ask": ServiceOwnership(
+        path_prefix="libs/cdp_ask/",
+        owned_libs=frozenset({"admission_common", "cdp_ask", "claude_bundles", "cortex_store", "deploy_identity", "pager_notify", "transport_utils", "universal_event_bus", "universal_logging", "universal_workspace"}),
+    ),
     "cloud_proxy": ServiceOwnership(
         path_prefix="services/universal_cloud_proxy/",
         owned_libs=frozenset({"agent_bus_store", "agent_seat", "cdp_ask", "claude_bundles", "cortex_store", "cursor_capabilities", "event_store", "gen_rules", "implement_admission", "llm_adapters", "markdown_fence", "markdown_sections", "markdown_xml_blocks", "model_capabilities", "model_id", "ocr_core", "predicate_form", "process_ipc", "role_lint", "sse", "stargate_chat", "transport_utils", "universal_concurrency", "universal_event_bus", "universal_logging", "universal_protocol", "universal_transport"}),

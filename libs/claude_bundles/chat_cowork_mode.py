@@ -22,6 +22,9 @@ from claude_bundles.compose_attest import (
     compose_mode_fingerprint,
 )
 
+# Harvest mints sync_restart for cdp_ask when this module lands (ensure_cowork_auto path).
+CONSUMERS: tuple[str, ...] = ("cdp_ask",)
+
 _CHIP_POLL_TIMEOUT_S = 8.0
 
 ApprovalMode = Literal["auto", "manual", "skip"]
