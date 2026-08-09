@@ -10,41 +10,29 @@ must be optional-with-default only — never rename or remove existing keys.
 
 from __future__ import annotations
 
-import os
 import time
 from typing import Any
 
 import httpx
 
-_DEFAULT_WORKER_URL = "http://127.0.0.1:8091"
-_AUTO_API_PREFIX = "/api/v1/git/cursor-auto"
-_DEFAULT_MAX_ATTEMPTS = 3
-_DEFAULT_ATTEMPT_TIMEOUTS_S = (3.0, 5.0, 5.0)
-_DEFAULT_BACKOFF_S = (0.5, 1.5)
-_DEFAULT_TOTAL_BUDGET_S = 15.0
+from .job_state_client import fetch_job_state
+from .worker_http import (
+    _DEFAULT_ATTEMPT_TIMEOUTS_S,
+    _DEFAULT_BACKOFF_S,
+    _DEFAULT_MAX_ATTEMPTS,
+    _DEFAULT_TOTAL_BUDGET_S,
+    _auto_url,
+    _worker_base_url,
+)
 
-
-def _worker_base_url() -> str:
-    """Resolve Auto worker base URL for mcp→host reachability.
-
-    Prefer ``GIT_INTEGRATION_WORKER_URL`` when set. Otherwise, from the mcp
-    container, use ``STARGATE_URL`` so enqueue/liveness ride the existing
-    ``/api/v1/git/*`` host-side proxy (worker binds 127.0.0.1 — unreachable
-    via host.docker.internal). Host-local callers fall back to loopback.
-    """
-    explicit = os.environ.get("GIT_INTEGRATION_WORKER_URL", "").strip()
-    if explicit:
-        return explicit.rstrip("/")
-    stargate = os.environ.get("STARGATE_URL", "").strip()
-    if stargate:
-        return stargate.rstrip("/")
-    return _DEFAULT_WORKER_URL
-
-
-def _auto_url(path: str, *, base_url: str | None = None) -> str:
-    base = (base_url or _worker_base_url()).rstrip("/")
-    suffix = path if path.startswith("/") else f"/{path}"
-    return f"{base}{_AUTO_API_PREFIX}{suffix}"
+# Re-export for callers that imported URL helpers from this module.
+__all__ = [
+    "_auto_url",
+    "_worker_base_url",
+    "enqueue_auto_job",
+    "fetch_job_state",
+    "probe_auto_liveness",
+]
 
 
 def _classify_probe_error(
@@ -275,67 +263,3 @@ def enqueue_auto_job(
         }
 
 
-def fetch_job_state(
-    *,
-    thread_id: str | None = None,
-    job_id: str | None = None,
-    include_terminal: bool = False,
-    base_url: str | None = None,
-    timeout_s: float = 3.0,
-) -> dict[str, Any]:
-    """GET keyed cursor-auto job observer view from the Auto worker.
-
-    Soft-fails when the worker is unreachable so ``thread_get`` still returns
-    bus metadata; callers treat a missing ``job`` as no live Auto job.
-    """
-    if not thread_id and not job_id:
-        return {
-            "ok": False,
-            "found": False,
-            "job": None,
-            "reason": "missing_key",
-        }
-    params: list[str] = []
-    if job_id:
-        params.append(f"job_id={job_id}")
-    if thread_id:
-        params.append(f"thread_id={thread_id}")
-    if include_terminal:
-        params.append("include_terminal=true")
-    qs = "&".join(params)
-    url = _auto_url(f"/job-state?{qs}", base_url=base_url)
-    try:
-        with httpx.Client(timeout=timeout_s) as client:
-            resp = client.get(url)
-        data = resp.json() if resp.content else {}
-        if resp.status_code != 200:
-            return {
-                "ok": False,
-                "found": False,
-                "job": None,
-                "reason": "job_state_http_error",
-                "status_code": resp.status_code,
-            }
-        return {
-            "ok": bool(data.get("ok", True)),
-            "found": bool(data.get("found")),
-            "job": data.get("job"),
-            "reason": "ok" if data.get("found") else "not_found",
-        }
-    except (httpx.HTTPError, ValueError, OSError) as exc:
-        return {
-            "ok": False,
-            "found": False,
-            "job": None,
-            "reason": "job_state_unreachable",
-            "error": str(exc),
-        }
-
-
-__all__ = [
-    "_auto_url",
-    "_worker_base_url",
-    "enqueue_auto_job",
-    "fetch_job_state",
-    "probe_auto_liveness",
-]
