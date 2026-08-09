@@ -9,8 +9,9 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from transport_utils import EVENTS_QUERY_SOCK, make_sync_client
 from universal_logging import get_logger
@@ -26,7 +27,6 @@ from services.git_integration_worker.cursor_auto.hop_cadence_id_map import (
     submitted_updates_claim,
 )
 from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
-    cooldown_s,
     load_watches,
     save_watches,
 )

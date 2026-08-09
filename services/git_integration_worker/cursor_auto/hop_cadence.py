@@ -17,12 +17,12 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
-
-from universal_logging import get_logger
+from typing import Any
 
 from claude_bundles.hop_seat_cutover import refuse_cadence_hop_for_live_seat
+from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_auto.cdp_escalation import (
     escalation_lane_refusal,
