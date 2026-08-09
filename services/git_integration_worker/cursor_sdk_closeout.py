@@ -1533,7 +1533,16 @@ def _assemble_closeout_delivery(
                 head_sha=state.head_sha,
                 branch=record.branch_name,
             )
-            lane_b_landed = plane_obs.landed_local_master is True
+            # G₂ (todo:success-shaped-silence): ancestry alone is vacuous when
+            # commits_ahead=0 (head==branch_point already on master).
+            from services.git_integration_worker.cursor_sdk_deliverables_expected import (
+                admit_landed_true,
+            )
+
+            lane_b_landed = admit_landed_true(
+                ancestry_on_master=plane_obs.landed_local_master,
+                commits_ahead=state.commits_ahead,
+            )
             if outcome.status != "finished" and not state.safe_to_delete:
                 from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
                     mark_lane_b_disposition,

@@ -685,6 +685,23 @@ def verification_all_pass(verification: list[Verification] | None) -> bool:
     return all(item.exit_code == 0 for item in verification)
 
 
+def _is_closeout_receipt_path(path: str) -> bool:
+    """True for worker control-plane closeout receipts — never intended artifacts."""
+    norm = _normalize_expected_path(path).lower().replace("\\", "/")
+    if "tmp/reviews/closeouts/" in norm:
+        return True
+    return is_allowlisted_control_plane_path(norm)
+
+
+def _filter_intended_artifact_paths(paths: Iterable[str]) -> tuple[str, ...]:
+    """Drop worker closeout receipts from the G₁ intended-artifact probe union."""
+    return tuple(
+        path
+        for path in filter_probeable_expected_paths(paths)
+        if not _is_closeout_receipt_path(path)
+    )
+
+
 def positive_deliverable_evidence(
     *,
     files_offgit_produced: Iterable[str] = (),
@@ -696,7 +713,11 @@ def positive_deliverable_evidence(
     cortex_root: Path,
     baseline: dict[str, Any] | None = None,
 ) -> bool:
-    """I2 — capture-independent positive probe for work_outcome=shipped."""
+    """I2 — capture-independent positive probe for work_outcome=shipped.
+
+    Intended-artifact evidence excludes worker closeout receipts under
+    ``**/tmp/reviews/closeouts/**`` (todo:success-shaped-silence G₁).
+    """
     from services.git_integration_worker.cursor_sdk_capture_divergence import (
         expected_deliverables_present,
     )
@@ -708,7 +729,7 @@ def positive_deliverable_evidence(
         light_bounded_expected_paths,
         files_expected or [],
     ):
-        probe_union.extend(filter_probeable_expected_paths(seq))
+        probe_union.extend(_filter_intended_artifact_paths(seq))
     if probe_union and expected_deliverables_present(
         probe_union,
         manifest,
@@ -716,11 +737,12 @@ def positive_deliverable_evidence(
         cortex_root=cortex_root,
     ):
         return True
-    if _repo_manifest_evidence_paths(
+    manifest_evidence = _repo_manifest_evidence_paths(
         manifest,
         source_repo=source_repo,
         baseline=baseline,
-    ):
+    )
+    if any(not _is_closeout_receipt_path(path) for path in manifest_evidence):
         return True
     return False
 
@@ -749,11 +771,20 @@ def resolve_work_outcome(
     deviations: Iterable[str] | None = None,
     deliverables_expected: bool = False,
 ) -> WorkOutcome:
-    """Grade work truth independently from capture_status (Fork A refined)."""
+    """Grade work truth independently from capture_status (Fork A refined).
+
+    G₁ (todo:success-shaped-silence): no-write intent conjuncts evaluate *before*
+    the positive→SHIPPED short-circuit; refusal projects UNVERIFIED (I3 middle),
+    not NOT_SHIPPED (reserved for terminal no-run / run_status tokens).
+    """
     if degraded_reason and degraded_reason.startswith("run_status="):
         return WorkOutcome.NOT_SHIPPED
 
     if _has_work_cap_deviation(divergence_reason, deviations):
+        return WorkOutcome.UNVERIFIED
+
+    # G₁ conjuncts 1–2 — before positive short-circuit (specimen i launder fix).
+    if is_no_write_intent_reason(degraded_reason):
         return WorkOutcome.UNVERIFIED
 
     positive = positive_deliverable_evidence(

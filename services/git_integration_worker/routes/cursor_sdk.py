@@ -159,6 +159,9 @@ from services.git_integration_worker.cursor_sdk_lane_select import (
     select_lane,
     wire_lane_explicit,
 )
+from services.git_integration_worker.cursor_sdk_deliverables_expected import (
+    compute_deliverables_expected,
+)
 from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
     extract_instructed_paths,
     first_landed_fs_uri,
@@ -1998,12 +2001,10 @@ async def _finalize_success(
     degraded_reason = (
         degraded_implement_reason(outcome) if contract == "implement" else None
     )
-    # deliverables_expected gate (todo:cursor-sdk-deliverables-expected-light-bounded):
-    # a light-bounded packet that names a durable output path in prose (almost
-    # never a structured files_expected: field) gates the same as implement, but
-    # via disk/cortex existence rather than the implement-only baseline-diff
-    # machinery — see light_bounded_expected_paths threading into
-    # resolve_closeout_capture_fields.
+    # deliverables_expected gate (todo:cursor-sdk-deliverables-expected-light-bounded
+    # + todo:success-shaped-silence operator bind 6929#534): light-bounded path
+    # extract, implement contract, OR commissioner-named files_expected /
+    # evidence_required obligations — worker-set, not producer-declared.
     light_bounded_expected_paths = (
         extract_instructed_paths(instruction_text)
         if contract == LIGHT_BOUNDED_CONTRACT
@@ -2089,8 +2090,11 @@ async def _finalize_success(
         work_item_ref=work_item_ref,
         controller=controller,
         packet_text=packet_text,
-        deliverables_expected=contract == "implement"
-        or bool(light_bounded_expected_paths),
+        deliverables_expected=compute_deliverables_expected(
+            contract=contract,
+            instruction_text=instruction_text,
+            light_bounded_expected_paths=light_bounded_expected_paths,
+        ),
         light_bounded_expected_paths=light_bounded_expected_paths,
         extra_deviations=implement_gate_bypass_deviations(
             contract=contract,

@@ -862,3 +862,124 @@ def test_g3b_closeout_pipeline_tolerates_omitted_work_outcome() -> None:
     assert synthesized is not None
     assert "work_outcome" not in synthesized
     assert "capture_status=complete" in synthesized
+
+
+# --- todo:success-shaped-silence G₁ three-trace pins (round-1 specimens) ---
+
+
+def test_g1_trace_i_auto_bb6dd0a409f6_refuse_stated_intent_no_write(
+    tmp_path: Path,
+) -> None:
+    """(i) auto-bb6dd0a409f6 — G₁ REFUSE even when closeout receipt is probeable.
+
+    Specimen emitted complete/shipped with degraded_reason=stated_intent_no_write
+    because positive short-circuited on the worker receipt. G₁ evaluates no-write
+    before positive and excludes closeout receipts from intended artifacts.
+    """
+    repo = _init_git_repo(tmp_path)
+    cortex_root = repo / ".cortex"
+    cortex_root.mkdir()
+    receipt = "tmp/reviews/closeouts/auto-bb6dd0a409f6.md"
+    (repo / receipt).parent.mkdir(parents=True, exist_ok=True)
+    (repo / receipt).write_text("receipt\n", encoding="utf-8")
+
+    work_outcome = resolve_work_outcome(
+        degraded_reason="stated_intent_no_write",
+        verification=[],
+        files_offgit_produced=[],
+        artifact_paths=[
+            f"workspaces://universal-llm-gateway/{receipt}",
+            receipt,
+        ],
+        manifest=None,
+        source_repo=repo,
+        cortex_root=cortex_root,
+        deviations=["divergence:light_bounded_path_absent:x", "degraded:sdk_git_probe_absent"],
+        deliverables_expected=False,
+    )
+    assert work_outcome == WorkOutcome.UNVERIFIED
+    assert work_outcome != WorkOutcome.SHIPPED
+    assert (
+        project_status_from_work_outcome(work_outcome, "stated_intent_no_write")
+        == CloseoutStatus.PARTIAL
+    )
+
+
+def test_g1_trace_ii_auto_625a11ce0892_admit_with_cortex_artifacts(
+    tmp_path: Path,
+) -> None:
+    """(ii) auto-625a11ce0892 — G₁ ADMIT on status plane (cortex artifacts present)."""
+    repo = _init_git_repo(tmp_path)
+    cortex_root = tmp_path / "cortex"
+    seed = "notes/system/threads/success-shaped-silence/judgment-seed.md"
+    spec = "notes/system/specs/success-shaped-silence.md"
+    for rel in (seed, spec):
+        path = cortex_root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("artifact\n", encoding="utf-8")
+
+    work_outcome = resolve_work_outcome(
+        degraded_reason=None,
+        verification=[],
+        files_offgit_produced=[f"cortex://{seed}", f"cortex://{spec}"],
+        artifact_paths=[],
+        manifest=None,
+        source_repo=repo,
+        cortex_root=cortex_root,
+        deviations=["degraded:sdk_git_probe_absent"],
+        deliverables_expected=True,
+    )
+    assert work_outcome == WorkOutcome.SHIPPED
+    assert (
+        project_status_from_work_outcome(work_outcome, None) == CloseoutStatus.COMPLETE
+    )
+
+
+def test_g1_trace_iii_auto_028dbc284356_admit_probe_absent_ignored(
+    tmp_path: Path,
+) -> None:
+    """(iii) auto-028dbc284356 — G₁ ADMIT; sdk_git_probe_absent does not refuse."""
+    repo = _init_git_repo(tmp_path)
+    cortex_root = tmp_path / "cortex"
+    rel = "notes/system/threads/6929-hop-window-health-investigate.md"
+    path = cortex_root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("hop health\n", encoding="utf-8")
+
+    work_outcome = resolve_work_outcome(
+        degraded_reason=None,
+        verification=[],
+        files_offgit_produced=[f"cortex://{rel}"],
+        artifact_paths=[],
+        manifest=None,
+        source_repo=repo,
+        cortex_root=cortex_root,
+        deviations=["degraded:sdk_git_probe_absent"],
+        deliverables_expected=True,
+    )
+    assert work_outcome == WorkOutcome.SHIPPED
+    assert (
+        project_status_from_work_outcome(work_outcome, None) == CloseoutStatus.COMPLETE
+    )
+
+
+def test_g1_closeout_receipt_alone_not_intended_artifact(tmp_path: Path) -> None:
+    """Closeout receipt cannot satisfy intended_artifact_evidence under G₁."""
+    repo = _init_git_repo(tmp_path)
+    cortex_root = repo / ".cortex"
+    cortex_root.mkdir()
+    receipt = "tmp/reviews/closeouts/auto-bb6dd0a409f6.md"
+    (repo / receipt).parent.mkdir(parents=True, exist_ok=True)
+    (repo / receipt).write_text("receipt\n", encoding="utf-8")
+
+    work_outcome = resolve_work_outcome(
+        degraded_reason=None,
+        verification=[],
+        files_offgit_produced=[],
+        artifact_paths=[receipt],
+        manifest=None,
+        source_repo=repo,
+        cortex_root=cortex_root,
+        deliverables_expected=True,
+    )
+    assert work_outcome == WorkOutcome.UNVERIFIED
