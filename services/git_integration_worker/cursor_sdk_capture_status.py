@@ -10,7 +10,11 @@ from pathlib import Path
 from typing import Any, Literal
 
 from implement_admission.closeout_models import EffectsManifest, Verification
-from implement_admission.spec import NO_RUN_DEGRADED_REASONS, CloseoutStatus, WorkOutcome
+from implement_admission.spec import (
+    NO_RUN_DEGRADED_REASONS,
+    CloseoutStatus,
+    WorkOutcome,
+)
 
 from services.git_integration_worker.cursor_sdk_capture_policy import (
     any_hard_fail_deviation,
@@ -679,10 +683,23 @@ def _repo_has_shell_entry(manifest: EffectsManifest | None) -> bool:
 
 
 def verification_all_pass(verification: list[Verification] | None) -> bool:
-    """True when every verification row exited 0 — I2 positive probe."""
+    """True when verification earns the I2 SHIPPED short-circuit.
+
+    A row is trusted only when ``exit_code_register == "observed"`` (process
+    returncode). Derived Gate-D / lint-skip booleans packed as ``exit_code: 0``
+    are emitter self-reports — they must not launder SHIPPED above G₁
+    (todo:success-shaped-silence F1 / specimen class gate_d:passed derived).
+
+    Fail-closed rules:
+    - empty list → False
+    - any non-zero exit (observed, derived, or unknown) → False
+    - zero exits but no ``observed`` row → False (derived-only / unknown-only)
+    """
     if not verification:
         return False
-    return all(item.exit_code == 0 for item in verification)
+    if any(item.exit_code != 0 for item in verification):
+        return False
+    return any(item.exit_code_register == "observed" for item in verification)
 
 
 def _is_closeout_receipt_path(path: str) -> bool:

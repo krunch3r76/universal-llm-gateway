@@ -12,7 +12,10 @@ from implement_admission.closeout_models import (
     EffectsManifest,
     SurfaceSection,
     Verification,
+    derived_gate_verification,
+    observed_process_verification,
 )
+from implement_admission.spec import CloseoutStatus, WorkOutcome
 
 from services.git_integration_worker.cursor_sdk_capture_divergence import (
     apply_surface_cross_checks,
@@ -27,8 +30,8 @@ from services.git_integration_worker.cursor_sdk_capture_status import (
     resolve_closeout_capture_fields,
     resolve_work_outcome,
     stated_intent_no_write_capture_violation,
+    verification_all_pass,
 )
-from implement_admission.spec import CloseoutStatus, WorkOutcome
 from services.git_integration_worker.cursor_sdk_manifest import (
     repo_change_set_from_manifest,
 )
@@ -487,7 +490,9 @@ def test_finalize_closeout_body_preserves_work_outcome() -> None:
     """AC8 — reduced finalize payload retains work_outcome."""
     import json
 
-    from services.git_integration_worker.cursor_sdk_closeout import finalize_closeout_body
+    from services.git_integration_worker.cursor_sdk_closeout import (
+        finalize_closeout_body,
+    )
 
     payload = {
         "schema_version": 1,
@@ -823,10 +828,11 @@ def test_g3b_closeout_pipeline_tolerates_omitted_work_outcome() -> None:
     from unittest.mock import MagicMock, patch
 
     from implement_admission.closeout_models import ImplementCloseout
+    from systems.frontier_consult.closeout_reply import trigger_closeout_from_turn
+
     from services.git_integration_worker.cursor_auto.closeout_relay import (
         synthesize_section2,
     )
-    from systems.frontier_consult.closeout_reply import trigger_closeout_from_turn
 
     legacy_payload = {
         "schema_version": 1,
@@ -960,6 +966,74 @@ def test_g1_trace_iii_auto_028dbc284356_admit_probe_absent_ignored(
     assert work_outcome == WorkOutcome.SHIPPED
     assert (
         project_status_from_work_outcome(work_outcome, None) == CloseoutStatus.COMPLETE
+    )
+
+
+def test_f1_derived_only_verification_does_not_short_circuit_shipped(
+    tmp_path: Path,
+) -> None:
+    """F1 — derived-only green verification must not launder WorkOutcome.SHIPPED.
+
+    Specimen shape from this arc's closeout: gate_d:passed / exit_code 0 /
+    exit_code_register=derived / basis=gate_d_boolean_pass (+ lint-skip derived).
+    Before F1, verification_all_pass consulted exit_code only and sat above every
+    G₁ conjunct as a SHIPPED short-circuit.
+    """
+    repo = _init_git_repo(tmp_path)
+    cortex_root = repo / ".cortex"
+    cortex_root.mkdir()
+    verification = [
+        derived_gate_verification(
+            command="gate_d:passed",
+            exit_code=0,
+            basis="gate_d_boolean_pass",
+            invocation_id="gate_d:passed",
+        ),
+        derived_gate_verification(
+            command="ruff check (no python files touched)",
+            exit_code=0,
+            basis="lint_skipped_no_python",
+            invocation_id="lint-skip:fixture",
+        ),
+    ]
+    assert verification_all_pass(verification) is False
+
+    work_outcome = resolve_work_outcome(
+        degraded_reason=None,
+        verification=verification,
+        files_offgit_produced=[],
+        artifact_paths=[],
+        manifest=None,
+        source_repo=repo,
+        cortex_root=cortex_root,
+        deliverables_expected=True,
+    )
+    assert work_outcome == WorkOutcome.UNVERIFIED
+    assert work_outcome != WorkOutcome.SHIPPED
+
+    # Co-present observed process exit 0 still earns the short-circuit.
+    with_observed = [
+        *verification,
+        observed_process_verification(
+            command="ruff check 2 touched files",
+            exit_code=0,
+            invocation_id="lint:fixture-obs",
+            basis="subprocess.run.returncode",
+        ),
+    ]
+    assert verification_all_pass(with_observed) is True
+    assert (
+        resolve_work_outcome(
+            degraded_reason=None,
+            verification=with_observed,
+            files_offgit_produced=[],
+            artifact_paths=[],
+            manifest=None,
+            source_repo=repo,
+            cortex_root=cortex_root,
+            deliverables_expected=True,
+        )
+        == WorkOutcome.SHIPPED
     )
 
 
