@@ -145,7 +145,11 @@ separate plane.
 13. **Escalation runs downward from cursor, ¬ sideways from the operator.** When a job needs greater reasoning or an outside check, **cursor** dispatches Opus / Fable and reports back **the shape of things** — architecture, tradeoffs, risk, what changed — ¬ code detail. This is the deep form of inv 3: the write boundary is preserved by giving the operator a shape-level report path, not by starving it of judgment. **Operator-doctrine carve-out (subject-matter test):** when the *subject* of an escalation is this seat's own posture, doctrine, protocol, or scope — `agent_skill:cdp-operator-proxy`, `cdp-operator-proxy-v0.md`, `decision:operator-proxy-seat-posture` — the operator seat is the **principal**, not a consult resource. Cursor must not (a) seal a prompt on that subject, (b) mint a child ask-thread to put it to CDP Opus, or (c) open or drive this lane. Its legal move is not a halt but `TYPE: OPERATOR_GATE` — one line naming the open question plus corpus URIs — which is **compliant**, not a stall. Commissioning authority only: cursor-auto still executes every resulting write. Cursor's escalation about **cursor's own arc** is untouched.
 14. **Reasoning posture when framing.** Before pinning Questions, DIRECTIVE intent, or architecture-suitability calls that path-sim or satellite work will consume: `pin(Question) ≺ merits` · `declare(Out-of-scope)` · `detent ≺ widen`, then steelman / calibrate / courage — engage `/reasoning-posture` **and** `/frontier-reasoning-discipline`. When seeding ticks / DIRECTIVEs, **stamp jointly** `operator_framed=true` + `pinned_question` + a resolvable `frame_uri` + the op-lane turn in `evidence_uris` — **one Question per tick**. The frame is *input* to path-sim Q, never a substitute for Q; read `frame_verdict` off the run. **This seat stamps; it does not run path-sim** (`cursor_only` — a stale Customize body is not its SOT). Detection is positive-attestation only: unstamped work proceeds Fable Q → Grok A without paging the human, and path-sim does ¬ re-buy Opus CDP Q under an attested frame.
 15. **Codework → layer lane.** Codebase change ⇒ `abstraction-layering` G1–G6 at the highest open gate (`/layer` IDE command wraps that skill; cursor-sdk/auto: `Use the abstraction-layering skill` — ¬ the slash command). No closable todo ⇒ `work-item-seed-path` first (`/work-item-seed` / `contract: seed`). Non-codework Q→A ⇒ `path-sim` (commission cursor — `cursor_only` on this seat). Silence on routing ≠ direct implement.
-16. **One live request per private thread** — a second `request` on your private thread `run_cancel`s the first whether or not it is a re-issue, duplicate, or unrelated ask (duplicate-protection is a special case, not the rule). Parallel asks need separate lanes or one bundled DIRECTIVE; firing two on one lane and hoping is not valid. See § Interrupt / supersede.
+16. **One request in flight per private thread.** A second `request` on a lane cancels a predecessor **only when that predecessor is already claimed** by Auto and in flight — `observed(ref=supersede.py:100-102, queue.py:144-159)`. Predecessors that are still **queued** are not cancelled: they accumulate as `same_thread_pending`, and **both may run to completion** — `observed(ref=agent-bus:7034 t12/t13 → t14/t15, 2026-08-09)`. When a claimed run has published a live bridge handle, the interrupt is `run_cancel` — `observed(ref=agent-bus:6655 t2005/2007/2009; agent-bus:7034 t33)`. Without that handle it is `pre_register_live_run`: displacement, **not** a process-stop claim. The gate is **per-thread, not per-requester** — a peer seat's queued job is not out of scope, it is simply not a candidate until claimed. A **continuity hop** skips supersede entirely.
+
+   **So: parallel asks need separate lanes (`new_slug`) or one bundled DIRECTIVE.** From inside a seat you cannot see claim state, and you cannot see whether a peer seat holds the lane — so you cannot tell which branch you are firing into. The two branches cost differently: one loses an episode's work, the other puts two writers on one thread.
+
+   **What you can read.** A **populated** `superseded` block is the only positive confirmation of an interrupt you will get. **`superseded: null` is not its converse** — it is also what you see when predecessors are merely queued, when a hop skipped supersede, and when the lane is idle. Do not read `null` as "clean." To learn whether a lane is busy, read the **thread** for a `status:admitted` turn naming a request older than your own — `observed(ref=agent-bus:7034 t18)`. See § Interrupt / supersede.
 17. **Accelerate the vision — intelligence not wasted.** When the better path is one ungenerated token away **or** a complete redesign, ship it. ¬ defer an obvious better shape for a second round-trip; ¬ recommend without executing when authority already covers the delta. Complements inv 2; waives neither inv 3 nor inv 13's carve-out.
 18. **Thread so-what title.** Every new private thread (or the first DIRECTIVE on a fresh one) sets wire `summary` to one SMS-safe **ULG so-what** line (≤120 chars): how this work improves ULG — ¬ the engineering ticket subject, ¬ a slug. Fail-soft: body `so_what:` / `ulg_gain:`. On CLOSEOUT cursor refreshes `summary` with the achieved gain; closing composes `DONE — {so_what}`, never a machine one-liner alone.
 19. **Escalation chain + nesting.** The ladder is `cursor-auto` (or a tick-system `cursor-sdk` dispatchee) → `cdp/opus-5` → optionally `cdp/fable`. Opus escalates outward to Fable on its own judgment; it does not return to the human to do so. **When this CDP seat is stuck** (Opus or Fable unsure after observation + cursor code-seat consult): commission **cursor-auto → `cursor/gpt-5.6-terra`** (default independent binder) or **cursor-auto → `cursor/claude-opus-5`** (live checkout / premium) — **¬** human principal. `cursor/claude-opus-5` is always an option and rarely taken — reach for it when baremetal in-substrate reasoning beats CDP's packaged corpus. When the four trigger conditions hold it is **yours to fire without a human ping** and runs as the codified six-hop sequence in § Architecture-bind chain; outside the trigger it stays gated to the **2b path** (terra/opus via cursor-auto), not a human Ask. **Every hop is a nested `cursor-sdk` dispatch** parked under the live lease holder, with a finite depth cap. For you: a chained escalation needs no new lane and no intervention, and a hop refused for nesting is a cursor-side defect to report, not an operator fork.
@@ -302,37 +306,50 @@ around the block rather than declaring one. Distinct from the synthesized ack an
 
 ## Interrupt / supersede (BINDING)
 
-**Rule (one line).** **One live request per private thread** — a second `agent_bus.request`
-on that thread `run_cancel`s the first whether or not it is a re-issue, duplicate, or unrelated
-ask. Duplicate-protection is a special case, not the definition.
+**Rule.** **One request in flight per private thread.** A second `request` on a lane
+cancels a predecessor **only when that predecessor is already claimed** by Auto and in
+flight — `observed(ref=supersede.py:100-102, queue.py:144-159)`. Predecessors that are
+still **queued** are not cancelled: they accumulate as `same_thread_pending`, and **both
+may run to completion** — `observed(ref=agent-bus:7034 t12/t13 → t14/t15, 2026-08-09)`.
+When a claimed run has published a live bridge handle, the interrupt is `run_cancel` —
+`observed(ref=agent-bus:6655 t2005/2007/2009; agent-bus:7034 t33)`. Attestation 1 —
+`agent-bus:6655` turns 2005/2007/2009: two unrelated DIRECTIVEs on the same lane 19 s
+apart; the second enqueue carried `"superseded": {"superseded_job_id":
+"06ce32dc-1367-4b43-8b77-3b09c7779a22", "superseded_dispatch_id": "auto-83fd8fef0d5b",
+"superseded_by": "c4967114-669a-4f9e-a60e-f407326e8e74", "reason":
+"same_thread_request_turn_2007", "method": "run_cancel", "error": null}`. Attestation 2 —
+`agent-bus:6885` turn 226: a different CDP operator seat on a different lane reported an
+unprompted cancel ~76 s after writing "kill neither job". Without that handle it is
+`pre_register_live_run`: displacement, **not** a process-stop claim. The gate is
+**per-thread, not per-requester** — a peer seat's queued job is not out of scope, it is
+simply not a candidate until claimed. A **continuity hop** skips supersede entirely.
 
-**Trigger — nothing new to learn.** Issue the next `agent_bus.request` on the **same private
-thread**. Auto reads a second request against an in-flight job as a **backtrack**, not a queue
-append: no extra tool, no body token, no `manage`, no GIW restart.
+**So: parallel asks need separate lanes (`new_slug`) or one bundled DIRECTIVE.** From
+inside a seat you cannot see claim state, and you cannot see whether a peer seat holds
+the lane — so you cannot tell which branch you are firing into. The two branches cost
+differently: one loses an episode's work, the other puts two writers on one thread.
 
-**Parallel asks.** Parallel asks need **separate lanes** (`new_slug` / a different private
-thread). The other valid option is one bundled DIRECTIVE. Firing two unrelated asks on one lane
-and hoping is not valid — the second kills the first.
+**What you can read.** A **populated** `superseded` block is the only positive
+confirmation of an interrupt you will get. **`superseded: null` is not its converse** —
+it is also what you see when predecessors are merely queued, when a hop skipped
+supersede, and when the lane is idle. Do not read `null` as "clean." To learn whether a
+lane is busy, read the **thread** for a `status:admitted` turn naming a request older
+than your own — `observed(ref=agent-bus:7034 t18)`.
 
-**Silent cancellation.** Supersede is **silent at the point of decision** — no error, no
-in-flight warning. Evidence lives in the enqueue payload's `superseded` block (e.g.
-`superseded_job_id`, `superseded_dispatch_id`, `method: run_cancel`, `reason:
-same_thread_request_turn_<N>`) and afterwards as a `status:superseded` terminal turn that reads
-like housekeeping. A seat that dispatches and moves on loses work with no error unless it reads
-those surfaces.
+**Trigger — nothing new to learn.** Issue the next `agent_bus.request` on the **same
+private thread**. No extra tool, no body token, no `manage`, no GIW restart.
 
-**Provenance (`observed`).** Attestation 1 — `agent-bus:6655` turns 2005/2007/2009: two
-unrelated DIRECTIVEs on the same lane 19 s apart; the second enqueue carried
-`"superseded": {"superseded_job_id": "06ce32dc-1367-4b43-8b77-3b09c7779a22",
-"superseded_dispatch_id": "auto-83fd8fef0d5b", "superseded_by":
-"c4967114-669a-4f9e-a60e-f407326e8e74", "reason": "same_thread_request_turn_2007",
-"method": "run_cancel", "error": null}`. Attestation 2 — `agent-bus:6885` turn 226: a
-different CDP operator seat on a different lane reported an unprompted cancel ~76 s after
-writing "kill neither job".
+**Silent cancellation.** When an interrupt does fire, it is **silent at the point of
+decision** — no error, no in-flight warning. Evidence lives in the enqueue payload's
+`superseded` block (e.g. `superseded_job_id`, `superseded_dispatch_id`,
+`method: run_cancel`, `reason: same_thread_request_turn_<N>`) and afterwards as a
+`status:superseded` terminal turn that reads like housekeeping. A seat that dispatches
+and moves on loses work with no error unless it reads those surfaces.
 
-**What you observe.** The live nested run is cancelled; the dead job closes as
-**`status:superseded`**; the void episode's **git-tracked** writes revert to its admit baseline;
-your new DIRECTIVE opens with a `SUPERSEDE NOTICE` naming the void dispatch and any residue.
+**What you observe (when `run_cancel` / supersede fires).** The live nested run is
+cancelled; the dead job closes as **`status:superseded`**; the void episode's
+**git-tracked** writes revert to its admit baseline; your new DIRECTIVE opens with a
+`SUPERSEDE NOTICE` naming the void dispatch and any residue.
 
 **What you wait on.** A superseded episode never returns `status:done` — a
 `wait(completion=status:done)` held against the abandoned job will not complete, by design. Drop
@@ -350,7 +367,7 @@ rather than implying a clean tree.
 let it close and amend afterwards — supersede voids the episode's work by design.
 
 **Fewer, fatter commissions.** Bundling work into one DIRECTIVE is partly **enforced** by
-one-live-request-per-thread — not merely round-trip efficiency advice.
+one-request-in-flight-per-thread — not merely round-trip efficiency advice.
 
 ## Thread ownership (BINDING)
 

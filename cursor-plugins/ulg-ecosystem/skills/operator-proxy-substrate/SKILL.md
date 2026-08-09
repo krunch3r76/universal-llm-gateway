@@ -72,16 +72,23 @@ Operator-facing signals + `auth_gate_ack:` grammar: `cdp-operator-proxy` § Auth
 
 ## Supersede mechanism (BINDING)
 
-**One live request per private thread.** A second `agent_bus.request` on that thread
-`run_cancel`s the first whether or not it is a re-issue, duplicate, or unrelated ask
-(duplicate-protection is a special case, not the rule). Parallel asks need separate lanes or one
-bundled DIRECTIVE. Cancellation is silent at decision — visible only in the enqueue `superseded`
-block and afterwards as a `status:superseded` turn. Provenance (`observed`): `agent-bus:6655`
-turns 2005/2007/2009; `agent-bus:6885` turn 226 — see `cdp-operator-proxy` § Interrupt /
-supersede.
+**One request in flight per private thread.** A second `request` on a lane cancels a
+predecessor **only when that predecessor is already claimed** by Auto and in flight —
+`observed(ref=supersede.py:100-102, queue.py:144-159)`. Predecessors that are still
+**queued** are not cancelled: they accumulate as `same_thread_pending`, and **both may
+run to completion** — `observed(ref=agent-bus:7034 t12/t13 → t14/t15, 2026-08-09)`. When
+a claimed run has published a live bridge handle, the interrupt is `run_cancel` —
+`observed(ref=agent-bus:6655 t2005/2007/2009; agent-bus:7034 t33)`. Attestation 1 —
+`agent-bus:6655` turns 2005/2007/2009; Attestation 2 — `agent-bus:6885` turn 226 — full
+payloads in `cdp-operator-proxy` § Interrupt / supersede. Without that handle it is
+`pre_register_live_run`: displacement, **not** a process-stop claim. The gate is
+**per-thread, not per-requester**. A **continuity hop** skips supersede entirely.
 
-While a job is in flight, a second request on the **same private thread** is read as a
-**backtrack**, not a queue append — no extra tool, no body token, no `manage`, no GIW restart.
+**So: parallel asks need separate lanes (`new_slug`) or one bundled DIRECTIVE.** A
+**populated** `superseded` block is the only positive confirmation of an interrupt;
+**`superseded: null` is not its converse**. Cancellation, when it fires, is silent at
+decision — visible in the enqueue `superseded` block and afterwards as a
+`status:superseded` turn. No extra tool, no body token, no `manage`, no GIW restart.
 
 | # | Step | Evidence |
 |---|---|---|
