@@ -15,8 +15,9 @@ def _sandbox_roots(
     workspaces_root = tmp_path / "project"
     cortex_root.mkdir()
     workspaces_root.mkdir()
-    monkeypatch.setitem(cross_sandbox._SANDBOX_ROOTS, "cortex", cortex_root)
-    monkeypatch.setitem(cross_sandbox._SANDBOX_ROOTS, "workspaces", workspaces_root)
+    monkeypatch.setenv("PROJECT_ROOT", str(workspaces_root))
+    monkeypatch.delenv("LIFE_PROJECT_ROOT", raising=False)
+    monkeypatch.setattr(cross_sandbox, "SANDBOX_ROOT", cortex_root)
     monkeypatch.setattr(cross_sandbox, "record", lambda *_args, **_kwargs: None)
     return cortex_root, workspaces_root
 
@@ -70,10 +71,44 @@ def test_copy_between_sandboxes_rejects_traversal(
 ) -> None:
     _sandbox_roots(monkeypatch, tmp_path)
 
-    with pytest.raises(ValueError, match="traversal rejected"):
+    with pytest.raises(ValueError, match="traversal"):
         cross_sandbox.copy_between_sandboxes_impl(
             "workspaces",
             "../outside.pdf",
             "cortex",
             "notes/outside.pdf",
         )
+
+
+def test_life_copy_to_workspaces_uses_life_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    shared = tmp_path / "shared"
+    life_root = tmp_path / "life"
+    cortex_root = tmp_path / "files"
+    shared.mkdir()
+    life_root.mkdir()
+    cortex_root.mkdir()
+    (life_root / "universal-llm-gateway").mkdir(parents=True)
+    source = cortex_root / "notes" / "probe.txt"
+    source.parent.mkdir(parents=True)
+    source.write_text("payload")
+
+    monkeypatch.setenv("PROJECT_ROOT", str(shared))
+    monkeypatch.setenv("LIFE_PROJECT_ROOT", str(life_root))
+    monkeypatch.setattr(cross_sandbox, "SANDBOX_ROOT", cortex_root)
+    monkeypatch.setattr(cross_sandbox, "record", lambda *_args, **_kwargs: None)
+
+    cross_sandbox.copy_between_sandboxes_impl(
+        "cortex",
+        "notes/probe.txt",
+        "workspaces",
+        "universal-llm-gateway/tmp/probe.txt",
+        surface="life",
+    )
+
+    life_target = life_root / "universal-llm-gateway" / "tmp" / "probe.txt"
+    shared_target = shared / "universal-llm-gateway" / "tmp" / "probe.txt"
+    assert life_target.read_text() == "payload"
+    assert not shared_target.exists()

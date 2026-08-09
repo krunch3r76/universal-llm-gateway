@@ -121,12 +121,28 @@ Re-poll up to 5× if status is still pending/running.
 tools (xAI multi-agent rejects them; standard API path has no vortex). This platform
 (grok.com) has the full vortex MCP catalog available — use it."""
 
-CLAUDE_WEB_TOOL_SURFACE = """\
+
+def _life_workspaces_web_prose() -> str:
+    from fs_roots import life_workspaces_write_enabled
+
+    if life_workspaces_write_enabled():
+        return (
+            "repository source is writable on /mcp/life when LIFE_PROJECT_ROOT is "
+            "configured (`workspaces://{repo}/{rel}` — see fs tool description for ops)"
+        )
+    return (
+        "repository source is READ-ONLY here (`workspaces://{repo}/{rel}` reads and "
+        "`md_*` navigation are sanctioned — the tool description lists the readable ops)"
+    )
+
+
+def render_claude_web_tool_surface() -> str:
+    ws_prose = _life_workspaces_web_prose()
+    return f"""\
 ## Web-anthropic life surface
 `/mcp/life` is ON. Your primary set is the boot card's `## MCP server primary` line
 (derived per mount — do not re-derive it from prose). `fs` writes land in the cortex
-sandbox; repository source is READ-ONLY here (`workspaces://{repo}/{rel}` reads and
-`md_*` navigation are sanctioned — the tool description lists the readable ops).
+sandbox; {ws_prose}.
 
 `/mcp/code` is OFF: `team_dispatch`, `panel_dispatch`, `pipeline`, `manage`, `observability`, `project_ask`, and every workspaces WRITE are absent from this mount — a REAL absence, not a deferred bind. Need one? Ask a code seat: `agent_bus(tool="request", to="cursor", …)` (Cursor Auto; poll `poll_hint` with `wait`) or `send` for an attended seat — skill `life-to-code-request-lane` (`lane:life-to-code`). Gate SoT: boot card `## Dispatch & Consult` + skill `consult-routing` § Surface gate.
 Handoff defaults are read/coordination + bus reply. Graph walks or durable life
@@ -140,6 +156,9 @@ or total-`NONE` wording. Read packet/evidence mirrors only from `cortex://`.
 Customize carries life procedure, not code skills. Code/architecture handoffs
 must inline the required skill bodies in the packet; do not fetch `.cursor/skills`
 or `workspaces://` paths. Missing code-side action returns `<need>` for a code seat."""
+
+
+CLAUDE_WEB_TOOL_SURFACE = render_claude_web_tool_surface()
 
 GEMINI_WEB_TOOL_SURFACE = """\
 ## Gemini App Tool Surface (gemini-web — CANDIDATE seat)

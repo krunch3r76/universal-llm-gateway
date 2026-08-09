@@ -8,6 +8,8 @@ derivation. Wire registration (``tools/list``) stays separate — see
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -62,8 +64,54 @@ PERMISSIONS: dict[tuple[Surface, str], frozenset[str]] = {
 }
 
 
+def project_root_path() -> Path:
+    """Shared checkout root (``PROJECT_ROOT``)."""
+    return Path(os.environ.get("PROJECT_ROOT", "/data/project")).resolve()
+
+
+def life_project_root_path() -> Path | None:
+    """Configured life worktree root, or None when unset."""
+    configured = os.environ.get("LIFE_PROJECT_ROOT")
+    if not configured:
+        return None
+    return Path(configured).resolve()
+
+
+def life_workspaces_write_enabled() -> bool:
+    """True when life may write workspaces into a distinct ``LIFE_PROJECT_ROOT``."""
+    life_root = life_project_root_path()
+    if life_root is None:
+        return False
+    return life_root != project_root_path()
+
+
+def workspaces_write_lease() -> frozenset[str]:
+    """Surfaces authorized to write workspaces for the current configuration."""
+    lease = frozenset({"code"})
+    if life_workspaces_write_enabled():
+        return lease | frozenset({"life"})
+    return lease
+
+
+def fs_root_for(surface: Surface, root_id: str) -> Path:
+    """Resolve the on-disk root for *(surface, root_id)*."""
+    if root_id == "workspaces":
+        if surface == "life" and life_workspaces_write_enabled():
+            return life_project_root_path()  # type: ignore[return-value]
+        return project_root_path()
+    meta = ROOTS.get(root_id, {})
+    fs_root = meta.get("fs_root")
+    if isinstance(fs_root, Path):
+        return fs_root.resolve()
+    return Path(str(fs_root)).resolve()
+
+
 def permitted_ops(surface: Surface, root_id: str) -> frozenset[str]:
     """Return the op set authorized for *(surface, root_id)*."""
+    if surface == "life" and root_id == "workspaces":
+        if life_workspaces_write_enabled():
+            return _WORKSPACES_OPS
+        return LIFE_WORKSPACES_READ_OPS
     return PERMISSIONS.get((surface, root_id), frozenset())
 
 
@@ -76,6 +124,37 @@ def life_workspaces_read_granted() -> bool:
     return bool(LIFE_WORKSPACES_READ_OPS & permitted_ops("life", "workspaces"))
 
 
+def life_workspaces_write_refusal_message() -> str:
+    """Standard life-surface workspaces write refusal (table-derived)."""
+    allowed = permitted_ops("life", "workspaces")
+    return (
+        f"op='write' is not available for sandbox='workspaces' on the "
+        "/mcp/life surface — repository source is READ-ONLY here. "
+        f"Readable ops: {', '.join(sorted(allowed))}. Repository edits "
+        "are served on /mcp/code only; a life seat that needs a write "
+        "should request it from cursor rather than author it directly, "
+        "so the write stays inside the shared-checkout lease."
+    )
+
+
+@contextmanager
+def bind_workspaces_root(surface: Surface) -> Iterator[Path]:
+    """Bind project path resolution to ``fs_root_for(surface, 'workspaces')``."""
+    root = fs_root_for(surface, "workspaces")
+    import tools._project_paths as paths_mod
+    import tools.project as project_mod
+
+    old_project = project_mod._PROJECT_ROOT
+    old_paths = paths_mod._PROJECT_ROOT
+    project_mod._PROJECT_ROOT = root
+    paths_mod._PROJECT_ROOT = root
+    try:
+        yield root
+    finally:
+        project_mod._PROJECT_ROOT = old_project
+        paths_mod._PROJECT_ROOT = old_paths
+
+
 def permission_refusal(
     surface: Surface,
     root_id: str,
@@ -85,22 +164,15 @@ def permission_refusal(
 ) -> dict[str, str] | None:
     """Return an error dict when *(surface, root_id, op)* is denied; else None."""
     if target_sandbox == "workspaces" and root_id != "workspaces":
-        return _cross_sandbox_write_refusal(surface)
+        refusal = _cross_sandbox_write_refusal(surface)
+        if refusal is not None:
+            return refusal
     allowed = permitted_ops(surface, root_id)
     if op in allowed:
         return None
     if root_id == "workspaces" and surface == "life":
         if op in _WRITE_OPS:
-            return {
-                "error": (
-                    f"op={op!r} is not available for sandbox='workspaces' on the "
-                    "/mcp/life surface — repository source is READ-ONLY here. "
-                    f"Readable ops: {', '.join(sorted(allowed))}. Repository edits "
-                    "are served on /mcp/code only; a life seat that needs a write "
-                    "should request it from cursor rather than author it directly, "
-                    "so the write stays inside the shared-checkout lease."
-                )
-            }
+            return {"error": life_workspaces_write_refusal_message()}
         readable = ", ".join(sorted(allowed))
         return {
             "error": (
@@ -110,7 +182,11 @@ def permission_refusal(
                 "/mcp/code only."
             )
         }
-    write_lease = ROOTS.get(root_id, {}).get("write_lease", frozenset())
+    write_lease = (
+        workspaces_write_lease()
+        if root_id == "workspaces"
+        else ROOTS.get(root_id, {}).get("write_lease", frozenset())
+    )
     if op in _WRITE_OPS and surface not in write_lease:
         return {
             "error": (
@@ -138,7 +214,9 @@ def permission_refusal(
     }
 
 
-def _cross_sandbox_write_refusal(surface: Surface) -> dict[str, str]:
+def _cross_sandbox_write_refusal(surface: Surface) -> dict[str, str] | None:
+    if surface == "life" and life_workspaces_write_enabled():
+        return None
     return {
         "error": (
             "target_sandbox='workspaces' is not writable from the /mcp/life "
@@ -154,8 +232,38 @@ def _cross_sandbox_write_refusal(surface: Surface) -> dict[str, str]:
 def derive_fs_sandbox_intro(surface: Surface) -> tuple[str, str, str]:
     """Build fs intro/find/search blurbs from PERMISSIONS — not hand-edited."""
     life_ws_read = surface == "life" and life_workspaces_read_granted()
+    life_ws_write = surface == "life" and life_workspaces_write_enabled()
     if surface == "life":
-        if life_ws_read:
+        if life_ws_write:
+            allowed = ", ".join(sorted(permitted_ops("life", "workspaces")))
+            sandbox_intro = (
+                "File I/O for cortex and life worktree repository source on "
+                "/mcp/life. `op` is REQUIRED.\n"
+                "On this surface, an unqualified relative path defaults to cortex "
+                "when `sandbox` is omitted; `cortex://{rel}` is the canonical form "
+                "for durable agent-process artifacts. Repository source (`workspaces`) "
+                "writes land in the configured life worktree (`LIFE_PROJECT_ROOT`), "
+                "not the shared checkout.\n\n"
+                f"Workspaces ops on /mcp/life: {allowed}.\n\n"
+                "Share URI grammar (canonical cross-resident refs on this surface):\n"
+                "  cortex://{rel}             — notes, agent-skills, dropbox, uploads\n"
+                "  workspaces://{repo}/{rel}  — repository source (life worktree)\n\n"
+                "Examples:\n"
+                '  fs(op="write", path="cortex://notes/system/threads/foo.md", content="...")\n'
+                '  fs(op="write", sandbox="workspaces", path="universal-llm-gateway/tmp/foo.md", content="...")\n'
+                '  fs(op="read", path="workspaces://universal-llm-gateway/libs/foo.py")\n\n'
+            )
+            find_blurb = (
+                "``find`` and ``search`` ``mode=filename`` are available on "
+                "workspaces from /mcp/life.\n\n"
+            )
+            search_blurb = (
+                "**Literal content search:** ``op=search`` is case-sensitive regex "
+                "over file contents (cortex + workspaces) — NOT semantic "
+                "retrieval. Pattern goes in ``content=``. For meaning-based lookup "
+                "use ``rag(op=search, …)`` or ``cortex(tool=search, …)``.\n\n"
+            )
+        elif life_ws_read:
             readable = ", ".join(sorted(LIFE_WORKSPACES_READ_OPS))
             sandbox_intro = (
                 "File I/O for cortex and read-only repository source on "
@@ -178,6 +286,12 @@ def derive_fs_sandbox_intro(surface: Surface) -> tuple[str, str, str]:
                 "``find`` and ``search`` ``mode=filename`` are available on "
                 "workspaces (read-only) from /mcp/life.\n\n"
             )
+            search_blurb = (
+                "**Literal content search:** ``op=search`` is case-sensitive regex "
+                "over file contents (cortex + read-only workspaces) — NOT semantic "
+                "retrieval. Pattern goes in ``content=``. For meaning-based lookup "
+                "use ``rag(op=search, …)`` or ``cortex(tool=search, …)``.\n\n"
+            )
         else:
             sandbox_intro = (
                 "File I/O for the cortex sandbox on /mcp/life. `op` is REQUIRED.\n"
@@ -196,21 +310,14 @@ def derive_fs_sandbox_intro(surface: Surface) -> tuple[str, str, str]:
                 "``find`` (filename glob) and ``search`` ``mode=filename`` are "
                 "/mcp/code (/ workspaces) capabilities only — not on /mcp/life.\n\n"
             )
-        search_blurb = (
-            "**Literal content search (cortex):** ``op=search`` scans file "
-            "*contents* with a case-sensitive regex — NOT semantic retrieval. "
-            "Pass the pattern in ``content`` (not ``pattern``). ``path`` may "
-            "be a file or directory. ``mode`` accepts ``auto`` or "
-            "``content`` only; ``filename`` is rejected on cortex. For "
-            "meaning-based lookup use ``rag(op=search, …)`` or "
-            "``cortex(tool=search, …)`` — not ``fs`` search.\n\n"
-        )
-        if life_ws_read:
             search_blurb = (
-                "**Literal content search:** ``op=search`` is case-sensitive regex "
-                "over file contents (cortex + read-only workspaces) — NOT semantic "
-                "retrieval. Pattern goes in ``content=``. For meaning-based lookup "
-                "use ``rag(op=search, …)`` or ``cortex(tool=search, …)``.\n\n"
+                "**Literal content search (cortex):** ``op=search`` scans file "
+                "*contents* with a case-sensitive regex — NOT semantic retrieval. "
+                "Pass the pattern in ``content`` (not ``pattern``). ``path`` may "
+                "be a file or directory. ``mode`` accepts ``auto`` or "
+                "``content`` only; ``filename`` is rejected on cortex. For "
+                "meaning-based lookup use ``rag(op=search, …)`` or "
+                "``cortex(tool=search, …)`` — not ``fs`` search.\n\n"
             )
     else:
         sandbox_intro = (

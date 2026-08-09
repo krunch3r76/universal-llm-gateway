@@ -94,7 +94,7 @@ def test_code_missing_sandbox_hint_keeps_ambiguous_advisory():
 
 def test_life_workspaces_refusal_mentions_default():
     err = life_workspaces_fs_refusal()["error"]
-    assert "defaults to cortex" in err
+    assert "READ-ONLY" in err
     assert "/mcp/code" in err
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from endpoint_surface import Surface
-from fs_roots import permission_refusal
+from fs_roots import bind_workspaces_root, permission_refusal
 from project_ops import workspaces_impl_registry
 from tool_error_enricher import apply_life_sandbox_default, fs_missing_sandbox_hint
 from tools.filesystem._cross_sandbox import copy_between_sandboxes_impl
@@ -179,6 +179,7 @@ def fs_impl(
             effective_path,
             target_sandbox,
             target,
+            surface=surface,
         )
         result["_next"] = FS_WORKFLOW_HINTS["copy"]
         result.update(ingress_meta)
@@ -189,23 +190,24 @@ def fs_impl(
             **workspaces_impl_registry(),
             **overflow_registry,
         }
-        result = dispatch_workspaces_op(
-            op,
-            effective_path,
-            paths,
-            content,
-            target,
-            line,
-            all_occurrences,
-            include_untracked,
-            binary,
-            max_depth,
-            offset,
-            limit,
-            impl_registry,
-            FS_WORKFLOW_HINTS,
-            mode=mode,
-        )
+        with bind_workspaces_root(surface):
+            result = dispatch_workspaces_op(
+                op,
+                effective_path,
+                paths,
+                content,
+                target,
+                line,
+                all_occurrences,
+                include_untracked,
+                binary,
+                max_depth,
+                offset,
+                limit,
+                impl_registry,
+                FS_WORKFLOW_HINTS,
+                mode=mode,
+            )
         if isinstance(result, dict) and "error" not in result:
             result.update(ingress_meta)
         return result

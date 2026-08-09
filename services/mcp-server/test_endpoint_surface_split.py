@@ -257,6 +257,158 @@ def test_life_fs_workspaces_write_refused(life_server: dict) -> None:
     assert "READ-ONLY" in result["error"]
 
 
+def test_life_workspaces_write_guard_unset_life_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """AC1 — refusal preserved when LIFE_PROJECT_ROOT is unset."""
+    from fs_roots import (
+        life_workspaces_write_enabled,
+        permission_refusal,
+        permitted_ops,
+    )
+
+    monkeypatch.delenv("LIFE_PROJECT_ROOT", raising=False)
+    monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
+    assert not life_workspaces_write_enabled()
+    assert "write" not in permitted_ops("life", "workspaces")
+    refusal = permission_refusal("life", "workspaces", "write")
+    assert refusal is not None
+    assert "READ-ONLY" in refusal["error"]
+
+
+def test_life_workspaces_write_guard_equal_roots_fail_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """AC4 — LIFE_PROJECT_ROOT == PROJECT_ROOT must fail closed."""
+    from fs_roots import life_workspaces_write_enabled, permission_refusal
+
+    monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("LIFE_PROJECT_ROOT", str(tmp_path))
+    assert not life_workspaces_write_enabled()
+    refusal = permission_refusal("life", "workspaces", "write")
+    assert refusal is not None
+    assert "READ-ONLY" in refusal["error"]
+
+
+def test_life_fs_workspaces_write_lands_in_life_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    life_server: dict,
+) -> None:
+    """AC2 — life write resolves to LIFE_PROJECT_ROOT, not PROJECT_ROOT."""
+    shared = tmp_path / "shared"
+    life_root = tmp_path / "life"
+    shared.mkdir()
+    life_root.mkdir()
+    (shared / "universal-llm-gateway").mkdir(parents=True)
+    (life_root / "universal-llm-gateway").mkdir(parents=True)
+    monkeypatch.setenv("PROJECT_ROOT", str(shared))
+    monkeypatch.setenv("LIFE_PROJECT_ROOT", str(life_root))
+
+    fs_fn, _ = _fs_tool_fn(life_server)
+    result = fs_fn(
+        op="write",
+        sandbox="workspaces",
+        path="universal-llm-gateway/tmp/life-seat-probe.md",
+        content="life-probe",
+    )
+    assert "error" not in result, result
+    life_file = life_root / "universal-llm-gateway" / "tmp" / "life-seat-probe.md"
+    shared_file = shared / "universal-llm-gateway" / "tmp" / "life-seat-probe.md"
+    assert life_file.read_text() == "life-probe"
+    assert not shared_file.exists()
+
+
+def test_life_fs_workspaces_traversal_cannot_reach_shared_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    life_server: dict,
+) -> None:
+    """AC2 — .. traversal must not resolve into PROJECT_ROOT."""
+    shared = tmp_path / "shared"
+    life_root = tmp_path / "life"
+    shared.mkdir()
+    life_root.mkdir()
+    secret = shared / "secret.txt"
+    secret.write_text("shared-secret")
+    (life_root / "universal-llm-gateway").mkdir(parents=True)
+    monkeypatch.setenv("PROJECT_ROOT", str(shared))
+    monkeypatch.setenv("LIFE_PROJECT_ROOT", str(life_root))
+
+    fs_fn, _ = _fs_tool_fn(life_server)
+    result = fs_fn(
+        op="write",
+        sandbox="workspaces",
+        path="universal-llm-gateway/../../secret.txt",
+        content="pwn",
+    )
+    assert "error" in result
+    assert secret.read_text() == "shared-secret"
+
+
+def test_code_fs_workspaces_write_unchanged_with_life_root_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    code_server: dict,
+) -> None:
+    """AC3 — code surface keeps using PROJECT_ROOT."""
+    shared = tmp_path / "shared"
+    life_root = tmp_path / "life"
+    shared.mkdir()
+    life_root.mkdir()
+    (shared / "universal-llm-gateway").mkdir(parents=True)
+    (life_root / "universal-llm-gateway").mkdir(parents=True)
+    monkeypatch.setenv("PROJECT_ROOT", str(shared))
+    monkeypatch.setenv("LIFE_PROJECT_ROOT", str(life_root))
+
+    fs_fn, _ = _fs_tool_fn(code_server)
+    result = fs_fn(
+        op="write",
+        sandbox="workspaces",
+        path="universal-llm-gateway/tmp/code-probe.md",
+        content="code-probe",
+    )
+    assert "error" not in result, result
+    shared_file = shared / "universal-llm-gateway" / "tmp" / "code-probe.md"
+    life_file = life_root / "universal-llm-gateway" / "tmp" / "code-probe.md"
+    assert shared_file.read_text() == "code-probe"
+    assert not life_file.exists()
+
+
+def test_fs_root_for_code_workspaces_unchanged_with_life_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """AC3 — fs_root_for('code','workspaces') ignores LIFE_PROJECT_ROOT."""
+    from fs_roots import fs_root_for
+
+    shared = tmp_path / "shared"
+    life_root = tmp_path / "life"
+    shared.mkdir()
+    life_root.mkdir()
+    monkeypatch.setenv("PROJECT_ROOT", str(shared))
+    monkeypatch.setenv("LIFE_PROJECT_ROOT", str(life_root))
+    assert fs_root_for("code", "workspaces") == shared.resolve()
+    assert fs_root_for("life", "workspaces") == life_root.resolve()
+
+
+def test_life_fs_description_when_write_enabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """AC5 — derive_fs_sandbox_intro tracks write grant."""
+    from fs_roots import derive_fs_sandbox_intro, life_workspaces_write_enabled
+
+    shared = tmp_path / "shared"
+    life_root = tmp_path / "life"
+    shared.mkdir()
+    life_root.mkdir()
+    monkeypatch.setenv("PROJECT_ROOT", str(shared))
+    monkeypatch.setenv("LIFE_PROJECT_ROOT", str(life_root))
+    assert life_workspaces_write_enabled()
+    intro, _, _ = derive_fs_sandbox_intro("life")
+    assert "life worktree" in intro
+    assert "READ-ONLY" not in intro
+
+
 def test_life_fs_workspaces_non_allowlisted_op_refused(life_server: dict) -> None:
     fs_fn, _ = _fs_tool_fn(life_server)
     result = fs_fn(

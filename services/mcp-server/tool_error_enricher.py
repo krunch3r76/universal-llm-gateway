@@ -18,6 +18,11 @@ from typing import TYPE_CHECKING, Any
 import mcp.types as mt
 from fastmcp.server.middleware.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.tools.tool import ToolResult
+from fs_roots import (
+    life_workspaces_write_enabled,
+    life_workspaces_write_refusal_message,
+    permitted_ops,
+)
 from mcp_events import record
 from pydantic import ValidationError
 from request_profile import current_request_metadata
@@ -38,10 +43,25 @@ _FS_SANDBOX_HINT = (
     "or pass sandbox=cortex|workspaces explicitly."
 )
 
-_FS_LIFE_SANDBOX_HINT = (
+_FS_LIFE_SANDBOX_HINT_READONLY = (
     "On /mcp/life, omit sandbox (defaults to cortex) or use a cortex:// Share URI. "
     "sandbox='workspaces' supports read-only repository access — use /mcp/code for edits."
 )
+
+
+def _life_fs_sandbox_hint() -> str:
+    if life_workspaces_write_enabled():
+        allowed = ", ".join(sorted(permitted_ops("life", "workspaces")))
+        return (
+            "On /mcp/life, omit sandbox (defaults to cortex) or use a cortex:// Share URI. "
+            f"sandbox='workspaces' supports repository access ({allowed}) in the "
+            "configured life worktree."
+        )
+    return _FS_LIFE_SANDBOX_HINT_READONLY
+
+
+def life_workspaces_fs_refusal() -> dict[str, str]:
+    return {"error": life_workspaces_write_refusal_message()}
 
 
 def _known_workspaces_repo_names() -> set[str]:
@@ -93,7 +113,7 @@ def apply_life_sandbox_default(
 def fs_missing_sandbox_hint(path: str = "", *, surface: str = "") -> str:
     """Advisory hint when fs is called without sandbox (no inference on code)."""
     if surface == "life":
-        return _FS_LIFE_SANDBOX_HINT
+        return _life_fs_sandbox_hint()
     parts = [part for part in path.strip().strip("/").split("/") if part]
     if parts:
         first = parts[0]
@@ -108,9 +128,6 @@ def fs_missing_sandbox_hint(path: str = "", *, surface: str = "") -> str:
                 "exists under BOTH stores; use cortex:// or workspaces:// scheme."
             )
     return f"{_FS_SANDBOX_HINT}"
-
-
-from fs_roots import LIFE_WORKSPACES_READ_OPS  # noqa: F401 — re-export for tests
 
 
 # Per-session invocation tracker for Signal 5 (first_invocation_this_session).
