@@ -28,10 +28,10 @@ from .agent_bus import (
     _fetch_dispatch,
     _fetch_unread_dispatch,
     _get_dispatch,
-    _thread_get_dispatch,
     _threads_dispatch,
     _wait_dispatch,
 )
+from .agent_bus.threads import _job_state_dispatch, _thread_get_dispatch
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -47,6 +47,7 @@ AGENT_BUS_READ_OPS: dict[str, Callable[..., Any]] = {
     "get": _get_dispatch,
     "thread_get": _thread_get_dispatch,
     "threads": _threads_dispatch,
+    "job_state": _job_state_dispatch,
     "wait": _wait_dispatch,
 }
 
@@ -66,8 +67,9 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
         auto-approve reads. For post/reply/update/close/delete_* use agent_bus.
 
         Operations (identical semantics to the matching agent_bus ops):
-          thread_get   (thread)  — single ThreadDetail (tags/status/summary/turn_count/…)
+          thread_get   (thread)  — single ThreadDetail (+ cursor_auto_job when a non-terminal Auto job is on the lane)
           threads      (status?, tags?, lifecycle_state?, last?, limit?, has_unread?, query?)
+          job_state    (thread|thread_id?, job_id?, include_terminal?)  — keyed cursor-auto phase+clocks
           fetch        (to?, thread?, last?, unread?, compact?, mark_read?, all?)
           fetch_unread (to?, thread?, mark_read?, compact?, active_since?, limit?, all?)  — recipient scope: enriched per-thread unread digest; thread scope: that thread's full unread turn list
           get          (thread, turn_number)  — turn_number may be int or "latest"

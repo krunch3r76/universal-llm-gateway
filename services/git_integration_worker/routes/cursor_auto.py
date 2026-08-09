@@ -26,6 +26,10 @@ from services.git_integration_worker.cursor_auto.hop_cadence import (
     hop_cadence_loop,  # noqa: F401 — re-export for app lifespan
     observe_lane_from_enqueue,
 )
+from services.git_integration_worker.cursor_auto.job_ledger import get_ledger
+from services.git_integration_worker.cursor_auto.job_lifecycle import (
+    job_state_response,
+)
 from services.git_integration_worker.cursor_auto.liveness import get_registry
 from services.git_integration_worker.cursor_auto.queue import AutoJob, get_queue
 from services.git_integration_worker.cursor_auto.static_pin_refusal import (
@@ -100,6 +104,30 @@ async def liveness() -> dict[str, Any]:
 @router.get("/queue")
 async def queue_snapshot() -> dict[str, Any]:
     return get_queue().snapshot()
+
+
+@router.get("/job-state")
+async def job_state(
+    job_id: str | None = None,
+    thread_id: str | None = None,
+    include_terminal: bool = False,
+) -> dict[str, Any]:
+    """Keyed read of live cursor-auto phase+clocks (same shape as thread_get)."""
+    if not job_id and not thread_id:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "ok": False,
+                "error": "job-state requires job_id and/or thread_id",
+                "reason": "missing_key",
+            },
+        )
+    view = get_ledger().observer_state(
+        job_id=job_id,
+        thread_id=thread_id,
+        include_terminal=include_terminal,
+    )
+    return job_state_response(job_id=job_id, thread_id=thread_id, view=view)
 
 
 @router.post("/enqueue")

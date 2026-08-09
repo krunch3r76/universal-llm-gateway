@@ -222,10 +222,19 @@ class AutoJobQueue:
     ) -> dict[str, int]:
         """Thread-scoped pending/claimed peers (same lock as :meth:`snapshot`).
 
+        When durable, counts come from the job ledger — the same persisted
+        source as the keyed job-state / ``thread_get`` observer path. In-memory
+        queues (tests with ``durable=False``) keep the process-local count.
         Excludes *exclude_job_id* so an admit response can report *other*
         jobs on the lane — alone → 0; N queued predecessors → N. Claimed
-        peers match supersede candidacy (``nested_sdk_finished`` excluded).
+        peers match supersede candidacy (``nested_sdk_finished`` /
+        post-nested ``relay_phase`` excluded).
         """
+        ledger = self._ledger_client()
+        if ledger is not None:
+            return ledger.thread_lane_counts(
+                thread_id, exclude_job_id=exclude_job_id
+            )
         with self._lock:
             return self._thread_lane_counts_unlocked(
                 thread_id, exclude_job_id=exclude_job_id

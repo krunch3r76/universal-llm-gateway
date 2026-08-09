@@ -10,6 +10,19 @@ from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
 
+from services.git_integration_worker.cursor_auto.job_lifecycle import (
+    PHASE_ADMITTED,
+    PHASE_BOUND,
+    PHASE_CLAIMED_PRE_ADMIT,
+    PHASE_QUEUED,
+    query_observer_state,
+    query_thread_lane_counts,
+    terminal_phase_for_status,
+)
+from services.git_integration_worker.cursor_auto.job_record import (
+    job_from_row,
+    job_record,
+)
 from services.git_integration_worker.cursor_dispatch_ledger import (
     _connect,
     _ledger_path,
@@ -54,60 +67,6 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _job_record(job: AutoJob) -> dict[str, Any]:  # noqa: F821
-    return {
-        "job_id": job.job_id,
-        "thread_id": job.thread_id,
-        "turn_number": job.turn_number,
-        "subject": job.subject,
-        "body": job.body,
-        "from_agent": job.from_agent,
-        "to_agent": job.to_agent,
-        "desired_model": job.desired_model,
-        "desired_effort": job.desired_effort,
-        "escalation": job.escalation,
-        "contract": job.contract,
-        "require_attended": job.require_attended,
-        "request_id": job.request_id,
-        "enqueued_at_mono": job.enqueued_at,
-        "superseded_by": job.superseded_by,
-        "supersedes": job.supersedes,
-        "superseded_dispatch_id": job.superseded_dispatch_id,
-        "continuity_hop": job.continuity_hop,
-        "continuity_matched_token": job.continuity_matched_token,
-    }
-
-
-def _job_from_row(row: sqlite3.Row) -> AutoJob:  # noqa: F821
-    from services.git_integration_worker.cursor_auto.queue import AutoJob
-
-    data = json.loads(row["record_json"] or "{}")
-    if not isinstance(data, dict):
-        data = {}
-    return AutoJob(
-        job_id=row["job_id"],
-        thread_id=row["thread_id"],
-        turn_number=int(row["turn_number"] or data.get("turn_number") or 0),
-        subject=str(data.get("subject") or ""),
-        body=str(data.get("body") or ""),
-        from_agent=str(data.get("from_agent") or ""),
-        to_agent=str(data.get("to_agent") or "cursor"),
-        desired_model=str(data.get("desired_model") or "auto"),
-        desired_effort=str(data.get("desired_effort") or "medium"),
-        escalation=data.get("escalation") or None,
-        contract=str(data.get("contract") or "answer"),
-        require_attended=bool(data.get("require_attended", False)),
-        request_id=row["request_id"] or data.get("request_id"),
-        enqueued_at=float(data.get("enqueued_at_mono") or 0.0),
-        status=row["status"],
-        superseded_by=data.get("superseded_by"),
-        supersedes=data.get("supersedes"),
-        superseded_dispatch_id=data.get("superseded_dispatch_id"),
-        continuity_hop=bool(data.get("continuity_hop", False)),
-        continuity_matched_token=data.get("continuity_matched_token"),
-    )
-
-
 class AutoJobLedger:
     """Durable owner of cursor-auto job status; survives GIW restart."""
 
@@ -129,6 +88,15 @@ class AutoJobLedger:
             conn.execute(
                 "ALTER TABLE cursor_auto_jobs ADD COLUMN relay_phase TEXT "
                 "DEFAULT 'none'"
+            )
+        if "admitted_at" not in cols:
+            conn.execute("ALTER TABLE cursor_auto_jobs ADD COLUMN admitted_at TEXT")
+        if "bound_at" not in cols:
+            conn.execute("ALTER TABLE cursor_auto_jobs ADD COLUMN bound_at TEXT")
+        if "lifecycle_phase" not in cols:
+            conn.execute(
+                "ALTER TABLE cursor_auto_jobs ADD COLUMN lifecycle_phase TEXT "
+                f"DEFAULT '{PHASE_QUEUED}'"
             )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_auto_jobs_dispatch "
@@ -152,12 +120,12 @@ class AutoJobLedger:
             cls._instance = None
 
     def insert(self, job: AutoJob) -> None:
-        payload = json.dumps(_job_record(job), sort_keys=True, separators=(",", ":"))
+        payload = json.dumps(job_record(job), sort_keys=True, separators=(",", ":"))
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO cursor_auto_jobs "
                 "(job_id, request_id, thread_id, turn_number, status, enqueued_at, "
-                "record_json) VALUES (?,?,?,?,?,?,?)",
+                "lifecycle_phase, record_json) VALUES (?,?,?,?,?,?,?,?)",
                 (
                     job.job_id,
                     job.request_id,
@@ -165,12 +133,13 @@ class AutoJobLedger:
                     job.turn_number,
                     job.status,
                     _now_iso(),
+                    PHASE_QUEUED,
                     payload,
                 ),
             )
 
     def sync_record(self, job: AutoJob) -> None:
-        payload = json.dumps(_job_record(job), sort_keys=True, separators=(",", ":"))
+        payload = json.dumps(job_record(job), sort_keys=True, separators=(",", ":"))
         with self._connect() as conn:
             conn.execute(
                 "UPDATE cursor_auto_jobs SET status=?, record_json=? WHERE job_id=?",
@@ -182,8 +151,19 @@ class AutoJobLedger:
         with self._connect() as conn:
             conn.execute(
                 "UPDATE cursor_auto_jobs SET status='claimed', claimed_at=?, "
-                "last_heartbeat_at=? WHERE job_id=? AND status='queued'",
-                (now, now, job_id),
+                "last_heartbeat_at=?, lifecycle_phase=? "
+                "WHERE job_id=? AND status='queued'",
+                (now, now, PHASE_CLAIMED_PRE_ADMIT, job_id),
+            )
+
+    def mark_admitted(self, job_id: str) -> None:
+        """Stamp admit clock after a successful bus ``status:admitted`` reply."""
+        now = _now_iso()
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE cursor_auto_jobs SET admitted_at=?, lifecycle_phase=? "
+                "WHERE job_id=? AND status='claimed' AND admitted_at IS NULL",
+                (now, PHASE_ADMITTED, job_id),
             )
 
     def bump_heartbeat(self, job_id: str) -> None:
@@ -213,14 +193,20 @@ class AutoJobLedger:
                 return None
             conn.execute(
                 "UPDATE cursor_auto_jobs SET status=?, ended_at=?, "
-                "terminal_reason=? WHERE job_id=?",
-                (status, now, terminal_reason, job_id),
+                "terminal_reason=?, lifecycle_phase=? WHERE job_id=?",
+                (
+                    status,
+                    now,
+                    terminal_reason,
+                    terminal_phase_for_status(status),
+                    job_id,
+                ),
             )
             row = conn.execute(
                 "SELECT * FROM cursor_auto_jobs WHERE job_id=?",
                 (job_id,),
             ).fetchone()
-        return _job_from_row(row) if row is not None else None
+        return job_from_row(row) if row is not None else None
 
     def list_open(self) -> list[AutoJob]:
         with self._connect() as conn:
@@ -228,7 +214,7 @@ class AutoJobLedger:
                 "SELECT * FROM cursor_auto_jobs WHERE status IN ('queued','claimed') "
                 "ORDER BY enqueued_at ASC"
             ).fetchall()
-        return [_job_from_row(row) for row in rows]
+        return [job_from_row(row) for row in rows]
 
     def bind_dispatch(
         self,
@@ -237,11 +223,12 @@ class AutoJobLedger:
         dispatch_id: str,
         relay_phase: str = RELAY_PHASE_DISPATCHED,
     ) -> None:
+        now = _now_iso()
         with self._connect() as conn:
             conn.execute(
-                "UPDATE cursor_auto_jobs SET dispatch_id=?, relay_phase=? "
-                "WHERE job_id=?",
-                (dispatch_id, relay_phase, job_id),
+                "UPDATE cursor_auto_jobs SET dispatch_id=?, relay_phase=?, "
+                "bound_at=COALESCE(bound_at, ?), lifecycle_phase=? WHERE job_id=?",
+                (dispatch_id, relay_phase, now, PHASE_BOUND, job_id),
             )
 
     def set_relay_phase(self, job_id: str, *, relay_phase: str) -> None:
@@ -272,7 +259,35 @@ class AutoJobLedger:
                 "SELECT * FROM cursor_auto_jobs WHERE dispatch_id=? LIMIT 1",
                 (dispatch_id,),
             ).fetchone()
-        return _job_from_row(row) if row is not None else None
+        return job_from_row(row) if row is not None else None
+
+    def observer_state(
+        self,
+        *,
+        job_id: str | None = None,
+        thread_id: str | None = None,
+        include_terminal: bool = False,
+    ) -> dict[str, Any] | None:
+        """Return the codeblind observer view for a job or newest lane job."""
+        with self._connect() as conn:
+            return query_observer_state(
+                conn,
+                job_id=job_id,
+                thread_id=thread_id,
+                include_terminal=include_terminal,
+            )
+
+    def thread_lane_counts(
+        self,
+        thread_id: str,
+        *,
+        exclude_job_id: str | None = None,
+    ) -> dict[str, int]:
+        """Persisted same-thread pending/claimed peers (enqueue + read SoT)."""
+        with self._connect() as conn:
+            return query_thread_lane_counts(
+                conn, thread_id, exclude_job_id=exclude_job_id
+            )
 
     def status_counts(self) -> dict[str, int]:
         with self._connect() as conn:

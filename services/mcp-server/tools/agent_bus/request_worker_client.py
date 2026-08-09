@@ -275,9 +275,67 @@ def enqueue_auto_job(
         }
 
 
+def fetch_job_state(
+    *,
+    thread_id: str | None = None,
+    job_id: str | None = None,
+    include_terminal: bool = False,
+    base_url: str | None = None,
+    timeout_s: float = 3.0,
+) -> dict[str, Any]:
+    """GET keyed cursor-auto job observer view from the Auto worker.
+
+    Soft-fails when the worker is unreachable so ``thread_get`` still returns
+    bus metadata; callers treat a missing ``job`` as no live Auto job.
+    """
+    if not thread_id and not job_id:
+        return {
+            "ok": False,
+            "found": False,
+            "job": None,
+            "reason": "missing_key",
+        }
+    params: list[str] = []
+    if job_id:
+        params.append(f"job_id={job_id}")
+    if thread_id:
+        params.append(f"thread_id={thread_id}")
+    if include_terminal:
+        params.append("include_terminal=true")
+    qs = "&".join(params)
+    url = _auto_url(f"/job-state?{qs}", base_url=base_url)
+    try:
+        with httpx.Client(timeout=timeout_s) as client:
+            resp = client.get(url)
+        data = resp.json() if resp.content else {}
+        if resp.status_code != 200:
+            return {
+                "ok": False,
+                "found": False,
+                "job": None,
+                "reason": "job_state_http_error",
+                "status_code": resp.status_code,
+            }
+        return {
+            "ok": bool(data.get("ok", True)),
+            "found": bool(data.get("found")),
+            "job": data.get("job"),
+            "reason": "ok" if data.get("found") else "not_found",
+        }
+    except (httpx.HTTPError, ValueError, OSError) as exc:
+        return {
+            "ok": False,
+            "found": False,
+            "job": None,
+            "reason": "job_state_unreachable",
+            "error": str(exc),
+        }
+
+
 __all__ = [
     "_auto_url",
     "_worker_base_url",
     "enqueue_auto_job",
+    "fetch_job_state",
     "probe_auto_liveness",
 ]

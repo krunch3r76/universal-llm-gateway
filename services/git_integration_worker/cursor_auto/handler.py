@@ -259,6 +259,10 @@ async def process_job(
             "body": admit.body,
         }
 
+    # Claim≠admit: stamp the admit clock on successful bus reply so observers
+    # can distinguish wedged-pre-admit from wedged-post-admit-pre-bind.
+    get_ledger().mark_admitted(job.job_id)
+
     # Settle before any refusal branch: the superseded episode is void whatever
     # this job's own fate, so its writes must come back regardless.
     settlement = await settle_supersede(job)
