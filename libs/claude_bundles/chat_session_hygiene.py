@@ -432,6 +432,8 @@ def _compose_setup_error(
                 "after": mode_block.get("after"),
                 "via": mode_block.get("via"),
                 "attest": mode_block.get("attest"),
+                "compose_mode_fingerprint": mode_block.get("compose_mode_fingerprint"),
+                "candidates": mode_block.get("candidates"),
             }
         )
     # Keep nested mode/approval when both exist so readers see the successful

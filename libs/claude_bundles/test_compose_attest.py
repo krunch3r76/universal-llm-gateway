@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 
 pytest.importorskip("playwright")
 from playwright.async_api import async_playwright  # noqa: E402
 
+from claude_bundles.chat_cowork_mode import select_compose_mode
 from claude_bundles.compose_attest import (
     discover_live_submit,
     is_excluded_submit_control,
@@ -134,3 +137,97 @@ async def test_discover_live_submit_bare_new_finds_start_task() -> None:
             assert hit["name"] == "Start task"
         finally:
             await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_select_compose_mode_polls_until_fingerprint_attests_cowork(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Chip absent at t=0; fingerprint attests cowork during poll — not chip_missing."""
+    fp_calls = {"n": 0}
+    chat_fp = {
+        "title": "New chat - Claude",
+        "mode": "chat",
+        "approval": None,
+        "url": "https://claude.ai/new",
+    }
+    cowork_fp = {
+        "title": "New task - Claude",
+        "mode": "cowork",
+        "approval": {"aria": "Automatically approve", "text": "Auto"},
+        "url": "https://claude.ai/new",
+    }
+
+    async def mock_fingerprint(_page) -> dict:
+        fp_calls["n"] += 1
+        return chat_fp if fp_calls["n"] <= 2 else cowork_fp
+
+    async def mock_try_click(_page, _label) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "claude_bundles.chat_cowork_mode.compose_mode_fingerprint",
+        mock_fingerprint,
+    )
+    monkeypatch.setattr(
+        "claude_bundles.chat_cowork_mode._try_click_compose_chip",
+        mock_try_click,
+    )
+    page = AsyncMock()
+    page.wait_for_timeout = AsyncMock()
+
+    result = await select_compose_mode(page, "cowork")
+    assert result["ok"] is True
+    assert result["step"] == "already_cowork"
+    assert result["after"]["mode"] == "cowork"
+
+
+@pytest.mark.asyncio
+async def test_select_compose_mode_polls_until_chip_click_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Chip absent at t=0, present after poll — click then attest, not chip_missing."""
+    click_calls = {"n": 0}
+    chat_fp = {
+        "title": "New chat - Claude",
+        "mode": "chat",
+        "approval": None,
+        "url": "https://claude.ai/new",
+    }
+    cowork_fp = {
+        "title": "New task - Claude",
+        "mode": "cowork",
+        "approval": {"aria": "Automatically approve", "text": "Auto"},
+        "url": "https://claude.ai/new",
+    }
+
+    async def mock_fingerprint(_page) -> dict:
+        return chat_fp
+
+    async def mock_try_click(_page, _label) -> str | None:
+        click_calls["n"] += 1
+        return None if click_calls["n"] < 3 else "playwright_surface"
+
+    async def mock_attest(_page, mode, *, timeout_s=8.0, poll_ms=400) -> dict:
+        return {"ok": True, "step": f"attested_{mode}", "fingerprint": cowork_fp}
+
+    monkeypatch.setattr(
+        "claude_bundles.chat_cowork_mode.compose_mode_fingerprint",
+        mock_fingerprint,
+    )
+    monkeypatch.setattr(
+        "claude_bundles.chat_cowork_mode._try_click_compose_chip",
+        mock_try_click,
+    )
+    monkeypatch.setattr(
+        "claude_bundles.chat_cowork_mode.await_compose_attest",
+        mock_attest,
+    )
+    page = AsyncMock()
+    page.wait_for_timeout = AsyncMock()
+    page.evaluate = AsyncMock(return_value=[])
+
+    result = await select_compose_mode(page, "cowork")
+    assert result["ok"] is True
+    assert result["step"] == "selected_cowork"
+    assert result["step"] != "chip_missing"

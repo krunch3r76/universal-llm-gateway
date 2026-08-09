@@ -103,3 +103,37 @@ def test_logout_url_classifies_unauthenticated_over_nested_blocks() -> None:
     )
     assert classified["failure_class"] == "unauthenticated"
     assert classified["hint"] == "new_compose_unauthenticated"
+
+
+def test_chip_missing_payload_includes_fingerprint_and_candidates() -> None:
+    """Toggle failure must carry verbatim fingerprint + chip census (friction 25052)."""
+    fp = {
+        "title": "New chat - Claude",
+        "mode": "chat",
+        "approval": None,
+        "url": "https://claude.ai/new",
+    }
+    candidates = [{"text": "Cowork", "tag": "SPAN", "role": "radio", "w": 67.8, "h": 26}]
+    result = {
+        "ok": False,
+        "step": "cowork",
+        "mode": {
+            "ok": False,
+            "step": "chip_missing",
+            "wanted": "cowork",
+            "before": fp,
+            "compose_mode_fingerprint": fp,
+            "candidates": candidates,
+        },
+    }
+    err = _compose_setup_error(
+        step="ensure_cowork_auto",
+        url="https://claude.ai/new",
+        result=result,
+        on_new=True,
+    )
+    payload = json.loads(str(err).split("failed: ", 1)[1])
+    assert payload["inner_step"] == "chip_missing"
+    assert payload["compose_mode_fingerprint"] == fp
+    assert payload["candidates"] == candidates
+    assert payload["failure_class"] == "toggle"

@@ -17,9 +17,12 @@ import re
 from typing import Any, Literal
 
 from claude_bundles.compose_attest import (
+    _POLL_MS,
     await_compose_attest,
     compose_mode_fingerprint,
 )
+
+_CHIP_POLL_TIMEOUT_S = 8.0
 
 ApprovalMode = Literal["auto", "manual", "skip"]
 ComposeMode = Literal["chat", "cowork"]
@@ -83,14 +86,67 @@ async def _scroll_click(loc) -> None:
     await loc.click(force=True)
 
 
-async def select_compose_mode(page, mode: ComposeMode) -> dict[str, Any]:
-    """Toggle Chat/Cowork segmented control on ``/new`` (pre-submit)."""
-    label = "Cowork" if mode == "cowork" else "Chat"
-    before = await compose_mode_fingerprint(page)
-    if before.get("mode") == mode:
-        return {"ok": True, "step": f"already_{mode}", "before": before, "after": before}
+async def _collect_chip_candidates(page, label: str) -> list[dict[str, Any]]:
+    """Visible chip census for toggle-failure diagnostics."""
+    raw = await page.evaluate(
+        """(label) => {
+          const out = [];
+          for (const el of document.querySelectorAll('span,button,div,[role=button],[role=radio]')) {
+            const text = (el.innerText || '').trim();
+            if (text !== label) continue;
+            if (!el.offsetParent) continue;
+            const r = el.getBoundingClientRect();
+            out.push({
+              text,
+              tag: el.tagName,
+              role: el.getAttribute('role') || '',
+              w: r.width,
+              h: r.height,
+            });
+          }
+          return out;
+        }""",
+        label,
+    )
+    return list(raw or [])
 
-    clicked_via = None
+
+async def _chip_missing_payload(
+    page,
+    *,
+    mode: ComposeMode,
+    before: dict[str, Any],
+) -> dict[str, Any]:
+    fp = await compose_mode_fingerprint(page)
+    candidates = await _collect_chip_candidates(
+        page, "Cowork" if mode == "cowork" else "Chat"
+    )
+    return {
+        "ok": False,
+        "step": "chip_missing",
+        "wanted": mode,
+        "before": before,
+        "compose_mode_fingerprint": fp,
+        "candidates": candidates,
+    }
+
+
+async def _try_click_compose_chip(page, label: str) -> str | None:
+    """Click Chat/Cowork chip if visible. Prefer Surface radiogroup; fallback unscoped."""
+    # Sidebar owns aria-label="Mode" (Home/Code) — compose toggle is Surface + radio.
+    scoped = page.get_by_role("radiogroup", name="Surface").get_by_role(
+        "radio", name=re.compile(rf"^{re.escape(label)}$", re.I)
+    )
+    if await scoped.count():
+        btn = scoped.first
+        if await btn.is_visible():
+            box = await btn.bounding_box()
+            if box and not (
+                box["width"] < 20 or box["width"] > 220 or box["height"] < 14
+            ):
+                await _scroll_click(btn)
+                return "playwright_surface"
+
     for name in (label, label.lower(), label.upper()):
         for loc in (
             page.get_by_role("tab", name=re.compile(rf"^{re.escape(name)}$", re.I)),
@@ -107,22 +163,62 @@ async def select_compose_mode(page, mode: ComposeMode) -> dict[str, Any]:
             if box and (box["width"] < 20 or box["width"] > 220 or box["height"] < 14):
                 continue
             await _scroll_click(btn)
-            clicked_via = "playwright"
-            break
+            return "playwright"
+    box = await _chip_center(page, label)
+    if box:
+        await page.mouse.click(box["x"], box["y"])
+        return "mouse"
+    return None
+
+
+async def _poll_for_chip_or_attest(
+    page,
+    mode: ComposeMode,
+    label: str,
+    before: dict[str, Any],
+    *,
+    timeout_s: float = _CHIP_POLL_TIMEOUT_S,
+    poll_ms: int = _POLL_MS,
+) -> dict[str, Any]:
+    """Poll fingerprint + chip presence before ``chip_missing`` (cold-compose hydrate)."""
+    elapsed = 0.0
+    limit_ms = int(timeout_s * 1000)
+    last_fp = before
+    while elapsed < limit_ms:
+        await page.wait_for_timeout(poll_ms)
+        elapsed += poll_ms
+        last_fp = await compose_mode_fingerprint(page)
+        if last_fp.get("mode") == mode:
+            return {
+                "ok": True,
+                "step": f"already_{mode}",
+                "before": before,
+                "after": last_fp,
+                "polled_ms": elapsed,
+            }
+        clicked_via = await _try_click_compose_chip(page, label)
         if clicked_via:
-            break
+            return {"clicked": True, "via": clicked_via, "fingerprint": last_fp}
+    return {"ok": False, "fingerprint": last_fp, "elapsed_ms": elapsed}
+
+
+async def select_compose_mode(page, mode: ComposeMode) -> dict[str, Any]:
+    """Toggle Chat/Cowork segmented control on ``/new`` (pre-submit)."""
+    label = "Cowork" if mode == "cowork" else "Chat"
+    before = await compose_mode_fingerprint(page)
+    if before.get("mode") == mode:
+        return {"ok": True, "step": f"already_{mode}", "before": before, "after": before}
+
+    clicked_via = await _try_click_compose_chip(page, label)
 
     if not clicked_via:
-        box = await _chip_center(page, label)
-        if not box:
-            return {
-                "ok": False,
-                "step": "chip_missing",
-                "wanted": mode,
-                "before": before,
-            }
-        await page.mouse.click(box["x"], box["y"])
-        clicked_via = "mouse"
+        poll = await _poll_for_chip_or_attest(page, mode, label, before)
+        if poll.get("ok"):
+            return poll
+        if poll.get("clicked"):
+            clicked_via = poll["via"]
+        else:
+            return await _chip_missing_payload(page, mode=mode, before=before)
 
     if mode == "cowork" and label == "Cowork":
         after_probe = await compose_mode_fingerprint(page)
