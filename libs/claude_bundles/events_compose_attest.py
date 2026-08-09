@@ -158,11 +158,50 @@ def emit_compose_attested_from_result(
     )
 
 
-def _mirror_to_event_service(event: Event) -> None:
-    """Best-effort UDS ingest — silent when the events sock is down."""
-    sock_path = os.environ.get(
-        "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
+def _parse_tcp_target(raw: str) -> tuple[str, int] | None:
+    """Parse ``host:port`` (IPv4/hostname). Returns None when malformed."""
+    text = raw.strip()
+    if not text or ":" not in text:
+        return None
+    host, _, port_s = text.rpartition(":")
+    host = host.strip()
+    if not host or not port_s.strip().isdigit():
+        return None
+    return host, int(port_s)
+
+
+def _resolve_tcp_target() -> tuple[str, int] | None:
+    """TCP target when set: ``EVENTS_INGEST_TCP`` or host+port env pair.
+
+    Jupiter ``cdp_ask`` remote start exports hub ``EVENTS_INGEST_TCP`` because
+    local UDS on the satellite does not reach hub Event Service (MONITOR AC-2).
+    """
+    combined = os.environ.get("EVENTS_INGEST_TCP", "").strip()
+    if combined:
+        return _parse_tcp_target(combined)
+    host = (
+        os.environ.get("EVENT_SERVICE_INGEST_HOST", "").strip()
+        or os.environ.get("EVENTS_INGEST_HOST", "").strip()
     )
+    if not host:
+        return None
+    port_s = (
+        os.environ.get("EVENTS_INGEST_PORT", "").strip()
+        or os.environ.get("EVENT_INGEST_TCP_PORT", "").strip()
+        or "7101"
+    )
+    if not port_s.isdigit():
+        return None
+    return host, int(port_s)
+
+
+def _mirror_to_event_service(event: Event) -> None:
+    """Best-effort Event Service ingest — TCP when configured, else UDS; never raises.
+
+    Prefer ``EVENTS_INGEST_TCP=host:port`` so Jupiter ``cdp_ask`` / bundle emits
+    reach hub ``:7101``. UDS-only silently dropped every post-``567a9b49`` row
+    (arc 6928 COUNT=0) because the sock is local to the satellite.
+    """
     payload: dict[str, Any] = {
         "signal": event.signal,
         "source": "cdp-compose-attest",
@@ -171,8 +210,20 @@ def _mirror_to_event_service(event: Event) -> None:
         "ts_unix_ms": int(time.time() * 1000),
         "payload": event.payload,
     }
+    line = (json.dumps(payload) + "\n").encode()
     with contextlib.suppress(Exception):
+        tcp = _resolve_tcp_target()
+        if tcp is not None:
+            host, port = tcp
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(1.0)
+                sock.connect((host, port))
+                sock.sendall(line)
+            return
+        sock_path = os.environ.get(
+            "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
+        )
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
             sock.settimeout(1.0)
             sock.connect(sock_path)
-            sock.sendall((json.dumps(payload) + "\n").encode())
+            sock.sendall(line)
