@@ -267,6 +267,14 @@ def evaluate_watch(
     thread_id = str(row.get("thread_id") or "")
     if not thread_id:
         return HopDecision("", "skip", "missing_thread_id")
+    from services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile import (
+        breaker_blocks_hop,
+    )
+
+    if breaker_blocks_hop(row):
+        return HopDecision(
+            thread_id, "skip", "revoke_breaker", threshold_s=thr, signal="breaker"
+        )
     last_hop = row.get("last_hop_at")
     if last_hop is not None:
         try:
@@ -313,12 +321,23 @@ def mark_hop_fired(
     now: float | None = None,
     path: Path | None = None,
     execution_id: str | None = None,
+    satellite_execution_id: str | None = None,
 ) -> None:
     """Reset seated_at after a cadence hop so the successor is not immediately re-hopped."""
+    from services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile import (
+        record_succession_claim,
+    )
+
     ts = time.time() if now is None else now
     watches = load_watches(path)
     row = dict(watches.get(thread_id) or {"thread_id": thread_id})
     predecessor_reg = str(row.get("registration_id") or "").strip() or None
+    row = record_succession_claim(
+        row,
+        execution_id=execution_id,
+        satellite_execution_id=satellite_execution_id,
+        now=ts,
+    )
     row["thread_id"] = thread_id
     row["last_hop_at"] = ts
     row["seated_at"] = ts

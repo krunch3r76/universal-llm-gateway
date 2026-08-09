@@ -31,6 +31,9 @@ from services.git_integration_worker.cursor_auto.cdp_escalation import (
 from services.git_integration_worker.cursor_auto.continuity_hop import (
     run_continuity_hop_concurrent,
 )
+from services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile import (
+    reconcile_stall_revocations,
+)
 from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
     HopDecision,
     age_threshold_s,
@@ -287,6 +290,7 @@ async def hop_cadence_loop(app: Any) -> None:
     )
     while True:
         try:
+            reconcile_stall_revocations()
             outcomes = await scan_and_fire(queue=get_queue())
             due = [o for o in outcomes if o.get("ok") or o.get("reason") == "capacity_blocked"]
             if due:
