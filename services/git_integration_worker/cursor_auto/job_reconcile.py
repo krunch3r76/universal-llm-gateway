@@ -25,11 +25,43 @@ from services.git_integration_worker.cursor_auto.queue import (
     AutoJobQueue,
     get_queue,
 )
+from services.git_integration_worker.cursor_auto.silence_visibility_events import (
+    emit_queue_owner_restart_bus_unposted,
+)
 from services.git_integration_worker.cursor_bus import CursorBusClient
 
 logger = get_logger(__name__)
 
 _SHUTDOWN_TIMEOUT_S = 5.0
+
+
+def _bus_post_succeeded(post_result: dict[str, Any] | None) -> bool:
+    """True when the restart terminal reply reached the bus (HTTP < 400)."""
+    if not isinstance(post_result, dict):
+        return False
+    code = post_result.get("status_code")
+    return isinstance(code, int) and code < 400
+
+
+def _mark_bus_notify_pending(
+    ledger: AutoJobLedger,
+    job: AutoJob,
+    *,
+    status_code: int | None,
+) -> None:
+    """Durable + event mark when ledger death has no waiter-visible bus turn."""
+    ledger.merge_record_json(
+        job.job_id,
+        {
+            "bus_notify_pending": True,
+            "bus_notify_mark": "queue_owner_restart_death",
+        },
+    )
+    emit_queue_owner_restart_bus_unposted(
+        job_id=job.job_id,
+        thread_id=str(job.thread_id or ""),
+        status_code=status_code,
+    )
 
 
 def _open_jobs_union(
@@ -83,8 +115,9 @@ async def _terminalize_job(
         return None
     queue.mark_done(job.job_id, failed=True)
     if post_bus and terminal.thread_id:
+        post_result: dict[str, Any] | None = None
         try:
-            await post_queue_owner_restart_terminal(
+            post_result = await post_queue_owner_restart_terminal(
                 terminal,
                 client=client,
                 queue=queue,
@@ -94,6 +127,19 @@ async def _terminalize_job(
                 "cursor-auto restart terminal bus post failed job=%s: %s",
                 job.job_id,
                 exc,
+            )
+            _mark_bus_notify_pending(ledger, terminal, status_code=None)
+            return terminal
+        if not _bus_post_succeeded(post_result):
+            code = (
+                post_result.get("status_code")
+                if isinstance(post_result, dict)
+                else None
+            )
+            _mark_bus_notify_pending(
+                ledger,
+                terminal,
+                status_code=code if isinstance(code, int) else None,
             )
     return terminal
 

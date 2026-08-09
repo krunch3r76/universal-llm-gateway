@@ -125,7 +125,7 @@ async def complete_continuity_hop(
         parent_thread=str(job.thread_id),
     )
     if not commissioned.get("ok"):
-        return await post_terminal_status(
+        terminal = await post_terminal_status(
             job,
             client=bus,
             queue=queue,
@@ -145,7 +145,9 @@ async def complete_continuity_hop(
                 "commission": commissioned,
             },
         )
-    return await post_terminal_status(
+        return terminal
+    execution_id = commissioned.get("execution_id")
+    terminal = await post_terminal_status(
         job,
         client=bus,
         queue=queue,
@@ -159,11 +161,14 @@ async def complete_continuity_hop(
             "continuity_hop": True,
             "matched_token": job.continuity_matched_token,
             "harvest_residual": residual,
-            "execution_id": commissioned.get("execution_id"),
+            "execution_id": execution_id,
             "incumbent_job_id": incumbent.job_id if incumbent else None,
             "incumbent_dispatch_id": dispatch_id,
         },
     )
+    if execution_id and not terminal.get("execution_id"):
+        terminal = {**terminal, "execution_id": execution_id}
+    return terminal
 
 
 async def run_continuity_hop_concurrent(

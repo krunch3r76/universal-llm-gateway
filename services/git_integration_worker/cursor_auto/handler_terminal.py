@@ -79,7 +79,7 @@ async def post_terminal_status(
         allow_long_body=True,
     )
     queue.mark_done(job.job_id, failed=failed)
-    return {
+    out: dict[str, Any] = {
         "ok": not failed and terminal.status_code < 400,
         "phase": "terminal",
         "terminal_status": terminal_status,
@@ -87,6 +87,11 @@ async def post_terminal_status(
         "status_code": terminal.status_code,
         "summary": summary,
     }
+    # Surface join keys for hop-cadence succession (payload-only was invisible).
+    for key in ("execution_id", "satellite_execution_id"):
+        if payload.get(key):
+            out[key] = payload[key]
+    return out
 
 
 ANSWER_DECLINED_REASON = "answer_in_seat_no_execution"

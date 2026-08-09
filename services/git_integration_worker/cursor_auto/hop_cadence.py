@@ -46,6 +46,10 @@ from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
     scan_interval_s,
 )
 from services.git_integration_worker.cursor_auto.queue import AutoJobQueue
+from services.git_integration_worker.cursor_auto.silence_visibility_events import (
+    emit_liveness_probe_failed,
+    emit_succession_claim_missing_execution_id,
+)
 
 logger = get_logger(__name__)
 
@@ -151,11 +155,17 @@ async def fire_hop_for_decision(
             "capacity_label": label,
             "thread_id": decision.thread_id,
         }
+    liveness_probe: dict[str, Any] = {"fail_open": False}
     try:
         snap = reader()
     except Exception as exc:  # noqa: BLE001 — cadence must not crash the worker
         logger.warning("hop_cadence liveness probe failed: %s", exc)
         snap = {}
+        liveness_probe = {"fail_open": True, "error": str(exc)}
+        emit_liveness_probe_failed(
+            thread_id=decision.thread_id,
+            error=str(exc),
+        )
     refuse, refuse_reason, refuse_evidence = refuse_cadence_hop_for_live_seat(
         row, snap if isinstance(snap, dict) else {}
     )
@@ -171,6 +181,7 @@ async def fire_hop_for_decision(
             "reason": refuse_reason,
             "thread_id": decision.thread_id,
             "refusal": refuse_evidence,
+            "liveness_probe": liveness_probe,
         }
     body = build_cadence_hop_body(
         decision,
@@ -204,22 +215,31 @@ async def fire_hop_for_decision(
     result = await run_continuity_hop_concurrent(
         job, queue=queue, incumbent=incumbent
     )
-    hop_ok = result.get("reason") != "hop_not_queued"
-    if hop_ok:
-        mark_hop_fired(
-            decision.thread_id,
-            execution_id=str(result.get("execution_id") or "") or None,
+    execution_id = str(result.get("execution_id") or "").strip() or None
+    if result.get("reason") == "hop_not_queued":
+        hop_ok = False
+    elif not execution_id:
+        # Claim-only / commission without joinable id — do not advance succession.
+        hop_ok = False
+        emit_succession_claim_missing_execution_id(
+            thread_id=decision.thread_id,
+            job_id=job.job_id,
         )
+    else:
+        hop_ok = True
+        mark_hop_fired(decision.thread_id, execution_id=execution_id)
     logger.info(
-        "hop_cadence fire thread=%s job=%s hop_ok=%s",
+        "hop_cadence fire thread=%s job=%s hop_ok=%s execution_id=%s",
         decision.thread_id,
         job.job_id,
         hop_ok,
+        execution_id,
     )
     return {
         "ok": hop_ok,
         "thread_id": decision.thread_id,
         "job_id": job.job_id,
+        "execution_id": execution_id,
         "decision": {
             "reason": decision.reason,
             "age_s": decision.age_s,
@@ -228,6 +248,7 @@ async def fire_hop_for_decision(
             "handoff_status": decision.handoff.status if decision.handoff else None,
         },
         "hop_result": result,
+        "liveness_probe": liveness_probe,
     }
 
 

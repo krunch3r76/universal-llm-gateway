@@ -128,7 +128,7 @@ async def test_cadence_hop_residual_re_issue_subject_names_incumbent(monkeypatch
         residuals.append(payload)
         return {"ok": True, "payload": payload}
 
-    async def _fake_commission(j, *, model, purpose):
+    async def _fake_commission(j, *, model, purpose, **_kwargs):
         return {"ok": True, "execution_id": "exec-cadence-1"}
 
     async def _fake_terminal(j, **kwargs):

@@ -113,7 +113,7 @@ HARVEST_JS = """
     if (stop) break;
   }
   const errorBannerRe =
-    /hit a limit|rate limit|something went wrong|network error|try again later|usage limit|overloaded/i;
+    /hit a limit|hit your .+ limit|weekly limit|rate limit|something went wrong|network error|try again later|usage limit|overloaded/i;
   const isInsideComposer = (el) => {
     if (!el) return false;
     if (el.closest('[data-testid="chat-input"]')) return true;

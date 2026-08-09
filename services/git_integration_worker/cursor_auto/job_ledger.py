@@ -253,6 +253,39 @@ class AutoJobLedger:
             "status": row["status"],
         }
 
+    def read_record_json(self, job_id: str) -> dict[str, Any]:
+        """Return decoded ``record_json`` for *job_id*, or ``{}`` if missing."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT record_json FROM cursor_auto_jobs WHERE job_id=?",
+                (job_id,),
+            ).fetchone()
+        if row is None:
+            return {}
+        data = json.loads(row["record_json"] or "{}")
+        return data if isinstance(data, dict) else {}
+
+    def merge_record_json(self, job_id: str, patch: dict[str, Any]) -> None:
+        """Merge *patch* into durable ``record_json`` (silence-family marks)."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT record_json FROM cursor_auto_jobs WHERE job_id=?",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                return
+            data = json.loads(row["record_json"] or "{}")
+            if not isinstance(data, dict):
+                data = {}
+            data.update(patch)
+            conn.execute(
+                "UPDATE cursor_auto_jobs SET record_json=? WHERE job_id=?",
+                (
+                    json.dumps(data, sort_keys=True, separators=(",", ":")),
+                    job_id,
+                ),
+            )
+
     def get_by_dispatch_id(self, dispatch_id: str) -> AutoJob | None:
         with self._connect() as conn:
             row = conn.execute(

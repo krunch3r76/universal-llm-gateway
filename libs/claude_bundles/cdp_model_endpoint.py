@@ -49,12 +49,17 @@ RETRYABLE_OVERLOAD_STATUS = frozenset({529, 503})
 SUBMIT_RETRY_BACKOFF_S = 5.0
 MAX_OVERLOAD_SUBMIT_ATTEMPTS = 2
 UPSTREAM_OVERLOADED = "upstream_overloaded"
+WEEKLY_LIMIT = "weekly_limit"
 _OVERLOAD_ONLY_BODY_RE = re.compile(r"API Error:\s*52[93]", re.IGNORECASE)
 _OVERLOAD_ONLY_LINE_RE = re.compile(
     r"^(?:Claude responded: )?API Error:\s*52[93].*$",
     re.IGNORECASE,
 )
 _OVERLOAD_ONLY_MAX_LEN = 500
+_WEEKLY_LIMIT_RE = re.compile(
+    r"weekly\s+limit|hit\s+your\s+.+\s*limit|you've\s+hit\s+your",
+    re.IGNORECASE,
+)
 
 HarvestSource = Literal["chat", "output-file", "auto"]
 ExpectedSize = Literal["small", "large", "auto"]
@@ -332,6 +337,45 @@ def _proof_rejects_overload(snapshot: dict[str, Any]) -> bool:
     return bool(snapshot.get("archive_uri"))
 
 
+def _proof_rejects_weekly_limit(snapshot: dict[str, Any]) -> bool:
+    """True when harvest is a product quota banner, not a seat reply."""
+    body = str(snapshot.get("body") or "")
+    banner = " ".join(
+        str(snapshot.get(k) or "")
+        for k in ("error_banner_text", "error_banner_match", "error_banner")
+    )
+    return bool(_WEEKLY_LIMIT_RE.search(body) or _WEEKLY_LIMIT_RE.search(banner))
+
+
+def _weekly_limit_result(
+    *,
+    body: str,
+    execution_id: str,
+    satellite_execution_id: str | None,
+    prompt_uri: str,
+    picker_model: str,
+    carry: dict[str, str | None] | None = None,
+    poll_snapshots: int = 0,
+) -> CdpGenerateResult:
+    """Grade weekly-limit banner as ``cdp FAILED`` (mark: banner_not_a_seat)."""
+    carry = carry or {}
+    return CdpGenerateResult(
+        ok=False,
+        body=body,
+        execution_id=execution_id,
+        satellite_execution_id=satellite_execution_id,
+        prompt_uri=prompt_uri,
+        picker_model=picker_model,
+        stall_stage=WEEKLY_LIMIT,
+        error="product weekly-limit banner (not a seat reply)",
+        extras={"mark": "banner_not_a_seat", "reason": WEEKLY_LIMIT},
+        archive_uri=carry.get("archive_uri"),
+        content_proof_uri=carry.get("content_proof_uri"),
+        content_proof_sha256=carry.get("content_proof_sha256"),
+        poll_snapshots=poll_snapshots,
+    )
+
+
 def _upstream_overloaded_extras(
     exc: CdpAskClientError | None = None,
     *,
@@ -409,6 +453,15 @@ def result_from_snapshot(
                 archive_uri=carry["archive_uri"],
                 content_proof_uri=carry["content_proof_uri"],
                 content_proof_sha256=carry["content_proof_sha256"],
+            )
+        if _proof_rejects_weekly_limit(snapshot):
+            return _weekly_limit_result(
+                body=body,
+                execution_id=execution_id,
+                satellite_execution_id=satellite_execution_id,
+                prompt_uri=prompt_uri,
+                picker_model=picker_model,
+                carry=carry,
             )
         return CdpGenerateResult(
             ok=True,
@@ -716,6 +769,20 @@ def run_cdp_generate(
                     error="upstream overload-only harvest body",
                     poll_snapshots=polls,
                     extras=_upstream_overloaded_extras(abort=abort_info),
+                )
+            if _proof_rejects_weekly_limit(snapshot):
+                return _weekly_limit_result(
+                    body=body,
+                    execution_id=execution_id,
+                    satellite_execution_id=sat_id,
+                    prompt_uri=staged.prompt_uri,
+                    picker_model=picker,
+                    carry={
+                        "archive_uri": snapshot.get("archive_uri"),
+                        "content_proof_uri": snapshot.get("content_proof_uri"),
+                        "content_proof_sha256": snapshot.get("content_proof_sha256"),
+                    },
+                    poll_snapshots=polls,
                 )
             sweep_ephemeral(execution_id)
             return CdpGenerateResult(
