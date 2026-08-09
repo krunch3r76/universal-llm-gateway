@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from implement_admission.spec import NO_RUN_DEGRADED_REASONS
+
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
 )
@@ -30,6 +32,8 @@ _CORTEX_URI_PREFIX = "cortex://"
 _UNHASHABLE_CORTEX_DEFERRED = (
     "deferred: cortex durable write could not be rehashed"
 )
+_DEGRADED_SUMMARY_RE = re.compile(r"\(degraded:\s*([^)]+)\)")
+_TOOL_CALLS_SUMMARY_RE = re.compile(r":\s*(\d+)\s+tool calls\b")
 
 
 @dataclass(frozen=True)
@@ -72,6 +76,73 @@ def probe_authored_path_baseline() -> AuthoredPathProbe:
             "dirty paths in neither set — registration gaps, not WIP to respect."
         ),
     )
+
+
+def degraded_reason_from_closeout_wrapper(wrapper_text: str | None) -> str | None:
+    """Parse ``degraded_reason`` from an ImplementCloseout JSON body.
+
+    Prefer the structured ``degraded_reason`` field; fall back to the legacy
+    ``(degraded: …)`` token embedded in ``summary`` for older wrappers.
+    """
+    if not wrapper_text or not wrapper_text.strip():
+        return None
+    try:
+        payload = json.loads(wrapper_text)
+    except json.JSONDecodeError:
+        return None
+    structured = payload.get("degraded_reason")
+    if isinstance(structured, str) and structured.strip():
+        return structured.strip()
+    summary = payload.get("summary")
+    if not isinstance(summary, str):
+        return None
+    match = _DEGRADED_SUMMARY_RE.search(summary)
+    if match is None:
+        return None
+    return match.group(1).strip()
+
+
+def tool_call_count_from_closeout_wrapper(wrapper_text: str | None) -> int | None:
+    """Parse tool-call count from an ImplementCloseout JSON body.
+
+    Prefer structured ``tool_call_count``; fall back to the summary line.
+    """
+    if not wrapper_text or not wrapper_text.strip():
+        return None
+    try:
+        payload = json.loads(wrapper_text)
+    except json.JSONDecodeError:
+        return None
+    structured = payload.get("tool_call_count")
+    if isinstance(structured, int):
+        return structured
+    summary = payload.get("summary")
+    if not isinstance(summary, str):
+        return None
+    match = _TOOL_CALLS_SUMMARY_RE.search(summary)
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
+def null_run_suppresses_lane_a_authorship(
+    *,
+    degraded_reason: str | None,
+    wrapper_text: str | None = None,
+) -> bool:
+    """True when ``NO_RUN_DEGRADED_REASONS`` means zero dispatch authorship.
+
+    ``empty_terminal_output`` may co-occur with tool calls that wrote files — only
+    suppress when the wrapper reports zero tool calls.
+    """
+    if degraded_reason is None:
+        return False
+    if degraded_reason in ("empty_assistant_turn", "zero_tool_calls"):
+        return True
+    if degraded_reason == "empty_terminal_output":
+        tool_calls = tool_call_count_from_closeout_wrapper(wrapper_text)
+        return tool_calls == 0
+    return degraded_reason in NO_RUN_DEGRADED_REASONS
 
 
 def authored_paths_for_dispatch(
@@ -254,6 +325,7 @@ def compute_lane_a_checkpoint_value(
     baseline: dict[str, Any] | None = None,
     wrapper_text: str | None = None,
     cortex_root: Path | None = None,
+    degraded_reason: str | None = None,
 ) -> str:
     """Infrastructure-derived checkpoint disposition — not agent-typed.
 
@@ -261,6 +333,13 @@ def compute_lane_a_checkpoint_value(
     durable writes. When both git signals are empty, closeout-time rehash of
     wrapper ``cortex://`` offgit URIs yields ``authored_cortex:`` (row 19).
     """
+    if degraded_reason is None:
+        degraded_reason = degraded_reason_from_closeout_wrapper(wrapper_text)
+    if null_run_suppresses_lane_a_authorship(
+        degraded_reason=degraded_reason,
+        wrapper_text=wrapper_text,
+    ):
+        return "nothing_authored"
     if baseline is None:
         baseline = _parse_wt_baseline(
             CursorDispatchLedger.instance().read_wt_baseline(dispatch_id=dispatch_id)
@@ -320,6 +399,9 @@ __all__ = [
     "TreeResidueSnapshot",
     "authored_paths_for_dispatch",
     "compute_lane_a_checkpoint_value",
+    "degraded_reason_from_closeout_wrapper",
+    "null_run_suppresses_lane_a_authorship",
+    "tool_call_count_from_closeout_wrapper",
     "cortex_offgit_uris_from_wrapper",
     "derive_tree_residue",
     "extract_authored_checkpoint",

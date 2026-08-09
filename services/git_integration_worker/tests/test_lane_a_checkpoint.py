@@ -10,20 +10,30 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from claude_bundles.lane_a_closeout_checkpoint import (
     validate_lane_a_closeout_checkpoint,
 )
+
+from services.git_integration_worker.cursor_auto.closeout_tree_state import (
+    compute_closeout_tree_state,
+)
 from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
     compute_lane_a_checkpoint_value,
+    degraded_reason_from_closeout_wrapper,
     derive_tree_residue,
     inject_checkpoint_line,
     inject_tree_residue_line,
+    null_run_suppresses_lane_a_authorship,
     probe_authored_path_baseline,
     rehash_cortex_uri,
 )
+from services.git_integration_worker.cursor_dispatch_ledger import (
+    CursorDispatchLedger,
+)
 from services.git_integration_worker.cursor_home import dispatch_git_identity
 from services.git_integration_worker.cursor_sdk_closeout import (
+    SdkRunOutcome,
+    build_implement_closeout_body,
     capture_wt_baseline_with_hashes,
 )
 from services.git_integration_worker.cursor_sdk_git_head import paths_in_commit
@@ -273,6 +283,167 @@ def test_compute_checkpoint_committed_when_clean_tree_after_lane_commit(
         )
     path_count = len(paths_in_commit(tmp_path, lane_sha))
     assert value == f"committed {lane_sha} paths={path_count}"
+
+
+def _null_run_wrapper_without_summary_scrape(
+    *,
+    dispatch_id: str,
+    degraded_reason: str,
+    tool_call_count: int,
+) -> str:
+    """Realistic ImplementCloseout JSON with structured fields only (no summary scrape)."""
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "status": "failed",
+            "degraded_reason": degraded_reason,
+            "tool_call_count": tool_call_count,
+            "summary": (
+                f"dispatch {dispatch_id}: {tool_call_count} tool calls, "
+                "0.1s, 0B -> sidecar"
+            ),
+            "source_ref": f"workspaces://universal-llm-gateway/tmp/reviews/{dispatch_id}.md",
+            "files_created": [],
+            "files_modified": [],
+            "files_deleted": [],
+            "effects": [],
+        }
+    )
+
+
+def test_null_run_zero_tool_calls_dirty_tree_reports_nothing_authored(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC1 — NO_RUN on a dirty tree must not credit ambient dirt as authorship."""
+    dispatch_id = "auto-null-run-dirty-tree"
+    _init_git_repo(tmp_path)
+    _commit(tmp_path, "seed.py")
+    admit_baseline = capture_wt_baseline_with_hashes(tmp_path)
+    assert admit_baseline is not None
+    ambient_paths = tuple(f"ambient{i}.py" for i in range(8))
+    for rel in ambient_paths:
+        target = tmp_path / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(f"# {rel}\n", encoding="utf-8")
+    ledger = CursorDispatchLedger.instance()
+    monkeypatch.setattr(
+        ledger,
+        "read_wt_baseline",
+        lambda *, dispatch_id: admit_baseline if dispatch_id else None,
+    )
+    from services.git_integration_worker.cursor_auto import lane_a_checkpoint
+
+    authored = lane_a_checkpoint.authored_paths_for_dispatch(
+        source_repo=tmp_path,
+        dispatch_id=dispatch_id,
+    )
+    assert authored == ambient_paths
+    wrapper = _null_run_wrapper_without_summary_scrape(
+        dispatch_id=dispatch_id,
+        degraded_reason="zero_tool_calls",
+        tool_call_count=0,
+    )
+    assert degraded_reason_from_closeout_wrapper(wrapper) == "zero_tool_calls"
+    assert "(degraded:" not in wrapper
+    state = compute_closeout_tree_state(
+        source_repo=tmp_path,
+        dispatch_id=dispatch_id,
+        wrapper_text=wrapper,
+    )
+    assert state.checkpoint == "nothing_authored@local-master"
+    assert state.deployment_state is None
+
+
+def test_null_run_e2e_via_build_implement_closeout_body(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC1 e2e — producer stamps structured degraded_reason; tree_state honors it."""
+    dispatch_id = "auto-null-run-producer-e2e"
+    _init_git_repo(tmp_path)
+    _commit(tmp_path, "seed.py")
+    admit_baseline = capture_wt_baseline_with_hashes(tmp_path)
+    assert admit_baseline is not None
+    for i in range(8):
+        rel = f"foreign{i}.py"
+        (tmp_path / rel).write_text(f"# {rel}\n", encoding="utf-8")
+    ledger = CursorDispatchLedger.instance()
+    monkeypatch.setattr(
+        ledger,
+        "read_wt_baseline",
+        lambda *, dispatch_id: admit_baseline if dispatch_id else None,
+    )
+    outcome = SdkRunOutcome(
+        body="",
+        status="finished",
+        duration_ms=100,
+        tool_call_count=0,
+    )
+    wrapper = build_implement_closeout_body(
+        dispatch_id=dispatch_id,
+        outcome=outcome,
+        degraded_reason="zero_tool_calls",
+        sidecar_ref=f"workspaces://universal-llm-gateway/tmp/reviews/{dispatch_id}.md",
+        result_bytes=0,
+        thread_id="t-null-run",
+        work_item_ref=None,
+    )
+    payload = json.loads(wrapper)
+    assert payload["degraded_reason"] == "zero_tool_calls"
+    assert payload["tool_call_count"] == 0
+    state = compute_closeout_tree_state(
+        source_repo=tmp_path,
+        dispatch_id=dispatch_id,
+        wrapper_text=wrapper,
+    )
+    assert state.checkpoint == "nothing_authored@local-master"
+    assert state.deployment_state is None
+
+
+def test_null_run_empty_terminal_output_with_tool_calls_still_deferred(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC4 — run that authored paths still reports deferred, not nothing_authored."""
+    dispatch_id = "auto-empty-output-with-tools"
+    _init_git_repo(tmp_path)
+    admit = _commit(tmp_path, "seed.py")
+    admit_baseline = capture_wt_baseline_with_hashes(tmp_path)
+    assert admit_baseline is not None
+    (tmp_path / "tool_written.py").write_text("x=1\n", encoding="utf-8")
+    ledger = CursorDispatchLedger.instance()
+    monkeypatch.setattr(
+        ledger,
+        "read_wt_baseline",
+        lambda *, dispatch_id: admit_baseline if dispatch_id else None,
+    )
+    wrapper = _null_run_wrapper_without_summary_scrape(
+        dispatch_id=dispatch_id,
+        degraded_reason="empty_terminal_output",
+        tool_call_count=3,
+    )
+    wrapper_obj = json.loads(wrapper)
+    wrapper_obj["files_created"] = ["tool_written.py"]
+    wrapper_obj["effects"] = ["tool_written.py"]
+    wrapper = json.dumps(wrapper_obj)
+    value = compute_lane_a_checkpoint_value(
+        source_repo=tmp_path,
+        dispatch_id=dispatch_id,
+        baseline={"admit_head": admit},
+        wrapper_text=wrapper,
+    )
+    assert value == "deferred: authored paths not yet path-explicit committed"
+    assert not null_run_suppresses_lane_a_authorship(
+        degraded_reason=degraded_reason_from_closeout_wrapper(wrapper),
+        wrapper_text=wrapper,
+    )
+    state = compute_closeout_tree_state(
+        source_repo=tmp_path,
+        dispatch_id=dispatch_id,
+        wrapper_text=wrapper,
+    )
+    assert "authored-not-committed" in (state.deployment_state or "")
 
 
 def test_compute_checkpoint_nothing_authored_when_both_empty(

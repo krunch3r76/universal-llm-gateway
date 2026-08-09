@@ -1066,6 +1066,9 @@ def build_implement_closeout_body(
             usage_capture_status=outcome.usage_capture_status,  # type: ignore[arg-type]
         )
         payload = closeout.model_dump(mode="json")
+        if degraded_reason:
+            payload["degraded_reason"] = degraded_reason
+        payload["tool_call_count"] = outcome.tool_call_count
         if status_authority_disagreement is not None:
             payload["status_authority_disagreement"] = status_authority_disagreement
         if files_untracked_or_ignored:

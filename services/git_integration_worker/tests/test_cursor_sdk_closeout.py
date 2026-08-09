@@ -241,6 +241,8 @@ def test_build_implement_closeout_body_degraded() -> None:
     )
     payload = json.loads(body)
     assert payload["status"] == "failed"
+    assert payload["degraded_reason"] == "zero_tool_calls"
+    assert payload["tool_call_count"] == 0
     assert "zero_tool_calls" in payload["summary"]
 
 
