@@ -419,16 +419,23 @@ async def _compose_model_selected(
     compose_url: str | None = None,
     project_uuid: str | None = None,
     ensure_cowork_auto: bool = True,
+    stargate_execution_id: str = "",
+    satellite_execution_id: str = "",
 ) -> dict:
     """Land compose, select picker model, recover from chrome detours / warm CSE."""
+    compose_kw = {
+        "stargate_execution_id": stargate_execution_id,
+        "satellite_execution_id": satellite_execution_id,
+    }
     if project_uuid:
-        await goto_fresh_compose(page, project_uuid=project_uuid)
+        await goto_fresh_compose(page, project_uuid=project_uuid, **compose_kw)
     else:
         url = compose_url or "https://claude.ai/new"
         await goto_fresh_compose(
             page,
             compose_url=url,
             ensure_cowork_auto=ensure_cowork_auto,
+            **compose_kw,
         )
     composer = await find_composer(page)
     if composer is not None:
@@ -440,12 +447,13 @@ async def _compose_model_selected(
     # Model picker clicks can land on settings / scheduled-task — re-land + re-pick.
     if "/new" not in (page.url or "") and "/cowork/" not in (page.url or ""):
         if project_uuid:
-            await goto_fresh_compose(page, project_uuid=project_uuid)
+            await goto_fresh_compose(page, project_uuid=project_uuid, **compose_kw)
         else:
             await goto_fresh_compose(
                 page,
                 compose_url=compose_url or "https://claude.ai/new",
                 ensure_cowork_auto=ensure_cowork_auto,
+                **compose_kw,
             )
         model_info = await select_model(page, model)
         if not model_info.get("ok"):
@@ -453,12 +461,13 @@ async def _compose_model_selected(
     # Warm CSE/chat retains the prior family — fresh dispatch must use /new.
     if in_active_chat(page.url or "") and not await picker_attests_request(page, model):
         if project_uuid:
-            await goto_fresh_compose(page, project_uuid=project_uuid)
+            await goto_fresh_compose(page, project_uuid=project_uuid, **compose_kw)
         else:
             await goto_fresh_compose(
                 page,
                 compose_url=compose_url or "https://claude.ai/new",
                 ensure_cowork_auto=ensure_cowork_auto,
+                **compose_kw,
             )
         model_info = await select_model(page, model)
     return model_info
@@ -494,6 +503,8 @@ async def project_ask_on_page(
             page,
             model,
             project_uuid=project_uuid,
+            stargate_execution_id=stargate_execution_id,
+            satellite_execution_id=str(execution_id or ""),
         )
         if not model_info.get("ok"):
             return ProjectAskResult(

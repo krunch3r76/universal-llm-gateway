@@ -336,6 +336,8 @@ async def run_project_conversation(
                 model,
                 compose_url=url,
                 ensure_cowork_auto=ensure_cowork_auto,
+                stargate_execution_id=stargate_execution_id,
+                satellite_execution_id=satellite_execution_id,
             )
             if not model_info.get("ok"):
                 return [

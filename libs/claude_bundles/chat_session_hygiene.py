@@ -434,6 +434,11 @@ def _compose_setup_error(
                 "attest": mode_block.get("attest"),
                 "compose_mode_fingerprint": mode_block.get("compose_mode_fingerprint"),
                 "candidates": mode_block.get("candidates"),
+                "click_probe": mode_block.get("click_probe"),
+                "surface_radiogroup_count": mode_block.get("surface_radiogroup_count"),
+                "radiogroup_names": mode_block.get("radiogroup_names"),
+                "gate_rejects": mode_block.get("gate_rejects"),
+                "polled_ms": mode_block.get("polled_ms"),
             }
         )
     # Keep nested mode/approval when both exist so readers see the successful
@@ -453,12 +458,17 @@ async def goto_fresh_compose(
     project_uuid: str | None = None,
     compose_url: str | None = None,
     ensure_cowork_auto: bool = True,
+    stargate_execution_id: str = "",
+    satellite_execution_id: str = "",
 ) -> str:
     """Land on a clean compose surface (Project chrome or bare /new).
 
     On bare ``/new``, default ``ensure_cowork_auto=True`` selects Cowork + Auto
     (friction 25051 — Chat CDP Send path broken). Pass ``ensure_cowork_auto=False``
     only on **operator-gated** Chat dispatches.
+
+    ``stargate_execution_id`` / ``satellite_execution_id`` thread into
+    ``cdp.generate.compose_attested`` on both arms (arc 6928 / 7034 B1 producer).
     """
     if compose_url:
         url = compose_url
@@ -480,29 +490,23 @@ async def goto_fresh_compose(
     # Chat/Cowork + Auto only exist on bare /new compose — not Project shell.
     on_new = url.rstrip("/").endswith("/new") or "/new?" in url
     if on_new and not project_uuid:
-        from claude_bundles.chat_cowork_mode import (
-            ensure_chat_compose as _ensure_chat,
-        )
-        from claude_bundles.chat_cowork_mode import (
-            ensure_cowork_auto as _ensure_cowork,
-        )
+        from claude_bundles.compose_setup_emit import ensure_bare_new_compose
 
-        if ensure_cowork_auto:
-            result = await _ensure_cowork(page)
-            if not result.get("ok"):
-                raise _compose_setup_error(
-                    step="ensure_cowork_auto",
-                    url=page.url,
-                    result=result,
-                    on_new=on_new,
-                )
-        else:
-            result = await _ensure_chat(page)
-            if not result.get("ok"):
-                raise _compose_setup_error(
-                    step="ensure_chat_compose",
-                    url=page.url,
-                    result=result,
-                    on_new=on_new,
-                )
+        result = await ensure_bare_new_compose(
+            page,
+            ensure_cowork_auto=ensure_cowork_auto,
+            stargate_execution_id=stargate_execution_id,
+            satellite_execution_id=satellite_execution_id,
+        )
+        if not result.get("ok"):
+            raise _compose_setup_error(
+                step=(
+                    "ensure_cowork_auto"
+                    if ensure_cowork_auto
+                    else "ensure_chat_compose"
+                ),
+                url=page.url,
+                result=result,
+                on_new=on_new,
+            )
     return page.url

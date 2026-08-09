@@ -114,6 +114,7 @@ def test_chip_missing_payload_includes_fingerprint_and_candidates() -> None:
         "url": "https://claude.ai/new",
     }
     candidates = [{"text": "Cowork", "tag": "SPAN", "role": "radio", "w": 67.8, "h": 26}]
+    gate_rejects = [{"arm": "surface", "reason": "size", "w": 12, "h": 10}]
     result = {
         "ok": False,
         "step": "cowork",
@@ -124,6 +125,10 @@ def test_chip_missing_payload_includes_fingerprint_and_candidates() -> None:
             "before": fp,
             "compose_mode_fingerprint": fp,
             "candidates": candidates,
+            "surface_radiogroup_count": 1,
+            "radiogroup_names": ["Surface"],
+            "gate_rejects": gate_rejects,
+            "polled_ms": 8000,
         },
     }
     err = _compose_setup_error(
@@ -136,4 +141,7 @@ def test_chip_missing_payload_includes_fingerprint_and_candidates() -> None:
     assert payload["inner_step"] == "chip_missing"
     assert payload["compose_mode_fingerprint"] == fp
     assert payload["candidates"] == candidates
+    assert payload["gate_rejects"] == gate_rejects
+    assert payload["surface_radiogroup_count"] == 1
+    assert payload["radiogroup_names"] == ["Surface"]
     assert payload["failure_class"] == "toggle"

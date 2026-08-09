@@ -162,15 +162,15 @@ async def test_select_compose_mode_polls_until_fingerprint_attests_cowork(
         fp_calls["n"] += 1
         return chat_fp if fp_calls["n"] <= 2 else cowork_fp
 
-    async def mock_try_click(_page, _label) -> None:
-        return None
+    async def mock_try_click(_page, _label):
+        return None, {"gate_rejects": [], "surface_radiogroup_count": 0, "radiogroup_names": []}
 
     monkeypatch.setattr(
         "claude_bundles.chat_cowork_mode.compose_mode_fingerprint",
         mock_fingerprint,
     )
     monkeypatch.setattr(
-        "claude_bundles.chat_cowork_mode._try_click_compose_chip",
+        "claude_bundles.chat_cowork_mode.try_click_compose_chip",
         mock_try_click,
     )
     page = AsyncMock()
@@ -204,9 +204,16 @@ async def test_select_compose_mode_polls_until_chip_click_succeeds(
     async def mock_fingerprint(_page) -> dict:
         return chat_fp
 
-    async def mock_try_click(_page, _label) -> str | None:
+    async def mock_try_click(_page, _label):
         click_calls["n"] += 1
-        return None if click_calls["n"] < 3 else "playwright_surface"
+        probe = {
+            "gate_rejects": [],
+            "surface_radiogroup_count": 1,
+            "radiogroup_names": ["Surface"],
+        }
+        if click_calls["n"] < 3:
+            return None, probe
+        return "playwright_surface", {**probe, "via": "playwright_surface"}
 
     async def mock_attest(_page, mode, *, timeout_s=8.0, poll_ms=400) -> dict:
         return {"ok": True, "step": f"attested_{mode}", "fingerprint": cowork_fp}
@@ -216,7 +223,7 @@ async def test_select_compose_mode_polls_until_chip_click_succeeds(
         mock_fingerprint,
     )
     monkeypatch.setattr(
-        "claude_bundles.chat_cowork_mode._try_click_compose_chip",
+        "claude_bundles.chat_cowork_mode.try_click_compose_chip",
         mock_try_click,
     )
     monkeypatch.setattr(
