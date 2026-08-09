@@ -51,6 +51,11 @@ class CloseoutStatus(StrEnum):
     GATED = "gated"
 
 
+NO_RUN_DEGRADED_REASONS: frozenset[str] = frozenset(
+    {"empty_assistant_turn", "zero_tool_calls", "empty_terminal_output"}
+)
+
+
 class WorkOutcome(StrEnum):
     SHIPPED = "shipped"
     NOT_SHIPPED = "not_shipped"

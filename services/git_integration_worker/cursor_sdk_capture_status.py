@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from implement_admission.closeout_models import EffectsManifest, Verification
-from implement_admission.spec import CloseoutStatus, WorkOutcome
+from implement_admission.spec import NO_RUN_DEGRADED_REASONS, CloseoutStatus, WorkOutcome
 
 from services.git_integration_worker.cursor_sdk_capture_policy import (
     any_hard_fail_deviation,
@@ -769,11 +769,7 @@ def resolve_work_outcome(
     if verification_all_pass(verification) or positive:
         return WorkOutcome.SHIPPED
 
-    if degraded_reason in {
-        "empty_assistant_turn",
-        "zero_tool_calls",
-        "empty_terminal_output",
-    }:
+    if degraded_reason in NO_RUN_DEGRADED_REASONS:
         return WorkOutcome.NOT_SHIPPED
     if degraded_reason and degraded_reason.startswith("pinned_deliverable_write_failed"):
         return WorkOutcome.UNVERIFIED
@@ -790,6 +786,8 @@ def project_status_from_work_outcome(
 ) -> CloseoutStatus:
     """Pure status projection from work_outcome — no capture coupling."""
     if degraded_reason and degraded_reason.startswith("run_status="):
+        return CloseoutStatus.FAILED
+    if degraded_reason in NO_RUN_DEGRADED_REASONS:
         return CloseoutStatus.FAILED
     if work_outcome == WorkOutcome.SHIPPED:
         return CloseoutStatus.COMPLETE

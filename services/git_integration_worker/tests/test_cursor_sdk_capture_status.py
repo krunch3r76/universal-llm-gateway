@@ -632,8 +632,8 @@ def test_g1_not_shipped_reachable_via_terminal_degrade_tokens(tmp_path: Path) ->
         assert work_outcome == WorkOutcome.NOT_SHIPPED, degraded_reason
         assert (
             project_status_from_work_outcome(work_outcome, degraded_reason)
-            == CloseoutStatus.PARTIAL
-        )
+            == CloseoutStatus.FAILED
+        ), degraded_reason
 
     run_status_outcome = resolve_work_outcome(
         degraded_reason="run_status=cancelled",

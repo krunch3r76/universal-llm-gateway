@@ -240,7 +240,7 @@ def test_build_implement_closeout_body_degraded() -> None:
         work_item_ref=None,
     )
     payload = json.loads(body)
-    assert payload["status"] == "partial"
+    assert payload["status"] == "failed"
     assert "zero_tool_calls" in payload["summary"]
 
 
@@ -840,7 +840,7 @@ def test_prepare_closeout_delivery_degraded_sidecar(tmp_path: Path) -> None:
     assert sidecar_text.startswith("status: degraded\nreason: zero_tool_calls")
     assert "Implementing" in sidecar_text
     payload = json.loads(delivery.body)
-    assert payload["status"] == "partial"
+    assert payload["status"] == "failed"
     assert "zero_tool_calls" in payload["summary"]
 
 
@@ -1125,7 +1125,7 @@ def test_empty_assistant_turn_reason_none_when_tools_ran() -> None:
     assert empty_assistant_turn_reason(outcome) is None
 
 
-def test_empty_assistant_turn_maps_partial_with_reason_in_summary() -> None:
+def test_empty_assistant_turn_maps_failed_with_reason_in_summary() -> None:
     outcome = SdkRunOutcome(
         body="", status="aborted", duration_ms=100, tool_call_count=0
     )
@@ -1139,8 +1139,54 @@ def test_empty_assistant_turn_maps_partial_with_reason_in_summary() -> None:
         work_item_ref=None,
     )
     payload = json.loads(body)
-    assert payload["status"] == "partial"
+    assert payload["status"] == "failed"
     assert "empty_assistant_turn" in payload["summary"]
+
+
+@pytest.mark.parametrize(
+    "degraded_reason",
+    ["zero_tool_calls", "empty_terminal_output"],
+)
+def test_no_run_degraded_reasons_map_failed(degraded_reason: str) -> None:
+    outcome = SdkRunOutcome(
+        body="",
+        status="aborted" if degraded_reason != "empty_terminal_output" else "finished",
+        duration_ms=100,
+        tool_call_count=0 if degraded_reason != "empty_terminal_output" else 3,
+    )
+    body = build_implement_closeout_body(
+        dispatch_id=f"d-{degraded_reason}",
+        outcome=outcome,
+        degraded_reason=degraded_reason,
+        sidecar_ref=sidecar_workspaces_ref(f"d-{degraded_reason}"),
+        result_bytes=0,
+        thread_id=f"t-{degraded_reason}",
+        work_item_ref=None,
+    )
+    payload = json.loads(body)
+    assert payload["status"] == "failed"
+    assert degraded_reason in payload["summary"]
+
+
+def test_pinned_deliverable_write_failed_still_maps_partial() -> None:
+    outcome = SdkRunOutcome(
+        body="blocked on pinned write",
+        status="finished",
+        duration_ms=500,
+        tool_call_count=2,
+    )
+    body = build_implement_closeout_body(
+        dispatch_id="d-pinned-fail",
+        outcome=outcome,
+        degraded_reason="pinned_deliverable_write_failed:notes/system/templates/foo.md",
+        sidecar_ref=sidecar_workspaces_ref("d-pinned-fail"),
+        result_bytes=100,
+        thread_id="t-pinned-fail",
+        work_item_ref=None,
+    )
+    payload = json.loads(body)
+    assert payload["status"] == "partial"
+    assert "pinned_deliverable_write_failed" in payload["summary"]
 
 
 async def _failing_pin_resolution(**_: object):
@@ -1226,10 +1272,10 @@ async def test_empty_assistant_turn_outranks_pin_reason(
     payload = json.loads(delivery.body)
     assert "empty_assistant_turn" in payload["summary"]
     assert "pinned_deliverable_write_failed" not in payload["summary"]
-    assert payload["status"] == "partial"
+    assert payload["status"] == "failed"
 
 
-def test_empty_terminal_output_maps_partial_not_complete() -> None:
+def test_empty_terminal_output_maps_failed_not_complete() -> None:
     outcome = SdkRunOutcome(
         body="", status="finished", duration_ms=100, tool_call_count=3
     )
@@ -1243,7 +1289,7 @@ def test_empty_terminal_output_maps_partial_not_complete() -> None:
         work_item_ref=None,
     )
     payload = json.loads(body)
-    assert payload["status"] == "partial"
+    assert payload["status"] == "failed"
     assert payload["status"] != "complete"
     assert "empty_terminal_output" in payload["summary"]
 

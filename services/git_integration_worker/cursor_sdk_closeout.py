@@ -29,7 +29,12 @@ from implement_admission.propagation_row import (
     land_paths_for_propagation,
     resolve_code_ref,
 )
-from implement_admission.spec import CloseoutStatus, ImplementSpec, WorkOutcome
+from implement_admission.spec import (
+    NO_RUN_DEGRADED_REASONS,
+    CloseoutStatus,
+    ImplementSpec,
+    WorkOutcome,
+)
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_auto.closeout_relay_cortex_uri import (
@@ -707,7 +712,7 @@ def empty_output_degraded_reason(outcome: SdkRunOutcome) -> str | None:
 
     A finished run whose captured body (after transcript reconstruction by
     ``resolve_run_body``) is empty must never report ``status: complete`` with a
-    0-byte sidecar. Returns ``"empty_terminal_output"`` (mapped to PARTIAL by
+    0-byte sidecar. Returns ``"empty_terminal_output"`` (mapped to FAILED by
     ``_map_closeout_status``) so the silent-success failure mode is surfaced
     explicitly. Non-finished runs are already covered by the ``run_status=`` reason.
     """
@@ -741,11 +746,14 @@ def _map_closeout_status(degraded_reason: str | None) -> CloseoutStatus:
 
     None              -> COMPLETE (clean finished run with tool calls)
     "run_status=..."  -> FAILED   (the SDK run itself did not finish)
-    anything else     -> PARTIAL  (ran but degraded, e.g. "zero_tool_calls")
+    NO_RUN_*          -> FAILED   (run produced nothing — see NO_RUN_DEGRADED_REASONS)
+    anything else     -> PARTIAL  (ran but degraded, e.g. pinned write miss)
     """
     if degraded_reason is None:
         return CloseoutStatus.COMPLETE
     if degraded_reason.startswith("run_status="):
+        return CloseoutStatus.FAILED
+    if degraded_reason in NO_RUN_DEGRADED_REASONS:
         return CloseoutStatus.FAILED
     return CloseoutStatus.PARTIAL
 
