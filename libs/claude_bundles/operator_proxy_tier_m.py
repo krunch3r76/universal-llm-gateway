@@ -41,13 +41,14 @@ longer has to borrow `files_expected: none` to clear the scope gate. `vision:`
 is still required for `implement` / `investigate`. A blocked reply carries
 `missed_tokens` plus a `fix_hint` naming the exact lines to add: fix the named
 lines and re-issue on the same thread. **One live request per private thread** —
-any second `agent_bus.request` on that thread `run_cancel`s the first whether or
-not it is a re-issue, duplicate, or unrelated ask (duplicate-protection is a
-special case, not the rule). Parallel asks need separate lanes or one bundled
-DIRECTIVE; firing two on one lane and hoping is not valid. Cancellation is silent
-at decision — visible only in the enqueue `superseded` block and afterwards as a
-`status:superseded` turn that reads like housekeeping. See `cdp-operator-proxy`
-§ Interrupt / supersede.
+a second `agent_bus.request` cancels a predecessor **only when that predecessor
+is already `claimed`** (and the path is not a continuity hop). Queued predecessors
+are **not** cancelled — both may run. The protection is weakest under backlog
+(slow admit → re-issue against still-queued → both run): **wait**; a missing admit
+is not a lost enqueue. `superseded: null` is not "lane clear"; a populated block
+is an interrupt **attempt** (`run_cancel` = stop; `pre_register_live_run` =
+displacement without process-stop). Parallel asks need separate lanes or one
+bundled DIRECTIVE. See `cdp-operator-proxy` § Interrupt / supersede.
 
 Optional on any DIRECTIVE: `deadline: +15m` (or an ISO-8601 stamp) — a job still
 queued past it terminates `status:failed reason=expired` instead of running stale
@@ -188,8 +189,9 @@ _DEGRADE_LADDER = """\
 - `no-auto-handler` — the turn was written but nothing will act on it; the ask is
   parked. Re-`request` after liveness returns, or `send` + park. Never long-wait.
 - `status:blocked (reason)` — authoring defect; fix per `missed_tokens` +
-  `fix_hint` and re-issue on the same thread (same-thread re-issue supersedes any
-  in-flight job — one live request per thread; see § Interrupt / supersede).
+  `fix_hint` and re-issue on the same thread (same-thread re-issue supersedes a
+  **claimed** in-flight job only — queued peers are not cancelled; see § Interrupt /
+  supersede).
 - `status:needs-attended (reason)` — surface the reason verbatim to the operator;
   Auto refuses to run it unattended.
 - `status:done` + `disposition: declined` — nothing executed (answer contract has
