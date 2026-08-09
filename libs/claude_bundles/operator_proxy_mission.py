@@ -227,6 +227,11 @@ model on the wire as `desired_model`. For nested cursor-sdk dispatches the code-
 fires, `model_knobs` including `effort` and `fast` belong on the **dispatch wire** (SOT:
 `libs/cursor_capabilities/cursor_capabilities.py`). The `fast` knob has **no wire param** on
 `agent_bus.request`; when omitted, catalog defaults apply (**`fast=true`** for grok). Catalog
+
+**CDP Fable / Opus pin (BINDING):** `desired_model` is cursor-sdk only (`composer-2.5` /
+`grok-4.5` / `opus-5`). Pin CDP advisors with wire **`escalation=cdp/fable`** or
+**`escalation=cdp/opus-5`** — ¬ `desired_model=cdp/…`. Admit auto-coalesces the mistaken
+form onto `escalation` when unambiguous; prefer the correct wire on new sessions.
 `reasoning_effort` is rejected 422 `reasoning_effort_not_supported` on `seat=cursor-sdk`.
 
 **Admit gate (BINDING):** mentor-loop commissions require body `contract: investigate`

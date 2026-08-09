@@ -91,6 +91,7 @@ from services.git_integration_worker.cursor_auto.wire_map import (
     admit_effort_override_rule_line,
     admit_model_override_rule_line,
     admit_model_pin_flags,
+    coalesce_cdp_desired_model_into_escalation,
     compose_model_knobs,
     resolve_contract_disposition,
     resolve_desired_effort,
@@ -163,6 +164,18 @@ async def process_job(
     expired = await deadline_terminal(job, client=client, queue=queue)
     if expired is not None:
         return expired
+    desired_model, escalation, coalesce_meta = coalesce_cdp_desired_model_into_escalation(
+        job.desired_model,
+        job.escalation,
+    )
+    if coalesce_meta.get("coalesced"):
+        logger.info(
+            "cursor-auto coalesced cdp desired_model job=%s %s",
+            job.job_id,
+            coalesce_meta.get("notes"),
+        )
+        job.desired_model = desired_model
+        job.escalation = escalation
     static_refusal = assess_static_pin_refusal(
         desired_model=job.desired_model,
         desired_effort=job.desired_effort,

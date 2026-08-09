@@ -34,6 +34,9 @@ from services.git_integration_worker.cursor_auto.static_pin_refusal import (
 from services.git_integration_worker.cursor_auto.supersede import (
     supersede_same_thread_inflight,
 )
+from services.git_integration_worker.cursor_auto.wire_map import (
+    coalesce_cdp_desired_model_into_escalation,
+)
 from services.git_integration_worker.cursor_auto.wire_skew_events import (
     note_dropped_fields,
 )
@@ -117,11 +120,22 @@ async def enqueue(body: EnqueueBody):
     is_hop, matched_token = is_continuity_hop_request(
         body.body, wire_flag=bool(body.continuity_hop)
     )
+    desired_model, escalation, coalesce_meta = coalesce_cdp_desired_model_into_escalation(
+        body.desired_model,
+        body.escalation,
+    )
+    if coalesce_meta.get("coalesced"):
+        logger.info(
+            "cursor-auto coalesced cdp desired_model thread=%s turn=%s %s",
+            body.thread_id,
+            body.turn_number,
+            coalesce_meta.get("notes"),
+        )
     if not is_hop:
         static_refusal = assess_static_pin_refusal(
-            desired_model=body.desired_model,
+            desired_model=desired_model,
             desired_effort=body.desired_effort,
-            escalation=body.escalation,
+            escalation=escalation,
             contract=body.contract,
             body=body.body,
         )
@@ -134,10 +148,10 @@ async def enqueue(body: EnqueueBody):
                 body=body.body,
                 from_agent=body.from_agent,
                 to_agent=body.to_agent,
-                desired_model=body.desired_model,
+                desired_model=desired_model,
                 desired_effort=body.desired_effort,
                 contract=static_refusal.contract,
-                escalation=body.escalation,
+                escalation=escalation,
                 require_attended=body.require_attended,
                 request_id=body.request_id,
             )
@@ -176,9 +190,9 @@ async def enqueue(body: EnqueueBody):
         body=body.body,
         from_agent=body.from_agent,
         to_agent=body.to_agent,
-        desired_model=body.desired_model,
+        desired_model=desired_model,
         desired_effort=body.desired_effort,
-        escalation=body.escalation,
+        escalation=escalation,
         contract=body.contract,
         require_attended=body.require_attended,
         request_id=body.request_id,

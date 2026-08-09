@@ -61,6 +61,59 @@ def format_cdp_escalation_hint() -> str:
     )
 
 
+def coerce_cdp_desired_model_alias(raw: str | None) -> str | None:
+    """Return canonical escalation if ``raw`` is a CDP-on-desired_model alias."""
+    key = (raw or "").strip().lower()
+    if not key:
+        return None
+    return _CDP_DESIRED_MODEL_ALIASES.get(key)
+
+
+def coalesce_cdp_desired_model_into_escalation(
+    desired_model: str | None,
+    escalation: str | None,
+) -> tuple[str, str | None, dict[str, Any]]:
+    """Move ``desired_model=cdp/*`` onto ``escalation`` so admits succeed.
+
+    Fresh operator-proxy seats commonly pin Fable/Opus on ``desired_model``
+    (cursor-sdk vocabulary). That used to ``model_pin_refused``. When the value
+    is a known CDP escalation alias and ``escalation`` is empty (or already the
+    same), rewrite ``desired_model→auto`` and set ``escalation``. Conflicting
+    pins (cdp/fable on model + cdp/opus-5 on escalation) are left unchanged for
+    the normal refusal path.
+    """
+    requested_model = (desired_model or "auto").strip() or "auto"
+    esc_raw = (escalation or "").strip()
+    esc = esc_raw.lower() if esc_raw else None
+    alias = coerce_cdp_desired_model_alias(requested_model)
+    if alias is None:
+        return requested_model, (esc_raw or None), {"coalesced": False}
+    if esc and esc != alias:
+        return (
+            requested_model,
+            esc_raw or None,
+            {
+                "coalesced": False,
+                "conflict": True,
+                "desired_model_as_escalation": alias,
+                "escalation": esc,
+            },
+        )
+    return (
+        "auto",
+        alias,
+        {
+            "coalesced": True,
+            "from_desired_model": requested_model.strip().lower(),
+            "to_escalation": alias,
+            "notes": (
+                f"coalesced desired_model={requested_model!r} → "
+                f"escalation={alias!r} (desired_model=auto)"
+            ),
+        },
+    )
+
+
 def _model_pin_refusal(requested: str) -> str:
     """Refusal line for unknown ``desired_model`` including CDP route naming."""
     return (
@@ -83,6 +136,15 @@ _EFFORT_LADDER: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
 _EFFORT_VALUES = frozenset(_EFFORT_LADDER)
 BINDABLE_EFFORT_VALUES: tuple[str, ...] = _EFFORT_LADDER
 BINDABLE_CDP_ESCALATIONS: tuple[str, ...] = ("cdp/opus-5", "cdp/fable")
+# Life seats often put CDP models on desired_model by mistake; map → escalation.
+_CDP_DESIRED_MODEL_ALIASES: dict[str, str] = {
+    "cdp/opus-5": "cdp/opus-5",
+    "cdp/opus": "cdp/opus-5",
+    "cdp/opus5": "cdp/opus-5",
+    "cdp/fable": "cdp/fable",
+    "cdp/fable-5": "cdp/fable",
+    "cdp/fable5": "cdp/fable",
+}
 _EFFORT_ALIASES: dict[str, str] = {
     "extra": "xhigh",
     "extra-high": "xhigh",

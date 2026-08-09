@@ -242,19 +242,28 @@ def test_process_job_cdp_lane_full_terminalizes(monkeypatch):
     assert payload["free_slots"] == 0
 
 
-def test_process_job_desired_model_cdp_still_refuses():
-    """AC-S2-orthogonal: desired_model=cdp/fable refuses with escalation hint."""
+def test_process_job_desired_model_cdp_coalesces_to_escalation(monkeypatch):
+    """desired_model=cdp/fable auto-moves onto escalation= so admits proceed."""
     from services.git_integration_worker.cursor_auto.handler import process_job
 
     bus = AsyncMock()
     bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    commission = AsyncMock(return_value={"ok": True, "execution_id": "exec-coalesce"})
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.handler.commission_cdp_escalation",
+        commission,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.handler.read_cdp_lane_snapshot",
+        lambda **_: {"at_hard_limit": False, "at_soft_limit": False, "free_slots": 2},
+    )
 
     job = AutoJob(
-        job_id="j-model-cdp",
+        job_id="j-model-cdp-coalesce",
         thread_id="6829",
         turn_number=1,
-        subject="bad model pin",
-        body="",
+        subject="coalesce fable pin",
+        body="Please summarize the escalation binding spec.",
         from_agent="web-anthropic",
         to_agent="cursor",
         desired_model="cdp/fable",
@@ -262,7 +271,8 @@ def test_process_job_desired_model_cdp_still_refuses():
         contract="answer",
     )
     result = asyncio.run(process_job(job, bus=bus))
-    assert result["terminal_status"] == "status:blocked"
-    payload = json.loads(bus.reply.await_args_list[-1].kwargs["body"])
-    assert payload["reason"] == "model_pin_refused"
-    assert "escalation=" in payload["summary"]
+    assert result["terminal_status"] == "status:done"
+    assert job.desired_model == "auto"
+    assert job.escalation == "cdp/fable"
+    commission.assert_awaited_once()
+    assert commission.await_args.kwargs["model"] == "cdp/fable"
