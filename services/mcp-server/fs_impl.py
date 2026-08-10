@@ -5,7 +5,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from endpoint_surface import Surface
-from fs_roots import bind_workspaces_root, permission_refusal
+from fs_roots import (
+    bind_workspaces_root,
+    life_workspaces_resolution_fields,
+    permission_refusal,
+)
 from project_ops import workspaces_impl_registry
 from tool_error_enricher import apply_life_sandbox_default, fs_missing_sandbox_hint
 from tools.filesystem._cross_sandbox import copy_between_sandboxes_impl
@@ -155,6 +159,26 @@ def fs_impl(
         if md_op is None:
             valid = ", ".join(sorted(_MD_OP_MAP))
             return {"error": f"Unknown markdown op: {op!r}. Available: {valid}"}
+        if effective_sandbox == "workspaces":
+            with bind_workspaces_root(surface) as root:
+                result = md_fn(
+                    op=md_op,
+                    path=effective_path,
+                    sandbox=effective_sandbox,
+                    section=section,
+                    content=content,
+                    heading=heading,
+                    level=level,
+                    position=position,
+                )
+            if isinstance(result, dict) and "error" not in result:
+                result.update(ingress_meta)
+                result.update(
+                    life_workspaces_resolution_fields(
+                        surface, root, rel_path=effective_path
+                    )
+                )
+            return result
         result = md_fn(
             op=md_op,
             path=effective_path,
@@ -190,7 +214,7 @@ def fs_impl(
             **workspaces_impl_registry(),
             **overflow_registry,
         }
-        with bind_workspaces_root(surface):
+        with bind_workspaces_root(surface) as root:
             result = dispatch_workspaces_op(
                 op,
                 effective_path,
@@ -210,6 +234,11 @@ def fs_impl(
             )
         if isinstance(result, dict) and "error" not in result:
             result.update(ingress_meta)
+            result.update(
+                life_workspaces_resolution_fields(
+                    surface, root, rel_path=effective_path
+                )
+            )
         return result
 
     tool_name = _SANDBOX_TOOL[effective_sandbox]

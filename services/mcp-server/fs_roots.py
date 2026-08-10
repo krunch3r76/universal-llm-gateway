@@ -8,6 +8,7 @@ derivation. Wire registration (``tools/list``) stays separate — see
 from __future__ import annotations
 
 import os
+import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -30,6 +31,28 @@ LIFE_WORKSPACES_READ_OPS: frozenset[str] = frozenset(
         "md_list",
         "md_to_dict",
     }
+)
+
+# Explicit life workspaces write grant when ``LIFE_PROJECT_ROOT`` is enabled.
+# Destructive ops (delete, move) and raw ``_WORKSPACES_OPS`` inheritance are
+# intentionally excluded — see arc 6655 bind shape (c).
+LIFE_WORKSPACES_WRITE_OPS: frozenset[str] = frozenset(
+    {
+        "write",
+        "append",
+        "prepend",
+        "replace",
+        "insert_at_line",
+        "copy",
+        "md_replace",
+        "md_append",
+        "md_insert",
+        "md_delete",
+    }
+)
+
+LIFE_WORKSPACES_ENABLED_OPS: frozenset[str] = (
+    LIFE_WORKSPACES_READ_OPS | LIFE_WORKSPACES_WRITE_OPS
 )
 
 _WRITE_OPS = frozenset(
@@ -110,7 +133,7 @@ def permitted_ops(surface: Surface, root_id: str) -> frozenset[str]:
     """Return the op set authorized for *(surface, root_id)*."""
     if surface == "life" and root_id == "workspaces":
         if life_workspaces_write_enabled():
-            return _WORKSPACES_OPS
+            return LIFE_WORKSPACES_ENABLED_OPS
         return LIFE_WORKSPACES_READ_OPS
     return PERMISSIONS.get((surface, root_id), frozenset())
 
@@ -127,14 +150,78 @@ def life_workspaces_read_granted() -> bool:
 def life_workspaces_write_refusal_message() -> str:
     """Standard life-surface workspaces write refusal (table-derived)."""
     allowed = permitted_ops("life", "workspaces")
+    allowed_text = ", ".join(sorted(allowed))
+    if life_workspaces_write_enabled():
+        return (
+            f"op='write' is not available for sandbox='workspaces' on the "
+            f"/mcp/life surface — not in the life workspaces grant. "
+            f"Permitted ops: {allowed_text}."
+        )
     return (
         f"op='write' is not available for sandbox='workspaces' on the "
         "/mcp/life surface — repository source is READ-ONLY here. "
-        f"Readable ops: {', '.join(sorted(allowed))}. Repository edits "
+        f"Readable ops: {allowed_text}. Repository edits "
         "are served on /mcp/code only; a life seat that needs a write "
         "should request it from cursor rather than author it directly, "
         "so the write stays inside the shared-checkout lease."
     )
+
+
+def _git_head_at(repo: Path) -> str | None:
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            capture_output=True,
+            check=True,
+            timeout=10,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return None
+    sha = proc.stdout.decode("utf-8", errors="replace").strip()
+    return sha or None
+
+
+def workspaces_git_head(root: Path, rel_path: str = "") -> tuple[str | None, str | None]:
+    """Return ``(head_sha, unknown_reason)`` for a workspaces root + optional rel path."""
+    root = root.resolve()
+    if (root / ".git").exists():
+        head = _git_head_at(root)
+        if head:
+            return head, None
+        return None, "git rev-parse HEAD failed at workspaces root"
+
+    if rel_path.strip():
+        from tools._project_paths import candidate_paths
+
+        for candidate in candidate_paths(rel_path, root):
+            repo = candidate.parent if candidate.is_file() else candidate
+            while repo != root and repo != repo.parent:
+                if (repo / ".git").exists():
+                    head = _git_head_at(repo)
+                    if head:
+                        return head, None
+                    return None, f"git rev-parse HEAD failed at {repo}"
+                repo = repo.parent
+
+    return None, "workspaces root is not a git repository"
+
+
+def life_workspaces_resolution_fields(
+    surface: Surface,
+    root: Path,
+    *,
+    rel_path: str = "",
+) -> dict[str, str]:
+    """Structured root + HEAD visibility for successful life workspaces responses."""
+    if surface != "life":
+        return {}
+    fields: dict[str, str] = {"workspaces_resolved_root": str(root.resolve())}
+    head, unknown = workspaces_git_head(root, rel_path)
+    if head:
+        fields["workspaces_read_at_head"] = head
+    else:
+        fields["workspaces_head_unknown"] = unknown or "HEAD could not be resolved"
+    return fields
 
 
 @contextmanager
@@ -142,17 +229,21 @@ def bind_workspaces_root(surface: Surface) -> Iterator[Path]:
     """Bind project path resolution to ``fs_root_for(surface, 'workspaces')``."""
     root = fs_root_for(surface, "workspaces")
     import tools._project_paths as paths_mod
+    import tools.markdown_tool as markdown_mod
     import tools.project as project_mod
 
     old_project = project_mod._PROJECT_ROOT
     old_paths = paths_mod._PROJECT_ROOT
+    old_markdown = markdown_mod._PROJECT_ROOT
     project_mod._PROJECT_ROOT = root
     paths_mod._PROJECT_ROOT = root
+    markdown_mod._PROJECT_ROOT = root
     try:
         yield root
     finally:
         project_mod._PROJECT_ROOT = old_project
         paths_mod._PROJECT_ROOT = old_paths
+        markdown_mod._PROJECT_ROOT = old_markdown
 
 
 def permission_refusal(
@@ -171,9 +262,17 @@ def permission_refusal(
     if op in allowed:
         return None
     if root_id == "workspaces" and surface == "life":
-        if op in _WRITE_OPS:
-            return {"error": life_workspaces_write_refusal_message()}
         readable = ", ".join(sorted(allowed))
+        if life_workspaces_write_enabled():
+            return {
+                "error": (
+                    f"op={op!r} is not available for sandbox='workspaces' on the "
+                    f"/mcp/life surface — not in the life workspaces grant. "
+                    f"Permitted ops: {readable}."
+                )
+            }
+        if op in _WRITE_OPS or op in LIFE_WORKSPACES_WRITE_OPS:
+            return {"error": life_workspaces_write_refusal_message()}
         return {
             "error": (
                 f"op={op!r} is not available for sandbox='workspaces' on the "

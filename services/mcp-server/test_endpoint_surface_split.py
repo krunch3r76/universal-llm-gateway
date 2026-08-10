@@ -23,6 +23,7 @@ LIFE_PRIMARY = frozenset(
         "cortex_brief",
         "agent_bus",
         "agent_bus_read",
+        "cursor_request",
         "fs",
         "rag",
         "retrieve",
@@ -31,7 +32,6 @@ LIFE_PRIMARY = frozenset(
         "imprint",
         "delegate",
         "notify",
-        "trigger",
     }
 )
 CODE_EXTRA = frozenset(
@@ -42,10 +42,12 @@ CODE_EXTRA = frozenset(
         "team_dispatch",
         "panel_dispatch",
         "project_ask",
-        "trigger",
     }
 )
-CODE_PRIMARY = (LIFE_PRIMARY - frozenset({"imprint", "delegate"})) | CODE_EXTRA
+# imprint/delegate/notify are life-only (canonical domain_endpoints); trigger is
+# overflow/relay, never surface_primary (d946 test overclaim; a505 promoted
+# cursor_request into both primaries without updating this gate).
+CODE_PRIMARY = (LIFE_PRIMARY - frozenset({"imprint", "delegate", "notify"})) | CODE_EXTRA
 
 
 @pytest.fixture(scope="module")
@@ -429,6 +431,149 @@ def test_life_fs_workspaces_md_list_succeeds(life_server: dict) -> None:
     )
     assert "error" not in result, result.get("error")
     assert "sections" in result or "headings" in result
+    assert "workspaces_resolved_root" in result
+    assert (
+        "workspaces_read_at_head" in result or "workspaces_head_unknown" in result
+    )
+
+
+def test_life_workspaces_enabled_grant_preserves_md_ops(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """AC2 — enabling write must not drop md_* from permitted_ops."""
+    from fs_roots import LIFE_WORKSPACES_READ_OPS, permitted_ops
+
+    shared = tmp_path / "shared"
+    life_root = tmp_path / "life"
+    shared.mkdir()
+    life_root.mkdir()
+    monkeypatch.setenv("PROJECT_ROOT", str(shared))
+    monkeypatch.setenv("LIFE_PROJECT_ROOT", str(life_root))
+
+    granted = permitted_ops("life", "workspaces")
+    for md_op in ("md_read", "md_list", "md_to_dict"):
+        assert md_op in granted, (
+            f"{md_op} dropped from life workspaces grant when write enabled; "
+            f"grant={sorted(granted)}"
+        )
+    assert LIFE_WORKSPACES_READ_OPS <= granted
+
+
+def test_life_workspaces_enabled_grant_excludes_delete_move(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """AC6 — explicit grant must not inherit delete/move from _WORKSPACES_OPS."""
+    from fs_roots import permitted_ops
+
+    shared = tmp_path / "shared"
+    life_root = tmp_path / "life"
+    shared.mkdir()
+    life_root.mkdir()
+    monkeypatch.setenv("PROJECT_ROOT", str(shared))
+    monkeypatch.setenv("LIFE_PROJECT_ROOT", str(life_root))
+
+    granted = permitted_ops("life", "workspaces")
+    assert "delete" not in granted
+    assert "move" not in granted
+
+
+def test_life_fs_workspaces_read_reports_root_and_head(life_server: dict) -> None:
+    """AC3 — plain read carries structured root + HEAD visibility."""
+    fs_fn, _ = _fs_tool_fn(life_server)
+    result = fs_fn(
+        op="read",
+        sandbox="workspaces",
+        path=_workspaces_read_probe_path(),
+    )
+    assert "error" not in result, result
+    assert "workspaces_resolved_root" in result
+    assert (
+        "workspaces_read_at_head" in result or "workspaces_head_unknown" in result
+    )
+
+
+def test_life_fs_workspaces_md_read_reports_root_and_head(life_server: dict) -> None:
+    """AC3 — md_read carries structured root + HEAD visibility."""
+    fs_fn, _ = _fs_tool_fn(life_server)
+    result = fs_fn(
+        op="md_read",
+        sandbox="workspaces",
+        path=_workspaces_read_probe_path(),
+    )
+    assert "error" not in result, result
+    assert "workspaces_resolved_root" in result
+    assert (
+        "workspaces_read_at_head" in result or "workspaces_head_unknown" in result
+    )
+
+
+def test_life_read_and_md_read_share_resolved_root_read_only(
+    life_server: dict,
+) -> None:
+    """AC4 — read and md_read resolve to the same tree when write is off."""
+    fs_fn, _ = _fs_tool_fn(life_server)
+    path = _workspaces_read_probe_path()
+    read_result = fs_fn(op="read", sandbox="workspaces", path=path)
+    md_result = fs_fn(op="md_read", sandbox="workspaces", path=path)
+    assert "error" not in read_result, read_result
+    assert "error" not in md_result, md_result
+    assert (
+        read_result["workspaces_resolved_root"]
+        == md_result["workspaces_resolved_root"]
+    )
+
+
+def test_life_read_and_md_read_share_resolved_root_when_write_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    life_server: dict,
+) -> None:
+    """AC4 — read and md_read share fs_root_for bind path when write is on."""
+    shared = tmp_path / "shared"
+    life_root = tmp_path / "life"
+    shared.mkdir()
+    life_root.mkdir()
+    (shared / "universal-llm-gateway").mkdir(parents=True)
+    life_repo = life_root / "universal-llm-gateway"
+    life_repo.mkdir(parents=True)
+    probe = life_repo / "tmp" / "life-resolution-probe.md"
+    probe.parent.mkdir(parents=True)
+    probe.write_text("# Probe\n\nlife-tree-only\n", encoding="utf-8")
+    monkeypatch.setenv("PROJECT_ROOT", str(shared))
+    monkeypatch.setenv("LIFE_PROJECT_ROOT", str(life_root))
+
+    fs_fn, _ = _fs_tool_fn(life_server)
+    rel = "universal-llm-gateway/tmp/life-resolution-probe.md"
+    read_result = fs_fn(op="read", sandbox="workspaces", path=rel)
+    md_result = fs_fn(op="md_read", sandbox="workspaces", path=rel)
+    assert "error" not in read_result, read_result
+    assert "error" not in md_result, md_result
+    assert read_result.get("content") == "# Probe\n\nlife-tree-only\n"
+    assert "life-tree-only" in md_result.get("content", "")
+    assert read_result["workspaces_resolved_root"] == str(life_root.resolve())
+    assert (
+        read_result["workspaces_resolved_root"]
+        == md_result["workspaces_resolved_root"]
+    )
+
+
+def test_life_workspaces_refusal_state_aware_when_write_enabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """AC5 — refusal must not claim READ-ONLY when a life root is configured."""
+    from fs_roots import permission_refusal
+
+    shared = tmp_path / "shared"
+    life_root = tmp_path / "life"
+    shared.mkdir()
+    life_root.mkdir()
+    monkeypatch.setenv("PROJECT_ROOT", str(shared))
+    monkeypatch.setenv("LIFE_PROJECT_ROOT", str(life_root))
+
+    refusal = permission_refusal("life", "workspaces", "delete")
+    assert refusal is not None
+    assert "READ-ONLY" not in refusal["error"]
+    assert "not in the life workspaces grant" in refusal["error"]
 
 
 def test_life_fs_cortex_md_list_refused_by_permissions(life_server: dict) -> None:
