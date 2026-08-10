@@ -25,6 +25,9 @@ from services.git_integration_worker.cursor_auto.directive import (
     effective_require_attended,
     parse_request_body,
 )
+from services.git_integration_worker.cursor_auto.dispatch_bounds import (
+    clamp_effort_to_autonomous_ceiling,
+)
 from services.git_integration_worker.cursor_auto.dispatch_progress import (
     ProgressEmitter,
 )
@@ -164,9 +167,11 @@ async def process_job(
     expired = await deadline_terminal(job, client=client, queue=queue)
     if expired is not None:
         return expired
-    desired_model, escalation, coalesce_meta = coalesce_cdp_desired_model_into_escalation(
-        job.desired_model,
-        job.escalation,
+    desired_model, escalation, coalesce_meta = (
+        coalesce_cdp_desired_model_into_escalation(
+            job.desired_model,
+            job.escalation,
+        )
     )
     if coalesce_meta.get("coalesced"):
         logger.info(
@@ -196,14 +201,21 @@ async def process_job(
             failed=True,
         )
     model = resolve_desired_model(job.desired_model, contract=contract)
-    effort = resolve_desired_effort(job.desired_effort)
+    effort = clamp_effort_to_autonomous_ceiling(
+        model["resolved_model_id"], resolve_desired_effort(job.desired_effort)
+    )
     escalation = resolve_escalation(job.escalation)
     contract_info = resolve_contract_disposition(contract)
     handoff_contract = resolve_handoff_contract(contract)
-    if directive is not None or contract in _NESTED_CONTRACTS or contract in {
-        EXECUTE_CONTRACT,
-        PROPAGATE_CONTRACT,
-    }:
+    if (
+        directive is not None
+        or contract in _NESTED_CONTRACTS
+        or contract
+        in {
+            EXECUTE_CONTRACT,
+            PROPAGATE_CONTRACT,
+        }
+    ):
         blocked = await blocking_admit_gate(job, client=client, queue=queue)
         if blocked is not None:
             return blocked
@@ -329,8 +341,7 @@ async def process_job(
                     client=client,
                     queue=queue,
                     summary=(
-                        "cdp escalation commission failed: "
-                        f"{commissioned.get('error')}"
+                        f"cdp escalation commission failed: {commissioned.get('error')}"
                     ),
                     extra=commissioned,
                 )
@@ -406,8 +417,7 @@ async def process_job(
                 client=client,
                 queue=queue,
                 summary=(
-                    "cdp escalation commission failed: "
-                    f"{commissioned.get('error')}"
+                    f"cdp escalation commission failed: {commissioned.get('error')}"
                 ),
                 extra=commissioned,
             )
@@ -575,9 +585,7 @@ async def _terminalize_cdp_lane_full_if_blocked(
     if not refuse:
         return None
     free_slots = snap.get("free_slots", 0)
-    summary = (
-        f"cdp lane full ({lane}); free_slots={free_slots} — escalation refused"
-    )
+    summary = f"cdp lane full ({lane}); free_slots={free_slots} — escalation refused"
     return await post_terminal_status(
         job,
         client=client,

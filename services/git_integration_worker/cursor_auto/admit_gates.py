@@ -25,6 +25,9 @@ from services.git_integration_worker.cursor_auto.directive import (
     is_continuity_hop_request,
     parse_request_body,
 )
+from services.git_integration_worker.cursor_auto.dispatch_bounds import (
+    scope_waiver_allowed,
+)
 from services.git_integration_worker.cursor_auto.episode_briefing import (
     fetch_thread_status,
     fetch_thread_turns,
@@ -54,6 +57,7 @@ from services.git_integration_worker.cursor_auto.queue import AutoJob
 from services.git_integration_worker.cursor_auto.relay_trust import (
     pending_synthesized_closeout,
 )
+from services.git_integration_worker.cursor_auto.wire_map import resolve_desired_model
 from services.git_integration_worker.cursor_bus import CursorBusClient
 from services.git_integration_worker.cursor_sdk_events import (
     emit_frontier_sdk_auto_auth_gate_blocked,
@@ -130,10 +134,7 @@ async def blocking_admit_gate(
     )
     if not pickup.ok:
         reason = pickup.reason or "pickup_declaration_missing"
-        summary = (
-            "Pickup/awaits gate refused "
-            f"({reason})."
-        )
+        summary = f"Pickup/awaits gate refused ({reason})."
         hint = (
             PICKUP_AWAITS_STOP_FIX_HINT
             if reason == "pickup_awaits_unbound"
@@ -192,7 +193,14 @@ async def blocking_admit_gate(
     if contract in NESTED_SCOPE_CONTRACTS and not has_actionable_scope(job.body):
         directive = parse_request_body(job.body)
         density = directive.density if directive is not None else None
-        if body_has_contract_override(job.body):
+        resolved_model_id = str(
+            resolve_desired_model(job.desired_model, contract=contract).get(
+                "resolved_model_id"
+            )
+            or ""
+        )
+        override = body_has_contract_override(job.body)
+        if override and scope_waiver_allowed(resolved_model_id):
             emit_frontier_sdk_auto_empty_directive_scope_waived(
                 thread_id=job.thread_id,
                 contract=contract,
@@ -203,6 +211,13 @@ async def blocking_admit_gate(
                 "Empty directive scope — no actionable scope/todo/packet/"
                 "files_expected (empty_directive_scope)."
             )
+            if override:
+                summary = (
+                    f"Empty directive scope — {resolved_model_id} is outside the "
+                    "roaming tier, so a contract override does not waive the scope "
+                    "bound (empty_directive_scope). Bound the work or bind "
+                    "composer-2.5/grok-4.5."
+                )
             emit_frontier_sdk_auto_empty_directive_scope_blocked(
                 thread_id=job.thread_id,
                 contract=contract,
@@ -220,6 +235,8 @@ async def blocking_admit_gate(
                     "contract": contract,
                     "density": density,
                     "missed_tokens": list(missed),
+                    "resolved_model": resolved_model_id,
+                    "scope_waiver_withheld": override,
                     "fix_hint": EMPTY_SCOPE_FIX_HINT,
                 },
             )
@@ -272,8 +289,7 @@ async def blocking_admit_gate(
     turns = await fetch_thread_turns(job.thread_id)
     if turns is None:
         summary = (
-            "Relay trust gate cannot verify thread history "
-            "(relay_trust_unverifiable)."
+            "Relay trust gate cannot verify thread history (relay_trust_unverifiable)."
         )
         return await _blocked(
             job,
@@ -296,9 +312,7 @@ async def blocking_admit_gate(
             payload={"summary": summary, "pending_synthesized_closeout": pending},
         )
     if pending_auth_gate_block(turns, operator_from=job.from_agent):
-        failures = count_auth_gate_failures(
-            turns, operator_from=job.from_agent
-        )
+        failures = count_auth_gate_failures(turns, operator_from=job.from_agent)
         budget, post_ack = effective_auth_gate_budget(
             turns, operator_from=job.from_agent
         )

@@ -1,0 +1,165 @@
+"""Falsifier: the autonomous lane must not commission unbounded premium work.
+
+Auto POSTs the cursor-sdk worker directly, so Stargate's ``sdk_cost_risk`` guard
+never sees these binds. Two bounds stand in for it — a scope bound (a ``contract:``
+override stops waiving the empty-scope refusal outside the roaming tier) and an
+effort ceiling (``xhigh``/``max`` need a standing trigger the unattended lane does
+not have). These tests pin both, and pin that the roaming tier is untouched so the
+default mechanical path keeps its latitude.
+"""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from services.git_integration_worker.cursor_auto.admit_gates import blocking_admit_gate
+from services.git_integration_worker.cursor_auto.dispatch_bounds import (
+    AUTONOMOUS_EFFORT_CEILING,
+    clamp_effort_to_autonomous_ceiling,
+    is_roaming_tier,
+    scope_waiver_allowed,
+)
+from services.git_integration_worker.cursor_auto.queue import AutoJob
+
+_NO_SCOPE_WITH_OVERRIDE = (
+    "TYPE: DIRECTIVE\ndensity: dense\ncontract: implement\n"
+    "vision: mechanical — dispatch bounds fixture\n"
+)
+
+
+@pytest.fixture(autouse=True)
+def _capture_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[tuple[str, dict[str, object]]]:
+    emitted: list[tuple[str, dict[str, object]]] = []
+
+    def _capture(signal: str, **payload: object) -> None:
+        emitted.append((signal, dict(payload)))
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_events.record",
+        _capture,
+    )
+    return emitted
+
+
+def _job(desired_model: str) -> AutoJob:
+    return AutoJob(
+        job_id=f"j-{desired_model}",
+        thread_id="5899",
+        turn_number=1,
+        subject="bounds",
+        body=_NO_SCOPE_WITH_OVERRIDE,
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model=desired_model,
+        desired_effort="medium",
+        contract="implement",
+    )
+
+
+def _effort(value: str) -> dict[str, object]:
+    return {
+        "requested": value,
+        "resolved_effort": value,
+        "clamped": False,
+        "notes": "honored",
+    }
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    ["composer-2.5", "cursor/composer-2.5", "grok-4.5", "cursor/grok-4.5"],
+)
+def test_roaming_tier_membership(model_id: str) -> None:
+    assert is_roaming_tier(model_id)
+    assert scope_waiver_allowed(model_id)
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    ["cursor/claude-opus-5", "claude-opus-5", "cursor/gpt-5.6-terra", "", None],
+)
+def test_non_roaming_models_lose_the_scope_waiver(model_id: str | None) -> None:
+    assert not is_roaming_tier(model_id)
+    assert not scope_waiver_allowed(model_id)
+
+
+@pytest.mark.parametrize("requested", ["xhigh", "max"])
+def test_premium_effort_clamps_to_ceiling(requested: str) -> None:
+    out = clamp_effort_to_autonomous_ceiling(
+        "cursor/claude-opus-5", _effort(requested)
+    )
+    assert out["resolved_effort"] == AUTONOMOUS_EFFORT_CEILING
+    assert out["clamped"] is True
+    assert requested in str(out["notes"])
+
+
+@pytest.mark.parametrize("requested", ["low", "medium", "high"])
+def test_effort_at_or_below_ceiling_is_identity(requested: str) -> None:
+    payload = _effort(requested)
+    assert clamp_effort_to_autonomous_ceiling("cursor/claude-opus-5", payload) is payload
+
+
+@pytest.mark.parametrize("requested", ["xhigh", "max"])
+def test_roaming_tier_keeps_full_effort_range(requested: str) -> None:
+    payload = _effort(requested)
+    assert clamp_effort_to_autonomous_ceiling("cursor/grok-4.5", payload) is payload
+
+
+@pytest.mark.asyncio
+async def test_premium_override_no_longer_waives_empty_scope(
+    _capture_events: list[tuple[str, dict[str, object]]],
+) -> None:
+    client = AsyncMock()
+    client.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            "services.git_integration_worker.cursor_auto.admit_gates.fetch_thread_status",
+            AsyncMock(return_value="active"),
+        )
+        mp.setattr(
+            "services.git_integration_worker.cursor_auto.admit_gates.fetch_thread_turns",
+            AsyncMock(return_value=[]),
+        )
+        blocked = await blocking_admit_gate(
+            _job("cursor/claude-opus-5"),
+            client=client,
+            queue=MagicMock(),
+        )
+
+    assert blocked is not None
+    assert blocked["terminal_status"] == "status:blocked"
+    assert "roaming tier" in blocked["summary"]
+    signals = [sig for sig, _ in _capture_events]
+    assert "frontier.sdk.auto.empty_directive_scope_blocked" in signals
+    assert "frontier.sdk.auto.empty_directive_scope_waived" not in signals
+
+
+@pytest.mark.asyncio
+async def test_roaming_override_still_waives_empty_scope(
+    _capture_events: list[tuple[str, dict[str, object]]],
+) -> None:
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            "services.git_integration_worker.cursor_auto.admit_gates.fetch_thread_status",
+            AsyncMock(return_value="active"),
+        )
+        mp.setattr(
+            "services.git_integration_worker.cursor_auto.admit_gates.fetch_thread_turns",
+            AsyncMock(return_value=[]),
+        )
+        result = await blocking_admit_gate(
+            _job("composer-2.5"),
+            client=AsyncMock(),
+            queue=MagicMock(),
+        )
+
+    assert result is None
+    assert any(
+        sig == "frontier.sdk.auto.empty_directive_scope_waived"
+        for sig, _ in _capture_events
+    )
