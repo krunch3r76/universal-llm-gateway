@@ -13,6 +13,7 @@ from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
     PlaneObservation,
     annotate_checkpoint_claim_discrepancy,
     annotate_plane_discrepancy,
+    apply_landed_admit_gate,
     checkpoint_dispositions_equivalent,
     inject_plane_line,
     merge_plane_discrepancy_markers,
@@ -87,6 +88,19 @@ def test_parse_capture_plane_keys_from_wrapper() -> None:
     assert keys.head_sha == "abc1234"
     assert keys.branch == "cursor-sdk/auto-3137b70eeaba"
     assert keys.commits_ahead is None
+    assert keys.commits_ahead_presence == "absent"
+
+
+def test_parse_capture_plane_keys_unparsed_commits_ahead() -> None:
+    payload = {
+        "schema_version": 1,
+        "status": "complete",
+        "head_sha": "abc1234",
+        "commits_ahead": "not-a-number",
+    }
+    keys = parse_capture_plane_keys(json.dumps(payload))
+    assert keys.commits_ahead is None
+    assert keys.commits_ahead_presence == "unparsed"
 
 
 def test_parse_capture_plane_keys_extracts_commits_ahead() -> None:
@@ -94,10 +108,12 @@ def test_parse_capture_plane_keys_extracts_commits_ahead() -> None:
         _wrapper(head_sha="abc1234", branch="cursor-sdk/x", commits_ahead=0)
     )
     assert keys.commits_ahead == 0
+    assert keys.commits_ahead_presence == "present"
     keys_one = parse_capture_plane_keys(
         _wrapper(head_sha="abc1234", branch="cursor-sdk/x", commits_ahead=1)
     )
     assert keys_one.commits_ahead == 1
+    assert keys_one.commits_ahead_presence == "present"
 
 
 def test_stranded_fixture_headline_grep_visible_not_landed(tmp_path: Path) -> None:
@@ -380,7 +396,7 @@ def test_compute_tree_state_missing_head_unknown(tmp_path: Path) -> None:
 
 
 def test_compute_tree_state_lane_a_capture_head_resolves_plane(tmp_path: Path) -> None:
-    """Lane-A intake: non-None capture head_sha resolves plane (not unknown)."""
+    """Lane-A intake: head at master tip with absent commits_ahead stays landed."""
     repo = _init_repo(tmp_path)
     head = _git(repo, "rev-parse", "HEAD")
     wrapper = _wrapper(head_sha=head, branch=None)
@@ -395,8 +411,51 @@ def test_compute_tree_state_lane_a_capture_head_resolves_plane(tmp_path: Path) -
             wrapper_text=wrapper,
         )
     assert "unknown@lane-B (capture head absent)" not in state.plane_line
-    assert "NOT landed@local-master" in state.plane_line
-    assert "landed@local-master" not in state.plane_line.split("NOT landed@local-master")[0]
+    assert "landed@local-master" in state.plane_line
+    assert "NOT landed@local-master" not in state.plane_line
+
+
+def test_apply_landed_admit_gate_absent_refuses_vacuous_demotion() -> None:
+    """Absent commits_ahead must not coerce master-tip ancestry into NOT landed."""
+    plane = PlaneObservation(
+        head_sha="abc1234",
+        branch=None,
+        commit_exists=True,
+        landed_local_master=True,
+        published_origin=None,
+        unknown_reason=None,
+        as_of="t0",
+    )
+    gated = apply_landed_admit_gate(
+        plane,
+        commits_ahead=None,
+        commits_ahead_presence="absent",
+    )
+    assert gated.landed_local_master is True
+    headline = render_plane_headline(gated)
+    assert "landed@local-master" in headline
+    assert "NOT landed@local-master" not in headline
+
+
+def test_apply_landed_admit_gate_present_zero_refuses_landed() -> None:
+    """Measured commits_ahead=0 must refuse vacuous landed@local-master."""
+    plane = PlaneObservation(
+        head_sha="abc1234",
+        branch="cursor-sdk/auto-vacuous",
+        commit_exists=True,
+        landed_local_master=True,
+        published_origin=None,
+        unknown_reason=None,
+        as_of="t0",
+    )
+    gated = apply_landed_admit_gate(
+        plane,
+        commits_ahead=0,
+        commits_ahead_presence="present",
+    )
+    assert gated.landed_local_master is False
+    headline = render_plane_headline(gated)
+    assert "NOT landed@local-master" in headline
 
 
 def test_vacuous_tip_on_master_commits_ahead_zero_not_landed(tmp_path: Path) -> None:

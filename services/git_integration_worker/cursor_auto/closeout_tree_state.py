@@ -130,7 +130,11 @@ def compute_closeout_tree_state(
         head_sha=keys.head_sha,
         branch=keys.branch,
     )
-    plane = apply_landed_admit_gate(plane, commits_ahead=keys.commits_ahead or 0)
+    plane = apply_landed_admit_gate(
+        plane,
+        commits_ahead=keys.commits_ahead,
+        commits_ahead_presence=keys.commits_ahead_presence,
+    )
     checkpoint = qualify_checkpoint_value(checkpoint)
     deployment_state = qualify_deployment_state(deployment_state)
     plane_line = render_plane_headline(plane)

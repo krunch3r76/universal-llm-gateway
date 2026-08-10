@@ -15,6 +15,7 @@ import subprocess
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 _GIT_TIMEOUT_S = 30.0
 _SHA_RE = re.compile(r"^[0-9a-f]{7,40}$", re.I)
@@ -49,6 +50,9 @@ _STATUS_CLAIM_FRAGMENT_RE = re.compile(
 )
 
 
+_FieldPresence = Literal["present", "absent", "unparsed"]
+
+
 @dataclass(frozen=True, slots=True)
 class CapturePlaneKeys:
     """Capture-block keys that key the three-plane probe."""
@@ -56,6 +60,7 @@ class CapturePlaneKeys:
     head_sha: str | None
     branch: str | None
     commits_ahead: int | None = None
+    commits_ahead_presence: _FieldPresence = "absent"
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,15 +85,23 @@ class PlaneObservation:
         return self.unknown_reason is not None
 
 
-def _parse_commits_ahead(raw: object) -> int | None:
-    """Parse optional capture ``commits_ahead``; invalid values fail closed to None."""
+def _classify_commits_ahead(
+    raw: object,
+    *,
+    key_present: bool,
+) -> tuple[int | None, _FieldPresence]:
+    """Classify capture ``commits_ahead`` as present, absent, or unparsed."""
+    if not key_present:
+        return None, "absent"
     if raw is None:
-        return None
+        return None, "absent"
     try:
         value = int(raw)
     except (TypeError, ValueError):
-        return None
-    return value if value >= 0 else None
+        return None, "unparsed"
+    if value < 0:
+        return None, "unparsed"
+    return value, "present"
 
 
 def parse_capture_plane_keys(wrapper_text: str | None) -> CapturePlaneKeys:
@@ -112,10 +125,16 @@ def parse_capture_plane_keys(wrapper_text: str | None) -> CapturePlaneKeys:
     )
     if head_sha is not None and not _SHA_RE.match(head_sha):
         head_sha = None
+    commits_key_present = "commits_ahead" in data
+    commits_ahead, commits_ahead_presence = _classify_commits_ahead(
+        data.get("commits_ahead"),
+        key_present=commits_key_present,
+    )
     return CapturePlaneKeys(
         head_sha=head_sha,
         branch=branch_name,
-        commits_ahead=_parse_commits_ahead(data.get("commits_ahead")),
+        commits_ahead=commits_ahead,
+        commits_ahead_presence=commits_ahead_presence,
     )
 
 
@@ -203,21 +222,26 @@ def probe_three_planes(
 def apply_landed_admit_gate(
     plane: PlaneObservation,
     *,
-    commits_ahead: int,
+    commits_ahead: int | None,
+    commits_ahead_presence: _FieldPresence = "absent",
 ) -> PlaneObservation:
     """Refuse vacuous ``landed@local-master`` when G₂ admit would reject.
 
     Raw ancestry may probe True at ``head_sha == branch_point``; the landed
     axis used for headline and annotate must pass ``admit_landed_true`` first.
-    Missing or invalid capture ``commits_ahead`` is treated as 0 (fail closed).
+    Gate applies only when capture ``commits_ahead`` is **present** (measured).
+    Absent or unparsed values are not coerced to zero — the probe stands.
     """
     from services.git_integration_worker.cursor_sdk_deliverables_expected import (
         admit_landed_true,
     )
 
+    if commits_ahead_presence != "present":
+        return plane
     if plane.landed_local_master is not True:
         return plane
-    if admit_landed_true(ancestry_on_master=True, commits_ahead=commits_ahead):
+    measured = commits_ahead if commits_ahead is not None else 0
+    if admit_landed_true(ancestry_on_master=True, commits_ahead=measured):
         return plane
     return replace(plane, landed_local_master=False)
 
