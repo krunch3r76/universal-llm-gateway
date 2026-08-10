@@ -817,9 +817,10 @@ def test_bind_session_address_survives_release(isolated_registry: Path) -> None:
     url = "https://claude.ai/cowork/cse_bindTest001"
     assert reg.bind_session_address(r.registration_id, chat_url=url, execution_id="e1")
     assert reg.chat_url_for_registration(r.registration_id) == url
+    # kill=False is intentional retention (listable ``retained``), not released.
     reg.deregister_lane(r.registration_id, kill=False)
     row = reg._store.load_active()[r.registration_id]
-    assert row["status"] == "released"
+    assert row["status"] == "retained"
     assert row["chat_url"] == url
     assert reg.chat_url_for_registration(r.registration_id) == url
 
