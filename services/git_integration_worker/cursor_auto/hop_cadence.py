@@ -41,6 +41,7 @@ from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
     cooldown_s,
     evaluate_watch,
     load_watches,
+    mark_hop_failed,
     mark_hop_fired,
     observe_lane_from_enqueue,
     scan_interval_s,
@@ -218,9 +219,13 @@ async def fire_hop_for_decision(
     execution_id = str(result.get("execution_id") or "").strip() or None
     if result.get("reason") == "hop_not_queued":
         hop_ok = False
+        mark_hop_failed(decision.thread_id, reason="hop_not_queued")
     elif not execution_id:
         # Claim-only / commission without joinable id — do not advance succession.
+        # Still take the cooldown: an unjoinable hop is a failed hop, and leaving
+        # last_hop_at unadvanced re-fires it every scan.
         hop_ok = False
+        mark_hop_failed(decision.thread_id, reason="missing_execution_id")
         emit_succession_claim_missing_execution_id(
             thread_id=decision.thread_id,
             job_id=job.job_id,

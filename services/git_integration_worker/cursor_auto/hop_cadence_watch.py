@@ -342,10 +342,52 @@ def mark_hop_fired(
     row["last_hop_at"] = ts
     row["seated_at"] = ts
     row["enroll_source"] = "post_hop_reset"
+    row.pop("consecutive_hop_failures", None)
     if predecessor_reg:
         row["superseded_registration_id"] = predecessor_reg
     if execution_id:
         row["last_hop_execution_id"] = execution_id
         row["successor_execution_id"] = execution_id
+    watches[thread_id] = row
+    save_watches(watches, path)
+
+
+def mark_hop_failed(
+    thread_id: str,
+    *,
+    reason: str,
+    now: float | None = None,
+    path: Path | None = None,
+) -> None:
+    """Apply the cooldown after a hop that produced no joinable execution id.
+
+    A hop with no ``execution_id`` must not record a succession claim — the
+    reconciler could never join a stall to it, so the revoke breaker would never
+    count and the lane would burn CDP windows unchecked. But skipping
+    ``mark_hop_fired`` entirely leaves ``last_hop_at`` unadvanced, so
+    ``evaluate_watch`` re-fires on the very next scan: a ~30s hot loop in place
+    of the 30m cadence, exactly when the substrate is already failing every
+    generate. Advance the cooldown clock without claiming succession.
+    """
+    from services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile import (
+        REVOKE_BREAKER_N,
+    )
+
+    ts = time.time() if now is None else now
+    watches = load_watches(path)
+    row = dict(watches.get(thread_id) or {"thread_id": thread_id})
+    failures = int(row.get("consecutive_hop_failures") or 0) + 1
+    row["thread_id"] = thread_id
+    row["last_hop_at"] = ts
+    row["last_hop_failure_at"] = ts
+    row["last_hop_failure_reason"] = reason
+    row["consecutive_hop_failures"] = failures
+    # A lane that cannot produce a joinable id is failing just as surely as one
+    # whose stall we can join; without this it would never reach the breaker,
+    # because the breaker only counts revocations of claims that were joinable.
+    if failures >= REVOKE_BREAKER_N:
+        row["breaker_tripped"] = True
+        row["breaker_tripped_at"] = ts
+        row["breaker_trip_reason"] = reason
     watches[thread_id] = row
     save_watches(watches, path)

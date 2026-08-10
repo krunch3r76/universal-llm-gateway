@@ -19,6 +19,7 @@ from git_integrate.events import register_uds_publisher
 from universal_logging import get_logger
 
 from services.git_integration_worker.admission import WorkAdmissionController
+from services.git_integration_worker.background_supervisor import supervise
 from services.git_integration_worker.config import WorkerConfig, load_config
 from services.git_integration_worker.cursor_auto.closeout_outbox import (
     CloseoutOutboxStore,
@@ -129,20 +130,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # off the wire (2026-08-03 boot hang — unbounded pre-yield work).
     schedule_startup_persistence(app)
     register_production_invoker()
-    sweeper = asyncio.create_task(stale_lease_sweeper(app))
-    app.state.stale_lease_sweeper = sweeper
-    auto_worker = asyncio.create_task(auto_worker_loop(app))
-    app.state.cursor_auto_worker = auto_worker
-    orphan_scanner = asyncio.create_task(orphan_scanner_loop(app))
-    app.state.cursor_auto_orphan_scanner = orphan_scanner
-    hop_cadence = asyncio.create_task(hop_cadence_loop(app))
-    app.state.cursor_auto_hop_cadence = hop_cadence
-    story_projector = asyncio.create_task(ulg_story_projector_loop(app))
-    app.state.ulg_story_projector = story_projector
-    trigger_loop = asyncio.create_task(trigger_fire_loop(app))
-    app.state.trigger_fire_loop = trigger_loop
-    lane_b_sweeper = asyncio.create_task(lane_b_sweeper_loop(app))
-    app.state.lane_b_sweeper = lane_b_sweeper
+    app.state.shutting_down = False
+    supervise(app, "stale_lease_sweeper", lambda: stale_lease_sweeper(app))
+    # Respawn the lane loop: its absence deregisters the cursor-auto handler and
+    # parks every agent_bus.request, including the propagate repair path.
+    supervise(app, "cursor_auto_worker", lambda: auto_worker_loop(app), restart=True)
+    supervise(app, "cursor_auto_orphan_scanner", lambda: orphan_scanner_loop(app))
+    supervise(app, "cursor_auto_hop_cadence", lambda: hop_cadence_loop(app))
+    supervise(app, "ulg_story_projector", lambda: ulg_story_projector_loop(app))
+    supervise(app, "trigger_fire_loop", lambda: trigger_fire_loop(app))
+    supervise(app, "lane_b_sweeper", lambda: lane_b_sweeper_loop(app))
     logger.info(
         "git-integration-worker started: version=%s port=%d source_repo=%s "
         "worker_id=%s startup_persistence=background",
@@ -168,6 +165,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        app.state.shutting_down = True
         clear_tool_op_invoker()
         shutdown_active_bridges()
         await shutdown_auto_jobs(app)

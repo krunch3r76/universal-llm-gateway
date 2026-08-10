@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from contextlib import suppress
 from typing import Any
 
 from fastapi import APIRouter
@@ -294,40 +293,63 @@ async def auto_worker_loop(app: Any) -> None:
     async def _heartbeat_while_busy(job_id: str) -> None:
         while True:
             registry.heartbeat(_HANDLER_ID)
-            get_queue().bump_heartbeat(job_id)
+            try:
+                get_queue().bump_heartbeat(job_id)
+            except Exception:
+                # A failed ledger write must not end this task. The registry
+                # refresh above is what keeps the lane armed; if this coroutine
+                # dies the handler is pruned 30s later and every subsequent
+                # agent_bus.request 503s with no turn and no alarm.
+                logger.exception(
+                    "cursor-auto heartbeat ledger write failed job=%s", job_id
+                )
             await asyncio.sleep(min(5.0, _WORKER_INTERVAL_S * 4))
 
     try:
         while True:
-            registry.heartbeat(_HANDLER_ID)
-            job = get_queue().claim_next()
-            if job is not None:
-                hb_task = asyncio.create_task(_heartbeat_while_busy(job.job_id))
-                try:
-                    controller = getattr(app.state, "admission_controller", None)
-                    result = await process_job(
-                        job,
-                        admission_controller=controller,
-                        worker_id=str(getattr(app.state, "worker_id", "") or ""),
-                        worker_started_at=str(
-                            getattr(app.state, "worker_boot_ts", "") or ""
-                        ),
-                    )
-                    logger.info(
-                        "cursor-auto job=%s result ok=%s terminal=%s",
-                        job.job_id,
-                        result.get("ok"),
-                        result.get("terminal_status"),
-                    )
-                except Exception as exc:
-                    get_queue().mark_done(job.job_id, failed=True)
-                    logger.exception(
-                        "cursor-auto job=%s failed: %s", job.job_id, exc
-                    )
-                finally:
-                    hb_task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await hb_task
+            try:
+                registry.heartbeat(_HANDLER_ID)
+                job = get_queue().claim_next()
+                if job is not None:
+                    hb_task = asyncio.create_task(_heartbeat_while_busy(job.job_id))
+                    try:
+                        controller = getattr(app.state, "admission_controller", None)
+                        result = await process_job(
+                            job,
+                            admission_controller=controller,
+                            worker_id=str(getattr(app.state, "worker_id", "") or ""),
+                            worker_started_at=str(
+                                getattr(app.state, "worker_boot_ts", "") or ""
+                            ),
+                        )
+                        logger.info(
+                            "cursor-auto job=%s result ok=%s terminal=%s",
+                            job.job_id,
+                            result.get("ok"),
+                            result.get("terminal_status"),
+                        )
+                    except Exception as exc:
+                        get_queue().mark_done(job.job_id, failed=True)
+                        logger.exception(
+                            "cursor-auto job=%s failed: %s", job.job_id, exc
+                        )
+                    finally:
+                        hb_task.cancel()
+                        try:
+                            await hb_task
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception:
+                            # Re-raised from a heartbeat that already died; only
+                            # CancelledError used to be caught here, so this was
+                            # the escape hatch that unwound the whole loop.
+                            logger.exception(
+                                "cursor-auto heartbeat writer died job=%s", job.job_id
+                            )
+            except Exception:
+                # Never let one iteration end the lane (hop_cadence_loop pattern).
+                # CancelledError still propagates, so lifespan shutdown is intact.
+                logger.exception("cursor-auto worker loop iteration failed")
             await asyncio.sleep(_WORKER_INTERVAL_S)
     finally:
         registry.unregister(_HANDLER_ID)
