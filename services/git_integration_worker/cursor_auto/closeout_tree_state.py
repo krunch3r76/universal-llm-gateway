@@ -33,10 +33,11 @@ from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
 )
+from services.git_integration_worker.seat_write_ledger import SeatWriteLedger
 
 _DEPLOYMENT_STATE_LINE_RE = re.compile(r"(?im)^deployment_state:\s*.+$")
 
-# Lane-A cursor-sdk writes cannot reach SeatWriteLedger (``lane_b_sweeper.REGISTRATION_GAPS``).
+# Greppable when ``has_paths_for_arc`` is false (failed/assembly-skipped/zero-row arcs).
 _LEDGER_REGISTRATION_UNAVAILABLE = (
     "ledger-registration-unavailable — cursor-sdk paths not in seat write ledger"
 )
@@ -115,10 +116,13 @@ def compute_closeout_tree_state(
             source_repo=source_repo,
             dispatch_id=dispatch_id,
         )
+        ledger_registration_available = SeatWriteLedger.instance().has_paths_for_arc(
+            arc_id=dispatch_id
+        )
         deployment_state = compose_deployment_authorship(
             baseline=baseline,
             authored=authored,
-            ledger_registration_available=False,
+            ledger_registration_available=ledger_registration_available,
         )
     keys = parse_capture_plane_keys(wrapper_text)
     plane = probe_three_planes(

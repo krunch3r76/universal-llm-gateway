@@ -134,6 +134,67 @@ def test_closed_quiescent_arc_is_swept(
 def test_registration_gaps_named() -> None:
     assert any("Tab inline" in gap for gap in REGISTRATION_GAPS)
     assert any("External editor" in gap for gap in REGISTRATION_GAPS)
+    assert not any("cursor-sdk" in gap for gap in REGISTRATION_GAPS)
+
+
+def test_closed_cursor_sdk_arc_not_swept(
+    repo: Path, patch_ledger: SeatWriteLedger
+) -> None:
+    """Defense in depth: closed cursor-sdk arc must not lane-B commit."""
+    arc_id = "sdk-closed"
+    patch_ledger.open_arc(arc_id=arc_id, seat_id="cursor-sdk", source_repo=str(repo))
+    target = repo / "sdk_only.py"
+    target.write_text("sdk\n", encoding="utf-8")
+    patch_ledger.register_paths(
+        arc_id=arc_id,
+        seat_id="cursor-sdk",
+        source_repo=str(repo),
+        paths=("sdk_only.py",),
+    )
+    patch_ledger.close_arc(arc_id=arc_id)
+    _backdate_touch(patch_ledger, arc_id=arc_id, path="sdk_only.py", seconds_ago=400)
+
+    result = _run(sweep_lane_b_writes(repo, quiescence_s=300))
+
+    assert result.paths_committed == 0
+    status = subprocess.run(
+        ["git", "-C", str(repo), "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "sdk_only.py" in status.stdout
+
+
+def test_prune_stale_cursor_sdk_paths(
+    repo: Path, patch_ledger: SeatWriteLedger
+) -> None:
+    """TTL prune removes aged cursor-sdk rows without lane-B commit."""
+    arc_id = "sdk-stale"
+    patch_ledger.register_paths(
+        arc_id=arc_id,
+        seat_id="cursor-sdk",
+        source_repo=str(repo),
+        paths=("stale.py",),
+    )
+    _backdate_touch(patch_ledger, arc_id=arc_id, path="stale.py", seconds_ago=800_000)
+    patch_ledger.register_paths(
+        arc_id="sdk-fresh",
+        seat_id="cursor-sdk",
+        source_repo=str(repo),
+        paths=("fresh.py",),
+    )
+
+    deleted = patch_ledger.prune_stale_seat_paths(
+        seat_id="cursor-sdk",
+        max_age_s=604800,
+    )
+
+    assert deleted == 1
+    assert patch_ledger.has_paths_for_arc(arc_id=arc_id) is False
+    assert patch_ledger.has_paths_for_arc(arc_id="sdk-fresh") is True
+    assert "stale.py" not in patch_ledger.registered_paths(source_repo=str(repo))
+    assert "fresh.py" in patch_ledger.registered_paths(source_repo=str(repo))
 
 
 def _backdate_touch(

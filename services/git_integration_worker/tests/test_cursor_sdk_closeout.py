@@ -3119,3 +3119,171 @@ def test_closeout_status_enum_unchanged_sdk019() -> None:
     )
     payload = json.loads(body)
     assert payload["status"] in {"complete", "partial", "failed"}
+
+
+def test_closeout_registers_attributed_paths_in_seat_ledger(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Slice A — attributed repo_change_set rows land under dispatch arc."""
+    from implement_admission.closeout_models import (
+        EffectEntry,
+        EffectsManifest,
+        SurfaceSection,
+    )
+
+    from services.git_integration_worker.config import WorkerConfig
+    from services.git_integration_worker.cursor_sdk_closeout import (
+        _assemble_closeout_delivery,
+    )
+    from services.git_integration_worker.seat_write_ledger import SeatWriteLedger
+
+    _init_git_repo_with_commit(tmp_path)
+    dispatch_id = "disp-register"
+    rel = "services/written.py"
+    (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / rel).write_text("x=1\n", encoding="utf-8")
+    baseline = capture_wt_baseline_with_hashes(tmp_path)
+    assert baseline is not None
+
+    SeatWriteLedger.reset_instance()
+    ledger = SeatWriteLedger(db_path=tmp_path.parent / "seat-write-ledger.db")
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.SeatWriteLedger.instance",
+        lambda: ledger,
+    )
+    cfg = WorkerConfig(
+        host="127.0.0.1",
+        port=8091,
+        source_repo=tmp_path,
+        worktree_root=tmp_path / "wt",
+        dispatch_workspace=tmp_path / "ws",
+        green_gate_cmd=["true"],
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.load_config",
+        lambda: cfg,
+    )
+
+    manifest = EffectsManifest(
+        dispatch_id=dispatch_id,
+        thread_id="t-reg",
+        capture_sources=["conversation"],
+        surfaces={
+            "repo": SurfaceSection(
+                surface="repo",
+                source="conversation",
+                entries=[EffectEntry(op="write", target=rel, identity=rel)],
+            )
+        },
+        coverage={"repo": "complete"},
+    )
+    outcome = SdkRunOutcome(
+        body="done",
+        status="finished",
+        duration_ms=50,
+        tool_call_count=2,
+        effects_manifest=manifest,
+    )
+    _assemble_closeout_delivery(
+        source_repo=tmp_path,
+        dispatch_id=dispatch_id,
+        outcome=outcome,
+        degraded_reason=None,
+        thread_id="t-reg",
+        work_item_ref=None,
+        baseline=baseline,
+        packet_text=f"<scope>\nFiles expected:\n- `{rel}`\n</scope>\n",
+        files_expected=[rel],
+        cortex_artifact_paths=[],
+        gate_d_created_rels=(),
+        deliverables_expected=True,
+    )
+    assert ledger.has_paths_for_arc(arc_id=dispatch_id) is True
+    registered = ledger.registered_paths(source_repo=str(tmp_path))
+    assert rel in registered
+
+
+def test_closeout_does_not_register_ambient_only_git_delta(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Slice A — ambient dirty paths diverted by resolve are not ledger-seeded."""
+    from services.git_integration_worker.config import WorkerConfig
+    from services.git_integration_worker.cursor_sdk_closeout import (
+        _assemble_closeout_delivery,
+    )
+    from services.git_integration_worker.seat_write_ledger import SeatWriteLedger
+
+    _init_git_repo_with_commit(tmp_path)
+    dispatch_id = "disp-ambient"
+    ambient = "parallel_wip.py"
+    (tmp_path / ambient).write_text("ambient\n", encoding="utf-8")
+    baseline = capture_wt_baseline_with_hashes(tmp_path)
+    assert baseline is not None
+    expected = "services/attributed.py"
+    (tmp_path / expected).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / expected).write_text("lane\n", encoding="utf-8")
+
+    SeatWriteLedger.reset_instance()
+    ledger = SeatWriteLedger(db_path=tmp_path.parent / "seat-write-ledger.db")
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.SeatWriteLedger.instance",
+        lambda: ledger,
+    )
+    cfg = WorkerConfig(
+        host="127.0.0.1",
+        port=8091,
+        source_repo=tmp_path,
+        worktree_root=tmp_path / "wt",
+        dispatch_workspace=tmp_path / "ws",
+        green_gate_cmd=["true"],
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.load_config",
+        lambda: cfg,
+    )
+
+    from implement_admission.closeout_models import (
+        EffectEntry,
+        EffectsManifest,
+        SurfaceSection,
+    )
+
+    manifest = EffectsManifest(
+        dispatch_id=dispatch_id,
+        thread_id="t-ambient",
+        capture_sources=["conversation"],
+        surfaces={
+            "repo": SurfaceSection(
+                surface="repo",
+                source="conversation",
+                entries=[EffectEntry(op="write", target=expected, identity=expected)],
+            )
+        },
+        coverage={"repo": "complete"},
+    )
+    outcome = SdkRunOutcome(
+        body="done",
+        status="finished",
+        duration_ms=50,
+        tool_call_count=1,
+        effects_manifest=manifest,
+    )
+    _assemble_closeout_delivery(
+        source_repo=tmp_path,
+        dispatch_id=dispatch_id,
+        outcome=outcome,
+        degraded_reason=None,
+        thread_id="t-ambient",
+        work_item_ref=None,
+        baseline=baseline,
+        packet_text=f"<scope>\nFiles expected:\n- `{expected}`\n</scope>\n",
+        files_expected=[expected],
+        cortex_artifact_paths=[],
+        gate_d_created_rels=(),
+        deliverables_expected=True,
+    )
+    registered = ledger.registered_paths(source_repo=str(tmp_path))
+    assert expected in registered
+    assert ambient not in registered

@@ -18,6 +18,7 @@ from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_sdk_closeout import capture_wt_baseline
 from services.git_integration_worker.seat_write_ledger import (
+    CURSOR_SDK_SEAT_RETENTION_S,
     QuiescentArcBatch,
     SeatWriteLedger,
 )
@@ -32,7 +33,6 @@ _GIT_TIMEOUT_S = 30.0
 REGISTRATION_GAPS: tuple[str, ...] = (
     "Tab inline completion edits (afterTabFileEdit hook not wired in v1)",
     "External editor / shell writes outside Cursor hook surface",
-    "cursor-sdk dispatch paths (lane A wt_baseline — not seat ledger)",
 )
 
 
@@ -97,12 +97,18 @@ async def sweep_lane_b_writes(
     repo = source_repo.resolve()
     window = LANE_B_QUIESCENCE_S if quiescence_s is None else quiescence_s
     ledger = SeatWriteLedger.instance()
+    ledger.prune_stale_seat_paths(
+        seat_id="cursor-sdk",
+        max_age_s=CURSOR_SDK_SEAT_RETENTION_S,
+    )
     dirty = dirty_paths(repo)
     committed: list[tuple[str, str, int]] = []
     skipped_not_dirty: list[str] = []
     skipped_unregistered: list[str] = []
 
     for batch in ledger.quiescent_batches(source_repo=str(repo), quiescence_s=window):
+        if batch.seat_id == "cursor-sdk":
+            continue
         paths, not_dirty = select_sweep_paths(batch=batch, dirty=dirty)
         skipped_not_dirty.extend(not_dirty)
         if not paths:

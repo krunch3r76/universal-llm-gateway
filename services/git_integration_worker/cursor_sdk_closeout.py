@@ -37,6 +37,7 @@ from implement_admission.spec import (
 )
 from universal_logging import get_logger
 
+from services.git_integration_worker.config import load_config
 from services.git_integration_worker.cursor_auto.closeout_relay_cortex_uri import (
     read_cortex_text,
 )
@@ -121,6 +122,7 @@ from services.git_integration_worker.cursor_sdk_subagent_capture import (
 from services.git_integration_worker.cursor_sdk_test_observation import (
     harvest_test_verifications,
 )
+from services.git_integration_worker.seat_write_ledger import SeatWriteLedger
 
 logger = get_logger(__name__)
 
@@ -1263,6 +1265,40 @@ async def prepare_closeout_delivery_async(
     )
 
 
+def _register_cursor_sdk_seat_writes(
+    *,
+    dispatch_id: str,
+    baseline: dict[str, Any] | None,
+    repo_change_set: ChangeSet,
+) -> None:
+    """Register attributed closeout paths for lane-A cursor-sdk Rank-2 authorship.
+
+    Attach at closeout (not admit) because authored paths are unknown until
+    ``resolve_repo_change_set`` completes. Register the attributed set only —
+    ambient/parallel-WIP diverted by resolve must not seed the ledger. Arc stays
+    open (never ``close_arc`` here) so lane-B quiescent sweep does not commit
+    cursor-sdk rows. ``source_repo`` uses the consumer key from ``load_config``
+    (matches ``nested_outcome`` relay); Lane-B/worktree binding divergence can
+    leave rows unread at a different resolved path.
+    """
+    if baseline is None:
+        return
+    paths = (
+        *repo_change_set.created,
+        *repo_change_set.modified,
+        *repo_change_set.deleted,
+    )
+    if not paths:
+        return
+    source_repo = str(Path(load_config().source_repo).resolve())
+    SeatWriteLedger.instance().register_paths(
+        arc_id=dispatch_id,
+        seat_id="cursor-sdk",
+        source_repo=source_repo,
+        paths=paths,
+    )
+
+
 def _assemble_closeout_delivery(
     *,
     source_repo: Path,
@@ -1380,6 +1416,11 @@ def _assemble_closeout_delivery(
         created=tuple(filter_manifest_swamp(repo_change_set.created)),
         modified=tuple(filter_manifest_swamp(repo_change_set.modified)),
         deleted=tuple(filter_manifest_swamp(repo_change_set.deleted)),
+    )
+    _register_cursor_sdk_seat_writes(
+        dispatch_id=dispatch_id,
+        baseline=baseline,
+        repo_change_set=repo_change_set,
     )
     all_outside_repo = tuple(dict.fromkeys([*outside_repo_paths, *manifest_outside]))
     verification_cs = build_verification_change_set(

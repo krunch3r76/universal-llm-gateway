@@ -1,7 +1,8 @@
-"""Durable write ledger for lane-B IDE / attended model seats.
+"""Durable write ledger for IDE and cursor-sdk seat path registration.
 
-Non-dispatch model writes register here at edit time so a quiescent sweeper
-can commit from record rather than inferring authorship from the tree.
+Lane-B attended seats register at edit time; lane-A cursor-sdk registers
+attributed closeout paths so Rank-2 authorship can intersect baseline-delta
+with ledger rows without inferring authorship from the tree alone.
 """
 
 from __future__ import annotations
@@ -16,6 +17,11 @@ from pathlib import Path
 from universal_logging import get_logger
 
 logger = get_logger(__name__)
+
+# Default TTL for open cursor-sdk rows — longer than supersede/replay, bounded growth.
+CURSOR_SDK_SEAT_RETENTION_S = float(
+    os.getenv("CURSOR_SDK_SEAT_RETENTION_S", "604800")
+)
 
 _STATUS_OPEN = "open"
 _STATUS_CLOSED = "closed"
@@ -171,6 +177,39 @@ class SeatWriteLedger:
             ).fetchall()
         return frozenset(row["path"] for row in rows)
 
+    def has_paths_for_arc(self, *, arc_id: str) -> bool:
+        """True when at least one path row exists for ``arc_id``."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM seat_write_paths WHERE arc_id=? LIMIT 1",
+                (arc_id,),
+            ).fetchone()
+        return row is not None
+
+    def prune_stale_seat_paths(
+        self,
+        *,
+        seat_id: str,
+        max_age_s: float,
+        now_mono: float | None = None,
+    ) -> int:
+        """Delete aged path rows for one seat without a lane-B commit."""
+        cutoff = _now_before(max_age_s, now_mono=now_mono)
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            cur = conn.execute(
+                "DELETE FROM seat_write_paths WHERE seat_id=? AND last_touch_at < ?",
+                (seat_id, cutoff),
+            )
+            deleted = cur.rowcount
+            conn.execute(
+                "DELETE FROM seat_write_arcs "
+                "WHERE seat_id=? AND status=? "
+                "AND arc_id NOT IN (SELECT DISTINCT arc_id FROM seat_write_paths)",
+                (seat_id, _STATUS_OPEN),
+            )
+        return deleted
+
     def quiescent_batches(
         self,
         *,
@@ -240,6 +279,7 @@ def _now_before(seconds: float, *, now_mono: float | None = None) -> str:
 
 
 __all__ = [
+    "CURSOR_SDK_SEAT_RETENTION_S",
     "QuiescentArcBatch",
     "SeatWriteLedger",
 ]

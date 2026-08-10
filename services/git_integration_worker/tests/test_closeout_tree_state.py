@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,6 +16,10 @@ from services.git_integration_worker.cursor_auto.closeout_tree_state import (
 )
 
 pytestmark = pytest.mark.offline
+
+_VACANCY = (
+    "ledger-registration-unavailable — cursor-sdk paths not in seat write ledger"
+)
 
 
 def test_deployment_state_contradicts_when_owed_without_commit() -> None:
@@ -308,3 +313,96 @@ def test_rank2_both_directions_via_compute_closeout_tree_state() -> None:
     assert fire.deployment_state is not None
     assert "authored-not-committed@local-master" in fire.deployment_state
     assert "1 path" in fire.deployment_state
+
+
+def test_nr1_compose_vacancy_when_unavailable_red() -> None:
+    """NR1 — explicit False at compose ceiling must emit greppable vacancy."""
+    claim = compose_deployment_authorship(
+        baseline={
+            "codes": {},
+            "hashes": {},
+            "admit_head": "6cf34833ea361a0b694e8ff169e476c06f329b95",
+            "outside_repo": [],
+        },
+        authored=(),
+        ledger_registration_available=False,
+    )
+    assert claim is not None
+    assert _VACANCY in claim
+
+
+def test_nr2_wiring_derives_from_has_paths_for_arc() -> None:
+    """NR2 — compute_closeout_tree_state passes has_paths_for_arc(dispatch_id)."""
+    usable_baseline = {
+        "codes": {},
+        "hashes": {},
+        "admit_head": "6cf34833ea361a0b694e8ff169e476c06f329b95",
+        "outside_repo": [],
+    }
+    with patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "compute_lane_a_checkpoint_value",
+        return_value="deferred: authored paths not yet path-explicit committed",
+    ), patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "CursorDispatchLedger.instance",
+    ) as ledger_cls, patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "authored_paths_for_dispatch",
+        return_value=(),
+    ), patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "SeatWriteLedger.instance",
+    ) as seat_ledger_cls:
+        ledger_cls.return_value.read_wt_baseline.return_value = usable_baseline
+        seat_ledger = seat_ledger_cls.return_value
+        seat_ledger.has_paths_for_arc.return_value = True
+        state = compute_closeout_tree_state(
+            source_repo=Path("/tmp/unused"),
+            dispatch_id="d-nr2",
+        )
+        seat_ledger.has_paths_for_arc.assert_called_once_with(arc_id="d-nr2")
+    assert state.deployment_state is None
+
+
+def test_nr3_failed_population_vacancy_when_zero_arc_rows() -> None:
+    """NR3 / AC-2 — failed-but-terminal: baseline + no rows + empty authored → vacancy."""
+    usable_baseline = {
+        "codes": {".gitignore": " M"},
+        "hashes": {".gitignore": "d" * 64},
+        "admit_head": "6cf34833ea361a0b694e8ff169e476c06f329b95",
+        "outside_repo": [],
+    }
+    with patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "compute_lane_a_checkpoint_value",
+        return_value="deferred: authored paths not yet path-explicit committed",
+    ), patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "CursorDispatchLedger.instance",
+    ) as ledger_cls, patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "authored_paths_for_dispatch",
+        return_value=(),
+    ), patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "SeatWriteLedger.instance",
+    ) as seat_ledger_cls:
+        ledger_cls.return_value.read_wt_baseline.return_value = usable_baseline
+        seat_ledger_cls.return_value.has_paths_for_arc.return_value = False
+        state = compute_closeout_tree_state(
+            source_repo=Path("/tmp/unused"),
+            dispatch_id="d-failed-terminal",
+        )
+    assert state.deployment_state is not None
+    assert _VACANCY in state.deployment_state
+    assert "@local-master" in state.deployment_state
+
+
+def test_nr4_compute_body_has_no_literal_registration_flag() -> None:
+    """NR4 — production compose site must not hardcode True/False."""
+    from services.git_integration_worker.cursor_auto import closeout_tree_state
+
+    source = inspect.getsource(closeout_tree_state.compute_closeout_tree_state)
+    assert "ledger_registration_available=True" not in source
+    assert "ledger_registration_available=False" not in source
