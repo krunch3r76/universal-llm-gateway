@@ -278,6 +278,12 @@ def qualify_deployment_state(deployment_state: str | None) -> str | None:
             "authored-not-committed@local-master",
             1,
         )
+    if text.startswith("attribution-unavailable"):
+        return text.replace(
+            "attribution-unavailable",
+            "attribution-unavailable@local-master",
+            1,
+        )
     if "propagation-owed" in text and "@" not in text.split("—", 1)[0]:
         return text.replace("propagation-owed", "propagation-owed@local-master", 1)
     if "landed-not-live" in text and "@" not in text.split("—", 1)[0]:

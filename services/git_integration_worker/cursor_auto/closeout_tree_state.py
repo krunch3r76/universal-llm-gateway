@@ -12,6 +12,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from typing import Any
+
 from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
     annotate_plane_discrepancy,
     apply_landed_admit_gate,
@@ -29,6 +31,12 @@ from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
     authored_paths_for_dispatch,
     compute_lane_a_checkpoint_value,
 )
+from services.git_integration_worker.cursor_dispatch_ledger import (
+    CursorDispatchLedger,
+)
+from services.git_integration_worker.cursor_sdk_capture_status import (
+    normalize_wt_baseline,
+)
 
 _DEPLOYMENT_STATE_LINE_RE = re.compile(r"(?im)^deployment_state:\s*.+$")
 
@@ -43,6 +51,37 @@ class CloseoutTreeState:
     plane_discrepancy: str | None = None
 
 
+def compose_deployment_authorship(
+    *,
+    baseline: dict[str, Any] | None,
+    authored: tuple[str, ...],
+) -> str | None:
+    """Rank-1 authorship claim for ``deployment_state`` (refuse when proof thin).
+
+    ``authored-not-committed`` requires a usable admit baseline with non-empty
+    ``codes`` plus a non-empty baseline-delta. Missing baseline or empty
+    ``codes`` (including clean-admit ``{}`` and plane-mismatch empties) yields
+    ``attribution-unavailable`` when dirt/delta is present — never a false
+    path-explicit-commit obligation. Clean-admit→edit positives stay muted
+    until Rank 2 (SeatWriteLedger); populated-baseline deltas still fire.
+    """
+    if baseline is None:
+        return "attribution-unavailable — admit baseline missing"
+    codes, _hashes = normalize_wt_baseline(baseline)
+    if not codes:
+        if not authored:
+            return None
+        return "attribution-unavailable — empty admit baseline codes"
+    if not authored:
+        return None
+    count = len(authored)
+    noun = "path" if count == 1 else "paths"
+    return (
+        f"authored-not-committed — {count} {noun} "
+        "await path-explicit commit"
+    )
+
+
 def compute_closeout_tree_state(
     *,
     source_repo: Path,
@@ -54,7 +93,8 @@ def compute_closeout_tree_state(
     Lane-A porcelain/lane-refs remain the checkpoint authority; capture
     ``head_sha``/``branch`` key the three-plane probe (local refs, no fetch).
     Wrapper cortex offgit URIs feed the row-19 ``authored_cortex:`` arm when the
-    git plane is empty.
+    git plane is empty. ``deployment_state`` authorship vocabulary is Rank-1
+    gated via ``compose_deployment_authorship`` (baseline proof ≺ label).
     """
     from implement_admission.closeout_helpers import cortex_files_root
 
@@ -68,17 +108,17 @@ def compute_closeout_tree_state(
     if checkpoint_claims_committed(checkpoint):
         deployment_state = obligation_deployment_state_from_wrapper(wrapper_text)
     elif checkpoint != "nothing_authored":
+        baseline = CursorDispatchLedger.instance().read_wt_baseline(
+            dispatch_id=dispatch_id
+        )
         authored = authored_paths_for_dispatch(
             source_repo=source_repo,
             dispatch_id=dispatch_id,
         )
-        if authored:
-            count = len(authored)
-            noun = "path" if count == 1 else "paths"
-            deployment_state = (
-                f"authored-not-committed — {count} {noun} "
-                "await path-explicit commit"
-            )
+        deployment_state = compose_deployment_authorship(
+            baseline=baseline,
+            authored=authored,
+        )
     keys = parse_capture_plane_keys(wrapper_text)
     plane = probe_three_planes(
         source_repo,

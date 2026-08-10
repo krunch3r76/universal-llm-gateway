@@ -9,6 +9,7 @@ import pytest
 
 from services.git_integration_worker.cursor_auto.closeout_tree_state import (
     CloseoutTreeState,
+    compose_deployment_authorship,
     compute_closeout_tree_state,
     deployment_state_contradicts_checkpoint,
 )
@@ -54,13 +55,23 @@ def test_compute_closeout_tree_state_uncommitted_never_claims_landed() -> None:
         '"files_modified":["libs/charter_runner_store/db.py"],'
         '"propagation_residue":["sync_restart: git_integration_worker — manage(...)"]}'
     )
+    usable_baseline = {
+        "codes": {"libs/ambient.py": " M"},
+        "hashes": {"libs/ambient.py": "a" * 64},
+        "admit_head": "abc123",
+        "outside_repo": [],
+    }
     with patch(
         "services.git_integration_worker.cursor_auto.closeout_tree_state.compute_lane_a_checkpoint_value",
         return_value="deferred: authored paths not yet path-explicit committed",
     ), patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "CursorDispatchLedger.instance",
+    ) as ledger_cls, patch(
         "services.git_integration_worker.cursor_auto.closeout_tree_state.authored_paths_for_dispatch",
         return_value=("libs/charter_runner_store/db.py", "libs/foo.py"),
     ):
+        ledger_cls.return_value.read_wt_baseline.return_value = usable_baseline
         state = compute_closeout_tree_state(
             source_repo=Path("/tmp/unused"),
             dispatch_id="d-uncommitted",
@@ -135,15 +146,124 @@ def test_compute_closeout_tree_state_threads_wrapper_for_authored_cortex() -> No
     ) as compute, patch(
         "implement_admission.closeout_helpers.cortex_files_root",
         return_value=Path("/tmp/cortex-root"),
+    ), patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "CursorDispatchLedger.instance",
+    ) as ledger_cls, patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state.authored_paths_for_dispatch",
+        return_value=(),
     ):
+        ledger_cls.return_value.read_wt_baseline.return_value = None
         state = compute_closeout_tree_state(
             source_repo=Path("/tmp/unused"),
             dispatch_id="d-cortex",
             wrapper_text=wrapper,
         )
     assert state.checkpoint.startswith("authored_cortex@local-master:")
-    assert state.deployment_state is None
+    # Rank 1: missing baseline under non-nothing_authored → refuse, not mute.
+    assert state.deployment_state is not None
+    assert "attribution-unavailable@local-master" in state.deployment_state
+    assert "authored-not-committed" not in state.deployment_state
     assert state.plane_line.startswith("plane:")
     kwargs = compute.call_args.kwargs
     assert kwargs["wrapper_text"] == wrapper
     assert kwargs["cortex_root"] == Path("/tmp/cortex-root")
+
+
+def test_compose_rank1_empty_codes_refuses_ambient_authorship() -> None:
+    """AC must-not: empty admit codes + ambient dirt → not authored-not-committed."""
+    ambient = (
+        ".gitignore",
+        "libs/cdp_ask/runner.py.orig",
+        "scripts/watch-giw-wedge-stackdump.py",
+        "scripts/watch-giw-wedge-tmux.sh",
+    )
+    claim = compose_deployment_authorship(
+        baseline={
+            "codes": {},
+            "hashes": {},
+            "admit_head": "6cf34833ea361a0b694e8ff169e476c06f329b95",
+            "outside_repo": [],
+        },
+        authored=ambient,
+    )
+    assert claim is not None
+    assert claim.startswith("attribution-unavailable")
+    assert "authored-not-committed" not in claim
+
+
+def test_compose_rank1_populated_baseline_delta_still_fires() -> None:
+    """AC must-fire: usable codes + real lane delta → authored-not-committed."""
+    claim = compose_deployment_authorship(
+        baseline={
+            "codes": {
+                ".gitignore": " M",
+                "libs/cdp_ask/runner.py.orig": "??",
+            },
+            "hashes": {
+                ".gitignore": "b" * 64,
+                "libs/cdp_ask/runner.py.orig": "c" * 64,
+            },
+            "admit_head": "6cf34833ea361a0b694e8ff169e476c06f329b95",
+            "outside_repo": [],
+        },
+        authored=("services/git_integration_worker/cursor_auto/nested_outcome.py",),
+    )
+    assert claim == (
+        "authored-not-committed — 1 path await path-explicit commit"
+    )
+
+
+def test_compose_rank1_missing_baseline_refuses() -> None:
+    claim = compose_deployment_authorship(baseline=None, authored=())
+    assert claim == "attribution-unavailable — admit baseline missing"
+
+
+def test_rank1_both_directions_via_compute_closeout_tree_state() -> None:
+    """Both AC arms green in one compute path (must-not + must-fire)."""
+    ambient = (
+        ".gitignore",
+        "libs/cdp_ask/runner.py.orig",
+        "scripts/watch-giw-wedge-stackdump.py",
+        "scripts/watch-giw-wedge-tmux.sh",
+    )
+    empty_baseline = {
+        "codes": {},
+        "hashes": {},
+        "admit_head": "6cf34833ea361a0b694e8ff169e476c06f329b95",
+        "outside_repo": [],
+    }
+    usable_baseline = {
+        "codes": {p: "??" for p in ambient},
+        "hashes": {p: "d" * 64 for p in ambient},
+        "admit_head": "6cf34833ea361a0b694e8ff169e476c06f329b95",
+        "outside_repo": [],
+    }
+    with patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state.compute_lane_a_checkpoint_value",
+        return_value="deferred: authored paths not yet path-explicit committed",
+    ), patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "CursorDispatchLedger.instance",
+    ) as ledger_cls, patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state.authored_paths_for_dispatch",
+        side_effect=[ambient, ("services/git_integration_worker/x.py",)],
+    ):
+        ledger_cls.return_value.read_wt_baseline.side_effect = [
+            empty_baseline,
+            usable_baseline,
+        ]
+        refuse = compute_closeout_tree_state(
+            source_repo=Path("/tmp/unused"),
+            dispatch_id="d-ambient",
+        )
+        fire = compute_closeout_tree_state(
+            source_repo=Path("/tmp/unused"),
+            dispatch_id="d-lane-edit",
+        )
+    assert refuse.deployment_state is not None
+    assert "attribution-unavailable@local-master" in refuse.deployment_state
+    assert "authored-not-committed" not in refuse.deployment_state
+    assert fire.deployment_state is not None
+    assert "authored-not-committed@local-master" in fire.deployment_state
+    assert "1 path" in fire.deployment_state
