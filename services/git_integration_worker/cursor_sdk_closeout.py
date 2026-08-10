@@ -1643,8 +1643,8 @@ def _assemble_closeout_delivery(
         lane_b_head_sha if lane_b_head_sha is not None else closeout_head
     )
     # Lane-A: populate commits_ahead from admit_head..closeout_head (symmetric with
-    # Lane-B branch_point..branch). Absent measurement leaves presence absent and
-    # re-admits vacuous landed@local-master via ancestry alone (A1 / a04184ad door).
+    # Lane-B branch_point..branch). Leaving the key absent re-admits vacuous
+    # landed@local-master via ancestry alone (A1 / a04184ad door after 79954cfe).
     capture_commits_ahead = lane_b_commits_ahead
     if capture_commits_ahead is None:
         admit_head: str | None = None
