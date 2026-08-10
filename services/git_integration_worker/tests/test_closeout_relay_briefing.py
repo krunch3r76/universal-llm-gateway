@@ -867,3 +867,181 @@ def test_preclamp_checkpoint_claim_fires_when_authored_diverges_after_cut() -> N
     assert marker is not None
     assert "checkpoint_claim@§2" in marker
     assert _CLAMP_URI_DIVERGE in marker
+
+
+# --- arc 6655 cause 2 — relay_closeout_outcome seam (ordering red→green) ---
+
+_SEAM_WRAPPER = json.dumps(
+    {
+        "schema_version": 1,
+        "status": "complete",
+        "files_created": [],
+        "capture_status": "partial",
+        "effects_manifest": {"schema_version": 1},
+    }
+)
+
+
+async def _relay_closeout_with_checkpoint_claim(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    claim: str,
+    measurement: str,
+    dispatch_id: str,
+) -> str:
+    """Drive finalize→clamp→extract→annotate via ``relay_closeout_outcome``.
+
+    Sidecar prose is oversized so ``finalize_relay_payload`` / ``clamp_relay_body``
+    mid-cut ``checkpoint_claim``. Tree/residue/wake I/O is stubbed; the captured
+    ``closeout_body`` is the post-annotate relay body.
+    """
+    from pathlib import Path
+    from unittest.mock import AsyncMock, MagicMock
+
+    from services.git_integration_worker.cursor_auto.closeout_tree_state import (
+        CloseoutTreeState,
+    )
+    from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
+        TreeResidueSnapshot,
+    )
+    from services.git_integration_worker.cursor_auto.nested_outcome import (
+        relay_closeout_outcome,
+    )
+    from services.git_integration_worker.cursor_auto.queue import AutoJob
+
+    sidecar = _oversized_checkpoint_claim_body(claim)
+    captured: dict[str, str] = {}
+
+    async def _capture_closeout(*_a: object, **kwargs: object) -> dict[str, object]:
+        captured["closeout_body"] = str(kwargs.get("closeout_body") or "")
+        return {"ok": True, "status_code": 200}
+
+    async def _passthrough_promote(payload: CloseoutRelayPayload, **_k: object) -> CloseoutRelayPayload:
+        return payload
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.nested_outcome.read_repo_closeout_sidecar",
+        lambda *_a, **_k: sidecar,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.nested_outcome.promote_clamped_closeout_to_cortex",
+        _passthrough_promote,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.nested_outcome.derive_tree_residue",
+        lambda **_k: TreeResidueSnapshot(count=0, authored_paths=()),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.nested_outcome.compute_closeout_tree_state",
+        lambda **_k: CloseoutTreeState(
+            checkpoint=measurement,
+            deployment_state=None,
+            plane_line="plane: local-master=probe lane-b=absent origin=absent",
+            plane_discrepancy=None,
+        ),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.nested_outcome.load_config",
+        lambda: MagicMock(source_repo=Path("/tmp/6655-seam-repo")),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.nested_outcome.post_operator_closeout",
+        _capture_closeout,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.cse_wake_delivery.pay_wake_unit",
+        AsyncMock(
+            return_value={
+                "wake": {"ok": True},
+                "delivery": {"ok": True},
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.nested_outcome.maybe_post_substrate_feedback",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.nested_outcome.append_journal_entry",
+        lambda **_k: None,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.nested_outcome.emit_sdk_closeout_relayed",
+        lambda **_k: None,
+    )
+
+    job = AutoJob(
+        job_id="j-6655-seam",
+        thread_id="7065",
+        turn_number=1,
+        subject="DIRECTIVE seam guard",
+        body="TYPE: DIRECTIVE\nintent: seam guard\n",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="composer-2.5",
+        desired_effort="medium",
+        contract="implement",
+    )
+    result = await relay_closeout_outcome(
+        job,
+        client=AsyncMock(),
+        queue=MagicMock(),
+        dispatch_id=dispatch_id,
+        model={"resolved_model_id": "cursor/composer-2.5"},
+        effort={},
+        gate_plan={},
+        contract_info={"disposition_hint": "implemented"},
+        sdk_body=_SEAM_WRAPPER,
+        terminal_status="completed",
+        nest_under=None,
+        execution_id=f"exec-{dispatch_id}",
+    )
+    assert result["ok"] is True
+    assert "closeout_body" in captured
+    return captured["closeout_body"]
+
+
+@pytest.mark.asyncio
+async def test_relay_seam_silence_when_preclamp_claim_matches_measurement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Production ordering MUST silence — extract from body_full, not clamped body.
+
+    Binds ``relay_closeout_outcome`` after finalize/clamp. Parent of 6cf34833
+    extracted from clamped ``payload.body`` and false-fired on the mid-cut ``…``.
+    """
+    claim = f"authored_cortex: {_CLAMP_URI_IDENTICAL} {_CLAMP_DIGEST}"
+    measurement = f"authored_cortex@local-master: {_CLAMP_URI_IDENTICAL} {_CLAMP_DIGEST}"
+    body = await _relay_closeout_with_checkpoint_claim(
+        monkeypatch,
+        claim=claim,
+        measurement=measurement,
+        dispatch_id="auto-6655-seam-silence",
+    )
+    assert "checkpoint_claim@§2" not in body, (
+        "pre-clamp identical claim must not emit checkpoint_claim plane-discrepancy; "
+        f"got body marker region: {[ln for ln in body.splitlines() if 'plane-' in ln]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_relay_seam_fires_when_authored_diverges_after_cut(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Production ordering MUST fire with the post-cut diverge URI visible.
+
+    Companion to silence: same clamp offset; only the authored URI past the cut
+    differs. Parent extract from clamped body cannot see ``_CLAMP_URI_DIVERGE``.
+    """
+    claim = f"authored_cortex: {_CLAMP_URI_DIVERGE} {_CLAMP_DIGEST}"
+    measurement = f"authored_cortex@local-master: {_CLAMP_URI_IDENTICAL} {_CLAMP_DIGEST}"
+    body = await _relay_closeout_with_checkpoint_claim(
+        monkeypatch,
+        claim=claim,
+        measurement=measurement,
+        dispatch_id="auto-6655-seam-diverge",
+    )
+    markers = [ln for ln in body.splitlines() if ln.startswith("plane-discrepancy:")]
+    assert markers, "expected plane-discrepancy line for post-cut URI diverge"
+    assert any("checkpoint_claim@§2" in ln for ln in markers)
+    assert any(_CLAMP_URI_DIVERGE in ln for ln in markers)
