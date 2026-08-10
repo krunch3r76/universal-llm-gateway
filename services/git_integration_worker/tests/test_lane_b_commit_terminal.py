@@ -296,7 +296,7 @@ def test_ac_s3_6_lane_a_never_commits_or_salvages(source_repo: Path) -> None:
     assert head_before == head_after
     payload = json.loads(delivery.body)
     assert payload.get("lane") is None
-    assert payload.get("commits_ahead") is None
+    assert payload.get("commits_ahead") == 0
 
 
 def test_branch_state_counts_since_branch_point(source_repo: Path, tmp_path: Path) -> None:

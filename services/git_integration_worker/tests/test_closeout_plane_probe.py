@@ -396,14 +396,19 @@ def test_compute_tree_state_missing_head_unknown(tmp_path: Path) -> None:
 
 
 def test_compute_tree_state_lane_a_capture_head_resolves_plane(tmp_path: Path) -> None:
-    """Lane-A intake: head at master tip with absent commits_ahead stays landed."""
+    """Lane-A specimen (auto-1a46033ab0e5): tip on master + commits_ahead=0 → NOT landed.
+
+    Production Lane-A now populates commits_ahead (presence present). Zero commits is
+    measured 0 — G₂ refuses vacuous ancestry-alone bare landed@local-master.
+    """
     repo = _init_repo(tmp_path)
     head = _git(repo, "rev-parse", "HEAD")
-    wrapper = _wrapper(head_sha=head, branch=None)
+    # Capture shape after PRIMARY populate: head_sha set, commits_ahead=0, no branch.
+    wrapper = _wrapper(head_sha=head, branch=None, commits_ahead=0)
     with patch(
         "services.git_integration_worker.cursor_auto.closeout_tree_state."
         "compute_lane_a_checkpoint_value",
-        return_value="committed abc1234 paths=1",
+        return_value="nothing_authored",
     ):
         state = compute_closeout_tree_state(
             source_repo=repo,
@@ -411,6 +416,29 @@ def test_compute_tree_state_lane_a_capture_head_resolves_plane(tmp_path: Path) -
             wrapper_text=wrapper,
         )
     assert "unknown@lane-B (capture head absent)" not in state.plane_line
+    assert "NOT landed@local-master" in state.plane_line
+
+
+def test_compute_tree_state_lane_a_commits_ahead_one_reports_landed(
+    tmp_path: Path,
+) -> None:
+    """Lane-A tip on master with commits_ahead>=1 still renders bare landed."""
+    repo = _init_repo(tmp_path)
+    (repo / "lane_a_landed.txt").write_text("landed\n", encoding="utf-8")
+    _git(repo, "add", "lane_a_landed.txt")
+    _git(repo, "commit", "-m", "lane-a progress")
+    head = _git(repo, "rev-parse", "HEAD")
+    wrapper = _wrapper(head_sha=head, branch=None, commits_ahead=1)
+    with patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "compute_lane_a_checkpoint_value",
+        return_value="committed abc1234 paths=1",
+    ):
+        state = compute_closeout_tree_state(
+            source_repo=repo,
+            dispatch_id="lane-a-genuine-land",
+            wrapper_text=wrapper,
+        )
     assert "landed@local-master" in state.plane_line
     assert "NOT landed@local-master" not in state.plane_line
 

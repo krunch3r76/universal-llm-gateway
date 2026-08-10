@@ -300,7 +300,7 @@ def _init_git_repo_with_commit(path: Path) -> str:
 
 
 def test_lane_a_capture_head_sha_from_closeout_head(tmp_path: Path) -> None:
-    """Lane-A finalize sets capture head_sha from closeout_head when Lane-B unset."""
+    """Lane-A finalize sets capture head_sha + commits_ahead=0 when nothing committed."""
     head = _init_git_repo_with_commit(tmp_path)
     outcome = SdkRunOutcome(
         body="done",
@@ -315,13 +315,54 @@ def test_lane_a_capture_head_sha_from_closeout_head(tmp_path: Path) -> None:
         degraded_reason=None,
         thread_id="t1",
         work_item_ref=None,
-        baseline={},
+        baseline={"admit_head": head},
         deliverables_expected=True,
     )
     payload = json.loads(delivery.body)
     assert payload.get("head_sha") == head
     assert payload.get("lane") is None
-    assert payload.get("commits_ahead") is None
+    assert payload.get("commits_ahead") == 0
+
+
+def test_lane_a_capture_commits_ahead_after_commit(tmp_path: Path) -> None:
+    """Lane-A capture commits_ahead counts admit_head..closeout_head when tip advances."""
+    admit = _init_git_repo_with_commit(tmp_path)
+    (tmp_path / "lane_a_progress.py").write_text("progress\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "add", "lane_a_progress.py"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "commit", "-m", "lane-a progress"],
+        check=True,
+        capture_output=True,
+    )
+    closeout = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    outcome = SdkRunOutcome(
+        body="done",
+        status="finished",
+        duration_ms=50,
+        tool_call_count=2,
+    )
+    delivery = prepare_closeout_delivery(
+        source_repo=tmp_path,
+        dispatch_id="lane-a-commits-ahead",
+        outcome=outcome,
+        degraded_reason=None,
+        thread_id="t1",
+        work_item_ref=None,
+        baseline={"admit_head": admit},
+        deliverables_expected=True,
+    )
+    payload = json.loads(delivery.body)
+    assert payload.get("head_sha") == closeout
+    assert payload.get("commits_ahead") >= 1
 
 
 def test_prepare_closeout_delivery_baseline_none_ignores_dirty_tree(
