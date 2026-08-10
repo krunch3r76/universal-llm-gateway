@@ -11,7 +11,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-
 from typing import Any
 
 from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
@@ -37,6 +36,11 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
 
 _DEPLOYMENT_STATE_LINE_RE = re.compile(r"(?im)^deployment_state:\s*.+$")
 
+# Lane-A cursor-sdk writes cannot reach SeatWriteLedger (``lane_b_sweeper.REGISTRATION_GAPS``).
+_LEDGER_REGISTRATION_UNAVAILABLE = (
+    "ledger-registration-unavailable — cursor-sdk paths not in seat write ledger"
+)
+
 
 @dataclass(frozen=True)
 class CloseoutTreeState:
@@ -52,18 +56,23 @@ def compose_deployment_authorship(
     *,
     baseline: dict[str, Any] | None,
     authored: tuple[str, ...],
+    ledger_registration_available: bool = True,
 ) -> str | None:
     """Rank-2 authorship claim for ``deployment_state`` (positive measurement).
 
     ``authored`` is already ``baseline-delta ∩ SeatWriteLedger`` from
     ``authored_paths_for_dispatch`` — baseline-delta alone never authors the
-    label. Missing baseline → refuse. Empty ledger-proven ``authored`` → omit.
-    Non-empty ledger-proven ``authored`` → ``authored-not-committed`` even on
-    clean-admit ``codes={}`` (Rank-2 restore).
+    label. Missing baseline → refuse. Empty ledger-proven ``authored`` on a
+    registering seat → omit. Empty ``authored`` when the producing seat cannot
+    populate the ledger → ``ledger-registration-unavailable``. Non-empty
+    ledger-proven ``authored`` → ``authored-not-committed`` even on clean-admit
+    ``codes={}`` (Rank-2 restore).
     """
     if baseline is None:
         return "attribution-unavailable — admit baseline missing"
     if not authored:
+        if not ledger_registration_available:
+            return _LEDGER_REGISTRATION_UNAVAILABLE
         return None
     count = len(authored)
     noun = "path" if count == 1 else "paths"
@@ -109,6 +118,7 @@ def compute_closeout_tree_state(
         deployment_state = compose_deployment_authorship(
             baseline=baseline,
             authored=authored,
+            ledger_registration_available=False,
         )
     keys = parse_capture_plane_keys(wrapper_text)
     plane = probe_three_planes(

@@ -170,6 +170,42 @@ def test_compute_closeout_tree_state_threads_wrapper_for_authored_cortex() -> No
     assert kwargs["cortex_root"] == Path("/tmp/cortex-root")
 
 
+def test_compose_empty_authored_registration_gap_emits_unavailability() -> None:
+    """Case (b): producing seat cannot register → greppable unavailability, not omit."""
+    claim = compose_deployment_authorship(
+        baseline={
+            "codes": {},
+            "hashes": {},
+            "admit_head": "6cf34833ea361a0b694e8ff169e476c06f329b95",
+            "outside_repo": [],
+        },
+        authored=(),
+        ledger_registration_available=False,
+    )
+    assert claim is not None
+    assert "ledger-registration-unavailable" in claim
+    assert "attribution-unavailable" not in claim
+    assert "authored-not-committed" not in claim
+
+
+def test_compose_empty_authored_registering_seat_omits() -> None:
+    """Case (a): ledger consulted, seat registers, nothing ledger-proven → omit."""
+    claim = compose_deployment_authorship(
+        baseline={
+            "codes": {},
+            "hashes": {},
+            "admit_head": "6cf34833ea361a0b694e8ff169e476c06f329b95",
+            "outside_repo": [],
+        },
+        authored=(),
+        ledger_registration_available=True,
+    )
+    assert claim is None
+    assert "authored-not-committed" not in (claim or "")
+    assert "attribution-unavailable" not in (claim or "")
+    assert "ledger-registration-unavailable" not in (claim or "")
+
+
 def test_compose_rank2_empty_codes_ambient_omits_when_unproven() -> None:
     """Must-not: empty admit codes + ambient dirt without ledger proof → omit."""
     claim = compose_deployment_authorship(
@@ -180,6 +216,7 @@ def test_compose_rank2_empty_codes_ambient_omits_when_unproven() -> None:
             "outside_repo": [],
         },
         authored=(),
+        ledger_registration_available=True,
     )
     assert claim is None
     assert "authored-not-committed" not in (claim or "")
@@ -265,7 +302,9 @@ def test_rank2_both_directions_via_compute_closeout_tree_state() -> None:
             source_repo=Path("/tmp/unused"),
             dispatch_id="d-lane-edit",
         )
-    assert omit.deployment_state is None
+    assert omit.deployment_state is not None
+    assert "ledger-registration-unavailable" in omit.deployment_state
+    assert "@local-master" in omit.deployment_state
     assert fire.deployment_state is not None
     assert "authored-not-committed@local-master" in fire.deployment_state
     assert "1 path" in fire.deployment_state
