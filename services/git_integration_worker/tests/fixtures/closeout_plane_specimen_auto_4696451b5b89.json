@@ -1,0 +1,54 @@
+{
+  "dispatch_id": "auto-4696451b5b89",
+  "source": {
+    "bus_thread": "7065",
+    "bus_turn": 71,
+    "sidecar": "cortex://notes/system/threads/7065-cursor-sdk-closeout-auto-4696451b5b89.md",
+    "observed_at": "2026-08-10T15:40:44Z"
+  },
+  "detector_inputs": {
+    "checkpoint": "deferred@local-master: authored paths not yet path-explicit committed",
+    "deployment_state": "authored-not-committed@local-master — 7 paths await path-explicit commit",
+    "plane": {
+      "head_sha": "b79b10cdeb71c66f458f7fa977898ff983bdef90",
+      "branch": "cursor-sdk/auto-4696451b5b89",
+      "commit_exists": true,
+      "landed_local_master": true,
+      "published_origin": true,
+      "unknown_reason": null,
+      "as_of": "2026-08-10T15:40:44Z"
+    }
+  },
+  "observed_envelope": {
+    "status": "complete",
+    "plane_line": "plane: landed@local-master · published@origin · as-of 2026-08-10T15:40:44Z",
+    "plane_discrepancy": "plane-discrepancy: deployment_state@local-master lags landed@local-master",
+    "section2_checkpoint": "nothing_authored"
+  },
+  "structured_closeout_full": {
+    "status": "partial",
+    "work_outcome": "unverified",
+    "landed": false,
+    "commits_ahead": 0,
+    "files_created": [],
+    "files_modified": [],
+    "files_deleted": []
+  },
+  "contradictions": {
+    "1_deployment_vs_landed": {
+      "shape": "deployment_state authored-not-committed@local-master while plane landed@local-master (also §2 checkpoint nothing_authored + empty files_* vs 7 paths)",
+      "detector_expressible": true
+    },
+    "2_plane_vs_structured_landed": {
+      "shape": "plane landed@local-master · published@origin vs structured_closeout_full.landed false / commits_ahead 0",
+      "detector_expressible": false,
+      "reason": "annotate_plane_discrepancy has no structured_closeout_full / capture.landed argument"
+    },
+    "3_status_complete_vs_structured_partial": {
+      "shape": "§2/envelope status complete vs structured_closeout_full.status partial / work_outcome unverified",
+      "detector_expressible": false,
+      "reason": "status/outcome reconciliation is outside closeout_plane_probe scope"
+    }
+  },
+  "expected_marker": "plane-discrepancy: deployment_state@local-master lags landed@local-master"
+}

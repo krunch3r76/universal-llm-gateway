@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pytest
 
 from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+    PlaneObservation,
     annotate_plane_discrepancy,
     inject_plane_line,
     parse_capture_plane_keys,
@@ -186,6 +187,54 @@ def test_discrepancy_annotates_when_deployment_lags_landed(tmp_path: Path) -> No
     assert marker is not None
     assert marker.startswith("plane-discrepancy:")
     assert "lags landed@local-master" in marker
+
+
+def test_specimen_auto_4696451b5b89_deployment_lags_landed_caught() -> None:
+    """Falsifier specimen (7065#71) — push-only dispatch with three self-disagreements.
+
+    Contradiction 1 (deployment authored-not-committed vs plane landed) is expressible
+    and must fire ``annotate_plane_discrepancy`` at closeout_plane_probe.py:248-255.
+    Contradictions 2–3 (plane vs structured_closeout_full.landed; §2 complete vs
+    structured partial) are not detector inputs — fixture documents the gap.
+    """
+    fixture_path = (
+        Path(__file__).resolve().parent
+        / "fixtures"
+        / "closeout_plane_specimen_auto_4696451b5b89.json"
+    )
+    specimen = json.loads(fixture_path.read_text(encoding="utf-8"))
+    inputs = specimen["detector_inputs"]
+    plane_raw = inputs["plane"]
+    plane = PlaneObservation(
+        head_sha=plane_raw["head_sha"],
+        branch=plane_raw["branch"],
+        commit_exists=plane_raw["commit_exists"],
+        landed_local_master=plane_raw["landed_local_master"],
+        published_origin=plane_raw["published_origin"],
+        unknown_reason=plane_raw["unknown_reason"],
+        as_of=plane_raw["as_of"],
+    )
+    assert plane.landed_local_master is True
+    assert "authored-not-committed" in inputs["deployment_state"]
+    # Live envelope already injected this marker (7065#71); lock the arm.
+    marker = annotate_plane_discrepancy(
+        checkpoint=inputs["checkpoint"],
+        deployment_state=inputs["deployment_state"],
+        plane=plane,
+    )
+    assert marker == specimen["expected_marker"]
+    assert specimen["contradictions"]["1_deployment_vs_landed"]["detector_expressible"]
+    assert not specimen["contradictions"]["2_plane_vs_structured_landed"][
+        "detector_expressible"
+    ]
+    assert not specimen["contradictions"]["3_status_complete_vs_structured_partial"][
+        "detector_expressible"
+    ]
+    # Structured fields exist on the specimen but cannot be passed to the detector.
+    structured = specimen["structured_closeout_full"]
+    assert structured["landed"] is False
+    assert structured["status"] == "partial"
+    assert specimen["observed_envelope"]["status"] == "complete"
 
 
 def test_relay_preserves_plane_line_through_envelope_strip() -> None:
