@@ -11,6 +11,7 @@ from mcp_events import record
 
 from ._hashing import sha256_hex_of_file
 from ._line_range import apply_line_range
+from ._operating_state_serve import apply_operating_state_serve
 from ._pdf_read import (
     PDF_LAYOUT_MAX_BYTES,
     PDF_METHOD_LAYOUT,
@@ -260,6 +261,17 @@ def read_file_result(
         raise ValueError(f"Path is not a file: {path!r}")
 
     read_sha256 = sha256_hex_of_file(src)
+
+    served = apply_operating_state_serve(
+        path,
+        src,
+        read_sha256,
+        binary=binary,
+        offset=offset,
+        limit=limit,
+    )
+    if served is not None:
+        return served
 
     if binary:
         result = build_binary_read_result(src)

@@ -140,6 +140,7 @@ def test_no_raw_running_access_bypasses_serve_filter() -> None:
         "claude_bundles.what_is_running_view.serve_view (sole row filter)",
         "claude_bundles.what_is_running_view.render_text → serve_view",
         "scripts/cortex/what_is_running.py:main → serve_view for --json",
+        "services/mcp-server/tools/_operating_state_serve.py → read_file_result",
     ]
 
     render_src = inspect.getsource(render_text)
