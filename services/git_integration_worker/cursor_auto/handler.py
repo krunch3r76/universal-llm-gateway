@@ -27,6 +27,7 @@ from services.git_integration_worker.cursor_auto.directive import (
 )
 from services.git_integration_worker.cursor_auto.dispatch_bounds import (
     clamp_effort_to_autonomous_ceiling,
+    redirect_mechanical_executor,
 )
 from services.git_integration_worker.cursor_auto.dispatch_progress import (
     ProgressEmitter,
@@ -77,6 +78,7 @@ from services.git_integration_worker.cursor_auto.propagate_admission import (
 )
 from services.git_integration_worker.cursor_auto.queue import AutoJob, get_queue
 from services.git_integration_worker.cursor_auto.reflex_events import (
+    emit_mechanical_executor_redirected,
     maybe_emit_premium_bind,
 )
 from services.git_integration_worker.cursor_auto.reflex_read import (
@@ -201,12 +203,23 @@ async def process_job(
             failed=True,
         )
     model = resolve_desired_model(job.desired_model, contract=contract)
+    handoff_contract = resolve_handoff_contract(contract)
+    model, displaced_model = redirect_mechanical_executor(
+        model, contract=contract, handoff_contract=handoff_contract
+    )
+    if displaced_model:
+        emit_mechanical_executor_redirected(
+            thread_id=job.thread_id,
+            requested_model=displaced_model,
+            executor_model=str(model["resolved_model_id"]),
+            contract=contract,
+            handoff_contract=handoff_contract,
+        )
     effort = clamp_effort_to_autonomous_ceiling(
         model["resolved_model_id"], resolve_desired_effort(job.desired_effort)
     )
     escalation = resolve_escalation(job.escalation)
     contract_info = resolve_contract_disposition(contract)
-    handoff_contract = resolve_handoff_contract(contract)
     if (
         directive is not None
         or contract in _NESTED_CONTRACTS

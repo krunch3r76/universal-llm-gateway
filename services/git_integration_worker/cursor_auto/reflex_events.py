@@ -81,6 +81,27 @@ def FrontierSdkAutoPremiumBind(  # noqa: N802
     )
 
 
+@event_factory
+def FrontierSdkAutoMechanicalExecutorRedirected(  # noqa: N802
+    thread_id: str,
+    requested_model: str,
+    executor_model: str,
+    contract: str,
+    handoff_contract: str,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.auto.mechanical_executor_redirected",
+        payload={
+            "thread_id": thread_id,
+            "requested_model": requested_model,
+            "executor_model": executor_model,
+            "contract": contract,
+            "handoff_contract": handoff_contract,
+        },
+        scope="node",
+    )
+
+
 def emit_second_read(
     *,
     thread_id: str,
@@ -135,6 +156,36 @@ def emit_premium_bind(
         logger.warning("cursor-auto premium_bind event emit failed: %s", exc)
 
 
+def emit_mechanical_executor_redirected(
+    *,
+    thread_id: str,
+    requested_model: str,
+    executor_model: str,
+    contract: str,
+    handoff_contract: str,
+) -> None:
+    """Announce that mechanical work was moved off a reasoning model.
+
+    The redirect is silent on the wire otherwise — the orchestrator asked for one
+    executor and a different one ran. Announcing it keeps the substitution
+    auditable and makes mis-routing measurable rather than merely prevented.
+    """
+    try:
+        emit_frontier_event(
+            FrontierSdkAutoMechanicalExecutorRedirected(
+                thread_id=thread_id,
+                requested_model=requested_model,
+                executor_model=executor_model,
+                contract=contract,
+                handoff_contract=handoff_contract,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 — observation must not raise into relay
+        logger.warning(
+            "cursor-auto mechanical_executor_redirected event emit failed: %s", exc
+        )
+
+
 def maybe_emit_premium_bind(
     *,
     thread_id: str,
@@ -158,8 +209,10 @@ def maybe_emit_premium_bind(
 
 
 __all__ = [
+    "FrontierSdkAutoMechanicalExecutorRedirected",
     "FrontierSdkAutoPremiumBind",
     "FrontierSdkAutoSecondRead",
+    "emit_mechanical_executor_redirected",
     "emit_premium_bind",
     "emit_second_read",
     "is_premium_bind",

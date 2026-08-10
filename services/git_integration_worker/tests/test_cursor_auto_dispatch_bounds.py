@@ -1,11 +1,12 @@
 """Falsifier: the autonomous lane must not commission unbounded premium work.
 
 Auto POSTs the cursor-sdk worker directly, so Stargate's ``sdk_cost_risk`` guard
-never sees these binds. Two bounds stand in for it — a scope bound (a ``contract:``
-override stops waiving the empty-scope refusal outside the roaming tier) and an
+never sees these binds. Three bounds stand in for it — an executor bound (a
+reasoning model never runs the mechanical leg), a scope bound (a ``contract:``
+override stops waiving the empty-scope refusal outside the roaming tier), and an
 effort ceiling (``xhigh``/``max`` need a standing trigger the unattended lane does
-not have). These tests pin both, and pin that the roaming tier is untouched so the
-default mechanical path keeps its latitude.
+not have). These tests pin all three, and pin that the roaming tier is untouched
+so the default mechanical path keeps its latitude.
 """
 
 from __future__ import annotations
@@ -17,11 +18,17 @@ import pytest
 from services.git_integration_worker.cursor_auto.admit_gates import blocking_admit_gate
 from services.git_integration_worker.cursor_auto.dispatch_bounds import (
     AUTONOMOUS_EFFORT_CEILING,
+    MECHANICAL_EXECUTOR_MODEL_ID,
     clamp_effort_to_autonomous_ceiling,
     is_roaming_tier,
+    redirect_mechanical_executor,
     scope_waiver_allowed,
 )
 from services.git_integration_worker.cursor_auto.queue import AutoJob
+from services.git_integration_worker.cursor_auto.wire_map import (
+    resolve_desired_model,
+    resolve_handoff_contract,
+)
 
 _NO_SCOPE_WITH_OVERRIDE = (
     "TYPE: DIRECTIVE\ndensity: dense\ncontract: implement\n"
@@ -107,6 +114,45 @@ def test_effort_at_or_below_ceiling_is_identity(requested: str) -> None:
 def test_roaming_tier_keeps_full_effort_range(requested: str) -> None:
     payload = _effort(requested)
     assert clamp_effort_to_autonomous_ceiling("cursor/grok-4.5", payload) is payload
+
+
+def test_reasoning_model_never_runs_the_mechanical_leg() -> None:
+    model = resolve_desired_model("cursor/claude-opus-5", contract="implement")
+    out, displaced = redirect_mechanical_executor(
+        model,
+        contract="implement",
+        handoff_contract=resolve_handoff_contract("implement"),
+    )
+    assert displaced == "cursor/claude-opus-5"
+    assert out["resolved_model_id"] == MECHANICAL_EXECUTOR_MODEL_ID
+    # Opus-intrinsic knobs must not ride along onto the compose tier.
+    assert out.get("model_knobs") == {}
+    assert out["honored"] is False
+    assert "compose tier implements" in str(out["notes"])
+
+
+def test_reasoning_model_keeps_the_bind_leg() -> None:
+    model = resolve_desired_model("cursor/claude-opus-5", contract="investigate")
+    out, displaced = redirect_mechanical_executor(
+        model,
+        contract="investigate",
+        handoff_contract=resolve_handoff_contract("investigate"),
+    )
+    assert displaced is None
+    assert out["resolved_model_id"] == "cursor/claude-opus-5"
+
+
+@pytest.mark.parametrize("requested", ["composer-2.5", "cursor/grok-4.5", "auto"])
+def test_roaming_tier_runs_mechanical_work_untouched(requested: str) -> None:
+    model = resolve_desired_model(requested, contract="implement")
+    before = model["resolved_model_id"]
+    out, displaced = redirect_mechanical_executor(
+        model,
+        contract="implement",
+        handoff_contract=resolve_handoff_contract("implement"),
+    )
+    assert displaced is None
+    assert out["resolved_model_id"] == before
 
 
 @pytest.mark.asyncio

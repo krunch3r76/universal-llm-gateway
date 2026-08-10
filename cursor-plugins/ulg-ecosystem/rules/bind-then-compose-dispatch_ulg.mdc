@@ -25,6 +25,27 @@ Transport shapes, `nest_under`, packet scoping: `consult-routing` § Bind-then-c
 premium / reasoning models **bind**; **`cursor/composer-2.5`** (default `seat=cursor-sdk`
 generate) **implements** nested — ¬ one dispatch doing both.
 
+## Enforced in substrate on the cursor-auto lane (operator bind 2026-08-09)
+
+On the unattended `cursor-auto` lane this is **no longer advisory** —
+`services/git_integration_worker/cursor_auto/dispatch_bounds.py` enforces it. Auto
+POSTs the cursor-sdk worker directly, so Stargate's `sdk_cost_risk` guard never sees
+these binds; `premium_bind` announced premium spend and nothing gated it.
+
+| Bound | Behavior | Check |
+|---|---|---|
+| **Executor** | `contract=implement` (→ `pure-mechanical`) redirects to `cursor/composer-2.5` — a reasoning model **never** runs the mechanical leg | `frontier.sdk.auto.mechanical_executor_redirected` |
+| **Scope** | a `contract:` override no longer waives the empty-scope refusal outside the roaming tier | `frontier.sdk.auto.empty_directive_scope_blocked` |
+| **Effort** | `xhigh`/`max` clamp to `high` (those rungs need a standing trigger the lane lacks) | admit turn `resolved_effort` |
+
+**Roaming tier** = `composer-2.5`, `composer-2.5-fast`, `grok-4.5`. Everything else —
+opus, sonnet, fable, `gpt-5.6-*` — is bounded. `desired_model: auto` resolves *into*
+the roaming tier, so the default mechanical path is untouched.
+
+Naming a reasoning model on an implement contract is no longer a violation you can
+commit: it is corrected and announced. Redirect ¬ refuse — the work is legitimate,
+only the executor was wrong. SOT: `decision:autonomous-dispatch-bounds`.
+
 ## When the split is mandatory
 
 Fire **two legs** (or bind in-seat + compose dispatch) when **ANY**:
@@ -73,6 +94,7 @@ Chained hops (CDP → auto → specialist) **must** `nest_under` the live lease 
 | `executor_override: cursor/claude-opus-5` on mechanical implement | Omit `model=` on `seat=cursor-sdk` implement (Composer default) |
 | Ignore `sdk_cost_risk` at admit | Split or downgrade to Composer before edits |
 | Premium model runs quality_gate/pytest loops on known files | Composer leg + lead verify sample |
+| Treat the split as guidance the orchestrator may skip when in a hurry | On `cursor-auto` it is substrate; the redirect fires whether or not you meant it |
 
 ## Composes with
 

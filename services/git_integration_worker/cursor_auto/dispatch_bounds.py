@@ -10,8 +10,12 @@ commissioning site in ``handler``). ``premium_bind`` announces them, but an
 announcement is not a gate — until this module the orchestrator could bind a
 premium reasoner at unbounded depth against a directive carrying no scope at all.
 
-Two bounds, both encoding standing policy rather than new policy:
+Three bounds, all encoding standing policy rather than new policy:
 
+* **Executor** — ``bind-then-compose`` already says premium models bind and
+  Composer implements. Mechanical work is therefore redirected onto the compose
+  tier regardless of who was named, because once judgment has closed the edits
+  are the same edits whoever makes them.
 * **Scope** — ``NESTED_SCOPE_CONTRACTS`` already refuse a directive with no
   actionable scope, but a ``contract:`` override waives that refusal outright.
   The waiver stays for the roaming tier and is withdrawn for everything else, so
@@ -31,7 +35,10 @@ from typing import Any
 
 from cursor_capabilities import canonical_cursor_bare_id
 
-from services.git_integration_worker.cursor_auto.wire_map import BINDABLE_EFFORT_VALUES
+from services.git_integration_worker.cursor_auto.wire_map import (
+    BINDABLE_EFFORT_VALUES,
+    resolve_desired_model,
+)
 
 # Roaming tier: cheap enough per agent step that an unbounded loop is affordable.
 # Every other cursor model costs multiples per step for the same walk.
@@ -40,6 +47,14 @@ ROAMING_TIER_BARE_MODELS: frozenset[str] = frozenset(
 )
 
 AUTONOMOUS_EFFORT_CEILING = "high"
+
+# ``resolve_handoff_contract`` maps contract ``implement`` here and nothing else;
+# this is the codebase's own name for work that carries no open judgment.
+MECHANICAL_HANDOFF_CONTRACT = "pure-mechanical"
+
+# The compose leg of bind-then-compose. Mechanical work lands here no matter who
+# the orchestrator named.
+MECHANICAL_EXECUTOR_MODEL_ID = "cursor/composer-2.5"
 
 
 def is_roaming_tier(model_id: str | None) -> bool:
@@ -91,10 +106,50 @@ def clamp_effort_to_autonomous_ceiling(
     }
 
 
+def redirect_mechanical_executor(
+    model: dict[str, Any],
+    *,
+    contract: str,
+    handoff_contract: str,
+) -> tuple[dict[str, Any], str | None]:
+    """Move mechanical work off a reasoning model onto the compose tier.
+
+    A reasoning model never runs the mechanical leg: once judgment has closed,
+    the remaining edits are the same edits whoever makes them, and the premium
+    tier charges multiples per step for the identical walk. This is
+    ``bind-then-compose`` stated as substrate instead of as guidance — the bind
+    leg may be any model the orchestrator wants, the compose leg is Composer.
+
+    Returns the model to actually dispatch plus the displaced model id, or
+    ``None`` when nothing was displaced. Redirect rather than refuse because the
+    work itself is legitimate; only the executor was wrong, and refusing would
+    strand a bounded implement packet that has nothing left to decide.
+    """
+    if handoff_contract != MECHANICAL_HANDOFF_CONTRACT:
+        return model, None
+    requested_id = str(model.get("resolved_model_id") or "")
+    if is_roaming_tier(requested_id):
+        return model, None
+    executor = resolve_desired_model(MECHANICAL_EXECUTOR_MODEL_ID, contract=contract)
+    prior = str(model.get("notes") or "").strip()
+    note = (
+        f"mechanical contract — executor {requested_id or '(unset)'}"
+        f"→{executor['resolved_model_id']} (reasoning tier binds, compose tier "
+        "implements)"
+    )
+    executor["requested"] = model.get("requested")
+    executor["honored"] = False
+    executor["notes"] = f"{prior}; {note}" if prior else note
+    return executor, requested_id
+
+
 __all__ = [
     "AUTONOMOUS_EFFORT_CEILING",
+    "MECHANICAL_EXECUTOR_MODEL_ID",
+    "MECHANICAL_HANDOFF_CONTRACT",
     "ROAMING_TIER_BARE_MODELS",
     "clamp_effort_to_autonomous_ceiling",
     "is_roaming_tier",
+    "redirect_mechanical_executor",
     "scope_waiver_allowed",
 ]
