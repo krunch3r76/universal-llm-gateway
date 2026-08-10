@@ -1,9 +1,12 @@
 """Render open propagation *obligation* rows into charter scoreboard markdown.
 
 This table is the owed-restart worklist (open events), not a liveness board.
-Absence of an open row ≠ live; a frozen failed ledger event is invisible here
-and must not be inferred as current not-live. For ``is code_ref live on
-service?`` use
+Absence of an open row means no obligation *attempt* was recorded — not that
+a restart never ran and not that a ``code_ref`` is unserved. Incidental /
+manage-path restarts outside ``contract: propagate`` leave no row by design
+(posture A / ``7065#24``). Absence ≠ live and absence ≠ unserved; a frozen
+failed ledger event is invisible here and must not be inferred as current
+not-live. For ``is code_ref live on service?`` use
 ``charter_runner_store.propagation_liveness.observe_code_ref_live``.
 """
 
@@ -25,8 +28,11 @@ def render_open_propagation_table(rows: list[dict[str, Any]]) -> str:
         _OPEN_ROWS_HEADING,
         "",
         "Open *obligations* only (owed sync_restart events) — not current liveness. "
+        "Absence of a row ⇒ no obligation attempt recorded (incidental/manage-path "
+        "restarts outside `contract: propagate` leave none); absence ≠ unserved. "
         "Liveness answers cite `observe_code_ref_live` (process probe + "
-        "`code_ref_relation`), never this table or a frozen `status=failed` row. "
+        "`code_ref_relation`), never this table, a missing SHA, or a frozen "
+        "`status=failed` row. "
         "READ-CAVEAT: open rows with `defer=version_superseded_by_newer_code` "
         "(ancestry-satisfied, including legacy premature proof stamps) stay "
         "listed — do not close them from the proof string; re-ask "

@@ -54,3 +54,5 @@ def test_render_labels_obligations_not_liveness():
     assert "## Open propagation obligations" in table
     assert "observe_code_ref_live" in table
     assert "not current liveness" in table
+    assert "no obligation attempt recorded" in table
+    assert "absence ≠ unserved" in table

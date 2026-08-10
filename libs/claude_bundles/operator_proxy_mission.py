@@ -36,13 +36,15 @@ MISSION_SKILL_SLUGS: tuple[str, ...] = (
     "completion-provenance-discipline",
 )
 
-# Derived from config/mcp/canonical.yaml surface_primary_domains.life (A9).
+# Hand-maintained mirror of config/mcp/canonical.yaml surface_primary_domains.life
+# (A9). Not generated — update this frozenset when the YAML primary set moves.
 LIFE_SURFACE_LEGAL_TOOLS: frozenset[str] = frozenset(
     {
         "cortex",
         "cortex_brief",
         "agent_bus",
         "agent_bus_read",
+        "cursor_request",
         "fs",
         "rag",
         "retrieve",
@@ -107,7 +109,7 @@ def _build_briefing_block() -> str:
 
 ## Life surface act path (BINDING)
 
-Legal verbs on `/mcp/life` (mechanized from `surface_primary_domains.life`): {_legal_tools_line()}.
+Legal verbs on `/mcp/life` (hand-maintained mirror of `surface_primary_domains.life`; SoT `config/mcp/canonical.yaml`): {_legal_tools_line()}.
 
 Act on code-surface capabilities only by **commissioning** through life-reachable paths:
 `agent_bus.request` with `to="cursor"` — arms cursor-auto (B1/B2); `cursor-auto` is the executor role, ¬ a bus address — or charter enroll (`enroll_charter_runner=true`).

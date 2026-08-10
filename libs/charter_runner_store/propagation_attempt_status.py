@@ -8,6 +8,10 @@ Packet D / row 29 member 2 bind (2026-08-06, agent-bus:6655):
   :func:`charter_runner_store.propagation_liveness.observe_code_ref_live`
   whether a ``code_ref`` is live now. Reading ``status=failed`` as durable
   not-live is a consumer defect.
+- **ABSENCE IS NOT UNSERVED.** No ledger row for a ``service:code_ref`` means
+  no obligation *attempt* was recorded — including intentional silence when a
+  restart ran outside ``contract: propagate``. Do not mint-on-manage to fill
+  that gap; do not treat ``count=0`` as "still owed a bounce."
 - **Consumer census that decided the fork:** zero production sites treat
   ``propagation_ledger.status`` as current liveness. Restart-intent
   ``status`` (drain lifecycle) is a different store/question. Therefore the
