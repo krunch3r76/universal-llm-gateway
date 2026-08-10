@@ -283,8 +283,12 @@ def gc_merged_dispatch_branches(*, source_repo: Path) -> int:
         check=False,
     )
     if merged_proc.returncode == 0:
+        from services.git_integration_worker.cursor_sdk_lane_b_commit import (
+            normalize_git_branch_list_name,
+        )
+
         for line in merged_proc.stdout.splitlines():
-            name = line.strip().lstrip("* ").strip()
+            name = normalize_git_branch_list_name(line)
             if not name.startswith(_DISPATCH_BRANCH_PREFIX):
                 continue
             if name in registered:

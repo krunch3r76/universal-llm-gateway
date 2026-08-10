@@ -968,6 +968,17 @@ def build_implement_closeout_body(
             deliverables_expected=deliverables_expected,
         )
     )
+    from services.git_integration_worker.cursor_sdk_land_discipline import (
+        apply_lane_b_land_incompleteness,
+    )
+
+    status, deviations = apply_lane_b_land_incompleteness(
+        status,
+        lane=lane,
+        landed=landed,
+        commits_ahead=commits_ahead,
+        deviations=deviations,
+    )
     manifest_source = ensure_subagents_surface(
         effects_manifest or outcome.effects_manifest
     )

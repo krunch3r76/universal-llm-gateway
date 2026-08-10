@@ -126,6 +126,9 @@ def test_ac_s3_1_terminal_dirty_tree_commits_on_branch(
     head_sha = payload["head_sha"]
     assert head_sha == _git("rev-parse", "HEAD", cwd=wt).stdout.strip()
     assert payload["landed"] is False
+    # G2 land-discipline: unlanded Lane-B progress cannot grade complete.
+    assert payload["status"] == "partial"
+    assert "land:lane_b_unlanded" in (payload.get("deviations") or [])
 
 
 def test_ac_s3_2_prune_recovers_file_from_branch(

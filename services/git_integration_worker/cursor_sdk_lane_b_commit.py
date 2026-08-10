@@ -193,7 +193,7 @@ def branch_state(
     merged_names: set[str] = set()
     if merged_proc.returncode == 0:
         for line in merged_proc.stdout.splitlines():
-            name = line.strip().lstrip("* ").strip()
+            name = normalize_git_branch_list_name(line)
             if name:
                 merged_names.add(name)
 
@@ -211,6 +211,19 @@ def branch_state(
         merged_into_master=merged_into_master,
         content_landed=content_landed,
     )
+
+
+def normalize_git_branch_list_name(line: str) -> str:
+    """Strip ``git branch`` current/worktree markers from a list line.
+
+    Porcelain prefixes: ``* `` (checked out here), ``+ `` (other worktree),
+    or two spaces. ``lstrip("* ")`` alone drops ``*`` but leaves ``+``, which
+    made worktree-checked-out ``cursor-sdk/*`` heads invisible to the meter.
+    """
+    name = line.strip()
+    while name[:1] in "*+":
+        name = name[1:].lstrip()
+    return name.strip()
 
 
 def merge_base_with_master(source_repo: Path, *, branch_name: str) -> str | None:
@@ -241,7 +254,7 @@ def list_cursor_sdk_branches(source_repo: Path) -> list[str]:
         return []
     names: list[str] = []
     for line in proc.stdout.splitlines():
-        name = line.strip().lstrip("* ").strip()
+        name = normalize_git_branch_list_name(line)
         if name.startswith("cursor-sdk/"):
             names.append(name)
     return names

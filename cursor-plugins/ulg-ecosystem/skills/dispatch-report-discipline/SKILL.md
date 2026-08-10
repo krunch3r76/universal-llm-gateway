@@ -141,8 +141,12 @@ reproduces the unlabeled-provenance defect:
 Closeouts carry an always-present `plane:` headline (grep-visible stranding —
 no cross-field join) plus `@plane` qualifiers on `checkpoint:` /
 `deployment_state:`. Degraded capture → `unknown@lane-B (capture head absent)` —
-never upgrade unknown to a positive plane. `status: complete` is independent of
-plane reached (deliberate-unlanded closeouts remain legal).
+never upgrade unknown to a positive plane. **Lane-B land discipline
+(todo:lane-b-land-discipline-harvest):** when `lane: B` ∧ `commits_ahead ≥ 1` ∧
+`landed=false`, harvest is **incomplete** (`status: partial` +
+`land:lane_b_unlanded`) until FF-merge/content-land or explicit discard — do not
+treat deliberate-unlanded Lane-B as `complete`. Other planes/lanes: `status:
+complete` may still be independent of origin publish.
 
 ## Composes with
 
