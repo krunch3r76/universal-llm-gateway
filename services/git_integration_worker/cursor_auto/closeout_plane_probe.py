@@ -67,8 +67,11 @@ class CapturePlaneKeys:
 class PlaneObservation:
     """Single three-plane git observation at closeout assembly.
 
-    ``None`` on a boolean axis means unknown — never upgraded to a definite
-    weaker claim (``[universal:executor-rec]`` preserve-no-data shape).
+    Boolean axes are three-valued: ``True`` / ``False`` / ``None`` (unknown).
+    ``None`` is never upgraded to a definite weaker claim
+    (``[universal:executor-rec]`` preserve-no-data shape). Landed unknown may
+    carry ``unknown_reason`` while ``commit_exists is True`` — that is not
+    lane-B ``is_unknown``.
     """
 
     head_sha: str | None
@@ -81,8 +84,13 @@ class PlaneObservation:
 
     @property
     def is_unknown(self) -> bool:
-        """True when the probe could not resolve a definite lane-B head."""
-        return self.unknown_reason is not None
+        """True when lane-B head/ODB is unresolved (not landed-axis-only unknown).
+
+        ``unknown_reason`` may also label a measured commit whose *landed* axis
+        is unmeasured (``landed_local_master is None``). That case keeps
+        commit/branch in the headline — only lane-B absence short-circuits.
+        """
+        return self.unknown_reason is not None and self.commit_exists is not True
 
 
 def _classify_commits_ahead(
@@ -225,19 +233,31 @@ def apply_landed_admit_gate(
     commits_ahead: int | None,
     commits_ahead_presence: _FieldPresence = "absent",
 ) -> PlaneObservation:
-    """Refuse vacuous ``landed@local-master`` when G₂ admit would reject.
+    """Project the landed axis to {True, False, None} under G₂ admit.
 
-    Raw ancestry may probe True at ``head_sha == branch_point``; the landed
-    axis used for headline and annotate must pass ``admit_landed_true`` first.
-    Gate applies only when capture ``commits_ahead`` is **present** (measured).
-    Absent or unparsed values are not coerced to zero — the probe stands.
+    Ancestry-alone True without a measured ``commits_ahead`` is **unknown**
+    (not landed, not NOT landed) — presence≠present must not collapse to either
+    definite claim. When presence is present, vacuous ``commits_ahead==0``
+    demotes True→False; ``>=1`` leaves True. Ancestry False/None is unchanged
+    by an absent meter (stranded NOT-landed stays grounded by the ancestry probe).
     """
     from services.git_integration_worker.cursor_sdk_deliverables_expected import (
         admit_landed_true,
     )
 
     if commits_ahead_presence != "present":
-        return plane
+        if plane.landed_local_master is not True:
+            return plane
+        reason = (
+            "commits_ahead absent"
+            if commits_ahead_presence == "absent"
+            else "commits_ahead unparsed"
+        )
+        return replace(
+            plane,
+            landed_local_master=None,
+            unknown_reason=reason,
+        )
     if plane.landed_local_master is not True:
         return plane
     measured = commits_ahead if commits_ahead is not None else 0
@@ -247,7 +267,13 @@ def apply_landed_admit_gate(
 
 
 def render_plane_headline(obs: PlaneObservation) -> str:
-    """Render the always-present ``plane:`` headline so stranding is grep-visible alone."""
+    """Render always-present ``plane:`` with a three-valued landed axis.
+
+    Landed tokens are ``landed@local-master`` / ``NOT landed@local-master`` /
+    ``unknown@local-master (reason)``. Lane-B head/ODB absence still short-
+    circuits to ``unknown@lane-B``; a measured commit with unmeasured landed
+    keeps ``committed@lane-B`` and marks only the landed axis unknown.
+    """
     if obs.is_unknown:
         reason = obs.unknown_reason or "unresolved"
         return f"plane: unknown@lane-B ({reason})"
@@ -255,16 +281,21 @@ def render_plane_headline(obs: PlaneObservation) -> str:
     parts: list[str] = []
     if obs.landed_local_master is True:
         parts.append("landed@local-master")
+    elif obs.landed_local_master is False:
+        if obs.commit_exists is True:
+            parts.append(f"committed@lane-B{branch_token}")
+        parts.append("NOT landed@local-master")
     elif obs.commit_exists is True:
         parts.append(f"committed@lane-B{branch_token}")
-        parts.append("NOT landed@local-master")
+        reason = obs.unknown_reason or "landed axis unmeasured"
+        parts.append(f"unknown@local-master ({reason})")
     else:
         parts.append(f"unknown@lane-B{branch_token}")
     if obs.published_origin is True:
         parts.append("published@origin")
     elif obs.published_origin is False:
         parts.append("NOT published@origin")
-    elif obs.published_origin is None and obs.landed_local_master is not None:
+    elif obs.published_origin is None and obs.commit_exists is True:
         # origin tip absent locally — preserve unknown, do not claim unpublished
         parts.append("unknown@origin (origin/master ref absent)")
     parts.append(f"as-of {obs.as_of}")
@@ -514,6 +545,8 @@ def annotate_plane_discrepancy(
     """Inline annotate-only marker when labeled fields disagree across planes.
 
     Never refuses emit — discrepancy is a rendered defect signal, not a gate.
+    Landed-axis ``None`` (unknown) is a third case: neither the lags-landed
+    nor the NOT-landed clash arms fire (unknown ≠ absence-of-NOT).
     """
     markers: list[str] = []
     if plane.is_unknown:

@@ -377,7 +377,12 @@ def test_lane_a_capture_commits_ahead_absent_without_admit_head(
         commits_ahead_presence=keys.commits_ahead_presence,
     )
     headline = render_plane_headline(gated)
+    assert gated.landed_local_master is None
+    assert "unknown@local-master (commits_ahead absent)" in headline
     assert "NOT landed@local-master" not in headline
+    assert "landed@local-master" not in headline.replace(
+        "unknown@local-master", ""
+    )
 
 
 def test_lane_a_capture_commits_ahead_after_commit(tmp_path: Path) -> None:

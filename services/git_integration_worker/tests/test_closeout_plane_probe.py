@@ -443,8 +443,12 @@ def test_compute_tree_state_lane_a_commits_ahead_one_reports_landed(
     assert "NOT landed@local-master" not in state.plane_line
 
 
-def test_apply_landed_admit_gate_absent_refuses_vacuous_demotion() -> None:
-    """Absent commits_ahead must not coerce master-tip ancestry into NOT landed."""
+def test_apply_landed_admit_gate_absent_renders_landed_unknown() -> None:
+    """Absent commits_ahead + ancestry True → unknown (not landed, not NOT landed).
+
+    Fails before three-valued landed: gate left ancestry True and headline
+    rendered bare landed@local-master (A1 definite-from-absence).
+    """
     plane = PlaneObservation(
         head_sha="abc1234",
         branch=None,
@@ -459,10 +463,149 @@ def test_apply_landed_admit_gate_absent_refuses_vacuous_demotion() -> None:
         commits_ahead=None,
         commits_ahead_presence="absent",
     )
-    assert gated.landed_local_master is True
+    assert gated.landed_local_master is None
     headline = render_plane_headline(gated)
-    assert "landed@local-master" in headline
+    assert "unknown@local-master (commits_ahead absent)" in headline
+    assert "committed@lane-B" in headline
+    assert "landed@local-master" not in headline.replace(
+        "unknown@local-master", ""
+    ).replace("NOT landed@local-master", "")
     assert "NOT landed@local-master" not in headline
+
+
+@pytest.mark.parametrize(
+    ("presence", "commits_ahead", "expected_verdict", "reason_substr"),
+    [
+        ("absent", None, "unknown", "commits_ahead absent"),  # A1 key-omitted
+        ("absent", None, "unknown", "commits_ahead absent"),  # A2 null→absent
+        ("unparsed", None, "unknown", "commits_ahead unparsed"),  # U1 non-int
+        ("unparsed", None, "unknown", "commits_ahead unparsed"),  # U2 negative
+        ("present", 0, "NOT landed", None),  # P0
+        ("present", 1, "landed", None),  # P>=1
+    ],
+    ids=["A1", "A2", "U1", "U2", "P0", "P_ge_1"],
+)
+def test_landed_axis_state_table_ancestry_true(
+    presence: str,
+    commits_ahead: int | None,
+    expected_verdict: str,
+    reason_substr: str | None,
+) -> None:
+    """Six-row landed-axis table (ancestry True) — every row an explicit verdict."""
+    plane = PlaneObservation(
+        head_sha="abc1234",
+        branch="cursor-sdk/auto-axis",
+        commit_exists=True,
+        landed_local_master=True,
+        published_origin=False,
+        unknown_reason=None,
+        as_of="t0",
+    )
+    gated = apply_landed_admit_gate(
+        plane,
+        commits_ahead=commits_ahead,
+        commits_ahead_presence=presence,  # type: ignore[arg-type]
+    )
+    headline = render_plane_headline(gated)
+    bare = headline.replace("NOT landed@local-master", "")
+    if expected_verdict == "unknown":
+        assert gated.landed_local_master is None
+        assert f"unknown@local-master ({reason_substr})" in headline
+        assert "committed@lane-B" in headline
+        assert "landed@local-master" not in bare
+        assert "NOT landed@local-master" not in headline
+    elif expected_verdict == "NOT landed":
+        assert gated.landed_local_master is False
+        assert "NOT landed@local-master" in headline
+        assert "landed@local-master" not in bare
+    else:
+        assert gated.landed_local_master is True
+        assert "landed@local-master" in bare
+        assert "NOT landed@local-master" not in headline
+        assert "unknown@local-master" not in headline
+
+
+def test_landed_axis_parse_a1_a2_u1_u2_feed_gate_unknown() -> None:
+    """Classify paths A1/A2/U1/U2 → presence≠present → gate unknown (not bare landed)."""
+    cases = [
+        ({"head_sha": "abc1234"}, "absent", "commits_ahead absent"),  # A1
+        ({"head_sha": "abc1234", "commits_ahead": None}, "absent", "commits_ahead absent"),  # A2
+        (
+            {"head_sha": "abc1234", "commits_ahead": "not-a-number"},
+            "unparsed",
+            "commits_ahead unparsed",
+        ),  # U1
+        ({"head_sha": "abc1234", "commits_ahead": -1}, "unparsed", "commits_ahead unparsed"),  # U2
+    ]
+    plane = PlaneObservation(
+        head_sha="abc1234",
+        branch=None,
+        commit_exists=True,
+        landed_local_master=True,
+        published_origin=None,
+        unknown_reason=None,
+        as_of="t0",
+    )
+    for payload, presence, reason in cases:
+        keys = parse_capture_plane_keys(json.dumps(payload))
+        assert keys.commits_ahead_presence == presence
+        gated = apply_landed_admit_gate(
+            plane,
+            commits_ahead=keys.commits_ahead,
+            commits_ahead_presence=keys.commits_ahead_presence,
+        )
+        line = render_plane_headline(gated)
+        assert gated.landed_local_master is None, payload
+        assert f"unknown@local-master ({reason})" in line, payload
+
+
+def test_compute_tree_state_absent_commits_ahead_renders_landed_unknown(
+    tmp_path: Path,
+) -> None:
+    """Compose arm: tip on master + key-omitted commits_ahead → unknown@local-master."""
+    repo = _init_repo(tmp_path)
+    head = _git(repo, "rev-parse", "HEAD")
+    wrapper = _wrapper(head_sha=head, branch=None)  # A1 — key omitted
+    with patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "compute_lane_a_checkpoint_value",
+        return_value="nothing_authored",
+    ):
+        state = compute_closeout_tree_state(
+            source_repo=repo,
+            dispatch_id="lane-a-absent-ahead",
+            wrapper_text=wrapper,
+        )
+    assert "unknown@local-master (commits_ahead absent)" in state.plane_line
+    assert "committed@lane-B" in state.plane_line
+    bare = state.plane_line.replace("unknown@local-master (commits_ahead absent)", "")
+    assert "landed@local-master" not in bare
+    assert "NOT landed@local-master" not in state.plane_line
+
+
+def test_landed_axis_unknown_skips_not_landed_discrepancy_arm() -> None:
+    """Landed unknown is not absence-of-NOT — annotate NOT-landed clash stays silent."""
+    plane = PlaneObservation(
+        head_sha="abc1234",
+        branch=None,
+        commit_exists=True,
+        landed_local_master=True,
+        published_origin=None,
+        unknown_reason=None,
+        as_of="t0",
+    )
+    gated = apply_landed_admit_gate(
+        plane,
+        commits_ahead=None,
+        commits_ahead_presence="absent",
+    )
+    assert gated.landed_local_master is None
+    marker = annotate_plane_discrepancy(
+        checkpoint="committed@local-master deadbeef paths=1",
+        deployment_state=None,
+        plane=gated,
+    )
+    assert marker is None
 
 
 def test_apply_landed_admit_gate_present_zero_refuses_landed() -> None:
