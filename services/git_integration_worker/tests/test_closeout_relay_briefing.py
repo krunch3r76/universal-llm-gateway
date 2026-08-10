@@ -729,3 +729,141 @@ def test_row11_clamp_requires_a_trailing_relay_pointer() -> None:
     unchanged, was_clamped = clamp_relay_body(preserved, pointer=pointer)
     assert was_clamped is False
     assert unchanged == preserved
+
+
+# --- arc 6655 cause 2 — pre-clamp checkpoint_claim for plane-discrepancy ---
+
+_CLAMP_URI_BASE = "cortex://notes/system/reviews/6655-emitter-path-specimen-classify"
+_CLAMP_URI_IDENTICAL = f"{_CLAMP_URI_BASE}.md"
+_CLAMP_URI_DIVERGE = f"{_CLAMP_URI_BASE}-ALT.md"
+_CLAMP_DIGEST = "890772acd9ec5d7726a9f3e169a8f4ef08a3ef9c3017b28f9c542888abc8747f"
+
+
+def _oversized_checkpoint_claim_body(claim: str) -> str:
+    """Build a §2 table body large enough that clamp mid-cuts checkpoint_claim."""
+    pad = "x" * 400
+    rows = (
+        ("status_claim", "complete"),
+        ("ac_verdict", pad),
+        ("deltas_to_spec", pad),
+        ("decisions_taken", pad),
+        ("effects", pad),
+        ("evidence", pad),
+        ("next", pad),
+        ("open forks", "none"),
+        ("access", pad),
+        ("coverage", pad),
+        ("model_actual", "n/a"),
+        ("checkpoint_claim", claim),
+    )
+    lines = [
+        "TYPE: CLOSEOUT",
+        "status: complete",
+        "",
+        "| Field | Value |",
+        "|---|---|",
+        *(f"| {field} | {value} |" for field, value in rows),
+    ]
+    return "\n".join(lines)
+
+
+def _finalize_clamped_checkpoint_payload(claim: str) -> CloseoutRelayPayload:
+    body = _oversized_checkpoint_claim_body(claim)
+    assert len(body) > 2000
+    return finalize_relay_payload(
+        CloseoutRelayPayload(body=body, status="complete", source="section2_sidecar"),
+        wrapper_text=_WRAPPER,
+        dispatch_id="auto-6655-preclamp-claim",
+        caller_auditable=True,
+    )
+
+
+def test_preclamp_checkpoint_claim_silence_when_display_truncates_identical() -> None:
+    """MUST silence — clamp mid-cuts display; authored claim equals measurement."""
+    from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+        annotate_checkpoint_claim_discrepancy,
+    )
+    from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
+        extract_checkpoint_claim,
+    )
+
+    claim = f"authored_cortex: {_CLAMP_URI_IDENTICAL} {_CLAMP_DIGEST}"
+    measurement = f"authored_cortex@local-master: {_CLAMP_URI_IDENTICAL} {_CLAMP_DIGEST}"
+    payload = _finalize_clamped_checkpoint_payload(claim)
+    assert payload.clamped is True
+    assert payload.body_full is not None
+
+    # Post-clamp extract is the buggy seam (nested_outcome before 6655 ordering fix).
+    post_clamp_claim = extract_checkpoint_claim(
+        payload.body,
+        allow_legacy_control_line=True,
+    )
+    assert post_clamp_claim is not None
+    assert post_clamp_claim.endswith("…")
+    assert (
+        annotate_checkpoint_claim_discrepancy(
+            claim=post_clamp_claim,
+            measurement=measurement,
+        )
+        is not None
+    ), "precondition: post-clamp extract must false-fire on identical authored values"
+
+    pre_clamp_claim = extract_checkpoint_claim(
+        payload.body_full or payload.body,
+        allow_legacy_control_line=True,
+    )
+    assert pre_clamp_claim == claim
+    assert (
+        annotate_checkpoint_claim_discrepancy(
+            claim=pre_clamp_claim,
+            measurement=measurement,
+        )
+        is None
+    )
+
+
+def test_preclamp_checkpoint_claim_fires_when_authored_diverges_after_cut() -> None:
+    """MUST fire — same cut offset; authored URIs diverge only past the ellipsis.
+
+    The rejected comparator branch (strip mid-cut ``…``, compare prefixes) would
+    silence this pair because the truncated display forms are identical.
+    """
+    from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+        annotate_checkpoint_claim_discrepancy,
+    )
+    from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
+        extract_checkpoint_claim,
+    )
+
+    claim = f"authored_cortex: {_CLAMP_URI_DIVERGE} {_CLAMP_DIGEST}"
+    measurement = f"authored_cortex@local-master: {_CLAMP_URI_IDENTICAL} {_CLAMP_DIGEST}"
+    identical_claim = f"authored_cortex: {_CLAMP_URI_IDENTICAL} {_CLAMP_DIGEST}"
+    payload = _finalize_clamped_checkpoint_payload(claim)
+    identical_payload = _finalize_clamped_checkpoint_payload(identical_claim)
+    assert payload.clamped is True
+    assert identical_payload.clamped is True
+
+    post_clamp_claim = extract_checkpoint_claim(
+        payload.body,
+        allow_legacy_control_line=True,
+    )
+    post_clamp_identical = extract_checkpoint_claim(
+        identical_payload.body,
+        allow_legacy_control_line=True,
+    )
+    assert post_clamp_claim is not None and post_clamp_identical is not None
+    assert post_clamp_claim == post_clamp_identical
+    assert post_clamp_claim.endswith("…")
+
+    pre_clamp_claim = extract_checkpoint_claim(
+        payload.body_full or payload.body,
+        allow_legacy_control_line=True,
+    )
+    assert pre_clamp_claim == claim
+    marker = annotate_checkpoint_claim_discrepancy(
+        claim=pre_clamp_claim,
+        measurement=measurement,
+    )
+    assert marker is not None
+    assert "checkpoint_claim@§2" in marker
+    assert _CLAMP_URI_DIVERGE in marker

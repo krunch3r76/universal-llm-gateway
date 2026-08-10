@@ -262,12 +262,16 @@ async def relay_closeout_outcome(
         source_repo=source_repo,
         dispatch_id=dispatch_id,
     )
-    relay_body = strip_deployment_state_line(payload.body)
-    relay_body = inject_tree_residue_line(relay_body, count=residue_before.count)
+    # Plane-discrepancy compare uses the authored claim, not the display clamp.
+    # finalize_relay_payload mid-cuts cells via _shrink_value; extracting after
+    # that lets bare "…" enter the compared value and fire on relay destruction
+    # (arc 6655 / cause 2). body_full is the pre-clamp prose when clamped.
     checkpoint_claim = extract_checkpoint_claim(
-        relay_body,
+        payload.body_full or payload.body,
         allow_legacy_control_line=True,
     )
+    relay_body = strip_deployment_state_line(payload.body)
+    relay_body = inject_tree_residue_line(relay_body, count=residue_before.count)
     tree_state = compute_closeout_tree_state(
         source_repo=source_repo,
         dispatch_id=dispatch_id,
