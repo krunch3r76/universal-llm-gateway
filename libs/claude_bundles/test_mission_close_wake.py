@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 
 from claude_bundles.mission_close_wake import (
     BEYOND_HEADING,
     BEYOND_NOTIFY_PREFIX,
+    MissionCloseWakeVerdict,
     is_mission_closeout,
     refusal_envelope,
     validate_mission_close_wake,
@@ -154,6 +157,56 @@ def test_debrief_notify_rejects_unnamed_systems() -> None:
     )
     assert verdict.ok is False
     assert verdict.reason == "mission_debrief_systems_unnamed"
+
+
+def test_debrief_notify_wake_incomplete_names_compact_beyond_surface() -> None:
+    """7065#111 shape — bullets carry tokens; compact Beyond line is inspected."""
+    body = (
+        "The fleet used to lose track of wake debt after PARKED closes — "
+        "forty chars of vision text here.\n\n"
+        "Looking back: We treated wake as courtesy.\n\n"
+        "Architecture: CSE Session Registry on cdp-registry + project_ask "
+        "followup + agent-bus.\n\n"
+        "Looking ahead: Enter /layer on the obligations todo.\n\n"
+        f"{BEYOND_HEADING}\n"
+        "- D10 — collector: this-seat · followup: poll 6576\n"
+        "- D11 — collector: cursor-auto · followup: agent_bus.request\n\n"
+        f"{BEYOND_NOTIFY_PREFIX} seven residuals without a wake token on this line"
+    )
+    verdict = validate_mission_debrief_notify(
+        subject="ULG mission debrief",
+        body=body,
+        tag="mission-debrief",
+    )
+    assert verdict.ok is False
+    assert verdict.reason == "mission_debrief_wake_path_incomplete"
+    assert len(verdict.missed_tokens) == 1
+    assert verdict.missed_tokens[0].startswith(BEYOND_NOTIFY_PREFIX)
+    assert "seven residuals without a wake token" in verdict.missed_tokens[0]
+    assert "wake_path (" not in verdict.missed_tokens[0]
+
+
+def test_debrief_gate_not_always_passing() -> None:
+    """Removing closeout slot inspection must not make hollow closeouts pass."""
+    from claude_bundles.mission_close_debrief_auto import deliver_mission_debrief_auto
+
+    hollow = (
+        "TYPE: MISSION_CLOSEOUT\n\n"
+        f"{BEYOND_HEADING}\n"
+        "- D10 — collector: web-anthropic · followup: poll 6576\n"
+    )
+    with patch(
+        "claude_bundles.mission_close_debrief_auto.validate_mission_debrief_notify",
+        return_value=MissionCloseWakeVerdict(ok=True),
+    ):
+        outcome = deliver_mission_debrief_auto(
+            closeout_subject="MISSION CLOSEOUT",
+            closeout_body=hollow,
+            thread_id="6642",
+            from_agent="web-anthropic",
+            record_fn=lambda *_a, **_k: None,
+        )
+    assert outcome["status"] == "rejected"
 
 
 # --- AC1 reproduction tests (correct behavior after bullet-item fix) ---

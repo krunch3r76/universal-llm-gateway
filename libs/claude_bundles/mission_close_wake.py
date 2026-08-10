@@ -308,7 +308,7 @@ def validate_mission_debrief_notify(
             ),
         )
 
-    payload = _beyond_notify_payload(text)
+    payload, surface = _beyond_notify_inspection(text)
     if payload is None:
         return MissionCloseWakeVerdict(
             ok=False,
@@ -329,25 +329,22 @@ def validate_mission_debrief_notify(
         return MissionCloseWakeVerdict(
             ok=False,
             reason="mission_debrief_wake_path_incomplete",
-            missed_tokens=(
-                "wake_path (collector:|followup:|charter_enrolled:|operator_gate:)",
-            ),
+            missed_tokens=(surface or BEYOND_NOTIFY_PREFIX,),
         )
     return MissionCloseWakeVerdict(ok=True)
 
 
-def _beyond_notify_payload(text: str) -> str | None:
-    """Extract Beyond payload from same-line or multi-line notify forms."""
+def _beyond_notify_inspection(text: str) -> tuple[str | None, str]:
+    """Return (payload, surface_label) for the Beyond region actually inspected."""
     # Compact same-line only (do not let \\s eat the newline into the next bullet):
-    # ``Beyond this close: none`` / ``Beyond this close: D10 — collector: …``
     match = re.search(
         rf"(?im)^{re.escape(BEYOND_NOTIFY_PREFIX)}[ \t]+(.+)$",
         text or "",
     )
     if match and match.group(1).strip():
-        return match.group(1).strip()
+        payload = match.group(1).strip()
+        return payload, f"{BEYOND_NOTIFY_PREFIX} {payload}"
     # Multi-line block from format_mission_awareness_page:
-    # Beyond this close:\n- bullet\n- bullet
     block = re.search(
         rf"(?im)^{re.escape(BEYOND_NOTIFY_PREFIX)}\s*\n(.*?)(?=^##\s|\Z)",
         text or "",
@@ -356,22 +353,32 @@ def _beyond_notify_payload(text: str) -> str | None:
     if block is not None:
         items, _ = _parse_bullet_items(block.group(1))
         if items:
-            return " · ".join(items)
+            payload = " · ".join(items)
+            return payload, f"{BEYOND_NOTIFY_PREFIX}\n" + block.group(1).strip()
         substantive = _lines_substantive(block.group(1))
         if substantive:
-            return " ".join(substantive)
-        return "none"
+            payload = " ".join(substantive)
+            return payload, f"{BEYOND_NOTIFY_PREFIX}\n" + block.group(1).strip()
+        return "none", f"{BEYOND_NOTIFY_PREFIX} none"
     # Durable closeout heading inside a longer notify body.
     section = _section_body(text or "", BEYOND_HEADING)
     if section is None:
-        return None
+        return None, BEYOND_NOTIFY_PREFIX
     if _section_is_none(section):
-        return "none"
+        return "none", f"{BEYOND_HEADING}\nnone"
     items, _ = _parse_bullet_items(section)
     if items:
-        return " · ".join(items)
+        payload = " · ".join(items)
+        return payload, f"{BEYOND_HEADING}\n" + section.strip()
     compact = " ".join(_lines_substantive(section))
-    return compact if compact else "none"
+    payload = compact if compact else "none"
+    return payload, f"{BEYOND_HEADING}\n{section.strip()}"
+
+
+def _beyond_notify_payload(text: str) -> str | None:
+    """Extract Beyond payload from same-line or multi-line notify forms."""
+    payload, _surface = _beyond_notify_inspection(text)
+    return payload
 
 
 def refusal_envelope(verdict: MissionCloseWakeVerdict) -> dict[str, object]:

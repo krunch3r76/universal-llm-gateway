@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 from pager_notify.life_notify import deliver_pager_notify
 from pager_notify.mission_page import (
+    AwarenessSlots,
     extract_awareness_slots,
     format_mission_awareness_page,
     named_ulg_systems,
@@ -19,6 +20,7 @@ from pager_notify.mission_page import (
 from pager_notify.so_what import SMS_SUBJECT_MAX, clip
 
 from claude_bundles.mission_close_wake import (
+    MissionCloseWakeVerdict,
     format_beyond_notify_line,
     validate_mission_debrief_notify,
 )
@@ -42,6 +44,67 @@ def _beyond_bullets_from_closeout(body: str) -> list[str]:
     return [part.strip() for part in payload.split(" · ") if part.strip()]
 
 
+_VISION_OPENER_SPLIT_RE = re.compile(
+    r"(?im)^(?:Vision|##\s*Vision|Looking back|Architecture|##\s*Architecture|"
+    r"Looking ahead|Beyond this close|##\s*Work beyond)"
+)
+_FRONTMATTER_RE = re.compile(r"(?i)^(type|arc|lane|so_what|status):\s*")
+
+
+def _resolve_closeout_vision(body: str, slots: AwarenessSlots) -> str:
+    """Vision label, or opening closeout prose before growth-map labels."""
+    if slots.vision.strip():
+        return slots.vision.strip()
+    opener = _VISION_OPENER_SPLIT_RE.split(body or "", maxsplit=1)[0]
+    lines: list[str] = []
+    for raw in opener.splitlines():
+        line = raw.strip()
+        if not line or _FRONTMATTER_RE.match(line):
+            continue
+        lines.append(line)
+    return " ".join(" ".join(lines).split())
+
+
+def _resolve_closeout_architecture(body: str, slots: AwarenessSlots) -> str:
+    if slots.architecture.strip():
+        return slots.architecture.strip()
+    return ""
+
+
+def check_closeout_growth_map_gaps(body: str) -> MissionCloseWakeVerdict | None:
+    """Refuse when closeout slots are missing — inspect the turn body, not a stub."""
+    slots = extract_awareness_slots(body)
+    vision = _resolve_closeout_vision(body, slots)
+    architecture = _resolve_closeout_architecture(body, slots)
+    missed: list[str] = []
+    if len(vision) < 40:
+        missed.append("Vision: <fleet gap this work closes>")
+    if not architecture:
+        missed.append("Architecture: <named ULG systems>")
+    elif not named_ulg_systems(f"{architecture}\n{vision}\n{body}"):
+        missed.append(
+            "name concrete ULG systems (e.g. CSE Session Registry, "
+            "project_ask, cdp-registry, agent-bus, cortex)"
+        )
+    if not missed:
+        return None
+    if len(missed) == 1:
+        token = missed[0]
+        if token.startswith("Vision:"):
+            reason = "mission_debrief_vision_missing"
+        elif token.startswith("Architecture:"):
+            reason = "mission_debrief_architecture_missing"
+        else:
+            reason = "mission_debrief_systems_unnamed"
+    else:
+        reason = "mission_debrief_closeout_slots_missing"
+    return MissionCloseWakeVerdict(
+        ok=False,
+        reason=reason,
+        missed_tokens=tuple(missed),
+    )
+
+
 def _fallback_looking_ahead(beyond_bullets: list[str]) -> str:
     if not beyond_bullets or beyond_bullets == ["none"]:
         return "Nothing further is owed from this close."
@@ -57,17 +120,16 @@ def compose_mission_debrief_from_closeout(
 ) -> dict[str, str]:
     """Build growth-map pager fields from a closeout turn.
 
-    Requires Vision + Architecture (labeled or ATX) naming concrete ULG systems.
-    Missing slots produce a body that ``validate_mission_debrief_notify`` refuses
-    — auto path never invents hollow architecture.
+    Requires Vision + Architecture naming concrete ULG systems. Missing slots
+    are refused in ``deliver_mission_debrief_auto`` before validate-on-stub.
     """
     del subject  # awareness subject is synthesized; closeout subject may say CLOSEOUT
     thread = (thread_id or "").strip() or "unknown"
     slots = extract_awareness_slots(body)
     beyond_bullets = _beyond_bullets_from_closeout(body)
 
-    vision = slots.vision.strip()
-    architecture = slots.architecture.strip()
+    vision = _resolve_closeout_vision(body, slots)
+    architecture = _resolve_closeout_architecture(body, slots)
     looking_back = slots.looking_back.strip() or (
         "Episode closed; the Architecture line is what landed in the fleet."
     )
@@ -91,8 +153,8 @@ def compose_mission_debrief_from_closeout(
         )
 
     # Fail closed: do not invent Architecture/Vision. Incomplete closeouts
-    # produce a stub that validation refuses (no lexicon false-pass).
-    if not vision or not architecture:
+    # are refused in deliver_mission_debrief_auto before validate-on-stub.
+    if len(vision) < 40 or not architecture:
         beyond_line = (
             f"Beyond this close: {beyond_bullets[0]}"
             if beyond_bullets
@@ -158,6 +220,22 @@ def deliver_mission_debrief_auto(
 ) -> dict[str, Any]:
     """Compose, validate, and page a mission debrief after durable closeout."""
     emit = record_fn if record_fn is not None else _default_record
+    gap = check_closeout_growth_map_gaps(closeout_body)
+    if gap is not None:
+        reason = gap.reason or "mission_debrief_closeout_slots_missing"
+        emit(
+            "mcp.agentbus.mission_debrief.failed",
+            from_agent=from_agent,
+            thread=thread_id,
+            reason=reason,
+            tag=_MISSION_DEBRIEF_TAG,
+            missed_tokens=list(gap.missed_tokens),
+        )
+        return {
+            "status": "rejected",
+            "reason": reason,
+            "missed_tokens": list(gap.missed_tokens),
+        }
     composed = compose_mission_debrief_from_closeout(
         subject=closeout_subject,
         body=closeout_body,
@@ -227,6 +305,7 @@ def attach_mission_debrief_notify(
 
 __all__ = [
     "attach_mission_debrief_notify",
+    "check_closeout_growth_map_gaps",
     "compose_mission_debrief_from_closeout",
     "deliver_mission_debrief_auto",
 ]
