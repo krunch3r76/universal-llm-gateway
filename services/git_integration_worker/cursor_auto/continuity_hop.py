@@ -17,6 +17,9 @@ from universal_logging import get_logger
 from services.git_integration_worker.cursor_auto.cdp_escalation import (
     commission_cdp_escalation,
 )
+from services.git_integration_worker.cursor_auto.directive import (
+    split_continuity_hop_legs,
+)
 from services.git_integration_worker.cursor_auto.handler_terminal import (
     post_terminal_status,
 )
@@ -94,6 +97,42 @@ async def post_harvest_residual(
     }
 
 
+def _enqueue_deferred_non_hop_leg(
+    job: AutoJob,
+    *,
+    queue: AutoJobQueue,
+    deferred_body: str,
+) -> str:
+    """Queue the stripped DIRECTIVE sibling without HTTP re-admit / supersede."""
+    sibling = queue.enqueue(
+        thread_id=job.thread_id,
+        turn_number=job.turn_number,
+        subject=f"{job.subject} — deferred non-hop leg",
+        body=deferred_body,
+        from_agent=job.from_agent,
+        to_agent=job.to_agent,
+        desired_model=job.desired_model,
+        desired_effort=job.desired_effort,
+        escalation=job.escalation,
+        contract=job.contract,
+        require_attended=job.require_attended,
+        request_id=(
+            f"{job.request_id}:deferred" if job.request_id else None
+        ),
+        cse_chat_url=job.cse_chat_url,
+        cse_registration_id=job.cse_registration_id,
+        continuity_hop=False,
+        continuity_matched_token=None,
+    )
+    logger.info(
+        "continuity hop deferred non-hop leg job=%s from hop=%s thread=%s",
+        sibling.job_id,
+        job.job_id,
+        job.thread_id,
+    )
+    return sibling.job_id
+
+
 async def complete_continuity_hop(
     job: AutoJob,
     *,
@@ -106,8 +145,19 @@ async def complete_continuity_hop(
     Called from the concurrent enqueue task after ``claim_job``, or from
     ``process_job`` when the serial worker won the claim race — never runs
     ``effective_contract`` / admit gates.
+
+    Defense-in-depth: if the claimed body still carries a trailing
+    ``TYPE: DIRECTIVE`` (enqueue fork missed), strip it before CDP commission
+    and enqueue the sibling so the leg is not lost and not double-prompted.
     """
     bus = client or CursorBusClient()
+    hop_body, deferred_body = split_continuity_hop_legs(job.body)
+    deferred_job_id: str | None = None
+    if deferred_body is not None:
+        job.body = hop_body
+        deferred_job_id = _enqueue_deferred_non_hop_leg(
+            job, queue=queue, deferred_body=deferred_body
+        )
     live = live_run_for_thread(job.thread_id)
     dispatch_id = live.dispatch_id if live else None
     residual = await post_harvest_residual(
@@ -143,6 +193,8 @@ async def complete_continuity_hop(
                 "matched_token": job.continuity_matched_token,
                 "harvest_residual": residual,
                 "commission": commissioned,
+                "deferred_job_id": deferred_job_id,
+                "deferred_leg_enqueued": deferred_job_id is not None,
             },
         )
         return terminal
@@ -164,6 +216,8 @@ async def complete_continuity_hop(
             "execution_id": execution_id,
             "incumbent_job_id": incumbent.job_id if incumbent else None,
             "incumbent_dispatch_id": dispatch_id,
+            "deferred_job_id": deferred_job_id,
+            "deferred_leg_enqueued": deferred_job_id is not None,
         },
     )
     if execution_id and not terminal.get("execution_id"):

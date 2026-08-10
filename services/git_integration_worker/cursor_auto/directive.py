@@ -310,6 +310,56 @@ def is_continuity_hop_request(
     return False, "none"
 
 
+def split_continuity_hop_legs(body: str) -> tuple[str, str | None]:
+    """Split a hop-classified body into hop slice + deferred non-hop leg.
+
+    A dying author may pack ``TYPE: CONTINUITY_HANDOFF`` and a later
+    ``TYPE: DIRECTIVE`` into one body. Hop short-circuit must not discard the
+    second envelope. Returns ``(hop_body, deferred_body)`` where
+    ``deferred_body`` is ``None`` when no second ``TYPE: DIRECTIVE`` follows
+    a first-line handoff. Scope/vision inside the hop slice alone is not a
+    second leg (F5 hop-with-scope still single-envelope).
+    """
+    text = body or ""
+    if not text.strip():
+        return text, None
+    lines = text.splitlines(keepends=True)
+    # Locate first nonblank TYPE line — must be CONTINUITY_HANDOFF to fork.
+    first_type_idx: int | None = None
+    first_type: str | None = None
+    for idx, raw in enumerate(lines):
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        match = _FIRST_LINE_TYPE_RE.match(stripped)
+        if match is None:
+            # Leading non-TYPE prose ⇒ not a structural dual-envelope hop body.
+            return text, None
+        first_type_idx = idx
+        first_type = match.group(1).strip().upper()
+        break
+    if first_type_idx is None or first_type != _CONTINUITY_HANDOFF:
+        return text, None
+    deferred_idx: int | None = None
+    for idx in range(first_type_idx + 1, len(lines)):
+        stripped = lines[idx].strip()
+        if not stripped:
+            continue
+        match = _FIRST_LINE_TYPE_RE.match(stripped)
+        if match is None:
+            continue
+        if match.group(1).strip().upper() == "DIRECTIVE":
+            deferred_idx = idx
+            break
+    if deferred_idx is None:
+        return text, None
+    hop_body = "".join(lines[:deferred_idx])
+    deferred_body = "".join(lines[deferred_idx:])
+    if not deferred_body.strip():
+        return text, None
+    return hop_body, deferred_body
+
+
 def parse_request_body(body: str) -> ParsedDirective | None:
     """Return parsed directive for ``TYPE: DIRECTIVE`` or ``CONTINUITY_HANDOFF``."""
     text = (body or "").strip()

@@ -15,6 +15,7 @@ from services.git_integration_worker.cursor_auto.continuity_hop import (
 )
 from services.git_integration_worker.cursor_auto.directive import (
     is_continuity_hop_request,
+    split_continuity_hop_legs,
 )
 from services.git_integration_worker.cursor_auto.handler_terminal import (
     post_terminal_status,
@@ -203,11 +204,18 @@ async def enqueue(body: EnqueueBody, request: Request):
                     "queue": queue.snapshot(),
                 },
             )
+    # Dual-envelope hop: strip TYPE:DIRECTIVE sibling before hop job lands so
+    # CDP prompt cannot double-execute the deferred leg (loop guard). Sibling
+    # is queue.enqueue'd directly — ¬ HTTP re-admit, ¬ supersede.
+    hop_body = body.body
+    deferred_body: str | None = None
+    if is_hop:
+        hop_body, deferred_body = split_continuity_hop_legs(body.body)
     job = queue.enqueue(
         thread_id=body.thread_id,
         turn_number=body.turn_number,
         subject=body.subject,
-        body=body.body,
+        body=hop_body,
         from_agent=body.from_agent,
         to_agent=body.to_agent,
         desired_model=desired_model,
@@ -221,17 +229,47 @@ async def enqueue(body: EnqueueBody, request: Request):
         continuity_hop=is_hop,
         continuity_matched_token=matched_token,
     )
+    deferred_job_id: str | None = None
+    if deferred_body is not None:
+        deferred = queue.enqueue(
+            thread_id=body.thread_id,
+            turn_number=body.turn_number,
+            subject=f"{body.subject} — deferred non-hop leg",
+            body=deferred_body,
+            from_agent=body.from_agent,
+            to_agent=body.to_agent,
+            desired_model=desired_model,
+            desired_effort=body.desired_effort,
+            escalation=escalation,
+            contract=body.contract,
+            require_attended=body.require_attended,
+            request_id=(
+                f"{body.request_id}:deferred" if body.request_id else None
+            ),
+            cse_chat_url=body.cse_chat_url,
+            cse_registration_id=body.cse_registration_id,
+            continuity_hop=False,
+            continuity_matched_token=None,
+        )
+        deferred_job_id = deferred.job_id
+        logger.info(
+            "cursor-auto deferred non-hop leg job=%s from hop=%s thread=%s",
+            deferred.job_id,
+            job.job_id,
+            body.thread_id,
+        )
     # Cadence ownership: enroll/refresh CSE-age watch on web-* admits (not hops).
     observe_lane_from_enqueue(job)
     logger.info(
         "cursor-auto enqueued job=%s thread=%s turn=%s request_id=%s "
-        "continuity_hop=%s matched_token=%s",
+        "continuity_hop=%s matched_token=%s deferred_job_id=%s",
         job.job_id,
         body.thread_id,
         body.turn_number,
         body.request_id,
         is_hop,
         matched_token,
+        deferred_job_id,
     )
     interrupt: dict[str, Any] | None = None
     if is_hop:
@@ -285,6 +323,8 @@ async def enqueue(body: EnqueueBody, request: Request):
             "same_thread_claimed": lane["same_thread_claimed"],
             "continuity_hop": is_hop,
             "matched_token": matched_token,
+            "deferred_job_id": deferred_job_id,
+            "deferred_leg_enqueued": deferred_job_id is not None,
             "queue": queue.snapshot(),
         },
     )
