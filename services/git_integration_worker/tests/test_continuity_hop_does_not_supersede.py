@@ -485,6 +485,41 @@ def test_split_continuity_hop_legs_scope_alone_is_not_second_leg():
     assert hop_body == body
 
 
+def test_split_continuity_hop_legs_wire_flag_directive_opener():
+    body = (
+        "TYPE: DIRECTIVE\n"
+        "contract: implement\n"
+        "scope: git push origin master\n"
+        "files_expected: none\n"
+    )
+    hop_body, deferred = split_continuity_hop_legs(
+        body, matched_token="wire:continuity_hop"
+    )
+    assert hop_body == ""
+    assert deferred == body
+
+
+def test_split_continuity_hop_legs_multi_directive_chain_kept_together():
+    """Trailing DIRECTIVE blocks after handoff fork as one deferred sibling."""
+    body = (
+        "TYPE: CONTINUITY_HANDOFF\n"
+        "scope: CDP only\n"
+        "\n"
+        "TYPE: DIRECTIVE\n"
+        "scope: first leg\n"
+        "\n"
+        "TYPE: DIRECTIVE\n"
+        "scope: second leg\n"
+    )
+    hop_body, deferred = split_continuity_hop_legs(body)
+    assert deferred is not None
+    assert hop_body.startswith("TYPE: CONTINUITY_HANDOFF")
+    assert "TYPE: DIRECTIVE" not in hop_body
+    assert deferred.count("TYPE: DIRECTIVE") == 2
+    assert "first leg" in deferred
+    assert "second leg" in deferred
+
+
 @pytest.mark.asyncio
 async def test_two_leg_hop_body_loses_nothing(monkeypatch):
     """Dual-envelope hop: hop fires ∧ DIRECTIVE sibling queued ∧ CDP sees hop-only."""
@@ -565,3 +600,79 @@ async def test_two_leg_hop_body_loses_nothing(monkeypatch):
     assert "TYPE: DIRECTIVE" not in commissioned_prompts[0]
     assert "git push origin master" not in commissioned_prompts[0]
     assert "TYPE: CONTINUITY_HANDOFF" in commissioned_prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_wire_flag_hop_directive_body_loses_nothing(monkeypatch):
+    """Wire-flag hop whose body opens TYPE:DIRECTIVE: entire body deferred, CDP empty."""
+    from services.git_integration_worker.cursor_auto import queue as queue_mod
+
+    q = queue_mod.reset_queue_for_tests(durable=False)
+    commissioned_prompts: list[str] = []
+
+    async def _run_hop(job, *, queue, incumbent=None):
+        from services.git_integration_worker.cursor_auto import continuity_hop as hop_mod
+
+        async def _fake_commission(j, **_kwargs):
+            commissioned_prompts.append(j.body)
+            return {"ok": True, "execution_id": "exec-wire-flag"}
+
+        async def _fake_terminal(j, **kwargs):
+            return {"ok": True, "payload": kwargs.get("payload") or {}}
+
+        monkeypatch.setattr(hop_mod, "commission_cdp_escalation", _fake_commission)
+        monkeypatch.setattr(hop_mod, "post_terminal_status", _fake_terminal)
+        monkeypatch.setattr(
+            hop_mod, "post_harvest_residual", AsyncMock(return_value={"ok": True})
+        )
+        monkeypatch.setattr(hop_mod, "live_run_for_thread", lambda _t: None)
+        return await hop_mod.run_continuity_hop_concurrent(
+            job, queue=queue, incumbent=incumbent
+        )
+
+    monkeypatch.setattr(routes_mod, "get_queue", lambda: q)
+    monkeypatch.setattr(
+        routes_mod, "get_registry", lambda: MagicMock(is_live=lambda: True)
+    )
+    monkeypatch.setattr(routes_mod, "run_continuity_hop_concurrent", _run_hop)
+
+    directive_leg = (
+        "TYPE: DIRECTIVE\n"
+        "contract: implement\n"
+        "scope: git push origin master after measure\n"
+        "files_expected: none\n"
+        "vision: mechanical — publish tip\n"
+    )
+    body = EnqueueBody(
+        thread_id="T-wire-flag-hop",
+        turn_number=63,
+        subject="wire-flag hop + directive",
+        body=directive_leg,
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        contract="implement",
+        continuity_hop=True,
+        request_id="wire-flag-req-1",
+    )
+    resp = await enqueue(body, _enqueue_request())
+    assert resp.status_code == 200
+    payload = json.loads(
+        resp.body.decode() if hasattr(resp.body, "decode") else resp.body
+    )
+    assert payload["continuity_hop"] is True
+    assert payload["matched_token"] == "wire:continuity_hop"
+    assert payload["deferred_leg_enqueued"] is True
+    assert payload["deferred_job_id"]
+    await asyncio.sleep(0)
+
+    hop_job = q.get(payload["job_id"])
+    deferred_job = q.get(payload["deferred_job_id"])
+    assert hop_job is not None
+    assert deferred_job is not None
+    assert hop_job.continuity_hop is True
+    assert hop_job.body.strip() == ""
+    assert deferred_job.continuity_hop is False
+    assert deferred_job.body == directive_leg
+    assert commissioned_prompts
+    assert commissioned_prompts[0].strip() == ""
+    assert "git push origin master" not in commissioned_prompts[0]

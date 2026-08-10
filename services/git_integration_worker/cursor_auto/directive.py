@@ -310,21 +310,29 @@ def is_continuity_hop_request(
     return False, "none"
 
 
-def split_continuity_hop_legs(body: str) -> tuple[str, str | None]:
+def split_continuity_hop_legs(
+    body: str, *, matched_token: str | None = None
+) -> tuple[str, str | None]:
     """Split a hop-classified body into hop slice + deferred non-hop leg.
 
     A dying author may pack ``TYPE: CONTINUITY_HANDOFF`` and a later
-    ``TYPE: DIRECTIVE`` into one body. Hop short-circuit must not discard the
-    second envelope. Returns ``(hop_body, deferred_body)`` where
-    ``deferred_body`` is ``None`` when no second ``TYPE: DIRECTIVE`` follows
-    a first-line handoff. Scope/vision inside the hop slice alone is not a
+    ``TYPE: DIRECTIVE`` into one body. Wire-flag hops whose body opens
+    ``TYPE: DIRECTIVE`` carry no structural marker — the entire body is the
+    lost leg. Hop short-circuit must not discard either envelope.
+
+    Returns ``(hop_body, deferred_body)`` where ``deferred_body`` is ``None``
+    when no fork applies. Scope/vision inside the hop slice alone is not a
     second leg (F5 hop-with-scope still single-envelope).
+
+    Multi-``TYPE: DIRECTIVE`` chains: when a fork triggers, every trailing
+    ``TYPE: DIRECTIVE`` block from the first split point through end-of-body
+    is kept together in one deferred sibling (one queue job, not per-block).
     """
     text = body or ""
     if not text.strip():
         return text, None
     lines = text.splitlines(keepends=True)
-    # Locate first nonblank TYPE line — must be CONTINUITY_HANDOFF to fork.
+    # Locate first nonblank TYPE line.
     first_type_idx: int | None = None
     first_type: str | None = None
     for idx, raw in enumerate(lines):
@@ -338,7 +346,13 @@ def split_continuity_hop_legs(body: str) -> tuple[str, str | None]:
         first_type_idx = idx
         first_type = match.group(1).strip().upper()
         break
-    if first_type_idx is None or first_type != _CONTINUITY_HANDOFF:
+    if first_type_idx is None:
+        return text, None
+    # Wire-flag hop with no CONTINUITY_HANDOFF marker: entire DIRECTIVE body
+    # is the deferred leg; CDP hop slice is empty (structural hop only).
+    if matched_token == "wire:continuity_hop" and first_type == "DIRECTIVE":
+        return "", text
+    if first_type != _CONTINUITY_HANDOFF:
         return text, None
     deferred_idx: int | None = None
     for idx in range(first_type_idx + 1, len(lines)):

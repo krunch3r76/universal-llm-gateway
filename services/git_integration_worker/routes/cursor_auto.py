@@ -210,7 +210,9 @@ async def enqueue(body: EnqueueBody, request: Request):
     hop_body = body.body
     deferred_body: str | None = None
     if is_hop:
-        hop_body, deferred_body = split_continuity_hop_legs(body.body)
+        hop_body, deferred_body = split_continuity_hop_legs(
+            body.body, matched_token=matched_token
+        )
     job = queue.enqueue(
         thread_id=body.thread_id,
         turn_number=body.turn_number,

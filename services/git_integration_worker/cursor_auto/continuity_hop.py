@@ -151,7 +151,9 @@ async def complete_continuity_hop(
     and enqueue the sibling so the leg is not lost and not double-prompted.
     """
     bus = client or CursorBusClient()
-    hop_body, deferred_body = split_continuity_hop_legs(job.body)
+    hop_body, deferred_body = split_continuity_hop_legs(
+        job.body, matched_token=job.continuity_matched_token
+    )
     deferred_job_id: str | None = None
     if deferred_body is not None:
         job.body = hop_body
