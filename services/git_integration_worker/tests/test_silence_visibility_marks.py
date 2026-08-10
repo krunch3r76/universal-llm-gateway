@@ -32,6 +32,10 @@ from services.git_integration_worker.cursor_auto.queue import (
 @pytest.fixture(autouse=True)
 def _isolated_stores(tmp_path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv(
+        "CURSOR_AUTO_HOP_WATCHES_PATH",
+        str(tmp_path / "hop_cadence_watches.json"),
+    )
     AutoJobLedger.reset_for_tests()
     CloseoutOutboxStore.reset_for_tests()
     reset_queue_for_tests(durable=True)
@@ -94,6 +98,7 @@ async def test_hop_fire_missing_execution_id_emits_successor_never_ran(
 
     q = queue_mod.reset_queue_for_tests(durable=False)
     fired: list[tuple] = []
+    failed: list[tuple] = []
     emit = MagicMock()
 
     async def _hop_no_id(job, *, queue, incumbent=None):
@@ -105,6 +110,11 @@ async def test_hop_fire_missing_execution_id_emits_successor_never_ran(
         cadence_mod,
         "mark_hop_fired",
         lambda *a, **k: fired.append((a, k)),
+    )
+    monkeypatch.setattr(
+        cadence_mod,
+        "mark_hop_failed",
+        lambda *a, **k: failed.append((a, k)),
     )
     monkeypatch.setattr(
         cadence_mod,
@@ -136,6 +146,9 @@ async def test_hop_fire_missing_execution_id_emits_successor_never_ran(
     assert outcome["ok"] is False
     assert outcome.get("execution_id") is None
     assert fired == []
+    assert len(failed) == 1
+    assert failed[0][0][0] == "T-silence-no-exec"
+    assert failed[0][1]["reason"] == "missing_execution_id"
     emit.assert_called_once()
     assert emit.call_args.kwargs["thread_id"] == "T-silence-no-exec"
 

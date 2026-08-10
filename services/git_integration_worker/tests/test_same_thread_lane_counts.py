@@ -38,6 +38,10 @@ def _enqueue(queue: AutoJobQueue, *, thread_id: str, turn_number: int):
 @pytest.fixture
 def cursor_auto_client(tmp_path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv(
+        "CURSOR_AUTO_HOP_WATCHES_PATH",
+        str(tmp_path / "hop_cadence_watches.json"),
+    )
     reset_queue_for_tests(durable=False)
     return TestClient(create_app())
 

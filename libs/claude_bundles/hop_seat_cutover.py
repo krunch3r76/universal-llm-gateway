@@ -8,6 +8,7 @@ once the successor execution is observed running (successor_confirm).
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Callable
 
@@ -21,7 +22,13 @@ _REFUSE_REASON_REQUEST = "superseded_predecessor_refuse_at_request"
 
 
 def watches_path() -> Path:
-    """Hop watch ledger beside the CDP registry store."""
+    """Hop watch ledger beside the CDP registry store.
+
+    Override with env ``CURSOR_AUTO_HOP_WATCHES_PATH`` (non-empty) for tests.
+    """
+    raw = os.environ.get("CURSOR_AUTO_HOP_WATCHES_PATH", "").strip()
+    if raw:
+        return Path(raw)
     return Path.home() / ".gateway" / "cdp-registry" / _WATCH_FILENAME
 
 

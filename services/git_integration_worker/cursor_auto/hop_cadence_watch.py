@@ -75,7 +75,13 @@ def scan_interval_s() -> float:
 
 
 def watches_path() -> Path:
-    """Durable watch ledger path beside the CDP registry store."""
+    """Durable watch ledger path beside the CDP registry store.
+
+    Override with env ``CURSOR_AUTO_HOP_WATCHES_PATH`` (non-empty) for tests.
+    """
+    raw = os.environ.get("CURSOR_AUTO_HOP_WATCHES_PATH", "").strip()
+    if raw:
+        return Path(raw)
     return Path.home() / ".gateway" / "cdp-registry" / _WATCH_FILENAME
 
 
