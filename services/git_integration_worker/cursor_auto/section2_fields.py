@@ -8,7 +8,7 @@ the executor reads cannot drift from the surface the parser matches.
 from __future__ import annotations
 
 SECTION2_FIELDS: tuple[tuple[str, str], ...] = (
-    ("status", "status"),
+    ("status_claim", "status_claim"),
     ("ac_verdict", "ac_verdict"),
     ("deltas_to_spec", "deltas_to_spec"),
     ("decisions_taken", "decisions_taken"),

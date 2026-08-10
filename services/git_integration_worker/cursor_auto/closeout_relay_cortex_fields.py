@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 
 _FIELD_HEADING_ALIASES: dict[str, tuple[str, ...]] = {
+    "status_claim": ("status_claim", "status claim"),
+    # Legacy §2 heading — claim extraction only; not envelope ``status:`` measurement.
     "status": ("status",),
     "ac_verdict": (
         "ac_verdict",
@@ -347,48 +349,21 @@ def extract_table_field(body: str, field: str) -> str | None:
 
 
 def extract_status(body: str) -> str | None:
-    """Extract closeout status from header line, table row, or bold field."""
-
-    def _normalize_status_token(raw: str) -> str | None:
-        text = raw.strip().strip("`").strip()
-        match = re.match(r"^(complete|partial|blocked)\b", text, re.IGNORECASE)
-        if match:
-            return match.group(1).lower()
-        normalized = text.casefold()
-        if normalized in {"complete", "partial", "blocked"}:
-            return normalized
-        return None
-
-    header = re.search(
-        r"(?im)^status\s*[:=]\s*`?(complete|partial|blocked)`?",
-        body,
+    """Backward-compatible alias — prefer :func:`extract_status_claim`."""
+    from services.git_integration_worker.cursor_auto.lane_a_status import (
+        extract_status_claim,
     )
-    if header:
-        return header.group(1).lower()
-    table = extract_table_field(body, "status")
-    if table:
-        normalized = _normalize_status_token(table)
-        if normalized is not None:
-            return normalized
-    bold = _extract_bold_same_line(body, "status") or _extract_bold_section(
-        body, "status"
-    )
-    if bold:
-        normalized = _normalize_status_token(bold)
-        if normalized is not None:
-            return normalized
-    return status_from_section2(body)
+
+    return extract_status_claim(body)
 
 
 def status_from_section2(text: str) -> str | None:
-    """Extract ``complete|partial|blocked`` from authored §2 prose, if present."""
-    match = re.search(
-        r"(?im)^(?:\*\*)?status(?:\*\*)?\s*[:=]\s*`?(complete|partial|blocked)`?",
-        text,
+    """Backward-compatible alias — prefer :func:`status_claim_from_section2`."""
+    from services.git_integration_worker.cursor_auto.lane_a_status import (
+        status_claim_from_section2,
     )
-    if match is None:
-        return None
-    return match.group(1).lower()
+
+    return status_claim_from_section2(text)
 
 
 def extract_field_section(body: str, field: str) -> str | None:

@@ -9,9 +9,11 @@ from dataclasses import dataclass
 
 from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
     extract_field_section,
-    extract_status,
     field_heading_present,
     status_from_section2,
+)
+from services.git_integration_worker.cursor_auto.lane_a_status import (
+    extract_status_claim,
 )
 
 _SECTION2_MARKERS = ("ac_verdict", "deltas_to_spec")
@@ -20,7 +22,7 @@ _TAIL_MARKERS = (
     "\n## structured_closeout_full",
 )
 _STATUS_RE = re.compile(
-    r"(?im)^(?:\*\*)?status(?:\*\*)?\s*[:=]\s*`?(complete|partial|blocked)`?"
+    r"(?im)^(?:\*\*)?(?:status_claim|status)(?:\*\*)?\s*[:=]\s*`?(complete|partial|blocked)`?"
 )
 _VALID_WRAPPER_STATUSES = frozenset({"complete", "partial", "blocked"})
 RELAY_PARSE_FAILED_STATUS = "relay_parse_failed"
@@ -153,7 +155,7 @@ def looks_section2(text: str) -> bool:
     has_deltas = extract_field_section(prose, "deltas_to_spec") is not None
     if has_ac and has_deltas:
         return True
-    if has_ac and extract_status(prose) is not None:
+    if has_ac and extract_status_claim(prose) is not None:
         return True
     low = prose.lower()
     return all(marker in low for marker in _SECTION2_MARKERS)
@@ -312,14 +314,62 @@ def relay_parse_failure_detected(body: str) -> bool:
     return "parse_failed —" in lowered or "parse_failed—" in lowered
 
 
-def resolve_relay_status(body: str, status: str) -> str:
-    """Prefer §2 body/header/table status over a stale payload status field."""
-    normalized = status.strip().lower()
+def structured_status_to_relay(raw: str) -> str:
+    """Map structured B3 status tokens to relay envelope vocabulary."""
+    normalized = raw.strip().lower()
+    if normalized in {"failed", "gated"}:
+        return "blocked"
+    if normalized in _VALID_WRAPPER_STATUSES:
+        return normalized
+    return "partial"
+
+
+def resolve_measurement_status_from_wrapper(wrapper_text: str | None) -> str | None:
+    """Return uncapped machine grade from ImplementCloseout JSON (B3 → B2 source)."""
+    if not wrapper_text or not is_wrapper_manifest(wrapper_text):
+        return None
+    try:
+        payload = json.loads(wrapper_text)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    disagreement = payload.get("status_authority_disagreement")
+    if isinstance(disagreement, dict):
+        machine = disagreement.get("machine_status")
+        if isinstance(machine, str) and machine.strip():
+            return structured_status_to_relay(machine)
+    status = payload.get("status")
+    if isinstance(status, str) and status.strip():
+        return structured_status_to_relay(status)
+    return None
+
+
+def resolve_measurement_status(
+    *,
+    wrapper_text: str | None,
+    ledger_fallback: str,
+) -> str:
+    """Measurement control line for envelope ``status:`` — B3/ledger, not §2 claim."""
+    measured = resolve_measurement_status_from_wrapper(wrapper_text)
+    if measured is not None:
+        return measured
+    normalized = ledger_fallback.strip().lower()
+    if normalized in _VALID_WRAPPER_STATUSES | _RELAY_INFRA_STATUSES:
+        return normalized
+    return "partial"
+
+
+def resolve_relay_status(body: str, measurement_status: str) -> str:
+    """Return measurement control-line status for envelope ``status:`` (B2).
+
+    §2 ``status_claim`` is extracted separately for divergence annotation;
+    envelope ``status:`` must not prefer the agent claim over measurement.
+    """
+    del body  # claim lives in §2; envelope reads measurement only (arc 7070).
+    normalized = measurement_status.strip().lower()
     if normalized == RELAY_PARSE_FAILED_STATUS:
         return RELAY_PARSE_FAILED_STATUS
-    body_status = extract_status(body) or status_from_section2(body)
-    if body_status in _VALID_WRAPPER_STATUSES:
-        return body_status
     if normalized in _VALID_WRAPPER_STATUSES:
         return normalized
     return "partial"
@@ -372,7 +422,10 @@ __all__ = [
     "relay_parse_failure_detected",
     "relay_parse_miss_cell",
     "RELAY_PARSE_FAILED_STATUS",
+    "resolve_measurement_status",
+    "resolve_measurement_status_from_wrapper",
     "resolve_relay_status",
+    "structured_status_to_relay",
     "status_from_section2",
     "strip_projected_closeout_envelope",
     "strip_machine_tail",

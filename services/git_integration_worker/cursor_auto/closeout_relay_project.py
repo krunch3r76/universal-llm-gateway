@@ -14,14 +14,16 @@ from services.git_integration_worker.cursor_auto.closeout_relay_common import (
     looks_fenced,
     relay_parse_miss_cell,
     sanitize_relay_cell,
-    status_from_section2,
     strip_machine_tail,
 )
 from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
     extract_field_section,
-    extract_status,
     extract_table_field,
     field_heading_present,
+)
+from services.git_integration_worker.cursor_auto.lane_a_status import (
+    extract_status_claim,
+    status_claim_from_section2,
 )
 from services.git_integration_worker.cursor_auto.section2_fields import SECTION2_FIELDS
 
@@ -149,8 +151,8 @@ def count_relay_parse_miss_fields(body: str) -> int:
 
 
 def _extract_cell(prose: str, field: str, *, provenance: str) -> str:
-    if field == "status":
-        value = extract_status(prose)
+    if field == "status_claim":
+        value = extract_status_claim(prose)
         return value or ""
     if field == "ac_verdict":
         return build_ac_verdict_cell(prose, provenance=provenance, cap=None)
@@ -181,16 +183,20 @@ def project_section2_table(
 ) -> tuple[str, str]:
     """Build normalized §2 table from authored prose.
 
-    Returns ``(body, status)`` with one consistent status across header and table.
+    Returns ``(body, status_claim)`` with claim in the ``status_claim`` table row.
     """
     text = strip_machine_tail(prose).strip()
-    status = extract_status(text) or status_from_section2(text) or fallback_status
+    claim = (
+        extract_status_claim(text)
+        or status_claim_from_section2(text)
+        or fallback_status
+    )
 
     rows: list[tuple[str, str]] = []
     fenced_appendix: list[tuple[str, str]] = []
     for field, label in SECTION2_FIELDS:
-        if field == "status":
-            rows.append((label, status))
+        if field == "status_claim":
+            rows.append((label, claim))
             continue
         raw = extract_field_section(text, field) or extract_table_field(text, field)
         if raw and looks_fenced(raw):
@@ -201,7 +207,6 @@ def project_section2_table(
 
     lines = [
         "TYPE: CLOSEOUT",
-        f"status: {status}",
         f"source_ref: {provenance}",
         "",
         "| Field | Value |",
@@ -210,7 +215,7 @@ def project_section2_table(
     for field, value in rows:
         lines.append(f"| {field} | {_render_table_cell(value)} |")
     _append_fenced_sections(lines, fenced_appendix)
-    return "\n".join(lines), status
+    return "\n".join(lines), claim
 
 
 __all__ = [

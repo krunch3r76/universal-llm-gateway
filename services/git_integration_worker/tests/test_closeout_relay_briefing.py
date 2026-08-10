@@ -22,6 +22,9 @@ from services.git_integration_worker.cursor_auto.closeout_relay_common import (
 from services.git_integration_worker.cursor_auto.closeout_relay_cortex_spill import (
     promote_clamped_closeout_to_cortex,
 )
+from services.git_integration_worker.cursor_auto.lane_a_status import (
+    extract_status_claim,
+)
 from services.git_integration_worker.cursor_auto.relay_trust import (
     RELAY_TRUST_SYNTHESIZED_GATE_ENABLED,
     pending_synthesized_closeout,
@@ -81,7 +84,7 @@ def test_synthesized_6294_fixture_body_under_2048() -> None:
     assert "M1 compensating parity gate" not in payload.body
     assert sidecar_workspaces_ref(_DISPATCH) in payload.body
     for field in (
-        "status",
+        "status_claim",
         "ac_verdict",
         "deltas_to_spec",
         "decisions_taken",
@@ -319,7 +322,7 @@ def test_clamp_preserves_short_ac_verdict_when_effects_bloat() -> None:
 
 
 def test_envelope_status_matches_body_complete_c4_regression() -> None:
-    """AC1/C4 — payload.status tracks §2 body when sidecar says complete."""
+    """7070 — payload.status is measurement; status_claim carries §2 body."""
     sidecar = """\
 TYPE: CLOSEOUT
 status: complete
@@ -341,14 +344,14 @@ status: complete
         dispatch_id=_DISPATCH,
         caller_auditable=True,
     )
-    assert payload.status == "complete"
-    assert status_from_section2(payload.body) == "complete"
-    table_status = payload.body.split("| status | ", 1)[1].split(" |", 1)[0]
+    assert payload.status == "partial"
+    assert extract_status_claim(payload.body) == "complete"
+    table_status = payload.body.split("| status_claim | ", 1)[1].split(" |", 1)[0]
     assert table_status == "complete"
-    header_match = payload.body.splitlines()
-    status_lines = [line for line in header_match if line.lower().startswith("status:")]
-    assert len(status_lines) == 1
-    assert status_lines[0].strip() == "status: complete"
+    status_lines = [
+        line for line in payload.body.splitlines() if line.lower().startswith("status:")
+    ]
+    assert status_lines == []
 
 
 def test_synthesized_with_sidecar_complete_not_forced_partial() -> None:
@@ -369,7 +372,8 @@ status: complete
         caller_auditable=True,
     )
     assert payload.source == "section2_sidecar"
-    assert payload.status == "complete"
+    assert payload.status == "partial"
+    assert extract_status_claim(payload.body) == "complete"
 
 
 @pytest.mark.asyncio
@@ -385,7 +389,7 @@ async def test_post_operator_closeout_single_envelope_status() -> None:
     closeout_body = (
         "TYPE: CLOSEOUT\nstatus: complete\ncheckpoint: nothing_authored\n\n"
         "| Field | Value |\n|---|---|\n"
-        "| status | complete |\n"
+        "| status_claim | complete |\n"
         "| ac_verdict | PASS |\n"
     )
     job = AutoJob(
@@ -418,8 +422,8 @@ async def test_post_operator_closeout_single_envelope_status() -> None:
     status_lines = [
         line.strip() for line in sent.splitlines() if line.lower().startswith("status:")
     ]
-    assert status_lines == ["status: complete"]
-    assert "| status | complete |" in sent
+    assert status_lines == ["status: partial"]
+    assert "| status_claim | complete |" in sent
 
 
 _CORTEX_POINTER = (
@@ -476,7 +480,7 @@ async def test_promote_clamped_closeout_cortex_pointer() -> None:
     )
     assert _CORTEX_POINTER in promoted.body
     assert sidecar_workspaces_ref(_DISPATCH) not in promoted.body
-    assert "TYPE: CLOSEOUT" in promoted.body or "| status |" in promoted.body
+    assert "TYPE: CLOSEOUT" in promoted.body or "| status_claim |" in promoted.body
     assert status_from_section2(promoted.body) in {
         None,
         "partial",

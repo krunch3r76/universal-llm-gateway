@@ -43,7 +43,9 @@ from services.git_integration_worker.cursor_bus import CursorBusClient
 
 logger = get_logger(__name__)
 
-_DEFAULT_MODEL = "cursor/claude-opus-5"
+# Roaming-tier default: the reflex is a short read-only closeout check, not a
+# bind-leg judgment seat. Opus remains available via CURSOR_AUTO_REFLEX_MODEL.
+_DEFAULT_MODEL = "cursor/grok-4.5"
 _DEFAULT_EFFORT = "low"
 # The reflex sits between the executor finishing and the manager being told
 # anything, so every second here is latency the manager pays. A bounded read of

@@ -23,6 +23,10 @@ from services.git_integration_worker.cursor_auto.reflex_policy import (
     counters,
     evaluate_reflex,
 )
+from services.git_integration_worker.cursor_auto.reflex_read import (
+    _DEFAULT_MODEL,
+    reflex_model,
+)
 from services.git_integration_worker.cursor_auto.wire_map import compose_model_knobs
 
 THREAD = "t-reflex"
@@ -46,6 +50,24 @@ def _clean_body(status: str = "complete") -> str:
         "open forks: none\n"
         "checkpoint: committed abc123 paths=1\n"
     )
+
+
+# --- default model ----------------------------------------------------------
+
+
+def test_default_reflex_model_is_grok_not_opus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CURSOR_AUTO_REFLEX_MODEL", raising=False)
+    assert _DEFAULT_MODEL == "cursor/grok-4.5"
+    assert reflex_model() == "cursor/grok-4.5"
+
+
+def test_reflex_model_env_override_still_honors_opus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CURSOR_AUTO_REFLEX_MODEL", "cursor/claude-opus-5")
+    assert reflex_model() == "cursor/claude-opus-5"
 
 
 # --- knob composition -------------------------------------------------------

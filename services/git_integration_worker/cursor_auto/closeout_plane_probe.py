@@ -226,6 +226,40 @@ def checkpoint_claims_committed(checkpoint: str) -> bool:
     return lead == "committed" or lead.startswith("committed@")
 
 
+def status_dispositions_equivalent(claim: str, measurement: str) -> bool:
+    """True when agent claim and infra measurement describe the same closeout status."""
+    claim_norm = (claim or "").strip().lower()
+    measure_norm = (measurement or "").strip().lower()
+    if measure_norm == "relay_parse_failed":
+        return False
+    # B3 structured enums → relay envelope vocabulary.
+    measure_map = {
+        "failed": "blocked",
+        "gated": "blocked",
+        "shipped": "complete",
+    }
+    measure_norm = measure_map.get(measure_norm, measure_norm)
+    return claim_norm == measure_norm
+
+
+def annotate_status_claim_discrepancy(
+    *,
+    claim: str | None,
+    measurement: str,
+) -> str | None:
+    """Emit annotate-only marker when §2 claim diverges from infra ``status:``."""
+    if claim is None or not claim.strip():
+        return None
+    if status_dispositions_equivalent(claim, measurement):
+        return None
+    claim_display = claim.strip().lower()
+    measure_display = measurement.strip().lower()
+    return (
+        f"status_claim@§2 {claim_display} "
+        f"while status@infra {measure_display}"
+    )
+
+
 def checkpoint_dispositions_equivalent(claim: str, measurement: str) -> bool:
     """True when agent claim and infra measurement describe the same disposition."""
     from claude_bundles.lane_a_closeout_checkpoint import normalize_checkpoint_value
@@ -365,10 +399,12 @@ def preserve_plane_lines(body: str) -> bool:
 __all__ = [
     "CapturePlaneKeys",
     "PlaneObservation",
+    "annotate_status_claim_discrepancy",
     "annotate_checkpoint_claim_discrepancy",
     "annotate_plane_discrepancy",
     "checkpoint_claims_committed",
     "checkpoint_dispositions_equivalent",
+    "status_dispositions_equivalent",
     "merge_plane_discrepancy_markers",
     "inject_plane_discrepancy_line",
     "inject_plane_line",

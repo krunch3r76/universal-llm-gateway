@@ -1,4 +1,4 @@
-"""Firing predicate and episode budget for the Opus second-read reflex leg.
+"""Firing predicate and episode budget for the second-read reflex leg.
 
 cursor-auto holds no judgment of its own, so "occasionally escalate to a premium
 reader" has to be a predicate over observable closeout shape plus a hard spend

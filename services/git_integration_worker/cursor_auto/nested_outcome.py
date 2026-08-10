@@ -20,6 +20,13 @@ from services.git_integration_worker.config import load_config
 from services.git_integration_worker.cursor_auto.caller_auditable import (
     caller_auditable,
 )
+from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+    annotate_checkpoint_claim_discrepancy,
+    annotate_status_claim_discrepancy,
+    inject_plane_discrepancy_line,
+    inject_plane_line,
+    merge_plane_discrepancy_markers,
+)
 from services.git_integration_worker.cursor_auto.closeout_relay import (
     read_repo_closeout_sidecar,
     select_closeout_relay_payload,
@@ -29,12 +36,6 @@ from services.git_integration_worker.cursor_auto.closeout_relay_common import (
 )
 from services.git_integration_worker.cursor_auto.closeout_relay_cortex_spill import (
     promote_clamped_closeout_to_cortex,
-)
-from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
-    annotate_checkpoint_claim_discrepancy,
-    inject_plane_discrepancy_line,
-    inject_plane_line,
-    merge_plane_discrepancy_markers,
 )
 from services.git_integration_worker.cursor_auto.closeout_tree_state import (
     compute_closeout_tree_state,
@@ -52,6 +53,9 @@ from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
     extract_checkpoint_claim,
     inject_checkpoint_line,
     inject_tree_residue_line,
+)
+from services.git_integration_worker.cursor_auto.lane_a_status import (
+    extract_status_claim,
 )
 from services.git_integration_worker.cursor_auto.nested_sdk import (
     CloseoutRelayContext,
@@ -272,11 +276,17 @@ async def relay_closeout_outcome(
         claim=checkpoint_claim,
         measurement=tree_state.checkpoint,
     )
+    status_claim = extract_status_claim(relay_body)
+    status_discrepancy = annotate_status_claim_discrepancy(
+        claim=status_claim,
+        measurement=payload.status,
+    )
     relay_body = inject_plane_discrepancy_line(
         relay_body,
         value=merge_plane_discrepancy_markers(
             tree_state.plane_discrepancy,
             claim_discrepancy,
+            status_discrepancy,
         ),
     )
     if second_read is not None:

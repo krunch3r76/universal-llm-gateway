@@ -27,6 +27,7 @@ from services.git_integration_worker.cursor_auto.closeout_relay_common import (
     is_wrapper_manifest,
     looks_section2,
     relay_parse_miss_cell,
+    resolve_measurement_status,
     strip_machine_tail,
     wrapper_status,
 )
@@ -209,7 +210,7 @@ def synthesize_section2(
     )
 
     rows = (
-        ("status", str(status)),
+        ("status_claim", str(status)),
         ("ac_verdict", ac_verdict),
         ("deltas_to_spec", deltas_to_spec),
         ("decisions_taken", decisions_taken),
@@ -304,16 +305,20 @@ def select_closeout_relay_payload(
         prose = strip_machine_tail(sidecar_text)
         if looks_section2(prose):
             provenance = sidecar_workspaces_ref(dispatch_id) if dispatch_id else "repo sidecar"
-            projected, status = project_section2_table(
+            projected, _claim = project_section2_table(
                 prose,
                 provenance=provenance,
                 fallback_status=fallback_status,
             )
             projected = _append_fence_exception_lines(projected, prose)
+            measurement = resolve_measurement_status(
+                wrapper_text=wrapper_text,
+                ledger_fallback=fallback_status,
+            )
             return finalize_relay_payload(
                 CloseoutRelayPayload(
                     body=projected,
-                    status=status,
+                    status=measurement,
                     source="section2_sidecar",
                 ),
                 **bind,
@@ -322,16 +327,20 @@ def select_closeout_relay_payload(
     if sdk_body and looks_section2(sdk_body) and not is_wrapper_manifest(sdk_body):
         prose = strip_machine_tail(sdk_body)
         provenance = sidecar_workspaces_ref(dispatch_id) if dispatch_id else "bus §2 body"
-        projected, status = project_section2_table(
+        projected, _claim = project_section2_table(
             prose,
             provenance=provenance,
             fallback_status=fallback_status,
         )
         projected = _append_fence_exception_lines(projected, prose)
+        measurement = resolve_measurement_status(
+            wrapper_text=wrapper_text,
+            ledger_fallback=fallback_status,
+        )
         return finalize_relay_payload(
             CloseoutRelayPayload(
                 body=projected,
-                status=status,
+                status=measurement,
                 source="section2_bus",
             ),
             **bind,
@@ -360,30 +369,41 @@ def select_closeout_relay_payload(
     )
     if synthesized is not None:
         source = "section2_synthesized"
-        raw_status = wrapper_status(sdk_body or "") or fallback_status
+        measurement = resolve_measurement_status(
+            wrapper_text=sdk_body,
+            ledger_fallback=fallback_status,
+        )
         return finalize_relay_payload(
             CloseoutRelayPayload(
                 body=synthesized,
-                status=raw_status,
+                status=measurement,
                 source=source,
             ),
             **bind,
         )
 
     if sdk_body and sdk_body.strip():
+        measurement = resolve_measurement_status(
+            wrapper_text=sdk_body,
+            ledger_fallback=fallback_status,
+        )
         return finalize_relay_payload(
             CloseoutRelayPayload(
                 body=sdk_body.strip(),
-                status=fallback_status,
+                status=measurement,
                 source="wrapper",
             ),
             **bind,
         )
 
+    measurement = resolve_measurement_status(
+        wrapper_text=sdk_body,
+        ledger_fallback=fallback_status,
+    )
     return finalize_relay_payload(
         CloseoutRelayPayload(
             body="(no cursor-sdk closeout body captured)",
-            status=fallback_status,
+            status=measurement,
             source="empty",
         ),
         **bind,

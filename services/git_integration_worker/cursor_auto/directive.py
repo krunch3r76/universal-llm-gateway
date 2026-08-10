@@ -417,6 +417,11 @@ def build_sdk_message(job_body: str, *, contract: str) -> str:
             [
                 "",
                 "## Lane-A checkpoint (mandatory on closeout)",
+                "In §2 emit `status_claim:` — your belief about dispatch outcome:",
+                "`status_claim: complete` | `status_claim: partial` | `status_claim: blocked`.",
+                "Infrastructure injects the authoritative envelope `status:` measurement line at relay",
+                "assembly. Claim and measurement diverge via `plane-discrepancy:` — not silent sync.",
+                "",
                 "In §2 emit `checkpoint_claim:` — your belief about authorship:",
                 "`checkpoint_claim: committed <sha> paths=N` (optional `(+M pending)`),",
                 "`checkpoint_claim: nothing_authored`, `checkpoint_claim: authored_cortex: …`,",

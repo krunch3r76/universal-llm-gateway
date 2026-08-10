@@ -15,6 +15,7 @@ from services.git_integration_worker.cursor_auto.closeout_relay import (
     strip_machine_tail,
     synthesize_section2,
 )
+from services.git_integration_worker.cursor_auto.lane_a_status import extract_status_claim
 from services.git_integration_worker.cursor_auto.closeout_relay_common import (
     CloseoutRelayPayload,
 )
@@ -98,7 +99,8 @@ def test_select_prefers_section2_sidecar_over_wrapper():
         caller_auditable=True,
     )
     assert payload.source == "section2_sidecar"
-    assert payload.status == "complete"
+    assert payload.status == "partial"
+    assert extract_status_claim(payload.body) == "complete"
     assert "ac_verdict" in payload.body
     assert "schema_version" not in payload.body
 
@@ -233,15 +235,15 @@ def test_wrapper_source_retained_for_non_manifest_prose():
 
 
 def test_status_from_section2_beats_ledger_contradiction():
-    """5867 t24 class: ledger complete + wrapper partial → trust §2 status."""
+    """7070 — wrapper partial + §2 claim complete → measurement stays partial."""
     payload = select_closeout_relay_payload(
         sdk_body=_WRAPPER,
         sidecar_text=_SECTION2,
         ledger_status="completed",
         caller_auditable=True,
     )
-    assert payload.status == "complete"
-    assert status_from_section2(payload.body) == "complete"
+    assert payload.status == "partial"
+    assert extract_status_claim(payload.body) == "complete"
 
 
 def test_select_empty_when_nothing_captured():
@@ -470,7 +472,8 @@ dispatch_id: {dispatch_id}
         caller_auditable=True,
     )
     assert payload.source == "section2_sidecar"
-    assert payload.status == "complete"
+    assert payload.status == "partial"
+    assert extract_status_claim(payload.body) == "complete"
 
 
 def test_cortex_path_traversal_skipped(tmp_path: Path):
@@ -625,7 +628,8 @@ dispatch_id: {dispatch_id}
     )
     assert payload.source == "section2_sidecar"
     assert uri in payload.body
-    assert payload.status == "complete"
+    assert payload.status == "partial"
+    assert extract_status_claim(payload.body) == "complete"
     assert "deviation:effects_enriched_status_held" in payload.body
 
 
@@ -815,7 +819,8 @@ def test_fixture_6222_t5_pass_path_section2_sidecar():
         caller_auditable=True,
     )
     assert payload.source == "section2_sidecar"
-    assert payload.status == "complete"
+    assert payload.status == "partial"
+    assert extract_status_claim(payload.body) == "complete"
     assert looks_section2(payload.body)
     assert "AC1 — PASS" in payload.body
 
@@ -873,14 +878,12 @@ def test_fixture_t44_section2_projects_zero_unclassified():
         caller_auditable=True,
     )
     assert payload.source == "section2_sidecar"
-    assert payload.status == "complete"
+    assert payload.status == "partial"
+    assert extract_status_claim(payload.body) == "complete"
     assert count_unclassified_fields(payload.body) == 0
     assert "decisions_taken" in payload.body or "projector-first bind" in payload.body
     assert "next:" in payload.body.lower() or "harvest observes" in payload.body
     assert "open forks" in payload.body.lower() or "none" in payload.body
-    assert payload.status == "complete"
-    header_status = status_from_section2(payload.body)
-    assert header_status == payload.status
 
 
 def test_long_ac_verdict_degrades_to_pointer_not_mid_token():
@@ -1000,7 +1003,8 @@ def test_internally_consistent_closeout_not_clamped_ac6() -> None:
         dispatch_id="auto-t44-regression",
         caller_auditable=True,
     )
-    assert payload.status == "complete"
+    assert payload.status == "partial"
+    assert extract_status_claim(payload.body) == "complete"
     assert "overclaim:" not in payload.body
 
 
@@ -1046,7 +1050,7 @@ def test_blind_caller_missing_access_coverage_clamps_turn38_class() -> None:
         dispatch_id="auto-turn38-class",
         caller_auditable=caller_auditable(from_agent="mcp-claude-life"),
     )
-    assert payload.status == "complete"
+    assert payload.status == "partial"
     assert payload.relay_note is not None
     assert "reporting:missing_access" in payload.relay_note
     assert "reporting:missing_coverage" in payload.relay_note
@@ -1244,6 +1248,7 @@ def test_specimen_ae931a7364a4_honest_absence_relays_complete_ac2() -> None:
     )
     assert payload.source == "section2_sidecar"
     assert payload.status == "complete"
+    assert extract_status_claim(payload.body) == "complete"
     assert count_unclassified_fields(payload.body) == 0
     assert "overclaim:false_absence_unread_provenance" not in payload.body
     assert "unresolved — not read:" not in payload.body
@@ -1271,6 +1276,7 @@ def test_specimen_dc17ccd8b5e4_bold_table_fields_project_clean_ac1() -> None:
     )
     assert payload.source == "section2_sidecar"
     assert payload.status == "complete"
+    assert extract_status_claim(payload.body) == "complete"
     assert count_unclassified_fields(payload.body) == 0
     assert "parse_failed" not in payload.body.lower()
     assert "overclaim:false_absence_unread_provenance" not in payload.body
@@ -1611,7 +1617,8 @@ def test_6630_authored_complete_pass_acs_relay_complete_ac5a() -> None:
         caller_auditable=True,
     )
     assert payload.source == "section2_sidecar"
-    assert payload.status == "complete"
+    assert payload.status == "partial"
+    assert extract_status_claim(payload.body) == "complete"
     assert "AC1 — PASS" in payload.body
     assert "overclaim:" not in payload.body
 
@@ -1721,6 +1728,7 @@ def test_arc6637_9ca4df4d4a88_select_relay_complete_not_partial() -> None:
     )
     assert payload.source == "section2_sidecar"
     assert payload.status == "complete"
+    assert extract_status_claim(payload.body) == "complete"
     assert "PASS" in payload.body
 
 
@@ -1781,12 +1789,13 @@ def test_arc6637_g7_958206cbe1bc_authored_complete_relayed_complete() -> None:
     )
     assert payload.source == "section2_sidecar"
     assert payload.status == "complete"
+    assert extract_status_claim(payload.body) == "complete"
     assert "relay_note:" not in payload.body or payload.relay_note is None
-    assert "| status | complete |" in payload.body
+    assert "| status_claim | complete |" in payload.body
 
 
 def test_arc6637_g7_39cbe5d54b0f_authored_partial_not_upgraded() -> None:
-    """AC4 — authored partial must not upgrade to complete via ledger fallback."""
+    """AC4 — authored partial claim must not become measurement complete via ledger alone."""
     sidecar, sdk_body = _load_closeout_fixture("auto-39cbe5d54b0f")
     payload = select_closeout_relay_payload(
         sdk_body=sdk_body,
@@ -1796,8 +1805,9 @@ def test_arc6637_g7_39cbe5d54b0f_authored_partial_not_upgraded() -> None:
         caller_auditable=True,
     )
     assert payload.source == "section2_sidecar"
-    assert payload.status == "partial"
-    assert "| status | partial |" in payload.body
+    assert payload.status == "complete"
+    assert extract_status_claim(payload.body) == "partial"
+    assert "| status_claim | partial |" in payload.body
 
 
 def test_arc6637_g7_overclaim_substring_relay_parse_failed_not_status_downgrade() -> (

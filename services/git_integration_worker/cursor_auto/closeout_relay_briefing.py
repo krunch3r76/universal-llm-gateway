@@ -13,14 +13,11 @@ from services.git_integration_worker.cursor_auto.closeout_relay_common import (
     looks_fenced,
     merge_relay_notes,
     relay_parse_failure_detected,
+    resolve_measurement_status,
     sanitize_relay_cell,
-    status_from_section2,
 )
 from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fence import (
     apply_write_fence,
-)
-from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
-    extract_status,
 )
 from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
     amend_completion_overclaim,
@@ -32,6 +29,9 @@ from services.git_integration_worker.cursor_auto.closeout_relay_reporting import
 )
 from services.git_integration_worker.cursor_auto.episode_residue import (
     obligation_deployment_state_from_wrapper,
+)
+from services.git_integration_worker.cursor_auto.lane_a_status import (
+    extract_status_claim,
 )
 from services.git_integration_worker.cursor_auto.relay_trust import (
     enforce_synthesized_partial,
@@ -285,24 +285,8 @@ def clamp_relay_body(body: str, *, pointer: str | None) -> tuple[str, bool]:
 
 
 def _sync_payload_status(payload: CloseoutRelayPayload) -> CloseoutRelayPayload:
-    """Rewrite §2 header/table status to match payload.status (authored verdict sync)."""
-    body_status = extract_status(payload.body) or status_from_section2(payload.body)
-    if body_status == payload.status:
-        return payload
-    from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
-        _rewrite_relay_status,
-    )
-
-    synced_body = _rewrite_relay_status(payload.body, payload.status)
-    return CloseoutRelayPayload(
-        body=synced_body,
-        status=payload.status,
-        source=payload.source,
-        body_full=payload.body_full,
-        clamped=payload.clamped,
-        relay_note=payload.relay_note,
-        deployment_state=payload.deployment_state,
-    )
+    """Claim surface is no longer rewritten to match measurement (arc 7070)."""
+    return payload
 
 
 def _has_authored_executor_verdict(*, source: str, authored_status: str) -> bool:
@@ -354,19 +338,25 @@ def finalize_relay_payload(
     resolved_model: str | None = None,
     sidecar_read_failed_uri: str | None = None,
 ) -> CloseoutRelayPayload:
-    """Run honesty amend, reporting tier, optional confer fence, then clamp — status immutable."""
-    authored_status = payload.status.strip().lower()
+    """Run honesty amend, reporting tier, optional confer fence, then clamp — measurement immutable."""
+    authored_claim = (
+        extract_status_claim(payload.body) or payload.status.strip().lower()
+    )
+    measurement_status = resolve_measurement_status(
+        wrapper_text=wrapper_text,
+        ledger_fallback=payload.status,
+    )
     amended = amend_effects_underclaim(
         payload.body,
         wrapper_text=wrapper_text,
-        status=authored_status,
+        status=authored_claim,
         source=payload.source,
     )
     sidecar_read_succeeded = payload.source in ("section2_sidecar", "section2_bus")
     overclaim = amend_completion_overclaim(
         amended.body,
         wrapper_text=wrapper_text,
-        status=authored_status,
+        status=authored_claim,
         source=amended.source,
         dispatch_id=dispatch_id,
         sidecar_read_succeeded=sidecar_read_succeeded,
@@ -386,14 +376,14 @@ def finalize_relay_payload(
         )
     reporting = amend_reporting_field_gaps(
         stamped,
-        status=authored_status,
+        status=authored_claim,
         source=overclaim.source,
         caller_auditable=caller_auditable,
         model_substitution=model_substitution,
     )
     breadth = amend_breadth_recon_gaps(
         reporting.body,
-        status=authored_status,
+        status=authored_claim,
         source=reporting.source,
         wrapper_text=wrapper_text,
     )
@@ -401,7 +391,7 @@ def finalize_relay_payload(
         _merge_payload_notes(amended, overclaim, reporting, breadth),
         synthesized_relay_note(
             closeout_source=reporting.source,
-            status=authored_status,
+            status=authored_claim,
         ),
     )
     # deployment_state is derived with checkpoint in nested_outcome relay path —
@@ -409,7 +399,7 @@ def finalize_relay_payload(
     # propagation-owed vs uncommitted checkpoint contradictions (arc 550).
     processed = CloseoutRelayPayload(
         body=breadth.body,
-        status=authored_status,
+        status=measurement_status,
         source=breadth.source,
         relay_note=relay_note,
         deployment_state=None,
@@ -427,12 +417,12 @@ def finalize_relay_payload(
         relay_note=processed.relay_note,
         deployment_state=processed.deployment_state,
     )
-    final_status = authored_status
+    final_status = measurement_status
     if relay_parse_failure_detected(
         body_with_meta
     ) and not _has_authored_executor_verdict(
         source=processed.source,
-        authored_status=authored_status,
+        authored_status=authored_claim,
     ):
         final_status = RELAY_PARSE_FAILED_STATUS
     synced = _sync_payload_status(
