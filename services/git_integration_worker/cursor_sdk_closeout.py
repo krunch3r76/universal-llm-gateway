@@ -1400,15 +1400,16 @@ def _assemble_closeout_delivery(
         lint_verification, lint_deviation = run_touched_files_lint(
             write_tree, repo_change_set
         )
-        # Harvest optional observed pytest siblings from stream tool_calls.
-        # Absence does not earn "no tests ran" (presence_legible_absence_not).
-        verification = [
-            *verification,
-            lint_verification,
-            *harvest_test_verifications(outcome.tool_calls),
-        ]
+        verification = [*verification, lint_verification]
         if lint_deviation:
             baseline_deviations.append(lint_deviation)
+    # Harvest observed pytest siblings from stream tool_calls regardless of
+    # baseline / contract (G1: non-implement harvest still owed). Absence does
+    # not earn "no tests ran" (presence_legible_absence_not).
+    verification = [
+        *verification,
+        *harvest_test_verifications(outcome.tool_calls),
+    ]
     capture_status, divergence_reason, deviations, manifest = (
         resolve_closeout_capture_fields(
             deliverables_expected=deliverables_expected,

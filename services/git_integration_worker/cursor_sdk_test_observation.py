@@ -8,7 +8,7 @@ optional ``observed`` siblings when shell / quality_gate tool results carry exit
 
 from __future__ import annotations
 
-import shlex
+import re
 from collections.abc import Mapping, Sequence
 
 from implement_admission.closeout_models import (
@@ -27,9 +27,22 @@ _CONTAMINATED_AGREEMENT_MARKER = (
     "test_claim@§2 pytest success without pytest witness sibling"
 )
 
+# Invoke-position pytest: start of string/line, or after shell separators.
+# ``shlex`` collapses newlines, so line anchors on the raw command are required
+# for compound gate shells (specimen auto-e93f739c279c). Rejects ``echo pytest``.
+_PYTEST_INVOKE_RE = re.compile(
+    r"(?:^|[\n;|&]|\|\||&&)\s*(?:[^\s;|&]*/)?pytest\b",
+    flags=re.MULTILINE,
+)
+
 
 def is_pytest_command(command: str) -> bool:
-    """True when *command* is a pytest-class shell invocation (hermetic token match)."""
+    """True when *command* is a pytest-class shell invocation (hermetic match).
+
+    Matches head ``pytest``, ``*/pytest``, ``python -m pytest``, and mid-script
+    invoke-position ``pytest`` after newlines / ``;`` / ``&&`` (compound gate
+    shells). Does not treat ``echo pytest`` / ``which pytest`` as invocations.
+    """
     cmd = command.strip()
     if not cmd:
         return False
@@ -38,29 +51,20 @@ def is_pytest_command(command: str) -> bool:
         return True
     if "-m pytest" in lower:
         return True
-    try:
-        tokens = shlex.split(cmd)
-    except ValueError:
-        tokens = cmd.split()
-    if not tokens:
-        return False
-    head = tokens[0]
-    return head == "pytest" or head.endswith("/pytest")
+    return _PYTEST_INVOKE_RE.search(cmd) is not None
 
 
 def is_pytest_witness(row: Verification) -> bool:
-    """True only for observed pytest-class verification rows — never Gate-D or lint."""
+    """True only for observed pytest-class verification rows — never Gate-D.
+
+    Compound shells that also run ``ruff check`` (specimen e93f) remain witnesses
+    when ``is_pytest_command`` matches; lint-only rows fail that predicate.
+    """
     if row.exit_code_register != "observed":
         return False
-    command = row.command
-    if command.startswith("gate_d:"):
+    if row.command.startswith("gate_d:"):
         return False
-    lower = command.lower()
-    if lower.startswith("ruff") or "ruff check" in lower:
-        return False
-    if lower.startswith("lint") or "lint-skip" in lower:
-        return False
-    return is_pytest_command(command)
+    return is_pytest_command(row.command)
 
 
 def _coerce_exit_code(value: object) -> int | None:

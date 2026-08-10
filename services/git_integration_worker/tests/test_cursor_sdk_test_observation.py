@@ -49,8 +49,12 @@ def test_is_pytest_command_tokens() -> None:
     assert is_pytest_command("pytest -q services/foo/test_bar.py")
     assert is_pytest_command("python -m pytest libs/")
     assert is_pytest_command("/home/io/.venvs/universal/bin/python -m pytest -q")
+    assert is_pytest_command(
+        "export PATH=/x\npytest -q services/foo/test_bar.py\necho done"
+    )
     assert not is_pytest_command("ruff check foo.py")
     assert not is_pytest_command("echo pytest")
+    assert not is_pytest_command("which pytest")
 
 
 def test_is_pytest_witness_denies_gate_d_and_lint() -> None:
@@ -174,3 +178,75 @@ def test_specimen_independent_disagreement_fires() -> None:
         verification=verification,
     )
     assert marker == "test_claim@§2 exit 0 while verification observed 1"
+
+
+# Live observation record from auto-e93f739c279c (frontier.sdk.worker.toolcall
+# @ 2026-08-10T18:00:59.460908Z) + command from that dispatch's effects_manifest.
+_E93F_CALL_ID = (
+    "call-681ca700-785c-4ece-ae96-d9f27701fb74-20\n"
+    "fc_ovfiK6F-6SkKZu-14936c94-aws_ue1_2"
+)
+_E93F_COMMAND = """# use system universal venv
+export PATH="$HOME/.venvs/universal/bin:$PATH"
+which python pytest ruff
+cd /mnt/torus/projects/universal-llm-gateway
+# Full-file gate on six touched modules
+echo '=== RUFF ==='
+ruff check \\
+  libs/implement_admission/closeout_models.py \\
+  libs/implement_admission/deliverable_verification.py \\
+  services/git_integration_worker/cursor_sdk_capture_status.py \\
+  services/git_integration_worker/cursor_sdk_closeout.py \\
+  services/git_integration_worker/cursor_sdk_test_observation.py \\
+  services/git_integration_worker/tests/test_cursor_sdk_test_observation.py
+echo "RUFF_EXIT=$?"
+echo '=== PYTEST ==='
+pytest -q services/git_integration_worker/tests/test_cursor_sdk_test_observation.py
+echo "PYTEST_EXIT=$?"
+"""
+_E93F_RESULT = {
+    "status": "success",
+    "value": {
+        "exitCode": 0,
+        "signal": "",
+        "stdout": (
+            "/home/io/.venvs/universal/bin/python\n"
+            "/home/io/.venvs/universal/bin/pytest\n"
+            "/home/io/.venvs/universal/bin/ruff\n"
+            "=== RUFF ===\n"
+            "All checks passed!\n"
+            "RUFF_EXIT=0\n"
+            "=== PYTEST ===\n"
+            "..........                                               "
+            "                [100%]\n"
+            "10 passed in 0.17s\n"
+            "PYTEST_EXIT=0\n"
+        ),
+        "stderr": "",
+        "executionTime": 637,
+    },
+}
+
+
+def test_specimen_auto_e93f739c279c_harvests_observed_test_sibling() -> None:
+    """Replay live e93f shell ToolCallObservation; require observed pytest sibling."""
+    obs = ToolCallObservation(
+        call_id=_E93F_CALL_ID,
+        tool_name="shell",
+        status="completed",
+        arg_bytes=800,
+        result_bytes=402,
+        truncated_fields=(),
+        args={"command": _E93F_COMMAND},
+        result=_E93F_RESULT,
+        result_body=_E93F_RESULT,
+        result_body_status="present",
+    )
+    rows = harvest_test_verifications((obs,))
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.exit_code_register == "observed"
+    assert row.exit_code == 0
+    assert row.basis == "shell_tool_result.exitCode"
+    assert is_pytest_witness(row) is True
+    assert row.invocation_id == f"test:{_E93F_CALL_ID}"

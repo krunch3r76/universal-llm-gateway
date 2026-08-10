@@ -308,6 +308,58 @@ def test_prepare_closeout_delivery_baseline_none_ignores_dirty_tree(
     assert payload.get("capture_status") is None
 
 
+def test_prepare_closeout_delivery_baseline_none_still_harvests_pytest(
+    tmp_path: Path,
+) -> None:
+    """Wiring: harvest is not gated on baseline (e93f light-bounded path)."""
+    from services.git_integration_worker.cursor_sdk_stream_capture import (
+        ToolCallObservation,
+    )
+
+    _init_git_repo(tmp_path)
+    result = {
+        "status": "success",
+        "value": {"exitCode": 0, "stdout": "1 passed\n", "stderr": ""},
+    }
+    obs = ToolCallObservation(
+        call_id="call-baseline-none-pytest",
+        tool_name="shell",
+        status="completed",
+        arg_bytes=1,
+        result_bytes=1,
+        truncated_fields=(),
+        args={"command": "pytest -q services/foo/test_bar.py"},
+        result=result,
+        result_body=result,
+        result_body_status="present",
+    )
+    outcome = SdkRunOutcome(
+        body="done",
+        status="finished",
+        duration_ms=50,
+        tool_call_count=1,
+        tool_calls=(obs,),
+    )
+    delivery = prepare_closeout_delivery(
+        source_repo=tmp_path,
+        dispatch_id="disp-no-baseline-harvest",
+        outcome=outcome,
+        degraded_reason=None,
+        thread_id="t1",
+        work_item_ref=None,
+        baseline=None,
+    )
+    payload = json.loads(delivery.body)
+    assert payload["files_created"] == []
+    assert payload["files_modified"] == []
+    verification = payload["verification"]
+    assert len(verification) == 1
+    assert verification[0]["exit_code_register"] == "observed"
+    assert verification[0]["exit_code"] == 0
+    assert verification[0]["basis"] == "shell_tool_result.exitCode"
+    assert verification[0]["invocation_id"] == "test:call-baseline-none-pytest"
+
+
 def test_prepare_closeout_delivery_implement_clean_complete(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     outcome = SdkRunOutcome(
