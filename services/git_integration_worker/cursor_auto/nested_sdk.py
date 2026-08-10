@@ -41,7 +41,7 @@ from services.git_integration_worker.cursor_auto.job_ledger import (
     get_ledger,
 )
 from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
-    extract_authored_checkpoint,
+    extract_checkpoint_claim,
 )
 from services.git_integration_worker.cursor_auto.queue import AutoJob
 from services.git_integration_worker.cursor_bus import CursorBusClient
@@ -397,7 +397,7 @@ async def post_operator_closeout(
     ctx = relay_ctx
     outbox_skip = skip_outbox_persist or (ctx.skip_outbox if ctx else False)
     if not outbox_skip and ctx is not None and not replay_mode:
-        checkpoint_value = extract_authored_checkpoint(body)
+        checkpoint_value = extract_checkpoint_claim(body)
         tree_match = _TREE_RESIDUE_RE.search(body)
         tree_residue = int(tree_match.group(1)) if tree_match else None
         subject = f"status:done — {job.subject[:60]}"

@@ -27,6 +27,8 @@ _FIELD_HEADING_ALIASES: dict[str, tuple[str, ...]] = {
     "access": ("access",),
     "coverage": ("coverage",),
     "model_actual": ("model actual", "model_actual", "modelactual"),
+    "checkpoint_claim": ("checkpoint_claim", "checkpoint claim"),
+    # Legacy §2 heading — claim extraction only; not the infra ``checkpoint:`` line.
     "checkpoint": ("checkpoint",),
 }
 

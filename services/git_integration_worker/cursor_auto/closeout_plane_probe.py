@@ -226,6 +226,51 @@ def checkpoint_claims_committed(checkpoint: str) -> bool:
     return lead == "committed" or lead.startswith("committed@")
 
 
+def checkpoint_dispositions_equivalent(claim: str, measurement: str) -> bool:
+    """True when agent claim and infra measurement describe the same disposition."""
+    from claude_bundles.lane_a_closeout_checkpoint import normalize_checkpoint_value
+
+    claim_q = qualify_checkpoint_value(normalize_checkpoint_value(claim))
+    measure_q = qualify_checkpoint_value(normalize_checkpoint_value(measurement))
+    return claim_q == measure_q
+
+
+def annotate_checkpoint_claim_discrepancy(
+    *,
+    claim: str | None,
+    measurement: str,
+) -> str | None:
+    """Emit annotate-only marker when §2 claim diverges from infra ``checkpoint:``."""
+    if claim is None or not claim.strip():
+        return None
+    if checkpoint_dispositions_equivalent(claim, measurement):
+        return None
+    from claude_bundles.lane_a_closeout_checkpoint import normalize_checkpoint_value
+
+    claim_display = qualify_checkpoint_value(normalize_checkpoint_value(claim.strip()))
+    measure_display = measurement.strip()
+    return (
+        f"checkpoint_claim@§2 {claim_display} "
+        f"while checkpoint@infra {measure_display}"
+    )
+
+
+def merge_plane_discrepancy_markers(*parts: str | None) -> str | None:
+    """Join multiple discrepancy fragments into one ``plane-discrepancy:`` line."""
+    markers: list[str] = []
+    for part in parts:
+        if not part:
+            continue
+        text = part.strip()
+        if text.casefold().startswith("plane-discrepancy:"):
+            text = text.split(":", 1)[1].strip()
+        if text:
+            markers.append(text)
+    if not markers:
+        return None
+    return "plane-discrepancy: " + "; ".join(markers)
+
+
 def annotate_plane_discrepancy(
     *,
     checkpoint: str,
@@ -320,8 +365,11 @@ def preserve_plane_lines(body: str) -> bool:
 __all__ = [
     "CapturePlaneKeys",
     "PlaneObservation",
+    "annotate_checkpoint_claim_discrepancy",
     "annotate_plane_discrepancy",
     "checkpoint_claims_committed",
+    "checkpoint_dispositions_equivalent",
+    "merge_plane_discrepancy_markers",
     "inject_plane_discrepancy_line",
     "inject_plane_line",
     "parse_capture_plane_keys",

@@ -417,10 +417,12 @@ def build_sdk_message(job_body: str, *, contract: str) -> str:
             [
                 "",
                 "## Lane-A checkpoint (mandatory on closeout)",
-                "Include `checkpoint: committed <sha> paths=N` after path-explicit commit",
-                "(optional `(+M pending)` when authored paths remain dirty),",
-                "`checkpoint: nothing_authored`, or `checkpoint: deferred: <reason>`.",
-                "Never `--all`. Commit clears lane authorship — not live/done gates.",
+                "In §2 emit `checkpoint_claim:` — your belief about authorship:",
+                "`checkpoint_claim: committed <sha> paths=N` (optional `(+M pending)`),",
+                "`checkpoint_claim: nothing_authored`, `checkpoint_claim: authored_cortex: …`,",
+                "or `checkpoint_claim: deferred: <reason>`.",
+                "Infrastructure injects the authoritative `checkpoint:` control line at relay",
+                "assembly. Never `--all`. Commit clears lane authorship — not live/done gates.",
             ]
         )
     if contract == "confer":

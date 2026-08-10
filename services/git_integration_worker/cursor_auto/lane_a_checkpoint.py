@@ -28,6 +28,10 @@ from services.git_integration_worker.seat_write_ledger import SeatWriteLedger
 _TREE_RESIDUE_RE = re.compile(r"(?im)^tree_residue:\s*(\d+)\b")
 _CHECKPOINT_LINE_RE = re.compile(r"(?im)^checkpoint:\s*(.+)$")
 _BOLD_CHECKPOINT_RE = re.compile(r"(?im)^\*\*checkpoint:\*\*\s*(.+)$")
+_CHECKPOINT_CLAIM_LINE_RE = re.compile(r"(?im)^checkpoint_claim:\s*(.+)$")
+_BOLD_CHECKPOINT_CLAIM_RE = re.compile(
+    r"(?im)^\*\*checkpoint_claim:\*\*\s*(.+)$"
+)
 _CORTEX_URI_PREFIX = "cortex://"
 _UNHASHABLE_CORTEX_DEFERRED = (
     "deferred: cortex durable write could not be rehashed"
@@ -201,8 +205,13 @@ def inject_tree_residue_line(body: str, *, count: int) -> str:
     return f"{body[:insert_at]}\n{line}{body[insert_at:]}"
 
 
-def extract_authored_checkpoint(body: str) -> str | None:
-    """Return the checkpoint disposition value from executor-authored closeout prose."""
+def _extract_checkpoint_field_value(
+    text: str,
+    field: str,
+    *,
+    include_control_lines: bool,
+) -> str | None:
+    """Return a normalized checkpoint disposition from §2 *field* prose."""
     from claude_bundles.lane_a_closeout_checkpoint import normalize_checkpoint_value
 
     from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
@@ -211,19 +220,29 @@ def extract_authored_checkpoint(body: str) -> str | None:
         in_fenced_span,
     )
 
-    text = body or ""
     fenced = fenced_spans(text)
-    for match in _CHECKPOINT_LINE_RE.finditer(text):
-        if not in_fenced_span(fenced, match.start()):
-            return normalize_checkpoint_value(match.group(1))
-    for match in _BOLD_CHECKPOINT_RE.finditer(text):
-        if not in_fenced_span(fenced, match.start()):
-            return normalize_checkpoint_value(match.group(1))
+    if field == "checkpoint_claim":
+        line_res = _CHECKPOINT_CLAIM_LINE_RE
+        bold_res = (_BOLD_CHECKPOINT_CLAIM_RE,)
+    else:
+        line_res = _CHECKPOINT_LINE_RE if include_control_lines else None
+        bold_res = (_BOLD_CHECKPOINT_RE,) if include_control_lines else ()
 
-    section = extract_field_section(text, "checkpoint")
+    if line_res is not None:
+        for match in line_res.finditer(text):
+            if not in_fenced_span(fenced, match.start()):
+                return normalize_checkpoint_value(match.group(1))
+    for bold_re in bold_res:
+        for match in bold_re.finditer(text):
+            if not in_fenced_span(fenced, match.start()):
+                return normalize_checkpoint_value(match.group(1))
+
+    section = extract_field_section(text, field)
     if section and section.strip():
         return normalize_checkpoint_value(section.strip())
-    table_row_re = re.compile(r"(?im)^\|\s*checkpoint\s*\|\s*(?P<value>.*?)\s*\|")
+    table_row_re = re.compile(
+        rf"(?im)^\|\s*{re.escape(field)}\s*\|\s*(?P<value>.*?)\s*\|"
+    )
     table_match = next(
         (
             match
@@ -237,6 +256,36 @@ def extract_authored_checkpoint(body: str) -> str | None:
         if value and not value.casefold().startswith("relay could not locate"):
             return normalize_checkpoint_value(value)
     return None
+
+
+def extract_checkpoint_claim(
+    body: str,
+    *,
+    allow_legacy_control_line: bool = False,
+) -> str | None:
+    """Return the agent's §2 checkpoint claim — never the infra ``checkpoint:`` line.
+
+    Primary surface is ``checkpoint_claim`` (§2 field / table / bold). When
+    *allow_legacy_control_line* is True, fall back to legacy ``checkpoint`` §2
+    prose and pre-relay ``checkpoint:`` control lines for in-flight sidecars.
+    """
+    claim = _extract_checkpoint_field_value(
+        body or "",
+        "checkpoint_claim",
+        include_control_lines=True,
+    )
+    if claim is not None:
+        return claim
+    return _extract_checkpoint_field_value(
+        body or "",
+        "checkpoint",
+        include_control_lines=allow_legacy_control_line,
+    )
+
+
+def extract_authored_checkpoint(body: str) -> str | None:
+    """Backward-compatible alias — prefer :func:`extract_checkpoint_claim`."""
+    return extract_checkpoint_claim(body, allow_legacy_control_line=True)
 
 
 def _parse_wt_baseline(raw: Any) -> dict[str, Any] | None:
@@ -379,7 +428,7 @@ def compute_lane_a_checkpoint_value(
 
 
 def inject_checkpoint_line(body: str, *, value: str) -> str:
-    """Replace or append executor-authored ``checkpoint:`` for lane-A validation."""
+    """Replace or append infrastructure-measured ``checkpoint:`` for lane-A gate."""
     line = f"checkpoint: {value}"
     if _CHECKPOINT_LINE_RE.search(body):
         return _CHECKPOINT_LINE_RE.sub(line, body, count=1)
@@ -405,6 +454,7 @@ __all__ = [
     "cortex_offgit_uris_from_wrapper",
     "derive_tree_residue",
     "extract_authored_checkpoint",
+    "extract_checkpoint_claim",
     "inject_checkpoint_line",
     "inject_tree_residue_line",
     "probe_authored_path_baseline",

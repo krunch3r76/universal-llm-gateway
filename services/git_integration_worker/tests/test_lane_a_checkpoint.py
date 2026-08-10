@@ -127,10 +127,31 @@ def test_inject_tree_residue_replaces_existing_line() -> None:
     assert "tree_residue: 99" not in out
 
 
+def test_extract_checkpoint_claim_from_bold_and_plain() -> None:
+    from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
+        extract_checkpoint_claim,
+        inject_checkpoint_line,
+    )
+
+    bold = (
+        "**checkpoint_claim:** deferred: lane-B implement — sweeper owns commit\n"
+        "**status:** complete\n"
+    )
+    assert extract_checkpoint_claim(bold) == (
+        "deferred: lane-B implement — sweeper owns commit"
+    )
+    plain = "checkpoint_claim: nothing_authored\n"
+    assert extract_checkpoint_claim(plain) == "nothing_authored"
+    injected = inject_checkpoint_line(
+        "TYPE: CLOSEOUT\nstatus: complete\ntree_residue: 2\n",
+        value="deferred: foreign WIP",
+    )
+    assert "checkpoint: deferred: foreign WIP" in injected
+
+
 def test_extract_authored_checkpoint_from_bold_and_plain() -> None:
     from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
         extract_authored_checkpoint,
-        inject_checkpoint_line,
     )
 
     bold = (
@@ -142,11 +163,24 @@ def test_extract_authored_checkpoint_from_bold_and_plain() -> None:
     )
     plain = "checkpoint: nothing_authored\n"
     assert extract_authored_checkpoint(plain) == "nothing_authored"
-    injected = inject_checkpoint_line(
-        "TYPE: CLOSEOUT\nstatus: complete\ntree_residue: 2\n",
-        value="deferred: foreign WIP",
+
+
+def test_extract_checkpoint_claim_ignores_infra_control_line() -> None:
+    """Infra ``checkpoint:`` control line is not the agent §2 claim surface."""
+    from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
+        extract_checkpoint_claim,
     )
-    assert "checkpoint: deferred: foreign WIP" in injected
+
+    body = """\
+**checkpoint_claim:** nothing_authored
+
+checkpoint: authored_cortex@local-master: cortex://notes/a.md deadbeef
+"""
+    assert extract_checkpoint_claim(body) == "nothing_authored"
+    assert (
+        extract_checkpoint_claim(body, allow_legacy_control_line=False)
+        == "nothing_authored"
+    )
 
 
 def test_extract_authored_checkpoint_ignores_fenced_table_quote() -> None:
@@ -212,8 +246,8 @@ checkpoint: committed deadbeef paths=99
     assert extract_authored_checkpoint(body) == "nothing_authored"
 
 
-def test_relay_table_projection_preserves_checkpoint_for_gate() -> None:
-    """Positive path: infrastructure checkpoint survives §2 table projection + gate."""
+def test_relay_table_projection_preserves_checkpoint_claim_for_gate() -> None:
+    """Positive path: infra checkpoint survives §2 table projection + gate."""
     from claude_bundles.lane_a_closeout_checkpoint import (
         validate_lane_a_closeout_checkpoint,
     )
@@ -233,6 +267,8 @@ def test_relay_table_projection_preserves_checkpoint_for_gate() -> None:
 ## §2 closeout
 
 **status:** complete
+
+**checkpoint_claim:** nothing_authored
 
 **ac_verdict:** AC1 — PASS
 
@@ -254,7 +290,7 @@ def test_relay_table_projection_preserves_checkpoint_for_gate() -> None:
         dispatch_id=dispatch_id,
     )
     relay_body = inject_checkpoint_line(relay_body, value=checkpoint_value)
-    assert "| checkpoint |" in relay_body
+    assert "| checkpoint_claim |" in relay_body
     verdict = validate_lane_a_closeout_checkpoint(
         body=relay_body,
         require_closeout_type=False,
@@ -682,3 +718,44 @@ def test_compute_checkpoint_committed_senior_to_cortex_offgit(
     path_count = len(paths_in_commit(tmp_path, lane_sha))
     assert value == f"committed {lane_sha} paths={path_count}"
     assert not value.startswith("authored_cortex:")
+
+
+def test_specimen_2_checkpoint_claim_vs_infra_authored_cortex() -> None:
+    """Specimen 2 — agent §2 claim nothing_authored vs infra authored_cortex measurement."""
+    from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+        annotate_checkpoint_claim_discrepancy,
+        merge_plane_discrepancy_markers,
+    )
+
+    uri = "cortex://notes/system/specs/seed-fixture.md"
+    digest = "a" * 64
+    measurement = f"authored_cortex@local-master: {uri} {digest}"
+    marker = annotate_checkpoint_claim_discrepancy(
+        claim="nothing_authored",
+        measurement=measurement,
+    )
+    assert marker == (
+        f"checkpoint_claim@§2 nothing_authored@local-master "
+        f"while checkpoint@infra {measurement}"
+    )
+    merged = merge_plane_discrepancy_markers(
+        "plane-discrepancy: deployment_state@local-master lags landed@local-master",
+        marker,
+    )
+    assert merged is not None
+    assert "checkpoint_claim@§2 nothing_authored@local-master" in merged
+    assert f"while checkpoint@infra {measurement}" in merged
+
+
+def test_checkpoint_claim_discrepancy_silent_when_equivalent() -> None:
+    from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+        annotate_checkpoint_claim_discrepancy,
+    )
+
+    assert (
+        annotate_checkpoint_claim_discrepancy(
+            claim="nothing_authored",
+            measurement="nothing_authored@local-master",
+        )
+        is None
+    )

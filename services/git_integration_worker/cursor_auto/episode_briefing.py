@@ -63,7 +63,7 @@ def build_briefing_block(
                 f"Codework ({raw}): abstraction-layering at highest open layer;",
                 "tick mint+enroll enrolled root — ¬ tip improvise. AC on CLOSEOUT.",
                 "Closeout: path-explicit commit clears lane authorship;",
-                "checkpoint: committed|nothing_authored|deferred: required.",
+                "checkpoint_claim: committed|nothing_authored|deferred: required in §2.",
             ]
         )
     elif raw == "seed":

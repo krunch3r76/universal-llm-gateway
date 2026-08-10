@@ -31,8 +31,10 @@ from services.git_integration_worker.cursor_auto.closeout_relay_cortex_spill imp
     promote_clamped_closeout_to_cortex,
 )
 from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+    annotate_checkpoint_claim_discrepancy,
     inject_plane_discrepancy_line,
     inject_plane_line,
+    merge_plane_discrepancy_markers,
 )
 from services.git_integration_worker.cursor_auto.closeout_tree_state import (
     compute_closeout_tree_state,
@@ -47,6 +49,7 @@ from services.git_integration_worker.cursor_auto.directive import (
 )
 from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
     derive_tree_residue,
+    extract_checkpoint_claim,
     inject_checkpoint_line,
     inject_tree_residue_line,
 )
@@ -254,6 +257,10 @@ async def relay_closeout_outcome(
     )
     relay_body = strip_deployment_state_line(payload.body)
     relay_body = inject_tree_residue_line(relay_body, count=residue_before.count)
+    checkpoint_claim = extract_checkpoint_claim(
+        relay_body,
+        allow_legacy_control_line=True,
+    )
     tree_state = compute_closeout_tree_state(
         source_repo=source_repo,
         dispatch_id=dispatch_id,
@@ -261,9 +268,16 @@ async def relay_closeout_outcome(
     )
     relay_body = inject_checkpoint_line(relay_body, value=tree_state.checkpoint)
     relay_body = inject_plane_line(relay_body, value=tree_state.plane_line)
+    claim_discrepancy = annotate_checkpoint_claim_discrepancy(
+        claim=checkpoint_claim,
+        measurement=tree_state.checkpoint,
+    )
     relay_body = inject_plane_discrepancy_line(
         relay_body,
-        value=tree_state.plane_discrepancy,
+        value=merge_plane_discrepancy_markers(
+            tree_state.plane_discrepancy,
+            claim_discrepancy,
+        ),
     )
     if second_read is not None:
         relay_body = inject_second_read_block(

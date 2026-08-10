@@ -1686,7 +1686,7 @@ def test_arc6637_real_closeout_fixtures_parse_without_relay_miss(
     import re
 
     parse_miss_fields = re.findall(r"relay could not locate `([^`]+)`", body)
-    assert [field for field in parse_miss_fields if field != "checkpoint"] == []
+    assert [field for field in parse_miss_fields if field != "checkpoint_claim"] == []
     assert f"source_ref: {provenance}" in body
 
 
@@ -2091,13 +2091,13 @@ TYPE: CLOSEOUT
 | status | complete |
 | ac_verdict | AC-1: PASS; AC-2: PASS; AC-3: PASS |
 | deltas_to_spec | none |
-| checkpoint | nothing_authored |
+| checkpoint_claim | nothing_authored |
 
 **evidence:**
 ```text
 | status | poison |
 | ac_verdict | … |
-| checkpoint | committed deadbeef paths=1 |
+| checkpoint_claim | committed deadbeef paths=1 |
 ```
 """
     assert extract_table_field(projected_body, "status") == "complete"
@@ -2107,7 +2107,7 @@ TYPE: CLOSEOUT
     assert "AC-1" in ac and "AC-2" in ac and "AC-3" in ac
     assert ac.strip() != "…"
     assert extract_field_section(projected_body, "deltas_to_spec") == "none"
-    assert extract_field_section(projected_body, "checkpoint") == "nothing_authored"
+    assert extract_field_section(projected_body, "checkpoint_claim") == "nothing_authored"
 
 
 def test_row11_section7_positive_ac_verdict_assertions() -> None:
