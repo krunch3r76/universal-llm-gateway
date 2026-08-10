@@ -168,8 +168,21 @@ Multi-slug: `--slugs a,b,c --continue-on-error`. Menu label is **Uninstall** (no
 
 ### Step 6 — Verify
 
-Re-run `scripts/cortex/claude-ai-sync-jupiter status`. Confirm target slug absent
-from `missing_on_ui` and (after uninstall) absent from `extra_on_ui`.
+1. Re-run `scripts/cortex/claude-ai-sync-jupiter status`. Confirm target slug
+   absent from `missing_on_ui` and (after uninstall) absent from `extra_on_ui`.
+   This is **Customize library** parity only.
+2. **Session-loaded skills (BINDING after arc 6895):** scrape the chat UI
+   Context → Skills frame — a DOM read, not a model probe. Never treat
+   `SKILLS_PROBE_OK` / "do you have the skill?" as verification.
+
+```bash
+scripts/cortex/claude-ai-sync-jupiter loaded-skills \
+  --chat-url 'https://claude.ai/cowork/cse_…' \
+  --require-loaded reasoning-posture,frontier-reasoning-discipline
+# or: upload_claude_bundles_ui.py --loaded-skills --chat-url … [--json]
+```
+
+Helper: `libs/claude_bundles/chat_context_skills.py` (`scrape_loaded_skills`).
 
 ## MCP connector restore (vortex / <mcp-host>)
 
