@@ -82,6 +82,22 @@ def code_server() -> dict:
     }
 
 
+def test_operator_proxy_life_surface_legal_tools_matches_derive() -> None:
+    """Gate hand-maintained LIFE_SURFACE_LEGAL_TOOLS against derive (arc 6655)."""
+    from claude_bundles.operator_proxy_mission import LIFE_SURFACE_LEGAL_TOOLS
+    from endpoint_surface import derive_surface_primary_tools
+
+    assert LIFE_SURFACE_LEGAL_TOOLS == derive_surface_primary_tools("life")
+
+
+def test_operator_proxy_forbidden_tools_matches_code_extra_derive() -> None:
+    """Gate LIFE_SURFACE_FORBIDDEN_TOOLS against derive_code_extra_primary_tools."""
+    from claude_bundles.operator_proxy_mission import LIFE_SURFACE_FORBIDDEN_TOOLS
+    from endpoint_surface import derive_code_extra_primary_tools
+
+    assert LIFE_SURFACE_FORBIDDEN_TOOLS == derive_code_extra_primary_tools()
+
+
 def test_life_tools_list_exact_primary_set(life_server: dict) -> None:
     assert life_server["tool_names"] == set(LIFE_PRIMARY)
     assert life_server["primary"] == LIFE_PRIMARY
