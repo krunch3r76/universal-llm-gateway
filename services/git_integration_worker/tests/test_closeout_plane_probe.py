@@ -56,7 +56,13 @@ def _init_repo(tmp_path: Path) -> Path:
     return repo
 
 
-def _wrapper(*, head_sha: str | None, branch: str | None) -> str:
+def _wrapper(
+    *,
+    head_sha: str | None,
+    branch: str | None,
+    commits_ahead: int | None = None,
+    landed: bool | None = None,
+) -> str:
     payload: dict[str, object] = {
         "schema_version": 1,
         "status": "complete",
@@ -67,6 +73,10 @@ def _wrapper(*, head_sha: str | None, branch: str | None) -> str:
         payload["head_sha"] = head_sha
     if branch is not None:
         payload["branch"] = branch
+    if commits_ahead is not None:
+        payload["commits_ahead"] = commits_ahead
+    if landed is not None:
+        payload["landed"] = landed
     return json.dumps(payload)
 
 
@@ -76,6 +86,18 @@ def test_parse_capture_plane_keys_from_wrapper() -> None:
     )
     assert keys.head_sha == "abc1234"
     assert keys.branch == "cursor-sdk/auto-3137b70eeaba"
+    assert keys.commits_ahead is None
+
+
+def test_parse_capture_plane_keys_extracts_commits_ahead() -> None:
+    keys = parse_capture_plane_keys(
+        _wrapper(head_sha="abc1234", branch="cursor-sdk/x", commits_ahead=0)
+    )
+    assert keys.commits_ahead == 0
+    keys_one = parse_capture_plane_keys(
+        _wrapper(head_sha="abc1234", branch="cursor-sdk/x", commits_ahead=1)
+    )
+    assert keys_one.commits_ahead == 1
 
 
 def test_stranded_fixture_headline_grep_visible_not_landed(tmp_path: Path) -> None:
@@ -373,7 +395,77 @@ def test_compute_tree_state_lane_a_capture_head_resolves_plane(tmp_path: Path) -
             wrapper_text=wrapper,
         )
     assert "unknown@lane-B (capture head absent)" not in state.plane_line
+    assert "NOT landed@local-master" in state.plane_line
+    assert "landed@local-master" not in state.plane_line.split("NOT landed@local-master")[0]
+
+
+def test_vacuous_tip_on_master_commits_ahead_zero_not_landed(tmp_path: Path) -> None:
+    """G₂ vacuous positive — tip on master with commits_ahead=0 must NOT claim landed."""
+    repo = _init_repo(tmp_path)
+    head = _git(repo, "rev-parse", "HEAD")
+    wrapper = _wrapper(head_sha=head, branch="cursor-sdk/auto-vacuous", commits_ahead=0)
+    with patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "compute_lane_a_checkpoint_value",
+        return_value="nothing_authored",
+    ):
+        state = compute_closeout_tree_state(
+            source_repo=repo,
+            dispatch_id="auto-vacuous",
+            wrapper_text=wrapper,
+        )
+    assert "NOT landed@local-master" in state.plane_line
+    plane_body = state.plane_line.split("plane:", 1)[1]
+    assert "landed@local-master" not in plane_body.replace("NOT landed@local-master", "")
+
+
+def test_vacuous_landed_false_wrapper_still_not_landed(tmp_path: Path) -> None:
+    """Optional landed:false in wrapper does not override G₂ admit gate."""
+    repo = _init_repo(tmp_path)
+    head = _git(repo, "rev-parse", "HEAD")
+    wrapper = _wrapper(
+        head_sha=head,
+        branch="cursor-sdk/auto-vacuous",
+        commits_ahead=0,
+        landed=False,
+    )
+    with patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "compute_lane_a_checkpoint_value",
+        return_value="nothing_authored",
+    ):
+        state = compute_closeout_tree_state(
+            source_repo=repo,
+            dispatch_id="auto-vacuous-false",
+            wrapper_text=wrapper,
+        )
+    assert "NOT landed@local-master" in state.plane_line
+
+
+def test_genuine_land_commits_ahead_one_reports_landed(tmp_path: Path) -> None:
+    """Genuine land — branch commit merged to master with commits_ahead=1."""
+    repo = _init_repo(tmp_path)
+    branch = "cursor-sdk/auto-genuine-land"
+    _git(repo, "checkout", "-b", branch)
+    (repo / "landed.txt").write_text("landed\n", encoding="utf-8")
+    _git(repo, "add", "landed.txt")
+    _git(repo, "commit", "-m", "lane-b progress")
+    head = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "master")
+    _git(repo, "merge", "--ff-only", branch)
+    wrapper = _wrapper(head_sha=head, branch=branch, commits_ahead=1)
+    with patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "compute_lane_a_checkpoint_value",
+        return_value="committed abc1234 paths=1",
+    ):
+        state = compute_closeout_tree_state(
+            source_repo=repo,
+            dispatch_id="auto-genuine-land",
+            wrapper_text=wrapper,
+        )
     assert "landed@local-master" in state.plane_line
+    assert "NOT landed@local-master" not in state.plane_line
 
 
 def test_strip_plane_line_roundtrip() -> None:

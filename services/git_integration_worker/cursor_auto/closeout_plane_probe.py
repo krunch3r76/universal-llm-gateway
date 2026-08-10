@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -55,6 +55,7 @@ class CapturePlaneKeys:
 
     head_sha: str | None
     branch: str | None
+    commits_ahead: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,8 +80,19 @@ class PlaneObservation:
         return self.unknown_reason is not None
 
 
+def _parse_commits_ahead(raw: object) -> int | None:
+    """Parse optional capture ``commits_ahead``; invalid values fail closed to None."""
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
 def parse_capture_plane_keys(wrapper_text: str | None) -> CapturePlaneKeys:
-    """Extract ``head_sha`` / ``branch`` from an SDK capture JSON wrapper."""
+    """Extract ``head_sha`` / ``branch`` / ``commits_ahead`` from capture JSON."""
     if not wrapper_text:
         return CapturePlaneKeys(head_sha=None, branch=None)
     raw = wrapper_text.strip()
@@ -100,7 +112,11 @@ def parse_capture_plane_keys(wrapper_text: str | None) -> CapturePlaneKeys:
     )
     if head_sha is not None and not _SHA_RE.match(head_sha):
         head_sha = None
-    return CapturePlaneKeys(head_sha=head_sha, branch=branch_name)
+    return CapturePlaneKeys(
+        head_sha=head_sha,
+        branch=branch_name,
+        commits_ahead=_parse_commits_ahead(data.get("commits_ahead")),
+    )
 
 
 def _git_ok(source_repo: Path, *args: str) -> bool:
@@ -182,6 +198,28 @@ def probe_three_planes(
         unknown_reason=None,
         as_of=stamp,
     )
+
+
+def apply_landed_admit_gate(
+    plane: PlaneObservation,
+    *,
+    commits_ahead: int,
+) -> PlaneObservation:
+    """Refuse vacuous ``landed@local-master`` when G₂ admit would reject.
+
+    Raw ancestry may probe True at ``head_sha == branch_point``; the landed
+    axis used for headline and annotate must pass ``admit_landed_true`` first.
+    Missing or invalid capture ``commits_ahead`` is treated as 0 (fail closed).
+    """
+    from services.git_integration_worker.cursor_sdk_deliverables_expected import (
+        admit_landed_true,
+    )
+
+    if plane.landed_local_master is not True:
+        return plane
+    if admit_landed_true(ancestry_on_master=True, commits_ahead=commits_ahead):
+        return plane
+    return replace(plane, landed_local_master=False)
 
 
 def render_plane_headline(obs: PlaneObservation) -> str:
@@ -547,6 +585,7 @@ def preserve_plane_lines(body: str) -> bool:
 __all__ = [
     "CapturePlaneKeys",
     "PlaneObservation",
+    "apply_landed_admit_gate",
     "annotate_status_claim_discrepancy",
     "annotate_checkpoint_claim_discrepancy",
     "annotate_plane_discrepancy",
