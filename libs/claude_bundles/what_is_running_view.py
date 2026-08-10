@@ -18,11 +18,64 @@ from typing import Any
 SCHEMA = "what-is-running/v1"
 SNAPSHOT_URI = "cortex://notes/system/operational/what-is-running.json"
 OPERATOR_PURPOSES = frozenset({"operator-proxy", "mission"})
+# Manual publish is deferred (todo:fleet-what-is-running); 5m TTL stops a forgotten
+# snapshot from vouching for liveness longer than one operational read cycle.
+DEFAULT_LIVENESS_TTL_S = 300.0
+HONEST_EMPTY_SESSIONS = "no live sessions asserted"
 
 
 def now_iso() -> str:
     """UTC timestamp with trailing Z for operational snapshots."""
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def ts_to_iso_z(ts: float) -> str:
+    """Convert unix seconds to operational snapshot ISO-Z."""
+    return datetime.fromtimestamp(ts, UTC).isoformat().replace("+00:00", "Z")
+
+
+def iso_z_to_ts(iso: str | None) -> float | None:
+    """Parse operational ISO-Z to unix seconds; None when unparseable."""
+    if not iso or not isinstance(iso, str):
+        return None
+    try:
+        text = iso[:-1] + "+00:00" if iso.endswith("Z") else iso
+        return datetime.fromisoformat(text).timestamp()
+    except (ValueError, TypeError):
+        return None
+
+
+def is_expired(expires_at_utc: str | None, now: float) -> bool:
+    """True when ``expires_at_utc`` is missing, unparseable, or not after ``now``."""
+    ts = iso_z_to_ts(expires_at_utc)
+    if ts is None:
+        return True
+    return now >= ts
+
+
+def _obligation_marker() -> dict[str, Any]:
+    return {"expiring": False, "obligation": True}
+
+
+def _honest_empty_scalars(scalars: dict[str, Any]) -> dict[str, Any]:
+    """Zero liveness scalars when the snapshot can no longer vouch for occupancy."""
+    out = dict(scalars)
+    out["streams_running_count"] = 0
+    out["attachments_live_cse_count"] = 0
+    out["registry_capacity_count"] = 0
+    out["effective_count_drain_only"] = 0
+    out["at_soft_limit"] = False
+    out["at_hard_limit"] = False
+    return out
+
+
+def _recompute_scalars(
+    view: dict[str, Any], running: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Refresh stream count from filtered ``running`` rows; keep other scalars."""
+    scalars = dict(view.get("scalars_actual") or {})
+    scalars["streams_running_count"] = len(running)
+    return scalars
 
 
 def age_s(started_at: Any, now: float) -> float | None:
@@ -128,6 +181,8 @@ def compose_view(
             registration_id=rid_s,
             started_at=reg.get("started_at"),
         )
+        row_observed = ts_to_iso_z(now)
+        row_expires = ts_to_iso_z(now + DEFAULT_LIVENESS_TTL_S)
         rows_out.append(
             {
                 "execution_id": row.get("execution_id"),
@@ -142,6 +197,9 @@ def compose_view(
                 "commissioned_by": holder,
                 "age_s": age_s(reg.get("started_at"), now),
                 "stream_status": row.get("status"),
+                "observed_at_utc": row_observed,
+                "expires_at_utc": row_expires,
+                "expiring": True,
             }
         )
 
@@ -167,6 +225,7 @@ def compose_view(
         "stream_soft_limit": active_work.get("soft_limit"),
         "stream_hard_limit": active_work.get("hard_limit"),
         "attachments_are_hygiene_not_admission": True,
+        **_obligation_marker(),
     }
 
     unknown_bucket = lanes_with_ops.get("lane_unknown") or []
@@ -184,6 +243,7 @@ def compose_view(
                         f"≥2 operator-proxy/mission streams on lane {lane} — "
                         "succession collision (predecessor not stood down)"
                     ),
+                    **_obligation_marker(),
                 }
             )
 
@@ -198,6 +258,7 @@ def compose_view(
                     "≥2 operator-purpose streams with unresolved lane join — "
                     "cannot confirm per-lane exclusivity"
                 ),
+                **_obligation_marker(),
             }
         )
     elif (
@@ -217,6 +278,7 @@ def compose_view(
                     f"{len(op_streams)} operator-purpose streams on distinct "
                     "lanes — per-lane exclusivity holds; fleet at soft capacity"
                 ),
+                **_obligation_marker(),
             }
         )
 
@@ -234,6 +296,7 @@ def compose_view(
                     "attachments ≠ product chats on claude.ai "
                     "(reclaim: todo:cdp-ask-ghost-live-cse-count)"
                 ),
+                **_obligation_marker(),
             }
         )
 
@@ -243,14 +306,18 @@ def compose_view(
                 "verdict": "ALIGNED",
                 "rule": "observed_matches_intended_minimum",
                 "detail": "No overlap or attachment-hygiene drift detected",
+                **_obligation_marker(),
             }
         )
 
     running = int(active_work.get("running_count") or 0)
+    observed_at_utc = ts_to_iso_z(now)
+    expires_at_utc = ts_to_iso_z(now + DEFAULT_LIVENESS_TTL_S)
     return {
         "schema": SCHEMA,
         "snapshot_uri": SNAPSHOT_URI,
-        "observed_at_utc": now_iso(),
+        "observed_at_utc": observed_at_utc,
+        "expires_at_utc": expires_at_utc,
         "sources": sources,
         "ontology": {
             "session": "URL-addressed CSE (durable, free)",
@@ -293,11 +360,41 @@ def compose_view(
     }
 
 
-def render_text(view: dict[str, Any]) -> str:
-    """Format a composed view as a codeblind operator-readable text report."""
+def serve_view(view: dict[str, Any], now: float | None = None) -> dict[str, Any]:
+    """Apply liveness expiry on read — the sole filter for ``running`` rows.
+
+    Snapshot past ``expires_at_utc`` ⇒ honest-empty liveness (AC2) while
+    obligation blocks (``intended``, ``findings``) pass through unchanged.
+    Side effects: none.
+    """
+    now = time.time() if now is None else now
+    out = dict(view)
+    if is_expired(view.get("expires_at_utc"), now):
+        out["liveness_assertion"] = HONEST_EMPTY_SESSIONS
+        out["running"] = []
+        out["scalars_actual"] = _honest_empty_scalars(view.get("scalars_actual") or {})
+        out["registry_status_counts"] = {}
+        return out
+
+    running: list[dict[str, Any]] = []
+    for row in view.get("running") or []:
+        if not isinstance(row, dict):
+            continue
+        if is_expired(row.get("expires_at_utc"), now):
+            continue
+        running.append(row)
+    out["running"] = running
+    out["scalars_actual"] = _recompute_scalars(view, running)
+    return out
+
+
+def render_text(view: dict[str, Any], *, now: float | None = None) -> str:
+    """Format a served view as a codeblind operator-readable text report."""
+    view = serve_view(view, now=now)
     lines: list[str] = [
         "=== what-is-running v1 ===",
         f"observed_at: {view['observed_at_utc']}",
+        f"expires_at: {view.get('expires_at_utc', '?')}",
         f"sources: {json.dumps(view['sources'], sort_keys=True)}",
         "",
         "## Ontology nouns (do not collapse)",
@@ -319,7 +416,9 @@ def render_text(view: dict[str, Any]) -> str:
         "",
         "## Running streams",
     ]
-    if not view["running"]:
+    if view.get("liveness_assertion") == HONEST_EMPTY_SESSIONS:
+        lines.append(f"  {HONEST_EMPTY_SESSIONS}")
+    elif not view["running"]:
         lines.append("  (none)")
     for r in view["running"]:
         age = r.get("age_s")

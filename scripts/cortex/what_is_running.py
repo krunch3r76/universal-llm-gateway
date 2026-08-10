@@ -27,6 +27,7 @@ from claude_bundles.what_is_running_view import (  # noqa: E402
     SNAPSHOT_URI,
     compose_view,
     render_text,
+    serve_view,
 )
 
 _SNAPSHOT_REL = "notes/system/operational/what-is-running.json"
@@ -172,8 +173,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.publish:
         path = publish_cortex(view)
         print(f"published {SNAPSHOT_URI} path={path}", file=sys.stderr)
+    served = serve_view(view)
     if args.json:
-        print(json.dumps(view, indent=2, sort_keys=True))
+        print(json.dumps(served, indent=2, sort_keys=True))
     else:
         print(render_text(view), end="")
     return 0
