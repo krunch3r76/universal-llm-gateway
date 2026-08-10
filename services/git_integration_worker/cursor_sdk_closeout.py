@@ -1112,6 +1112,10 @@ def build_implement_closeout_body(
             payload["head_sha"] = head_sha
         if commits_ahead is not None:
             payload["commits_ahead"] = commits_ahead
+        else:
+            # Schema model_dump may emit null; absence must travel as a missing
+            # key so the plane classifier does not see a present measurement.
+            payload.pop("commits_ahead", None)
         if landed is not None:
             payload["landed"] = landed
         effects = attribution_effects_paths(
@@ -1643,8 +1647,9 @@ def _assemble_closeout_delivery(
         lane_b_head_sha if lane_b_head_sha is not None else closeout_head
     )
     # Lane-A: populate commits_ahead from admit_head..closeout_head (symmetric with
-    # Lane-B branch_point..branch). Leaving the key absent re-admits vacuous
-    # landed@local-master via ancestry alone (A1 / a04184ad door after 79954cfe).
+    # Lane-B branch_point..branch). A real admit_head with an empty range is a
+    # measured 0 (refuse vacuous landed). A missing/unresolvable admit_head must
+    # leave the key absent — never launder None into 0 (presence typing travels).
     capture_commits_ahead = lane_b_commits_ahead
     if capture_commits_ahead is None:
         admit_head: str | None = None
@@ -1652,13 +1657,14 @@ def _assemble_closeout_delivery(
             raw_admit = baseline.get("admit_head")
             if isinstance(raw_admit, str) and raw_admit.strip():
                 admit_head = raw_admit.strip()
-        capture_commits_ahead = len(
-            commits_between(
-                write_tree,
-                admit_head=admit_head,
-                closeout_head=closeout_head,
+        if admit_head is not None and closeout_head is not None:
+            capture_commits_ahead = len(
+                commits_between(
+                    write_tree,
+                    admit_head=admit_head,
+                    closeout_head=closeout_head,
+                )
             )
-        )
     body = build_implement_closeout_body(
         dispatch_id=dispatch_id,
         outcome=outcome,

@@ -300,7 +300,7 @@ def _init_git_repo_with_commit(path: Path) -> str:
 
 
 def test_lane_a_capture_head_sha_from_closeout_head(tmp_path: Path) -> None:
-    """Lane-A finalize sets capture head_sha + commits_ahead=0 when nothing committed."""
+    """AC2: real admit_head + empty range → measured commits_ahead=0."""
     head = _init_git_repo_with_commit(tmp_path)
     outcome = SdkRunOutcome(
         body="done",
@@ -324,8 +324,64 @@ def test_lane_a_capture_head_sha_from_closeout_head(tmp_path: Path) -> None:
     assert payload.get("commits_ahead") == 0
 
 
+def test_lane_a_capture_commits_ahead_absent_without_admit_head(
+    tmp_path: Path,
+) -> None:
+    """AC1: unresolvable admit_head must not emit measured commits_ahead=0.
+
+    Fails before the DOOR-1 fix: len(commits_between(admit_head=None)) launders
+    into present 0 and the plane gate demotes tip-on-master to NOT landed.
+    """
+    from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+        PlaneObservation,
+        apply_landed_admit_gate,
+        parse_capture_plane_keys,
+        render_plane_headline,
+    )
+
+    head = _init_git_repo_with_commit(tmp_path)
+    outcome = SdkRunOutcome(
+        body="done",
+        status="finished",
+        duration_ms=50,
+        tool_call_count=2,
+    )
+    delivery = prepare_closeout_delivery(
+        source_repo=tmp_path,
+        dispatch_id="lane-a-no-admit-head",
+        outcome=outcome,
+        degraded_reason=None,
+        thread_id="t1",
+        work_item_ref=None,
+        baseline={"codes": {}, "hashes": {}},
+        deliverables_expected=True,
+    )
+    payload = json.loads(delivery.body)
+    assert payload.get("head_sha") == head
+    assert "commits_ahead" not in payload
+
+    keys = parse_capture_plane_keys(delivery.body)
+    assert keys.commits_ahead_presence == "absent"
+    assert keys.commits_ahead is None
+    gated = apply_landed_admit_gate(
+        PlaneObservation(
+            head_sha=head,
+            branch=None,
+            commit_exists=True,
+            landed_local_master=True,
+            published_origin=None,
+            unknown_reason=None,
+            as_of="t0",
+        ),
+        commits_ahead=keys.commits_ahead,
+        commits_ahead_presence=keys.commits_ahead_presence,
+    )
+    headline = render_plane_headline(gated)
+    assert "NOT landed@local-master" not in headline
+
+
 def test_lane_a_capture_commits_ahead_after_commit(tmp_path: Path) -> None:
-    """Lane-A capture commits_ahead counts admit_head..closeout_head when tip advances."""
+    """AC3: Lane-A tip advance after real admit_head → commits_ahead>=1."""
     admit = _init_git_repo_with_commit(tmp_path)
     (tmp_path / "lane_a_progress.py").write_text("progress\n", encoding="utf-8")
     subprocess.run(
