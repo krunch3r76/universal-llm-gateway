@@ -686,8 +686,11 @@ def verification_all_pass(verification: list[Verification] | None) -> bool:
     """True when verification earns the I2 SHIPPED short-circuit.
 
     A row is trusted only when ``exit_code_register == "observed"`` (process
-    returncode). Derived Gate-D / lint-skip booleans packed as ``exit_code: 0``
-    are emitter self-reports — they must not launder SHIPPED above G₁
+    returncode). Observed lint and harvested pytest siblings both count;
+    ``gate_d:*`` rows are derived structural gates — never pytest witnesses.
+
+    Derived Gate-D / lint-skip booleans packed as ``exit_code: 0`` are emitter
+    self-reports — they must not launder SHIPPED above G₁
     (todo:success-shaped-silence F1 / specimen class gate_d:passed derived).
 
     Fail-closed rules:

@@ -107,9 +107,12 @@ def build_gate_d_verification(
 ) -> Verification:
     """Pack Gate-D as a *derived* boolean wearing a process-exit shape.
 
+    Structural deliverable gate — **not** a pytest / test-process witness.
     ``exit_code`` here is not a subprocess returncode — it is ``0 if passed
     else 1``. Marked ``derived`` so readers cannot treat it as an observed
     process exit (row 29 member 5 / specimen auto-00a23d2a4f45 class).
+    Harvested pytest siblings live in separate ``observed`` rows when present;
+    their absence is ``presence_legible_absence_not``.
     """
     cmd = f"{GATE_D_PREFIX}{reason}"
     if note:

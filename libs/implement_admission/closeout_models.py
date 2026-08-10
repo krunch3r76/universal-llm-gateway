@@ -80,6 +80,13 @@ class Verification(BaseModel):
       runs of the same command are distinguishable. A register alone without
       identity does not fix the specimen class.
 
+    **Gate-D ≠ pytest witness:** ``gate_d:*`` rows are structural deliverable
+    gates (``basis=gate_d_boolean_pass``), not harvested test process exits.
+    Optional pytest siblings are ``observed`` rows packed by
+    ``cursor_sdk_test_observation.harvest_test_verifications``; absence of such
+    a sibling does **not** earn "no tests ran" — semantics
+    ``presence_legible_absence_not`` (7065#162).
+
     Default ``unknown`` keeps historical closeout JSON loadable
     (``ImplementCloseout.model_validate`` / pipeline apply). New packers MUST
     set register + invocation_id via the helpers below — bare two-field
@@ -103,6 +110,8 @@ def observed_process_verification(
     """Pack a process-observed exit from ``subprocess`` / shell returncode.
 
     Mints ``invocation_id`` when omitted so each process run stays distinct.
+    Used for closeout-time lint, harvested pytest shells, and quality_gate test
+    siblings — never for Gate-D (use ``derived_gate_verification``).
     """
     return Verification(
         command=command,
@@ -123,6 +132,8 @@ def derived_gate_verification(
     """Pack a derived boolean-as-exit for Gate-D and similar non-process verdicts.
 
     ``exit_code`` is not a live process returncode — callers must pass *basis*.
+    Readers must not treat ``gate_d:*`` rows as pytest witnesses; see
+    ``TEST_OBSERVATION_SEMANTICS`` / ``presence_legible_absence_not``.
     """
     return Verification(
         command=command,

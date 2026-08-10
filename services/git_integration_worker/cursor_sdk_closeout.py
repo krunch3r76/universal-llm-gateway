@@ -118,6 +118,9 @@ from services.git_integration_worker.cursor_sdk_stream_capture import (
 from services.git_integration_worker.cursor_sdk_subagent_capture import (
     ensure_subagents_surface,
 )
+from services.git_integration_worker.cursor_sdk_test_observation import (
+    harvest_test_verifications,
+)
 
 logger = get_logger(__name__)
 
@@ -1397,7 +1400,13 @@ def _assemble_closeout_delivery(
         lint_verification, lint_deviation = run_touched_files_lint(
             write_tree, repo_change_set
         )
-        verification = [*verification, lint_verification]
+        # Harvest optional observed pytest siblings from stream tool_calls.
+        # Absence does not earn "no tests ran" (presence_legible_absence_not).
+        verification = [
+            *verification,
+            lint_verification,
+            *harvest_test_verifications(outcome.tool_calls),
+        ]
         if lint_deviation:
             baseline_deviations.append(lint_deviation)
     capture_status, divergence_reason, deviations, manifest = (
