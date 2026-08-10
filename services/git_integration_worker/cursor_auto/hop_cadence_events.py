@@ -37,7 +37,7 @@ def GiwCursorAutoHopCadenceRevokeBreaker(  # noqa: N802
     revocation_count: int,
     breaker_n: int,
 ) -> Event:
-    """Cadence hop breaker tripped after repeated stall revocations."""
+    """Cadence hop breaker tripped (stall revocations or unjoinable hop failures)."""
     return Event(
         signal="giw.cursor_auto.hop_cadence_revoke_breaker",
         payload={

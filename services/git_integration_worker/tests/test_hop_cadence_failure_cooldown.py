@@ -14,6 +14,7 @@ substrate is already failing every generate.
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 from services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile import (
     REVOKE_BREAKER_N,
@@ -57,14 +58,34 @@ def test_failed_hop_records_no_unjoinable_claim(tmp_path: Path) -> None:
 def test_repeated_unjoinable_hops_trip_the_breaker(tmp_path: Path) -> None:
     path = _watches_file(tmp_path)
     now = 1_000_000.0
-    for i in range(REVOKE_BREAKER_N):
+    emit_kw: list[dict] = []
+
+    def _capture_emit(**kwargs: object) -> None:
+        emit_kw.append(dict(kwargs))
+
+    with patch(
+        "services.git_integration_worker.cursor_auto.hop_cadence_events.emit_revoke_breaker",
+        _capture_emit,
+    ):
+        for i in range(REVOKE_BREAKER_N):
+            mark_hop_failed(
+                "7046", reason="missing_execution_id", now=now + i * 1801.0, path=path
+            )
+        # Already tripped — further failures must not re-emit.
         mark_hop_failed(
-            "7046", reason="missing_execution_id", now=now + i * 1801.0, path=path
+            "7046",
+            reason="missing_execution_id",
+            now=now + REVOKE_BREAKER_N * 1801.0,
+            path=path,
         )
 
     row = load_watches(path)["7046"]
-    assert row["consecutive_hop_failures"] == REVOKE_BREAKER_N
+    assert row["consecutive_hop_failures"] == REVOKE_BREAKER_N + 1
     assert breaker_blocks_hop(row), "breaker never trips on unjoinable hops"
+    assert len(emit_kw) == 1, "revoke_breaker must emit once on first trip"
+    assert emit_kw[0]["thread_id"] == "7046"
+    assert emit_kw[0]["revocation_count"] == REVOKE_BREAKER_N
+    assert emit_kw[0]["breaker_n"] == REVOKE_BREAKER_N
 
 
 def test_successful_hop_clears_the_failure_streak(tmp_path: Path) -> None:

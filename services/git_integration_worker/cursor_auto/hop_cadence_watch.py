@@ -392,8 +392,21 @@ def mark_hop_failed(
     # whose stall we can join; without this it would never reach the breaker,
     # because the breaker only counts revocations of claims that were joinable.
     if failures >= REVOKE_BREAKER_N:
+        first_trip = not row.get("breaker_tripped")
         row["breaker_tripped"] = True
         row["breaker_tripped_at"] = ts
         row["breaker_trip_reason"] = reason
+        if first_trip:
+            # Same escalate surface as stall-revoke (AC4) — unjoinable hops
+            # must be observable when they trip the breaker alone.
+            from services.git_integration_worker.cursor_auto.hop_cadence_events import (
+                emit_revoke_breaker,
+            )
+
+            emit_revoke_breaker(
+                thread_id=thread_id,
+                revocation_count=failures,
+                breaker_n=REVOKE_BREAKER_N,
+            )
     watches[thread_id] = row
     save_watches(watches, path)
