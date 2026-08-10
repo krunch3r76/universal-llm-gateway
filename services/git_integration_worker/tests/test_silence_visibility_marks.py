@@ -6,12 +6,14 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from claude_bundles.cdp_model_endpoint import result_from_snapshot
+
 from services.git_integration_worker.cursor_auto.closeout_outbox import (
     CloseoutOutboxStore,
 )
-from services.git_integration_worker.cursor_auto.hop_cadence import fire_hop_for_decision
+from services.git_integration_worker.cursor_auto.hop_cadence import (
+    fire_hop_for_decision,
+)
 from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
     HopDecision,
     StandingHandoffFreshness,
