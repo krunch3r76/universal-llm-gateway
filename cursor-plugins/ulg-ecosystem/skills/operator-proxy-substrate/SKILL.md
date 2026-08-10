@@ -72,16 +72,7 @@ Operator-facing signals + `auth_gate_ack:` grammar: `cdp-operator-proxy` § Auth
 
 ## Supersede mechanism (BINDING)
 
-**One live request per private thread.** A second `agent_bus.request` on that thread
-`run_cancel`s the first whether or not it is a re-issue, duplicate, or unrelated ask
-(duplicate-protection is a special case, not the rule). Parallel asks need separate lanes or one
-bundled DIRECTIVE. Cancellation is silent at decision — visible only in the enqueue `superseded`
-block and afterwards as a `status:superseded` turn. Provenance (`observed`): `agent-bus:6655`
-turns 2005/2007/2009; `agent-bus:6885` turn 226 — see `cdp-operator-proxy` § Interrupt /
-supersede.
-
-While a job is in flight, a second request on the **same private thread** is read as a
-**backtrack**, not a queue append — no extra tool, no body token, no `manage`, no GIW restart.
+**One live request per private thread — and know exactly what does and does not protect you.** A second `agent_bus.request` on a thread cancels a predecessor **only when that predecessor is already `claimed` by Auto** (in flight, nested SDK not finished) **and** the path is not a continuity hop. Predecessors still `queued` are **not** cancelled — they accumulate, and **both will run**. Scope is **per-thread, not per-requester**. The protection is weakest under backlog (slow admit → re-issue against still-queued → both run): **wait.** A populated `superseded` block is an interrupt **attempt** (`run_cancel` = process stop; `pre_register_live_run` = displacement without process-stop); `superseded: null` is not "lane clear." Parallel asks need separate lanes or one bundled DIRECTIVE. Full seat-facing text + **Provenance (source-read)** table: `cdp-operator-proxy` § Interrupt / supersede (`supersede.py:100-102`, `queue.py:144-159`, `cursor_sdk_supersede.py:156-157`, `routes/cursor_auto.py:217-246`).
 
 | # | Step | Evidence |
 |---|---|---|
