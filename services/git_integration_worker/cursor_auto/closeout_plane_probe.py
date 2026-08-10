@@ -236,26 +236,32 @@ def annotate_plane_discrepancy(
 
     Never refuses emit — discrepancy is a rendered defect signal, not a gate.
     """
-    if plane.is_unknown:
-        return None
     markers: list[str] = []
-    if (
-        plane.landed_local_master is True
-        and deployment_state
-        and "authored-not-committed" in deployment_state
-    ):
-        markers.append(
-            "deployment_state@local-master lags landed@local-master"
-        )
-    if (
-        plane.landed_local_master is False
-        and plane.commit_exists is True
-        and checkpoint_claims_committed(checkpoint)
-        and "@local-master" in checkpoint.split()[0]
-    ):
-        markers.append(
-            "checkpoint@local-master claims commit while plane NOT landed@local-master"
-        )
+    if plane.is_unknown:
+        if checkpoint_claims_committed(checkpoint):
+            reason = plane.unknown_reason or "unresolved"
+            lead = checkpoint.strip().split()[0] if checkpoint.strip() else "committed"
+            markers.append(
+                f"plane unknown@lane-B ({reason}) while checkpoint claims {lead}"
+            )
+    else:
+        if (
+            plane.landed_local_master is True
+            and deployment_state
+            and "authored-not-committed" in deployment_state
+        ):
+            markers.append(
+                "deployment_state@local-master lags landed@local-master"
+            )
+        if (
+            plane.landed_local_master is False
+            and plane.commit_exists is True
+            and checkpoint_claims_committed(checkpoint)
+            and "@local-master" in checkpoint.split()[0]
+        ):
+            markers.append(
+                "checkpoint@local-master claims commit while plane NOT landed@local-master"
+            )
     if not markers:
         return None
     return "plane-discrepancy: " + "; ".join(markers)

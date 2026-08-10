@@ -143,6 +143,37 @@ def test_degraded_commit_absent_from_odb(tmp_path: Path) -> None:
     assert "landed@local-master" not in line
 
 
+def test_discrepancy_annotates_unknown_plane_with_committed_checkpoint(
+    tmp_path: Path,
+) -> None:
+    """unknown@lane-B + committed checkpoint must not ship silently (bus 7068#13)."""
+    repo = _init_repo(tmp_path)
+    obs = probe_three_planes(repo, head_sha=None, branch="cursor-sdk/x")
+    assert render_plane_headline(obs) == "plane: unknown@lane-B (capture head absent)"
+    marker = annotate_plane_discrepancy(
+        checkpoint="committed@local-master deadbeef paths=1",
+        deployment_state=None,
+        plane=obs,
+    )
+    assert marker is not None
+    assert marker.startswith("plane-discrepancy:")
+    assert "unknown" in marker.lower()
+    assert "committed" in marker.lower()
+
+
+def test_discrepancy_silent_when_unknown_and_checkpoint_not_committed(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path)
+    obs = probe_three_planes(repo, head_sha=None)
+    marker = annotate_plane_discrepancy(
+        checkpoint="nothing_authored@local-master",
+        deployment_state=None,
+        plane=obs,
+    )
+    assert marker is None
+
+
 def test_discrepancy_annotates_when_deployment_lags_landed(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path)
     head = _git(repo, "rev-parse", "HEAD")
