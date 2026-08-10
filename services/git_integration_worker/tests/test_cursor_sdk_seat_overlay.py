@@ -15,6 +15,7 @@ import pytest
 
 from services.git_integration_worker.cursor_seat_overlay import (
     ECOSYSTEM_PLUGIN_RELPATH,
+    LEAD_ONLY_PLUGIN_PATHS,
     PRUNE_ONLY_PLUGIN_PATHS,
     PRUNED_PLUGIN_PATHS,
     SeatOverlayConfigError,
@@ -40,6 +41,8 @@ def _fake_dispatch_cursor_dir(tmp_path: Path) -> Path:
         ("cdp-operator-proxy_ulg.mdc", "Kaywan explicitly declares\n"),
     ):
         (plugin_root / "rules" / name).write_text(body, encoding="utf-8")
+    for relpath in LEAD_ONLY_PLUGIN_PATHS:
+        (plugin_root / relpath).write_text("lead-only doctrine\n", encoding="utf-8")
     (plugin_root / "rules" / "presence-discipline_ulg.mdc").write_text(
         "unrelated\n", encoding="utf-8"
     )
@@ -74,7 +77,7 @@ def test_human_register_pruned_and_interagent_grafted(tmp_path: Path) -> None:
     plugin_root = cursor_dir / ECOSYSTEM_PLUGIN_RELPATH
     for relpath in PRUNE_ONLY_PLUGIN_PATHS:
         assert not (plugin_root / relpath).exists()
-    assert set(pruned) == set(PRUNED_PLUGIN_PATHS)
+    assert set(pruned) == set(PRUNED_PLUGIN_PATHS) | set(LEAD_ONLY_PLUGIN_PATHS)
 
     assert (plugin_root / "rules" / "interagent-posture_ulg.mdc").is_file()
     assert (plugin_root / "skills" / "interagent-posture" / "SKILL.md").is_file()
@@ -89,8 +92,26 @@ def test_human_register_pruned_and_interagent_grafted(tmp_path: Path) -> None:
     ).read_text(encoding="utf-8")
     assert not (plugin_root / "rules" / "cdp-operator-proxy_ulg.mdc").exists()
 
+    # Lead-only doctrine costs a re-send per agent step and governs nothing here.
+    for relpath in LEAD_ONLY_PLUGIN_PATHS:
+        assert not (plugin_root / relpath).exists(), relpath
+
     # Unrelated plugin rules keep IDE parity.
     assert (plugin_root / "rules" / "presence-discipline_ulg.mdc").is_file()
+
+
+def test_lead_only_absence_is_tolerated(tmp_path: Path) -> None:
+    """A lead-only rule missing from the operator tree must not fail the overlay."""
+    cursor_dir = _fake_dispatch_cursor_dir(tmp_path)
+    plugin_root = cursor_dir / ECOSYSTEM_PLUGIN_RELPATH
+    (plugin_root / LEAD_ONLY_PLUGIN_PATHS[0]).unlink()
+
+    pruned, _ = apply_cursor_sdk_seat_overlay(
+        cursor_dir, overlay_root=_fake_overlay(tmp_path)
+    )
+
+    assert LEAD_ONLY_PLUGIN_PATHS[0] not in pruned
+    assert set(PRUNED_PLUGIN_PATHS) <= set(pruned)
 
 
 def test_idempotent_when_already_applied(tmp_path: Path) -> None:

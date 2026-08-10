@@ -2,11 +2,17 @@
 
 The per-dispatch HOME (see :mod:`cursor_home`) copies the operator's
 ``~/.cursor/plugins`` so ``setting_sources=all`` matches the IDE substrate. That
-parity is wrong for one class of guidance: the **human-facing** operator register
+parity is wrong for two classes of guidance.
+
+The first is a **correctness** problem: the human-facing operator register
 (``operator-posture``) teaches a seat to open with Been→Are→Going orientation and
 close with "What I need from you" — addressed to a person who is not in the
 dispatch loop at all. A headless seat inheriting it addresses its dispatching lead
 (a model) as a human.
+
+The second is an **economics** problem: always-applied lead/orchestrator rules are
+re-sent on every agent step, so a rule the seat can never act on is charged once per
+tool call for the life of the run. ``LEAD_ONLY_PLUGIN_PATHS`` carries that set.
 
 Because the HOME plugin tree is a *copy*, it is the one substrate layer a seat can
 actually be excluded from: this module deletes the human-register rule and skill
@@ -48,6 +54,21 @@ PRUNE_ONLY_PLUGIN_PATHS: tuple[Path, ...] = (
     Path("rules") / "operator-posture_ulg.mdc",
     Path("skills") / "operator-posture",
     Path("rules") / "cdp-operator-proxy_ulg.mdc",
+)
+
+# Lead/orchestrator-only rules pruned for context economy, not register correctness.
+# Each is always-applied, so the IDE copy re-sends it on every agent step; a headless
+# seat never performs the behavior any of them govern. Measured 2026-08-09: the
+# resident prime is ~81K tokens per step and these seven are ~6.6K of it, charged
+# across ~3.5K steps/day. Absence here is tolerated — a missing file is a no-op.
+LEAD_ONLY_PLUGIN_PATHS: tuple[Path, ...] = (
+    Path("rules") / "expand-growth-loop_ulg.mdc",
+    Path("rules") / "dispatch-in-flight-supremacy_ulg.mdc",
+    Path("rules") / "claude-ai-cdp-navigation_ulg.mdc",
+    Path("rules") / "session-abort-authorization_ulg.mdc",
+    Path("rules") / "bind-then-compose-dispatch_ulg.mdc",
+    Path("rules") / "pager-notify_ulg.mdc",
+    Path("rules") / "anthropic-substrate_ulg.mdc",
 )
 
 
@@ -92,18 +113,17 @@ def apply_cursor_sdk_seat_overlay(
     *,
     overlay_root: Path | str | None = None,
 ) -> tuple[list[Path], list[Path]]:
-    """Prune the human register from *cursor_dir* plugins and graft the overlay.
+    """Prune the human register and lead-only rules from *cursor_dir*, graft the overlay.
 
     *cursor_dir* is the dispatch HOME's ``.cursor`` directory (already seeded with
-    the plugin copy). Returns ``(pruned, grafted)`` plugin-relative paths. Raises
+    the plugin copy). Returns ``(pruned, grafted)`` plugin-relative paths — ``pruned``
+    spans both :data:`PRUNED_PLUGIN_PATHS` and :data:`LEAD_ONLY_PLUGIN_PATHS`. Raises
     :class:`SeatOverlayConfigError` when the overlay SoT or the plugin copy is
     missing, or when a prune/graft did not take effect — a silent no-op here means
     the seat runs with the human register attached.
     """
     root = (
-        seat_overlay_root()
-        if overlay_root is None
-        else Path(overlay_root).expanduser()
+        seat_overlay_root() if overlay_root is None else Path(overlay_root).expanduser()
     )
     if not root.is_dir():
         raise SeatOverlayConfigError(f"seat overlay root absent: {root}")
@@ -117,7 +137,7 @@ def apply_cursor_sdk_seat_overlay(
     graft_pairs = _graft_entries(root)
 
     pruned: list[Path] = []
-    for relpath in PRUNED_PLUGIN_PATHS:
+    for relpath in (*PRUNED_PLUGIN_PATHS, *LEAD_ONLY_PLUGIN_PATHS):
         target = plugin_root / relpath
         if target.is_dir():
             shutil.rmtree(target)
