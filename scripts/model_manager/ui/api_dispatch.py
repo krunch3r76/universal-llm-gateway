@@ -33,6 +33,7 @@ from .controller.restart_intent_store import (
     intent_status_view,
 )
 from .controller.restart_window_ctl import lifecycle_with_restart_window
+from .lifecycle_envelope import start_envelope
 
 if TYPE_CHECKING:
     from universal_event_bus import EventBus
@@ -124,7 +125,7 @@ async def execute(
         case "start":
             require_service(service)
             msg = await _start(ctl, service)
-            return {"status": "ok", "message": msg}
+            return start_envelope(msg)
 
         case "stop":
             require_service(service)
