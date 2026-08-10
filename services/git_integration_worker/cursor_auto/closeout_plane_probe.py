@@ -13,13 +13,40 @@ import json
 import re
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 _GIT_TIMEOUT_S = 30.0
 _SHA_RE = re.compile(r"^[0-9a-f]{7,40}$", re.I)
 _PLANE_LINE_RE = re.compile(r"(?im)^plane:\s*.+$")
 _PLANE_DISCREPANCY_RE = re.compile(r"(?im)^plane-discrepancy:\s*.+$")
+_PLANE_REGISTER_RE = re.compile(r"(?im)^plane-register:\s*.+$")
+_PLANE_INFIX = r"(?:@[\w.-]+(?:\([^)]*\))?)?"
+_PENDING_TAIL_RE = re.compile(r"\s+\(\+\d+\s+pending\)\s*$", re.I)
+_TRUNCATION_ELLIPSIS_RE = re.compile(
+    r"\s*…\s*\(full(?:\s+text)?:\s*[^)]+\)\s*$",
+    re.I,
+)
+_TRUNCATION_POINTER_RE = re.compile(
+    r"^\s*truncated:\s*…\s*\(full(?:\s+text)?:\s*[^)]+\)\s*$",
+    re.I,
+)
+_AUTHORED_CORTEX_PREFIX_RE = re.compile(
+    rf"^authored_cortex{_PLANE_INFIX}:\s*(.+)$",
+    re.I | re.S,
+)
+_CORTEX_URI_DIGEST_PAIR_RE = re.compile(
+    r"^(cortex://\S+)(?:\s+[0-9a-f]{64})?$",
+    re.I,
+)
+_COMMITTED_DISPOSITION_RE = re.compile(
+    rf"^committed{_PLANE_INFIX}\s+([0-9a-f]{{7,40}})\s+paths=(\d+)",
+    re.I,
+)
+_STATUS_CLAIM_FRAGMENT_RE = re.compile(
+    r"^status_claim@§2\s+(\S+)\s+while\s+status@infra\s+(\S+)$",
+    re.I,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,7 +135,7 @@ def _is_ancestor_of_ref(source_repo: Path, sha: str, ref: str) -> bool | None:
 
 
 def _as_of_stamp() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def probe_three_planes(
@@ -226,6 +253,81 @@ def checkpoint_claims_committed(checkpoint: str) -> bool:
     return lead == "committed" or lead.startswith("committed@")
 
 
+def _strip_cosmetic_checkpoint_tail(text: str) -> str:
+    """Strip relay truncation tails and committed pending suffixes before compare."""
+    stripped = text.strip()
+    while True:
+        next_text = _PENDING_TAIL_RE.sub("", stripped)
+        next_text = _TRUNCATION_ELLIPSIS_RE.sub("", next_text)
+        if next_text == stripped:
+            break
+        stripped = next_text.strip()
+    if _TRUNCATION_POINTER_RE.match(stripped):
+        return ""
+    return stripped
+
+
+def _sha_prefix_equal(left: str, right: str) -> bool:
+    a, b = left.lower(), right.lower()
+    if not _SHA_RE.match(a) or not _SHA_RE.match(b):
+        return a == b
+    return a.startswith(b) or b.startswith(a)
+
+
+def _authored_cortex_uri_list(text: str) -> tuple[str, ...] | None:
+    match = _AUTHORED_CORTEX_PREFIX_RE.match(text.strip())
+    if match is None:
+        return None
+    uris: list[str] = []
+    for part in match.group(1).split(";"):
+        part = part.strip()
+        if not part:
+            return None
+        pair = _CORTEX_URI_DIGEST_PAIR_RE.match(part)
+        if pair is None:
+            return None
+        uris.append(pair.group(1))
+    return tuple(uris)
+
+
+def _committed_disposition_parts(text: str) -> tuple[str, str] | None:
+    match = _COMMITTED_DISPOSITION_RE.match(text.strip())
+    if match is None:
+        return None
+    return match.group(1).lower(), match.group(2)
+
+
+def _authored_cortex_dispositions_equivalent(left: str, right: str) -> bool:
+    left_uris = _authored_cortex_uri_list(left)
+    right_uris = _authored_cortex_uri_list(right)
+    if left_uris is None or right_uris is None:
+        return False
+    return left_uris == right_uris
+
+
+def _committed_dispositions_equivalent(left: str, right: str) -> bool:
+    left_parts = _committed_disposition_parts(left)
+    right_parts = _committed_disposition_parts(right)
+    if left_parts is None or right_parts is None:
+        return False
+    left_sha, left_paths = left_parts
+    right_sha, right_paths = right_parts
+    return left_paths == right_paths and _sha_prefix_equal(left_sha, right_sha)
+
+
+def status_claim_is_dual_register_honesty(*, claim: str, measurement: str) -> bool:
+    """True for the expected partial-claim vs machine-complete honesty pair."""
+    claim_norm = (claim or "").strip().lower()
+    measure_norm = (measurement or "").strip().lower()
+    measure_map = {
+        "failed": "blocked",
+        "gated": "blocked",
+        "shipped": "complete",
+    }
+    measure_norm = measure_map.get(measure_norm, measure_norm)
+    return claim_norm == "partial" and measure_norm == "complete"
+
+
 def status_dispositions_equivalent(claim: str, measurement: str) -> bool:
     """True when agent claim and infra measurement describe the same closeout status."""
     claim_norm = (claim or "").strip().lower()
@@ -266,7 +368,13 @@ def checkpoint_dispositions_equivalent(claim: str, measurement: str) -> bool:
 
     claim_q = qualify_checkpoint_value(normalize_checkpoint_value(claim))
     measure_q = qualify_checkpoint_value(normalize_checkpoint_value(measurement))
-    return claim_q == measure_q
+    claim_cmp = _strip_cosmetic_checkpoint_tail(claim_q)
+    measure_cmp = _strip_cosmetic_checkpoint_tail(measure_q)
+    if _authored_cortex_dispositions_equivalent(claim_cmp, measure_cmp):
+        return True
+    if _committed_dispositions_equivalent(claim_cmp, measure_cmp):
+        return True
+    return claim_cmp == measure_cmp
 
 
 def annotate_checkpoint_claim_discrepancy(
@@ -298,11 +406,35 @@ def merge_plane_discrepancy_markers(*parts: str | None) -> str | None:
         text = part.strip()
         if text.casefold().startswith("plane-discrepancy:"):
             text = text.split(":", 1)[1].strip()
+        if text.casefold().startswith("plane-register:"):
+            continue
+        status_match = _STATUS_CLAIM_FRAGMENT_RE.match(text)
+        if status_match is not None and status_claim_is_dual_register_honesty(
+            claim=status_match.group(1),
+            measurement=status_match.group(2),
+        ):
+            continue
         if text:
             markers.append(text)
     if not markers:
         return None
     return "plane-discrepancy: " + "; ".join(markers)
+
+
+def merge_plane_register_markers(*parts: str | None) -> str | None:
+    """Join expected dual-register fragments into one ``plane-register:`` line."""
+    markers: list[str] = []
+    for part in parts:
+        if not part:
+            continue
+        text = part.strip()
+        if text.casefold().startswith("plane-register:"):
+            text = text.split(":", 1)[1].strip()
+        if text:
+            markers.append(text)
+    if not markers:
+        return None
+    return "plane-register: " + "; ".join(markers)
 
 
 def annotate_plane_discrepancy(
@@ -381,12 +513,28 @@ def inject_plane_discrepancy_line(body: str, *, value: str | None) -> str:
     return body.rstrip() + f"\n{line}\n"
 
 
+def inject_plane_register_line(body: str, *, value: str | None) -> str:
+    """Inject an annotate-only ``plane-register:`` marker; no-op when value is None."""
+    if not value:
+        return body
+    line = value if value.startswith("plane-register:") else f"plane-register: {value}"
+    if _PLANE_REGISTER_RE.search(body):
+        return _PLANE_REGISTER_RE.sub(line, body, count=1)
+    plane_match = _PLANE_LINE_RE.search(body)
+    if plane_match:
+        insert_at = plane_match.end()
+        return f"{body[:insert_at]}\n{line}{body[insert_at:]}"
+    return body.rstrip() + f"\n{line}\n"
+
+
 def strip_plane_line(body: str) -> str:
-    """Remove ``plane:`` and ``plane-discrepancy:`` lines for tests or clean re-inject."""
+    """Remove plane annotation lines for tests or clean re-inject."""
     lines = [
         line
         for line in body.splitlines()
-        if not _PLANE_LINE_RE.match(line) and not _PLANE_DISCREPANCY_RE.match(line)
+        if not _PLANE_LINE_RE.match(line)
+        and not _PLANE_DISCREPANCY_RE.match(line)
+        and not _PLANE_REGISTER_RE.match(line)
     ]
     return "\n".join(lines).rstrip() + ("\n" if body.endswith("\n") else "")
 
@@ -406,7 +554,10 @@ __all__ = [
     "checkpoint_dispositions_equivalent",
     "status_dispositions_equivalent",
     "merge_plane_discrepancy_markers",
+    "merge_plane_register_markers",
+    "status_claim_is_dual_register_honesty",
     "inject_plane_discrepancy_line",
+    "inject_plane_register_line",
     "inject_plane_line",
     "parse_capture_plane_keys",
     "preserve_plane_lines",

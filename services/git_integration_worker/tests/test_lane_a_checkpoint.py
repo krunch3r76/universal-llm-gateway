@@ -306,7 +306,6 @@ def test_compute_checkpoint_committed_when_clean_tree_after_lane_commit(
     _init_git_repo(tmp_path)
     admit = _commit(tmp_path, "seed.py")
     lane_sha = _commit(tmp_path, "fix.py", dispatch_id=dispatch_id)
-    closeout = _git(tmp_path, "rev-parse", "HEAD")
     baseline = {"admit_head": admit}
     with patch(
         "services.git_integration_worker.cursor_auto.lane_a_checkpoint.authored_paths_for_dispatch",
@@ -783,4 +782,36 @@ def test_checkpoint_claim_discrepancy_silent_when_table_cell_carries_field_prefi
             measurement="nothing_authored@local-master",
         )
         is None
+    )
+
+
+def test_checkpoint_dispositions_equivalent_authored_cortex_digest_optional() -> None:
+    """7065#239 — authored_cortex URI±digest does not emit defect marker."""
+    from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+        checkpoint_dispositions_equivalent,
+    )
+
+    uri = "cortex://notes/system/specs/closeout-plane-discrepancy-register.md"
+    digest = "d" * 64
+    assert checkpoint_dispositions_equivalent(
+        f"authored_cortex: {uri}",
+        f"authored_cortex@local-master: {uri} {digest}",
+    )
+
+
+def test_checkpoint_dispositions_equivalent_committed_short_sha_and_pending() -> None:
+    """7065#223 — committed short SHA and pending prose normalize before compare."""
+    from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+        checkpoint_dispositions_equivalent,
+    )
+
+    full_sha = "feedfacefeedfacefeedfacefeedfacefeedface"
+    short_sha = full_sha[:7]
+    assert checkpoint_dispositions_equivalent(
+        f"committed {short_sha} paths=1",
+        f"committed@local-master {full_sha} paths=1",
+    )
+    assert checkpoint_dispositions_equivalent(
+        f"committed {full_sha} paths=2 (+4 pending)",
+        f"committed@local-master {full_sha} paths=2",
     )

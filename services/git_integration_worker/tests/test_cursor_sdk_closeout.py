@@ -280,6 +280,50 @@ def _init_git_repo(path: Path) -> None:
     )
 
 
+def _init_git_repo_with_commit(path: Path) -> str:
+    """Init repo with one commit; return HEAD sha."""
+    _init_git_repo(path)
+    (path / "README.md").write_text("seed\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(path), "add", "README.md"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(path), "commit", "-m", "seed"],
+        check=True,
+        capture_output=True,
+    )
+    proc = subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return proc.stdout.strip()
+
+
+def test_lane_a_capture_head_sha_from_closeout_head(tmp_path: Path) -> None:
+    """Lane-A finalize sets capture head_sha from closeout_head when Lane-B unset."""
+    head = _init_git_repo_with_commit(tmp_path)
+    outcome = SdkRunOutcome(
+        body="done",
+        status="finished",
+        duration_ms=50,
+        tool_call_count=2,
+    )
+    delivery = prepare_closeout_delivery(
+        source_repo=tmp_path,
+        dispatch_id="lane-a-head-sha",
+        outcome=outcome,
+        degraded_reason=None,
+        thread_id="t1",
+        work_item_ref=None,
+        baseline={},
+        deliverables_expected=True,
+    )
+    payload = json.loads(delivery.body)
+    assert payload.get("head_sha") == head
+    assert payload.get("lane") is None
+    assert payload.get("commits_ahead") is None
+
+
 def test_prepare_closeout_delivery_baseline_none_ignores_dirty_tree(
     tmp_path: Path,
 ) -> None:

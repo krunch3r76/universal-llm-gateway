@@ -8,8 +8,11 @@ from pathlib import Path
 from implement_admission.spec import CloseoutStatus, WorkOutcome
 
 from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+    annotate_checkpoint_claim_discrepancy,
     annotate_status_claim_discrepancy,
+    checkpoint_dispositions_equivalent,
     merge_plane_discrepancy_markers,
+    merge_plane_register_markers,
     status_dispositions_equivalent,
 )
 from services.git_integration_worker.cursor_auto.closeout_relay_common import (
@@ -49,14 +52,15 @@ def test_specimen_independent_agreement_silent() -> None:
 
 
 def test_specimen_contaminated_agreement_fires() -> None:
-    """Contaminated agreement — claim partial vs uncapped machine complete must fire."""
+    """Contaminated agreement — claim partial vs uncapped machine complete stays visible."""
     marker = annotate_status_claim_discrepancy(
         claim="partial",
         measurement="complete",
     )
     assert marker == "status_claim@§2 partial while status@infra complete"
-    merged = merge_plane_discrepancy_markers(marker)
-    assert merged == "plane-discrepancy: status_claim@§2 partial while status@infra complete"
+    merged = merge_plane_register_markers(marker)
+    assert merged == "plane-register: status_claim@§2 partial while status@infra complete"
+    assert merge_plane_discrepancy_markers(marker) is None
 
 
 def test_specimen_independent_disagreement_fires() -> None:
@@ -66,6 +70,39 @@ def test_specimen_independent_disagreement_fires() -> None:
         measurement="partial",
     )
     assert marker == "status_claim@§2 complete while status@infra partial"
+    assert merge_plane_discrepancy_markers(marker) == (
+        "plane-discrepancy: status_claim@§2 complete while status@infra partial"
+    )
+
+
+def test_checkpoint_dispositions_equivalent_authored_cortex_digest_optional() -> None:
+    """7065#239 — same URI with/without trailing digest must not defect-fire."""
+    uri = "cortex://notes/system/specs/closeout-plane-discrepancy-register.md"
+    digest = "a" * 64
+    with_digest = f"authored_cortex: {uri} {digest}"
+    without_digest = f"authored_cortex: {uri}"
+    assert checkpoint_dispositions_equivalent(with_digest, without_digest)
+    assert (
+        annotate_checkpoint_claim_discrepancy(
+            claim=without_digest,
+            measurement=f"authored_cortex@local-master: {uri} {digest}",
+        )
+        is None
+    )
+
+
+def test_checkpoint_dispositions_equivalent_committed_sha_prefix_and_pending() -> None:
+    """7065#223 — short vs full SHA and pending prose normalize before compare."""
+    full_sha = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    short_sha = full_sha[:7]
+    assert checkpoint_dispositions_equivalent(
+        f"committed {short_sha} paths=1",
+        f"committed@local-master {full_sha} paths=1",
+    )
+    assert checkpoint_dispositions_equivalent(
+        f"committed {full_sha} paths=2 (+3 pending)",
+        f"committed@local-master {full_sha} paths=2",
+    )
 
 
 def test_resolve_relay_status_does_not_prefer_section2_claim() -> None:

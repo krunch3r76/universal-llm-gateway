@@ -11,8 +11,11 @@ import pytest
 
 from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
     PlaneObservation,
+    annotate_checkpoint_claim_discrepancy,
     annotate_plane_discrepancy,
+    checkpoint_dispositions_equivalent,
     inject_plane_line,
+    merge_plane_discrepancy_markers,
     parse_capture_plane_keys,
     preserve_plane_lines,
     probe_three_planes,
@@ -114,7 +117,7 @@ def test_ff_landed_fixture_headline_landed_not_published(tmp_path: Path) -> None
     head = _git(repo, "rev-parse", "HEAD")
     _git(repo, "checkout", "master")
     _git(repo, "merge", "--ff-only", branch)
-    # no origin/master ref → unknown@origin, not a false unpublished claim... 
+    # no origin/master ref → unknown@origin, not a false unpublished claim...
     # AC5 wants NOT published@origin when origin is behind. Create origin behind.
     _git(repo, "update-ref", "refs/remotes/origin/master", _git(repo, "rev-parse", "HEAD~1"))
     obs = probe_three_planes(repo, head_sha=head, branch=branch, as_of="2026-08-07T00:00:00Z")
@@ -173,6 +176,38 @@ def test_discrepancy_silent_when_unknown_and_checkpoint_not_committed(
         plane=obs,
     )
     assert marker is None
+
+
+def test_checkpoint_dispositions_equivalent_authored_cortex_digest_only_delta() -> None:
+    """B specimen — digest-only delta on identical authored_cortex URI is silent."""
+    uri = "cortex://notes/system/threads/7065-fixture.md"
+    digest = "b" * 64
+    claim = f"authored_cortex: {uri}"
+    measurement = f"authored_cortex@local-master: {uri} {digest}"
+    assert checkpoint_dispositions_equivalent(claim, measurement)
+    assert (
+        annotate_checkpoint_claim_discrepancy(
+            claim=claim,
+            measurement=measurement,
+        )
+        is None
+    )
+    assert merge_plane_discrepancy_markers(
+        annotate_checkpoint_claim_discrepancy(
+            claim=claim,
+            measurement=measurement,
+        )
+    ) is None
+
+
+def test_checkpoint_dispositions_equivalent_committed_short_sha() -> None:
+    """B specimen — short vs full SHA on the same object is silent."""
+    full_sha = "cafebabecafebabecafebabecafebabecafebabe"
+    short_sha = full_sha[:7]
+    assert checkpoint_dispositions_equivalent(
+        f"committed {short_sha} paths=1",
+        f"committed@local-master {full_sha} paths=1",
+    )
 
 
 def test_discrepancy_annotates_when_deployment_lags_landed(tmp_path: Path) -> None:
@@ -320,6 +355,25 @@ def test_compute_tree_state_missing_head_unknown(tmp_path: Path) -> None:
         )
     assert state.plane_line == "plane: unknown@lane-B (capture head absent)"
     assert state.checkpoint == "nothing_authored@local-master"
+
+
+def test_compute_tree_state_lane_a_capture_head_resolves_plane(tmp_path: Path) -> None:
+    """Lane-A intake: non-None capture head_sha resolves plane (not unknown)."""
+    repo = _init_repo(tmp_path)
+    head = _git(repo, "rev-parse", "HEAD")
+    wrapper = _wrapper(head_sha=head, branch=None)
+    with patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "compute_lane_a_checkpoint_value",
+        return_value="committed abc1234 paths=1",
+    ):
+        state = compute_closeout_tree_state(
+            source_repo=repo,
+            dispatch_id="lane-a-head",
+            wrapper_text=wrapper,
+        )
+    assert "unknown@lane-B (capture head absent)" not in state.plane_line
+    assert "landed@local-master" in state.plane_line
 
 
 def test_strip_plane_line_roundtrip() -> None:

@@ -1595,6 +1595,11 @@ def _assemble_closeout_delivery(
         )
     cortex_authoritative = bool(gate_d_created_rels)
     closeout_head = resolve_git_head(write_tree)
+    # Lane-A: populate capture head_sha from write-tree tip when Lane-B did not
+    # assign one — keys the three-plane probe without upgrading from checkpoint prose.
+    capture_head_sha = (
+        lane_b_head_sha if lane_b_head_sha is not None else closeout_head
+    )
     body = build_implement_closeout_body(
         dispatch_id=dispatch_id,
         outcome=outcome,
@@ -1631,7 +1636,7 @@ def _assemble_closeout_delivery(
         lane=lane_b_lane if lane_b_lane is not None else reported_lane,
         branch=lane_b_branch,
         branch_point=lane_b_branch_point,
-        head_sha=lane_b_head_sha,
+        head_sha=capture_head_sha,
         commits_ahead=lane_b_commits_ahead,
         landed=lane_b_landed,
         isolation_materialized=isolation_mat,

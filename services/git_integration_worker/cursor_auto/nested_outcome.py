@@ -25,7 +25,10 @@ from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
     annotate_status_claim_discrepancy,
     inject_plane_discrepancy_line,
     inject_plane_line,
+    inject_plane_register_line,
     merge_plane_discrepancy_markers,
+    merge_plane_register_markers,
+    status_claim_is_dual_register_honesty,
 )
 from services.git_integration_worker.cursor_auto.closeout_relay import (
     read_repo_closeout_sidecar,
@@ -281,13 +284,26 @@ async def relay_closeout_outcome(
         claim=status_claim,
         measurement=payload.status,
     )
+    register_marker = None
+    defect_marker = merge_plane_discrepancy_markers(
+        tree_state.plane_discrepancy,
+        claim_discrepancy,
+    )
+    if status_discrepancy is not None:
+        if status_claim_is_dual_register_honesty(
+            claim=status_claim or "",
+            measurement=payload.status,
+        ):
+            register_marker = merge_plane_register_markers(status_discrepancy)
+        else:
+            defect_marker = merge_plane_discrepancy_markers(
+                defect_marker,
+                status_discrepancy,
+            )
+    relay_body = inject_plane_register_line(relay_body, value=register_marker)
     relay_body = inject_plane_discrepancy_line(
         relay_body,
-        value=merge_plane_discrepancy_markers(
-            tree_state.plane_discrepancy,
-            claim_discrepancy,
-            status_discrepancy,
-        ),
+        value=defect_marker,
     )
     if second_read is not None:
         relay_body = inject_second_read_block(
