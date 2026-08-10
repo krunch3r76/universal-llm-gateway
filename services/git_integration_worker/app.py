@@ -21,6 +21,10 @@ from universal_logging import get_logger
 from services.git_integration_worker.admission import WorkAdmissionController
 from services.git_integration_worker.background_supervisor import supervise
 from services.git_integration_worker.config import WorkerConfig, load_config
+from services.git_integration_worker.cursor_auto.auto_worker_loop import (
+    auto_worker_loop,
+    orphan_scanner_loop,
+)
 from services.git_integration_worker.cursor_auto.closeout_outbox import (
     CloseoutOutboxStore,
 )
@@ -30,6 +34,7 @@ from services.git_integration_worker.cursor_auto.execute_runner import (
 from services.git_integration_worker.cursor_auto.execute_tool_op_invoker import (
     register_production_invoker,
 )
+from services.git_integration_worker.cursor_auto.hop_cadence import hop_cadence_loop
 from services.git_integration_worker.cursor_auto.job_reconcile import (
     shutdown_auto_jobs,
 )
@@ -50,11 +55,6 @@ from services.git_integration_worker.git_worker_lifecycle_events import (
 )
 from services.git_integration_worker.lane_b_sweeper import lane_b_sweeper_loop
 from services.git_integration_worker.routes.admin import router as admin_router
-from services.git_integration_worker.cursor_auto.auto_worker_loop import (
-    auto_worker_loop,
-    orphan_scanner_loop,
-)
-from services.git_integration_worker.cursor_auto.hop_cadence import hop_cadence_loop
 from services.git_integration_worker.routes.cursor_auto import (
     router as cursor_auto_router,
 )

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from services.git_integration_worker.admission import WorkAdmissionController
 from services.git_integration_worker.cursor_auto.directive import (
     is_continuity_hop_request,
     parse_request_body,
@@ -19,12 +20,11 @@ from services.git_integration_worker.cursor_auto.supersede import (
     post_superseded_terminal,
     supersede_same_thread_inflight,
 )
+from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_supersede import (
     register_live_run,
     unregister_live_run,
 )
-from services.git_integration_worker.admission import WorkAdmissionController
-from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.routes import cursor_auto as routes_mod
 from services.git_integration_worker.routes.cursor_auto import EnqueueBody, enqueue
 
