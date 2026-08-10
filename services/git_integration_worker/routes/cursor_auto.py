@@ -1,12 +1,11 @@
-"""HTTP routes for Cursor Auto admit path (enqueue + liveness + worker loop)."""
+"""HTTP routes for Cursor Auto admit path (enqueue + liveness)."""
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from universal_logging import get_logger
@@ -17,12 +16,10 @@ from services.git_integration_worker.cursor_auto.continuity_hop import (
 from services.git_integration_worker.cursor_auto.directive import (
     is_continuity_hop_request,
 )
-from services.git_integration_worker.cursor_auto.handler import process_job
 from services.git_integration_worker.cursor_auto.handler_terminal import (
     post_terminal_status,
 )
 from services.git_integration_worker.cursor_auto.hop_cadence import (
-    hop_cadence_loop,  # noqa: F401 — re-export for app lifespan
     observe_lane_from_enqueue,
 )
 from services.git_integration_worker.cursor_auto.job_ledger import get_ledger
@@ -48,10 +45,6 @@ from services.git_integration_worker.cursor_bus import CursorBusClient
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/git/cursor-auto", tags=["cursor-auto"])
-
-_HANDLER_ID = "cursor-auto-primary"
-_WORKER_INTERVAL_S = 0.5
-_ORPHAN_INTERVAL_S = 15.0
 
 
 class EnqueueBody(BaseModel):
@@ -130,7 +123,7 @@ async def job_state(
 
 
 @router.post("/enqueue")
-async def enqueue(body: EnqueueBody):
+async def enqueue(body: EnqueueBody, request: Request):
     """Admit-on-request enqueue. Requires a live Auto handler (else 503)."""
     registry = get_registry()
     if not registry.is_live():
@@ -248,10 +241,28 @@ async def enqueue(body: EnqueueBody):
         incumbent = queue.claimed_for_thread(body.thread_id)
         if incumbent is not None and incumbent.job_id == job.job_id:
             incumbent = None
-        asyncio.create_task(
+        controller = getattr(request.app.state, "admission_controller", None)
+        if controller is None:
+            logger.error(
+                "cursor-auto enqueue hop rejected: admission_controller missing "
+                "job=%s thread=%s",
+                job.job_id,
+                body.thread_id,
+            )
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "ok": False,
+                    "error": "admission_controller_unavailable",
+                    "reason": "missing_admission_controller",
+                    "job_id": job.job_id,
+                },
+            )
+        controller.create_tracked_task(
             run_continuity_hop_concurrent(
                 job, queue=queue, incumbent=incumbent
-            )
+            ),
+            op_id=f"cursor-auto-continuity-hop:{job.job_id}",
         )
     else:
         # A second request on a private thread is a backtrack, not a queue append:
@@ -277,93 +288,3 @@ async def enqueue(body: EnqueueBody):
             "queue": queue.snapshot(),
         },
     )
-
-
-async def auto_worker_loop(app: Any) -> None:
-    """Background: heartbeat + claim/process queued Auto jobs.
-
-    Heartbeat must continue during long ``process_job`` awaits (nested SDK
-    often exceeds ``heartbeat_ttl_s``). Otherwise enqueue sees a dead handler
-    mid-job and the next ``agent_bus.request`` 503s — 5867 DIRECTIVE-4 class.
-    """
-    registry = get_registry()
-    registry.register(_HANDLER_ID)
-    logger.info("cursor-auto worker loop started handler_id=%s", _HANDLER_ID)
-
-    async def _heartbeat_while_busy(job_id: str) -> None:
-        while True:
-            registry.heartbeat(_HANDLER_ID)
-            try:
-                get_queue().bump_heartbeat(job_id)
-            except Exception:
-                # A failed ledger write must not end this task. The registry
-                # refresh above is what keeps the lane armed; if this coroutine
-                # dies the handler is pruned 30s later and every subsequent
-                # agent_bus.request 503s with no turn and no alarm.
-                logger.exception(
-                    "cursor-auto heartbeat ledger write failed job=%s", job_id
-                )
-            await asyncio.sleep(min(5.0, _WORKER_INTERVAL_S * 4))
-
-    try:
-        while True:
-            try:
-                registry.heartbeat(_HANDLER_ID)
-                job = get_queue().claim_next()
-                if job is not None:
-                    hb_task = asyncio.create_task(_heartbeat_while_busy(job.job_id))
-                    try:
-                        controller = getattr(app.state, "admission_controller", None)
-                        result = await process_job(
-                            job,
-                            admission_controller=controller,
-                            worker_id=str(getattr(app.state, "worker_id", "") or ""),
-                            worker_started_at=str(
-                                getattr(app.state, "worker_boot_ts", "") or ""
-                            ),
-                        )
-                        logger.info(
-                            "cursor-auto job=%s result ok=%s terminal=%s",
-                            job.job_id,
-                            result.get("ok"),
-                            result.get("terminal_status"),
-                        )
-                    except Exception as exc:
-                        get_queue().mark_done(job.job_id, failed=True)
-                        logger.exception(
-                            "cursor-auto job=%s failed: %s", job.job_id, exc
-                        )
-                    finally:
-                        hb_task.cancel()
-                        try:
-                            await hb_task
-                        except asyncio.CancelledError:
-                            pass
-                        except Exception:
-                            # Re-raised from a heartbeat that already died; only
-                            # CancelledError used to be caught here, so this was
-                            # the escape hatch that unwound the whole loop.
-                            logger.exception(
-                                "cursor-auto heartbeat writer died job=%s", job.job_id
-                            )
-            except Exception:
-                # Never let one iteration end the lane (hop_cadence_loop pattern).
-                # CancelledError still propagates, so lifespan shutdown is intact.
-                logger.exception("cursor-auto worker loop iteration failed")
-            await asyncio.sleep(_WORKER_INTERVAL_S)
-    finally:
-        registry.unregister(_HANDLER_ID)
-        logger.info("cursor-auto worker loop stopped")
-
-
-async def orphan_scanner_loop(app: Any) -> None:
-    """Secondary wake: log pending queue depth (v0; full bus scan later)."""
-    while True:
-        snap = get_queue().snapshot()
-        if snap["pending"] > 0:
-            logger.info(
-                "cursor-auto orphan-scanner pending=%s claimed=%s",
-                snap["pending"],
-                snap["claimed"],
-            )
-        await asyncio.sleep(_ORPHAN_INTERVAL_S)

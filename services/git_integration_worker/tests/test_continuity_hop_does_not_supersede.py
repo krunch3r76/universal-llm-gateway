@@ -23,8 +23,25 @@ from services.git_integration_worker.cursor_sdk_supersede import (
     register_live_run,
     unregister_live_run,
 )
+from services.git_integration_worker.admission import WorkAdmissionController
+from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.routes import cursor_auto as routes_mod
 from services.git_integration_worker.routes.cursor_auto import EnqueueBody, enqueue
+
+
+def _enqueue_request() -> MagicMock:
+    """Minimal FastAPI Request with a drain-tracked admission controller."""
+    controller = WorkAdmissionController(
+        ledger=CursorDispatchLedger.instance(),
+        worker_id="test-worker",
+        pid=1234,
+        worker_started_at="2026-01-01T00:00:00+00:00",
+    )
+    app = MagicMock()
+    app.state.admission_controller = controller
+    request = MagicMock()
+    request.app = app
+    return request
 
 
 def test_continuity_hop_first_line_type():
@@ -111,7 +128,7 @@ async def test_hop_enqueue_leaves_claimed_job_running(live_run, monkeypatch):
         to_agent="cursor",
         contract="implement",
     )
-    resp = await enqueue(body)
+    resp = await enqueue(body, _enqueue_request())
     assert resp.status_code == 200
     content = resp.body
     if hasattr(content, "decode"):
@@ -215,7 +232,7 @@ async def test_hop_without_scope_routes_to_cdp_not_blocked(monkeypatch):
         to_agent="cursor",
         contract="answer",
     )
-    resp = await enqueue(body)
+    resp = await enqueue(body, _enqueue_request())
     assert resp.status_code == 200
     payload = json.loads(
         resp.body.decode() if hasattr(resp.body, "decode") else resp.body
@@ -245,7 +262,7 @@ async def test_hop_without_scope_routes_to_cdp_not_blocked(monkeypatch):
     commissioned: list[str] = []
     terminal_payloads: list[dict] = []
 
-    async def _fake_commission(j, *, model, purpose):
+    async def _fake_commission(j, *, model, purpose, **_kwargs):
         commissioned.append(model)
         return {"ok": True, "execution_id": "exec-hop-1"}
 
@@ -301,7 +318,7 @@ async def test_hop_with_scope_vision_still_routes_to_cdp(monkeypatch):
         to_agent="cursor",
         contract="implement",
     )
-    resp = await enqueue(body)
+    resp = await enqueue(body, _enqueue_request())
     assert resp.status_code == 200
     payload = json.loads(
         resp.body.decode() if hasattr(resp.body, "decode") else resp.body

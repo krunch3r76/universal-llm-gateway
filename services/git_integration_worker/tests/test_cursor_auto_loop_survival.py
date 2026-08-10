@@ -17,8 +17,8 @@ from unittest.mock import patch
 
 import pytest
 
+from services.git_integration_worker.cursor_auto import auto_worker_loop as mod
 from services.git_integration_worker.cursor_auto.liveness import AutoLivenessRegistry
-from services.git_integration_worker.routes import cursor_auto as mod
 
 
 async def _run_loop_briefly(

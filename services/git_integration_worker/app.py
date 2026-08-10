@@ -50,11 +50,11 @@ from services.git_integration_worker.git_worker_lifecycle_events import (
 )
 from services.git_integration_worker.lane_b_sweeper import lane_b_sweeper_loop
 from services.git_integration_worker.routes.admin import router as admin_router
-from services.git_integration_worker.routes.cursor_auto import (
+from services.git_integration_worker.cursor_auto.auto_worker_loop import (
     auto_worker_loop,
-    hop_cadence_loop,
     orphan_scanner_loop,
 )
+from services.git_integration_worker.cursor_auto.hop_cadence import hop_cadence_loop
 from services.git_integration_worker.routes.cursor_auto import (
     router as cursor_auto_router,
 )
