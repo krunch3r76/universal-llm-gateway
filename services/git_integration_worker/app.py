@@ -46,6 +46,7 @@ from services.git_integration_worker.cursor_sdk_events import (
 )
 from services.git_integration_worker.cursor_sdk_orphan import shutdown_active_bridges
 from services.git_integration_worker.events import publish_lib_signal
+from services.git_integration_worker.fault_dump import arm_stack_dumps
 from services.git_integration_worker.git_worker_drain_events import (
     register_git_worker_drain_event_publisher,
 )
@@ -211,6 +212,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     """Build and return the git-integration-worker FastAPI application instance."""
+    arm_stack_dumps()
     app = FastAPI(
         title="git-integration-worker",
         version="0.1.0",
