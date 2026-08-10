@@ -759,3 +759,28 @@ def test_checkpoint_claim_discrepancy_silent_when_equivalent() -> None:
         )
         is None
     )
+
+
+def test_checkpoint_claim_discrepancy_silent_when_table_cell_carries_field_prefix() -> None:
+    """7065#98 — relay table may echo ``checkpoint_claim:`` inside the Value cell."""
+    from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+        annotate_checkpoint_claim_discrepancy,
+    )
+    from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
+        extract_checkpoint_claim,
+    )
+
+    table_body = """\
+| Field | Value |
+|---|---|
+| checkpoint_claim | `checkpoint_claim: nothing_authored` |
+"""
+    claim = extract_checkpoint_claim(table_body)
+    assert claim == "nothing_authored"
+    assert (
+        annotate_checkpoint_claim_discrepancy(
+            claim=claim,
+            measurement="nothing_authored@local-master",
+        )
+        is None
+    )

@@ -66,12 +66,19 @@ def is_lane_a_closeout(*, subject: str = "", body: str = "") -> bool:
 
 
 def normalize_checkpoint_value(value: str) -> str:
-    """Strip markdown/backtick wrapping and doubled ``checkpoint:`` prefixes."""
+    """Strip markdown/backtick wrapping and field/control-line prefixes."""
     text = value.strip().strip("`").strip()
     lowered = text.casefold()
-    while lowered.startswith("checkpoint:"):
-        text = text.split(":", 1)[1].strip().strip("`").strip()
-        lowered = text.casefold()
+    while True:
+        if lowered.startswith("checkpoint_claim:"):
+            text = text.split(":", 1)[1].strip().strip("`").strip()
+            lowered = text.casefold()
+            continue
+        if lowered.startswith("checkpoint:"):
+            text = text.split(":", 1)[1].strip().strip("`").strip()
+            lowered = text.casefold()
+            continue
+        break
     return text
 
 

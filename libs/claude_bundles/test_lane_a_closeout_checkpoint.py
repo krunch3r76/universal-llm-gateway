@@ -132,6 +132,17 @@ def test_malformed_doubled_checkpoint_normalizes() -> None:
     )
 
 
+def test_normalize_checkpoint_value_strips_checkpoint_claim_prefix() -> None:
+    from claude_bundles.lane_a_closeout_checkpoint import normalize_checkpoint_value
+
+    assert normalize_checkpoint_value("checkpoint_claim: nothing_authored") == (
+        "nothing_authored"
+    )
+    assert normalize_checkpoint_value("`checkpoint_claim: nothing_authored`") == (
+        "nothing_authored"
+    )
+
+
 def test_plane_qualified_checkpoint_tokens_legal() -> None:
     """closeout-plane-legibility — @plane infix is additive, not a malform."""
     bodies = [
