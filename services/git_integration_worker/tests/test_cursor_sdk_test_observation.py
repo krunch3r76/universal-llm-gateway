@@ -250,3 +250,70 @@ def test_specimen_auto_e93f739c279c_harvests_observed_test_sibling() -> None:
     assert row.basis == "shell_tool_result.exitCode"
     assert is_pytest_witness(row) is True
     assert row.invocation_id == f"test:{_E93F_CALL_ID}"
+
+
+# False-positive specimens from auto-6281707f8c76 machine verification[] —
+# neither shell ran pytest; both were over-emitted as observed test siblings.
+_SPECIMEN_628_RG_CALL_ID = (
+    "call-66c7318a-b6d3-4cf3-ab44-770f59fe80dd-11\n"
+    "fc_ovfqB8U-6SkKZu-d45d5547-aws_ue1_3"
+)
+_SPECIMEN_628_RG_COMMAND = (
+    'rg -l "harvest" services/git_integration_worker --glob \'*.py\' | head -40; '
+    'rg -n "test_prepare_closeout_delivery_implement_clean_complete|'
+    'test_closeout_raw_shell_outside_repo_falsifier" -g \'*.py\' '
+    "--glob '!**/node_modules/**' | head -40; "
+    'rg -n "verification\\[\\]|harvest.*pytest|pytest.*harvest" '
+    "services/git_integration_worker -g '*.py' | head -50"
+)
+
+_SPECIMEN_628_HEREDOC_CALL_ID = (
+    "call-74910aaf-e715-43b5-86b2-026cdcb70240-38\n"
+    "fc_ovfrFBC-6SkKZu-fa38b2a5-aws_ue1_0"
+)
+_SPECIMEN_628_HEREDOC_COMMAND = """OUT=/tmp/verify-6655-both-directions-bisect.md
+cat > \"$OUT\" << 'EOF'
+# Verify — arc 6655 closeout envelope honesty (both directions + bisect)
+
+### Real harvest pytest run (direction A)
+
+Command (live checkout HEAD=291faef6):
+
+```bash
+python -m pytest \\
+  services/git_integration_worker/tests/test_cursor_sdk_test_observation.py \\
+  services/git_integration_worker/tests/test_cursor_sdk_harvest_live_shape.py \\
+  -q --tb=line
+```
+
+Verbatim result:
+
+```text
+16 passed in 0.19s
+HARVEST_EXIT=0
+```
+EOF
+wc -c \"$OUT\"
+"""
+
+
+def test_specimen_auto_6281707f8c76_rg_shell_not_emitted() -> None:
+    """Replay receipt entry #1 — rg-only shell must NOT mint a test sibling."""
+    assert is_pytest_command(_SPECIMEN_628_RG_COMMAND) is False
+    obs = _shell_obs(
+        call_id=_SPECIMEN_628_RG_CALL_ID,
+        command=_SPECIMEN_628_RG_COMMAND,
+        exit_code=0,
+    )
+    assert harvest_test_verifications((obs,)) == []
+
+
+def test_specimen_auto_6281707f8c76_heredoc_prose_not_emitted() -> None:
+    """Replay receipt entry #5 — heredoc quoting pytest prose must NOT emit."""
+    assert is_pytest_command(_SPECIMEN_628_HEREDOC_COMMAND) is False
+    obs = _shell_obs(
+        call_id=_SPECIMEN_628_HEREDOC_CALL_ID,
+        command=_SPECIMEN_628_HEREDOC_COMMAND,
+        exit_code=0,
+    )
+    assert harvest_test_verifications((obs,)) == []

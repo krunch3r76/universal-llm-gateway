@@ -35,6 +35,23 @@ _PYTEST_INVOKE_RE = re.compile(
     flags=re.MULTILINE,
 )
 
+# Heredoc bodies and quoted strings mention pytest in prose / rg patterns without
+# invoking it (arc-6655 auto-6281707f8c76 direction-B over-emission).
+_HEREDOC_BODY_RE = re.compile(
+    r"<<-?\s*(['\"]?)(\w+)\1\r?\n.*?\r?\n\2(?:\r?\n|$)",
+    flags=re.DOTALL,
+)
+_SINGLE_QUOTED_RE = re.compile(r"'[^']*'")
+_DOUBLE_QUOTED_RE = re.compile(r'"(?:\\.|[^"\\])*"')
+
+
+def _strip_shell_literals(command: str) -> str:
+    """Remove heredoc bodies and quoted strings so prose cannot fake invoke-position."""
+    cleaned = _HEREDOC_BODY_RE.sub("\n", command)
+    cleaned = _SINGLE_QUOTED_RE.sub(" ", cleaned)
+    cleaned = _DOUBLE_QUOTED_RE.sub(" ", cleaned)
+    return cleaned
+
 
 def is_pytest_command(command: str) -> bool:
     """True when *command* is a pytest-class shell invocation (hermetic match).
@@ -42,16 +59,21 @@ def is_pytest_command(command: str) -> bool:
     Matches head ``pytest``, ``*/pytest``, ``python -m pytest``, and mid-script
     invoke-position ``pytest`` after newlines / ``;`` / ``&&`` (compound gate
     shells). Does not treat ``echo pytest`` / ``which pytest`` as invocations.
+    Quoted strings and heredoc bodies are stripped first so narrative / ``rg``
+    pattern text cannot mint a false observed test sibling.
     """
     cmd = command.strip()
     if not cmd:
         return False
-    lower = cmd.lower()
+    executable = _strip_shell_literals(cmd)
+    if not executable.strip():
+        return False
+    lower = executable.lower()
     if "python -m pytest" in lower or "python3 -m pytest" in lower:
         return True
     if "-m pytest" in lower:
         return True
-    return _PYTEST_INVOKE_RE.search(cmd) is not None
+    return _PYTEST_INVOKE_RE.search(executable) is not None
 
 
 def is_pytest_witness(row: Verification) -> bool:
