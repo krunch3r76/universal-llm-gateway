@@ -373,7 +373,7 @@ def test_null_run_zero_tool_calls_dirty_tree_reports_nothing_authored(
         source_repo=tmp_path,
         dispatch_id=dispatch_id,
     )
-    assert authored == ambient_paths
+    assert authored == ()
     wrapper = _null_run_wrapper_without_summary_scrape(
         dispatch_id=dispatch_id,
         degraded_reason="zero_tool_calls",
@@ -447,6 +447,20 @@ def test_null_run_empty_terminal_output_with_tool_calls_still_deferred(
     admit_baseline = capture_wt_baseline_with_hashes(tmp_path)
     assert admit_baseline is not None
     (tmp_path / "tool_written.py").write_text("x=1\n", encoding="utf-8")
+    from services.git_integration_worker.seat_write_ledger import SeatWriteLedger
+
+    SeatWriteLedger.reset_instance()
+    db = SeatWriteLedger(db_path=tmp_path / "seat-write-ledger.db")
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.lane_a_checkpoint.SeatWriteLedger.instance",
+        lambda: db,
+    )
+    db.register_paths(
+        arc_id=dispatch_id,
+        seat_id="cursor-sdk",
+        source_repo=str(tmp_path),
+        paths=("tool_written.py",),
+    )
     ledger = CursorDispatchLedger.instance()
     monkeypatch.setattr(
         ledger,
@@ -546,8 +560,66 @@ def test_compute_checkpoint_committed_with_pending_after_lane_commit(
     )
 
 
+def test_authored_paths_for_dispatch_intersects_seat_write_ledger(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rank 2 — delta alone never authors; ledger ∩ delta does."""
+    from services.git_integration_worker.seat_write_ledger import SeatWriteLedger
+
+    SeatWriteLedger.reset_instance()
+    db = SeatWriteLedger(db_path=tmp_path / "seat-write-ledger.db")
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.lane_a_checkpoint.SeatWriteLedger.instance",
+        lambda: db,
+    )
+
+    def _git(*args: str) -> None:
+        import subprocess
+
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+
+    _git("init", "-b", "master")
+    _git("config", "user.email", "t@example.com")
+    _git("config", "user.name", "t")
+    _git("commit", "--allow-empty", "-m", "seed")
+    (tmp_path / "ambient.py").write_text("a=1\n", encoding="utf-8")
+    from services.git_integration_worker.cursor_sdk_closeout import (
+        capture_wt_baseline_with_hashes,
+    )
+
+    baseline = capture_wt_baseline_with_hashes(tmp_path)
+    assert baseline is not None
+    (tmp_path / "lane_edit.py").write_text("e=1\n", encoding="utf-8")
+    db.register_paths(
+        arc_id="arc-rank2",
+        seat_id="cursor-sdk",
+        source_repo=str(tmp_path),
+        paths=("lane_edit.py",),
+    )
+
+    class _Ledger:
+        def read_wt_baseline(self, *, dispatch_id: str) -> dict:
+            return baseline
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.lane_a_checkpoint.CursorDispatchLedger.instance",
+        lambda: _Ledger(),
+    )
+    from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
+        authored_paths_for_dispatch,
+    )
+
+    proven = authored_paths_for_dispatch(
+        source_repo=tmp_path,
+        dispatch_id="auto-rank2-specimen",
+    )
+    assert proven == ("lane_edit.py",)
+    assert "ambient.py" not in proven
+
+
 def test_authored_paths_for_dispatch_signature_unchanged() -> None:
-    """AC5 — authored_paths_for_dispatch call sites and semantics unchanged."""
+    """authored_paths_for_dispatch keeps public signature; Rank 2 adds ledger gate."""
     import inspect
 
     from services.git_integration_worker.cursor_auto import lane_a_checkpoint
@@ -557,6 +629,7 @@ def test_authored_paths_for_dispatch_signature_unchanged() -> None:
     source = inspect.getsource(lane_a_checkpoint.authored_paths_for_dispatch)
     assert "read_wt_baseline" in source
     assert "changed_paths" in source
+    assert "SeatWriteLedger" in source
 
 
 def _cortex_wrapper(*uris: str) -> str:

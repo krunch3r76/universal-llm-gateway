@@ -154,14 +154,20 @@ def authored_paths_for_dispatch(
     source_repo: Path,
     dispatch_id: str,
 ) -> tuple[str, ...]:
-    """Return paths attributed to one dispatch via its admit baseline."""
+    """Return ledger-proven paths for one dispatch via baseline delta ∩ SeatWriteLedger."""
     baseline = CursorDispatchLedger.instance().read_wt_baseline(dispatch_id=dispatch_id)
     if baseline is None:
         return ()
     change_set, _deviations = changed_paths(source_repo, baseline)
-    return tuple(
+    delta = tuple(
         dict.fromkeys((*change_set.created, *change_set.modified, *change_set.deleted))
     )
+    registered = SeatWriteLedger.instance().registered_paths(
+        source_repo=str(source_repo.resolve())
+    )
+    if not registered:
+        return ()
+    return tuple(p for p in delta if p in registered)
 
 
 def derive_tree_residue(

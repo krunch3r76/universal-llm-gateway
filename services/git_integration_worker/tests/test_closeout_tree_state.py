@@ -170,8 +170,40 @@ def test_compute_closeout_tree_state_threads_wrapper_for_authored_cortex() -> No
     assert kwargs["cortex_root"] == Path("/tmp/cortex-root")
 
 
-def test_compose_rank1_empty_codes_refuses_ambient_authorship() -> None:
-    """AC must-not: empty admit codes + ambient dirt → not authored-not-committed."""
+def test_compose_rank2_empty_codes_ambient_omits_when_unproven() -> None:
+    """Must-not: empty admit codes + ambient dirt without ledger proof → omit."""
+    claim = compose_deployment_authorship(
+        baseline={
+            "codes": {},
+            "hashes": {},
+            "admit_head": "6cf34833ea361a0b694e8ff169e476c06f329b95",
+            "outside_repo": [],
+        },
+        authored=(),
+    )
+    assert claim is None
+    assert "authored-not-committed" not in (claim or "")
+    assert "attribution-unavailable" not in (claim or "")
+
+
+def test_compose_rank2_empty_codes_ledger_edit_fires() -> None:
+    """Rank 2 restore: clean-admit codes={} + ledger-proven lane edit → fire."""
+    claim = compose_deployment_authorship(
+        baseline={
+            "codes": {},
+            "hashes": {},
+            "admit_head": "6cf34833ea361a0b694e8ff169e476c06f329b95",
+            "outside_repo": [],
+        },
+        authored=("services/git_integration_worker/cursor_auto/nested_outcome.py",),
+    )
+    assert claim == (
+        "authored-not-committed — 1 path await path-explicit commit"
+    )
+
+
+def test_compose_rank2_populated_baseline_delta_still_fires() -> None:
+    """Must-fire: ledger-proven delta under populated admit baseline → fire."""
     ambient = (
         ".gitignore",
         "libs/cdp_ask/runner.py.orig",
@@ -180,30 +212,8 @@ def test_compose_rank1_empty_codes_refuses_ambient_authorship() -> None:
     )
     claim = compose_deployment_authorship(
         baseline={
-            "codes": {},
-            "hashes": {},
-            "admit_head": "6cf34833ea361a0b694e8ff169e476c06f329b95",
-            "outside_repo": [],
-        },
-        authored=ambient,
-    )
-    assert claim is not None
-    assert claim.startswith("attribution-unavailable")
-    assert "authored-not-committed" not in claim
-
-
-def test_compose_rank1_populated_baseline_delta_still_fires() -> None:
-    """AC must-fire: usable codes + real lane delta → authored-not-committed."""
-    claim = compose_deployment_authorship(
-        baseline={
-            "codes": {
-                ".gitignore": " M",
-                "libs/cdp_ask/runner.py.orig": "??",
-            },
-            "hashes": {
-                ".gitignore": "b" * 64,
-                "libs/cdp_ask/runner.py.orig": "c" * 64,
-            },
+            "codes": {p: "??" for p in ambient},
+            "hashes": {p: "d" * 64 for p in ambient},
             "admit_head": "6cf34833ea361a0b694e8ff169e476c06f329b95",
             "outside_repo": [],
         },
@@ -219,14 +229,8 @@ def test_compose_rank1_missing_baseline_refuses() -> None:
     assert claim == "attribution-unavailable — admit baseline missing"
 
 
-def test_rank1_both_directions_via_compute_closeout_tree_state() -> None:
-    """Both AC arms green in one compute path (must-not + must-fire)."""
-    ambient = (
-        ".gitignore",
-        "libs/cdp_ask/runner.py.orig",
-        "scripts/watch-giw-wedge-stackdump.py",
-        "scripts/watch-giw-wedge-tmux.sh",
-    )
+def test_rank2_both_directions_via_compute_closeout_tree_state() -> None:
+    """Both AC arms green in one compute path (must-not omit + must-fire)."""
     empty_baseline = {
         "codes": {},
         "hashes": {},
@@ -234,8 +238,8 @@ def test_rank1_both_directions_via_compute_closeout_tree_state() -> None:
         "outside_repo": [],
     }
     usable_baseline = {
-        "codes": {p: "??" for p in ambient},
-        "hashes": {p: "d" * 64 for p in ambient},
+        "codes": {".gitignore": " M"},
+        "hashes": {".gitignore": "d" * 64},
         "admit_head": "6cf34833ea361a0b694e8ff169e476c06f329b95",
         "outside_repo": [],
     }
@@ -247,13 +251,13 @@ def test_rank1_both_directions_via_compute_closeout_tree_state() -> None:
         "CursorDispatchLedger.instance",
     ) as ledger_cls, patch(
         "services.git_integration_worker.cursor_auto.closeout_tree_state.authored_paths_for_dispatch",
-        side_effect=[ambient, ("services/git_integration_worker/x.py",)],
+        side_effect=[(), ("services/git_integration_worker/x.py",)],
     ):
         ledger_cls.return_value.read_wt_baseline.side_effect = [
             empty_baseline,
             usable_baseline,
         ]
-        refuse = compute_closeout_tree_state(
+        omit = compute_closeout_tree_state(
             source_repo=Path("/tmp/unused"),
             dispatch_id="d-ambient",
         )
@@ -261,9 +265,7 @@ def test_rank1_both_directions_via_compute_closeout_tree_state() -> None:
             source_repo=Path("/tmp/unused"),
             dispatch_id="d-lane-edit",
         )
-    assert refuse.deployment_state is not None
-    assert "attribution-unavailable@local-master" in refuse.deployment_state
-    assert "authored-not-committed" not in refuse.deployment_state
+    assert omit.deployment_state is None
     assert fire.deployment_state is not None
     assert "authored-not-committed@local-master" in fire.deployment_state
     assert "1 path" in fire.deployment_state

@@ -34,9 +34,6 @@ from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
 )
-from services.git_integration_worker.cursor_sdk_capture_status import (
-    normalize_wt_baseline,
-)
 
 _DEPLOYMENT_STATE_LINE_RE = re.compile(r"(?im)^deployment_state:\s*.+$")
 
@@ -56,22 +53,16 @@ def compose_deployment_authorship(
     baseline: dict[str, Any] | None,
     authored: tuple[str, ...],
 ) -> str | None:
-    """Rank-1 authorship claim for ``deployment_state`` (refuse when proof thin).
+    """Rank-2 authorship claim for ``deployment_state`` (positive measurement).
 
-    ``authored-not-committed`` requires a usable admit baseline with non-empty
-    ``codes`` plus a non-empty baseline-delta. Missing baseline or empty
-    ``codes`` (including clean-admit ``{}`` and plane-mismatch empties) yields
-    ``attribution-unavailable`` when dirt/delta is present — never a false
-    path-explicit-commit obligation. Clean-admit→edit positives stay muted
-    until Rank 2 (SeatWriteLedger); populated-baseline deltas still fire.
+    ``authored`` is already ``baseline-delta ∩ SeatWriteLedger`` from
+    ``authored_paths_for_dispatch`` — baseline-delta alone never authors the
+    label. Missing baseline → refuse. Empty ledger-proven ``authored`` → omit.
+    Non-empty ledger-proven ``authored`` → ``authored-not-committed`` even on
+    clean-admit ``codes={}`` (Rank-2 restore).
     """
     if baseline is None:
         return "attribution-unavailable — admit baseline missing"
-    codes, _hashes = normalize_wt_baseline(baseline)
-    if not codes:
-        if not authored:
-            return None
-        return "attribution-unavailable — empty admit baseline codes"
     if not authored:
         return None
     count = len(authored)
