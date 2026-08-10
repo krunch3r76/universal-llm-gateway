@@ -15,6 +15,8 @@ from services.git_integration_worker.cursor_auto.closeout_relay_common import (
 )
 from services.git_integration_worker.cursor_auto.closeout_relay_reporting import (
     amend_reporting_field_gaps,
+    missing_reporting_field_deviations,
+    unparsed_reporting_field_deviations,
 )
 from services.git_integration_worker.cursor_auto.directive import build_sdk_message
 from services.git_integration_worker.cursor_auto.reporting_contract import (
@@ -168,3 +170,145 @@ def test_reporting_contract_enumerates_every_projector_field() -> None:
     assert section2_field_names() == tuple(field for field, _ in SECTION2_FIELDS)
     assert "etc." not in section2_emit_line()
     assert "verbatim" in section2_emit_line()
+
+
+_PROVENANCE = "workspaces://universal-llm-gateway/tmp/reviews/closeouts/auto-specimen.md"
+
+_CLASS_I_ABSENT_CLOSEOUT = """\
+TYPE: CLOSEOUT
+status: complete
+
+**ac_verdict:** PASS
+
+**deltas_to_spec:** none material — scoped work delivered
+
+**effects:** none
+"""
+
+_CLASS_II_PRESENT_CLOSEOUT = """\
+TYPE: CLOSEOUT
+status: complete
+
+**ac_verdict:** PASS
+
+**deltas_to_spec:** none material — scoped work delivered
+
+**access:** full checkout
+
+**coverage:** n/a — no retrieval this seat
+
+**effects:** none
+"""
+
+_CLASS_III_UNPARSED_PROJECTED = f"""\
+TYPE: CLOSEOUT
+source_ref: {_PROVENANCE}
+
+| Field | Value |
+|---|---|
+| status_claim | complete |
+| ac_verdict | pass |
+| deltas_to_spec | none material |
+| decisions_taken | none |
+| effects | none |
+| evidence | none |
+| next | none |
+| open forks | none |
+| access | relay could not locate `access` — see source_ref: {_PROVENANCE} |
+| coverage | relay could not locate `coverage` — see source_ref: {_PROVENANCE} |
+| model_actual | n/a — no substitution |
+| checkpoint_claim | nothing_authored |
+"""
+
+
+def test_lane_a_checkpoint_teaches_bare_section2_field_lines() -> None:
+    """Edit 1 — Lane-A examples are bare ``field: value``, not whole-line backticks."""
+    message = build_sdk_message("TYPE: DIRECTIVE\nscope: foo\nDo work.", contract="implement")
+    assert "status_claim: complete" in message
+    assert "checkpoint_claim: nothing_authored" in message
+    assert "`status_claim: complete`" not in message
+    assert "`checkpoint_claim: nothing_authored`" not in message
+    # Name-only backticks in the emit instruction remain compatible.
+    assert "`status_claim:`" in message
+    assert "`checkpoint_claim:`" in message
+
+
+def test_reporting_class_i_genuinely_absent_field_reported_absent() -> None:
+    """AC class (i) — field missing from §2 ⇒ reporting:missing_* (absent)."""
+    missing = missing_reporting_field_deviations(
+        _CLASS_I_ABSENT_CLOSEOUT, model_substitution=False
+    )
+    unparsed = unparsed_reporting_field_deviations(
+        _CLASS_I_ABSENT_CLOSEOUT, model_substitution=False
+    )
+    assert "reporting:missing_access" in missing
+    assert "reporting:missing_coverage" in missing
+    assert unparsed == []
+    blind = amend_reporting_field_gaps(
+        _CLASS_I_ABSENT_CLOSEOUT,
+        status="complete",
+        source="section2_sidecar",
+        caller_auditable=False,
+        model_substitution=False,
+    )
+    assert blind.relay_note is not None
+    assert "reporting:blind_caller_missing_fields" in blind.relay_note
+
+
+def test_reporting_class_ii_present_parseable_no_deviation() -> None:
+    """AC class (ii) — field present and parseable ⇒ extracted; no reporting deviation."""
+    missing = missing_reporting_field_deviations(
+        _CLASS_II_PRESENT_CLOSEOUT, model_substitution=False
+    )
+    unparsed = unparsed_reporting_field_deviations(
+        _CLASS_II_PRESENT_CLOSEOUT, model_substitution=False
+    )
+    assert missing == []
+    assert unparsed == []
+    payload = amend_reporting_field_gaps(
+        _CLASS_II_PRESENT_CLOSEOUT,
+        status="complete",
+        source="section2_sidecar",
+        caller_auditable=False,
+        model_substitution=False,
+    )
+    assert payload.relay_note is None or "reporting:missing_" not in payload.relay_note
+    assert payload.relay_note is None or "reporting:unparsed_" not in payload.relay_note
+    assert (
+        payload.relay_note is None
+        or "reporting:blind_caller_missing_fields" not in payload.relay_note
+    )
+
+
+def test_reporting_class_iii_present_unparseable_reported_unparsed_never_absent() -> None:
+    """AC class (iii) — locate-miss / parse-miss ⇒ unparsed, never missing_* / blind clamp.
+
+    Specimen is a projected table whose access/coverage cells carry relay locate-miss
+    voice (the production fold path). Backtick-strip is deferred, so this shape remains
+    reachable after the teaching fix.
+    """
+    missing = missing_reporting_field_deviations(
+        _CLASS_III_UNPARSED_PROJECTED, model_substitution=False
+    )
+    unparsed = unparsed_reporting_field_deviations(
+        _CLASS_III_UNPARSED_PROJECTED, model_substitution=False
+    )
+    assert "reporting:missing_access" not in missing
+    assert "reporting:missing_coverage" not in missing
+    assert "reporting:unparsed_access" in unparsed
+    assert "reporting:unparsed_coverage" in unparsed
+    blind = amend_reporting_field_gaps(
+        _CLASS_III_UNPARSED_PROJECTED,
+        status="complete",
+        source="section2_sidecar",
+        caller_auditable=False,
+        model_substitution=False,
+    )
+    assert blind.relay_note is not None
+    assert "reporting:unparsed_access" in blind.relay_note
+    assert "reporting:unparsed_coverage" in blind.relay_note
+    assert "reporting:missing_access" not in blind.relay_note
+    assert "reporting:missing_coverage" not in blind.relay_note
+    assert "reporting:blind_caller_missing_fields" not in blind.relay_note
+    assert "reporting:unparsed_access" in blind.body
+    assert "reporting:missing_access" not in blind.body

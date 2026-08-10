@@ -1,8 +1,15 @@
-"""L2 reporting-field presence checks and caller_auditable tiering at relay."""
+"""L2 reporting-field presence checks and caller_auditable tiering at relay.
+
+Presence classification distinguishes three outcomes that blind callers must not
+conflate: a field the author never wrote (absent), a field that extracted cleanly
+(present), and a field the projector/parser could not read (unparsed). Locate-miss
+and parse-failed cell voice are unparsed — never ``reporting:missing_*``.
+"""
 
 from __future__ import annotations
 
 import re
+from typing import Literal
 
 from services.git_integration_worker.cursor_auto.closeout_relay_common import (
     CloseoutRelayPayload,
@@ -18,6 +25,10 @@ _REPORTING_MISSING_SCOPE_DELTA = "reporting:missing_scope_delta"
 _REPORTING_MISSING_ACCESS = "reporting:missing_access"
 _REPORTING_MISSING_COVERAGE = "reporting:missing_coverage"
 _REPORTING_MISSING_MODEL_ACTUAL = "reporting:missing_model_actual"
+_REPORTING_UNPARSED_SCOPE_DELTA = "reporting:unparsed_scope_delta"
+_REPORTING_UNPARSED_ACCESS = "reporting:unparsed_access"
+_REPORTING_UNPARSED_COVERAGE = "reporting:unparsed_coverage"
+_REPORTING_UNPARSED_MODEL_ACTUAL = "reporting:unparsed_model_actual"
 _TABLE_CELL_ROW_RE = re.compile(
     r"(?im)^\|\s*(?P<field>[^|]+?)\s*\|\s*(?P<value>.*?)\s*\|\s*$"
 )
@@ -33,8 +44,8 @@ _FIELD_ABSENT_MARKERS: tuple[str, ...] = (
     "unknown — executor emitted no §2",
     "not reported",
     "unauthored",
-    "relay could not locate",
 )
+_FieldPresence = Literal["present", "absent", "unparsed"]
 
 
 def _extract_table_cell(body: str, field: str) -> str | None:
@@ -47,10 +58,24 @@ def _extract_table_cell(body: str, field: str) -> str | None:
     return None
 
 
+def _cell_claims_field_unparsed(cell: str) -> bool:
+    """True when a projected cell is relay parse-miss / parse-failed voice."""
+    lowered = cell.strip().casefold()
+    if not lowered:
+        return False
+    if lowered.startswith("relay could not locate"):
+        return True
+    if lowered.startswith("parse_failed"):
+        return True
+    return False
+
+
 def _cell_claims_field_absent(cell: str) -> bool:
     lowered = cell.strip().casefold()
     if not lowered or lowered in {"none", "n/a"}:
         return True
+    if _cell_claims_field_unparsed(cell):
+        return False
     return any(marker.casefold() in lowered for marker in _FIELD_ABSENT_MARKERS)
 
 
@@ -66,47 +91,78 @@ def _extract_named_section(body: str, *field_keys: str) -> str | None:
     return None
 
 
-def _scope_delta_present(body: str) -> bool:
+def _classify_reporting_field(body: str, *field_keys: str) -> _FieldPresence:
+    """Classify a required reporting field as present, absent, or unparsed."""
+    for field in field_keys:
+        cell = _extract_table_cell(body, field)
+        if cell is not None:
+            if _cell_claims_field_unparsed(cell):
+                return "unparsed"
+            if _cell_claims_field_absent(cell):
+                return "absent"
+            return "present" if cell.strip() else "absent"
+    section = _extract_named_section(body, *field_keys)
+    if section is None:
+        return "absent"
+    return "present" if section.strip() else "absent"
+
+
+def _scope_delta_presence(body: str) -> _FieldPresence:
     cell = _extract_table_cell(body, "deltas_to_spec")
     if cell is not None:
+        if _cell_claims_field_unparsed(cell):
+            return "unparsed"
         if _cell_claims_field_absent(cell):
-            return False
-        return bool(cell.strip())
+            return "absent"
+        return "present" if cell.strip() else "absent"
     section = _extract_named_section(body, "deltas_to_spec")
     if section is None:
-        return False
+        return "absent"
     if any(
         marker.casefold() in section.casefold()
         for marker in _SCOPE_DELTA_ABSENT_MARKERS
     ):
-        return False
-    return bool(section.strip())
+        return "absent"
+    return "present" if section.strip() else "absent"
+
+
+def _access_presence(body: str) -> _FieldPresence:
+    return _classify_reporting_field(body, "access")
+
+
+def _coverage_presence(body: str) -> _FieldPresence:
+    return _classify_reporting_field(body, "coverage")
+
+
+def _model_actual_presence(body: str) -> _FieldPresence:
+    for field in ("model actual", "model_actual"):
+        cell = _extract_table_cell(body, field)
+        if cell is not None:
+            if _cell_claims_field_unparsed(cell):
+                return "unparsed"
+            if _cell_claims_field_absent(cell):
+                return "absent"
+            return "present" if cell.strip() else "absent"
+    section = _extract_named_section(body, "model_actual")
+    if section is None:
+        return "absent"
+    return "present" if section.strip() else "absent"
+
+
+def _scope_delta_present(body: str) -> bool:
+    return _scope_delta_presence(body) == "present"
 
 
 def _access_present(body: str) -> bool:
-    cell = _extract_table_cell(body, "access")
-    if cell is not None:
-        return not _cell_claims_field_absent(cell)
-    section = _extract_named_section(body, "access")
-    return section is not None and bool(section.strip())
+    return _access_presence(body) == "present"
 
 
 def _coverage_present(body: str) -> bool:
-    cell = _extract_table_cell(body, "coverage")
-    if cell is not None:
-        return not _cell_claims_field_absent(cell)
-    section = _extract_named_section(body, "coverage")
-    return section is not None and bool(section.strip())
+    return _coverage_presence(body) == "present"
 
 
 def _model_actual_present(body: str) -> bool:
-    cell = _extract_table_cell(body, "model actual")
-    if cell is None:
-        cell = _extract_table_cell(body, "model_actual")
-    if cell is not None:
-        return not _cell_claims_field_absent(cell)
-    section = _extract_named_section(body, "model_actual")
-    return section is not None and bool(section.strip())
+    return _model_actual_presence(body) == "present"
 
 
 def missing_reporting_field_deviations(
@@ -114,16 +170,34 @@ def missing_reporting_field_deviations(
     *,
     model_substitution: bool,
 ) -> list[str]:
-    """Return deviation tokens for absent required §2 reporting checklist fields."""
+    """Return deviation tokens for genuinely absent required §2 reporting fields."""
     deviations: list[str] = []
-    if not _scope_delta_present(body):
+    if _scope_delta_presence(body) == "absent":
         deviations.append(_REPORTING_MISSING_SCOPE_DELTA)
-    if not _access_present(body):
+    if _access_presence(body) == "absent":
         deviations.append(_REPORTING_MISSING_ACCESS)
-    if not _coverage_present(body):
+    if _coverage_presence(body) == "absent":
         deviations.append(_REPORTING_MISSING_COVERAGE)
-    if model_substitution and not _model_actual_present(body):
+    if model_substitution and _model_actual_presence(body) == "absent":
         deviations.append(_REPORTING_MISSING_MODEL_ACTUAL)
+    return deviations
+
+
+def unparsed_reporting_field_deviations(
+    body: str,
+    *,
+    model_substitution: bool,
+) -> list[str]:
+    """Return deviation tokens for required fields present in §2 but unparseable."""
+    deviations: list[str] = []
+    if _scope_delta_presence(body) == "unparsed":
+        deviations.append(_REPORTING_UNPARSED_SCOPE_DELTA)
+    if _access_presence(body) == "unparsed":
+        deviations.append(_REPORTING_UNPARSED_ACCESS)
+    if _coverage_presence(body) == "unparsed":
+        deviations.append(_REPORTING_UNPARSED_COVERAGE)
+    if model_substitution and _model_actual_presence(body) == "unparsed":
+        deviations.append(_REPORTING_UNPARSED_MODEL_ACTUAL)
     return deviations
 
 
@@ -150,13 +224,18 @@ def amend_reporting_field_gaps(
     caller_auditable: bool,
     model_substitution: bool,
 ) -> CloseoutRelayPayload:
-    """Tier missing §2 reporting fields — clamp on blind callers, deviation-only when auditable."""
+    """Tier missing/unparsed §2 reporting fields — clamp only on genuine absence."""
     if not looks_section2(body):
         return CloseoutRelayPayload(body=body, status=status, source=source)
-    deviations = missing_reporting_field_deviations(
+    missing = missing_reporting_field_deviations(
         body,
         model_substitution=model_substitution,
     )
+    unparsed = unparsed_reporting_field_deviations(
+        body,
+        model_substitution=model_substitution,
+    )
+    deviations = [*missing, *unparsed]
     if not deviations:
         return CloseoutRelayPayload(body=body, status=status, source=source)
     from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
@@ -164,8 +243,7 @@ def amend_reporting_field_gaps(
     )
 
     amended_body = _append_deviation_tokens(body, deviations)
-    relay_note = None
-    if not caller_auditable and status == "complete":
+    if missing and not caller_auditable and status == "complete":
         relay_note = merge_relay_notes(
             "; ".join(deviations),
             "reporting:blind_caller_missing_fields",
@@ -184,4 +262,5 @@ __all__ = [
     "amend_reporting_field_gaps",
     "missing_reporting_field_deviations",
     "stamp_model_actual",
+    "unparsed_reporting_field_deviations",
 ]
