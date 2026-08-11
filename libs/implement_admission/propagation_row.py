@@ -68,11 +68,22 @@ _DEFAULT_PROOF_CLASS: dict[str, ProofClass] = {
     "stargate": "process_live",
 }
 
-_PROCESS_LIVE_PROOF = (
-    "AFTER restart VERIFY code_ref is ancestor-of-or-equal-to observed code_version "
-    "AND VERIFY process identity changed "
-    "(pid/process_start_time/process_age_s/uptime_s) since the pre-restart probe"
-)
+
+def _process_identity_fields_clause() -> str:
+    """Identity fields attestation uses — derived from probe oracle, not hand-copied."""
+    from services.git_integration_worker.cursor_auto.propagation_probe import (
+        IDENTIFIER_FIELDS,
+    )
+
+    return "/".join(IDENTIFIER_FIELDS)
+
+
+def _process_live_proof_body() -> str:
+    fields = _process_identity_fields_clause()
+    return (
+        "AFTER restart VERIFY code_ref is ancestor-of-or-equal-to observed code_version "
+        f"AND VERIFY process identity changed ({fields}) since the pre-restart probe"
+    )
 
 # Optional service specialization for client_visible (class base alone is insufficient).
 _CLIENT_VISIBLE_PROOF_BY_SERVICE: dict[str, str] = {
@@ -136,7 +147,7 @@ def compose_proof(
     slug = (service or "").strip().lower()
     pc = (proof_class or "").strip()
     if pc == "process_live":
-        return f"service health/liveness → {_PROCESS_LIVE_PROOF} ({slug})"
+        return f"service health/liveness → {_process_live_proof_body()} ({slug})"
     if pc == "client_visible":
         template = _CLIENT_VISIBLE_PROOF_BY_SERVICE.get(slug)
         if template is None:

@@ -28,7 +28,7 @@ def compact_propagate_terminal_payload(payload: dict[str, Any]) -> dict[str, Any
             continue
         compact = dict(item)
         row_id = str(compact.get("row_id") or len(spill))
-        for field in ("proof", "proof_before"):
+        for field in ("proof", "proof_before", "proof_at_submit"):
             value = compact.pop(field, None)
             if value is None:
                 continue

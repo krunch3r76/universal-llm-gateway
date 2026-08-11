@@ -228,11 +228,16 @@ def test_service_path_row_tags_distinguishable_from_hand_authored():
 
 
 def test_compose_proof_process_live_giw_is_process_identity_not_openapi():
+    from services.git_integration_worker.cursor_auto.propagation_probe import (
+        IDENTIFIER_FIELDS,
+    )
+
+    identity_clause = "/".join(IDENTIFIER_FIELDS)
     expected = (
         "service health/liveness → AFTER restart VERIFY code_ref is "
         "ancestor-of-or-equal-to observed code_version AND VERIFY process identity "
-        "changed (pid/process_start_time/process_age_s/uptime_s) since the "
-        "pre-restart probe (git_integration_worker)"
+        f"changed ({identity_clause}) since the pre-restart probe "
+        "(git_integration_worker)"
     )
     assert compose_proof("git_integration_worker", "process_live") == expected
     row = PropagationRow(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from typing import Any
 
 from charter_runner_store.propagation_ledger import (
@@ -53,6 +54,24 @@ MCP_DISCONNECT_ADVISORY = (
     "reconnect after healthy (force lands the container, it does not refresh "
     "the live CSE MCP binding)."
 )
+
+
+def execution_terminal_proof_fields(
+    *,
+    status: str,
+    before: dict[str, Any] | None,
+    after: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Attach honestly-named proof capture fields for propagate executions[]."""
+    fields: dict[str, Any] = {}
+    if before is not None:
+        fields["proof_before"] = before
+    if status == "executed" and after is not None:
+        fields["proof"] = after
+    elif status == "submitted" and after is not None:
+        fields["proof_at_submit"] = after
+        fields["proof_at_submit_captured_at"] = datetime.now(timezone.utc).isoformat()
+    return fields
 
 
 def _preempted_work_label(manage_result: dict[str, Any]) -> str:
@@ -339,8 +358,11 @@ async def _execute_row(
             "row_id": row_id,
             "status": "executed",
             "manage": manage_result,
-            "proof": after,
-            "proof_before": before,
+            **execution_terminal_proof_fields(
+                status="executed",
+                before=before,
+                after=after,
+            ),
             "proof_class_requested": after_dispatch.proof_class_requested,
             "proof_class_executed": after_dispatch.proof_class_executed,
             "force": force,
@@ -370,8 +392,11 @@ async def _execute_row(
         "row_id": row_id,
         "status": "submitted",
         "manage": manage_result,
-        "proof": after,
-        "proof_before": before,
+        **execution_terminal_proof_fields(
+            status="submitted",
+            before=before,
+            after=after,
+        ),
         "force": force,
         "self_preempt_applied": self_preempt_applied,
     }
@@ -569,6 +594,7 @@ __all__ = [
     "MCP_DISCONNECT_ADVISORY",
     "deferred_is_self_preemptable",
     "execution_for_manage_deferred",
+    "execution_terminal_proof_fields",
     "restart_intent_persisted",
     "run_propagation_in_seat",
 ]
