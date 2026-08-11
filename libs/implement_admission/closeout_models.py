@@ -100,6 +100,12 @@ class Verification(BaseModel):
     exit_code_register: ExitCodeRegister = "unknown"
     invocation_id: str | None = None
     basis: str | None = None
+    # Retained process streams for non-zero exits (lint / harvested shells).
+    # Absent on pass and on legacy rows; truncate at pack time so closeout JSON
+    # stays interrogable without unbounded capture.
+    stdout: str | None = None
+    stderr: str | None = None
+    output_truncated: bool = False
 
 
 def unattributed_process_verification(
@@ -108,6 +114,9 @@ def unattributed_process_verification(
     exit_code: int,
     invocation_id: str | None = None,
     basis: str | None = None,
+    stdout: str | None = None,
+    stderr: str | None = None,
+    output_truncated: bool = False,
 ) -> Verification:
     """Pack a shell exit integer whose process-under-test attribution is unproven.
 
@@ -121,6 +130,9 @@ def unattributed_process_verification(
         exit_code_register="unattributed",
         invocation_id=invocation_id or f"proc:{uuid4().hex}",
         basis=basis,
+        stdout=stdout,
+        stderr=stderr,
+        output_truncated=output_truncated,
     )
 
 
@@ -130,6 +142,9 @@ def observed_process_verification(
     exit_code: int,
     invocation_id: str | None = None,
     basis: str | None = None,
+    stdout: str | None = None,
+    stderr: str | None = None,
+    output_truncated: bool = False,
 ) -> Verification:
     """Pack a process-observed exit from ``subprocess`` / shell returncode.
 
@@ -143,6 +158,9 @@ def observed_process_verification(
         exit_code_register="observed",
         invocation_id=invocation_id or f"proc:{uuid4().hex}",
         basis=basis,
+        stdout=stdout,
+        stderr=stderr,
+        output_truncated=output_truncated,
     )
 
 

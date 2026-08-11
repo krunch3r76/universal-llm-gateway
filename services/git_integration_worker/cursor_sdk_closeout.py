@@ -262,6 +262,30 @@ def capture_wt_baseline_with_hashes(
     }
 
 
+# Cap retained lint streams so a noisy ruff failure cannot inflate closeout JSON.
+# Marker suffix records the cut when either stream exceeds the budget.
+_LINT_OUTPUT_RETAIN_CHARS = 4000
+
+
+def _decode_retained_stream(raw: bytes | str | None) -> tuple[str, bool]:
+    """Decode a subprocess stream and truncate to ``_LINT_OUTPUT_RETAIN_CHARS``.
+
+    Returns ``(text, truncated)``. Empty/absent streams become ``""``.
+    """
+    if raw is None:
+        return "", False
+    if isinstance(raw, bytes):
+        text = raw.decode("utf-8", errors="replace")
+    else:
+        text = str(raw)
+    if len(text) <= _LINT_OUTPUT_RETAIN_CHARS:
+        return text, False
+    return (
+        text[:_LINT_OUTPUT_RETAIN_CHARS] + "\n...[truncated]",
+        True,
+    )
+
+
 def run_touched_files_lint(
     source_repo: Path,
     change_set: ChangeSet,
@@ -272,6 +296,10 @@ def run_touched_files_lint(
     cannot be silently conflated with a mid-run agent shell that happened to
     print ``All checks passed!`` (specimen auto-00a23d2a4f45). ``cwd`` is
     pinned to ``source_repo`` so config discovery matches in-tree measurement.
+
+    On non-zero exit, stdout/stderr are retained on the verification row
+    (each truncated at ``_LINT_OUTPUT_RETAIN_CHARS``) so a later
+    ``checks_failed`` grade remains interrogable.
     """
     py_paths = [
         path
@@ -320,12 +348,22 @@ def run_touched_files_lint(
             ),
             "verification:lint_unavailable",
         )
+    stdout: str | None = None
+    stderr: str | None = None
+    output_truncated = False
+    if proc.returncode != 0:
+        stdout, trunc_out = _decode_retained_stream(proc.stdout)
+        stderr, trunc_err = _decode_retained_stream(proc.stderr)
+        output_truncated = trunc_out or trunc_err
     return (
         observed_process_verification(
             command=command,
             exit_code=proc.returncode,
             invocation_id=invocation_id,
             basis="subprocess.run.returncode",
+            stdout=stdout,
+            stderr=stderr,
+            output_truncated=output_truncated,
         ),
         None,
     )

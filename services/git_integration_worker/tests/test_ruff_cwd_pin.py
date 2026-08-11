@@ -80,3 +80,69 @@ def test_run_touched_files_lint_pins_cwd_to_source_repo(
     assert note is None
     assert verification.exit_code == 0
     assert captured["kwargs"].get("cwd") == str(_REPO)
+    assert verification.stdout is None
+    assert verification.stderr is None
+
+
+def test_run_touched_files_lint_retains_streams_on_nonzero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-zero ruff must keep stdout/stderr on the verification row."""
+
+    def fake_run(cmd: list[str], **kwargs: Any) -> MagicMock:
+        del cmd, kwargs
+        proc = MagicMock()
+        proc.returncode = 1
+        proc.stdout = b"file.py:1:1: F401 unused import\n"
+        proc.stderr = b""
+        return proc
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.subprocess.run",
+        fake_run,
+    )
+    verification, note = run_touched_files_lint(
+        _REPO,
+        ChangeSet(created=(_CLEAN_REL,), modified=(), deleted=()),
+    )
+    assert note is None
+    assert verification.exit_code == 1
+    assert verification.stdout == "file.py:1:1: F401 unused import\n"
+    assert verification.stderr == ""
+    assert verification.output_truncated is False
+
+
+def test_run_touched_files_lint_truncates_oversized_streams(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Streams longer than the retain budget are cut and flagged."""
+    from services.git_integration_worker.cursor_sdk_closeout import (
+        _LINT_OUTPUT_RETAIN_CHARS,
+    )
+
+    oversized = ("x" * (_LINT_OUTPUT_RETAIN_CHARS + 50)).encode()
+
+    def fake_run(cmd: list[str], **kwargs: Any) -> MagicMock:
+        del cmd, kwargs
+        proc = MagicMock()
+        proc.returncode = 1
+        proc.stdout = b""
+        proc.stderr = oversized
+        return proc
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.subprocess.run",
+        fake_run,
+    )
+    verification, note = run_touched_files_lint(
+        _REPO,
+        ChangeSet(created=(_CLEAN_REL,), modified=(), deleted=()),
+    )
+    assert note is None
+    assert verification.exit_code == 1
+    assert verification.output_truncated is True
+    assert verification.stderr is not None
+    assert verification.stderr.endswith("\n...[truncated]")
+    assert len(verification.stderr) == _LINT_OUTPUT_RETAIN_CHARS + len(
+        "\n...[truncated]"
+    )
