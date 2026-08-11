@@ -274,7 +274,7 @@ def test_structured_rows_none_for_deleted_lib_with_consumers():
 
 
 def test_oracle_code_ref_relation_omits_contradicted_mcp():
-    """auto-8ec92394d3a1 class: package CONSUMERS over-nominated mcp for sibling module."""
+    """Sibling over-nomination: no sync_restart for mcp; blinds → escalate not silent omit."""
     payload = _closeout_payload(
         files_modified=["libs/deploy_identity/code_ref_relation.py"],
     )
@@ -283,7 +283,10 @@ def test_oracle_code_ref_relation_omits_contradicted_mcp():
     assert "sync_restart: git_integration_worker" in block
     assert "import_path:verified" in block
     assert "sync_restart: mcp" not in block
-    assert "libs_touched" not in block  # GIW verified remains; mcp omit is earned
+    # Fork 1: mcp has measured blinds → lead-visible escalate (not accuracy-backed omit).
+    assert "libs_touched:" in block
+    assert "mcp" in block
+    assert "import_grammar_blind:" in block
 
 
 def test_structured_oracle_code_ref_relation_omits_mcp():

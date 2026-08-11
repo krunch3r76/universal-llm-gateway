@@ -71,9 +71,10 @@ def test_legacy_residue_preserves_line_tags_without_inventing():
         "path-derived obligation; liveness: unknown; "
         "derived:path_prefix; import_path:verified"
     )
+    # Coerce preserves the on-wire fragment; parse normalizes legacy pair (Fork 3).
     assert parse_verification_tags(rows[0].reason) == {
         "derived": "path_prefix",
-        "import_path": "verified",
+        "import_path": "not_probed",
     }
     assert skipped == []
 
@@ -96,11 +97,12 @@ def test_row_model_requires_service_and_code_ref():
 
 
 def test_rows_from_lib_consumers_skips_test_module():
-    rows = rows_from_lib_consumers(
+    rows, escalations = rows_from_lib_consumers(
         ["libs/implement_admission/test_propagation_block_parser.py"],
         code_ref="sha-test-skip",
     )
     assert rows == []
+    assert escalations == []
 
 
 def test_resolve_code_ref_prefers_explicit_git_refs_over_closeout_head():
@@ -157,13 +159,15 @@ def test_rows_from_closeout_payload_modified_lib_still_mints_consumers():
 def test_rows_from_lib_consumers_oracle_omits_contradicted_mcp():
     from implement_admission.propagation_row import rows_from_lib_consumers
 
-    rows = rows_from_lib_consumers(
+    rows, escalations = rows_from_lib_consumers(
         ["libs/deploy_identity/code_ref_relation.py"],
         code_ref="oracle-sha",
     )
     assert [row.service for row in rows] == ["git_integration_worker"]
     assert "import_path:verified" in (rows[0].reason or "")
     assert "mcp" not in {row.service for row in rows}
+    # mcp contradicted with measured blinds → escalate prose, never a PropagationRow
+    assert any("mcp" in line and "import_grammar_blind:" in line for line in escalations)
 
 
 def test_default_proof_strings_are_obligation_not_observation():
@@ -196,7 +200,7 @@ def test_service_path_mint_labels_obligation_not_liveness():
     assert len(rows) == 1
     assert rows[0].reason == (
         "path-derived obligation; liveness: unknown; "
-        "derived:path_prefix; import_path:verified"
+        "derived:path_prefix; import_path:not_probed"
     )
     assert "AFTER restart VERIFY" in rows[0].proof
 
@@ -214,8 +218,12 @@ def test_service_path_row_tags_distinguishable_from_hand_authored():
     )
     assert parse_verification_tags(derived[0].reason) == {
         "derived": "path_prefix",
-        "import_path": "verified",
+        "import_path": "not_probed",
     }
+    # Legacy generator default normalizes at read time (Fork 3).
+    assert parse_verification_tags(
+        "path-derived obligation; derived:path_prefix; import_path:verified"
+    ) == {"derived": "path_prefix", "import_path": "not_probed"}
     assert parse_verification_tags(hand.reason) is None
 
 

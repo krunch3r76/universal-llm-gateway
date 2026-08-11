@@ -444,14 +444,20 @@ def rows_from_lib_consumers(
     paths: list[str],
     *,
     code_ref: str,
-) -> list[PropagationRow]:
-    """Mint one row per **verified** CONSUMERS candidate for shared-lib lands.
+) -> tuple[list[PropagationRow], list[str]]:
+    """Mint verified CONSUMERS rows; return lead-visible escalations separately.
 
-    Candidates come from package/module ``CONSUMERS``; owed rows require a
-    module-path import hit (``import_path:verified``). Contradicted candidates
-    are omitted (accuracy-backed); unverified are not minted as owed rows.
+    Returns ``(rows, escalations)`` — escalations are ``libs_touched:…`` prose,
+    never ``PropagationRow`` (appending a row would mint a restart and suppress
+    the ``rows_from_service_paths`` fallback). Mint only on measured
+    ``import_path:verified``. ``unverified`` always escalates; ``contradicted``
+    escalates only when import-grammar blinds measure applicable for that slug.
     """
+    from implement_admission.consumer_import_blinds import measure_import_grammar_blinds
+    from implement_admission.consumer_import_verify import escalate_consumer_line
+
     rows: list[PropagationRow] = []
+    escalations: list[str] = []
     seen: set[tuple[str, str]] = set()
     for path in paths:
         if is_lib_test_module(path):
@@ -461,28 +467,47 @@ def rows_from_lib_consumers(
             continue
         for slug in consumers:
             status = verify_consumer_import(slug, path)
-            if status != "verified":
-                continue
-            key = (slug, code_ref)
-            if key in seen:
-                continue
-            seen.add(key)
-            pc = default_proof_class(slug)
-            tags = format_verification_tags(derived="consumers", import_path=status)
-            rows.append(
-                PropagationRow(
-                    service=slug,
-                    code_ref=code_ref,
-                    safe_window=default_safe_window(slug),
-                    proof=compose_proof(slug, pc),
-                    proof_class=pc,
-                    reason=(
-                        f"shared lib land: {path}; {_PATH_DERIVED_OBLIGATION_REASON}; "
-                        f"{tags}"
-                    ),
+            blinds = measure_import_grammar_blinds(slug)
+            if status == "verified":
+                key = (slug, code_ref)
+                if key in seen:
+                    continue
+                seen.add(key)
+                pc = default_proof_class(slug)
+                tags = format_verification_tags(derived="consumers", import_path=status)
+                rows.append(
+                    PropagationRow(
+                        service=slug,
+                        code_ref=code_ref,
+                        safe_window=default_safe_window(slug),
+                        proof=compose_proof(slug, pc),
+                        proof_class=pc,
+                        reason=(
+                            f"shared lib land: {path}; {_PATH_DERIVED_OBLIGATION_REASON}; "
+                            f"{tags}"
+                        ),
+                    )
                 )
-            )
-    return rows
+            elif status == "unverified":
+                escalations.append(
+                    escalate_consumer_line(path, slug, status=status, blinds=blinds)
+                )
+            elif status == "contradicted":
+                if blinds:
+                    escalations.append(
+                        escalate_consumer_line(
+                            path, slug, status=status, blinds=blinds
+                        )
+                    )
+            elif status in ("not_probed", "indeterminate"):
+                escalations.append(
+                    escalate_consumer_line(path, slug, status=status, blinds=blinds)
+                )
+            else:
+                raise ValueError(
+                    f"unrecognised ImportPathStatus {status!r} for slug {slug!r}"
+                )
+    return rows, escalations
 
 
 def rows_from_service_paths(
@@ -492,8 +517,8 @@ def rows_from_service_paths(
 ) -> list[PropagationRow]:
     """Derive sync_restart obligation rows from touched service Python paths.
 
-    Generator-derived: stamps ``derived:path_prefix; import_path:verified`` so
-    absence of tags on other rows stays informative (seat-authored).
+    Generator-derived: stamps ``derived:path_prefix; import_path:not_probed`` —
+    path_prefix never ran the import predicate (Fork 3 / Fork 4).
     """
     rows: list[PropagationRow] = []
     seen: set[str] = set()
@@ -504,7 +529,7 @@ def rows_from_service_paths(
         seen.add(slug)
         pc = default_proof_class(slug)
         tags = format_verification_tags(
-            derived="path_prefix", import_path="verified"
+            derived="path_prefix", import_path="not_probed"
         )
         rows.append(
             PropagationRow(
@@ -569,7 +594,10 @@ def rows_from_closeout_payload(
     if rows:
         return rows, skipped, False
 
-    consumer_rows = rows_from_lib_consumers(land_paths, code_ref=code_ref)
+    consumer_rows, consumer_escalations = rows_from_lib_consumers(
+        land_paths, code_ref=code_ref
+    )
+    skipped = [*skipped, *consumer_escalations]
     if consumer_rows:
         return consumer_rows, skipped, False
 

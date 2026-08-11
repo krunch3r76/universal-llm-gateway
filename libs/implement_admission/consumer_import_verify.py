@@ -9,6 +9,11 @@ Granularity is file/module — not package. The harvest helper
 ``propagation_libs_closure.services_for_lib_path`` is package-granular and must
 not be reused as the verifier (it would re-encode the defect one layer down).
 
+Mint is positive-only on measured ``verified``. ``contradicted`` with all three
+import-grammar blinds measuring zero is an earned silent omit; ``contradicted``
+with any blind applicable, and every ``unverified``, escalate with tags.
+``path_prefix`` tags are non-probes (``not_probed``), never measured reach.
+
 Callers: ``episode_residue`` / ``rows_from_lib_consumers``.
 
 Authorship-time check: ``check_consumers_declarations`` applies the same
@@ -28,7 +33,13 @@ from typing import Literal
 
 from implement_admission.service_lib_ownership import path_prefixes, service_ownership
 
-ImportPathStatus = Literal["verified", "unverified", "contradicted"]
+ImportPathStatus = Literal[
+    "verified",
+    "unverified",
+    "contradicted",
+    "not_probed",
+    "indeterminate",
+]
 DerivedSource = Literal["consumers", "path_prefix", "ownership", "import_graph"]
 
 _LIBS_DIR = "libs"
@@ -202,14 +213,22 @@ def format_verification_tags(
     *,
     derived: DerivedSource,
     import_path: ImportPathStatus,
+    blinds: frozenset[str] | set[str] | None = None,
 ) -> str:
     """Machine-readable tag suffix consumed by seats reading RESIDUE / row reason."""
-    return f"derived:{derived}; import_path:{import_path}"
+    base = f"derived:{derived}; import_path:{import_path}"
+    if not blinds:
+        return base
+    from implement_admission.consumer_import_blinds import format_blind_tag
+
+    fragment = format_blind_tag(blinds)
+    return f"{base}; {fragment}" if fragment else base
 
 
 _VERIFICATION_TAGS_RE = re.compile(
     r"derived:(?P<derived>consumers|path_prefix|ownership|import_graph);\s*"
-    r"import_path:(?P<import_path>verified|unverified|contradicted)"
+    r"import_path:(?P<import_path>verified|unverified|contradicted|not_probed|indeterminate)"
+    r"(?:;\s*import_grammar_blind:(?P<blinds>[\w|]+))?"
 )
 
 
@@ -218,14 +237,22 @@ def parse_verification_tags(text: str | None) -> dict[str, str] | None:
 
     Returns ``None`` when absent — absence means seat-authored (or an untagged
     legacy coerce), not "unknown derivation." Does not invent tags.
+
+    Forward-only Fork 3: ``derived:path_prefix; import_path:verified`` is by
+    construction a pre-change generator default — normalize to ``not_probed``.
     """
     match = _VERIFICATION_TAGS_RE.search(str(text or ""))
     if match is None:
         return None
-    return {
-        "derived": match.group("derived"),
-        "import_path": match.group("import_path"),
-    }
+    derived = match.group("derived")
+    import_path = match.group("import_path")
+    if derived == "path_prefix" and import_path == "verified":
+        import_path = "not_probed"
+    result = {"derived": derived, "import_path": import_path}
+    blinds = match.group("blinds")
+    if blinds:
+        result["import_grammar_blind"] = blinds
+    return result
 
 
 def verification_tags_fragment(text: str | None) -> str | None:
@@ -237,6 +264,23 @@ def verification_tags_fragment(text: str | None) -> str | None:
     return match.group(0) if match else None
 
 
+def escalate_consumer_line(
+    path: str,
+    slug: str,
+    *,
+    status: ImportPathStatus,
+    blinds: frozenset[str],
+) -> str:
+    """Lead-visible escalate line for one non-minted CONSUMERS slug."""
+    tags = format_verification_tags(
+        derived="consumers", import_path=status, blinds=blinds or None
+    )
+    return (
+        f"libs_touched: {path} — shared lib; lead must decide consumer "
+        f"{slug!r} ({status}); {tags}"
+    )
+
+
 def residue_actions_for_lib_consumers(
     path: str,
     consumers: tuple[str, ...],
@@ -245,41 +289,54 @@ def residue_actions_for_lib_consumers(
 ) -> tuple[str, ...]:
     """Build RESIDUE action lines for CONSUMERS after module-path verify.
 
-    Verified slugs become ``sync_restart`` lines; when none verify, emit a tagged
-    ``libs_touched`` line (unverified or contradicted) so uncertainty stays visible.
+    Verified → ``sync_restart``. ``unverified`` always escalates. ``contradicted``
+    escalates only when import-grammar blinds measure applicable for that slug;
+    zero blinds ⇒ earned silent omit. Mixed verified + escalate siblings both emit.
     """
+    from implement_admission.consumer_import_blinds import measure_import_grammar_blinds
+
+    base = root if root is not None else repo_root()
     verified: list[str] = []
-    saw_unverified = False
-    saw_contradicted = False
+    escalations: list[str] = []
     for slug in consumers:
-        status = verify_consumer_import(slug, path, root=root)
-        tags = format_verification_tags(derived="consumers", import_path=status)
+        status = verify_consumer_import(slug, path, root=base)
+        blinds = measure_import_grammar_blinds(slug, str(base))
         if status == "verified":
-            line = (
+            tags = format_verification_tags(derived="consumers", import_path=status)
+            verified.append(
                 f'sync_restart: {slug} — manage(action="sync_restart", '
                 f'service="{slug}"); {tags}'
             )
-            verified.append(line)
         elif status == "unverified":
-            saw_unverified = True
+            escalations.append(
+                escalate_consumer_line(path, slug, status=status, blinds=blinds)
+            )
+        elif status == "contradicted":
+            if blinds:
+                escalations.append(
+                    escalate_consumer_line(path, slug, status=status, blinds=blinds)
+                )
+            # else: earned silent omit
+        elif status in ("not_probed", "indeterminate"):
+            escalations.append(
+                escalate_consumer_line(path, slug, status=status, blinds=blinds)
+            )
         else:
-            saw_contradicted = True
-    if verified:
-        return tuple(verified)
-    status: ImportPathStatus = (
-        "unverified" if saw_unverified else "contradicted" if saw_contradicted else "unverified"
-    )
-    tags = format_verification_tags(derived="consumers", import_path=status)
-    return (
-        f"libs_touched: {path} — shared lib; lead must decide which consumers "
-        f"restart; {tags}",
-    )
+            raise ValueError(
+                f"unrecognised ImportPathStatus {status!r} for slug {slug!r}"
+            )
+    if verified or escalations:
+        return tuple([*verified, *escalations])
+    return ()
 
 
 def clear_verify_caches() -> None:
     """Drop scan caches (tests that mutate trees / monkeypatch roots)."""
+    from implement_admission.consumer_import_blinds import clear_blind_caches
+
     _reachable_modules.cache_clear()
     _service_dir.cache_clear()
+    clear_blind_caches()
 
 
 def _literal_str_tuple(node: ast.AST | None) -> tuple[str, ...] | None:
@@ -378,6 +435,7 @@ __all__ = [
     "check_consumers_declarations",
     "clear_verify_caches",
     "consumers_declared_in_source",
+    "escalate_consumer_line",
     "format_verification_tags",
     "is_lib_test_module_path",
     "iter_consumers_declarations",

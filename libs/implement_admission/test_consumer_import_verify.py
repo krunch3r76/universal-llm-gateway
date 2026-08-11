@@ -61,16 +61,48 @@ def test_tags_are_machine_readable_kv():
 
 def test_parse_verification_tags_round_trip_and_absence():
     tagged = format_verification_tags(
-        derived="path_prefix", import_path="verified"
+        derived="path_prefix", import_path="not_probed"
     )
     reason = f"path-derived obligation; liveness: unknown; {tagged}"
     assert parse_verification_tags(reason) == {
         "derived": "path_prefix",
-        "import_path": "verified",
+        "import_path": "not_probed",
     }
     assert verification_tags_fragment(reason) == tagged
+    # Pre-change generator default → not_probed at read (Fork 3).
+    legacy = "derived:path_prefix; import_path:verified"
+    assert parse_verification_tags(legacy) == {
+        "derived": "path_prefix",
+        "import_path": "not_probed",
+    }
     assert parse_verification_tags("operator restart request via cursor-auto") is None
     assert verification_tags_fragment("operator restart request via cursor-auto") is None
+
+
+def test_measure_blinds_and_mixed_residue_oracle():
+    """Fork 1: mcp contradicted + blinds escalate; GIW verified still mints."""
+    from implement_admission.consumer_import_blinds import measure_import_grammar_blinds
+    from implement_admission.consumer_import_verify import (
+        residue_actions_for_lib_consumers,
+    )
+
+    clear_verify_caches()
+    path = "libs/deploy_identity/code_ref_relation.py"
+    mcp_blinds = measure_import_grammar_blinds("mcp")
+    assert mcp_blinds  # contact: service_relative/dynamic/from_import_name
+    cortex_blinds = measure_import_grammar_blinds("cortex_api")
+    assert cortex_blinds == frozenset()
+    actions = residue_actions_for_lib_consumers(
+        path, ("git_integration_worker", "mcp")
+    )
+    text = "\n".join(actions)
+    assert "sync_restart: git_integration_worker" in text
+    assert "sync_restart: mcp" not in text
+    assert "libs_touched:" in text and "mcp" in text
+    assert "import_grammar_blind:" in text
+    # Earned omit: contradicted + zero blinds → no escalate for that slug alone.
+    omit_only = residue_actions_for_lib_consumers(path, ("cortex_api",))
+    assert omit_only == ()
 
 
 def test_consumers_declared_in_source_parses_annotated_tuple():
@@ -110,10 +142,9 @@ def test_deploy_identity_package_init_remains_verified_negative_control():
 
 @pytest.mark.offline
 def test_operator_proxy_briefings_declare_giw_not_mcp():
-    """The three contradicted briefing modules — corrected authorship shape."""
+    """Briefing modules declare GIW-only CONSUMERS (corrected authorship shape)."""
     clear_verify_caches()
     decls = dict(iter_consumers_declarations())
     for path in _OPERATOR_PROXY_BRIEFINGS:
         assert decls[path] == ("git_integration_worker",), path
         assert verify_consumer_import("git_integration_worker", path) == "verified"
-        assert verify_consumer_import("mcp", path) == "contradicted"

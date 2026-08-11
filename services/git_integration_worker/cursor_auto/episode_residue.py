@@ -6,12 +6,12 @@ import json
 from collections.abc import Sequence
 
 from claim_register import claimed_derived, render_claim
-from implement_admission.propagation_block_parser import (
-    propagation_rows_from_markdown_sources,
-)
 from implement_admission.consumer_import_verify import (
     format_verification_tags,
     residue_actions_for_lib_consumers,
+)
+from implement_admission.propagation_block_parser import (
+    propagation_rows_from_markdown_sources,
 )
 from implement_admission.propagation_row import (
     PropagationRow,
@@ -95,7 +95,9 @@ def structured_propagation_rows(
     )
 
     code_ref = resolve_code_ref(decoded)
-    consumer_rows = rows_from_lib_consumers(land_paths, code_ref=code_ref)
+    consumer_rows, _escalations = rows_from_lib_consumers(
+        land_paths, code_ref=code_ref
+    )
     if consumer_rows:
         return tuple(consumer_rows)
 
@@ -161,7 +163,7 @@ def _actions_for_path(path: str) -> tuple[str, ...]:
     for prefix, slug in _SERVICE_SLUGS.items():
         if path.startswith(prefix) and path.endswith(".py"):
             tags = format_verification_tags(
-                derived="path_prefix", import_path="verified"
+                derived="path_prefix", import_path="not_probed"
             )
             return (_sync_restart_line(slug, tags=tags),)
 
@@ -366,7 +368,7 @@ def resolve_propagation_for_finalize(
             return tuple(block_rows)
 
     paths = list(residue_paths)
-    consumer_rows = rows_from_lib_consumers(paths, code_ref=code_ref)
+    consumer_rows, _escalations = rows_from_lib_consumers(paths, code_ref=code_ref)
     if consumer_rows:
         return tuple(consumer_rows)
     return tuple(rows_from_service_paths(paths, code_ref=code_ref))
