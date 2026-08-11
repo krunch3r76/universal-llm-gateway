@@ -1,3 +1,0 @@
-# Override repo-wide **/test_*.py and **/conftest.py for contract tests in this tree.
-!**/test_*.py
-!**/conftest.py
