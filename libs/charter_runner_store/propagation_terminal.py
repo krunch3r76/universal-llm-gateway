@@ -108,7 +108,9 @@ def _proof_matches_projection(
     )
 
 
-def proof_matches_row(row: OpenPropagationProjection, payload: dict[str, Any] | None) -> bool:
+def proof_matches_row(
+    row: OpenPropagationProjection, payload: dict[str, Any] | None
+) -> bool:
     """True when observed code_version satisfies the row's code_ref via ancestry."""
     if payload is None:
         return False
@@ -171,9 +173,7 @@ def settle_open_row(
         )
 
     payload = (
-        _probe_for_projection(row)
-        if probe is default_probe
-        else probe(row.service)
+        _probe_for_projection(row) if probe is default_probe else probe(row.service)
     )
     if payload is None:
         if defer_if_unreachable:
@@ -193,11 +193,8 @@ def settle_open_row(
             detail="probe unreachable",
         )
 
-    if (
-        boundary is not None
-        and _probe_is_outgoing_generation(
-            payload, settle_not_before_monotonic=boundary
-        )
+    if boundary is not None and _probe_is_outgoing_generation(
+        payload, settle_not_before_monotonic=boundary
     ):
         if defer_if_unreachable:
             set_defer_reason(row.row_id, _OUTGOING_DEFER)
@@ -264,11 +261,15 @@ def settle_open_row(
         payload, code_ref=row.code_ref, matched=exact_match and proof_passes
     )
 
+    # Settle has no harvest before/after today — retire identity arms see
+    # before=None → indeterminate and close nothing via presence. Equal-ref
+    # close requires proof_passes (or a future caller that supplies before).
     retired = try_close_on_version_satisfaction(
         row,
         payload,
         proof_passes=proof_passes,
         determination=determination,
+        before=None,
     )
     if retired is not None:
         return SettleResult(
@@ -292,9 +293,7 @@ def settle_open_row(
             service=row.service,
             code_ref=row.code_ref,
             outcome="closed",
-            detail=(
-                f"proof predicate satisfied for proof_class={row.proof_class}"
-            ),
+            detail=(f"proof predicate satisfied for proof_class={row.proof_class}"),
         )
 
     ruled_out = outgoing_generation_ruled_out(
@@ -302,7 +301,11 @@ def settle_open_row(
         settle_not_before_monotonic=boundary,
         now_monotonic=time.monotonic(),
     )
-    if satisfaction.case == "stale_code" and determination == "contradicted" and ruled_out:
+    if (
+        satisfaction.case == "stale_code"
+        and determination == "contradicted"
+        and ruled_out
+    ):
         # Terminal event freeze of one settle attempt. True at write time; may
         # become false when the world catches up. Do not present status=failed
         # as current not-live — observe_code_ref_live cites a fresh probe.

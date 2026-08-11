@@ -85,7 +85,9 @@ def test_guarded_unrelated_fails_deploy_line_without_uptime(
     assert list_open_rows() == []
 
 
-def test_half_unreachable_composite_probe_is_indeterminate(tmp_path, monkeypatch) -> None:
+def test_half_unreachable_composite_probe_is_indeterminate(
+    tmp_path, monkeypatch
+) -> None:
     """One dead half of an mcp composite payload must not read as a mismatch."""
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
     expected = "abc1230000000000000000000000000000000000"
@@ -344,34 +346,83 @@ def test_reconcile_uses_persisted_row_boundary(tmp_path, monkeypatch) -> None:
     assert report["after_open"] == 0
 
 
-def test_exact_match_closes_when_live_process_identity_attested(
+def test_exact_match_does_not_retire_on_process_live_pid_presence_alone(
     tmp_path, monkeypatch
 ) -> None:
-    """Equal-ref settle retires when strong identity is present without harvest delta."""
+    """Bypass name: process_live payload merely *having* pid must not retire.
+
+    Isolates the former identity_attested presence shortcut: proof_passes is
+    False and before is absent → indeterminate → close nothing.
+    """
+    from charter_runner_store.propagation_terminal_retire import (
+        try_close_on_version_satisfaction,
+    )
+
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
     sha = "abc1230000000000000000000000000000000000"
     upsert_open_rows([_row(code_ref=sha, proof_class="process_live")])
     row = list_open_rows()[0]
+    payload = {"code_version": sha, "uptime_s": 2.0, "pid": 4242}
 
-    def probe(_service: str) -> dict[str, float | int | str]:
-        return {"code_version": sha, "uptime_s": 2.0, "pid": 4242}
+    detail = try_close_on_version_satisfaction(
+        row,
+        payload,
+        proof_passes=False,
+        determination="indeterminate",
+        before=None,
+    )
+    assert detail is None
+    assert len(list_open_rows()) == 1
 
-    # Custom probe path already closes on exact match; pin identity detail.
-    result = settle_open_row(row, probe, defer_if_unreachable=True)
-    assert result.outcome == "closed"
+
+def test_exact_match_retires_process_live_only_on_identity_delta(
+    tmp_path, monkeypatch
+) -> None:
+    """Equal-ref identity arm closes only when proof_identity_attestation is changed."""
+    from charter_runner_store.propagation_terminal_retire import (
+        try_close_on_version_satisfaction,
+    )
+
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    sha = "abc1230000000000000000000000000000000000"
+    upsert_open_rows([_row(code_ref=sha, proof_class="process_live")])
+    row = list_open_rows()[0]
+    before = {"code_version": sha, "pid": 100}
+    after = {"code_version": sha, "uptime_s": 2.0, "pid": 200}
+
+    unchanged = try_close_on_version_satisfaction(
+        row,
+        {"code_version": sha, "uptime_s": 2.0, "pid": 100},
+        proof_passes=False,
+        determination="indeterminate",
+        before=before,
+    )
+    assert unchanged is None
+    assert len(list_open_rows()) == 1
+
+    detail = try_close_on_version_satisfaction(
+        row,
+        after,
+        proof_passes=False,
+        determination="indeterminate",
+        before=before,
+    )
+    assert detail is not None
+    assert "identity delta attested" in detail
     assert list_open_rows() == []
 
 
-def test_mcp_client_visible_retires_on_mcp_surface_when_cortex_lags(
+def test_mcp_client_visible_does_not_retire_on_matching_code_version_alone(
     tmp_path, monkeypatch
 ) -> None:
-    """D2: mcp client_visible equal-ref retires from mcp_health even if cortex lags."""
+    """Bypass name: mcp client_visible + matching code_version, no identity move.
+
+    Former mcp_surface_attested closed on version alone; must not retire.
+    """
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
     sha = "abc1230000000000000000000000000000000000"
     other = "def4560000000000000000000000000000000000"
-    upsert_open_rows(
-        [_row(service="mcp", code_ref=sha, proof_class="client_visible")]
-    )
+    upsert_open_rows([_row(service="mcp", code_ref=sha, proof_class="client_visible")])
     row = list_open_rows()[0]
 
     def probe(_service: str) -> dict[str, object]:
@@ -381,9 +432,9 @@ def test_mcp_client_visible_retires_on_mcp_surface_when_cortex_lags(
         }
 
     result = settle_open_row(row, probe, defer_if_unreachable=True)
-    assert result.outcome == "closed"
-    assert "mcp surface attested" in result.detail
-    assert list_open_rows() == []
+    assert result.outcome != "closed"
+    assert "mcp surface attested" not in (result.detail or "")
+    assert len(list_open_rows()) == 1
 
 
 def test_ancestry_satisfied_descendant_version_closes_not_failed(
@@ -492,7 +543,8 @@ def test_reconcile_sweep_ancestry_row_closes(tmp_path, monkeypatch) -> None:
 
 
 def test_client_visible_mcp_flat_payload_does_not_close_satisfied(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ) -> None:
     """76776b54-class: flat payload must not close client_visible mcp as satisfied."""
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
@@ -520,7 +572,8 @@ def test_client_visible_mcp_flat_payload_does_not_close_satisfied(
 
 
 def test_served_artifact_flat_code_version_only_unevaluable(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ) -> None:
     """Open fork closed: flat code_version-only is unevaluable for served_artifact."""
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
@@ -546,7 +599,8 @@ def test_served_artifact_flat_code_version_only_unevaluable(
 
 
 def test_served_artifact_proper_shape_passes_evaluable_gate(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ) -> None:
     """Same gate path: proper served_artifact shape is evaluable (not unevaluable)."""
     from deploy_identity.code_ref_relation import code_ref_relation_from_observed
