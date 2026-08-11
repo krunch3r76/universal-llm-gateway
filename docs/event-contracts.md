@@ -1134,7 +1134,7 @@ Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exc
 
 ### Request Events
 
-<!-- GENERATED:START region=capacity inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=capacity inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `capacity.admission.paused` | `model_id`, `duration_s`, `reason` | Admission for model_id suspended for duration_s seconds. |
@@ -1146,14 +1146,14 @@ Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exc
 | `capacity.pool.waiting` | `request_id`, `model_id`, `wait_ms`, `queue_position`, `queue_depth` | Request is still queued in CapacityPool; waiting remains non-terminal. |
 | `capacity.slot.leak.recovered` | `request_id`, `gateway_id`, `model_id`, `snapshot` | Create CAPACITY_SLOT_LEAK_RECOVERED event. |
 <!-- GENERATED:END region=capacity -->
-<!-- GENERATED:START region=federated inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=federated inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `federated.request.prompt.transformation.applied` | `request_id`, `model_id`, `gateway_id`, `prompt_chars` | — |
 | `federated.request.prompt.transformation.failed` | `request_id`, `model_id`, `gateway_id`, `error` | — |
 | `federated.request.prompt.transformation.skipped` | `request_id`, `model_id`, `gateway_id`, `reason` | — |
 <!-- GENERATED:END region=federated -->
-<!-- GENERATED:START region=model inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=model inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `model.available` | `model_id` | Publish aggregate routing availability for a model ID at Stargate scope. |
@@ -1188,7 +1188,7 @@ Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exc
 | `model.unloaded` | `url`, `model_id`, `gateway_name` | `reason` |
 | `model.unloading.started` | `model_id` | Create MODEL_UNLOADING_STARTED event. |
 <!-- GENERATED:END region=model -->
-<!-- GENERATED:START region=request inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=request inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `request.alias.resolved` | `request_id`, `alias_id`, `backing_model_id` | Create REQUEST_ALIAS_RESOLVED event. |
@@ -1211,7 +1211,7 @@ Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exc
 | `request.snapshot.routed` | `request_id`, `model_id`, `gateway_id`, `profile_name`, `phase` | Snapshot the routing decision (model, gateway, profile). |
 | `request.timed.out` | `request_id`, `gateway_url`, `model_id`, `timeout_seconds` | `correlation_id`, `timeout_ms` |
 <!-- GENERATED:END region=request -->
-<!-- GENERATED:START region=routing inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=routing inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `routing.capacity.divergence` | `request_id`, `model_id`, `gateway_id`, `busy_models_state`, `capacity_pool_available`, `capacity_pool_in_flight`, `capacity_pool_max` | Create ROUTING_CAPACITY_DIVERGENCE event. |
@@ -1243,7 +1243,7 @@ Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exc
 | `routing.startup.timeout` | `request_id`, `model_id`, `waited_ms`, `uptime_s` | Emit when startup queue window exhausted with no gateway connecting. |
 | `routing.upstream.all.excluded` | `request_id`, `model_id`, `excluded_gateway_ids` | Create ROUTING_UPSTREAM_ALL_EXCLUDED event. |
 <!-- GENERATED:END region=routing -->
-<!-- GENERATED:START region=scheduler inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=scheduler inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `scheduler.eviction.cooldown.applied` | `model_id`, `gateway_id`, `protected_count`, `cooldown_s`, `timestamp` | — |
@@ -1256,7 +1256,7 @@ Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exc
 | `scheduler.routing.queued` | `request_id`, `model_id`, `constraint`, `gateway_id`, `timestamp` | `gateway_id` |
 | `scheduler.routing.timeout` | `request_id`, `model_id`, `constraint`, `wait_ms`, `timestamp` | Emit when a queued request exceeds wait timeout for its constraint. |
 <!-- GENERATED:END region=scheduler -->
-<!-- GENERATED:START region=token inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=token inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `token.count.completed` | `request_id`, `model_id`, `gateway_url`, `timestamp`, `success`, `count_time_ms`, `input_tokens`, `context_limit`, `allocated_max_tokens`, `error` | Create TOKEN_COUNT_COMPLETED event. |
@@ -1646,7 +1646,7 @@ signal.
 
 ### Model Events
 
-<!-- GENERATED:START region=model inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=model inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `model.available` | `model_id` | Publish aggregate routing availability for a model ID at Stargate scope. |
@@ -1687,7 +1687,7 @@ signal.
 
 ### Federation Events
 
-<!-- GENERATED:START region=federation inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=federation inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `federation.activation.filtered.empty` | `gateway_id`, `available_count`, `activated_count` | gateway has available models but activated_models is explicitly empty — all hidden from /v1/models |
@@ -1743,7 +1743,7 @@ this means all models are hidden from `/v1/models` for that gateway.
 
 ### Gateway Events
 
-<!-- GENERATED:START region=gateway inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=gateway inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `gateway.draining` | `gateway_id`, `reason`, `timeout`, `timestamp` | Create GATEWAY_DRAINING event. |
@@ -1762,7 +1762,7 @@ this means all models are hidden from `/v1/models` for that gateway.
 
 ### Guidance Locality Events
 
-<!-- GENERATED:START region=guidance inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=guidance inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `guidance.delivery.deduped` | `execution_id`, `guidance_resource_key`, `trigger_fan_in_count`, `dedup_scope?`, `request_id?`, `dispatch_id?`, `registry_schema_version?`, `producer_version?` | Emitted when the resolver collapses overlapping triggers into one bundle. |
@@ -1773,7 +1773,7 @@ this means all models are hidden from `/v1/models` for that gateway.
 
 ### RAG Events
 
-<!-- GENERATED:START region=rag inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=rag inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `rag.admission.first.burst.observed` | `model_id`, `workers_in_flight`, `stargate_queue_depth` | First OPEN→CLOSED cold-load transition. `workers_in_flight`: count of `wait_for_admission()` calls that allowed a worker through (returned True or timed out to proceed) since the gate was last OPEN or since startup. `stargate_queue_depth`: value from `GET /api/v1/admission/state` at transition time; `null` if Stargate unreachable. |
@@ -1920,7 +1920,7 @@ requests to Stargate before `model.loading.started` arrived and closed the gate.
 See `todo:rag-admission-gate-first-burst-measurement` and Worst-Case Cold-Load
 Timing in `tmp/prompts/coordination-overhaul/phase4.md`.
 
-<!-- GENERATED:START region=rag inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=rag inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `rag.admission.first.burst.observed` | `model_id`, `workers_in_flight`, `stargate_queue_depth` | First OPEN→CLOSED cold-load transition. `workers_in_flight`: count of `wait_for_admission()` calls that allowed a worker through (returned True or timed out to proceed) since the gate was last OPEN or since startup. `stargate_queue_depth`: value from `GET /api/v1/admission/state` at transition time; `null` if Stargate unreachable. |
@@ -2098,7 +2098,7 @@ singleflight hold proposal.
 
 ### RAG Article Metadata Lifecycle
 
-<!-- GENERATED:START region=rag inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=rag inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `rag.admission.first.burst.observed` | `model_id`, `workers_in_flight`, `stargate_queue_depth` | First OPEN→CLOSED cold-load transition. `workers_in_flight`: count of `wait_for_admission()` calls that allowed a worker through (returned True or timed out to proceed) since the gate was last OPEN or since startup. `stargate_queue_depth`: value from `GET /api/v1/admission/state` at transition time; `null` if Stargate unreachable. |
@@ -2233,7 +2233,7 @@ singleflight hold proposal.
 
 Emitted by the MCP server boot path (`_boot_data_fetch._fetch_rag_pipeline_state`) when a per-endpoint or total fetch of RAG pipeline state fails during `cortex_brief`. Brief continues; the stanza is omitted or shows `unreachable` depending on which endpoint failed.
 
-<!-- GENERATED:START region=mcp inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=mcp inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -2241,6 +2241,7 @@ Emitted by the MCP server boot path (`_boot_data_fetch._fetch_rag_pipeline_state
 | `mcp.adapter.tool.seen` | `tool_name`, `server_name`, `correlation_id?` | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
 | `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
 | `mcp.agentbus.advisory.fired` | `advisory`, `turn_kind`, `chars`, `suppressed_by_profile`, `thread`, `subject` | Signal: mcp.agentbus.advisory.fired |
+| `mcp.agentbus.branch.associated` | `thread_id`, `branch_name`, `association_id` | Signal: mcp.agentbus.branch.associated |
 | `mcp.agentbus.checkpoint.auto_stamp` | `thread`, `turn_number`, `subject` | Signal: mcp.agentbus.checkpoint.auto_stamp |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
@@ -2264,7 +2265,7 @@ Emitted by the MCP server boot path (`_boot_data_fetch._fetch_rag_pipeline_state
 
 ### Doc Generate Events
 
-<!-- GENERATED:START region=doc inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=doc inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 
@@ -2275,7 +2276,7 @@ Emitted by the MCP server boot path (`_boot_data_fetch._fetch_rag_pipeline_state
 Pipeline events are persisted to the Event Service and can be queried with
 `scripts/query-events --op pipeline-trace --execution-id ID`.
 
-<!-- GENERATED:START region=frontier inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=frontier inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `frontier.admit_pointer.loop_closure` | `request_id`, `execution_id`, `admit_target_thread`, `prompt_source_thread`, `prompt_bind_mode`, `prompt_turn_number`, `has_explicit_prompt_source`, `loop_closure`, `allowlisted_silent`, `would_have_refused`, `would_have_refused_total`, `reason`, `spawn_uses_latest_on_thread` | Transitional B.1 detector — joinable with review_child.prompt_bind (6655). |
@@ -2376,7 +2377,7 @@ seat_capability (object, additive): resolved-seat advisory
 - `docs/event-contracts.md`: updated — regenerated frontier region via `scripts/gen-event-catalog` to add `frontier.handoff.materialization.incomplete` (`FrontierHandoffMaterializationIncomplete` factory, G-b probe miss).
 - `docs/tool-reference.md`: updated — handoff response fields `materialization_present`, `warnings` (graded materialization probe).
 
-<!-- GENERATED:START region=pipeline inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=pipeline inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `pipeline.cancelled` | `pipeline_id`, `execution_id`, `duration_seconds`, `reason`, `completed_steps`, `pending_steps` | Emitted when pipeline execution is cancelled (e.g., client disconnect). |
@@ -2506,7 +2507,7 @@ tracking across long-running map steps. Failed/timeout/cancelled iterations emit
 **INVARIANT**: If no boundary signal is seen,
 `pipeline.map.iteration.inference.lost` is emitted.
 
-<!-- GENERATED:START region=pipeline inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=pipeline inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `pipeline.cancelled` | `pipeline_id`, `execution_id`, `duration_seconds`, `reason`, `completed_steps`, `pending_steps` | Emitted when pipeline execution is cancelled (e.g., client disconnect). |
@@ -2649,7 +2650,7 @@ consult.call.started
       └─> consult.call.finished (success=true | success=false)
 ```
 
-<!-- GENERATED:START region=consult inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=consult inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 
@@ -2727,7 +2728,7 @@ mcp.oauth.server.started
   └─> mcp.oauth.token.rejected (request terminates)
 ```
 
-<!-- GENERATED:START region=mcp inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=mcp inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -2735,6 +2736,7 @@ mcp.oauth.server.started
 | `mcp.adapter.tool.seen` | `tool_name`, `server_name`, `correlation_id?` | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
 | `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
 | `mcp.agentbus.advisory.fired` | `advisory`, `turn_kind`, `chars`, `suppressed_by_profile`, `thread`, `subject` | Signal: mcp.agentbus.advisory.fired |
+| `mcp.agentbus.branch.associated` | `thread_id`, `branch_name`, `association_id` | Signal: mcp.agentbus.branch.associated |
 | `mcp.agentbus.checkpoint.auto_stamp` | `thread`, `turn_number`, `subject` | Signal: mcp.agentbus.checkpoint.auto_stamp |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
@@ -2785,7 +2787,7 @@ event bus debug broadcaster). Join to MCP server `mcp.transport.*` / `mcp.reques
 using `correlation_id` and timestamp; optional header `X-Cloudproxy-Correlation-Id`
 is sent upstream and may appear on MCP ingress when the provider forwards it.
 
-<!-- GENERATED:START region=cloudproxy inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=cloudproxy inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `cloudproxy.mcp.correlation.assigned` | `correlation_id`, `provider` | UUID assigned for one Messages request |
@@ -2801,7 +2803,7 @@ is sent upstream and may appear on MCP ingress when the provider forwards it.
 The internet-facing MCP server (`source: "mcp-server"`) publishes to the
 event service over the same `/tmp/universal-protocol/events.sock` socket.
 
-<!-- GENERATED:START region=mcp inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=mcp inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -2809,6 +2811,7 @@ event service over the same `/tmp/universal-protocol/events.sock` socket.
 | `mcp.adapter.tool.seen` | `tool_name`, `server_name`, `correlation_id?` | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
 | `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
 | `mcp.agentbus.advisory.fired` | `advisory`, `turn_kind`, `chars`, `suppressed_by_profile`, `thread`, `subject` | Signal: mcp.agentbus.advisory.fired |
+| `mcp.agentbus.branch.associated` | `thread_id`, `branch_name`, `association_id` | Signal: mcp.agentbus.branch.associated |
 | `mcp.agentbus.checkpoint.auto_stamp` | `thread`, `turn_number`, `subject` | Signal: mcp.agentbus.checkpoint.auto_stamp |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
@@ -2867,7 +2870,7 @@ semantic layer ships; target milestone is post-calibration-window close.
 Emitted by `libs/life_intent/events.py` for registry check → proposal → commit
 lifecycle on the life-domain intent path.
 
-<!-- GENERATED:START region=life inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=life inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `life.intent.committed` | `verb`, `proposal_id`, `entity_id`, `dispatch_ref` | life.intent.committed — commit applied and downstream scout fired. |
@@ -2881,7 +2884,7 @@ lifecycle on the life-domain intent path.
 
 Emitted by `libs/cortex_store/dispatch_ops/ops_audit.py` and `ops_audit_detectors.py` via `record()` shim. All signals use `role="observation"`, `scope="global"` per existing shim defaults. Introduced in Phase 1b of `todo:cortex-graph-projection-and-audit-primitives`.
 
-<!-- GENERATED:START region=cortex inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=cortex inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `cortex.digest.extract` | `journal_entity_id`, `entry_anchor`, `claim_count` | - |
@@ -2945,7 +2948,7 @@ The consolidated `agent_bus(tool=...)` tool emits operation-level signals.
 With atomic server-side endpoints, partial-failure and stage signals are
 unnecessary — each operation succeeds or fails atomically.
 
-<!-- GENERATED:START region=mcp inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=mcp inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -2953,6 +2956,7 @@ unnecessary — each operation succeeds or fails atomically.
 | `mcp.adapter.tool.seen` | `tool_name`, `server_name`, `correlation_id?` | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
 | `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
 | `mcp.agentbus.advisory.fired` | `advisory`, `turn_kind`, `chars`, `suppressed_by_profile`, `thread`, `subject` | Signal: mcp.agentbus.advisory.fired |
+| `mcp.agentbus.branch.associated` | `thread_id`, `branch_name`, `association_id` | Signal: mcp.agentbus.branch.associated |
 | `mcp.agentbus.checkpoint.auto_stamp` | `thread`, `turn_number`, `subject` | Signal: mcp.agentbus.checkpoint.auto_stamp |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
@@ -2982,7 +2986,7 @@ All signals: `role="observation"`, `scope="global"`.
 
 Emitted by the bulk dispatch ops in `libs/cortex_store/dispatch_ops/ops_bulk_entities.py` and `ops_bulk_relationships.py` via the `record()` shim. Bulk writes are atomic at the transaction boundary — either every item in the batch persists, or none do. All signals: `role="observation"`, `scope="global"`.
 
-<!-- GENERATED:START region=mcp inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=mcp inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -2990,6 +2994,7 @@ Emitted by the bulk dispatch ops in `libs/cortex_store/dispatch_ops/ops_bulk_ent
 | `mcp.adapter.tool.seen` | `tool_name`, `server_name`, `correlation_id?` | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
 | `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
 | `mcp.agentbus.advisory.fired` | `advisory`, `turn_kind`, `chars`, `suppressed_by_profile`, `thread`, `subject` | Signal: mcp.agentbus.advisory.fired |
+| `mcp.agentbus.branch.associated` | `thread_id`, `branch_name`, `association_id` | Signal: mcp.agentbus.branch.associated |
 | `mcp.agentbus.checkpoint.auto_stamp` | `thread`, `turn_number`, `subject` | Signal: mcp.agentbus.checkpoint.auto_stamp |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
@@ -3015,7 +3020,7 @@ Emitted by the bulk dispatch ops in `libs/cortex_store/dispatch_ops/ops_bulk_ent
 
 Emitted by `services/mcp-server/tools/_cortex_relay.py::cx` via bare `mcp_events.record()` (mirrors `relay()` idiom). Makes every cortex-api REST relay observable. A `mcp.cortex.relay.called` with no terminal sibling within the relay budget indicates a connector-side abort. All signals: `role="observation"`, `scope="global"`.
 
-<!-- GENERATED:START region=mcp inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=mcp inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -3023,6 +3028,7 @@ Emitted by `services/mcp-server/tools/_cortex_relay.py::cx` via bare `mcp_events
 | `mcp.adapter.tool.seen` | `tool_name`, `server_name`, `correlation_id?` | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
 | `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
 | `mcp.agentbus.advisory.fired` | `advisory`, `turn_kind`, `chars`, `suppressed_by_profile`, `thread`, `subject` | Signal: mcp.agentbus.advisory.fired |
+| `mcp.agentbus.branch.associated` | `thread_id`, `branch_name`, `association_id` | Signal: mcp.agentbus.branch.associated |
 | `mcp.agentbus.checkpoint.auto_stamp` | `thread`, `turn_number`, `subject` | Signal: mcp.agentbus.checkpoint.auto_stamp |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
@@ -3052,7 +3058,7 @@ deadline: if `mcp.local.api.failed` reports `/ingest` timeout, the
 `email.ingest.*` and `email.pipeline.*` events show which message and stage was
 still running or failed. All signals: `role="observation"`, `scope="global"`.
 
-<!-- GENERATED:START region=email inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=email inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 
@@ -3070,7 +3076,7 @@ are emitted by ``libs/cortex_store/routes/documents.py`` — the cortex-api endp
 the MCP ``extract_directory`` tool relays to. All signals:
 ``role="observation"``, ``scope="global"``.
 
-<!-- GENERATED:START region=mcp inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=mcp inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -3078,6 +3084,7 @@ the MCP ``extract_directory`` tool relays to. All signals:
 | `mcp.adapter.tool.seen` | `tool_name`, `server_name`, `correlation_id?` | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
 | `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
 | `mcp.agentbus.advisory.fired` | `advisory`, `turn_kind`, `chars`, `suppressed_by_profile`, `thread`, `subject` | Signal: mcp.agentbus.advisory.fired |
+| `mcp.agentbus.branch.associated` | `thread_id`, `branch_name`, `association_id` | Signal: mcp.agentbus.branch.associated |
 | `mcp.agentbus.checkpoint.auto_stamp` | `thread`, `turn_number`, `subject` | Signal: mcp.agentbus.checkpoint.auto_stamp |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
@@ -3105,7 +3112,7 @@ Emitted by ``services/mcp-server/tools/extract_document.py`` (the ``extract_docu
 MCP tool, renamed from ``ingest_document`` in phase-c). All signals:
 ``role="observation"``, ``scope="global"``.
 
-<!-- GENERATED:START region=mcp inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=mcp inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -3113,6 +3120,7 @@ MCP tool, renamed from ``ingest_document`` in phase-c). All signals:
 | `mcp.adapter.tool.seen` | `tool_name`, `server_name`, `correlation_id?` | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
 | `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
 | `mcp.agentbus.advisory.fired` | `advisory`, `turn_kind`, `chars`, `suppressed_by_profile`, `thread`, `subject` | Signal: mcp.agentbus.advisory.fired |
+| `mcp.agentbus.branch.associated` | `thread_id`, `branch_name`, `association_id` | Signal: mcp.agentbus.branch.associated |
 | `mcp.agentbus.checkpoint.auto_stamp` | `thread`, `turn_number`, `subject` | Signal: mcp.agentbus.checkpoint.auto_stamp |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
@@ -3139,7 +3147,7 @@ MCP tool, renamed from ``ingest_document`` in phase-c). All signals:
 Emitted by ``services/mcp-server/tools/local/extract_document_structured.py``.
 All signals: ``role="observation"``, ``scope="global"``.
 
-<!-- GENERATED:START region=mcp inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=mcp inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -3147,6 +3155,7 @@ All signals: ``role="observation"``, ``scope="global"``.
 | `mcp.adapter.tool.seen` | `tool_name`, `server_name`, `correlation_id?` | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
 | `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
 | `mcp.agentbus.advisory.fired` | `advisory`, `turn_kind`, `chars`, `suppressed_by_profile`, `thread`, `subject` | Signal: mcp.agentbus.advisory.fired |
+| `mcp.agentbus.branch.associated` | `thread_id`, `branch_name`, `association_id` | Signal: mcp.agentbus.branch.associated |
 | `mcp.agentbus.checkpoint.auto_stamp` | `thread`, `turn_number`, `subject` | Signal: mcp.agentbus.checkpoint.auto_stamp |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
@@ -3177,7 +3186,7 @@ Emitted by ``services/mcp-server/tools/promote_document_to_evidence.py`` (the
 ``promote_document_to_evidence`` MCP tool, phase-d of the document ingestion
 redesign). All signals: ``role="observation"``, ``scope="global"``.
 
-<!-- GENERATED:START region=mcp inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=mcp inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -3185,6 +3194,7 @@ redesign). All signals: ``role="observation"``, ``scope="global"``.
 | `mcp.adapter.tool.seen` | `tool_name`, `server_name`, `correlation_id?` | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
 | `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
 | `mcp.agentbus.advisory.fired` | `advisory`, `turn_kind`, `chars`, `suppressed_by_profile`, `thread`, `subject` | Signal: mcp.agentbus.advisory.fired |
+| `mcp.agentbus.branch.associated` | `thread_id`, `branch_name`, `association_id` | Signal: mcp.agentbus.branch.associated |
 | `mcp.agentbus.checkpoint.auto_stamp` | `thread`, `turn_number`, `subject` | Signal: mcp.agentbus.checkpoint.auto_stamp |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
@@ -3210,7 +3220,7 @@ redesign). All signals: ``role="observation"``, ``scope="global"``.
 
 Emitted by `libs/cortex_store/dispatch_ops/ops_journals.py` · `_op_session_close` via `record()`. All signals: `role="observation"`, `scope="global"`.
 
-<!-- GENERATED:START region=cortex inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=cortex inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `cortex.digest.extract` | `journal_entity_id`, `entry_anchor`, `claim_count` | - |
@@ -3253,7 +3263,7 @@ Emitted by `libs/cortex_store/dispatch_ops/ops_journals.py` · `_op_session_clos
 | `cortex.supersede.would_reject` | `rule_ids`, `derivation_type`, `force`, `valid_from_inherited`, `parent_had_valid_from`, `reject_field_origins`, `mode`, `entity_id` | cortex.supersede.would_reject — durable shadow/hard_422 reject telemetry. |
 | `cortex.view.rendered` | `document_id`, `view_rev`, `mode`, `sections_repaired_count`, `delta_create_count`, `delta_update_count`, `delta_delete_count` | cortex.view.rendered — emitted on register/refresh/full view_render. |
 <!-- GENERATED:END region=cortex -->
-<!-- GENERATED:START region=mcp inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=mcp inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -3261,6 +3271,7 @@ Emitted by `libs/cortex_store/dispatch_ops/ops_journals.py` · `_op_session_clos
 | `mcp.adapter.tool.seen` | `tool_name`, `server_name`, `correlation_id?` | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
 | `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
 | `mcp.agentbus.advisory.fired` | `advisory`, `turn_kind`, `chars`, `suppressed_by_profile`, `thread`, `subject` | Signal: mcp.agentbus.advisory.fired |
+| `mcp.agentbus.branch.associated` | `thread_id`, `branch_name`, `association_id` | Signal: mcp.agentbus.branch.associated |
 | `mcp.agentbus.checkpoint.auto_stamp` | `thread`, `turn_number`, `subject` | Signal: mcp.agentbus.checkpoint.auto_stamp |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
@@ -3389,7 +3400,7 @@ Emitted by `services/mcp-server/middleware/drain.py` during graceful restart. Tr
 
 All signals: `role="observation"`, `scope="global"`. Source: `mcp-server`.
 
-<!-- GENERATED:START region=mcp inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=mcp inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -3397,6 +3408,7 @@ All signals: `role="observation"`, `scope="global"`. Source: `mcp-server`.
 | `mcp.adapter.tool.seen` | `tool_name`, `server_name`, `correlation_id?` | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
 | `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
 | `mcp.agentbus.advisory.fired` | `advisory`, `turn_kind`, `chars`, `suppressed_by_profile`, `thread`, `subject` | Signal: mcp.agentbus.advisory.fired |
+| `mcp.agentbus.branch.associated` | `thread_id`, `branch_name`, `association_id` | Signal: mcp.agentbus.branch.associated |
 | `mcp.agentbus.checkpoint.auto_stamp` | `thread`, `turn_number`, `subject` | Signal: mcp.agentbus.checkpoint.auto_stamp |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
@@ -3471,7 +3483,7 @@ All signals: `role="observation"`, `scope="global"`.
 
 **Lib signals (`mcp.grokbuild.*`).** Source: `mcp-server` in V1; `grokbuild-worker` in V2 (via the UDS publisher hook). Payload contracts unchanged across versions.
 
-<!-- GENERATED:START region=mcp inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=mcp inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -3479,6 +3491,7 @@ All signals: `role="observation"`, `scope="global"`.
 | `mcp.adapter.tool.seen` | `tool_name`, `server_name`, `correlation_id?` | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
 | `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
 | `mcp.agentbus.advisory.fired` | `advisory`, `turn_kind`, `chars`, `suppressed_by_profile`, `thread`, `subject` | Signal: mcp.agentbus.advisory.fired |
+| `mcp.agentbus.branch.associated` | `thread_id`, `branch_name`, `association_id` | Signal: mcp.agentbus.branch.associated |
 | `mcp.agentbus.checkpoint.auto_stamp` | `thread`, `turn_number`, `subject` | Signal: mcp.agentbus.checkpoint.auto_stamp |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
@@ -3525,7 +3538,7 @@ only via `grokbuild.auth.required` and the `checks.grok_auth` field, never as wo
 
 All signals: `role="observation"`, `scope="global"`.
 
-<!-- GENERATED:START region=git inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=git inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `git.commit.created` | `integration_id`, `arc`, `commit_sha` | - |
@@ -3545,7 +3558,7 @@ All signals: `role="observation"`, `scope="global"`.
 `CursorSdkCatalogPoller` polling `GET /api/v1/cursor/catalog` on
 git_integration_worker.
 
-<!-- GENERATED:START region=cursor inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=cursor inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `cursor.catalog.available` | `worker_url`, `model_count` | - |
@@ -3559,7 +3572,7 @@ git_integration_worker.
 
 All signals: `role="observation"`, `scope="node"`.
 
-<!-- GENERATED:START region=git_worker inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=git_worker inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `git_worker.admission.rejected` | `kind`, `route`, `intent_id`, `drain_epoch` | - |
@@ -3573,7 +3586,7 @@ All signals: `role="observation"`, `scope="node"`.
 
 All signals: `role="observation"`, `scope="node"`.
 
-<!-- GENERATED:START region=sdk inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=sdk inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `sdk.lane.selected` | `dispatch_id`, `thread_id`, `lane`, `reason`, `regime_active`, `regime_state`, `contract`, `selecting_predicate` | - |
@@ -3603,7 +3616,7 @@ All signals: `role="observation"`, `scope="node"`.
 
 **Worker signals (`grokbuild.*`).** Source: `grokbuild-worker`. Added V2. SSE-friendly tracker vocabulary plus per-op tracking events; does NOT carry the lib's audit fields (those live on the parallel `mcp.grokbuild.dispatch.completed`).
 
-<!-- GENERATED:START region=grokbuild inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=grokbuild inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 
@@ -3754,7 +3767,7 @@ quality before disabling the lean partition.
 Fallback-only stdio bridge (`source: "mcp-fastmcp-remote-bridge"`) emits `mcp.bridge.stdio.started`
 (`transport=stdio`) at launch — distinct from server-side `mcp.transport.request.*` lifecycle signals. Supersedes legacy `proxy.*` names and the retired custom `mcp-stdio-proxy` publisher. Emitted NDJSON-direct via the events ingest socket — bypasses `event_factory`, so it has no GENERATED catalog row by design (curated here, parity with `fleet.service.step`).
 
-<!-- GENERATED:START region=mcp inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=mcp inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -3762,6 +3775,7 @@ Fallback-only stdio bridge (`source: "mcp-fastmcp-remote-bridge"`) emits `mcp.br
 | `mcp.adapter.tool.seen` | `tool_name`, `server_name`, `correlation_id?` | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
 | `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
 | `mcp.agentbus.advisory.fired` | `advisory`, `turn_kind`, `chars`, `suppressed_by_profile`, `thread`, `subject` | Signal: mcp.agentbus.advisory.fired |
+| `mcp.agentbus.branch.associated` | `thread_id`, `branch_name`, `association_id` | Signal: mcp.agentbus.branch.associated |
 | `mcp.agentbus.checkpoint.auto_stamp` | `thread`, `turn_number`, `subject` | Signal: mcp.agentbus.checkpoint.auto_stamp |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
@@ -3788,7 +3802,7 @@ Fallback-only stdio bridge (`source: "mcp-fastmcp-remote-bridge"`) emits `mcp.br
 OAuth signals are emitted by the auth admission middleware and OAuth service
 when OAuth is enabled (`MCP_OAUTH_ENABLED=true` with a valid HTTPS issuer).
 
-<!-- GENERATED:START region=mcp inventory_sha=302f3e9c9991 generated=2026-08-11T02:13:15Z -->
+<!-- GENERATED:START region=mcp inventory_sha=4f1083fab681 generated=2026-08-11T07:36:46Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
@@ -3796,6 +3810,7 @@ when OAuth is enabled (`MCP_OAUTH_ENABLED=true` with a valid HTTPS issuer).
 | `mcp.adapter.tool.seen` | `tool_name`, `server_name`, `correlation_id?` | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
 | `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
 | `mcp.agentbus.advisory.fired` | `advisory`, `turn_kind`, `chars`, `suppressed_by_profile`, `thread`, `subject` | Signal: mcp.agentbus.advisory.fired |
+| `mcp.agentbus.branch.associated` | `thread_id`, `branch_name`, `association_id` | Signal: mcp.agentbus.branch.associated |
 | `mcp.agentbus.checkpoint.auto_stamp` | `thread`, `turn_number`, `subject` | Signal: mcp.agentbus.checkpoint.auto_stamp |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
 | `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |

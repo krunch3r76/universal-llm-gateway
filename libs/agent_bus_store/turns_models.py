@@ -677,3 +677,29 @@ class ThreadTriageExecuted(BaseModel):
     marked_read: int = 0
     closed: int = 0
     confirm_token_id: str
+
+
+class BranchAssociateCreate(BaseModel):
+    """Associate payload — store allocates ``id``; client must not supply ordering."""
+
+    model_config = {"extra": "forbid"}
+
+    branch_name: str
+
+
+class BranchAssociateResponse(BaseModel):
+    """POST associate echo plus derived current branch — no clock fields."""
+
+    thread_id: str
+    branch_name: str
+    id: int
+    current_branch: str | None
+
+
+class BranchCurrentResponse(BaseModel):
+    """Derived current branch read — ``state=none`` when lane never associated."""
+
+    thread_id: str
+    current_branch: str | None
+    association_id: int | None
+    state: Literal["none", "associated"]

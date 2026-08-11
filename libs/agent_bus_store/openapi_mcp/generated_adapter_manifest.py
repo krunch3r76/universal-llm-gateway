@@ -7,9 +7,19 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "3eefef97798628d139f8d587c0831a771088cd2e0667184f5ac846c9bc7d0b3f"
+OPENAPI_SHA256 = "4967d580ccee0747792b8cdbc979d1dd3bd304ade37e87d516dd4513d9d63639"
 FACADE_TOOL = "agent-bus"
 SERVED_OPS: dict[str, dict[str, str]] = {
+    "branch_associate": {
+        "method": "POST",
+        "path": "/threads/{thread_id}/branch-associate",
+        "operation_id": "branch_associate_route_threads__thread_id__branch_associate_post",
+    },
+    "branch_current": {
+        "method": "GET",
+        "path": "/threads/{thread_id}/branch-current",
+        "operation_id": "branch_current_route_threads__thread_id__branch_current_get",
+    },
     "close": {
         "method": "PATCH",
         "path": "/threads/{thread_id}/close",
@@ -97,10 +107,10 @@ SERVED_OPS: dict[str, dict[str, str]] = {
     },
 }
 NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
-    "@components": "fa0b819d288b904eb1ee014c5e2d4f9626701081f59957e65a77061bcfc73183",
+    "@components": "74d9d226e89c90b21443a2d1a375826a72ac009a1790718c5d4b4cd8da5ddc3f",
     "@info": "a8986fa23eba4ccbefb9d1d606b05ebcfa8474d790ceb9a8d83b4b3be5c8e983",
     "GET /dispatch-links/{execution_id}": "bec5bf28fc7e55d2aaae6fdd2f4af55a177f74f7030987e27c7bd9d73ebe86a3",
-    "GET /health": "28f9baa09e00da33a5bfd7f4efb63b3cfd18fd05e7fe029a1871788e5629ad96",
+    "GET /health": "f788a7842ed18c68945e8d9e81f2dffc59910ef597bb4f3841b6c97f8d3296b9",
     "GET /messages": "dfa9edc6b95121bb35b9ecca22260b564c40e4a8c4c180950101cb75619b0aa5",
     "GET /threads/{thread_id}/export": "a784f1abaed3c1f6839a38b2da63cff1f70cd335d3a9098fa3f2ebf10d8eb063",
     "GET /threads/{thread_id}/summary": "417a68f81d68bf2bc3d782fa38b0e437fe498480b1814bebddc34190be955f74",

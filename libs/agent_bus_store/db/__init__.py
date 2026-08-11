@@ -1,6 +1,12 @@
 """Agent-bus database layer - SQLite with WAL mode."""
 
 from .connection import init_db
+from .branch_associations import (
+    ClientOrderingTokenError,
+    associate_branch,
+    get_current_branch,
+    reject_client_ordering_tokens,
+)
 from .messages import get_messages, insert_message, list_threads, mark_read
 from .threads import (
     ThreadHasReadTurns,
@@ -52,6 +58,7 @@ from .turns import (
 )
 
 __all__ = [
+    "ClientOrderingTokenError",
     "SlugExists",
     "ThreadHasReadTurns",
     "TurnAlreadyAcknowledged",
@@ -59,6 +66,7 @@ __all__ = [
     "PendingShellContention",
     "admit_dispatch",
     "add_tags",
+    "associate_branch",
     "claim_and_post_turn",
     "close_thread",
     "consume_triage_confirm_token",
@@ -73,6 +81,7 @@ __all__ = [
     "delete_turn",
     "get_messages",
     "get_dispatch_link_by_execution_id",
+    "get_current_branch",
     "get_thread",
     "get_thread_summary",
     "get_thread_turns_asc",
@@ -93,6 +102,7 @@ __all__ = [
     "mark_read",
     "mark_turn_read",
     "normalize_thread_id",
+    "reject_client_ordering_tokens",
     "remove_tags",
     "rename_thread",
     "set_thread_tags",

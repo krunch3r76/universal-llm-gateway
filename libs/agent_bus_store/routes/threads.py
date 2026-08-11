@@ -25,6 +25,7 @@ from ..db import (
     ThreadHasReadTurns,
     add_tags,
     admit_dispatch,
+    associate_branch,
     claim_and_post_turn,
     close_thread,
     consume_triage_confirm_token,
@@ -34,6 +35,7 @@ from ..db import (
     delete_thread,
     execute_triage_close,
     execute_triage_mark_read,
+    get_current_branch,
     get_dispatch_link_by_execution_id,
     get_thread,
     get_thread_summary,
@@ -42,11 +44,13 @@ from ..db import (
     list_threads_v2,
     list_triage_candidates,
     normalize_thread_id,
+    reject_client_ordering_tokens,
     remove_tags,
     rename_thread,
     terminate_dispatch,
     update_thread,
 )
+from ..db.branch_associations import ClientOrderingTokenError
 from ..db.turns import UnreadTurnsExist
 from ..enrollment_guard import EnrollmentTagError, enrollment_denied_http
 from ..supersedes_turn_boundary import (
@@ -56,6 +60,9 @@ from ..supersedes_turn_boundary import (
 from ..thread_classification import ThreadClassificationError
 from ..turns_models import (
     TRIAGE_THREAD_CAP,
+    BranchAssociateCreate,
+    BranchAssociateResponse,
+    BranchCurrentResponse,
     DispatchAdmit,
     DispatchClaimAndPost,
     DispatchLinkByExecution,
@@ -1296,3 +1303,53 @@ async def delete_thread_route(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Thread has {e.read_count} read turn(s) - use force=true",
         )
+
+
+@router.post(
+    "/threads/{thread_id}/branch-associate",
+    response_model=BranchAssociateResponse,
+    openapi_extra=x_mcp("branch_associate", tool="agent_bus"),
+)
+async def branch_associate_route(
+    thread_id: str,
+    body: BranchAssociateCreate,
+) -> BranchAssociateResponse:
+    """Append one lane↔branch association; current is derived from MAX(id)."""
+    thread_id = normalize_thread_id(thread_id)
+    try:
+        reject_client_ordering_tokens(body.model_dump())
+        result = associate_branch(thread_id=thread_id, branch_name=body.branch_name)
+    except ClientOrderingTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": "client_ordering_token", "reason": str(exc)},
+        )
+    except LookupError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Thread {thread_id} not found",
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": "invalid_branch_name", "reason": str(exc)},
+        )
+    return BranchAssociateResponse(**result)
+
+
+@router.get(
+    "/threads/{thread_id}/branch-current",
+    response_model=BranchCurrentResponse,
+    openapi_extra=x_mcp("branch_current", tool="agent_bus"),
+)
+async def branch_current_route(thread_id: str) -> BranchCurrentResponse:
+    """Return derived current branch for a lane from association history."""
+    thread_id = normalize_thread_id(thread_id)
+    try:
+        result = get_current_branch(thread_id=thread_id)
+    except LookupError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Thread {thread_id} not found",
+        )
+    return BranchCurrentResponse(**result)

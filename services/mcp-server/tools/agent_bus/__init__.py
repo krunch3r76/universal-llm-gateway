@@ -22,6 +22,10 @@ from ._shared import (
     _structured_relay_error,
     _unknown_arg_error,
 )
+from .branch_associations import (
+    _branch_associate_dispatch,
+    _branch_current_dispatch,
+)
 from .fetch import (
     _fetch_dispatch,
     _fetch_impl,
@@ -100,6 +104,8 @@ AGENT_BUS_OPS: dict[str, Callable[..., Any]] = {
     "mark_read": _mark_read_dispatch,
     "triage": _triage_dispatch,
     "wait": _wait_dispatch,
+    "branch_associate": _branch_associate_dispatch,
+    "branch_current": _branch_current_dispatch,
 }
 
 
