@@ -7,7 +7,12 @@
 # Optional cache_*_rate_per_m omitted when docs list "-" for that tier.
 
 aliases:
+  # Pipeline ids reach the rollup as model_id (pipeline-as-service virtual model);
+  # map to the backing model, or to local/zero-cost when the pipeline runs no
+  # inference step at all.
+  assertion-enrichment: qwen3-14b-q4-k-m-40960
   composer-2.5: cursor/composer-2.5
+  implement-closeout: local/zero-cost
   predicate-extract: openai/gpt-4o-mini
   rag-contextualize: qwen3-5-9b-q8-0-131072
   todo-close: local/zero-cost

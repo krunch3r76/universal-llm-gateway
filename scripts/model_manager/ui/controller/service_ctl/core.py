@@ -1225,6 +1225,12 @@ class ServiceController:
             f"(could not confirm death, PID {pid}, {total_elapsed:.1f}s)."
         )
 
+    async def probe_authority_identity(self, service: str) -> str | int | None:
+        """Return manage-observed identity (host PID or container StartedAt)."""
+        from .authority_identity import probe_service_identity
+
+        return await probe_service_identity(self, service)
+
     def _write_pid_file(self, pid: int) -> None:
         """Writes the given PID to the Stargate PID file.
 

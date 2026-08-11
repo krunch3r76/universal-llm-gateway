@@ -49,6 +49,14 @@ _INLINE_SKILL_SLUG = re.compile(r'<skill slug="([^"]+)"')
 _CDP_REQUIRED_AUTHORITY = re.compile(
     r"<!--cdp-required-skills:([^\n]*?)-->\r?\n?"
 )
+# Leading-only peel for idempotent re-stage (admit→worker double-owner).
+_LEADING_AUTHORITY = re.compile(
+    r"^(?:\r?\n)*<!--cdp-required-skills:([^\n]*?)-->\r?\n?"
+)
+_LEADING_INLINE_BLOCK = re.compile(
+    r"^(?:\r?\n)*<skills_inline>.*?</skills_inline>(?:\r?\n)*",
+    re.DOTALL,
+)
 
 # Operator 2026-07-26: multi-skill attach = composer + → Skills → pick-each.
 # Flag name is historical (pre-attach era); True means multi-shared_sync
@@ -214,6 +222,49 @@ def split_leading_slash_skills(text: str) -> tuple[list[str], str]:
     return tokens, rest
 
 
+def peel_sealed_cdp_skill_prefix(
+    text: str,
+) -> tuple[list[str], list[str], str]:
+    """Strip all leading sealed skill prefixes; return ``(attach, inline, body)``.
+
+    Peels repeated slash / authority / ``<skills_inline>`` blocks so
+    ``prepend_cdp_dispatch_skills`` is text-idempotent under
+    ``stage(stage(x))`` (admit then worker re-stage on the same prompt.md).
+    """
+    attach: list[str] = []
+    inline: list[str] = []
+    rest = text
+    seen_attach: set[str] = set()
+    seen_inline: set[str] = set()
+    for _ in range(32):  # hard cap — sealed prefixes are tiny
+        auth = _LEADING_AUTHORITY.match(rest)
+        if auth is not None:
+            rest = rest[auth.end() :]
+            continue
+        tokens, after = split_leading_slash_skills(rest)
+        if tokens:
+            for token in tokens:
+                slug = token.removeprefix("/").strip()
+                key = slug.lower()
+                if slug and key not in seen_attach:
+                    seen_attach.add(key)
+                    attach.append(slug)
+            rest = after
+            continue
+        inline_match = _LEADING_INLINE_BLOCK.match(rest)
+        if inline_match is not None:
+            block = inline_match.group(0)
+            for slug in extract_inline_slugs_from_sealed(block):
+                key = slug.lower()
+                if key not in seen_inline:
+                    seen_inline.add(key)
+                    inline.append(slug)
+            rest = rest[inline_match.end() :]
+            continue
+        break
+    return attach, inline, rest
+
+
 def render_cdp_inline_skills_xml(bodies: list[InjectedSkillBody]) -> str:
     """XML-delimited inline skills for roleless CDP (team_dispatch packet idiom).
 
@@ -252,10 +303,14 @@ def prepend_cdp_dispatch_skills(
     chip-glue forces the friction 5588/5590 escape. All other catalog skills
     are inlined inside ``<skills_inline>`` XML with a blank line separator
     when both blocks are present.
+
+    Text-idempotent: peels any existing leading sealed skill prefix before
+    rebuilding, so ``stage(stage(x))`` yields a single manifest block.
     """
     if not slugs:
         return prompt, [], []
     requested = [str(s).strip() for s in slugs if str(s).strip()]
+    _peeled_attach, _peeled_inline, body = peel_sealed_cdp_skill_prefix(prompt)
     slash_slugs, inline_slugs = partition_cdp_skills(list(slugs))
     slash_block = (
         format_cdp_hybrid_prefix(slash_slugs)
@@ -275,11 +330,11 @@ def prepend_cdp_dispatch_skills(
         prefix = f"{slash_block}{inline_block}"
     authority = render_cdp_required_authority(requested)
     if not prefix:
-        return f"{authority}{prompt}", slash_slugs, bodies
+        return f"{authority}{body}", slash_slugs, bodies
     # Blank line between slash chip lines and body when no XML inline follows.
-    if slash_block and not inline_block and not prompt.startswith("\n"):
+    if slash_block and not inline_block and not body.startswith("\n"):
         prefix = f"{slash_block}\n"
-    return f"{prefix}{authority}{prompt}", slash_slugs, bodies
+    return f"{prefix}{authority}{body}", slash_slugs, bodies
 
 
 def plan_skill_delivery(slugs: list[str]) -> list[SkillDeliveryPlan]:

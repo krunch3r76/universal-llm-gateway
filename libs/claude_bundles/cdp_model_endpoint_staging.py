@@ -204,6 +204,10 @@ def stage_cdp_prompt_with_skills(
     (``composer_session_skills.attach_session_skills``), never slash-type.
 
     Rejects ``path-sim`` in ``skills=`` (``cdp_skills_path_sim_rejected``).
+
+    Single-owner guard: when ``prompt_uri`` already points at this execution's
+    ephemeral tree and no alternate body source is supplied, pass through
+    without re-reading/rewriting (admit stages; worker must not double-prepend).
     """
     from claude_bundles.cowork_skill_delivery import (
         SkillDeliveryError,
@@ -211,6 +215,24 @@ def stage_cdp_prompt_with_skills(
     )
 
     reject_cdp_skills_path_sim(skills)
+
+    # Worker path: admit already wrote ephemeral prompt.md for this execution_id.
+    if (
+        prompt_uri
+        and not (prompt_text and str(prompt_text).strip())
+        and not (packet_path and str(packet_path).strip())
+        and not (sidecar_ref and str(sidecar_ref).strip())
+    ):
+        prefix = ephemeral_uri_prefix(execution_id).rstrip("/") + "/"
+        uri = str(prompt_uri).strip()
+        if uri.startswith(prefix) or uri.rstrip("/") == prefix.rstrip("/"):
+            root = ephemeral_dir(execution_id)
+            return StagedPrompt(
+                prompt_uri=uri,
+                ephemeral_root=root if root.is_dir() else None,
+                staged=True,
+            )
+
     effective = ensure_cdp_judgment_skills(skills)
     body = read_prompt_text(
         prompt_text=prompt_text,
