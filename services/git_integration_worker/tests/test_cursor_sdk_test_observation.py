@@ -8,6 +8,9 @@ from implement_admission.closeout_models import (
     observed_process_verification,
 )
 
+from services.git_integration_worker.cursor_sdk_capture_status import (
+    verification_all_pass,
+)
 from services.git_integration_worker.cursor_sdk_stream_capture import (
     ToolCallObservation,
 )
@@ -15,8 +18,10 @@ from services.git_integration_worker.cursor_sdk_test_observation import (
     TEST_OBSERVATION_SEMANTICS,
     annotate_test_observation_discrepancy,
     harvest_test_verifications,
+    is_proven_simple_pytest_command,
     is_pytest_command,
     is_pytest_witness,
+    wrapper_exit_demotion_deviation,
 )
 
 
@@ -317,3 +322,49 @@ def test_specimen_auto_6281707f8c76_heredoc_prose_not_emitted() -> None:
         exit_code=0,
     )
     assert harvest_test_verifications((obs,)) == []
+
+
+_SPECIMEN_A_CALL_ID = "call-specimen-a-46c3"
+_SPECIMEN_A_COMMAND = (
+    "cd /mnt/torus/projects/universal-llm-gateway && "
+    "/home/io/.venvs/universal/bin/python -m pytest "
+    "libs/implement_admission services/git_integration_worker/tests --tb=no -q "
+    "2>&1 | tee /tmp/ambient-suite-6655.txt; "
+    'echo "SUITE_EXIT:${PIPESTATUS[0]}"'
+)
+
+
+def test_harvest_specimen_a_compound_echo_is_unattributed_and_blocks_all_pass() -> None:
+    """Specimen auto-46c3c9c57994 — pipeline+tee+echo masks pytest exit."""
+    obs = _shell_obs(
+        call_id=_SPECIMEN_A_CALL_ID,
+        command=_SPECIMEN_A_COMMAND,
+        exit_code=0,
+    )
+    rows = harvest_test_verifications((obs,))
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.exit_code_register == "unattributed"
+    assert row.exit_code == 0
+    assert is_proven_simple_pytest_command(_SPECIMEN_A_COMMAND) is False
+    assert wrapper_exit_demotion_deviation(row) == (
+        f"wrapper_exit_demoted:{_SPECIMEN_A_CALL_ID}"
+    )
+    lint = observed_process_verification(
+        command="ruff check 2 touched files",
+        exit_code=0,
+        invocation_id="lint:specimen-a",
+        basis="subprocess.run.returncode",
+    )
+    assert verification_all_pass([lint, row]) is False
+
+
+def test_is_proven_simple_allows_ruff_and_pytest_and_chain() -> None:
+    assert is_proven_simple_pytest_command("pytest -q foo.py") is True
+    assert is_proven_simple_pytest_command("ruff check a.py && pytest -q foo.py") is True
+    assert (
+        is_proven_simple_pytest_command(
+            "pytest -q foo.py | tee /tmp/out.txt; echo done"
+        )
+        is False
+    )

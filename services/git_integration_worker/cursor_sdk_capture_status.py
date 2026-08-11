@@ -692,9 +692,11 @@ def verification_has_failure(verification: list[Verification] | None) -> bool:
 def verification_all_pass(verification: list[Verification] | None) -> bool:
     """True when verification earns the I2 SHIPPED short-circuit.
 
-    A row is trusted only when ``exit_code_register == "observed"`` (process
-    returncode). Observed lint and harvested pytest siblings both count;
-    ``gate_d:*`` rows are derived structural gates — never pytest witnesses.
+    A row is trusted only when ``exit_code_register == "observed"`` (proven
+    process-under-test returncode). Observed lint and harvested pytest siblings
+    both count; ``gate_d:*`` rows are derived structural gates — never pytest
+    witnesses. ``unattributed`` rows keep the exit integer for audit but must
+    not launder SHIPPED (clause c).
 
     Derived Gate-D / lint-skip booleans packed as ``exit_code: 0`` are emitter
     self-reports — they must not launder SHIPPED above G₁
@@ -702,13 +704,23 @@ def verification_all_pass(verification: list[Verification] | None) -> bool:
 
     Fail-closed rules:
     - empty list → False
-    - any non-zero exit (observed, derived, or unknown) → False
+    - any non-zero exit (observed, derived, unknown, or unattributed) → False
     - zero exits but no ``observed`` row → False (derived-only / unknown-only)
+    - clause (c): pytest-class row with register ≠ ``observed`` → False
     """
     if not verification:
         return False
     if any(item.exit_code != 0 for item in verification):
         return False
+    from services.git_integration_worker.cursor_sdk_test_observation import (
+        is_pytest_command,
+    )
+
+    for item in verification:
+        if item.command.startswith("gate_d:"):
+            continue
+        if is_pytest_command(item.command) and item.exit_code_register != "observed":
+            return False
     return any(item.exit_code_register == "observed" for item in verification)
 
 

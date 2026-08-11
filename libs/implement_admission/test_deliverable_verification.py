@@ -243,3 +243,19 @@ def test_member5_specimen_auto_00a23d2a4f45_class_distinguishable() -> None:
     )
     assert legacy.exit_code_register == "unknown"
     assert legacy.invocation_id is None
+
+
+@pytest.mark.offline
+def test_unattributed_register_packs_without_observed_semantics() -> None:
+    """Member 5 — unattributed rows are distinct from observed packers."""
+    from implement_admission.closeout_models import unattributed_process_verification
+
+    row = unattributed_process_verification(
+        command="pytest -q | tee /tmp/out; echo SUITE_EXIT",
+        exit_code=0,
+        invocation_id="test:unattributed-pack",
+        basis="shell_tool_result.exitCode",
+    )
+    assert row.exit_code_register == "unattributed"
+    assert row.exit_code == 0
+    assert row.basis == "shell_tool_result.exitCode"

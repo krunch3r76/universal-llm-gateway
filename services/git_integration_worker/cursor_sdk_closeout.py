@@ -124,6 +124,9 @@ from services.git_integration_worker.cursor_sdk_subagent_capture import (
     ensure_subagents_surface,
 )
 from services.git_integration_worker.cursor_sdk_test_observation import (
+    annotate_test_observation_discrepancy,
+    append_harvest_demotion_deviations,
+    extract_prose_test_claim,
     harvest_test_verifications,
 )
 from services.git_integration_worker.seat_write_ledger import SeatWriteLedger
@@ -1480,6 +1483,17 @@ def _assemble_closeout_delivery(
         *verification,
         *harvest_test_verifications(outcome.tool_calls),
     ]
+    baseline_deviations_list = list(baseline_deviations)
+    append_harvest_demotion_deviations(verification, baseline_deviations_list)
+    prose_exit, prose_claims_pytest = extract_prose_test_claim(text)
+    discrepancy = annotate_test_observation_discrepancy(
+        prose_claim_exit=prose_exit,
+        prose_claims_pytest=prose_claims_pytest,
+        verification=verification,
+    )
+    if discrepancy:
+        baseline_deviations_list.append(discrepancy)
+    baseline_deviations = baseline_deviations_list
     capture_status, divergence_reason, deviations, manifest = (
         resolve_closeout_capture_fields(
             deliverables_expected=deliverables_expected,

@@ -23,7 +23,7 @@ AmbientRepoCause = Literal[
 # Row 29 member 5 — exit_code claim register (mirrors claim_register.ClaimRegister
 # + unknown degrade). Kept as Literal here so closeout_models stays free of a
 # hard import cycle into claim_register from every closeout consumer.
-ExitCodeRegister = Literal["observed", "derived", "unknown"]
+ExitCodeRegister = Literal["observed", "derived", "unknown", "unattributed"]
 
 
 class AmbientRepoMovement(BaseModel):
@@ -74,8 +74,10 @@ class Verification(BaseModel):
     structured ``ruff check 8 touched files`` / ``exit_code: 1``). Row 29
     member 5 opens the schema:
 
-    - ``exit_code_register`` — ``observed`` (process returncode) vs ``derived``
-      (Gate-D boolean packed as 0/1) vs ``unknown`` (legacy wire degrade).
+    - ``exit_code_register`` — ``observed`` (proven process-under-test returncode)
+      vs ``derived`` (Gate-D boolean packed as 0/1) vs ``unattributed`` (shell
+      exit integer present but compound shape cannot prove it names the check in
+      ``command``) vs ``unknown`` (legacy wire degrade / field omitted).
     - ``invocation_id`` — binds the row to one process/gate evaluation so two
       runs of the same command are distinguishable. A register alone without
       identity does not fix the specimen class.
@@ -98,6 +100,28 @@ class Verification(BaseModel):
     exit_code_register: ExitCodeRegister = "unknown"
     invocation_id: str | None = None
     basis: str | None = None
+
+
+def unattributed_process_verification(
+    *,
+    command: str,
+    exit_code: int,
+    invocation_id: str | None = None,
+    basis: str | None = None,
+) -> Verification:
+    """Pack a shell exit integer whose process-under-test attribution is unproven.
+
+    Used when ``shell_tool_result.exitCode`` is present but the command shape
+    (pipeline wrappers, trailing echo, etc.) cannot prove the integer is the
+    exit of the check named by ``command``. Row is kept for audit — not dropped.
+    """
+    return Verification(
+        command=command,
+        exit_code=exit_code,
+        exit_code_register="unattributed",
+        invocation_id=invocation_id or f"proc:{uuid4().hex}",
+        basis=basis,
+    )
 
 
 def observed_process_verification(

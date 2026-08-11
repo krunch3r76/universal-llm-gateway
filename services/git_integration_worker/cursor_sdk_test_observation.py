@@ -14,6 +14,7 @@ from collections.abc import Mapping, Sequence
 from implement_admission.closeout_models import (
     Verification,
     observed_process_verification,
+    unattributed_process_verification,
 )
 
 from services.git_integration_worker.cursor_sdk_stream_capture import (
@@ -43,6 +44,63 @@ _HEREDOC_BODY_RE = re.compile(
 )
 _SINGLE_QUOTED_RE = re.compile(r"'[^']*'")
 _DOUBLE_QUOTED_RE = re.compile(r'"(?:\\.|[^"\\])*"')
+_PIPEFAIL_RE = re.compile(r"set\s+-o\s+pipefail", flags=re.IGNORECASE)
+_CHAIN_SPLIT_RE = re.compile(r"&&|\n|;")
+
+
+def _chain_segments(command: str) -> list[str]:
+    """Split shell script into ``;`` / ``&&`` / newline-separated segments."""
+    segments: list[str] = []
+    for part in _CHAIN_SPLIT_RE.split(command):
+        stripped = part.strip()
+        if stripped:
+            segments.append(stripped)
+    return segments
+
+
+def _pytest_segment(command: str) -> str | None:
+    """Return the last chain segment that invokes pytest, or None."""
+    for segment in reversed(_chain_segments(_strip_shell_literals(command))):
+        if is_pytest_command(segment):
+            return segment
+    return None
+
+
+def is_proven_simple_pytest_command(command: str) -> bool:
+    """True when shell exit can name the pytest process under test.
+
+    Default-deny compound shapes (specimen ``auto-46c3c9c57994``):
+
+    - **Deny** — ``pytest … | tee …; echo "SUITE_EXIT:${PIPESTATUS[0]}"`` (pipeline
+      wrapper masks pytest exit; outer shell exit is the trailing ``echo``).
+    - **Allow** — sole/direct ``pytest`` invoke (specimen e93f: ``pytest -q …`` line
+      has no ``|``; trailing ``echo "PYTEST_EXIT=$?"`` is diagnostic only).
+    - **Allow** — ``ruff … && pytest …`` with pytest terminal in the ``&&`` chain.
+    - **Allow** — ``pytest | …`` pipeline only when ``set -o pipefail`` appears
+      earlier in the raw script (pipefail binds pipeline exit to pytest).
+    """
+    cmd = command.strip()
+    if not cmd or not is_pytest_command(cmd):
+        return False
+
+    segment = _pytest_segment(cmd)
+    if segment is None:
+        return False
+
+    if "|" not in segment:
+        return True
+
+    if not _PIPEFAIL_RE.search(cmd):
+        return False
+
+    head = segment.lstrip()
+    lower = head.lower()
+    return (
+        lower.startswith("pytest")
+        or "python -m pytest" in lower
+        or "python3 -m pytest" in lower
+        or (lower.startswith("python") and "-m pytest" in lower)
+    )
 
 
 def _strip_shell_literals(command: str) -> str:
@@ -176,7 +234,12 @@ def _harvest_shell_pytest(obs: ToolCallObservation) -> Verification | None:
     if exit_code is None:
         return None
     invocation_id = f"test:{obs.call_id}" if obs.call_id else None
-    return observed_process_verification(
+    pack = (
+        observed_process_verification
+        if is_proven_simple_pytest_command(command)
+        else unattributed_process_verification
+    )
+    return pack(
         command=command,
         exit_code=exit_code,
         invocation_id=invocation_id,
@@ -211,6 +274,58 @@ def harvest_test_verifications(
     return rows
 
 
+def extract_prose_test_claim(body: str) -> tuple[int | None, bool]:
+    """Extract §2 / sidecar prose pytest exit claim when present.
+
+    Returns ``(exit_code, claims_pytest)``. When no claim is found, returns
+    ``(None, False)`` so the annotator stays silent.
+    """
+    text = body or ""
+    lower = text.lower()
+    claims_pytest = bool(
+        re.search(r"\bpytest\b", lower)
+        and re.search(
+            r"(?:exit_code|suite_exit|pytest_exit)\s*[:=]\s*(\d+)",
+            lower,
+        )
+    )
+    if not claims_pytest:
+        return None, False
+    match = re.search(
+        r"(?:exit_code|suite_exit|pytest_exit)\s*[:=]\s*(\d+)",
+        lower,
+    )
+    if match is None:
+        return None, True
+    return int(match.group(1)), True
+
+
+def wrapper_exit_demotion_deviation(row: Verification) -> str | None:
+    """Map demoted harvest row to ``wrapper_exit_demoted:<call_id>`` token."""
+    if row.exit_code_register != "unattributed":
+        return None
+    invocation_id = row.invocation_id or ""
+    if not invocation_id.startswith("test:"):
+        return None
+    call_id = invocation_id.removeprefix("test:")
+    if not call_id:
+        return None
+    return f"wrapper_exit_demoted:{call_id}"
+
+
+def append_harvest_demotion_deviations(
+    verification: Sequence[Verification],
+    deviations: list[str],
+) -> None:
+    """Append ``wrapper_exit_demoted:<call_id>`` for each unattributed harvest row."""
+    seen = set(deviations)
+    for row in verification:
+        token = wrapper_exit_demotion_deviation(row)
+        if token and token not in seen:
+            deviations.append(token)
+            seen.add(token)
+
+
 def annotate_test_observation_discrepancy(
     *,
     prose_claim_exit: int | None,
@@ -243,7 +358,11 @@ def annotate_test_observation_discrepancy(
 __all__ = [
     "TEST_OBSERVATION_SEMANTICS",
     "annotate_test_observation_discrepancy",
+    "append_harvest_demotion_deviations",
+    "extract_prose_test_claim",
     "harvest_test_verifications",
+    "is_proven_simple_pytest_command",
     "is_pytest_command",
     "is_pytest_witness",
+    "wrapper_exit_demotion_deviation",
 ]

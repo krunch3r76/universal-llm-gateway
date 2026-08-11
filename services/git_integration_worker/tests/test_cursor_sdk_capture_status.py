@@ -14,6 +14,7 @@ from implement_admission.closeout_models import (
     Verification,
     derived_gate_verification,
     observed_process_verification,
+    unattributed_process_verification,
 )
 from implement_admission.spec import CloseoutStatus, WorkOutcome
 
@@ -1257,3 +1258,50 @@ def test_capture_incomplete_blocks_optimistic_shipped() -> None:
     )
     assert status_absent == CloseoutStatus.PARTIAL
     assert wo_absent != WorkOutcome.SHIPPED
+
+
+def test_exit_code_register_verdicts_all_states() -> None:
+    """Register completeness — each exit_code_register state has explicit verdict."""
+    observed = observed_process_verification(
+        command="ruff check 1 touched files",
+        exit_code=0,
+        invocation_id="lint:observed",
+    )
+    derived = derived_gate_verification(
+        command="gate_d:passed",
+        exit_code=0,
+        basis="gate_d_boolean_pass",
+        invocation_id="gate_d:derived",
+    )
+    unattributed = unattributed_process_verification(
+        command="pytest -q | tee /tmp/out; echo done",
+        exit_code=0,
+        invocation_id="test:unattributed",
+    )
+    legacy = Verification(command="legacy probe", exit_code=0)
+
+    assert verification_all_pass([observed]) is True
+    assert verification_all_pass([derived]) is False
+    assert verification_all_pass([unattributed]) is False
+    assert verification_all_pass([legacy]) is False
+    assert legacy.exit_code_register == "unknown"
+
+
+def test_clause_c_observed_lint_plus_unattributed_pytest_blocks_all_pass() -> None:
+    """Clause (c): observed lint-green + unattributed pytest-class ⇒ all_pass False."""
+    lint = observed_process_verification(
+        command="ruff check 2 touched files",
+        exit_code=0,
+        invocation_id="lint:clause-c",
+        basis="subprocess.run.returncode",
+    )
+    pytest_row = unattributed_process_verification(
+        command=(
+            "pytest -q services/foo/test_bar.py 2>&1 | tee /tmp/out; "
+            'echo "SUITE_EXIT:${PIPESTATUS[0]}"'
+        ),
+        exit_code=0,
+        invocation_id="test:clause-c",
+        basis="shell_tool_result.exitCode",
+    )
+    assert verification_all_pass([lint, pytest_row]) is False

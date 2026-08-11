@@ -531,6 +531,67 @@ def test_prepare_closeout_delivery_baseline_none_still_harvests_pytest(
     assert verification[0]["invocation_id"] == "test:call-baseline-none-pytest"
 
 
+def test_prepare_closeout_delivery_demotes_compound_pytest_and_wires_annotator(
+    tmp_path: Path,
+) -> None:
+    """6655 — demotion deviation + annotate_test_observation_discrepancy wired."""
+    import inspect
+
+    from services.git_integration_worker import cursor_sdk_closeout as closeout_mod
+    from services.git_integration_worker.cursor_sdk_stream_capture import (
+        ToolCallObservation,
+    )
+
+    sync_source = inspect.getsource(closeout_mod._assemble_closeout_delivery)
+    async_source = inspect.getsource(closeout_mod.prepare_closeout_delivery_async)
+    assert "annotate_test_observation_discrepancy" in sync_source
+    assert "append_harvest_demotion_deviations" in sync_source
+    assert "_assemble_closeout_delivery" in async_source
+
+    _init_git_repo(tmp_path)
+    command = (
+        "pytest -q services/foo/test_bar.py 2>&1 | tee /tmp/out; "
+        'echo "SUITE_EXIT:${PIPESTATUS[0]}"'
+    )
+    result = {
+        "status": "success",
+        "value": {"exitCode": 0, "stdout": "1 passed\n", "stderr": ""},
+    }
+    obs = ToolCallObservation(
+        call_id="call-compound-pytest",
+        tool_name="shell",
+        status="completed",
+        arg_bytes=1,
+        result_bytes=1,
+        truncated_fields=(),
+        args={"command": command},
+        result=result,
+        result_body=result,
+        result_body_status="present",
+    )
+    outcome = SdkRunOutcome(
+        body="verification:\n- exit_code: 0\nSUITE_EXIT:0\n",
+        status="finished",
+        duration_ms=50,
+        tool_call_count=1,
+        tool_calls=(obs,),
+    )
+    delivery = prepare_closeout_delivery(
+        source_repo=tmp_path,
+        dispatch_id="disp-compound-pytest",
+        outcome=outcome,
+        degraded_reason=None,
+        thread_id="t1",
+        work_item_ref=None,
+        baseline=None,
+    )
+    payload = json.loads(delivery.body)
+    verification = payload["verification"]
+    assert len(verification) == 1
+    assert verification[0]["exit_code_register"] == "unattributed"
+    assert "wrapper_exit_demoted:call-compound-pytest" in payload["deviations"]
+
+
 def test_prepare_closeout_delivery_implement_clean_complete(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     outcome = SdkRunOutcome(
