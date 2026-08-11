@@ -1148,7 +1148,7 @@ def test_positive_cannot_override_failed_verification(tmp_path: Path) -> None:
 
 
 def test_vacuous_shipped_blocked_by_nonzero_exit(tmp_path: Path) -> None:
-    """A4 + C5 — ¬deliverables_expected vacuous SHIPPED forbidden when exit≠0."""
+    """A4 + C5 + a:28572 — ¬deliverables_expected vacuous SHIPPED forbidden when exit≠0."""
     repo = _init_git_repo(tmp_path)
     cortex_root = repo / ".cortex"
     cortex_root.mkdir()
@@ -1169,7 +1169,7 @@ def test_vacuous_shipped_blocked_by_nonzero_exit(tmp_path: Path) -> None:
         cortex_root=cortex_root,
         deliverables_expected=False,
     )
-    assert work_outcome == WorkOutcome.CHECKS_FAILED
+    assert work_outcome == WorkOutcome.UNVERIFIED
     assert work_outcome != WorkOutcome.SHIPPED
 
 
@@ -1305,3 +1305,171 @@ def test_clause_c_observed_lint_plus_unattributed_pytest_blocks_all_pass() -> No
         basis="shell_tool_result.exitCode",
     )
     assert verification_all_pass([lint, pytest_row]) is False
+
+
+# --- todo:closeout-grade-trust-join (J1 bidirectional all_pass join) ---
+
+
+def _land_positive_fixture(tmp_path: Path) -> tuple[Path, Path, str]:
+    """Repo + cortex root with one off-git artifact for land-positive probes."""
+    repo = _init_git_repo(tmp_path)
+    cortex_root = tmp_path / "cortex"
+    rel = "notes/system/specs/trust-join-fixture.md"
+    path = cortex_root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("artifact\n", encoding="utf-8")
+    return repo, cortex_root, rel
+
+
+def _verification_row_for_register(
+    register: str,
+    *,
+    exit_code: int,
+) -> Verification:
+    if register == "observed":
+        return observed_process_verification(
+            command="ruff check 1 touched files",
+            exit_code=exit_code,
+            invocation_id=f"lint:{register}-{exit_code}",
+        )
+    if register == "derived":
+        return derived_gate_verification(
+            command="gate_d:passed",
+            exit_code=exit_code,
+            basis="gate_d_boolean_pass",
+            invocation_id=f"gate_d:{register}-{exit_code}",
+        )
+    if register == "unattributed":
+        return unattributed_process_verification(
+            command="pytest -q services/foo/tests",
+            exit_code=exit_code,
+            invocation_id=f"test:{register}-{exit_code}",
+        )
+    if register == "unknown":
+        return Verification(command="legacy probe", exit_code=exit_code)
+    raise ValueError(f"unsupported register: {register}")
+
+
+@pytest.mark.parametrize(
+    ("register", "exit_code", "expected_outcome"),
+    [
+        ("observed", 0, WorkOutcome.SHIPPED),
+        ("observed", 1, WorkOutcome.CHECKS_FAILED),
+        ("derived", 0, WorkOutcome.UNVERIFIED),
+        ("derived", 1, WorkOutcome.CHECKS_FAILED),
+        ("unknown", 0, WorkOutcome.UNVERIFIED),
+        ("unknown", 1, WorkOutcome.CHECKS_FAILED),
+        ("unattributed", 0, WorkOutcome.UNVERIFIED),
+        ("unattributed", 1, WorkOutcome.CHECKS_FAILED),
+    ],
+)
+def test_land_positive_register_exit_matrix(
+    tmp_path: Path,
+    register: str,
+    exit_code: int,
+    expected_outcome: WorkOutcome,
+) -> None:
+    """Land-positive symmetric table — every register × exit class (todo:closeout-grade-trust-join AC1)."""
+    repo, cortex_root, rel = _land_positive_fixture(tmp_path)
+    verification = [_verification_row_for_register(register, exit_code=exit_code)]
+    work_outcome = resolve_work_outcome(
+        degraded_reason=None,
+        verification=verification,
+        files_offgit_produced=[f"cortex://{rel}"],
+        artifact_paths=[],
+        manifest=None,
+        source_repo=repo,
+        cortex_root=cortex_root,
+        deliverables_expected=True,
+    )
+    assert work_outcome == expected_outcome
+    if expected_outcome == WorkOutcome.SHIPPED:
+        assert (
+            project_status_from_work_outcome(work_outcome, None)
+            == CloseoutStatus.COMPLETE
+        )
+    elif expected_outcome == WorkOutcome.CHECKS_FAILED:
+        assert (
+            project_status_from_work_outcome(work_outcome, None)
+            == CloseoutStatus.PARTIAL
+        )
+    else:
+        assert work_outcome != WorkOutcome.SHIPPED
+        assert (
+            project_status_from_work_outcome(work_outcome, None)
+            != CloseoutStatus.COMPLETE
+        )
+
+
+def test_land_positive_empty_verification_legacy_ladder(tmp_path: Path) -> None:
+    """Empty verification[] keeps legacy positive→SHIPPED (todo:closeout-grade-trust-join)."""
+    repo, cortex_root, rel = _land_positive_fixture(tmp_path)
+    work_outcome = resolve_work_outcome(
+        degraded_reason=None,
+        verification=[],
+        files_offgit_produced=[f"cortex://{rel}"],
+        artifact_paths=[],
+        manifest=None,
+        source_repo=repo,
+        cortex_root=cortex_root,
+        deliverables_expected=True,
+    )
+    assert work_outcome == WorkOutcome.SHIPPED
+
+
+def test_negative_evidence_nonzero_stays_unverified_a28572(tmp_path: Path) -> None:
+    """a:28572 — land-¬positive + any register + exit≠0 → UNVERIFIED (not CHECKS_FAILED)."""
+    repo = _init_git_repo(tmp_path)
+    cortex_root = repo / ".cortex"
+    cortex_root.mkdir()
+    verification = [
+        observed_process_verification(
+            command="pytest -q",
+            exit_code=1,
+            invocation_id="pytest:fail-no-positive",
+        )
+    ]
+    work_outcome = resolve_work_outcome(
+        degraded_reason=None,
+        verification=verification,
+        files_offgit_produced=[],
+        artifact_paths=[],
+        manifest=None,
+        source_repo=repo,
+        cortex_root=cortex_root,
+        deliverables_expected=True,
+    )
+    assert work_outcome == WorkOutcome.UNVERIFIED
+    assert work_outcome != WorkOutcome.CHECKS_FAILED
+    assert work_outcome != WorkOutcome.SHIPPED
+
+
+def test_specimen_unattributed_zero_red_suite_does_not_ship(tmp_path: Path) -> None:
+    """Specimen auto-a33a6923392c — unattributed exit 0 + land-positive must not SHIPPED."""
+    repo, cortex_root, rel = _land_positive_fixture(tmp_path)
+    verification = [
+        unattributed_process_verification(
+            command=(
+                "pytest -q services/git_integration_worker/tests 2>&1 | tee /tmp/out; "
+                'echo "SUITE_EXIT:${PIPESTATUS[0]}"'
+            ),
+            exit_code=0,
+            invocation_id="test:specimen-a33a",
+            basis="shell_tool_result.exitCode",
+        )
+    ]
+    work_outcome = resolve_work_outcome(
+        degraded_reason=None,
+        verification=verification,
+        files_offgit_produced=[f"cortex://{rel}"],
+        artifact_paths=[],
+        manifest=None,
+        source_repo=repo,
+        cortex_root=cortex_root,
+        deliverables_expected=True,
+    )
+    assert work_outcome != WorkOutcome.SHIPPED
+    assert work_outcome == WorkOutcome.UNVERIFIED
+    assert (
+        project_status_from_work_outcome(work_outcome, None) != CloseoutStatus.COMPLETE
+    )

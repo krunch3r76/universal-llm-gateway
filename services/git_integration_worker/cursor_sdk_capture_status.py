@@ -815,6 +815,13 @@ def resolve_work_outcome(
     G₁ (todo:success-shaped-silence): no-write intent conjuncts evaluate *before*
     the positive→SHIPPED short-circuit; refusal projects UNVERIFIED (I3 middle),
     not NOT_SHIPPED (reserved for terminal no-run / run_status tokens).
+
+    Trust join (todo:closeout-grade-trust-join): when ``verification`` is
+    non-empty, ``SHIPPED`` iff ``verification_all_pass`` — untrusted-zero
+    (derived / unknown / unattributed / absent register) projects UNVERIFIED
+    and cannot be upgraded by positive or vacuous paths. Absence of
+    ``exit_code_register`` resolves to ``unknown``, not toward trusting.
+    Empty ``verification[]`` keeps the legacy positive/vacuous ladder.
     """
     if degraded_reason and degraded_reason.startswith("run_status="):
         return WorkOutcome.NOT_SHIPPED
@@ -837,14 +844,18 @@ def resolve_work_outcome(
         baseline=baseline,
     )
     has_failure = verification_has_failure(verification)
+    verification_nonempty = bool(verification)
 
     # A4 — failed verification must never ride positive/vacuous to SHIPPED.
     if has_failure:
         if positive:
             return WorkOutcome.CHECKS_FAILED
 
-    if verification_all_pass(verification):
-        return WorkOutcome.SHIPPED
+    if verification_nonempty:
+        if verification_all_pass(verification):
+            return WorkOutcome.SHIPPED
+        return WorkOutcome.UNVERIFIED
+
     if positive and not has_failure:
         return WorkOutcome.SHIPPED
 
