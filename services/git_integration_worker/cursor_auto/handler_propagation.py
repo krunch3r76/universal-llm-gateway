@@ -9,6 +9,7 @@ from charter_runner_store.propagation_ledger import (
     close_row,
     fail_row,
     mark_harvest_wanted,
+    set_defer_reason,
     set_open_proof_payload,
     upsert_open_rows,
 )

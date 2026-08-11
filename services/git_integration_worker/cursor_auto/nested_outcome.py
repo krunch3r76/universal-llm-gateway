@@ -16,7 +16,12 @@ from systems.frontier_consult.story_wire import (
     safe_emit_observation,
 )
 
-from services.git_integration_worker.config import load_config
+from services.git_integration_worker.cursor_auto.terminal_reason_codec import (
+    TERMINAL_REASON_CLOSEOUT_RELAY_FAILED,
+    TERMINAL_REASON_CONFER_RELAY_FAILED,
+    deliberate_failure_terminal_reason,
+    relay_failure_terminal_reason,
+)
 from services.git_integration_worker.cursor_auto.caller_auditable import (
     caller_auditable,
 )
@@ -143,7 +148,12 @@ async def relay_confer_outcome(
         bus=client,
     )
     failed = not relay.get("ok") or terminal_status == "failed"
-    queue.mark_done(job.job_id, failed=failed)
+    term_reason = None
+    if failed:
+        term_reason = relay_failure_terminal_reason(
+            relay, fallback=TERMINAL_REASON_CONFER_RELAY_FAILED
+        )
+    queue.mark_done(job.job_id, failed=failed, terminal_reason=term_reason)
     journal_status = _journal_terminal_status(payload_status=payload.status, failed=failed)
     disposition = "fence_violation" if fence_violation else "conferred"
     append_journal_entry(
@@ -351,7 +361,17 @@ async def relay_closeout_outcome(
             failed=True,
             dispatch_id=dispatch_id,
         )
-        queue.mark_done(job.job_id, failed=True)
+        queue.mark_done(
+            job.job_id,
+            failed=True,
+            terminal_reason=deliberate_failure_terminal_reason(
+                disposition="blocked",
+                payload={
+                    "reason": checkpoint_verdict.reason or "lane_a_checkpoint_missing",
+                },
+                summary=summary,
+            ),
+        )
         if admission_controller is not None and dispatch_id:
             admission_controller.close_ticket(dispatch_id, terminal_status="failed")
         return {
@@ -460,7 +480,12 @@ async def relay_closeout_outcome(
             "request_id": job.request_id,
         },
     )
-    queue.mark_done(job.job_id, failed=failed)
+    term_reason = None
+    if failed:
+        term_reason = relay_failure_terminal_reason(
+            relay, fallback=TERMINAL_REASON_CLOSEOUT_RELAY_FAILED
+        )
+    queue.mark_done(job.job_id, failed=failed, terminal_reason=term_reason)
     if admission_controller is not None:
         admission_controller.close_ticket(
             dispatch_id,

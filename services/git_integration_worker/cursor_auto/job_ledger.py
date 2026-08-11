@@ -240,6 +240,8 @@ class AutoJobLedger:
     ) -> AutoJob | None:
         if status not in _TERMINAL_STATUSES:
             raise ValueError(f"invalid terminal status: {status}")
+        if status == "failed" and not terminal_reason:
+            raise ValueError("terminal_reason required when status=failed")
         now = _now_iso()
         with self._connect() as conn:
             row = conn.execute(

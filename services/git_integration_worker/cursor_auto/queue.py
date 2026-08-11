@@ -108,8 +108,16 @@ class AutoJobQueue:
         if ledger is not None:
             ledger.bump_heartbeat(job_id)
 
-    def mark_done(self, job_id: str, *, failed: bool = False) -> None:
+    def mark_done(
+        self,
+        job_id: str,
+        *,
+        failed: bool = False,
+        terminal_reason: str | None = None,
+    ) -> None:
         """Terminalize a job; a superseded job keeps its interrupt status."""
+        if failed and not terminal_reason:
+            raise ValueError("terminal_reason required when failed=True")
         terminal_status: str | None = None
         with self._lock:
             job = self._jobs.get(job_id)
@@ -122,7 +130,7 @@ class AutoJobQueue:
             ledger.mark_terminal(
                 job_id,
                 status=terminal_status,
-                terminal_reason=None,
+                terminal_reason=terminal_reason,
             )
 
     def mark_report_undelivered(

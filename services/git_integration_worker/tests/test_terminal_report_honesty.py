@@ -75,8 +75,14 @@ class _RecordingQueue:
         self.done: list[tuple[str, bool]] = []
         self.undelivered: list[dict[str, Any]] = []
 
-    def mark_done(self, job_id: str, *, failed: bool = False) -> None:
-        self.done.append((job_id, failed))
+    def mark_done(
+        self,
+        job_id: str,
+        *,
+        failed: bool = False,
+        terminal_reason: str | None = None,
+    ) -> None:
+        self.done.append((job_id, failed, terminal_reason))
 
     def mark_report_undelivered(
         self,
@@ -216,7 +222,7 @@ async def test_2xx_marks_done_not_report_undelivered() -> None:
         contract="propagate",
         payload={"summary": "propagated"},
     )
-    assert queue.done == [("job-honesty", False)]
+    assert queue.done == [("job-honesty", False, None)]
     assert queue.undelivered == []
     assert client.reply.await_args.kwargs["allow_long_body"] is False
 

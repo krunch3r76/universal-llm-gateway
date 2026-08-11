@@ -112,7 +112,13 @@ async def test_run_propagation_queues_when_manage_defers() -> None:
     calls: list[str] = []
 
     class _Queue:
-        def mark_done(self, job_id: str, *, failed: bool = False) -> None:
+        def mark_done(
+            self,
+            job_id: str,
+            *,
+            failed: bool = False,
+            terminal_reason: str | None = None,
+        ) -> None:
             calls.append(job_id)
 
     class _Client:
@@ -176,7 +182,13 @@ async def test_run_propagation_self_preempts_mcp_busy_deferral() -> None:
     )
 
     class _Queue:
-        def mark_done(self, job_id: str, *, failed: bool = False) -> None:
+        def mark_done(
+            self,
+            job_id: str,
+            *,
+            failed: bool = False,
+            terminal_reason: str | None = None,
+        ) -> None:
             pass
 
     posted: list[dict[str, object]] = []
@@ -298,7 +310,13 @@ async def test_run_propagation_self_preempt_vetoed_by_allow_self_preempt_false()
     )
 
     class _Queue:
-        def mark_done(self, job_id: str, *, failed: bool = False) -> None:
+        def mark_done(
+            self,
+            job_id: str,
+            *,
+            failed: bool = False,
+            terminal_reason: str | None = None,
+        ) -> None:
             pass
 
     class _Client:

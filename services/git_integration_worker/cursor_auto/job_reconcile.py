@@ -20,6 +20,9 @@ from services.git_integration_worker.cursor_auto.job_ledger import (
     AutoJobLedger,
     get_ledger,
 )
+from services.git_integration_worker.cursor_auto.terminal_reason_codec import (
+    TERMINAL_REASON_RECONCILE_INFLIGHT_LOST,
+)
 from services.git_integration_worker.cursor_auto.queue import (
     AutoJob,
     AutoJobQueue,
@@ -100,11 +103,15 @@ async def _terminalize_job(
         terminal = ledger.mark_terminal(
             job.job_id,
             status="failed",
-            terminal_reason=None,
+            terminal_reason=TERMINAL_REASON_RECONCILE_INFLIGHT_LOST,
         )
         if terminal is None:
             return None
-        queue.mark_done(job.job_id, failed=True)
+        queue.mark_done(
+            job.job_id,
+            failed=True,
+            terminal_reason=TERMINAL_REASON_RECONCILE_INFLIGHT_LOST,
+        )
         return terminal
     terminal = ledger.mark_terminal(
         job.job_id,
@@ -113,7 +120,11 @@ async def _terminalize_job(
     )
     if terminal is None:
         return None
-    queue.mark_done(job.job_id, failed=True)
+    queue.mark_done(
+        job.job_id,
+        failed=True,
+        terminal_reason=TERMINAL_REASON_QUEUE_OWNER_RESTART,
+    )
     if post_bus and terminal.thread_id:
         post_result: dict[str, Any] | None = None
         try:

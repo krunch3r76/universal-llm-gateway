@@ -84,7 +84,13 @@ class _FakeQueue:
     def __init__(self) -> None:
         self.done: list[tuple[str, bool]] = []
 
-    def mark_done(self, job_id: str, *, failed: bool = False) -> None:
+    def mark_done(
+        self,
+        job_id: str,
+        *,
+        failed: bool = False,
+        terminal_reason: str | None = None,
+    ) -> None:
         self.done.append((job_id, failed))
 
 

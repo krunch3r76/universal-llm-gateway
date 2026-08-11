@@ -14,6 +14,9 @@ from services.git_integration_worker.cursor_auto.terminal_post_outcome import (
     terminal_post_retryable,
     terminal_reason_for_status,
 )
+from services.git_integration_worker.cursor_auto.terminal_reason_codec import (
+    deliberate_failure_terminal_reason,
+)
 from services.git_integration_worker.cursor_auto.work_journal import (
     append_journal_entry,
 )
@@ -90,7 +93,14 @@ async def post_terminal_status(
     )
     delivered = terminal_post_delivered(terminal.status_code)
     if delivered:
-        queue.mark_done(job.job_id, failed=failed)
+        term_reason = None
+        if failed:
+            term_reason = deliberate_failure_terminal_reason(
+                disposition=disposition,
+                payload=payload,
+                summary=summary,
+            )
+        queue.mark_done(job.job_id, failed=failed, terminal_reason=term_reason)
     else:
         queue.mark_report_undelivered(
             job.job_id,

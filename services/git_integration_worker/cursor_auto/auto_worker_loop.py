@@ -10,6 +10,9 @@ from universal_logging import get_logger
 from services.git_integration_worker.cursor_auto.handler import process_job
 from services.git_integration_worker.cursor_auto.liveness import get_registry
 from services.git_integration_worker.cursor_auto.queue import get_queue
+from services.git_integration_worker.cursor_auto.terminal_reason_codec import (
+    format_exception_reason,
+)
 
 logger = get_logger(__name__)
 
@@ -68,7 +71,11 @@ async def auto_worker_loop(app: Any) -> None:
                             result.get("terminal_status"),
                         )
                     except Exception as exc:
-                        get_queue().mark_done(job.job_id, failed=True)
+                        get_queue().mark_done(
+                            job.job_id,
+                            failed=True,
+                            terminal_reason=format_exception_reason(exc),
+                        )
                         logger.exception(
                             "cursor-auto job=%s failed: %s", job.job_id, exc
                         )

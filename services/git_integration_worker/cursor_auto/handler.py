@@ -278,7 +278,15 @@ async def process_job(
         body=compose_admit_body(base_admit_body, briefing),
     )
     if admit.status_code >= 400:
-        queue.mark_done(job.job_id, failed=True)
+        from services.git_integration_worker.cursor_auto.terminal_post_outcome import (
+            terminal_reason_for_status,
+        )
+
+        queue.mark_done(
+            job.job_id,
+            failed=True,
+            terminal_reason=terminal_reason_for_status(admit.status_code),
+        )
         return {
             "ok": False,
             "phase": "admit",
