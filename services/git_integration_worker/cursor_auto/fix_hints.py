@@ -70,6 +70,13 @@ PROPAGATE_MISSING_FIX_HINT = (
     "`scope: propagation sync_restart mcp` with `effects_expected:`."
 )
 
+OPTIONS_SYMMETRY_FIX_HINT = (
+    "Every option in `## options` must share the same key set with non-empty "
+    "`cost:`, `benefit:`, and `falsifier:` values, and at least two options "
+    "are required. A one-option or asymmetric menu is a loaded fork — add the "
+    "missing keys per option id or remove the block."
+)
+
 DEADLINE_UNPARSEABLE_FIX_HINT = (
     "`deadline:` accepts a relative window (`+15m`, `+2h`, `+90s`) or an "
     "ISO-8601 timestamp (`2026-07-29T18:00:00Z`). Fix the value and re-issue."
@@ -81,6 +88,7 @@ __all__ = [
     "EMPTY_SCOPE_FIX_HINT",
     "LANE_A_CHECKPOINT_FIX_HINT",
     "MISSION_CLOSE_WAKE_FIX_HINT",
+    "OPTIONS_SYMMETRY_FIX_HINT",
     "PICKUP_AWAITS_STOP_FIX_HINT",
     "PICKUP_DECLARATION_FIX_HINT",
     "PROPAGATE_MISSING_FIX_HINT",

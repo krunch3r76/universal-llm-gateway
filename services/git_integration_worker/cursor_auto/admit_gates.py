@@ -43,11 +43,15 @@ from services.git_integration_worker.cursor_auto.fix_hints import (
     CONTINUITY_HOP_FIX_HINT,
     EMPTY_SCOPE_FIX_HINT,
     MISSION_CLOSE_WAKE_FIX_HINT,
+    OPTIONS_SYMMETRY_FIX_HINT,
     PROPAGATE_MISSING_FIX_HINT,
     VISION_MISSING_FIX_HINT,
 )
 from services.git_integration_worker.cursor_auto.handler_terminal import (
     post_terminal_status,
+)
+from services.git_integration_worker.cursor_auto.options_admission import (
+    admit_options_body,
 )
 from services.git_integration_worker.cursor_auto.propagate_admission import (
     PROPAGATE_CONTRACT,
@@ -263,6 +267,24 @@ async def blocking_admit_gate(
                     "fix_hint": claimed_derived(
                         VISION_MISSING_FIX_HINT,
                         basis="admit_gates.vision_field_missing",
+                    ).to_wire(),
+                },
+            )
+        admission = admit_options_body(job.body)
+        if not admission.approved and admission.error is not None:
+            summary = admission.error["summary"]
+            return await _blocked(
+                job,
+                client=client,
+                queue=queue,
+                summary=summary,
+                payload={
+                    **admission.error,
+                    "contract": contract,
+                    "density": directive.density,
+                    "fix_hint": claimed_derived(
+                        admission.error.get("fix_hint", OPTIONS_SYMMETRY_FIX_HINT),
+                        basis=f"admit_gates.{admission.error['reason']}",
                     ).to_wire(),
                 },
             )
