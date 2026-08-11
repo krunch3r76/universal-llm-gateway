@@ -15,6 +15,29 @@ Load when restarting/rebuilding services, MCP dependency changes, or manage-sock
 
 **Architecture consult duty:** when a packet binds service **home**, **extract**, or **process manager**, attach `ulg-architecture` + `architecture-invariants` and **inline** this invariant. Do not let binders inherit systemd framing from older BEFORE maps.
 
+## Periodic work — plane selection (`[ulg:periodic-plane]`)
+
+**Invariant:** manage owns **two** scheduling planes with **different liveness**, and ¬cron/¬systemd-timer on this host (no `.timer` unit exists; `crontab` unused).
+
+| Plane | Liveness | Examples |
+|---|---|---|
+| **manage TUI in-process loop** | Dies on `q` / TUI quit | `DigestTickLoop` (30s), `CharterRunnerTickLoop` (20s tick / 300s reconcile) |
+| **manage-hosted host-service loop** | **Outlives** the TUI — `service_ctl` spawns via `host_spawn.spawn_detached_host_process` (`Popen` + `start_new_session`, `todo:manage-quit-must-not-stop-fleet`) | GIW `supervise(app, attr, factory)` loops; cortex-api lifespan `asyncio.create_task` (`run_skill_graph_drift_monitor`, 3600s) |
+| **Satellite loop** | Independent host | cdp-ask `RegistryHygieneLoop` (1200s) |
+
+`TUI_loop_liveness ⊊ host_service_liveness` — both are manage-owned, so choosing a host-service loop is a **refinement** of "manage is the scheduling plane", not an overturn.
+
+**Cadence rule (BINDING):** `cadence ≫ process_lifetime ⇒ durable_due_state`. Observed lifetimes are **hours**, not days (2026-08-11, host up 46d: manage TUI 1h25m · GIW 1h20m · cortex-api 2h47m — routine `sync_restart` churn). A bare `asyncio.sleep(interval)` loop therefore fires with probability ≈0 for any daily/weekly cadence: every restart resets the sleep. Such a job is scheduled-on-paper and never runs.
+
+| Cadence | Shape |
+|---|---|
+| seconds–minutes | bare `while True: … await asyncio.sleep(interval)` — the digest/drift template |
+| hours–days | **short poll + persisted `last_run_at` due-check** (state under `~/.gateway/`), ¬ long sleep |
+
+Do not copy `DigestTickLoop` as a template for a slow cadence: its 30s interval sits far **below** process lifetime, which makes restart amnesia invisible in that design. Durable-due-state precedent inside the fleet: GIW `trigger_service` (SQLite `fire_at` / `recur_every_s`, polled every 30s).
+
+**Selection:** unattended ∧ hours–days ⇒ host-service loop + durable due-state · interactive ∨ work-advancing ∧ sub-minute ⇒ TUI loop · domain locality (credentials, SDK runtime, owning service) breaks ties.
+
 ## Forbidden ops
 
 ¬`pkill`, `docker restart/stop`, `systemctl`, direct script starts. Use `manage` MCP or `./manage` TUI.
