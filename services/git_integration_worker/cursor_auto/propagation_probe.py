@@ -323,6 +323,20 @@ def _mcp_health_section(
     return None
 
 
+def _served_artifact_identity_section(
+    payload: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Prefer nested ``liveness``; else flat identifier fields on the probe payload."""
+    if not isinstance(payload, dict):
+        return None
+    section = payload.get("liveness")
+    if isinstance(section, dict):
+        return section
+    if any(key in payload for key in IDENTIFIER_FIELDS):
+        return payload
+    return None
+
+
 def proof_identity_attestation(
     before: dict[str, Any] | None,
     after: dict[str, Any],
@@ -336,6 +350,14 @@ def proof_identity_attestation(
     if surface == "mcp_health":
         before_section = _mcp_health_section(before)
         after_section = _mcp_health_section(after)
+        if before_section is None or after_section is None:
+            return "indeterminate"
+        return attest_identity_delta(
+            before_section, after_section, service=service
+        )
+    if surface == "liveness":
+        before_section = _served_artifact_identity_section(before)
+        after_section = _served_artifact_identity_section(after)
         if before_section is None or after_section is None:
             return "indeterminate"
         return attest_identity_delta(
@@ -403,11 +425,22 @@ def proof_observed(
         if descriptor is None:
             return False
         expected = row.expected_x_mcp_count or descriptor.expected_x_mcp_count
-        return served_artifact_observed(
+        if not served_artifact_observed(
             payload,
             code_ref=row.code_ref,
             expected_x_mcp_count=expected,
+        ):
+            return False
+        # Byte-identical OpenAPI only proves surfaces agree with each other —
+        # compatible with all being stale together. Identity movement is owed
+        # the same way as client_visible (harvest before/after).
+        attestation = proof_identity_attestation(
+            before,
+            payload,
+            service=row.service,
+            surface="liveness",
         )
+        return attestation == "changed"
     if row.proof_class == "client_visible" and row.service == "mcp":
         mcp_health = payload.get("mcp_health")
         cortex_health = payload.get("cortex_api")

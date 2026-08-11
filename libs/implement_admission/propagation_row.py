@@ -116,7 +116,9 @@ def _served_artifact_body(*, expected_x_mcp_count: int | None) -> str:
         "served OpenAPI from every client-reachable surface → "
         f"{count_clause}"
         "all surfaces byte-identical, document parses; AFTER restart VERIFY code_ref "
-        "is ancestor-of-or-equal-to observed code_version"
+        "is ancestor-of-or-equal-to observed code_version "
+        "AND VERIFY process identity changed "
+        "(pid/process_start_time/source_synced_at) since the pre-restart probe"
     )
 
 

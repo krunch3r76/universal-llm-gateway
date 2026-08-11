@@ -259,6 +259,7 @@ def test_compose_proof_matrix_present_and_absent_default_proof_services():
     for service in ("git_integration_worker", "cortex_api", "agent_bus", "rag"):
         proof = compose_proof(service, "served_artifact")
         assert "OpenAPI" in proof, service
+        assert "process identity changed" in proof, service
         # null expected_x_mcp_count ⇒ no unbound ">= expected" clause
         assert ">= expected" not in proof, service
         assert "x-mcp count >=" not in proof, service
@@ -267,6 +268,7 @@ def test_compose_proof_matrix_present_and_absent_default_proof_services():
         "git_integration_worker", "served_artifact", expected_x_mcp_count=9
     )
     assert "x-mcp count >= 9" in bound
+    assert "process identity changed" in bound
 
     for service in absent_default:
         with pytest.raises(MissingProofTemplateError) as excinfo:
