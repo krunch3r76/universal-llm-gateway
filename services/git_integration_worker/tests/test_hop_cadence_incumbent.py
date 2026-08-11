@@ -7,7 +7,7 @@ claimed an empty lane while a claimed Auto commission was mid-flight.
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -128,16 +128,20 @@ async def test_cadence_hop_residual_re_issue_subject_names_incumbent(monkeypatch
         residuals.append(payload)
         return {"ok": True, "payload": payload}
 
-    async def _fake_commission(j, *, model, purpose, **_kwargs):
-        return {"ok": True, "execution_id": "exec-cadence-1"}
+    from services.git_integration_worker.tests.commission_spy import commission_spy
+
+    commission = commission_spy(execution_id="exec-cadence-1")
 
     async def _fake_terminal(j, **kwargs):
         return {"ok": True, "payload": kwargs.get("payload") or {}}
 
     monkeypatch.setattr(hop_mod, "post_harvest_residual", _capture_residual)
-    monkeypatch.setattr(hop_mod, "commission_cdp_escalation", _fake_commission)
+    monkeypatch.setattr(hop_mod, "commission_cdp_escalation", commission)
     monkeypatch.setattr(hop_mod, "post_terminal_status", _fake_terminal)
     monkeypatch.setattr(hop_mod, "live_run_for_thread", lambda _t: None)
+    monkeypatch.setattr(
+        hop_mod, "_post_hop_admit_report", AsyncMock(return_value=None)
+    )
     monkeypatch.setattr(cadence_mod, "capacity_blocks_hop", lambda **_: (False, None))
     monkeypatch.setattr(cadence_mod, "mark_hop_fired", lambda *a, **k: None)
     monkeypatch.setattr(

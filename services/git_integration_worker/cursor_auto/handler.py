@@ -10,6 +10,9 @@ from universal_logging import get_logger
 from services.git_integration_worker.cursor_auto.admit_gates import (
     blocking_admit_gate,
 )
+from services.git_integration_worker.cursor_auto.admit_report import (
+    build_admit_report_body,
+)
 from services.git_integration_worker.cursor_auto.cdp_escalation import (
     commission_cdp_escalation,
     escalation_lane_refusal,
@@ -78,6 +81,7 @@ from services.git_integration_worker.cursor_auto.propagate_admission import (
 )
 from services.git_integration_worker.cursor_auto.queue import AutoJob, get_queue
 from services.git_integration_worker.cursor_auto.reflex_events import (
+    emit_cdp_effort_bind,
     emit_mechanical_executor_redirected,
     maybe_emit_premium_bind,
 )
@@ -215,8 +219,12 @@ async def process_job(
             contract=contract,
             handoff_contract=handoff_contract,
         )
+    # Unclamped effort is the operator wire pin. Autonomous ceiling applies to
+    # nested cursor-sdk only — CDP picker depth must not be decided by the
+    # resolved cursor-sdk model (is_roaming_tier predicate on the wrong subject).
+    wire_effort = resolve_desired_effort(job.desired_effort)
     effort = clamp_effort_to_autonomous_ceiling(
-        model["resolved_model_id"], resolve_desired_effort(job.desired_effort)
+        model["resolved_model_id"], wire_effort
     )
     escalation = resolve_escalation(job.escalation)
     contract_info = resolve_contract_disposition(contract)
@@ -241,32 +249,26 @@ async def process_job(
         work_bounded=work_bounded,
     )
 
-    base_admit_body = (
-        "Auto admitted lane:cursor-auto request.\n"
-        f"requested_model={model['requested']} "
-        f"resolved={model['resolved_model_id']} (admit-plane)\n"
-        f"model_honored={model['honored']} (admit-plane pin result)\n"
-        f"requested_effort={effort['requested']} "
-        f"resolved={effort['resolved_effort']}\n"
-        f"requested_escalation={escalation['requested'] or '(none)'} "
-        f"resolved={escalation.get('resolved_escalation') or '(none)'}\n"
-        f"contract={contract_info['contract']} "
-        f"handoff={handoff_contract}\n"
-        f"gate_plan={gate_plan['action']}\n"
-        f"gate_occupancy_source={gate_plan.get('gate', {}).get('occupancy_source', 'gate_only')}\n"
-        f"directive={directive is not None}\n"
-        f"continuity_hop={str(bool(job.continuity_hop)).lower()} "
-        f"matched_token={job.continuity_matched_token or 'none'}"
-    )
     override_rule = admit_model_override_rule_line(model)
-    if override_rule is not None:
-        base_admit_body += f"\n{override_rule}"
     effort_rule = admit_effort_override_rule_line(effort)
-    if effort_rule is not None:
-        base_admit_body += f"\n{effort_rule}"
     pin_flags = admit_model_pin_flags(model, effort)
-    if pin_flags:
-        base_admit_body += "\nflags: " + "; ".join(pin_flags)
+    base_admit_body = build_admit_report_body(
+        model=model,
+        effort=effort,
+        escalation=escalation,
+        contract=str(contract_info["contract"]),
+        handoff_contract=handoff_contract,
+        gate_action=str(gate_plan["action"]),
+        gate_occupancy_source=str(
+            gate_plan.get("gate", {}).get("occupancy_source", "gate_only")
+        ),
+        directive_present=directive is not None,
+        continuity_hop=bool(job.continuity_hop),
+        matched_token=job.continuity_matched_token,
+        override_rule=override_rule,
+        effort_rule=effort_rule,
+        pin_flags=pin_flags,
+    )
     briefing = await maybe_briefing_for_admit(job.thread_id, contract=contract)
     admit = await client.reply(
         thread_id=job.thread_id,
@@ -343,10 +345,11 @@ async def process_job(
 
     if contract not in _NESTED_CONTRACTS:
         if cdp_model:
+            cdp_effort = str(wire_effort.get("resolved_effort") or "") or None
             commissioned = await commission_cdp_escalation(
                 job,
                 model=str(cdp_model),
-                reasoning_effort=str(effort.get("resolved_effort") or "") or None,
+                reasoning_effort=cdp_effort,
             )
             if not commissioned.get("ok"):
                 return await terminal_failed(
@@ -364,6 +367,14 @@ async def process_job(
             )
 
             cdp_execution_id = commissioned.get("execution_id")
+            emit_cdp_effort_bind(
+                thread_id=job.thread_id,
+                execution_id=str(cdp_execution_id or ""),
+                model=str(cdp_model),
+                requested_effort=str(wire_effort.get("requested") or ""),
+                resolved_effort=str(cdp_effort or ""),
+                lane="cursor-auto-cdp-escalation",
+            )
             cdp_disposition = outcome_disposition_for_stamp(
                 "dispatched-and-relayed",
                 m1_satisfied=m1_cdp_commission(execution_id=cdp_execution_id),
@@ -373,6 +384,8 @@ async def process_job(
                 "reason": "cdp_escalation_commissioned",
                 "escalation_model": cdp_model,
                 "execution_id": cdp_execution_id,
+                "requested_effort": wire_effort.get("requested"),
+                "resolved_effort": cdp_effort,
             }
             if cdp_disposition is not None:
                 cdp_payload["disposition"] = cdp_disposition
@@ -436,10 +449,11 @@ async def process_job(
         skip_outbox=queue.is_superseded(job.job_id),
     )
     if cdp_model:
+        cdp_effort = str(wire_effort.get("resolved_effort") or "") or None
         commissioned = await commission_cdp_escalation(
             job,
             model=str(cdp_model),
-            reasoning_effort=str(effort.get("resolved_effort") or "") or None,
+            reasoning_effort=cdp_effort,
         )
         if not commissioned.get("ok"):
             return await terminal_failed(
@@ -451,6 +465,14 @@ async def process_job(
                 ),
                 extra=commissioned,
             )
+        emit_cdp_effort_bind(
+            thread_id=job.thread_id,
+            execution_id=str(commissioned.get("execution_id") or ""),
+            model=str(cdp_model),
+            requested_effort=str(wire_effort.get("requested") or ""),
+            resolved_effort=str(cdp_effort or ""),
+            lane="cursor-auto-cdp-escalation-nested",
+        )
         get_ledger().merge_record_json(
             job.job_id,
             {

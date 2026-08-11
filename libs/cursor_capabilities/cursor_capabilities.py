@@ -6,6 +6,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final
 
+from effort_vocabulary import WIRE_LADDER
+
+# Full wire ladder for models that accept every rung; capability subsets below.
+_FULL_EFFORT: Final[tuple[str, ...]] = WIRE_LADDER
+
 __all__ = [
     "CURSOR_DENIED_MODELS",
     "CURSOR_MODEL_CAPABILITIES",
@@ -129,7 +134,7 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         knobs={
             "thinking": KnobSpec(accepted=("false", "true")),
             "context": KnobSpec(accepted=("300k", "1m")),
-            "effort": KnobSpec(accepted=("low", "medium", "high", "xhigh", "max")),
+            "effort": KnobSpec(accepted=_FULL_EFFORT),
             "fast": KnobSpec(accepted=("false", "true")),
         },
         fixed_params={"cyber": "false"},
@@ -145,7 +150,7 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         knobs={
             "thinking": KnobSpec(accepted=("false", "true")),
             "context": KnobSpec(accepted=("300k", "1m")),
-            "effort": KnobSpec(accepted=("low", "medium", "high", "xhigh", "max")),
+            "effort": KnobSpec(accepted=_FULL_EFFORT),
             "fast": KnobSpec(accepted=("false", "true")),
         },
         fixed_params={"cyber": "false"},
@@ -161,6 +166,7 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         knobs={
             "thinking": KnobSpec(accepted=("false", "true")),
             "context": KnobSpec(accepted=("200k", "1m")),
+            # Capability subset — no xhigh on this model (not vocabulary).
             "effort": KnobSpec(accepted=("low", "medium", "high", "max")),
         },
         default_variant={
@@ -174,7 +180,7 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         knobs={
             "thinking": KnobSpec(accepted=("false", "true")),
             "context": KnobSpec(accepted=("300k", "1m")),
-            "effort": KnobSpec(accepted=("low", "medium", "high", "xhigh", "max")),
+            "effort": KnobSpec(accepted=_FULL_EFFORT),
         },
         default_variant={
             "thinking": "true",
@@ -189,7 +195,7 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         knobs={
             "thinking": KnobSpec(accepted=("false", "true")),
             "context": KnobSpec(accepted=("300k", "1m")),
-            "effort": KnobSpec(accepted=("low", "medium", "high", "xhigh", "max")),
+            "effort": KnobSpec(accepted=_FULL_EFFORT),
         },
         default_variant={
             "thinking": "true",

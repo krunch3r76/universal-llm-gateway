@@ -166,12 +166,11 @@ def test_escalation_survives_ledger_roundtrip(tmp_path, monkeypatch):
 def test_process_job_commissions_cdp_on_answer(monkeypatch):
     """AC-S2-wire: answer contract + escalation commissions one CDP leg."""
     from services.git_integration_worker.cursor_auto.handler import process_job
+    from services.git_integration_worker.tests.commission_spy import commission_spy
 
     bus = AsyncMock()
     bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
-    commission = AsyncMock(
-        return_value={"ok": True, "execution_id": "exec-1", "status_code": 202}
-    )
+    commission = commission_spy(execution_id="exec-1")
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.handler.commission_cdp_escalation",
         commission,
@@ -179,6 +178,10 @@ def test_process_job_commissions_cdp_on_answer(monkeypatch):
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.handler.read_cdp_lane_snapshot",
         lambda **_: {"at_hard_limit": False, "at_soft_limit": False, "free_slots": 2},
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.handler.emit_cdp_effort_bind",
+        lambda **_: None,
     )
 
     job = AutoJob(
@@ -198,6 +201,7 @@ def test_process_job_commissions_cdp_on_answer(monkeypatch):
     assert result["terminal_status"] == "status:done"
     commission.assert_awaited_once()
     assert commission.await_args.kwargs["model"] == "cdp/fable"
+    assert "reasoning_effort" in commission.await_args.kwargs
 
 
 def test_process_job_cdp_lane_full_terminalizes(monkeypatch):
@@ -245,10 +249,11 @@ def test_process_job_cdp_lane_full_terminalizes(monkeypatch):
 def test_process_job_desired_model_cdp_coalesces_to_escalation(monkeypatch):
     """desired_model=cdp/fable auto-moves onto escalation= so admits proceed."""
     from services.git_integration_worker.cursor_auto.handler import process_job
+    from services.git_integration_worker.tests.commission_spy import commission_spy
 
     bus = AsyncMock()
     bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
-    commission = AsyncMock(return_value={"ok": True, "execution_id": "exec-coalesce"})
+    commission = commission_spy(execution_id="exec-coalesce")
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.handler.commission_cdp_escalation",
         commission,
@@ -256,6 +261,10 @@ def test_process_job_desired_model_cdp_coalesces_to_escalation(monkeypatch):
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.handler.read_cdp_lane_snapshot",
         lambda **_: {"at_hard_limit": False, "at_soft_limit": False, "free_slots": 2},
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.handler.emit_cdp_effort_bind",
+        lambda **_: None,
     )
 
     job = AutoJob(
@@ -276,3 +285,74 @@ def test_process_job_desired_model_cdp_coalesces_to_escalation(monkeypatch):
     assert job.escalation == "cdp/fable"
     commission.assert_awaited_once()
     assert commission.await_args.kwargs["model"] == "cdp/fable"
+    assert "reasoning_effort" in commission.await_args.kwargs
+
+
+def test_commission_spy_rejects_omitted_reasoning_effort():
+    """Phase 6 acceptance: omitting reasoning_effort= fails loudly."""
+    import asyncio
+
+    from services.git_integration_worker.tests.commission_spy import commission_spy
+
+    spy = commission_spy()
+    job = AutoJob(
+        job_id="j-omit",
+        thread_id="1",
+        turn_number=1,
+        subject="omit",
+        body="x",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="answer",
+    )
+
+    async def _call_without_effort() -> None:
+        await spy(job, model="cdp/opus-5", purpose="operator-proxy")
+
+    with pytest.raises(AssertionError, match="without reasoning_effort"):
+        asyncio.run(_call_without_effort())
+
+
+def test_process_job_cdp_effort_unclamped_when_sdk_model_non_roaming(monkeypatch):
+    """CDP leg gets wire xhigh even when nested sdk model would clamp to high."""
+    from services.git_integration_worker.cursor_auto.handler import process_job
+    from services.git_integration_worker.tests.commission_spy import commission_spy
+
+    bus = AsyncMock()
+    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    commission = commission_spy(execution_id="exec-xhigh")
+    binds: list[dict] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.handler.commission_cdp_escalation",
+        commission,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.handler.read_cdp_lane_snapshot",
+        lambda **_: {"at_hard_limit": False, "at_soft_limit": False, "free_slots": 2},
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.handler.emit_cdp_effort_bind",
+        lambda **kwargs: binds.append(kwargs),
+    )
+
+    job = AutoJob(
+        job_id="j-cdp-xhigh-unclamped",
+        thread_id="6829",
+        turn_number=1,
+        subject="cdp xhigh",
+        body="Please summarize the escalation binding spec.",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="cursor/claude-opus-5",
+        desired_effort="xhigh",
+        escalation="cdp/opus-5",
+        contract="answer",
+    )
+    result = asyncio.run(process_job(job, bus=bus))
+    assert result["terminal_status"] == "status:done"
+    commission.assert_awaited_once()
+    assert commission.await_args.kwargs["reasoning_effort"] == "xhigh"
+    assert binds and binds[0]["resolved_effort"] == "xhigh"
+    assert binds[0]["requested_effort"] == "xhigh"

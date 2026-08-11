@@ -260,22 +260,29 @@ async def test_hop_without_scope_routes_to_cdp_not_blocked(monkeypatch):
     )
     claimed = q2.claim_next()
     assert claimed.job_id == job.job_id
+    from services.git_integration_worker.tests.commission_spy import commission_spy
+
     commissioned: list[str] = []
     terminal_payloads: list[dict] = []
+    commission = commission_spy(execution_id="exec-hop-1")
 
-    async def _fake_commission(j, *, model, purpose, **_kwargs):
-        commissioned.append(model)
-        return {"ok": True, "execution_id": "exec-hop-1"}
+    async def _track_commission(j, **kwargs):
+        result = await commission(j, **kwargs)
+        commissioned.append(kwargs.get("model") or "")
+        return result
 
     async def _fake_terminal(j, **kwargs):
         payload = kwargs.get("payload") or {}
         terminal_payloads.append(payload)
         return {"ok": True, "payload": payload}
 
-    monkeypatch.setattr(hop_mod, "commission_cdp_escalation", _fake_commission)
+    monkeypatch.setattr(hop_mod, "commission_cdp_escalation", _track_commission)
     monkeypatch.setattr(hop_mod, "post_terminal_status", _fake_terminal)
     monkeypatch.setattr(hop_mod, "post_harvest_residual", AsyncMock(return_value={"ok": True}))
     monkeypatch.setattr(hop_mod, "live_run_for_thread", lambda _t: None)
+    monkeypatch.setattr(
+        hop_mod, "_post_hop_admit_report", AsyncMock(return_value=None)
+    )
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.handler.get_queue",
         lambda: q2,
@@ -531,19 +538,27 @@ async def test_two_leg_hop_body_loses_nothing(monkeypatch):
     async def _run_hop(job, *, queue, incumbent=None):
         from services.git_integration_worker.cursor_auto import continuity_hop as hop_mod
 
-        async def _fake_commission(j, **_kwargs):
+        from services.git_integration_worker.tests.commission_spy import commission_spy
+
+        commission = commission_spy(execution_id="exec-two-leg")
+
+        async def _track_commission(j, **kwargs):
+            result = await commission(j, **kwargs)
             commissioned_prompts.append(j.body)
-            return {"ok": True, "execution_id": "exec-two-leg"}
+            return result
 
         async def _fake_terminal(j, **kwargs):
             return {"ok": True, "payload": kwargs.get("payload") or {}}
 
-        monkeypatch.setattr(hop_mod, "commission_cdp_escalation", _fake_commission)
+        monkeypatch.setattr(hop_mod, "commission_cdp_escalation", _track_commission)
         monkeypatch.setattr(hop_mod, "post_terminal_status", _fake_terminal)
         monkeypatch.setattr(
             hop_mod, "post_harvest_residual", AsyncMock(return_value={"ok": True})
         )
         monkeypatch.setattr(hop_mod, "live_run_for_thread", lambda _t: None)
+        monkeypatch.setattr(
+            hop_mod, "_post_hop_admit_report", AsyncMock(return_value=None)
+        )
         return await hop_mod.run_continuity_hop_concurrent(
             job, queue=queue, incumbent=incumbent
         )
@@ -613,19 +628,27 @@ async def test_wire_flag_hop_directive_body_loses_nothing(monkeypatch):
     async def _run_hop(job, *, queue, incumbent=None):
         from services.git_integration_worker.cursor_auto import continuity_hop as hop_mod
 
-        async def _fake_commission(j, **_kwargs):
+        from services.git_integration_worker.tests.commission_spy import commission_spy
+
+        commission = commission_spy(execution_id="exec-wire-flag")
+
+        async def _track_commission(j, **kwargs):
+            result = await commission(j, **kwargs)
             commissioned_prompts.append(j.body)
-            return {"ok": True, "execution_id": "exec-wire-flag"}
+            return result
 
         async def _fake_terminal(j, **kwargs):
             return {"ok": True, "payload": kwargs.get("payload") or {}}
 
-        monkeypatch.setattr(hop_mod, "commission_cdp_escalation", _fake_commission)
+        monkeypatch.setattr(hop_mod, "commission_cdp_escalation", _track_commission)
         monkeypatch.setattr(hop_mod, "post_terminal_status", _fake_terminal)
         monkeypatch.setattr(
             hop_mod, "post_harvest_residual", AsyncMock(return_value={"ok": True})
         )
         monkeypatch.setattr(hop_mod, "live_run_for_thread", lambda _t: None)
+        monkeypatch.setattr(
+            hop_mod, "_post_hop_admit_report", AsyncMock(return_value=None)
+        )
         return await hop_mod.run_continuity_hop_concurrent(
             job, queue=queue, incumbent=incumbent
         )
@@ -676,3 +699,80 @@ async def test_wire_flag_hop_directive_body_loses_nothing(monkeypatch):
     assert commissioned_prompts
     assert commissioned_prompts[0].strip() == ""
     assert "git push origin master" not in commissioned_prompts[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("desired_effort", "expected_wire"),
+    [
+        ("xhigh", "xhigh"),
+        ("extra", "xhigh"),
+        ("max", "max"),
+        ("high", "high"),
+        ("medium", None),
+    ],
+)
+async def test_hop_forwards_explicit_effort_omits_schema_default(
+    monkeypatch, desired_effort: str, expected_wire: str | None
+):
+    """Explicit pins forward; schema-default medium omits (sealed-ask High)."""
+    from services.git_integration_worker.cursor_auto import continuity_hop as hop_mod
+    from services.git_integration_worker.cursor_auto import queue as queue_mod
+
+    q = queue_mod.reset_queue_for_tests(durable=False)
+    job = q.enqueue(
+        thread_id=f"T-hop-effort-{desired_effort}",
+        turn_number=1,
+        subject="effort hop",
+        body="TYPE: CONTINUITY_HANDOFF\n",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort=desired_effort,
+        contract="light-bounded",
+        continuity_hop=True,
+        continuity_matched_token="TYPE:CONTINUITY_HANDOFF",
+    )
+    claimed = q.claim_next()
+    assert claimed is not None
+    from services.git_integration_worker.tests.commission_spy import commission_spy
+
+    commission_kwargs: list[dict] = []
+    terminal_payloads: list[dict] = []
+    admit_reports: list[dict] = []
+    commission = commission_spy(
+        execution_id=f"exec-{desired_effort}", capture=commission_kwargs
+    )
+
+    async def _fake_terminal(j, **kwargs):
+        payload = kwargs.get("payload") or {}
+        terminal_payloads.append(payload)
+        return {"ok": True, "payload": payload}
+
+    bus = MagicMock()
+    bus.reply = AsyncMock(
+        side_effect=lambda **kwargs: (
+            admit_reports.append(kwargs) or MagicMock(status_code=200, body={})
+        )
+    )
+
+    monkeypatch.setattr(hop_mod, "commission_cdp_escalation", commission)
+    monkeypatch.setattr(hop_mod, "post_terminal_status", _fake_terminal)
+    monkeypatch.setattr(
+        hop_mod, "post_harvest_residual", AsyncMock(return_value={"ok": True})
+    )
+    monkeypatch.setattr(hop_mod, "live_run_for_thread", lambda _t: None)
+    monkeypatch.setattr(hop_mod, "emit_cdp_effort_bind", lambda **_: None)
+
+    result = await hop_mod.complete_continuity_hop(claimed, queue=q, client=bus)
+    assert result["ok"] is True or result.get("payload") is not None
+    assert commission_kwargs, "commission must be called"
+    assert commission_kwargs[0]["reasoning_effort"] == expected_wire
+    assert terminal_payloads[0]["wire_effort"] == expected_wire
+    assert "requested_effort" in terminal_payloads[0]
+    assert "resolved_effort" in terminal_payloads[0]
+    assert admit_reports, "hop must post report-only admit line"
+    assert admit_reports[0]["subject"].startswith("status:admit-report")
+    assert "requested_effort=" in admit_reports[0]["body"]
+    assert "resolved=" in admit_reports[0]["body"]
+    assert "Auto admit-report (hop; no gate)" in admit_reports[0]["body"]

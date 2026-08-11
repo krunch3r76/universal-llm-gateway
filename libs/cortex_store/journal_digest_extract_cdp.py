@@ -165,13 +165,15 @@ def poll_cdp_execution(
                     "terminal": True,
                 }
             attested = (last.get("attested_model") or "").strip()
-            if attested and not _model_matches(requested_model, attested):
-                return {
-                    **last,
-                    "error": "model_unavailable",
-                    "terminal": True,
-                    "park_reason": "model_unavailable",
-                }
+            if attested:
+                park = _attest_park_reason(requested_model, attested)
+                if park is not None:
+                    return {
+                        **last,
+                        "error": park,
+                        "terminal": True,
+                        "park_reason": park,
+                    }
             archive_uri = last.get("archive_uri")
             if not archive_uri:
                 return {
@@ -186,15 +188,32 @@ def poll_cdp_execution(
     return {"error": "timeout", "terminal": True, "park_reason": "timeout", **last}
 
 
+def _attest_park_reason(requested: str, attested: str) -> str | None:
+    """Return park_reason when attestation fails; None when the label satisfies.
+
+    Uses exclusive-rung matching (friction 24969): family match with a wrong
+    effort rung is ``effort_unavailable``; family miss is ``model_unavailable``.
+    Unpinned requests (no effort token) accept any attested effort on the family.
+    """
+    from claude_bundles.chat_model_match import (
+        family_pattern,
+        label_satisfies_request,
+        normalize_picker_request,
+        parse_model_request,
+    )
+
+    wire = normalize_picker_request(requested)
+    family, effort = parse_model_request(wire)
+    if label_satisfies_request(wire, attested):
+        return None
+    if effort is not None and family_pattern(family).search(attested or ""):
+        return "effort_unavailable"
+    return "model_unavailable"
+
+
 def _model_matches(requested: str, attested: str) -> bool:
-    req = requested.strip().lower()
-    got = attested.strip().lower()
-    if not req or not got:
-        return False
-    if req in got or got in req:
-        return True
-    req_family = req.split("-", 1)[0]
-    return req_family in got
+    """Backward-compatible family+effort attestation check."""
+    return _attest_park_reason(requested, attested) is None
 
 
 def read_archive_body(archive_uri: str) -> str | None:

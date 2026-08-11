@@ -116,6 +116,21 @@ def test_roaming_tier_keeps_full_effort_range(requested: str) -> None:
     assert clamp_effort_to_autonomous_ceiling("cursor/grok-4.5", payload) is payload
 
 
+def test_sdk_clamp_does_not_define_cdp_wire_effort() -> None:
+    """Document the split: sdk ceiling clamps; CDP commission uses unclamped wire."""
+    from services.git_integration_worker.cursor_auto.wire_map import (
+        resolve_desired_effort,
+    )
+
+    wire = resolve_desired_effort("xhigh")
+    clamped = clamp_effort_to_autonomous_ceiling("cursor/claude-opus-5", wire)
+    assert wire["resolved_effort"] == "xhigh"
+    assert clamped["resolved_effort"] == AUTONOMOUS_EFFORT_CEILING
+    # Handler must pass wire["resolved_effort"] to CDP, not clamped.
+    cdp_wire = str(wire.get("resolved_effort") or "") or None
+    assert cdp_wire == "xhigh"
+
+
 def test_reasoning_model_never_runs_the_mechanical_leg() -> None:
     model = resolve_desired_model("cursor/claude-opus-5", contract="implement")
     out, displaced = redirect_mechanical_executor(

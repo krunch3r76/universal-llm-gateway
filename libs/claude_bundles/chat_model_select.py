@@ -28,6 +28,7 @@ from claude_bundles.chat_model_match import (
     parse_model_request,
     sealed_ask_default_effort,
 )
+from effort_vocabulary import to_testid as _effort_testid
 
 # Re-export pure helpers for existing callers / tests.
 __all__ = [
@@ -48,15 +49,6 @@ __all__ = [
     "select_opus_5",
     "set_effort",
 ]
-
-_EFFORT_TESTIDS = {
-    "low": "effort-option-low",
-    "medium": "effort-option-medium",
-    "high": "effort-option-high",
-    "extra": "effort-option-xhigh",
-    "xhigh": "effort-option-xhigh",
-    "max": "effort-option-max",
-}
 
 
 async def current_model_label(page) -> str:
@@ -129,7 +121,7 @@ async def set_effort(page, level: str) -> dict:
     low|medium|high|extra|xhigh|max.
     """
     key = (level or "").strip().lower()
-    testid = _EFFORT_TESTIDS.get(key)
+    testid = _effort_testid(key)
     if not testid:
         return {"ok": False, "step": "effort_unknown", "requested": level}
 

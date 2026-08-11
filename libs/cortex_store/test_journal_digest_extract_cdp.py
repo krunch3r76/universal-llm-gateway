@@ -138,5 +138,72 @@ def test_model_mismatch_poll_parks(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.offline
+def test_effort_mismatch_poll_parks_effort_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PROJECT_ASK_URL", "http://satellite:8770")
+
+    completed = {
+        "execution_id": "exec-effort",
+        "status": "completed",
+        "ok": True,
+        "archive_uri": "cortex://ephemeral/digest/x.md",
+        "attested_model": "Opus 5 High",
+    }
+
+    class _Resp:
+        def __init__(self, payload: dict) -> None:
+            self._payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return self._payload
+
+    class _Client:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> _Client:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def get(self, url: str) -> _Resp:
+            return _Resp(completed)
+
+    with patch("cortex_store.journal_digest_extract_cdp.httpx.Client", _Client):
+        result = poll_cdp_execution(
+            "exec-effort",
+            requested_model="cdp/opus-5-extra",
+            timeout_s=1,
+        )
+
+    assert result.get("park_reason") == "effort_unavailable"
+    assert result.get("error") == "effort_unavailable"
+
+
+@pytest.mark.offline
+@pytest.mark.parametrize(
+    ("requested", "attested", "expected"),
+    [
+        ("opus-5", "Opus 5 High", None),
+        ("opus-5-extra", "Opus 5 Extra High", None),
+        ("cdp/opus-5-extra", "Opus 5 High", "effort_unavailable"),
+        ("opus-5-high", "Opus 5 Extra High", "effort_unavailable"),
+        ("haiku-4.5", "Sonnet 4.5", "model_unavailable"),
+    ],
+)
+def test_attest_park_reason_exclusive_rungs(
+    requested: str, attested: str, expected: str | None
+) -> None:
+    from cortex_store.journal_digest_extract_cdp import _attest_park_reason
+
+    assert _attest_park_reason(requested, attested) == expected
+
+
+@pytest.mark.offline
 def test_prompt_rev_constant() -> None:
     assert PROMPT_REV_SOFT_V2 == "soft-v2"

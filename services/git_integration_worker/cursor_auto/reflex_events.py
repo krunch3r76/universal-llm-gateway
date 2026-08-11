@@ -102,6 +102,29 @@ def FrontierSdkAutoMechanicalExecutorRedirected(  # noqa: N802
     )
 
 
+@event_factory
+def FrontierSdkAutoCdpEffortBind(  # noqa: N802
+    thread_id: str,
+    execution_id: str,
+    model: str,
+    requested_effort: str,
+    resolved_effort: str,
+    lane: str,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.auto.cdp_effort_bind",
+        payload={
+            "thread_id": thread_id,
+            "execution_id": execution_id,
+            "model": model,
+            "requested_effort": requested_effort,
+            "resolved_effort": resolved_effort,
+            "lane": lane,
+        },
+        scope="node",
+    )
+
+
 def emit_second_read(
     *,
     thread_id: str,
@@ -208,10 +231,37 @@ def maybe_emit_premium_bind(
     )
 
 
+def emit_cdp_effort_bind(
+    *,
+    thread_id: str,
+    execution_id: str,
+    model: str,
+    requested_effort: str,
+    resolved_effort: str,
+    lane: str,
+) -> None:
+    """Announce CDP picker effort so unattended Extra/Max depth is auditable."""
+    try:
+        emit_frontier_event(
+            FrontierSdkAutoCdpEffortBind(
+                thread_id=thread_id,
+                execution_id=execution_id,
+                model=model,
+                requested_effort=requested_effort,
+                resolved_effort=resolved_effort,
+                lane=lane,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 — observation must not raise into relay
+        logger.warning("cursor-auto cdp_effort_bind event emit failed: %s", exc)
+
+
 __all__ = [
+    "FrontierSdkAutoCdpEffortBind",
     "FrontierSdkAutoMechanicalExecutorRedirected",
     "FrontierSdkAutoPremiumBind",
     "FrontierSdkAutoSecondRead",
+    "emit_cdp_effort_bind",
     "emit_mechanical_executor_redirected",
     "emit_premium_bind",
     "emit_second_read",

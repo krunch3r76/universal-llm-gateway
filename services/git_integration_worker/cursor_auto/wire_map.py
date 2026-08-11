@@ -12,6 +12,7 @@ from cursor_capabilities import (
     effort_knob_name,
     supported_knobs,
 )
+from effort_vocabulary import WIRE_LADDER, normalize_effort
 
 Contract = Literal[
     "answer", "confer", "investigate", "implement", "verify", "execute", "propagate", "seed"
@@ -130,9 +131,8 @@ def _lookup_explicit_model(raw: str) -> str | None:
     if raw.startswith("cursor/") and raw in _BINDABLE_MODEL_IDS:
         return raw
     return None
-# Canonical wire vocabulary (cursor knobs + frontier reasoning_effort).
-# Aliases: CDP UI "Extra" / Cursor "Extra High" / GPT "extra-high" → xhigh.
-_EFFORT_LADDER: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
+# Canonical wire vocabulary — owned by libs/effort_vocabulary (aliases too).
+_EFFORT_LADDER: tuple[str, ...] = WIRE_LADDER
 _EFFORT_VALUES = frozenset(_EFFORT_LADDER)
 BINDABLE_EFFORT_VALUES: tuple[str, ...] = _EFFORT_LADDER
 BINDABLE_CDP_ESCALATIONS: tuple[str, ...] = ("cdp/opus-5", "cdp/fable")
@@ -144,12 +144,6 @@ _CDP_DESIRED_MODEL_ALIASES: dict[str, str] = {
     "cdp/fable": "cdp/fable",
     "cdp/fable-5": "cdp/fable",
     "cdp/fable5": "cdp/fable",
-}
-_EFFORT_ALIASES: dict[str, str] = {
-    "extra": "xhigh",
-    "extra-high": "xhigh",
-    "extra_high": "xhigh",
-    "extrahigh": "xhigh",
 }
 _CONTRACTS = frozenset(
     {"answer", "confer", "investigate", "implement", "verify", "execute", "propagate", "seed"}
@@ -394,15 +388,13 @@ def resolve_desired_effort(desired_effort: str | None) -> dict[str, Any]:
     """Normalize + clamp ``desired_effort`` to canonical wire values.
 
     Canonical set: low|medium|high|xhigh|max. Surface aliases (``extra``,
-    ``extra-high``, ``Extra High``) normalize to ``xhigh`` before clamp.
+    ``extra-high``, ``Extra High``) normalize to ``xhigh`` via effort_vocabulary.
     """
     requested = (desired_effort or "medium").strip().lower() or "medium"
-    # Spaces → hyphens so "extra high" / "Extra High" share one alias key.
-    key = requested.replace(" ", "-")
-    normalized = _EFFORT_ALIASES.get(key, key)
-    if normalized in _EFFORT_VALUES:
+    normalized = normalize_effort(requested)
+    if normalized is not None and normalized in _EFFORT_VALUES:
         notes = "honored"
-        if normalized != key:
+        if normalized != requested.replace(" ", "-"):
             notes = f"normalized {requested!r}→{normalized}"
         return {
             "requested": requested,

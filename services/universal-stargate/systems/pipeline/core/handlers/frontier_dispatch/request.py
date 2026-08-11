@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 from agent_seat import normalize_agent_slug
 from agent_seat.registry import resolve_agent_model
+from effort_vocabulary import PROVIDER_EXTENDED, WIRE_LADDER
 from llm_adapters.capability_dispatch import default_reasoning_effort, wrapper_for
 
 from ...execution.resolver import NamespaceResolver, traverse_path
@@ -35,10 +36,8 @@ if TYPE_CHECKING:
 # Accepted effort vocabulary (union of documented provider surfaces). Per-model
 # support — and the native-shape translation — is owned by the
 # ``llm_adapters.capability_dispatch`` registry/wrappers; only the admission
-# vocabulary gate stays here.
-_VALID_REASONING_EFFORTS: frozenset[str] = frozenset(
-    {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
-)
+# vocabulary gate stays here. Ladder SOT: libs/effort_vocabulary.
+_VALID_REASONING_EFFORTS: frozenset[str] = frozenset({*WIRE_LADDER, *PROVIDER_EXTENDED})
 
 
 def resolve_default_reasoning_effort(model: str | None) -> str | None:

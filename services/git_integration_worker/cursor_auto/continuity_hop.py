@@ -14,6 +14,9 @@ from typing import Any
 from agent_seat.registry import normalize_bus_address
 from universal_logging import get_logger
 
+from services.git_integration_worker.cursor_auto.admit_report import (
+    build_admit_report_body,
+)
 from services.git_integration_worker.cursor_auto.cdp_escalation import (
     commission_cdp_escalation,
 )
@@ -24,6 +27,18 @@ from services.git_integration_worker.cursor_auto.handler_terminal import (
     post_terminal_status,
 )
 from services.git_integration_worker.cursor_auto.queue import AutoJob, AutoJobQueue
+from services.git_integration_worker.cursor_auto.reflex_events import (
+    emit_cdp_effort_bind,
+)
+from services.git_integration_worker.cursor_auto.wire_map import (
+    admit_effort_override_rule_line,
+    admit_model_override_rule_line,
+    admit_model_pin_flags,
+    resolve_desired_effort,
+    resolve_desired_model,
+    resolve_escalation,
+    resolve_handoff_contract,
+)
 from services.git_integration_worker.cursor_bus import CursorBusClient
 from services.git_integration_worker.cursor_sdk_supersede import live_run_for_thread
 
@@ -31,6 +46,8 @@ logger = get_logger(__name__)
 
 _FROM_AUTO = "cursor-auto"
 _DEFAULT_CDP_MODEL = "cdp/opus-5"
+# Schema default on agent_bus.request / AutoJob; CDP sealed-ask defaults Opus to High.
+_UNPINNED_EFFORT = "medium"
 
 
 def _hop_cdp_model(job: AutoJob) -> str:
@@ -38,6 +55,65 @@ def _hop_cdp_model(job: AutoJob) -> str:
     if desired.startswith("cdp/"):
         return desired
     return _DEFAULT_CDP_MODEL
+
+
+def _hop_reasoning_effort(job: AutoJob) -> dict[str, Any]:
+    """Resolve wire effort for a hop CDP commission.
+
+    Schema-default ``medium`` is treated as unpinned so sealed-ask High remains
+    the picker default. Explicit pins (incl. ``xhigh`` / ``extra`` aliases) forward.
+    """
+    effort = resolve_desired_effort(job.desired_effort)
+    resolved = str(effort.get("resolved_effort") or "").strip().lower()
+    if resolved == _UNPINNED_EFFORT:
+        return {**effort, "wire_effort": None}
+    return {**effort, "wire_effort": resolved or None}
+
+
+async def _post_hop_admit_report(
+    job: AutoJob,
+    *,
+    client: CursorBusClient,
+    cdp_model: str,
+    effort: dict[str, Any],
+) -> None:
+    """Post report-only admit lines for a hop (no gating, no ledger admit stamp)."""
+    try:
+        sdk_model = resolve_desired_model(
+            job.desired_model, contract=job.contract or "answer"
+        )
+        escalation = resolve_escalation(job.escalation or cdp_model)
+        if not escalation.get("resolved_escalation"):
+            escalation = {
+                **escalation,
+                "requested": job.escalation or cdp_model,
+                "resolved_escalation": cdp_model,
+            }
+        handoff = resolve_handoff_contract(job.contract or "light-bounded")
+        body = build_admit_report_body(
+            model=sdk_model,
+            effort=effort,
+            escalation=escalation,
+            contract=job.contract or "light-bounded",
+            handoff_contract=handoff,
+            continuity_hop=True,
+            matched_token=job.continuity_matched_token,
+            report_only=True,
+            override_rule=admit_model_override_rule_line(sdk_model),
+            effort_rule=admit_effort_override_rule_line(effort),
+            pin_flags=admit_model_pin_flags(sdk_model, effort),
+        )
+        await client.reply(
+            thread_id=job.thread_id,
+            to_agent=normalize_bus_address(job.from_agent),
+            from_agent=_FROM_AUTO,
+            subject=f"status:admit-report — {job.subject[:80]}",
+            body=body,
+        )
+    except Exception as exc:  # noqa: BLE001 — report must not block hop commission
+        logger.warning(
+            "continuity hop admit-report failed job=%s: %s", job.job_id, exc
+        )
 
 
 async def post_harvest_residual(
@@ -169,13 +245,22 @@ async def complete_continuity_hop(
         dispatch_id=dispatch_id,
     )
     model = _hop_cdp_model(job)
+    effort = _hop_reasoning_effort(job)
+    wire_effort = effort.get("wire_effort")
+    await _post_hop_admit_report(job, client=bus, cdp_model=model, effort=effort)
     commissioned = await commission_cdp_escalation(
         job,
         model=model,
+        reasoning_effort=str(wire_effort) if wire_effort else None,
         purpose="operator-proxy",
         mission_kind="hop",
         parent_thread=str(job.thread_id),
     )
+    effort_echo = {
+        "requested_effort": effort.get("requested"),
+        "resolved_effort": effort.get("resolved_effort"),
+        "wire_effort": wire_effort,
+    }
     if not commissioned.get("ok"):
         terminal = await post_terminal_status(
             job,
@@ -197,6 +282,7 @@ async def complete_continuity_hop(
                 "commission": commissioned,
                 "deferred_job_id": deferred_job_id,
                 "deferred_leg_enqueued": deferred_job_id is not None,
+                **effort_echo,
             },
         )
         return terminal
@@ -206,6 +292,14 @@ async def complete_continuity_hop(
     )
 
     execution_id = commissioned.get("execution_id")
+    emit_cdp_effort_bind(
+        thread_id=job.thread_id,
+        execution_id=str(execution_id or ""),
+        model=model,
+        requested_effort=str(effort.get("requested") or ""),
+        resolved_effort=str(wire_effort or effort.get("resolved_effort") or ""),
+        lane="cursor-auto-continuity-hop",
+    )
     hop_disposition = outcome_disposition_for_stamp(
         "dispatched-and-relayed",
         m1_satisfied=m1_cdp_commission(execution_id=execution_id),
@@ -221,6 +315,7 @@ async def complete_continuity_hop(
         "incumbent_dispatch_id": dispatch_id,
         "deferred_job_id": deferred_job_id,
         "deferred_leg_enqueued": deferred_job_id is not None,
+        **effort_echo,
     }
     if hop_disposition is not None:
         hop_payload["disposition"] = hop_disposition

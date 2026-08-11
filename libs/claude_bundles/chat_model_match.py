@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import re
 
+from effort_vocabulary import EFFORT_TOKENS, to_picker_suffix
+
 _LEAVE = frozenset({"leave", "none", "current"})
-_EFFORT_TOKENS = frozenset({"low", "medium", "high", "extra", "xhigh", "max"})
+_EFFORT_TOKENS = EFFORT_TOKENS - {"none", "minimal"}  # picker/family strip set
 
 # Pipeline prediction — try-first labels only. Miss ⇒ live UI discovery (SOT).
 # Operator-authorized 2026-07-16; keep in sync with common picker SKUs.
@@ -64,10 +66,8 @@ def compose_cdp_model_with_effort(
     raw = (model or "").strip()
     if not raw:
         return raw
-    effort = (reasoning_effort or "").strip().lower() or None
-    if effort == "xhigh":
-        effort = "extra"
-    if effort not in _EFFORT_TOKENS:
+    effort = to_picker_suffix(reasoning_effort)
+    if effort is None or effort not in _EFFORT_TOKENS:
         return raw
     picker = normalize_picker_request(raw)
     family, existing = parse_model_request(picker)
@@ -84,6 +84,7 @@ def parse_model_request(requested: str) -> tuple[str, str | None]:
     Trailing effort tokens are stripped. Leave-tokens return as-is.
     Opus High defaulting is applied by ``select_model`` (sealed-ask policy),
     not here — callers may suppress or override effort.
+    ``xhigh`` normalizes to picker suffix ``extra``.
     """
     key = (requested or "opus-5").strip().lower()
     if key in _LEAVE:
@@ -93,9 +94,8 @@ def parse_model_request(requested: str) -> tuple[str, str | None]:
     parts = [p for p in norm.split("-") if p]
     effort: str | None = None
     while parts and parts[-1] in _EFFORT_TOKENS:
-        effort = parts.pop()
-        if effort == "xhigh":
-            effort = "extra"
+        raw_token = parts.pop()
+        effort = to_picker_suffix(raw_token) or raw_token
     family = "-".join(parts) if parts else key
     return family, effort
 
