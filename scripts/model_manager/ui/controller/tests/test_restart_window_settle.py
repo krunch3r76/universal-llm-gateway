@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -25,6 +26,12 @@ def store(tmp_path: Any) -> RestartIntentStore:
 
 def test_lifecycle_success_settles_with_boundary(store: RestartIntentStore) -> None:
     settle = AsyncMock()
+    during_lifecycle: list[float] = []
+
+    async def _lifecycle() -> str:
+        during_lifecycle.append(time.monotonic())
+        return "ok"
+
     with patch(
         "scripts.model_manager.ui.controller.restart_window_ctl.invoke_propagation_settle_for_service",
         settle,
@@ -34,14 +41,51 @@ def test_lifecycle_success_settles_with_boundary(store: RestartIntentStore) -> N
                 store,
                 "mcp",
                 "restart",
-                AsyncMock(return_value="ok"),
+                _lifecycle,
             )
         )
     assert result == "ok"
     settle.assert_awaited_once()
     kwargs = settle.await_args.kwargs
     assert kwargs["source"] == "lifecycle_wrapper"
-    assert isinstance(kwargs["settle_not_before_monotonic"], float)
+    boundary = kwargs["settle_not_before_monotonic"]
+    assert isinstance(boundary, float)
+    assert boundary <= during_lifecycle[0]
+    assert kwargs["window_deadline_at"] is not None
+
+
+def test_lifecycle_window_open_boundary_precedes_completion(store: RestartIntentStore) -> None:
+    """Window-open monotonic must be captured before lifecycle completes (AC-P6)."""
+    captured: list[float] = []
+    during_lifecycle: list[float] = []
+
+    async def _lifecycle() -> str:
+        during_lifecycle.append(time.monotonic())
+        return "ok"
+
+    async def _settle(
+        _service: str,
+        *,
+        settle_not_before_monotonic: float,
+        source: str,
+        window_deadline_at: str | None = None,
+    ) -> None:
+        captured.append(settle_not_before_monotonic)
+
+    with patch(
+        "scripts.model_manager.ui.controller.restart_window_ctl.invoke_propagation_settle_for_service",
+        _settle,
+    ):
+        _run(
+            lifecycle_with_restart_window(
+                store,
+                "git_integration_worker",
+                "restart",
+                _lifecycle,
+            )
+        )
+    assert len(captured) == 1
+    assert captured[0] <= during_lifecycle[0]
 
 
 def test_lifecycle_exception_does_not_settle(store: RestartIntentStore) -> None:

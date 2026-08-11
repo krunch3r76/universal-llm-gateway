@@ -18,6 +18,7 @@ def settle_open_rows_for_service(
     *,
     defer_if_unreachable: bool = True,
     settle_not_before_monotonic: float | None = None,
+    unreachable_defer_reason: str = "proof_pending_after_drain",
 ) -> list[SettleResult]:
     """Settle all open rows for one service — drain-supervisor post-completion hook."""
     results: list[SettleResult] = []
@@ -30,6 +31,7 @@ def settle_open_rows_for_service(
                 probe,
                 defer_if_unreachable=defer_if_unreachable,
                 settle_not_before_monotonic=settle_not_before_monotonic,
+                unreachable_defer_reason=unreachable_defer_reason,
             )
         )
     return results

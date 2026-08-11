@@ -783,3 +783,46 @@ def test_cross_service_settle_does_not_touch_other_service_rows(
     assert len(open_rows) == 1
     assert open_rows[0].service == "stargate"
 
+
+def test_unreachable_defer_reason_ready_timeout(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    upsert_open_rows([_row(code_ref="abc1230000000000000000000000000000000000")])
+    row = list_open_rows()[0]
+
+    result = settle_open_row(
+        row,
+        lambda _service: None,
+        defer_if_unreachable=True,
+        unreachable_defer_reason="proof_pending_ready_timeout",
+    )
+    assert result.outcome == "deferred"
+    assert "ready-wait exhausted" in result.detail
+    assert list_open_rows()[0].defer_reason == "proof_pending_ready_timeout"
+
+
+def test_unreachable_defer_reason_after_drain_default(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    upsert_open_rows([_row(code_ref="abc1230000000000000000000000000000000000")])
+    row = list_open_rows()[0]
+
+    result = settle_open_row(
+        row,
+        lambda _service: None,
+        defer_if_unreachable=True,
+    )
+    assert result.outcome == "deferred"
+    assert list_open_rows()[0].defer_reason == "proof_pending_after_drain"
+
+
+def test_ready_wait_defer_tokens_do_not_collapse() -> None:
+    from charter_runner_store.propagation_terminal import (
+        _DEFER_AFTER_DRAIN,
+        _DEFER_READY_TIMEOUT,
+        _DEFER_READY_WAIT,
+    )
+
+    tokens = (_DEFER_AFTER_DRAIN, _DEFER_READY_WAIT, _DEFER_READY_TIMEOUT)
+    assert len(set(tokens)) == 3
+    assert _DEFER_AFTER_DRAIN != _DEFER_READY_TIMEOUT
+    assert _DEFER_READY_WAIT != _DEFER_READY_TIMEOUT
+

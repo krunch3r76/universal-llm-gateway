@@ -40,6 +40,9 @@ _OUTGOING_DEFER = "proof_pending_outgoing_generation"
 _UNATTRIBUTED_CONTRADICTION = "proof_contradicted_generation_unverified"
 _INDETERMINATE_PROBE = "proof_indeterminate_probe_unreadable"
 _UNEVALUABLE_PAYLOAD = "proof_unevaluable_payload_shape"
+_DEFER_AFTER_DRAIN = "proof_pending_after_drain"
+_DEFER_READY_WAIT = "proof_pending_ready_wait"
+_DEFER_READY_TIMEOUT = "proof_pending_ready_timeout"
 
 
 def _probe_is_outgoing_generation(
@@ -144,6 +147,7 @@ def settle_open_row(
     *,
     defer_if_unreachable: bool = False,
     settle_not_before_monotonic: float | None = None,
+    unreachable_defer_reason: str = _DEFER_AFTER_DRAIN,
 ) -> SettleResult:
     """Close or fail one open row from a client-reachable liveness probe."""
     from services.git_integration_worker.cursor_auto.propagation_proof_reconcile import (
@@ -186,13 +190,21 @@ def settle_open_row(
     )
     if payload is None:
         if defer_if_unreachable:
-            set_defer_reason(row.row_id, "proof_pending_after_drain")
+            set_defer_reason(row.row_id, unreachable_defer_reason)
+            detail = "probe unreachable — row left open"
+            if unreachable_defer_reason == _DEFER_READY_TIMEOUT:
+                detail = (
+                    "ready-wait exhausted at bound — row left open "
+                    "(no further unprompted look for this earning restart)"
+                )
+            elif unreachable_defer_reason == _DEFER_READY_WAIT:
+                detail = "ready-wait in progress — row left open (re-look owed)"
             return SettleResult(
                 row_id=row.row_id,
                 service=row.service,
                 code_ref=row.code_ref,
                 outcome="deferred",
-                detail="probe unreachable — row left open",
+                detail=detail,
             )
         return SettleResult(
             row_id=row.row_id,

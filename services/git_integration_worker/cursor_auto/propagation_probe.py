@@ -125,9 +125,33 @@ def _fetch_agent_bus_health() -> dict[str, Any] | None:
     return _fetch_health_at_base(DEFAULT_AGENT_BUS_URL)
 
 
+def resolve_cdp_ask_probe_base_url() -> str | None:
+    """Resolve cdp-ask ``/health`` base for propagation settle probes.
+
+    Matches manage lifecycle authority: ``cdp_ask_url_config()`` / mcp
+    ``project_ask_url``. Explicit ``PROJECT_ASK_URL`` env is used when config
+    is absent or agrees; when both are present and disagree, config wins
+    (stale env export must not blind the manage-equivalent probe).
+    """
+    from scripts.model_manager.ui.controller.service_config import cdp_ask_url_config
+
+    env = os.environ.get("PROJECT_ASK_URL", "").strip().rstrip("/")
+    cfg = cdp_ask_url_config()
+    config_base = cfg[2] if cfg else None
+    if not env:
+        return config_base
+    if config_base is None:
+        return env or None
+    if env == config_base:
+        return env
+    return config_base
+
+
 def _fetch_cdp_ask_health() -> dict[str, Any] | None:
-    """Probe cdp-ask satellite ``/health`` via ``PROJECT_ASK_URL`` (empty ⇒ None)."""
-    base = os.environ.get("PROJECT_ASK_URL", "").strip().rstrip("/")
+    """Probe cdp-ask satellite ``/health`` via manage-equivalent URL resolution."""
+    base = resolve_cdp_ask_probe_base_url()
+    if not base:
+        return None
     return _fetch_health_at_base(base)
 
 
@@ -581,6 +605,7 @@ __all__ = [
     "IDENTIFIER_FIELDS",
     "IdentityAttestation",
     "PROCESS_LIVE_FETCHERS",
+    "resolve_cdp_ask_probe_base_url",
     "attest_authority_identity",
     "attest_identity_delta",
     "giw_i2_clear",

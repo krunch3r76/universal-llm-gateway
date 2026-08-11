@@ -129,15 +129,17 @@ async def lifecycle_with_restart_window(
     lifecycle: Any,
 ) -> str:
     """Open a window immediately before the first stop, clear after lifecycle."""
-    await open_service_window(store, service, reason=f"manage {action}")
+    window = await open_service_window(store, service, reason=f"manage {action}")
+    settle_boundary = time.monotonic()
     clear_reason = "lifecycle failed"
     try:
         result = await lifecycle()
         clear_reason = "lifecycle completed"
         await invoke_propagation_settle_for_service(
             service,
-            settle_not_before_monotonic=time.monotonic(),
+            settle_not_before_monotonic=settle_boundary,
             source="lifecycle_wrapper",
+            window_deadline_at=window.deadline_at,
         )
         return result
     except asyncio.CancelledError:
