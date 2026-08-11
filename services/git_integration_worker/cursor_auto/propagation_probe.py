@@ -277,6 +277,81 @@ def attest_identity_delta(
     return "unchanged"
 
 
+AuthorityAttestationResult = IdentityAttestation | Literal["fall_through"]
+
+
+def attest_authority_identity(
+    authority: dict[str, Any] | None,
+) -> AuthorityAttestationResult:
+    """Attest identity from manage authority observation when readiness is proven.
+
+    Returns ``fall_through`` when authority cannot bind (missing readiness, partial
+    old/new, or cross-source mismatch) so the self-report arm may still attest.
+    AC9 unchanged is terminal — callers must not fall through on that verdict.
+    """
+    from scripts.model_manager.ui.controller.service_ctl.authority_identity import (
+        normalize_authority_value,
+    )
+
+    if not authority:
+        return "fall_through"
+    if not authority.get("readiness_proven"):
+        return "fall_through"
+
+    old_src = authority.get("old_identity_source") or authority.get("identity_source")
+    new_src = authority.get("new_identity_source") or authority.get("identity_source")
+    if old_src != new_src:
+        return "fall_through"
+
+    old = authority.get("old")
+    new = authority.get("new")
+    if old is None or new is None:
+        return "fall_through"
+
+    norm_old = normalize_authority_value(old)
+    norm_new = normalize_authority_value(new)
+    if norm_old == norm_new:
+        return "unchanged"
+    if norm_old != norm_new:
+        return "changed"
+    return "fall_through"
+
+
+def resolve_identity_attestation(
+    before: dict[str, Any] | None,
+    after: dict[str, Any],
+    *,
+    service: str,
+    authority_identity: dict[str, Any] | None = None,
+    surface: str = "default",
+) -> IdentityAttestation:
+    """Combine authority-primary and self-report identity attestation (Option C)."""
+    if before is None:
+        return "indeterminate"
+    authority_result = attest_authority_identity(authority_identity)
+    if authority_result == "changed":
+        return "changed"
+    if authority_result == "unchanged":
+        return "unchanged"
+    if surface == "mcp_health":
+        before_section = _mcp_health_section(before)
+        after_section = _mcp_health_section(after)
+        if before_section is None or after_section is None:
+            return "indeterminate"
+        return attest_identity_delta(
+            before_section, after_section, service=service
+        )
+    if surface == "liveness":
+        before_section = _served_artifact_identity_section(before)
+        after_section = _served_artifact_identity_section(after)
+        if before_section is None or after_section is None:
+            return "indeterminate"
+        return attest_identity_delta(
+            before_section, after_section, service=service
+        )
+    return attest_identity_delta(before, after, service=service)
+
+
 def process_identity(payload: dict[str, Any]) -> str | None:
     """Return a comparable identifier-class key from health/liveness JSON, excluding age."""
     pid = payload.get("pid")
@@ -343,27 +418,16 @@ def proof_identity_attestation(
     *,
     service: str,
     surface: str = "default",
+    authority_identity: dict[str, Any] | None = None,
 ) -> IdentityAttestation:
     """Attest identity movement for one proof surface using identifier-class fields only."""
-    if before is None:
-        return "indeterminate"
-    if surface == "mcp_health":
-        before_section = _mcp_health_section(before)
-        after_section = _mcp_health_section(after)
-        if before_section is None or after_section is None:
-            return "indeterminate"
-        return attest_identity_delta(
-            before_section, after_section, service=service
-        )
-    if surface == "liveness":
-        before_section = _served_artifact_identity_section(before)
-        after_section = _served_artifact_identity_section(after)
-        if before_section is None or after_section is None:
-            return "indeterminate"
-        return attest_identity_delta(
-            before_section, after_section, service=service
-        )
-    return attest_identity_delta(before, after, service=service)
+    return resolve_identity_attestation(
+        before,
+        after,
+        service=service,
+        authority_identity=authority_identity,
+        surface=surface,
+    )
 
 
 def _probe_is_outgoing_generation(
@@ -391,6 +455,7 @@ def proof_observed(
     before: dict[str, Any] | None = None,
     settle_not_before_monotonic: float | None = None,
     probed_surface: str | None = None,
+    authority_identity: dict[str, Any] | None = None,
 ) -> bool:
     """Return whether *payload* closes the row's proof_class obligation.
 
@@ -439,6 +504,7 @@ def proof_observed(
             payload,
             service=row.service,
             surface="liveness",
+            authority_identity=authority_identity,
         )
         return attestation == "changed"
     if row.proof_class == "client_visible" and row.service == "mcp":
@@ -456,13 +522,19 @@ def proof_observed(
             payload,
             service=row.service,
             surface="mcp_health",
+            authority_identity=authority_identity,
         )
         return attestation == "changed"
     observed = _code_version(payload)
     if not isinstance(observed, str) or not code_ref_satisfied(row.code_ref, observed):
         return False
     if before is not None:
-        attestation = attest_identity_delta(before, payload, service=row.service)
+        attestation = resolve_identity_attestation(
+            before,
+            payload,
+            service=row.service,
+            authority_identity=authority_identity,
+        )
         return attestation == "changed"
     if settle_not_before_monotonic is not None:
         if _probe_is_outgoing_generation(
@@ -478,6 +550,7 @@ __all__ = [
     "IDENTIFIER_FIELDS",
     "IdentityAttestation",
     "PROCESS_LIVE_FETCHERS",
+    "attest_authority_identity",
     "attest_identity_delta",
     "giw_i2_clear",
     "probe_for_row",
@@ -486,6 +559,7 @@ __all__ = [
     "process_live_probeable_services",
     "proof_identity_attestation",
     "proof_observed",
+    "resolve_identity_attestation",
     "row_key",
     "strong_process_identity",
 ]

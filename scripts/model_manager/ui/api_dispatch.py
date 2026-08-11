@@ -322,6 +322,32 @@ _CHARTER_HARVEST_WAIT_HEALTHY_S = 120.0
 _CHARTER_HARVEST_DEFER_MAX_ATTEMPTS = 40
 
 
+async def _attach_harvest_authority_identity(
+    ctl: ServiceController,
+    service: str,
+    result: dict[str, Any],
+    before_snap: Any,
+    *,
+    readiness_proven: bool,
+) -> dict[str, Any]:
+    """Merge structured authority identity into a charter harvest restart outcome."""
+    from .controller.service_ctl.authority_identity import finalize_authority_identity
+
+    if before_snap is None:
+        return result
+    intent_id = result.get("restart_intent_id") or result.get("intent_id")
+    authority_identity = await finalize_authority_identity(
+        ctl.service_state,
+        service,
+        before_snap,
+        readiness_proven=readiness_proven,
+        intent_id=intent_id,
+    )
+    if authority_identity is None:
+        return result
+    return {**result, "authority_identity": authority_identity}
+
+
 async def sync_restart_charter_harvest(
     ctl: ServiceController,
     service: str,
@@ -334,6 +360,8 @@ async def sync_restart_charter_harvest(
     so git-integration-worker uses the blocking drain supervisor and other
     services poll until healthy or retry budget exhausts.
     """
+    from .controller.service_ctl.authority_identity import snapshot_before_restart
+
     if service not in SYNC_RESTART_SERVICES:
         return {
             "status": "skipped",
@@ -341,17 +369,27 @@ async def sync_restart_charter_harvest(
             "reason": "unsupported_service",
         }
 
+    before_snap = await snapshot_before_restart(ctl.service_state, service)
+
     if service == "git_integration_worker":
         supervisor = ctl.build_git_worker_drain_supervisor(
             kill=ctl.git_worker_kill_for("sync_restart")
         )
-        return await run_gated_drain_supervised_blocking(
+        result = await run_gated_drain_supervised_blocking(
             ctl.restart_gate,
             "sync_restart",
             service,
             store=ctl.restart_intent_store,
             supervisor=supervisor,
             reason="charter harvest propagation",
+        )
+        proven = result.get("status") == "ok"
+        return await _attach_harvest_authority_identity(
+            ctl,
+            service,
+            result,
+            before_snap,
+            readiness_proven=proven,
         )
 
     if service == "mcp":
@@ -363,27 +401,51 @@ async def sync_restart_charter_harvest(
             no_cache=False,
         )
         if result.get("status") == "deferred":
-            return {**result, "service": service, "outcome": "declined"}
+            return await _attach_harvest_authority_identity(
+                ctl,
+                service,
+                {**result, "service": service, "outcome": "declined"},
+                before_snap,
+                readiness_proven=False,
+            )
         if result.get("status") == "ok":
             try:
                 waited = await _wait_healthy(
                     ctl.service_state, "mcp", _CHARTER_HARVEST_WAIT_HEALTHY_S
                 )
             except TimeoutError as exc:
-                return {
-                    "status": "error",
+                return await _attach_harvest_authority_identity(
+                    ctl,
+                    service,
+                    {
+                        "status": "error",
+                        "service": service,
+                        "reason": str(exc),
+                        "scheduled": result,
+                        "outcome": "attempted_unproven",
+                    },
+                    before_snap,
+                    readiness_proven=False,
+                )
+            return await _attach_harvest_authority_identity(
+                ctl,
+                service,
+                {
+                    **result,
                     "service": service,
-                    "reason": str(exc),
-                    "scheduled": result,
-                    "outcome": "attempted_unproven",
-                }
-            return {
-                **result,
-                "service": service,
-                "wait_healthy_s": waited,
-                "outcome": "proven",
-            }
-        return result
+                    "wait_healthy_s": waited,
+                    "outcome": "proven",
+                },
+                before_snap,
+                readiness_proven=True,
+            )
+        return await _attach_harvest_authority_identity(
+            ctl,
+            service,
+            result,
+            before_snap,
+            readiness_proven=False,
+        )
 
     last: dict[str, Any] = {"status": "error", "reason": "no_attempt"}
     for _ in range(_CHARTER_HARVEST_DEFER_MAX_ATTEMPTS):
@@ -410,14 +472,33 @@ async def sync_restart_charter_harvest(
                 ctl.service_state, service, _CHARTER_HARVEST_WAIT_HEALTHY_S
             )
             last = {**last, "wait_healthy_s": waited}
+            return await _attach_harvest_authority_identity(
+                ctl,
+                service,
+                last,
+                before_snap,
+                readiness_proven=True,
+            )
         except TimeoutError as exc:
-            return {
-                "status": "error",
-                "service": service,
-                "reason": str(exc),
-                "restart": last,
-            }
-    return last
+            return await _attach_harvest_authority_identity(
+                ctl,
+                service,
+                {
+                    "status": "error",
+                    "service": service,
+                    "reason": str(exc),
+                    "restart": last,
+                },
+                before_snap,
+                readiness_proven=False,
+            )
+    return await _attach_harvest_authority_identity(
+        ctl,
+        service,
+        last,
+        before_snap,
+        readiness_proven=False,
+    )
 
 
 async def _git_worker_drain_supervised(

@@ -289,13 +289,19 @@ async def emit_manage_restart_drain_completed(
 
 
 async def emit_manage_restart_completed(
-    *, intent_id: str, duration_s: float
+    *,
+    intent_id: str,
+    duration_s: float,
+    authority_identity: dict[str, Any] | None = None,
 ) -> None:
     """The deferred restart finished (SIGTERM delivered, intent completed)."""
-    await _emit(
-        "manage.restart.completed",
-        {"intent_id": intent_id, "duration_s": round(duration_s, 1)},
-    )
+    payload: dict[str, Any] = {
+        "intent_id": intent_id,
+        "duration_s": round(duration_s, 1),
+    }
+    if authority_identity is not None:
+        payload["authority_identity"] = authority_identity
+    await _emit("manage.restart.completed", payload)
 
 
 async def emit_manage_restart_failed(*, intent_id: str, reason: str) -> None:

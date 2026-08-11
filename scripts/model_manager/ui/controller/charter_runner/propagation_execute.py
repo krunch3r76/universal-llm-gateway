@@ -479,6 +479,7 @@ def proof_matches(
     *,
     before: dict[str, Any] | None = None,
     settle_not_before_monotonic: float | None = None,
+    authority_identity: dict[str, Any] | None = None,
 ) -> bool:
     """Close predicate: identity-aware proof via shared propagation_probe helper."""
     from services.git_integration_worker.cursor_auto.propagation_probe import (
@@ -490,6 +491,7 @@ def proof_matches(
         payload,
         before=before,
         settle_not_before_monotonic=settle_not_before_monotonic,
+        authority_identity=authority_identity,
     )
 
 
@@ -689,9 +691,15 @@ async def execute_propagation_plan(
         live_after = dispatch_after.payload
         executed_class = dispatch_after.proof_class_executed
         class_diverged = executed_class != requested_class
+        authority_identity = outcome.get("authority_identity")
         proof_ok = (
             not class_diverged
-            and proof_matches(row, live_after, before=before)
+            and proof_matches(
+                row,
+                live_after,
+                before=before,
+                authority_identity=authority_identity,
+            )
         )
         close_payload = {
             **(live_after or {}),
