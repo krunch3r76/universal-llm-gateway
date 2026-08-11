@@ -82,6 +82,7 @@ from services.git_integration_worker.cursor_auto.substrate_feedback import (
 from services.git_integration_worker.cursor_auto.work_journal import (
     append_journal_entry,
 )
+from services.git_integration_worker.config import load_config
 from services.git_integration_worker.cursor_bus import CursorBusClient
 from services.git_integration_worker.cursor_sdk_deliverables import (
     sidecar_workspaces_ref,

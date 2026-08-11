@@ -298,3 +298,11 @@ def test_execution_for_manage_deferred_import_resolves_set_defer_reason() -> Non
         )
     assert result["status"] == "queued"
     mock_set.assert_called_once_with(row_id, "manage_queued_drain")
+
+
+def test_relay_closeout_outcome_load_config_import_resolves() -> None:
+    """6655 undefined-name sweep: relay path must bind load_config at import."""
+    from services.git_integration_worker.config import load_config as config_load
+    from services.git_integration_worker.cursor_auto import nested_outcome
+
+    assert nested_outcome.load_config is config_load
