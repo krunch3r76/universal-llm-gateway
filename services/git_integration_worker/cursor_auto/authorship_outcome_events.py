@@ -1,8 +1,10 @@
-"""Eligible-denominator tally for Rank-2 deployment authorship compose outcomes.
+"""Eligible-denominator tally for closeout authorship-decision outcomes.
 
-Every ``compose_deployment_authorship`` branch — including omit (vacancy does
-not fire) — emits one observation so vacancy rate is fires/eligible without
-grepping closeout prose. Process-frequency fact; Event Service is the store.
+Every arm of ``compute_closeout_tree_state``'s authorship decision — including
+checkpoint-committed and nothing_authored gate skips, plus every
+``compose_deployment_authorship`` branch (omit included) — emits one
+observation so vacancy rate is fires/eligible without grepping closeout prose.
+Process-frequency fact; Event Service is the store.
 """
 
 from __future__ import annotations
@@ -19,12 +21,19 @@ CODE_REF = (
     "services.git_integration_worker.cursor_auto.closeout_tree_state"
     ":compose_deployment_authorship"
 )
+CODE_REF_COMPUTE = (
+    "services.git_integration_worker.cursor_auto.closeout_tree_state"
+    ":compute_closeout_tree_state"
+)
 SCHEMA_VERSION = 1
 
 OUTCOME_ATTRIBUTION_UNAVAILABLE = "attribution_unavailable"
 OUTCOME_VACANCY = "vacancy"
 OUTCOME_OMIT = "omit"
 OUTCOME_AUTHORED_NOT_COMMITTED = "authored_not_committed"
+# Gate arms in compute_closeout_tree_state that never reach compose.
+OUTCOME_CHECKPOINT_COMMITTED = "checkpoint_committed"
+OUTCOME_NOTHING_AUTHORED = "nothing_authored"
 
 
 @event_factory
@@ -39,7 +48,7 @@ def FrontierSdkCloseoutAuthorshipOutcome(  # noqa: N802
     code_ref: str,
     schema_version: int,
 ) -> Event:
-    """One authorship-branch compose decision, including non-firing omit."""
+    """One authorship-decision arm, including gate-skips and non-firing omit."""
     return Event(
         signal=SIGNAL,
         payload={
@@ -65,8 +74,9 @@ def emit_authorship_outcome(
     baseline_present: bool,
     ledger_registration_available: bool,
     authored_count: int,
+    code_ref: str = CODE_REF,
 ) -> None:
-    """Record compose outcome at decision time. Never raises into closeout."""
+    """Record authorship-decision arm at decision time. Never raises into closeout."""
     try:
         emit_frontier_event(
             FrontierSdkCloseoutAuthorshipOutcome(
@@ -77,7 +87,7 @@ def emit_authorship_outcome(
                 vacancy_fired=outcome == OUTCOME_VACANCY,
                 ledger_registration_available=ledger_registration_available,
                 authored_count=authored_count,
-                code_ref=CODE_REF,
+                code_ref=code_ref,
                 schema_version=SCHEMA_VERSION,
             )
         )
@@ -92,8 +102,11 @@ def emit_authorship_outcome(
 
 __all__ = [
     "CODE_REF",
+    "CODE_REF_COMPUTE",
     "OUTCOME_ATTRIBUTION_UNAVAILABLE",
     "OUTCOME_AUTHORED_NOT_COMMITTED",
+    "OUTCOME_CHECKPOINT_COMMITTED",
+    "OUTCOME_NOTHING_AUTHORED",
     "OUTCOME_OMIT",
     "OUTCOME_VACANCY",
     "SCHEMA_VERSION",

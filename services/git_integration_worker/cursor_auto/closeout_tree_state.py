@@ -14,8 +14,11 @@ from pathlib import Path
 from typing import Any
 
 from services.git_integration_worker.cursor_auto.authorship_outcome_events import (
+    CODE_REF_COMPUTE,
     OUTCOME_ATTRIBUTION_UNAVAILABLE,
     OUTCOME_AUTHORED_NOT_COMMITTED,
+    OUTCOME_CHECKPOINT_COMMITTED,
+    OUTCOME_NOTHING_AUTHORED,
     OUTCOME_OMIT,
     OUTCOME_VACANCY,
     emit_authorship_outcome,
@@ -107,6 +110,24 @@ def compose_deployment_authorship(
     return text
 
 
+def _emit_authorship_gate_arm(*, dispatch_id: str, outcome: str) -> None:
+    """Tally a compute-level authorship arm that never reaches compose.
+
+    Gate-skip arms (checkpoint-committed, nothing_authored) must still record
+    so the vacancy denominator can distinguish \"eligible\" from \"never reached
+    compose\". Baseline/ledger fields are unconsulted → false/zero; vacancy
+    eligibility stays false via ``baseline_present``.
+    """
+    emit_authorship_outcome(
+        dispatch_id=dispatch_id,
+        outcome=outcome,
+        baseline_present=False,
+        ledger_registration_available=False,
+        authored_count=0,
+        code_ref=CODE_REF_COMPUTE,
+    )
+
+
 def compute_closeout_tree_state(
     *,
     source_repo: Path,
@@ -120,6 +141,9 @@ def compute_closeout_tree_state(
     Wrapper cortex offgit URIs feed the row-19 ``authored_cortex:`` arm when the
     git plane is empty. ``deployment_state`` authorship vocabulary is Rank-1
     gated via ``compose_deployment_authorship`` (baseline proof ≺ label).
+    Every authorship arm — including committed and nothing_authored gate skips
+    — records ``frontier.sdk.closeout.authorship_outcome``; render of
+    ``deployment_state`` is unchanged.
     """
     from implement_admission.closeout_helpers import cortex_files_root
 
@@ -132,6 +156,10 @@ def compute_closeout_tree_state(
     deployment_state: str | None = None
     if checkpoint_claims_committed(checkpoint):
         deployment_state = obligation_deployment_state_from_wrapper(wrapper_text)
+        _emit_authorship_gate_arm(
+            dispatch_id=dispatch_id,
+            outcome=OUTCOME_CHECKPOINT_COMMITTED,
+        )
     elif checkpoint != "nothing_authored":
         baseline = CursorDispatchLedger.instance().read_wt_baseline(
             dispatch_id=dispatch_id
@@ -148,6 +176,11 @@ def compute_closeout_tree_state(
             authored=authored,
             ledger_registration_available=ledger_registration_available,
             dispatch_id=dispatch_id,
+        )
+    else:
+        _emit_authorship_gate_arm(
+            dispatch_id=dispatch_id,
+            outcome=OUTCOME_NOTHING_AUTHORED,
         )
     keys = parse_capture_plane_keys(wrapper_text)
     plane = probe_three_planes(

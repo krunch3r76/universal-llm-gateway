@@ -470,3 +470,194 @@ def test_nr4_compute_body_has_no_literal_registration_flag() -> None:
     source = inspect.getsource(closeout_tree_state.compute_closeout_tree_state)
     assert "ledger_registration_available=True" not in source
     assert "ledger_registration_available=False" not in source
+
+
+def _capture_emit() -> tuple[list[dict[str, object]], object]:
+    """Return (bucket, side_effect) for patching emit_authorship_outcome."""
+    captured: list[dict[str, object]] = []
+
+    def _capture(**kwargs: object) -> None:
+        captured.append(kwargs)
+
+    return captured, _capture
+
+
+def test_arm_checkpoint_committed_records_authorship_outcome() -> None:
+    """Arm 1 — checkpoint claims committed → outcome=checkpoint_committed; render unchanged."""
+    captured, _capture = _capture_emit()
+    wrapper = (
+        '{"schema_version":1,"status":"complete",'
+        '"files_modified":["services/git_integration_worker/x.py"],'
+        '"propagation_residue":["sync_restart: git_integration_worker — manage(...)"]}'
+    )
+    with patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "compute_lane_a_checkpoint_value",
+        return_value="committed abc1234 paths=1",
+    ), patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "emit_authorship_outcome",
+        side_effect=_capture,
+    ):
+        state = compute_closeout_tree_state(
+            source_repo=Path("/tmp/unused"),
+            dispatch_id="d-arm-committed",
+            wrapper_text=wrapper,
+        )
+    assert state.deployment_state is not None
+    assert "propagation-owed@local-master" in state.deployment_state
+    assert len(captured) == 1
+    assert captured[0]["outcome"] == "checkpoint_committed"
+    assert captured[0]["dispatch_id"] == "d-arm-committed"
+    assert captured[0]["baseline_present"] is False
+    assert captured[0]["authored_count"] == 0
+
+
+def test_arm_nothing_authored_records_authorship_outcome() -> None:
+    """Arm 2 — nothing_authored → outcome=nothing_authored; deployment_state stays None."""
+    captured, _capture = _capture_emit()
+    with patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "compute_lane_a_checkpoint_value",
+        return_value="nothing_authored",
+    ), patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "emit_authorship_outcome",
+        side_effect=_capture,
+    ):
+        state = compute_closeout_tree_state(
+            source_repo=Path("/tmp/unused"),
+            dispatch_id="d-arm-nothing",
+            wrapper_text='{"schema_version":1,"status":"complete"}',
+        )
+    assert state.deployment_state is None
+    assert state.checkpoint == "nothing_authored@local-master"
+    assert len(captured) == 1
+    assert captured[0]["outcome"] == "nothing_authored"
+    assert captured[0]["dispatch_id"] == "d-arm-nothing"
+    assert captured[0]["baseline_present"] is False
+
+
+def test_arm_compose_vacancy_records_via_compute() -> None:
+    """Arm 3 — compose→vacancy still tallied when reached through compute."""
+    captured, _capture = _capture_emit()
+    usable_baseline = {
+        "codes": {".gitignore": " M"},
+        "hashes": {".gitignore": "d" * 64},
+        "admit_head": "6cf34833ea361a0b694e8ff169e476c06f329b95",
+        "outside_repo": [],
+    }
+    with patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "compute_lane_a_checkpoint_value",
+        return_value="deferred: authored paths not yet path-explicit committed",
+    ), patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "CursorDispatchLedger.instance",
+    ) as ledger_cls, patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "authored_paths_for_dispatch",
+        return_value=(),
+    ), patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "SeatWriteLedger.instance",
+    ) as seat_ledger_cls, patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "emit_authorship_outcome",
+        side_effect=_capture,
+    ):
+        ledger_cls.return_value.read_wt_baseline.return_value = usable_baseline
+        seat_ledger_cls.return_value.has_paths_for_arc.return_value = False
+        state = compute_closeout_tree_state(
+            source_repo=Path("/tmp/unused"),
+            dispatch_id="d-arm-vacancy",
+        )
+    assert state.deployment_state is not None
+    assert _VACANCY in state.deployment_state
+    assert len(captured) == 1
+    assert captured[0]["outcome"] == "vacancy"
+    assert captured[0]["dispatch_id"] == "d-arm-vacancy"
+    assert captured[0]["ledger_registration_available"] is False
+
+
+def test_arm_compose_omit_records_via_compute() -> None:
+    """Arm 4 — compose→omit tallied through compute (registering seat, empty authored)."""
+    captured, _capture = _capture_emit()
+    empty_baseline = {
+        "codes": {},
+        "hashes": {},
+        "admit_head": "6cf34833ea361a0b694e8ff169e476c06f329b95",
+        "outside_repo": [],
+    }
+    with patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "compute_lane_a_checkpoint_value",
+        return_value="deferred: authored paths not yet path-explicit committed",
+    ), patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "CursorDispatchLedger.instance",
+    ) as ledger_cls, patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "authored_paths_for_dispatch",
+        return_value=(),
+    ), patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "SeatWriteLedger.instance",
+    ) as seat_ledger_cls, patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "emit_authorship_outcome",
+        side_effect=_capture,
+    ):
+        ledger_cls.return_value.read_wt_baseline.return_value = empty_baseline
+        seat_ledger_cls.return_value.has_paths_for_arc.return_value = True
+        state = compute_closeout_tree_state(
+            source_repo=Path("/tmp/unused"),
+            dispatch_id="d-arm-omit",
+        )
+    assert state.deployment_state is None
+    assert len(captured) == 1
+    assert captured[0]["outcome"] == "omit"
+    assert captured[0]["dispatch_id"] == "d-arm-omit"
+    assert captured[0]["ledger_registration_available"] is True
+
+
+def test_arm_compose_authored_not_committed_records_via_compute() -> None:
+    """Arm 5 — compose→authored_not_committed tallied through compute."""
+    captured, _capture = _capture_emit()
+    usable_baseline = {
+        "codes": {".gitignore": " M"},
+        "hashes": {".gitignore": "d" * 64},
+        "admit_head": "6cf34833ea361a0b694e8ff169e476c06f329b95",
+        "outside_repo": [],
+    }
+    with patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "compute_lane_a_checkpoint_value",
+        return_value="deferred: authored paths not yet path-explicit committed",
+    ), patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "CursorDispatchLedger.instance",
+    ) as ledger_cls, patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "authored_paths_for_dispatch",
+        return_value=("services/git_integration_worker/x.py",),
+    ), patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "SeatWriteLedger.instance",
+    ) as seat_ledger_cls, patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "emit_authorship_outcome",
+        side_effect=_capture,
+    ):
+        ledger_cls.return_value.read_wt_baseline.return_value = usable_baseline
+        seat_ledger_cls.return_value.has_paths_for_arc.return_value = True
+        state = compute_closeout_tree_state(
+            source_repo=Path("/tmp/unused"),
+            dispatch_id="d-arm-anc",
+        )
+    assert state.deployment_state is not None
+    assert "authored-not-committed@local-master" in state.deployment_state
+    assert len(captured) == 1
+    assert captured[0]["outcome"] == "authored_not_committed"
+    assert captured[0]["dispatch_id"] == "d-arm-anc"
+    assert captured[0]["authored_count"] == 1
