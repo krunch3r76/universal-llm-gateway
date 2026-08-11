@@ -19,7 +19,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from services.git_integration_worker.cursor_sdk_capture_status import ChangeSet
-from services.git_integration_worker.cursor_sdk_closeout import run_touched_files_lint
+from services.git_integration_worker.cursor_sdk_closeout import (
+    run_giw_subtree_f821_lint,
+    run_touched_files_lint,
+)
 
 _REPO = Path(__file__).resolve().parents[3]
 _CLEAN_REL = (
@@ -146,3 +149,35 @@ def test_run_touched_files_lint_truncates_oversized_streams(
     assert len(verification.stderr) == _LINT_OUTPUT_RETAIN_CHARS + len(
         "\n...[truncated]"
     )
+
+
+def test_run_giw_subtree_f821_lint_passes_on_clean_subtree() -> None:
+    """GIW subtree F821 gate passes when the package has no undefined names."""
+    verification, note = run_giw_subtree_f821_lint(_REPO)
+    assert note is None
+    assert verification.exit_code == 0
+    assert verification.command == "ruff check --select F821 services/git_integration_worker/"
+
+
+def test_run_giw_subtree_f821_lint_pins_cwd_to_source_repo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Subprocess cwd must be the owning repo root (same invariant as touched-files lint)."""
+    captured: dict[str, Any] = {}
+
+    def fake_run(cmd: list[str], **kwargs: Any) -> MagicMock:
+        captured["cwd"] = kwargs.get("cwd")
+        proc = MagicMock()
+        proc.returncode = 0
+        proc.stdout = b""
+        proc.stderr = b""
+        return proc
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.subprocess.run",
+        fake_run,
+    )
+    verification, note = run_giw_subtree_f821_lint(_REPO)
+    assert note is None
+    assert verification.exit_code == 0
+    assert captured["cwd"] == str(_REPO)

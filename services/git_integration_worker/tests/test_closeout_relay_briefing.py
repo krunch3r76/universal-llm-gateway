@@ -941,7 +941,7 @@ async def _relay_closeout_with_checkpoint_claim(
         ),
     )
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_auto.nested_outcome.load_config",
+        "services.git_integration_worker.config.load_config",
         lambda: MagicMock(source_repo=Path("/tmp/6655-seam-repo")),
     )
     monkeypatch.setattr(

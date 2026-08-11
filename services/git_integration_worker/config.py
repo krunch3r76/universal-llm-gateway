@@ -19,6 +19,10 @@ _DIFF_SCOPED_GATE_SCRIPT = (
     "--diff-filter=ACMR -- '*.py'); "
     'if [ -n "$files" ]; then ruff check $files && python -m compileall -q $files; fi'
 )
+# F821-only pass on the GIW package subtree. Whole-repo ruff is blocked by master
+# lint debt; this subtree is kept F821-clean so undefined-name defects surface at
+# closeout even when touched-files lint misses a path in the change set.
+GIW_SUBTREE_F821_REL = "services/git_integration_worker/"
 _DEFAULT_GREEN_GATE = ["bash", "-lc", _DIFF_SCOPED_GATE_SCRIPT]
 _DEFAULT_SOURCE_REPO = "/mnt/torus/projects/universal-llm-gateway"
 _DEFAULT_DISPATCH_WORKSPACE = str(Path(_DEFAULT_SOURCE_REPO).parent)

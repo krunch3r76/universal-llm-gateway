@@ -369,6 +369,69 @@ def run_touched_files_lint(
     )
 
 
+def run_giw_subtree_f821_lint(
+    source_repo: Path,
+) -> tuple[Verification, str | None]:
+    """Run ``ruff check --select F821`` on the GIW package subtree.
+
+    Whole-repo ruff is blocked by pre-existing master lint debt; this
+    F821-only pass on ``services/git_integration_worker/`` closes the
+    enforcement gap where undefined-name defects in the dispatch substrate
+    landed despite F821 being enabled project-wide (arc 6655).
+    """
+    from services.git_integration_worker.config import GIW_SUBTREE_F821_REL
+
+    rel = GIW_SUBTREE_F821_REL
+    command = f"ruff check --select F821 {rel}"
+    invocation_id = f"lint-giw-f821:{uuid4().hex}"
+    try:
+        proc = subprocess.run(
+            ["ruff", "check", "--select", "F821", rel],
+            capture_output=True,
+            timeout=60,
+            cwd=str(source_repo),
+        )
+    except FileNotFoundError:
+        return (
+            derived_gate_verification(
+                command=command,
+                exit_code=0,
+                basis="lint_unavailable_ruff_missing",
+                invocation_id=invocation_id,
+            ),
+            "verification:lint_unavailable",
+        )
+    except subprocess.TimeoutExpired:
+        return (
+            derived_gate_verification(
+                command=command,
+                exit_code=0,
+                basis="lint_unavailable_timeout",
+                invocation_id=invocation_id,
+            ),
+            "verification:lint_unavailable",
+        )
+    stdout: str | None = None
+    stderr: str | None = None
+    output_truncated = False
+    if proc.returncode != 0:
+        stdout, trunc_out = _decode_retained_stream(proc.stdout)
+        stderr, trunc_err = _decode_retained_stream(proc.stderr)
+        output_truncated = trunc_out or trunc_err
+    return (
+        observed_process_verification(
+            command=command,
+            exit_code=proc.returncode,
+            invocation_id=invocation_id,
+            basis="subprocess.run.returncode",
+            stdout=stdout,
+            stderr=stderr,
+            output_truncated=output_truncated,
+        ),
+        None,
+    )
+
+
 def _split_baseline(
     baseline: dict[str, Any] | None,
 ) -> tuple[dict[str, str], dict[str, str]]:
@@ -1514,6 +1577,12 @@ def _assemble_closeout_delivery(
         verification = [*verification, lint_verification]
         if lint_deviation:
             baseline_deviations.append(lint_deviation)
+        giw_f821_verification, giw_f821_deviation = run_giw_subtree_f821_lint(
+            write_tree
+        )
+        verification = [*verification, giw_f821_verification]
+        if giw_f821_deviation:
+            baseline_deviations.append(giw_f821_deviation)
     # Harvest observed pytest siblings from stream tool_calls regardless of
     # baseline / contract (G1: non-implement harvest still owed). Absence does
     # not earn "no tests ran" (presence_legible_absence_not).
