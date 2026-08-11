@@ -17,6 +17,9 @@ from implement_admission.propagation_row import PropagationRow
 from services.git_integration_worker.cursor_auto.handler_terminal import (
     post_terminal_status,
 )
+from services.git_integration_worker.cursor_auto.propagation_terminal_payload import (
+    compact_propagate_terminal_payload,
+)
 from services.git_integration_worker.cursor_auto.manage_sock import sync_restart_service
 from services.git_integration_worker.cursor_auto.propagate_admission import (
     PROPAGATE_CONTRACT,
@@ -184,6 +187,7 @@ async def run_propagation_in_seat(
     }
     if escalations:
         payload["self_preempt_escalations"] = escalations
+    payload = compact_propagate_terminal_payload(payload)
     return await post_terminal_status(
         job,
         client=client,

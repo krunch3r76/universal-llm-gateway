@@ -41,7 +41,7 @@ RELAY_PHASE_SDK_TERMINAL = "sdk_terminal"
 RELAY_PHASE_CLOSEOUT_POSTED = "closeout_posted"
 
 _OPEN_STATUSES = ("queued", "claimed")
-_TERMINAL_STATUSES = ("done", "failed", "superseded")
+_TERMINAL_STATUSES = ("done", "failed", "report_undelivered", "superseded")
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS cursor_auto_jobs (
@@ -50,7 +50,8 @@ CREATE TABLE IF NOT EXISTS cursor_auto_jobs (
     thread_id         TEXT NOT NULL,
     turn_number       INTEGER,
     status            TEXT NOT NULL CHECK (status IN (
-                          'queued','claimed','done','failed','superseded')),
+                          'queued','claimed','done','failed',
+                          'report_undelivered','superseded')),
     enqueued_at       TEXT NOT NULL,
     claimed_at        TEXT,
     last_heartbeat_at TEXT,
@@ -78,6 +79,62 @@ class AutoJobLedger:
         with self._connect() as conn:
             conn.executescript(_DDL)
             self._ensure_relay_columns(conn)
+            self._ensure_report_undelivered_status(conn)
+
+    @staticmethod
+    def _ensure_report_undelivered_status(conn: sqlite3.Connection) -> None:
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' "
+            "AND name='cursor_auto_jobs'"
+        ).fetchone()
+        if row is None or row["sql"] is None:
+            return
+        if "'report_undelivered'" in row["sql"]:
+            return
+        conn.executescript(
+            """
+            CREATE TABLE cursor_auto_jobs_v2 (
+                job_id            TEXT PRIMARY KEY,
+                request_id        TEXT,
+                thread_id         TEXT NOT NULL,
+                turn_number       INTEGER,
+                status            TEXT NOT NULL CHECK (status IN (
+                                      'queued','claimed','done','failed',
+                                      'report_undelivered','superseded')),
+                enqueued_at       TEXT NOT NULL,
+                claimed_at        TEXT,
+                last_heartbeat_at TEXT,
+                ended_at          TEXT,
+                terminal_reason   TEXT,
+                record_json       TEXT NOT NULL,
+                dispatch_id       TEXT,
+                relay_phase       TEXT DEFAULT 'none',
+                admitted_at       TEXT,
+                bound_at          TEXT,
+                lifecycle_phase   TEXT DEFAULT 'queued'
+            );
+            INSERT INTO cursor_auto_jobs_v2 (
+                job_id, request_id, thread_id, turn_number, status,
+                enqueued_at, claimed_at, last_heartbeat_at, ended_at,
+                terminal_reason, record_json, dispatch_id, relay_phase,
+                admitted_at, bound_at, lifecycle_phase
+            )
+            SELECT
+                job_id, request_id, thread_id, turn_number, status,
+                enqueued_at, claimed_at, last_heartbeat_at, ended_at,
+                terminal_reason, record_json, dispatch_id, relay_phase,
+                admitted_at, bound_at, lifecycle_phase
+            FROM cursor_auto_jobs;
+            DROP TABLE cursor_auto_jobs;
+            ALTER TABLE cursor_auto_jobs_v2 RENAME TO cursor_auto_jobs;
+            CREATE INDEX IF NOT EXISTS idx_auto_jobs_status
+                ON cursor_auto_jobs (status);
+            CREATE INDEX IF NOT EXISTS idx_auto_jobs_thread
+                ON cursor_auto_jobs (thread_id);
+            CREATE INDEX IF NOT EXISTS idx_auto_jobs_dispatch
+                ON cursor_auto_jobs (dispatch_id);
+            """
+        )
 
     @staticmethod
     def _ensure_relay_columns(conn: sqlite3.Connection) -> None:

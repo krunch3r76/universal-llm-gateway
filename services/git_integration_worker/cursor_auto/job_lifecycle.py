@@ -18,6 +18,7 @@ PHASE_ADMITTED = "admitted"
 PHASE_BOUND = "bound"
 PHASE_TERMINAL_DONE = "terminal_done"
 PHASE_TERMINAL_FAILED = "terminal_failed"
+PHASE_TERMINAL_REPORT_UNDELIVERED = "terminal_report_undelivered"
 PHASE_TERMINAL_SUPERSEDED = "terminal_superseded"
 
 # Supersede-candidate phases: claimed through bound, before nested SDK finish.
@@ -35,6 +36,8 @@ def terminal_phase_for_status(status: str) -> str:
         return PHASE_TERMINAL_DONE
     if status == "failed":
         return PHASE_TERMINAL_FAILED
+    if status == "report_undelivered":
+        return PHASE_TERMINAL_REPORT_UNDELIVERED
     if status == "superseded":
         return PHASE_TERMINAL_SUPERSEDED
     raise ValueError(f"not a terminal status: {status}")
@@ -52,7 +55,7 @@ def derive_lifecycle_phase(
     """Resolve observer phase, preferring the persisted column when present."""
     if lifecycle_phase:
         return str(lifecycle_phase)
-    if status in ("done", "failed", "superseded"):
+    if status in ("done", "failed", "report_undelivered", "superseded"):
         return terminal_phase_for_status(str(status))
     if bound_at or dispatch_id:
         return PHASE_BOUND

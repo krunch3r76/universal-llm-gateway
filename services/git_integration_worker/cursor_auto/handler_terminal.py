@@ -9,6 +9,11 @@ from agent_seat.registry import normalize_bus_address
 from claim_register import normalize_claim_bearing_payload
 
 from services.git_integration_worker.cursor_auto.queue import AutoJob
+from services.git_integration_worker.cursor_auto.terminal_post_outcome import (
+    terminal_post_delivered,
+    terminal_post_retryable,
+    terminal_reason_for_status,
+)
 from services.git_integration_worker.cursor_auto.work_journal import (
     append_journal_entry,
 )
@@ -81,11 +86,21 @@ async def post_terminal_status(
         from_agent=_FROM_AUTO,
         subject=f"{terminal_status} — {job.subject[:60]}",
         body=json.dumps(payload, indent=2),
-        allow_long_body=True,
+        allow_long_body=False,
     )
-    queue.mark_done(job.job_id, failed=failed)
+    delivered = terminal_post_delivered(terminal.status_code)
+    if delivered:
+        queue.mark_done(job.job_id, failed=failed)
+    else:
+        queue.mark_report_undelivered(
+            job.job_id,
+            terminal_reason=terminal_reason_for_status(terminal.status_code),
+            retryable=terminal_post_retryable(terminal.status_code),
+            status_code=terminal.status_code,
+        )
     out: dict[str, Any] = {
-        "ok": not failed and terminal.status_code < 400,
+        "ok": not failed and delivered,
+        "delivered": delivered,
         "phase": "terminal",
         "terminal_status": terminal_status,
         "status_code": terminal.status_code,

@@ -34,7 +34,7 @@ class AutoJob:
     continuity_hop: bool = False
     continuity_matched_token: str | None = None
     enqueued_at: float = field(default_factory=time.monotonic)
-    status: str = "queued"  # queued | claimed | done | failed | superseded
+    status: str = "queued"  # queued | claimed | done | failed | report_undelivered | superseded
     superseded_by: str | None = None
     supersedes: str | None = None
     superseded_dispatch_id: str | None = None
@@ -124,6 +124,32 @@ class AutoJobQueue:
                 status=terminal_status,
                 terminal_reason=None,
             )
+
+    def mark_report_undelivered(
+        self,
+        job_id: str,
+        *,
+        terminal_reason: str,
+        retryable: bool = False,
+        status_code: int | None = None,
+    ) -> None:
+        """Work finished but the terminal bus post did not land (arc 6655)."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.status == "superseded":
+                return
+            job.status = "report_undelivered"
+        ledger = self._ledger_client()
+        if ledger is not None:
+            ledger.mark_terminal(
+                job_id,
+                status="report_undelivered",
+                terminal_reason=terminal_reason,
+            )
+            patch: dict[str, Any] = {"terminal_post_retryable": retryable}
+            if status_code is not None:
+                patch["terminal_post_status_code"] = status_code
+            ledger.merge_record_json(job_id, patch)
 
     def get(self, job_id: str) -> AutoJob | None:
         """Return the job record for *job_id*, if the process still holds it."""
@@ -252,6 +278,11 @@ class AutoJobQueue:
                 "done": sum(1 for j in self._jobs.values() if j.status == "done"),
                 "failed": sum(
                     1 for j in self._jobs.values() if j.status == "failed"
+                ),
+                "report_undelivered": sum(
+                    1
+                    for j in self._jobs.values()
+                    if j.status == "report_undelivered"
                 ),
                 "superseded": sum(
                     1 for j in self._jobs.values() if j.status == "superseded"
