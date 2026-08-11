@@ -290,7 +290,9 @@ def is_probeable_expected_path(raw: str) -> bool:
     norm = _normalize_expected_path(path)
     if not norm:
         return False
-    if "/" not in norm and not any(norm.startswith(prefix) for prefix in _PROBEABLE_PREFIXES):
+    if "/" not in norm and not any(
+        norm.startswith(prefix) for prefix in _PROBEABLE_PREFIXES
+    ):
         return False
     return True
 
@@ -572,9 +574,7 @@ def _job_surface_paths(
     *,
     source_repo: Path | None = None,
 ) -> set[str]:
-    surface = {
-        _normalize_expected_path(raw) for raw in files_expected if raw.strip()
-    }
+    surface = {_normalize_expected_path(raw) for raw in files_expected if raw.strip()}
     surface.update(_repo_manifest_paths(manifest, source_repo=source_repo))
     return surface
 
@@ -680,6 +680,13 @@ def _repo_has_shell_entry(manifest: EffectsManifest | None) -> bool:
     if section is None:
         return False
     return any(entry.op == "shell" for entry in section.entries)
+
+
+def verification_has_failure(verification: list[Verification] | None) -> bool:
+    """True when any verification row carries a non-zero exit_code."""
+    if not verification:
+        return False
+    return any(item.exit_code != 0 for item in verification)
 
 
 def verification_all_pass(verification: list[Verification] | None) -> bool:
@@ -817,16 +824,29 @@ def resolve_work_outcome(
         cortex_root=cortex_root,
         baseline=baseline,
     )
-    if verification_all_pass(verification) or positive:
+    has_failure = verification_has_failure(verification)
+
+    # A4 — failed verification must never ride positive/vacuous to SHIPPED.
+    if has_failure:
+        if positive:
+            return WorkOutcome.CHECKS_FAILED
+
+    if verification_all_pass(verification):
+        return WorkOutcome.SHIPPED
+    if positive and not has_failure:
         return WorkOutcome.SHIPPED
 
     if degraded_reason in NO_RUN_DEGRADED_REASONS:
         return WorkOutcome.NOT_SHIPPED
-    if degraded_reason and degraded_reason.startswith("pinned_deliverable_write_failed"):
+    if degraded_reason and degraded_reason.startswith(
+        "pinned_deliverable_write_failed"
+    ):
         return WorkOutcome.UNVERIFIED
     if degraded_reason:
         return WorkOutcome.UNVERIFIED
     if not deliverables_expected:
+        if has_failure:
+            return WorkOutcome.CHECKS_FAILED
         return WorkOutcome.SHIPPED
     return WorkOutcome.UNVERIFIED
 
@@ -842,7 +862,45 @@ def project_status_from_work_outcome(
         return CloseoutStatus.FAILED
     if work_outcome == WorkOutcome.SHIPPED:
         return CloseoutStatus.COMPLETE
+    if work_outcome == WorkOutcome.CHECKS_FAILED:
+        return CloseoutStatus.PARTIAL
     return CloseoutStatus.PARTIAL
+
+
+def apply_escalation_harvest_gate(
+    *,
+    status: CloseoutStatus,
+    work_outcome: WorkOutcome | None,
+    escalation_harvest: str | None,
+) -> tuple[CloseoutStatus, WorkOutcome | None]:
+    """B2/B3 — open harvest forbids optimistic complete/shipped headlines."""
+    harvest = escalation_harvest or "none"
+    if harvest != "open":
+        return status, work_outcome
+    if work_outcome == WorkOutcome.SHIPPED:
+        work_outcome = WorkOutcome.UNVERIFIED
+    if status == CloseoutStatus.COMPLETE:
+        status = CloseoutStatus.PARTIAL
+    return status, work_outcome
+
+
+def apply_capture_incompleteness_gate(
+    *,
+    status: CloseoutStatus,
+    work_outcome: WorkOutcome | None,
+    deliverables_expected: bool,
+    capture_status: CaptureStatus | None,
+) -> tuple[CloseoutStatus, WorkOutcome | None]:
+    """C2/C3 — incomplete or absent capture forbids optimistic complete/shipped."""
+    if not deliverables_expected:
+        return status, work_outcome
+    if capture_status not in ("partial", "unavailable"):
+        return status, work_outcome
+    if work_outcome == WorkOutcome.SHIPPED:
+        work_outcome = WorkOutcome.UNVERIFIED
+    if status == CloseoutStatus.COMPLETE:
+        status = CloseoutStatus.PARTIAL
+    return status, work_outcome
 
 
 def resolve_closeout_capture_fields(

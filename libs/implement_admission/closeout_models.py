@@ -163,6 +163,7 @@ class ImplementCloseout(BaseModel):
     schema_version: Literal[1] = 1
     status: CloseoutStatus
     work_outcome: WorkOutcome | None = None
+    escalation_harvest: Literal["none", "open", "harvested", "failed"] | None = "none"
     summary: str
     deviations: list[str] = Field(default_factory=list)
     files_created: list[str] = Field(default_factory=list)
@@ -182,9 +183,9 @@ class ImplementCloseout(BaseModel):
     # Structured harvest rows — authoritative when non-empty over propagation_residue.
     propagation: list[PropagationRow] = Field(default_factory=list)
     usage: dict[str, Any] | None = None
-    usage_capture_status: Literal["captured", "partial", "missing", "reconciled_delta"] | None = (
-        None
-    )
+    usage_capture_status: (
+        Literal["captured", "partial", "missing", "reconciled_delta"] | None
+    ) = None
     # Row-16 lane label + isolation gauge — stamped at admit on all write lanes.
     lane: Literal["A", "B"] | None = None
     isolation_materialized: bool | None = None

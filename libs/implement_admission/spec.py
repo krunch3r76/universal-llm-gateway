@@ -60,6 +60,7 @@ class WorkOutcome(StrEnum):
     SHIPPED = "shipped"
     NOT_SHIPPED = "not_shipped"
     UNVERIFIED = "unverified"
+    CHECKS_FAILED = "checks_failed"
 
 
 class SourceVersion(BaseModel):

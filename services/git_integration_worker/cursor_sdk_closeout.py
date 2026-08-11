@@ -56,6 +56,8 @@ from services.git_integration_worker.cursor_sdk_boundary_finalize import (
 from services.git_integration_worker.cursor_sdk_capture_binding import CaptureBinding
 from services.git_integration_worker.cursor_sdk_capture_status import (
     ChangeSet,
+    apply_capture_incompleteness_gate,
+    apply_escalation_harvest_gate,
     attribution_effects_paths,
     baseline_dirty_in_expected,
     filter_manifest_swamp,
@@ -65,6 +67,7 @@ from services.git_integration_worker.cursor_sdk_capture_status import (
     project_status_from_work_outcome,
     resolve_closeout_capture_fields,
     resolve_work_outcome,
+    verification_has_failure,
 )
 from services.git_integration_worker.cursor_sdk_deliverables import (
     artifact_paths_for_closeout,
@@ -246,11 +249,7 @@ def capture_wt_baseline_with_hashes(
         if digest is not None:
             hashes[path] = digest
     mount = (mount_root or resolve_mount_root(source_repo)).resolve()
-    roots = (
-        list(repo_roots)
-        if repo_roots is not None
-        else registered_repo_roots(mount)
-    )
+    roots = list(repo_roots) if repo_roots is not None else registered_repo_roots(mount)
     outside = sorted(snapshot_outside_repo_paths(mount, roots))
     return {
         "codes": codes,
@@ -428,11 +427,7 @@ def reconcile_workspace_changes(
     from services.git_integration_worker.cursor_sdk_manifest import resolve_mount_root
 
     mount = (mount_root or resolve_mount_root(source_repo)).resolve()
-    repos = (
-        list(repo_roots)
-        if repo_roots is not None
-        else registered_repo_roots(mount)
-    )
+    repos = list(repo_roots) if repo_roots is not None else registered_repo_roots(mount)
     if baseline is None:
         git_change = ChangeSet(created=(), modified=(), deleted=())
         polarity_deviations: tuple[str, ...] = ()
@@ -911,6 +906,7 @@ def build_implement_closeout_body(
     commits_ahead_unfiltered: int | None = None,
     landed: bool | None = None,
     isolation_materialized: bool | None = None,
+    escalation_harvest: str | None = "none",
 ) -> str:
     """Build a compact, valid ImplementCloseout JSON turn body.
 
@@ -944,7 +940,11 @@ def build_implement_closeout_body(
         offgit_deliverable_uris=offgit_deliverable_uris or [],
     )
     resolved_work_outcome = work_outcome
-    if resolved_work_outcome is None and source_repo is not None and cortex_root is not None:
+    if (
+        resolved_work_outcome is None
+        and source_repo is not None
+        and cortex_root is not None
+    ):
         resolved_work_outcome = resolve_work_outcome(
             degraded_reason=degraded_reason,
             verification=verification,
@@ -960,12 +960,30 @@ def build_implement_closeout_body(
             deviations=deviations,
             deliverables_expected=deliverables_expected,
         )
-    elif resolved_work_outcome is None and verification and any(v.exit_code for v in verification):
-        status = CloseoutStatus.PARTIAL
+    elif (
+        resolved_work_outcome is None
+        and verification
+        and verification_has_failure(verification)
+    ):
+        resolved_work_outcome = WorkOutcome.CHECKS_FAILED
+        status = project_status_from_work_outcome(
+            resolved_work_outcome, degraded_reason
+        )
     if resolved_work_outcome is not None:
-        status = project_status_from_work_outcome(resolved_work_outcome, degraded_reason)
-    elif verification and any(v.exit_code for v in verification):
-        status = CloseoutStatus.PARTIAL
+        status = project_status_from_work_outcome(
+            resolved_work_outcome, degraded_reason
+        )
+    status, resolved_work_outcome = apply_capture_incompleteness_gate(
+        status=status,
+        work_outcome=resolved_work_outcome,
+        deliverables_expected=deliverables_expected,
+        capture_status=capture_status,
+    )
+    status, resolved_work_outcome = apply_escalation_harvest_gate(
+        status=status,
+        work_outcome=resolved_work_outcome,
+        escalation_harvest=escalation_harvest,
+    )
     status, resolved_work_outcome, status_authority_disagreement, deviations = (
         reconcile_structured_with_authored(
             status=status,
@@ -994,12 +1012,9 @@ def build_implement_closeout_body(
         sidecar_appendix=sidecar_appendix,
     )
     cortex_assertions = harvest_cortex_assertion_ids(manifest_source)
-    cortex_section = (
-        manifest_source.surfaces.get("cortex") if manifest_source else None
-    )
+    cortex_section = manifest_source.surfaces.get("cortex") if manifest_source else None
     cortex_self_reported = (
-        cortex_section is not None
-        and cortex_section.authority_class == "self_reported"
+        cortex_section is not None and cortex_section.authority_class == "self_reported"
     )
     cortex_writes_unattributed = (
         cortex_self_reported
@@ -1054,6 +1069,7 @@ def build_implement_closeout_body(
         closeout = ImplementCloseout(
             status=status,
             work_outcome=resolved_work_outcome,
+            escalation_harvest=escalation_harvest or "none",
             summary=summary,
             source_ref=work_item_ref or sidecar_ref,
             files_created=list(repo_files.created),
@@ -1398,24 +1414,27 @@ def _assemble_closeout_delivery(
     )
     if manifest_cs is None:
         manifest_cs = ChangeSet(created=(), modified=(), deleted=())
-    repo_change_set, manifest_extra_untracked, manifest_git_divergence, ambient_movements = (
-        resolve_repo_change_set(
-            manifest=manifest,
-            git_change_set=git_change_set,
-            source_repo=write_tree,
-            mount_root=mount,
-            baseline=baseline,
-            files_expected=files_expected,
-            current_porcelain=capture_wt_baseline(write_tree),
-            admit_head=(
-                baseline.get("admit_head")
-                if isinstance(baseline, dict)
-                and isinstance(baseline.get("admit_head"), str)
-                else None
-            ),
-            closeout_head=resolve_git_head(write_tree),
-            dispatch_id=dispatch_id,
-        )
+    (
+        repo_change_set,
+        manifest_extra_untracked,
+        manifest_git_divergence,
+        ambient_movements,
+    ) = resolve_repo_change_set(
+        manifest=manifest,
+        git_change_set=git_change_set,
+        source_repo=write_tree,
+        mount_root=mount,
+        baseline=baseline,
+        files_expected=files_expected,
+        current_porcelain=capture_wt_baseline(write_tree),
+        admit_head=(
+            baseline.get("admit_head")
+            if isinstance(baseline, dict)
+            and isinstance(baseline.get("admit_head"), str)
+            else None
+        ),
+        closeout_head=resolve_git_head(write_tree),
+        dispatch_id=dispatch_id,
     )
     repo_change_set, files_untracked_or_ignored = partition_gitignored_from_change_set(
         repo_change_set,
@@ -1531,7 +1550,10 @@ def _assemble_closeout_delivery(
             capture_status = "partial"
         if divergence_reason is None:
             divergence_reason = oob_divergence
-    if manifest_git_divergence and "divergence:manifest_vs_git_labels" not in deviations:
+    if (
+        manifest_git_divergence
+        and "divergence:manifest_vs_git_labels" not in deviations
+    ):
         deviations = [*(deviations or []), "divergence:manifest_vs_git_labels"]
         if divergence_reason is None:
             divergence_reason = "divergence:manifest_vs_git_labels"
@@ -1630,6 +1652,7 @@ def _assemble_closeout_delivery(
                 )
     reported_lane = binding.lane if binding is not None else None
     isolation_mat: bool | None = None
+    escalation_harvest: str = "none"
     with CursorDispatchLedger.instance()._connect() as conn:
         row = conn.execute(
             "SELECT record_json, lease_key, source_repo FROM cursor_sdk_dispatches "
@@ -1646,13 +1669,18 @@ def _assemble_closeout_delivery(
             lease_key=row["lease_key"],
             source_repo=row["source_repo"],
         )
+        try:
+            record_data = json.loads(row["record_json"] or "{}")
+        except json.JSONDecodeError:
+            record_data = {}
+        raw_harvest = record_data.get("escalation_harvest")
+        if isinstance(raw_harvest, str) and raw_harvest.strip():
+            escalation_harvest = raw_harvest.strip()
     cortex_authoritative = bool(gate_d_created_rels)
     closeout_head = resolve_git_head(write_tree)
     # Lane-A: populate capture head_sha from write-tree tip when Lane-B did not
     # assign one — keys the three-plane probe without upgrading from checkpoint prose.
-    capture_head_sha = (
-        lane_b_head_sha if lane_b_head_sha is not None else closeout_head
-    )
+    capture_head_sha = lane_b_head_sha if lane_b_head_sha is not None else closeout_head
     # Lane-A: populate commits_ahead from admit_head..closeout_head (symmetric with
     # Lane-B branch_point..branch). A real admit_head with an empty range is a
     # measured 0 (refuse vacuous landed). A missing/unresolvable admit_head must
@@ -1733,6 +1761,7 @@ def _assemble_closeout_delivery(
         commits_ahead_unfiltered=capture_commits_ahead_unfiltered,
         landed=capture_landed,
         isolation_materialized=isolation_mat,
+        escalation_harvest=escalation_harvest,
     )
     if sidecar_appendix:
         appendix = "\n\n## effects_manifest\n\n" + "\n".join(sidecar_appendix)

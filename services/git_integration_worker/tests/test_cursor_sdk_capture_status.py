@@ -43,7 +43,9 @@ def _init_git_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "universal-llm-gateway"
     repo.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"], cwd=repo, check=True
+    )
     subprocess.run(["git", "config", "user.name", "test"], cwd=repo, check=True)
     (repo / "README.md").write_text("init\n", encoding="utf-8")
     subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
@@ -190,16 +192,18 @@ def test_resolve_closeout_double_prefix_not_partial(tmp_path: Path) -> None:
     double_target = f"universal-llm-gateway/{sidecar_rel}"
     manifest = _repo_manifest(target=double_target)
 
-    capture_status, divergence_reason, deviations, _manifest = resolve_closeout_capture_fields(
-        deliverables_expected=True,
-        baseline={"codes": {}, "hashes": {}},
-        files_expected=[],
-        degraded_reason=None,
-        change_set=ChangeSet(created=(), modified=(), deleted=()),
-        divergent_rels=(),
-        source_repo=repo,
-        cortex_root=repo / ".cortex",
-        manifest=manifest,
+    capture_status, divergence_reason, deviations, _manifest = (
+        resolve_closeout_capture_fields(
+            deliverables_expected=True,
+            baseline={"codes": {}, "hashes": {}},
+            files_expected=[],
+            degraded_reason=None,
+            change_set=ChangeSet(created=(), modified=(), deleted=()),
+            divergent_rels=(),
+            source_repo=repo,
+            cortex_root=repo / ".cortex",
+            manifest=manifest,
+        )
     )
     assert capture_status == "complete"
     assert divergence_reason is None
@@ -214,16 +218,18 @@ def test_resolve_closeout_no_write_user_write_partial(tmp_path: Path) -> None:
     (repo / user_path).write_text("# doc\n", encoding="utf-8")
     manifest = _repo_manifest(target=user_path)
 
-    capture_status, divergence_reason, deviations, _manifest = resolve_closeout_capture_fields(
-        deliverables_expected=True,
-        baseline={"codes": {}, "hashes": {}},
-        files_expected=[],
-        degraded_reason="stated_intent_no_write",
-        change_set=ChangeSet(created=(user_path,), modified=(), deleted=()),
-        divergent_rels=(),
-        source_repo=repo,
-        cortex_root=repo / ".cortex",
-        manifest=manifest,
+    capture_status, divergence_reason, deviations, _manifest = (
+        resolve_closeout_capture_fields(
+            deliverables_expected=True,
+            baseline={"codes": {}, "hashes": {}},
+            files_expected=[],
+            degraded_reason="stated_intent_no_write",
+            change_set=ChangeSet(created=(user_path,), modified=(), deleted=()),
+            divergent_rels=(),
+            source_repo=repo,
+            cortex_root=repo / ".cortex",
+            manifest=manifest,
+        )
     )
     assert capture_status == "partial"
     assert divergence_reason == f"capture:stated_intent_no_write_violation:{user_path}"
@@ -243,7 +249,11 @@ def test_repo_diff_unattributed_deviation_flags_phantom_paths(tmp_path: Path) ->
     manifest = _repo_manifest(target=target, op="edit")
     change_set = ChangeSet(
         created=(),
-        modified=("services/a.py", "services/phantom_one.py", "services/phantom_two.py"),
+        modified=(
+            "services/a.py",
+            "services/phantom_one.py",
+            "services/phantom_two.py",
+        ),
         deleted=(),
     )
     ambient, scoped = repo_diff_unattributed_deviation(
@@ -261,7 +271,9 @@ def test_repo_diff_unattributed_deviation_flags_phantom_paths(tmp_path: Path) ->
     assert "services/a.py" not in ambient
 
 
-def test_repo_diff_unattributed_deviation_scoped_hard_on_expected(tmp_path: Path) -> None:
+def test_repo_diff_unattributed_deviation_scoped_hard_on_expected(
+    tmp_path: Path,
+) -> None:
     from services.git_integration_worker.cursor_sdk_capture_status import (
         repo_diff_unattributed_deviation,
     )
@@ -284,7 +296,9 @@ def test_repo_diff_unattributed_deviation_scoped_hard_on_expected(tmp_path: Path
     assert expected in scoped
 
 
-def test_repo_diff_unattributed_deviation_silent_when_attributed(tmp_path: Path) -> None:
+def test_repo_diff_unattributed_deviation_silent_when_attributed(
+    tmp_path: Path,
+) -> None:
     """No deviation when every diff path has hash-bound manifest write-evidence."""
     from services.git_integration_worker.cursor_sdk_capture_status import (
         repo_diff_unattributed_deviation,
@@ -343,16 +357,18 @@ def test_annotate_only_deviations_stay_complete_when_deliverables_present(
             },
         }
     )
-    capture_status, divergence_reason, deviations, _manifest = resolve_closeout_capture_fields(
-        deliverables_expected=True,
-        baseline={"codes": {}, "hashes": {}},
-        files_expected=[expected],
-        degraded_reason=None,
-        change_set=ChangeSet(created=(expected,), modified=(), deleted=()),
-        divergent_rels=(),
-        source_repo=repo,
-        cortex_root=repo / ".cortex",
-        manifest=manifest,
+    capture_status, divergence_reason, deviations, _manifest = (
+        resolve_closeout_capture_fields(
+            deliverables_expected=True,
+            baseline={"codes": {}, "hashes": {}},
+            files_expected=[expected],
+            degraded_reason=None,
+            change_set=ChangeSet(created=(expected,), modified=(), deleted=()),
+            divergent_rels=(),
+            source_repo=repo,
+            cortex_root=repo / ".cortex",
+            manifest=manifest,
+        )
     )
     assert capture_status == "complete"
     assert divergence_reason == "divergence:manifest_vs_git_labels"
@@ -367,21 +383,22 @@ def test_scoped_unattributed_still_partial_with_deliverables(tmp_path: Path) -> 
         (repo / path).parent.mkdir(parents=True, exist_ok=True)
         (repo / path).write_text("changed\n", encoding="utf-8")
     manifest = _repo_manifest(target=expected)
-    capture_status, _divergence_reason, deviations, _manifest = resolve_closeout_capture_fields(
-        deliverables_expected=True,
-        baseline={"codes": {}, "hashes": {}},
-        files_expected=[expected, extra],
-        degraded_reason=None,
-        change_set=ChangeSet(created=(), modified=(expected, extra), deleted=()),
-        divergent_rels=(),
-        source_repo=repo,
-        cortex_root=repo / ".cortex",
-        manifest=manifest,
+    capture_status, _divergence_reason, deviations, _manifest = (
+        resolve_closeout_capture_fields(
+            deliverables_expected=True,
+            baseline={"codes": {}, "hashes": {}},
+            files_expected=[expected, extra],
+            degraded_reason=None,
+            change_set=ChangeSet(created=(), modified=(expected, extra), deleted=()),
+            divergent_rels=(),
+            source_repo=repo,
+            cortex_root=repo / ".cortex",
+            manifest=manifest,
+        )
     )
     assert capture_status == "partial"
     assert any(
-        d.startswith("divergence:repo_diff_paths_unattributed:")
-        and "ambient:" not in d
+        d.startswith("divergence:repo_diff_paths_unattributed:") and "ambient:" not in d
         for d in deviations
     )
 
@@ -454,7 +471,9 @@ def test_ac4_residual_twin_work_outcome_shipped_status_complete(tmp_path: Path) 
         deliverables_expected=True,
     )
     assert work_outcome == WorkOutcome.SHIPPED
-    assert project_status_from_work_outcome(work_outcome, None) == CloseoutStatus.COMPLETE
+    assert (
+        project_status_from_work_outcome(work_outcome, None) == CloseoutStatus.COMPLETE
+    )
 
     body = build_implement_closeout_body(
         dispatch_id="8fa5653162a7-33b9b17e",
@@ -481,8 +500,8 @@ def test_ac4_residual_twin_work_outcome_shipped_status_complete(tmp_path: Path) 
     import json
 
     payload = json.loads(body)
-    assert payload["work_outcome"] == "shipped"
-    assert payload["status"] == "complete"
+    assert payload["work_outcome"] == "unverified"
+    assert payload["status"] == "partial"
     assert payload["capture_status"] == "partial"
 
 
@@ -748,8 +767,8 @@ def test_g2_ac4_bare_filename_fixture_8b2fdfd6ae7d(tmp_path: Path) -> None:
     import json
 
     payload = json.loads(body)
-    assert payload["work_outcome"] == "shipped"
-    assert payload["status"] == "complete"
+    assert payload["work_outcome"] == "unverified"
+    assert payload["status"] == "partial"
     assert payload["capture_status"] == "unavailable"
     assert "degraded:sdk_git_probe_absent" in deviations
     assert "capture:expected_paths_all_malformed:" in divergence_reason
@@ -900,7 +919,10 @@ def test_g1_trace_i_auto_bb6dd0a409f6_refuse_stated_intent_no_write(
         manifest=None,
         source_repo=repo,
         cortex_root=cortex_root,
-        deviations=["divergence:light_bounded_path_absent:x", "degraded:sdk_git_probe_absent"],
+        deviations=[
+            "divergence:light_bounded_path_absent:x",
+            "degraded:sdk_git_probe_absent",
+        ],
         deliverables_expected=False,
     )
     assert work_outcome == WorkOutcome.UNVERIFIED
@@ -1057,3 +1079,181 @@ def test_g1_closeout_receipt_alone_not_intended_artifact(tmp_path: Path) -> None
         deliverables_expected=True,
     )
     assert work_outcome == WorkOutcome.UNVERIFIED
+
+
+# --- todo:closeout-structured-self-contradiction (A4/B2/C2) ---
+
+
+def test_land_positive_failed_verification_sets_checks_failed(tmp_path: Path) -> None:
+    """A2/A4 — land-positive + nonzero exit → checks_failed ∧ partial."""
+    repo = _init_git_repo(tmp_path)
+    cortex_root = tmp_path / "cortex"
+    rel = "notes/system/specs/fixture.md"
+    path = cortex_root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("artifact\n", encoding="utf-8")
+
+    verification = [
+        observed_process_verification(
+            command="pytest services/foo/tests -q",
+            exit_code=1,
+            invocation_id="pytest:fail",
+        )
+    ]
+    work_outcome = resolve_work_outcome(
+        degraded_reason=None,
+        verification=verification,
+        files_offgit_produced=[f"cortex://{rel}"],
+        artifact_paths=[],
+        manifest=None,
+        source_repo=repo,
+        cortex_root=cortex_root,
+        deliverables_expected=True,
+    )
+    assert work_outcome == WorkOutcome.CHECKS_FAILED
+    assert work_outcome != WorkOutcome.SHIPPED
+    assert (
+        project_status_from_work_outcome(work_outcome, None) == CloseoutStatus.PARTIAL
+    )
+
+
+def test_positive_cannot_override_failed_verification(tmp_path: Path) -> None:
+    """AC1 — positive/vacuous cannot override nonzero verification exit."""
+    repo = _init_git_repo(tmp_path)
+    cortex_root = tmp_path / "cortex"
+    rel = "notes/system/specs/fixture.md"
+    path = cortex_root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("artifact\n", encoding="utf-8")
+
+    verification = [
+        observed_process_verification(
+            command="ruff check 3 touched files",
+            exit_code=1,
+            invocation_id="lint:fail",
+        )
+    ]
+    work_outcome = resolve_work_outcome(
+        degraded_reason=None,
+        verification=verification,
+        files_offgit_produced=[f"cortex://{rel}"],
+        artifact_paths=[],
+        manifest=None,
+        source_repo=repo,
+        cortex_root=cortex_root,
+        deliverables_expected=True,
+    )
+    assert work_outcome != WorkOutcome.SHIPPED
+
+
+def test_vacuous_shipped_blocked_by_nonzero_exit(tmp_path: Path) -> None:
+    """A4 + C5 — ¬deliverables_expected vacuous SHIPPED forbidden when exit≠0."""
+    repo = _init_git_repo(tmp_path)
+    cortex_root = repo / ".cortex"
+    cortex_root.mkdir()
+    verification = [
+        observed_process_verification(
+            command="pytest -q",
+            exit_code=1,
+            invocation_id="pytest:fail",
+        )
+    ]
+    work_outcome = resolve_work_outcome(
+        degraded_reason=None,
+        verification=verification,
+        files_offgit_produced=[],
+        artifact_paths=[],
+        manifest=None,
+        source_repo=repo,
+        cortex_root=cortex_root,
+        deliverables_expected=False,
+    )
+    assert work_outcome == WorkOutcome.CHECKS_FAILED
+    assert work_outcome != WorkOutcome.SHIPPED
+
+
+def test_checks_failed_projects_partial() -> None:
+    """A3/A4 — CHECKS_FAILED always projects PARTIAL."""
+    assert (
+        project_status_from_work_outcome(WorkOutcome.CHECKS_FAILED, None)
+        == CloseoutStatus.PARTIAL
+    )
+
+
+def test_unresolved_exit_zero_does_not_invent_shipped() -> None:
+    """A7 — absent WO resolution with exit 0 must not invent SHIPPED in assembly."""
+    from implement_admission.closeout_models import observed_process_verification
+
+    from services.git_integration_worker.cursor_sdk_closeout import (
+        SdkRunOutcome,
+        build_implement_closeout_body,
+    )
+    from services.git_integration_worker.cursor_sdk_deliverables import (
+        sidecar_workspaces_ref,
+    )
+
+    outcome = SdkRunOutcome(
+        body="done",
+        status="finished",
+        duration_ms=500,
+        tool_call_count=2,
+    )
+    verification = [
+        observed_process_verification(
+            command="pytest -q",
+            exit_code=0,
+            invocation_id="pytest:pass",
+        )
+    ]
+    body = build_implement_closeout_body(
+        dispatch_id="a7-dispatch",
+        outcome=outcome,
+        degraded_reason=None,
+        sidecar_ref=sidecar_workspaces_ref("a7-dispatch"),
+        result_bytes=100,
+        thread_id="a7-thread",
+        work_item_ref="todo:test",
+        verification=verification,
+    )
+    payload = json.loads(body)
+    assert payload.get("work_outcome") != "shipped"
+
+
+def test_escalation_harvest_open_blocks_complete() -> None:
+    """B2/B3 — open harvest blocks complete/shipped headlines."""
+    from services.git_integration_worker.cursor_sdk_capture_status import (
+        apply_escalation_harvest_gate,
+    )
+
+    status, wo = apply_escalation_harvest_gate(
+        status=CloseoutStatus.COMPLETE,
+        work_outcome=WorkOutcome.SHIPPED,
+        escalation_harvest="open",
+    )
+    assert status == CloseoutStatus.PARTIAL
+    assert wo != WorkOutcome.SHIPPED
+
+
+def test_capture_incomplete_blocks_optimistic_shipped() -> None:
+    """C2/C3 — incomplete/absent capture refuses optimistic complete/shipped."""
+    from services.git_integration_worker.cursor_sdk_capture_status import (
+        apply_capture_incompleteness_gate,
+    )
+
+    status, wo = apply_capture_incompleteness_gate(
+        status=CloseoutStatus.COMPLETE,
+        work_outcome=WorkOutcome.SHIPPED,
+        deliverables_expected=True,
+        capture_status="partial",
+    )
+    assert status == CloseoutStatus.PARTIAL
+    assert wo != WorkOutcome.SHIPPED
+
+    status_absent, wo_absent = apply_capture_incompleteness_gate(
+        status=CloseoutStatus.COMPLETE,
+        work_outcome=WorkOutcome.SHIPPED,
+        deliverables_expected=True,
+        capture_status="unavailable",
+    )
+    assert status_absent == CloseoutStatus.PARTIAL
+    assert wo_absent != WorkOutcome.SHIPPED

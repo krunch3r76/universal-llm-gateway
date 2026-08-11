@@ -376,6 +376,10 @@ async def process_job(
             }
             if cdp_disposition is not None:
                 cdp_payload["disposition"] = cdp_disposition
+            get_ledger().merge_record_json(
+                job.job_id,
+                {"escalation_harvest": "open", "cdp_execution_id": cdp_execution_id},
+            )
             return await post_terminal_status(
                 job,
                 client=client,
@@ -447,6 +451,13 @@ async def process_job(
                 ),
                 extra=commissioned,
             )
+        get_ledger().merge_record_json(
+            job.job_id,
+            {
+                "escalation_harvest": "open",
+                "cdp_execution_id": commissioned.get("execution_id"),
+            },
+        )
     submit = await submit_nested_dispatch(
         job,
         model_id=str(model["resolved_model_id"]),
@@ -484,6 +495,11 @@ async def process_job(
         )
 
     dispatch_id = str(submit["dispatch_id"])
+    if cdp_model:
+        CursorDispatchLedger.instance().merge_record_json(
+            dispatch_id=dispatch_id,
+            patch={"escalation_harvest": "open"},
+        )
     progress = ProgressEmitter(job, client=client)
     polled = await poll_dispatch_terminal(
         thread_id=job.thread_id,

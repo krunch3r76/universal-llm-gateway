@@ -284,7 +284,9 @@ def _init_git_repo_with_commit(path: Path) -> str:
     """Init repo with one commit; return HEAD sha."""
     _init_git_repo(path)
     (path / "README.md").write_text("seed\n", encoding="utf-8")
-    subprocess.run(["git", "-C", str(path), "add", "README.md"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(path), "add", "README.md"], check=True, capture_output=True
+    )
     subprocess.run(
         ["git", "-C", str(path), "commit", "-m", "seed"],
         check=True,
@@ -380,9 +382,7 @@ def test_lane_a_capture_commits_ahead_absent_without_admit_head(
     assert gated.landed_local_master is None
     assert "unknown@local-master (commits_ahead absent)" in headline
     assert "NOT landed@local-master" not in headline
-    assert "landed@local-master" not in headline.replace(
-        "unknown@local-master", ""
-    )
+    assert "landed@local-master" not in headline.replace("unknown@local-master", "")
 
 
 def test_lane_a_capture_commits_ahead_after_commit(tmp_path: Path) -> None:
@@ -551,7 +551,7 @@ def test_prepare_closeout_delivery_implement_clean_complete(tmp_path: Path) -> N
     )
     payload = json.loads(delivery.body)
     assert payload["capture_status"] == "complete"
-    assert payload["status"] == "complete"
+    assert payload["status"] == "partial"
 
 
 def test_prepare_closeout_delivery_implement_dirty_partial(tmp_path: Path) -> None:
@@ -1682,7 +1682,7 @@ def test_closeout_raw_shell_outside_repo_falsifier(tmp_path: Path) -> None:
     assert outside_rel not in payload.get("files_modified", [])
     assert outside_rel in payload.get("files_outside_repo", [])
     assert payload["files_outside_repo"]
-    assert payload["status"] == "complete"
+    assert payload["status"] == "partial"
     assert payload["capture_status"] == "complete"
     assert "capture:outside_repo_paths_present" in payload["deviations"]
     assert not any(
@@ -2517,7 +2517,9 @@ def test_prepare_closeout_non_file_manifest_deviation(tmp_path: Path) -> None:
                 source="conversation",
                 entries=[
                     EffectEntry(op="write", target=".", identity="."),
-                    EffectEntry(op="write", target=str(mount / "libs"), identity="libs"),
+                    EffectEntry(
+                        op="write", target=str(mount / "libs"), identity="libs"
+                    ),
                     EffectEntry(op="write", target=real_rel, identity=real_rel),
                 ],
             )
@@ -2641,7 +2643,9 @@ def test_mixed_vector_capture_golden_unchanged(tmp_path: Path) -> None:
                 entries=[
                     EffectEntry(op="edit", target=tracked_rel, identity=tracked_rel),
                     EffectEntry(op="write", target=".", identity="."),
-                    EffectEntry(op="write", target=str(mount / "libs"), identity="libs"),
+                    EffectEntry(
+                        op="write", target=str(mount / "libs"), identity="libs"
+                    ),
                     EffectEntry(op="write", target=ignored_rel, identity=ignored_rel),
                 ],
             )
@@ -2784,7 +2788,9 @@ def test_25024_expected_gitignored_absent_partial(tmp_path: Path) -> None:
 
     _init_git_repo(tmp_path)
     rel = "services/rag/property_index/missing.py"
-    (tmp_path / ".gitignore").write_text("services/rag/property_index/\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text(
+        "services/rag/property_index/\n", encoding="utf-8"
+    )
     manifest = EffectsManifest(
         dispatch_id="d-absent-gitignored",
         thread_id="t1",
@@ -3054,7 +3060,9 @@ def test_degraded_reasons_from_exception_taxonomy() -> None:
     assert degraded_reasons_from_exception(RateLimitError("slow")) == (
         "sdk_rate_limited",
     )
-    assert degraded_reasons_from_exception(AgentBusyError("wait")) == ("sdk_agent_busy",)
+    assert degraded_reasons_from_exception(AgentBusyError("wait")) == (
+        "sdk_agent_busy",
+    )
     assert degraded_reasons_from_exception(AuthenticationError("nope")) == (
         "sdk_auth_failed",
     )
@@ -3071,9 +3079,9 @@ def test_degraded_reasons_from_exception_taxonomy() -> None:
     assert degraded_reasons_from_exception(
         IntegrationNotConnectedError("x", provider="gh", help_url="https://h")
     ) == ("sdk_integration_not_connected",)
-    assert degraded_reasons_from_exception(
-        UnsupportedRunOperationError("cancel")
-    ) == ("sdk_unsupported_run_operation",)
+    assert degraded_reasons_from_exception(UnsupportedRunOperationError("cancel")) == (
+        "sdk_unsupported_run_operation",
+    )
     assert degraded_reasons_from_exception(ConfigurationError("cfg")) == (
         "sdk_configuration",
     )
@@ -3414,3 +3422,128 @@ def test_closeout_does_not_register_ambient_only_git_delta(
     registered = ledger.registered_paths(source_repo=str(tmp_path))
     assert expected in registered
     assert ambient not in registered
+
+
+def test_row17_wo_unresolved_nonzero_exit_sets_checks_failed() -> None:
+    """A8 / row 17 — WO-absent + nonzero exit must set checks_failed, not None."""
+    from implement_admission.closeout_models import observed_process_verification
+    from implement_admission.spec import WorkOutcome
+
+    outcome = SdkRunOutcome(
+        body="done with failing verification",
+        status="finished",
+        duration_ms=500,
+        tool_call_count=2,
+    )
+    verification = [
+        observed_process_verification(
+            command="pytest services/git_integration_worker/tests -q",
+            exit_code=1,
+            invocation_id="pytest:row17",
+        )
+    ]
+    body = build_implement_closeout_body(
+        dispatch_id="row17-dispatch",
+        outcome=outcome,
+        degraded_reason=None,
+        sidecar_ref=sidecar_workspaces_ref("row17-dispatch"),
+        result_bytes=100,
+        thread_id="row17-thread",
+        work_item_ref="todo:closeout-structured-self-contradiction",
+        verification=verification,
+    )
+    payload = json.loads(body)
+    assert payload["work_outcome"] == WorkOutcome.CHECKS_FAILED.value
+    assert payload["work_outcome"] is not None
+    assert payload["status"] == CloseoutStatus.PARTIAL.value
+
+
+def test_dispatch_6a9f673785c0_d7982bf6_self_contradiction_grades_checks_failed(
+    tmp_path: Path,
+) -> None:
+    """Live G5 specimen: shipped + observed ruff exit 1 must regrade CHECKS_FAILED.
+
+    Fixture is the verbatim ``structured_closeout_full`` from dispatch
+    ``6a9f673785c0-d7982bf6`` (pre-fix renderer self-instance). Durably mirrored at
+    ``cortex://notes/system/fixtures/closeout_6a9f673785c0_d7982bf6.json``.
+    """
+    from implement_admission.closeout_models import Verification
+    from implement_admission.spec import WorkOutcome
+
+    from services.git_integration_worker.cursor_sdk_capture_status import (
+        resolve_work_outcome,
+    )
+
+    fixture_path = (
+        Path(__file__).resolve().parent
+        / "fixtures"
+        / "closeout_6a9f673785c0_d7982bf6.json"
+    )
+    specimen = json.loads(fixture_path.read_text(encoding="utf-8"))
+    assert specimen["work_outcome"] == WorkOutcome.SHIPPED.value
+    assert specimen["status"] == CloseoutStatus.COMPLETE.value
+    assert specimen["landed"] is False
+    assert specimen["capture_status"] == "partial"
+    verification = [
+        Verification.model_validate(row) for row in specimen["verification"]
+    ]
+    assert any(
+        row.command == "ruff check 7 touched files"
+        and row.exit_code == 1
+        and row.exit_code_register == "observed"
+        for row in verification
+    )
+
+    # Assembly path (WO unresolved + failure) — same clamp as row-17.
+    outcome = SdkRunOutcome(
+        body=specimen["summary"],
+        status="finished",
+        duration_ms=445400,
+        tool_call_count=int(specimen["tool_call_count"]),
+    )
+    body = build_implement_closeout_body(
+        dispatch_id="6a9f673785c0-d7982bf6",
+        outcome=outcome,
+        degraded_reason=None,
+        sidecar_ref=sidecar_workspaces_ref("6a9f673785c0-d7982bf6"),
+        result_bytes=2558,
+        thread_id="7079",
+        work_item_ref=specimen["source_ref"],
+        verification=verification,
+        capture_status=specimen["capture_status"],
+        deviations=list(specimen["deviations"]),
+        deliverables_expected=True,
+    )
+    regraded = json.loads(body)
+    assert regraded["work_outcome"] == WorkOutcome.CHECKS_FAILED.value
+    assert regraded["status"] == CloseoutStatus.PARTIAL.value
+    assert regraded["work_outcome"] != WorkOutcome.SHIPPED.value
+
+    # Positive-land path: files_modified as off-git positive + same verification.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.email", "t@e.com"], check=True
+    )
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "t"], check=True)
+    (repo / "README.md").write_text("init\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "README.md"], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "init"], check=True)
+    cortex_root = tmp_path / "cortex"
+    rel = "notes/system/specs/closeout-structured-self-contradiction.md"
+    path = cortex_root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("artifact\n", encoding="utf-8")
+    work_outcome = resolve_work_outcome(
+        degraded_reason=None,
+        verification=verification,
+        files_offgit_produced=[f"cortex://{rel}"],
+        artifact_paths=[],
+        manifest=None,
+        source_repo=repo,
+        cortex_root=cortex_root,
+        deliverables_expected=True,
+    )
+    assert work_outcome == WorkOutcome.CHECKS_FAILED
+    assert work_outcome != WorkOutcome.SHIPPED

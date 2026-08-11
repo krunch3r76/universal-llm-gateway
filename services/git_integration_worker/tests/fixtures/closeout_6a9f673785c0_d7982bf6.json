@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "status": "complete",
+  "work_outcome": "shipped",
+  "summary": "dispatch 6a9f673785c0-d7982bf6: 95 tool calls, 445.4s, 2558B -> sidecar",
+  "deviations": [
+    "capture:shell_repo_writes_unverified",
+    "capture:outside_repo_paths_present",
+    "divergence:unknown_root_child:cortex://notes/system/specs/closeout-structured-self-contradiction.md",
+    "stream_only_effect",
+    "degraded:sdk_git_probe_absent",
+    "capture:non_file_manifest_entry_dropped"
+  ],
+  "files_created": [],
+  "files_modified": [
+    "libs/implement_admission/closeout_models.py",
+    "libs/implement_admission/spec.py",
+    "services/git_integration_worker/cursor_sdk_capture_status.py",
+    "services/git_integration_worker/cursor_sdk_closeout.py",
+    "services/git_integration_worker/cursor_auto/handler.py",
+    "services/git_integration_worker/tests/test_cursor_sdk_capture_status.py",
+    "services/git_integration_worker/tests/test_cursor_sdk_closeout.py"
+  ],
+  "files_deleted": [],
+  "files_ambient_repo_movement": [],
+  "capture_status": "partial",
+  "effects_manifest": {
+    "schema_version": 1,
+    "dispatch_id": "6a9f673785c0-d7982bf6",
+    "thread_id": "7079",
+    "digest": "677ac0c0563d147ab74344fbff164c23556c6c265932711a1c55f24a111e239f",
+    "surface_counts": {
+      "repo": 55,
+      "agent_bus": 2,
+      "fs": 1,
+      "service": 2,
+      "subagents": 0
+    },
+    "capture_sources": [
+      "conversation",
+      "stream",
+      "wrapper"
+    ],
+    "external_effects": "scoped_out"
+  },
+  "public_api_changed": false,
+  "verification": [
+    {
+      "command": "gate_d:passed",
+      "exit_code": 0,
+      "exit_code_register": "derived",
+      "invocation_id": "gate_d:0a6f990c25d54890b756af80d6ca0176",
+      "basis": "gate_d_boolean_pass"
+    },
+    {
+      "command": "ruff check 7 touched files",
+      "exit_code": 1,
+      "exit_code_register": "observed",
+      "invocation_id": "lint:73f17c24ff6b4a5cbe61dc2083a2e53d",
+      "basis": "subprocess.run.returncode"
+    }
+  ],
+  "evidence_uris": {
+    "dispatch_ids": [
+      "6a9f673785c0-d7982bf6"
+    ],
+    "bus_threads": [
+      "7079"
+    ],
+    "artifact_paths": [
+      "workspaces://universal-llm-gateway/tmp/reviews/closeouts/6a9f673785c0-d7982bf6.md"
+    ],
+    "cortex_assertions": [],
+    "git_refs": []
+  },
+  "source_ref": "todo:closeout-structured-self-contradiction",
+  "packet_sha256": null,
+  "adapter_results": [],
+  "propagation_residue": [
+    "sync_restart: git_integration_worker \u2014 manage(action=\"sync_restart\", service=\"git_integration_worker\"); derived:path_prefix; import_path:verified",
+    "libs_touched: libs/implement_admission/closeout_models.py \u2014 shared lib; lead must decide which consumers restart",
+    "libs_touched: libs/implement_admission/spec.py \u2014 shared lib; lead must decide which consumers restart"
+  ],
+  "propagation": [
+    {
+      "service": "git_integration_worker",
+      "action": "sync_restart",
+      "code_ref": "0dcd47a8924d66b12eb7cedbb6641da3aa9ba114",
+      "safe_window": "drain_required",
+      "hazard": null,
+      "reason": "path-derived obligation; liveness: unknown; derived:path_prefix; import_path:verified",
+      "proof": "GET served OpenAPI (direct + stargate) \u2192 served OpenAPI from every client-reachable surface \u2192 all surfaces byte-identical, document parses; AFTER restart VERIFY code_ref is ancestor-of-or-equal-to observed code_version",
+      "proof_class": "served_artifact",
+      "proof_class_requested": "served_artifact",
+      "expected_x_mcp_count": null,
+      "mint_thread": null,
+      "mint_turn": null,
+      "force": false,
+      "allow_self_preempt": true
+    }
+  ],
+  "usage": {
+    "input_tokens": 5249824,
+    "output_tokens": 25129,
+    "cache_read_tokens": 5140000,
+    "cache_write_tokens": 0,
+    "total_tokens": 10414953
+  },
+  "usage_capture_status": "captured",
+  "lane": "A",
+  "isolation_materialized": false,
+  "branch": null,
+  "branch_point": null,
+  "head_sha": "0dcd47a8924d66b12eb7cedbb6641da3aa9ba114",
+  "commits_ahead": 0,
+  "commits_ahead_unfiltered": 0,
+  "landed": false,
+  "tool_call_count": 95,
+  "files_outside_repo": [
+    "/home/io/.local/share/git-integration-worker/cursor-dispatch-homes/6a9f673785c0-d7982bf6-home/.cursor/projects/mnt-torus-projects-universal-llm-gateway/terminals/795112.txt"
+  ],
+  "dropped_non_file_entries": [
+    {
+      "surface": "repo",
+      "op": "observed",
+      "target": "services/git_integration_worker/tests",
+      "reason": "non_file"
+    },
+    {
+      "surface": "repo",
+      "op": "observed",
+      "target": "services/git_integration_worker",
+      "reason": "non_file"
+    },
+    {
+      "surface": "repo",
+      "op": "observed",
+      "target": "services/git_integration_worker/cursor_auto",
+      "reason": "non_file"
+    }
+  ],
+  "effects": [
+    "libs/implement_admission/closeout_models.py",
+    "libs/implement_admission/spec.py",
+    "services/git_integration_worker/cursor_auto/handler.py",
+    "services/git_integration_worker/cursor_sdk_capture_status.py",
+    "services/git_integration_worker/cursor_sdk_closeout.py",
+    "services/git_integration_worker/tests/test_cursor_sdk_capture_status.py",
+    "services/git_integration_worker/tests/test_cursor_sdk_closeout.py"
+  ]
+}
