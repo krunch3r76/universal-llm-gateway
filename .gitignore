@@ -72,55 +72,12 @@ docs/vision/
 
 prompts/
 
-# Tests are tracked (operator bind 2026-07-31, a:27411) — untracked tests made
-# every cross-seat "tests pass" claim unverifiable from the repo.
-# Lane-A contract tests (todo:track-implement-admission-tests-ci)
-!libs/implement_admission/test_skill_fs_line.py
-!libs/implement_admission/test_materialize.py
-!libs/implement_admission/test_density_triage_gate.py
-!libs/cortex_store/test_skill_suggest_stage_a.py
-!libs/cortex_store/test_entity_update_trait_write.py
-!libs/cortex_store/entity_source_uri_canonical_test.py
-!libs/cortex_store/source_uri_backfill_test.py
-!libs/cortex_store/digest_segment_test.py
-!libs/cortex_store/test_ops_digest.py
-!libs/cortex_store/test_digest_ledger.py
-!libs/cortex_store/test_digest_attach.py
-!libs/cortex_store/test_digest_dispatch.py
-!libs/cortex_store/tests/test_register_skill_substrate.py
-!libs/cortex_store/dispatch_ops/test_mcp_doc_parity.py
-!libs/claude_bundles/test_skills_ui_upload.py
-!libs/claude_bundles/test_catalog.py
-!services/universal-stargate/systems/frontier_consult/test_implement_admission_materialize.py
-!services/universal-stargate/systems/frontier_consult/test_handoff_enrich.py
-!services/universal-stargate/systems/frontier_consult/test_life_intent_routes.py
-!services/universal-stargate/systems/frontier_consult/test_anthropic_override_gate.py
-!services/universal-stargate/systems/frontier_consult/test_cdp_generate_reconcile.py
-!libs/life_intent/test_*.py
-!libs/session_store/test_*.py
-# Bound-invariant falsifier tier (arc 5911 G10) — path fence only; legacy test_*.py stay ignored
-!**/test_falsifier_*.py
-# Closeout propagation residue (decision:closeout-propagation-residue / friction 26340)
-!services/git_integration_worker/tests/test_cursor_auto_episode_residue.py
-!services/git_integration_worker/tests/test_cursor_sdk_closeout_residue.py
-!services/git_integration_worker/tests/test_cursor_admitted_via.py
-# fleet_idle predicate (agent-bus:6590 idle-wake-schedule)
-!services/git_integration_worker/tests/test_trigger_fleet_idle.py
-!services/git_integration_worker/tests/test_handler_propagation_disposition.py
-# MCP boot-card / dual-endpoint surface contracts (thread 6310)
-!services/mcp-server/test_endpoint_surface_split.py
-!services/mcp-server/tools/test_boot_orientation_gates.py
-# Salience collision engine + /claims/burst (arc 6386, slices 3+4 ratified)
-!libs/cortex_store/test_claims_burst.py
-!libs/predicate_form/test_collision.py
-!libs/predicate_form/test_action_enrichment.py
-# Slice 5a terminal-facts-forward at activation (arc 6386)
-!libs/cortex_store/test_terminal_facts.py
-!libs/predicate_form/test_terminal_facts_precision.py
-# Fixtures the arc-6386 tests above depend on (head-schema migrated DB)
-!libs/cortex_store/conftest.py
-# Propagation declared-ownership manifest + closure audit (Lane A offline)
-!libs/implement_admission/test_service_lib_ownership.py
+# Tests are tracked (operator bind 2026-07-31, a:27411). Untracked tests had made
+# every cross-seat "tests pass" claim unverifiable from the repo; repo-wide ignores
+# (**/test_*.py, **/*_test.py, **/conftest.py, tests/*) were removed in 71e6f0e9.
+# There is no blanket test ignore today — tests are tracked because nothing ignores
+# them, not because individual paths are negated. Prior ! allowlist lines were
+# historical residue from the removed rules and have been pruned.
 # Root-anchored: rsync --filter=:- .gitignore ignores git ! negations.
 # Use /foo/ not foo/ when foo/ also appears as a source directory elsewhere in the tree.
 /templates/
