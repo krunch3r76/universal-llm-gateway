@@ -9,7 +9,6 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
-import sys
 from pathlib import Path
 
 from .runner import run_guarded_reexec
@@ -85,9 +84,13 @@ def main(argv: list[str] | None = None) -> int:
     if result.status == "dry-run" and result.checks.get("refused"):
         return 2
     if result.status == "refused":
+        # Precondition refuse — manage still up; nothing destroyed.
         return 2
     if result.status == "proof-failed":
         return 3
+    if result.status == "start-failed":
+        # Quit landed; start/health did not — opposite of precondition refuse.
+        return 4
     return 1
 
 

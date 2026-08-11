@@ -6,6 +6,7 @@ mechanism lives outside manage so a sealed Sunday process cannot soft-veto its
 own replacement. Not wired into ``propagate`` or ``VALID_SERVICES``.
 """
 
-from .runner import GuardedReexecResult, run_guarded_reexec
+from .result import RECOVERY_PATH, GuardedReexecResult
+from .runner import run_guarded_reexec
 
-__all__ = ["GuardedReexecResult", "run_guarded_reexec"]
+__all__ = ["GuardedReexecResult", "RECOVERY_PATH", "run_guarded_reexec"]

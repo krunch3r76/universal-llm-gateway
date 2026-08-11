@@ -1,11 +1,14 @@
 """Refusal-path unit tests for guarded manage reexec (no live manage).
 
-AC: non-terminal intent, manage_inflight others, drain not clear — each asserts
-refusal, not merely happy-path coverage.
+AC: non-terminal intent, manage_inflight others, drain not clear, pane-pid
+mismatch, never-healthy start — each asserts refusal/failure, not merely
+happy-path coverage.
 """
 
 from __future__ import annotations
 
+import subprocess
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -15,7 +18,11 @@ from scripts.model_manager.guarded_manage_reexec.checks import (
     observe_manage_inflight,
     observe_nonterminal_intents,
 )
+from scripts.model_manager.guarded_manage_reexec.pane import (
+    observe_tmux_pane_hosts_manage,
+)
 from scripts.model_manager.guarded_manage_reexec.runner import (
+    RECOVERY_PATH,
     prove_pickup,
     run_guarded_reexec,
 )
@@ -23,6 +30,19 @@ from scripts.model_manager.ui.controller.restart_intent_store import (
     STATUS_PENDING_DRAIN,
     RestartIntentStore,
 )
+
+
+def _ok_tmux(pane_pid: int = 9):
+    """Return a run_cmd that reports a matching pane_pid for display-message."""
+
+    def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        if cmd[:2] == ["tmux", "display-message"]:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout=f"{pane_pid}\n", stderr=""
+            )
+        raise AssertionError(f"unexpected cmd: {cmd}")
+
+    return run_cmd
 
 
 def _store(tmp_path: Any) -> RestartIntentStore:
@@ -202,9 +222,143 @@ def test_dry_run_stops_before_quit(tmp_path: Any) -> None:
         dry_run=True,
         manage_call=manage_call,
         intent_db=store._db_path,  # noqa: SLF001 — test injection
-        run_cmd=lambda cmd: (_ for _ in ()).throw(AssertionError(f"cmd {cmd}")),
+        run_cmd=_ok_tmux(9),
+        tree_contains_fn=lambda pid, ancestor: pid == ancestor,
     )
     assert result.status == "dry-run"
     assert result.reason == "checks_passed_stopped_before_quit"
     assert result.executed is False
+    assert result.recovery_path == RECOVERY_PATH
+    assert result.recovery_path == "manual, human at the terminal"
     assert "charter_pause" not in calls
+
+
+def test_refuse_tmux_pane_pid_mismatch() -> None:
+    """Target pane that does not host live manage pid ⇒ refuse before quit."""
+    finding = observe_tmux_pane_hosts_manage(
+        tmux_target="0:0",
+        manage_pid=42,
+        run_cmd=_ok_tmux(99),
+        tree_contains_fn=lambda pid, ancestor: False,
+    )
+    assert finding is not None
+    assert finding.reason == "tmux_pane_pid_mismatch"
+    assert finding.offenders[0]["pane_pid"] == 99
+    assert finding.offenders[0]["manage_pid"] == 42
+
+
+def test_run_refuses_when_tmux_pane_mismatches(tmp_path: Any) -> None:
+    """run_guarded_reexec refuses (executed=False) when pane does not match pid."""
+    store = _store(tmp_path)
+
+    def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
+        del params, kwargs
+        if method == "whoami":
+            return {
+                "pid": 42,
+                "code_version": "deadbeef",
+                "process_start_time": "2026-08-10T00:00:00+00:00",
+            }
+        if method == "busy_status":
+            return {
+                "process": {"manage_inflight": 1, "activities": []},
+                "charter_hold": {"held": True, "pause_drain_clear": True},
+            }
+        if method == "charter_hold_status":
+            return {
+                "held": True,
+                "pause_drain_clear": True,
+                "tick_in_flight": False,
+                "live_charter_shaped_dispatches": [],
+            }
+        raise AssertionError(method)
+
+    sends: list[list[str]] = []
+
+    def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        if cmd[:2] == ["tmux", "display-message"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="99\n", stderr="")
+        if cmd[:2] == ["tmux", "send-keys"]:
+            sends.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        raise AssertionError(cmd)
+
+    result = run_guarded_reexec(
+        target_ref="deadbeef",
+        dry_run=False,
+        manage_call=manage_call,
+        intent_db=store._db_path,  # noqa: SLF001
+        run_cmd=run_cmd,
+        tree_contains_fn=lambda pid, ancestor: False,
+    )
+    assert result.status == "refused"
+    assert "tmux_pane_pid_mismatch" in result.reason
+    assert result.executed is False
+    assert result.whoami_before is not None
+    assert result.whoami_before["pid"] == 42
+    assert sends == []
+
+
+def test_start_never_healthy_reports_failure_not_hang(tmp_path: Any) -> None:
+    """Quit-ok + sock never-up ⇒ status=start-failed within boot_timeout bound."""
+    store = _store(tmp_path)
+    state = {"down": False}
+
+    def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
+        del params, kwargs
+        if method == "whoami":
+            if state["down"]:
+                return {"status": "error", "reason": "manage_sock_missing"}
+            return {
+                "pid": 9,
+                "code_version": "deadbeef",
+                "process_start_time": "2026-08-10T00:00:00+00:00",
+            }
+        if method == "busy_status":
+            return {
+                "process": {"manage_inflight": 1, "activities": []},
+                "charter_hold": {"held": True, "pause_drain_clear": True},
+            }
+        if method == "charter_hold_status":
+            return {
+                "held": True,
+                "pause_drain_clear": True,
+                "tick_in_flight": False,
+                "live_charter_shaped_dispatches": [],
+            }
+        if method == "charter_pause":
+            return {"status": "ok", "held": True}
+        raise AssertionError(method)
+
+    def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        if cmd[:2] == ["tmux", "display-message"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="9\n", stderr="")
+        if cmd[:2] == ["tmux", "send-keys"]:
+            # First send is quit (`q`); subsequent is start — stay down either way.
+            state["down"] = True
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        raise AssertionError(cmd)
+
+    t0 = time.monotonic()
+    result = run_guarded_reexec(
+        target_ref="deadbeef",
+        dry_run=False,
+        manage_call=manage_call,
+        intent_db=store._db_path,  # noqa: SLF001
+        run_cmd=run_cmd,
+        tree_contains_fn=lambda pid, ancestor: pid == ancestor,
+        quit_timeout_s=0.2,
+        boot_timeout_s=0.2,
+    )
+    elapsed = time.monotonic() - t0
+    assert result.status == "start-failed"
+    assert result.reason == "reexec_sock_not_up"
+    assert result.executed is True
+    assert result.whoami_before is not None
+    assert result.whoami_before["pid"] == 9
+    assert result.boot_timeout_s == 0.2
+    assert result.recovery_path == "manual, human at the terminal"
+    # Must terminate: wall clock well under an unbounded hang (≪ 30s).
+    assert elapsed < 5.0
+    # Opposite of precondition refuse: status is not "refused".
+    assert result.status != "refused"

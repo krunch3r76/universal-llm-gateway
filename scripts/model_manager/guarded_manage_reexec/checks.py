@@ -11,10 +11,11 @@ say ``safe_to_quit``. This package keys the wire field only.
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from scripts.model_manager.ui.controller.restart_intent_store import (
     RestartIntentStore,

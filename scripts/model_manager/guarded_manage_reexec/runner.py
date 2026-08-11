@@ -1,19 +1,23 @@
 """Orchestrate guarded manage quit/start with structured proof verdicts.
 
-Sequence: refuse checks → charter_pause → drain-clear → quit → re-exec
-``python -m scripts.model_manager.ui`` → charter_resume → dual whoami proof
-(code_version match AND process_start_time later than pre-quit). Dry-run stops
-before quit and before any pause mutation.
+Sequence: refuse checks → pane-identity (live manage pid) → charter_pause →
+drain-clear → quit → re-exec ``python -m scripts.model_manager.ui`` →
+charter_resume → dual whoami proof (code_version match AND process_start_time
+later than pre-quit). Dry-run stops before quit and before any pause mutation.
+
+Recovery after quit-ok / start-fail: **manual, human at the terminal** — manage
+is not in ``VALID_SERVICES``, has no systemd/supervisord unit, and this package
+does not retry. Re-drive ``tmux`` ``0:0`` (or the verified target) with
+``./manage`` per ``services_ws`` safe quit/start recipe.
 """
 
 from __future__ import annotations
 
 import subprocess
 import time
-from dataclasses import dataclass, field
-from datetime import datetime
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from transport_utils import MANAGE_SOCKET
 
@@ -23,6 +27,14 @@ from .checks import (
     observe_drain_clear,
 )
 from .client import call_manage
+from .pane import TreeContainsFn, observe_tmux_pane_hosts_manage
+from .result import (
+    DEFAULT_BOOT_TIMEOUT_S,
+    DEFAULT_QUIT_TIMEOUT_S,
+    RECOVERY_PATH,
+    GuardedReexecResult,
+    prove_pickup,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_TMUX_TARGET = "0:0"
@@ -31,79 +43,15 @@ DEFAULT_PYTHON = str(Path.home() / ".venvs" / "universal" / "bin" / "python")
 ManageCall = Callable[..., dict[str, Any]]
 RunCmd = Callable[[list[str]], subprocess.CompletedProcess[str]]
 
-
-@dataclass(slots=True)
-class GuardedReexecResult:
-    """Codeblind-disposition structured result for one guarded reexec attempt."""
-
-    status: str  # refused|quit|restarted|proof-satisfied|proof-failed|dry-run
-    reason: str
-    dry_run: bool
-    checks: dict[str, Any] = field(default_factory=dict)
-    whoami_before: dict[str, Any] | None = None
-    whoami_after: dict[str, Any] | None = None
-    target_ref: str | None = None
-    code_version_ok: bool | None = None
-    process_start_later_ok: bool | None = None
-    executed: bool = False
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "status": self.status,
-            "reason": self.reason,
-            "dry_run": self.dry_run,
-            "executed": self.executed,
-            "target_ref": self.target_ref,
-            "checks": self.checks,
-            "whoami_before": self.whoami_before,
-            "whoami_after": self.whoami_after,
-            "proof": {
-                "code_version_ok": self.code_version_ok,
-                "process_start_later_ok": self.process_start_later_ok,
-            },
-        }
-
-
-def _parse_iso(value: Any) -> datetime | None:
-    if not isinstance(value, str) or not value or value == "unknown":
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
-def prove_pickup(
-    *,
-    before: dict[str, Any],
-    after: dict[str, Any],
-    target_ref: str,
-) -> tuple[bool, bool, str]:
-    """Two separate verdicts: code_version == target_ref, start_time later.
-
-    New pid alone is not proof — both verdicts must pass for proof-satisfied.
-    """
-    after_ver = after.get("code_version")
-    version_ok = isinstance(after_ver, str) and after_ver == target_ref
-    before_ts = _parse_iso(before.get("process_start_time"))
-    after_ts = _parse_iso(after.get("process_start_time"))
-    start_ok = (
-        before_ts is not None and after_ts is not None and after_ts > before_ts
-    )
-    if version_ok and start_ok:
-        return True, True, "proof_satisfied"
-    parts: list[str] = []
-    if not version_ok:
-        parts.append(
-            f"code_version_mismatch: observed={after_ver!r} target={target_ref!r}"
-        )
-    if not start_ok:
-        parts.append(
-            "process_start_time_not_later: "
-            f"before={before.get('process_start_time')!r} "
-            f"after={after.get('process_start_time')!r}"
-        )
-    return version_ok, start_ok, "; ".join(parts)
+__all__ = [
+    "DEFAULT_BOOT_TIMEOUT_S",
+    "DEFAULT_QUIT_TIMEOUT_S",
+    "DEFAULT_TMUX_TARGET",
+    "GuardedReexecResult",
+    "RECOVERY_PATH",
+    "prove_pickup",
+    "run_guarded_reexec",
+]
 
 
 def _default_run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
@@ -148,6 +96,13 @@ def _dry_run_attach_drain(report: Any, hold: dict[str, Any]) -> None:
         report.refused = True
 
 
+def _attach_pane_finding(report: Any, finding: RefuseFinding | None) -> None:
+    if finding is None:
+        return
+    report.findings.append(finding)
+    report.refused = True
+
+
 def run_guarded_reexec(
     *,
     target_ref: str,
@@ -160,8 +115,9 @@ def run_guarded_reexec(
     run_cmd: RunCmd | None = None,
     intent_db: Path | None = None,
     pause_reason: str = "guarded_manage_reexec",
-    quit_timeout_s: float = 180.0,
-    boot_timeout_s: float = 120.0,
+    quit_timeout_s: float = DEFAULT_QUIT_TIMEOUT_S,
+    boot_timeout_s: float = DEFAULT_BOOT_TIMEOUT_S,
+    tree_contains_fn: TreeContainsFn | None = None,
 ) -> GuardedReexecResult:
     """Run refuse/require/proof path; dry_run never quits or pauses charter hold."""
     manage_call = manage_call or call_manage
@@ -181,6 +137,8 @@ def run_guarded_reexec(
             dry_run=dry_run,
             whoami_before=whoami_before,
             target_ref=target_ref,
+            boot_timeout_s=boot_timeout_s,
+            quit_timeout_s=quit_timeout_s,
             checks={
                 "findings": [
                     {
@@ -204,6 +162,25 @@ def run_guarded_reexec(
     if dry_run:
         _dry_run_attach_drain(report, _hold())
 
+    if manage_pid_i is None:
+        _attach_pane_finding(
+            report,
+            RefuseFinding(
+                reason="manage_pid_unobservable",
+                offenders=[{"whoami": whoami_before}],
+            ),
+        )
+    else:
+        _attach_pane_finding(
+            report,
+            observe_tmux_pane_hosts_manage(
+                tmux_target=tmux_target,
+                manage_pid=manage_pid_i,
+                run_cmd=run_cmd,
+                tree_contains_fn=tree_contains_fn,
+            ),
+        )
+
     if report.refused:
         return GuardedReexecResult(
             status="dry-run" if dry_run else "refused",
@@ -213,6 +190,8 @@ def run_guarded_reexec(
             whoami_before=whoami_before,
             target_ref=target_ref,
             executed=False,
+            boot_timeout_s=boot_timeout_s,
+            quit_timeout_s=quit_timeout_s,
         )
 
     if dry_run:
@@ -224,6 +203,8 @@ def run_guarded_reexec(
             whoami_before=whoami_before,
             target_ref=target_ref,
             executed=False,
+            boot_timeout_s=boot_timeout_s,
+            quit_timeout_s=quit_timeout_s,
         )
 
     # ── mutate path (operator-authorized only; this dispatch does not run it)
@@ -252,6 +233,8 @@ def run_guarded_reexec(
             whoami_before=whoami_before,
             target_ref=target_ref,
             executed=False,
+            boot_timeout_s=boot_timeout_s,
+            quit_timeout_s=quit_timeout_s,
         )
 
     _tmux_send(tmux_target, "q", run_cmd=run_cmd)
@@ -265,6 +248,8 @@ def run_guarded_reexec(
             whoami_before=whoami_before,
             target_ref=target_ref,
             executed=True,
+            boot_timeout_s=boot_timeout_s,
+            quit_timeout_s=quit_timeout_s,
         )
 
     start_cmd = f"cd {repo_root} && {python_bin} -m scripts.model_manager.ui"
@@ -272,13 +257,26 @@ def run_guarded_reexec(
     if not _wait_sock(
         sock_path, manage_call=manage_call, timeout_s=boot_timeout_s, want_up=True
     ):
+        # Quit succeeded; start/health did not. Distinct from status=refused
+        # (precondition — manage still up, nothing destroyed).
         return GuardedReexecResult(
-            status="restarted",
+            status="start-failed",
             reason="reexec_sock_not_up",
             dry_run=False,
             whoami_before=whoami_before,
             target_ref=target_ref,
             executed=True,
+            boot_timeout_s=boot_timeout_s,
+            quit_timeout_s=quit_timeout_s,
+            checks={
+                "pause": pause,
+                "hold_after": hold_after,
+                "recovery_path": RECOVERY_PATH,
+                "note": (
+                    "manage quit landed; sock never returned within "
+                    f"boot_timeout_s={boot_timeout_s}"
+                ),
+            },
         )
 
     whoami_after = manage_call("whoami", {}, sock_path=sock_path)
@@ -297,5 +295,7 @@ def run_guarded_reexec(
         code_version_ok=version_ok,
         process_start_later_ok=start_ok,
         executed=True,
+        boot_timeout_s=boot_timeout_s,
+        quit_timeout_s=quit_timeout_s,
         checks={"pause": pause, "hold_after": hold_after},
     )
