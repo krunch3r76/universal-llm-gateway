@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agent_bus_store.auth import require_token
-from agent_bus_store.db import create_thread, init_db
+from agent_bus_store.db import init_db
 from agent_bus_store.db.connection import connect
 from agent_bus_store.server import create_app
 
@@ -125,8 +125,9 @@ def test_no_association_distinct_from_history(bus_client: TestClient) -> None:
 
 def test_no_auto_mint_on_probe() -> None:
     """v1 has no auto-mint resolver module wired into agent_bus_store."""
-    import agent_bus_store  # noqa: F401
     import importlib
+
+    import agent_bus_store  # noqa: F401
 
     pkg_root = Path(agent_bus_store.__file__).resolve().parent
     resolver_names = (

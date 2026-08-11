@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from ..events.branch_associated import emit_branch_associated
 from .connection import connect
 from .threads import get_thread, normalize_thread_id
-from ..events.branch_associated import emit_branch_associated
 
 AssociationState = Literal["none", "associated"]
 

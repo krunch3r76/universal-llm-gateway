@@ -1,12 +1,12 @@
 """Agent-bus database layer - SQLite with WAL mode."""
 
-from .connection import init_db
 from .branch_associations import (
     ClientOrderingTokenError,
     associate_branch,
     get_current_branch,
     reject_client_ordering_tokens,
 )
+from .connection import init_db
 from .messages import get_messages, insert_message, list_threads, mark_read
 from .threads import (
     ThreadHasReadTurns,
