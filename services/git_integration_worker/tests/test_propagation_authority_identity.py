@@ -1,6 +1,6 @@
 """Falsifier tests for authority-primary propagation identity attestation (Option C).
 
-These tests encode AC4 and AC9–AC14: attestation must not widen what counts as
+These tests encode AC4 and AC9–AC15: attestation must not widen what counts as
 proof — indeterminate-rate dashboards are not quality gates; these falsifiers are.
 """
 
@@ -13,6 +13,9 @@ from services.git_integration_worker.cursor_auto.propagation_probe import (
     attest_identity_delta,
     proof_observed,
     resolve_identity_attestation,
+)
+from scripts.model_manager.ui.controller.service_ctl.authority_identity import (
+    normalize_authority_value,
 )
 
 _SHA = "abc1230000000000000000000000000000000000"
@@ -332,3 +335,70 @@ def test_ac14_intent_id_not_blocked_when_either_side_absent() -> None:
         )
         is True
     )
+
+
+def _ac15_ready_base(**overrides: object) -> dict[str, object]:
+    base: dict[str, object] = {
+        "service": "mcp",
+        "identity_source": "manage_container_started_at",
+        "readiness_proven": True,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_ac15_int_str_same_identity_unchanged_terminal() -> None:
+    """AC15: int old vs str new with same decimal identity ⇒ unchanged TERMINAL."""
+    authority = _ac15_ready_base(old=100, new="100")
+    assert attest_authority_identity(authority) == "unchanged"
+
+
+def test_ac15_whitespace_stripped_same_identity_unchanged() -> None:
+    """AC15: trailing whitespace old vs clean new ⇒ unchanged TERMINAL."""
+    authority = _ac15_ready_base(old="100 ", new="100")
+    assert attest_authority_identity(authority) == "unchanged"
+
+
+def test_ac15_started_at_precision_drift_same_instant_unchanged() -> None:
+    """AC15: StartedAt same instant, differing fractional precision ⇒ unchanged."""
+    instant_a = "2026-08-11T10:00:00.900140477Z"
+    instant_b = "2026-08-11T10:00:00.9001405Z"
+    authority = _ac15_ready_base(old=instant_a, new=instant_b)
+    assert attest_authority_identity(authority) == "unchanged"
+
+
+def test_ac15_started_at_trailing_zeros_same_instant_unchanged() -> None:
+    """AC15: StartedAt nanosecond vs padded-nanosecond same instant ⇒ unchanged."""
+    authority = _ac15_ready_base(
+        old="2026-08-11T10:00:00.900140477Z",
+        new="2026-08-11T10:00:00.900140477000Z",
+    )
+    assert attest_authority_identity(authority) == "unchanged"
+
+
+def test_ac15_mixed_type_genuine_delta_changed() -> None:
+    """AC15: int vs str with different identity values ⇒ changed (not blanket equalizer)."""
+    authority = _ac15_ready_base(old=100, new="200")
+    assert attest_authority_identity(authority) == "changed"
+
+
+def test_ac15_unparseable_timestamp_falls_through_never_changed() -> None:
+    """AC15: timestamp-shaped but unparseable values ⇒ fall_through, never changed."""
+    authority = _ac15_ready_base(
+        old="2026-13-45T10:00:00Z",
+        new="2026-08-11T10:00:00.900140477Z",
+    )
+    assert attest_authority_identity(authority) == "fall_through"
+
+
+def test_ac15_normalize_raises_falls_through_never_changed() -> None:
+    """AC15: normalization failure on proof path ⇒ fall_through, never changed."""
+    authority = _ac15_ready_base(old="2026-13-45T99:99:99Z", new="2026-08-11T10:00:00Z")
+    assert attest_authority_identity(authority) == "fall_through"
+
+
+def test_ac15_normalize_authority_value_int_coercion_load_bearing() -> None:
+    """AC15: int→str coercion in normalize_authority_value is load-bearing."""
+    assert normalize_authority_value(100) == "100"
+    assert normalize_authority_value(100) == normalize_authority_value("100")
+    assert isinstance(normalize_authority_value(100), str)

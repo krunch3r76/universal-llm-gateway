@@ -321,8 +321,11 @@ def attest_authority_identity(
     if old_src != new_src:
         return "fall_through"
 
-    norm_old = normalize_authority_value(authority.get("old"))
-    norm_new = normalize_authority_value(authority.get("new"))
+    try:
+        norm_old = normalize_authority_value(authority.get("old"))
+        norm_new = normalize_authority_value(authority.get("new"))
+    except ValueError:
+        return "fall_through"
     if norm_old is None or norm_new is None:
         return "fall_through"
     if norm_old == norm_new:

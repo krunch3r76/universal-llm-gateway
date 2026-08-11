@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, TypedDict
 
@@ -185,14 +187,47 @@ async def finalize_authority_identity(
     )
 
 
+_ISO_TIMESTAMP_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}(?::\d{2})?)$"
+)
+
+
+def _canonicalize_iso_timestamp(text: str) -> str:
+    """Return UTC microsecond-precision ISO form when *text* parses as a timestamp."""
+    candidate = text.strip()
+    if candidate.endswith("Z"):
+        candidate = candidate[:-1] + "+00:00"
+    parsed = datetime.fromisoformat(candidate)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    else:
+        parsed = parsed.astimezone(timezone.utc)
+    micros = parsed.microsecond
+    return (
+        parsed.strftime("%Y-%m-%dT%H:%M:%S")
+        + f".{micros:06d}Z"
+    )
+
+
 def normalize_authority_value(value: str | int | None) -> str | None:
-    """Normalize authority old/new values for equality comparison."""
+    """Normalize authority old/new values for equality comparison.
+
+    Integers coerce to decimal strings so JSON round-trip pid drift (``100`` vs
+    ``"100"``) does not become an identity delta. ISO8601 container StartedAt
+    strings canonicalize to UTC microsecond form; unparseable timestamp-shaped
+    strings raise ``ValueError`` so callers fall through instead of ``changed``.
+    """
     if value is None:
         return None
     if isinstance(value, int):
         return str(value)
-    if isinstance(value, str) and value.strip():
-        return value.strip()
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        if _ISO_TIMESTAMP_RE.match(stripped):
+            return _canonicalize_iso_timestamp(stripped)
+        return stripped
     return None
 
 
