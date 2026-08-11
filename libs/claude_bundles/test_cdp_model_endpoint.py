@@ -1010,3 +1010,75 @@ def test_run_cdp_generate_mission_overload_retain_cse(
     )
     assert result.ok is False
     assert retain_calls == [True]
+
+
+def test_stage_cdp_prompt_twice_yields_single_manifest_block(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Double stage on one execution_id must not leak an interior slash block."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    first = stage_cdp_prompt_with_skills(
+        execution_id="exec-double-stage",
+        prompt_text="TYPE: CONTINUITY_HANDOFF\narc: 6655\n",
+        skills=["reasoning-posture", "frontier-reasoning-discipline"],
+    )
+    on_disk = (
+        tmp_path
+        / "notes/system/ephemeral/cdp-endpoint/exec-double-stage/prompt.md"
+    )
+    once_text = on_disk.read_text(encoding="utf-8")
+    # Simulate worker re-entry that still rewrites (defense-in-depth peel).
+    second = stage_cdp_prompt_with_skills(
+        execution_id="exec-double-stage-rewrite",
+        prompt_text=once_text,
+        skills=None,
+    )
+    twice_path = (
+        tmp_path
+        / "notes/system/ephemeral/cdp-endpoint/exec-double-stage-rewrite/prompt.md"
+    )
+    twice_text = twice_path.read_text(encoding="utf-8")
+    assert twice_text.count("/reasoning-posture\n") == 1
+    assert twice_text.count("/frontier-reasoning-discipline\n") == 1
+    assert twice_text.count("<!--cdp-required-skills:") == 1
+    assert "TYPE: CONTINUITY_HANDOFF" in twice_text
+    # Ownership guard: re-stage via same-exec prompt_uri must pass through.
+    guarded = stage_cdp_prompt_with_skills(
+        execution_id="exec-double-stage",
+        prompt_uri=first.prompt_uri,
+        skills=None,
+    )
+    assert guarded.prompt_uri == first.prompt_uri
+    assert on_disk.read_text(encoding="utf-8") == once_text
+    assert second.staged is True
+
+
+def test_admit_then_worker_uri_does_not_double_prepend(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Admit stages; worker passes the staged URI — single owner, no interior slash."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    admitted = stage_cdp_prompt_with_skills(
+        execution_id="exec-admit-worker",
+        prompt_text="## ask\nhello\n",
+        skills=["reasoning-posture", "consult-posture"],
+    )
+    # Worker shape: skills omitted, prompt_uri = admit's ephemeral URI.
+    worker = stage_cdp_prompt_with_skills(
+        execution_id="exec-admit-worker",
+        prompt_uri=admitted.prompt_uri,
+        skills=None,
+    )
+    assert worker.prompt_uri == admitted.prompt_uri
+    text = (
+        tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-admit-worker/prompt.md"
+    ).read_text(encoding="utf-8")
+    assert text.count("/reasoning-posture\n") == 1
+    assert text.count("/frontier-reasoning-discipline\n") == 1
+    assert text.count("/consult-posture\n") == 1
+    assert text.count("<!--cdp-required-skills:") == 1
+    # After stripping the leading manifest, body must not start with another slash block.
+    from claude_bundles.cowork_skill_delivery import split_leading_slash_skills
+
+    _tokens, rest = split_leading_slash_skills(text)
+    assert not rest.lstrip("\n").startswith("/")

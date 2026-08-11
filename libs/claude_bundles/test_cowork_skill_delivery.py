@@ -440,3 +440,45 @@ def test_ledger_ok_requires_delivery() -> None:
     assert ok["ok"] is True
     assert len(ok["rows"]) == 2
     assert "gitignored" in github_cannot_load_skill_trees_note()
+
+
+def test_prepend_cdp_dispatch_skills_is_text_idempotent() -> None:
+    """stage(stage(x)) must not stack a second slash+authority block."""
+    from claude_bundles.cowork_skill_delivery import (
+        peel_sealed_cdp_skill_prefix,
+        prepend_cdp_dispatch_skills,
+        split_leading_slash_skills,
+    )
+
+    slugs = ["reasoning-posture", "frontier-reasoning-discipline"]
+    once, _, _ = prepend_cdp_dispatch_skills("TYPE: CONTINUITY\narc: 6655\n", slugs)
+    twice, _, _ = prepend_cdp_dispatch_skills(once, slugs)
+    assert twice == once
+    assert once.count("/reasoning-posture\n") == 1
+    assert once.count("/frontier-reasoning-discipline\n") == 1
+    assert once.count("<!--cdp-required-skills:") == 1
+    tokens, rest = split_leading_slash_skills(twice)
+    assert tokens == ["/reasoning-posture", "/frontier-reasoning-discipline"]
+    assert "/reasoning-posture" not in rest
+    assert "/frontier-reasoning-discipline" not in rest
+
+
+def test_peel_sealed_cdp_skill_prefix_collapses_doubled_manifest() -> None:
+    from claude_bundles.cowork_skill_delivery import peel_sealed_cdp_skill_prefix
+
+    doubled = (
+        "/reasoning-posture\n"
+        "/frontier-reasoning-discipline\n"
+        "\n"
+        "<!--cdp-required-skills:reasoning-posture,frontier-reasoning-discipline-->\n"
+        "/reasoning-posture\n"
+        "/frontier-reasoning-discipline\n"
+        "\n"
+        "<!--cdp-required-skills:reasoning-posture,frontier-reasoning-discipline-->\n"
+        "TYPE: CONTINUITY_HANDOFF\narc: 6655\n"
+    )
+    attach, inline, body = peel_sealed_cdp_skill_prefix(doubled)
+    assert attach == ["reasoning-posture", "frontier-reasoning-discipline"]
+    assert inline == []
+    assert body.lstrip("\n").startswith("TYPE: CONTINUITY_HANDOFF")
+    assert "/reasoning-posture" not in body

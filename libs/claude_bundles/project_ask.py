@@ -344,8 +344,18 @@ async def send_prompt(
 
     Correlation ids optional: threaded into channel-attest telemetry only;
     empty strings are valid for non-seating harness callers.
+
+    After a successful click, records a non-gating Context → Skills receipt
+    (``cdp.skill.context_loaded``) — chips gate submit; the rail is the receipt.
     """
     from claude_bundles.composer_session_skills import require_compose_surface
+    from claude_bundles.cowork_skill_delivery import (
+        extract_cdp_required_authority,
+        parse_cdp_sealed_skill_channels,
+    )
+    from claude_bundles.skill_context_receipt import (
+        record_post_submit_skills_receipt,
+    )
 
     require_compose_surface(page)
     composer = await find_composer(page)
@@ -377,38 +387,52 @@ async def send_prompt(
                 f"submit (live_discover) — refusing Enter fallback; last={submit.get('last')}"
             )
         await click_discovered_submit(page, submit, composer=composer)
-        return
+    else:
+        mode: str = fp.get("mode") or ("cowork" if fp.get("approval") else "chat")
+        if mode not in ("chat", "cowork"):
+            mode = "cowork" if fp.get("approval") else "chat"
+        attest = await await_compose_attest(page, mode, timeout_s=4.0)  # type: ignore[arg-type]
+        if not attest.get("ok"):
+            raise RuntimeError(
+                f"compose re-attest failed before send: mode={mode!r} "
+                f"fingerprint={attest.get('fingerprint')}"
+            )
 
-    mode: str = fp.get("mode") or ("cowork" if fp.get("approval") else "chat")
-    if mode not in ("chat", "cowork"):
-        mode = "cowork" if fp.get("approval") else "chat"
-    attest = await await_compose_attest(page, mode, timeout_s=4.0)  # type: ignore[arg-type]
-    if not attest.get("ok"):
-        raise RuntimeError(
-            f"compose re-attest failed before send: mode={mode!r} "
-            f"fingerprint={attest.get('fingerprint')}"
-        )
+        submit = await await_submit_visible(page, mode, timeout_s=8.0)
+        clicked = False
+        if submit.get("ok"):
+            role_re = _SUBMIT_ROLE_RES[0 if mode == "cowork" else 1]
+            loc = page.get_by_role("button", name=role_re)
+            if await loc.count():
+                btn = loc.first
+                if await btn.is_visible() and not await btn.is_disabled():
+                    await btn.click(force=True)
+                    clicked = True
+            if not clicked:
+                aria = _SUBMIT_ARIA_SUBSTRS[0 if mode == "cowork" else 1]
+                loc = page.locator(f"button[aria-label*='{aria}' i]")
+                if await loc.count():
+                    btn = loc.first
+                    if await btn.is_visible() and not await btn.is_disabled():
+                        await btn.click(force=True)
+                        clicked = True
+        if not clicked:
+            raise RuntimeError(
+                "submit control missing: need visible Start task (Cowork) or "
+                "Send message (Chat) — refusing Enter fallback"
+            )
 
-    submit = await await_submit_visible(page, mode, timeout_s=8.0)
-    if submit.get("ok"):
-        role_re = _SUBMIT_ROLE_RES[0 if mode == "cowork" else 1]
-        loc = page.get_by_role("button", name=role_re)
-        if await loc.count():
-            btn = loc.first
-            if await btn.is_visible() and not await btn.is_disabled():
-                await btn.click(force=True)
-                return
-        aria = _SUBMIT_ARIA_SUBSTRS[0 if mode == "cowork" else 1]
-        loc = page.locator(f"button[aria-label*='{aria}' i]")
-        if await loc.count():
-            btn = loc.first
-            if await btn.is_visible() and not await btn.is_disabled():
-                await btn.click(force=True)
-                return
-
-    raise RuntimeError(
-        "submit control missing: need visible Start task (Cowork) or "
-        "Send message (Chat) — refusing Enter fallback"
+    required_authority = extract_cdp_required_authority(text)
+    attach_slugs, inline_slugs, _rest = parse_cdp_sealed_skill_channels(text)
+    if required_authority is not None:
+        required = required_authority
+    else:
+        required = attach_slugs + inline_slugs
+    await record_post_submit_skills_receipt(
+        page,
+        required=required,
+        execution_id=str(stargate_execution_id or ""),
+        satellite_execution_id=str(satellite_execution_id or ""),
     )
 
 

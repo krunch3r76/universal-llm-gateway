@@ -87,6 +87,69 @@ def emit_skill_delivery_attested(
     return event
 
 
+@event_factory
+def cdp_skill_context_loaded(
+    *,
+    ok: bool,
+    required: list[str],
+    observed: list[str],
+    missing: list[str],
+    execution_id: str = "",
+    satellite_execution_id: str = "",
+    context_found: bool = False,
+    skills_heading_found: bool = False,
+    error: str = "",
+) -> Event:
+    """Post-submit Context → Skills receipt (non-gating observation)."""
+    return Event(
+        signal="cdp.skill.context_loaded",
+        role="observation",
+        scope="node",
+        payload={
+            "ok": ok,
+            "required": list(required),
+            "observed": list(observed),
+            "missing": list(missing),
+            "context_found": context_found,
+            "skills_heading_found": skills_heading_found,
+            "error": str(error or ""),
+            "execution_id": str(execution_id or ""),
+            "satellite_execution_id": str(satellite_execution_id or ""),
+        },
+    )
+
+
+def emit_skill_context_loaded(
+    *,
+    ok: bool,
+    required: list[str],
+    observed: list[str],
+    missing: list[str],
+    execution_id: str = "",
+    satellite_execution_id: str = "",
+    context_found: bool = False,
+    skills_heading_found: bool = False,
+    error: str = "",
+) -> Event | None:
+    """Best-effort ``cdp.skill.context_loaded``; never raises."""
+    try:
+        event = cdp_skill_context_loaded(
+            ok=ok,
+            required=required,
+            observed=observed,
+            missing=missing,
+            execution_id=execution_id,
+            satellite_execution_id=satellite_execution_id,
+            context_found=context_found,
+            skills_heading_found=skills_heading_found,
+            error=error,
+        )
+    except Exception:  # noqa: BLE001 — receipt must not fail submit
+        return None
+    _mirror_to_event_service(event)
+    return event
+
+
 def _mirror_to_event_service(event: Event) -> None:
     """Best-effort UDS ingest — silent when the events sock is down."""
     sock_path = os.environ.get(

@@ -59,6 +59,10 @@ def test_ensure_idempotent_when_chips_present() -> None:
     twice = ensure_operator_proxy_mission_prompt(once)
     assert twice.count("/cdp-operator-proxy") == 1
     assert twice.count("## Mission seat map (BINDING") == 1
+    assert twice.count("/reasoning-posture") == 1
+    assert twice.count("/frontier-reasoning-discipline") == 1
+    # strip() on re-entry may drop a trailing newline; slash block must stay single.
+    assert twice.rstrip("\n") == once.rstrip("\n")
 
 
 def test_ensure_adds_missing_chip_only() -> None:

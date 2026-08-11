@@ -37,25 +37,19 @@ from typing import Any, Literal
 
 from claude_bundles.catalog import get_skill_catalog
 from claude_bundles.events_skill_delivery import emit_skill_delivery_attested
+from claude_bundles.sealed_cdp_prefix import (
+    extract_inline_slugs_from_sealed,
+    peel_sealed_cdp_skill_prefix,
+    split_leading_slash_skills,
+)
 
 DeliveryChannel = Literal["inject", "customize_skills", "unavailable"]
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_LEADING_SLASH_SKILL = re.compile(r"^(/[\w-]+)\r?\n")
-# Wire contract for inline channel tags — pin in tests (R-after A4 / H1).
-_INLINE_SKILL_SLUG = re.compile(r'<skill slug="([^"]+)"')
 # Required authority sealed at staging — NOT derived from attach/inline channels
 # (amended A4: required must survive XML drop/rename; R-after decisive_falsifier).
 _CDP_REQUIRED_AUTHORITY = re.compile(
     r"<!--cdp-required-skills:([^\n]*?)-->\r?\n?"
-)
-# Leading-only peel for idempotent re-stage (admit→worker double-owner).
-_LEADING_AUTHORITY = re.compile(
-    r"^(?:\r?\n)*<!--cdp-required-skills:([^\n]*?)-->\r?\n?"
-)
-_LEADING_INLINE_BLOCK = re.compile(
-    r"^(?:\r?\n)*<skills_inline>.*?</skills_inline>(?:\r?\n)*",
-    re.DOTALL,
 )
 
 # Operator 2026-07-26: multi-skill attach = composer + → Skills → pick-each.
@@ -203,66 +197,6 @@ def format_cdp_slash_prefix(
             "(friction 5588/5590 escape) or set allow_proven_multi_chip=True"
         )
     return "".join(f"/{slug}\n" for slug in slugs)
-
-
-def split_leading_slash_skills(text: str) -> tuple[list[str], str]:
-    """Parse consecutive leading ``/<slug>\\n`` lines for composer chip bind.
-
-    Consumes exactly one line break per slash line so trailing blank lines before
-    body prose remain in ``rest`` for ``insert_text`` replay.
-    """
-    tokens: list[str] = []
-    rest = text
-    while True:
-        match = _LEADING_SLASH_SKILL.match(rest)
-        if match is None:
-            break
-        tokens.append(match.group(1))
-        rest = rest[match.end() :]
-    return tokens, rest
-
-
-def peel_sealed_cdp_skill_prefix(
-    text: str,
-) -> tuple[list[str], list[str], str]:
-    """Strip all leading sealed skill prefixes; return ``(attach, inline, body)``.
-
-    Peels repeated slash / authority / ``<skills_inline>`` blocks so
-    ``prepend_cdp_dispatch_skills`` is text-idempotent under
-    ``stage(stage(x))`` (admit then worker re-stage on the same prompt.md).
-    """
-    attach: list[str] = []
-    inline: list[str] = []
-    rest = text
-    seen_attach: set[str] = set()
-    seen_inline: set[str] = set()
-    for _ in range(32):  # hard cap — sealed prefixes are tiny
-        auth = _LEADING_AUTHORITY.match(rest)
-        if auth is not None:
-            rest = rest[auth.end() :]
-            continue
-        tokens, after = split_leading_slash_skills(rest)
-        if tokens:
-            for token in tokens:
-                slug = token.removeprefix("/").strip()
-                key = slug.lower()
-                if slug and key not in seen_attach:
-                    seen_attach.add(key)
-                    attach.append(slug)
-            rest = after
-            continue
-        inline_match = _LEADING_INLINE_BLOCK.match(rest)
-        if inline_match is not None:
-            block = inline_match.group(0)
-            for slug in extract_inline_slugs_from_sealed(block):
-                key = slug.lower()
-                if key not in seen_inline:
-                    seen_inline.add(key)
-                    inline.append(slug)
-            rest = rest[inline_match.end() :]
-            continue
-        break
-    return attach, inline, rest
 
 
 def render_cdp_inline_skills_xml(bodies: list[InjectedSkillBody]) -> str:
@@ -444,18 +378,6 @@ def extract_cdp_required_authority(text: str) -> list[str] | None:
 def strip_cdp_required_authority(text: str) -> str:
     """Remove the first required-authority marker from a sealed prompt."""
     return _CDP_REQUIRED_AUTHORITY.sub("", text, count=1)
-
-
-def extract_inline_slugs_from_sealed(rest: str) -> list[str]:
-    """Return slug names from a staged ``<skills_inline>`` XML block in ``rest``.
-
-    Pin: only ``<skill slug=\"…\">`` attributes match (``_INLINE_SKILL_SLUG``).
-    A rename to ``name=`` yields no inline slug — required authority must still
-    come from ``<!--cdp-required-skills:…-->``, not this parse.
-    """
-    if "<skills_inline>" not in rest:
-        return []
-    return _INLINE_SKILL_SLUG.findall(rest)
 
 
 def parse_cdp_sealed_skill_channels(
