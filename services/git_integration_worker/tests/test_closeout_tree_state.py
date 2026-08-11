@@ -211,6 +211,70 @@ def test_compose_empty_authored_registering_seat_omits() -> None:
     assert "ledger-registration-unavailable" not in (claim or "")
 
 
+def test_compose_omit_records_authorship_outcome_at_decision() -> None:
+    """AC — non-firing omit is tallied; silence must not leave the meter dark."""
+    captured: list[dict[str, object]] = []
+
+    def _capture(**kwargs: object) -> None:
+        captured.append(kwargs)
+
+    with patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "emit_authorship_outcome",
+        side_effect=_capture,
+    ):
+        claim = compose_deployment_authorship(
+            baseline={
+                "codes": {},
+                "hashes": {},
+                "admit_head": "6cf34833ea361a0b694e8ff169e476c06f329b95",
+                "outside_repo": [],
+            },
+            authored=(),
+            ledger_registration_available=True,
+            dispatch_id="d-omit-tally",
+        )
+    assert claim is None
+    assert len(captured) == 1
+    assert captured[0]["outcome"] == "omit"
+    assert captured[0]["dispatch_id"] == "d-omit-tally"
+    assert captured[0]["baseline_present"] is True
+    assert captured[0]["ledger_registration_available"] is True
+    assert captured[0]["authored_count"] == 0
+
+
+def test_compose_vacancy_records_authorship_outcome_at_decision() -> None:
+    """Vacancy fire is tallied with the same instrument as omit (paired numerator)."""
+    captured: list[dict[str, object]] = []
+
+    def _capture(**kwargs: object) -> None:
+        captured.append(kwargs)
+
+    with patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "emit_authorship_outcome",
+        side_effect=_capture,
+    ):
+        claim = compose_deployment_authorship(
+            baseline={
+                "codes": {},
+                "hashes": {},
+                "admit_head": "6cf34833ea361a0b694e8ff169e476c06f329b95",
+                "outside_repo": [],
+            },
+            authored=(),
+            ledger_registration_available=False,
+            dispatch_id="d-vacancy-tally",
+        )
+    assert claim is not None
+    assert _VACANCY in claim
+    assert len(captured) == 1
+    assert captured[0]["outcome"] == "vacancy"
+    assert captured[0]["dispatch_id"] == "d-vacancy-tally"
+    assert captured[0]["baseline_present"] is True
+    assert captured[0]["ledger_registration_available"] is False
+
+
 def test_compose_rank2_empty_codes_ambient_omits_when_unproven() -> None:
     """Must-not: empty admit codes + ambient dirt without ledger proof → omit."""
     claim = compose_deployment_authorship(

@@ -13,6 +13,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from services.git_integration_worker.cursor_auto.authorship_outcome_events import (
+    OUTCOME_ATTRIBUTION_UNAVAILABLE,
+    OUTCOME_AUTHORED_NOT_COMMITTED,
+    OUTCOME_OMIT,
+    OUTCOME_VACANCY,
+    emit_authorship_outcome,
+)
 from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
     annotate_plane_discrepancy,
     apply_landed_admit_gate,
@@ -58,6 +65,7 @@ def compose_deployment_authorship(
     baseline: dict[str, Any] | None,
     authored: tuple[str, ...],
     ledger_registration_available: bool = True,
+    dispatch_id: str | None = None,
 ) -> str | None:
     """Rank-2 authorship claim for ``deployment_state`` (positive measurement).
 
@@ -67,20 +75,36 @@ def compose_deployment_authorship(
     registering seat → omit. Empty ``authored`` when the producing seat cannot
     populate the ledger → ``ledger-registration-unavailable``. Non-empty
     ledger-proven ``authored`` → ``authored-not-committed`` even on clean-admit
-    ``codes={}`` (Rank-2 restore).
+    ``codes={}`` (Rank-2 restore). Every branch emits
+    ``frontier.sdk.closeout.authorship_outcome`` (including omit) so vacancy
+    rate has an eligible denominator.
     """
+    authored_count = len(authored)
     if baseline is None:
-        return "attribution-unavailable — admit baseline missing"
-    if not authored:
+        outcome = OUTCOME_ATTRIBUTION_UNAVAILABLE
+        text: str | None = "attribution-unavailable — admit baseline missing"
+    elif not authored:
         if not ledger_registration_available:
-            return _LEDGER_REGISTRATION_UNAVAILABLE
-        return None
-    count = len(authored)
-    noun = "path" if count == 1 else "paths"
-    return (
-        f"authored-not-committed — {count} {noun} "
-        "await path-explicit commit"
+            outcome = OUTCOME_VACANCY
+            text = _LEDGER_REGISTRATION_UNAVAILABLE
+        else:
+            outcome = OUTCOME_OMIT
+            text = None
+    else:
+        outcome = OUTCOME_AUTHORED_NOT_COMMITTED
+        noun = "path" if authored_count == 1 else "paths"
+        text = (
+            f"authored-not-committed — {authored_count} {noun} "
+            "await path-explicit commit"
+        )
+    emit_authorship_outcome(
+        dispatch_id=dispatch_id or "",
+        outcome=outcome,
+        baseline_present=baseline is not None,
+        ledger_registration_available=ledger_registration_available,
+        authored_count=authored_count,
     )
+    return text
 
 
 def compute_closeout_tree_state(
@@ -123,6 +147,7 @@ def compute_closeout_tree_state(
             baseline=baseline,
             authored=authored,
             ledger_registration_available=ledger_registration_available,
+            dispatch_id=dispatch_id,
         )
     keys = parse_capture_plane_keys(wrapper_text)
     plane = probe_three_planes(
