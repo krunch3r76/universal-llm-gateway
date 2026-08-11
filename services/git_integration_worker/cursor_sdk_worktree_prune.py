@@ -117,7 +117,7 @@ def prune_dispatch_worktree(
     if (
         wt_path.is_dir()
         and is_worktree_dirty(wt_path)
-        and state_pre.commits_ahead == 0
+        and (state_pre.commits_ahead is None or state_pre.commits_ahead == 0)
         and (salvage is None or not salvage.committed)
     ):
         logger.error(

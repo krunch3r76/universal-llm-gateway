@@ -59,6 +59,19 @@ def test_lane_a_unaffected() -> None:
     assert deviations is None
 
 
+def test_unknown_landed_null_does_not_downgrade() -> None:
+    """Preserve-no-data: landed=None must not fire land:lane_b_unlanded."""
+    status, deviations = apply_lane_b_land_incompleteness(
+        CloseoutStatus.COMPLETE,
+        lane="B",
+        landed=None,
+        commits_ahead=2,
+        deviations=None,
+    )
+    assert status == CloseoutStatus.COMPLETE
+    assert deviations is None
+
+
 def test_normalize_git_branch_list_name_strips_worktree_plus() -> None:
     assert (
         normalize_git_branch_list_name("+ cursor-sdk/auto-c3c2defa7bac")

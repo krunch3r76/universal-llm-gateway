@@ -912,7 +912,7 @@ def emit_sdk_lane_b_salvage_failed(
 def SdkLaneBBranchRetained(  # noqa: N802
     dispatch_id: str,
     branch: str,
-    commits_ahead: int,
+    commits_ahead: int | None,
 ) -> Event:
     return Event(
         signal="sdk.lane_b.branch_retained",
@@ -929,9 +929,13 @@ def emit_sdk_lane_b_branch_retained(
     *,
     dispatch_id: str,
     branch: str,
-    commits_ahead: int,
+    commits_ahead: int | None,
 ) -> None:
-    """Emit when prune retains an unmerged dispatch branch."""
+    """Emit when prune retains an unmerged dispatch branch.
+
+    ``commits_ahead`` may be ``None`` when the tip meter is unresolved — same
+    preserve-no-data shape as structured capture (not a measured zero).
+    """
     _emit(
         SdkLaneBBranchRetained(
             dispatch_id=dispatch_id,

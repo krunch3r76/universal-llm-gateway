@@ -76,4 +76,11 @@ def test_g2_trace_ii_auto_625a11ce0892_refuse_landed_at_commits_ahead_zero() -> 
     )
     assert admit_landed_true(ancestry_on_master=True, commits_ahead=1) is True
     assert admit_landed_true(ancestry_on_master=False, commits_ahead=2) is False
-    assert admit_landed_true(ancestry_on_master=None, commits_ahead=3) is False
+
+
+def test_g2_unknown_ancestry_emits_landed_null_not_false() -> None:
+    """Unknown ancestry must not collapse to structured landed:false (arc 6655)."""
+    assert admit_landed_true(ancestry_on_master=None, commits_ahead=3) is None
+    assert admit_landed_true(ancestry_on_master=None, commits_ahead=0) is None
+    assert admit_landed_true(ancestry_on_master=False, commits_ahead=3) is False
+    assert admit_landed_true(ancestry_on_master=True, commits_ahead=None) is None

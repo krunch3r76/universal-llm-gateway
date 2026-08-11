@@ -325,6 +325,47 @@ def test_branch_state_counts_since_branch_point(source_repo: Path, tmp_path: Pat
     assert not state.merged_into_master
 
 
+def test_branch_state_missing_tip_commits_ahead_absent_not_zero(
+    source_repo: Path,
+) -> None:
+    """Missing tip must not launder unknown meter into measured commits_ahead=0."""
+    branch_point = resolve_master_branch_point(source_repo)
+    state = branch_state(
+        source_repo,
+        branch_name="cursor-sdk/does-not-exist-tip",
+        branch_point=branch_point,
+    )
+    assert state.head_sha is None
+    assert state.commits_ahead is None
+    assert state.is_empty is False
+
+
+def test_branch_state_measured_zero_stays_zero(source_repo: Path, tmp_path: Path) -> None:
+    """Empty divergence after mint is a measured 0 — still refuses vacuous landed."""
+    from services.git_integration_worker.cursor_sdk_deliverables_expected import (
+        admit_landed_true,
+    )
+
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "s3-zero-meter"
+    mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    branch = f"cursor-sdk/{dispatch_id}"
+    branch_point = resolve_master_branch_point(source_repo)
+    state = branch_state(
+        source_repo,
+        branch_name=branch,
+        branch_point=branch_point,
+    )
+    assert state.head_sha is not None
+    assert state.commits_ahead == 0
+    assert state.is_empty is True
+    assert admit_landed_true(ancestry_on_master=True, commits_ahead=0) is False
+
+
 def _install_refusing_hook(repo: Path, marker: str = "hook-refused-marker") -> None:
     """Install a pre-commit hook that rejects every commit in repo and worktrees."""
     hooks = repo / ".git" / "hooks"

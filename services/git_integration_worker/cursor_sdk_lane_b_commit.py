@@ -20,13 +20,13 @@ class BranchState:
     """Tip and merge posture for a dispatch branch keyed at mint."""
 
     head_sha: str | None
-    commits_ahead: int
+    commits_ahead: int | None
     merged_into_master: bool
     content_landed: bool = False
 
     @property
     def is_empty(self) -> bool:
-        """True when the branch never diverged from its mint point."""
+        """True only for a measured zero — unknown tip is not empty."""
         return self.commits_ahead == 0
 
     @property
@@ -163,7 +163,8 @@ def branch_state(
     repo = source_repo.resolve()
     head_sha = _rev_parse(repo, branch_name)
     if head_sha is None:
-        return BranchState(head_sha=None, commits_ahead=0, merged_into_master=False)
+        # Tip unresolved — meter unknown. Never launder into measured 0.
+        return BranchState(head_sha=None, commits_ahead=None, merged_into_master=False)
 
     count_proc = subprocess.run(
         [
@@ -265,7 +266,7 @@ def orphan_branch_state(source_repo: Path, *, branch_name: str) -> BranchState:
     repo = source_repo.resolve()
     head_sha = _rev_parse(repo, branch_name)
     if head_sha is None:
-        return BranchState(head_sha=None, commits_ahead=0, merged_into_master=False)
+        return BranchState(head_sha=None, commits_ahead=None, merged_into_master=False)
     branch_point = merge_base_with_master(repo, branch_name=branch_name)
     if branch_point is None:
         return BranchState(

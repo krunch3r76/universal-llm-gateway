@@ -1560,7 +1560,11 @@ def _assemble_closeout_delivery(
                 branch_name=record.branch_name,
                 branch_point=record.branch_point,
             )
-            if commit_result.committed and commit_result.head_sha:
+            if (
+                commit_result.committed
+                and commit_result.head_sha
+                and state.commits_ahead is not None
+            ):
                 from services.git_integration_worker.cursor_sdk_events import (
                     emit_sdk_lane_b_committed,
                 )
@@ -1589,8 +1593,7 @@ def _assemble_closeout_delivery(
             lane_b_branch_point = record.branch_point
             lane_b_head_sha = state.head_sha
             lane_b_commits_ahead = state.commits_ahead
-            # landed@local-master — computed from capture head vs local master
-            # (never a constant; unknown head stays False, not upgraded).
+            # landed@local-master — ancestry probe + G₂ meter; unknown stays None.
             from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
                 probe_three_planes,
             )
@@ -1600,8 +1603,7 @@ def _assemble_closeout_delivery(
                 head_sha=state.head_sha,
                 branch=record.branch_name,
             )
-            # G₂ (todo:success-shaped-silence): ancestry alone is vacuous when
-            # commits_ahead=0 (head==branch_point already on master).
+            # G₂: measured 0 refuses vacuous True; unknown ancestry/meter → None.
             from services.git_integration_worker.cursor_sdk_deliverables_expected import (
                 admit_landed_true,
             )

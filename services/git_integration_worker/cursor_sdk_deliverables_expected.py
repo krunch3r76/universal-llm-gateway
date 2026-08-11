@@ -96,13 +96,20 @@ def compute_deliverables_expected(
 def admit_landed_true(
     *,
     ancestry_on_master: bool | None,
-    commits_ahead: int,
-) -> bool:
-    """G₂ — emit ``landed:true`` only when local git progress exists.
+    commits_ahead: int | None,
+) -> bool | None:
+    """G₂ — project structured ``landed`` to {True, False, None}.
 
     Ancestry-on-master alone is vacuous when ``head_sha == branch_point``
-    (commits_ahead=0): the SHA is already on master without this dispatch
-    advancing anything. Returns False unless both ancestry is True and
-    commits_ahead ≥ 1.
+    (measured ``commits_ahead=0``): the SHA is already on master without this
+    dispatch advancing anything — emit ``False``, not ``True``. Unknown
+    ancestry or an unmeasured meter must stay ``None`` (preserve-no-data);
+    definite ancestry ``False`` stays ``False``. Side effects: none (pure).
     """
-    return ancestry_on_master is True and commits_ahead >= 1
+    if ancestry_on_master is None:
+        return None
+    if ancestry_on_master is False:
+        return False
+    if commits_ahead is None:
+        return None
+    return commits_ahead >= 1
