@@ -94,12 +94,30 @@ def salvage_commit(worktree_path: Path, *, message: str) -> SalvageResult:
     A clean tree and a git-refused commit both yield ``committed=False``; callers
     that may destroy the worktree must branch on ``refused``, which is set only
     when work exists and git declined to record it (for example a failing
-    pre-commit hook).
+    pre-commit hook or the GIW subtree F821 land gate).
     """
     wt = worktree_path.resolve()
     head = _rev_parse(wt, "HEAD")
     if not is_worktree_dirty(wt):
         return SalvageResult(committed=False, head_sha=head)
+
+    from services.git_integration_worker.giw_f821_gate import run_giw_subtree_f821_check
+
+    f821 = run_giw_subtree_f821_check(wt)
+    if not f821.passed:
+        detail = (f821.stderr or f821.stdout or "F821 check failed").strip()
+        logger.error(
+            "lane_b salvage commit refused path=%s f821_exit=%s err=%s",
+            wt,
+            f821.exit_code,
+            detail,
+        )
+        return SalvageResult(
+            committed=False,
+            head_sha=head,
+            refused=True,
+            error=_truncate(f"giw_f821_gate: {detail}"),
+        )
 
     add = subprocess.run(
         ["git", "-C", str(wt), "add", "-A"],

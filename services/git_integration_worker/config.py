@@ -17,7 +17,8 @@ from pathlib import Path
 _DIFF_SCOPED_GATE_SCRIPT = (
     "files=$(git diff refs/heads/master...HEAD --name-only "
     "--diff-filter=ACMR -- '*.py'); "
-    'if [ -n "$files" ]; then ruff check $files && python -m compileall -q $files; fi'
+    'if [ -n "$files" ]; then ruff check $files && python -m compileall -q $files; fi && '
+    "ruff check --select F821 services/git_integration_worker/"
 )
 # F821-only pass on the GIW package subtree. Whole-repo ruff is blocked by master
 # lint debt; this subtree is kept F821-clean so undefined-name defects surface at
