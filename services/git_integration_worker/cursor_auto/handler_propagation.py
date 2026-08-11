@@ -9,7 +9,7 @@ from charter_runner_store.propagation_ledger import (
     close_row,
     fail_row,
     mark_harvest_wanted,
-    set_defer_reason,
+    set_open_proof_payload,
     upsert_open_rows,
 )
 from implement_admission.propagation_row import PropagationRow
@@ -21,6 +21,9 @@ from services.git_integration_worker.cursor_auto.manage_sock import sync_restart
 from services.git_integration_worker.cursor_auto.propagate_admission import (
     PROPAGATE_CONTRACT,
     admit_propagate_body,
+)
+from charter_runner_store.propagation_terminal_persisted_before import (
+    proof_before_payload_for_submit,
 )
 from services.git_integration_worker.cursor_auto.propagation_probe import (
     proof_observed,
@@ -343,7 +346,20 @@ async def _execute_row(
         if advisory:
             out["advisory"] = advisory
         return out
-    set_defer_reason(row_id, "proof_pending")
+    set_open_proof_payload(
+        row_id,
+        proof_payload=proof_before_payload_for_submit(
+            before=before,
+            after=after,
+            code_ref=row.code_ref,
+            manage_status=str(manage_result.get("status"))
+            if manage_result.get("status") is not None
+            else None,
+            proof_class_requested=after_dispatch.proof_class_requested,
+            proof_class_executed=after_dispatch.proof_class_executed,
+        ),
+        defer_reason="proof_pending",
+    )
     out = {
         "service": row.service,
         "row_id": row_id,

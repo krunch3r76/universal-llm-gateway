@@ -409,6 +409,36 @@ def scoreboard_projection(*, conn: sqlite3.Connection | None = None) -> list[dic
     ]
 
 
+def get_open_proof_payload(
+    row_id: str,
+    *,
+    conn: sqlite3.Connection | None = None,
+) -> dict[str, Any] | None:
+    """Return the open row's ``proof_payload`` JSON, or None when absent."""
+    own_conn = conn is None
+    db = conn or open_ledger_db()
+    try:
+        cur = db.execute(
+            """
+            SELECT proof_payload
+            FROM propagation_ledger
+            WHERE row_id=? AND status='open'
+            """,
+            (row_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        raw = row["proof_payload"]
+        if raw is None:
+            return None
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else None
+    finally:
+        if own_conn:
+            db.close()
+
+
 def set_open_proof_payload(
     row_id: str,
     *,
@@ -592,6 +622,7 @@ __all__ = [
     "bump_age_for_open_rows",
     "close_row",
     "fail_row",
+    "get_open_proof_payload",
     "list_harvest_wanted_rows",
     "list_open_rows",
     "mark_harvest_wanted",
@@ -601,6 +632,7 @@ __all__ = [
     "reopen_closed_row",
     "scoreboard_projection",
     "set_defer_reason",
+    "set_open_proof_payload",
     "set_proof_class",
     "set_settle_boundary",
     "try_claim_for_consumption",

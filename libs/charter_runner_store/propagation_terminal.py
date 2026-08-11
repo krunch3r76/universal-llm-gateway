@@ -96,6 +96,7 @@ def _proof_matches_projection(
     payload: dict[str, Any] | None,
     *,
     settle_not_before_monotonic: float | None = None,
+    before: dict[str, Any] | None = None,
 ) -> bool:
     from services.git_integration_worker.cursor_auto.propagation_probe import (
         proof_observed,
@@ -104,6 +105,7 @@ def _proof_matches_projection(
     return proof_observed(
         _projection_to_row(row),
         payload,
+        before=before,
         settle_not_before_monotonic=settle_not_before_monotonic,
     )
 
@@ -237,39 +239,52 @@ def settle_open_row(
             detail=detail,
         )
 
+    from .propagation_terminal_persisted_before import (
+        defer_reason_and_detail_for_identity,
+        load_persisted_proof_before,
+    )
     from .propagation_terminal_retire import (
         observed_code_version_for_settle,
         try_close_on_version_satisfaction,
     )
 
+    persisted = load_persisted_proof_before(row)
+    persisted_before = persisted.before
     observed_str = observed_code_version_for_settle(row, payload)
     observed = observed_str
     satisfaction = classify_version_satisfaction(row.code_ref, observed_str)
     relation = satisfaction.relation
 
     exact_match = satisfaction.case == "exact_match"
-    proof_passes = (
-        _proof_matches_projection(
+    if persisted_before is not None or row.proof_class in (
+        "client_visible",
+        "served_artifact",
+    ):
+        proof_passes = _proof_matches_projection(
             row,
             payload,
             settle_not_before_monotonic=boundary,
+            before=persisted_before,
         )
-        if probe is default_probe
-        else proof_matches_row(row, payload) and exact_match
-    )
+    elif probe is default_probe:
+        proof_passes = _proof_matches_projection(
+            row,
+            payload,
+            settle_not_before_monotonic=boundary,
+            before=None,
+        )
+    else:
+        proof_passes = proof_matches_row(row, payload) and exact_match
     determination = classify_probe(
         payload, code_ref=row.code_ref, matched=exact_match and proof_passes
     )
 
-    # Settle has no harvest before/after today — retire identity arms see
-    # before=None → indeterminate and close nothing via presence. Equal-ref
-    # close requires proof_passes (or a future caller that supplies before).
     retired = try_close_on_version_satisfaction(
         row,
         payload,
         proof_passes=proof_passes,
         determination=determination,
-        before=None,
+        before=persisted_before,
     )
     if retired is not None:
         return SettleResult(
@@ -349,8 +364,17 @@ def settle_open_row(
             f"(expected {row.code_ref} observed {observed!r}) — row left open"
         )
     else:
-        reason = _INDETERMINATE_PROBE
-        detail = "probe carried no readable code_version — row left open"
+        identity_defer = defer_reason_and_detail_for_identity(
+            row,
+            payload=payload,
+            observed_code_version=observed_str,
+            persisted=persisted,
+        )
+        if identity_defer is not None:
+            reason, detail = identity_defer
+        else:
+            reason = _INDETERMINATE_PROBE
+            detail = "probe carried no readable code_version — row left open"
     if defer_if_unreachable:
         set_defer_reason(row.row_id, reason)
     return SettleResult(
