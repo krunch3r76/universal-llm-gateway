@@ -456,32 +456,18 @@ class GitWorkerDrainSupervisor:
         settle_not_before_monotonic: float | None = None,
     ) -> None:
         """Close or fail open propagation rows from observed liveness after restart."""
-        try:
-            from charter_runner_store.propagation_terminal import (
-                default_probe,
-                settle_open_rows_for_service,
-            )
+        from .propagation_settle_hook import invoke_propagation_settle_for_service
 
-            results = await asyncio.to_thread(
-                settle_open_rows_for_service,
-                service,
-                default_probe,
-                defer_if_unreachable=True,
-                settle_not_before_monotonic=settle_not_before_monotonic,
-            )
-            for item in results:
-                logger.info(
-                    "propagation ledger settle service=%s row=%s outcome=%s detail=%s",
-                    service,
-                    item.row_id,
-                    item.outcome,
-                    item.detail,
-                )
-        except Exception:  # noqa: BLE001 — ledger settle must not fail the drain
-            logger.exception(
-                "propagation ledger settle failed after drain complete service=%s",
-                service,
-            )
+        boundary = (
+            settle_not_before_monotonic
+            if settle_not_before_monotonic is not None
+            else time.monotonic()
+        )
+        await invoke_propagation_settle_for_service(
+            service,
+            settle_not_before_monotonic=boundary,
+            source="drain",
+        )
 
 
 # ---------------------------------------------------------------------------

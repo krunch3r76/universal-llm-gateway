@@ -136,7 +136,7 @@ def test_head_resolves_at_mint(tmp_path, monkeypatch) -> None:
     assert open_row.code_ref == resolved
 
 
-def test_literal_head_row_unsettled_at_reconcile(tmp_path, monkeypatch) -> None:
+def test_literal_head_row_terminal_fails_at_reconcile(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
     db = tmp_path / "root-ledger.sqlite"
     from charter_runner_store.db import open_ledger_db
@@ -164,8 +164,9 @@ def test_literal_head_row_unsettled_at_reconcile(tmp_path, monkeypatch) -> None:
 
     report = reconcile_all_open_rows(lambda _s: {"code_version": "anything"})
     assert report["before_open"] == 1
-    assert report["after_open"] == 1
-    assert report["unsettled"] == 1
+    assert report["after_open"] == 0
+    assert report["failed"] == 1
+    assert report["unsettled"] == 0
     assert "HEAD" in report["results"][0].detail
 
 
@@ -645,3 +646,140 @@ def test_served_artifact_proper_shape_passes_evaluable_gate(
 
     result = settle_open_row(row, default_probe, defer_if_unreachable=True)
     assert "unevaluable" not in result.detail.lower()
+
+
+def test_literal_head_terminal_fail_omits_recovered_code_ref(
+    tmp_path, monkeypatch
+) -> None:
+    import json
+
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    db = tmp_path / "root-ledger.sqlite"
+    from charter_runner_store.db import open_ledger_db
+
+    conn = open_ledger_db(db)
+    conn.execute(
+        """
+        INSERT INTO propagation_ledger (
+          row_id, service, action, code_ref, safe_window, proof, proof_class,
+          status, age_in_harvests, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', 0, 1.0, 1.0)
+        """,
+        (
+            "mcp:HEAD:sync_restart",
+            "mcp",
+            "sync_restart",
+            "HEAD",
+            "drain_required",
+            "probe",
+            "process_live",
+        ),
+    )
+    conn.commit()
+    conn.close()
+    row = list_open_rows()[0]
+    calls: list[str] = []
+
+    def _track_recover(stored: str) -> None:
+        calls.append(stored)
+        return None
+
+    monkeypatch.setattr(
+        "charter_runner_store.propagation_code_ref_mint.try_recover_code_ref",
+        _track_recover,
+    )
+    result = settle_open_row(
+        row, lambda _s: {"code_version": "x"}, defer_if_unreachable=True
+    )
+
+    assert result.outcome == "failed"
+    assert calls == []
+    stored = open_ledger_db(db).execute(
+        "SELECT status, proof_payload FROM propagation_ledger WHERE row_id=?",
+        (row.row_id,),
+    ).fetchone()
+    payload = json.loads(stored["proof_payload"])
+    assert stored["status"] == "failed"
+    assert "recovered_code_ref" not in payload
+
+
+def test_literal_head_cannot_satisfied_close(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    db = tmp_path / "root-ledger.sqlite"
+    from charter_runner_store.db import open_ledger_db
+
+    conn = open_ledger_db(db)
+    conn.execute(
+        """
+        INSERT INTO propagation_ledger (
+          row_id, service, action, code_ref, safe_window, proof, proof_class,
+          status, age_in_harvests, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', 0, 1.0, 1.0)
+        """,
+        (
+            "mcp:HEAD:sync_restart",
+            "mcp",
+            "sync_restart",
+            " head ",
+            "drain_required",
+            "probe",
+            "process_live",
+        ),
+    )
+    conn.commit()
+    conn.close()
+    row = list_open_rows()[0]
+    sha = "abc1230000000000000000000000000000000000"
+
+    result = settle_open_row(
+        row, lambda _s: {"code_version": sha}, defer_if_unreachable=True
+    )
+    assert result.outcome == "failed"
+    assert result.outcome != "closed"
+    assert list_open_rows() == []
+
+
+def test_cross_service_settle_does_not_touch_other_service_rows(
+    tmp_path, monkeypatch
+) -> None:
+    from charter_runner_store.db import open_ledger_db
+
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    sha = "abc1230000000000000000000000000000000000"
+    db = open_ledger_db()
+    try:
+        for service in ("mcp", "stargate"):
+            db.execute(
+                """
+                INSERT INTO propagation_ledger (
+                  row_id, service, action, code_ref, safe_window, proof, proof_class,
+                  status, age_in_harvests, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', 0, 1.0, 1.0)
+                """,
+                (
+                    f"{service}:{sha}:sync_restart",
+                    service,
+                    "sync_restart",
+                    sha,
+                    "drain_required",
+                    "probe",
+                    "process_live",
+                ),
+            )
+        db.commit()
+    finally:
+        db.close()
+
+    def probe(service: str) -> dict[str, str]:
+        return {"code_version": sha}
+
+    results = settle_open_rows_for_service(
+        "mcp", probe, settle_not_before_monotonic=time.monotonic()
+    )
+    assert len(results) == 1
+    assert results[0].service == "mcp"
+    assert results[0].outcome == "closed"
+    open_rows = list_open_rows()
+    assert len(open_rows) == 1
+    assert open_rows[0].service == "stargate"
+

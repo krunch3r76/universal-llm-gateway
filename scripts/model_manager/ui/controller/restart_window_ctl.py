@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -10,6 +12,7 @@ from scripts.model_manager.observation_event import (
     emit_manage_restart_window_opened,
 )
 
+from .propagation_settle_hook import invoke_propagation_settle_for_service
 from .restart_window_store import (
     DEFAULT_FLEET_TTL_S,
     DEFAULT_SERVICE_TTL_S,
@@ -127,12 +130,24 @@ async def lifecycle_with_restart_window(
 ) -> str:
     """Open a window immediately before the first stop, clear after lifecycle."""
     await open_service_window(store, service, reason=f"manage {action}")
+    clear_reason = "lifecycle failed"
     try:
-        return await lifecycle()
-    finally:
-        await clear_service_windows(
-            store, service, reason="lifecycle completed"
+        result = await lifecycle()
+        clear_reason = "lifecycle completed"
+        await invoke_propagation_settle_for_service(
+            service,
+            settle_not_before_monotonic=time.monotonic(),
+            source="lifecycle_wrapper",
         )
+        return result
+    except asyncio.CancelledError:
+        clear_reason = "lifecycle cancelled"
+        raise
+    except Exception:
+        clear_reason = "lifecycle failed"
+        raise
+    finally:
+        await clear_service_windows(store, service, reason=clear_reason)
 
 
 def restart_window_annotation(

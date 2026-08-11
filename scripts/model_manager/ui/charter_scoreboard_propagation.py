@@ -18,8 +18,29 @@ from typing import Any
 
 _OPEN_ROWS_HEADING = "## Open propagation obligations"
 _NEXT_SECTION = re.compile(r"^##\s+", re.MULTILINE)
+_NO_CONSUMER_NOTE = "no_unprompted_settle_consumer"
 # Prior heading kept so patch_scoreboard can replace legacy sections in place.
 _LEGACY_OPEN_ROWS_HEADING = "## Open propagation rows"
+
+
+def unprompted_settle_consumer_services(*, fleet_attached: bool = False) -> frozenset[str]:
+    """Services with an unprompted post-restart settle hook (GIW drain + lifecycle wrapper)."""
+    from scripts.model_manager.ui.api_dispatch import VALID_SERVICES
+    from scripts.model_manager.ui.controller.restart_window_store import (
+        FLEET_WINDOW_SERVICES,
+    )
+
+    consumers = set(VALID_SERVICES)
+    if fleet_attached:
+        consumers.update(FLEET_WINDOW_SERVICES)
+    return frozenset(consumers)
+
+
+def service_has_unprompted_settle_consumer(
+    service: str, *, fleet_attached: bool = False
+) -> bool:
+    """True when *service* has GIW drain and/or lifecycle-wrapper settle coverage."""
+    return service in unprompted_settle_consumer_services(fleet_attached=fleet_attached)
 
 
 def render_open_propagation_table(rows: list[dict[str, Any]]) -> str:
@@ -57,6 +78,13 @@ def render_open_propagation_table(rows: list[dict[str, Any]]) -> str:
             defer = row.get("defer_reason")
             if defer:
                 minted = f"{minted}; defer={defer}" if minted else f"defer={defer}"
+            service = str(row.get("service", ""))
+            if not service_has_unprompted_settle_consumer(service):
+                minted = (
+                    f"{minted}; {_NO_CONSUMER_NOTE}"
+                    if minted
+                    else _NO_CONSUMER_NOTE
+                )
             lines.append(
                 "| {service} | sync_restart | {code_ref} | {safe_window} | {age} | {proof_class} | {minted} |".format(
                     service=row.get("service", ""),
@@ -98,5 +126,7 @@ def write_scoreboard_open_rows(path: Path, rows: list[dict[str, Any]]) -> None:
 __all__ = [
     "patch_scoreboard_open_rows",
     "render_open_propagation_table",
+    "service_has_unprompted_settle_consumer",
+    "unprompted_settle_consumer_services",
     "write_scoreboard_open_rows",
 ]

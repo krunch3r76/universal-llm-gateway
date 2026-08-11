@@ -35,6 +35,7 @@ ProbeFn = Callable[[str], dict[str, Any] | None]
 Outcome = Literal["closed", "failed", "deferred", "unsettled", "skipped"]
 
 _UNCHECKABLE_HEAD = "code_ref is literal HEAD — permanently uncheckable"
+_REASON_LITERAL_HEAD = "literal_head_uncheckable"
 _OUTGOING_DEFER = "proof_pending_outgoing_generation"
 _UNATTRIBUTED_CONTRADICTION = "proof_contradicted_generation_unverified"
 _INDETERMINATE_PROBE = "proof_indeterminate_probe_unreadable"
@@ -166,11 +167,17 @@ def settle_open_row(
         )
     row = _fresh_projection(row)
     if _is_literal_head(row.code_ref):
+        fail_payload = {"expected_code_ref": row.code_ref}
+        fail_row(
+            row.row_id,
+            proof_payload=fail_payload,
+            reason=_REASON_LITERAL_HEAD,
+        )
         return SettleResult(
             row_id=row.row_id,
             service=row.service,
             code_ref=row.code_ref,
-            outcome="unsettled",
+            outcome="failed",
             detail=_UNCHECKABLE_HEAD,
         )
 

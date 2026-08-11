@@ -40,13 +40,15 @@ def try_terminalize_unsatisfiable(
     """Fail or defer unresolvable/unrelated cases; None if not applicable."""
     relation = satisfaction.relation
     if satisfaction.case == "unresolvable":
-        recovered = try_recover_code_ref(row.code_ref)
-        if recovered is None:
-            for field in (row.reason, row.hazard, row.proof):
-                if field:
-                    recovered = try_recover_code_ref(str(field))
-                    if recovered is not None:
-                        break
+        recovered: str | None = None
+        if str(row.code_ref or "").strip().upper() != "HEAD":
+            recovered = try_recover_code_ref(row.code_ref)
+            if recovered is None:
+                for field in (row.reason, row.hazard, row.proof):
+                    if field:
+                        recovered = try_recover_code_ref(str(field))
+                        if recovered is not None:
+                            break
         fail_payload = {
             **payload,
             "expected_code_ref": row.code_ref,

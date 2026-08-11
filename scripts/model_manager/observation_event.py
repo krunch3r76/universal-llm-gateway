@@ -390,6 +390,23 @@ async def emit_manage_restart_window_cleared(
     )
 
 
+async def emit_manage_propagation_settle_looked_empty(
+    *,
+    service: str,
+    settle_not_before_monotonic: float,
+    source: str,
+) -> None:
+    """Settle ran after restart completion but no open rows matched the service."""
+    await _emit(
+        "manage.propagation.settle.looked_empty",
+        {
+            "service": service,
+            "settle_not_before_monotonic": settle_not_before_monotonic,
+            "source": source,
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # Manage-owned digest tick loop (todo:digest-manage-tick-loop)
 # ---------------------------------------------------------------------------

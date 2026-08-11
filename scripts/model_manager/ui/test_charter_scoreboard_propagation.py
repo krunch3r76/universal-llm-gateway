@@ -5,6 +5,7 @@ from __future__ import annotations
 from scripts.model_manager.ui.charter_scoreboard_propagation import (
     patch_scoreboard_open_rows,
     render_open_propagation_table,
+    service_has_unprompted_settle_consumer,
 )
 
 
@@ -56,3 +57,38 @@ def test_render_labels_obligations_not_liveness():
     assert "not current liveness" in table
     assert "no obligation attempt recorded" in table
     assert "absence ≠ unserved" in table
+
+
+def test_known_service_has_unprompted_consumer():
+    assert service_has_unprompted_settle_consumer("mcp") is True
+
+
+def test_no_consumer_service_gets_scoreboard_annotation():
+    table = render_open_propagation_table(
+        [
+            {
+                "service": "orphan_service",
+                "code_ref": "abc123",
+                "safe_window": "drain_required",
+                "age_in_harvests": 1,
+                "proof_class": "process_live",
+            }
+        ]
+    )
+    assert "no_unprompted_settle_consumer" in table
+    assert "orphan_service" in table
+
+
+def test_consumer_service_ordinary_rendering_without_annotation():
+    table = render_open_propagation_table(
+        [
+            {
+                "service": "git_integration_worker",
+                "code_ref": "abc123",
+                "safe_window": "drain_required",
+                "age_in_harvests": 1,
+                "proof_class": "process_live",
+            }
+        ]
+    )
+    assert "no_unprompted_settle_consumer" not in table
