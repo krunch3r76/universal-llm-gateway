@@ -30,6 +30,7 @@ _PLUGIN_CENSUS = ("SKILLS_CENSUS.txt", "RULES_ULG_CENSUS.txt")
 
 _SERVICE_SLUGS = {
     "services/agent-bus/": "agent_bus",
+    "libs/cortex_store/": "cortex_api",
     "services/cortex-api/": "cortex_api",
     "services/event-service/": "event_service",
     "services/git_integration_worker/": "git_integration_worker",

@@ -27,7 +27,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
         owned_libs=frozenset({"agent_bus_store", "agent_seat", "cdp_ask", "claude_bundles", "cortex_store", "cursor_capabilities", "gen_rules", "implement_admission", "llm_adapters", "markdown_fence", "markdown_sections", "markdown_xml_blocks", "model_capabilities", "model_id", "ocr_core", "predicate_form", "role_lint", "sse", "stargate_chat", "transport_utils", "universal_event_bus", "universal_logging"}),
     ),
     "cortex_api": ServiceOwnership(
-        path_prefix="services/cortex-api/",
+        path_prefix="libs/cortex_store/",
         owned_libs=frozenset({"agent_bus_store", "agent_seat", "cdp_ask", "claude_bundles", "cortex_store", "cursor_capabilities", "gen_rules", "implement_admission", "llm_adapters", "markdown_fence", "markdown_sections", "markdown_xml_blocks", "model_capabilities", "model_id", "ocr_core", "predicate_form", "role_lint", "sse", "stargate_chat", "transport_utils", "universal_event_bus", "universal_logging"}),
     ),
     "event_service": ServiceOwnership(
