@@ -16,12 +16,7 @@ from systems.frontier_consult.story_wire import (
     safe_emit_observation,
 )
 
-from services.git_integration_worker.cursor_auto.terminal_reason_codec import (
-    TERMINAL_REASON_CLOSEOUT_RELAY_FAILED,
-    TERMINAL_REASON_CONFER_RELAY_FAILED,
-    deliberate_failure_terminal_reason,
-    relay_failure_terminal_reason,
-)
+from services.git_integration_worker.config import load_config
 from services.git_integration_worker.cursor_auto.caller_auditable import (
     caller_auditable,
 )
@@ -79,10 +74,15 @@ from services.git_integration_worker.cursor_auto.reflex_read import ReflexOutcom
 from services.git_integration_worker.cursor_auto.substrate_feedback import (
     maybe_post_substrate_feedback,
 )
+from services.git_integration_worker.cursor_auto.terminal_reason_codec import (
+    TERMINAL_REASON_CLOSEOUT_RELAY_FAILED,
+    TERMINAL_REASON_CONFER_RELAY_FAILED,
+    deliberate_failure_terminal_reason,
+    relay_failure_terminal_reason,
+)
 from services.git_integration_worker.cursor_auto.work_journal import (
     append_journal_entry,
 )
-from services.git_integration_worker.config import load_config
 from services.git_integration_worker.cursor_bus import CursorBusClient
 from services.git_integration_worker.cursor_sdk_deliverables import (
     sidecar_workspaces_ref,

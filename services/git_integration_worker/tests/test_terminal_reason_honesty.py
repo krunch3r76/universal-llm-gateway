@@ -7,8 +7,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from implement_admission.propagation_row import PropagationRow
+
 from services.git_integration_worker.cursor_auto.handler_propagation import (
     execution_for_manage_deferred,
 )
@@ -240,7 +240,9 @@ def test_failed_job_observer_state_never_null_terminal_reason() -> None:
 @pytest.mark.asyncio
 async def test_worker_loop_persists_name_error_terminal_reason() -> None:
     from services.git_integration_worker.cursor_auto import auto_worker_loop as mod
-    from services.git_integration_worker.cursor_auto.liveness import AutoLivenessRegistry
+    from services.git_integration_worker.cursor_auto.liveness import (
+        AutoLivenessRegistry,
+    )
 
     registry = AutoLivenessRegistry()
     app = SimpleNamespace(
