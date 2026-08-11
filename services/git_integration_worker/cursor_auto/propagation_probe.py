@@ -11,7 +11,7 @@ import os
 import subprocess
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from deploy_identity.code_ref_relation import code_ref_satisfied
@@ -220,42 +220,128 @@ def _code_version(payload: dict[str, Any]) -> str | None:
     return observed if isinstance(observed, str) else None
 
 
+IdentityAttestation = Literal["changed", "unchanged", "indeterminate"]
+
+IDENTIFIER_FIELDS: tuple[str, ...] = ("pid", "process_start_time", "source_synced_at")
+AGE_FIELDS: tuple[str, ...] = ("process_age_s", "uptime_s")
+
+
+def _normalize_identifier_value(field: str, value: Any) -> Any | None:
+    """Return a comparable identifier value, or None when the field is absent."""
+    if value is None:
+        return None
+    if field == "pid":
+        return value
+    if field in ("process_start_time", "source_synced_at"):
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return None
+    return None
+
+
+def _attesting_identifier_fields(
+    before: dict[str, Any],
+    after: dict[str, Any],
+    *,
+    service: str | None = None,
+) -> list[str]:
+    """Identifier-class fields present on both probes and usable for attestation."""
+    shared: list[str] = []
+    for field in IDENTIFIER_FIELDS:
+        if (
+            _normalize_identifier_value(field, before.get(field)) is not None
+            and _normalize_identifier_value(field, after.get(field)) is not None
+        ):
+            shared.append(field)
+    if service == "mcp" and "pid" in shared:
+        if before.get("pid") == 1 and after.get("pid") == 1:
+            shared = [field for field in shared if field != "pid"]
+    return shared
+
+
+def attest_identity_delta(
+    before: dict[str, Any],
+    after: dict[str, Any],
+    *,
+    service: str | None = None,
+) -> IdentityAttestation:
+    """Compare all shared identifier-class fields; age counters never attest identity."""
+    fields = _attesting_identifier_fields(before, after, service=service)
+    if not fields:
+        return "indeterminate"
+    for field in fields:
+        before_val = _normalize_identifier_value(field, before.get(field))
+        after_val = _normalize_identifier_value(field, after.get(field))
+        if before_val != after_val:
+            return "changed"
+    return "unchanged"
+
+
 def process_identity(payload: dict[str, Any]) -> str | None:
-    """Return a comparable process-identity key from a health/liveness payload."""
+    """Return a comparable identifier-class key from health/liveness JSON, excluding age."""
     pid = payload.get("pid")
     if pid is not None:
         return f"pid:{pid}"
     start = payload.get("process_start_time")
     if isinstance(start, str) and start.strip():
         return f"start:{start.strip()}"
-    age = payload.get("process_age_s")
-    if isinstance(age, (int, float)):
-        return f"age:{float(age):.6f}"
-    uptime = payload.get("uptime_s")
-    if isinstance(uptime, (int, float)):
-        return f"uptime:{float(uptime):.6f}"
+    synced = payload.get("source_synced_at")
+    if isinstance(synced, str) and synced.strip():
+        return f"synced:{synced.strip()}"
     return None
 
 
-def strong_process_identity(payload: dict[str, Any]) -> bool:
-    """True when identity binds a specific OS process, not uptime alone."""
-    if payload.get("pid") is not None:
-        return True
-    start = payload.get("process_start_time")
-    if isinstance(start, str) and start.strip():
-        return True
-    return isinstance(payload.get("process_age_s"), (int, float))
-
-
-def _process_live_identity_delta(
-    before: dict[str, Any],
-    after: dict[str, Any],
+def strong_process_identity(
+    payload: dict[str, Any],
+    *,
+    service: str | None = None,
 ) -> bool:
-    before_id = process_identity(before)
-    after_id = process_identity(after)
-    if before_id is None or after_id is None:
-        return False
-    return before_id != after_id
+    """True when payload carries an attesting identifier-class field (not age alone).
+
+    ``mcp`` ``pid == 1`` is container-invariant and does not bind process identity.
+    """
+    for field in IDENTIFIER_FIELDS:
+        value = _normalize_identifier_value(field, payload.get(field))
+        if value is None:
+            continue
+        if service == "mcp" and field == "pid" and value == 1:
+            continue
+        return True
+    return False
+
+
+def _mcp_health_section(
+    payload: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    section = payload.get("mcp_health")
+    if isinstance(section, dict):
+        return section
+    if any(key in payload for key in (*IDENTIFIER_FIELDS, "code_version")):
+        return payload
+    return None
+
+
+def proof_identity_attestation(
+    before: dict[str, Any] | None,
+    after: dict[str, Any],
+    *,
+    service: str,
+    surface: str = "default",
+) -> IdentityAttestation:
+    """Attest identity movement for one proof surface using identifier-class fields only."""
+    if before is None:
+        return "indeterminate"
+    if surface == "mcp_health":
+        before_section = _mcp_health_section(before)
+        after_section = _mcp_health_section(after)
+        if before_section is None or after_section is None:
+            return "indeterminate"
+        return attest_identity_delta(
+            before_section, after_section, service=service
+        )
+    return attest_identity_delta(before, after, service=service)
 
 
 def _probe_is_outgoing_generation(
@@ -327,30 +413,45 @@ def proof_observed(
         cortex_health = payload.get("cortex_api")
         if not isinstance(mcp_health, dict) or not isinstance(cortex_health, dict):
             return False
-        return _section_code_ref_satisfied(
-            mcp_health, row.code_ref
-        ) and _section_code_ref_satisfied(cortex_health, row.code_ref)
+        if not (
+            _section_code_ref_satisfied(mcp_health, row.code_ref)
+            and _section_code_ref_satisfied(cortex_health, row.code_ref)
+        ):
+            return False
+        attestation = proof_identity_attestation(
+            before,
+            payload,
+            service=row.service,
+            surface="mcp_health",
+        )
+        return attestation == "changed"
     observed = _code_version(payload)
     if not isinstance(observed, str) or not code_ref_satisfied(row.code_ref, observed):
         return False
     if before is not None:
-        return _process_live_identity_delta(before, payload)
+        attestation = attest_identity_delta(before, payload, service=row.service)
+        return attestation == "changed"
     if settle_not_before_monotonic is not None:
         if _probe_is_outgoing_generation(
             payload, settle_not_before_monotonic=settle_not_before_monotonic
         ):
             return False
-        return strong_process_identity(payload)
+        return strong_process_identity(payload, service=row.service)
     return False
 
 
 __all__ = [
+    "AGE_FIELDS",
+    "IDENTIFIER_FIELDS",
+    "IdentityAttestation",
     "PROCESS_LIVE_FETCHERS",
+    "attest_identity_delta",
     "giw_i2_clear",
     "probe_for_row",
     "probe_process_live",
     "process_identity",
     "process_live_probeable_services",
+    "proof_identity_attestation",
     "proof_observed",
     "row_key",
     "strong_process_identity",

@@ -7,7 +7,9 @@ from unittest.mock import patch
 from implement_admission.propagation_row import PropagationRow
 
 from services.git_integration_worker.cursor_auto.propagation_probe import (
+    attest_identity_delta,
     process_identity,
+    proof_identity_attestation,
     proof_observed,
     strong_process_identity,
 )
@@ -35,6 +37,58 @@ def _row(
 
 def test_process_identity_prefers_pid() -> None:
     assert process_identity({"pid": 42, "process_age_s": 1.0}) == "pid:42"
+
+
+def test_process_identity_ignores_age_counters() -> None:
+    assert process_identity({"process_age_s": 1.0, "uptime_s": 2.0}) is None
+
+
+def test_attest_identity_delta_age_only_indeterminate() -> None:
+    before = {"process_age_s": 1.0, "uptime_s": 10.0}
+    after = {"process_age_s": 5.0, "uptime_s": 20.0}
+    assert attest_identity_delta(before, after) == "indeterminate"
+
+
+def test_attest_identity_delta_pid_equal_start_changed() -> None:
+    before = {"pid": 100, "process_start_time": "t1"}
+    after = {"pid": 100, "process_start_time": "t2"}
+    assert attest_identity_delta(before, after) == "changed"
+
+
+def test_attest_identity_delta_all_identifiers_equal() -> None:
+    before = {"pid": 100, "process_start_time": "t1"}
+    after = {"pid": 100, "process_start_time": "t1"}
+    assert attest_identity_delta(before, after) == "unchanged"
+
+
+def test_attest_identity_delta_mcp_pid_one_alone_indeterminate() -> None:
+    before = {"pid": 1}
+    after = {"pid": 1}
+    assert attest_identity_delta(before, after, service="mcp") == "indeterminate"
+
+
+def test_attest_identity_delta_mcp_source_synced_at_changed() -> None:
+    before = {"pid": 1, "source_synced_at": "2026-08-11T00:00:00Z"}
+    after = {"pid": 1, "source_synced_at": "2026-08-11T01:00:00Z"}
+    assert attest_identity_delta(before, after, service="mcp") == "changed"
+
+
+def test_strong_process_identity_mcp_pid_one_alone_is_not_strong() -> None:
+    assert not strong_process_identity({"pid": 1}, service="mcp")
+    assert strong_process_identity(
+        {"pid": 1, "source_synced_at": "2026-08-11T00:00:00Z"},
+        service="mcp",
+    )
+
+
+def test_strong_process_identity_age_alone_is_not_strong() -> None:
+    """Age counters must never bind strong identity on any service path."""
+    assert not strong_process_identity({"process_age_s": 12.0})
+    assert not strong_process_identity({"uptime_s": 12.0})
+    assert not strong_process_identity(
+        {"process_age_s": 12.0, "uptime_s": 12.0},
+        service="git_integration_worker",
+    )
 
 
 def test_ac17p_proof_observed_reaches_deployment_identity_emit() -> None:
@@ -164,14 +218,16 @@ def test_ac_d3_drain_propagation_uptime_only_cannot_bind_process_identity() -> N
     import time
     from unittest.mock import patch
 
-    from services.git_integration_worker.cursor_auto.liveness import AutoLivenessRegistry
+    from services.git_integration_worker.cursor_auto.liveness import (
+        AutoLivenessRegistry,
+    )
 
     row = _row("git_integration_worker", _SHA_A, proof_class="process_live")
     settle_not_before = time.monotonic() - 30.0
 
     pre_fix_liveness = {"code_version": _SHA_A, "uptime_s": 2.0}
     assert pre_fix_liveness.get("pid") is None
-    assert process_identity(pre_fix_liveness) == "uptime:2.000000"
+    assert process_identity(pre_fix_liveness) is None
     assert not strong_process_identity(pre_fix_liveness)
     assert not proof_observed(
         row,
@@ -211,11 +267,66 @@ def test_proof_observed_post_restart_boundary_rejects_outgoing_generation() -> N
 
 def test_client_visible_mcp_requires_both_surfaces() -> None:
     row = _row("mcp", _SHA_A, proof_class="client_visible")
-    both_match = {
-        "mcp_health": {"code_version": _SHA_A},
+    both_match_no_before = {
+        "mcp_health": {"code_version": _SHA_A, "pid": 1, "source_synced_at": "t1"},
         "cortex_api": {"code_version": _SHA_A},
     }
-    assert proof_observed(row, both_match) is True
+    assert proof_observed(row, both_match_no_before) is False
+    assert (
+        proof_identity_attestation(
+            None,
+            both_match_no_before,
+            service="mcp",
+            surface="mcp_health",
+        )
+        == "indeterminate"
+    )
+
+    both_match_no_identity_movement = {
+        "mcp_health": {"code_version": _SHA_A, "pid": 1, "source_synced_at": "t1"},
+        "cortex_api": {"code_version": _SHA_A},
+    }
+    before = {
+        "mcp_health": {"code_version": _SHA_OLD, "pid": 1, "source_synced_at": "t1"},
+        "cortex_api": {"code_version": _SHA_OLD},
+    }
+    assert proof_observed(row, both_match_no_identity_movement, before=before) is False
+    assert (
+        proof_identity_attestation(
+            before,
+            both_match_no_identity_movement,
+            service="mcp",
+            surface="mcp_health",
+        )
+        == "unchanged"
+    )
+
+    both_match_identity_changed = {
+        "mcp_health": {
+            "code_version": _SHA_A,
+            "pid": 1,
+            "source_synced_at": "2026-08-11T01:00:00Z",
+        },
+        "cortex_api": {"code_version": _SHA_A},
+    }
+    before_changed = {
+        "mcp_health": {
+            "code_version": _SHA_OLD,
+            "pid": 1,
+            "source_synced_at": "2026-08-11T00:00:00Z",
+        },
+        "cortex_api": {"code_version": _SHA_OLD},
+    }
+    assert proof_observed(row, both_match_identity_changed, before=before_changed) is True
+    assert (
+        proof_identity_attestation(
+            before_changed,
+            both_match_identity_changed,
+            service="mcp",
+            surface="mcp_health",
+        )
+        == "changed"
+    )
 
 
 def test_client_visible_mcp_instance2_replay_mcp_only_match() -> None:
