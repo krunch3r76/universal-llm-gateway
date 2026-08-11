@@ -86,6 +86,87 @@ def commits_between(
     ]
 
 
+def enumerate_tip_window_commits(
+    source_repo: Path,
+    *,
+    admit_head: str | None,
+    closeout_head: str | None,
+) -> list[tuple[str, str]]:
+    """Commit ``(sha, author_email)`` pairs in ``admit_head..closeout_head`` (oldest first).
+
+    Single subprocess for dual-meter stamping — failure collapses to ``[]`` once (S10a).
+    """
+    if not admit_head or not closeout_head or admit_head == closeout_head:
+        return []
+    try:
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(source_repo),
+                "log",
+                f"{admit_head}..{closeout_head}",
+                "--reverse",
+                "--format=%H%x00%ae",
+            ],
+            capture_output=True,
+            check=True,
+            timeout=10,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return []
+    rows: list[tuple[str, str]] = []
+    for line in proc.stdout.splitlines():
+        if not line:
+            continue
+        parts = line.split(b"\x00", 1)
+        if len(parts) != 2:
+            continue
+        sha = parts[0].decode("utf-8", errors="replace").strip()
+        email = parts[1].decode("utf-8", errors="replace").strip()
+        if sha:
+            rows.append((sha, email))
+    return rows
+
+
+def partition_tip_window_meters(
+    rows: list[tuple[str, str]],
+    *,
+    dispatch_id: str,
+) -> tuple[list[str], list[str]]:
+    """Split tip-window *rows* into authored vs unfiltered SHA lists."""
+    from services.git_integration_worker.cursor_home import dispatch_git_identity
+
+    _name, dispatch_email = dispatch_git_identity(dispatch_id)
+    unfiltered = [sha for sha, _ in rows]
+    authored = [sha for sha, author_email in rows if author_email == dispatch_email]
+    return authored, unfiltered
+
+
+def tip_window_meter_counts(
+    source_repo: Path,
+    *,
+    dispatch_id: str,
+    admit_head: str | None,
+    closeout_head: str | None,
+) -> tuple[int, int] | None:
+    """Authored and unfiltered commit counts from one tip-window enumeration.
+
+    Returns ``None`` when either head is missing. When heads resolve, returns
+    ``(authored_count, unfiltered_count)`` — including ``(0, 0)`` for an empty
+    range or a single subprocess failure (S10a co-collapse).
+    """
+    if not admit_head or not closeout_head:
+        return None
+    rows = enumerate_tip_window_commits(
+        source_repo,
+        admit_head=admit_head,
+        closeout_head=closeout_head,
+    )
+    authored, unfiltered = partition_tip_window_meters(rows, dispatch_id=dispatch_id)
+    return len(authored), len(unfiltered)
+
+
 def paths_in_commit(source_repo: Path, sha: str) -> frozenset[str]:
     """Paths touched by a single commit (diff-tree name-only)."""
     try:

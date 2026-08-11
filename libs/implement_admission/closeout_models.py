@@ -188,9 +188,10 @@ class ImplementCloseout(BaseModel):
     # Row-16 lane label + isolation gauge — stamped at admit on all write lanes.
     lane: Literal["A", "B"] | None = None
     isolation_materialized: bool | None = None
-    # Lane-B worktree closeout fields (S3) — optional; Lane-A omits below.
+    # Lane-B worktree closeout fields (S3) — optional; Lane-A/non-B may omit branch keys.
     branch: str | None = None
     branch_point: str | None = None
     head_sha: str | None = None
     commits_ahead: int | None = None
+    commits_ahead_unfiltered: int | None = None
     landed: bool | None = None

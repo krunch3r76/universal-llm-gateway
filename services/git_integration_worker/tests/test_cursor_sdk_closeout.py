@@ -386,7 +386,12 @@ def test_lane_a_capture_commits_ahead_absent_without_admit_head(
 
 
 def test_lane_a_capture_commits_ahead_after_commit(tmp_path: Path) -> None:
-    """AC3: Lane-A tip advance after real admit_head → commits_ahead>=1."""
+    """AC3: Lane-A tip advance after real admit_head → authored commits_ahead>=1."""
+    import os
+
+    from services.git_integration_worker.cursor_home import dispatch_git_identity
+
+    dispatch_id = "lane-a-commits-ahead"
     admit = _init_git_repo_with_commit(tmp_path)
     (tmp_path / "lane_a_progress.py").write_text("progress\n", encoding="utf-8")
     subprocess.run(
@@ -394,10 +399,29 @@ def test_lane_a_capture_commits_ahead_after_commit(tmp_path: Path) -> None:
         check=True,
         capture_output=True,
     )
+    name, email = dispatch_git_identity(dispatch_id)
+    env = dict(os.environ)
+    env.update(
+        {
+            "GIT_AUTHOR_NAME": name,
+            "GIT_AUTHOR_EMAIL": email,
+            "GIT_COMMITTER_NAME": name,
+            "GIT_COMMITTER_EMAIL": email,
+        }
+    )
     subprocess.run(
-        ["git", "-C", str(tmp_path), "commit", "-m", "lane-a progress"],
+        [
+            "git",
+            "-C",
+            str(tmp_path),
+            "commit",
+            "-m",
+            "lane-a progress",
+            f"--author={name} <{email}>",
+        ],
         check=True,
         capture_output=True,
+        env=env,
     )
     closeout = subprocess.run(
         ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
@@ -413,7 +437,7 @@ def test_lane_a_capture_commits_ahead_after_commit(tmp_path: Path) -> None:
     )
     delivery = prepare_closeout_delivery(
         source_repo=tmp_path,
-        dispatch_id="lane-a-commits-ahead",
+        dispatch_id=dispatch_id,
         outcome=outcome,
         degraded_reason=None,
         thread_id="t1",
@@ -424,6 +448,7 @@ def test_lane_a_capture_commits_ahead_after_commit(tmp_path: Path) -> None:
     payload = json.loads(delivery.body)
     assert payload.get("head_sha") == closeout
     assert payload.get("commits_ahead") >= 1
+    assert payload.get("commits_ahead_unfiltered") >= payload.get("commits_ahead")
 
 
 def test_prepare_closeout_delivery_baseline_none_ignores_dirty_tree(

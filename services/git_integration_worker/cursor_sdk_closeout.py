@@ -81,9 +81,9 @@ from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_closeout_relocated,
 )
 from services.git_integration_worker.cursor_sdk_git_head import (
-    commits_between,
     observed_lane_git_refs,
     resolve_git_head,
+    tip_window_meter_counts,
 )
 from services.git_integration_worker.cursor_sdk_manifest import (
     CaptureBranch,
@@ -908,6 +908,7 @@ def build_implement_closeout_body(
     branch_point: str | None = None,
     head_sha: str | None = None,
     commits_ahead: int | None = None,
+    commits_ahead_unfiltered: int | None = None,
     landed: bool | None = None,
     isolation_materialized: bool | None = None,
 ) -> str:
@@ -1116,6 +1117,10 @@ def build_implement_closeout_body(
             # Schema model_dump may emit null; absence must travel as a missing
             # key so the plane classifier does not see a present measurement.
             payload.pop("commits_ahead", None)
+        if commits_ahead_unfiltered is not None:
+            payload["commits_ahead_unfiltered"] = commits_ahead_unfiltered
+        else:
+            payload.pop("commits_ahead_unfiltered", None)
         if landed is not None:
             payload["landed"] = landed
         effects = attribution_effects_paths(
@@ -1653,6 +1658,8 @@ def _assemble_closeout_delivery(
     # measured 0 (refuse vacuous landed). A missing/unresolvable admit_head must
     # leave the key absent — never launder None into 0 (presence typing travels).
     capture_commits_ahead = lane_b_commits_ahead
+    capture_commits_ahead_unfiltered: int | None = None
+    capture_landed = lane_b_landed
     if capture_commits_ahead is None:
         admit_head: str | None = None
         if isinstance(baseline, dict):
@@ -1660,12 +1667,30 @@ def _assemble_closeout_delivery(
             if isinstance(raw_admit, str) and raw_admit.strip():
                 admit_head = raw_admit.strip()
         if admit_head is not None and closeout_head is not None:
-            capture_commits_ahead = len(
-                commits_between(
-                    write_tree,
-                    admit_head=admit_head,
-                    closeout_head=closeout_head,
-                )
+            meter_pair = tip_window_meter_counts(
+                write_tree,
+                dispatch_id=dispatch_id,
+                admit_head=admit_head,
+                closeout_head=closeout_head,
+            )
+            if meter_pair is not None:
+                capture_commits_ahead, capture_commits_ahead_unfiltered = meter_pair
+        if lane_b_lane != "B" and capture_commits_ahead is not None:
+            from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
+                probe_three_planes,
+            )
+            from services.git_integration_worker.cursor_sdk_deliverables_expected import (
+                admit_landed_true,
+            )
+
+            plane_obs = probe_three_planes(
+                receipt_tree,
+                head_sha=capture_head_sha,
+                branch=lane_b_branch,
+            )
+            capture_landed = admit_landed_true(
+                ancestry_on_master=plane_obs.landed_local_master,
+                commits_ahead=capture_commits_ahead,
             )
     body = build_implement_closeout_body(
         dispatch_id=dispatch_id,
@@ -1705,7 +1730,8 @@ def _assemble_closeout_delivery(
         branch_point=lane_b_branch_point,
         head_sha=capture_head_sha,
         commits_ahead=capture_commits_ahead,
-        landed=lane_b_landed,
+        commits_ahead_unfiltered=capture_commits_ahead_unfiltered,
+        landed=capture_landed,
         isolation_materialized=isolation_mat,
     )
     if sidecar_appendix:
