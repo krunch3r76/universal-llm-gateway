@@ -23,7 +23,7 @@ async def post_terminal_status(
     client: CursorBusClient,
     queue: Any,
     summary: str,
-    disposition: str,
+    disposition: str | None,
     payload: dict[str, Any],
     contract: str,
     terminal_status: str = "status:done",
@@ -35,6 +35,9 @@ async def post_terminal_status(
 
     The subject carries *terminal_status* verbatim, so waiters keyed on a
     completion token see exactly the vocabulary the caller chose.
+
+    *disposition* may be None when path-gated outcome tokens must omit (arc
+    6655); the journal key and return dict then omit ``disposition``.
 
     Claim-register partial guard (row 29): claim-bearing keys in *payload*
     (``fix_hint``, ``claim_register``) are normalized via
@@ -55,6 +58,8 @@ async def post_terminal_status(
         payload = {**payload, "request_id": job.request_id}
     # Partial guard — degrade, do not refuse (Packet A bind).
     payload = normalize_claim_bearing_payload(payload)
+    if disposition is None:
+        payload = {k: v for k, v in payload.items() if k != "disposition"}
     extra: dict[str, Any] = {"summary": summary, "request_id": job.request_id}
     if journal_extra:
         extra.update(journal_extra)
@@ -83,10 +88,11 @@ async def post_terminal_status(
         "ok": not failed and terminal.status_code < 400,
         "phase": "terminal",
         "terminal_status": terminal_status,
-        "disposition": disposition,
         "status_code": terminal.status_code,
         "summary": summary,
     }
+    if disposition is not None:
+        out["disposition"] = disposition
     # Surface join keys for hop-cadence succession (payload-only was invisible).
     for key in ("execution_id", "satellite_execution_id"):
         if payload.get(key):
@@ -122,9 +128,19 @@ async def terminal_in_seat(
     substantive content the terminal declines with a routing hint instead of
     reporting a success-shaped no-op (``status:done`` stays the completion
     token so waiters still resolve, but the disposition tells the truth).
+
+    In-seat paths never satisfy nested/CDP M1, so outcome token
+    ``dispatched-and-relayed`` (e.g. seed hint) is omitted from reader fields.
     """
+    from services.git_integration_worker.cursor_auto.disposition_outcome import (
+        outcome_disposition_for_stamp,
+    )
+
     contract = str(contract_info["contract"])
-    disposition = str(contract_info["disposition_hint"])
+    disposition: str | None = outcome_disposition_for_stamp(
+        str(contract_info["disposition_hint"]),
+        m1_satisfied=False,
+    )
     body_text = (answer_body or "").strip()
     declined = contract == "answer" and not body_text
     if declined:
@@ -140,7 +156,6 @@ async def terminal_in_seat(
         )
     payload: dict[str, Any] = {
         "summary": summary,
-        "disposition": disposition,
         "disposition_hint": contract_info["disposition_hint"],
         "requested_model": model["requested"],
         "actual_model": model["resolved_model_id"],
@@ -149,6 +164,8 @@ async def terminal_in_seat(
         "gate_plan": gate_plan,
         "request_turn": job.turn_number,
     }
+    if disposition is not None:
+        payload["disposition"] = disposition
     if declined:
         payload["declined_reason"] = ANSWER_DECLINED_REASON
         payload["routing_hint"] = ANSWER_ROUTING_HINT

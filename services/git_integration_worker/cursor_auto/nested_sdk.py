@@ -287,6 +287,7 @@ async def post_operator_confer(
         f"status: {status}",
         f"dispatch_id: {dispatch_id}",
         f"model: {model_id}",
+        "model_plane: admit-resolved",
         f"request_turn: {job.turn_number}",
         "",
         payload,
@@ -369,6 +370,7 @@ async def post_operator_closeout(
         [
             f"dispatch_id: {dispatch_id}",
             f"model: {model_id}",
+            "model_plane: admit-resolved",
             f"request_turn: {job.turn_number}",
         ]
     )

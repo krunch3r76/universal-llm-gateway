@@ -244,8 +244,8 @@ async def process_job(
     base_admit_body = (
         "Auto admitted lane:cursor-auto request.\n"
         f"requested_model={model['requested']} "
-        f"resolved={model['resolved_model_id']}\n"
-        f"model_honored={model['honored']}\n"
+        f"resolved={model['resolved_model_id']} (admit-plane)\n"
+        f"model_honored={model['honored']} (admit-plane pin result)\n"
         f"requested_effort={effort['requested']} "
         f"resolved={effort['resolved_effort']}\n"
         f"requested_escalation={escalation['requested'] or '(none)'} "
@@ -358,20 +358,33 @@ async def process_job(
                     ),
                     extra=commissioned,
                 )
+            from services.git_integration_worker.cursor_auto.disposition_outcome import (
+                m1_cdp_commission,
+                outcome_disposition_for_stamp,
+            )
+
+            cdp_execution_id = commissioned.get("execution_id")
+            cdp_disposition = outcome_disposition_for_stamp(
+                "dispatched-and-relayed",
+                m1_satisfied=m1_cdp_commission(execution_id=cdp_execution_id),
+            )
+            cdp_payload: dict[str, Any] = {
+                "summary": f"CDP escalation commissioned model={cdp_model}",
+                "reason": "cdp_escalation_commissioned",
+                "escalation_model": cdp_model,
+                "execution_id": cdp_execution_id,
+            }
+            if cdp_disposition is not None:
+                cdp_payload["disposition"] = cdp_disposition
             return await post_terminal_status(
                 job,
                 client=client,
                 queue=queue,
                 summary=f"CDP escalation commissioned model={cdp_model}",
-                disposition="dispatched-and-relayed",
+                disposition=cdp_disposition,
                 contract=contract,
                 terminal_status="status:done",
-                payload={
-                    "summary": f"CDP escalation commissioned model={cdp_model}",
-                    "reason": "cdp_escalation_commissioned",
-                    "escalation_model": cdp_model,
-                    "execution_id": commissioned.get("execution_id"),
-                },
+                payload=cdp_payload,
             )
         return await terminal_in_seat(
             job,

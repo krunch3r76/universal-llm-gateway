@@ -53,6 +53,7 @@ _PRESERVED_HEADER_PREFIXES = (
     "status:",
     "dispatch_id:",
     "model:",
+    "model_plane:",
     "request_turn:",
     "meta:",
 )

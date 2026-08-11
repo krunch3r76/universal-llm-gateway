@@ -200,27 +200,39 @@ async def complete_continuity_hop(
             },
         )
         return terminal
+    from services.git_integration_worker.cursor_auto.disposition_outcome import (
+        m1_cdp_commission,
+        outcome_disposition_for_stamp,
+    )
+
     execution_id = commissioned.get("execution_id")
+    hop_disposition = outcome_disposition_for_stamp(
+        "dispatched-and-relayed",
+        m1_satisfied=m1_cdp_commission(execution_id=execution_id),
+    )
+    hop_payload: dict[str, Any] = {
+        "summary": f"continuity hop CDP commissioned model={model}",
+        "reason": "continuity_hop_cdp_commissioned",
+        "continuity_hop": True,
+        "matched_token": job.continuity_matched_token,
+        "harvest_residual": residual,
+        "execution_id": execution_id,
+        "incumbent_job_id": incumbent.job_id if incumbent else None,
+        "incumbent_dispatch_id": dispatch_id,
+        "deferred_job_id": deferred_job_id,
+        "deferred_leg_enqueued": deferred_job_id is not None,
+    }
+    if hop_disposition is not None:
+        hop_payload["disposition"] = hop_disposition
     terminal = await post_terminal_status(
         job,
         client=bus,
         queue=queue,
         summary=f"continuity hop CDP commissioned model={model}",
-        disposition="dispatched-and-relayed",
+        disposition=hop_disposition,
         contract=job.contract,
         terminal_status="status:done",
-        payload={
-            "summary": f"continuity hop CDP commissioned model={model}",
-            "reason": "continuity_hop_cdp_commissioned",
-            "continuity_hop": True,
-            "matched_token": job.continuity_matched_token,
-            "harvest_residual": residual,
-            "execution_id": execution_id,
-            "incumbent_job_id": incumbent.job_id if incumbent else None,
-            "incumbent_dispatch_id": dispatch_id,
-            "deferred_job_id": deferred_job_id,
-            "deferred_leg_enqueued": deferred_job_id is not None,
-        },
+        payload=hop_payload,
     )
     if execution_id and not terminal.get("execution_id"):
         terminal = {**terminal, "execution_id": execution_id}

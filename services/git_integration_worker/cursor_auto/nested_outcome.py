@@ -437,12 +437,23 @@ async def relay_closeout_outcome(
         wake = {"ok": False, "skipped": True, "reason": "closeout_not_ok"}
         delivery = {"ok": False, "skipped": True, "reason": "closeout_not_ok"}
     failed = not relay.get("ok") or terminal_status == "failed"
+    from services.git_integration_worker.cursor_auto.disposition_outcome import (
+        m1_nested_relay,
+        outcome_disposition_for_stamp,
+    )
+
     append_journal_entry(
         thread_id=job.thread_id,
         dispatch_id=dispatch_id,
         contract=job.contract,
         terminal_status=_journal_terminal_status(payload_status=payload.status, failed=failed),
-        disposition=str(contract_info["disposition_hint"]),
+        disposition=outcome_disposition_for_stamp(
+            str(contract_info["disposition_hint"]),
+            m1_satisfied=m1_nested_relay(
+                dispatch_id=dispatch_id,
+                relay_ok=bool(relay.get("ok")),
+            ),
+        ),
         extra={
             "closeout_source": payload.source,
             "closeout_status": payload.status,
