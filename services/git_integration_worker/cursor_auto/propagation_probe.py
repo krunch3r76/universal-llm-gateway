@@ -280,14 +280,32 @@ def attest_identity_delta(
 AuthorityAttestationResult = IdentityAttestation | Literal["fall_through"]
 
 
+def _authority_identity_binds_row(
+    authority: dict[str, Any],
+    *,
+    service: str,
+    intent_id: str | None = None,
+) -> bool:
+    """True when *authority* describes the row under attestation (AC14 / L5)."""
+    auth_service = authority.get("service")
+    if auth_service is None or auth_service != service:
+        return False
+    auth_intent = authority.get("intent_id")
+    if intent_id is not None and auth_intent is not None and auth_intent != intent_id:
+        return False
+    return True
+
+
 def attest_authority_identity(
     authority: dict[str, Any] | None,
 ) -> AuthorityAttestationResult:
     """Attest identity from manage authority observation when readiness is proven.
 
     Returns ``fall_through`` when authority cannot bind (missing readiness, partial
-    old/new, or cross-source mismatch) so the self-report arm may still attest.
-    AC9 unchanged is terminal — callers must not fall through on that verdict.
+    old/new after normalize, or cross-source mismatch) so the self-report arm may
+    still attest. AC9 unchanged is terminal — callers must not fall through on that
+    verdict. AC12 requires ``readiness_proven is True``; AC13 normalizes before
+    comparing old/new.
     """
     from scripts.model_manager.ui.controller.service_ctl.authority_identity import (
         normalize_authority_value,
@@ -295,7 +313,7 @@ def attest_authority_identity(
 
     if not authority:
         return "fall_through"
-    if not authority.get("readiness_proven"):
+    if authority.get("readiness_proven") is not True:
         return "fall_through"
 
     old_src = authority.get("old_identity_source") or authority.get("identity_source")
@@ -303,18 +321,13 @@ def attest_authority_identity(
     if old_src != new_src:
         return "fall_through"
 
-    old = authority.get("old")
-    new = authority.get("new")
-    if old is None or new is None:
+    norm_old = normalize_authority_value(authority.get("old"))
+    norm_new = normalize_authority_value(authority.get("new"))
+    if norm_old is None or norm_new is None:
         return "fall_through"
-
-    norm_old = normalize_authority_value(old)
-    norm_new = normalize_authority_value(new)
     if norm_old == norm_new:
         return "unchanged"
-    if norm_old != norm_new:
-        return "changed"
-    return "fall_through"
+    return "changed"
 
 
 def resolve_identity_attestation(
@@ -324,11 +337,20 @@ def resolve_identity_attestation(
     service: str,
     authority_identity: dict[str, Any] | None = None,
     surface: str = "default",
+    intent_id: str | None = None,
 ) -> IdentityAttestation:
     """Combine authority-primary and self-report identity attestation (Option C)."""
     if before is None:
         return "indeterminate"
-    authority_result = attest_authority_identity(authority_identity)
+    bound_authority = authority_identity
+    if (
+        authority_identity is not None
+        and not _authority_identity_binds_row(
+            authority_identity, service=service, intent_id=intent_id
+        )
+    ):
+        bound_authority = None
+    authority_result = attest_authority_identity(bound_authority)
     if authority_result == "changed":
         return "changed"
     if authority_result == "unchanged":
@@ -419,6 +441,7 @@ def proof_identity_attestation(
     service: str,
     surface: str = "default",
     authority_identity: dict[str, Any] | None = None,
+    intent_id: str | None = None,
 ) -> IdentityAttestation:
     """Attest identity movement for one proof surface using identifier-class fields only."""
     return resolve_identity_attestation(
@@ -427,6 +450,7 @@ def proof_identity_attestation(
         service=service,
         authority_identity=authority_identity,
         surface=surface,
+        intent_id=intent_id,
     )
 
 
@@ -456,6 +480,7 @@ def proof_observed(
     settle_not_before_monotonic: float | None = None,
     probed_surface: str | None = None,
     authority_identity: dict[str, Any] | None = None,
+    intent_id: str | None = None,
 ) -> bool:
     """Return whether *payload* closes the row's proof_class obligation.
 
@@ -505,6 +530,7 @@ def proof_observed(
             service=row.service,
             surface="liveness",
             authority_identity=authority_identity,
+            intent_id=intent_id,
         )
         return attestation == "changed"
     if row.proof_class == "client_visible" and row.service == "mcp":
@@ -523,6 +549,7 @@ def proof_observed(
             service=row.service,
             surface="mcp_health",
             authority_identity=authority_identity,
+            intent_id=intent_id,
         )
         return attestation == "changed"
     observed = _code_version(payload)
@@ -534,6 +561,7 @@ def proof_observed(
             payload,
             service=row.service,
             authority_identity=authority_identity,
+            intent_id=intent_id,
         )
         return attestation == "changed"
     if settle_not_before_monotonic is not None:

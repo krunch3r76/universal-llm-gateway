@@ -1,6 +1,6 @@
 """Falsifier tests for authority-primary propagation identity attestation (Option C).
 
-These tests encode AC4 and AC9–AC11: attestation must not widen what counts as
+These tests encode AC4 and AC9–AC14: attestation must not widen what counts as
 proof — indeterminate-rate dashboards are not quality gates; these falsifiers are.
 """
 
@@ -166,4 +166,169 @@ def test_ac11_cross_source_identity_never_authority_changed() -> None:
     assert (
         proof_observed(row, after, before=before, authority_identity=authority)
         is False
+    )
+
+
+def test_ac12_readiness_proven_requires_exact_true() -> None:
+    """AC12 / L2: only ``readiness_proven is True`` proceeds; other values fall through."""
+    base = {
+        "service": "stargate",
+        "old": 100,
+        "new": 200,
+        "identity_source": "manage_host_pid",
+    }
+    assert attest_authority_identity({**base, "readiness_proven": True}) == "changed"
+    assert attest_authority_identity({**base, "readiness_proven": False}) == "fall_through"
+    assert attest_authority_identity({**base, "readiness_proven": "yes"}) == "fall_through"
+    assert attest_authority_identity({**base, "readiness_proven": 1}) == "fall_through"
+    assert attest_authority_identity({**base, "readiness_proven": ["x"]}) == "fall_through"
+    assert attest_authority_identity({**base}) == "fall_through"
+
+
+def test_ac13_normalize_first_blank_never_authority_changed() -> None:
+    """AC13 / L3: blank or whitespace old/new normalize to None and never ``changed``."""
+    base = {
+        "service": "stargate",
+        "new": 200,
+        "identity_source": "manage_host_pid",
+        "readiness_proven": True,
+    }
+    for old in ("", "   ", None):
+        authority = {**base, "old": old}
+        assert attest_authority_identity(authority) == "fall_through", f"old={old!r}"
+
+
+def test_ac13_normalize_first_both_blank_fall_through_not_unchanged() -> None:
+    """AC13 / L3: both sides blank normalize to None ⇒ fall_through, not unchanged."""
+    authority = {
+        "service": "stargate",
+        "old": "",
+        "new": "   ",
+        "identity_source": "manage_host_pid",
+        "readiness_proven": True,
+    }
+    assert attest_authority_identity(authority) == "fall_through"
+
+
+def test_ac13_normalize_first_equal_non_blank_unchanged() -> None:
+    """AC13 / L3: both normalize to same non-None value ⇒ unchanged (AC9 path)."""
+    authority = {
+        "service": "stargate",
+        "old": "100",
+        "new": 100,
+        "identity_source": "manage_host_pid",
+        "readiness_proven": True,
+    }
+    assert attest_authority_identity(authority) == "unchanged"
+
+
+def test_ac13_normalize_first_differing_non_blank_changed() -> None:
+    """AC13 / L3: both normalize non-None and differ ⇒ changed."""
+    authority = {
+        "service": "stargate",
+        "old": 100,
+        "new": 200,
+        "identity_source": "manage_host_pid",
+        "readiness_proven": True,
+    }
+    assert attest_authority_identity(authority) == "changed"
+
+
+def test_ac14_authority_service_must_match_row() -> None:
+    """AC14 / L5: authority service must equal row service or attestation falls through."""
+    authority = {
+        "service": "mcp",
+        "old": 100,
+        "new": 200,
+        "identity_source": "manage_host_pid",
+        "readiness_proven": True,
+    }
+    before = {"code_version": _SHA}
+    after = {"code_version": _SHA}
+    row = _process_live_row(service="stargate")
+    assert (
+        proof_observed(row, after, before=before, authority_identity=authority)
+        is False
+    )
+    assert (
+        resolve_identity_attestation(
+            before,
+            after,
+            service="stargate",
+            authority_identity=authority,
+        )
+        == "indeterminate"
+    )
+
+
+def test_ac14_authority_without_service_falls_through() -> None:
+    """AC14 / L5: authority record without service cannot bind a row."""
+    authority = {
+        "old": 100,
+        "new": 200,
+        "identity_source": "manage_host_pid",
+        "readiness_proven": True,
+    }
+    before = {"code_version": _SHA}
+    after = {"code_version": _SHA}
+    row = _process_live_row()
+    assert attest_authority_identity(authority) == "changed"
+    assert (
+        proof_observed(row, after, before=before, authority_identity=authority)
+        is False
+    )
+
+
+def test_ac14_intent_id_mismatch_falls_through_when_both_present() -> None:
+    """AC14 / L5: mismatched intent_id falls through when both sides carry one."""
+    authority = {
+        "service": "stargate",
+        "old": 100,
+        "new": 200,
+        "identity_source": "manage_host_pid",
+        "readiness_proven": True,
+        "intent_id": "intent-a",
+    }
+    before = {"code_version": _SHA}
+    after = {"code_version": _SHA}
+    row = _process_live_row()
+    assert (
+        proof_observed(
+            row,
+            after,
+            before=before,
+            authority_identity=authority,
+            intent_id="intent-b",
+        )
+        is False
+    )
+
+
+def test_ac14_intent_id_not_blocked_when_either_side_absent() -> None:
+    """AC14 / L5: intent_id mismatch is not checked when either side lacks intent_id."""
+    authority = {
+        "service": "stargate",
+        "old": 100,
+        "new": 200,
+        "identity_source": "manage_host_pid",
+        "readiness_proven": True,
+        "intent_id": "intent-a",
+    }
+    before = {"code_version": _SHA}
+    after = {"code_version": _SHA}
+    row = _process_live_row()
+    assert (
+        proof_observed(row, after, before=before, authority_identity=authority)
+        is True
+    )
+    authority_no_intent = {k: v for k, v in authority.items() if k != "intent_id"}
+    assert (
+        proof_observed(
+            row,
+            after,
+            before=before,
+            authority_identity=authority_no_intent,
+            intent_id="intent-b",
+        )
+        is True
     )
