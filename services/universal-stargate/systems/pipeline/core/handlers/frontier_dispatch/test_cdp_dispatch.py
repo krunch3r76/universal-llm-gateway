@@ -8,13 +8,6 @@ from typing import Any
 import pytest
 from claude_bundles.cdp_model_endpoint import CdpGenerateResult
 
-from systems.pipeline.core.handlers.frontier_dispatch.cdp_dispatch import (
-    build_cdp_step_output,
-    compose_cdp_prompt_text,
-    is_cdp_dispatch_model,
-    parse_cdp_harvest_options,
-    run_cdp_dispatch,
-)
 from systems.pipeline.core.handlers.frontier_dispatch import (
     FrontierDispatchHandler,
 )
@@ -23,6 +16,13 @@ from systems.pipeline.core.handlers.frontier_dispatch import (
 )
 from systems.pipeline.core.handlers.frontier_dispatch import (
     native_loop as fd_native_mod,
+)
+from systems.pipeline.core.handlers.frontier_dispatch.cdp_dispatch import (
+    build_cdp_step_output,
+    compose_cdp_prompt_text,
+    is_cdp_dispatch_model,
+    parse_cdp_harvest_options,
+    run_cdp_dispatch,
 )
 
 

@@ -65,8 +65,8 @@ def reject_cdp_role_conflict(
     execution_id: str,
 ) -> None:
     """Reject role + ``cdp/`` combinations (role would be dropped on cloud path)."""
-    from systems.frontier_consult.cdp_generate import reject_role_with_substrate_model
     from systems.frontier_consult.admission import FrontierEndpointError
+    from systems.frontier_consult.cdp_generate import reject_role_with_substrate_model
 
     if not role:
         return
