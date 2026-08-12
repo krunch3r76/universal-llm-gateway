@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -1315,6 +1317,326 @@ async def test_dispatch_timeout_posts_failure_and_terminates(
     assert timeout_events[0]["dispatch_id"] == "disp-timeout"
     assert timeout_events[0]["thread_id"] == "1607"
     assert timeout_events[0]["execution_id"] == "exec-timeout"
+    assert timeout_events[0]["since_last_progress_s"] >= 0.02
+    assert timeout_events[0]["tool_call_count"] == 0
+
+
+def _completed_observation() -> object:
+    from services.git_integration_worker.cursor_sdk_stream_capture import (
+        ToolCallObservation,
+    )
+
+    return ToolCallObservation(
+        call_id="c1",
+        tool_name="fs",
+        status="completed",
+        arg_bytes=0,
+        result_bytes=0,
+        truncated_fields=(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_idle_deadline_wait_rearms_on_completed_toolcall() -> None:
+    """AC1: successful tool calls re-arm idle budget past cumulative elapsed."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    clock = {"t": 0.0}
+    now_fn = lambda: clock["t"]
+    idle_budget = 100.0
+    counter = route_mod._LiveToolCallCounter(now_fn=now_fn)
+    worker_future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+
+    async def _worker() -> None:
+        await worker_future
+
+    worker_task = asyncio.create_task(_worker())
+
+    async def _fake_wait(
+        fs: set[asyncio.Task[Any]], *, timeout: float = 0.0
+    ) -> tuple[set[asyncio.Task[Any]], set[asyncio.Task[Any]]]:
+        clock["t"] += timeout
+        if clock["t"] >= 50.0 and counter.value() == 0:
+            counter.bump(_completed_observation())
+        if clock["t"] >= 120.0 and counter.value() == 1:
+            counter.bump(_completed_observation())
+        if clock["t"] >= 190.0 and counter.value() == 2:
+            counter.bump(_completed_observation())
+        if counter.value() >= 3 and not worker_future.done():
+            worker_future.set_result(None)
+        if counter.value() >= 3:
+            return set(fs), set()
+        done = {t for t in fs if t.done()}
+        return done, fs - done
+
+    timed_out = await route_mod._idle_deadline_wait(
+        worker_task,
+        live_counter=counter,
+        idle_budget_s=idle_budget,
+        now_fn=now_fn,
+        wait_fn=_fake_wait,
+    )
+
+    assert timed_out is False
+    assert clock["t"] > idle_budget
+    assert counter.value() == 3
+    await worker_task
+
+
+@pytest.mark.asyncio
+async def test_idle_deadline_wait_fires_without_completed_progress() -> None:
+    """AC2: zero successful tool calls for idle budget triggers timeout."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    clock = {"t": 0.0}
+    now_fn = lambda: clock["t"]
+    idle_budget = 60.0
+    counter = route_mod._LiveToolCallCounter(now_fn=now_fn)
+
+    async def _worker() -> None:
+        await asyncio.Event().wait()
+
+    worker_task = asyncio.create_task(_worker())
+
+    async def _fake_wait(
+        fs: set[asyncio.Task[Any]], *, timeout: float = 0.0
+    ) -> tuple[set[asyncio.Task[Any]], set[asyncio.Task[Any]]]:
+        clock["t"] += timeout
+        done = {t for t in fs if t.done()}
+        return done, fs - done
+
+    timed_out = await route_mod._idle_deadline_wait(
+        worker_task,
+        live_counter=counter,
+        idle_budget_s=idle_budget,
+        now_fn=now_fn,
+        wait_fn=_fake_wait,
+    )
+
+    assert timed_out is True
+    assert counter.since_last_progress_s() >= idle_budget
+    worker_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await worker_task
+
+
+@pytest.mark.asyncio
+async def test_idle_deadline_wait_ignores_non_completed_bumps() -> None:
+    """AC3: error/running toolcall emits do not defer idle timeout."""
+    from services.git_integration_worker.cursor_sdk_stream_capture import (
+        ToolCallObservation,
+    )
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    clock = {"t": 0.0}
+    now_fn = lambda: clock["t"]
+    idle_budget = 60.0
+    counter = route_mod._LiveToolCallCounter(now_fn=now_fn)
+    seeded_at = counter.last_progress_at()
+
+    async def _worker() -> None:
+        await asyncio.Event().wait()
+
+    worker_task = asyncio.create_task(_worker())
+
+    async def _fake_wait(
+        fs: set[asyncio.Task[Any]], *, timeout: float = 0.0
+    ) -> tuple[set[asyncio.Task[Any]], set[asyncio.Task[Any]]]:
+        clock["t"] += timeout
+        if clock["t"] >= 30.0 and counter.value() == 0:
+            counter.bump(
+                ToolCallObservation(
+                    call_id="e1",
+                    tool_name="fs",
+                    status="error",
+                    arg_bytes=0,
+                    result_bytes=0,
+                    truncated_fields=(),
+                )
+            )
+        if clock["t"] >= 45.0 and counter.value() == 1:
+            counter.bump(
+                ToolCallObservation(
+                    call_id="r1",
+                    tool_name="fs",
+                    status="running",
+                    arg_bytes=0,
+                    result_bytes=0,
+                    truncated_fields=(),
+                )
+            )
+        done = {t for t in fs if t.done()}
+        return done, fs - done
+
+    timed_out = await route_mod._idle_deadline_wait(
+        worker_task,
+        live_counter=counter,
+        idle_budget_s=idle_budget,
+        now_fn=now_fn,
+        wait_fn=_fake_wait,
+    )
+
+    assert timed_out is True
+    assert counter.last_progress_at() == seeded_at
+    assert counter.value() == 2
+    worker_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await worker_task
+
+
+def test_heartbeat_elapsed_anchored_to_run_started(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC4: idle deadline reset does not rebase heartbeat elapsed_s origin."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    clock = {"t": 100.0}
+    monkeypatch.setattr(route_mod.time, "monotonic", lambda: clock["t"])
+    progress: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        route_mod,
+        "emit_sdk_worker_progress",
+        lambda **kwargs: progress.append(dict(kwargs)),
+    )
+    monkeypatch.setattr(route_mod, "is_dispatch_orphaned", lambda **_: False)
+    monkeypatch.setattr(route_mod, "_SDK_HEARTBEAT_S", 0.01)
+
+    counter = route_mod._LiveToolCallCounter()
+    hb_thread, hb_stop = route_mod._start_heartbeat(
+        dispatch_id="d-ac4",
+        thread_id="t-ac4",
+        resolved_model="composer-2.5",
+        tool_call_count_fn=counter.value,
+    )
+    try:
+        clock["t"] = 130.0
+        counter.bump(_completed_observation())
+        clock["t"] = 160.0
+        time.sleep(0.05)
+    finally:
+        hb_stop.set()
+        hb_thread.join(timeout=2.0)
+
+    assert progress
+    assert progress[-1]["elapsed_s"] == pytest.approx(60.0, abs=0.5)
+
+
+def test_live_tool_call_counter_success_filter() -> None:
+    """T5: only status==completed advances last_progress_at."""
+    from services.git_integration_worker.cursor_sdk_stream_capture import (
+        ToolCallObservation,
+    )
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    clock = {"t": 0.0}
+    now_fn = lambda: clock["t"]
+    counter = route_mod._LiveToolCallCounter(now_fn=now_fn)
+    seeded = counter.last_progress_at()
+
+    counter.bump(None)
+    assert counter.last_progress_at() == seeded
+    assert counter.value() == 1
+
+    counter.bump(
+        ToolCallObservation(
+            call_id="e1",
+            tool_name="fs",
+            status="error",
+            arg_bytes=0,
+            result_bytes=0,
+            truncated_fields=(),
+        )
+    )
+    assert counter.last_progress_at() == seeded
+
+    clock["t"] = 50.0
+    counter.bump(_completed_observation())
+    assert counter.last_progress_at() == 50.0
+    assert counter.value() == 3
+
+
+@pytest.mark.asyncio
+async def test_dispatch_idle_timeout_payload_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC2 integration: idle timeout emits since_last_progress_s and tool_call_count."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    req = CursorDispatchRequest(
+        thread_id="idle-payload",
+        model="cursor/composer-2.5",
+        dispatch_id="disp-idle-payload",
+        execution_id="exec-idle-payload",
+        message="hello",
+    )
+    bus = _mock_bus()
+    timeout_events: list[dict[str, object]] = []
+    orphan_events: list[dict[str, object]] = []
+
+    clock = {"t": 0.0}
+    now_fn = lambda: clock["t"]
+    monkeypatch.setattr(route_mod, "_SDK_TIMEOUT_S", 60.0)
+    monkeypatch.setattr(route_mod, "_SDK_TIMEOUT_BUFFER_S", 0.0)
+    monkeypatch.setattr(
+        route_mod,
+        "emit_sdk_worker_timeout",
+        lambda **kwargs: timeout_events.append(dict(kwargs)),
+    )
+    monkeypatch.setattr(
+        route_mod,
+        "emit_sdk_worker_orphaned",
+        lambda **kwargs: orphan_events.append(dict(kwargs)),
+    )
+    monkeypatch.setattr(route_mod, "mark_dispatch_orphaned", lambda **_: None)
+    monkeypatch.setattr(
+        route_mod, "abort_orphaned_bridge", lambda **_: False
+    )
+    monkeypatch.setattr(route_mod, "_terminate_link", AsyncMock())
+    monkeypatch.setattr(route_mod, "_mark_terminal_and_promote", AsyncMock())
+
+    original_counter_cls = route_mod._LiveToolCallCounter
+
+    class _ClockCounter(original_counter_cls):
+        def __init__(self, *, now_fn: Callable[[], float] | None = None) -> None:
+            super().__init__(now_fn=now_fn or (lambda: clock["t"]))
+
+    monkeypatch.setattr(route_mod, "_LiveToolCallCounter", _ClockCounter)
+
+    async def _fake_wait(
+        worker_task: asyncio.Task[Any],
+        *,
+        live_counter: route_mod._LiveToolCallCounter,
+        idle_budget_s: float,
+        now_fn: Callable[[], float] | None = None,
+        wait_fn: Any = None,
+    ) -> bool:
+        del now_fn, wait_fn
+        clock["t"] = idle_budget_s + 1.0
+        return True
+
+    monkeypatch.setattr(route_mod, "_idle_deadline_wait", _fake_wait)
+
+    def _slow(**_kwargs: object) -> SdkRunOutcome:
+        import time
+
+        time.sleep(5.0)
+        return _sdk_outcome(body="late", duration_ms=5000, tool_call_count=0)
+
+    monkeypatch.setattr(route_mod, "_run_sdk_sync", _slow)
+
+    await route_mod._run_sdk_dispatch_gated(
+        req=req,
+        source_repo=route_mod._CONFIG.source_repo,
+        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        bus=bus,
+        controller=_make_controller(),
+    )
+
+    assert timeout_events
+    assert timeout_events[0]["since_last_progress_s"] >= 60.0
+    assert timeout_events[0]["tool_call_count"] == 0
+    assert orphan_events
+    assert orphan_events[0]["since_last_progress_s"] >= 60.0
 
 
 @pytest.mark.asyncio

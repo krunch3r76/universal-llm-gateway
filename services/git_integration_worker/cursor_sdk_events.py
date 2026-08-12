@@ -1351,16 +1351,23 @@ def FrontierSdkWorkerTimeout(  # noqa: N802
     execution_id: str,
     resolved_model: str,
     timeout_s: float,
+    since_last_progress_s: float | None = None,
+    tool_call_count: int | None = None,
 ) -> Event:
+    payload: dict[str, Any] = {
+        "dispatch_id": dispatch_id,
+        "thread_id": thread_id,
+        "execution_id": execution_id,
+        "resolved_model": resolved_model,
+        "timeout_s": timeout_s,
+    }
+    if since_last_progress_s is not None:
+        payload["since_last_progress_s"] = since_last_progress_s
+    if tool_call_count is not None:
+        payload["tool_call_count"] = tool_call_count
     return Event(
         signal="frontier.sdk.worker.timeout",
-        payload={
-            "dispatch_id": dispatch_id,
-            "thread_id": thread_id,
-            "execution_id": execution_id,
-            "resolved_model": resolved_model,
-            "timeout_s": timeout_s,
-        },
+        payload=payload,
         scope="node",
     )
 
@@ -1372,8 +1379,10 @@ def emit_sdk_worker_timeout(
     execution_id: str,
     resolved_model: str,
     timeout_s: float,
+    since_last_progress_s: float | None = None,
+    tool_call_count: int | None = None,
 ) -> None:
-    """Publish hard-timeout failure for a cursor-sdk worker that exceeded its budget."""
+    """Publish idle timeout when no successful tool call occurred within budget."""
     _emit(
         FrontierSdkWorkerTimeout(
             dispatch_id=dispatch_id,
@@ -1381,6 +1390,8 @@ def emit_sdk_worker_timeout(
             execution_id=execution_id,
             resolved_model=resolved_model,
             timeout_s=timeout_s,
+            since_last_progress_s=since_last_progress_s,
+            tool_call_count=tool_call_count,
         )
     )
     _register_terminal_emitted(dispatch_id)
@@ -1401,18 +1412,22 @@ def FrontierSdkWorkerOrphaned(  # noqa: N802
     resolved_model: str,
     timeout_s: float,
     bridge_aborted: bool,
+    since_last_progress_s: float | None = None,
 ) -> Event:
+    payload: dict[str, Any] = {
+        "dispatch_id": dispatch_id,
+        "thread_id": thread_id,
+        "execution_id": execution_id,
+        "resolved_model": resolved_model,
+        "timeout_s": timeout_s,
+        "bridge_aborted": bridge_aborted,
+        "terminal_status": "failed",
+    }
+    if since_last_progress_s is not None:
+        payload["since_last_progress_s"] = since_last_progress_s
     return Event(
         signal="frontier.sdk.worker.orphaned",
-        payload={
-            "dispatch_id": dispatch_id,
-            "thread_id": thread_id,
-            "execution_id": execution_id,
-            "resolved_model": resolved_model,
-            "timeout_s": timeout_s,
-            "bridge_aborted": bridge_aborted,
-            "terminal_status": "failed",
-        },
+        payload=payload,
         scope="node",
     )
 
@@ -1425,6 +1440,7 @@ def emit_sdk_worker_orphaned(
     resolved_model: str,
     timeout_s: float,
     bridge_aborted: bool,
+    since_last_progress_s: float | None = None,
 ) -> None:
     """Publish orphaned-worker failure when the bridge exits without a clean closeout."""
     _emit(
@@ -1435,6 +1451,7 @@ def emit_sdk_worker_orphaned(
             resolved_model=resolved_model,
             timeout_s=timeout_s,
             bridge_aborted=bridge_aborted,
+            since_last_progress_s=since_last_progress_s,
         )
     )
     _register_terminal_emitted(dispatch_id)

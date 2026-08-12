@@ -261,6 +261,9 @@ _CONFIG: WorkerConfig = load_config()
 _SDK_BRIDGE_BIN = os.environ.get("CURSOR_SDK_BRIDGE_BIN", "").strip() or None
 _SDK_TIMEOUT_S = float(os.environ.get("CURSOR_SDK_TIMEOUT", "1800"))
 _SDK_TIMEOUT_BUFFER_S = 120.0
+# Bounded slice for the idle-since-progress outer wait loop. Overshoot on
+# timeout fire is at most one slice; ~60 wakeups per 30-min idle window.
+_SDK_IDLE_WAIT_SLICE_S = 30.0
 
 
 def _sdk_client_read_timeout() -> float | None:
@@ -273,15 +276,16 @@ def _sdk_client_read_timeout() -> float | None:
     30s heartbeat keeps reporting progress — heartbeat and read deadline
     are on different clocks.
 
-    Default: outer budget + 60s margin (NOT None). The outer
-    ``asyncio.wait`` watchdog governs every healthy run first, so this
-    deadline never fires on a live dispatch; its sole job is to unblock
-    an orphaned sync worker thread after the async side has already timed
-    out. That unblock matters: the worker thread's ``finally`` is what
-    releases the capacity slot (gate limit=1) and closes the bridge — a
-    truly unbounded read against a wedged-but-connected bridge would hold
-    the slot forever and brick the dispatch lane. Set
-    CURSOR_SDK_CLIENT_READ_TIMEOUT to override (<=0 for unbounded — not
+    Default: outer idle budget + 60s margin (NOT None). The outer
+    idle-since-successful-toolcall watchdog governs every healthy run
+    first, so this deadline never fires on a live dispatch; its sole job
+    is to unblock an orphaned sync worker thread after the async side has
+    already timed out. That unblock matters: the worker thread's
+    ``finally`` is what releases the capacity slot (gate limit=1) and
+    closes the bridge — a truly unbounded read against a wedged-but-
+    connected bridge would hold the slot forever and brick the dispatch
+    lane. Outer idle budget < read idle is preserved by the +60 margin.
+    Set CURSOR_SDK_CLIENT_READ_TIMEOUT to override (<=0 for unbounded — not
     recommended).
     """
     raw = os.environ.get("CURSOR_SDK_CLIENT_READ_TIMEOUT", "").strip()
@@ -292,8 +296,8 @@ def _sdk_client_read_timeout() -> float | None:
 
 
 # Finite everywhere: connect/write/pool keep genuinely-dead bridges failing
-# fast; read sits just above the outer watchdog so it only fires to unblock
-# an orphaned worker thread (see friction 23057 / _sdk_client_read_timeout).
+# fast; read sits just above the outer idle watchdog so it only fires to
+# unblock an orphaned worker thread (see friction 23057 / _sdk_client_read_timeout).
 _SDK_CLIENT_TIMEOUT = httpx.Timeout(
     connect=30.0,
     read=_sdk_client_read_timeout(),
@@ -301,6 +305,13 @@ _SDK_CLIENT_TIMEOUT = httpx.Timeout(
     pool=60.0,
 )
 _SDK_HEARTBEAT_S = float(os.environ.get("CURSOR_SDK_HEARTBEAT", "30"))
+# Default magnitude outer idle budget + 60s — a threshold, not a wall-from-
+# start clock. Stale reap ages on ledger heartbeat liveness
+# (``cursor_sdk_park._heartbeat_stale``: ``last_heartbeat_at`` or else
+# ``started_at``), independent of tool-call idle state. Heartbeats fire
+# every ``_SDK_HEARTBEAT_S`` regardless of successful tool calls, so a
+# healthy long run keeps the lease; outer idle timeout and stale lease
+# remain complementary (bridge-idle vs heartbeat-dead).
 _STALE_LEASE_S = float(
     os.environ.get(
         "CURSOR_STALE_LEASE_S",
@@ -684,18 +695,71 @@ class SdkRunAbortedError(RuntimeError):
 
 
 class _LiveToolCallCounter:
-    """Monotonic tool-call counter shared between stream capture and heartbeat."""
+    """Monotonic tool-call counter shared between stream capture and heartbeat.
 
-    __slots__ = ("_n",)
+    ``_n`` counts every emitted tool-call observation (heartbeat
+    ``tool_call_count``). ``last_progress_at`` advances only on successful
+    terminal ``status == \"completed\"`` observations — the sole idle-clock
+    reset site for the outer watchdog.
+    """
 
-    def __init__(self) -> None:
+    __slots__ = ("_last_progress_at", "_n", "_now_fn")
+
+    def __init__(self, *, now_fn: Callable[[], float] | None = None) -> None:
+        self._now_fn = now_fn or time.monotonic
         self._n = 0
+        self._last_progress_at = self._now_fn()
 
-    def bump(self, _observation: object = None) -> None:
+    def bump(self, observation: object = None) -> None:
         self._n += 1
+        if getattr(observation, "status", None) == "completed":
+            self._last_progress_at = self._now_fn()
 
     def value(self) -> int:
         return self._n
+
+    def last_progress_at(self) -> float:
+        return self._last_progress_at
+
+    def since_last_progress_s(self) -> float:
+        return self._now_fn() - self._last_progress_at
+
+
+async def _idle_deadline_wait(
+    worker_task: asyncio.Task[Any],
+    *,
+    live_counter: _LiveToolCallCounter,
+    idle_budget_s: float,
+    now_fn: Callable[[], float] | None = None,
+    wait_fn: Callable[
+        [set[asyncio.Task[Any]], float],
+        Awaitable[tuple[set[asyncio.Task[Any]], set[asyncio.Task[Any]]]],
+    ]
+    | Callable[
+        ...,
+        Awaitable[tuple[set[asyncio.Task[Any]], set[asyncio.Task[Any]]]],
+    ]
+    | None = None,
+) -> bool:
+    """Wait for ``worker_task`` with an idle-since-progress deadline.
+
+    Returns ``True`` when no successful tool call occurred within
+    ``idle_budget_s`` of ``live_counter.last_progress_at()``. Returns
+    ``False`` when the worker task completes first.
+    """
+    now = now_fn or live_counter._now_fn
+    wait = wait_fn or asyncio.wait
+    while True:
+        if worker_task.done():
+            return False
+        current = now()
+        deadline = live_counter.last_progress_at() + idle_budget_s
+        if current >= deadline:
+            return True
+        slice_s = min(deadline - current, _SDK_IDLE_WAIT_SLICE_S)
+        done, _ = await wait({worker_task}, timeout=slice_s)
+        if done:
+            return False
 
 
 def _start_heartbeat(
@@ -751,6 +815,7 @@ def _run_sdk_sync(
     resolved_model: str,
     execution_id: str | None = None,
     gate_loop: asyncio.AbstractEventLoop,
+    live_counter: _LiveToolCallCounter | None = None,
 ) -> SdkRunOutcome:
     # Pin operator home via passwd — never trust process HOME (may be a leaked
     # dispatch overlay; CURSOR_VENV_CONFIG / agent-bus:6468).
@@ -826,7 +891,8 @@ def _run_sdk_sync(
                     )
                     time.sleep(backoff)
             register_active_client(dispatch_id=dispatch_id, client=client)
-            live_counter = _LiveToolCallCounter()
+            if live_counter is None:
+                live_counter = _LiveToolCallCounter()
             hb_thread, hb_stop = _start_heartbeat(
                 dispatch_id=dispatch_id,
                 thread_id=thread_id,
@@ -1743,6 +1809,7 @@ async def _run_sdk_dispatch_gated(
 
     prompt = _resolve_prompt(req, source_repo)
 
+    live_counter = _LiveToolCallCounter()
     worker_task = controller.create_tracked_task(
         asyncio.to_thread(
             _run_sdk_sync,
@@ -1757,13 +1824,20 @@ async def _run_sdk_dispatch_gated(
             resolved_model=req.model,
             execution_id=req.execution_id,
             gate_loop=gate_loop,
+            live_counter=live_counter,
         ),
         op_id=f"{req.dispatch_id}:worker",
     )
 
-    done, _ = await asyncio.wait({worker_task}, timeout=outer_timeout_s)
+    timed_out = await _idle_deadline_wait(
+        worker_task,
+        live_counter=live_counter,
+        idle_budget_s=outer_timeout_s,
+    )
 
-    if not done:
+    if timed_out:
+        since_last_progress_s = live_counter.since_last_progress_s()
+        tool_call_count = live_counter.value()
         # Do NOT cancel worker_task. The thread is non-cancellable and owns the
         # gate slot until its finally block runs release_sdk_dispatch_slot_sync.
         # Mark orphaned first so heartbeats stop misleading observability, then
@@ -1776,6 +1850,8 @@ async def _run_sdk_dispatch_gated(
             execution_id=req.execution_id,
             resolved_model=req.model,
             timeout_s=outer_timeout_s,
+            since_last_progress_s=since_last_progress_s,
+            tool_call_count=tool_call_count,
         )
         bridge_aborted = await asyncio.to_thread(
             abort_orphaned_bridge,
@@ -1789,6 +1865,7 @@ async def _run_sdk_dispatch_gated(
             resolved_model=req.model,
             timeout_s=outer_timeout_s,
             bridge_aborted=bridge_aborted,
+            since_last_progress_s=since_last_progress_s,
         )
         worker_task.add_done_callback(
             lambda fut: logger.warning(
@@ -1801,7 +1878,10 @@ async def _run_sdk_dispatch_gated(
         )
         env = error_envelope(
             code="CURSOR_SDK_TIMEOUT",
-            message=f"cursor-sdk dispatch exceeded outer timeout ({outer_timeout_s:.0f}s)",
+            message=(
+                f"cursor-sdk dispatch idle timeout: no successful tool call "
+                f"for {since_last_progress_s:.0f}s (budget {outer_timeout_s:.0f}s)"
+            ),
             source="gateway",
         )
         await bus.reply(
