@@ -219,7 +219,7 @@ _FORMER_CHANNEL_ACCOUNTING_SLUGS = (
     "session-close",
     "session-close-audit",
     "web-transcript-preprocessing",
-    "frontier-reasoning-discipline",
+    "reasoning-posture",
     "prose-discipline",
 )
 

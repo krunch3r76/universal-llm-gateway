@@ -185,6 +185,32 @@ complete(turn) ⇐ assistant_body ∧ ¬streaming ∧ ¬Stop ∧ stable_length
 
 `¬ complete(h) ⇒ ¬delete ∧ friction`. Stop detection only in generation/composer roots — sidebar Stop excluded (24873). `error_banner`: banner/toast only, exclude composer (25486); `Overloaded` may linger after completion — structural completion wins (25684). Cowork CSE fallback + detail: L3 `operations-annex.md`.
 
+### Reading the harvest — chrome ≠ delivery (BINDING — operator 2026-08-11)
+
+The scraped CSE body carries claude.ai **UI chrome** alongside assistant prose: artifact
+cards, "Used … integration" banners, and **suggested connector** affordances. The fleet does
+**not** use those connectors — Drive/Docs/etc. are product suggestions the scrape renders, not
+destinations anything wrote to.
+
+```
+connector_name ∈ harvest ⇏ artifact_written(connector)
+artifact_card ∈ harvest ⇏ body ∈ harvest
+```
+
+| Harvest shows | Means | ¬ Means |
+|---|---|---|
+| `<title>` / `Document · MD · Google Drive` under a card | Cowork **artifact** exists in-session; Drive is a *suggested* save target | The seat wrote to Drive; the file is fetchable there |
+| `Used toys integration` / `updated tasks` | Product-surface activity banner | A durable fleet write happened |
+| Card title present, body absent | **Delivery gap** — harvest did not pull the artifact body | The deliverable is lost, or went to a connector |
+
+**Delivery surfaces that count:** bus turn body · `cortex://` write (quote `written_sha256`).
+A Cowork document artifact is **neither** until harvested into one.
+
+`card_without_body ⇒ re-request(blocks inline in reply body ∧ cortex:// write)` — a thin
+follow-up naming the missing blocks, ¬ a rework of the judgment, and ¬ a "do not use
+<connector>" instruction premised on a misread. Packet `<output_format>` SHOULD say *reply
+body + `cortex://`* explicitly so the seat does not answer into an artifact card.
+
 ## Parallel Chrome (BINDING)
 
 **DEFAULT:** `register_lane` / `project-ask --register`. Soft=**2**, hard=**3** concurrent — use `free_slots` / `at_hard_limit` from `effective_count = max(running_count, live_cse_count)`, not `busy` or recorded-only counts alone (a:25814). `--no-register --cdp-url :9222` = attended primary only. Registry + OptGuide + orphan observability: L3 `reference-annex.md`.
@@ -196,7 +222,7 @@ complete(turn) ⇐ assistant_body ∧ ¬streaming ∧ ¬Stop ∧ stable_length
 | **Product (DEFAULT)** — consult / binder / R-admit / judgment_gap / Fable outside-check | `team_dispatch(op=generate, model=cdp/opus-5\|cdp/fable, contract=light-bounded, prompt\|sidecar_ref=…, dispatch_thread_id=…)` → poll `poll_hint` (`agent_bus.wait`). Compose `lean-context-dispatch-first` · `consult-routing`. |
 | **Escape** — satellite-direct / MCP-only / IF6 | `project_ask(op=submit, prompt_uri=cortex://…, converse=true, no_project_uuid=true, model=opus-5\|fable-5)` → poll. Use when `team_dispatch` CDP path is unavailable or caller must bypass Stargate admit. |
 | **Warm follow-up (attached lane)** | `project_ask(op=followup, chat_url=… \| registration_id=… \| execution_id=…, prompt_text=… \| prompt_uri=…, purpose=operator-proxy, timeout_s=60)` — wake/correction/advisory into retained operator-proxy CSE; in-chat ≻ bus NOTE. CLI `cowork_chat_followup.py` = escape. |
-| **Operator-proxy mission** | Prefer `team_dispatch(model=cdp/opus-5, purpose=operator-proxy\|mission, contract=light-bounded, …)` — runner auto-ensures `/cdp-operator-proxy` + `/reasoning-posture` + `/frontier-reasoning-discipline` chips + seat-map briefing (`operator_proxy_mission.py`). `project_ask(purpose=…)` remains escape. Prompt body still carries mission ACs. SOT: `cdp-operator-proxy` inv 20 · `cortex://notes/system/specs/cursor-auto-tick-work-posting.md` |
+| **Operator-proxy mission** | Prefer `team_dispatch(model=cdp/opus-5, purpose=operator-proxy\|mission, contract=light-bounded, …)` — runner auto-ensures `/cdp-operator-proxy` + `/reasoning-posture` chips + seat-map briefing (`operator_proxy_mission.py`). `project_ask(purpose=…)` remains escape. Prompt body still carries mission ACs. SOT: `cdp-operator-proxy` inv 20 · `cortex://notes/system/specs/cursor-auto-tick-work-posting.md` |
 | Operator Chat on `/new` | `chat_compose=true` / `--chat` |
 | Register / list | `list-lanes` / `deregister-lane` |
 

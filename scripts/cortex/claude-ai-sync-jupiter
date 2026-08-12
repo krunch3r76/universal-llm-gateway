@@ -11,7 +11,7 @@
 #   # Context→Skills DOM scrape (session-loaded; never model self-report):
 #   scripts/cortex/claude-ai-sync-jupiter loaded-skills \\
 #     --chat-url 'https://claude.ai/cowork/cse_…' \\
-#     --require-loaded reasoning-posture,frontier-reasoning-discipline
+#     --require-loaded reasoning-posture
 #   scripts/cortex/claude-ai-sync-jupiter upload --slugs my-skill --continue-on-error
 #   scripts/cortex/claude-ai-sync-jupiter upload --slugs my-skill --replace --continue-on-error
 #   scripts/cortex/claude-ai-sync-jupiter upload --all --continue-on-error   # NEW slugs only

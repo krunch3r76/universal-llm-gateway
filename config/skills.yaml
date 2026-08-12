@@ -229,9 +229,6 @@ skills:
   frontier-model-instructions:
     surface_class: cursor_only
     mcp_surface_required: none
-  frontier-reasoning-discipline:
-    surface_class: shared_sync
-    mcp_surface_required: none
   fs:
     surface_class: shared_sync
     mcp_surface_required: life
@@ -400,7 +397,7 @@ skills:
     mcp_surface_required: code
   reasoning-posture:
     surface_class: shared_sync
-    mcp_surface_required: life
+    mcp_surface_required: none
   required-skills-pickup:
     surface_class: shared_sync
     mcp_surface_required: life

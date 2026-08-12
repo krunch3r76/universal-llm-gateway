@@ -281,14 +281,14 @@ Mechanics: `libs/claude_bundles/cowork_skill_delivery.py` + `composer_session_sk
 
 | Packet class | Claude-slug engage | Inline (not Claude slugs) |
 |---|---|---|
-| Light-bounded architect / admit bind | `reasoning-posture` + `frontier-reasoning-discipline` (+ `consult-posture` when consult-shaped) | none — **¬** `path-sim` unless this leg is a path-sim Q/A/R cascade (a:27142) |
+| Light-bounded architect / admit bind | `reasoning-posture` (+ `consult-posture` when consult-shaped) | none — **¬** `path-sim` unless this leg is a path-sim Q/A/R cascade (a:27142) |
 | **`/layer` G1 · Fable/Opus architecture** | optional judgment chips | **`architecture-invariants` + `ulg-architecture`** (fail closed — judgment chips ¬ substitute; lead preflight in `abstraction-layering`) |
-| **ULG service home / placement / extract / hosting BIND** | `reasoning-posture` + `frontier-reasoning-discipline` (+ `consult-posture` when consult-shaped) | **`architecture-invariants` + `ulg-architecture`** — and **inline** `[ulg:host-process]` when process manager / service home is load-bearing (cursor_only → local inject / excerpt) |
+| **ULG service home / placement / extract / hosting BIND** | `reasoning-posture` (+ `consult-posture` when consult-shaped) | **`architecture-invariants` + `ulg-architecture`** — and **inline** `[ulg:host-process]` when process manager / service home is load-bearing (cursor_only → local inject / excerpt) |
 | Modularize / overhaul deep split | optional chip helpers | `architecture-invariants` + `modularize-discipline` (+ `ulg-architecture`) — `/modularize` cascade SOT: `modularize-path` (CDP M-Arch fail-closed inline) |
 | Overhaul §5.6 / `/docstring-enhance` CDP | `evidence-review-discipline`, `no-silent-inference` | short `architecture-invariants` floor |
-| Overhaul step-4 deep code review | `evidence-review-discipline`, `frontier-reasoning-discipline`, `no-silent-inference` | `architecture-invariants` + `ulg-architecture` |
+| Overhaul step-4 deep code review | `evidence-review-discipline`, `reasoning-posture`, `no-silent-inference` | `architecture-invariants` + `ulg-architecture` |
 | `/review-arch-doc` CDP | same three as step-4 | `architecture-invariants` + `ulg-architecture` |
-| Path-sim R-admit | `reasoning-posture` + `frontier-reasoning-discipline` + `consult-posture` | none required by default |
+| Path-sim R-admit | `reasoning-posture` + `consult-posture` | none required by default |
 
 **Hosting load-bearing (BINDING — friction class: poisoned BEFORE-map systemd framing):** when the packet asks where a **service lives**, how it is **extracted**, or which **process manager** owns it, the sealed prompt MUST include a one-line inline of `[ulg:host-process]`: except satellites, host fleet = `./manage` subprocesses; repo `systemd/*.service` ≠ live path. Judgment chips alone do not substitute for the architecture floor on this class (agent-bus:6301).
 

@@ -15,7 +15,7 @@ Core: material lead decisions require steelman plus — on hard triggers — a �
 |---|---|
 | Binder/escalation independence (weight class ∨ family), when to escalate at all | `judgment-escalation-ladder_ulg.mdc` |
 | Skeptic dispatch mechanics, MCP on/off path, `FILE_EVIDENCE_PATHS` footer, recon ladder | `cheap-recon-before-escalation` § Axis 2 |
-| Every-turn steelman / calibration / courage / one-determinate-step | `frontier-reasoning-discipline` |
+| Every-turn steelman / calibration / courage / one-determinate-step | `reasoning-posture` |
 | Posture before transport on an operator consult | `consult-posture` |
 | Transport shapes, roster models, life-vs-code surface gate, writing lane | `consult-routing` · `panel_dispatch` descriptor |
 | Write-side confidence mechanics · anti-agreement response shape | `auditor-validatable-confidence` · `engagement-stance` |
@@ -35,7 +35,7 @@ Gate on structural facts, not self-rated confidence. Low confidence may raise a 
 
 ## 2. Panel discipline
 
-`material(decision) ⇒ steelman(each_live_option)`, including the option you lean against. Steelman craft itself is `frontier-reasoning-discipline`; what binds *here* is that the live-options steelman is lead-authored and non-offloadable (Guard 2) — its absence downgrades the honest stamp to `steelman-only`.
+`material(decision) ⇒ steelman(each_live_option)`, including the option you lean against. Steelman craft itself is `reasoning-posture`; what binds *here* is that the live-options steelman is lead-authored and non-offloadable (Guard 2) — its absence downgrades the honest stamp to `steelman-only`.
 
 `hard_trigger ⇒ ≥2 distinct provider families + lead adjudication`.
 

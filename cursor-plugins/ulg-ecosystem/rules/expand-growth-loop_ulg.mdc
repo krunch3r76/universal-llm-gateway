@@ -62,7 +62,7 @@ Standing priority is ranked by the G4/G5 criteria on `decision:distill-trigger` 
 | **optimal** | `cheap-recon-before-escalation` + recon-default | before-run/reflect; builds verifier evidence that gates escalation |
 | **optimal** | `friction-review` + web code-review practice | post-run reflect; external verifier (raises G5 ceiling) + G4 distill-recurrence feed |
 | **acceptable** | `advisor-timing` | pause-before-bind/done — trigger to consult G4/G5, not a criterion |
-| **acceptable** | `frontier-reasoning-discipline` | self-signal reflect floor; per G5 cannot alone license wide/frontier |
+| **acceptable** | `reasoning-posture` | self-signal reflect floor; per G5 cannot alone license wide/frontier |
 | **acceptable** | `orchestrator-workflow` | expand-execution fan; only when detent≥wide ∧ structural debt |
 
 `claude-ai-cdp-navigation` § Cowork multitask is expand **transport** (fan→join product path) — not a standing blend row; see that skill / `consult-routing`.

@@ -399,7 +399,6 @@ def test_web_loaded_set_unions_orientation_and_opcontext_channels() -> None:
     assert "boot-execution-discipline" in suggested
     assert "operator-posture" not in omitted
     assert "consult-routing" in omitted
-    assert "frontier-reasoning-discipline" in omitted
     assert "reasoning-posture" in omitted
     assert "operator-posture" not in suggested
     assert "consult-routing" not in suggested

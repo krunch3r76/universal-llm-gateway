@@ -66,18 +66,14 @@ _ORIENTATION_BLOCKS_CURSOR: frozenset[str] = frozenset(
 )
 
 # Channel 3 — operational-context sections (``render_operational_context``).
-# frontier-reasoning injects BOTH skills (decision:reasoning-frontier-skill-pair).
 OPCONTEXT_SECTION_SKILL_MAP: dict[str, tuple[str, ...]] = {
-    "frontier-reasoning": (
-        "frontier-reasoning-discipline",
-        "reasoning-posture",
-    ),
+    "reasoning-posture": ("reasoning-posture",),
     "prose-discipline": ("prose-discipline",),
     "team-consultation": ("consult-routing",),
 }
 
 _OPCONTEXT_SUBAGENT_EXCLUDED: frozenset[str] = frozenset(
-    {"frontier-reasoning", "team-consultation"}
+    {"reasoning-posture", "team-consultation"}
 )
 
 

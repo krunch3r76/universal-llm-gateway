@@ -148,7 +148,7 @@ semantics, MCP relay, and workspace-critical patterns.
   editorial findings are in scope. **¬ slash** these. **¬** cite retired
   `cortex://agent-skills/*.md`.
 - **Claude-slug engage** (`/` or `Use the … skill`): `evidence-review-discipline`,
-  `frontier-reasoning-discipline`, `no-silent-inference`.
+  `reasoning-posture`, `no-silent-inference`.
 - **Fail closed** before CDP submit if required inlines are missing.
 
 For `team-generate` dispatch, Claude-slug engage is optional — the protocol's

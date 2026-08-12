@@ -47,9 +47,9 @@ _MAX_PLUS_LABEL_CHARS = 28
 def _slug_matchers(slug: str) -> list[re.Pattern[str]]:
     """Match Customize list labels — exact slug, then spaced/prefixed variants.
 
-    Start-anchored throughout: an unanchored substring match lets
-    ``reasoning-posture`` select the ``frontier-reasoning-discipline`` entry,
-    attaching a skill nobody asked for while the caller records a success.
+    Start-anchored throughout: an unanchored substring match lets one slug select
+    another slug's entry, attaching a skill nobody asked for while the caller
+    records a success.
     """
     raw = slug.strip()
     spaced = raw.replace("-", " ")

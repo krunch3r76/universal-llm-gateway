@@ -26,7 +26,7 @@ Half-implementing a gated todo, or implementing one already done/superseded, is 
 
 ## Companion skills
 
-- `frontier-reasoning-discipline` — verify-don't-assume / self-correction.
+- `reasoning-posture` — verify-don't-assume / self-correction.
 - `entity-lifecycle-discipline` — Todo→Plan thresholds, todo-vs-plan scope, `workflow_state` semantics.
 - `implementation-plan-workflow` — plan deck authoring / `/implement-plan` coordination after threshold trip.
 - `dispatch-workflow` / `consult-routing` — DISPATCH mechanics + gate contract detail.

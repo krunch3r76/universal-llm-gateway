@@ -60,7 +60,9 @@ def test_ensure_idempotent_when_chips_present() -> None:
     assert twice.count("/cdp-operator-proxy") == 1
     assert twice.count("## Mission seat map (BINDING") == 1
     assert twice.count("/reasoning-posture") == 1
-    assert twice.count("/frontier-reasoning-discipline") == 1
+    # Counted in the leading chip block only — the slug also appears in the
+    # seat-map prose below it.
+    assert twice.split("\n\n", 1)[0].count("/completion-provenance-discipline") == 1
     # strip() on re-entry may drop a trailing newline; slash block must stay single.
     assert twice.rstrip("\n") == once.rstrip("\n")
 

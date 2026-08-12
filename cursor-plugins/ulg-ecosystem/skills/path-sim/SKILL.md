@@ -3,14 +3,14 @@ name: path-sim
 description: "On dispatching or running a frontier consult that searches a solution or question space — L0/L1/L2 machinery, aperture detents, scope-lock handshake, conformance checklist."
 lifecycle: active
 trigger_match_terms: ["path-sim", "path_sim", "path simulation", "aperture", "detent", "L0", "L1", "L2", "question space", "solution space", "scope-lock", "frontier consult", "tree of thoughts", "cascade", "effort dialing", "charter-runner", "enroll_charter_runner", "tick enrollment", "hang on tick"]
-related_skills: ["reasoning-posture", "frontier-reasoning-discipline", "consult-routing", "dispatch-workflow", "handoff-packet-authoring", "frontier-model-instructions"]
+related_skills: ["reasoning-posture", "consult-routing", "dispatch-workflow", "handoff-packet-authoring", "frontier-model-instructions"]
 ---
 
 # Path-Sim — frontier solution/question-space search
 
 **v0 provisional** — Stage 1 of `decision:fable-path-sim-remaining-window`; ratify/revise at window close after ≥2 dogfood reps (annex C § Staging). Edits land HERE (SOT); the template annex (`notes/system/templates/fable-path-sim-prompt.md`) and window params on the decision entity regenerate from this — never fork a second body.
 
-Composes with `notes/system/specs/consult-scope-lock-template.md` (scope-lock pins the QUESTION; path-sim opens the SOLUTION SPACE inside it — wide aperture without a pinned question = drift), `reasoning-posture` + `frontier-reasoning-discipline` (paired scope + epistemic rails; this skill is the consult-shaped extension).
+Composes with `notes/system/specs/consult-scope-lock-template.md` (scope-lock pins the QUESTION; path-sim opens the SOLUTION SPACE inside it — wide aperture without a pinned question = drift), `reasoning-posture` (scope + epistemic rails; this skill is the consult-shaped extension).
 
 **L3 annexes (same directory — open only for the named job).** **Annex A** `dispatch-cascade-annex.md`: orchestrating an arc — commands, phase table, recon, R positions, operator-framed Q, Q-only / Q-cascade, bundled dispatch, Gate-2 densify closeout, R-admit CDP recipe + poll ladder, auto-advance checklist, Stage-B, anti-patterns, todo attrs. **Annex B** `tick-enrollment-annex.md`: charter-tick enrollment CHECKPOINT template, **autonomous** attendance. **Annex C** `substrate-staging-annex.md`: transport tables (per-family / Anthropic / xAI), VISION-ALIGN corpus + note rule, docstring AC, delivery lanes, staging, grounding.
 

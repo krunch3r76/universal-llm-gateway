@@ -47,7 +47,7 @@ second opinion, hand off reasoning, **or hand off a bound implementation**.
  `consult-routing.md` before a dispatch is a protocol violation — the same
  severity as skipping the packet protocol reads.
 2. Complete the **mandatory preflight** (consult AND implement handoffs):
-   1. **Resident rails (always):** Use the `reasoning-posture` skill **and** Use the `frontier-reasoning-discipline` skill — pin Question/OOS/detent before merits; then steelman / calibrate / courage; `thinking_off ⇏ waive`.
+   1. **Resident rails (always):** Use the `reasoning-posture` skill — pin Question/OOS/detent before merits; then steelman / calibrate / courage; `thinking_off ⇏ waive`.
    2. **Operator consult token ⇒ posture before transport:** Use the `consult-posture` skill (annex URI on non-resident seats) — classify, declare detent/cascade/scope-lock BEFORE transport or packet (defers general rails to `reasoning-posture`).
    3. Use the `consult-routing` skill (canonical slug — seat self-fetches; ¬ fs-read skill body) — transport + authority map
    4. `fs(workspaces, .cursor/rules/architecture-handoff-protocol.mdc)` — md_read § The Six Required Blocks (rule artifact — read)
@@ -204,10 +204,9 @@ bouncing between two incompatible approaches.
   while retaining control.
 - **Plan mode**: advisor timing checkpoint 1 is a micro-version of Plan mode.
   Switch to full Plan mode when the decision is large enough to warrant it.
-- **Reasoning posture** (skill `reasoning-posture`) **paired with**
-  **frontier-reasoning-discipline**: resident *Question/OOS/detent* rails +
-  epistemic quality — thinking-off does not waive; referenced by consult-posture.
-  Inject sites MUST pair both (`decision:reasoning-frontier-skill-pair`).
+- **Reasoning posture** (skill `reasoning-posture`): resident *Question/OOS/detent*
+  rails + epistemic quality — thinking-off does not waive; referenced by
+  consult-posture.
 - **Consult posture** (skill `consult-posture`): governs *extended-capability
   posture* — classify, detent, cascade, scope-lock BEFORE transport once
   checkpoint 0 fires (defers general rails to `reasoning-posture`).

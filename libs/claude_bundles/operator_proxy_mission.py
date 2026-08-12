@@ -31,7 +31,6 @@ OPERATOR_PROXY_MISSION_PURPOSES: frozenset[str] = frozenset(
 MISSION_SKILL_SLUGS: tuple[str, ...] = (
     "cdp-operator-proxy",
     "reasoning-posture",
-    "frontier-reasoning-discipline",
     # Member 6: status/rank/liveness register at mission-close authoring.
     "completion-provenance-discipline",
 )

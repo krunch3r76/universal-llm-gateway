@@ -69,8 +69,7 @@ Do **not** treat `consult me` / `consult the operator` as exempt without operato
 
 | Concern | Defers to | Non-resident fallback |
 |---|---|---|
-| Resident Question/OOS/detent/cascade rails (thinking-off non-waiver) | `agent_skill:reasoning-posture` | alwaysApply stub `reasoning-posture_ulg` |
-| Epistemic quality (steelman / calibration / courage) — **paired** with reasoning-posture | `agent_skill:frontier-reasoning-discipline` | cortex_brief opcontext block |
+| Resident Question/OOS/detent/cascade rails (thinking-off non-waiver) + epistemic quality (steelman / calibration / courage) | `agent_skill:reasoning-posture` | alwaysApply stub `reasoning-posture_ulg`; cortex_brief opcontext block |
 | Path-sim machinery · detents · header grammar · checklist · per-family window params | `agent_skill:path-sim` | `cortex://notes/system/templates/fable-path-sim-prompt.md` |
 | Seat/transport/densify/implement_ready | `consult-routing` | `agent_bus` ask code lead |
 | Anthropic-web substrate + attest | `claude-ai-cdp-navigation` | — (Cursor-lane concern) |
@@ -81,7 +80,6 @@ Do **not** treat `consult me` / `consult the operator` as exempt without operato
 ## Related skills
 
 - reasoning-posture
-- frontier-reasoning-discipline
 - path-sim
 - consult-routing
 - advisor-timing

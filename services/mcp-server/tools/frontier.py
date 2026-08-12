@@ -519,10 +519,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           (``shared_sync``) are prepended as leading ``/<slug>\\n`` manifest
           lines (not typed); the satellite attaches each via composer
           **+ → Skills → pick**. Non-Claude skills are inlined at the top of
-          the sealed prompt. Staging always merges ``reasoning-posture`` +
-          ``frontier-reasoning-discipline`` into effective skills (including
-          when ``skills`` is omitted on light-bounded —
-          ``decision:reasoning-frontier-skill-pair``).
+          the sealed prompt. Staging always merges ``reasoning-posture`` into
+          effective skills (including when ``skills`` is omitted on
+          light-bounded — ``decision:reasoning-frontier-skill-pair``).
           MCP-predicated skills on a non-MCP dispatch reject 422
           ``skills_mcp_predicated`` naming the offenders; scope-default
           predicated skills are skipped with an event, never rejected.

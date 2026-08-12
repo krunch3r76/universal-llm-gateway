@@ -122,13 +122,13 @@ def test_stage_inputs_prepends_claude_slash_skills(tmp_path, monkeypatch) -> Non
     )
     text = prompt_path.read_text(encoding="utf-8")
     assert text.startswith(
-        "/frontier-reasoning-discipline\n/reasoning-posture\n/consult-posture\n"
+        "/reasoning-posture\n/consult-posture\n"
     )
     assert "## ask" in text
     assert staged.staged is True
 
 
-def test_stage_inputs_omitted_skills_gets_judgment_pair(tmp_path, monkeypatch) -> None:
+def test_stage_inputs_omitted_skills_gets_judgment_skill(tmp_path, monkeypatch) -> None:
     from claude_bundles import cdp_model_endpoint_staging as staging
 
     from systems.frontier_consult.cdp_generate import _stage_inputs
@@ -146,7 +146,7 @@ def test_stage_inputs_omitted_skills_gets_judgment_pair(tmp_path, monkeypatch) -
     )
     text = prompt_path.read_text(encoding="utf-8")
     assert text.startswith(
-        "/reasoning-posture\n/frontier-reasoning-discipline\n"
+        "/reasoning-posture\n"
     )
     assert "## light" in text
     assert staged.staged is True
@@ -169,9 +169,9 @@ def test_stage_inputs_inlines_non_claude_skills(tmp_path, monkeypatch) -> None:
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-2/prompt.md"
     )
     text = prompt_path.read_text(encoding="utf-8")
-    # Judgment pair always prepended as slash; caller non-Claude stays inline.
+    # Judgment skill always prepended as slash; caller non-Claude stays inline.
     assert text.startswith(
-        "/reasoning-posture\n/frontier-reasoning-discipline\n"
+        "/reasoning-posture\n"
     )
     assert "<skills_inline>" in text
     assert '<skill slug="investigation-economy"' in text
@@ -217,7 +217,7 @@ def test_stage_inputs_inlines_code_mcp_skills_with_claude_slash(
     )
     text = prompt_path.read_text(encoding="utf-8")
     assert text.startswith(
-        "/frontier-reasoning-discipline\n/reasoning-posture\n"
+        "/reasoning-posture\n"
     )
     assert "/investigation-economy" not in text.split("<skills_inline>", 1)[0]
     assert '<skill slug="investigation-economy"' in text

@@ -25,4 +25,4 @@ apply_tier: required_gate
 - `density_triage == "mechanical"` or `"trivial"` scope
 - Todo already carries a **dense implement spec** with `files_expected` + `acceptance_criteria`
 
-Cross-refs: `friction-review_ws.mdc`, `advisor-timing.mdc`, `reasoning-posture` + `frontier-reasoning-discipline`.
+Cross-refs: `friction-review_ws.mdc`, `advisor-timing.mdc`, `reasoning-posture`.

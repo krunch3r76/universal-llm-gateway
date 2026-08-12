@@ -1,5 +1,5 @@
 ---
-description: Reasoning posture — pin Question before merits, out-of-scope, detent before widening; thinking-off does not waive. Resident baseline for strong reasoning.
+description: Reasoning posture — pin Question before merits, out-of-scope, detent before widening, steelman before critique, calibrated confidence, one determinate step; thinking-off does not waive.
 alwaysApply: true
 rule_category: workflow
 apply_tier: catalog
@@ -10,6 +10,10 @@ trigger_match_terms:
   - detent
   - cascade
   - thinking-off
+  - steelman
+  - calibrated confidence
+  - intellectual courage
+  - one-determinate-step
 ---
 # Reasoning Posture
 
@@ -20,22 +24,23 @@ trigger_match_terms:
 `cascade_live ⇒ greater_explores ∧ lesser_binds` ·
 `consult_live ⇒ posture ≺ transport` · **`thinking_off ⇏ waive`**.
 
-## Pairing (BINDING)
+∀ substantive reasoning turn: steelman before critique · calibrated confidence
+(`fact` / `inference` / `speculation`) · intellectual courage · resist framing
+capture · immediate self-correction · **one determinate step** (bind the bounded
+leg + its verification boundary before any premise-dependent follow-on).
 
-`material_judgment_injection ⇒ pair(reasoning-posture, frontier-reasoning-discipline)` —
-scope rails alone are incomplete. On substantive turns also apply
-**`frontier-reasoning-discipline`** (steelman / calibration /
-courage / framing / one-determinate-step). Carve-out: mechanical executor
-against a dense pre-staged spec (dispatcher owns discipline).
+Carve-out: mechanical executor against a dense pre-staged spec (dispatcher owns
+discipline). Full body — including the one-determinate-step doctrine — is the
+`reasoning-posture` skill.
 
 ## Composition (do not fatten consult-posture)
 
 | Concern | Owner |
 |---|---|
-| These rails | `reasoning-posture` (this) |
-| Epistemic quality (paired) | `frontier-reasoning-discipline` |
+| Scope rails + epistemic quality + one determinate step | `reasoning-posture` (this) |
 | Consult fire grammar | `consult-posture` (trigger-gated) |
 | Pause timing | `advisor-timing` |
 | L0/L1/L2 machinery | `path-sim` |
+| Bind forks / evidence before done | `presence-discipline` |
 
 ¬ copy path-sim tables here. ¬ expand `consult-posture` into the general reasoning guide.

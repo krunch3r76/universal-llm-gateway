@@ -159,8 +159,7 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
         ``team_dispatch(model=cdp/…, purpose=operator-proxy|mission)`` —
         purpose is wired on CDP generate. On this escape tool, set
         ``purpose=operator-proxy`` (or ``mission``) — the cdp-ask runner
-        auto-ensures ``/cdp-operator-proxy`` + ``/reasoning-posture`` +
-        ``/frontier-reasoning-discipline`` chips and the Opus-operator /
+        auto-ensures ``/cdp-operator-proxy`` + ``/reasoning-posture`` chips and the Opus-operator /
         Fable-advisor seat-map briefing
         (``libs/claude_bundles/operator_proxy_mission.py``).
 

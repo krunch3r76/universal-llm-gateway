@@ -70,11 +70,11 @@ def test_web_and_api_orientation_selection_carry_full_doctrine() -> None:
 @pytest.mark.offline
 def test_opcontext_excludes_subagent_sections() -> None:
     keys = opcontext_section_keys_for_agent("subagent", "subagent")
-    assert "frontier-reasoning" not in keys
+    assert "reasoning-posture" not in keys
     assert "team-consultation" not in keys
     assert "prose-discipline" in keys
     slugs = web_opcontext_inject_skill_slugs(None, "subagent", "subagent")
-    assert "frontier-reasoning-discipline" not in slugs
+    assert "reasoning-posture" not in slugs
     assert "prose-discipline" in slugs
 
 
@@ -85,7 +85,7 @@ def test_web_seat_injected_unions_channel_one_live() -> None:
     # (e.g. cortex-orientation) are a separate delivery path, not this union.
     # operator-posture is cursor_only — inline doctrine only, ¬ channel slug.
     assert "operator-posture" not in slugs
-    assert "frontier-reasoning-discipline" in slugs
+    assert "reasoning-posture" in slugs
     assert "consult-routing" in slugs
 
 

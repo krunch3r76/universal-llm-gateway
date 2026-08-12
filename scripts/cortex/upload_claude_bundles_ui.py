@@ -15,7 +15,7 @@ On Jupiter (or via claude-ai-sync-jupiter wrapper):
   # Session-loaded skills (Context frame DOM — not model self-report):
   python scripts/cortex/upload_claude_bundles_ui.py --loaded-skills \\
     --chat-url 'https://claude.ai/cowork/cse_…' \\
-    --require-loaded reasoning-posture,frontier-reasoning-discipline
+    --require-loaded reasoning-posture
   python scripts/cortex/upload_claude_bundles_ui.py --preflight
   python scripts/cortex/upload_claude_bundles_ui.py --slugs SLUG --continue-on-error
   python scripts/cortex/upload_claude_bundles_ui.py --slugs SLUG --replace --continue-on-error

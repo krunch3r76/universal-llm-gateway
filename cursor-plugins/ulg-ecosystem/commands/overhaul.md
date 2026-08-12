@@ -40,7 +40,7 @@ the user explicitly approves each call.
 
 **Autonomy bind (operator ratified 2026-07-19):** proceed through green-tier work
 without operator stops. Pause only on **yellow** (agent concern) or **red** (high
-stakes). Composes with `reasoning-posture` **and** `frontier-reasoning-discipline`:
+stakes). Composes with `reasoning-posture`:
 pin scope at arc birth; declare detent at tier choice; then steelman / calibrate;
 `thinking_off ⇏ waive` evidence gates.
 
@@ -260,7 +260,7 @@ calling `/modularize` or waiting on manual operator push:
    (`ulg-architecture` excerpt required for ULG `services/` / `libs/`).
 
    Optional shared_sync chip helpers (real Claude slugs, when on chip):
-   `/frontier-reasoning-discipline`, `/evidence-review-discipline`,
+   `/reasoning-posture`, `/evidence-review-discipline`,
    `/no-silent-inference` — additive only; ¬ substitutes for the three inlines.
 3. Stage corpus under `cortex://notes/system/threads/{arc-slug}/source/` (source file, consumer manifest). See Use the `claude-ai-cdp-navigation` skill § web-anthropic-cdp dispatch constraints.
 4. Write `tmp/modularize-plans/{sanitized-name}-packet.md` — six-block format from `architecture-handoff-protocol.mdc` (same block table as `/modularize` §2.3). Required skill **inlines** live inside `<invariants>` (fleet rule — Use the `claude-ai-cdp-navigation` skill).
@@ -396,7 +396,7 @@ skill § Skill delivery — fleet rule:
 - **Inline** into `<invariants>` (not Claude slugs): `architecture-invariants` +
   `ulg-architecture` tag floors relevant to changed code. **¬ slash.**
 - **Claude-slug engage** at top of sealed prompt (`/` line or `Use the … skill`):
-  `evidence-review-discipline`, `frontier-reasoning-discipline`,
+  `evidence-review-discipline`, `reasoning-posture`,
   `no-silent-inference` (on Customize staging).
 - Also: `<scope>`, `<corpus>` (changed manifest + staged excerpts),
   `<task_guidance>` (post-overhaul split review — correctness, invariants, event
@@ -949,7 +949,7 @@ the user explicitly approves each call.
 
 **Autonomy bind (operator ratified 2026-07-19):** proceed through green-tier work
 without operator stops. Pause only on **yellow** (agent concern) or **red** (high
-stakes). Composes with `reasoning-posture` **and** `frontier-reasoning-discipline`:
+stakes). Composes with `reasoning-posture`:
 pin scope at arc birth; declare detent at tier choice; then steelman / calibrate;
 `thinking_off ⇏ waive` evidence gates.
 
@@ -1169,7 +1169,7 @@ calling `/modularize` or waiting on manual operator push:
    (`ulg-architecture` excerpt required for ULG `services/` / `libs/`).
 
    Optional shared_sync chip helpers (real Claude slugs, when on chip):
-   `/frontier-reasoning-discipline`, `/evidence-review-discipline`,
+   `/reasoning-posture`, `/evidence-review-discipline`,
    `/no-silent-inference` — additive only; ¬ substitutes for the three inlines.
 3. Stage corpus under `cortex://notes/system/threads/{arc-slug}/source/` (source file, consumer manifest). See Use the `claude-ai-cdp-navigation` skill § web-anthropic-cdp dispatch constraints.
 4. Write `tmp/modularize-plans/{sanitized-name}-packet.md` — six-block format from `architecture-handoff-protocol.mdc` (same block table as `/modularize` §2.3). Required skill **inlines** live inside `<invariants>` (fleet rule — Use the `claude-ai-cdp-navigation` skill).
@@ -1305,7 +1305,7 @@ skill § Skill delivery — fleet rule:
 - **Inline** into `<invariants>` (not Claude slugs): `architecture-invariants` +
   `ulg-architecture` tag floors relevant to changed code. **¬ slash.**
 - **Claude-slug engage** at top of sealed prompt (`/` line or `Use the … skill`):
-  `evidence-review-discipline`, `frontier-reasoning-discipline`,
+  `evidence-review-discipline`, `reasoning-posture`,
   `no-silent-inference` (on Customize staging).
 - Also: `<scope>`, `<corpus>` (changed manifest + staged excerpts),
   `<task_guidance>` (post-overhaul split review — correctness, invariants, event

@@ -181,7 +181,7 @@ Same R semantics live in the parent skill. `/work-item-review` owns after-ship t
 
 **Default executor for path-sim Q is CDP Fable** (`team_dispatch(model=cdp/fable)` / `project_ask` `fable-5` escape — Use the `claude-ai-cdp-navigation` skill; ¬ `anthropic/*` API). Rationale (operator 2026-07-28): Fable owns explore / L0 width; **R-admit stays Opus CDP** so Q and R are not the same seat; **A stays `cursor/grok-4.5`**. Do **¬** default Q to Opus CDP. Do **¬** default Q to Grok on the bundled arc — Grok Q is the **closed-detent / explicit-skip** carve-out only. A strong frame makes Q **cheap** (bounded adopt-or-contradict), not **absent**.
 
-Vision / architecture-suitability framing belongs on the **operator seat**, which must engage `reasoning-posture` **and** `frontier-reasoning-discipline` (pin Question · Out-of-scope · detent ≺ widen; then steelman / calibrate) so it sees further and wider — Use the `cdp-operator-proxy` skill § Invariants. Path-sim then **tests** that frame when attested (falsifiable feedback), ¬ rubber-stamps it.
+Vision / architecture-suitability framing belongs on the **operator seat**, which must engage `reasoning-posture` (pin Question · Out-of-scope · detent ≺ widen; then steelman / calibrate) so it sees further and wider — Use the `cdp-operator-proxy` skill § Invariants. Path-sim then **tests** that frame when attested (falsifiable feedback), ¬ rubber-stamps it.
 
 #### Detecting operator-framed (positive attestation only)
 
@@ -196,7 +196,7 @@ Operator-framed is true only when **all** joint stamps exist on the work item (O
 | Resolvable `attributes.frame_uri` (or op-lane body URI) pointing at the frame prose | todo / cortex |
 | DIRECTIVE / tick cites the pinned Question + `evidence_uris` includes `agent-bus:{op-thread}#turn-N` | todo attrs / assertions |
 
-Operator duty when seeding ticks / DIRECTIVEs that path-sim will consume: **stamp** `operator_framed=true`, `pinned_question`, and `frame_uri` (after reasoning-posture + frontier-reasoning-discipline); **one Question per tick**. Optional: `repos[]` when work spans satellites, or positive `satellites: none` when hub-only — path-sim must **¬** assume hub-only checkout. Unstamped work is isolated by definition.
+Operator duty when seeding ticks / DIRECTIVEs that path-sim will consume: **stamp** `operator_framed=true`, `pinned_question`, and `frame_uri` (after reasoning-posture); **one Question per tick**. Optional: `repos[]` when work spans satellites, or positive `satellites: none` when hub-only — path-sim must **¬** assume hub-only checkout. Unstamped work is isolated by definition.
 
 | Attestation | Path-sim Q → A |
 |---|---|
@@ -255,7 +255,7 @@ team_dispatch(
   contract=light-bounded,
   dispatch_thread_id=<bus thread id>,
   packet_path=tmp/prompts/path-sim-{slug}-grok-q-packet.md,
-  skills=[path-sim, frontier-reasoning-discipline, cursor-sdk-instruction-standard]
+  skills=[path-sim, reasoning-posture, cursor-sdk-instruction-standard]
 )
 ```
 
@@ -341,7 +341,7 @@ notes are **not** Gate-2 closeout. `fs`-readable `source_uri` and dense-spec
 
 **Lead R (default-on, CDP)** — on Gate-2 closeout OK (A sidecar + dense spec PASS + attrs + implement_ready), the **lead** stages review corpus to `cortex://` and fires `project-ask` per `claude-ai-cdp-navigation` § Path-sim R-admit; writes verdict sidecar `…/path-sim-{slug}-web-anthropic-review.md` citing the **CDP harvest URI**. **¬ delegate R to the worker.** Staging review corpus ≠ RAG activation: when the CDP endpoint is **MCP-enabled for RAG**, the executing agent calls `rag` via MCP (live or `mapped=true`) even when a corpus URI is mapped; lead does **¬** post-hoc merge a staged RAG harvest into the expand (`decision:cdp-rag-via-mcp-not-lead-merge`).
 
-**R prompt life skills (Customize Skills — synced):** nudge body MUST engage by canonical name — `Use the reasoning-posture skill` + `Use the frontier-reasoning-discipline skill` + `Use the consult-posture skill` — then keep the injected R-gate (`¬` path-sim / `¬` L0 reopen / ADMIT enum). Template: `cortex://notes/system/templates/path-sim-cdp-review-nudge.md`. ¬ inject full skill bodies (already on Customize Skills).
+**R prompt life skills (Customize Skills — synced):** nudge body MUST engage by canonical name — `Use the reasoning-posture skill` + `Use the consult-posture skill` — then keep the injected R-gate (`¬` path-sim / `¬` L0 reopen / ADMIT enum). Template: `cortex://notes/system/templates/path-sim-cdp-review-nudge.md`. ¬ inject full skill bodies (already on Customize Skills).
 
 **R-admit CDP recipe (BINDING — friction 24967):** default sealed R on **`/new`**, not an endeavor Cowork Project.
 

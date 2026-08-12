@@ -50,10 +50,10 @@ def record_attaches(monkeypatch):
 
 @asyncio_test
 async def test_observe_reads_slugs_from_chip_payload():
-    page = FakePage([chips("reasoning-posture", "frontier-reasoning-discipline")])
+    page = FakePage([chips("reasoning-posture", "consult-posture")])
     assert await observe_composer_skill_chips(page) == [
         "reasoning-posture",
-        "frontier-reasoning-discipline",
+        "consult-posture",
     ]
 
 
@@ -78,16 +78,16 @@ async def test_retries_only_the_missing_slug(record_attaches):
     page = FakePage(
         [
             chips("reasoning-posture"),
-            chips("reasoning-posture", "frontier-reasoning-discipline"),
+            chips("reasoning-posture", "consult-posture"),
         ]
     )
     obs = await attach_skills_verified(
         page,
-        ["reasoning-posture", "frontier-reasoning-discipline"],
+        ["reasoning-posture", "consult-posture"],
         composer=object(),
     )
     assert obs.complete
-    assert record_attaches == ["frontier-reasoning-discipline"]
+    assert record_attaches == ["consult-posture"]
     assert obs.attempts == 2
 
 
@@ -96,14 +96,14 @@ async def test_never_landing_slug_is_reported_missing(record_attaches):
     page = FakePage([chips("reasoning-posture")])
     obs = await attach_skills_verified(
         page,
-        ["reasoning-posture", "frontier-reasoning-discipline"],
+        ["reasoning-posture", "consult-posture"],
         composer=object(),
         attempts=2,
     )
     assert not obs.complete
-    assert obs.missing == ("frontier-reasoning-discipline",)
+    assert obs.missing == ("consult-posture",)
     assert obs.observed == ("reasoning-posture",)
-    assert record_attaches == ["frontier-reasoning-discipline"] * 2
+    assert record_attaches == ["consult-posture"] * 2
 
 
 @asyncio_test
@@ -131,14 +131,14 @@ async def test_attach_failure_does_not_abort_remaining_slugs(monkeypatch):
             raise SkillDeliveryError("not in Skills list")
 
     monkeypatch.setattr(css, "attach_one_session_skill", _attach)
-    page = FakePage([chips(), chips("frontier-reasoning-discipline")])
+    page = FakePage([chips(), chips("consult-posture")])
     obs = await attach_skills_verified(
         page,
-        ["reasoning-posture", "frontier-reasoning-discipline"],
+        ["reasoning-posture", "consult-posture"],
         composer=object(),
         attempts=1,
     )
-    assert "frontier-reasoning-discipline" in attempted
+    assert "consult-posture" in attempted
     assert obs.missing == ("reasoning-posture",)
 
 
@@ -153,5 +153,5 @@ async def test_empty_request_is_a_no_op(record_attaches):
 
 def test_slug_matchers_do_not_select_a_superstring_entry():
     matchers = css._slug_matchers("reasoning-posture")
-    assert not any(m.search("frontier-reasoning-discipline") for m in matchers)
+    assert not any(m.search("meta-reasoning-posture-draft") for m in matchers)
     assert any(m.search("reasoning-posture") for m in matchers)

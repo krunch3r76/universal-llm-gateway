@@ -54,26 +54,17 @@ def test_stage_prompt_text_writes_ephemeral(
 def test_ensure_cdp_judgment_skills_prepends_missing() -> None:
     from claude_bundles.cdp_model_endpoint_staging import ensure_cdp_judgment_skills
 
-    assert ensure_cdp_judgment_skills(None) == [
-        "reasoning-posture",
-        "frontier-reasoning-discipline",
-    ]
-    assert ensure_cdp_judgment_skills([]) == [
-        "reasoning-posture",
-        "frontier-reasoning-discipline",
-    ]
+    assert ensure_cdp_judgment_skills(None) == ["reasoning-posture"]
+    assert ensure_cdp_judgment_skills([]) == ["reasoning-posture"]
     assert ensure_cdp_judgment_skills(["consult-posture"]) == [
         "reasoning-posture",
-        "frontier-reasoning-discipline",
         "consult-posture",
     ]
     assert ensure_cdp_judgment_skills(
-        ["reasoning-posture", "frontier-reasoning-discipline", "path-sim"]
-    ) == ["reasoning-posture", "frontier-reasoning-discipline", "path-sim"]
-    assert ensure_cdp_judgment_skills(["frontier-reasoning-discipline"]) == [
-        "reasoning-posture",
-        "frontier-reasoning-discipline",
-    ]
+        ["reasoning-posture", "consult-posture", "path-sim"]
+    ) == ["reasoning-posture", "consult-posture", "path-sim"]
+    # Slash-prefixed caller entry still counts as present (``have`` lstrips "/").
+    assert ensure_cdp_judgment_skills(["/reasoning-posture"]) == ["/reasoning-posture"]
 
 
 def test_stage_cdp_prompt_with_skills_prepends_manifest(
@@ -87,18 +78,16 @@ def test_stage_cdp_prompt_with_skills_prepends_manifest(
     )
     on_disk = tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills/prompt.md"
     text = on_disk.read_text(encoding="utf-8")
-    # Missing frontier pair member is prepended (judgment pair always on).
-    assert text.startswith(
-        "/frontier-reasoning-discipline\n/reasoning-posture\n/consult-posture\n"
-    )
+    # Judgment skill is always on, even when the caller lists others.
+    assert text.startswith("/reasoning-posture\n/consult-posture\n")
     assert "## Task" in text
     assert staged.prompt_uri.endswith("exec-skills/prompt.md")
 
 
-def test_stage_cdp_prompt_omitted_skills_still_gets_judgment_pair(
+def test_stage_cdp_prompt_omitted_skills_still_gets_judgment_skill(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Light-bounded / skills=None still attaches the judgment pair."""
+    """Light-bounded / skills=None still attaches the judgment skill."""
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     staged = stage_cdp_prompt_with_skills(
         execution_id="exec-skills-default",
@@ -109,9 +98,7 @@ def test_stage_cdp_prompt_omitted_skills_still_gets_judgment_pair(
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-default/prompt.md"
     )
     text = on_disk.read_text(encoding="utf-8")
-    assert text.startswith(
-        "/reasoning-posture\n/frontier-reasoning-discipline\n"
-    )
+    assert text.startswith("/reasoning-posture\n")
     assert "## light ask" in text
     assert staged.staged is True
 
@@ -119,7 +106,7 @@ def test_stage_cdp_prompt_omitted_skills_still_gets_judgment_pair(
 def test_stage_cdp_prompt_with_skills_rejects_path_sim(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """a:27430 — path-sim on CDP skills= fails closed; judgment pair still stages."""
+    """a:27430 — path-sim on CDP skills= fails closed; judgment skill still stages."""
     from claude_bundles.cdp_model_endpoint_staging import (
         ensure_cdp_judgment_skills,
         reject_cdp_skills_path_sim,
@@ -130,35 +117,32 @@ def test_stage_cdp_prompt_with_skills_rejects_path_sim(
         stage_cdp_prompt_with_skills(
             execution_id="exec-skills-path-sim",
             prompt_text="## architect bind\n",
-            skills=["path-sim", "reasoning-posture", "frontier-reasoning-discipline"],
+            skills=["path-sim", "reasoning-posture", "consult-posture"],
         )
     assert excinfo.value.code == "cdp_skills_path_sim_rejected"
     assert "path-sim" in excinfo.value.reason
 
-    # Same reject when path-sim is the only caller skill (pair would have been merged).
+    # Same reject when path-sim is the only caller skill (judgment slug would merge).
     with pytest.raises(CdpStagingError) as excinfo2:
         reject_cdp_skills_path_sim(["path-sim"])
     assert excinfo2.value.code == "cdp_skills_path_sim_rejected"
 
-    # Judgment pair alone still stages (codework / architect default).
+    # Judgment skill alone still stages (codework / architect default).
     staged = stage_cdp_prompt_with_skills(
-        execution_id="exec-skills-pair-ok",
+        execution_id="exec-skills-judgment-ok",
         prompt_text="## architect bind\n",
-        skills=["reasoning-posture", "frontier-reasoning-discipline"],
+        skills=["reasoning-posture", "consult-posture"],
     )
     on_disk = (
-        tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-pair-ok/prompt.md"
+        tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-judgment-ok/prompt.md"
     )
     text = on_disk.read_text(encoding="utf-8")
-    assert text.startswith(
-        "/reasoning-posture\n/frontier-reasoning-discipline\n"
-    )
+    assert text.startswith("/reasoning-posture\n/consult-posture\n")
     assert "path-sim" not in text
     assert "## architect bind" in text
     assert staged.staged is True
     assert ensure_cdp_judgment_skills(["consult-posture"]) == [
         "reasoning-posture",
-        "frontier-reasoning-discipline",
         "consult-posture",
     ]
 
@@ -174,9 +158,7 @@ def test_stage_cdp_prompt_with_skills_inlines_cursor_only(
     )
     on_disk = tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-mixed/prompt.md"
     text = on_disk.read_text(encoding="utf-8")
-    assert text.startswith(
-        "/frontier-reasoning-discipline\n/reasoning-posture\n"
-    )
+    assert text.startswith("/reasoning-posture\n")
     assert '<skill slug="investigation-economy"' in text
     assert "## Task" in text
     assert staged.prompt_uri.endswith("exec-skills-mixed/prompt.md")
@@ -191,6 +173,57 @@ def test_stage_cortex_passthrough(
     assert staged.staged is False
     assert staged.prompt_uri == uri
     assert staged.ephemeral_root is None
+
+
+def test_stage_cdp_presealed_cortex_uri_passes_through(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A caller URI already carrying the effective manifest is not rewritten."""
+    from claude_bundles.cowork_skill_delivery import prepend_cdp_dispatch_skills
+
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    sealed, _, _ = prepend_cdp_dispatch_skills(
+        "## pre-staged ask\nbody\n", ["reasoning-posture"]
+    )
+    src = tmp_path / "notes/system/specs/presealed.md"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text(sealed, encoding="utf-8")
+    uri = "cortex://notes/system/specs/presealed.md"
+
+    staged = stage_cdp_prompt_with_skills(
+        execution_id="exec-presealed", prompt_uri=uri, skills=None
+    )
+
+    assert staged.prompt_uri == uri
+    assert staged.staged is False
+    assert staged.ephemeral_root is None
+    assert not (
+        tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-presealed/prompt.md"
+    ).exists()
+    assert src.read_text(encoding="utf-8") == sealed
+
+
+def test_stage_cdp_bare_cortex_uri_is_rewritten_with_rails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Fail-closed: a URI missing the judgment rail is rewritten, not passed through."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    src = tmp_path / "notes/system/specs/bare.md"
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text("## bare ask\nno rails here\n", encoding="utf-8")
+
+    staged = stage_cdp_prompt_with_skills(
+        execution_id="exec-bare", prompt_uri="cortex://notes/system/specs/bare.md",
+        skills=None,
+    )
+
+    assert staged.staged is True
+    assert staged.prompt_uri.endswith("exec-bare/prompt.md")
+    text = (
+        tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-bare/prompt.md"
+    ).read_text(encoding="utf-8")
+    assert text.startswith("/reasoning-posture\n")
+    assert "## bare ask" in text
 
 
 def test_stage_workspaces_copy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -509,8 +542,8 @@ def test_has_proof_archiving_phase_not_failed() -> None:
 def test_has_proof_rejects_083e6e4a_echo_archive() -> None:
     """AC-S1-b negative: prompt-echo archive with attested_model None is not proof."""
     echo_body = (
-        "You said: /reasoning-posture /frontier-reasoning-discipline\n\n"
-        "/reasoning-posture\n/frontier-reasoning-discipline\n"
+        "You said: /reasoning-posture\n\n"
+        "/reasoning-posture\n"
     )
     snap = {
         "status": "completed",
@@ -1020,7 +1053,7 @@ def test_stage_cdp_prompt_twice_yields_single_manifest_block(
     first = stage_cdp_prompt_with_skills(
         execution_id="exec-double-stage",
         prompt_text="TYPE: CONTINUITY_HANDOFF\narc: 6655\n",
-        skills=["reasoning-posture", "frontier-reasoning-discipline"],
+        skills=["reasoning-posture", "consult-posture"],
     )
     on_disk = (
         tmp_path
@@ -1039,9 +1072,11 @@ def test_stage_cdp_prompt_twice_yields_single_manifest_block(
     )
     twice_text = twice_path.read_text(encoding="utf-8")
     assert twice_text.count("/reasoning-posture\n") == 1
-    assert twice_text.count("/frontier-reasoning-discipline\n") == 1
     assert twice_text.count("<!--cdp-required-skills:") == 1
     assert "TYPE: CONTINUITY_HANDOFF" in twice_text
+    # Re-entry reseals from the effective set, so a caller-only slug from the
+    # first stage is not carried forward.
+    assert "/consult-posture\n" not in twice_text
     # Ownership guard: re-stage via same-exec prompt_uri must pass through.
     guarded = stage_cdp_prompt_with_skills(
         execution_id="exec-double-stage",
@@ -1074,7 +1109,6 @@ def test_admit_then_worker_uri_does_not_double_prepend(
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-admit-worker/prompt.md"
     ).read_text(encoding="utf-8")
     assert text.count("/reasoning-posture\n") == 1
-    assert text.count("/frontier-reasoning-discipline\n") == 1
     assert text.count("/consult-posture\n") == 1
     assert text.count("<!--cdp-required-skills:") == 1
     # After stripping the leading manifest, body must not start with another slash block.

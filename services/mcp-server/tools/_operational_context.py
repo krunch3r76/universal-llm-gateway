@@ -184,10 +184,9 @@ def render_operational_context(
     # seats; skipped for inline-only subagent execution where the discipline
     # belongs to the dispatcher, not the executor.
     if not (family == "subagent" and platform == "subagent"):
-        # inject-channel section key: frontier-reasoning
-        # (accounts both frontier-reasoning-discipline + reasoning-posture)
+        # inject-channel section key: reasoning-posture
         sections.append(
-            templates.render_frontier_reasoning(lead_posture=is_lead_agent(agent))
+            templates.render_reasoning_posture(lead_posture=is_lead_agent(agent))
         )
     sections.append(_render_observe_and_search(agent))
     sections.append(templates.ASSERTION_SEARCH)

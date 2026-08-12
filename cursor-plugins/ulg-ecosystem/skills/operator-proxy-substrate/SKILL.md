@@ -161,17 +161,17 @@ the operator lane — **paste ≠ commission**. Operator-facing contract: `cdp-o
 |---|---|
 | Default reviewer | `cursor/gpt-5.6-terra` — family independence **and** live checkout sight |
 | Escalation | local `cursor/claude-opus-5` only when grok already escalated for checkout depth; Fable only for frame/doctrine meta — ¬ local Fable for this lane |
-| Fire | `team_dispatch(op=generate, seat=cursor-sdk, model=cursor/gpt-5.6-terra, contract=light-bounded, skills=["reasoning-posture","frontier-reasoning-discipline"])` — queues behind the live holder, ¬ contend |
+| Fire | `team_dispatch(op=generate, seat=cursor-sdk, model=cursor/gpt-5.6-terra, contract=light-bounded, skills=["reasoning-posture"])` — queues behind the live holder, ¬ contend |
 | Deliver | `project_ask(op=followup)` into the attached CSE |
 | Log | NOTE on the **MONITOR sibling** — silence on the watched lane |
 
-**Skills pair is MANDATORY on cursor-sdk break-in (BINDING).** Pass
-`skills=["reasoning-posture","frontier-reasoning-discipline"]` on every terra (or Opus)
-break-in `team_dispatch`. CDP generate auto-merges that pair
+**Judgment skill is MANDATORY on cursor-sdk break-in (BINDING).** Pass
+`skills=["reasoning-posture"]` on every terra (or Opus)
+break-in `team_dispatch`. CDP generate auto-merges that skill
 (`decision:reasoning-frontier-skill-pair` / `cdp_model_endpoint_staging`); **cursor-sdk does
 not** — omitting `skills=` is how fire #2a (`c9501ca9ebe7-5bbda0e8`) skipped Question/OOS
 rails instead of binding them. Packet body SHOULD also open with
-`Use the reasoning-posture skill` + `Use the frontier-reasoning-discipline skill` as belt-and-
+`Use the reasoning-posture skill` as belt-and-
 suspenders for seats that ignore the wire `skills=` list.
 
 **Proceed-anyway pin (BINDING).** The packet MUST require terra to answer on the bound break-in

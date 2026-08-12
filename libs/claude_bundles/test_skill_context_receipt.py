@@ -43,15 +43,15 @@ async def test_receipt_records_missing_without_raising(monkeypatch) -> None:
     page.wait_for_timeout = AsyncMock()
     out = await record_post_submit_skills_receipt(
         page,
-        required=["reasoning-posture", "frontier-reasoning-discipline"],
+        required=["reasoning-posture", "consult-posture"],
         execution_id="sg-1",
         satellite_execution_id="sat-1",
         settle_ms=0,
     )
     assert out["ok"] is False
-    assert out["missing"] == ["frontier-reasoning-discipline"]
+    assert out["missing"] == ["consult-posture"]
     assert out["observed"] == ["reasoning-posture"]
-    assert emitted and emitted[0]["missing"] == ["frontier-reasoning-discipline"]
+    assert emitted and emitted[0]["missing"] == ["consult-posture"]
     assert emitted[0]["ok"] is False
 
 

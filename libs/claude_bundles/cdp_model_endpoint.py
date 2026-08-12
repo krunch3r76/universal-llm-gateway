@@ -566,8 +566,8 @@ def run_cdp_generate(
     ``skills`` (optional): catalog slugs prepended via
     ``stage_cdp_prompt_with_skills`` — ``shared_sync`` as leading ``/<slug>\\n``
     manifest lines; satellite attaches via **+ → Skills → pick** (never typed).
-    Staging always merges ``reasoning-posture`` + ``frontier-reasoning-discipline``
-    even when ``skills`` is omitted (light-bounded included).
+    Staging always merges ``reasoning-posture`` even when ``skills`` is omitted
+    (light-bounded included).
 
     ``on_submitted`` receives the satellite-minted execution id the moment the
     submit is accepted. The satellite id space is disjoint from the caller's

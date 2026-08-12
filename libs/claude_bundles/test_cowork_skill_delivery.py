@@ -450,17 +450,17 @@ def test_prepend_cdp_dispatch_skills_is_text_idempotent() -> None:
         split_leading_slash_skills,
     )
 
-    slugs = ["reasoning-posture", "frontier-reasoning-discipline"]
+    slugs = ["reasoning-posture", "consult-posture"]
     once, _, _ = prepend_cdp_dispatch_skills("TYPE: CONTINUITY\narc: 6655\n", slugs)
     twice, _, _ = prepend_cdp_dispatch_skills(once, slugs)
     assert twice == once
     assert once.count("/reasoning-posture\n") == 1
-    assert once.count("/frontier-reasoning-discipline\n") == 1
+    assert once.count("/consult-posture\n") == 1
     assert once.count("<!--cdp-required-skills:") == 1
     tokens, rest = split_leading_slash_skills(twice)
-    assert tokens == ["/reasoning-posture", "/frontier-reasoning-discipline"]
+    assert tokens == ["/reasoning-posture", "/consult-posture"]
     assert "/reasoning-posture" not in rest
-    assert "/frontier-reasoning-discipline" not in rest
+    assert "/consult-posture" not in rest
 
 
 def test_peel_sealed_cdp_skill_prefix_collapses_doubled_manifest() -> None:
@@ -468,17 +468,17 @@ def test_peel_sealed_cdp_skill_prefix_collapses_doubled_manifest() -> None:
 
     doubled = (
         "/reasoning-posture\n"
-        "/frontier-reasoning-discipline\n"
+        "/consult-posture\n"
         "\n"
-        "<!--cdp-required-skills:reasoning-posture,frontier-reasoning-discipline-->\n"
+        "<!--cdp-required-skills:reasoning-posture,consult-posture-->\n"
         "/reasoning-posture\n"
-        "/frontier-reasoning-discipline\n"
+        "/consult-posture\n"
         "\n"
-        "<!--cdp-required-skills:reasoning-posture,frontier-reasoning-discipline-->\n"
+        "<!--cdp-required-skills:reasoning-posture,consult-posture-->\n"
         "TYPE: CONTINUITY_HANDOFF\narc: 6655\n"
     )
     attach, inline, body = peel_sealed_cdp_skill_prefix(doubled)
-    assert attach == ["reasoning-posture", "frontier-reasoning-discipline"]
+    assert attach == ["reasoning-posture", "consult-posture"]
     assert inline == []
     assert body.lstrip("\n").startswith("TYPE: CONTINUITY_HANDOFF")
     assert "/reasoning-posture" not in body

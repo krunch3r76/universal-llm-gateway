@@ -178,7 +178,7 @@ Multi-slug: `--slugs a,b,c --continue-on-error`. Menu label is **Uninstall** (no
 ```bash
 scripts/cortex/claude-ai-sync-jupiter loaded-skills \
   --chat-url 'https://claude.ai/cowork/cse_…' \
-  --require-loaded reasoning-posture,frontier-reasoning-discipline
+  --require-loaded reasoning-posture
 # or: upload_claude_bundles_ui.py --loaded-skills --chat-url … [--json]
 ```
 

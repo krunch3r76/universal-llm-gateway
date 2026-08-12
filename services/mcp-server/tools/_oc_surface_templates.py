@@ -345,9 +345,9 @@ BEHAVIORAL_RULES = """\
 9. **Operator posture is binding** — the boot-card "## Operator posture" block and skill `operator-posture` govern operator-facing register, dispatch briefings, and pickup orientation. This section defers to them on any conflict."""
 
 # Change B (decision:boot-identity-by-allusion): rule 0 + invitational line for lead seats only.
-_LEAD_CONSENSUS_FRONTIER_PREAMBLE = """\
-## Reasoning Posture + Frontier Reasoning Discipline
-**Pair (BINDING):** scope rails (`reasoning-posture`) ≺ epistemic quality (`frontier-reasoning-discipline`). Pin Question / Out-of-scope / detent before merits; then steelman / calibrate / courage.
+_LEAD_CONSENSUS_REASONING_PREAMBLE = """\
+## Reasoning Posture
+**BINDING:** scope rails ≺ epistemic quality (skill `reasoning-posture`). Pin Question / Out-of-scope / detent before merits; then steelman / calibrate / courage.
 
 When a decision is **material**, steelman every live option and name `consensus_disposition` on the `decision:*` assertion you write — detection at session close makes aggregate misses visible.
 
@@ -358,37 +358,38 @@ _REASONING_POSTURE_SCOPE = """\
 **Scope rails (skill `reasoning-posture`):** `pin(Question) ≺ merits` · `declare(Out-of-scope)` · `detent ≺ widen` · `thinking_off ⇏ waive`. Load the full skill on material judgment / consult / path-sim.
 """
 
-_FRONTIER_REASONING_CORE = """\
+_REASONING_POSTURE_CORE = """\
 1. **Steelman before critique** — reconstruct the strongest form of a position before challenging it. Weakmanning is a reasoning error.
 2. **Calibrate confidence** — distinguish facts / inferences / speculation; hedge the gap, not the conclusion.
 3. **Intellectual courage** — answer the legitimate question directly; truth over agreeableness, including over agreement with the user.
 4. **Resist framing capture** — entrenched ≠ true; falsification-test load-bearing claims, especially your own.
 5. **Self-correct immediately** — name the diff in the next turn, do not defend sunk framing.
+6. **One determinate step** — bind the next bounded leg and its verification boundary before any premise-dependent follow-on.
 
-Full procedure (falsification mode, anti-patterns, lineage): skill `frontier-reasoning-discipline`. Pair with skill `reasoning-posture` on every substantive inject."""
+Full procedure (falsification mode, one-determinate-step doctrine, anti-patterns, lineage): skill `reasoning-posture`."""
 
-_FRONTIER_REASONING_HEADER = """\
-## Reasoning Posture + Frontier Reasoning Discipline
+_REASONING_POSTURE_HEADER = """\
+## Reasoning Posture
 """
 
 
-def render_frontier_reasoning(*, lead_posture: bool) -> str:
-    """Paired reasoning-posture + frontier block; lead seats get Change B rule 0."""
+def render_reasoning_posture(*, lead_posture: bool) -> str:
+    """Reasoning-posture opcontext block; lead seats get Change B rule 0."""
     if lead_posture:
         return (
-            _LEAD_CONSENSUS_FRONTIER_PREAMBLE
+            _LEAD_CONSENSUS_REASONING_PREAMBLE
             + _REASONING_POSTURE_SCOPE
-            + _FRONTIER_REASONING_CORE
+            + _REASONING_POSTURE_CORE
         )
     return (
-        _FRONTIER_REASONING_HEADER
+        _REASONING_POSTURE_HEADER
         + _REASONING_POSTURE_SCOPE
-        + _FRONTIER_REASONING_CORE
+        + _REASONING_POSTURE_CORE
     )
 
 
 # Default export: non-lead shape (gemini-*, grok-*, subagent, etc.).
-FRONTIER_REASONING = render_frontier_reasoning(lead_posture=False)
+REASONING_POSTURE = render_reasoning_posture(lead_posture=False)
 
 NOTES_TO_SELF = """\
 ## Notes to Self (Session Close)

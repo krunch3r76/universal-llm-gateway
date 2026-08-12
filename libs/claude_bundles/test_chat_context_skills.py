@@ -29,11 +29,11 @@ def test_parse_both_required_skills() -> None:
     section = """Context
 Skills
 reasoning-posture
-frontier-reasoning-discipline
+consult-posture
 """
     assert parse_skills_from_context_section(section) == (
         "reasoning-posture",
-        "frontier-reasoning-discipline",
+        "consult-posture",
     )
 
 
@@ -68,6 +68,6 @@ def test_missing_required() -> None:
         selectors=(),
         raw_section_text="Skills\nreasoning-posture",
     )
-    assert report.missing(["reasoning-posture", "frontier-reasoning-discipline"]) == (
-        "frontier-reasoning-discipline",
+    assert report.missing(["reasoning-posture", "consult-posture"]) == (
+        "consult-posture",
     )
