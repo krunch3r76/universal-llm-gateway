@@ -466,6 +466,43 @@ Leg-current — cadence hops point at it; they do not author it. Detail:
 `decisions_taken`; touched outside directive scope ⇒ `deltas_to_spec`. Test: *did cursor touch
 something the DIRECTIVE did not scope in?*
 
+### Closeout harvest — land claim read-back (BINDING)
+
+When harvesting a nested CLOSEOUT or dispositioning a land/commit claim, run the
+**seven-state recipe** in `provenance-discipline` § Read back (commit / land claim row) —
+**not** `git log -1 --format=%H` alone. The operator seat is the consumer that skipped this
+check at `agent-bus:6655#2461` (HEAD SHA existed; claimed change did not).
+
+| Step | Action |
+|---|---|
+| 1 | For each path in the packet's `files_expected`, run path-scoped `git log -1 --format=%H -- <path>` |
+| 2 | Content-probe the returned SHA: `git show <sha>:<path>` or a named symbol/count probe from the AC |
+| 3 | If working tree differs from the claimed land, state **NOT LANDED** (state 5) — HEAD SHA is irrelevant |
+| 4 | If `files_expected: none`, render **NO LAND CLAIM MADE** (state 4) — not LANDED, not silent pass |
+| 5 | On command error or unreadable ref/repo, render **INDETERMINATE** (state 7) — neither LANDED nor NOT LANDED |
+
+Quote path-scoped SHA + probe output in DISPOSITION evidence. A hedge on an unread probe is
+still unobserved — worse than a bare error because it reads calibrated.
+
+### Turn authoring order — mint then quote (BINDING)
+
+**Ordering constraint on composition** — not a confidence instruction:
+
+```
+∀ outbound turn body (DIRECTIVE, CLOSEOUT, DISPOSITION, PARKED, debrief, ack line):
+  mint(artifact) ≺ compose(sentence containing artifact.id)
+```
+
+- Mint the artifact first; compose the turn body **after** the mint response is in hand.
+- **Never** write a sentence containing an id you have not read from a response payload.
+- Root cause (observed `agent-bus:6655#2456`): *"The actual cause is ordering, not confidence
+  language. Mint the artifact first, then quote its identifier from the response."*
+- Hedging fails the observed register: *"A hedge on an unobserved value is still an unobserved
+  value in the observed register, and it is worse than a bare error because it reads as
+  calibrated."*
+- **Regression (6655#2457/#2458):** self-attestation ("minted before this sentence was written")
+  is **not** compliance — it is the same defect one level up.
+
 **Mission friction reflection:** after a substantive DISPOSITION / episode close, and when
 dispositioning a charter `TICK_STATUS` digest, spend one beat on frictions in **this seat's own
 workflow with cursor/ULG** (ladder misses, schema drift, life-tool gaps, wait/WAKE gaps,
