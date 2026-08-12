@@ -25,7 +25,6 @@ from claude_bundles.hop_seat_cutover import refuse_cadence_hop_for_live_seat
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_auto.cdp_escalation import (
-    escalation_lane_refusal,
     read_cdp_lane_snapshot,
 )
 from services.git_integration_worker.cursor_auto.continuity_hop import (
@@ -121,18 +120,26 @@ def capacity_blocks_hop(
     *,
     snapshot_reader: Callable[[], dict[str, Any]] | None = None,
 ) -> tuple[bool, str | None]:
-    """Return (blocked, label) when CDP capacity cannot admit a successor window."""
+    """Return (blocked, label) when CDP capacity cannot admit a successor window.
+
+    Hop cadence is a seat *replacement* within hard=3: admit when ``free_slots >= 1``
+    so a successor window can occupy the last hard slot while the predecessor
+    streams out. The generic unattended soft gate (``escalation_lane_refusal`` with
+    ``at_soft_limit``) requires ``free_slots >= 2`` and must not apply here.
+    """
     reader = snapshot_reader or read_cdp_lane_snapshot
     try:
         snap = reader()
     except Exception as exc:  # noqa: BLE001 — cadence must not crash the worker
         logger.warning("hop_cadence capacity probe failed: %s", exc)
         return False, None
-    refuse, label = escalation_lane_refusal(
-        snap if isinstance(snap, dict) else {}, unattended=True
-    )
-    if refuse:
-        return True, label or "capacity"
+    if not isinstance(snap, dict):
+        return False, None
+    if snap.get("at_hard_limit"):
+        return True, "hard"
+    free_slots = int(snap.get("free_slots") or 0)
+    if free_slots < 1:
+        return True, "hard"
     return False, None
 
 
