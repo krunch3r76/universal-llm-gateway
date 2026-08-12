@@ -323,6 +323,7 @@ async def run_cdp_dispatch(
         satellite_execution_id=result.satellite_execution_id or submitted_sat_id,
         stall_stage=result.stall_stage,
         error=result.error,
+        since_last_progress_s=(result.extras or {}).get("since_last_progress_s"),
     )
     raise CdpDispatchError(
         f"CDP dispatch failed: stall_stage={result.stall_stage!r} "

@@ -233,3 +233,65 @@ async def test_handler_cdp_forwards_pipeline_skills(
 
     await handler.execute(step, context)
     assert captured["skills"] == ["reasoning-posture", "consult-posture"]
+
+
+@pytest.mark.asyncio
+async def test_run_cdp_dispatch_forwards_since_last_progress_s_on_stall(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stalled_calls: list[dict[str, Any]] = []
+
+    def capture_stalled(_factory, **kwargs: Any) -> None:
+        stalled_calls.append(kwargs)
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_events.publish_cdp_kwargs",
+        capture_stalled,
+    )
+    monkeypatch.setattr(
+        cdp_mod,
+        "run_cdp_generate",
+        lambda **_kwargs: CdpGenerateResult(
+            ok=False,
+            body="",
+            execution_id="exec-stall",
+            satellite_execution_id="sat-stall",
+            prompt_uri="cortex://notes/system/ephemeral/x/prompt.md",
+            picker_model="opus-5",
+            stall_stage="wall_clock_exceeded",
+            error="no progress",
+            extras={"since_last_progress_s": 123.4},
+        ),
+    )
+
+    step = SimpleNamespace(
+        id="respond",
+        name="respond",
+        system_prompt=None,
+        handler_inputs={},
+        generation_parameters={},
+        _domain={},
+        get_domain_field=lambda key, default=None: default,
+    )
+    admission = SimpleNamespace(
+        model="cdp/opus-5",
+        model_entity_id="model:cdp-opus-5",
+        user_prompt="question",
+        system=None,
+        opts={},
+        publish=lambda _event: None,
+    )
+    context = SimpleNamespace(execution_id="exec-stall")
+
+    with pytest.raises(Exception, match="CDP dispatch failed"):
+        await run_cdp_dispatch(
+            handler=SimpleNamespace(),
+            step=step,
+            context=context,
+            admission=admission,
+        )
+
+    assert stalled_calls
+    assert stalled_calls[0]["since_last_progress_s"] == 123.4
+    assert "active_wall_s" not in stalled_calls[0]
+    assert "wall_paused_s" not in stalled_calls[0]

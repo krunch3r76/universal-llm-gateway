@@ -414,6 +414,67 @@ def test_run_cdp_generate_stall_wall_clock(
     assert result.stall_stage == "wall_clock_exceeded"
 
 
+def test_run_cdp_generate_progress_resets_wall_clock(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Cumulative elapsed > max_wall_s with fingerprint deltas still delivers proof (R1)."""
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-r1")
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-r1", "status": "running"},
+            {
+                "execution_id": "sat-r1",
+                "status": "running",
+                "completion_phase": "running",
+                "body_len": 0,
+                "liveness_observed_at": "t0",
+            },
+            {
+                "execution_id": "sat-r1",
+                "status": "running",
+                "completion_phase": "running",
+                "body_len": 1,
+                "liveness_observed_at": "t1",
+            },
+            {
+                "execution_id": "sat-r1",
+                "status": "running",
+                "completion_phase": "running",
+                "body_len": 2,
+                "liveness_observed_at": "t2",
+                "streaming": True,
+            },
+            {
+                "execution_id": "sat-r1",
+                "status": "completed",
+                "body": "done after long stream",
+                "attested_model": "Model: Opus 4.8",
+            },
+        ]
+    )
+    clock = {"t": 0.0}
+
+    def _now() -> float:
+        return clock["t"]
+
+    def _sleep(_s: float) -> None:
+        clock["t"] += 6.0
+
+    result = run_cdp_generate(
+        execution_id="dispatch-r1",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        max_wall_s=10,
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=_sleep,
+        now=_now,
+    )
+    assert result.ok is True
+    assert result.stall_stage is None
+    assert clock["t"] >= 18.0
+
+
 def test_run_cdp_generate_mission_wall_does_not_abort(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -487,8 +548,7 @@ def test_run_cdp_generate_wall_clock_preserves_archive_uri(
     so this case carries ``archive_uri`` on the submit ack, polls a running
     snapshot without re-emitting it, then fires wall_clock on the next loop head.
     """
-    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
-    monkeypatch.setenv("PROJECT_ASK_URL", "http://satellite.test")
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-wc")
     archive = "cortex://notes/system/threads/archive-wc.md"
     client = _FakeClient(
         [
@@ -500,9 +560,7 @@ def test_run_cdp_generate_wall_clock_preserves_archive_uri(
             {
                 "execution_id": "sat-wc",
                 "status": "running",
-                "completion_phase": "running",
-                "body_len": 0,
-                "liveness_observed_at": "t1",
+                "archive_uri": archive,
             },
         ]
     )
@@ -583,6 +641,17 @@ def test_has_proof_outputs_path_requires_content_proof_uri() -> None:
     assert has_proof(snap) is True
 
 
+def test_has_proof_rejects_superseded_archive_only() -> None:
+    """Archive under _superseded/ without attested_model or content_proof is not success (R5)."""
+    snap = {
+        "status": "completed",
+        "archive_uri": "cortex://notes/system/threads/run/_superseded/old.md",
+        "body": "superseded bytes only",
+        "attested_model": None,
+    }
+    assert has_proof(snap) is False
+
+
 def test_has_unresolved_artifact_card_predicate() -> None:
     assert _has_unresolved_artifact_card({"artifact_cards_unresolved": True})
     assert not _has_unresolved_artifact_card({"artifact_cards_unresolved": False})
@@ -624,13 +693,14 @@ def test_has_proof_accepts_specimen_when_cards_resolved() -> None:
 def test_run_cdp_generate_stall_no_progress(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
-    monkeypatch.setenv("PROJECT_ASK_URL", "http://satellite.test")
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-3")
     perpetual = {
         "execution_id": "sat-3",
         "status": "running",
         "completion_phase": "running",
         "body_len": 0,
+        "streaming": True,
+        "tool_pause": False,
     }
     client = _FakeClient(
         [
@@ -662,6 +732,79 @@ def test_run_cdp_generate_stall_no_progress(
     )
     assert result.ok is False
     assert result.stall_stage == "no_progress"
+    assert result.stall_stage != "wall_clock_exceeded"
+
+
+def test_run_cdp_generate_post_idle_wall_since_last_progress(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Frozen POST_IDLE trips wall_clock_exceeded at max_wall_s since last delta (R3)."""
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-post-idle-wall")
+    idle = {
+        "execution_id": "sat-post-idle-wall",
+        "status": "running",
+        "completion_phase": "turn_idle",
+        "body_len": 2,
+        "liveness_observed_at": "t2",
+    }
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-post-idle-wall", "status": "running"},
+            {
+                "execution_id": "sat-post-idle-wall",
+                "status": "running",
+                "completion_phase": "running",
+                "body_len": 0,
+                "liveness_observed_at": "t0",
+            },
+            {
+                "execution_id": "sat-post-idle-wall",
+                "status": "running",
+                "completion_phase": "running",
+                "body_len": 1,
+                "liveness_observed_at": "t1",
+            },
+            {
+                "execution_id": "sat-post-idle-wall",
+                "status": "running",
+                "completion_phase": "running",
+                "body_len": 2,
+                "liveness_observed_at": "t2",
+            },
+            idle,
+            idle,
+            idle,
+        ]
+    )
+    clock = {"t": 0.0}
+
+    def _now() -> float:
+        return clock["t"]
+
+    def _sleep(_s: float) -> None:
+        clock["t"] += 6.0
+
+    result = run_cdp_generate(
+        execution_id="dispatch-post-idle-wall",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        max_wall_s=10,
+        no_progress_s=5,
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=_sleep,
+        now=_now,
+    )
+    assert result.ok is False
+    assert result.stall_stage == "wall_clock_exceeded"
+    since_last = (result.extras or {}).get("since_last_progress_s")
+    assert since_last is not None
+    assert since_last >= 10.0
+    trace = (result.extras or {}).get("progress_trace") or {}
+    history = trace.get("history") or []
+    at_s_values = [entry["at_s"] for entry in history]
+    assert at_s_values == sorted(at_s_values)
+    assert trace.get("frozen_for_s", 0.0) >= 10.0
 
 
 def test_run_cdp_generate_no_progress_exempt_post_idle(

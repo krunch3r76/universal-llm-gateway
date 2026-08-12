@@ -85,6 +85,7 @@ def CdpGenerateStalled(  # noqa: N802
     progress_trace: dict[str, Any] | None = None,
     archive_uri: str | None = None,
     deliverable_present: bool = False,
+    since_last_progress_s: float | None = None,
 ) -> Event:
     """CDP generate terminated without proof (stall or satellite failure).
 
@@ -92,8 +93,13 @@ def CdpGenerateStalled(  # noqa: N802
     raise ourselves (``wall_clock_exceeded``, ``no_progress``); without it
     those stages cannot distinguish a long task from a dead session.
 
-    ``archive_uri`` / ``deliverable_present`` distinguish residual stalls where
-    a deliverable URI was recovered but proof fields were insufficient.
+    ``wall_clock_exceeded`` means no observed fingerprint progress for
+    ``max_wall_s`` seconds (not cumulative job elapsed time).
+
+    ``since_last_progress_s`` is the poller-local idle span at abort
+    (``clock() - last_progress_at``). ``archive_uri`` / ``deliverable_present``
+    distinguish residual stalls where a deliverable URI was recovered but proof
+    fields were insufficient.
     """
     return Event(
         signal="cdp.generate.stalled",
@@ -106,6 +112,7 @@ def CdpGenerateStalled(  # noqa: N802
             "progress_trace": progress_trace,
             "archive_uri": archive_uri,
             "deliverable_present": deliverable_present,
+            "since_last_progress_s": since_last_progress_s,
         },
         scope="node",
     )

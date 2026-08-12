@@ -256,6 +256,7 @@ async def finalize_cdp_generate(
             stall_stage=result.stall_stage,
             error=result.error,
             progress_trace=(result.extras or {}).get("progress_trace"),
+            since_last_progress_s=(result.extras or {}).get("since_last_progress_s"),
             archive_uri=result.archive_uri,
             deliverable_present=bool(
                 result.archive_uri
