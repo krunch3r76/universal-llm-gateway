@@ -7,11 +7,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from services.git_integration_worker.cursor_auto import supersede as auto_supersede
-from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_auto.queue import AutoJobQueue
 from services.git_integration_worker.cursor_auto.supersede import (
     supersede_same_thread_inflight,
 )
+from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_supersede import (
     escalate_supersede_abort,
     register_live_run,
@@ -188,13 +188,13 @@ def test_emit_operator_cancel_before_lease_released(emitted, monkeypatch) -> Non
         "services.git_integration_worker.cursor_sdk_operator_cancel.emit_write_lease_released",
         lambda **_: order.append("lease_released"),
     )
-    from services.git_integration_worker.cursor_sdk_operator_cancel import (
-        _emit_cancel_side_effects,
-    )
+    from services.git_integration_worker.admission import WorkAdmissionController
     from services.git_integration_worker.cursor_dispatch_ledger import (
         CancelDispatchResult,
     )
-    from services.git_integration_worker.admission import WorkAdmissionController
+    from services.git_integration_worker.cursor_sdk_operator_cancel import (
+        _emit_cancel_side_effects,
+    )
 
     controller = WorkAdmissionController(
         ledger=CursorDispatchLedger.instance(),

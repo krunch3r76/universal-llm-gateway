@@ -96,6 +96,13 @@ from services.git_integration_worker.cursor_sdk_closeout_trigger import (
     extract_turn_number,
     normalize_closeout_source_ref,
 )
+from services.git_integration_worker.cursor_sdk_concurrency_posture import (
+    b_worktree_materialized,
+    derive_concurrency_posture,
+    refuse_b_without_worktree_enabled,
+    reported_admit_lane,
+    write_lease_slot_limit,
+)
 from services.git_integration_worker.cursor_sdk_context import (
     CursorSdkParityError,
     build_agent_options,
@@ -108,11 +115,15 @@ from services.git_integration_worker.cursor_sdk_deliverable_truth import (
 from services.git_integration_worker.cursor_sdk_deliverables import (
     sidecar_workspaces_ref,
 )
+from services.git_integration_worker.cursor_sdk_deliverables_expected import (
+    compute_deliverables_expected,
+)
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_closeout_reconciled,
     emit_sdk_implement_unresolved_source_ref,
     emit_sdk_lane_b_mint_rolled_back,
     emit_sdk_lane_b_minted,
+    emit_sdk_lane_b_worktree_missing_observed,
     emit_sdk_lane_selected,
     emit_sdk_restart_bridge_reap_failed,
     emit_sdk_worker_completed,
@@ -128,15 +139,7 @@ from services.git_integration_worker.cursor_sdk_events import (
     emit_write_lease_promoted,
     emit_write_lease_queue_stalled,
     emit_write_lease_released,
-    emit_sdk_lane_b_worktree_missing_observed,
     terminal_emitted,
-)
-from services.git_integration_worker.cursor_sdk_concurrency_posture import (
-    b_worktree_materialized,
-    derive_concurrency_posture,
-    refuse_b_without_worktree_enabled,
-    reported_admit_lane,
-    write_lease_slot_limit,
 )
 from services.git_integration_worker.cursor_sdk_feature_probe import (
     LOCAL_BRIDGE_PATH_LABEL,
@@ -158,9 +161,6 @@ from services.git_integration_worker.cursor_sdk_lane_select import (
     lane_selection_predicate,
     select_lane,
     wire_lane_explicit,
-)
-from services.git_integration_worker.cursor_sdk_deliverables_expected import (
-    compute_deliverables_expected,
 )
 from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
     extract_instructed_paths,
