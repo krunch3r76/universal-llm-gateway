@@ -137,15 +137,15 @@ def test_stranded_fixture_headline_grep_visible_not_landed(tmp_path: Path) -> No
     obs = probe_three_planes(repo, head_sha=head, branch=branch, as_of="2026-08-07T00:00:00Z")
     line = render_plane_headline(obs)
     assert "NOT landed@local-master" in line
-    assert "committed@lane-B" in line
+    assert "tip@lane-B" in line
     assert branch in line
     assert "as-of 2026-08-07T00:00:00Z" in line
     # AC2: grep-visible without joining a second field
     assert "NOT landed@local-master" in line
     assert line.startswith(f"plane: {head[:7]} · ")
-    # Additive: rung lexemes unchanged (F3 committed@ gate)
-    assert "committed@lane-B" in line
-    assert "committed@" in line  # lexeme intact; SHA is a separate · token
+    # F3 amend bind: ODB/tip rung is tip@lane-B; SHA referent is a separate · token
+    assert "tip@lane-B" in line
+    assert "committed@lane-B" not in line
 
 
 def test_ff_landed_fixture_headline_landed_not_published(tmp_path: Path) -> None:
@@ -170,7 +170,7 @@ def test_ff_landed_fixture_headline_landed_not_published(tmp_path: Path) -> None
     assert "published@origin" not in line.split("NOT published@origin")[0]
     # Shared-referent shape: SHA at head even when no lane-B rung is shown
     assert line.startswith(f"plane: {head[:7]} · ")
-    assert "committed@lane-B" not in line
+    assert "tip@lane-B" not in line
 
 
 def test_degraded_capture_head_absent_never_upgraded(tmp_path: Path) -> None:
@@ -179,7 +179,7 @@ def test_degraded_capture_head_absent_never_upgraded(tmp_path: Path) -> None:
     line = render_plane_headline(obs)
     assert line == "plane: unknown@lane-B (capture head absent)"
     assert "landed@local-master" not in line
-    assert "committed@lane-B" not in line
+    assert "tip@lane-B" not in line
 
 
 def test_degraded_commit_absent_from_odb(tmp_path: Path) -> None:
@@ -194,7 +194,7 @@ def test_degraded_commit_absent_from_odb(tmp_path: Path) -> None:
 
 
 def test_plane_headline_sha_referent_shared_additive() -> None:
-    """One short SHA names the shared capture tip; rung tokens unchanged.
+    """One short SHA names the shared capture tip; ODB rung is tip@lane-B (F3 amend bind).
 
     AC1 bind: commit_exists / landed / published all key off PlaneObservation.head_sha
     (probe_three_planes). Per-rung SHA rejected — would imply distinct objects.
@@ -210,11 +210,11 @@ def test_plane_headline_sha_referent_shared_additive() -> None:
     )
     line = render_plane_headline(obs)
     assert line == (
-        "plane: 2b01f24 · committed@lane-B(cursor-sdk/auto-example) · "
+        "plane: 2b01f24 · tip@lane-B(cursor-sdk/auto-example) · "
         "NOT landed@local-master · NOT published@origin · as-of 2026-08-12T00:00:00Z"
     )
-    # Additive: prior tokens keep their exact values; SHA is a new · slot
-    assert "committed@lane-B(cursor-sdk/auto-example)" in line
+    # F3 amend: tip@lane-B rung; SHA is a separate · slot
+    assert "tip@lane-B(cursor-sdk/auto-example)" in line
     assert "NOT landed@local-master" in line
     assert "NOT published@origin" in line
 
@@ -351,7 +351,7 @@ def test_relay_preserves_plane_line_through_envelope_strip() -> None:
         "\n"
         "status: complete\n"
         "checkpoint: committed@local-master abc1234 paths=1\n"
-        "plane: committed@lane-B(cursor-sdk/x) · NOT landed@local-master · as-of t0\n"
+        "plane: tip@lane-B(cursor-sdk/x) · NOT landed@local-master · as-of t0\n"
         "plane-discrepancy: example\n"
     )
     stripped = strip_projected_closeout_envelope(body)
@@ -500,7 +500,7 @@ def test_apply_landed_admit_gate_absent_renders_landed_unknown() -> None:
     assert gated.landed_local_master is None
     headline = render_plane_headline(gated)
     assert "unknown@local-master (commits_ahead absent)" in headline
-    assert "committed@lane-B" in headline
+    assert "tip@lane-B" in headline
     assert "landed@local-master" not in headline.replace(
         "unknown@local-master", ""
     ).replace("NOT landed@local-master", "")
@@ -545,7 +545,7 @@ def test_landed_axis_state_table_ancestry_true(
     if expected_verdict == "unknown":
         assert gated.landed_local_master is None
         assert f"unknown@local-master ({reason_substr})" in headline
-        assert "committed@lane-B" in headline
+        assert "tip@lane-B" in headline
         assert "landed@local-master" not in bare
         assert "NOT landed@local-master" not in headline
     elif expected_verdict == "NOT landed":
@@ -611,7 +611,7 @@ def test_compute_tree_state_absent_commits_ahead_renders_landed_unknown(
             wrapper_text=wrapper,
         )
     assert "unknown@local-master (commits_ahead absent)" in state.plane_line
-    assert "committed@lane-B" in state.plane_line
+    assert "tip@lane-B" in state.plane_line
     bare = state.plane_line.replace("unknown@local-master (commits_ahead absent)", "")
     assert "landed@local-master" not in bare
     assert "NOT landed@local-master" not in state.plane_line

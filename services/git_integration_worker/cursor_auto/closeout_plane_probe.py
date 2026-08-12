@@ -277,13 +277,14 @@ def render_plane_headline(obs: PlaneObservation) -> str:
     Landed tokens are ``landed@local-master`` / ``NOT landed@local-master`` /
     ``unknown@local-master (reason)``. Lane-B head/ODB absence still short-
     circuits to ``unknown@lane-B``; a measured commit with unmeasured landed
-    keeps ``committed@lane-B`` and marks only the landed axis unknown.
+    keeps ``tip@lane-B`` and marks only the landed axis unknown.
 
     When ``obs.head_sha`` is set, a short SHA is emitted once immediately after
     ``plane:`` — all three rung verdicts are keyed to that capture tip
     (``probe_three_planes``), so one referent is honest; per-rung SHA would
-    falsely imply distinct objects. The SHA is additive: rung tokens are
-    unchanged. The tip is not renamed into ``committed@`` (F3 lexeme gate).
+    falsely imply distinct objects. The SHA is additive beside the ODB/tip rung
+    token ``tip@lane-B`` (amend bind: tip@ over odb@; ``committed@`` reserved
+    for authorship-coupled checkpoint claims).
     """
     if obs.is_unknown:
         reason = obs.unknown_reason or "unresolved"
@@ -296,10 +297,10 @@ def render_plane_headline(obs: PlaneObservation) -> str:
         parts.append("landed@local-master")
     elif obs.landed_local_master is False:
         if obs.commit_exists is True:
-            parts.append(f"committed@lane-B{branch_token}")
+            parts.append(f"tip@lane-B{branch_token}")
         parts.append("NOT landed@local-master")
     elif obs.commit_exists is True:
-        parts.append(f"committed@lane-B{branch_token}")
+        parts.append(f"tip@lane-B{branch_token}")
         reason = obs.unknown_reason or "landed axis unmeasured"
         parts.append(f"unknown@local-master ({reason})")
     else:

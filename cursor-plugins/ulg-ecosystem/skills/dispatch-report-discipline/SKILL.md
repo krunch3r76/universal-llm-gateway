@@ -134,7 +134,7 @@ reproduces the unlabeled-provenance defect:
 
 | Plane | Token | Meaning |
 |---|---|---|
-| Commit exists | `committed@lane-B(<ref>)` | Object in ODB / Lane-B branch tip |
+| Capture tip exists | `tip@lane-B(<ref>)` | Object in ODB / Lane-B branch tip (not authorship) |
 | Local master land | `landed@local-master` / `NOT landed@local-master` | Ancestor of local `refs/heads/master` |
 | Origin publish | `published@origin` / `NOT published@origin` | Ancestor of local `refs/remotes/origin/master` (no fetch) |
 

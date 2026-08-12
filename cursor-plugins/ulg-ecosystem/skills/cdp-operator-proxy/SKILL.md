@@ -51,7 +51,7 @@ Distinct from transport-vs-bus above. Closeout `checkpoint:` / `deployment_state
 
 | Plane | Tokens |
 |---|---|
-| Commit exists (possibly Lane-B only) | `committed@lane-B(<ref>)` |
+| Capture tip exists (possibly Lane-B only) | `tip@lane-B(<ref>)` |
 | Local master land (what services serve) | `landed@local-master` · `NOT landed@local-master` |
 | Origin publish | `published@origin` · `NOT published@origin` |
 
