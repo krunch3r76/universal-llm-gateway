@@ -2,7 +2,8 @@
 
 Sibling to ``cowork_output_preview`` — click card → panel/canvas ``innerText``
 (or copy affordance) → ``ArtifactCardResult``. Returns ``None`` on miss and on
-empty/chrome-only extract (title echoed without body).
+empty/chrome-only extract (title echoed without body). Card-toolbar ``Google Drive``
+is export-dropdown trigger chrome (optional Drive ∨ Download); fleet never uses Drive.
 """
 
 from __future__ import annotations

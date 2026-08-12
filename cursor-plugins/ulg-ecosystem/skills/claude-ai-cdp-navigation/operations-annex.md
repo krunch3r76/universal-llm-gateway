@@ -26,16 +26,19 @@ MCP: `project_ask(op=submit, expected_size=…, harvest_source=…, download_out
 ### File-card / artifact chrome ≠ deliverable location (BINDING — 2026-08-04)
 
 Cowork often renders a created MD as an **artifact/canvas** or **Outputs** row.
-The card toolbar may show **Google Drive** (and a dropdown that also lists
-**Download**). Drive is an **open-with option**, frequently shown even when
-Drive is not connected — **¬** proof the model wrote to Drive, and **¬** proof
-the deliverable is missing. The bytes live in Cowork **Outputs** / the artifact
-panel; automation already downloads that surface (`cowork_output_download` /
-filename-button preview) when harvest knobs request it.
+The card toolbar shows a **"Google Drive" dropdown button** (chevron) — the
+visible label is **not** where the file lives. Expanding the dropdown offers two
+choices: **Google Drive** (optional open-with connector; fleet **never** uses it)
+and **Download** (the harvest-relevant option). The button defaults to the
+"Google Drive" label even when Drive is not connected — **¬** proof the model
+wrote to Drive, and **¬** proof the deliverable is missing. The bytes live in
+Cowork **Outputs** / the artifact panel; automation already downloads that
+surface (`cowork_output_download` / filename-button preview) when harvest knobs
+request it.
 
 | Misread | Correct harvest |
 |---|---|
-| "Google Drive" on the card ⇒ file is in Drive / lost | Card is Cowork-local (**Outputs** / artifact). Prefer automated **Download**/Output harvest: `expected_size=large` ∨ `download_output=true` ∨ `harvest_source=output-file`; else followup paste of artifact body |
+| "Google Drive" label on the card ⇒ file is in Drive / lost | Card is Cowork-local (**Outputs** / artifact). The label is export-dropdown chrome (Drive optional ∨ **Download**). Prefer automated **Download**/Output harvest: `expected_size=large` ∨ `download_output=true` ∨ `harvest_source=output-file`; else followup paste of artifact body |
 | Chat says "delivered above" + thin scrape ⇒ re-dispatch | Re-harvest the **existing** CSE Output/artifact first; ¬ treat chrome as absence |
 | `harvest_provenance=chat` alone on a large structured ask | Prefer Outputs-first knobs on admit; name explicit `harvest_uri` / `cortex://…` in the sealed prompt |
 
@@ -43,13 +46,15 @@ filename-button preview) when harvest knobs request it.
 commission / packet / seed drafts ⇒ set Outputs-first knobs on admit
 (`expected_size=large` and/or `download_output=true` via `generation_options`
 on CDP generate, or the same fields on `project_ask`). Default `auto`+chat
-scrape collapses artifact cards to chrome ("Google Drive") and loses the body.
+scrape collapses artifact cards to dropdown chrome ("Google Drive" trigger label)
+and loses the body.
 
 **Prompt duty (sealed body):** name **where harvest comes from** — preferred
 order: (1) write full body to named `cortex://…` via fs when tools exist,
 (2) else Cowork **Output**/artifact + one-line chat pointer (filename + sha),
-(3) else full inline chat markdown. Explicitly: "Drive/open-with chrome is not
-a deliverable; Download/Outputs is."
+(3) else full inline chat markdown. Explicitly: "The Google Drive dropdown is
+export chrome (Drive optional, fleet never uses; **Download** is the choice);
+harvest via Download/Outputs, not Drive."
 
 ## Completion predicate — detail
 
