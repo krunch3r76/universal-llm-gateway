@@ -115,6 +115,54 @@ def capture_predecessor_at_hop(
     )
 
 
+def _registration_for_snap_fallback(
+    row: dict[str, Any],
+    error: PredecessorConfirmError,
+) -> str | None:
+    """Registration id to consult in active_work when the watch row lacks execution id."""
+    for key in ("superseded_registration_id", "registration_id"):
+        val = str(error.detail.get(key) or "").strip()
+        if val and val != PRIOR_NONE_REGISTRATION:
+            return val
+    for key in ("superseded_registration_id", "registration_id"):
+        val = str(row.get(key) or "").strip()
+        if val and val != PRIOR_NONE_REGISTRATION:
+            return val
+    return None
+
+
+def predecessor_for_confirm(
+    row: dict[str, Any],
+    active_work_snap: dict[str, Any] | None = None,
+) -> PredecessorHandle | PredecessorConfirmError:
+    """Resolve predecessor at confirm; consult active_work when watch lacks execution id.
+
+    Hop fire persists execution ids from ``cdp_ask.active_work`` (R10). Legacy watch
+    rows may carry registration without ``superseded_execution_id``; confirm must read
+    the same snapshot rather than fail every tick on stale ledger fields.
+    """
+    handle = predecessor_from_watch(row)
+    if not isinstance(handle, PredecessorConfirmError):
+        return handle
+    if handle.reason not in {
+        "incumbent_registration_without_execution_id",
+        "incumbent_handle_incomplete",
+    }:
+        return handle
+    reg = _registration_for_snap_fallback(row, handle)
+    if not reg:
+        return handle
+    snap_dict = active_work_snap if isinstance(active_work_snap, dict) else {}
+    exec_id = execution_id_for_registration(snap_dict, reg)
+    if not exec_id:
+        return handle
+    return PredecessorHandle(
+        registration_id=reg,
+        execution_id=exec_id,
+        verdict=PredecessorVerdict.INCUMBENT_RECORDED,
+    )
+
+
 def predecessor_from_watch(row: dict[str, Any]) -> PredecessorHandle | PredecessorConfirmError:
     """Load persisted predecessor handle for confirm; fail loud on corrupt state."""
     thread_id = str(row.get("thread_id") or "")
@@ -194,6 +242,7 @@ __all__ = [
     "PredecessorVerdict",
     "capture_predecessor_at_hop",
     "execution_id_for_registration",
+    "predecessor_for_confirm",
     "predecessor_from_watch",
     "prior_registration_for_confirm",
 ]

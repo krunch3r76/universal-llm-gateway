@@ -37,7 +37,7 @@ from services.git_integration_worker.cursor_auto.hop_cadence_predecessor import 
     PredecessorHandle,
     PredecessorVerdict,
     prior_registration_for_confirm,
-    predecessor_from_watch,
+    predecessor_for_confirm,
 )
 from services.git_integration_worker.cursor_auto.hop_cadence_succession_release import (
     RELEASE_IDLE_STREAK_REQUIRED,
@@ -532,7 +532,7 @@ def reconcile_succession_confirmations(
         matched_key, aw_row = matched_active_work_row(row, snap)
         if not matched_key:
             continue
-        handle = predecessor_from_watch(row)
+        handle = predecessor_for_confirm(row, snap)
         if isinstance(handle, PredecessorConfirmError):
             logger.error(
                 "hop_cadence confirm predecessor error thread=%s reason=%s detail=%s",
@@ -548,6 +548,14 @@ def reconcile_succession_confirmations(
                 }
             )
             continue
+        if (
+            handle.verdict == PredecessorVerdict.INCUMBENT_RECORDED
+            and not str(row.get("superseded_execution_id") or "").strip()
+        ):
+            row = dict(row)
+            row.update(handle.as_watch_fields())
+            watches[thread_id] = row
+            changed = True
         prior_reg = prior_registration_for_confirm(handle)
         updated, transition = advance_registration_on_confirm(
             row,

@@ -11,9 +11,11 @@ import pytest
 from services.git_integration_worker.cursor_auto.hop_cadence_predecessor import (
     PRIOR_NONE_EXECUTION,
     PRIOR_NONE_REGISTRATION,
+    PredecessorConfirmError,
     PredecessorHandle,
     PredecessorVerdict,
     capture_predecessor_at_hop,
+    predecessor_for_confirm,
     predecessor_from_watch,
 )
 from services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile import (
@@ -287,3 +289,126 @@ def test_advance_registration_on_confirm_uses_prior_from_handle() -> None:
     assert transition == ("reg-old", "reg-new")
     assert updated["registration_id"] == "reg-new"
     assert updated["succession_confirm_record"]["prior_registration_id"] == "reg-old"
+
+
+def test_predecessor_for_confirm_resolves_legacy_row_from_active_work() -> None:
+    """Live shape: registration on watch, execution id only in active_work snapshot."""
+    live_reg = "228c883a0fa9499b8e5675e045540689"
+    live_exec = "711f760c91734d509babb2cefeeeaafb"
+    row = {
+        "thread_id": "7119",
+        "registration_id": live_reg,
+        "superseded_registration_id": live_reg,
+        "successor_execution_id": "stargate-uuid",
+        "pending_satellite_execution_id": "satellite-live",
+    }
+    snap = {
+        "admission_count": 2,
+        "rows": [
+            {
+                "execution_id": live_exec,
+                "registration_id": live_reg,
+                "status": "running",
+                "purpose": "operator-proxy",
+            },
+            {
+                "execution_id": "satellite-live",
+                "registration_id": "reg-successor",
+                "status": "running",
+            },
+        ],
+    }
+    assert isinstance(predecessor_from_watch(row), PredecessorConfirmError)
+    handle = predecessor_for_confirm(row, snap)
+    assert handle.verdict == PredecessorVerdict.INCUMBENT_RECORDED
+    assert handle.registration_id == live_reg
+    assert handle.execution_id == live_exec
+
+
+def test_predecessor_for_confirm_stays_loud_when_absent_everywhere() -> None:
+    row = {
+        "thread_id": "7119",
+        "registration_id": "reg-missing",
+        "superseded_registration_id": "reg-missing",
+    }
+    result = predecessor_for_confirm(row, {"rows": []})
+    from services.git_integration_worker.cursor_auto.hop_cadence_predecessor import (
+        PredecessorConfirmError,
+    )
+
+    assert isinstance(result, PredecessorConfirmError)
+    assert result.reason == "incumbent_registration_without_execution_id"
+
+
+def test_confirm_legacy_row_resolves_via_active_work_snapshot() -> None:
+    live_reg = "228c883a0fa9499b8e5675e045540689"
+    live_exec = "711f760c91734d509babb2cefeeeaafb"
+    row = {
+        "thread_id": "6885",
+        "registration_id": live_reg,
+        "successor_execution_id": "stargate-uuid",
+        "pending_satellite_execution_id": "satellite-live",
+        "superseded_registration_id": live_reg,
+    }
+    watches = {"6885": dict(row)}
+    snap = {
+        "admission_count": 2,
+        "rows": [
+            {
+                "execution_id": live_exec,
+                "registration_id": live_reg,
+                "status": "running",
+            },
+            {
+                "execution_id": "satellite-live",
+                "registration_id": "reg-new",
+                "status": "running",
+            },
+        ],
+    }
+
+    with patch(
+        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.load_watches",
+        side_effect=lambda path=None: watches,
+    ), patch(
+        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.save_watches",
+        side_effect=lambda data, path=None: watches.update(data) or None,
+    ), patch(
+        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_succession_confirmed",
+    ) as confirmed_mock, patch(
+        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_registration_advanced",
+    ):
+        result = reconcile_succession_confirmations(snapshot_reader=lambda: snap)
+
+    assert len(result["confirmations"]) == 1
+    assert result["errors"] == []
+    confirmed_kwargs = confirmed_mock.call_args.kwargs
+    assert confirmed_kwargs["prior_registration_id"] == live_reg
+    assert confirmed_kwargs["superseded_execution_id"] == live_exec
+    assert watches["6885"]["superseded_execution_id"] == live_exec
+    assert watches["6885"]["predecessor_verdict"] == PredecessorVerdict.INCUMBENT_RECORDED.value
+
+
+def test_confirm_legacy_row_lookup_failed_when_incumbent_not_in_snapshot() -> None:
+    row = {
+        "thread_id": "6885",
+        "registration_id": "reg-old",
+        "successor_execution_id": "stargate-uuid",
+        "pending_satellite_execution_id": "satellite-live",
+        "superseded_registration_id": "reg-old",
+    }
+    watches = {"6885": dict(row)}
+    snap = _snap(registration_id="reg-new", execution_id="satellite-live")
+
+    with patch(
+        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.load_watches",
+        side_effect=lambda path=None: watches,
+    ), patch(
+        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_succession_confirmed",
+    ) as confirmed_mock:
+        result = reconcile_succession_confirmations(snapshot_reader=lambda: snap)
+
+    assert result["confirmations"] == []
+    assert len(result["errors"]) == 1
+    assert result["errors"][0]["reason"] == "incumbent_registration_without_execution_id"
+    confirmed_mock.assert_not_called()
