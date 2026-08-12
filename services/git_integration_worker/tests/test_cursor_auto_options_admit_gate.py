@@ -91,11 +91,12 @@ async def test_state3_ac1_asymmetric_options_blocked_after_fix(
 ) -> None:
     """AC1 post-fix: asymmetric required keys refuse nest."""
     _pass_through_gates(monkeypatch)
-    blocked = await blocking_admit_gate(
+    gate_out = await blocking_admit_gate(
         _implement_job(_BASE_DIRECTIVE + _ASYMMETRIC_OPTIONS),
         client=_bus_client(),
         queue=MagicMock(),
     )
+    blocked = gate_out.blocked
     assert blocked is not None
     assert blocked["terminal_status"] == "status:blocked"
     assert "full_path" in blocked["summary"]
@@ -276,7 +277,7 @@ async def test_state10_no_directive_type_gate_does_not_fire(
         client=_bus_client(),
         queue=MagicMock(),
     )
-    assert result is None
+    assert result.blocked is None
 
 
 @pytest.mark.asyncio
@@ -289,7 +290,7 @@ async def test_state11_verify_contract_gate_does_not_fire(
         client=_bus_client(),
         queue=MagicMock(),
     )
-    assert result is None
+    assert result.blocked is None
 
 
 @pytest.mark.asyncio
@@ -298,10 +299,11 @@ async def test_gate_fires_on_investigate_and_seed(
 ) -> None:
     _pass_through_gates(monkeypatch)
     for contract in ("investigate", "seed"):
-        blocked = await blocking_admit_gate(
+        gate_out = await blocking_admit_gate(
             _implement_job(_BASE_DIRECTIVE + _ASYMMETRIC_OPTIONS, contract=contract),
             client=_bus_client(),
             queue=MagicMock(),
         )
+        blocked = gate_out.blocked
         assert blocked is not None, contract
         assert "falsifier" in blocked["summary"], contract

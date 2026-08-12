@@ -70,6 +70,7 @@ class EnqueueBody(BaseModel):
     cse_registration_id: str | None = None
     # Row 21: structural hop flag (OR with first-line TYPE: CONTINUITY_HANDOFF).
     continuity_hop: bool = False
+    wire_dropped_fields: tuple[str, ...] = ()
 
     @model_validator(mode="before")
     @classmethod
@@ -85,6 +86,7 @@ class EnqueueBody(BaseModel):
                 dropped_fields=dropped,
                 sender=sender,
             )
+            data["wire_dropped_fields"] = dropped
         return data
 
 
@@ -230,6 +232,7 @@ async def enqueue(body: EnqueueBody, request: Request):
         cse_registration_id=body.cse_registration_id,
         continuity_hop=is_hop,
         continuity_matched_token=matched_token,
+        wire_dropped_fields=tuple(body.wire_dropped_fields),
     )
     deferred_job_id: str | None = None
     if deferred_body is not None:

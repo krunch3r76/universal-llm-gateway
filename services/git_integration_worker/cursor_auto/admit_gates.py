@@ -6,6 +6,7 @@ whose history cannot be verified never reaches ``submit_nested_dispatch``.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from claim_register import claimed_derived
@@ -34,6 +35,7 @@ from services.git_integration_worker.cursor_auto.episode_briefing import (
 )
 from services.git_integration_worker.cursor_auto.execute_admission import (
     EXECUTE_CONTRACT,
+    ExecuteAdmission,
     admit_execute_body,
 )
 from services.git_integration_worker.cursor_auto.execute_events import (
@@ -55,6 +57,7 @@ from services.git_integration_worker.cursor_auto.options_admission import (
 )
 from services.git_integration_worker.cursor_auto.propagate_admission import (
     PROPAGATE_CONTRACT,
+    PropagateAdmission,
     admit_propagate_body,
 )
 from services.git_integration_worker.cursor_auto.queue import AutoJob
@@ -71,15 +74,25 @@ from services.git_integration_worker.cursor_sdk_events import (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class AdmitGateResult:
+    """Outcome of ``blocking_admit_gate`` — block payload plus retained admissions."""
+
+    blocked: dict[str, Any] | None = None
+    propagate_admission: PropagateAdmission | None = None
+    execute_admission: ExecuteAdmission | None = None
+
+
 async def blocking_admit_gate(
     job: AutoJob,
     *,
     client: CursorBusClient,
     queue: Any,
-) -> dict[str, Any] | None:
-    """Return a terminal ``status:blocked`` result when an admit gate refuses.
+) -> AdmitGateResult:
+    """Return block payload when an admit gate refuses; else retained admissions.
 
-    ``None`` means all gates passed and the caller may continue to nest.
+    ``blocked`` set means the caller must terminalize; parity lives on the
+    admission objects either way for render on success paths.
     """
     from claude_bundles.mission_close_wake import validate_mission_close_wake
 
@@ -94,7 +107,8 @@ async def blocking_admit_gate(
             "Continuity hop reached implement admit — routing defect "
             "(continuity_hop_misroute). Do not add vision/scope fields."
         )
-        return await _blocked(
+        return AdmitGateResult(
+            blocked=await _blocked(
             job,
             client=client,
             queue=queue,
@@ -105,6 +119,7 @@ async def blocking_admit_gate(
                 "fix_hint": CONTINUITY_HOP_FIX_HINT,
             },
         )
+        )
 
     wake = validate_mission_close_wake(subject=job.subject or "", body=job.body or "")
     if not wake.ok:
@@ -112,17 +127,19 @@ async def blocking_admit_gate(
             "Mission close refused — outstanding work has no named wake path "
             f"({wake.reason or 'mission_close_wake_path_missing'})."
         )
-        return await _blocked(
-            job,
-            client=client,
-            queue=queue,
-            summary=summary,
-            payload={
-                "summary": summary,
-                "reason": wake.reason or "mission_close_wake_path_missing",
-                "missed_tokens": list(wake.missed_tokens),
-                "fix_hint": MISSION_CLOSE_WAKE_FIX_HINT,
-            },
+        return AdmitGateResult(
+            blocked=await _blocked(
+                job,
+                client=client,
+                queue=queue,
+                summary=summary,
+                payload={
+                    "summary": summary,
+                    "reason": wake.reason or "mission_close_wake_path_missing",
+                    "missed_tokens": list(wake.missed_tokens),
+                    "fix_hint": MISSION_CLOSE_WAKE_FIX_HINT,
+                },
+            )
         )
 
     from claude_bundles.pickup_awaits import (
@@ -144,24 +161,26 @@ async def blocking_admit_gate(
             if reason == "pickup_awaits_unbound"
             else PICKUP_DECLARATION_FIX_HINT
         )
-        return await _blocked(
-            job,
-            client=client,
-            queue=queue,
-            summary=summary,
-            payload={
-                "summary": summary,
-                "reason": reason,
-                "missed_tokens": list(pickup.missed_tokens),
-                "fix_hint": hint,
-            },
+        return AdmitGateResult(
+            blocked=await _blocked(
+                job,
+                client=client,
+                queue=queue,
+                summary=summary,
+                payload={
+                    "summary": summary,
+                    "reason": reason,
+                    "missed_tokens": list(pickup.missed_tokens),
+                    "fix_hint": hint,
+                },
+            )
         )
 
     contract = (job.contract or "answer").strip().lower()
     if contract == EXECUTE_CONTRACT:
         admission = admit_execute_body(job.body)
         if admission.approved:
-            return None
+            return AdmitGateResult(execute_admission=admission)
         error = admission.error or {"reason": "execute_admission_refused"}
         summary = str(error.get("summary", "execute admission refused"))
         emit_execute_admission_blocked(
@@ -169,30 +188,36 @@ async def blocking_admit_gate(
             reason=str(error.get("reason", "execute_admission_refused")),
             tool_op=error.get("tool_op"),
         )
-        return await _blocked(
-            job,
-            client=client,
-            queue=queue,
-            summary=summary,
-            payload={**error, "summary": summary, "contract": contract},
+        return AdmitGateResult(
+            blocked=await _blocked(
+                job,
+                client=client,
+                queue=queue,
+                summary=summary,
+                payload={**error, "summary": summary, "contract": contract},
+            ),
+            execute_admission=admission,
         )
     if contract == PROPAGATE_CONTRACT:
         admission = admit_propagate_body(job.body)
         if admission.approved:
-            return None
+            return AdmitGateResult(propagate_admission=admission)
         error = admission.error or {"reason": "propagate_admission_refused"}
         summary = str(error.get("summary", "propagate admission refused"))
-        return await _blocked(
-            job,
-            client=client,
-            queue=queue,
-            summary=summary,
-            payload={
-                **error,
-                "summary": summary,
-                "contract": contract,
-                "fix_hint": error.get("fix_hint", PROPAGATE_MISSING_FIX_HINT),
-            },
+        return AdmitGateResult(
+            blocked=await _blocked(
+                job,
+                client=client,
+                queue=queue,
+                summary=summary,
+                payload={
+                    **error,
+                    "summary": summary,
+                    "contract": contract,
+                    "fix_hint": error.get("fix_hint", PROPAGATE_MISSING_FIX_HINT),
+                },
+            ),
+            propagate_admission=admission,
         )
     if contract in NESTED_SCOPE_CONTRACTS and not has_actionable_scope(job.body):
         directive = parse_request_body(job.body)
@@ -228,7 +253,8 @@ async def blocking_admit_gate(
                 density=density,
                 missed_tokens=missed,
             )
-            return await _blocked(
+            return AdmitGateResult(
+                blocked=await _blocked(
                 job,
                 client=client,
                 queue=queue,
@@ -244,6 +270,7 @@ async def blocking_admit_gate(
                     "fix_hint": EMPTY_SCOPE_FIX_HINT,
                 },
             )
+            )
     directive = parse_request_body(job.body)
     if contract in VISION_REQUIRED_CONTRACTS and directive is not None:
         if not has_vision_field(job.body):
@@ -252,7 +279,8 @@ async def blocking_admit_gate(
                 "Directive vision field missing — implement/investigate DIRECTIVEs "
                 "require a vision: line (vision_field_missing)."
             )
-            return await _blocked(
+            return AdmitGateResult(
+                blocked=await _blocked(
                 job,
                 client=client,
                 queue=queue,
@@ -270,10 +298,12 @@ async def blocking_admit_gate(
                     ).to_wire(),
                 },
             )
+            )
         admission = admit_options_body(job.body)
         if not admission.approved and admission.error is not None:
             summary = admission.error["summary"]
-            return await _blocked(
+            return AdmitGateResult(
+                blocked=await _blocked(
                 job,
                 client=client,
                 queue=queue,
@@ -288,6 +318,7 @@ async def blocking_admit_gate(
                     ).to_wire(),
                 },
             )
+            )
     status = await fetch_thread_status(job.thread_id)
     if status in {"closed", "blocked"}:
         emit_frontier_sdk_auto_thread_status_refused(
@@ -297,7 +328,8 @@ async def blocking_admit_gate(
         summary = (
             f"Thread status {status} — refuse nest (thread_terminal_status_refused)."
         )
-        return await _blocked(
+        return AdmitGateResult(
+            blocked=await _blocked(
             job,
             client=client,
             queue=queue,
@@ -308,17 +340,20 @@ async def blocking_admit_gate(
                 "thread_status": status,
             },
         )
+        )
     turns = await fetch_thread_turns(job.thread_id)
     if turns is None:
         summary = (
             "Relay trust gate cannot verify thread history (relay_trust_unverifiable)."
         )
-        return await _blocked(
+        return AdmitGateResult(
+            blocked=await _blocked(
             job,
             client=client,
             queue=queue,
             summary=summary,
             payload={"summary": summary, "relay_trust_unverifiable": True},
+        )
         )
     pending = pending_synthesized_closeout(turns, operator_from=job.from_agent)
     if pending:
@@ -326,12 +361,14 @@ async def blocking_admit_gate(
             f"Synthesized closeout {pending} awaits operator ack "
             "(synthesized_closeout_ack: <dispatch_id>)."
         )
-        return await _blocked(
+        return AdmitGateResult(
+            blocked=await _blocked(
             job,
             client=client,
             queue=queue,
             summary=summary,
             payload={"summary": summary, "pending_synthesized_closeout": pending},
+        )
         )
     if pending_auth_gate_block(turns, operator_from=job.from_agent):
         failures = count_auth_gate_failures(turns, operator_from=job.from_agent)
@@ -350,7 +387,8 @@ async def blocking_admit_gate(
             budget=budget,
             post_ack=post_ack,
         )
-        return await _blocked(
+        return AdmitGateResult(
+            blocked=await _blocked(
             job,
             client=client,
             queue=queue,
@@ -375,7 +413,8 @@ async def blocking_admit_gate(
                 "post_ack": post_ack,
             },
         )
-    return None
+        )
+    return AdmitGateResult()
 
 
 async def _blocked(

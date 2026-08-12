@@ -307,8 +307,8 @@ async def test_post_ack_one_failure_blocks_at_admit(monkeypatch):
     result = await admit_gates.blocking_admit_gate(
         job, client=MagicMock(), queue=MagicMock()
     )
-    assert result is not None
-    assert result["terminal_status"] == "status:blocked"
+    assert result.blocked is not None
+    assert result.blocked["terminal_status"] == "status:blocked"
     kwargs = terminal.await_args.kwargs
     assert kwargs["payload"]["reason"] == "auth_gate_budget_exhausted"
     assert kwargs["payload"]["post_ack"] is True
@@ -397,8 +397,8 @@ async def test_admit_gate_blocks_third_implement(monkeypatch):
     result = await admit_gates.blocking_admit_gate(
         job, client=MagicMock(), queue=MagicMock()
     )
-    assert result is not None
-    assert result["terminal_status"] == "status:blocked"
+    assert result.blocked is not None
+    assert result.blocked["terminal_status"] == "status:blocked"
     kwargs = terminal.await_args.kwargs
     assert kwargs["payload"]["reason"] == "auth_gate_budget_exhausted"
     assert kwargs["payload"]["post_ack"] is False

@@ -32,6 +32,7 @@ def job_record(job: AutoJob) -> dict[str, Any]:
         "superseded_dispatch_id": job.superseded_dispatch_id,
         "continuity_hop": job.continuity_hop,
         "continuity_matched_token": job.continuity_matched_token,
+        "wire_dropped_fields": list(job.wire_dropped_fields),
     }
 
 
@@ -63,4 +64,5 @@ def job_from_row(row: sqlite3.Row) -> AutoJob:
         superseded_dispatch_id=data.get("superseded_dispatch_id"),
         continuity_hop=bool(data.get("continuity_hop", False)),
         continuity_matched_token=data.get("continuity_matched_token"),
+        wire_dropped_fields=tuple(data.get("wire_dropped_fields") or ()),
     )

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from services.git_integration_worker.cursor_auto.directive import effective_contract
+from services.git_integration_worker.cursor_auto.admit_gates import AdmitGateResult
 from services.git_integration_worker.cursor_auto.handler import process_job
 from services.git_integration_worker.cursor_auto.queue import AutoJob
 from services.git_integration_worker.cursor_auto.wire_map import (
@@ -76,7 +77,7 @@ def test_process_job_directive_answer_upgrades_to_nested(monkeypatch: pytest.Mon
     )
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.handler.blocking_admit_gate",
-        AsyncMock(return_value=None),
+        AsyncMock(return_value=AdmitGateResult()),
     )
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.gate_serialize.sdk_dispatch_gate_stats",

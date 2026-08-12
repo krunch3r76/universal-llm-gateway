@@ -7,7 +7,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from services.git_integration_worker.cursor_auto.admit_gates import blocking_admit_gate
+from services.git_integration_worker.cursor_auto.admit_gates import (
+    AdmitGateResult,
+    blocking_admit_gate,
+)
 from services.git_integration_worker.cursor_auto.directive import (
     effective_contract,
     has_actionable_scope,
@@ -15,6 +18,12 @@ from services.git_integration_worker.cursor_auto.directive import (
 )
 from services.git_integration_worker.cursor_auto.handler import process_job
 from services.git_integration_worker.cursor_auto.queue import AutoJob
+
+
+def _bus_client() -> AsyncMock:
+    client = AsyncMock()
+    client.reply = AsyncMock(return_value=MagicMock(status_code=200, body="{}"))
+    return client
 
 
 @pytest.fixture(autouse=True)
@@ -70,11 +79,12 @@ async def test_blocking_admit_gate_empty_dense_directive_blocks_first() -> None:
             "services.git_integration_worker.cursor_auto.admit_gates.fetch_thread_turns",
             fetch,
         )
-        blocked = await blocking_admit_gate(
+        gate_out = await blocking_admit_gate(
             job,
-            client=AsyncMock(),
+            client=_bus_client(),
             queue=MagicMock(),
         )
+        blocked = gate_out.blocked
     assert blocked is not None
     assert blocked["terminal_status"] == "status:blocked"
     assert "empty_directive_scope" in blocked["summary"]
@@ -108,10 +118,10 @@ async def test_blocking_admit_gate_contract_override_waives(
         )
         result = await blocking_admit_gate(
             job,
-            client=AsyncMock(),
+            client=_bus_client(),
             queue=MagicMock(),
         )
-    assert result is None
+    assert result.blocked is None
     assert any(
         sig == "frontier.sdk.auto.empty_directive_scope_waived"
         for sig, _ in _capture_events
@@ -147,8 +157,8 @@ def test_process_job_empty_directive_never_nests(monkeypatch: pytest.MonkeyPatch
         contract="answer",
     )
     result = asyncio.run(process_job(job, bus=bus))
-    assert result["terminal_status"] == "status:blocked"
-    assert "empty_directive_scope" in result["summary"]
+    assert result.blocked["terminal_status"] == "status:blocked"
+    assert "empty_directive_scope" in result.blocked["summary"]
     submit.assert_not_awaited()
     assert job.contract == "implement"
 
@@ -156,7 +166,11 @@ def test_process_job_empty_directive_never_nests(monkeypatch: pytest.MonkeyPatch
 def test_process_job_non_directive_contract_still_runs_gates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    gate = AsyncMock(return_value={"terminal_status": "status:blocked"})
+    gate = AsyncMock(
+        return_value=AdmitGateResult(
+            blocked={"terminal_status": "status:blocked"},
+        )
+    )
     bus = AsyncMock()
     submit = AsyncMock()
     monkeypatch.setattr(
@@ -227,11 +241,12 @@ async def test_blocking_admit_gate_missing_vision_blocks_implement() -> None:
             "services.git_integration_worker.cursor_auto.admit_gates.fetch_thread_turns",
             fetch,
         )
-        blocked = await blocking_admit_gate(
+        gate_out = await blocking_admit_gate(
             job,
-            client=AsyncMock(),
+            client=_bus_client(),
             queue=MagicMock(),
         )
+        blocked = gate_out.blocked
     assert blocked is not None
     assert blocked["terminal_status"] == "status:blocked"
     assert "vision_field_missing" in blocked["summary"]
@@ -258,11 +273,12 @@ async def test_blocking_admit_gate_missing_vision_blocks_investigate() -> None:
             "services.git_integration_worker.cursor_auto.admit_gates.fetch_thread_turns",
             fetch,
         )
-        blocked = await blocking_admit_gate(
+        gate_out = await blocking_admit_gate(
             job,
-            client=AsyncMock(),
+            client=_bus_client(),
             queue=MagicMock(),
         )
+        blocked = gate_out.blocked
     assert blocked is not None
     assert "vision_field_missing" in blocked["summary"]
     fetch.assert_not_awaited()
@@ -293,10 +309,10 @@ async def test_blocking_admit_gate_with_vision_passes() -> None:
         )
         result = await blocking_admit_gate(
             job,
-            client=AsyncMock(),
+            client=_bus_client(),
             queue=MagicMock(),
         )
-    assert result is None
+    assert result.blocked is None
 
 
 @pytest.mark.asyncio
@@ -326,11 +342,12 @@ async def test_blocking_admit_gate_closed_thread_refuses(
             "services.git_integration_worker.cursor_auto.admit_gates.fetch_thread_turns",
             fetch_turns,
         )
-        blocked = await blocking_admit_gate(
+        gate_out = await blocking_admit_gate(
             job,
-            client=AsyncMock(),
+            client=_bus_client(),
             queue=MagicMock(),
         )
+        blocked = gate_out.blocked
     assert blocked is not None
     assert blocked["terminal_status"] == "status:blocked"
     assert "thread_terminal_status_refused" in blocked["summary"]
@@ -369,11 +386,12 @@ async def test_blocking_admit_gate_blocked_thread_refuses(
             "services.git_integration_worker.cursor_auto.admit_gates.fetch_thread_turns",
             fetch_turns,
         )
-        blocked = await blocking_admit_gate(
+        gate_out = await blocking_admit_gate(
             job,
-            client=AsyncMock(),
+            client=_bus_client(),
             queue=MagicMock(),
         )
+        blocked = gate_out.blocked
     assert blocked is not None
     assert blocked["terminal_status"] == "status:blocked"
     assert "thread_terminal_status_refused" in blocked["summary"]
@@ -411,10 +429,10 @@ async def test_blocking_admit_gate_verify_non_directive_exempt() -> None:
         )
         result = await blocking_admit_gate(
             job,
-            client=AsyncMock(),
+            client=_bus_client(),
             queue=MagicMock(),
         )
-    assert result is None
+    assert result.blocked is None
     fetch.assert_awaited_once()
 
 
@@ -443,10 +461,10 @@ async def test_blocking_admit_gate_mechanical_vision_passes() -> None:
         )
         result = await blocking_admit_gate(
             job,
-            client=AsyncMock(),
+            client=_bus_client(),
             queue=MagicMock(),
         )
-    assert result is None
+    assert result.blocked is None
 
 
 @pytest.mark.asyncio
@@ -474,7 +492,7 @@ async def test_blocking_admit_gate_wrong_pillar_still_passes_presence_only() -> 
         )
         result = await blocking_admit_gate(
             job,
-            client=AsyncMock(),
+            client=_bus_client(),
             queue=MagicMock(),
         )
-    assert result is None
+    assert result.blocked is None

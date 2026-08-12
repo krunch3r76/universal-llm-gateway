@@ -8,6 +8,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from services.git_integration_worker.cursor_auto.field_parity import (
+    FieldParityReport,
+    render_field_parity_line,
+)
+
 
 def build_admit_report_body(
     *,
@@ -25,6 +30,7 @@ def build_admit_report_body(
     override_rule: str | None = None,
     effort_rule: str | None = None,
     pin_flags: tuple[str, ...] = (),
+    field_parity_report: FieldParityReport | None = None,
 ) -> str:
     """Compose the admit / admit-report body lines (no I/O, no gating)."""
     header = (
@@ -55,4 +61,6 @@ def build_admit_report_body(
         body += f"\n{effort_rule}"
     if pin_flags:
         body += "\nflags: " + "; ".join(pin_flags)
+    if field_parity_report is not None:
+        body += "\n" + render_field_parity_line(field_parity_report)
     return body

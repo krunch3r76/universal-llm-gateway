@@ -186,11 +186,12 @@ async def test_premium_override_no_longer_waives_empty_scope(
             "services.git_integration_worker.cursor_auto.admit_gates.fetch_thread_turns",
             AsyncMock(return_value=[]),
         )
-        blocked = await blocking_admit_gate(
+        gate_out = await blocking_admit_gate(
             _job("cursor/claude-opus-5"),
             client=client,
             queue=MagicMock(),
         )
+        blocked = gate_out.blocked
 
     assert blocked is not None
     assert blocked["terminal_status"] == "status:blocked"
@@ -219,7 +220,7 @@ async def test_roaming_override_still_waives_empty_scope(
             queue=MagicMock(),
         )
 
-    assert result is None
+    assert result.blocked is None
     assert any(
         sig == "frontier.sdk.auto.empty_directive_scope_waived"
         for sig, _ in _capture_events

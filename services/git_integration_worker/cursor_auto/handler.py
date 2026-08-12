@@ -8,7 +8,11 @@ from agent_seat.registry import normalize_bus_address
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_auto.admit_gates import (
+    AdmitGateResult,
     blocking_admit_gate,
+)
+from services.git_integration_worker.cursor_auto.field_parity import (
+    compute_field_parity_for_job,
 )
 from services.git_integration_worker.cursor_auto.admit_report import (
     build_admit_report_body,
@@ -228,6 +232,7 @@ async def process_job(
     )
     escalation = resolve_escalation(job.escalation)
     contract_info = resolve_contract_disposition(contract)
+    gate_result = AdmitGateResult()
     if (
         directive is not None
         or contract in _NESTED_CONTRACTS
@@ -237,9 +242,9 @@ async def process_job(
             PROPAGATE_CONTRACT,
         }
     ):
-        blocked = await blocking_admit_gate(job, client=client, queue=queue)
-        if blocked is not None:
-            return blocked
+        gate_result = await blocking_admit_gate(job, client=client, queue=queue)
+        if gate_result.blocked is not None:
+            return gate_result.blocked
 
     work_bounded = contract == "answer" or (
         directive is not None and directive.density == "sparse"
@@ -252,6 +257,13 @@ async def process_job(
     override_rule = admit_model_override_rule_line(model)
     effort_rule = admit_effort_override_rule_line(effort)
     pin_flags = admit_model_pin_flags(model, effort)
+    parity_report = compute_field_parity_for_job(
+        body=job.body,
+        contract=str(contract),
+        propagate_admission=gate_result.propagate_admission,
+        execute_admission=gate_result.execute_admission,
+        wire_dropped=tuple(job.wire_dropped_fields),
+    )
     base_admit_body = build_admit_report_body(
         model=model,
         effort=effort,
@@ -268,6 +280,7 @@ async def process_job(
         override_rule=override_rule,
         effort_rule=effort_rule,
         pin_flags=pin_flags,
+        field_parity_report=parity_report,
     )
     briefing = await maybe_briefing_for_admit(job.thread_id, contract=contract)
     admit = await client.reply(

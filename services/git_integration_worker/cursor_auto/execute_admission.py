@@ -46,11 +46,23 @@ class ExecuteAdmission:
     row: ManifestRow | None = None
     arguments: dict[str, Any] = field(default_factory=dict)
     error: dict[str, Any] | None = None
+    consumed_keys: frozenset[str] = frozenset()
 
     @property
     def approved(self) -> bool:
         """True when exactly one manifest-allowed op with parsed args was found."""
         return self.error is None and self.row is not None
+
+
+def _consumed_keys_from_body(body: str, *, tool_op: str | None) -> frozenset[str]:
+    keys: set[str] = set()
+    if tool_op:
+        keys.add("tool_op")
+    if _TOOL_ARGS_RE.search(body or ""):
+        keys.add("tool_args")
+    if has_effects_expected(body):
+        keys.add("effects_expected")
+    return frozenset(keys)
 
 
 def _error(
@@ -130,6 +142,7 @@ def admit_execute_body(body: str) -> ExecuteAdmission:
     if not tokens:
         return ExecuteAdmission(
             tokens=tokens,
+            consumed_keys=_consumed_keys_from_body(body, tool_op=None),
             error=_error(
                 "execute_tool_op_missing",
                 "contract=execute requires a tool_op: line naming the op to fire.",
@@ -140,6 +153,7 @@ def admit_execute_body(body: str) -> ExecuteAdmission:
     if len(tokens) > 1:
         return ExecuteAdmission(
             tokens=tokens,
+            consumed_keys=_consumed_keys_from_body(body, tool_op=tokens[0]),
             error=_error(
                 "execute_multi_op_unsupported",
                 (
@@ -151,11 +165,13 @@ def admit_execute_body(body: str) -> ExecuteAdmission:
             ),
         )
     row, denial = _resolve_row(tokens[0])
+    consumed = _consumed_keys_from_body(body, tool_op=tokens[0])
     if denial is not None:
-        return ExecuteAdmission(tokens=tokens, error=denial)
+        return ExecuteAdmission(tokens=tokens, consumed_keys=consumed, error=denial)
     if not has_effects_expected(body):
         return ExecuteAdmission(
             tokens=tokens,
+            consumed_keys=consumed,
             error=_error(
                 "execute_effects_expected_missing",
                 (
@@ -171,6 +187,7 @@ def admit_execute_body(body: str) -> ExecuteAdmission:
         return ExecuteAdmission(
             tokens=tokens,
             row=row,
+            consumed_keys=consumed,
             error=_error(
                 "execute_tool_args_unparseable",
                 "tool_args: must be a single-line JSON object.",
@@ -179,7 +196,9 @@ def admit_execute_body(body: str) -> ExecuteAdmission:
                 provided=bad_raw,
             ),
         )
-    return ExecuteAdmission(tokens=tokens, row=row, arguments=arguments)
+    return ExecuteAdmission(
+        tokens=tokens, row=row, arguments=arguments, consumed_keys=consumed
+    )
 
 
 __all__ = [

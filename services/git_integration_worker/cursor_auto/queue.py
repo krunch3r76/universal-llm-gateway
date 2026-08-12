@@ -33,6 +33,8 @@ class AutoJob:
     # Row 21: structural continuity-hop classification (set at enqueue).
     continuity_hop: bool = False
     continuity_matched_token: str | None = None
+    # Wire keys dropped at L1 enqueue (``extra=ignore`` observation).
+    wire_dropped_fields: tuple[str, ...] = ()
     enqueued_at: float = field(default_factory=time.monotonic)
     status: str = "queued"  # queued | claimed | done | failed | report_undelivered | superseded
     superseded_by: str | None = None

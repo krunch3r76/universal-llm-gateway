@@ -17,6 +17,13 @@ from universal_logging import get_logger
 from services.git_integration_worker.cursor_auto.admit_report import (
     build_admit_report_body,
 )
+from services.git_integration_worker.cursor_auto.field_parity import (
+    compute_field_parity_for_job,
+)
+from services.git_integration_worker.cursor_auto.propagate_admission import (
+    PROPAGATE_CONTRACT,
+    admit_propagate_body,
+)
 from services.git_integration_worker.cursor_auto.cdp_escalation import (
     commission_cdp_escalation,
 )
@@ -90,11 +97,21 @@ async def _post_hop_admit_report(
                 "resolved_escalation": cdp_model,
             }
         handoff = resolve_handoff_contract(job.contract or "light-bounded")
+        contract = job.contract or "light-bounded"
+        propagate_admission = None
+        if contract.strip().lower() == PROPAGATE_CONTRACT:
+            propagate_admission = admit_propagate_body(job.body)
+        parity_report = compute_field_parity_for_job(
+            body=job.body,
+            contract=contract,
+            propagate_admission=propagate_admission,
+            wire_dropped=tuple(job.wire_dropped_fields),
+        )
         body = build_admit_report_body(
             model=sdk_model,
             effort=effort,
             escalation=escalation,
-            contract=job.contract or "light-bounded",
+            contract=contract,
             handoff_contract=handoff,
             continuity_hop=True,
             matched_token=job.continuity_matched_token,
@@ -102,6 +119,7 @@ async def _post_hop_admit_report(
             override_rule=admit_model_override_rule_line(sdk_model),
             effort_rule=admit_effort_override_rule_line(effort),
             pin_flags=admit_model_pin_flags(sdk_model, effort),
+            field_parity_report=parity_report,
         )
         await client.reply(
             thread_id=job.thread_id,

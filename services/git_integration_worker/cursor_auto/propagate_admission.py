@@ -60,6 +60,7 @@ class PropagateAdmission:
     rows: tuple[PropagationRow, ...] = ()
     flags: tuple[str, ...] = ()
     error: dict[str, Any] | None = None
+    consumed_keys: frozenset[str] = frozenset()
 
     @property
     def approved(self) -> bool:
@@ -101,6 +102,34 @@ def _rows_from_structured_block(
             legal_safe_window=LEGAL_SAFE_WINDOW_LIST,
         )
     return tuple(rows), all_flags, None
+
+
+def consumed_keys_from_shorthand(body: str) -> frozenset[str]:
+    """Parser-reported keys the shorthand path actually read."""
+    keys: set[str] = set()
+    if _EFFECTS_EXPECTED_RE.search(body):
+        keys.add("effects_expected")
+    scope_match = _SCOPE_SYNC_RESTART_RE.search(body)
+    if scope_match:
+        keys.add("scope")
+        keys.add("service")
+    elif _SCOPE_PROPAGATION_RE.search(body):
+        keys.add("scope")
+        if _SERVICE_FIELD_RE.search(body):
+            keys.add("service")
+    if _CODE_REF_FIELD_RE.search(body):
+        keys.add("code_ref")
+    return frozenset(keys)
+
+
+def consumed_keys_from_yaml_block(body: str) -> frozenset[str]:
+    """Parser-reported keys from a structured ``## propagation`` block."""
+    keys: set[str] = {"effects_expected"}
+    raw_rows, _ = parse_propagation_block(body)
+    for raw in raw_rows:
+        if isinstance(raw, dict):
+            keys.update(str(k) for k in raw)
+    return frozenset(keys)
 
 
 def _rows_from_shorthand(body: str) -> tuple[PropagationRow, ...]:
@@ -155,6 +184,7 @@ def admit_propagate_body(body: str) -> PropagateAdmission:
     text = body or ""
     if not _EFFECTS_EXPECTED_RE.search(text):
         return PropagateAdmission(
+            consumed_keys=frozenset({"effects_expected"}),
             error=_error(
                 "propagate_effects_expected_missing",
                 "contract=propagate requires effects_expected: naming the observable outcome.",
@@ -163,24 +193,30 @@ def admit_propagate_body(body: str) -> PropagateAdmission:
         )
 
     if propagation_block_present(text):
+        consumed = consumed_keys_from_yaml_block(text)
         rows, flags, block_error = _rows_from_structured_block(text)
         if block_error is not None:
-            return PropagateAdmission(flags=flags, error=block_error)
+            return PropagateAdmission(flags=flags, consumed_keys=consumed, error=block_error)
         validated, ref_error = _validate_admitted_rows(rows)
         if ref_error is not None:
-            return PropagateAdmission(flags=flags, error=ref_error)
-        return PropagateAdmission(rows=validated, flags=flags)
+            return PropagateAdmission(flags=flags, consumed_keys=consumed, error=ref_error)
+        return PropagateAdmission(rows=validated, flags=flags, consumed_keys=consumed)
 
     try:
         shorthand_rows = _rows_from_shorthand(text)
     except UnresolvableCodeRefError as exc:
         return PropagateAdmission(
+            consumed_keys=consumed_keys_from_shorthand(text),
             error=admit_error_for_unresolvable_code_ref(exc.code_ref),
         )
     if shorthand_rows:
-        return PropagateAdmission(rows=shorthand_rows)
+        return PropagateAdmission(
+            rows=shorthand_rows,
+            consumed_keys=consumed_keys_from_shorthand(text),
+        )
 
     return PropagateAdmission(
+        consumed_keys=consumed_keys_from_shorthand(text),
         error=_error(
             "propagate_rows_missing",
             (
@@ -209,5 +245,7 @@ __all__ = [
     "PROPAGATE_CONTRACT",
     "PropagateAdmission",
     "admit_propagate_body",
+    "consumed_keys_from_shorthand",
+    "consumed_keys_from_yaml_block",
     "rows_from_admission_payload",
 ]

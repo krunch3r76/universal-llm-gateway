@@ -19,7 +19,7 @@ from collections.abc import Sequence
 from typing import Any, Literal
 
 from deploy_identity.code_version import normalize_code_ref
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from implement_admission.consumer_import_verify import (
     format_verification_tags,
@@ -170,22 +170,28 @@ def compose_proof(
 class PropagationRow(BaseModel):
     """One harvest-tracked restart requirement with proof obligation."""
 
-    service: str
-    action: PropagationAction = "sync_restart"
-    code_ref: str
-    safe_window: SafeWindow
-    hazard: str | None = None
-    reason: str | None = None
-    proof: str
-    proof_class: ProofClass
-    proof_class_requested: ProofClass | None = None
-    expected_x_mcp_count: int | None = None
-    mint_thread: str | None = None
-    mint_turn: int | None = None
+    service: str = Field(json_schema_extra={"parity": "bound"})
+    action: PropagationAction = Field(
+        default="sync_restart", json_schema_extra={"parity": "effect"}
+    )
+    code_ref: str = Field(json_schema_extra={"parity": "bound"})
+    safe_window: SafeWindow = Field(json_schema_extra={"parity": "effect"})
+    hazard: str | None = Field(default=None, json_schema_extra={"parity": "descriptive"})
+    reason: str | None = Field(default=None, json_schema_extra={"parity": "descriptive"})
+    proof: str = Field(json_schema_extra={"parity": "effect"})
+    proof_class: ProofClass = Field(json_schema_extra={"parity": "effect"})
+    proof_class_requested: ProofClass | None = Field(
+        default=None, json_schema_extra={"parity": "stamped"}
+    )
+    expected_x_mcp_count: int | None = Field(
+        default=None, json_schema_extra={"parity": "effect"}
+    )
+    mint_thread: str | None = Field(default=None, json_schema_extra={"parity": "stamped"})
+    mint_turn: int | None = Field(default=None, json_schema_extra={"parity": "stamped"})
     # mcp-only: operator-proxy self-preempt of own cdp_ask_live CSE (restart-drain carve-out)
-    force: bool = False
+    force: bool = Field(default=False, json_schema_extra={"parity": "narrowing"})
     # When False, suppress auto-escalation to force on self-preemptable busy deferrals.
-    allow_self_preempt: bool = True
+    allow_self_preempt: bool = Field(default=True, json_schema_extra={"parity": "effect"})
 
     @model_validator(mode="before")
     @classmethod

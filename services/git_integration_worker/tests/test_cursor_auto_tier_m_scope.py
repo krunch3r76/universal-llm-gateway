@@ -92,7 +92,7 @@ def test_tier_m_directive_passes_scope_and_vision_gates(
             queue=MagicMock(),
         )
     )
-    assert result is None
+    assert result.blocked is None
 
 
 def test_empty_scope_blocked_payload_carries_fix_hint() -> None:
@@ -105,8 +105,8 @@ def test_empty_scope_blocked_payload_carries_fix_hint() -> None:
             queue=MagicMock(),
         )
     )
-    assert result is not None
-    assert result["terminal_status"] == "status:blocked"
+    assert result.blocked is not None
+    assert result.blocked["terminal_status"] == "status:blocked"
     payload = _reply_payload(client)
     assert payload["reason"] == "empty_directive_scope"
     # Still bare at emit; post_terminal_status stamps unknown (Packet A
@@ -127,7 +127,7 @@ def test_vision_missing_blocked_payload_carries_fix_hint() -> None:
             queue=MagicMock(),
         )
     )
-    assert result is not None
+    assert result.blocked is not None
     payload = _reply_payload(client)
     # reason stays observed gate identity (bare string).
     assert payload["reason"] == "vision_field_missing"
@@ -158,7 +158,7 @@ def _in_seat(answer_body: str | None) -> tuple[dict, AsyncMock]:
 def test_answer_without_content_declines_with_routing_hint() -> None:
     result, client = _in_seat(None)
     assert result["disposition"] == "declined"
-    assert result["terminal_status"] == "status:done"
+    assert result.blocked["terminal_status"] == "status:done"
     payload = _reply_payload(client)
     assert payload["disposition"] == "declined"
     assert payload["declined_reason"] == ANSWER_DECLINED_REASON
