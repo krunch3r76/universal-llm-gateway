@@ -116,7 +116,7 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
 logger = get_logger(__name__)
 
 _FROM_AUTO = "cursor-auto"
-_NESTED_CONTRACTS = frozenset({"confer", "implement", "investigate", "verify"})
+_NESTED_CONTRACTS = frozenset({"confer", "implement", "investigate", "verify", "seed"})
 
 
 def _close_dispatch_ticket(
