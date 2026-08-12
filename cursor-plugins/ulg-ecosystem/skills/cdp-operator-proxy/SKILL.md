@@ -469,9 +469,11 @@ something the DIRECTIVE did not scope in?*
 ### Closeout harvest — land claim read-back (BINDING)
 
 When harvesting a nested CLOSEOUT or dispositioning a land/commit claim, run the
-**seven-state recipe** in `provenance-discipline` § Read back (commit / land claim row) —
-**not** `git log -1 --format=%H` alone. The operator seat is the consumer that skipped this
-check at `agent-bus:6655#2461` (HEAD SHA existed; claimed change did not).
+**seven-state recipe** in the steps table below (mirrored from hub
+`provenance-discipline.mdc` § Read back — mirror attestation in the following
+subsubsection) — **not** `git log -1 --format=%H` alone. The operator seat is the
+consumer that skipped this check at `agent-bus:6655#2461` (HEAD SHA existed; claimed
+change did not).
 
 | Step | Action |
 |---|---|
@@ -483,6 +485,49 @@ check at `agent-bus:6655#2461` (HEAD SHA existed; claimed change did not).
 
 Quote path-scoped SHA + probe output in DISPOSITION evidence. A hedge on an unread probe is
 still unobserved — worse than a bare error because it reads calibrated.
+
+#### Mirror attestation — hub `provenance-discipline.mdc` (BINDING)
+
+**Exposure (operator reframe, arc 6655):** This § carries a hand-copied mirror of the hub
+always-apply rule at `/mnt/torus/projects/.cursor/rules/provenance-discipline.mdc` (parent-pack,
+unversioned). The life/CDP seat reads **this mirror**, not the hub file. Without attestation,
+hub edits silently diverge from what this seat acts on — mirror-vs-source drift, not
+readability or tampering.
+
+**Not generated.** The mirror is hand-copied prose (no generate/symlink pipeline); drift is
+structurally possible. Recompute attestation on every intentional mirror or hub edit.
+
+| Field | Value |
+|---|---|
+| `hub_source_path` | `/mnt/torus/projects/.cursor/rules/provenance-discipline.mdc` |
+| `hub_source_sha256` | `58e944611df1a3e2ba5b3c258b38419222008905624a442e2b0725e27874911d` |
+| `mirror_locus` | § Closeout harvest — land claim read-back (steps table above) |
+| `attested_at` | 2026-08-12 |
+
+**Check** — before trusting the mirror after a hub-edit rumor or before re-copying the mirror:
+
+1. Read `hub_source_sha256` from this block (always reachable on this seat).
+2. Attempt to read hub bytes at `hub_source_path` (code / attended IDE seats; life/CDP: if
+   unreachable, skip digest compare).
+3. If readable: `sha256(bytes)` of the file; zero-length read ⇒ state 6.
+4. Render **one** verdict — every state names a token:
+
+| # | Observation | Verdict |
+|---|---|---|
+| 1 | hash recorded ∧ source readable ∧ `sha256(source)==hub_source_sha256` | **IN SYNC** |
+| 2 | hash recorded ∧ source readable ∧ `sha256(source)!=hub_source_sha256` | **DRIFT** — hub and mirror are both edit candidates; do not guess which moved |
+| 3 | hash recorded ∧ source **unreachable from this seat** (life/CDP has no path to hub) | **INDETERMINATE** — must not render as IN SYNC or DRIFT |
+| 4 | no `hub_source_sha256` recorded in this block | **NOT ATTESTED** — distinct from IN SYNC and DRIFT |
+| 5 | hash recorded but malformed, truncated, or not a 64-hex SHA-256 digest | **INDETERMINATE** |
+| 6 | source reachable ∧ zero-length / empty read | **DRIFT** — never IN SYNC |
+
+**Update protocol:** Intentional hub edit or mirror re-copy ⇒ recompute `sha256(hub bytes)`,
+update `hub_source_sha256` and `attested_at` in the **same commit** as any mirror prose change.
+
+**Must-fail-first (6655):** Before this block, `grep hub_source_sha256` on this skill returned
+no match ⇒ only state 4 (**NOT ATTESTED**) was expressible; drift was undetectable. After: a
+code seat with hub read access and matching bytes ⇒ state 1 (**IN SYNC**); a life seat with
+unreachable hub ⇒ state 3 (**INDETERMINATE**), not silent agreement.
 
 ### Turn authoring order — mint then quote (BINDING)
 
