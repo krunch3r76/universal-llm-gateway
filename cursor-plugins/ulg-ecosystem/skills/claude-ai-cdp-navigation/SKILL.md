@@ -221,7 +221,7 @@ body + `cortex://`* explicitly so the seat does not answer into an artifact card
 |---|---|
 | **Product (DEFAULT)** — consult / binder / R-admit / judgment_gap / Fable outside-check | `team_dispatch(op=generate, model=cdp/opus-5\|cdp/fable, contract=light-bounded, prompt\|sidecar_ref=…, dispatch_thread_id=…)` → poll `poll_hint` (`agent_bus.wait`). Compose `lean-context-dispatch-first` · `consult-routing`. |
 | **Escape** — satellite-direct / MCP-only / IF6 | `project_ask(op=submit, prompt_uri=cortex://…, converse=true, no_project_uuid=true, model=opus-5\|fable-5)` → poll. Use when `team_dispatch` CDP path is unavailable or caller must bypass Stargate admit. |
-| **Warm follow-up (attached lane)** | `project_ask(op=followup, chat_url=… \| registration_id=… \| execution_id=…, prompt_text=… \| prompt_uri=…, purpose=operator-proxy, timeout_s=60)` — wake/correction/advisory into retained operator-proxy CSE; in-chat ≻ bus NOTE. CLI `cowork_chat_followup.py` = escape. |
+| **Warm follow-up (attached lane)** | `project_ask(op=followup, chat_url=… \| registration_id=… \| execution_id=… \| identity omitted ⇒ resolve-or-refuse, cdp_url=… explicit override, prompt_text=… \| prompt_uri=…, purpose=operator-proxy, timeout_s=60)` — wake/correction/advisory into retained operator-proxy CSE; `project_ask(op=resolve_attended)` for read-only triple. CLI `cowork_chat_followup.py` = escape (defaults to resolver when flags omitted). |
 | **Operator-proxy mission** | Prefer `team_dispatch(model=cdp/opus-5, purpose=operator-proxy\|mission, contract=light-bounded, …)` — runner auto-ensures `/cdp-operator-proxy` + `/reasoning-posture` chips + seat-map briefing (`operator_proxy_mission.py`). `project_ask(purpose=…)` remains escape. Prompt body still carries mission ACs. SOT: `cdp-operator-proxy` inv 20 · `cortex://notes/system/specs/cursor-auto-tick-work-posting.md` |
 | Operator Chat on `/new` | `chat_compose=true` / `--chat` |
 | Register / list | `list-lanes` / `deregister-lane` |
@@ -234,7 +234,7 @@ A retained operator-proxy CSE is a **live correspondent**, not an archive. Reach
 
 | Situation | Move | Receipt |
 |---|---|---|
-| Wake / correction / ladder-fix / advisory to a **retained** CSE on an **attached** lane | `project_ask(op=followup, …)` — in-chat, paste-verified (`send_verified` / `receipt`), no reply harvest | `dom_paste` default; `dom_committed` when reload retains marker in committed user-turn nodes |
+| Wake / correction / ladder-fix / advisory to a **retained** CSE on an **attached** lane | `project_ask(op=followup, …)` — identity omitted ⇒ attended resolve-or-refuse on satellite (`target_binding=resolver`); explicit `cdp_url`+`chat_url` ⇒ `target_binding=explicit`. Paste-verified (`send_verified` / `receipt`), no reply harvest | `dom_paste` default; `dom_committed` when reload retains marker in committed user-turn nodes |
 | New turn with no retained CSE — or its context is stale / Customize skills refreshed | `team_dispatch(model=cdp/…)` (default) · `project_ask(op=submit, …)` (escape) — a **fresh window**, ¬ warm paste | n/a |
 | Audit trail for either | bus turn **accompanies** — ¬ substitutes | n/a |
 

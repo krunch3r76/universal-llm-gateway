@@ -197,20 +197,25 @@ CLI parity: `--keep-chat` ≡ `delete_after=false`.
 
   Primary (IDE MCP):
     project_ask(op=followup,
-      chat_url=… | registration_id=… | execution_id=…,
+      chat_url=… | registration_id=… | execution_id=… | identity omitted,
+      cdp_url=…,  # explicit (cdp_url, chat_url) override with chat_url
       prompt_text=… | prompt_uri=…,
       purpose=operator-proxy,
       timeout_s=60,
       min_receipt=dom_paste | dom_committed)  # default dom_paste
-    → paste proof (send_verified, receipt); no reply harvest
-    Identity ladder: chat_url ≻ registration_id ≻ execution_id
+    → paste proof (send_verified, receipt, target_binding); no reply harvest
+    Identity omitted ⇒ attended resolve-or-refuse (no_identity terminal deleted)
+    Identity ladder when supplied: chat_url ≻ registration_id ≻ execution_id
     v1 = attached lane only
+
+  Read-only attended triple:
+    project_ask(op=resolve_attended)
 
   Escape (hub checkout / no attached lane):
     scripts/cortex/cowork_chat_followup.py
-      --cdp-url http://127.0.0.1:<port>
-      --chat-url <exact URL>
+      [--cdp-url http://127.0.0.1:<port> --chat-url <exact URL>]
       --prompt-file <Jupiter-readable path>
+    (flags omitted ⇒ same attended resolver as satellite)
 
   Launch-path (reattach mints lane): paste proof is satellite-scope only
   ¬ relay ok=true / send_verified=true as human/CSE delivery (a:27855)

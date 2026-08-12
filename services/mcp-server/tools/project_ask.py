@@ -77,15 +77,83 @@ def _relay(
         return {"error": f"project-ask unreachable: {exc}"}
 
 
+_ATTENDED_RETRYABLE: dict[str, bool] = {
+    "no_attended_cse": True,
+    "ambiguous_attended": False,
+    "attended_liveness_failed": True,
+}
+
+_ATTENDED_MESSAGES: dict[str, str] = {
+    "no_attended_cse": "No mission-purpose attended CSE registered with bound chat_url",
+    "ambiguous_attended": "Multiple mission-purpose attended candidates — operator must disambiguate",
+    "attended_liveness_failed": "Sole attended candidate failed liveness on its registered port",
+}
+
+
+def _relay_attended(*, timeout_s: float = 30.0) -> dict[str, Any]:
+    """GET attended-operator with ProtocolError envelope on refusal codes."""
+    base = _project_ask_url()
+    if not base:
+        return {
+            "error": (
+                "PROJECT_ASK_URL not configured. Start the cdp-ask satellite on "
+                "Jupiter and set PROJECT_ASK_URL=http://HOST:PORT in the MCP "
+                "server environment."
+            )
+        }
+    url = f"{base.rstrip('/')}/v1/project-ask/attended-operator"
+    try:
+        with httpx.Client(timeout=timeout_s) as client:
+            resp = client.get(url)
+            if resp.status_code == 200:
+                return resp.json()
+            if resp.status_code in {404, 409, 424}:
+                body = resp.json()
+                code = str(body.get("code") or "attended_resolve_failed")
+                data = {k: v for k, v in body.items() if k != "code"}
+                return {
+                    "code": code,
+                    "message": _ATTENDED_MESSAGES.get(code, code),
+                    "source": "gateway",
+                    "retryable": _ATTENDED_RETRYABLE.get(code, False),
+                    "data": data,
+                }
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPStatusError as exc:
+        record(
+            "mcp.project_ask.relay.failed",
+            path="/v1/project-ask/attended-operator",
+            kind="http_status",
+            status=exc.response.status_code,
+        )
+        detail = exc.response.text[:400]
+        return {
+            "error": f"project-ask HTTP {exc.response.status_code}",
+            "status_code": exc.response.status_code,
+            "detail": detail,
+        }
+    except httpx.RequestError as exc:
+        record(
+            "mcp.project_ask.relay.failed",
+            path="/v1/project-ask/attended-operator",
+            kind="unreachable",
+        )
+        return {"error": f"project-ask unreachable: {exc}"}
+
+
 def register_project_ask_tool(mcp: FastMCP) -> None:
     """Register the project_ask relay on *mcp*."""
 
     @mcp.tool(title="CDP Project Ask")
     def project_ask(
-        op: Literal["submit", "poll", "abort", "active_work", "followup"],
+        op: Literal[
+            "submit", "poll", "abort", "active_work", "followup", "resolve_attended"
+        ],
         execution_id: str | None = None,
         chat_url: str | None = None,
         registration_id: str | None = None,
+        cdp_url: str | None = None,
         prompt_text: str | None = None,
         prompt_uri: str | None = None,
         prompt_path: str | None = None,
@@ -139,10 +207,15 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
             correlation is the ``cdp.generate.submitted`` event, which carries
             both ids and now publishes at submit time.
           followup — warm paste into a live retained Cowork CSE on an attached
-            lane (``chat_url`` ≻ ``registration_id`` ≻ ``execution_id``). In-chat
-            delivery ≻ bus NOTE; commission continuity stays on the private
-            ``agent_bus.request`` lane (transport ≠ bus). Returns paste proof
-            (``send_verified``, ``receipt``, ``url``) — no reply harvest.
+            lane (``chat_url`` ≻ ``registration_id`` ≻ ``execution_id``; identity
+            omitted ⇒ attended resolve-or-refuse on satellite). Explicit
+            ``cdp_url`` (+ ``chat_url``) selects the ``(cdp_url, chat_url)``
+            registry pair. In-chat delivery ≻ bus NOTE; commission continuity
+            stays on the private ``agent_bus.request`` lane (transport ≠ bus).
+          resolve_attended — read-only attended-operator triple from satellite
+            ``GET /v1/project-ask/attended-operator`` (404/409/424 map to
+            ProtocolError envelope with honest ``retryable``).
+            (``send_verified``, ``receipt``, ``url``, ``target_binding``) — no reply harvest.
             ``send_verified`` aliases ``receipt >= dom_paste``; ``ok`` requires
             proven ``receipt`` to meet ``min_receipt`` (default ``dom_paste``).
             ``min_receipt=human_visible`` fails closed with zero side effects.
@@ -202,10 +275,11 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
             archive path before ``content_proof``.
 
         Args:
-            op: submit | poll | abort | active_work | followup
+            op: submit | poll | abort | active_work | followup | resolve_attended
             execution_id: Required for poll/abort; optional identity for followup
             chat_url: Optional CSE URL identity for followup (highest precedence)
             registration_id: Optional attached-lane identity for followup
+            cdp_url: Optional CDP port override for followup explicit binding
             prompt_text: Inline prompt for submit or followup
             prompt_uri: cortex:// prompt for submit or followup
             prompt_path: Jupiter-readable file path for submit or followup
@@ -241,18 +315,16 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
                 hard_limit, free_slots, at_soft_limit, at_hard_limit}
             followup: {ok, url?, registration_id?, execution_id?, pasted_at?,
                 send_verified, receipt?, streaming_at_paste?, error?, detail?,
-                candidates?, reattach_used?, lane_created?, min_receipt?}
+                candidates?, reattach_used?, lane_created?, target_binding?,
+                min_receipt?}
+            resolve_attended: attended triple + source + shadow_urls on 200;
+                ProtocolError envelope {code, message, source, retryable, data}
+                on refusal
         """
+        if op == "resolve_attended":
+            return _relay_attended()
+
         if op == "followup":
-            identity = any(
-                [
-                    (chat_url or "").strip(),
-                    (registration_id or "").strip(),
-                    (execution_id or "").strip(),
-                ]
-            )
-            if not identity:
-                return {"ok": False, "error": "no_identity"}
             if not any(
                 [
                     (prompt_text or "").strip(),
@@ -268,6 +340,7 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
                     "chat_url": chat_url,
                     "registration_id": registration_id,
                     "execution_id": execution_id,
+                    "cdp_url": cdp_url,
                     "purpose": purpose if purpose != "ask" else None,
                     "prompt_text": prompt_text,
                     "prompt_uri": prompt_uri,
@@ -291,6 +364,8 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
                 else "registration_id"
                 if body.get("registration_id")
                 else "execution_id"
+                if body.get("execution_id")
+                else "attended_resolver"
             )
             record(
                 "mcp.project_ask.followup",

@@ -102,6 +102,9 @@ async def test_sealed_snapshot_wire_identical_for_qualified_fields(
                 "holder": "test",
                 "purpose": "ask",
                 "status": "pending",
+                "cdp_url": None,
+                "chat_url": None,
+                "source": None,
             }
         ],
     )

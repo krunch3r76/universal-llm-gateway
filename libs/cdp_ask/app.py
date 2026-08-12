@@ -9,10 +9,25 @@ import time
 
 from deploy_identity.code_version import resolve_code_version
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from cdp_ask.attended_operator import (
+    AttendedResolveSuccess,
+    refused_http_status,
+    refused_to_http_body,
+    resolve_attended_operator,
+    success_to_http_body,
+)
 from cdp_ask.execution_store import ExecutionStore
 from cdp_ask.followup import execute_followup
+from cdp_ask.followup_events import (
+    cdp_ask_attended_refused,
+    cdp_ask_attended_resolve,
+)
+from cdp_ask.followup_events import (
+    emit as emit_followup_event,
+)
 from cdp_ask.models import (
     AbortExecutionResponse,
     ExecutionPollResponse,
@@ -93,6 +108,33 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         ``registration_id`` / ``holder`` / ``purpose`` for warm followup discovery.
         """
         return await execution_store.active_work_snapshot()
+
+    @app.get("/v1/project-ask/attended-operator")
+    async def attended_operator() -> JSONResponse:
+        """Resolve the unique live mission-operator attended CSE (read-only)."""
+        outcome = resolve_attended_operator()
+        if isinstance(outcome, AttendedResolveSuccess):
+            emit_followup_event(
+                cdp_ask_attended_resolve(
+                    registration_id=outcome.registration_id,
+                    cdp_url=outcome.cdp_url,
+                    chat_url=outcome.chat_url,
+                    purpose=outcome.purpose,
+                    source=outcome.source,
+                )
+            )
+            return JSONResponse(status_code=200, content=success_to_http_body(outcome))
+        emit_followup_event(
+            cdp_ask_attended_refused(
+                code=outcome.code,
+                candidates_considered=outcome.candidates_considered or None,
+                candidate_count=len(outcome.candidates) if outcome.candidates else None,
+            )
+        )
+        return JSONResponse(
+            status_code=refused_http_status(outcome.code),
+            content=refused_to_http_body(outcome),
+        )
 
     @app.post(
         "/v1/project-ask/followups",

@@ -99,25 +99,34 @@ def _patch_list_active(
     reattach_empty: bool = False,
 ) -> None:
     """Patch shared registry ``list_active`` without clobbering resolve vs reattach."""
-    sequence: list[list[_FakeReg]] = []
     if reg is not None:
-        sequence.append([reg])
-    if reattach_empty:
-        sequence.append([])
-        sequence.append([reg] if reg is not None else [])
-    elif reg is not None:
-        sequence.append([reg])
+        monkeypatch.setattr(
+            "cdp_ask.followup_resolve.cdp_registry.chat_url_for_registration",
+            lambda rid, _reg=reg: CSE_A if rid == _reg.registration_id else None,
+        )
+        monkeypatch.setattr(
+            "claude_bundles.cdp_registry.chat_url_for_registration",
+            lambda rid, _reg=reg: CSE_A if rid == _reg.registration_id else None,
+        )
 
-    if len(sequence) == 1:
-        monkeypatch.setattr(
-            "claude_bundles.cdp_registry.list_active",
-            lambda: sequence[0],
-        )
-    else:
-        monkeypatch.setattr(
-            "claude_bundles.cdp_registry.list_active",
-            MagicMock(side_effect=sequence),
-        )
+    if reg is None:
+        monkeypatch.setattr("claude_bundles.cdp_registry.list_active", lambda: [])
+        return
+
+    calls = {"n": 0}
+
+    def _list_active() -> list[_FakeReg]:
+        calls["n"] += 1
+        if reattach_empty:
+            # Resolve may call list_active multiple times before reattach runs.
+            if calls["n"] == 4:
+                return []
+            return [reg]
+        return [reg]
+
+    monkeypatch.setattr("claude_bundles.cdp_registry.list_active", _list_active)
+    monkeypatch.setattr("cdp_ask.followup_reattach.cdp_registry.list_active", _list_active)
+    monkeypatch.setattr("cdp_ask.followup_resolve.cdp_registry.list_active", _list_active)
 
 
 @pytest.mark.asyncio
@@ -409,10 +418,7 @@ async def test_created_lane_retained_when_retain_lane_true(
 async def test_reused_lane_never_deregistered(monkeypatch: pytest.MonkeyPatch) -> None:
     store = ExecutionStore()
     reg = _reg("reg-1")
-    monkeypatch.setattr(
-        "claude_bundles.cdp_registry.list_active",
-        MagicMock(side_effect=[[reg], [reg], [reg]]),
-    )
+    _patch_list_active(monkeypatch, reg=reg)
     monkeypatch.setattr(
         "cdp_ask.followup_resolve.scan_lane_cse_urls",
         AsyncMock(side_effect=[[], [CSE_A]]),
@@ -452,6 +458,31 @@ async def test_reused_lane_never_deregistered(monkeypatch: pytest.MonkeyPatch) -
     assert resp.ok is True
     assert resp.lane_created is False
     deregister.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_unbound_binding_caps_human_visible_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC5: unbound + send_verified cannot satisfy human_visible gate."""
+    from cdp_ask.followup import _paste_response
+
+    req = FollowupProjectAskRequest(prompt_text="x", min_receipt="human_visible")
+    resp = _paste_response(
+        req=req,
+        target_registration_id="reg-1",
+        url=CSE_A,
+        pasted_at=1.0,
+        streaming=False,
+        receipt="dom_paste",
+        lane_created=False,
+        reattach_used=False,
+        target_binding="unbound",
+    )
+    assert resp.target_binding == "unbound"
+    assert resp.send_verified is True
+    assert resp.ok is False
+    assert resp.error == "send_unverified"
 
 
 @pytest.mark.asyncio

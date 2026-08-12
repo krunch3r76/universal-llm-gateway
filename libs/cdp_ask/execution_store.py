@@ -38,6 +38,28 @@ DeregisterFn = Callable[[str], None]
 LANE_SOFT_LIMIT = 2
 LANE_HARD_LIMIT = 3
 _LIVE_CSE_CACHE_TTL_S = 10.0
+_REGISTRY_SOURCE = "cse-session-registry"
+
+
+def _registry_projection(registration_id: str | None) -> dict[str, str | None]:
+    """Additive cdp_url/chat_url/source from CSE session registry."""
+    if not registration_id:
+        return {"cdp_url": None, "chat_url": None, "source": None}
+    from claude_bundles import cdp_registry
+
+    chat_url = cdp_registry.chat_url_for_registration(registration_id)
+    cdp_url: str | None = None
+    for lane in cdp_registry.list_active():
+        if lane.registration_id == registration_id:
+            cdp_url = lane.cdp_url
+            break
+    if not chat_url and not cdp_url:
+        return {"cdp_url": None, "chat_url": None, "source": None}
+    return {
+        "cdp_url": cdp_url,
+        "chat_url": chat_url,
+        "source": _REGISTRY_SOURCE,
+    }
 
 
 @dataclass
@@ -181,6 +203,7 @@ class ExecutionStore:
                     "holder": rec.holder,
                     "purpose": rec.purpose,
                     "status": rec.status,
+                    **_registry_projection(rec.registration_id),
                 }
                 for rec in active
             ]

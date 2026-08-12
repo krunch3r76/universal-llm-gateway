@@ -20,6 +20,7 @@ from cdp_ask.followup_events import (
     cdp_ask_followup_paste_verified,
     cdp_ask_followup_reattach_attempt,
     cdp_ask_followup_reattach_result,
+    cdp_ask_followup_unbound_capped,
 )
 from cdp_ask.followup_events import (
     emit as emit_followup_event,
@@ -41,6 +42,7 @@ from cdp_ask.models import (
     FollowupProjectAskRequest,
     FollowupProjectAskResponse,
     FollowupReceipt,
+    TargetBinding,
 )
 from cdp_ask.runner import resolve_followup_prompt
 
@@ -75,6 +77,30 @@ def _cap_receipt_for_lane(
     if lane_created and receipt not in _DOM_RECEIPTS:
         return "dom_committed" if _receipt_rank(receipt) >= 2 else "dom_paste"
     return receipt
+
+
+def _cap_receipt_for_unbound(
+    receipt: FollowupReceipt | None,
+    *,
+    target_binding: TargetBinding | None,
+) -> FollowupReceipt | None:
+    """Further cap unbound pastes to automation-visible DOM rungs only."""
+    capped = _cap_receipt_for_lane(receipt, lane_created=False)
+    if target_binding != "unbound" or capped is None:
+        return capped
+    if capped not in _DOM_RECEIPTS:
+        return "dom_paste"
+    return capped
+
+
+def _apply_receipt_caps(
+    receipt: FollowupReceipt | None,
+    *,
+    lane_created: bool,
+    target_binding: TargetBinding | None,
+) -> FollowupReceipt | None:
+    capped = _cap_receipt_for_lane(receipt, lane_created=lane_created)
+    return _cap_receipt_for_unbound(capped, target_binding=target_binding)
 
 
 async def _find_page_on_lane(cdp_url: str, chat_url: str) -> tuple[Any, Any] | None:
@@ -134,9 +160,21 @@ def _paste_response(
     receipt: FollowupReceipt | None,
     lane_created: bool,
     reattach_used: bool,
+    target_binding: TargetBinding | None,
 ) -> FollowupProjectAskResponse:
     """Build followup response from proven receipt and caller gate."""
-    receipt = _cap_receipt_for_lane(receipt, lane_created=lane_created)
+    binding: TargetBinding = target_binding or ("unbound" if lane_created else "explicit")
+    receipt = _apply_receipt_caps(
+        receipt, lane_created=lane_created, target_binding=binding
+    )
+    if binding == "unbound" and receipt is not None:
+        emit_followup_event(
+            cdp_ask_followup_unbound_capped(
+                registration_id=target_registration_id,
+                receipt=receipt,
+                target_binding="unbound",
+            )
+        )
     send_verified = receipt is not None
     ok = receipt_meets(receipt, req.min_receipt)
     extra = _response_extra(reattach_used=reattach_used, lane_created=lane_created)
@@ -151,6 +189,7 @@ def _paste_response(
             receipt=receipt,
             streaming_at_paste=streaming,
             error="send_unverified",
+            target_binding=binding,
             **extra,
         )
     return FollowupProjectAskResponse(
@@ -162,6 +201,7 @@ def _paste_response(
         send_verified=send_verified,
         receipt=receipt,
         streaming_at_paste=streaming,
+        target_binding=binding,
         **extra,
     )
 
@@ -244,14 +284,18 @@ async def execute_followup(
     reattach_used = False
     lane_created = False
 
-    target, err, resolution_path = await resolve_followup_target(req, store)
+    target, err, resolution_path, target_binding = await resolve_followup_target(
+        req, store
+    )
     if err is not None:
         reattach_outcome, reattach_err = await _maybe_reattach(req, store, err)
         if reattach_err is not None:
             return reattach_err
         reattach_used = True
         lane_created = bool(reattach_outcome and reattach_outcome.lane_created)
-        target, err, resolution_path = await resolve_followup_target(req, store)
+        target, err, resolution_path, target_binding = await resolve_followup_target(
+            req, store
+        )
         if err is not None:
             await _reattach_teardown(reattach_outcome, retain_lane=req.retain_lane)
             return fail_followup(
@@ -266,6 +310,9 @@ async def execute_followup(
 
     assert target is not None
     assert resolution_path is not None
+    binding: TargetBinding = target_binding or target.target_binding
+    if reattach_used and lane_created and binding != "resolver":
+        binding = "explicit"
     extra = _response_extra(reattach_used=reattach_used, lane_created=lane_created)
 
     if not await _acquire_lane(target.registration_id):
@@ -299,6 +346,7 @@ async def execute_followup(
                     error_code=resp.error,
                     lane_created=lane_created,
                     receipt=None,
+                    target_binding=binding,
                 )
             )
             return resp
@@ -317,6 +365,7 @@ async def execute_followup(
                     error_code=resp.error,
                     lane_created=lane_created,
                     receipt=None,
+                    target_binding=binding,
                 )
             )
             return resp
@@ -326,7 +375,9 @@ async def execute_followup(
         streaming = paste.get("streaming_at_paste")
         url = paste.get("url") or target.chat_url
         pasted_at = paste.get("pasted_at")
-        capped = _cap_receipt_for_lane(receipt, lane_created=lane_created)
+        capped = _apply_receipt_caps(
+            receipt, lane_created=lane_created, target_binding=binding
+        )
         send_verified = capped is not None
 
         emit_followup_event(
@@ -338,6 +389,7 @@ async def execute_followup(
                 error_code=None if send_verified else "send_unverified",
                 lane_created=lane_created,
                 receipt=capped,
+                target_binding=binding,
             )
         )
 
@@ -350,6 +402,7 @@ async def execute_followup(
             receipt=receipt,
             lane_created=lane_created,
             reattach_used=reattach_used,
+            target_binding=binding,
         )
 
         if (

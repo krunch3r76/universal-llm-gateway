@@ -135,6 +135,7 @@ async def send_followup_paste_half(
     *,
     stargate_execution_id: str = "",
     satellite_execution_id: str = "",
+    target_binding: str | None = None,
 ) -> dict:
     """Paste *prompt* into a live CSE and verify the user turn — no reply wait.
 
@@ -189,6 +190,7 @@ async def send_followup_paste_half(
         "pasted_at": pasted_at,
         "verification_marker": marker,
         "error": None if send_verified else "send_unverified",
+        "target_binding": target_binding,
     }
 
 

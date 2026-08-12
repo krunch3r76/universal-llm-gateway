@@ -17,6 +17,29 @@ from cdp_ask.execution_store import (
 pytestmark = pytest.mark.offline
 
 
+def _row(
+    *,
+    execution_id: str,
+    registration_id: str | None = None,
+    holder: str = "test",
+    purpose: str = "ask",
+    status: str = "pending",
+    cdp_url: str | None = None,
+    chat_url: str | None = None,
+    source: str | None = None,
+) -> dict[str, object]:
+    return {
+        "execution_id": execution_id,
+        "registration_id": registration_id,
+        "holder": holder,
+        "purpose": purpose,
+        "status": status,
+        "cdp_url": cdp_url,
+        "chat_url": chat_url,
+        "source": source,
+    }
+
+
 def _capacity(
     *,
     busy: bool,
@@ -94,13 +117,10 @@ async def test_active_work_snapshot_pending_execution(
         running_count=1,
         execution_ids=[record.execution_id],
         rows=[
-            {
-                "execution_id": record.execution_id,
-                "registration_id": None,
-                "holder": "test",
-                "purpose": "ask",
-                "status": "pending",
-            }
+            _row(
+                execution_id=record.execution_id,
+                registration_id=None,
+            )
         ],
     )
     # One stream in flight must NOT read as admission-full (soft=2, hard=3).
@@ -124,13 +144,10 @@ async def test_active_work_snapshot_capacity_soft_and_hard(
         rec = await store.create(holder="test", purpose="ask")
         ids.append(rec.execution_id)
         rows.append(
-            {
-                "execution_id": rec.execution_id,
-                "registration_id": None,
-                "holder": "test",
-                "purpose": "ask",
-                "status": "pending",
-            }
+            _row(
+                execution_id=rec.execution_id,
+                registration_id=None,
+            )
         )
     soft_snap = await store.active_work_snapshot()
     assert soft_snap["at_soft_limit"] is True
@@ -141,13 +158,10 @@ async def test_active_work_snapshot_capacity_soft_and_hard(
         rec = await store.create(holder="test", purpose="ask")
         ids.append(rec.execution_id)
         rows.append(
-            {
-                "execution_id": rec.execution_id,
-                "registration_id": None,
-                "holder": "test",
-                "purpose": "ask",
-                "status": "pending",
-            }
+            _row(
+                execution_id=rec.execution_id,
+                registration_id=None,
+            )
         )
     hard_snap = await store.active_work_snapshot()
     assert hard_snap == _capacity(
@@ -227,13 +241,12 @@ async def test_active_work_endpoint_busy(
         running_count=1,
         execution_ids=[record.execution_id],
         rows=[
-            {
-                "execution_id": record.execution_id,
-                "registration_id": None,
-                "holder": "holder",
-                "purpose": "harvest",
-                "status": "pending",
-            }
+            _row(
+                execution_id=record.execution_id,
+                registration_id=None,
+                holder="holder",
+                purpose="harvest",
+            )
         ],
     )
 
@@ -283,3 +296,50 @@ async def test_active_work_snapshot_probe_cached(
     await store.active_work_snapshot()
     await store.active_work_snapshot()
     assert calls["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_active_work_row_registry_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC6: rows carry cdp_url/chat_url/source from registry join."""
+    from dataclasses import dataclass
+    from pathlib import Path
+
+    @dataclass(frozen=True)
+    class _FakeReg:
+        registration_id: str
+        port: int
+        profile_suffix: str
+        profile: Path
+        cdp_url: str
+        holder: str
+        purpose: str | None = None
+
+    reg = _FakeReg(
+        registration_id="reg-1",
+        port=9223,
+        profile_suffix="s",
+        profile=Path("/tmp/p"),
+        cdp_url="http://127.0.0.1:9223",
+        holder="holder-a",
+        purpose="operator-proxy",
+    )
+    chat = "https://claude.ai/cowork/cse_ac6"
+    monkeypatch.setattr(
+        "claude_bundles.cdp_orphans.probe_live_ports",
+        lambda port_range=None: [],
+    )
+    monkeypatch.setattr("claude_bundles.cdp_registry.list_active", lambda: [reg])
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.chat_url_for_registration",
+        lambda rid: chat if rid == "reg-1" else None,
+    )
+    store = ExecutionStore()
+    record = await store.create(holder="test", purpose="operator-proxy")
+    await store.set_registration_id(record.execution_id, "reg-1")
+    snap = await store.active_work_snapshot()
+    row = snap["rows"][0]
+    assert row["cdp_url"] == "http://127.0.0.1:9223"
+    assert row["chat_url"] == chat
+    assert row["source"] == "cse-session-registry"

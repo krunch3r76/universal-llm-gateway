@@ -46,6 +46,7 @@ def cdp_ask_followup_paste_verified(
     error_code: str | None,
     lane_created: bool = False,
     receipt: str | None = None,
+    target_binding: str | None = None,
 ) -> Event:
     """Emit after paste verification completes (success or typed failure)."""
     return Event(
@@ -60,6 +61,72 @@ def cdp_ask_followup_paste_verified(
             "error_code": error_code,
             "lane_created": lane_created,
             "receipt": receipt,
+            "target_binding": target_binding,
+        },
+    )
+
+
+@event_factory
+def cdp_ask_attended_resolve(
+    *,
+    registration_id: str,
+    cdp_url: str,
+    chat_url: str,
+    purpose: str,
+    source: str,
+) -> Event:
+    """Emit when attended-operator resolver returns a unique live target."""
+    return Event(
+        signal="cdp_ask.attended.resolve",
+        role="observation",
+        scope="node",
+        payload={
+            "registration_id": registration_id,
+            "cdp_url": cdp_url,
+            "chat_url": chat_url,
+            "purpose": purpose,
+            "source": source,
+        },
+    )
+
+
+@event_factory
+def cdp_ask_attended_refused(
+    *,
+    code: str,
+    candidates_considered: int | None = None,
+    candidate_count: int | None = None,
+) -> Event:
+    """Emit when attended-operator resolver refuses (404/409/424)."""
+    payload: dict[str, Any] = {"code": code}
+    if candidates_considered is not None:
+        payload["candidates_considered"] = candidates_considered
+    if candidate_count is not None:
+        payload["candidate_count"] = candidate_count
+    return Event(
+        signal="cdp_ask.attended.refused",
+        role="observation",
+        scope="node",
+        payload=payload,
+    )
+
+
+@event_factory
+def cdp_ask_followup_unbound_capped(
+    *,
+    registration_id: str | None,
+    receipt: str | None,
+    target_binding: str,
+) -> Event:
+    """Emit when unbound paste path applies automation-visible receipt cap."""
+    return Event(
+        signal="cdp_ask.followup.unbound_capped",
+        role="observation",
+        scope="node",
+        payload={
+            "registration_id": registration_id,
+            "receipt": receipt,
+            "target_binding": target_binding,
         },
     )
 

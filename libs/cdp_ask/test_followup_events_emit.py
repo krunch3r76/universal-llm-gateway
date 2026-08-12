@@ -9,7 +9,10 @@ from universal_event_bus.events.event import Event
 
 from cdp_ask import followup_events
 from cdp_ask.followup_events import (
+    cdp_ask_attended_refused,
+    cdp_ask_attended_resolve,
     cdp_ask_followup_reattach_attempt,
+    cdp_ask_followup_unbound_capped,
     emit,
 )
 
@@ -131,3 +134,20 @@ def test_factory_still_builds_reattach_attempt() -> None:
         purpose=None,
     )
     assert event.signal == "cdp_ask.followup.reattach_attempt"
+
+
+def test_attended_and_unbound_factories() -> None:
+    resolved = cdp_ask_attended_resolve(
+        registration_id="r1",
+        cdp_url="http://127.0.0.1:9223",
+        chat_url="https://claude.ai/cowork/cse_x",
+        purpose="operator-proxy",
+        source="cse-session-registry",
+    )
+    assert resolved.signal == "cdp_ask.attended.resolve"
+    refused = cdp_ask_attended_refused(code="no_attended_cse", candidates_considered=0)
+    assert refused.payload["code"] == "no_attended_cse"
+    capped = cdp_ask_followup_unbound_capped(
+        registration_id="r1", receipt="dom_paste", target_binding="unbound"
+    )
+    assert capped.signal == "cdp_ask.followup.unbound_capped"

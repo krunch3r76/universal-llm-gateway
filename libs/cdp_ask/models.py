@@ -328,10 +328,15 @@ class FollowupCandidateInfo(BaseModel):
     chat_url: str
     holder: str
     purpose: str | None = None
+    cdp_url: str | None = None
+    source: str | None = None
 
 
 FollowupReceipt = Literal["dom_paste", "dom_committed"]
 FollowupMinReceipt = Literal["dom_paste", "dom_committed", "human_visible"]
+
+
+TargetBinding = Literal["resolver", "explicit", "unbound"]
 
 
 class FollowupProjectAskRequest(BaseModel):
@@ -340,6 +345,7 @@ class FollowupProjectAskRequest(BaseModel):
     chat_url: str | None = None
     registration_id: str | None = None
     execution_id: str | None = None
+    cdp_url: str | None = None
     purpose: str | None = None
     prompt_text: str | None = None
     prompt_uri: str | None = None
@@ -386,3 +392,4 @@ class FollowupProjectAskResponse(BaseModel):
     candidates: list[FollowupCandidateInfo] | None = None
     reattach_used: bool = False
     lane_created: bool = False
+    target_binding: TargetBinding | None = None
