@@ -32,15 +32,26 @@ def is_subagent_tool_call(*, tool_type: str = "", tool_name: str = "") -> bool:
     return tool_name.lower() in _SUBAGENT_TOOL_NAMES
 
 
+def _subagent_kind_from_args(args: Mapping[str, Any]) -> str | None:
+    wire = args.get("subagentType")
+    if isinstance(wire, Mapping):
+        kind = wire.get("kind")
+        if isinstance(kind, str) and kind.strip():
+            return kind.strip()
+    elif isinstance(wire, str) and wire.strip():
+        return wire.strip()
+    value = args.get("subagent_type")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
 def subagent_type_from_stream_args(tool_name: str, args: Any) -> str | None:
     if not is_subagent_tool_call(tool_name=tool_name):
         return None
     if not isinstance(args, Mapping):
         return None
-    value = args.get("subagent_type")
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    return None
+    return _subagent_kind_from_args(args)
 
 
 def _string_arg(args: Mapping[str, Any], *keys: str) -> str | None:
@@ -53,7 +64,10 @@ def _string_arg(args: Mapping[str, Any], *keys: str) -> str | None:
 
 def _bounded_subagent_detail(args: Mapping[str, Any]) -> dict[str, Any] | None:
     keep: dict[str, Any] = {}
-    for key in ("subagent_type", "description", "model", "run_in_background"):
+    kind = _subagent_kind_from_args(args)
+    if kind:
+        keep["subagent_type"] = kind
+    for key in ("description", "model", "run_in_background"):
         if key not in args:
             continue
         value = args[key]
@@ -77,7 +91,7 @@ def entry_from_subagent_message(message: Mapping[str, Any]) -> EffectEntry | Non
     if not is_subagent_tool_call(tool_type=tool_type):
         return None
     args = message.get("args") if isinstance(message.get("args"), Mapping) else {}
-    subagent_type = _string_arg(args, "subagent_type")
+    subagent_type = subagent_type_from_stream_args(tool_type, args)
     call_id = _string_arg(message, "call_id", "callId", "id")
     identity = call_id or subagent_type
     return EffectEntry(
