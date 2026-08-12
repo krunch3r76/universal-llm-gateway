@@ -76,7 +76,7 @@ running → turn_idle → content_proof → archiving → terminal | failed
 
 **Held-page (25671):** held Playwright page only; **either-proof advance:** verified `content_proof` **OR** `archive_uri`; never `turn_idle` alone. `delete_after`: archive-proof or attested abort — L3 `operations-annex.md`.
 
-**Artifact / Outputs harvest (BINDING cue):** Cowork **Outputs** + artifact/canvas are the deliverable surface; **Google Drive** in the card toolbar is open-with chrome (often shown with **Download** in the same menu). Structured CDP asks must admit with Outputs-first knobs (`expected_size=large` / `download_output=true`) — chat scrape alone collapses the card. Substrate now attempts in-chat Document/MD card body extract after Outputs/cortex-uri (`artifact-card` provenance) and fail-closed `artifact_card_without_body` when unresolved — **re-request on a live CSE is the exception path** for legacy archives or residual DOM drift, not the close path. Detail + prompt duty: L3 `operations-annex.md` § Cowork Outputs-first / File-card chrome.
+**Artifact / Outputs harvest (BINDING cue):** Cowork **Outputs** + artifact/canvas are the deliverable surface; the card toolbar **"Google Drive" label is a dropdown trigger** — expanding it offers Google Drive (optional connector; fleet **never** uses) vs **Download**. Structured CDP asks must admit with Outputs-first knobs (`expected_size=large` / `download_output=true`) — chat scrape alone collapses the card to that dropdown chrome. Substrate now attempts in-chat Document/MD card body extract after Outputs/cortex-uri (`artifact-card` provenance) and fail-closed `artifact_card_without_body` when unresolved — **re-request on a live CSE is the exception path** for legacy archives or residual DOM drift, not the close path. Detail + prompt duty: L3 `operations-annex.md` § Cowork Outputs-first / File-card chrome.
 
 ## FOL pipeline
 
@@ -188,9 +188,10 @@ complete(turn) ⇐ assistant_body ∧ ¬streaming ∧ ¬Stop ∧ stable_length
 ### Reading the harvest — chrome ≠ delivery (BINDING — operator 2026-08-11)
 
 The scraped CSE body carries claude.ai **UI chrome** alongside assistant prose: artifact
-cards, "Used … integration" banners, and **suggested connector** affordances. The fleet does
-**not** use those connectors — Drive/Docs/etc. are product suggestions the scrape renders, not
-destinations anything wrote to.
+cards, "Used … integration" banners, and **export-dropdown** affordances (the card
+toolbar "Google Drive" trigger expands to optional Drive ∨ **Download** — fleet
+never uses Drive). The fleet does **not** use those connectors — Drive/Docs/etc. are
+product suggestions the scrape renders, not destinations anything wrote to.
 
 ```
 connector_name ∈ harvest ⇏ artifact_written(connector)
@@ -199,7 +200,7 @@ artifact_card ∈ harvest ⇏ body ∈ harvest
 
 | Harvest shows | Means | ¬ Means |
 |---|---|---|
-| `<title>` / `Document · MD · Google Drive` under a card | Cowork **artifact** exists in-session; Drive is a *suggested* save target | The seat wrote to Drive; the file is fetchable there |
+| `<title>` / `Document · MD` + **Google Drive** dropdown chrome under a card | Cowork **artifact** exists in-session; "Google Drive" is the export-dropdown trigger (choices: optional Drive connector ∨ **Download**) | The seat wrote to Drive; the file is fetchable there |
 | `Used toys integration` / `updated tasks` | Product-surface activity banner | A durable fleet write happened |
 | Card title present, body absent | **Delivery gap** — harvest did not pull the artifact body | The deliverable is lost, or went to a connector |
 
