@@ -34,12 +34,30 @@ CURSOR_CREDENTIAL_FILENAME = "auth.json"
 GITCONFIG_FILENAME = ".gitconfig"
 DISPATCH_GIT_EMAIL_DOMAIN = "dispatch.git-integration-worker"
 
-_DISPATCH_HOME_ROOT = Path(
-    os.environ.get(
-        "CURSOR_DISPATCH_HOME_ROOT",
-        "~/.local/share/git-integration-worker/cursor-dispatch-homes",
-    )
-).expanduser()
+def _passwd_home() -> Path:
+    """Login-directory home from the passwd DB — immune to process ``HOME`` leaks."""
+    return Path(pwd.getpwuid(os.getuid()).pw_dir).expanduser()
+
+
+def _default_dispatch_home_root() -> Path:
+    """Module-default root — ``~`` expands against passwd, not process HOME."""
+    raw = "~/.local/share/git-integration-worker/cursor-dispatch-homes"
+    return (_passwd_home() / raw[2:].lstrip("/")).resolve()
+
+
+def _resolve_dispatch_home_root(root: Path | None = None) -> Path:
+    """Dispatch-home root for :func:`is_dispatch_home_path`."""
+    if root is not None:
+        return Path(root).expanduser().resolve()
+    env = os.environ.get("CURSOR_DISPATCH_HOME_ROOT", "").strip()
+    if env:
+        if env.startswith("~"):
+            return (_passwd_home() / env[2:].lstrip("/")).resolve()
+        return Path(env).expanduser().resolve()
+    return _DISPATCH_HOME_ROOT
+
+
+_DISPATCH_HOME_ROOT = _default_dispatch_home_root()
 _DEFAULT_DISPATCH_HOME_RETENTION_DAYS = int(
     os.environ.get("CURSOR_DISPATCH_HOME_RETENTION_DAYS", "14")
 )
@@ -58,15 +76,10 @@ class CursorVenvConfigError(RuntimeError):
     """Configured repo venv missing or incomplete — fail closed pre-launch."""
 
 
-def _passwd_home() -> Path:
-    """Login-directory home from the passwd DB — immune to process ``HOME`` leaks."""
-    return Path(pwd.getpwuid(os.getuid()).pw_dir).expanduser()
-
-
 def is_dispatch_home_path(path: Path | str, *, root: Path | None = None) -> bool:
     """True when *path* is under the per-dispatch HOME root (contamination fingerprint)."""
     candidate = Path(path).expanduser().resolve()
-    base = (root if root is not None else _DISPATCH_HOME_ROOT).expanduser().resolve()
+    base = _resolve_dispatch_home_root(root)
     try:
         candidate.relative_to(base)
     except ValueError:
