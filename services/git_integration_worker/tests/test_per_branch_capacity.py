@@ -16,12 +16,12 @@ from services.git_integration_worker.cursor_sdk_gate import (
     sdk_dispatch_gate_stats,
 )
 from services.git_integration_worker.cursor_sdk_lane_regime import set_lane_b_regime
-from services.git_integration_worker.cursor_sdk_worktree_registry import (
-    register_dispatch_worktree,
-)
 from services.git_integration_worker.cursor_sdk_workspace import (
     isolated_write_headroom,
     write_lease_slots,
+)
+from services.git_integration_worker.cursor_sdk_worktree_registry import (
+    register_dispatch_worktree,
 )
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
