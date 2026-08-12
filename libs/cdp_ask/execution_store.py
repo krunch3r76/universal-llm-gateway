@@ -438,24 +438,20 @@ class ExecutionStore:
             return rec
 
     async def boot_reconcile(self) -> list[str]:
-        """Deregister registry lanes with no live execution after restart."""
-        live = await self.list_running_registration_ids()
-        reaped: list[str] = []
-        from claude_bundles import cdp_registry
+        """Plan+apply boot lane re-adoption; return orphaned registration_ids."""
+        from claude_bundles import boot_lane_readoption as blr
+        from claude_bundles import cdp_orphans, cdp_registry
+        from claude_bundles.cse_wake_retain import registration_has_wake_debt
 
-        active_rows = cdp_registry._load_active()
-        for registration_id, row in active_rows.items():
-            if row.get("status") != "active":
-                continue
-            if registration_id in live:
-                continue
-            from claude_bundles.cse_wake_retain import registration_has_wake_debt
-
-            if registration_has_wake_debt(registration_id):
-                continue
-            cdp_registry.deregister_lane(registration_id, reason="probe_failed")
-            reaped.append(registration_id)
-        return reaped
+        live_exec = await self.list_running_registration_ids()
+        plan = blr.plan_boot_lane_readoption(
+            cdp_registry._load_active(),
+            cdp_orphans.probe_live_ports(),
+            running_registration_ids=set(live_exec),
+            wake_debt=registration_has_wake_debt,
+        )
+        _, orphaned = blr.apply_boot_readoption_plan(plan)
+        return orphaned
 
     async def iter_stop_ack_candidates(self, now: float) -> list[ExecutionRecord]:
         """Return mission stream-stop records past quiet gate (F1 predicate)."""

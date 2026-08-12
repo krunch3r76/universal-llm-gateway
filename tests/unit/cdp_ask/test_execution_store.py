@@ -39,11 +39,59 @@ async def test_boot_reconcile_reaps_orphaned_lanes(fast_store: ExecutionStore) -
     }
 
     with patch("claude_bundles.cdp_registry._load_active", return_value=fake_active):
-        with patch("claude_bundles.cdp_registry.deregister_lane", side_effect=_deregister):
-            reaped = await fast_store.boot_reconcile()
+        with patch("claude_bundles.cdp_orphans.probe_live_ports", return_value=[]):
+            with patch("claude_bundles.cdp_lane.is_listening", return_value=False):
+                with patch(
+                    "claude_bundles.cdp_registry.deregister_lane",
+                    side_effect=_deregister,
+                ):
+                    reaped = await fast_store.boot_reconcile()
 
     assert reaped == ["orphan-1"]
     assert deregistered == ["orphan-1"]
+
+
+@pytest.mark.asyncio
+async def test_boot_reconcile_adopts_live_port(fast_store: ExecutionStore) -> None:
+    from claude_bundles.cdp_lane import profile_for
+    from claude_bundles.cdp_orphans import LivePort
+
+    adopted: list[str] = []
+    deregistered: list[str] = []
+    fake_active = {
+        "live-glass-1": {
+            "registration_id": "live-glass-1",
+            "port": 9229,
+            "profile_suffix": "reg-liveg001",
+            "profile": str(profile_for("reg-liveg001")),
+            "holder": "dead-holder",
+            "status": "active",
+        }
+    }
+    live = [
+        LivePort(
+            port=9229,
+            profile=profile_for("reg-liveg001"),
+            page_urls=(),
+            has_live_cse=True,
+        )
+    ]
+
+    with patch("claude_bundles.cdp_registry._load_active", return_value=fake_active):
+        with patch("claude_bundles.cdp_orphans.probe_live_ports", return_value=live):
+            with patch(
+                "claude_bundles.boot_lane_readoption.boot_adopt_lane",
+                side_effect=lambda rid, **kw: adopted.append(rid),
+            ):
+                with patch(
+                    "claude_bundles.cdp_registry.deregister_lane",
+                    side_effect=lambda rid, **kw: deregistered.append(rid),
+                ):
+                    reaped = await fast_store.boot_reconcile()
+
+    assert reaped == []
+    assert adopted == ["live-glass-1"]
+    assert deregistered == []
 
 
 @pytest.mark.asyncio
@@ -64,11 +112,13 @@ async def test_boot_reconcile_keeps_live_execution_lane(
     }
 
     with patch("claude_bundles.cdp_registry._load_active", return_value=fake_active):
-        with patch(
-            "claude_bundles.cdp_registry.deregister_lane",
-            side_effect=lambda rid, **kw: deregistered.append(rid),
-        ):
-            reaped = await fast_store.boot_reconcile()
+        with patch("claude_bundles.cdp_orphans.probe_live_ports", return_value=[]):
+            with patch("claude_bundles.cdp_lane.is_listening", return_value=False):
+                with patch(
+                    "claude_bundles.cdp_registry.deregister_lane",
+                    side_effect=lambda rid, **kw: deregistered.append(rid),
+                ):
+                    reaped = await fast_store.boot_reconcile()
 
     assert reaped == []
     assert deregistered == []

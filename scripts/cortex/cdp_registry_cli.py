@@ -45,6 +45,16 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("list", help="List active registrations")
 
+    p_boot = sub.add_parser(
+        "boot-readoption-plan",
+        help="Dry-run boot lane re-adoption plan (no registry mutations)",
+    )
+    p_boot.add_argument(
+        "--include-running",
+        action="store_true",
+        help="Include in-memory running registration_ids from live cdp_ask (default: simulate empty store)",
+    )
+
     p_hygiene = sub.add_parser(
         "hygiene-reclaim",
         help="Reclaim released/orphaned_retry lanes and sweep orphan profiles",
@@ -97,6 +107,21 @@ def main(argv: list[str] | None = None) -> int:
         from claude_bundles import cdp_orphans
 
         print(json.dumps(cdp_orphans.list_surface_payload(), indent=2))
+        return 0
+
+    if args.cmd == "boot-readoption-plan":
+        from claude_bundles import boot_lane_readoption as blr
+
+        active_rows, live_ports, running_ids, wake_debt = blr.gather_rehearsal_inputs(
+            assume_empty_store=not args.include_running,
+        )
+        plan = blr.plan_boot_lane_readoption(
+            active_rows,
+            live_ports,
+            running_registration_ids=running_ids,
+            wake_debt=wake_debt,
+        )
+        print(json.dumps(blr.plan_as_dict(plan), indent=2))
         return 0
 
     if args.cmd == "hygiene-reclaim":

@@ -157,8 +157,24 @@ async def test_execution_store_boot_reconcile_skips_wake_debt(
     deregister = MagicMock()
     import claude_bundles.cdp_registry as reg
 
-    monkeypatch.setattr(reg, "_load_active", lambda: {"reg-6661": {"status": "active"}})
+    monkeypatch.setattr(
+        reg,
+        "_load_active",
+        lambda: {
+            "reg-6661": {
+                "status": "active",
+                "port": 9299,
+                "profile_suffix": "reg-6661abcd",
+            }
+        },
+    )
     monkeypatch.setattr(reg, "deregister_lane", deregister)
+    import claude_bundles.cdp_orphans as orphans
+
+    monkeypatch.setattr(orphans, "probe_live_ports", lambda port_range=None: [])
+    import claude_bundles.cdp_lane as lane
+
+    monkeypatch.setattr(lane, "is_listening", lambda _p: False)
     reaped = await store.boot_reconcile()
     assert reaped == []
     deregister.assert_not_called()
