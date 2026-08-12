@@ -369,6 +369,22 @@ async def post_operator_closeout(
     incomplete_class = measurement_incomplete_class(envelope_status)
     if incomplete_class is not None:
         lines.append(f"status_incomplete_class: {incomplete_class}")
+    from services.git_integration_worker.cursor_auto.composed_commission import (
+        compute_composed_commission,
+        prose_composed_commission_line,
+        resolve_composition_parent_id,
+    )
+
+    nest_under = (extra or {}).get("nest_under")
+    parent_id = resolve_composition_parent_id(
+        closing_dispatch_id=dispatch_id,
+        nest_under=nest_under,
+    )
+    composed_value = compute_composed_commission(
+        parent_dispatch_id=parent_id,
+        ledger=CursorDispatchLedger.instance(),
+    )
+    lines.append(prose_composed_commission_line(composed_value))
     lines.extend(prose_closeout_register_header_lines())
     if relay_note:
         lines.append(f"relay_note: {relay_note}")

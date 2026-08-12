@@ -231,6 +231,7 @@ def test_post_operator_closeout_stamps_prose_register_headers() -> None:
     subject = client.reply.await_args.kwargs["subject"]
     assert subject.startswith("status:done —")
     assert "status: complete" in sent
+    assert "composed_commission: n/a — not-in-closure" in sent
     assert f"envelope_status_status_of: {ENVELOPE_STATUS_STATUS_OF}" in sent
     assert f"terminal_status_status_of: {TERMINAL_STATUS_STATUS_OF}" in sent
     status_lines = [
@@ -241,3 +242,55 @@ def test_post_operator_closeout_stamps_prose_register_headers() -> None:
     meta = json.loads(meta_line[len("meta: ") :])
     assert meta["terminal_status"] == "completed"
     assert meta["terminal_status_status_of"] == TERMINAL_STATUS_STATUS_OF
+
+
+def test_post_operator_closeout_composed_commission_orthogonal_to_status() -> None:
+    """``status: complete`` may co-exist with ``composed_commission: failed``."""
+    from unittest.mock import patch
+
+    from services.git_integration_worker.cursor_auto.composed_commission import (
+        COMPOSED_COMMISSION_FAILED,
+    )
+    from services.git_integration_worker.cursor_auto.nested_sdk import (
+        post_operator_closeout,
+    )
+
+    client = AsyncMock()
+    client.reply = AsyncMock(return_value=MagicMock(status_code=200, body="ok"))
+    closeout_body = (
+        "TYPE: CLOSEOUT\nstatus: complete\ncheckpoint: nothing_authored\n\n"
+        "| Field | Value |\n|---|---|\n"
+        "| status_claim | complete |\n"
+    )
+    ledger = MagicMock()
+    ledger.list_nested_children.return_value = ["child-failed"]
+    ledger.dispatch_status_by_id.return_value = {
+        "dispatch_id": "child-failed",
+        "status": "failed",
+    }
+    with patch(
+        "services.git_integration_worker.cursor_auto.nested_sdk.CursorDispatchLedger"
+    ) as ledger_cls:
+        ledger_cls.instance.return_value = ledger
+        asyncio.run(
+            post_operator_closeout(
+                _job(contract="implement"),
+                status="complete",
+                dispatch_id="auto-compose-fail",
+                model_id="cursor/composer-2.5",
+                sdk_body=None,
+                closeout_body=closeout_body,
+                closeout_source="section2_sidecar",
+                extra={"nest_under": "parent-p", "terminal_status": "completed"},
+                bus=client,
+            )
+        )
+    sent = client.reply.await_args.kwargs["body"]
+    header_lines = sent.split("\n\n", 1)[0].splitlines()
+    status_idx = next(i for i, line in enumerate(header_lines) if line == "status: complete")
+    composed_idx = next(
+        i for i, line in enumerate(header_lines) if line.startswith("composed_commission:")
+    )
+    assert composed_idx > status_idx
+    assert f"composed_commission: {COMPOSED_COMMISSION_FAILED}" in sent
+    assert "status: complete" in sent
