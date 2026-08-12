@@ -266,6 +266,11 @@ def apply_landed_admit_gate(
     return replace(plane, landed_local_master=False)
 
 
+def _short_sha(sha: str) -> str:
+    """Seven-char prefix for plane headline referent (capture tip)."""
+    return sha[:7]
+
+
 def render_plane_headline(obs: PlaneObservation) -> str:
     """Render always-present ``plane:`` with a three-valued landed axis.
 
@@ -273,9 +278,17 @@ def render_plane_headline(obs: PlaneObservation) -> str:
     ``unknown@local-master (reason)``. Lane-B head/ODB absence still short-
     circuits to ``unknown@lane-B``; a measured commit with unmeasured landed
     keeps ``committed@lane-B`` and marks only the landed axis unknown.
+
+    When ``obs.head_sha`` is set, a short SHA is emitted once immediately after
+    ``plane:`` — all three rung verdicts are keyed to that capture tip
+    (``probe_three_planes``), so one referent is honest; per-rung SHA would
+    falsely imply distinct objects. The SHA is additive: rung tokens are
+    unchanged. The tip is not renamed into ``committed@`` (F3 lexeme gate).
     """
     if obs.is_unknown:
         reason = obs.unknown_reason or "unresolved"
+        if obs.head_sha:
+            return f"plane: {_short_sha(obs.head_sha)} · unknown@lane-B ({reason})"
         return f"plane: unknown@lane-B ({reason})"
     branch_token = f"({obs.branch})" if obs.branch else ""
     parts: list[str] = []
@@ -299,7 +312,10 @@ def render_plane_headline(obs: PlaneObservation) -> str:
         # origin tip absent locally — preserve unknown, do not claim unpublished
         parts.append("unknown@origin (origin/master ref absent)")
     parts.append(f"as-of {obs.as_of}")
-    return "plane: " + " · ".join(parts)
+    body = " · ".join(parts)
+    if obs.head_sha:
+        return f"plane: {_short_sha(obs.head_sha)} · {body}"
+    return f"plane: {body}"
 
 
 def qualify_checkpoint_value(checkpoint: str) -> str:

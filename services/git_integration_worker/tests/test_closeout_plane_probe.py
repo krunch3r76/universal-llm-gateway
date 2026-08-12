@@ -142,6 +142,10 @@ def test_stranded_fixture_headline_grep_visible_not_landed(tmp_path: Path) -> No
     assert "as-of 2026-08-07T00:00:00Z" in line
     # AC2: grep-visible without joining a second field
     assert "NOT landed@local-master" in line
+    assert line.startswith(f"plane: {head[:7]} · ")
+    # Additive: rung lexemes unchanged (F3 committed@ gate)
+    assert "committed@lane-B" in line
+    assert "committed@" in line  # lexeme intact; SHA is a separate · token
 
 
 def test_ff_landed_fixture_headline_landed_not_published(tmp_path: Path) -> None:
@@ -164,6 +168,9 @@ def test_ff_landed_fixture_headline_landed_not_published(tmp_path: Path) -> None
     assert "NOT landed@local-master" not in line
     assert "NOT published@origin" in line
     assert "published@origin" not in line.split("NOT published@origin")[0]
+    # Shared-referent shape: SHA at head even when no lane-B rung is shown
+    assert line.startswith(f"plane: {head[:7]} · ")
+    assert "committed@lane-B" not in line
 
 
 def test_degraded_capture_head_absent_never_upgraded(tmp_path: Path) -> None:
@@ -183,6 +190,33 @@ def test_degraded_commit_absent_from_odb(tmp_path: Path) -> None:
     assert "unknown@lane-B" in line
     assert "commit absent from ODB" in line
     assert "landed@local-master" not in line
+    assert line == f"plane: {phantom[:7]} · unknown@lane-B (commit absent from ODB)"
+
+
+def test_plane_headline_sha_referent_shared_additive() -> None:
+    """One short SHA names the shared capture tip; rung tokens unchanged.
+
+    AC1 bind: commit_exists / landed / published all key off PlaneObservation.head_sha
+    (probe_three_planes). Per-rung SHA rejected — would imply distinct objects.
+    """
+    obs = PlaneObservation(
+        head_sha="2b01f241abcdef0123456789abcdef0123456789",
+        branch="cursor-sdk/auto-example",
+        commit_exists=True,
+        landed_local_master=False,
+        published_origin=False,
+        unknown_reason=None,
+        as_of="2026-08-12T00:00:00Z",
+    )
+    line = render_plane_headline(obs)
+    assert line == (
+        "plane: 2b01f24 · committed@lane-B(cursor-sdk/auto-example) · "
+        "NOT landed@local-master · NOT published@origin · as-of 2026-08-12T00:00:00Z"
+    )
+    # Additive: prior tokens keep their exact values; SHA is a new · slot
+    assert "committed@lane-B(cursor-sdk/auto-example)" in line
+    assert "NOT landed@local-master" in line
+    assert "NOT published@origin" in line
 
 
 def test_discrepancy_annotates_unknown_plane_with_committed_checkpoint(
