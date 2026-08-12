@@ -10,7 +10,10 @@ from __future__ import annotations
 import subprocess
 import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
+
+import pytest
 
 from scripts.model_manager.guarded_manage_reexec.checks import (
     collect_refuse_report,
@@ -47,6 +50,37 @@ def _ok_tmux(pane_pid: int = 9):
 
 def _store(tmp_path: Any) -> RestartIntentStore:
     return RestartIntentStore(db_path=tmp_path / "restart-intents.db")
+
+
+def test_refuse_dispatch_home_before_any_manage_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Overlay HOME ⇒ refuse before whoami/quit (M2 / AC1)."""
+    dispatch_root = tmp_path / "cursor-dispatch-homes"
+    overlay = dispatch_root / "auto-refuse-home"
+    overlay.mkdir(parents=True)
+    import services.git_integration_worker.cursor_home as home_mod
+
+    monkeypatch.setattr(home_mod, "_DISPATCH_HOME_ROOT", dispatch_root)
+    monkeypatch.setenv("CURSOR_DISPATCH_HOME_ROOT", str(dispatch_root))
+    monkeypatch.setenv("HOME", str(overlay))
+
+    calls: list[str] = []
+
+    def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
+        del params, kwargs
+        calls.append(method)
+        raise AssertionError("must not call manage under dispatch HOME")
+
+    result = run_guarded_reexec(
+        target_ref="deadbeef",
+        dry_run=True,
+        manage_call=manage_call,
+    )
+    assert result.status == "dry-run"
+    assert result.reason == "dispatch_home_host_refusal"
+    assert result.executed is False
+    assert calls == []
 
 
 def test_refuse_nonterminal_restart_intent(tmp_path: Any) -> None:
