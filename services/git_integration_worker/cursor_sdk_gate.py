@@ -18,7 +18,11 @@ import uuid
 from collections.abc import Callable
 from typing import Literal
 
-from universal_concurrency import CrossLaneTransferError, FifoCapacityGate, TransferHolderError
+from universal_concurrency import (
+    CrossLaneTransferError,
+    FifoCapacityGate,
+    TransferHolderError,
+)
 
 from services.git_integration_worker.cursor_sdk_capacity_invariant import (
     active_by_lane_counts,
@@ -26,13 +30,23 @@ from services.git_integration_worker.cursor_sdk_capacity_invariant import (
 )
 from services.git_integration_worker.cursor_sdk_workspace import (
     default_write_path_is_lane_a,
+    isolated_write_headroom,
     write_lease_slots,
 )
 
 GateLane = Literal["standard", "operator"]
 
+_last_i1_disposition: Literal["ok", "clamp"] | None = None
+_last_limit_derived: tuple[int, int, int] | None = None
+
 
 def _standard_limit() -> int:
+    from services.git_integration_worker.cursor_sdk_lane_regime import (
+        lane_b_regime_active,
+    )
+
+    if lane_b_regime_active():
+        return isolated_write_headroom()
     raw = os.environ.get("CURSOR_SDK_DISPATCH_CONCURRENCY", "1")
     return max(1, int(raw))
 
@@ -240,6 +254,7 @@ async def acquire_sdk_dispatch_slot(
                 misplaced_holders=misplaced,
             ) from None
         raise
+    sdk_dispatch_gate_stats()
     return req_id
 
 
@@ -333,33 +348,146 @@ def _active_by_lane() -> dict[str, int]:
     return active_by_lane_counts([dict(row) for row in rows])
 
 
+def _file_i1_clamp_friction(
+    *,
+    configured_ceiling: int,
+    clamped_limit: int,
+    provisioner_headroom: int,
+) -> int | None:
+    try:
+        from cortex_store.dispatch_ops.ops_assertions_friction import _op_friction
+    except ImportError:
+        return None
+    note = (
+        "cursor-sdk I1 clamp: configured ceiling "
+        f"{configured_ceiling} exceeds provisioner headroom {provisioner_headroom}; "
+        f"effective standard limit {clamped_limit}"
+    )
+    try:
+        result = _op_friction(
+            owner="service:git_integration_worker",
+            category="boot_drift",
+            note=note,
+            agent="cursor-sdk-gate",
+            actionable=False,
+            actionable_false_reason="machine-recovery informational",
+        )
+    except Exception:  # noqa: BLE001 — friction must not block admits
+        return None
+    if "error" in result:
+        return None
+    item = result.get("item") or {}
+    try:
+        return int(item.get("id"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _maybe_emit_regime_on_derivation_events(
+    *,
+    configured_ceiling: int,
+    mintable: int,
+    derived_limit: int,
+    disposition: Literal["ok", "clamp"],
+) -> None:
+    global _last_i1_disposition, _last_limit_derived
+
+    from services.git_integration_worker.cursor_sdk_events import (
+        emit_frontier_sdk_gate_i1_clamp_transition,
+        emit_frontier_sdk_gate_limit_derived,
+    )
+
+    derived_tuple = (configured_ceiling, mintable, derived_limit)
+    if derived_tuple != _last_limit_derived:
+        emit_frontier_sdk_gate_limit_derived(
+            derived_limit=derived_limit,
+            ceiling=configured_ceiling,
+            provisioner_headroom=mintable,
+            regime_on=True,
+        )
+        _last_limit_derived = derived_tuple
+
+    if disposition != _last_i1_disposition and _last_i1_disposition is not None:
+        friction_id: int | None = None
+        if disposition == "clamp":
+            friction_id = _file_i1_clamp_friction(
+                configured_ceiling=configured_ceiling,
+                clamped_limit=derived_limit,
+                provisioner_headroom=mintable,
+            )
+        emit_frontier_sdk_gate_i1_clamp_transition(
+            from_disposition=_last_i1_disposition,
+            to_disposition=disposition,
+            configured_ceiling=configured_ceiling,
+            clamped_limit=derived_limit,
+            provisioner_headroom=mintable,
+            friction_id=friction_id,
+        )
+    _last_i1_disposition = disposition
+
+
+def reset_capacity_derivation_state() -> None:
+    """Clear edge-trigger state (tests only)."""
+    global _last_i1_disposition, _last_limit_derived
+    _last_i1_disposition = None
+    _last_limit_derived = None
+
+
 def _write_capacity_fields(
     *,
     standard: dict[str, int],
     operator: dict[str, int],
     live_by_lane: dict[str, int],
 ) -> dict[str, int | str | dict[str, dict[str, int]]]:
+    from services.git_integration_worker.cursor_sdk_lane_regime import (
+        lane_b_regime_active,
+    )
+    from services.git_integration_worker.cursor_sdk_worktree_registry import (
+        isolated_write_ceiling,
+        mintable_worktrees,
+    )
+
     std_lim = int(standard["limit"])
     op_lim = int(operator["limit"])
-    configured_headroom = std_lim + op_lim
-    lane_a_slots = write_lease_slots("A", gate_limit=configured_headroom)
-    lane_b_slots = write_lease_slots("B", gate_limit=configured_headroom)
     live_writers = int(live_by_lane.get("A", 0)) + int(live_by_lane.get("B", 0))
+
+    if lane_b_regime_active():
+        configured_ceiling = isolated_write_ceiling()
+        mintable = mintable_worktrees()
+        derived_limit = std_lim
+        configured_headroom = configured_ceiling
+        lane_a_slots = write_lease_slots("A", gate_limit=configured_headroom)
+        lane_b_slots = write_lease_slots("B")
+        disposition = evaluate_i1(configured_ceiling, 0, mintable)
+        _maybe_emit_regime_on_derivation_events(
+            configured_ceiling=configured_ceiling,
+            mintable=mintable,
+            derived_limit=derived_limit,
+            disposition=disposition,
+        )
+        headroom = lane_b_slots
+        write_capacity = derived_limit
+    else:
+        configured_headroom = std_lim + op_lim
+        lane_a_slots = write_lease_slots("A", gate_limit=configured_headroom)
+        lane_b_slots = write_lease_slots("B", gate_limit=configured_headroom)
+        if default_write_path_is_lane_a():
+            headroom = lane_a_slots
+            write_capacity = min(configured_headroom, headroom)
+        else:
+            headroom = lane_b_slots
+            write_capacity = configured_headroom
+        disposition = evaluate_i1(std_lim, op_lim, headroom)
+
     write_capacity_detail: dict[str, dict[str, int]] = {
         "lane_a": {"slots": lane_a_slots},
         "lane_b": {"slots": lane_b_slots},
     }
-    if default_write_path_is_lane_a():
-        headroom = lane_a_slots
-        write_capacity = min(configured_headroom, headroom)
-    else:
-        headroom = lane_b_slots
-        write_capacity = configured_headroom
     return {
         "write_capacity": write_capacity,
         "configured_headroom": configured_headroom,
         "live_writers": live_writers,
-        "capacity_disposition": evaluate_i1(std_lim, op_lim, headroom),
+        "capacity_disposition": disposition,
         "write_capacity_detail": write_capacity_detail,
     }
 

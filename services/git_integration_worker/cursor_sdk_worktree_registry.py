@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -158,3 +159,26 @@ def list_registered_worktrees_with_status() -> list[sqlite3.Row]:
             "FROM cursor_sdk_dispatch_worktrees w "
             "LEFT JOIN cursor_sdk_dispatches d ON d.dispatch_id = w.dispatch_id"
         ).fetchall()
+
+
+def isolated_write_ceiling() -> int:
+    """Regime-ON configured writer ceiling (``CURSOR_SDK_ISOLATED_WRITE_CEILING``)."""
+    raw = os.environ.get("CURSOR_SDK_ISOLATED_WRITE_CEILING", "4")
+    return max(1, int(raw))
+
+
+def mintable_worktrees() -> int:
+    """Remaining mint slots: ceiling minus live admitted/running worktrees on disk."""
+    ceiling = isolated_write_ceiling()
+    try:
+        rows = list_registered_worktrees_with_status()
+    except sqlite3.OperationalError:
+        return ceiling
+    live = 0
+    for row in rows:
+        status = row["status"]
+        if status not in ("admitted", "running"):
+            continue
+        if Path(row["worktree_path"]).is_dir():
+            live += 1
+    return max(0, ceiling - live)

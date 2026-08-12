@@ -1808,3 +1808,87 @@ def emit_sdk_closeout_relayed(
         purpose,
         receipt_path,
     )
+
+
+@event_factory
+def FrontierSdkGateLimitDerived(  # noqa: N802
+    derived_limit: int,
+    ceiling: int,
+    provisioner_headroom: int,
+    regime_on: bool,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.gate.limit_derived",
+        payload={
+            "derived_limit": derived_limit,
+            "ceiling": ceiling,
+            "provisioner_headroom": provisioner_headroom,
+            "regime_on": regime_on,
+        },
+        scope="node",
+    )
+
+
+def emit_frontier_sdk_gate_limit_derived(
+    *,
+    derived_limit: int,
+    ceiling: int,
+    provisioner_headroom: int,
+    regime_on: bool,
+) -> None:
+    """Emit when regime-ON derived standard limit tuple changes."""
+    emit_frontier_event(
+        FrontierSdkGateLimitDerived(
+            derived_limit=derived_limit,
+            ceiling=ceiling,
+            provisioner_headroom=provisioner_headroom,
+            regime_on=regime_on,
+        )
+    )
+
+
+@event_factory
+def FrontierSdkGateI1ClampTransition(  # noqa: N802
+    from_disposition: str,
+    to_disposition: str,
+    configured_ceiling: int,
+    clamped_limit: int,
+    provisioner_headroom: int,
+    friction_id: int | None = None,
+) -> Event:
+    payload: dict[str, object] = {
+        "from_disposition": from_disposition,
+        "to_disposition": to_disposition,
+        "configured_ceiling": configured_ceiling,
+        "clamped_limit": clamped_limit,
+        "provisioner_headroom": provisioner_headroom,
+    }
+    if friction_id is not None:
+        payload["friction_id"] = friction_id
+    return Event(
+        signal="frontier.sdk.gate.i1_clamp_transition",
+        payload=payload,
+        scope="node",
+    )
+
+
+def emit_frontier_sdk_gate_i1_clamp_transition(
+    *,
+    from_disposition: str,
+    to_disposition: str,
+    configured_ceiling: int,
+    clamped_limit: int,
+    provisioner_headroom: int,
+    friction_id: int | None = None,
+) -> None:
+    """Emit on I1 clamp disposition edge (paired friction when entering clamp)."""
+    emit_frontier_event(
+        FrontierSdkGateI1ClampTransition(
+            from_disposition=from_disposition,
+            to_disposition=to_disposition,
+            configured_ceiling=configured_ceiling,
+            clamped_limit=clamped_limit,
+            provisioner_headroom=provisioner_headroom,
+            friction_id=friction_id,
+        )
+    )

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class CursorDispatchRequest(BaseModel):
@@ -30,7 +30,14 @@ class CursorDispatchRequest(BaseModel):
     refuse_if_lease_held: bool = False
     lane: Literal["A", "B"] | None = None
     worktree_isolated: bool = False
-    worktree_path: str | None = None
+    worktree_path: str | None = Field(
+        default=None,
+        description=(
+            "Branch-targeting wire surface: a checked-out worktree path becomes the "
+            "write lease_key. Same path serializes per I2; distinct paths may run in "
+            "parallel under the derived standard load pool. There is no branch= arg."
+        ),
+    )
     admitted_via: Literal["cursor-auto", "stargate"] | None = None
     work_key: str | None = None
 
