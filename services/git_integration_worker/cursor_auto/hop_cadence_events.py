@@ -55,6 +55,8 @@ def GiwCursorAutoHopCadenceSuccessionConfirmed(  # noqa: N802
     thread_id: str,
     matched_key: str,
     watch_registration_id: str,
+    prior_registration_id: str,
+    superseded_execution_id: str,
 ) -> Event:
     """Live active-work membership first intersects a watch succession claim."""
     return Event(
@@ -63,6 +65,8 @@ def GiwCursorAutoHopCadenceSuccessionConfirmed(  # noqa: N802
             "thread_id": thread_id,
             "matched_key": matched_key,
             "watch_registration_id": watch_registration_id,
+            "prior_registration_id": prior_registration_id,
+            "superseded_execution_id": superseded_execution_id,
             "membership_scope": "cdp_ask.active_work",
             "freshness": "snapshot_at_scan",
         },
@@ -77,6 +81,7 @@ def GiwCursorAutoHopCadenceRegistrationAdvanced(  # noqa: N802
     prior_registration_id: str,
     new_registration_id: str,
     superseding_execution_id: str,
+    superseded_execution_id: str,
 ) -> Event:
     """Watch ``registration_id`` advanced to the matched active-work row."""
     return Event(
@@ -86,6 +91,7 @@ def GiwCursorAutoHopCadenceRegistrationAdvanced(  # noqa: N802
             "prior_registration_id": prior_registration_id,
             "new_registration_id": new_registration_id,
             "superseding_execution_id": superseding_execution_id,
+            "superseded_execution_id": superseded_execution_id,
         },
         scope="node",
         role="observation",
@@ -164,6 +170,8 @@ def emit_succession_confirmed(
     thread_id: str,
     matched_key: str,
     watch_registration_id: str,
+    prior_registration_id: str,
+    superseded_execution_id: str,
 ) -> None:
     """Emit ``giw.cursor_auto.hop_cadence_succession_confirmed`` on first live membership."""
     emit_frontier_event(
@@ -171,13 +179,18 @@ def emit_succession_confirmed(
             thread_id=thread_id,
             matched_key=matched_key,
             watch_registration_id=watch_registration_id,
+            prior_registration_id=prior_registration_id,
+            superseded_execution_id=superseded_execution_id,
         )
     )
     logger.info(
-        "hop_cadence succession_confirmed thread=%s matched_key=%s watch_reg=%s",
+        "hop_cadence succession_confirmed thread=%s matched_key=%s watch_reg=%s "
+        "prior_reg=%s superseded_exec=%s",
         thread_id,
         matched_key,
         watch_registration_id,
+        prior_registration_id,
+        superseded_execution_id,
     )
 
 
@@ -187,6 +200,7 @@ def emit_registration_advanced(
     prior_registration_id: str,
     new_registration_id: str,
     superseding_execution_id: str,
+    superseded_execution_id: str,
 ) -> None:
     """Emit ``giw.cursor_auto.hop_cadence_registration_advanced`` once per id transition."""
     emit_frontier_event(
@@ -195,14 +209,16 @@ def emit_registration_advanced(
             prior_registration_id=prior_registration_id,
             new_registration_id=new_registration_id,
             superseding_execution_id=superseding_execution_id,
+            superseded_execution_id=superseded_execution_id,
         )
     )
     logger.info(
-        "hop_cadence registration_advanced thread=%s prior=%s new=%s key=%s",
+        "hop_cadence registration_advanced thread=%s prior=%s new=%s key=%s superseded_exec=%s",
         thread_id,
         prior_registration_id,
         new_registration_id,
         superseding_execution_id,
+        superseded_execution_id,
     )
 
 

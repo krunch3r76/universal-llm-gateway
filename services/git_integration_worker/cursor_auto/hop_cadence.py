@@ -322,8 +322,13 @@ async def fire_hop_for_decision(
             job_id=job.job_id,
         )
     else:
-        hop_ok = True
-        mark_hop_fired(decision.thread_id, execution_id=execution_id, path=path)
+        fired = mark_hop_fired(
+            decision.thread_id,
+            execution_id=execution_id,
+            path=path,
+            active_work_snap=snap if isinstance(snap, dict) else None,
+        )
+        hop_ok = fired is not False
     logger.info(
         "hop_cadence fire thread=%s job=%s hop_ok=%s execution_id=%s",
         decision.thread_id,

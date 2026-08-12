@@ -29,6 +29,10 @@ from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
 
 def _snap(*, registration_id: str, execution_id: str = "exec-successor") -> dict:
     return {
+        "free_slots": 1,
+        "running_count": 1,
+        "at_soft_limit": False,
+        "at_hard_limit": False,
         "rows": [
             {
                 "execution_id": execution_id,
@@ -194,6 +198,9 @@ def test_registration_advanced_once_on_confirm():
         "registration_id": "reg-old",
         "successor_execution_id": "stargate-uuid",
         "pending_satellite_execution_id": "satellite-live",
+        "superseded_registration_id": "reg-old",
+        "superseded_execution_id": "exec-incumbent-old",
+        "predecessor_verdict": "incumbent_recorded",
     }
     watches = {"6885": dict(row)}
     snap = _snap(registration_id="reg-new", execution_id="satellite-live")
@@ -217,7 +224,9 @@ def test_registration_advanced_once_on_confirm():
         assert advanced_kwargs["prior_registration_id"] == "reg-old"
         assert advanced_kwargs["new_registration_id"] == "reg-new"
         assert advanced_kwargs["superseding_execution_id"] == "satellite-live"
+        assert advanced_kwargs["superseded_execution_id"] == "exec-incumbent-old"
         assert watches["6885"]["registration_id"] == "reg-new"
+        assert watches["6885"]["succession_confirm_record"]["prior_registration_id"] == "reg-old"
 
         confirmed_mock.reset_mock()
         advanced_mock.reset_mock()
@@ -228,13 +237,17 @@ def test_registration_advanced_once_on_confirm():
 
 
 def test_advance_registration_on_confirm_unit():
-    row = {"registration_id": "reg-old"}
+    row = {
+        "registration_id": "reg-old",
+        "superseded_execution_id": "exec-incumbent",
+    }
     aw_row = {"registration_id": "reg-new", "execution_id": "exec-1", "status": "running"}
     updated, transition = advance_registration_on_confirm(
         row,
         matched_key="exec-1",
         active_work_row=aw_row,
         now=time.time(),
+        prior_registration_id="reg-old",
     )
     assert transition == ("reg-old", "reg-new")
     assert updated["registration_id"] == "reg-new"
@@ -243,6 +256,7 @@ def test_advance_registration_on_confirm_unit():
         matched_key="exec-1",
         active_work_row=aw_row,
         now=time.time(),
+        prior_registration_id="reg-old",
     )
     assert transition2 is None
     assert updated2["registration_id"] == "reg-new"

@@ -339,8 +339,16 @@ def mark_hop_fired(
     path: Path | None = None,
     execution_id: str | None = None,
     satellite_execution_id: str | None = None,
-) -> None:
-    """Reset seated_at after a cadence hop so the successor is not immediately re-hopped."""
+    active_work_snap: dict[str, Any] | None = None,
+) -> bool:
+    """Reset seated_at after a cadence hop so the successor is not immediately re-hopped.
+
+    Returns False when predecessor execution lookup fails (handle incomplete).
+    """
+    from services.git_integration_worker.cursor_auto.hop_cadence_predecessor import (
+        PredecessorConfirmError,
+        capture_predecessor_at_hop,
+    )
     from services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile import (
         record_succession_claim,
     )
@@ -348,25 +356,33 @@ def mark_hop_fired(
     ts = time.time() if now is None else now
     watches = load_watches(path)
     row = dict(watches.get(thread_id) or {"thread_id": thread_id})
-    predecessor_reg = str(row.get("registration_id") or "").strip() or None
+    row["thread_id"] = thread_id
+    capture = capture_predecessor_at_hop(row, active_work_snap)
+    if isinstance(capture, PredecessorConfirmError):
+        mark_hop_failed(
+            thread_id,
+            reason=capture.reason,
+            now=ts,
+            path=path,
+        )
+        return False
+    row.update(capture.as_watch_fields())
     row = record_succession_claim(
         row,
         execution_id=execution_id,
         satellite_execution_id=satellite_execution_id,
         now=ts,
     )
-    row["thread_id"] = thread_id
     row["last_hop_at"] = ts
     row["seated_at"] = ts
     row["enroll_source"] = "post_hop_reset"
     row.pop("consecutive_hop_failures", None)
-    if predecessor_reg:
-        row["superseded_registration_id"] = predecessor_reg
     if execution_id:
         row["last_hop_execution_id"] = execution_id
         row["successor_execution_id"] = execution_id
     watches[thread_id] = row
     save_watches(watches, path)
+    return True
 
 
 def advance_registration_on_confirm(
@@ -375,6 +391,7 @@ def advance_registration_on_confirm(
     matched_key: str,
     active_work_row: dict[str, Any] | None,
     now: float,
+    prior_registration_id: str,
 ) -> tuple[dict[str, Any], tuple[str, str] | None]:
     """Advance watch registration when live membership confirms; emit events once per transition."""
     _ = now
@@ -383,11 +400,18 @@ def advance_registration_on_confirm(
     new_reg = str(active_work_row.get("registration_id") or "").strip()
     if not new_reg:
         return row, None
-    prior_reg = str(row.get("registration_id") or "").strip()
-    if prior_reg == new_reg:
+    prior_reg = prior_registration_id.strip()
+    current_reg = str(row.get("registration_id") or "").strip()
+    if current_reg == new_reg:
         return row, None
     updated = dict(row)
     updated["registration_id"] = new_reg
+    updated["succession_confirm_record"] = {
+        "prior_registration_id": prior_reg,
+        "superseded_execution_id": str(row.get("superseded_execution_id") or ""),
+        "superseding_execution_id": matched_key,
+        "confirmed_at": now,
+    }
     return updated, (prior_reg, new_reg)
 
 

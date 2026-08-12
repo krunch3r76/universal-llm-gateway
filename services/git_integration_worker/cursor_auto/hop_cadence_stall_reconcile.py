@@ -32,6 +32,11 @@ from services.git_integration_worker.cursor_auto.hop_cadence_events import (
     emit_succession_confirmed,
     emit_succession_revoked,
 )
+from services.git_integration_worker.cursor_auto.hop_cadence_predecessor import (
+    PredecessorConfirmError,
+    prior_registration_for_confirm,
+    predecessor_from_watch,
+)
 from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
     advance_registration_on_confirm,
     load_watches,
@@ -357,6 +362,7 @@ def reconcile_succession_confirmations(
         snap = {}
     watches = load_watches(watches_path)
     confirmations: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
     changed = False
     for thread_id, row in list(watches.items()):
         if not successor_confirm_active(row, snap):
@@ -364,22 +370,43 @@ def reconcile_succession_confirmations(
         matched_key, aw_row = matched_active_work_row(row, snap)
         if not matched_key:
             continue
+        handle = predecessor_from_watch(row)
+        if isinstance(handle, PredecessorConfirmError):
+            logger.error(
+                "hop_cadence confirm predecessor error thread=%s reason=%s detail=%s",
+                thread_id,
+                handle.reason,
+                handle.detail,
+            )
+            errors.append(
+                {
+                    "thread_id": thread_id,
+                    "reason": handle.reason,
+                    "detail": handle.detail,
+                }
+            )
+            continue
+        prior_reg = prior_registration_for_confirm(handle)
         updated, transition = advance_registration_on_confirm(
             row,
             matched_key=matched_key,
             active_work_row=aw_row,
             now=ts,
+            prior_registration_id=prior_reg,
         )
         if transition is None:
             continue
         watches[thread_id] = updated
         changed = True
-        prior_reg, new_reg = transition
+        _, new_reg = transition
         watch_reg = str(row.get("registration_id") or "")
+        superseded_exec = handle.execution_id
         emit_succession_confirmed(
             thread_id=thread_id,
             matched_key=matched_key,
             watch_registration_id=watch_reg,
+            prior_registration_id=prior_reg,
+            superseded_execution_id=superseded_exec,
         )
         if new_reg:
             emit_registration_advanced(
@@ -387,18 +414,20 @@ def reconcile_succession_confirmations(
                 prior_registration_id=prior_reg,
                 new_registration_id=new_reg,
                 superseding_execution_id=matched_key,
+                superseded_execution_id=superseded_exec,
             )
         confirmations.append(
             {
                 "thread_id": thread_id,
                 "matched_key": matched_key,
                 "prior_registration_id": prior_reg,
+                "superseded_execution_id": superseded_exec,
                 "new_registration_id": new_reg,
             }
         )
     if changed:
         save_watches(watches, watches_path)
-    return {"confirmations": confirmations}
+    return {"confirmations": confirmations, "errors": errors}
 
 
 def _default_snapshot_reader() -> dict[str, Any]:

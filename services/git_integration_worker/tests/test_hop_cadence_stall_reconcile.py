@@ -131,7 +131,21 @@ def test_end_to_end_admit_submit_stall_revokes(tmp_path: Path) -> None:
     """AC5: reconstruct admit → submit → stall class end-to-end."""
     watch_path = tmp_path / "watches.json"
     state_path = tmp_path / "state.json"
-    mark_hop_fired("6928", now=_NOW, path=watch_path, execution_id=_EXEC)
+    mark_hop_fired(
+        "6928",
+        now=_NOW,
+        path=watch_path,
+        execution_id=_EXEC,
+        active_work_snap={
+            "rows": [
+                {
+                    "execution_id": "exec-incumbent",
+                    "registration_id": "reg-live",
+                    "status": "running",
+                }
+            ]
+        },
+    )
     events = [
         {
             "seq": 1,
@@ -198,11 +212,34 @@ def test_proof_confirms_pending_claim_without_revoke() -> None:
 def test_mark_hop_fired_records_pending_claim(tmp_path: Path) -> None:
     watch_path = tmp_path / "watches.json"
     save_watches(
-        {"6928": {"thread_id": "6928", "seated_at": _NOW - 2000.0}},
+        {
+            "6928": {
+                "thread_id": "6928",
+                "seated_at": _NOW - 2000.0,
+                "registration_id": "reg-live",
+            }
+        },
         watch_path,
     )
-    mark_hop_fired("6928", now=_NOW, path=watch_path, execution_id=_EXEC)
+    snap = {
+        "rows": [
+            {
+                "execution_id": "exec-incumbent",
+                "registration_id": "reg-live",
+                "status": "running",
+            }
+        ]
+    }
+    assert mark_hop_fired(
+        "6928",
+        now=_NOW,
+        path=watch_path,
+        execution_id=_EXEC,
+        active_work_snap=snap,
+    )
     row = load_watches(watch_path)["6928"]
     assert row["succession_status"] == "pending"
     assert row["pending_succession"]["execution_id"] == _EXEC
     assert row["pre_hop_seated_at"] == _NOW - 2000.0
+    assert row["superseded_registration_id"] == "reg-live"
+    assert row["superseded_execution_id"] == "exec-incumbent"
