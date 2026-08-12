@@ -397,10 +397,15 @@ def resolve_measurement_status(
 ) -> str:
     """Measurement control line for envelope ``status:`` — B3/ledger, not §2 claim."""
     measured = resolve_measurement_status_from_wrapper(wrapper_text)
-    if measured is None and sidecar_text:
+    if sidecar_text and (measured is None or measured == "partial"):
         structured = extract_structured_closeout_full_text(sidecar_text)
         if structured:
-            measured = resolve_measurement_status_from_wrapper(structured)
+            sidecar_measured = resolve_measurement_status_from_wrapper(structured)
+            if sidecar_measured is not None:
+                if measured is None:
+                    measured = sidecar_measured
+                elif sidecar_measured != "partial":
+                    measured = sidecar_measured
     if measured is not None:
         return measured
     normalized = ledger_fallback.strip().lower()

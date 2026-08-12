@@ -528,6 +528,38 @@ def test_finalize_closeout_body_preserves_work_outcome() -> None:
     assert reduced["status"] == "complete"
 
 
+def test_finalize_closeout_body_preserves_status_incomplete_class() -> None:
+    """Repair D — shrink path retains status_incomplete_class (root cause fix)."""
+    import json
+
+    from services.git_integration_worker.cursor_sdk_closeout import (
+        finalize_closeout_body,
+    )
+
+    payload = {
+        "schema_version": 1,
+        "status": "partial",
+        "status_incomplete_class": "work",
+        "work_outcome": "checks_failed",
+        "summary": "dispatch d1: 1 tool calls, 1.0s, 100B -> sidecar",
+        "source_ref": "todo:test",
+        "capture_status": "partial",
+        "deviations": [f"padding:{index}" for index in range(800)],
+    }
+    reduced = json.loads(finalize_closeout_body(json.dumps(payload)))
+    assert reduced["status_incomplete_class"] == "work"
+    assert reduced["work_outcome"] == "checks_failed"
+    assert reduced["status"] == "partial"
+
+    minimal_trigger = {
+        **payload,
+        "summary": "x" * 9000,
+        "deviations": [f"padding:{index}" for index in range(2000)],
+    }
+    minimal = json.loads(finalize_closeout_body(json.dumps(minimal_trigger)))
+    assert minimal.get("status_incomplete_class") == "work"
+
+
 def test_i3_stated_intent_no_write_caps_work_at_unverified(tmp_path: Path) -> None:
     repo = _init_git_repo(tmp_path)
     user_path = "docs/user_change.md"

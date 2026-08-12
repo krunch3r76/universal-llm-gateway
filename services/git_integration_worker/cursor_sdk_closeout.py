@@ -876,6 +876,8 @@ def finalize_closeout_body(
     }
     if payload.get("work_outcome") is not None:
         reduced["work_outcome"] = payload["work_outcome"]
+    if payload.get("status_incomplete_class") is not None:
+        reduced["status_incomplete_class"] = payload["status_incomplete_class"]
     if payload.get("capture_status") is not None:
         reduced["capture_status"] = payload["capture_status"]
     if payload.get("evidence_uris"):
@@ -941,6 +943,8 @@ def finalize_closeout_body(
     }
     if payload.get("work_outcome") is not None:
         minimal["work_outcome"] = payload["work_outcome"]
+    if payload.get("status_incomplete_class") is not None:
+        minimal["status_incomplete_class"] = payload["status_incomplete_class"]
     if residue:
         minimal["propagation_residue"] = list(residue[:_CLOSEOUT_FILE_HEAD])
     if body_relocated is not None:

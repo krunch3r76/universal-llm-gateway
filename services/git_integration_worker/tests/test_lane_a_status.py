@@ -21,6 +21,7 @@ from services.git_integration_worker.cursor_auto.closeout_status_polarity import
     resolve_status_disagreement_authority,
 )
 from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+    resolve_measurement_status,
     resolve_measurement_status_from_wrapper,
     resolve_relay_status,
 )
@@ -429,3 +430,54 @@ def test_select_closeout_relay_parent_stub_reads_structured_closeout_full_work()
     )
     assert payload.source == "section2_sidecar"
     assert payload.status == "partial:work"
+
+
+def test_resolve_measurement_status_bare_partial_consults_sidecar() -> None:
+    """Repair C — unqualified wrapper partial falls through to structured_closeout_full."""
+    classless_wrapper = json.dumps(
+        {
+            "schema_version": 1,
+            "status": "partial",
+            "work_outcome": "checks_failed",
+            "summary": "dispatch auto-x: shrunk",
+            "source_ref": "todo:test",
+        }
+    )
+    sidecar = _sidecar_with_structured_work_json()
+    assert (
+        resolve_measurement_status(
+            wrapper_text=classless_wrapper,
+            ledger_fallback="completed",
+            sidecar_text=sidecar,
+        )
+        == "partial:work"
+    )
+
+
+def test_resolve_measurement_status_legitimate_bare_partial_not_relabelled() -> None:
+    """Repair C anti-overclaim — sidecar also bare partial stays bare."""
+    bare_structured = json.dumps(
+        {
+            "schema_version": 1,
+            "status": "partial",
+            "work_outcome": "unverified",
+            "capture_status": "unavailable",
+        }
+    )
+    sidecar = f"## structured_closeout_full\n\n{bare_structured}"
+    classless_wrapper = json.dumps(
+        {
+            "schema_version": 1,
+            "status": "partial",
+            "summary": "dispatch auto-x",
+            "source_ref": "todo:test",
+        }
+    )
+    assert (
+        resolve_measurement_status(
+            wrapper_text=classless_wrapper,
+            ledger_fallback="completed",
+            sidecar_text=sidecar,
+        )
+        == "partial"
+    )
