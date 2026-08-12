@@ -12,6 +12,34 @@ from .db.threads_atomic import close_thread
 from .turns_models import ThreadStatus
 
 BusLifecycle = Literal["persistent", "ephemeral"]
+
+# Matches ``TYPE: DISPOSITION``, ``TYPE: LEG DISPOSITION …``, and
+# ``TYPE: DISPOSITION+DIRECTIVE`` — not bare ``TYPE: DIRECTIVE``.
+_DISPOSITION_TURN_TYPE_RE = re.compile(
+    r"^TYPE:\s*(?:LEG\s+)?DISPOSITION(?:\+[\w-]+|\s|\(|$)",
+    re.IGNORECASE,
+)
+
+
+def first_line_is_disposition_type(first_line: str) -> bool:
+    """True when the first nonblank line is a disposition-family turn type."""
+    line = (first_line or "").strip()
+    if not line:
+        return False
+    return _DISPOSITION_TURN_TYPE_RE.match(line) is not None
+
+
+def body_has_disposition_type(body: str) -> bool:
+    """True when any line opens with a disposition-family ``TYPE:`` token."""
+    for raw in (body or "").splitlines():
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        if first_line_is_disposition_type(stripped):
+            return True
+        if stripped.upper().startswith("TYPE:"):
+            return False
+    return False
 _LIFECYCLE_EPHEMERAL = "bus_lifecycle:ephemeral"
 _LIFECYCLE_PERSISTENT = "bus_lifecycle:persistent"
 _DONE_PREFIX = "DONE — "

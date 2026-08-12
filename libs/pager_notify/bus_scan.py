@@ -7,6 +7,8 @@ import os
 
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 
+from agent_bus_store.disposition import body_has_disposition_type
+
 from pager_notify.client import notify_pager
 from pager_notify.so_what import SMS_BODY_MAX, SMS_SUBJECT_MAX, clip
 from pager_notify.state import load_last_turns, save_last_turn
@@ -41,7 +43,7 @@ def _turn_is_pageable(turn: dict) -> bool:
     sender = str(turn.get("from") or "")
     if sender == "web-anthropic" and (
         subject.startswith("DISPOSITION")
-        or "TYPE: DISPOSITION" in body
+        or body_has_disposition_type(body)
         or subject.startswith("OPERATOR")
     ):
         return True

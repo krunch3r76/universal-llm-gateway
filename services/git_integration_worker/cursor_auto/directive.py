@@ -447,4 +447,9 @@ def build_sdk_message(job_body: str, *, contract: str) -> str:
                     "- Emit an explicit line: fence_exception: <uri> — <reason>",
                 ]
             )
+    from services.git_integration_worker.cursor_auto.effect_claim import (
+        effect_claim_injection_lines,
+    )
+
+    lines.extend(effect_claim_injection_lines(body))
     return "\n".join(lines) + "\n"

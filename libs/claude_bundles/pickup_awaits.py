@@ -21,6 +21,8 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
+from agent_bus_store.disposition import body_has_disposition_type
+
 from claude_bundles.cse_session_common import is_parked_body
 from claude_bundles.mission_close_wake import is_mission_closeout
 
@@ -29,7 +31,6 @@ _PICKUP_TOKEN_RE = re.compile(r"(?i)\b(pickup|awaits_commission)\s*:")
 _FYI_TOKEN_RE = re.compile(r"(?i)\bfyi\s*:")
 _ARCH_BIND_SUBJECT_RE = re.compile(r"(?i)\bARCHITECTURE\s+BIND\b")
 _ARCH_BIND_TYPE_RE = re.compile(r"(?i)^TYPE:\s*ARCHITECTURE\s+BIND\b", re.M)
-_DISPOSITION_TYPE_RE = re.compile(r"(?i)^TYPE:\s*DISPOSITION\b", re.M)
 _CONTINUITY_TYPE_RE = re.compile(r"(?i)^TYPE:\s*CONTINUITY_HANDOFF\b", re.M)
 _STATUS_WRAPPER_RE = re.compile(r"(?i)^(status|DIRECTIVE|CLOSEOUT)\b")
 
@@ -111,7 +112,7 @@ def is_cease_to_act(*, subject: str = "", body: str = "") -> bool:
     text = body or ""
     if _CONTINUITY_TYPE_RE.search(text):
         return True
-    if _DISPOSITION_TYPE_RE.search(text):
+    if body_has_disposition_type(text):
         return True
     return False
 

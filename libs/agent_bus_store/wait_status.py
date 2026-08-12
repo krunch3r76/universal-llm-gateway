@@ -23,7 +23,7 @@ from typing import Any, Literal, TypedDict
 from agent_seat.registry import normalize_bus_address
 
 from .close_on_read import CLOSE_ON_READ_TAG
-from .disposition import resolve_bus_lifecycle
+from .disposition import first_line_is_disposition_type, resolve_bus_lifecycle
 from .turns_models import ThreadStatus
 
 WaitStatus = Literal["awaiting_first_reply", "complete"]
@@ -99,7 +99,7 @@ def is_disposition_one_correction(turn: dict[str, Any] | None) -> bool:
     if not body:
         return False
     lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
-    if not lines or lines[0].upper() != "TYPE: DISPOSITION":
+    if not lines or not first_line_is_disposition_type(lines[0]):
         return False
     for ln in lines[1:6]:
         low = ln.lower()
