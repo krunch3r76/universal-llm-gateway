@@ -397,7 +397,13 @@ def resolve_measurement_status(
 ) -> str:
     """Measurement control line for envelope ``status:`` — B3/ledger, not §2 claim."""
     measured = resolve_measurement_status_from_wrapper(wrapper_text)
-    if sidecar_text and (measured is None or measured == "partial"):
+    # Class-blind wrapper measures (None / bare partial / complete) may be
+    # enriched from durable ## structured_closeout_full. complete is class-blind
+    # the same way bare partial is — qualify_* never stamps work|capture on it —
+    # so a measuring complete must not short-circuit a qualified sidecar (D2).
+    if sidecar_text and (
+        measured is None or measured == "partial" or measured == "complete"
+    ):
         structured = extract_structured_closeout_full_text(sidecar_text)
         if structured:
             sidecar_measured = resolve_measurement_status_from_wrapper(structured)

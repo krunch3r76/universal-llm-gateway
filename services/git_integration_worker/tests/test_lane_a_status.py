@@ -432,6 +432,30 @@ def test_select_closeout_relay_parent_stub_reads_structured_closeout_full_work()
     assert payload.status == "partial:work"
 
 
+def test_resolve_measurement_status_complete_wrapper_does_not_mask_sidecar_work() -> None:
+    """D2 — measuring complete wrapper must not mask durable structured work-class."""
+    complete_wrapper = json.dumps(
+        {
+            "schema_version": 1,
+            "status": "complete",
+            "summary": "dispatch auto-x: complete wrapper",
+            "source_ref": "todo:test",
+            "capture_status": "ok",
+            "files_created": ["a"],
+            "work_outcome": "shipped",
+        }
+    )
+    sidecar = _sidecar_with_structured_work_json()
+    assert (
+        resolve_measurement_status(
+            wrapper_text=complete_wrapper,
+            ledger_fallback="completed",
+            sidecar_text=sidecar,
+        )
+        == "partial:work"
+    )
+
+
 def test_resolve_measurement_status_bare_partial_consults_sidecar() -> None:
     """Repair C — unqualified wrapper partial falls through to structured_closeout_full."""
     classless_wrapper = json.dumps(

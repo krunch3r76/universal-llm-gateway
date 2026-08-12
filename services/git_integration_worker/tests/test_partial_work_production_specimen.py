@@ -111,6 +111,33 @@ async def test_post_operator_closeout_emits_specimen_on_partial_work(
     assert payload["replay_mode"] is False
 
 
+@pytest.mark.asyncio
+async def test_post_operator_closeout_bus_reply_includes_status_incomplete_class_work(
+    relay_job: AutoJob,
+) -> None:
+    """Posted prose must carry ``status_incomplete_class: work`` for partial:work."""
+    bus = AsyncMock()
+    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+
+    result = await post_operator_closeout(
+        relay_job,
+        status="partial:work",
+        dispatch_id="auto-sic-work",
+        model_id="cursor/composer-2.5",
+        sdk_body=None,
+        closeout_body=_checkpoint_body("partial:work"),
+        closeout_source="section2_sidecar",
+        bus=bus,
+        skip_outbox_persist=True,
+    )
+
+    assert result["ok"] is True
+    sent = bus.reply.await_args.kwargs["body"]
+    assert isinstance(sent, str)
+    assert "status: partial:work" in sent
+    assert "status_incomplete_class: work" in sent
+
+
 def test_production_specimen_event_factory_payload() -> None:
     event = FrontierSdkCloseoutPartialWorkProductionSpecimen(
         dispatch_id="auto-specimen01",
