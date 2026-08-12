@@ -155,6 +155,7 @@ from services.git_integration_worker.cursor_sdk_gate import (
 from services.git_integration_worker.cursor_sdk_implement_gate import (
     implement_gate_bypass_deviations,
 )
+from services.git_integration_worker.cursor_sdk_lane_branch import associate_lane_branch
 from services.git_integration_worker.cursor_sdk_lane_regime import lane_b_regime_active
 from services.git_integration_worker.cursor_sdk_lane_select import (
     LaneScopeRefused,
@@ -1366,8 +1367,7 @@ async def startup_ledger_reconcile(app: FastAPI) -> None:
     )
     if wt_sweep.reaped:
         logger.info(
-            "startup orphan worktree reaper reaped=%d salvaged=%d "
-            "branches_retained=%d",
+            "startup orphan worktree reaper reaped=%d salvaged=%d branches_retained=%d",
             wt_sweep.reaped,
             wt_sweep.salvaged,
             wt_sweep.branches_retained,
@@ -2360,6 +2360,10 @@ async def cursor_dispatch(
                     branch=record.branch_name,
                     branch_point=record.branch_point,
                     mint_wait_ms=round(mint_wait_ms, 1),
+                )
+                await associate_lane_branch(
+                    thread_id=req.thread_id,
+                    branch_name=record.branch_name,
                 )
     except WorktreeMintError as exc:
         return _reject_pre_admission(

@@ -93,7 +93,7 @@ OP_DOC: dict[str, tuple[str, str]] = {
 #
 # Only the confusable subset is policed — params that are broadly applicable
 # (path, content) or inert (offset, limit, binary, max_depth, include_untracked,
-# description, paths) are never rejected.
+# description, paths, thread) are never rejected.
 CONTRACT_PARAMS: tuple[str, ...] = (
     "target",
     "section",
@@ -267,7 +267,7 @@ def md_section_op_doc() -> str:
     return (
         "Markdown section ops (for large docs):\n"
         "  md_list    (path)                    — list sections/TOC (PDFs: embedded outline; markdown: ATX headings plus line-anchored XML blocks such as `<scope>` / `<task_guidance>` on six-block handoff packets)\n"
-        "  md_read    (path, section?)          — read one section; empty/absent section => full document (text/markdown; PDFs still require a section). XML block keys: `<tag>` or bare `tag` (e.g. section=\"<task_guidance>\" or section=\"task_guidance\")\n"
+        '  md_read    (path, section?)          — read one section; empty/absent section => full document (text/markdown; PDFs still require a section). XML block keys: `<tag>` or bare `tag` (e.g. section="<task_guidance>" or section="task_guidance")\n'
         "  md_to_dict (path)                    — nested heading dict (PDFs: outline-driven; others: ATX sections)\n"
         "  md_replace (path, section, content)  — replace section body (text files only); content must NOT include the section heading — if it opens with a matching ATX heading, the op strips it and sets normalized_heading: true; response includes mutation (line/char delta) and _warning when body shrinks by >50%\n"
         "  md_append  (path, section, content)  — append to section body (text files only); same heading-less-content contract as md_replace\n"

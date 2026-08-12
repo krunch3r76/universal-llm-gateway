@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from endpoint_surface import Surface
@@ -52,6 +53,42 @@ _PATH_WRITE_OPS = frozenset(
 )
 
 
+def _lane_provenance_fields(*, thread: str, branch: str, root: Path) -> dict[str, str]:
+    return {
+        "lane_thread": thread,
+        "lane_branch": branch,
+        "lane_worktree_root": str(root.resolve()),
+    }
+
+
+def _resolve_workspaces_binding(
+    *,
+    surface: Surface,
+    thread: str | None,
+) -> tuple[Any, dict[str, str] | None, dict[str, str] | None]:
+    """Return (context_manager, lane_fields, error_dict)."""
+    if not thread or not str(thread).strip():
+        return bind_workspaces_root(surface), None, None
+    from lane_branch_root import (
+        LaneBranchResolutionError,
+        bind_lane_worktree_root,
+        branch_for_thread,
+        root_for_thread,
+    )
+
+    thread_id = str(thread).strip()
+    try:
+        branch = branch_for_thread(thread_id)
+        root = root_for_thread(thread_id)
+    except LaneBranchResolutionError as exc:
+        return None, None, {"error": str(exc)}
+    return (
+        bind_lane_worktree_root(root),
+        _lane_provenance_fields(thread=thread_id, branch=branch, root=root),
+        None,
+    )
+
+
 def fs_impl(
     *,
     surface: Surface,
@@ -77,6 +114,7 @@ def fs_impl(
     level: int = 0,
     position: str = "",
     mode: str = "",
+    thread: str | None = None,
 ) -> dict[str, Any]:
     if not op:
         return {"error": "'op' is required"}
@@ -160,7 +198,13 @@ def fs_impl(
             valid = ", ".join(sorted(_MD_OP_MAP))
             return {"error": f"Unknown markdown op: {op!r}. Available: {valid}"}
         if effective_sandbox == "workspaces":
-            with bind_workspaces_root(surface) as root:
+            bind_ctx, lane_fields, bind_error = _resolve_workspaces_binding(
+                surface=surface,
+                thread=thread,
+            )
+            if bind_error is not None:
+                return bind_error
+            with bind_ctx as root:
                 result = md_fn(
                     op=md_op,
                     path=effective_path,
@@ -178,6 +222,8 @@ def fs_impl(
                         surface, root, rel_path=effective_path
                     )
                 )
+                if lane_fields:
+                    result.update(lane_fields)
             return result
         result = md_fn(
             op=md_op,
@@ -214,7 +260,13 @@ def fs_impl(
             **workspaces_impl_registry(),
             **overflow_registry,
         }
-        with bind_workspaces_root(surface) as root:
+        bind_ctx, lane_fields, bind_error = _resolve_workspaces_binding(
+            surface=surface,
+            thread=thread,
+        )
+        if bind_error is not None:
+            return bind_error
+        with bind_ctx as root:
             result = dispatch_workspaces_op(
                 op,
                 effective_path,
@@ -239,6 +291,8 @@ def fs_impl(
                     surface, root, rel_path=effective_path
                 )
             )
+            if lane_fields:
+                result.update(lane_fields)
         return result
 
     tool_name = _SANDBOX_TOOL[effective_sandbox]

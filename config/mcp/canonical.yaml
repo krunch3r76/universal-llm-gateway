@@ -2353,7 +2353,7 @@ tools:
   flat_call_shape:
     tool: fs_read
     substrate_qualified: user-vortex__fs_read
-  fol_descriptor: "∀ path ∈ str: fs(read, …) routes by sandbox∨Share URI.\nOptional offset/limit window (ACI): response includes line_range + total_lines + truncated; returned=0 carries observation explaining empty window ≠ missing file.\nEmpty decoded text carries observation (success, zero content). See agent_skill:fs.\n"
+  fol_descriptor: "∀ path ∈ str: fs(read, …) routes by sandbox∨Share URI.\nOptional offset/limit window (ACI): response includes line_range + total_lines + truncated; returned=0 carries observation explaining empty window ≠ missing file.\nEmpty decoded text carries observation (success, zero content).\nthread (optional): agent-bus thread id. When set with sandbox=\"workspaces\", the operation is rooted in the worktree of that lane's current branch instead of the shared checkout; refuses when the lane has no branch association.\nSee agent_skill:fs.\n"
   json_schema:
     type: object
     properties:
@@ -2364,6 +2364,9 @@ tools:
         - workspaces
       path:
         type: string
+      thread:
+        type: string
+        description: agent-bus thread id; with sandbox=workspaces roots fs in lane worktree
     required:
     - path
   skill_uri: rule:fs

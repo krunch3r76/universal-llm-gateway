@@ -37,6 +37,10 @@ def build_fs_tool_description(surface: Surface) -> str:
         "Responses dual-carry `path` (sandbox-relative) and `uri` (canonical Share URI).\n"
         "Host mount paths are accepted at ingress and normalized with an advisory;\n"
         "egress never returns absolute mount paths.\n\n"
+        "`thread` (optional): agent-bus thread id. When set with "
+        '`sandbox="workspaces"`, the operation is rooted in the worktree of that '
+        "lane's current branch instead of the shared checkout; refuses when the lane "
+        "has no branch association.\n\n"
         'Use op="list" for directories; op="read" on a directory path returns an error.\n\n'
         f"{find_blurb}"
         f"{search_blurb}"
