@@ -23,8 +23,8 @@ from services.git_integration_worker.cursor_auto.queue import AutoJob
 
 logger = get_logger(__name__)
 
-# §14b: human observed deep at HEARTBEAT #6 (~24 min @ 240s). Interim bind.
-_DEFAULT_AGE_THRESHOLD_S = 1500.0
+# Operator bind 2026-08-12 (arc 7119): cadence = 30 minutes wall-clock.
+_DEFAULT_AGE_THRESHOLD_S = 1800.0
 _DEFAULT_COOLDOWN_S = 1800.0
 _DEFAULT_SCAN_INTERVAL_S = 30.0
 _STANDING_HANDOFF_STALE_FACTOR = 2.0
@@ -36,6 +36,7 @@ def age_threshold_s() -> float:
     """Seconds of CSE/watch age before Auto fires a continuity hop.
 
     Override with env ``CURSOR_AUTO_HOP_CSE_AGE_S`` (minimum 60s).
+    Default 1800s (30 min).
     """
     raw = os.environ.get("CURSOR_AUTO_HOP_CSE_AGE_S", "").strip()
     if not raw:
@@ -172,9 +173,19 @@ def save_watches(watches: dict[str, dict[str, Any]], path: Path | None = None) -
     tmp.replace(target)
 
 
-def _is_web_mailbox(from_agent: str) -> bool:
+def _is_operator_proxy_mailbox(from_agent: str) -> bool:
+    """True for mailboxes that own a private-lane operator CSE seat.
+
+    Historical enroll path keyed on ``web-*``. Live operator-proxy seats
+    post as ``cdp-operator-*`` (observed 6655 turn 2866). Both must enroll —
+    otherwise a cull of the watch ledger never re-heals on the standing lane.
+    """
     addr = normalize_bus_address((from_agent or "").strip())
-    return addr.startswith("web-")
+    return addr.startswith("web-") or addr.startswith("cdp-operator-")
+
+
+# Compat alias — tests / callers that still import the old name.
+_is_web_mailbox = _is_operator_proxy_mailbox
 
 
 def should_observe_job(job: AutoJob) -> bool:
@@ -186,7 +197,7 @@ def should_observe_job(job: AutoJob) -> bool:
     subject = (job.subject or "").lower()
     if "hop cadence" in subject and "cursor-auto" in subject:
         return False
-    return _is_web_mailbox(job.from_agent)
+    return _is_operator_proxy_mailbox(job.from_agent)
 
 
 def registry_started_at(registration_id: str | None) -> float | None:

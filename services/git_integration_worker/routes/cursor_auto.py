@@ -263,7 +263,8 @@ async def enqueue(body: EnqueueBody, request: Request):
             job.job_id,
             body.thread_id,
         )
-    # Cadence ownership: enroll/refresh CSE-age watch on web-* admits (not hops).
+    # Cadence ownership: enroll/refresh CSE-age watch on operator-proxy admits
+    # (web-* or cdp-operator-*; not hops).
     observe_lane_from_enqueue(job)
     logger.info(
         "cursor-auto enqueued job=%s thread=%s turn=%s request_id=%s "
