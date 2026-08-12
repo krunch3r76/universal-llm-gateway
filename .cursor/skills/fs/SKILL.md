@@ -1,6 +1,6 @@
 ---
 trigger_match_terms: ["call", "write", "ops", "tooling-observability", "list", "search", "markdown", "section", "binary", "fs"]
-description: On any fs(...) call — read, write, list, search across cortex or workspaces sandboxes; markdown section ops (md_list/md_read) are workspaces-only.
+description: On any fs(...) call — cortex/workspaces read-write; optional thread= roots workspaces in a lane worktree; md_* are workspaces-only.
 ---
 
 # Skill: MCP fs Tool
@@ -12,10 +12,10 @@ description: On any fs(...) call — read, write, list, search across cortex or 
 | Sandbox | Root | Path rule |
 |---|---|---|
 | `cortex` | `/data/files` | Path relative to sandbox root. |
-| `workspaces` | `/mnt/torus/projects/` | Repo-scoped paths include repo prefix: `universal-llm-gateway/services/...`; shared-parent paths do not: `.cursor/rules/...`. |
+| `workspaces` | `/mnt/torus/projects/` (default) | Repo-scoped paths include repo prefix: `universal-llm-gateway/services/...`; shared-parent paths do not: `.cursor/rules/...`. |
 | `context` | `tasks/` | Path relative to tasks root. |
 
-**Surface defaults:** `/mcp/code` — bare paths require `sandbox=` or a Share URI (`cortex://` / `workspaces://`). `/mcp/life` — omitted sandbox on an unqualified relative path defaults to cortex; prefer `cortex://notes/...`; workspaces refused.
+**Surface defaults:** `/mcp/code` — bare paths require `sandbox=` or a Share URI (`cortex://` / `workspaces://`). `/mcp/life` — omitted sandbox on an unqualified relative path defaults to cortex; prefer `cortex://notes/...`; workspaces refused unless the surface grant allows them.
 
 Workspaces examples:
 
@@ -25,6 +25,22 @@ fs(workspaces, path="universal-llm-gateway/services/mcp-server/tools/cortex.py")
 ```
 
 `path="projects/.cursor/..." ⇒ wrong`; root already is `/mnt/torus/projects/`.
+
+## Lane worktree via `thread=` (workspaces)
+
+Optional `thread=<agent-bus thread id>` with `sandbox="workspaces"` roots the call in that lane's **current branch worktree** (most-recent association), not the shared checkout.
+
+| Rule | Behavior |
+|---|---|
+| Association present + worktree resolvable | Ops use that worktree; success may include `lane_thread` / `lane_branch` / `lane_worktree_root` |
+| No association / unresolvable | **Refuse** (fail-closed) — never silent fallback to shared `master` |
+| `thread` omitted | Prior behavior — shared workspaces root for the surface |
+
+Branch → directory is resolved via `git worktree list --porcelain` matched on branch name (basename only). Do **not** invent a path from the branch string.
+
+Lane-B admit auto-posts the association (`branch_associate`); life/code callers pass `thread=` explicitly until a seat wires it automatically.
+
+**Life write grant is independent and still fail-closed** when `LIFE_PROJECT_ROOT` is unset — `thread=` alone does not unlock life workspaces writes. Unlock is a separate mission (`cortex://notes/system/prompts/life-write-unlock-via-lane-boot.md`). Plumbing: commit `bfc7fe34`.
 
 ## Search
 
