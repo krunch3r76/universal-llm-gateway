@@ -17,6 +17,19 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ULG_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+# Fail closed when HOME is a cursor-sdk dispatch overlay (option b — arc 6655).
+# Guard uses passwd-home python so a contaminated HOME cannot disable detection.
+_passwd_home="$(getent passwd "${USER:-$(id -un)}" | cut -d: -f6)"
+_guard_py="${_passwd_home}/.venvs/universal/bin/python3"
+if [[ ! -x "${_guard_py}" ]]; then
+  _guard_py="python3"
+fi
+if ! "${_guard_py}" -m services.git_integration_worker.dispatch_home_host_guard \
+    "bash ${SCRIPT_DIR}/install-ecosystem-plugin.sh"; then
+  exit 1
+fi
+
 PLUGIN_SRC="${ULG_ROOT}/cursor-plugins/ulg-ecosystem"
 CENSUS="${PLUGIN_SRC}/SKILLS_CENSUS.txt"
 RULES_CENSUS="${PLUGIN_SRC}/RULES_ULG_CENSUS.txt"
