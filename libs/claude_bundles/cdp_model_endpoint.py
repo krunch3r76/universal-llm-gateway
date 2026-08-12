@@ -42,7 +42,8 @@ CDP_REPLY_FROM = "web-anthropic"
 
 # Phases after the page goes idle: the satellite is resolving harvest (Cowork
 # Output download, archive write) and emits no per-sample progress, so the
-# no-progress fingerprint necessarily freezes. Only ``max_wall_s`` bounds these.
+# no-progress fingerprint necessarily freezes. ``max_wall_s`` bounds these as
+# seconds since the last observed fingerprint progress (not cumulative elapsed).
 POST_IDLE_PHASES = frozenset({"turn_idle", "content_proof", "archiving", "awaiting_wake"})
 
 RETRYABLE_OVERLOAD_STATUS = frozenset({529, 503})
@@ -584,6 +585,12 @@ def run_cdp_generate(
     ``execution_id``, and it is the only handle the poll plane accepts — so
     callers that want in-flight discoverability must publish it here rather than
     on return (friction a:26175).
+
+    ``max_wall_s`` measures seconds since the last observed fingerprint progress
+    (a ``trace.record`` delta resets the wall origin beside ``last_progress_at``).
+    ``no_progress_s`` still bounds frozen fingerprints outside post-idle phases.
+    Progress-trace diagnostics use a run-relative ``trace_started`` origin so
+    ``history[*].at_s`` stays monotonic across wall resets.
     """
     clock = now or time.monotonic
     picker = picker_from_model_id(model_id)
@@ -674,6 +681,7 @@ def run_cdp_generate(
         on_submitted(sat_id)
 
     started = clock()
+    trace_started = started
     last_fp = _progress_fingerprint(submitted)
     last_progress_at = started
     trace = ProgressTrace()
@@ -695,6 +703,7 @@ def run_cdp_generate(
             abort_info = _abort_then_sweep(
                 sat_id, execution_id, ask_client=relay, client=client
             )
+            since_last_progress_s = clock() - last_progress_at
             return CdpGenerateResult(
                 ok=False,
                 body="",
@@ -703,12 +712,16 @@ def run_cdp_generate(
                 prompt_uri=staged.prompt_uri,
                 picker_model=picker,
                 stall_stage="wall_clock_exceeded",
-                error=f"CDP generate exceeded max_wall_s={max_wall_s}",
+                error=(
+                    f"CDP generate no progress for max_wall_s={max_wall_s} "
+                    f"(since_last_progress_s={since_last_progress_s:.1f})"
+                ),
                 poll_snapshots=polls,
                 extras={
                     "abort": abort_info,
+                    "since_last_progress_s": since_last_progress_s,
                     "progress_trace": trace.as_dict(
-                        now_s=elapsed, no_progress_s=no_progress_s
+                        now_s=clock() - trace_started, no_progress_s=no_progress_s
                     ),
                 },
                 **proof_carry.as_result_fields(),
@@ -728,6 +741,7 @@ def run_cdp_generate(
                 abort_info = _abort_then_sweep(
                     sat_id, execution_id, ask_client=relay, client=client
                 )
+                since_last_progress_s = clock() - last_progress_at
                 return CdpGenerateResult(
                     ok=False,
                     body="",
@@ -740,8 +754,10 @@ def run_cdp_generate(
                     poll_snapshots=polls,
                     extras={
                         "abort": abort_info,
+                        "since_last_progress_s": since_last_progress_s,
                         "progress_trace": trace.as_dict(
-                            now_s=clock() - started, no_progress_s=no_progress_s
+                            now_s=clock() - trace_started,
+                            no_progress_s=no_progress_s,
                         ),
                     },
                     **proof_carry.as_result_fields(),
@@ -751,9 +767,10 @@ def run_cdp_generate(
         proof_carry.absorb_status_snapshot(snapshot)
 
         fp = _progress_fingerprint(snapshot)
-        if trace.record(fp, at_s=clock() - started):
+        if trace.record(fp, at_s=clock() - trace_started):
             last_fp = fp
             last_progress_at = clock()
+            started = clock()
 
         if _has_proof(snapshot):
             body = str(snapshot.get("body") or "")
@@ -864,6 +881,7 @@ def run_cdp_generate(
             abort_info = _abort_then_sweep(
                 sat_id, execution_id, ask_client=relay, client=client
             )
+            since_last_progress_s = clock() - last_progress_at
             return CdpGenerateResult(
                 ok=False,
                 body="",
@@ -879,8 +897,10 @@ def run_cdp_generate(
                 poll_snapshots=polls,
                 extras={
                     "abort": abort_info,
+                    "since_last_progress_s": since_last_progress_s,
                     "progress_trace": trace.as_dict(
-                        now_s=clock() - started, no_progress_s=no_progress_s
+                        now_s=clock() - trace_started,
+                        no_progress_s=no_progress_s,
                     ),
                 },
                 **proof_carry.as_result_fields(),

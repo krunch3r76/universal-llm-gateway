@@ -68,7 +68,9 @@ is *confirmed* (registration / `chat_url` observed) — which under the episodic
 deregister-kill on `max_wall_s`, `no_progress_s`, poller timeout, or a false "cdp FAILED" from
 the Stargate adapter. Idle streaming between legs is normal. The fleet poller wall is a
 ledger/open-leg concern, ¬ a licence to kill the page: IDE treats `wall_clock_exceeded` on
-`purpose=operator-proxy|mission` as poller-detach and **reattaches**. Self-stop authorization:
+`purpose=operator-proxy|mission` as poller-detach and **reattaches**. Generate `max_wall_s`
+measures seconds since the last observed fingerprint progress (reset on each delta), not
+cumulative elapsed time; retain/reattach guidance is unchanged. Self-stop authorization:
 inv 30.
 
 **Refresh ≠ follow-up (BINDING)** — two moves against the same CSE; pick by *what is stale*:
@@ -845,7 +847,7 @@ before re-issuing. Full templates arrive in the mission briefing inject.
 | A DISPOSITION that only accepts/rejects an `investigate` conclusion | Name the **first wrong step** + the evidence that settles it |
 | Cowork CSE open / chatty tone ⇒ the operator is human | Inv 0: the model seat is operator until a human **explicitly declares** |
 | Minting a new CDP window to deliver what a warm follow-up would carry — or warm-pasting when the CSE needs refreshed chips | Refresh ≠ follow-up: pick by what is stale |
-| Treating `wall_clock_exceeded` / poller FAILED as mission-dead, or killing the open CSE | Retain until a confirmed continuity handoff or a rare human gate — reattach |
+| Treating `wall_clock_exceeded` / poller FAILED as mission-dead, or killing the open CSE | Retain until a confirmed continuity handoff or a rare human gate — reattach; `wall_clock_exceeded` means no fingerprint progress for `max_wall_s`, not cumulative job time |
 | Ending the Cowork stream after a **leg** DISPOSITION ("Mission leg complete" / "Nothing needs you") | Stream stays live; next DIRECTIVE or idle wait (inv 30) |
 | On a persistent lane, emitting `MISSION_CLOSEOUT` because a roadmap row / work unit finished | Leg — stream continues; update standing handoff; carve-out (inv 30) |
 | On a persistent lane, posting a status report then going quiet while a dispatch is in flight | Report while continuing; poll/harvest/act — going quiet ≡ stop (inv 30) |

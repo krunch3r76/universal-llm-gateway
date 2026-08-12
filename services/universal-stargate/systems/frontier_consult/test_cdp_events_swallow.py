@@ -61,6 +61,21 @@ def test_stalled_payload_carries_progress_trace() -> None:
     assert event.payload["progress_trace"]["verdict"] == "frozen"
 
 
+def test_stalled_payload_carries_since_last_progress_s() -> None:
+    event = cdp_events.CdpGenerateStalled(
+        request_id="r",
+        execution_id="e",
+        satellite_execution_id="s",
+        stall_stage="wall_clock_exceeded",
+        error="CDP generate no progress for max_wall_s=1800",
+        progress_trace={"verdict": "frozen"},
+        since_last_progress_s=42.5,
+    )
+    assert event.payload["since_last_progress_s"] == 42.5
+    assert "active_wall_s" not in event.payload
+    assert "wall_paused_s" not in event.payload
+
+
 def test_stalled_payload_carries_deliverable_present() -> None:
     event = cdp_events.CdpGenerateStalled(
         request_id="r",
