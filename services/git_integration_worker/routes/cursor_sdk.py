@@ -2617,7 +2617,7 @@ async def cancel_cursor_dispatch(
     request: Request,
     reason: str | None = Query(None, description="Operator cancel reason."),
     cancelled_by: str | None = Query(None, description="Seat or operator id."),
-) -> JSONResponse:
+):
     """Operator cancel for queued/admitted SDK dispatches (ledger authority)."""
     from services.git_integration_worker.cursor_sdk_operator_cancel import (
         operator_cancel_dispatch,
