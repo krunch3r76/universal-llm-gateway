@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from claude_bundles.project_ask_abort import AbortCleanupOutcome
 from services.git_integration_worker.cursor_auto.hop_cadence_predecessor import (
     PRIOR_NONE_EXECUTION,
     PRIOR_NONE_REGISTRATION,
@@ -15,9 +17,12 @@ from services.git_integration_worker.cursor_auto.hop_cadence_predecessor import 
     PredecessorVerdict,
 )
 from services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile import (
+    MAX_RELEASE_OBLIGATION_RETRIES,
     reconcile_succession_confirmations,
 )
 from services.git_integration_worker.cursor_auto.hop_cadence_succession_release import (
+    RELEASE_IDLE_STREAK_REQUIRED,
+    predecessor_in_flight,
     predecessor_mid_turn,
     release_superseded_on_confirm,
 )
@@ -28,6 +33,19 @@ _INCUMBENT_EXEC = "exec-incumbent-r7"
 _SUCCESSOR_EXEC = "exec-successor-r7"
 _OTHER_A = "exec-other-a"
 _OTHER_B = "exec-other-b"
+
+_ALL_ABORT_OUTCOMES: tuple[AbortCleanupOutcome, ...] = (
+    "attested_stopped_and_deregistered",
+    "still_attached",
+    "probe_inconclusive",
+    "stop_transport_failed",
+    "stopped_deregister_failed",
+    "detached_remote_running",
+    "ownership_lost",
+    "lane_inactive",
+    "already_done",
+    "no_registration",
+)
 
 
 def _handle(*, verdict: PredecessorVerdict = PredecessorVerdict.INCUMBENT_RECORDED) -> PredecessorHandle:
@@ -51,36 +69,62 @@ def _handle(*, verdict: PredecessorVerdict = PredecessorVerdict.INCUMBENT_RECORD
     )
 
 
-def _poll(*, status: str = "running", streaming: bool = False, tool_pause: bool = False) -> dict[str, Any]:
+def _poll(
+    *,
+    status: str = "running",
+    streaming: bool = False,
+    stop: bool = False,
+    tool_pause: bool = False,
+) -> dict[str, Any]:
     return {
         "execution_id": _INCUMBENT_EXEC,
         "status": status,
         "streaming": streaming,
+        "stop": stop,
         "tool_pause": tool_pause,
     }
 
 
-def _client(*, poll: dict[str, Any] | None = None, abort: dict[str, Any] | None = None) -> MagicMock:
+def _client(
+    *,
+    poll: dict[str, Any] | None = None,
+    abort: dict[str, Any] | None = None,
+) -> MagicMock:
     client = MagicMock()
     client.poll.return_value = poll or _poll()
-    client.abort.return_value = abort or {"execution_id": _INCUMBENT_EXEC, "status": "aborted", "aborted": True}
+    client.abort.return_value = abort or {
+        "execution_id": _INCUMBENT_EXEC,
+        "status": "aborted",
+        "aborted": True,
+        "abort_outcome": "attested_stopped_and_deregistered",
+    }
     return client
 
 
-def test_predecessor_mid_turn_streaming() -> None:
-    mid, reason = predecessor_mid_turn(_poll(streaming=True))
+def _idle_streak_for_abort() -> int:
+    return RELEASE_IDLE_STREAK_REQUIRED - 1
+
+
+@pytest.mark.parametrize(
+    ("bit", "reason"),
+    [
+        ("streaming", "predecessor_streaming"),
+        ("stop", "predecessor_stop"),
+        ("tool_pause", "predecessor_tool_pause"),
+    ],
+)
+def test_predecessor_in_flight_each_bit(bit: str, reason: str) -> None:
+    poll = _poll(**{bit: True})
+    mid, got_reason = predecessor_in_flight(poll)
     assert mid is True
-    assert reason == "predecessor_streaming"
+    assert got_reason == reason
+    mid_alias, alias_reason = predecessor_mid_turn(poll)
+    assert mid_alias is True
+    assert alias_reason == reason
 
 
-def test_predecessor_mid_turn_tool_pause() -> None:
-    mid, reason = predecessor_mid_turn(_poll(tool_pause=True))
-    assert mid is True
-    assert reason == "predecessor_tool_pause"
-
-
-def test_predecessor_mid_turn_idle_running() -> None:
-    mid, reason = predecessor_mid_turn(_poll())
+def test_predecessor_in_flight_idle_running() -> None:
+    mid, reason = predecessor_in_flight(_poll())
     assert mid is False
     assert reason is None
 
@@ -97,28 +141,90 @@ def test_release_skipped_for_lookup_failed_verdict() -> None:
     assert result["reason"] == "verdict_lookup_failed"
 
 
-def test_release_terminalizes_incumbent_recorded() -> None:
+def test_release_terminalizes_only_when_aborted_true() -> None:
     client = _client()
-    result = release_superseded_on_confirm(_handle(), client=client)
+    result = release_superseded_on_confirm(
+        _handle(),
+        client=client,
+        idle_streak=_idle_streak_for_abort(),
+    )
     assert result["action"] == "terminalized"
     assert result["execution_id"] == _INCUMBENT_EXEC
+    assert result["abort_outcome"] == "attested_stopped_and_deregistered"
     client.poll.assert_called_once_with(_INCUMBENT_EXEC)
     client.abort.assert_called_once_with(_INCUMBENT_EXEC)
 
 
-def test_release_deferred_when_streaming() -> None:
-    client = _client(poll=_poll(streaming=True))
-    result = release_superseded_on_confirm(_handle(), client=client)
+@pytest.mark.parametrize("abort_outcome", _ALL_ABORT_OUTCOMES)
+def test_release_non_true_abort_outcome_records_error(abort_outcome: str) -> None:
+    aborted = abort_outcome == "attested_stopped_and_deregistered"
+    client = _client(
+        abort={
+            "execution_id": _INCUMBENT_EXEC,
+            "status": "aborted" if aborted else "running",
+            "aborted": aborted,
+            "abort_outcome": abort_outcome,
+        }
+    )
+    result = release_superseded_on_confirm(
+        _handle(),
+        client=client,
+        idle_streak=_idle_streak_for_abort(),
+    )
+    if aborted:
+        assert result["action"] == "terminalized"
+    else:
+        assert result["action"] == "error"
+        assert result["abort_outcome"] == abort_outcome
+        assert "terminalized" not in result["action"]
+
+
+def test_release_unrecognised_abort_outcome_fails_toward_error() -> None:
+    client = _client(
+        abort={
+            "execution_id": _INCUMBENT_EXEC,
+            "status": "running",
+            "aborted": False,
+            "abort_outcome": "unknown_future_value",
+        }
+    )
+    result = release_superseded_on_confirm(
+        _handle(),
+        client=client,
+        idle_streak=_idle_streak_for_abort(),
+    )
+    assert result["action"] == "error"
+    assert result["abort_outcome"] == "unknown_future_value"
+
+
+@pytest.mark.parametrize(
+    ("bit", "reason"),
+    [
+        ("streaming", "predecessor_streaming"),
+        ("stop", "predecessor_stop"),
+        ("tool_pause", "predecessor_tool_pause"),
+    ],
+)
+def test_release_deferred_mid_turn_each_bit(bit: str, reason: str) -> None:
+    client = _client(poll=_poll(**{bit: True}))
+    result = release_superseded_on_confirm(
+        _handle(),
+        client=client,
+        idle_streak=_idle_streak_for_abort(),
+    )
     assert result["action"] == "deferred"
-    assert result["reason"] == "predecessor_streaming"
+    assert result["reason"] == reason
+    assert result["idle_streak"] == 0
     client.abort.assert_not_called()
 
 
-def test_release_deferred_when_tool_pause() -> None:
-    client = _client(poll=_poll(tool_pause=True))
-    result = release_superseded_on_confirm(_handle(), client=client)
+def test_release_deferred_when_idle_streak_not_yet_satisfied() -> None:
+    client = _client()
+    result = release_superseded_on_confirm(_handle(), client=client, idle_streak=0)
     assert result["action"] == "deferred"
-    assert result["reason"] == "predecessor_tool_pause"
+    assert result["reason"] == "predecessor_idle_streak_unsatisfied"
+    assert result["idle_streak"] == 1
+    assert result["idle_streak_required"] == RELEASE_IDLE_STREAK_REQUIRED
     client.abort.assert_not_called()
 
 
@@ -162,10 +268,10 @@ def _snap_three_operator_proxy(*, admission_count: int = 3) -> dict[str, Any]:
     }
 
 
-def _watch_incumbent() -> dict[str, Any]:
+def _watch_incumbent(*, registration_id: str = "reg-new") -> dict[str, Any]:
     return {
         "thread_id": "6885",
-        "registration_id": "reg-old",
+        "registration_id": registration_id,
         "successor_execution_id": "stargate-uuid",
         "pending_satellite_execution_id": _SUCCESSOR_EXEC,
         "superseded_registration_id": "reg-old",
@@ -174,64 +280,163 @@ def _watch_incumbent() -> dict[str, Any]:
     }
 
 
+def _reconcile_patches(watches: dict[str, Any]):
+    return (
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.load_watches",
+            side_effect=lambda path=None: watches,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.save_watches",
+            side_effect=lambda data, path=None: watches.update(data) or None,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_succession_confirmed",
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_registration_advanced",
+        ),
+    )
+
+
+def _enter_reconcile_patches(watches: dict[str, Any]) -> ExitStack:
+    stack = ExitStack()
+    for patcher in _reconcile_patches(watches):
+        stack.enter_context(patcher)
+    return stack
+
+
 def test_reconcile_releases_only_incumbent_recorded() -> None:
     snap = _snap_three_operator_proxy()
-    watches = {"6885": _watch_incumbent()}
+    watches = {"6885": _watch_incumbent(registration_id="reg-old")}
     terminalized: list[str] = []
 
-    def _release(handle: PredecessorHandle) -> dict[str, Any]:
+    def _release(handle: PredecessorHandle, idle_streak: int = 0) -> dict[str, Any]:
         if handle.verdict == PredecessorVerdict.INCUMBENT_RECORDED:
+            if idle_streak < _idle_streak_for_abort():
+                return {
+                    "action": "deferred",
+                    "execution_id": handle.execution_id,
+                    "reason": "predecessor_idle_streak_unsatisfied",
+                    "idle_streak": idle_streak + 1,
+                }
             terminalized.append(handle.execution_id)
             snap["admission_count"] -= 1
             snap["rows"] = [r for r in snap["rows"] if r["execution_id"] != handle.execution_id]
             return {"action": "terminalized", "execution_id": handle.execution_id}
         return {"action": "skipped", "reason": f"verdict_{handle.verdict.value}"}
 
-    with patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.load_watches",
-        side_effect=lambda path=None: watches,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.save_watches",
-        side_effect=lambda data, path=None: watches.update(data) or None,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_succession_confirmed",
-    ), patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_registration_advanced",
-    ):
+    with _enter_reconcile_patches(watches):
         result = reconcile_succession_confirmations(
             snapshot_reader=lambda: snap,
             release_fn=_release,
         )
+        assert len(result["confirmations"]) == 1
+        assert result["releases"][0]["action"] == "deferred"
+        assert watches["6885"]["release_obligation"]["status"] == "pending"
 
-    assert len(result["confirmations"]) == 1
-    assert terminalized == [_INCUMBENT_EXEC]
-    assert snap["admission_count"] == 2
-    assert len(snap["rows"]) == 3
-    assert result["releases"][0]["action"] == "terminalized"
+        result2 = reconcile_succession_confirmations(
+            snapshot_reader=lambda: snap,
+            release_fn=_release,
+        )
+        assert len(result2["obligation_retries"]) == 1
+        assert result2["obligation_retries"][0]["action"] == "deferred"
+
+        result3 = reconcile_succession_confirmations(
+            snapshot_reader=lambda: snap,
+            release_fn=_release,
+        )
+        assert len(result3["obligation_retries"]) == 1
+        assert result3["obligation_retries"][0]["action"] == "terminalized"
+        assert terminalized == [_INCUMBENT_EXEC]
+        assert snap["admission_count"] == 2
+        assert "release_obligation" not in watches["6885"]
+
+
+def test_reconcile_error_persists_obligation_and_retries_to_terminalized() -> None:
+    snap = _snap_three_operator_proxy()
+    watches = {"6885": _watch_incumbent(registration_id="reg-old")}
+    attempts = {"count": 0}
+
+    def _release(handle: PredecessorHandle, idle_streak: int = 0) -> dict[str, Any]:
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            return {
+                "action": "error",
+                "execution_id": handle.execution_id,
+                "abort_outcome": "still_attached",
+            }
+        if idle_streak < _idle_streak_for_abort():
+            return {
+                "action": "deferred",
+                "execution_id": handle.execution_id,
+                "reason": "predecessor_idle_streak_unsatisfied",
+                "idle_streak": idle_streak + 1,
+            }
+        snap["admission_count"] -= 1
+        return {"action": "terminalized", "execution_id": handle.execution_id}
+
+    with _enter_reconcile_patches(watches):
+        first = reconcile_succession_confirmations(snapshot_reader=lambda: snap, release_fn=_release)
+        assert first["releases"][0]["action"] == "error"
+        assert watches["6885"]["release_obligation"]["status"] == "pending"
+        assert len(first["confirmations"]) == 1
+
+        second = reconcile_succession_confirmations(snapshot_reader=lambda: snap, release_fn=_release)
+        assert second["obligation_retries"][0]["action"] == "deferred"
+
+        third = reconcile_succession_confirmations(snapshot_reader=lambda: snap, release_fn=_release)
+        assert third["obligation_retries"][0]["action"] == "deferred"
+
+        fourth = reconcile_succession_confirmations(snapshot_reader=lambda: snap, release_fn=_release)
+        assert fourth["obligation_retries"][0]["action"] == "terminalized"
+        assert snap["admission_count"] == 2
+
+
+def test_obligation_reaches_failed_after_max_retries() -> None:
+    row = {
+        "thread_id": "6885",
+        "superseded_execution_id": _INCUMBENT_EXEC,
+        "superseded_registration_id": "reg-old",
+        "predecessor_verdict": PredecessorVerdict.INCUMBENT_RECORDED.value,
+        "release_obligation": {
+            "execution_id": _INCUMBENT_EXEC,
+            "registration_id": "reg-old",
+            "verdict": PredecessorVerdict.INCUMBENT_RECORDED.value,
+            "status": "pending",
+            "retry_count": MAX_RELEASE_OBLIGATION_RETRIES - 1,
+            "idle_streak": _idle_streak_for_abort(),
+        },
+    }
+    watches = {"6885": row}
+
+    def _release(handle: PredecessorHandle, idle_streak: int = 0) -> dict[str, Any]:
+        return {
+            "action": "error",
+            "execution_id": handle.execution_id,
+            "abort_outcome": "still_attached",
+        }
+
+    with _enter_reconcile_patches(watches):
+        result = reconcile_succession_confirmations(snapshot_reader=lambda: _snap_three_operator_proxy(), release_fn=_release)
+
+    assert result["obligation_retries"][0]["action"] == "error"
+    assert watches["6885"]["release_obligation"]["status"] == "failed"
+    assert watches["6885"]["release_obligation"]["failure_reason"] == "max_retries_exhausted"
 
 
 def test_reconcile_skips_release_for_first_seat_verdict() -> None:
     snap = _snap_three_operator_proxy()
     watches = {
         "6885": {
-            **_watch_incumbent(),
+            **_watch_incumbent(registration_id="reg-old"),
             "superseded_registration_id": PRIOR_NONE_REGISTRATION,
             "superseded_execution_id": PRIOR_NONE_EXECUTION,
             "predecessor_verdict": PredecessorVerdict.FIRST_SEAT_ON_LANE.value,
         }
     }
 
-    with patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.load_watches",
-        side_effect=lambda path=None: watches,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.save_watches",
-        side_effect=lambda data, path=None: watches.update(data) or None,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_succession_confirmed",
-    ), patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_registration_advanced",
-    ):
+    with _enter_reconcile_patches(watches):
         result = reconcile_succession_confirmations(
             snapshot_reader=lambda: snap,
             release_fn=release_superseded_on_confirm,
@@ -276,9 +481,15 @@ def test_invariant8_three_rows_one_superseded_ends_at_two(tmp_path: Path) -> Non
         "execution_id": ids["incumbent"],
         "status": "running",
         "streaming": False,
+        "stop": False,
         "tool_pause": False,
     }
-    client.abort.return_value = {"execution_id": ids["incumbent"], "status": "aborted"}
+    client.abort.return_value = {
+        "execution_id": ids["incumbent"],
+        "status": "aborted",
+        "aborted": True,
+        "abort_outcome": "attested_stopped_and_deregistered",
+    }
 
     handle = PredecessorHandle(
         registration_id="reg-old",
@@ -287,7 +498,11 @@ def test_invariant8_three_rows_one_superseded_ends_at_two(tmp_path: Path) -> Non
     )
 
     async def _terminalize() -> None:
-        result = release_superseded_on_confirm(handle, client=client)
+        result = release_superseded_on_confirm(
+            handle,
+            client=client,
+            idle_streak=_idle_streak_for_abort(),
+        )
         assert result["action"] == "terminalized"
         await store.mark_terminal(ids["incumbent"], status="aborted", error="succession_superseded")
 

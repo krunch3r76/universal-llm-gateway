@@ -35,10 +35,12 @@ from services.git_integration_worker.cursor_auto.hop_cadence_events import (
 from services.git_integration_worker.cursor_auto.hop_cadence_predecessor import (
     PredecessorConfirmError,
     PredecessorHandle,
+    PredecessorVerdict,
     prior_registration_for_confirm,
     predecessor_from_watch,
 )
 from services.git_integration_worker.cursor_auto.hop_cadence_succession_release import (
+    RELEASE_IDLE_STREAK_REQUIRED,
     release_superseded_on_confirm,
 )
 from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
@@ -54,6 +56,11 @@ STALL_OBSERVE_FLOOR_S = 15.0
 # Upper bound for stall→claim join after hop fire (generous vs day stall tail).
 STALL_JOIN_MAX_AGE_S = 600.0
 REVOKE_BREAKER_N = 3
+# Outstanding release obligations retry until terminalized or this cap — prevents silent drift.
+MAX_RELEASE_OBLIGATION_RETRIES = 12
+_RELEASE_OBLIGATION_PENDING = "pending"
+_RELEASE_OBLIGATION_RELEASED = "released"
+_RELEASE_OBLIGATION_FAILED = "failed"
 _STATE_FILENAME = "hop_cadence_reconcile_state.json"
 _GENERATE_SIGNALS = (
     "cdp.generate.stalled",
@@ -349,6 +356,143 @@ def reconcile_stall_revocations(
     return {"actions": actions, "events_scanned": len(events), "last_seq": max_seq}
 
 
+def _handle_from_release_obligation(
+    obligation: dict[str, Any],
+    row: dict[str, Any],
+) -> PredecessorHandle | None:
+    exec_id = str(obligation.get("execution_id") or row.get("superseded_execution_id") or "").strip()
+    reg_id = str(
+        obligation.get("registration_id") or row.get("superseded_registration_id") or ""
+    ).strip()
+    verdict_raw = str(
+        obligation.get("verdict") or row.get("predecessor_verdict") or ""
+    ).strip()
+    if not exec_id:
+        return None
+    try:
+        verdict = PredecessorVerdict(verdict_raw)
+    except ValueError:
+        verdict = PredecessorVerdict.INCUMBENT_RECORDED
+    return PredecessorHandle(
+        registration_id=reg_id,
+        execution_id=exec_id,
+        verdict=verdict,
+    )
+
+
+def persist_release_obligation(
+    row: dict[str, Any],
+    handle: PredecessorHandle,
+    outcome: dict[str, Any],
+    *,
+    now: float,
+) -> dict[str, Any]:
+    """Record an outstanding release obligation when release deferred or errored."""
+    updated = dict(row)
+    prior = updated.get("release_obligation")
+    prior_dict = prior if isinstance(prior, dict) else {}
+    retry_count = int(prior_dict.get("retry_count") or 0)
+    if prior_dict.get("status") == _RELEASE_OBLIGATION_PENDING:
+        retry_count += 1
+    streak = int(outcome.get("idle_streak") or prior_dict.get("idle_streak") or 0)
+    if outcome.get("action") == "deferred" and outcome.get("reason") != "predecessor_idle_streak_unsatisfied":
+        streak = 0
+    updated["release_obligation"] = {
+        "execution_id": handle.execution_id,
+        "registration_id": handle.registration_id,
+        "verdict": handle.verdict.value,
+        "status": _RELEASE_OBLIGATION_PENDING,
+        "retry_count": retry_count,
+        "idle_streak": streak,
+        "idle_streak_required": int(
+            outcome.get("idle_streak_required") or RELEASE_IDLE_STREAK_REQUIRED
+        ),
+        "created_at": float(prior_dict.get("created_at") or now),
+        "last_attempt_at": now,
+        "last_action": outcome.get("action"),
+        "last_reason": outcome.get("reason") or outcome.get("error"),
+        "last_abort_outcome": outcome.get("abort_outcome"),
+    }
+    if retry_count >= MAX_RELEASE_OBLIGATION_RETRIES:
+        updated["release_obligation"]["status"] = _RELEASE_OBLIGATION_FAILED
+        updated["release_obligation"]["failed_at"] = now
+        updated["release_obligation"]["failure_reason"] = "max_retries_exhausted"
+    return updated
+
+
+def clear_release_obligation(row: dict[str, Any], *, terminal_status: str) -> dict[str, Any]:
+    """Clear or terminalize a release obligation after successful release."""
+    updated = dict(row)
+    prior = updated.get("release_obligation")
+    prior_dict = prior if isinstance(prior, dict) else {}
+    updated["release_obligation"] = {
+        **prior_dict,
+        "status": terminal_status,
+        "cleared_at": prior_dict.get("last_attempt_at"),
+    }
+    if terminal_status == _RELEASE_OBLIGATION_RELEASED:
+        updated.pop("release_obligation", None)
+    return updated
+
+
+def apply_release_outcome_to_row(
+    row: dict[str, Any],
+    handle: PredecessorHandle,
+    outcome: dict[str, Any],
+    *,
+    now: float,
+) -> dict[str, Any]:
+    """Update watch row obligation fields from a release attempt outcome."""
+    action = outcome.get("action")
+    if action == "terminalized":
+        return clear_release_obligation(row, terminal_status=_RELEASE_OBLIGATION_RELEASED)
+    if action == "already_terminal":
+        return clear_release_obligation(row, terminal_status=_RELEASE_OBLIGATION_RELEASED)
+    if action in {"deferred", "error"}:
+        return persist_release_obligation(row, handle, outcome, now=now)
+    return row
+
+
+def _call_release(
+    release_fn: Callable[..., dict[str, Any]],
+    handle: PredecessorHandle,
+    *,
+    idle_streak: int = 0,
+) -> dict[str, Any]:
+    try:
+        return release_fn(handle, idle_streak=idle_streak)
+    except TypeError:
+        return release_fn(handle)
+
+
+def reconcile_release_obligations(
+    watches: dict[str, Any],
+    *,
+    now: float,
+    release_fn: Callable[..., dict[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Retry outstanding release obligations without re-confirming succession."""
+    retries: list[dict[str, Any]] = []
+    changed = False
+    for thread_id, row in list(watches.items()):
+        obligation = row.get("release_obligation")
+        if not isinstance(obligation, dict):
+            continue
+        if obligation.get("status") != _RELEASE_OBLIGATION_PENDING:
+            continue
+        handle = _handle_from_release_obligation(obligation, row)
+        if handle is None:
+            continue
+        streak = int(obligation.get("idle_streak") or 0)
+        outcome = _call_release(release_fn, handle, idle_streak=streak)
+        updated = apply_release_outcome_to_row(row, handle, outcome, now=now)
+        if updated != row:
+            watches[thread_id] = updated
+            changed = True
+        retries.append({"thread_id": thread_id, **outcome})
+    return watches, retries
+
+
 def reconcile_succession_confirmations(
     *,
     watches_path: Path | None = None,
@@ -369,8 +513,19 @@ def reconcile_succession_confirmations(
     confirmations: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
     releases: list[dict[str, Any]] = []
+    obligation_retries: list[dict[str, Any]] = []
     release = release_fn or release_superseded_on_confirm
     changed = False
+
+    watches, obligation_retries = reconcile_release_obligations(
+        watches,
+        now=ts,
+        release_fn=release,
+    )
+    if obligation_retries:
+        changed = True
+        releases.extend(obligation_retries)
+
     for thread_id, row in list(watches.items()):
         if not successor_confirm_active(row, snap):
             continue
@@ -417,6 +572,8 @@ def reconcile_succession_confirmations(
         )
         release_outcome = release(handle)
         releases.append({"thread_id": thread_id, **release_outcome})
+        updated = apply_release_outcome_to_row(updated, handle, release_outcome, now=ts)
+        watches[thread_id] = updated
         if new_reg:
             emit_registration_advanced(
                 thread_id=thread_id,
@@ -436,7 +593,12 @@ def reconcile_succession_confirmations(
         )
     if changed:
         save_watches(watches, watches_path)
-    return {"confirmations": confirmations, "errors": errors, "releases": releases}
+    return {
+        "confirmations": confirmations,
+        "errors": errors,
+        "releases": releases,
+        "obligation_retries": obligation_retries,
+    }
 
 
 def _default_snapshot_reader() -> dict[str, Any]:
@@ -448,13 +610,18 @@ def _default_snapshot_reader() -> dict[str, Any]:
 
 
 __all__ = [
+    "MAX_RELEASE_OBLIGATION_RETRIES",
     "REVOKE_BREAKER_N",
     "STALL_JOIN_MAX_AGE_S",
     "STALL_OBSERVE_FLOOR_S",
     "apply_event_to_watch",
+    "apply_release_outcome_to_row",
     "breaker_blocks_hop",
+    "clear_release_obligation",
     "confirm_succession_claim",
+    "persist_release_obligation",
     "query_generate_events_since",
+    "reconcile_release_obligations",
     "reconcile_stall_revocations",
     "reconcile_succession_confirmations",
     "record_succession_claim",
