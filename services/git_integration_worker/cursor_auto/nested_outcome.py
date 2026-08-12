@@ -30,6 +30,11 @@ from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
     merge_plane_register_markers,
     status_claim_is_dual_register_honesty,
 )
+from services.git_integration_worker.cursor_auto.closeout_status_polarity import (
+    inject_plane_legend_line,
+    merge_plane_legend_markers,
+    status_claim_is_polysemous_partial_legend,
+)
 from services.git_integration_worker.cursor_auto.closeout_relay import (
     read_repo_closeout_sidecar,
     select_closeout_relay_payload,
@@ -300,6 +305,7 @@ async def relay_closeout_outcome(
         measurement=payload.status,
     )
     register_marker = None
+    legend_marker = None
     defect_marker = merge_plane_discrepancy_markers(
         tree_state.plane_discrepancy,
         claim_discrepancy,
@@ -310,12 +316,18 @@ async def relay_closeout_outcome(
             measurement=payload.status,
         ):
             register_marker = merge_plane_register_markers(status_discrepancy)
+        elif status_claim_is_polysemous_partial_legend(
+            claim=status_claim or "",
+            measurement=payload.status,
+        ):
+            legend_marker = merge_plane_legend_markers(status_discrepancy)
         else:
             defect_marker = merge_plane_discrepancy_markers(
                 defect_marker,
                 status_discrepancy,
             )
     relay_body = inject_plane_register_line(relay_body, value=register_marker)
+    relay_body = inject_plane_legend_line(relay_body, value=legend_marker)
     relay_body = inject_plane_discrepancy_line(
         relay_body,
         value=defect_marker,

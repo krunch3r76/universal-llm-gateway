@@ -1103,6 +1103,18 @@ def build_implement_closeout_body(
         commits_ahead=commits_ahead,
         deviations=deviations,
     )
+    from services.git_integration_worker.cursor_auto.closeout_status_polarity import (
+        classify_status_incomplete_class,
+    )
+
+    status_incomplete_class = classify_status_incomplete_class(
+        status=status,
+        work_outcome=resolved_work_outcome,
+        capture_status=capture_status,
+        escalation_harvest=escalation_harvest,
+        deviations=deviations,
+        degraded_reason=degraded_reason,
+    )
     manifest_source = ensure_subagents_surface(
         effects_manifest or outcome.effects_manifest
     )
@@ -1204,6 +1216,8 @@ def build_implement_closeout_body(
         payload["tool_call_count"] = outcome.tool_call_count
         if status_authority_disagreement is not None:
             payload["status_authority_disagreement"] = status_authority_disagreement
+        if status_incomplete_class is not None:
+            payload["status_incomplete_class"] = status_incomplete_class
         if files_untracked_or_ignored:
             payload["files_untracked_or_ignored"] = files_untracked_or_ignored
         if files_outside_repo:

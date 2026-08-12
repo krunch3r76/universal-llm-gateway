@@ -148,6 +148,21 @@ never upgrade unknown to a positive plane. **Lane-B land discipline
 treat deliberate-unlanded Lane-B as `complete`. Other planes/lanes: `status:
 complete` may still be independent of origin publish.
 
+### Status claim×measure polarity (arc 6655 / P1)
+
+Polysemous ``partial`` splits into ``partial:work`` vs ``partial:capture`` on
+envelope measurement (sibling ``status_incomplete_class:`` when prose). Readers
+must consult ``deviations[]`` / ``work_outcome`` / ``capture_status`` before
+ascribing seat-lie on ``complete×partial`` — that cell emits ``plane-legend:``,
+not uniform ``plane-discrepancy:``. Honesty ``partial×complete`` stays
+``plane-register:``. Authority when claim≠measure (code, not prose):
+
+| Question | Wins | Loses |
+|---|---|---|
+| work_outcome / machine grade | measure | claim |
+| AC-pass | measure (`status@infra`) | claim |
+| next-step | deviations-qualified measure | bare claim; bare measure token |
+
 ## Composes with
 
 - `completion-provenance-discipline` — tool-response binding + status/rank register (§7)

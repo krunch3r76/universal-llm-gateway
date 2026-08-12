@@ -17,6 +17,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from services.git_integration_worker.cursor_auto.closeout_status_polarity import (
+    annotate_status_claim_discrepancy,
+    merge_plane_discrepancy_markers,
+    status_claim_is_dual_register_honesty,
+    status_dispositions_equivalent,
+)
+
 _GIT_TIMEOUT_S = 30.0
 _SHA_RE = re.compile(r"^[0-9a-f]{7,40}$", re.I)
 _PLANE_LINE_RE = re.compile(r"(?im)^plane:\s*.+$")
@@ -42,10 +49,6 @@ _CORTEX_URI_DIGEST_PAIR_RE = re.compile(
 )
 _COMMITTED_DISPOSITION_RE = re.compile(
     rf"^committed{_PLANE_INFIX}\s+([0-9a-f]{{7,40}})\s+paths=(\d+)",
-    re.I,
-)
-_STATUS_CLAIM_FRAGMENT_RE = re.compile(
-    r"^status_claim@§2\s+(\S+)\s+while\s+status@infra\s+(\S+)$",
     re.I,
 )
 
@@ -431,53 +434,6 @@ def _committed_dispositions_equivalent(left: str, right: str) -> bool:
     return left_paths == right_paths and _sha_prefix_equal(left_sha, right_sha)
 
 
-def status_claim_is_dual_register_honesty(*, claim: str, measurement: str) -> bool:
-    """True for the expected partial-claim vs machine-complete honesty pair."""
-    claim_norm = (claim or "").strip().lower()
-    measure_norm = (measurement or "").strip().lower()
-    measure_map = {
-        "failed": "blocked",
-        "gated": "blocked",
-        "shipped": "complete",
-    }
-    measure_norm = measure_map.get(measure_norm, measure_norm)
-    return claim_norm == "partial" and measure_norm == "complete"
-
-
-def status_dispositions_equivalent(claim: str, measurement: str) -> bool:
-    """True when agent claim and infra measurement describe the same closeout status."""
-    claim_norm = (claim or "").strip().lower()
-    measure_norm = (measurement or "").strip().lower()
-    if measure_norm == "relay_parse_failed":
-        return False
-    # B3 structured enums → relay envelope vocabulary.
-    measure_map = {
-        "failed": "blocked",
-        "gated": "blocked",
-        "shipped": "complete",
-    }
-    measure_norm = measure_map.get(measure_norm, measure_norm)
-    return claim_norm == measure_norm
-
-
-def annotate_status_claim_discrepancy(
-    *,
-    claim: str | None,
-    measurement: str,
-) -> str | None:
-    """Emit annotate-only marker when §2 claim diverges from infra ``status:``."""
-    if claim is None or not claim.strip():
-        return None
-    if status_dispositions_equivalent(claim, measurement):
-        return None
-    claim_display = claim.strip().lower()
-    measure_display = measurement.strip().lower()
-    return (
-        f"status_claim@§2 {claim_display} "
-        f"while status@infra {measure_display}"
-    )
-
-
 def checkpoint_dispositions_equivalent(claim: str, measurement: str) -> bool:
     """True when agent claim and infra measurement describe the same disposition."""
     from claude_bundles.lane_a_closeout_checkpoint import normalize_checkpoint_value
@@ -511,30 +467,6 @@ def annotate_checkpoint_claim_discrepancy(
         f"checkpoint_claim@§2 {claim_display} "
         f"while checkpoint@infra {measure_display}"
     )
-
-
-def merge_plane_discrepancy_markers(*parts: str | None) -> str | None:
-    """Join multiple discrepancy fragments into one ``plane-discrepancy:`` line."""
-    markers: list[str] = []
-    for part in parts:
-        if not part:
-            continue
-        text = part.strip()
-        if text.casefold().startswith("plane-discrepancy:"):
-            text = text.split(":", 1)[1].strip()
-        if text.casefold().startswith("plane-register:"):
-            continue
-        status_match = _STATUS_CLAIM_FRAGMENT_RE.match(text)
-        if status_match is not None and status_claim_is_dual_register_honesty(
-            claim=status_match.group(1),
-            measurement=status_match.group(2),
-        ):
-            continue
-        if text:
-            markers.append(text)
-    if not markers:
-        return None
-    return "plane-discrepancy: " + "; ".join(markers)
 
 
 def merge_plane_register_markers(*parts: str | None) -> str | None:

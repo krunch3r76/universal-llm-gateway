@@ -15,6 +15,11 @@ from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
     merge_plane_register_markers,
     status_dispositions_equivalent,
 )
+from services.git_integration_worker.cursor_auto.closeout_status_polarity import (
+    classify_status_incomplete_class,
+    merge_plane_legend_markers,
+    resolve_status_disagreement_authority,
+)
 from services.git_integration_worker.cursor_auto.closeout_relay_common import (
     resolve_measurement_status_from_wrapper,
     resolve_relay_status,
@@ -64,15 +69,102 @@ def test_specimen_contaminated_agreement_fires() -> None:
 
 
 def test_specimen_independent_disagreement_fires() -> None:
-    """Independent disagreement — claim complete vs machine partial fires."""
+    """Independent disagreement — claim complete vs machine partial → plane-legend."""
     marker = annotate_status_claim_discrepancy(
         claim="complete",
+        measurement="partial:capture",
+    )
+    assert marker == (
+        "status_claim@§2 complete while status@infra partial:capture"
+    )
+    assert merge_plane_discrepancy_markers(marker) is None
+    assert merge_plane_legend_markers(marker) == (
+        "plane-legend: status_claim@§2 complete while status@infra partial:capture"
+    )
+
+
+def test_absent_claim_emits_no_status_marker() -> None:
+    """Absent ≠ disagree — blank claim must not emit status marker."""
+    assert annotate_status_claim_discrepancy(claim=None, measurement="partial") is None
+    assert annotate_status_claim_discrepancy(claim="", measurement="partial") is None
+    assert annotate_status_claim_discrepancy(claim="   ", measurement="partial") is None
+
+
+def test_specimen_capture_driven_complete_x_partial_auto_889de52ed385_shape() -> None:
+    """Capture/measurement incompleteness — unverified + capture unavailable."""
+    incomplete_class = classify_status_incomplete_class(
+        status=CloseoutStatus.PARTIAL,
+        work_outcome=WorkOutcome.UNVERIFIED,
+        capture_status="unavailable",
+        escalation_harvest="none",
+        deviations=["capture:sidecar_absent", "degraded:sdk_git_probe_absent"],
+    )
+    assert incomplete_class == "capture"
+    wrapper = json.dumps(
+        {
+            "schema_version": 1,
+            "status": "partial",
+            "status_incomplete_class": "capture",
+            "work_outcome": "unverified",
+            "capture_status": "unavailable",
+        }
+    )
+    assert resolve_measurement_status_from_wrapper(wrapper) == "partial:capture"
+    marker = annotate_status_claim_discrepancy(
+        claim="complete",
+        measurement="partial:capture",
+    )
+    assert merge_plane_legend_markers(marker) is not None
+    assert merge_plane_discrepancy_markers(marker) is None
+
+
+def test_specimen_work_driven_complete_x_partial_auto_84c1c42a3720_shape() -> None:
+    """Work incompleteness — checks_failed + land:lane_b_unlanded."""
+    incomplete_class = classify_status_incomplete_class(
+        status=CloseoutStatus.PARTIAL,
+        work_outcome=WorkOutcome.CHECKS_FAILED,
+        capture_status="partial",
+        escalation_harvest="none",
+        deviations=["land:lane_b_unlanded"],
+    )
+    assert incomplete_class == "work"
+    wrapper = json.dumps(
+        {
+            "schema_version": 1,
+            "status": "partial",
+            "status_incomplete_class": "work",
+            "work_outcome": "checks_failed",
+            "capture_status": "partial",
+            "deviations": ["land:lane_b_unlanded"],
+        }
+    )
+    assert resolve_measurement_status_from_wrapper(wrapper) == "partial:work"
+    marker = annotate_status_claim_discrepancy(
+        claim="complete",
+        measurement="partial:work",
+    )
+    assert merge_plane_legend_markers(marker) is not None
+    authority = resolve_status_disagreement_authority(
+        claim="complete",
+        measurement="partial:work",
+        work_outcome="checks_failed",
+        deviations=["land:lane_b_unlanded"],
+    )
+    assert authority is not None
+    assert authority.work_outcome == "measure"
+    assert authority.ac_pass == "measure"
+    assert authority.next_step == "deviations_qualified_measure"
+
+
+def test_status_disagreement_authority_bare_losses_named() -> None:
+    """Bare claim and bare measure both lose on next-step when unqualified."""
+    authority = resolve_status_disagreement_authority(
+        claim="complete",
         measurement="partial",
+        deviations=[],
     )
-    assert marker == "status_claim@§2 complete while status@infra partial"
-    assert merge_plane_discrepancy_markers(marker) == (
-        "plane-discrepancy: status_claim@§2 complete while status@infra partial"
-    )
+    assert authority is not None
+    assert authority.next_step == "bare_measure"
 
 
 def test_checkpoint_dispositions_equivalent_authored_cortex_digest_optional() -> None:

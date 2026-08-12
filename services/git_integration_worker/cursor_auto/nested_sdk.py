@@ -358,11 +358,18 @@ async def post_operator_closeout(
     if getattr(job, "contract", None):
         meta.setdefault("contract", job.contract)
     meta = stamp_meta_terminal_status_status_of(meta)
+    from services.git_integration_worker.cursor_auto.closeout_status_polarity import (
+        measurement_incomplete_class,
+    )
+
     lines = [
         "TYPE: CLOSEOUT",
         f"status: {envelope_status}",
-        *prose_closeout_register_header_lines(),
     ]
+    incomplete_class = measurement_incomplete_class(envelope_status)
+    if incomplete_class is not None:
+        lines.append(f"status_incomplete_class: {incomplete_class}")
+    lines.extend(prose_closeout_register_header_lines())
     if relay_note:
         lines.append(f"relay_note: {relay_note}")
     if deployment_state:

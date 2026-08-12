@@ -25,6 +25,8 @@ _STATUS_RE = re.compile(
     r"(?im)^(?:\*\*)?(?:status_claim|status)(?:\*\*)?\s*[:=]\s*`?(complete|partial|blocked)`?"
 )
 _VALID_WRAPPER_STATUSES = frozenset({"complete", "partial", "blocked"})
+_QUALIFIED_PARTIAL_STATUSES = frozenset({"partial:work", "partial:capture"})
+_RELAY_MEASUREMENT_STATUSES = _VALID_WRAPPER_STATUSES | _QUALIFIED_PARTIAL_STATUSES
 RELAY_PARSE_FAILED_STATUS = "relay_parse_failed"
 _RELAY_INFRA_STATUSES = frozenset({RELAY_PARSE_FAILED_STATUS})
 RELAY_JUDGMENT_CLAMP_FIELDS = frozenset(
@@ -32,7 +34,7 @@ RELAY_JUDGMENT_CLAMP_FIELDS = frozenset(
 )
 _ENVELOPE_TYPE_RE = re.compile(r"(?im)^TYPE:\s*CLOSEOUT\s*$")
 _ENVELOPE_STATUS_RE = re.compile(
-    r"(?im)^status:\s*(complete|partial|blocked)\s*$"
+    r"(?im)^status:\s*(complete|partial(?::(?:work|capture))?|blocked)\s*$"
 )
 _ENVELOPE_DEVIATIONS_RE = re.compile(r"(?im)^deviations:\s*.+$")
 RELAY_CELL_CAP_CHARS = 400
@@ -334,15 +336,29 @@ def resolve_measurement_status_from_wrapper(wrapper_text: str | None) -> str | N
         return None
     if not isinstance(payload, dict):
         return None
+    from services.git_integration_worker.cursor_auto.closeout_status_polarity import (
+        incomplete_class_from_wrapper,
+        resolve_qualified_measurement_status,
+    )
+
     disagreement = payload.get("status_authority_disagreement")
+    base: str | None = None
     if isinstance(disagreement, dict):
         machine = disagreement.get("machine_status")
         if isinstance(machine, str) and machine.strip():
-            return structured_status_to_relay(machine)
-    status = payload.get("status")
-    if isinstance(status, str) and status.strip():
-        return structured_status_to_relay(status)
-    return None
+            base = structured_status_to_relay(machine)
+    if base is None:
+        status = payload.get("status")
+        if isinstance(status, str) and status.strip():
+            base = structured_status_to_relay(status)
+    if base is None:
+        return None
+    incomplete_class = incomplete_class_from_wrapper(payload)
+    return resolve_qualified_measurement_status(
+        base_status=base,
+        wrapper_text=None,
+        incomplete_class=incomplete_class,
+    )
 
 
 def resolve_measurement_status(
@@ -355,7 +371,7 @@ def resolve_measurement_status(
     if measured is not None:
         return measured
     normalized = ledger_fallback.strip().lower()
-    if normalized in _VALID_WRAPPER_STATUSES | _RELAY_INFRA_STATUSES:
+    if normalized in _RELAY_MEASUREMENT_STATUSES | _RELAY_INFRA_STATUSES:
         return normalized
     return "partial"
 
@@ -370,7 +386,7 @@ def resolve_relay_status(body: str, measurement_status: str) -> str:
     normalized = measurement_status.strip().lower()
     if normalized == RELAY_PARSE_FAILED_STATUS:
         return RELAY_PARSE_FAILED_STATUS
-    if normalized in _VALID_WRAPPER_STATUSES:
+    if normalized in _RELAY_MEASUREMENT_STATUSES:
         return normalized
     return "partial"
 

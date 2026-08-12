@@ -1106,3 +1106,8 @@ def resolve_closeout_capture_fields(
     ):
         capture_status = "complete"
     return capture_status, divergence_reason, deviations, manifest
+
+
+from services.git_integration_worker.cursor_auto.closeout_status_polarity import (  # noqa: E402
+    classify_status_incomplete_class,
+)
