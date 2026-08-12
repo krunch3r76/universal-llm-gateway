@@ -21,7 +21,7 @@ cortex(tool="entity_get", arguments='{"entity_id":"todo:{slug}"}')  # or task:/p
 ```
 
 For each `slug ∈ attributes.required_skills`:
-1. Confirm the slug is a registered **`agent_skill:{slug}`** (committed skill source table / `entity_get`). Rule-only / `.mdc` names (e.g. `testing-discipline`) are invalid here — Gate-3 materialize raises `SkillSourceResolveError` and blocks implement.
+1. Confirm the slug is a registered **`agent_skill:{slug}`** in `config/skills.yaml` (`get_skill_catalog()`). Rule-only / `*_ulg.mdc` stems (e.g. `skill-surface`, `testing-discipline`, `capability-dispatch`) are invalid — they are Cursor rules, not catalog skills. Write-time Gate-2 / `validate_distilled_attributes` 422s `required_skills_uncatalogued`; Gate-3 materialize still raises `SkillCatalogResolveError` / `SkillSourceResolveError` as last-ditch. **Do not** add rule stems to the skill catalog to paper this over.
 2. `cortex(tool="entity_get", arguments='{"entity_id":"agent_skill:{slug}"}')` — metadata / `source_uri` (authoring paths only; not runtime body load).
 3. **Use the** `{slug}` **skill** — canonical slug; seat self-fetches body. ¬ fs-read skill markdown (`agent-skills/` retired; friction 23128).
 

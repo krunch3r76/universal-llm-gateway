@@ -53,7 +53,7 @@ implement-ready.
 
 **Sequence:** verify lane → stub spec (`doc_template`) → consult brief → `handoff web-consult` (¬ `contract=consult`
 param) → distill attrs → implement-ready + `spec_sha256`. Detail: L3 annex § Gate 2 — expanded sequence. **`required_skills`:**
-catalog-registered slugs only.
+catalog-registered slugs only (`config/skills.yaml`). Rule `*_ulg.mdc` stems (e.g. `skill-surface`) are not valid — write-time 422 `required_skills_uncatalogued`.
 
 ## Gate 3 — direct implement dispatch
 

@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from universal_logging import get_logger
 
 from ._path_sim_required_skills_guard import reject_path_sim_in_required_skills
+from ._required_skills_catalog_guard import reject_uncatalogued_required_skills
 
 logger = get_logger("cortex-api.dispatch_ops.recon_seed")
 
@@ -76,6 +77,7 @@ def seed_recon_todo(
     if required_skills:
         try:
             reject_path_sim_in_required_skills(required_skills)
+            reject_uncatalogued_required_skills(required_skills)
         except HTTPException as exc:
             return {"error": exc.detail}
         attributes["required_skills"] = required_skills

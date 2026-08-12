@@ -53,7 +53,7 @@ Plus `<reasoning_trace>` with literal `no fork remains open`.
 | Condition | Verdict | Action |
 |---|---|---|
 | Missing attrs | `implement_attrs_unpopulated` | distill/backfill |
-| Bad `required_skills` slug | `SkillSourceResolveError` | registered slug only |
+| Bad `required_skills` slug | `required_skills_uncatalogued` (write-time 422) / `SkillCatalogResolveError` (materialize) | catalog-registered skill slug only — rule `*_ulg.mdc` stems (e.g. `skill-surface`) are not valid `required_skills` |
 | No implement-ready | not ready | return Gate 2 |
 | Open fork | not ready | resolve first |
 | Spec/attrs drift | `implement_spec_drifted_since_ready` | refresh assertion |

@@ -241,13 +241,18 @@ def validate_distilled_attributes(
             )
 
     # a:27431 — path-sim is a choke-point cue, not a required_skills leaf entry.
+    # Arc 7098 P1 — catalog membership before fire (materialize is last-ditch).
     # Lazy import keeps type_schemas free of an eager dispatch_ops cycle.
     if "required_skills" in attrs:
         from .dispatch_ops._path_sim_required_skills_guard import (
             reject_path_sim_in_required_skills,
         )
+        from .dispatch_ops._required_skills_catalog_guard import (
+            reject_uncatalogued_required_skills,
+        )
 
         reject_path_sim_in_required_skills(attrs["required_skills"])
+        reject_uncatalogued_required_skills(attrs["required_skills"])
 
 
 __all__ = [

@@ -42,6 +42,7 @@ from ..entity_aliases import resolve_entity_reference
 from ..event_publisher import cortex_implement_recon_waived
 from ..routes.assertions import _create_assertion_impl
 from ._path_sim_required_skills_guard import reject_path_sim_in_required_skills
+from ._required_skills_catalog_guard import reject_uncatalogued_required_skills
 from ._shared import record
 from .ops_assertions import _op_assertions
 from .ops_assertions_update import _op_assertion_get, _op_assertion_update
@@ -485,6 +486,7 @@ def distill_todo_implement_gate(
         if skills:
             try:
                 reject_path_sim_in_required_skills(skills)
+                reject_uncatalogued_required_skills(skills)
             except HTTPException as exc:
                 return {"error": exc.detail, "step": "required_skills"}
 
