@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from services.git_integration_worker.cursor_auto.hop_cadence import (
+    CapacityGateResult,
     fire_hop_for_decision,
 )
 from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
@@ -53,7 +54,9 @@ async def test_cadence_hop_passes_claimed_incumbent_to_continuity_hop(monkeypatc
         return {"ok": True, "reason": "continuity_hop_cdp_commissioned", "execution_id": "e1"}
 
     monkeypatch.setattr(cadence_mod, "run_continuity_hop_concurrent", _capture_hop)
-    monkeypatch.setattr(cadence_mod, "capacity_blocks_hop", lambda **_: (False, None))
+    monkeypatch.setattr(
+        cadence_mod, "capacity_blocks_hop", lambda **_: CapacityGateResult.fail_open()
+    )
     monkeypatch.setattr(cadence_mod, "mark_hop_fired", lambda *a, **k: None)
     monkeypatch.setattr(
         cadence_mod,
@@ -142,7 +145,9 @@ async def test_cadence_hop_residual_re_issue_subject_names_incumbent(monkeypatch
     monkeypatch.setattr(
         hop_mod, "_post_hop_admit_report", AsyncMock(return_value=None)
     )
-    monkeypatch.setattr(cadence_mod, "capacity_blocks_hop", lambda **_: (False, None))
+    monkeypatch.setattr(
+        cadence_mod, "capacity_blocks_hop", lambda **_: CapacityGateResult.fail_open()
+    )
     monkeypatch.setattr(cadence_mod, "mark_hop_fired", lambda *a, **k: None)
     monkeypatch.setattr(
         cadence_mod,

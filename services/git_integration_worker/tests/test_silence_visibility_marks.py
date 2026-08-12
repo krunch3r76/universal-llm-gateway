@@ -12,6 +12,7 @@ from services.git_integration_worker.cursor_auto.closeout_outbox import (
     CloseoutOutboxStore,
 )
 from services.git_integration_worker.cursor_auto.hop_cadence import (
+    CapacityGateResult,
     fire_hop_for_decision,
 )
 from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
@@ -107,7 +108,9 @@ async def test_hop_fire_missing_execution_id_emits_successor_never_ran(
         return {"ok": True, "reason": "continuity_hop_cdp_commissioned"}
 
     monkeypatch.setattr(cadence_mod, "run_continuity_hop_concurrent", _hop_no_id)
-    monkeypatch.setattr(cadence_mod, "capacity_blocks_hop", lambda **_: (False, None))
+    monkeypatch.setattr(
+        cadence_mod, "capacity_blocks_hop", lambda **_: CapacityGateResult.fail_open()
+    )
     monkeypatch.setattr(
         cadence_mod,
         "mark_hop_fired",
@@ -177,7 +180,9 @@ async def test_liveness_probe_swallow_emits_fail_open(
         }
 
     monkeypatch.setattr(cadence_mod, "run_continuity_hop_concurrent", _hop_ok)
-    monkeypatch.setattr(cadence_mod, "capacity_blocks_hop", lambda **_: (False, None))
+    monkeypatch.setattr(
+        cadence_mod, "capacity_blocks_hop", lambda **_: CapacityGateResult.fail_open()
+    )
     monkeypatch.setattr(cadence_mod, "mark_hop_fired", lambda *a, **k: None)
     monkeypatch.setattr(cadence_mod, "emit_liveness_probe_failed", emit)
     monkeypatch.setattr(

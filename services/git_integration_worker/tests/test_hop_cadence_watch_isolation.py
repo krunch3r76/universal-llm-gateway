@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
+from services.git_integration_worker.cursor_auto.hop_cadence import CapacityGateResult
 from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
     load_watches,
     mark_hop_failed,
@@ -122,7 +123,7 @@ async def test_fire_hop_for_decision_forwards_path_to_mark_helpers(
         patch(
             "services.git_integration_worker.cursor_auto.hop_cadence."
             "capacity_blocks_hop",
-            lambda **_: (False, None),
+            lambda **_: CapacityGateResult.fail_open(),
         ),
         patch(
             "services.git_integration_worker.cursor_auto.hop_cadence."

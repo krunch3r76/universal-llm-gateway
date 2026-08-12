@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -116,31 +117,81 @@ def build_cadence_hop_body(
     return "\n".join(lines) + "\n"
 
 
+@dataclass(frozen=True)
+class CapacityGateResult:
+    """Capacity snapshot + admit/block verdict for one hop-cadence decision."""
+
+    blocked: bool
+    label: str | None
+    free_slots: int
+    running_count: int
+    at_soft_limit: bool
+    at_hard_limit: bool
+
+    @classmethod
+    def fail_open(cls) -> CapacityGateResult:
+        """Probe failed — capacity gate defers to liveness path (not blocked)."""
+        return cls(
+            blocked=False,
+            label=None,
+            free_slots=0,
+            running_count=0,
+            at_soft_limit=False,
+            at_hard_limit=False,
+        )
+
+    def as_decision_dict(self) -> dict[str, Any]:
+        return {
+            "free_slots": self.free_slots,
+            "running_count": self.running_count,
+            "at_soft_limit": self.at_soft_limit,
+            "at_hard_limit": self.at_hard_limit,
+            "label": self.label,
+        }
+
+
+def _capacity_fields_from_snapshot(snap: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "free_slots": int(snap.get("free_slots") or 0),
+        "running_count": int(snap.get("running_count") or 0),
+        "at_soft_limit": bool(snap.get("at_soft_limit")),
+        "at_hard_limit": bool(snap.get("at_hard_limit")),
+    }
+
+
+def evaluate_capacity_gate(snap: dict[str, Any]) -> CapacityGateResult:
+    """Evaluate hop capacity gate from an already-read CDP lane snapshot."""
+    fields = _capacity_fields_from_snapshot(snap)
+    if fields["at_hard_limit"]:
+        return CapacityGateResult(blocked=True, label="hard", **fields)
+    if fields["free_slots"] < 1:
+        return CapacityGateResult(blocked=True, label="hard", **fields)
+    return CapacityGateResult(blocked=False, label=None, **fields)
+
+
 def capacity_blocks_hop(
     *,
     snapshot_reader: Callable[[], dict[str, Any]] | None = None,
-) -> tuple[bool, str | None]:
-    """Return (blocked, label) when CDP capacity cannot admit a successor window.
+    snap: dict[str, Any] | None = None,
+) -> CapacityGateResult:
+    """Return capacity verdict + snapshot fields for a hop-cadence admit decision.
 
     Hop cadence is a seat *replacement* within hard=3: admit when ``free_slots >= 1``
     so a successor window can occupy the last hard slot while the predecessor
     streams out. The generic unattended soft gate (``escalation_lane_refusal`` with
     ``at_soft_limit``) requires ``free_slots >= 2`` and must not apply here.
     """
+    if snap is not None:
+        return evaluate_capacity_gate(snap)
     reader = snapshot_reader or read_cdp_lane_snapshot
     try:
         snap = reader()
     except Exception as exc:  # noqa: BLE001 — cadence must not crash the worker
         logger.warning("hop_cadence capacity probe failed: %s", exc)
-        return False, None
+        return CapacityGateResult.fail_open()
     if not isinstance(snap, dict):
-        return False, None
-    if snap.get("at_hard_limit"):
-        return True, "hard"
-    free_slots = int(snap.get("free_slots") or 0)
-    if free_slots < 1:
-        return True, "hard"
-    return False, None
+        return CapacityGateResult.fail_open()
+    return evaluate_capacity_gate(snap)
 
 
 async def fire_hop_for_decision(
@@ -155,30 +206,52 @@ async def fire_hop_for_decision(
     if decision.action != "fire":
         return {"ok": False, "reason": decision.reason, "action": decision.action}
     reader = snapshot_reader or read_cdp_lane_snapshot
-    blocked, label = capacity_blocks_hop(snapshot_reader=reader)
-    if blocked:
+    snap_for_capacity: dict[str, Any] | None = None
+    try:
+        snap_for_capacity = reader()
+    except Exception as exc:  # noqa: BLE001 — cadence must not crash the worker
+        logger.warning("hop_cadence capacity probe failed: %s", exc)
+    cap = capacity_blocks_hop(
+        snapshot_reader=reader,
+        snap=snap_for_capacity if isinstance(snap_for_capacity, dict) else None,
+    )
+    cap_fields = cap.as_decision_dict()
+    if cap.blocked:
         logger.warning(
-            "hop_cadence defer thread=%s reason=capacity label=%s",
+            "hop_cadence defer thread=%s reason=capacity label=%s "
+            "free_slots=%s running_count=%s at_soft_limit=%s at_hard_limit=%s",
             decision.thread_id,
-            label,
+            cap_fields["label"],
+            cap_fields["free_slots"],
+            cap_fields["running_count"],
+            cap_fields["at_soft_limit"],
+            cap_fields["at_hard_limit"],
         )
         return {
             "ok": False,
             "reason": "capacity_blocked",
-            "capacity_label": label,
+            "capacity_label": cap.label,
             "thread_id": decision.thread_id,
+            "decision": {
+                "reason": "capacity_blocked",
+                **cap_fields,
+            },
         }
     liveness_probe: dict[str, Any] = {"fail_open": False}
-    try:
-        snap = reader()
-    except Exception as exc:  # noqa: BLE001 — cadence must not crash the worker
-        logger.warning("hop_cadence liveness probe failed: %s", exc)
-        snap = {}
-        liveness_probe = {"fail_open": True, "error": str(exc)}
-        emit_liveness_probe_failed(
-            thread_id=decision.thread_id,
-            error=str(exc),
-        )
+    snap: dict[str, Any]
+    if isinstance(snap_for_capacity, dict):
+        snap = snap_for_capacity
+    else:
+        try:
+            snap = reader()
+        except Exception as exc:  # noqa: BLE001 — cadence must not crash the worker
+            logger.warning("hop_cadence liveness probe failed: %s", exc)
+            snap = {}
+            liveness_probe = {"fail_open": True, "error": str(exc)}
+            emit_liveness_probe_failed(
+                thread_id=decision.thread_id,
+                error=str(exc),
+            )
     refuse, refuse_reason, refuse_evidence = refuse_cadence_hop_for_live_seat(
         row, snap if isinstance(snap, dict) else {}
     )
@@ -269,6 +342,7 @@ async def fire_hop_for_decision(
             "threshold_s": decision.threshold_s,
             "signal": decision.signal,
             "handoff_status": decision.handoff.status if decision.handoff else None,
+            **cap_fields,
         },
         "hop_result": result,
         "liveness_probe": liveness_probe,
