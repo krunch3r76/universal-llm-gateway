@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -10,6 +11,7 @@ import pytest
 from services.git_integration_worker.cursor_auto.hop_cadence_predecessor import (
     PRIOR_NONE_EXECUTION,
     PRIOR_NONE_REGISTRATION,
+    PredecessorHandle,
     PredecessorVerdict,
     capture_predecessor_at_hop,
     predecessor_from_watch,
@@ -216,7 +218,7 @@ def test_confirm_first_seat_uses_explicit_sentinel() -> None:
     assert handle.registration_id == PRIOR_NONE_REGISTRATION
 
 
-def test_admission_count_unaffected_by_confirm_reconcile() -> None:
+def test_admission_count_decrements_when_superseded_terminalized() -> None:
     snap = {
         "admission_count": 3,
         "rows": [
@@ -244,6 +246,11 @@ def test_admission_count_unaffected_by_confirm_reconcile() -> None:
         }
     }
 
+    def _release(handle: PredecessorHandle) -> dict[str, Any]:
+        snap["admission_count"] -= 1
+        snap["rows"] = [r for r in snap["rows"] if r["execution_id"] != handle.execution_id]
+        return {"action": "terminalized", "execution_id": handle.execution_id}
+
     with patch(
         "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.load_watches",
         side_effect=lambda path=None: watches,
@@ -256,10 +263,11 @@ def test_admission_count_unaffected_by_confirm_reconcile() -> None:
         "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_registration_advanced",
     ):
         before = snap["admission_count"]
-        reconcile_succession_confirmations(snapshot_reader=lambda: snap)
+        reconcile_succession_confirmations(snapshot_reader=lambda: snap, release_fn=_release)
         after = snap["admission_count"]
 
-    assert before == after == 3
+    assert before == 3
+    assert after == 2
 
 
 def test_advance_registration_on_confirm_uses_prior_from_handle() -> None:

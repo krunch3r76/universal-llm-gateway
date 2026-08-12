@@ -34,8 +34,12 @@ from services.git_integration_worker.cursor_auto.hop_cadence_events import (
 )
 from services.git_integration_worker.cursor_auto.hop_cadence_predecessor import (
     PredecessorConfirmError,
+    PredecessorHandle,
     prior_registration_for_confirm,
     predecessor_from_watch,
+)
+from services.git_integration_worker.cursor_auto.hop_cadence_succession_release import (
+    release_superseded_on_confirm,
 )
 from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
     advance_registration_on_confirm,
@@ -350,6 +354,7 @@ def reconcile_succession_confirmations(
     watches_path: Path | None = None,
     now: float | None = None,
     snapshot_reader: Callable[[], dict[str, Any]] | None = None,
+    release_fn: Callable[[PredecessorHandle], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Observe live active-work membership and advance watch registration ids once."""
     ts = time.time() if now is None else now
@@ -363,6 +368,8 @@ def reconcile_succession_confirmations(
     watches = load_watches(watches_path)
     confirmations: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
+    releases: list[dict[str, Any]] = []
+    release = release_fn or release_superseded_on_confirm
     changed = False
     for thread_id, row in list(watches.items()):
         if not successor_confirm_active(row, snap):
@@ -408,6 +415,8 @@ def reconcile_succession_confirmations(
             prior_registration_id=prior_reg,
             superseded_execution_id=superseded_exec,
         )
+        release_outcome = release(handle)
+        releases.append({"thread_id": thread_id, **release_outcome})
         if new_reg:
             emit_registration_advanced(
                 thread_id=thread_id,
@@ -427,7 +436,7 @@ def reconcile_succession_confirmations(
         )
     if changed:
         save_watches(watches, watches_path)
-    return {"confirmations": confirmations, "errors": errors}
+    return {"confirmations": confirmations, "errors": errors, "releases": releases}
 
 
 def _default_snapshot_reader() -> dict[str, Any]:
