@@ -335,10 +335,100 @@ async def test_resolve_harvest_body_chat_skips_download(
         "legacy chat harvest",
         harvest_source="chat",
         expected_size="large",
+        artifact_cards=[{"title": "ignored card", "kind": "MD"}],
     )
     assert body.content == "legacy chat harvest"
     assert body.provenance == "chat"
     mock_download.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_resolve_harvest_body_artifact_card_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from claude_bundles.cowork_artifact_card import ArtifactCardResult
+
+    page = MagicMock()
+    monkeypatch.setattr(
+        "claude_bundles.cowork_output_download.download_cowork_output",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cowork_artifact_card.extract_artifact_card_body",
+        AsyncMock(
+            return_value=ArtifactCardResult(
+                title="Bind sidecar reasoning posture merge",
+                content="# Sidecar\n\n" + ("deliverable line.\n" * 25),
+            )
+        ),
+    )
+    chat = "Bind complete. Summary prose here."
+    cards = [{"title": "Bind sidecar reasoning posture merge", "kind": "MD"}]
+    body = await resolve_harvest_body(
+        page,
+        chat,
+        harvest_source="auto",
+        expected_size="auto",
+        artifact_cards=cards,
+    )
+    assert body.provenance == "artifact-card"
+    assert chat in body.content
+    assert "## Artifact card: Bind sidecar reasoning posture merge" in body.content
+
+
+@pytest.mark.asyncio
+async def test_resolve_harvest_body_artifact_card_fail_closed_auto(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = MagicMock()
+    monkeypatch.setattr(
+        "claude_bundles.cowork_output_download.download_cowork_output",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cowork_artifact_card.extract_artifact_card_body",
+        AsyncMock(return_value=None),
+    )
+    chat = "Bind complete with card chrome only."
+    cards = [{"title": "Bind sidecar reasoning posture merge", "kind": "MD"}]
+    with pytest.raises(OutputDownloadError) as excinfo:
+        await resolve_harvest_body(
+            page,
+            chat,
+            harvest_source="auto",
+            expected_size="auto",
+            artifact_cards=cards,
+        )
+    assert "artifact_card_without_body" in str(excinfo.value)
+    assert excinfo.value.chat_body == chat
+
+
+@pytest.mark.asyncio
+async def test_resolve_harvest_body_artifact_card_trumps_chat_large(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = MagicMock()
+    monkeypatch.setattr(
+        "claude_bundles.cowork_output_download.download_cowork_output",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cowork_artifact_card.extract_artifact_card_body",
+        AsyncMock(return_value=None),
+    )
+    transcript = "operator proxy turn\n" * 1000
+    assert len(transcript) > THIN_CHAT_BODY_MAX_CHARS
+    cards = [{"title": "Bind sidecar reasoning posture merge", "kind": "MD"}]
+    with pytest.raises(OutputDownloadError) as excinfo:
+        await resolve_harvest_body(
+            page,
+            transcript,
+            harvest_source="auto",
+            expected_size="large",
+            artifact_cards=cards,
+        )
+    assert "artifact_card_without_body" in str(excinfo.value)
+    assert excinfo.value.chat_body == transcript
 
 
 @pytest.mark.asyncio

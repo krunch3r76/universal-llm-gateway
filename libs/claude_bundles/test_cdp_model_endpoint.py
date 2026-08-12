@@ -13,6 +13,7 @@ from claude_bundles.cdp_model_endpoint import (
     SUBMIT_RETRY_BACKOFF_S,
     UPSTREAM_OVERLOADED,
     _has_proof,
+    _has_unresolved_artifact_card,
     _is_chrome_only_body,
     _is_overload_only_harvest,
     _is_user_prompt_echo_body,
@@ -579,6 +580,44 @@ def test_has_proof_outputs_path_requires_content_proof_uri() -> None:
     }
     assert has_proof(snap) is False
     snap["content_proof_uri"] = "cortex://notes/system/threads/proof.md"
+    assert has_proof(snap) is True
+
+
+def test_has_unresolved_artifact_card_predicate() -> None:
+    assert _has_unresolved_artifact_card({"artifact_cards_unresolved": True})
+    assert not _has_unresolved_artifact_card({"artifact_cards_unresolved": False})
+
+
+def test_has_proof_rejects_specimen_unresolved_card() -> None:
+    """AC5 negative: substantive prose + attested_model + unresolved card chrome."""
+    snap = {
+        "status": "completed",
+        "body": (
+            "Bind complete. BIND: merge wins on the sidecar question.\n"
+            "Bind sidecar reasoning posture merge\nDocument · MD\nGoogle Drive"
+        ),
+        "attested_model": "Model: Fable 5 High",
+        "harvest_provenance": "chat",
+        "artifact_cards": [{"title": "Bind sidecar reasoning posture merge", "kind": "MD"}],
+        "artifact_cards_unresolved": True,
+    }
+    assert has_proof(snap) is False
+
+
+def test_has_proof_accepts_specimen_when_cards_resolved() -> None:
+    """AC5 positive: same shape with artifact_cards_unresolved=False."""
+    snap = {
+        "status": "completed",
+        "body": (
+            "Bind complete. BIND: merge wins.\n\n"
+            "## Artifact card: Bind sidecar reasoning posture merge\n\n"
+            "# Sidecar\n\nfull body bytes"
+        ),
+        "attested_model": "Model: Fable 5 High",
+        "harvest_provenance": "artifact-card",
+        "artifact_cards": [{"title": "Bind sidecar reasoning posture merge", "kind": "MD"}],
+        "artifact_cards_unresolved": False,
+    }
     assert has_proof(snap) is True
 
 

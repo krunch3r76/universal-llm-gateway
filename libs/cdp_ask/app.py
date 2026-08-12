@@ -293,6 +293,8 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             stop=record.stop if live else None,
             tool_pause=record.tool_pause if live else None,
             liveness_observed_at=record.liveness_observed_at if live else None,
+            artifact_cards=payload.get("artifact_cards"),
+            artifact_cards_unresolved=payload.get("artifact_cards_unresolved"),
         )
 
     @app.post(

@@ -146,6 +146,11 @@ def _is_chrome_only_body(body: str) -> bool:
     return True
 
 
+def _has_unresolved_artifact_card(snapshot: dict[str, Any]) -> bool:
+    """True when harvest observed in-chat artifact cards without resolved body."""
+    return bool(snapshot.get("artifact_cards_unresolved"))
+
+
 def has_proof(snapshot: dict[str, Any]) -> bool:
     """True when snapshot carries terminal harvest proof (shared poll + reconcile gate).
 
@@ -156,9 +161,14 @@ def has_proof(snapshot: dict[str, Any]) -> bool:
 
     ``archive_uri`` alone, ``completion_phase=terminal`` alone, and prompt-echo
     archives (``You said:`` with ``attested_model: None``) are insufficient.
+    Unresolved in-chat artifact cards (detected but body not extracted) also
+    fail proof — distinct from ``_is_chrome_only_body``.
     """
     phase = str(snapshot.get("completion_phase") or "")
     if phase == "failed":
+        return False
+
+    if _has_unresolved_artifact_card(snapshot):
         return False
 
     provenance = snapshot.get("harvest_provenance")
@@ -173,7 +183,7 @@ def has_proof(snapshot: dict[str, Any]) -> bool:
         return False
 
     attested = snapshot.get("attested_model")
-    if provenance in {"chat", "chat-large"}:
+    if provenance in {"chat", "chat-large", "artifact-card"}:
         return bool(attested and body.strip())
 
     if attested and body.strip():

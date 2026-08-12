@@ -76,7 +76,7 @@ running → turn_idle → content_proof → archiving → terminal | failed
 
 **Held-page (25671):** held Playwright page only; **either-proof advance:** verified `content_proof` **OR** `archive_uri`; never `turn_idle` alone. `delete_after`: archive-proof or attested abort — L3 `operations-annex.md`.
 
-**Artifact / Outputs harvest (BINDING cue):** Cowork **Outputs** + artifact/canvas are the deliverable surface; **Google Drive** in the card toolbar is open-with chrome (often shown with **Download** in the same menu). Structured CDP asks must admit with Outputs-first knobs (`expected_size=large` / `download_output=true`) — chat scrape alone collapses the card. Detail + prompt duty: L3 `operations-annex.md` § Cowork Outputs-first / File-card chrome.
+**Artifact / Outputs harvest (BINDING cue):** Cowork **Outputs** + artifact/canvas are the deliverable surface; **Google Drive** in the card toolbar is open-with chrome (often shown with **Download** in the same menu). Structured CDP asks must admit with Outputs-first knobs (`expected_size=large` / `download_output=true`) — chat scrape alone collapses the card. Substrate now attempts in-chat Document/MD card body extract after Outputs/cortex-uri (`artifact-card` provenance) and fail-closed `artifact_card_without_body` when unresolved — **re-request on a live CSE is the exception path** for legacy archives or residual DOM drift, not the close path. Detail + prompt duty: L3 `operations-annex.md` § Cowork Outputs-first / File-card chrome.
 
 ## FOL pipeline
 

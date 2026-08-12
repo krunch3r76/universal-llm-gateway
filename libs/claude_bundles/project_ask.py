@@ -93,9 +93,25 @@ class ProjectAskResult:
     archive_uri: str | None = None
     attested_model: str | None = None
     harvest_provenance: HarvestProvenance | None = None
+    artifact_cards: tuple[dict[str, str], ...] = ()
+    artifact_cards_unresolved: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def artifact_cards_from_state(state: dict[str, Any]) -> list[dict[str, str]]:
+    """Normalize ``artifact_cards`` from a ``HARVEST_JS`` / harvest_assistant sample."""
+    raw = state.get("artifact_cards") or []
+    cards: list[dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        kind = str(item.get("kind") or "MD").strip() or "MD"
+        if title:
+            cards.append({"title": title, "kind": kind})
+    return cards
 
 
 def _attest_model(requested: str, state: dict[str, Any], selected: dict[str, Any]) -> str | None:
@@ -148,6 +164,8 @@ def archive_harvest(
     attested_model: str | None,
     archive_path: str,
     execution_id: str | None = None,
+    artifact_cards: list[dict[str, str]] | None = None,
+    artifact_cards_unresolved: bool = False,
 ) -> str:
     """Persist raw harvest before delete. Returns cortex:// or file URI.
 
@@ -177,6 +195,14 @@ def archive_harvest(
     exec_line = (
         f"- execution_id: `{execution_id}`\n" if execution_id else ""
     )
+    card_lines = ""
+    if artifact_cards:
+        card_lines = f"- artifact_cards: `{artifact_cards}`\n"
+    card_lines += (
+        f"- artifact_cards_unresolved: `{artifact_cards_unresolved}`\n"
+        if artifact_cards or artifact_cards_unresolved
+        else ""
+    )
     text = (
         f"# CDP ask harvest\n\n"
         f"- archived_at: `{stamp}`\n"
@@ -184,7 +210,8 @@ def archive_harvest(
         f"- url: `{url}`\n"
         f"- project_uuid: `{project_uuid}`\n"
         f"- model_select: `{model}`\n"
-        f"- attested_model: `{attested_model}`\n\n"
+        f"- attested_model: `{attested_model}`\n"
+        f"{card_lines}\n"
         f"## Body\n\n{body}\n"
     )
     if path.is_file():
@@ -560,6 +587,7 @@ async def project_ask_on_page(
         )
         body = strip_thinking_prefix(state.get("body") or "")
         attested = _attest_model(model, state, model_info)
+        cards = artifact_cards_from_state(state)
         harvest_provenance: HarvestProvenance | None = None
         try:
             harvest = await resolve_harvest_body(
@@ -569,9 +597,11 @@ async def project_ask_on_page(
                 expected_size=expected_size,
                 download_output=download_output,
                 cortex_files_root=cortex_files_root_from_env(),
+                artifact_cards=cards,
             )
         except OutputDownloadError as exc:
             # Refuse the archive, keep the transcript — see OutputDownloadError.
+            unresolved = bool(cards) and "artifact_card_without_body" in str(exc)
             return ProjectAskResult(
                 ok=False,
                 body=exc.chat_body,
@@ -584,6 +614,8 @@ async def project_ask_on_page(
                 error=str(exc),
                 attested_model=attested,
                 harvest_provenance=None,
+                artifact_cards=tuple(cards),
+                artifact_cards_unresolved=unresolved,
             )
         archive_body = harvest.content
         harvest_provenance = harvest.provenance
@@ -598,6 +630,8 @@ async def project_ask_on_page(
                     attested_model=attested,
                     archive_path=archive_path,
                     execution_id=execution_id,
+                    artifact_cards=cards,
+                    artifact_cards_unresolved=False,
                 )
             except HarvestArchiveError as exc:
                 return ProjectAskResult(
@@ -642,6 +676,8 @@ async def project_ask_on_page(
             archive_uri=archive_uri,
             attested_model=attested,
             harvest_provenance=harvest_provenance,
+            artifact_cards=tuple(cards),
+            artifact_cards_unresolved=False,
         )
     except Exception as exc:  # noqa: BLE001 — surface to CLI ledger; ¬delete
         return ProjectAskResult(

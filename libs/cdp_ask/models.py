@@ -193,13 +193,14 @@ class ExecutionPollResponse(BaseModel):
     delete_after: dict[str, Any] | None = None
     results: list[dict[str, Any]] | None = None
     harvest_provenance: (
-        Literal["output-file", "cortex-uri", "chat", "chat-large"] | None
+        Literal["output-file", "cortex-uri", "chat", "chat-large", "artifact-card"] | None
     ) = Field(
         default=None,
         description=(
             "Resolution outcome provenance (distinct from submit ``harvest_source``). "
             "Present on successful terminals only; ``null`` on non-success. "
-            "When present: ``output-file`` | ``cortex-uri`` | ``chat`` | ``chat-large``. "
+            "When present: ``output-file`` | ``cortex-uri`` | ``chat`` | ``chat-large`` "
+            "| ``artifact-card``. "
             "Never ``ok=true`` with ``harvest_provenance=chat`` when "
             "``expected_size=large`` (auto fail-closed). ``chat-large`` marks the "
             "measured escape from that guard: Output and cortex-uri both missed but "
@@ -289,6 +290,21 @@ class ExecutionPollResponse(BaseModel):
             "content-proof watcher (~2s cadence). Populated only while status=running and "
             "completion_phase=running; null otherwise. Advisory only — does not gate "
             "turn_idle, content_proof, or stall_stage."
+        ),
+    )
+    artifact_cards: list[dict[str, str]] | None = Field(
+        default=None,
+        description=(
+            "In-chat Document/MD artifact cards detected in the final assistant turn "
+            "during harvest. Observed field — single authority is the harvest pass."
+        ),
+    )
+    artifact_cards_unresolved: bool | None = Field(
+        default=None,
+        description=(
+            "True when ``artifact_cards`` were observed but no body-bearing provenance "
+            "resolved (``artifact-card``, ``output-file``, or ``cortex-uri``). "
+            "Projection input for ``has_proof`` — must not be dual-written."
         ),
     )
 

@@ -52,6 +52,7 @@ HARVEST_JS = """
     : [];
   const seen = new Set();
   const msgs = [];
+  const assistantEls = [];
   for (const sel of [...baseSelectors, ...coworkSelectors]) {
     for (const el of document.querySelectorAll(sel)) {
       if (seen.has(el)) continue;
@@ -60,10 +61,75 @@ HARVEST_JS = """
       // Temp (a:27801): Cowork [role=article] matches user turns ("You said:…").
       // Skip those so wait keeps polling until a real assistant body appears.
       if (/^You said:\\s*/i.test(t)) continue;
-      if (t.length > minMsgChars) msgs.push(t);
+      if (t.length > minMsgChars) {
+        msgs.push(t);
+        assistantEls.push(el);
+      }
     }
   }
   const body = msgs.length ? msgs[msgs.length - 1] : '';
+  const artifactCards = [];
+  const lastTurnEl = assistantEls.length ? assistantEls[assistantEls.length - 1] : null;
+  if (lastTurnEl) {
+    const cardSeen = new Set();
+    const CARD_KIND_RE = /\\bdocument\\s*[·•]\\s*md\\b/i;
+    const cardChromeRe =
+      /^(google drive|download|copy|open|more ways to open|document\\s*[·•]\\s*md)$/i;
+    const pushCard = (el, title, kind) => {
+      const key = title + '::' + kind;
+      if (!title || cardSeen.has(key)) return;
+      cardSeen.add(key);
+      el.setAttribute('data-cdp-artifact-card', String(artifactCards.length));
+      artifactCards.push({ title, kind });
+    };
+    for (const el of lastTurnEl.querySelectorAll(
+      'button, a, [role="button"], [class*="artifact" i], [class*="Artifact" i], '
+      + '[data-testid*="artifact" i], [data-testid*="document" i]'
+    )) {
+      const raw = (el.innerText || el.textContent || '').trim();
+      if (!raw || raw.length > 500) continue;
+      const norm = raw.replace(/\\s+/g, ' ').trim();
+      if (!CARD_KIND_RE.test(norm) && !/\\bdocument\\b/i.test(norm)) continue;
+      const lines = raw.split('\\n').map((l) => l.trim()).filter(Boolean);
+      let title = '';
+      let kind = 'MD';
+      for (const line of lines) {
+        if (CARD_KIND_RE.test(line)) {
+          kind = 'MD';
+          continue;
+        }
+        if (cardChromeRe.test(line) || /google drive/i.test(line)) continue;
+        if (/^document\\b/i.test(line)) continue;
+        if (!title && line.length > 1) title = line;
+      }
+      if (!title) {
+        title = (el.getAttribute('aria-label') || '').trim();
+      }
+      pushCard(el, title, kind);
+    }
+    for (const el of lastTurnEl.querySelectorAll('div, article, section, li')) {
+      const raw = (el.innerText || '').trim();
+      if (!raw || raw.length < 10 || raw.length > 800) continue;
+      if (!CARD_KIND_RE.test(raw)) continue;
+      const childCardHits = [...el.querySelectorAll('div, article, section')].filter(
+        (c) => c !== el && CARD_KIND_RE.test(c.innerText || '')
+      );
+      if (childCardHits.length > 2) continue;
+      const lines = raw.split('\\n').map((l) => l.trim()).filter(Boolean);
+      let title = '';
+      let kind = 'MD';
+      for (const line of lines) {
+        if (CARD_KIND_RE.test(line)) {
+          kind = 'MD';
+          continue;
+        }
+        if (cardChromeRe.test(line) || /google drive/i.test(line)) continue;
+        if (/^document\\b/i.test(line)) continue;
+        if (!title && line.length > 1) title = line;
+      }
+      pushCard(el, title, kind);
+    }
+  }
   const streaming = !!document.querySelector(
     '[data-is-streaming="true"], [data-is-streaming=true]'
   );
@@ -193,6 +259,7 @@ HARVEST_JS = """
     task_map_present: taskMapPresent,
     task_map_working: taskMapWorking,
     task_map_idle: taskMapIdle,
+    artifact_cards: artifactCards,
   };
 }
 """

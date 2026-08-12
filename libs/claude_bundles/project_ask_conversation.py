@@ -21,6 +21,7 @@ from claude_bundles.project_ask import (
     ProjectAskResult,
     _attest_model,
     _compose_model_selected,
+    artifact_cards_from_state,
     project_ask_on_page,
     send_prompt,
     strip_thinking_prefix,
@@ -231,6 +232,7 @@ async def project_followup_on_page(
         )
         body = strip_thinking_prefix(state.get("body") or "")
         attested = _attest_model(model, state, {})
+        cards = artifact_cards_from_state(state)
         try:
             harvest = await resolve_harvest_body(
                 page,
@@ -239,9 +241,11 @@ async def project_followup_on_page(
                 expected_size=expected_size,
                 download_output=download_output,
                 cortex_files_root=cortex_files_root_from_env(),
+                artifact_cards=cards,
             )
         except OutputDownloadError as exc:
             # Refuse the archive, keep the transcript — see OutputDownloadError.
+            unresolved = bool(cards) and "artifact_card_without_body" in str(exc)
             return ProjectAskResult(
                 ok=False,
                 body=exc.chat_body,
@@ -254,6 +258,8 @@ async def project_followup_on_page(
                 error=str(exc),
                 attested_model=attested,
                 harvest_provenance=None,
+                artifact_cards=tuple(cards),
+                artifact_cards_unresolved=unresolved,
             )
         return ProjectAskResult(
             ok=True,
@@ -266,6 +272,8 @@ async def project_followup_on_page(
             delete_after=None,
             attested_model=attested,
             harvest_provenance=harvest.provenance,
+            artifact_cards=tuple(cards),
+            artifact_cards_unresolved=False,
         )
     except Exception as exc:  # noqa: BLE001
         return ProjectAskResult(
@@ -388,6 +396,7 @@ async def run_project_conversation(
                         harvest_provenance=None,
                     )
                 ]
+            cards = artifact_cards_from_state(state)
             try:
                 harvest = await resolve_harvest_body(
                     page,
@@ -396,9 +405,11 @@ async def run_project_conversation(
                     expected_size=expected_size,
                     download_output=download_output,
                     cortex_files_root=cortex_files_root_from_env(),
+                    artifact_cards=cards,
                 )
             except OutputDownloadError as exc:
                 # Refuse the archive, keep the transcript — see OutputDownloadError.
+                unresolved = bool(cards) and "artifact_card_without_body" in str(exc)
                 return [
                     ProjectAskResult(
                         ok=False,
@@ -412,6 +423,8 @@ async def run_project_conversation(
                         error=str(exc),
                         attested_model=attested,
                         harvest_provenance=None,
+                        artifact_cards=tuple(cards),
+                        artifact_cards_unresolved=unresolved,
                     )
                 ]
             first = ProjectAskResult(
@@ -425,6 +438,8 @@ async def run_project_conversation(
                 delete_after=None,
                 attested_model=attested,
                 harvest_provenance=harvest.provenance,
+                artifact_cards=tuple(cards),
+                artifact_cards_unresolved=False,
             )
         results.append(first)
         if not first.ok:
@@ -469,6 +484,8 @@ async def run_project_conversation(
                 archive_uri=last.archive_uri,
                 attested_model=last.attested_model,
                 harvest_provenance=last.harvest_provenance,
+                artifact_cards=last.artifact_cards,
+                artifact_cards_unresolved=last.artifact_cards_unresolved,
             )
         return results
     finally:

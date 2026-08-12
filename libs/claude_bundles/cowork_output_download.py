@@ -16,7 +16,7 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 ExpectedSize = Literal["small", "large", "auto"]
 HarvestSource = Literal["chat", "output-file", "auto"]
-HarvestProvenance = Literal["output-file", "cortex-uri", "chat", "chat-large"]
+HarvestProvenance = Literal["output-file", "cortex-uri", "chat", "chat-large", "artifact-card"]
 
 # A Cowork completion card ("written the verdict to the output file") runs a few
 # hundred chars; a real transcript runs tens of thousands. Above this bound the
@@ -237,8 +237,9 @@ async def resolve_harvest_body(
     expected_size: ExpectedSize = "auto",
     download_output: bool = False,
     cortex_files_root: Path | None = None,
+    artifact_cards: list[dict[str, str]] | None = None,
 ) -> HarvestBody:
-    """Resolve archive body from Output download, cortex-fs fallback, or chat scrape.
+    """Resolve archive body from Output download, cortex-fs fallback, card extract, or chat.
 
     Returns ``HarvestBody`` with ``provenance`` distinct from the submit-time
     ``harvest_source`` knob (``auto`` | ``output-file`` | ``chat``).
@@ -249,42 +250,58 @@ async def resolve_harvest_body(
     ``cortex://`` pointer; on both miss it measures the scraped body — over
     ``THIN_CHAT_BODY_MAX_CHARS`` yields ``provenance=chat-large``, at or under
     it raises ``OutputDownloadError`` (fail-closed — no thin chat archive).
-    Non-large ``auto`` soft-falls to chat. ``harvest_source=chat`` returns
-    scraped chat with ``provenance=chat``.
+    Non-large ``auto`` soft-falls to chat unless in-chat artifact cards were
+    detected — card evidence trumps ``chat-large`` and triggers extract-then-
+    fail-closed when unresolved. ``harvest_source=chat`` returns scraped chat
+    with ``provenance=chat`` (explicit scrape-only escape).
 
     Measuring the body replaces "an Output affordance existed" as the thin-stub
     discriminator. A ``converse`` operator-proxy session never mints a Cowork
     Output — its work lands on the agent bus — so the affordance proxy rejected
     full transcripts as stubs (agent-bus 5911).
     """
-    if not should_attempt_output_download(
+    if harvest_source == "chat":
+        return HarvestBody(content=chat_body, provenance="chat")
+
+    cards = list(artifact_cards or [])
+    attempted_download = should_attempt_output_download(
         harvest_source=harvest_source,
         expected_size=expected_size,
         download_output=download_output,
-    ):
-        return HarvestBody(content=chat_body, provenance="chat")
+    )
 
-    downloaded = await download_cowork_output(page)
-    if downloaded is not None and downloaded.content.strip():
-        return HarvestBody(content=downloaded.content, provenance="output-file")
+    if attempted_download:
+        downloaded = await download_cowork_output(page)
+        if downloaded is not None and downloaded.content.strip():
+            return HarvestBody(content=downloaded.content, provenance="output-file")
 
-    if harvest_source == "output-file":
-        # Explicit caller demand for Output bytes — no size escape.
+        if harvest_source == "output-file":
+            # Explicit caller demand for Output bytes — no size escape.
+            raise OutputDownloadError(
+                "Cowork Output download required (harvest_source=output-file) but "
+                "affordance missing or download empty",
+                chat_body=chat_body,
+            )
+
+        root = cortex_files_root
+        if root is not None:
+            uri = extract_cortex_uri(chat_body)
+            if uri:
+                copied = read_cortex_uri_content(uri, cortex_root=root)
+                if copied and copied.strip():
+                    return HarvestBody(content=copied, provenance="cortex-uri")
+
+    if cards:
+        card_result = await _resolve_artifact_cards(page, chat_body, cards)
+        if card_result is not None:
+            return card_result
         raise OutputDownloadError(
-            "Cowork Output download required (harvest_source=output-file) but "
-            "affordance missing or download empty",
+            "artifact_card_without_body: in-chat Document/MD card detected but "
+            "body extraction failed",
             chat_body=chat_body,
         )
 
-    root = cortex_files_root
-    if root is not None:
-        uri = extract_cortex_uri(chat_body)
-        if uri:
-            copied = read_cortex_uri_content(uri, cortex_root=root)
-            if copied and copied.strip():
-                return HarvestBody(content=copied, provenance="cortex-uri")
-
-    if harvest_source == "auto" and expected_size == "large":
+    if attempted_download and harvest_source == "auto" and expected_size == "large":
         if len(chat_body.strip()) > THIN_CHAT_BODY_MAX_CHARS:
             return HarvestBody(content=chat_body, provenance="chat-large")
         raise OutputDownloadError(
@@ -294,3 +311,29 @@ async def resolve_harvest_body(
         )
 
     return HarvestBody(content=chat_body, provenance="chat")
+
+
+async def _resolve_artifact_cards(
+    page: Page,
+    chat_body: str,
+    cards: list[dict[str, str]],
+) -> HarvestBody | None:
+    """Attempt in-chat artifact card extraction for each detected card."""
+    from claude_bundles.cowork_artifact_card import (
+        ArtifactCardResult,
+        combine_chat_and_card_sections,
+        extract_artifact_card_body,
+    )
+
+    extracted: list[ArtifactCardResult] = []
+    for card in cards:
+        title = str(card.get("title") or "").strip()
+        if not title:
+            continue
+        result = await extract_artifact_card_body(page, title)
+        if result is not None:
+            extracted.append(result)
+    if not extracted:
+        return None
+    combined = combine_chat_and_card_sections(chat_body, extracted)
+    return HarvestBody(content=combined, provenance="artifact-card")
