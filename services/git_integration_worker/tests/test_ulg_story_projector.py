@@ -63,6 +63,23 @@ def test_render_closeout_milestone() -> None:
     assert not line.startswith("Attention:")
 
 
+def test_render_partial_work_production_specimen_milestone() -> None:
+    line = render_event_line(
+        seq=103,
+        signal="frontier.sdk.closeout.partial_work.production_specimen",
+        payload=_payload(
+            envelope_turn=2489,
+            closeout_source="section2_sidecar",
+            contract="implement",
+        ),
+    )
+    assert line is not None
+    assert "recorded partial:work specimen for event-envelope work" in line
+    assert "(turn 2489)" in line
+    assert "dispatch auto-4ee49ad8686d" in line
+    assert not line.startswith("Attention:")
+
+
 def test_render_completed_milestone() -> None:
     line = render_event_line(
         seq=101,

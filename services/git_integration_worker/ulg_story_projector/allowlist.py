@@ -18,6 +18,7 @@ StoryClass = Literal["routine", "milestone", "attention"]
 # Dropped from operator hypothesis: ``empty_directive_scope_waived`` — routine
 # noise when the gate fires often during dogfood; Kaywan mutes chatty feeds.
 SIGNAL_ALLOWLIST: tuple[str, ...] = (
+    "frontier.sdk.closeout.partial_work.production_specimen",
     "frontier.sdk.closeout.relayed",
     "frontier.sdk.worker.dispatched",
     "frontier.sdk.worker.completed",
@@ -42,6 +43,11 @@ class SignalMapping:
 
 
 SIGNAL_MAPPINGS: dict[str, SignalMapping] = {
+    "frontier.sdk.closeout.partial_work.production_specimen": SignalMapping(
+        signal="frontier.sdk.closeout.partial_work.production_specimen",
+        story_class="milestone",
+        verb="recorded partial:work specimen for",
+    ),
     "frontier.sdk.closeout.relayed": SignalMapping(
         signal="frontier.sdk.closeout.relayed",
         story_class="milestone",

@@ -460,6 +460,19 @@ async def post_operator_closeout(
             job.job_id,
             relay_phase=RELAY_PHASE_CLOSEOUT_POSTED,
         )
+    if ok and envelope_status == "partial:work" and not replay_mode:
+        from services.git_integration_worker.cursor_auto.partial_work_production_specimen_events import (
+            emit_partial_work_production_specimen,
+        )
+
+        emit_partial_work_production_specimen(
+            dispatch_id=dispatch_id,
+            envelope_turn=job.turn_number,
+            thread_id=job.thread_id,
+            closeout_source=closeout_source,
+            contract=getattr(job, "contract", None),
+            replay_mode=replay_mode,
+        )
     return {
         "ok": ok,
         "status_code": resp.status_code,

@@ -57,6 +57,7 @@ _PRIORITY_SIGNALS: tuple[str, ...] = (
     "frontier.sdk.worker.progress",
     "frontier.sdk.generate.requested",
     "frontier.sdk.worker.lease.released",
+    "frontier.sdk.closeout.partial_work.production_specimen",
     "frontier.sdk.closeout.relayed",
     "pipeline.frontier.dispatch.started",
     "pipeline.frontier.dispatch.completed",

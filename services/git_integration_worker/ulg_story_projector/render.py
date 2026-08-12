@@ -280,6 +280,14 @@ def render_event_line(
     if signal == "frontier.sdk.closeout.relayed":
         receipt = str(payload.get("receipt_path") or "receipt path not recorded")
         sentence = f"cursor-sdk finished {purpose} for {seat} — receipt at {receipt}."
+    elif signal == "frontier.sdk.closeout.partial_work.production_specimen":
+        dispatch = str(payload.get("dispatch_id") or "unknown dispatch")
+        turn = payload.get("envelope_turn")
+        turn_bit = f" (turn {turn})" if turn is not None else ""
+        sentence = (
+            f"cursor-sdk {mapping.verb} {purpose} for {seat}{turn_bit} — "
+            f"dispatch {dispatch}."
+        )
     elif signal == "frontier.sdk.worker.dispatched":
         thread = str(payload.get("thread_id") or "unknown thread")
         seat_subject = _seat_subject(payload, mode)
