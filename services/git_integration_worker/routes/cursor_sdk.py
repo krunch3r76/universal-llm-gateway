@@ -1478,6 +1478,7 @@ async def _deliver_sdk_closeout(
         execution_id=req.execution_id,
         extra_deviations=extra_deviations,
         worktree_isolated=worktree_isolated,
+        resolved_model=req.model,
     )
     run_outcome = resolve_run_outcome_label(degraded_reason)
     if delivery.closeout_status.value == "partial":

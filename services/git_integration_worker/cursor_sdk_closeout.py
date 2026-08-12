@@ -129,6 +129,10 @@ from services.git_integration_worker.cursor_sdk_test_observation import (
     extract_prose_test_claim,
     harvest_test_verifications,
 )
+from services.git_integration_worker.cursor_sdk_usage_sidecar import (
+    render_usage_sidecar_section,
+    stamp_usage_model_label,
+)
 from services.git_integration_worker.seat_write_ledger import SeatWriteLedger
 
 logger = get_logger(__name__)
@@ -1010,6 +1014,7 @@ def build_implement_closeout_body(
     landed: bool | None = None,
     isolation_materialized: bool | None = None,
     escalation_harvest: str | None = "none",
+    resolved_model: str | None = None,
 ) -> str:
     """Build a compact, valid ImplementCloseout JSON turn body.
 
@@ -1224,7 +1229,7 @@ def build_implement_closeout_body(
             ),
             propagation_residue=propagation_residue,
             propagation=list(propagation_rows),
-            usage=outcome.usage,
+            usage=stamp_usage_model_label(outcome.usage, resolved_model),
             usage_capture_status=outcome.usage_capture_status,  # type: ignore[arg-type]
         )
         payload = closeout.model_dump(mode="json")
@@ -1334,6 +1339,7 @@ def prepare_closeout_delivery(
     light_bounded_expected_paths: tuple[str, ...] = (),
     execution_id: str = "test-execution",
     post_closeout_sidecar_fn: Callable[..., dict[str, Any] | None] | None = None,
+    resolved_model: str | None = None,
 ) -> CloseoutDelivery:
     """Sync closeout assembly (tests). Production uses ``prepare_closeout_delivery_async``."""
     return _assemble_closeout_delivery(
@@ -1353,6 +1359,7 @@ def prepare_closeout_delivery(
         light_bounded_expected_paths=light_bounded_expected_paths,
         execution_id=execution_id,
         post_closeout_sidecar_fn=post_closeout_sidecar_fn,
+        resolved_model=resolved_model,
     )
 
 
@@ -1373,6 +1380,7 @@ async def prepare_closeout_delivery_async(
     extra_deviations: tuple[str, ...] = (),
     post_closeout_sidecar_fn: Callable[..., Any] | None = None,
     worktree_isolated: bool = False,
+    resolved_model: str | None = None,
 ) -> CloseoutDelivery:
     """Write sidecar, resolve pinned cortex deliverables, build closeout JSON."""
     write_tree, _, _ = _capture_trees(source_repo, binding)
@@ -1418,6 +1426,7 @@ async def prepare_closeout_delivery_async(
         extra_deviations=extra_deviations,
         post_closeout_sidecar_fn=post_closeout_sidecar_fn,
         worktree_isolated=worktree_isolated,
+        resolved_model=resolved_model,
     )
 
 
@@ -1477,6 +1486,7 @@ def _assemble_closeout_delivery(
     post_closeout_sidecar_fn: Callable[..., dict[str, Any] | None] | None = None,
     finalize_oversize: bool = True,
     worktree_isolated: bool = False,
+    resolved_model: str | None = None,
 ) -> CloseoutDelivery:
     """Assemble implement closeout delivery.
 
@@ -1909,11 +1919,23 @@ def _assemble_closeout_delivery(
         landed=capture_landed,
         isolation_materialized=isolation_mat,
         escalation_harvest=escalation_harvest,
+        resolved_model=resolved_model,
     )
+    usage_section = render_usage_sidecar_section(
+        usage=outcome.usage,
+        usage_capture_status=outcome.usage_capture_status,
+        resolved_model=resolved_model,
+    )
+    sidecar_suffix_parts: list[str] = []
     if sidecar_appendix:
-        appendix = "\n\n## effects_manifest\n\n" + "\n".join(sidecar_appendix)
+        sidecar_suffix_parts.append(
+            "\n\n## effects_manifest\n\n" + "\n".join(sidecar_appendix)
+        )
+    if usage_section:
+        sidecar_suffix_parts.append("\n\n" + usage_section)
+    if sidecar_suffix_parts:
         sidecar_path.write_text(
-            sidecar_path.read_text(encoding="utf-8") + appendix,
+            sidecar_path.read_text(encoding="utf-8") + "".join(sidecar_suffix_parts),
             encoding="utf-8",
         )
         result_bytes = len(sidecar_path.read_text(encoding="utf-8").encode("utf-8"))
@@ -1983,6 +2005,7 @@ async def _assemble_closeout_delivery_async(
     extra_deviations: tuple[str, ...] = (),
     post_closeout_sidecar_fn: Callable[..., Any] | None = None,
     worktree_isolated: bool = False,
+    resolved_model: str | None = None,
 ) -> CloseoutDelivery:
     delivery = _assemble_closeout_delivery(
         source_repo=source_repo,
@@ -2004,6 +2027,7 @@ async def _assemble_closeout_delivery_async(
         extra_deviations=extra_deviations,
         finalize_oversize=False,
         worktree_isolated=worktree_isolated,
+        resolved_model=resolved_model,
     )
     full_body = delivery.body
     if len(full_body) <= MAX_TURN_BODY_CHARS:

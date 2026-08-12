@@ -417,12 +417,19 @@ def _drain_deferred_result(intent: Any, *, reason: str | None = None) -> dict[st
     waiting in-window for healthy while holding ``cursor_sdk_gate`` never
     converges (friction 25989). Arm the intent, then exit so active_count→0.
     """
+    from scripts.model_manager.ui.controller.restart_intent_consumer import (
+        project_restart_intent_consumer,
+    )
+
+    projected = project_restart_intent_consumer(intent)
     return {
         "status": "deferred",
         "state": "draining",
         "service": intent.service,
-        "restart_intent_id": intent.intent_id,
-        "deadline_at": intent.deadline_at,
+        "restart_intent_id": projected["restart_intent_id"],
+        "deadline_ceiling_at": projected["deadline_ceiling_at"],
+        "deadline_semantics": projected["deadline_semantics"],
+        "deadline_at": projected["deadline_at"],
         "reason": reason or "draining; completion delivered via git_worker.drain events",
         "caller_must_exit_to_release_lease": True,
         "guidance": (

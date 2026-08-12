@@ -38,6 +38,7 @@ _VALID_ACTIONS = frozenset(
         "rebuild",
         "wait_healthy",
         "busy_status",
+        "restart_intent_status",
         "cancel_restart_intent",
         "whoami",
         "charter_reload",
@@ -274,7 +275,15 @@ def register_manage_tools(mcp: FastMCP) -> None:
                                              restart_intent is null when
                                              no live non-terminal intent exists;
                                              otherwise {restart_intent_id, status,
-                                             drain_epoch, deadline_at, elapsed_s}.
+                                             drain_epoch, deadline_ceiling_at,
+                                             deadline_semantics, deadline_at,
+                                             elapsed_s, service, action, reason}.
+                                             deadline_ceiling_at/deadline_semantics:
+                                             TTL alert ceiling — NOT scheduled fire.
+          restart_intent_status (intent_id | service) — one-call read of a
+                                             restart intent (live intent when
+                                             service= given). Same projection as
+                                             busy_status.restart_intent; no mutation.
                                              restart_window is null when no operator
                                              restart window covers the service;
                                              otherwise {window_id, scope, service_set,
@@ -389,6 +398,11 @@ def register_manage_tools(mcp: FastMCP) -> None:
             params["force"] = True
         if action == "cancel_restart_intent":
             params["intent_id"] = intent_id
+        if action == "restart_intent_status":
+            if intent_id:
+                params["intent_id"] = intent_id
+            if service:
+                params["service"] = service
         if action == "charter_pause":
             params["set_by"] = "mcp"
             if reason:

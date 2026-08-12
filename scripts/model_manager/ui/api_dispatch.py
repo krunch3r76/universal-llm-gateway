@@ -32,6 +32,7 @@ from .controller.restart_intent_store import (
     RestartIntentStore,
     intent_status_view,
 )
+from .controller.restart_intent_consumer import project_restart_intent_consumer
 from .controller.restart_window_ctl import lifecycle_with_restart_window
 from .lifecycle_envelope import start_envelope
 
@@ -237,6 +238,9 @@ async def execute(
         case "busy_status":
             return await _busy_status(ctl)
 
+        case "restart_intent_status":
+            return await _restart_intent_status(ctl, params)
+
         case "cancel_restart_intent":
             return await _cancel_restart_intent(ctl, params)
 
@@ -303,7 +307,8 @@ async def execute(
             raise ValueError(
                 f"Unknown method: '{method}'. "
                 "Valid: status, health, wait_healthy, start, stop, restart, "
-                "sync_restart, rebuild, busy_status, cancel_restart_intent, "
+                "sync_restart, rebuild, busy_status, restart_intent_status, "
+                "cancel_restart_intent, "
                 "whoami, charter_reload, charter_pause, charter_resume, "
                 "charter_hold_status, charter_block_root, charter_unblock_root, "
                 "charter_root_status, fleet_sync_restart, fleet_rebuild_deploy"
@@ -558,7 +563,9 @@ async def _busy_status(ctl: ServiceController) -> dict[str, Any]:
     for service, entry in report.items():
         intent = live_intents.get(service)
         entry["restart_intent"] = (
-            intent_status_view(intent, now=now) if intent is not None else None
+            project_restart_intent_consumer(intent, now=now)
+            if intent is not None
+            else None
         )
         entry["restart_window"] = store.restart_window_for_service(service, now=now)
         entry["active_work_summary"] = format_active_work_summary(
@@ -576,6 +583,26 @@ async def _busy_status(ctl: ServiceController) -> dict[str, Any]:
         },
         "charter_hold": hold_status,
     }
+
+
+async def _restart_intent_status(
+    ctl: ServiceController, params: dict[str, Any]
+) -> dict[str, Any]:
+    """Read one restart intent by id or live intent for a service (no mutation)."""
+    intent_id = str(params.get("intent_id") or "").strip()
+    service = str(params.get("service") or "").strip()
+    store = ctl.restart_intent_store
+    now = datetime.now(UTC)
+    intent = None
+    if intent_id:
+        intent = store.get(intent_id)
+    elif service:
+        intent = store.active_for_service(service)
+    else:
+        raise ValueError("restart_intent_status requires 'intent_id' or 'service'")
+    if intent is None:
+        return {"restart_intent": None}
+    return {"restart_intent": project_restart_intent_consumer(intent, now=now)}
 
 
 async def _cancel_restart_intent(
