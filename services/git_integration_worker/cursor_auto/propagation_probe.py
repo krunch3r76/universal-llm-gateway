@@ -245,6 +245,15 @@ def _code_version(payload: dict[str, Any]) -> str | None:
 
 
 IdentityAttestation = Literal["changed", "unchanged", "indeterminate"]
+IdentityMeasurement = Literal["absent", "measured"]
+
+_IDENTITY_AWARE_PROOF_CLASSES = frozenset(
+    {"process_live", "served_artifact", "client_visible"}
+)
+
+
+class IdentityMeasurementError(ValueError):
+    """Close chokepoint cannot stamp identity_measurement — row must not close."""
 
 IDENTIFIER_FIELDS: tuple[str, ...] = ("pid", "process_start_time", "source_synced_at")
 AGE_FIELDS: tuple[str, ...] = ("process_age_s", "uptime_s")
@@ -481,6 +490,83 @@ def proof_identity_attestation(
     )
 
 
+def _proof_before_for_measurement(
+    proof_payload: dict[str, Any],
+    *,
+    code_ref: str,
+    open_row_payload: dict[str, Any] | None,
+) -> tuple[dict[str, Any] | None, bool]:
+    """Return coerced before dict, or (None, malformed) when persisted before is invalid."""
+    if "proof_before" in proof_payload:
+        candidate = proof_payload["proof_before"]
+        if candidate is None:
+            return None, False
+        if not isinstance(candidate, dict):
+            raise IdentityMeasurementError(
+                "proof_before in close payload was not a dict"
+            )
+        return candidate, False
+
+    if open_row_payload is None:
+        return None, False
+
+    stored_ref = open_row_payload.get("code_ref_at_submit")
+    if isinstance(stored_ref, str) and stored_ref != code_ref:
+        return None, False
+
+    if "proof_before" not in open_row_payload:
+        return None, False
+
+    candidate = open_row_payload["proof_before"]
+    if candidate is None:
+        return None, False
+    if not isinstance(candidate, dict):
+        return None, True
+    return candidate, False
+
+
+def resolve_identity_measurement(
+    proof_payload: dict[str, Any],
+    *,
+    service: str,
+    proof_class: str,
+    code_ref: str,
+    open_row_payload: dict[str, Any] | None = None,
+) -> IdentityMeasurement:
+    """Record whether before/after identity was measured for this close attempt.
+
+    Parallel to ``IdentityAttestation`` (evaluative result). ``absent`` means no
+    measurement was made; ``measured`` means a before/after or attestation arm ran.
+    """
+    _ = service  # reserved for surface-specific measurement rules
+    if proof_payload.get("version_satisfaction_case") == "ancestry_satisfied":
+        return "absent"
+    if "identity_attestation" in proof_payload or "identity_attested" in proof_payload:
+        return "measured"
+    if proof_payload.get("proof_predicate_satisfied") is True:
+        return "measured"
+
+    before, malformed = _proof_before_for_measurement(
+        proof_payload,
+        code_ref=code_ref,
+        open_row_payload=open_row_payload,
+    )
+    if malformed:
+        raise IdentityMeasurementError(
+            "persisted proof_before was not a dict — cannot stamp identity_measurement"
+        )
+    if isinstance(before, dict):
+        return "measured"
+
+    if (
+        proof_class in _IDENTITY_AWARE_PROOF_CLASSES
+        and proof_payload.get("proof_class_executed") is not None
+        and proof_payload.get("version_satisfaction_case") is None
+    ):
+        return "measured"
+    return "absent"
+
+
 def _probe_is_outgoing_generation(
     payload: dict[str, Any],
     *,
@@ -604,6 +690,8 @@ __all__ = [
     "AGE_FIELDS",
     "IDENTIFIER_FIELDS",
     "IdentityAttestation",
+    "IdentityMeasurement",
+    "IdentityMeasurementError",
     "PROCESS_LIVE_FETCHERS",
     "resolve_cdp_ask_probe_base_url",
     "attest_authority_identity",
@@ -616,6 +704,7 @@ __all__ = [
     "proof_identity_attestation",
     "proof_observed",
     "resolve_identity_attestation",
+    "resolve_identity_measurement",
     "row_key",
     "strong_process_identity",
 ]

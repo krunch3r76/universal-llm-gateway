@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import pytest
 from unittest.mock import patch
 
 from implement_admission.propagation_row import PropagationRow
 
 from services.git_integration_worker.cursor_auto.propagation_probe import (
+    IdentityMeasurementError,
     attest_identity_delta,
     process_identity,
     proof_identity_attestation,
     proof_observed,
+    resolve_identity_measurement,
     strong_process_identity,
 )
 
@@ -350,3 +353,112 @@ def test_client_visible_mcp_missing_cortex_api() -> None:
 def test_client_visible_mcp_flat_payload_rejected() -> None:
     row = _row("mcp", _SHA_A, proof_class="client_visible")
     assert proof_observed(row, {"code_version": _SHA_A}) is False
+
+
+# --- identity_measurement (arc 6655 propagation-proof-indeterminate-close-gate) ---
+
+
+def _resolve(**kwargs: object) -> str:
+    base: dict[str, object] = {
+        "proof_payload": {},
+        "service": "git_integration_worker",
+        "proof_class": "process_live",
+        "code_ref": _SHA_A,
+        "open_row_payload": None,
+    }
+    base.update(kwargs)
+    return resolve_identity_measurement(
+        base["proof_payload"],  # type: ignore[arg-type]
+        service=str(base["service"]),
+        proof_class=str(base["proof_class"]),
+        code_ref=str(base["code_ref"]),
+        open_row_payload=base["open_row_payload"],  # type: ignore[arg-type]
+    )
+
+
+def test_identity_measurement_ancestry_satisfied_is_absent() -> None:
+    assert (
+        _resolve(
+            proof_payload={"version_satisfaction_case": "ancestry_satisfied"},
+        )
+        == "absent"
+    )
+
+
+def test_identity_measurement_attestation_changed_is_measured() -> None:
+    assert (
+        _resolve(
+            proof_payload={
+                "identity_attestation": "changed",
+                "version_satisfaction_case": "exact_match",
+            },
+        )
+        == "measured"
+    )
+
+
+def test_identity_measurement_attestation_indeterminate_is_measured() -> None:
+    assert (
+        _resolve(
+            proof_payload={
+                "identity_attestation": "indeterminate",
+                "version_satisfaction_case": "exact_match",
+            },
+        )
+        == "measured"
+    )
+
+
+def test_identity_measurement_before_none_after_coerce_is_absent() -> None:
+    assert (
+        _resolve(
+            proof_payload={"version_satisfaction_case": "exact_match"},
+            open_row_payload={"proof_before": None, "code_ref_at_submit": _SHA_A},
+        )
+        == "absent"
+    )
+
+
+def test_identity_measurement_empty_before_dict_is_measured() -> None:
+    assert (
+        _resolve(
+            proof_payload={},
+            open_row_payload={"proof_before": {}, "code_ref_at_submit": _SHA_A},
+        )
+        == "measured"
+    )
+
+
+def test_identity_measurement_harvest_close_without_persisted_before_is_measured() -> None:
+    assert (
+        _resolve(
+            proof_payload={
+                "code_version": _SHA_A,
+                "pid": 200,
+                "proof_class_requested": "process_live",
+                "proof_class_executed": "process_live",
+            },
+        )
+        == "measured"
+    )
+
+
+def test_identity_measurement_never_computed_settle_exact_match_is_absent() -> None:
+    assert (
+        _resolve(
+            proof_payload={
+                "code_version": _SHA_A,
+                "version_satisfaction_case": "exact_match",
+                "code_ref_relation": "equal",
+            },
+        )
+        == "absent"
+    )
+
+
+def test_identity_measurement_malformed_persisted_before_raises() -> None:
+    with pytest.raises(IdentityMeasurementError, match="not a dict"):
+        _resolve(
+            proof_payload={"code_version": _SHA_A},
+            open_row_payload={"proof_before": "not-a-dict", "code_ref_at_submit": _SHA_A},
+        )

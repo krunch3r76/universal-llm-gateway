@@ -355,6 +355,45 @@ def fail_row(
             db.close()
 
 
+@dataclass(frozen=True)
+class _OpenRowCloseContext:
+    service: str
+    proof_class: str
+    code_ref: str
+    open_proof_payload: dict[str, Any] | None
+
+
+def _load_open_row_close_context(
+    row_id: str,
+    db: sqlite3.Connection,
+) -> _OpenRowCloseContext | None:
+    """Load open-row metadata needed to stamp ``identity_measurement`` at close."""
+    cur = db.execute(
+        """
+        SELECT service, proof_class, code_ref, proof_payload
+        FROM propagation_ledger
+        WHERE row_id=? AND status='open'
+        """,
+        (row_id,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        return None
+    open_payload: dict[str, Any] | None
+    raw = row["proof_payload"]
+    if raw is None:
+        open_payload = None
+    else:
+        parsed = json.loads(raw)
+        open_payload = parsed if isinstance(parsed, dict) else None
+    return _OpenRowCloseContext(
+        service=str(row["service"]),
+        proof_class=str(row["proof_class"]),
+        code_ref=str(row["code_ref"]),
+        open_proof_payload=open_payload,
+    )
+
+
 def close_row(
     row_id: str,
     *,
@@ -365,11 +404,39 @@ def close_row(
 
     ``status=closed`` is an attempt outcome (``STATUS_CLAIM_KIND=observed_of_attempt``),
     not a standing liveness oracle.
+
+    Stamps ``identity_measurement`` at this chokepoint for every close writer.
     """
     own_conn = conn is None
     db = conn or open_ledger_db()
     now = time.time()
-    payload = {**proof_payload, "status_claim_kind": _STATUS_CLAIM_KIND}
+    context = _load_open_row_close_context(row_id, db)
+    if context is None:
+        if own_conn:
+            db.close()
+        return
+    from services.git_integration_worker.cursor_auto.propagation_probe import (
+        IdentityMeasurementError,
+        resolve_identity_measurement,
+    )
+
+    try:
+        identity_measurement = resolve_identity_measurement(
+            proof_payload,
+            service=context.service,
+            proof_class=context.proof_class,
+            code_ref=context.code_ref,
+            open_row_payload=context.open_proof_payload,
+        )
+    except IdentityMeasurementError:
+        if own_conn:
+            db.close()
+        raise
+    payload = {
+        **proof_payload,
+        "identity_measurement": identity_measurement,
+        "status_claim_kind": _STATUS_CLAIM_KIND,
+    }
     try:
         execute_with_retry(
             db,
