@@ -21,6 +21,11 @@ from typing import Any
 
 from transport_utils import MANAGE_SOCKET
 
+from services.git_integration_worker.dispatch_home_host_guard import (
+    DispatchHomeHostRefusal,
+    refuse_host_target_if_dispatch_home,
+)
+
 from .checks import (
     RefuseFinding,
     collect_refuse_report,
@@ -122,6 +127,28 @@ def run_guarded_reexec(
     """Run refuse/require/proof path; dry_run never quits or pauses charter hold."""
     manage_call = manage_call or call_manage
     run_cmd = run_cmd or _default_run
+
+    try:
+        refuse_host_target_if_dispatch_home(tool="guarded_manage_reexec")
+    except DispatchHomeHostRefusal as exc:
+        return GuardedReexecResult(
+            status="dry-run" if dry_run else "refused",
+            reason="dispatch_home_host_refusal",
+            dry_run=dry_run,
+            checks={
+                "findings": [
+                    {
+                        "reason": "dispatch_home_host_refusal",
+                        "offenders": [{"message": str(exc)}],
+                    }
+                ],
+                "refused": True,
+            },
+            target_ref=target_ref,
+            executed=False,
+            boot_timeout_s=boot_timeout_s,
+            quit_timeout_s=quit_timeout_s,
+        )
 
     def _busy() -> dict[str, Any]:
         return manage_call("busy_status", {}, sock_path=sock_path)
