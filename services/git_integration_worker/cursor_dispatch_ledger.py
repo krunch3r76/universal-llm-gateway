@@ -37,11 +37,12 @@ _STATUS_QUEUED = "queued"
 _STATUS_ADMITTED = "admitted"
 _STATUS_RUNNING = "running"
 _STATUS_PARKED_WAITING = "parked_waiting"
-_STATUS_TERMINAL = ("completed", "failed")
+_STATUS_TERMINAL = ("completed", "failed", "cancelled")
 _ACTIVE_WRITER_STATUSES = (_STATUS_ADMITTED, _STATUS_RUNNING)
 _STATUS_CHECK = (
-    "'queued','admitted','running','parked_waiting','completed','failed'"
+    "'queued','admitted','running','parked_waiting','completed','failed','cancelled'"
 )
+_TERMINAL_STATUS_CHECK = "'completed','failed','cancelled'"
 _WORK_IDENTITY_CONTRACTS = frozenset({"implement", "consult", "light-bounded"})
 
 _DDL = """
@@ -57,10 +58,11 @@ CREATE TABLE IF NOT EXISTS cursor_sdk_dispatches (
     state_root         TEXT,
     sdk_agent_id       TEXT,
     sdk_run_id         TEXT,
-    status             TEXT NOT NULL CHECK (status IN ('queued','admitted','running','parked_waiting','completed','failed')),
+    status             TEXT NOT NULL CHECK (status IN ('queued','admitted','running','parked_waiting','completed','failed','cancelled')),
     started_at         TEXT,
     last_heartbeat_at  TEXT,
-    terminal_status    TEXT CHECK (terminal_status IN ('completed','failed')),
+    terminal_status    TEXT CHECK (terminal_status IN ('completed','failed','cancelled')),
+    work_fingerprint   TEXT,
     terminal_at        TEXT,
     record_json        TEXT NOT NULL DEFAULT '{}',
     queued_at          TEXT,
@@ -109,6 +111,7 @@ class SourceRefConflict(Exception):  # noqa: N818 — peer implement gate
     Attributes:
         source_ref: Work-item identity that collided (legacy / fallback).
         work_key: Stable work identity when supplied by caller.
+        work_fingerprint: Content-identity fingerprint when the dup gate fires.
         holder_dispatch_id: In-flight peer dispatch id.
         holder_thread_id: In-flight peer bus thread id, when persisted.
     """
@@ -120,16 +123,44 @@ class SourceRefConflict(Exception):  # noqa: N818 — peer implement gate
         holder_dispatch_id: str,
         holder_thread_id: str | None,
         work_key: str | None = None,
+        work_fingerprint: str | None = None,
     ) -> None:
         self.source_ref = source_ref
         self.work_key = work_key
+        self.work_fingerprint = work_fingerprint
         self.holder_dispatch_id = holder_dispatch_id
         self.holder_thread_id = holder_thread_id
-        identity = work_key or source_ref or "?"
+        identity = work_key or work_fingerprint or source_ref or "?"
         super().__init__(
             f"work identity {identity!r} already has non-terminal dispatch "
             f"(holder_dispatch_id={holder_dispatch_id!r}, "
             f"holder_thread_id={holder_thread_id!r})"
+        )
+
+
+class DispatchNotFound(Exception):  # noqa: N818 — operator cancel lookup
+    """Raised when ``dispatch_id`` is absent from the durable ledger."""
+
+    def __init__(self, dispatch_id: str) -> None:
+        self.dispatch_id = dispatch_id
+        super().__init__(f"dispatch_id {dispatch_id!r} not found")
+
+
+class NotCancellableRunning(Exception):  # noqa: N818 — MVP running/parked veto
+    """Typed refusal when operator cancel cannot stop a live worker row."""
+
+    def __init__(
+        self,
+        *,
+        dispatch_id: str,
+        status: str,
+        thread_id: str | None,
+    ) -> None:
+        self.dispatch_id = dispatch_id
+        self.status = status
+        self.thread_id = thread_id
+        super().__init__(
+            f"dispatch_id {dispatch_id!r} status={status!r} is not cancellable"
         )
 
 
@@ -205,6 +236,16 @@ class PromotedDispatch:
     read_only: bool
     record_json: str
     lease_key: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CancelDispatchResult:
+    """Outcome of operator cancel — ledger authority; route emits events."""
+
+    outcome: str
+    row: dict[str, Any]
+    lease_key: str | None = None
+    needs_promote: bool = False
 
 
 def _dispatch_record_json(req: CursorDispatchRequest) -> str:
@@ -340,6 +381,14 @@ def _response_from_row(
             queue_position=queue_position,
             since=row["queued_at"],
             **holder_fields,
+        )
+    if status in _STATUS_TERMINAL:
+        return CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=row["dispatch_id"],
+            thread_id=row["thread_id"],
+            model_id=row["resolved_model"],
+            status=status,  # type: ignore[arg-type]
         )
     return CursorDispatchResponse(
         admitted=True,
@@ -514,6 +563,230 @@ def _migrate_lease_key_column(conn: sqlite3.Connection) -> None:
     )
 
 
+def _work_fingerprint_from_parts(
+    *,
+    thread_id: str | None,
+    packet_path: str | None,
+    message: str | None,
+    read_only: bool,
+) -> str | None:
+    if not thread_id:
+        return None
+    message_hash: str | None = None
+    if message:
+        message_hash = hashlib.sha256(message.encode()).hexdigest()
+    if not packet_path and not message_hash:
+        return None
+    payload = {
+        "thread_id": thread_id,
+        "packet_path": packet_path,
+        "message_hash": message_hash,
+        "read_only": read_only,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _work_fingerprint_from_record_json(
+    *,
+    thread_id: str | None,
+    packet_path: str | None,
+    record_json: str,
+    read_only: bool,
+) -> str | None:
+    message: str | None = None
+    try:
+        data = json.loads(record_json or "{}")
+    except json.JSONDecodeError:
+        data = {}
+    if isinstance(data, dict):
+        raw = data.get("message")
+        if isinstance(raw, str) and raw:
+            message = raw
+        path = data.get("packet_path")
+        if isinstance(path, str) and path:
+            packet_path = path
+        if "read_only" in data:
+            read_only = bool(data["read_only"])
+    return _work_fingerprint_from_parts(
+        thread_id=thread_id,
+        packet_path=packet_path,
+        message=message,
+        read_only=read_only,
+    )
+
+
+def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    return {k: row[k] for k in row.keys()}
+
+
+def _merge_record_json_conn(
+    conn: sqlite3.Connection,
+    *,
+    dispatch_id: str,
+    patch: dict[str, Any],
+) -> None:
+    row = conn.execute(
+        "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+        (dispatch_id,),
+    ).fetchone()
+    if row is None:
+        return
+    try:
+        data = json.loads(row["record_json"] or "{}")
+    except json.JSONDecodeError:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    data.update(patch)
+    conn.execute(
+        "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",
+        (json.dumps(data, sort_keys=True, separators=(",", ":")), dispatch_id),
+    )
+
+
+def _migrate_cancelled_status(conn: sqlite3.Connection) -> None:
+    """Add ``cancelled`` terminal + ``work_fingerprint`` via table rebuild."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='cursor_sdk_dispatches'"
+    ).fetchone()
+    if row is None or row["sql"] is None:
+        return
+    cols = {
+        r["name"] for r in conn.execute("PRAGMA table_info(cursor_sdk_dispatches)")
+    }
+    needs_cancelled = "'cancelled'" not in row["sql"]
+    needs_fingerprint = "work_fingerprint" not in cols
+    if not needs_cancelled and not needs_fingerprint:
+        return
+    if needs_fingerprint and not needs_cancelled:
+        conn.execute(
+            "ALTER TABLE cursor_sdk_dispatches ADD COLUMN work_fingerprint TEXT"
+        )
+        rows = conn.execute(
+            "SELECT dispatch_id, thread_id, packet_path, record_json, read_only "
+            "FROM cursor_sdk_dispatches"
+        ).fetchall()
+        for r in rows:
+            wf = _work_fingerprint_from_record_json(
+                thread_id=r["thread_id"],
+                packet_path=r["packet_path"],
+                record_json=r["record_json"] or "{}",
+                read_only=bool(r["read_only"]),
+            )
+            if wf:
+                conn.execute(
+                    "UPDATE cursor_sdk_dispatches SET work_fingerprint=? "
+                    "WHERE dispatch_id=?",
+                    (wf, r["dispatch_id"]),
+                )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_work_fingerprint_active "
+            "ON cursor_sdk_dispatches(work_fingerprint, status) "
+            "WHERE status IN ('queued','admitted','running') "
+            "AND work_fingerprint IS NOT NULL"
+        )
+        return
+    has_work_key = "work_key" in cols
+    has_lease_key = "lease_key" in cols
+    work_key_select = "work_key" if has_work_key else "NULL"
+    lease_key_select = "lease_key" if has_lease_key else "NULL"
+    conn.executescript(
+        f"""
+        CREATE TABLE cursor_sdk_dispatches_v6 (
+            dispatch_id        TEXT PRIMARY KEY,
+            fingerprint        TEXT NOT NULL,
+            thread_id          TEXT NOT NULL,
+            execution_id       TEXT,
+            caller_agent       TEXT,
+            resolved_model     TEXT NOT NULL,
+            packet_path        TEXT,
+            message_present    INTEGER NOT NULL DEFAULT 0,
+            state_root         TEXT,
+            sdk_agent_id       TEXT,
+            sdk_run_id         TEXT,
+            status             TEXT NOT NULL CHECK (
+                status IN ({_STATUS_CHECK})
+            ),
+            started_at         TEXT,
+            last_heartbeat_at  TEXT,
+            terminal_status    TEXT CHECK (terminal_status IN ({_TERMINAL_STATUS_CHECK})),
+            terminal_at        TEXT,
+            record_json        TEXT NOT NULL DEFAULT '{{}}',
+            wt_baseline        TEXT,
+            contract           TEXT,
+            source_repo        TEXT,
+            read_only          INTEGER NOT NULL DEFAULT 0,
+            worker_instance    TEXT,
+            queued_at          TEXT,
+            source_ref         TEXT,
+            park_child_dispatch_id TEXT,
+            lease_key          TEXT,
+            work_key           TEXT,
+            work_fingerprint   TEXT
+        );
+        INSERT INTO cursor_sdk_dispatches_v6 (
+            dispatch_id, fingerprint, thread_id, execution_id, caller_agent,
+            resolved_model, packet_path, message_present, state_root,
+            sdk_agent_id, sdk_run_id, status, started_at, last_heartbeat_at,
+            terminal_status, terminal_at, record_json, wt_baseline, contract,
+            source_repo, read_only, worker_instance, queued_at, source_ref,
+            park_child_dispatch_id, lease_key, work_key, work_fingerprint
+        )
+        SELECT
+            dispatch_id, fingerprint, thread_id, execution_id, caller_agent,
+            resolved_model, packet_path, message_present, state_root,
+            sdk_agent_id, sdk_run_id, status, started_at, last_heartbeat_at,
+            terminal_status, terminal_at, record_json, wt_baseline, contract,
+            source_repo, read_only, worker_instance, queued_at, source_ref,
+            park_child_dispatch_id, {lease_key_select}, {work_key_select}, NULL
+        FROM cursor_sdk_dispatches;
+        DROP TABLE cursor_sdk_dispatches;
+        ALTER TABLE cursor_sdk_dispatches_v6 RENAME TO cursor_sdk_dispatches;
+        CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_running
+            ON cursor_sdk_dispatches(status) WHERE status = 'running';
+        CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_execution
+            ON cursor_sdk_dispatches(execution_id);
+        CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_parked
+            ON cursor_sdk_dispatches(source_repo, status)
+            WHERE status = 'parked_waiting';
+        CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_queued_lease
+            ON cursor_sdk_dispatches(lease_key, worker_instance, status)
+            WHERE status = 'queued';
+        CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_parked_lease
+            ON cursor_sdk_dispatches(lease_key, status)
+            WHERE status = 'parked_waiting';
+        CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_source_ref_active
+            ON cursor_sdk_dispatches(source_ref, status)
+            WHERE status IN ('queued','admitted','running');
+        CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_work_key_active
+            ON cursor_sdk_dispatches(work_key, status)
+            WHERE status IN ('queued','admitted','running');
+        CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_work_fingerprint_active
+            ON cursor_sdk_dispatches(work_fingerprint, status)
+            WHERE status IN ('queued','admitted','running')
+            AND work_fingerprint IS NOT NULL;
+        """
+    )
+    rows = conn.execute(
+        "SELECT dispatch_id, thread_id, packet_path, record_json, read_only "
+        "FROM cursor_sdk_dispatches"
+    ).fetchall()
+    for r in rows:
+        wf = _work_fingerprint_from_record_json(
+            thread_id=r["thread_id"],
+            packet_path=r["packet_path"],
+            record_json=r["record_json"] or "{}",
+            read_only=bool(r["read_only"]),
+        )
+        if wf:
+            conn.execute(
+                "UPDATE cursor_sdk_dispatches SET work_fingerprint=? "
+                "WHERE dispatch_id=?",
+                (wf, r["dispatch_id"]),
+            )
+
+
 class CursorDispatchLedger:
     """Durable singleton; survives worker restart. DB methods are sync (F1)."""
 
@@ -575,6 +848,7 @@ class CursorDispatchLedger:
             _migrate_queued_status(conn)
             _migrate_parked_waiting_status(conn)
             _migrate_lease_key_column(conn)
+            _migrate_cancelled_status(conn)
             from services.git_integration_worker.cursor_sdk_land_lease import (
                 ensure_land_lease_schema,
             )
@@ -594,6 +868,12 @@ class CursorDispatchLedger:
                 "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_work_key_active "
                 "ON cursor_sdk_dispatches(work_key, status) "
                 "WHERE status IN ('queued','admitted','running')"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_work_fingerprint_active "
+                "ON cursor_sdk_dispatches(work_fingerprint, status) "
+                "WHERE status IN ('queued','admitted','running') "
+                "AND work_fingerprint IS NOT NULL"
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_parked "
@@ -623,6 +903,16 @@ class CursorDispatchLedger:
         }
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).hexdigest()
+
+    @staticmethod
+    def work_fingerprint(req: CursorDispatchRequest) -> str | None:
+        """Content identity excluding dispatch/execution ids (dup gate)."""
+        return _work_fingerprint_from_parts(
+            thread_id=req.thread_id,
+            packet_path=req.packet_path,
+            message=req.message,
+            read_only=req.read_only,
+        )
 
     def admit(
         self,
@@ -664,6 +954,7 @@ class CursorDispatchLedger:
 
         Raises ``DispatchConflict`` on fingerprint mismatch."""
         record_json = _dispatch_record_json(req)
+        content_wf = self.work_fingerprint(req)
         if concurrency_posture:
             from services.git_integration_worker.cursor_sdk_concurrency_posture import (
                 stamp_posture_on_record_json,
@@ -740,6 +1031,21 @@ class CursorDispatchLedger:
                         work_key=work_key,
                         holder_dispatch_id=peer["dispatch_id"],
                         holder_thread_id=peer["thread_id"],
+                    )
+            if content_wf and not force:
+                fp_peer = conn.execute(
+                    "SELECT dispatch_id, thread_id FROM cursor_sdk_dispatches "
+                    "WHERE work_fingerprint=? AND dispatch_id<>? "
+                    "AND status IN ('queued','admitted','running') LIMIT 1",
+                    (content_wf, req.dispatch_id),
+                ).fetchone()
+                if fp_peer is not None:
+                    raise SourceRefConflict(
+                        source_ref=source_ref,
+                        work_key=work_key,
+                        work_fingerprint=content_wf,
+                        holder_dispatch_id=fp_peer["dispatch_id"],
+                        holder_thread_id=fp_peer["thread_id"],
                     )
             insert_status = _STATUS_ADMITTED
             queued_at: str | None = None
@@ -843,8 +1149,8 @@ class CursorDispatchLedger:
                 "(dispatch_id, fingerprint, thread_id, execution_id, caller_agent, "
                 " resolved_model, packet_path, message_present, status, record_json, "
                 " wt_baseline, contract, source_repo, lease_key, read_only, worker_instance, "
-                " queued_at, source_ref, work_key) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " queued_at, source_ref, work_key, work_fingerprint) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     req.dispatch_id,
                     fingerprint,
@@ -865,6 +1171,7 @@ class CursorDispatchLedger:
                     queued_at,
                     source_ref,
                     work_key,
+                    content_wf,
                 ),
             )
             if nested_park_parent is not None:
@@ -1099,6 +1406,124 @@ class CursorDispatchLedger:
             conn.execute(
                 "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",
                 (json.dumps(data, sort_keys=True, separators=(",", ":")), dispatch_id),
+            )
+
+    def cancel_dispatch(
+        self,
+        *,
+        dispatch_id: str,
+        cancel_reason: str | None = None,
+        cancelled_by: str | None = None,
+    ) -> CancelDispatchResult:
+        """Operator cancel with CAS + live-task veto (ledger authority)."""
+        patch: dict[str, Any] = {}
+        if cancel_reason is not None:
+            patch["cancel_reason"] = cancel_reason
+        if cancelled_by is not None:
+            patch["cancelled_by"] = cancelled_by
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (dispatch_id,),
+            ).fetchone()
+            if row is None:
+                raise DispatchNotFound(dispatch_id)
+            status = row["status"]
+            if status in _STATUS_TERMINAL:
+                return CancelDispatchResult(
+                    outcome="already_terminal",
+                    row=_row_to_dict(row),
+                )
+            if status in (_STATUS_RUNNING, _STATUS_PARKED_WAITING):
+                raise NotCancellableRunning(
+                    dispatch_id=dispatch_id,
+                    status=status,
+                    thread_id=row["thread_id"],
+                )
+            if status == _STATUS_ADMITTED:
+                task = self._tasks.get(dispatch_id)
+                if task is not None and not task.done():
+                    raise NotCancellableRunning(
+                        dispatch_id=dispatch_id,
+                        status=status,
+                        thread_id=row["thread_id"],
+                    )
+                updated = conn.execute(
+                    "UPDATE cursor_sdk_dispatches SET status=?, terminal_status=?, "
+                    "terminal_at=? WHERE dispatch_id=? AND status=?",
+                    ("cancelled", "cancelled", _now(), dispatch_id, _STATUS_ADMITTED),
+                )
+                if updated.rowcount != 1:
+                    refreshed = conn.execute(
+                        "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                        (dispatch_id,),
+                    ).fetchone()
+                    assert refreshed is not None
+                    if refreshed["status"] in _STATUS_TERMINAL:
+                        return CancelDispatchResult(
+                            outcome="already_terminal",
+                            row=_row_to_dict(refreshed),
+                        )
+                    raise NotCancellableRunning(
+                        dispatch_id=dispatch_id,
+                        status=str(refreshed["status"]),
+                        thread_id=refreshed["thread_id"],
+                    )
+                if patch:
+                    _merge_record_json_conn(conn, dispatch_id=dispatch_id, patch=patch)
+                refreshed = conn.execute(
+                    "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                    (dispatch_id,),
+                ).fetchone()
+                assert refreshed is not None
+                lease_key = _resolve_lease_key(
+                    lease_key=refreshed["lease_key"],
+                    source_repo=refreshed["source_repo"],
+                )
+                return CancelDispatchResult(
+                    outcome="cancelled",
+                    row=_row_to_dict(refreshed),
+                    lease_key=lease_key,
+                    needs_promote=bool(lease_key),
+                )
+            if status == _STATUS_QUEUED:
+                updated = conn.execute(
+                    "UPDATE cursor_sdk_dispatches SET status=?, terminal_status=?, "
+                    "terminal_at=? WHERE dispatch_id=? AND status=?",
+                    ("cancelled", "cancelled", _now(), dispatch_id, _STATUS_QUEUED),
+                )
+                if updated.rowcount != 1:
+                    refreshed = conn.execute(
+                        "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                        (dispatch_id,),
+                    ).fetchone()
+                    assert refreshed is not None
+                    if refreshed["status"] in _STATUS_TERMINAL:
+                        return CancelDispatchResult(
+                            outcome="already_terminal",
+                            row=_row_to_dict(refreshed),
+                        )
+                    raise NotCancellableRunning(
+                        dispatch_id=dispatch_id,
+                        status=str(refreshed["status"]),
+                        thread_id=refreshed["thread_id"],
+                    )
+                if patch:
+                    _merge_record_json_conn(conn, dispatch_id=dispatch_id, patch=patch)
+                refreshed = conn.execute(
+                    "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                    (dispatch_id,),
+                ).fetchone()
+                assert refreshed is not None
+                return CancelDispatchResult(
+                    outcome="cancelled",
+                    row=_row_to_dict(refreshed),
+                )
+            raise NotCancellableRunning(
+                dispatch_id=dispatch_id,
+                status=status,
+                thread_id=row["thread_id"],
             )
 
     def mark_terminal(self, *, dispatch_id: str, terminal_status: str) -> str | None:

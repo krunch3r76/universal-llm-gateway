@@ -327,7 +327,10 @@ def _pipeline_stats() -> dict[str, Any]:
 
 
 def _pipeline_cancel(execution_id: str) -> dict[str, Any]:
-    """Cancel an in-flight async-dispatched execution."""
+    """Cancel an in-flight execution — GIW SDK dispatch first, else Stargate."""
+    giw_body = _giw_cancel_dispatch(execution_id)
+    if giw_body is not None:
+        return giw_body
     url = f"/api/v1/pipelines/executions/{execution_id}"
     try:
         with make_sync_client(STARGATE_URL, timeout=_DISPATCH_TIMEOUT) as client:
@@ -336,6 +339,31 @@ def _pipeline_cancel(execution_id: str) -> dict[str, Any]:
             return resp.json()
     except httpx.HTTPError as exc:
         return {"error": {"code": "stargate_http_error", "message": str(exc)}}
+
+
+def _giw_cancel_dispatch(dispatch_id: str) -> dict[str, Any] | None:
+    """Relay cancel to GIW when the id is an SDK ledger row."""
+    from tools.agent_bus.worker_http import _worker_base_url
+
+    url = f"{_worker_base_url()}/api/v1/cursor/dispatch/{dispatch_id}"
+    token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        with httpx.Client(timeout=_DISPATCH_TIMEOUT) as client:
+            resp = client.delete(url, headers=headers)
+            if resp.status_code == 404:
+                return None
+            if resp.content:
+                body = resp.json()
+            else:
+                body = {"ok": True}
+            if resp.status_code >= 400:
+                if isinstance(body, dict):
+                    body.setdefault("status_code", resp.status_code)
+                return body
+            return body
+    except httpx.RequestError:
+        return None
 
 
 def _pipeline_result(execution_id: str, wait_seconds: float) -> dict[str, Any]:

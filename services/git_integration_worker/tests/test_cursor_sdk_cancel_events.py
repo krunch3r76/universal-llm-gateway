@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from services.git_integration_worker.cursor_auto import supersede as auto_supersede
+from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_auto.queue import AutoJobQueue
 from services.git_integration_worker.cursor_auto.supersede import (
     supersede_same_thread_inflight,
@@ -143,3 +144,78 @@ def test_pre_register_live_run_supersede_emits(emitted):
     assert emitted[0].payload["terminal_status"] == "displaced_pre_live"
     assert emitted[0].payload["dispatch_id"] == old.job_id
     assert emitted[0].payload["superseded_by"] == new.job_id
+
+
+def test_operator_cancel_method_accepted(emitted) -> None:
+    from services.git_integration_worker.cursor_sdk_cancel_events import (
+        emit_sdk_worker_cancelled,
+    )
+
+    emit_sdk_worker_cancelled(
+        dispatch_id="op-cancel-1",
+        method="operator_cancel",
+        reason="operator requested",
+        thread_id="t-op",
+    )
+    assert len(emitted) == 1
+    assert emitted[0].payload["method"] == "operator_cancel"
+    assert emitted[0].payload["terminal_status"] == "cancelled"
+
+
+def test_emit_operator_cancel_before_lease_released(emitted, monkeypatch) -> None:
+    order: list[str] = []
+
+    def _track_cancel(**kwargs: object) -> None:
+        order.append("cancelled")
+        from services.git_integration_worker.cursor_sdk_cancel_events import (
+            FrontierSdkWorkerCancelled,
+        )
+
+        emitted.append(
+            FrontierSdkWorkerCancelled(
+                dispatch_id=str(kwargs["dispatch_id"]),
+                method="operator_cancel",
+                reason=str(kwargs["reason"]),
+                thread_id=str(kwargs.get("thread_id") or ""),
+            )
+        )
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_operator_cancel.emit_sdk_worker_cancelled",
+        _track_cancel,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_operator_cancel.emit_write_lease_released",
+        lambda **_: order.append("lease_released"),
+    )
+    from services.git_integration_worker.cursor_sdk_operator_cancel import (
+        _emit_cancel_side_effects,
+    )
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CancelDispatchResult,
+    )
+    from services.git_integration_worker.admission import WorkAdmissionController
+
+    controller = WorkAdmissionController(
+        ledger=CursorDispatchLedger.instance(),
+        worker_id="test",
+        pid=0,
+        worker_started_at="test",
+    )
+    import asyncio
+
+    asyncio.run(
+        _emit_cancel_side_effects(
+            result=CancelDispatchResult(
+                outcome="cancelled",
+                row={"thread_id": "t1"},
+                lease_key="/repo",
+                needs_promote=False,
+            ),
+            dispatch_id="op-1",
+            cancel_reason="test",
+            controller=controller,
+            request=None,
+        )
+    )
+    assert order.index("cancelled") < order.index("lease_released")

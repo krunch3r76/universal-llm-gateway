@@ -29,26 +29,36 @@ def _insert_queued(
     source_repo: str,
     worker_instance: str,
 ) -> None:
+    req = CursorDispatchRequest(
+        thread_id=thread_id,
+        model="cursor/composer-2.5",
+        dispatch_id=dispatch_id,
+        execution_id=f"exec-{dispatch_id}",
+        message=f"queued-{dispatch_id}",
+    )
+    wf = ledger.work_fingerprint(req)
     with ledger._connect() as conn:
         conn.execute(
             "INSERT INTO cursor_sdk_dispatches "
             "(dispatch_id, fingerprint, thread_id, execution_id, resolved_model, "
-            " message_present, status, record_json, source_repo, read_only, "
-            " worker_instance, queued_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " message_present, status, record_json, source_repo, lease_key, "
+            " read_only, worker_instance, queued_at, work_fingerprint) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 dispatch_id,
-                "fp",
+                ledger.fingerprint(req),
                 thread_id,
-                "exec-1",
+                req.execution_id,
                 "cursor/composer-2.5",
-                0,
+                1,
                 "queued",
-                json.dumps({"model": "cursor/composer-2.5"}),
+                json.dumps({"model": "cursor/composer-2.5", "message": req.message}),
+                source_repo,
                 source_repo,
                 0,
                 worker_instance,
                 "2026-06-18T21:10:00+00:00",
+                wf,
             ),
         )
 
@@ -245,3 +255,43 @@ def test_demote_admitted_to_queued_restores_fifo_head(
     )
     assert repromoted is not None
     assert repromoted.dispatch_id == "queued-head"
+
+
+def test_demote_vs_cancel_race_cancel_wins(ledger: CursorDispatchLedger) -> None:
+    repo = "/mnt/torus/projects/universal-llm-gateway"
+    _insert_queued(
+        ledger,
+        dispatch_id="race-admitted",
+        thread_id="1",
+        source_repo=repo,
+        worker_instance="worker-a",
+    )
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET status='admitted' "
+            "WHERE dispatch_id='race-admitted'"
+        )
+    result = ledger.cancel_dispatch(dispatch_id="race-admitted")
+    assert result.outcome == "cancelled"
+    demoted = ledger.demote_admitted_to_queued(dispatch_id="race-admitted")
+    assert demoted is False
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            ("race-admitted",),
+        ).fetchone()
+    assert row["status"] == "cancelled"
+
+
+def test_promote_skips_cancelled(ledger: CursorDispatchLedger) -> None:
+    repo = "/mnt/torus/projects/universal-llm-gateway"
+    _insert_queued(
+        ledger,
+        dispatch_id="cancelled-q",
+        thread_id="1",
+        source_repo=repo,
+        worker_instance="worker-a",
+    )
+    ledger.cancel_dispatch(dispatch_id="cancelled-q")
+    promoted = ledger.promote_next_queued(source_repo=repo, worker_instance="live")
+    assert promoted is None

@@ -2393,17 +2393,35 @@ async def cursor_dispatch(
             minted_lane_b=minted_lane_b,
             reason="source_ref_conflict",
         )
+        if exc.work_fingerprint:
+            from services.git_integration_worker.cursor_sdk_cancel_events import (
+                emit_sdk_admit_duplicate_refused,
+            )
+
+            emit_sdk_admit_duplicate_refused(
+                dispatch_id=req.dispatch_id,
+                thread_id=req.thread_id,
+                work_fingerprint=exc.work_fingerprint,
+                holder_dispatch_id=exc.holder_dispatch_id,
+                holder_thread_id=exc.holder_thread_id,
+            )
+            worker_code = "CURSOR_WORK_FINGERPRINT_IN_FLIGHT"
+            validation_stage = "ledger_work_fingerprint"
+        else:
+            worker_code = "CURSOR_SOURCE_REF_IN_FLIGHT"
+            validation_stage = "ledger_source_ref"
         return _reject_pre_admission(
             req,
-            worker_error_code="CURSOR_SOURCE_REF_IN_FLIGHT",
+            worker_error_code=worker_code,
             failure_layer="admission",
             http_status=409,
             detail_summary=str(exc),
             retryable=False,
-            validation_stage="ledger_source_ref",
+            validation_stage=validation_stage,
             extra_data={
                 "source_ref": exc.source_ref,
                 "work_key": exc.work_key,
+                "work_fingerprint": exc.work_fingerprint,
                 "holder_dispatch_id": exc.holder_dispatch_id,
                 "holder_thread_id": exc.holder_thread_id,
             },
@@ -2591,6 +2609,29 @@ async def cursor_dispatch(
     await asyncio.to_thread(ledger.mark_running, dispatch_id=req.dispatch_id)
     _maybe_emit_giw_dispatched(req=req, packet_text=packet_text)
     return JSONResponse(status_code=200, content=admission.model_dump())
+
+
+@router.delete("/dispatch/{dispatch_id}")
+async def cancel_cursor_dispatch(
+    dispatch_id: str,
+    request: Request,
+    reason: str | None = Query(None, description="Operator cancel reason."),
+    cancelled_by: str | None = Query(None, description="Seat or operator id."),
+) -> JSONResponse:
+    """Operator cancel for queued/admitted SDK dispatches (ledger authority)."""
+    from services.git_integration_worker.cursor_sdk_operator_cancel import (
+        operator_cancel_dispatch,
+    )
+
+    controller = _controller(request)
+    status_code, body = await operator_cancel_dispatch(
+        dispatch_id=dispatch_id,
+        cancel_reason=reason,
+        cancelled_by=cancelled_by,
+        controller=controller,
+        request=request,
+    )
+    return JSONResponse(status_code=status_code, content=body)
 
 
 @router.get(

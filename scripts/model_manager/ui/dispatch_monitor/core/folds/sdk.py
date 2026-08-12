@@ -375,7 +375,7 @@ class SdkFold:
         )
 
     def _on_cancelled(self, record: EventRecord) -> None:
-        """Terminal: supersede / interrupt cancelled the worker."""
+        """Terminal: supersede / operator cancel interrupted the worker."""
         payload = record.payload
         method = payload.get("method")
         reason = payload.get("reason") or payload.get("error")

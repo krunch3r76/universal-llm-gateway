@@ -247,7 +247,7 @@ def _sdk_items(
                     severity="warn",
                     subject=row.dispatch_id,
                     title="Dispatch cancelled",
-                    detail=row.failure_reason or "supersede/interrupt cancelled worker",
+                    detail=row.failure_reason or "worker cancelled (supersede or operator)",
                     since_ms=row.terminal_ms,
                 )
             )

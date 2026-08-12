@@ -2895,3 +2895,75 @@ async def test_finalize_failed_emits_when_error_omitted(
     assert failed
     assert failed[0]["error"] == "CURSOR_TEST_NO_ERROR: synthetic failure"
     assert failed[0]["worker_error_code"] == "CURSOR_TEST_NO_ERROR"
+
+
+def test_delete_route_cancel_queued(client: TestClient) -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = CursorDispatchRequest(
+        thread_id="del-t1",
+        model="cursor/composer-2.5",
+        dispatch_id="del-queued",
+        execution_id="exec-del-queued",
+        message="cancel me",
+    )
+    with ledger._connect() as conn:
+        conn.execute(
+            "INSERT INTO cursor_sdk_dispatches "
+            "(dispatch_id, fingerprint, thread_id, execution_id, resolved_model, "
+            " message_present, status, record_json, source_repo, read_only) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                req.dispatch_id,
+                ledger.fingerprint(req),
+                req.thread_id,
+                req.execution_id,
+                "composer-2.5",
+                1,
+                "queued",
+                '{"model":"cursor/composer-2.5","message":"cancel me"}',
+                "/mnt/torus/projects/universal-llm-gateway",
+                0,
+            ),
+        )
+    resp = client.delete("/api/v1/cursor/dispatch/del-queued?reason=op-test")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "cancelled"
+    assert body["terminal_status"] == "cancelled"
+
+
+def test_delete_route_running_refuses_not_404(client: TestClient) -> None:
+    ledger = CursorDispatchLedger.instance()
+    req = CursorDispatchRequest(
+        thread_id="del-run",
+        model="cursor/composer-2.5",
+        dispatch_id="del-running",
+        execution_id="exec-del-running",
+        message="running",
+    )
+    with ledger._connect() as conn:
+        conn.execute(
+            "INSERT INTO cursor_sdk_dispatches "
+            "(dispatch_id, fingerprint, thread_id, execution_id, resolved_model, "
+            " message_present, status, record_json, source_repo, read_only) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                req.dispatch_id,
+                ledger.fingerprint(req),
+                req.thread_id,
+                req.execution_id,
+                "composer-2.5",
+                1,
+                "running",
+                '{"model":"cursor/composer-2.5","message":"running"}',
+                "/mnt/torus/projects/universal-llm-gateway",
+                0,
+            ),
+        )
+    resp = client.delete("/api/v1/cursor/dispatch/del-running")
+    assert resp.status_code == 409
+    assert resp.status_code != 404
+    body = resp.json()
+    assert body["code"] == "not_cancellable_running"
+    assert body["retryable"] is False
+    assert body["data"]["dispatch_id"] == "del-running"

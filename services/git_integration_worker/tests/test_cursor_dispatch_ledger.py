@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 from unittest.mock import AsyncMock, MagicMock
 
@@ -32,12 +33,13 @@ def _isolated_ledger(tmp_path, monkeypatch: pytest.MonkeyPatch):
 
 
 def _req(**overrides: object) -> CursorDispatchRequest:
+    dispatch_id = str(overrides.get("dispatch_id", "disp-ac1"))
     base = {
         "thread_id": "t1",
         "model": "cursor/composer-2.5",
-        "dispatch_id": "disp-ac1",
-        "execution_id": "exec-disp-ac1",
-        "message": "hello",
+        "dispatch_id": dispatch_id,
+        "execution_id": f"exec-{dispatch_id}",
+        "message": f"hello-{dispatch_id}",
     }
     base.update(overrides)
     return CursorDispatchRequest(**base)
@@ -1057,3 +1059,223 @@ def test_same_work_key_consult_reject_includes_holder() -> None:
     err = exc_info.value
     assert err.holder_dispatch_id == "wk-holder"
     assert err.holder_thread_id == "t-wk"
+
+
+def _insert_status_row(
+    ledger: CursorDispatchLedger,
+    *,
+    dispatch_id: str,
+    status: str,
+    thread_id: str = "t1",
+    source_repo: str = _REPO,
+) -> None:
+    req = _req(dispatch_id=dispatch_id, thread_id=thread_id)
+    wf = ledger.work_fingerprint(req)
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO cursor_sdk_dispatches "
+            "(dispatch_id, fingerprint, thread_id, execution_id, resolved_model, "
+            " message_present, status, record_json, source_repo, lease_key, "
+            " read_only, work_fingerprint) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                dispatch_id,
+                ledger.fingerprint(req),
+                thread_id,
+                req.execution_id,
+                "composer-2.5",
+                1,
+                status,
+                json.dumps({"model": "cursor/composer-2.5", "message": req.message}),
+                source_repo,
+                source_repo,
+                0,
+                wf,
+            ),
+        )
+
+
+def test_cancel_queued_cas() -> None:
+    ledger = CursorDispatchLedger.instance()
+    _insert_status_row(ledger, dispatch_id="q-cancel", status="queued")
+    result = ledger.cancel_dispatch(
+        dispatch_id="q-cancel", cancel_reason="test", cancelled_by="operator"
+    )
+    assert result.outcome == "cancelled"
+    assert result.row["status"] == "cancelled"
+    assert result.row["terminal_status"] == "cancelled"
+    assert result.needs_promote is False
+    record = json.loads(result.row["record_json"])
+    assert record["cancel_reason"] == "test"
+    assert record["cancelled_by"] == "operator"
+    from services.git_integration_worker.cursor_dispatch_ledger import DispatchNotFound
+
+    with pytest.raises(DispatchNotFound):
+        ledger.cancel_dispatch(dispatch_id="missing-id")
+
+
+def test_cancel_queued_wrong_status_noop_race() -> None:
+    ledger = CursorDispatchLedger.instance()
+    _insert_status_row(ledger, dispatch_id="running-x", status="running")
+    with pytest.raises(Exception) as exc_info:
+        ledger.cancel_dispatch(dispatch_id="running-x")
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        NotCancellableRunning,
+    )
+
+    assert isinstance(exc_info.value, NotCancellableRunning)
+
+
+def test_cancel_admitted_promotes_fifo() -> None:
+    ledger = CursorDispatchLedger.instance()
+    _insert_status_row(ledger, dispatch_id="admitted-h", status="admitted")
+    _insert_status_row(ledger, dispatch_id="queued-next", status="queued")
+    result = ledger.cancel_dispatch(dispatch_id="admitted-h")
+    assert result.outcome == "cancelled"
+    assert result.needs_promote is True
+    promoted = ledger.promote_next_queued(source_repo=_REPO, worker_instance="live")
+    assert promoted is not None
+    assert promoted.dispatch_id == "queued-next"
+
+
+def test_cancel_running_refuses_typed() -> None:
+    ledger = CursorDispatchLedger.instance()
+    _insert_status_row(ledger, dispatch_id="run-x", status="running")
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        NotCancellableRunning,
+    )
+
+    with pytest.raises(NotCancellableRunning) as exc_info:
+        ledger.cancel_dispatch(dispatch_id="run-x")
+    err = exc_info.value
+    assert err.status == "running"
+    assert err.dispatch_id == "run-x"
+
+
+def test_cancel_idempotent_replay() -> None:
+    ledger = CursorDispatchLedger.instance()
+    _insert_status_row(ledger, dispatch_id="cancelled-x", status="queued")
+    first = ledger.cancel_dispatch(dispatch_id="cancelled-x")
+    second = ledger.cancel_dispatch(dispatch_id="cancelled-x")
+    assert first.outcome == "cancelled"
+    assert second.outcome == "already_terminal"
+    assert second.row["status"] == "cancelled"
+    req = _req(dispatch_id="cancelled-x")
+    replay = ledger.admit(
+        req=req,
+        fingerprint=ledger.fingerprint(req),
+        execution_id=req.execution_id,
+        caller_agent=None,
+        resolved_model="composer-2.5",
+        admission=_admission(req),
+    )
+    assert replay is not None
+    assert replay.status == "cancelled"
+
+
+def test_work_fingerprint_refuses_active_peer() -> None:
+    ledger = CursorDispatchLedger.instance()
+    shared_message = "same-content-payload"
+    req1 = _req(dispatch_id="fp-hold", thread_id="t-fp", message=shared_message)
+    _admit(ledger, req1, source_repo=_REPO, contract="consult")
+    req2 = _req(dispatch_id="fp-dup", thread_id="t-fp", message=shared_message)
+    with pytest.raises(SourceRefConflict) as exc_info:
+        _admit(ledger, req2, source_repo=_REPO, contract="consult")
+    err = exc_info.value
+    assert err.work_fingerprint is not None
+    assert err.holder_dispatch_id == "fp-hold"
+
+
+def test_work_fingerprint_force_bypasses() -> None:
+    ledger = CursorDispatchLedger.instance()
+    shared_message = "force-shared-content"
+    req1 = _req(dispatch_id="fp-h1", thread_id="t-force", message=shared_message)
+    _admit(ledger, req1, source_repo=_REPO, contract="consult")
+    req2 = _req(dispatch_id="fp-h2", thread_id="t-force", message=shared_message)
+    result = _admit(ledger, req2, source_repo=_REPO, contract="consult", force=True)
+    assert result is None or result.status in ("admitted", "queued")
+
+
+def test_work_fingerprint_null_skips() -> None:
+    ledger = CursorDispatchLedger.instance()
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO cursor_sdk_dispatches "
+            "(dispatch_id, fingerprint, thread_id, execution_id, resolved_model, "
+            " message_present, status, record_json, source_repo, read_only) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "null-fp",
+                "fp",
+                "t-null",
+                "exec-null",
+                "composer-2.5",
+                0,
+                "admitted",
+                "{}",
+                _REPO,
+                0,
+            ),
+        )
+    req = CursorDispatchRequest(
+        thread_id="t-other",
+        model="cursor/composer-2.5",
+        dispatch_id="null-fp2",
+        execution_id="exec-null-fp2",
+        message="only-message",
+    )
+    assert ledger.work_fingerprint(req) is not None
+    result = _admit(ledger, req, source_repo=_REPO, contract="consult")
+    assert result is None or result.status == "admitted"
+
+
+def test_work_fingerprint_allows_after_terminal() -> None:
+    ledger = CursorDispatchLedger.instance()
+    shared_message = "after-terminal-shared"
+    req1 = _req(dispatch_id="term-h", thread_id="t-after", message=shared_message)
+    _admit(ledger, req1, source_repo=_REPO, contract="consult")
+    ledger.mark_terminal(dispatch_id="term-h", terminal_status="failed")
+    req2 = _req(dispatch_id="term-h2", thread_id="t-after", message=shared_message)
+    result = _admit(ledger, req2, source_repo=_REPO, contract="consult")
+    assert result is None or result.status in ("admitted", "queued")
+
+
+def test_fresh_ledger_schema_includes_cancelled_and_fingerprint(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    CursorDispatchLedger._instance = None
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        ddl = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' "
+            "AND name='cursor_sdk_dispatches'"
+        ).fetchone()
+        cols = {
+            r["name"] for r in conn.execute("PRAGMA table_info(cursor_sdk_dispatches)")
+        }
+    assert ddl is not None
+    assert "'cancelled'" in ddl["sql"]
+    assert "work_fingerprint" in cols
+
+
+def test_terminal_row_bytes_stable_across_reopen(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    CursorDispatchLedger._instance = None
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="term-persist")
+    _admit(ledger, req, source_repo=_REPO, contract="consult")
+    ledger.mark_terminal(dispatch_id="term-persist", terminal_status="completed")
+    with _connect() as conn:
+        before = conn.execute(
+            "SELECT dispatch_id, status, terminal_status, terminal_at, record_json "
+            "FROM cursor_sdk_dispatches WHERE dispatch_id='term-persist'"
+        ).fetchone()
+    CursorDispatchLedger._instance = None
+    ledger2 = CursorDispatchLedger.instance()
+    with ledger2._connect() as conn:
+        after = conn.execute(
+            "SELECT dispatch_id, status, terminal_status, terminal_at, record_json "
+            "FROM cursor_sdk_dispatches WHERE dispatch_id='term-persist'"
+        ).fetchone()
+    assert dict(before) == dict(after)

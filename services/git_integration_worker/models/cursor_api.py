@@ -58,7 +58,9 @@ class CursorDispatchResponse(BaseModel):
     dispatch_id: str
     thread_id: str
     model_id: str
-    status: Literal["admitted", "queued"] = "admitted"
+    status: Literal[
+        "admitted", "queued", "cancelled", "completed", "failed"
+    ] = "admitted"
     queue_position: int | None = None
     since: str | None = None
     holder_dispatch_id: str | None = None

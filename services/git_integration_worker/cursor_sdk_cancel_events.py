@@ -31,6 +31,7 @@ _CANCEL_METHODS = frozenset(
         "queued_only",
         "pre_register_live_run",
         "queue_withdraw",
+        "operator_cancel",
     }
 )
 
@@ -116,7 +117,58 @@ def emit_sdk_worker_cancelled(
     )
 
 
+@event_factory
+def FrontierSdkAdmitDuplicateRefused(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    work_fingerprint: str,
+    holder_dispatch_id: str,
+    holder_thread_id: str | None = None,
+) -> Event:
+    """Advisory: active peer blocked admit on content fingerprint."""
+    payload: dict[str, Any] = {
+        "dispatch_id": dispatch_id,
+        "thread_id": thread_id,
+        "work_fingerprint": work_fingerprint,
+        "holder_dispatch_id": holder_dispatch_id,
+    }
+    if holder_thread_id is not None:
+        payload["holder_thread_id"] = holder_thread_id
+    return Event(
+        signal="frontier.sdk.admit.duplicate_refused",
+        payload=payload,
+        scope="node",
+    )
+
+
+def emit_sdk_admit_duplicate_refused(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    work_fingerprint: str,
+    holder_dispatch_id: str,
+    holder_thread_id: str | None = None,
+) -> None:
+    """Publish advisory duplicate refusal — ledger row remains authority."""
+    event = FrontierSdkAdmitDuplicateRefused(
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        work_fingerprint=work_fingerprint,
+        holder_dispatch_id=holder_dispatch_id,
+        holder_thread_id=holder_thread_id,
+    )
+    emit_frontier_event(event)
+    logger.info(
+        "cursor sdk admit duplicate refused: dispatch_id=%s holder=%s fingerprint=%s",
+        dispatch_id,
+        holder_dispatch_id,
+        work_fingerprint[:16],
+    )
+
+
 __all__ = [
     "FrontierSdkWorkerCancelled",
+    "FrontierSdkAdmitDuplicateRefused",
     "emit_sdk_worker_cancelled",
+    "emit_sdk_admit_duplicate_refused",
 ]
