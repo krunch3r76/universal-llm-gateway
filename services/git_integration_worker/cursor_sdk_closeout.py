@@ -1096,6 +1096,7 @@ def build_implement_closeout_body(
         apply_lane_b_land_incompleteness,
     )
 
+    pre_lane_b_status = status
     status, deviations = apply_lane_b_land_incompleteness(
         status,
         lane=lane,
@@ -1115,6 +1116,18 @@ def build_implement_closeout_body(
         deviations=deviations,
         degraded_reason=degraded_reason,
     )
+    if status_authority_disagreement is not None and status != pre_lane_b_status:
+        from services.git_integration_worker.cursor_sdk_authored_status_reconcile import (
+            refresh_disagreement_after_machine_gate,
+        )
+
+        status_authority_disagreement = refresh_disagreement_after_machine_gate(
+            disagreement=status_authority_disagreement,
+            post_gate_status=status,
+            post_gate_work_outcome=resolved_work_outcome,
+            pre_gate_status=pre_lane_b_status,
+            status_incomplete_class=status_incomplete_class,
+        )
     manifest_source = ensure_subagents_surface(
         effects_manifest or outcome.effects_manifest
     )

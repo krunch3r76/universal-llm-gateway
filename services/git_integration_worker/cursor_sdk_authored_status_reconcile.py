@@ -111,3 +111,35 @@ def reconcile_structured_with_authored(
         )
 
     return status, work_outcome, None, out_devs
+
+
+def refresh_disagreement_after_machine_gate(
+    *,
+    disagreement: dict[str, Any],
+    post_gate_status: CloseoutStatus,
+    post_gate_work_outcome: WorkOutcome | None,
+    pre_gate_status: CloseoutStatus,
+    status_incomplete_class: str | None = None,
+) -> dict[str, Any]:
+    """Refresh stale ``machine_status`` after a later machine gate changed primary.
+
+    Reconcile records ``machine_status`` at reconcile time; lane-B (and similar
+    gates) may downgrade primary afterward. B2 prefers ``machine_status`` — without
+    refresh the disagreement block carries a pre-gate photograph (arc 6655 R3).
+    """
+    if post_gate_status == pre_gate_status:
+        return disagreement
+    refreshed: dict[str, Any] = {
+        **disagreement,
+        "machine_status": post_gate_status.value,
+        "primary_status": post_gate_status.value,
+    }
+    if status_incomplete_class is not None:
+        wo = (
+            post_gate_work_outcome.value
+            if post_gate_work_outcome is not None
+            else None
+        )
+        refreshed["machine_work_outcome"] = wo
+        refreshed["primary_work_outcome"] = wo
+    return refreshed

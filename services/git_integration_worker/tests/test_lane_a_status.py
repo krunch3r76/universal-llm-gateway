@@ -203,12 +203,12 @@ def test_resolve_relay_status_does_not_prefer_section2_claim() -> None:
     assert resolve_relay_status(body, "partial") == "partial"
 
 
-def test_measurement_from_wrapper_uses_uncapped_machine_grade() -> None:
-    """Step 2' — B2 source reads machine_status, not post-reconcile primary."""
+def test_measurement_anti_overclaim_seat_claim_does_not_cap_machine() -> None:
+    """Anti-overclaim preserved — no post-gate downgrade, B2 measures machine complete."""
     wrapper = json.dumps(
         {
             "schema_version": 1,
-            "status": "partial",
+            "status": "complete",
             "capture_status": "ok",
             "status_authority_disagreement": {
                 "authoritative": "machine_measurement",
@@ -218,6 +218,54 @@ def test_measurement_from_wrapper_uses_uncapped_machine_grade() -> None:
         }
     )
     assert resolve_measurement_status_from_wrapper(wrapper) == "complete"
+
+
+def test_lane_b_downgrade_refreshes_disagreement_for_post_gate_measurement(
+    tmp_path: Path,
+) -> None:
+    """Post-gate freshness — lane-B downgrade refreshes machine_status; B2 → partial:work."""
+    source_repo = tmp_path / "repo"
+    cortex_root = tmp_path / "cortex"
+    source_repo.mkdir()
+    cortex_root.mkdir()
+    offgit = ["cortex://notes/system/threads/fixture-deliverable.md"]
+    rel = offgit[0].removeprefix("cortex://")
+    path = cortex_root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("# fixture\n", encoding="utf-8")
+
+    section2 = "status_claim: partial\n"
+    body = build_implement_closeout_body(
+        dispatch_id="6655-lane-b-disagreement-refresh",
+        outcome=SdkRunOutcome(
+            body="executor prose",
+            status="finished",
+            duration_ms=100,
+            tool_call_count=3,
+        ),
+        degraded_reason=None,
+        sidecar_ref=sidecar_workspaces_ref("6655-lane-b-disagreement-refresh"),
+        result_bytes=200,
+        thread_id="6655",
+        work_item_ref="todo:closeout-plane-legibility",
+        sidecar_markdown=section2,
+        offgit_deliverable_uris=offgit,
+        source_repo=source_repo,
+        cortex_root=cortex_root,
+        deliverables_expected=True,
+        lane="B",
+        landed=False,
+        commits_ahead=1,
+    )
+    payload = json.loads(body)
+    assert payload["status"] == "partial"
+    disagreement = payload["status_authority_disagreement"]
+    assert disagreement is not None
+    assert disagreement["machine_status"] == "partial"
+    assert disagreement["authored_status"] == "partial"
+    assert payload["status_incomplete_class"] == "work"
+    assert "land:lane_b_unlanded" in (payload.get("deviations") or [])
+    assert resolve_measurement_status_from_wrapper(body) == "partial:work"
 
 
 def test_reconcile_preserves_machine_grade_when_authored_partial() -> None:
