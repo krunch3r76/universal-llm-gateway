@@ -180,6 +180,13 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         req: SubmitProjectAskRequest,
     ) -> SubmitProjectAskResponse:
         verify_harvest_root()
+        snap = await execution_store.active_work_snapshot()
+        from cdp_ask.lane_admission import purpose_lane_refusal
+
+        refuse, label = purpose_lane_refusal(snap, purpose=req.purpose, unattended=True)
+        if refuse:
+            detail = f"cdp lane admission refused ({label or 'hard'})"
+            raise HTTPException(status_code=429, detail=detail)
         record = await execution_store.create(holder=req.holder, purpose=req.purpose)
 
         async def _abort_check() -> bool:

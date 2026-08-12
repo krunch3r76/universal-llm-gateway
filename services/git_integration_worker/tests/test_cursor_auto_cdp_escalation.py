@@ -67,8 +67,13 @@ def test_assess_escalation_pin_refuses_unknown_wire():
 
 
 def test_escalation_lane_refusal_hard():
+    rows = [
+        {"purpose": "operator-proxy", "status": "running"},
+        {"purpose": "operator-proxy", "status": "running"},
+        {"purpose": "ask", "status": "running"},
+    ]
     refuse, lane = escalation_lane_refusal(
-        {"at_hard_limit": True, "at_soft_limit": True, "free_slots": 0},
+        {"rows": rows, "at_hard_limit": True, "at_soft_limit": True, "free_slots": 0},
         unattended=True,
     )
     assert refuse is True
@@ -76,8 +81,12 @@ def test_escalation_lane_refusal_hard():
 
 
 def test_escalation_lane_refusal_soft_unattended():
+    rows = [
+        {"purpose": "operator-proxy", "status": "running"},
+        {"purpose": "ask", "status": "running"},
+    ]
     refuse, lane = escalation_lane_refusal(
-        {"at_hard_limit": False, "at_soft_limit": True, "free_slots": 1},
+        {"rows": rows, "at_hard_limit": False, "at_soft_limit": True, "free_slots": 1},
         unattended=True,
     )
     assert refuse is True
@@ -218,6 +227,11 @@ def test_process_job_cdp_lane_full_terminalizes(monkeypatch):
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.handler.read_cdp_lane_snapshot",
         lambda **_: {
+            "rows": [
+                {"purpose": "operator-proxy", "status": "running"},
+                {"purpose": "operator-proxy", "status": "running"},
+                {"purpose": "ask", "status": "running"},
+            ],
             "at_hard_limit": True,
             "at_soft_limit": True,
             "free_slots": 0,

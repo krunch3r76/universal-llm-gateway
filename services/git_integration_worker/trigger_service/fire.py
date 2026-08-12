@@ -68,8 +68,13 @@ def lane_available(
         if is_retryable_submit_error(exc):
             return False, f"active-work probe: {exc}"
         raise
-    if snap.get("at_hard_limit"):
-        return False, "cdp lane at hard limit"
+    from cdp_ask.lane_admission import purpose_lane_refusal
+
+    refuse, label = purpose_lane_refusal(
+        snap, purpose=purpose, unattended=True
+    )
+    if refuse:
+        return False, f"cdp lane at {label or 'hard'} limit"
     if purpose:
         live = [
             row

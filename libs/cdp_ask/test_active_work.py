@@ -13,6 +13,12 @@ from cdp_ask.execution_store import (
     LANE_SOFT_LIMIT,
     ExecutionStore,
 )
+from cdp_ask.lane_admission import (
+    ADVISOR_RESERVE,
+    admission_regime,
+    count_by_purpose_class,
+    effective_abs_hard,
+)
 
 pytestmark = pytest.mark.offline
 
@@ -51,6 +57,10 @@ def _capacity(
 ) -> dict[str, Any]:
     admission_count = running_count
     effective = max(running_count, live_cse_count)
+    rows_list = list(rows or [])
+    seat_count, other_count = count_by_purpose_class(rows_list)
+    regime = admission_regime(seat_count)
+    abs_hard_effective = effective_abs_hard(seat_count)
     return {
         "busy": busy,
         "running_count": running_count,
@@ -76,9 +86,14 @@ def _capacity(
         "rows": rows or [],
         "soft_limit": LANE_SOFT_LIMIT,
         "hard_limit": LANE_HARD_LIMIT,
-        "free_slots": max(0, LANE_HARD_LIMIT - admission_count),
+        "free_slots": max(0, abs_hard_effective - admission_count),
         "at_soft_limit": admission_count >= LANE_SOFT_LIMIT,
-        "at_hard_limit": admission_count >= LANE_HARD_LIMIT,
+        "at_hard_limit": admission_count >= abs_hard_effective,
+        "seat_count": seat_count,
+        "other_count": other_count,
+        "advisor_reserve": ADVISOR_RESERVE,
+        "admission_regime": regime,
+        "effective_abs_hard": abs_hard_effective,
     }
 
 

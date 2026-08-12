@@ -104,8 +104,17 @@ async def test_fire_hop_admit_carries_capacity_in_decision(monkeypatch) -> None:
 
 def test_escalation_lane_refusal_soft_blocks_unattended_at_free_slots_1() -> None:
     """Document the generic gate this hop path must not use."""
+    rows = [
+        {"purpose": "ask", "status": "running"},
+        {"purpose": "ask", "status": "running"},
+    ]
     refuse, label = escalation_lane_refusal(
-        {"at_hard_limit": False, "at_soft_limit": True, "free_slots": 1},
+        {
+            "rows": rows,
+            "at_hard_limit": False,
+            "at_soft_limit": True,
+            "free_slots": 1,
+        },
         unattended=True,
     )
     assert refuse is True

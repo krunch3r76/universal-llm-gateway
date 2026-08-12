@@ -27,16 +27,16 @@ def escalation_lane_refusal(
     snap: dict[str, Any],
     *,
     unattended: bool,
+    purpose: str | None = "ask",
 ) -> tuple[bool, str | None]:
     """Return ``(refuse, lane_label)`` for an escalation commission attempt.
 
-    Hard limit always refuses. Soft limit refuses unattended jobs (Fork 3 ADOPT).
+    Purpose-aware Option A: advisor/escalation admits may use the reserved slot;
+    transitional additive regime applies while ``seat_count`` exceeds the carve line.
     """
-    if snap.get("at_hard_limit"):
-        return True, "hard"
-    if unattended and snap.get("at_soft_limit"):
-        return True, "soft"
-    return False, None
+    from cdp_ask.lane_admission import escalation_lane_refusal as _purpose_refusal
+
+    return _purpose_refusal(snap, unattended=unattended, purpose=purpose)
 
 
 async def commission_cdp_escalation(

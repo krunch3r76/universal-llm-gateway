@@ -12,6 +12,12 @@ from cdp_ask.execution_store import (
     LANE_SOFT_LIMIT,
     ExecutionStore,
 )
+from cdp_ask.lane_admission import (
+    ADVISOR_RESERVE,
+    admission_regime,
+    count_by_purpose_class,
+    effective_abs_hard,
+)
 
 pytestmark = pytest.mark.offline
 
@@ -36,6 +42,10 @@ def _capacity(
 ) -> dict[str, Any]:
     admission_count = running_count
     effective = max(running_count, live_cse_count)
+    rows_list = list(rows or [])
+    seat_count, other_count = count_by_purpose_class(rows_list)
+    regime = admission_regime(seat_count)
+    abs_hard_effective = effective_abs_hard(seat_count)
     return {
         "busy": busy,
         "running_count": running_count,
@@ -61,9 +71,14 @@ def _capacity(
         "rows": rows or [],
         "soft_limit": LANE_SOFT_LIMIT,
         "hard_limit": LANE_HARD_LIMIT,
-        "free_slots": max(0, LANE_HARD_LIMIT - admission_count),
+        "free_slots": max(0, abs_hard_effective - admission_count),
         "at_soft_limit": admission_count >= LANE_SOFT_LIMIT,
-        "at_hard_limit": admission_count >= LANE_HARD_LIMIT,
+        "at_hard_limit": admission_count >= abs_hard_effective,
+        "seat_count": seat_count,
+        "other_count": other_count,
+        "advisor_reserve": ADVISOR_RESERVE,
+        "admission_regime": regime,
+        "effective_abs_hard": abs_hard_effective,
     }
 
 
@@ -130,9 +145,26 @@ async def test_seal_raises_on_injected_undeclared_bare_numeric(
     )
     decl.plain("soft_limit", reason="configured stream admission constant")
     decl.plain("hard_limit", reason="configured stream admission constant")
-    decl.plain("free_slots", reason="derived: hard_limit - admission_count")
+    decl.plain(
+        "free_slots",
+        reason="derived: effective_abs_hard - admission_count",
+    )
     decl.plain("at_soft_limit", reason="derived: admission_count >= soft_limit")
-    decl.plain("at_hard_limit", reason="derived: admission_count >= hard_limit")
+    decl.plain(
+        "at_hard_limit",
+        reason="derived: admission_count >= effective_abs_hard",
+    )
+    decl.plain("seat_count", reason="derived: pending/running seat-purpose rows")
+    decl.plain("other_count", reason="derived: pending/running non-seat rows")
+    decl.plain("advisor_reserve", reason="configured reserved advisor slot count")
+    decl.plain(
+        "admission_regime",
+        reason="additive when seat_count > hard_limit - reserve else carved",
+    )
+    decl.plain(
+        "effective_abs_hard",
+        reason="regime-aware absolute stream ceiling",
+    )
     with pytest.raises(UnqualifiedScalarError, match="injected"):
         seal(snap, decl)
 

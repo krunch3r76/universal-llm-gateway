@@ -210,7 +210,17 @@ class ExecutionStore:
         running_count = len(execution_ids)
         live_cse_count = self._live_cse_count()
         admission_count = running_count
-        free_slots = max(0, LANE_HARD_LIMIT - admission_count)
+        from cdp_ask.lane_admission import (
+            ADVISOR_RESERVE,
+            admission_regime,
+            count_by_purpose_class,
+            effective_abs_hard,
+        )
+
+        seat_count, other_count = count_by_purpose_class(rows)
+        regime = admission_regime(seat_count)
+        abs_hard_effective = effective_abs_hard(seat_count)
+        free_slots = max(0, abs_hard_effective - admission_count)
         # Restart-drain aggregate only — never drives at_hard_limit after 6885.
         effective = max(running_count, live_cse_count)
         from claude_bundles import cdp_registry
@@ -227,7 +237,12 @@ class ExecutionStore:
             "hard_limit": LANE_HARD_LIMIT,
             "free_slots": free_slots,
             "at_soft_limit": admission_count >= LANE_SOFT_LIMIT,
-            "at_hard_limit": admission_count >= LANE_HARD_LIMIT,
+            "at_hard_limit": admission_count >= abs_hard_effective,
+            "seat_count": seat_count,
+            "other_count": other_count,
+            "advisor_reserve": ADVISOR_RESERVE,
+            "admission_regime": regime,
+            "effective_abs_hard": abs_hard_effective,
         }
         payload.update(
             QualifiedScalar(
@@ -271,9 +286,26 @@ class ExecutionStore:
         )
         decl.plain("soft_limit", reason="configured stream admission constant")
         decl.plain("hard_limit", reason="configured stream admission constant")
-        decl.plain("free_slots", reason="derived: hard_limit - admission_count")
+        decl.plain(
+            "free_slots",
+            reason="derived: effective_abs_hard - admission_count",
+        )
         decl.plain("at_soft_limit", reason="derived: admission_count >= soft_limit")
-        decl.plain("at_hard_limit", reason="derived: admission_count >= hard_limit")
+        decl.plain(
+            "at_hard_limit",
+            reason="derived: admission_count >= effective_abs_hard",
+        )
+        decl.plain("seat_count", reason="derived: pending/running seat-purpose rows")
+        decl.plain("other_count", reason="derived: pending/running non-seat rows")
+        decl.plain("advisor_reserve", reason="configured reserved advisor slot count")
+        decl.plain(
+            "admission_regime",
+            reason="additive when seat_count > hard_limit - reserve else carved",
+        )
+        decl.plain(
+            "effective_abs_hard",
+            reason="regime-aware absolute stream ceiling",
+        )
         return seal(payload, decl)
 
     async def attach_task(self, execution_id: str, task: asyncio.Task[Any]) -> None:
