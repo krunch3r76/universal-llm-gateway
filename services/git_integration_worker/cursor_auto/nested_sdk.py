@@ -338,6 +338,10 @@ async def post_operator_closeout(
     from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
         preserve_plane_lines,
     )
+    from services.git_integration_worker.cursor_auto.status_token_register import (
+        prose_closeout_register_header_lines,
+        stamp_meta_terminal_status_status_of,
+    )
 
     client = bus or CursorBusClient()
     meta = dict(extra or {})
@@ -353,9 +357,11 @@ async def post_operator_closeout(
         meta["gate_class"] = gate_class
     if getattr(job, "contract", None):
         meta.setdefault("contract", job.contract)
+    meta = stamp_meta_terminal_status_status_of(meta)
     lines = [
         "TYPE: CLOSEOUT",
         f"status: {envelope_status}",
+        *prose_closeout_register_header_lines(),
     ]
     if relay_note:
         lines.append(f"relay_note: {relay_note}")

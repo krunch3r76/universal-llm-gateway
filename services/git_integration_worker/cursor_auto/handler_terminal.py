@@ -9,6 +9,13 @@ from agent_seat.registry import normalize_bus_address
 from claim_register import normalize_claim_bearing_payload
 
 from services.git_integration_worker.cursor_auto.queue import AutoJob
+from services.git_integration_worker.cursor_auto.status_token_register import (
+    stamp_disposition_hint_status_of,
+    stamp_disposition_status_of,
+    stamp_terminal_status_status_of,
+    strip_disposition_hint_status_of,
+    strip_disposition_status_of,
+)
 from services.git_integration_worker.cursor_auto.terminal_post_outcome import (
     terminal_post_delivered,
     terminal_post_retryable,
@@ -61,13 +68,36 @@ async def post_terminal_status(
     wire). Member 2 (ledger ``status``) closed Packet D via
     ``propagation_attempt_status`` + ``observe_code_ref_live`` — not here.
     See ``claim_register.wire`` docstring.
+
+    When ``disposition_hint`` is present, emission adds sibling
+    ``disposition_hint_status_of`` naming the *planned* contract-policy register
+    (admit-time; may diverge from observed ``disposition``).
+
+    When ``disposition`` is present, emission adds sibling
+    ``disposition_status_of`` naming the *observed* outcome register without
+    renaming the bare token (arc 6655 rank-(i) additive slice).
+
+    Every emission also adds ``terminal_status_status_of`` naming what register
+    the wait-subject ``status:*`` token belongs to (arc 6655 rank-1b) — subject
+    line unchanged so wait predicates and prefix parsers keep matching.
     """
     if job.request_id and "request_id" not in payload:
         payload = {**payload, "request_id": job.request_id}
     # Partial guard — degrade, do not refuse (Packet A bind).
     payload = normalize_claim_bearing_payload(payload)
+    if "disposition_hint" in payload:
+        payload = stamp_disposition_hint_status_of(payload)
+    else:
+        payload = strip_disposition_hint_status_of(payload)
     if disposition is None:
         payload = {k: v for k, v in payload.items() if k != "disposition"}
+        payload = strip_disposition_status_of(payload)
+    elif "disposition" not in payload:
+        payload = {**payload, "disposition": disposition}
+        payload = stamp_disposition_status_of(payload)
+    else:
+        payload = stamp_disposition_status_of(payload)
+    payload = stamp_terminal_status_status_of(payload)
     extra: dict[str, Any] = {"summary": summary, "request_id": job.request_id}
     if journal_extra:
         extra.update(journal_extra)
