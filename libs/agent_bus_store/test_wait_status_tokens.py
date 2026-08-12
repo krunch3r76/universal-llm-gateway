@@ -61,10 +61,30 @@ def test_status_failed_does_not_match_done():
     )
 
 
+def test_status_superseded_completes_wait():
+    thread = {"status": ThreadStatus.ACTIVE}
+    turns = [
+        _turn(1, "web-anthropic", subject="request"),
+        _turn(2, "cursor-auto", subject="status:superseded — withdrawn"),
+    ]
+    comp = {"mode": "status:superseded"}
+    assert is_complete(thread, turns, after_turn=1, completion=comp)
+    assert derive_status(thread, turns, after_turn=1, completion=comp) == "complete"
+    q = qualifying_status_turn(
+        turns, after_turn=1, status_token="status:superseded"
+    )
+    assert q is not None and q["turn_number"] == 2
+
+
 def test_empty_snapshot_does_not_falsely_complete():
     thread = {"status": ThreadStatus.ACTIVE}
     turns = [_turn(1, "web-anthropic")]
-    for mode in ("status:done", "status:failed", "status:needs-attended"):
+    for mode in (
+        "status:done",
+        "status:failed",
+        "status:needs-attended",
+        "status:superseded",
+    ):
         assert not is_complete(
             thread, turns, after_turn=1, completion={"mode": mode}
         )

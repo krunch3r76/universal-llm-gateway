@@ -11,6 +11,7 @@ import pytest
 from services.git_integration_worker.cursor_auto import supersede as auto_supersede
 from services.git_integration_worker.cursor_auto.queue import AutoJobQueue
 from services.git_integration_worker.cursor_auto.supersede import (
+    QUEUE_WITHDRAW,
     SUPERSEDED_TERMINAL,
     compose_supersede_preamble,
     post_superseded_terminal,
@@ -386,6 +387,79 @@ def test_nested_sdk_finished_excludes_from_supersede_without_mark_done():
     assert queue.get(old.job_id).status == "claimed"
     assert not queue.is_superseded(old.job_id)
     assert new.supersedes is None
+
+
+def test_queued_predecessor_withdrawn_on_same_thread_request():
+    """Same-thread request while prior is queued returns queue_withdraw evidence."""
+    queue = AutoJobQueue(durable=False)
+    old = _enqueue(queue, thread_id="5867", turn_number=8)
+    assert old.status == "queued"
+    new = _enqueue(queue, thread_id="5867", turn_number=9)
+
+    bus = AsyncMock()
+    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    evidence = asyncio.run(
+        supersede_same_thread_inflight(new, queue=queue, client=bus)
+    )
+
+    assert evidence is not None
+    assert evidence["method"] == QUEUE_WITHDRAW
+    assert evidence["method"] != "queued_only"
+    assert queue.is_superseded(old.job_id)
+    assert queue.get(old.job_id).status == "superseded"
+    assert new.supersedes == old.job_id
+    next_job = queue.claim_next()
+    assert next_job is not None
+    assert next_job.job_id == new.job_id
+    assert next_job.job_id != old.job_id
+    terminal = bus.reply.await_args
+    assert terminal is not None
+    assert terminal.kwargs["subject"].startswith(SUPERSEDED_TERMINAL)
+
+
+def test_queued_withdraw_posts_terminal_before_claim_and_wait_completes():
+    """Integration: loser terminal on bus + status:superseded wait completion."""
+    from agent_bus_store.turns_models import ThreadStatus
+    from agent_bus_store.wait_status import derive_status, is_complete
+
+    queue = AutoJobQueue(durable=False)
+    old = _enqueue(queue, thread_id="5867", turn_number=8)
+    new = _enqueue(queue, thread_id="5867", turn_number=9)
+
+    bus = AsyncMock()
+    terminal_subject = f"{SUPERSEDED_TERMINAL} — turn 8"
+    bus.reply = AsyncMock(
+        return_value=MagicMock(status_code=200, body={"turn_number": 2})
+    )
+
+    asyncio.run(supersede_same_thread_inflight(new, queue=queue, client=bus))
+
+    assert queue.is_superseded(old.job_id)
+    bus.reply.assert_awaited_once()
+    assert bus.reply.await_args.kwargs["subject"].startswith(SUPERSEDED_TERMINAL)
+
+    thread = {"status": ThreadStatus.ACTIVE}
+    turns = [
+        {
+            "turn_number": 1,
+            "from_agent": "web-anthropic",
+            "subject": "request",
+            "body": "",
+            "read_at": None,
+            "status": "open",
+        },
+        {
+            "turn_number": 2,
+            "from_agent": "cursor-auto",
+            "subject": terminal_subject,
+            "body": json.dumps({"terminal_vocabulary": SUPERSEDED_TERMINAL}),
+            "read_at": None,
+            "status": "open",
+        },
+    ]
+    comp = {"mode": "status:superseded"}
+    assert is_complete(thread, turns, after_turn=1, completion=comp)
+    assert derive_status(thread, turns, after_turn=1, completion=comp) == "complete"
 
 
 def test_queued_only_still_supersedes_pre_submit_claimed_job():

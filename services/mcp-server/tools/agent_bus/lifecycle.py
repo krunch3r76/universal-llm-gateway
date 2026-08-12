@@ -303,7 +303,8 @@ def _wait_dispatch(
             "error": (
                 f"wait: unknown completion mode {completion!r}; "
                 "expected first_reply_from | thread_closed | "
-                "status:done | status:failed | status:needs-attended"
+                "status:done | status:failed | status:needs-attended | "
+                "status:superseded"
             ),
             "reason": "unknown_completion_mode",
         }

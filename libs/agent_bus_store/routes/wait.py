@@ -116,9 +116,9 @@ async def wait_thread_route(
     """Bounded server-side wait. ``wait=0`` is an immediate snapshot.
 
     ``completion`` ∈ {first_reply_from, thread_closed, status:done,
-    status:failed, status:needs-attended}. ``from_agent`` is required for
-    first_reply_from. Pre-reply status is always ``awaiting_first_reply`` (C)
-    — push state is not inferred from read_at.
+    status:failed, status:needs-attended, status:superseded}. ``from_agent`` is
+    required for first_reply_from. Pre-reply status is always
+    ``awaiting_first_reply`` (C) — push state is not inferred from read_at.
     """
     thread_id = normalize_thread_id(thread_id)
     allowed = ("first_reply_from", "thread_closed", *sorted(STATUS_COMPLETION_MODES))
@@ -128,7 +128,8 @@ async def wait_thread_route(
             detail=(
                 f"unknown completion mode {completion!r}; "
                 "expected first_reply_from | thread_closed | "
-                "status:done | status:failed | status:needs-attended"
+                "status:done | status:failed | status:needs-attended | "
+                "status:superseded"
             ),
         )
     if completion == "first_reply_from" and not from_agent:

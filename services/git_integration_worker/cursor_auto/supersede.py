@@ -1,9 +1,14 @@
 """Same-thread supersede policy for ``lane:cursor-auto``.
 
 A second ``agent_bus.request`` on a private thread whose previous job is still
-in flight is read as a **backtrack**, not as a queue append: the live nested run
-is interrupted, its writes are reverted from the admit baseline, and the new
+in flight **or still queued** is read as a **backtrack**, not as a queue append:
+the live nested run is interrupted (or a queued predecessor is withdrawn), its
+writes are reverted from the admit baseline when applicable, and the new
 DIRECTIVE carries a notice of what the void episode left behind.
+
+Queued predecessors use method token ``queue_withdraw`` (≠ ``queued_only`` or
+``pre_register_live_run``). The loser receives ``status:superseded`` on the bus
+before it can be claimed — ``mark_superseded`` alone is insufficient.
 
 **Exception (row 21):** a structural continuity hop
 (``TYPE: CONTINUITY_HANDOFF`` / wire ``continuity_hop=true``) is **not** a
@@ -12,6 +17,7 @@ backtrack — enqueue skips this module and runs the concurrent CDP hop path
 
 Scope bind: same ``thread_id`` only. Cross-thread contention stays FIFO on the
 capacity gate — a request on another thread never interrupts this one.
+Contract is irrelevant to the candidate predicate.
 """
 
 from __future__ import annotations
@@ -67,6 +73,8 @@ _PENDING: dict[str, SupersedeContext] = {}
 # Honesty token for claimed ∧ ¬register_live_run: names the window, does not
 # claim process stop. Distinct from ``queued_only`` (pre-mint cancel vocabulary).
 PRE_REGISTER_LIVE_RUN = "pre_register_live_run"
+# Queued predecessor retract — distinct from ``queued_only`` and pre-live tokens.
+QUEUE_WITHDRAW = "queue_withdraw"
 
 
 def _bound_auto_dispatch_id(job_id: str) -> str | None:
@@ -86,64 +94,99 @@ def _bound_auto_dispatch_id(job_id: str) -> str | None:
 
 
 async def supersede_same_thread_inflight(
-    new_job: AutoJob, *, queue: AutoJobQueue
+    new_job: AutoJob,
+    *,
+    queue: AutoJobQueue,
+    client: CursorBusClient | None = None,
 ) -> dict[str, Any] | None:
-    """Interrupt the in-flight job on ``new_job.thread_id``, if there is one.
+    """Interrupt or withdraw the predecessor on ``new_job.thread_id``, if any.
 
     Returns interrupt evidence for the enqueue response, or ``None`` when the
     thread is idle and the request is a plain FIFO append.
 
-    When ``live_run_for_thread`` is ``None``, the job may be never-submitted
-    **or** already past ``bind_dispatch``/POST without ``register_live_run``.
-    That probe cannot license ``queued_only`` + ``terminal_status=cancelled``.
+    Candidate resolution prefers a claimed in-flight job, else the oldest queued
+    peer on the thread. Queued withdraw emits ``queue_withdraw`` and posts
+    ``status:superseded`` immediately so the loser is observable before
+    ``claim_next`` could ever run it.
+
+    When ``live_run_for_thread`` is ``None`` on a **claimed** candidate, the job
+    may be never-submitted **or** already past ``bind_dispatch``/POST without
+    ``register_live_run``. That probe cannot license ``queued_only`` +
+    ``terminal_status=cancelled``.
     """
-    old_job = queue.claimed_for_thread(new_job.thread_id)
+    old_job = queue.supersede_candidate_for_thread(new_job.thread_id)
     if old_job is None or old_job.job_id == new_job.job_id:
         return None
-    live = live_run_for_thread(new_job.thread_id)
     reason = f"same_thread_request_turn_{new_job.turn_number}"
     superseded_dispatch_id: str | None = None
     source_repo: str | None = None
-    if live is not None:
-        mark = await asyncio.to_thread(
-            signal_supersede,
-            dispatch_id=live.dispatch_id,
-            superseded_by=new_job.job_id,
-            reason=reason,
-        )
-        superseded_dispatch_id = live.dispatch_id
-        source_repo = live.source_repo
-    else:
-        # Pre-CancelRun window — mark displacement honestly; do not claim stop.
-        bound_dispatch = _bound_auto_dispatch_id(old_job.job_id)
-        mark = {"method": PRE_REGISTER_LIVE_RUN, "reason": reason}
-        if bound_dispatch is not None:
-            mark["dispatch_id"] = bound_dispatch
+    was_queued = old_job.status == "queued"
+    if was_queued:
+        mark = {"method": QUEUE_WITHDRAW, "reason": reason}
         emit_sdk_worker_cancelled(
-            dispatch_id=bound_dispatch or old_job.job_id,
-            method=PRE_REGISTER_LIVE_RUN,
+            dispatch_id=old_job.job_id,
+            method=QUEUE_WITHDRAW,
             reason=reason,
             thread_id=new_job.thread_id,
             superseded_by=new_job.job_id,
+            terminal_status="displaced_queued",
         )
-        superseded_dispatch_id = bound_dispatch
-    queue.mark_superseded(old_job.job_id, superseded_by=new_job.job_id)
-    new_job.supersedes = old_job.job_id
-    new_job.superseded_dispatch_id = superseded_dispatch_id
-    _PENDING[new_job.job_id] = SupersedeContext(
-        superseded_job_id=old_job.job_id,
-        superseded_dispatch_id=superseded_dispatch_id,
-        source_repo=source_repo,
-        mark=mark,
-    )
+        queue.mark_superseded(old_job.job_id, superseded_by=new_job.job_id)
+        new_job.supersedes = old_job.job_id
+        new_job.superseded_dispatch_id = None
+        _PENDING[new_job.job_id] = SupersedeContext(
+            superseded_job_id=old_job.job_id,
+            superseded_dispatch_id=None,
+            source_repo=None,
+            mark=mark,
+        )
+        bus = client or CursorBusClient()
+        await post_superseded_terminal(
+            old_job, client=bus, queue=queue, dispatch_id=None
+        )
+    else:
+        live = live_run_for_thread(new_job.thread_id)
+        if live is not None:
+            mark = await asyncio.to_thread(
+                signal_supersede,
+                dispatch_id=live.dispatch_id,
+                superseded_by=new_job.job_id,
+                reason=reason,
+            )
+            superseded_dispatch_id = live.dispatch_id
+            source_repo = live.source_repo
+        else:
+            # Pre-CancelRun window — mark displacement honestly; do not claim stop.
+            bound_dispatch = _bound_auto_dispatch_id(old_job.job_id)
+            mark = {"method": PRE_REGISTER_LIVE_RUN, "reason": reason}
+            if bound_dispatch is not None:
+                mark["dispatch_id"] = bound_dispatch
+            emit_sdk_worker_cancelled(
+                dispatch_id=bound_dispatch or old_job.job_id,
+                method=PRE_REGISTER_LIVE_RUN,
+                reason=reason,
+                thread_id=new_job.thread_id,
+                superseded_by=new_job.job_id,
+            )
+            superseded_dispatch_id = bound_dispatch
+        queue.mark_superseded(old_job.job_id, superseded_by=new_job.job_id)
+        new_job.supersedes = old_job.job_id
+        new_job.superseded_dispatch_id = superseded_dispatch_id
+        _PENDING[new_job.job_id] = SupersedeContext(
+            superseded_job_id=old_job.job_id,
+            superseded_dispatch_id=superseded_dispatch_id,
+            source_repo=source_repo,
+            mark=mark,
+        )
     logger.warning(
         "cursor-auto supersede thread=%s superseded_job=%s by_job=%s "
-        "dispatch_id=%s method=%s",
+        "dispatch_id=%s method=%s queued=%s",
         new_job.thread_id,
         old_job.job_id,
         new_job.job_id,
         new_job.superseded_dispatch_id,
         mark.get("method"),
+        was_queued,
     )
     return {
         "superseded_job_id": old_job.job_id,

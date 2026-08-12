@@ -30,7 +30,12 @@ WaitStatus = Literal["awaiting_first_reply", "complete"]
 
 # Terminal Auto-orchestrator status tokens (agent_bus.request completion).
 STATUS_COMPLETION_MODES: frozenset[str] = frozenset(
-    {"status:done", "status:failed", "status:needs-attended"}
+    {
+        "status:done",
+        "status:failed",
+        "status:needs-attended",
+        "status:superseded",
+    }
 )
 CompletionMode = Literal[
     "first_reply_from",
@@ -38,6 +43,7 @@ CompletionMode = Literal[
     "status:done",
     "status:failed",
     "status:needs-attended",
+    "status:superseded",
 ]
 
 

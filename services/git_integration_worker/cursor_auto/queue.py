@@ -176,10 +176,11 @@ class AutoJobQueue:
                 job.nested_sdk_finished = True
 
     def claimed_for_thread(self, thread_id: str) -> AutoJob | None:
-        """Return the in-flight supersede candidate on *thread_id*.
+        """Return the claimed in-flight job on *thread_id* (claimed-only).
 
         Jobs whose nested SDK already finished (CLOSEOUT still relaying) stay
         ``claimed`` for restart triage but are not supersede candidates.
+        Hop cadence and continuity-hop incumbent lookup use this helper.
         """
         with self._lock:
             for jid in self._order:
@@ -191,6 +192,25 @@ class AutoJobQueue:
                 ):
                     return job
         return None
+
+    def supersede_candidate_for_thread(self, thread_id: str) -> AutoJob | None:
+        """Return the same-thread supersede target: claimed in-flight, else queued.
+
+        Scans ``_order`` FIFO. Prefer the first ``claimed`` job that is not
+        past nested SDK terminal; otherwise the oldest ``queued`` peer. Contract
+        is irrelevant to candidacy.
+        """
+        with self._lock:
+            queued_candidate: AutoJob | None = None
+            for jid in self._order:
+                job = self._jobs[jid]
+                if job.thread_id != thread_id:
+                    continue
+                if job.status == "claimed" and not job.nested_sdk_finished:
+                    return job
+                if job.status == "queued" and queued_candidate is None:
+                    queued_candidate = job
+            return queued_candidate
 
     def mark_superseded(self, job_id: str, *, superseded_by: str) -> AutoJob | None:
         """Flag an in-flight job as displaced by *superseded_by* and return it."""

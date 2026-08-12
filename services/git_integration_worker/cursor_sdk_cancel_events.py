@@ -30,6 +30,7 @@ _CANCEL_METHODS = frozenset(
         "bridge_abort_escalate",
         "queued_only",
         "pre_register_live_run",
+        "queue_withdraw",
     }
 )
 

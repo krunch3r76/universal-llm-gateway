@@ -306,7 +306,8 @@ async def enqueue(body: EnqueueBody, request: Request):
         )
     else:
         # A second request on a private thread is a backtrack, not a queue append:
-        # interrupt the live episode so the new DIRECTIVE does not wait it out.
+        # interrupt the live episode or withdraw a queued predecessor so the new
+        # DIRECTIVE does not wait it out. Continuity hops skip (Gate A).
         interrupt = await supersede_same_thread_inflight(job, queue=queue)
     # Peers only (exclude self): alone → 0; queued predecessors → N. Same lock
     # as snapshot(); do not disturb supersede vocabulary beside this field.
