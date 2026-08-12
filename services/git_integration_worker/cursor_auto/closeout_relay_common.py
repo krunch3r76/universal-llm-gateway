@@ -277,6 +277,34 @@ def strip_machine_tail(text: str) -> str:
     return text[:cut].rstrip()
 
 
+_STRUCTURED_CLOSEOUT_FULL_HEADING = _TAIL_MARKERS[1].lstrip("\n")
+
+
+def extract_structured_closeout_full_text(sidecar_text: str | None) -> str | None:
+    """Return raw JSON text from a sidecar ``## structured_closeout_full`` section."""
+    if not sidecar_text:
+        return None
+    marker = _TAIL_MARKERS[1]
+    idx = sidecar_text.find(marker)
+    if idx == -1:
+        if sidecar_text.lstrip().startswith(_STRUCTURED_CLOSEOUT_FULL_HEADING):
+            idx = sidecar_text.find(_STRUCTURED_CLOSEOUT_FULL_HEADING)
+        else:
+            return None
+    remainder = sidecar_text[idx + len(marker) :].lstrip("\n")
+    if not remainder.strip():
+        return None
+    cut = len(remainder)
+    for tail_marker in _TAIL_MARKERS:
+        if tail_marker == marker:
+            continue
+        pos = remainder.find(tail_marker)
+        if pos != -1:
+            cut = min(cut, pos)
+    json_text = remainder[:cut].strip()
+    return json_text or None
+
+
 def strip_projected_closeout_envelope(body: str) -> str:
     """Drop inner ``TYPE: CLOSEOUT`` header lines — outer relay owns one envelope.
 
@@ -365,9 +393,14 @@ def resolve_measurement_status(
     *,
     wrapper_text: str | None,
     ledger_fallback: str,
+    sidecar_text: str | None = None,
 ) -> str:
     """Measurement control line for envelope ``status:`` — B3/ledger, not §2 claim."""
     measured = resolve_measurement_status_from_wrapper(wrapper_text)
+    if measured is None and sidecar_text:
+        structured = extract_structured_closeout_full_text(sidecar_text)
+        if structured:
+            measured = resolve_measurement_status_from_wrapper(structured)
     if measured is not None:
         return measured
     normalized = ledger_fallback.strip().lower()
@@ -423,6 +456,7 @@ __all__ = [
     "build_ac_verdict_cell",
     "_DEVIATION_EFFECTS_ENRICHED",
     "default_relay_cell_cap",
+    "extract_structured_closeout_full_text",
     "fenced_cell_pointer",
     "fill_judgment_cell",
     "is_degenerate_fence_cell",

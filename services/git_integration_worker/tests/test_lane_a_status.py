@@ -328,3 +328,56 @@ def test_call_order_reconcile_before_envelope_measurement() -> None:
     assert "machine_status" in common_text
     assert "resolve_measurement_status_from_wrapper" in common_text
     assert "claim lives in §2" in common_text
+
+
+_PARENT_RELOCATED_STUB_JSON = json.dumps(
+    {
+        "schema_version": 1,
+        "status": "complete",
+        "summary": "dispatch auto-91649020500f: nested leg",
+        "work_outcome": "shipped",
+        "body_relocated": {
+            "uri": "cortex://notes/system/threads/6655-cursor-sdk-closeout-auto-91649020500f.md",
+        },
+    }
+)
+
+
+def _sidecar_with_structured_work_json() -> str:
+    structured = json.dumps(
+        {
+            "schema_version": 1,
+            "status": "partial",
+            "status_incomplete_class": "work",
+            "work_outcome": "checks_failed",
+            "capture_status": "partial",
+            "effects_manifest": {
+                "dispatch_id": "65fb113d1438-64e49b12",
+                "thread_id": "7165",
+                "capture_sources": ["conversation"],
+            },
+        }
+    )
+    return (
+        "## §2 closeout\n\n"
+        "**status_claim:** complete\n\n"
+        "**ac_verdict:** PASS\n\n"
+        "**deltas_to_spec:** none\n\n"
+        f"## structured_closeout_full\n\n{structured}"
+    )
+
+
+def test_select_closeout_relay_parent_stub_reads_structured_closeout_full_work() -> None:
+    """6655#2652 live shape — parent ``body_relocated`` stub + sidecar work JSON."""
+    from services.git_integration_worker.cursor_auto.closeout_relay import (
+        select_closeout_relay_payload,
+    )
+
+    payload = select_closeout_relay_payload(
+        sdk_body=_PARENT_RELOCATED_STUB_JSON,
+        sidecar_text=_sidecar_with_structured_work_json(),
+        ledger_status="completed",
+        dispatch_id="auto-91649020500f",
+    )
+    assert payload.source == "section2_sidecar"
+    assert payload.status == "partial:work"

@@ -332,6 +332,7 @@ def finalize_relay_payload(
     payload: CloseoutRelayPayload,
     *,
     wrapper_text: str | None,
+    sidecar_text: str | None = None,
     guard_uris: frozenset[str] | None = None,
     dispatch_id: str = "",
     caller_auditable: bool = False,
@@ -346,6 +347,7 @@ def finalize_relay_payload(
     measurement_status = resolve_measurement_status(
         wrapper_text=wrapper_text,
         ledger_fallback=payload.status,
+        sidecar_text=sidecar_text,
     )
     amended = amend_effects_underclaim(
         payload.body,

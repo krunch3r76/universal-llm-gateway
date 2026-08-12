@@ -293,6 +293,7 @@ def select_closeout_relay_payload(
 
     bind = {
         "wrapper_text": wrapper_text,
+        "sidecar_text": sidecar_text,
         "guard_uris": guard_uris,
         "dispatch_id": dispatch_id,
         "caller_auditable": caller_auditable,
@@ -314,6 +315,7 @@ def select_closeout_relay_payload(
             measurement = resolve_measurement_status(
                 wrapper_text=wrapper_text,
                 ledger_fallback=fallback_status,
+                sidecar_text=sidecar_text,
             )
             return finalize_relay_payload(
                 CloseoutRelayPayload(
@@ -336,6 +338,7 @@ def select_closeout_relay_payload(
         measurement = resolve_measurement_status(
             wrapper_text=wrapper_text,
             ledger_fallback=fallback_status,
+            sidecar_text=sidecar_text,
         )
         return finalize_relay_payload(
             CloseoutRelayPayload(
@@ -372,6 +375,7 @@ def select_closeout_relay_payload(
         measurement = resolve_measurement_status(
             wrapper_text=sdk_body,
             ledger_fallback=fallback_status,
+            sidecar_text=sidecar_text,
         )
         return finalize_relay_payload(
             CloseoutRelayPayload(
@@ -386,6 +390,7 @@ def select_closeout_relay_payload(
         measurement = resolve_measurement_status(
             wrapper_text=sdk_body,
             ledger_fallback=fallback_status,
+            sidecar_text=sidecar_text,
         )
         return finalize_relay_payload(
             CloseoutRelayPayload(
@@ -399,6 +404,7 @@ def select_closeout_relay_payload(
     measurement = resolve_measurement_status(
         wrapper_text=sdk_body,
         ledger_fallback=fallback_status,
+        sidecar_text=sidecar_text,
     )
     return finalize_relay_payload(
         CloseoutRelayPayload(
