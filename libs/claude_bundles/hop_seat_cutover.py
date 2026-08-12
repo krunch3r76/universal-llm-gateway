@@ -15,6 +15,8 @@ from typing import Any
 
 from universal_logging import get_logger
 
+from claude_bundles.hop_cadence_id_map import claim_join_keys
+
 logger = get_logger(__name__)
 
 _WATCH_FILENAME = "hop_cadence_watches.json"
@@ -76,12 +78,33 @@ def running_execution_ids(snap: dict[str, Any]) -> set[str]:
     return out
 
 
+def matched_active_work_row(
+    row: dict[str, Any],
+    snap: dict[str, Any],
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Return matched active-work row when claim join keys intersect the running set."""
+    keys = claim_join_keys(row)
+    if not keys:
+        return None, None
+    running = running_execution_ids(snap)
+    intersection = keys & running
+    if not intersection:
+        return None, None
+    rows = snap.get("rows") if isinstance(snap.get("rows"), list) else []
+    for aw_row in rows:
+        if not isinstance(aw_row, dict):
+            continue
+        status = str(aw_row.get("status") or "")
+        exec_id = str(aw_row.get("execution_id") or "").strip()
+        if exec_id in intersection and status in {"pending", "running"}:
+            return exec_id, aw_row
+    return next(iter(intersection)), None
+
+
 def successor_confirm_active(row: dict[str, Any], snap: dict[str, Any]) -> bool:
-    """True when the hop-commissioned successor stream is observed running."""
-    successor = str(row.get("successor_execution_id") or "").strip()
-    if not successor:
-        return False
-    return successor in running_execution_ids(snap)
+    """True when claim join keys intersect live ``cdp_ask`` active-work execution ids."""
+    matched_key, _ = matched_active_work_row(row, snap)
+    return matched_key is not None
 
 
 def refuse_cadence_hop_for_live_seat(
@@ -131,7 +154,18 @@ def resolve_request_refusal(
         return None
     if not successor_confirm_active(row, snap):
         return None
+    matched_key, _ = matched_active_work_row(row, snap)
     successor = str(row.get("successor_execution_id") or "").strip()
+    stargate_keys = {
+        str(row.get("successor_execution_id") or "").strip(),
+        str(row.get("last_hop_execution_id") or "").strip(),
+        str(row.get("pending_execution_id") or "").strip(),
+    }
+    pending = row.get("pending_succession")
+    if isinstance(pending, dict):
+        stargate_keys.add(str(pending.get("execution_id") or "").strip())
+    stargate_keys.discard("")
+    satellite_id = matched_key if matched_key and matched_key not in stargate_keys else None
     return {
         "error": (
             "request: lane write authority cut over to successor; "
@@ -142,7 +176,8 @@ def resolve_request_refusal(
         "thread_id": tid,
         "superseded_registration_id": superseded,
         "successor_execution_id": successor or None,
-        "signal": "cdp_ask_active_work_successor_execution_id",
+        "successor_satellite_execution_id": satellite_id,
+        "signal": "cdp_ask_active_work_membership",
     }
 
 
@@ -175,6 +210,7 @@ def effective_seated_at_after_hop(
 __all__ = [
     "effective_seated_at_after_hop",
     "load_watches",
+    "matched_active_work_row",
     "refuse_cadence_hop_for_live_seat",
     "resolve_request_refusal",
     "running_execution_ids",

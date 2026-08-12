@@ -358,6 +358,28 @@ def mark_hop_fired(
     save_watches(watches, path)
 
 
+def advance_registration_on_confirm(
+    row: dict[str, Any],
+    *,
+    matched_key: str,
+    active_work_row: dict[str, Any] | None,
+    now: float,
+) -> tuple[dict[str, Any], tuple[str, str] | None]:
+    """Advance watch registration when live membership confirms; emit events once per transition."""
+    _ = now
+    if active_work_row is None or not isinstance(active_work_row, dict):
+        return row, None
+    new_reg = str(active_work_row.get("registration_id") or "").strip()
+    if not new_reg:
+        return row, None
+    prior_reg = str(row.get("registration_id") or "").strip()
+    if prior_reg == new_reg:
+        return row, None
+    updated = dict(row)
+    updated["registration_id"] = new_reg
+    return updated, (prior_reg, new_reg)
+
+
 def mark_hop_failed(
     thread_id: str,
     *,

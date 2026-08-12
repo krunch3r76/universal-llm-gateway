@@ -6,15 +6,23 @@ import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from claude_bundles.hop_seat_cutover import (
     effective_seated_at_after_hop,
     refuse_cadence_hop_for_live_seat,
     resolve_request_refusal,
+    successor_confirm_active,
 )
-from services.git_integration_worker.cursor_auto.hop_cadence import fire_hop_for_decision
+
+from services.git_integration_worker.cursor_auto.hop_cadence import (
+    build_cadence_hop_body,
+    fire_hop_for_decision,
+)
+from services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile import (
+    reconcile_succession_confirmations,
+)
 from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
     HopDecision,
+    advance_registration_on_confirm,
     evaluate_watch,
 )
 
@@ -30,6 +38,40 @@ def _snap(*, registration_id: str, execution_id: str = "exec-successor") -> dict
             }
         ]
     }
+
+
+def test_confirm_active_join_keys_intersection():
+    row = {
+        "successor_execution_id": "stargate-uuid",
+        "pending_satellite_execution_id": "satellite-hex",
+    }
+    empty_snap = {"rows": []}
+    assert successor_confirm_active(row, empty_snap) is False
+
+    live_snap = _snap(registration_id="reg-new", execution_id="satellite-hex")
+    assert successor_confirm_active(row, live_snap) is True
+
+
+def test_confirm_active_multi_key_partial_live():
+    row = {
+        "successor_execution_id": "stargate-only",
+        "pending_satellite_execution_id": "satellite-live",
+    }
+    snap = _snap(registration_id="reg-new", execution_id="satellite-live")
+    assert successor_confirm_active(row, snap) is True
+
+    stargate_only_snap = _snap(registration_id="reg-new", execution_id="stargate-only")
+    assert successor_confirm_active(row, stargate_only_snap) is True
+
+
+def test_confirm_false_when_membership_empty_despite_pending_keys():
+    row = {
+        "successor_execution_id": "stargate-uuid",
+        "pending_satellite_execution_id": "satellite-pending",
+        "pending_execution_id": "stargate-uuid",
+    }
+    snap = {"rows": []}
+    assert successor_confirm_active(row, snap) is False
 
 
 def test_effective_seated_at_prefers_post_hop_reset_over_stale_registry():
@@ -73,12 +115,14 @@ def test_first_cadence_hop_allowed_while_seat_live():
 def test_resolve_request_refusal_after_successor_confirm():
     row = {
         "superseded_registration_id": "reg-old",
-        "successor_execution_id": "exec-new",
+        "successor_execution_id": "stargate-uuid",
+        "pending_satellite_execution_id": "satellite-live",
     }
+    snap = _snap(registration_id="reg-new", execution_id="satellite-live")
     refusal = resolve_request_refusal(
         thread_id="6885",
         cse_registration_id="reg-old",
-        snap=_snap(registration_id="reg-new", execution_id="exec-new"),
+        snap=snap,
         path=None,
     )
     assert refusal is None
@@ -90,11 +134,118 @@ def test_resolve_request_refusal_after_successor_confirm():
         refusal = resolve_request_refusal(
             thread_id="6885",
             cse_registration_id="reg-old",
-            snap=_snap(registration_id="reg-new", execution_id="exec-new"),
+            snap=snap,
         )
     assert refusal is not None
     assert refusal["reason"] == "superseded_predecessor_refuse_at_request"
-    assert refusal["successor_execution_id"] == "exec-new"
+    assert refusal["successor_execution_id"] == "stargate-uuid"
+    assert refusal["successor_satellite_execution_id"] == "satellite-live"
+    assert refusal["signal"] == "cdp_ask_active_work_membership"
+
+
+def test_resolve_request_refusal_envelope_additive_fields():
+    row = {
+        "superseded_registration_id": "reg-old",
+        "successor_execution_id": "exec-new",
+    }
+    snap = _snap(registration_id="reg-new", execution_id="exec-new")
+    with patch(
+        "claude_bundles.hop_seat_cutover.load_watches",
+        return_value={"6885": row},
+    ):
+        refusal = resolve_request_refusal(
+            thread_id="6885",
+            cse_registration_id="reg-old",
+            snap=snap,
+        )
+    assert refusal is not None
+    for key in (
+        "error",
+        "reason",
+        "status_code",
+        "thread_id",
+        "superseded_registration_id",
+        "successor_execution_id",
+        "signal",
+    ):
+        assert key in refusal
+    assert refusal["status_code"] == 422
+    assert "successor_satellite_execution_id" in refusal
+    assert refusal["signal"] == "cdp_ask_active_work_membership"
+
+
+def test_build_cadence_hop_body_superseded_registration_id_line():
+    decision = HopDecision(
+        "6885",
+        "fire",
+        "age_threshold_met",
+        age_s=2000.0,
+        threshold_s=1500.0,
+    )
+    body = build_cadence_hop_body(decision, registration_id="reg-incumbent")
+    lines = body.splitlines()
+    assert any(line == "superseded_registration_id: reg-incumbent" for line in lines)
+    assert not any(line.startswith("registration_id:") for line in lines)
+
+
+def test_registration_advanced_once_on_confirm():
+    row = {
+        "thread_id": "6885",
+        "registration_id": "reg-old",
+        "successor_execution_id": "stargate-uuid",
+        "pending_satellite_execution_id": "satellite-live",
+    }
+    watches = {"6885": dict(row)}
+    snap = _snap(registration_id="reg-new", execution_id="satellite-live")
+
+    with patch(
+        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.load_watches",
+        side_effect=lambda path=None: watches,
+    ), patch(
+        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.save_watches",
+        side_effect=lambda data, path=None: watches.update(data) or None,
+    ), patch(
+        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_succession_confirmed",
+    ) as confirmed_mock, patch(
+        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_registration_advanced",
+    ) as advanced_mock:
+        result = reconcile_succession_confirmations(snapshot_reader=lambda: snap)
+        assert len(result["confirmations"]) == 1
+        assert confirmed_mock.call_count == 1
+        assert advanced_mock.call_count == 1
+        advanced_kwargs = advanced_mock.call_args.kwargs
+        assert advanced_kwargs["prior_registration_id"] == "reg-old"
+        assert advanced_kwargs["new_registration_id"] == "reg-new"
+        assert advanced_kwargs["superseding_execution_id"] == "satellite-live"
+        assert watches["6885"]["registration_id"] == "reg-new"
+
+        confirmed_mock.reset_mock()
+        advanced_mock.reset_mock()
+        result2 = reconcile_succession_confirmations(snapshot_reader=lambda: snap)
+        assert result2["confirmations"] == []
+        assert confirmed_mock.call_count == 0
+        assert advanced_mock.call_count == 0
+
+
+def test_advance_registration_on_confirm_unit():
+    row = {"registration_id": "reg-old"}
+    aw_row = {"registration_id": "reg-new", "execution_id": "exec-1", "status": "running"}
+    updated, transition = advance_registration_on_confirm(
+        row,
+        matched_key="exec-1",
+        active_work_row=aw_row,
+        now=time.time(),
+    )
+    assert transition == ("reg-old", "reg-new")
+    assert updated["registration_id"] == "reg-new"
+    updated2, transition2 = advance_registration_on_confirm(
+        updated,
+        matched_key="exec-1",
+        active_work_row=aw_row,
+        now=time.time(),
+    )
+    assert transition2 is None
+    assert updated2["registration_id"] == "reg-new"
 
 
 @pytest.mark.asyncio
@@ -124,6 +275,8 @@ async def test_fire_hop_refuses_repeat_while_registration_streams():
         "services.git_integration_worker.cursor_auto.hop_cadence.run_continuity_hop_concurrent",
         new_callable=AsyncMock,
         return_value={"ok": True, "execution_id": "exec-new"},
+    ), patch(
+        "services.git_integration_worker.cursor_auto.hop_cadence.emit_cadence_refuse",
     ):
         outcome = await fire_hop_for_decision(
             decision,

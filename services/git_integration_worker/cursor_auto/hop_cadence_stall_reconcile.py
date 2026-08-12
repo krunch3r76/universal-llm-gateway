@@ -13,20 +13,27 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from transport_utils import EVENTS_QUERY_SOCK, make_sync_client
-from universal_logging import get_logger
-
-from services.git_integration_worker.cursor_auto.hop_cadence_events import (
-    emit_revoke_breaker,
-    emit_succession_revoked,
-)
-from services.git_integration_worker.cursor_auto.hop_cadence_id_map import (
+from claude_bundles.hop_cadence_id_map import (
     claim_join_keys,
     normalize_id,
     stall_matches_claim,
     submitted_updates_claim,
 )
+from claude_bundles.hop_seat_cutover import (
+    matched_active_work_row,
+    successor_confirm_active,
+)
+from transport_utils import EVENTS_QUERY_SOCK, make_sync_client
+from universal_logging import get_logger
+
+from services.git_integration_worker.cursor_auto.hop_cadence_events import (
+    emit_registration_advanced,
+    emit_revoke_breaker,
+    emit_succession_confirmed,
+    emit_succession_revoked,
+)
 from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
+    advance_registration_on_confirm,
     load_watches,
     save_watches,
 )
@@ -53,6 +60,7 @@ def reconcile_state_path() -> Path:
 
 
 def load_reconcile_state(path: Path | None = None) -> dict[str, Any]:
+    """Load durable reconcile cursor; default ``last_seq`` is zero when absent."""
     target = path or reconcile_state_path()
     if not target.is_file():
         return {"last_seq": 0}
@@ -64,6 +72,7 @@ def load_reconcile_state(path: Path | None = None) -> dict[str, Any]:
 
 
 def save_reconcile_state(state: dict[str, Any], path: Path | None = None) -> None:
+    """Persist reconcile cursor atomically beside the CDP registry store."""
     target = path or reconcile_state_path()
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix(".tmp")
@@ -210,6 +219,7 @@ def confirm_succession_claim(row: dict[str, Any], *, now: float) -> dict[str, An
 
 
 def breaker_blocks_hop(row: dict[str, Any]) -> bool:
+    """Return True when repeated stall revocations tripped the cadence breaker."""
     return bool(row.get("breaker_tripped"))
 
 
@@ -330,6 +340,75 @@ def reconcile_stall_revocations(
     return {"actions": actions, "events_scanned": len(events), "last_seq": max_seq}
 
 
+def reconcile_succession_confirmations(
+    *,
+    watches_path: Path | None = None,
+    now: float | None = None,
+    snapshot_reader: Callable[[], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Observe live active-work membership and advance watch registration ids once."""
+    ts = time.time() if now is None else now
+    try:
+        snap = (snapshot_reader or _default_snapshot_reader)()
+    except Exception as exc:  # noqa: BLE001 — reconcile must not crash cadence loop
+        logger.warning("hop_cadence confirm snapshot failed: %s", exc)
+        return {"confirmations": [], "error": str(exc)}
+    if not isinstance(snap, dict):
+        snap = {}
+    watches = load_watches(watches_path)
+    confirmations: list[dict[str, Any]] = []
+    changed = False
+    for thread_id, row in list(watches.items()):
+        if not successor_confirm_active(row, snap):
+            continue
+        matched_key, aw_row = matched_active_work_row(row, snap)
+        if not matched_key:
+            continue
+        updated, transition = advance_registration_on_confirm(
+            row,
+            matched_key=matched_key,
+            active_work_row=aw_row,
+            now=ts,
+        )
+        if transition is None:
+            continue
+        watches[thread_id] = updated
+        changed = True
+        prior_reg, new_reg = transition
+        watch_reg = str(row.get("registration_id") or "")
+        emit_succession_confirmed(
+            thread_id=thread_id,
+            matched_key=matched_key,
+            watch_registration_id=watch_reg,
+        )
+        if new_reg:
+            emit_registration_advanced(
+                thread_id=thread_id,
+                prior_registration_id=prior_reg,
+                new_registration_id=new_reg,
+                superseding_execution_id=matched_key,
+            )
+        confirmations.append(
+            {
+                "thread_id": thread_id,
+                "matched_key": matched_key,
+                "prior_registration_id": prior_reg,
+                "new_registration_id": new_reg,
+            }
+        )
+    if changed:
+        save_watches(watches, watches_path)
+    return {"confirmations": confirmations}
+
+
+def _default_snapshot_reader() -> dict[str, Any]:
+    from services.git_integration_worker.cursor_auto.cdp_escalation import (
+        read_cdp_lane_snapshot,
+    )
+
+    return read_cdp_lane_snapshot()
+
+
 __all__ = [
     "REVOKE_BREAKER_N",
     "STALL_JOIN_MAX_AGE_S",
@@ -339,6 +418,7 @@ __all__ = [
     "confirm_succession_claim",
     "query_generate_events_since",
     "reconcile_stall_revocations",
+    "reconcile_succession_confirmations",
     "record_succession_claim",
     "revoke_succession_claim",
 ]

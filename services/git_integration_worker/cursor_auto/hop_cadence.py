@@ -31,8 +31,12 @@ from services.git_integration_worker.cursor_auto.cdp_escalation import (
 from services.git_integration_worker.cursor_auto.continuity_hop import (
     run_continuity_hop_concurrent,
 )
+from services.git_integration_worker.cursor_auto.hop_cadence_events import (
+    emit_cadence_refuse,
+)
 from services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile import (
     reconcile_stall_revocations,
+    reconcile_succession_confirmations,
 )
 from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
     HopDecision,
@@ -89,7 +93,7 @@ def build_cadence_hop_body(
     if handoff.age_s is not None:
         lines.append(f"standing_handoff_age_s: {handoff.age_s:.1f}")
     if registration_id:
-        lines.append(f"registration_id: {registration_id}")
+        lines.append(f"superseded_registration_id: {registration_id}")
     lines.extend(
         [
             "",
@@ -177,6 +181,12 @@ async def fire_hop_for_decision(
             decision.thread_id,
             refuse_reason,
             refuse_evidence,
+        )
+        emit_cadence_refuse(
+            thread_id=decision.thread_id,
+            reason=str(refuse_reason or ""),
+            registration_id=str(refuse_evidence.get("registration_id") or ""),
+            signal=str(refuse_evidence.get("signal") or ""),
         )
         return {
             "ok": False,
@@ -319,6 +329,7 @@ async def hop_cadence_loop(app: Any) -> None:
     while True:
         try:
             reconcile_stall_revocations()
+            reconcile_succession_confirmations(snapshot_reader=read_cdp_lane_snapshot)
             outcomes = await scan_and_fire(queue=get_queue())
             due = [o for o in outcomes if o.get("ok") or o.get("reason") == "capacity_blocked"]
             if due:
