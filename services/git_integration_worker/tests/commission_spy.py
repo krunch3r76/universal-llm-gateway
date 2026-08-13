@@ -30,12 +30,14 @@ def commission_spy(
         mission_kind: str | None = None,
         parent_thread: str | None = None,
         stargate_url: str | None = None,
+        prompt_override: str | None = None,
     ) -> dict[str, Any]:
         if reasoning_effort is ...:
             raise AssertionError(
                 "commission_cdp_escalation called without reasoning_effort= "
                 "(pass None explicitly when unpinned)"
             )
+        job_body = getattr(job, "body", None)
         calls.append(
             {
                 "model": model,
@@ -43,7 +45,10 @@ def commission_spy(
                 "purpose": purpose,
                 "mission_kind": mission_kind,
                 "parent_thread": parent_thread,
-                "body": getattr(job, "body", None),
+                "body": job_body,
+                "prompt_override": prompt_override,
+                # What Stargate actually receives as the prompt.
+                "prompt": prompt_override or job_body,
             }
         )
         return {"ok": True, "execution_id": execution_id, "status_code": 202}

@@ -36,6 +36,10 @@ from services.git_integration_worker.cursor_auto.directive import (
 from services.git_integration_worker.cursor_auto.handler_terminal import (
     post_terminal_status,
 )
+from services.git_integration_worker.cursor_auto.hop_orientation import (
+    build_hop_orientation,
+    prepend_orientation,
+)
 from services.git_integration_worker.cursor_auto.queue import AutoJob, AutoJobQueue
 from services.git_integration_worker.cursor_auto.reflex_events import (
     emit_cdp_effort_bind,
@@ -270,6 +274,8 @@ async def complete_continuity_hop(
     effort = _hop_reasoning_effort(job)
     wire_effort = effort.get("wire_effort")
     await _post_hop_admit_report(job, client=bus, cdp_model=model, effort=effort)
+    # After the admit report so parity scans the authored body, not our block.
+    orientation = await build_hop_orientation(job, model=model, effort=effort)
     commissioned = await commission_cdp_escalation(
         job,
         model=model,
@@ -277,6 +283,7 @@ async def complete_continuity_hop(
         purpose="operator-proxy",
         mission_kind="hop",
         parent_thread=str(job.thread_id),
+        prompt_override=prepend_orientation(job.body, orientation.get("block")),
     )
     effort_echo = {
         "requested_effort": effort.get("requested"),
@@ -337,6 +344,10 @@ async def complete_continuity_hop(
         "incumbent_dispatch_id": dispatch_id,
         "deferred_job_id": deferred_job_id,
         "deferred_leg_enqueued": deferred_job_id is not None,
+        "orientation_generated": bool(orientation.get("generated")),
+        "orientation_inheritance_loop_closed": bool(
+            orientation.get("inheritance_loop_closed")
+        ),
         **effort_echo,
     }
     if hop_disposition is not None:

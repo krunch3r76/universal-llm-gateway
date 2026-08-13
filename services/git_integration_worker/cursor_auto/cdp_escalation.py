@@ -48,15 +48,19 @@ async def commission_cdp_escalation(
     purpose: str | None = None,
     mission_kind: str | None = None,
     parent_thread: str | None = None,
+    prompt_override: str | None = None,
 ) -> dict[str, Any]:
     """POST one CDP generate leg to Stargate ``/api/v1/team/dispatch``.
 
     Uses the same async HTTP client pattern as ``services/mcp-server/tools/frontier.py``.
+
+    *prompt_override* carries a body the caller composed for the successor (hop
+    orientation) without mutating the queued job.
     """
     body: dict[str, Any] = {
         "op": "generate",
         "model": model,
-        "prompt": job.body,
+        "prompt": prompt_override or job.body,
         "dispatch_thread_id": job.thread_id,
         "contract": "light-bounded",
         "caller_agent": "cursor-auto",

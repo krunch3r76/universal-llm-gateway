@@ -239,7 +239,7 @@ def format_cse_state_section(cse: CseStateSlice) -> str:
     return (
         f"cse_state: cse_id={cse.cse_id or 'unknown'} "
         f"phase={cse.phase or 'unset'} "
-        f"open_obligations=[{', '.join(ob_summary) or 'none'}] "
+        f"open_obligations=[{', '.join(parts) or 'none'}] "
         f"source={cse.source}"
     )
 

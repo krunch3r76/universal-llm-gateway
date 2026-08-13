@@ -14,6 +14,14 @@ if str(_REPO_ROOT) not in sys.path:
 
 
 @pytest.fixture(autouse=True)
+def _hop_orientation_bus_stub(monkeypatch: pytest.MonkeyPatch):
+    """Keep hop tests off the network — orientation fetches lane turns for real."""
+    from services.git_integration_worker.cursor_auto import hop_orientation
+
+    monkeypatch.setattr(hop_orientation, "fetch_thread_turns", AsyncMock(return_value=[]))
+
+
+@pytest.fixture(autouse=True)
 def _cursor_auto_admit_bus_stubs(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch):
     """Keep cursor-auto admit tests hermetic after thread-status gate landed."""
     if "cursor_auto" not in request.node.nodeid:
