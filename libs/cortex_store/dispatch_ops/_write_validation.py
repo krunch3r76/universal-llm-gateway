@@ -71,6 +71,29 @@ def _public_error_entry(entry: dict[str, Any]) -> dict[str, Any]:
     return public
 
 
+def resolve_mutually_exclusive_aliases(
+    *,
+    primary: object,
+    alias: object,
+    primary_name: str,
+    alias_name: str,
+    conflict_code: str = "conflicting_alias_values",
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Resolve two names for the same slot; error when both differ."""
+    primary_text = None if is_missing(primary) else str(primary).strip()
+    alias_text = None if is_missing(alias) else str(alias).strip()
+    if primary_text and alias_text and primary_text != alias_text:
+        return None, field_error(
+            primary_name,
+            (
+                f"Supply {primary_name}= or {alias_name}= (same slot), not both "
+                f"with different values."
+            ),
+            code=conflict_code,
+        )
+    return primary_text or alias_text, None
+
+
 def collect_missing_required(
     fields: dict[str, object],
     *,
@@ -121,11 +144,12 @@ def entity_create_preflight_errors(
     """Top-level + todo density_triage checks before entity_create impl."""
     errors = collect_missing_required({"id": id, "type": type, "name": name})
     if type == "todo":
-        from ..attributes_coerce import coerce_attributes_input
         from implement_admission.density_triage_create_gate import (
             format_implement_triage_unknown_reason,
         )
         from implement_admission.density_triage_gate import IMPLEMENT_GATE_TRIAGE
+
+        from ..attributes_coerce import coerce_attributes_input
 
         attrs_shape_invalid = False
         attrs: dict[str, Any] = {}
@@ -160,5 +184,6 @@ __all__ = [
     "entity_create_preflight_errors",
     "field_error",
     "is_missing",
+    "resolve_mutually_exclusive_aliases",
     "validation_error_response",
 ]

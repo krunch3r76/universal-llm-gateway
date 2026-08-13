@@ -38,6 +38,7 @@ from ._shared import (
 from ._write_validation import (
     collect_missing_required,
     field_error,
+    resolve_mutually_exclusive_aliases,
     validation_error_response,
 )
 
@@ -127,9 +128,18 @@ def _op_friction(
     owner_arg = owner if owner is not None else service
     # `claim` is the slot name on assert/observe/supersede, so seats reach for it
     # here too. Accept it rather than answer "note is required" to a caller who
-    # supplied the note under its sibling-op name.
-    note = note if note is not None else claim
-    errors = collect_missing_required(
+    # supplied the note under its sibling-op name — but reject when both differ.
+    note, alias_err = resolve_mutually_exclusive_aliases(
+        primary=note,
+        alias=claim,
+        primary_name="note",
+        alias_name="claim",
+    )
+    errors: list[dict[str, Any]] = []
+    if alias_err:
+        errors.append(alias_err)
+    errors.extend(
+        collect_missing_required(
         {"owner": owner_arg, "note": note},
         message_for={
             "owner": (
@@ -141,6 +151,7 @@ def _op_friction(
                 "`claim` is accepted as an alias"
             ),
         },
+        )
     )
     if category and category not in _FRICTION_CATEGORIES:
         errors.append(

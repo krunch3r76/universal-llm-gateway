@@ -16,6 +16,19 @@ from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
 _TIMEOUT = 30.0
 
 
+def resolve_friction_note(*, note: str = "", claim: str = "") -> tuple[str | None, str | None]:
+    """Resolve note/claim aliases; reject when both are non-empty and differ."""
+    note_text = (note or "").strip()
+    claim_text = (claim or "").strip()
+    if note_text and claim_text and note_text != claim_text:
+        return None, (
+            "substrate_friction_file: supply note= or claim= (same slot), "
+            "not both with different values"
+        )
+    resolved = note_text or claim_text
+    return resolved or None, None
+
+
 def file_friction(
     *,
     owner: str,

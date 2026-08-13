@@ -7,6 +7,6 @@ git_integration_worker, and this lib does not import either service.
 
 from __future__ import annotations
 
-from substrate_friction_file.file import file_friction
+from substrate_friction_file.file import file_friction, resolve_friction_note
 
-__all__ = ["file_friction"]
+__all__ = ["file_friction", "resolve_friction_note"]

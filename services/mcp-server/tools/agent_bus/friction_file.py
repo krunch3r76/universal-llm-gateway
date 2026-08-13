@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from mcp_events import record
-from substrate_friction_file import file_friction
+from substrate_friction_file import file_friction, resolve_friction_note
 
 
 def _reject(reason: str, *, message: str) -> dict[str, Any]:
@@ -40,7 +40,9 @@ def _friction_file_dispatch(
     unknown-argument gate (not in this signature).
     """
     resolved_owner = (owner or service or "").strip()
-    resolved_note = (note or claim or "").strip()
+    resolved_note, alias_err = resolve_friction_note(note=note, claim=claim)
+    if alias_err:
+        return _reject("friction_file_note_claim_conflict", message=alias_err)
     if not resolved_owner:
         return _reject(
             "friction_file_owner_required",
@@ -54,7 +56,7 @@ def _friction_file_dispatch(
 
     result = file_friction(
         owner=resolved_owner,
-        note=resolved_note,
+        note=resolved_note,  # claim= alias already resolved above
         category=category,
         suggestion=suggestion,
         evidence_uris=evidence_uris,
