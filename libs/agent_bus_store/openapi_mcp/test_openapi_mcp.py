@@ -20,6 +20,7 @@ def test_extract_typed_routes_returns_nineteen_ops() -> None:
     assert "request" not in routes
     assert "hop" not in routes
     assert "substrate_graph_write" not in routes
+    assert "substrate_friction_file" not in routes
     assert "add_tags" not in routes
     assert "remove_tags" not in routes
 
@@ -42,6 +43,7 @@ def test_unbound_ops_are_collision_losers_only() -> None:
     assert "request" not in unbound
     assert "hop" not in unbound
     assert "substrate_graph_write" not in unbound
+    assert "substrate_friction_file" not in unbound
 
 
 @pytest.mark.offline

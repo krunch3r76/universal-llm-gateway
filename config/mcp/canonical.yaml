@@ -2190,6 +2190,57 @@ tools:
   mandate_safety: write
   cache_priority: always_loaded
   introduced: 2026-08-13
+- canonical_name: agent_bus_substrate_friction_file
+  domain: agent_bus
+  operation: substrate_friction_file
+  dispatcher_call_shape:
+    tool: agent_bus
+    dispatch_key: op
+    dispatch_value: substrate_friction_file
+  flat_call_shape:
+    tool: agent_bus_substrate_friction_file
+    substrate_qualified: user-vortex__agent_bus_substrate_friction_file
+  fol_descriptor: "∀ args: (owner ∈ args ∨ service ∈ args) ∧ (note ∈ args ∨ claim ∈ args)\n  ⟹ cortex friction via substrate_friction_file lib (assertion_id + owner stamped).\nRequires owner (service= alias) + note (claim= alias) (422 friction_file_owner_required | friction_file_note_required).\n¬ mint on 404 · ¬ bus turn · ¬ hop/request fields · ¬ a contract token. Life-callable (mcp_claude). Mutating.\n"
+  json_schema:
+    type: object
+    properties:
+      owner:
+        type: string
+        description: Target owner entity (service:/agent_skill:/ai_agent: or bare slug → service:). Required unless service= is set.
+      service:
+        type: string
+        description: Alias for owner=.
+      note:
+        type: string
+        description: What went wrong. Required unless claim= is set.
+      claim:
+        type: string
+        description: Alias for note=.
+      category:
+        type: string
+        description: Friction category (tool_error, protocol, …).
+      suggestion:
+        type: string
+        description: Optional suggested fix.
+      evidence_uris:
+        type: array
+        items:
+          type: string
+        description: Optional evidence URI list.
+      confidence:
+        type: string
+        description: Cortex confidence (omitted → hypothesized).
+      agent:
+        type: string
+        description: Filing seat label.
+    required: []
+  skill_uri: agent_skill:agent_bus
+  seat_visibility:
+  - mcp
+  - mcp_claude
+  mandate_safety: write
+  cache_priority: always_loaded
+  introduced: 2026-08-13
 - canonical_name: agent_bus_triage
   domain: agent_bus
   operation: triage

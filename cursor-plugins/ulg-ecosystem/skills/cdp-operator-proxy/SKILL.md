@@ -429,6 +429,10 @@ cadence) and enqueues `continuity_hop=true`. Cursor-auto then fires
 `agent_bus(tool="substrate_graph_write", arguments='{"entity_id": "<todo:…|entity>", "claim": "<assertion text>", "evidence_uris": ["agent-bus:<thread>"]}')`
 — wraps cortex `assert` via shared lib; requires `entity_id` + `claim`; ¬ mint on 404; ¬ a contract token.
 
+**Substrate friction file — file a friction against a resolved owner (same request surface family as hop):**
+`agent_bus(tool="substrate_friction_file", arguments='{"owner": "<service:…|agent_skill:…>", "note": "<what went wrong>", "category": "tool_error"}')`
+— wraps cortex `friction` via shared lib; requires `owner` (or `service`) + `note` (or `claim`); ¬ mint on 404; ¬ a contract token.
+
 **Hop ≠ backtrack (row 21 BINDING):** `tool="hop"` (verb-authored first-line
 `TYPE: CONTINUITY_HANDOFF`) does **not** supersede an in-flight commission. Auto skips
 same-thread supersede, posts a harvest residual naming the live `dispatch_id`, and

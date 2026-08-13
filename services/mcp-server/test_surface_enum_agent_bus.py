@@ -16,6 +16,7 @@ def test_advertised_agent_bus_ops_excludes_deprecated() -> None:
     assert "request" in advertised
     assert "hop" in advertised
     assert "substrate_graph_write" in advertised
+    assert "substrate_friction_file" in advertised
     assert "fetch" in advertised
     assert advertised | AGENT_BUS_DEPRECATED_OPS == frozenset(AGENT_BUS_OPS)
 
