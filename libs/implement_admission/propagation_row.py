@@ -192,6 +192,12 @@ class PropagationRow(BaseModel):
     force: bool = Field(default=False, json_schema_extra={"parity": "narrowing"})
     # When False, suppress auto-escalation to force on self-preemptable busy deferrals.
     allow_self_preempt: bool = Field(default=True, json_schema_extra={"parity": "effect"})
+    close_surfaces: tuple[str, ...] | None = Field(
+        default=None, json_schema_extra={"parity": "effect"}
+    )
+    excluded_surfaces: tuple[dict[str, Any], ...] | None = Field(
+        default=None, json_schema_extra={"parity": "stamped"}
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -457,6 +463,44 @@ def land_paths_for_propagation(
     ]
 
 
+def _row_with_close_surfaces(
+    *,
+    service: str,
+    code_ref: str,
+    land_paths: list[str],
+    proof_class: ProofClass,
+    reason: str,
+    safe_window: SafeWindow | None = None,
+    expected_x_mcp_count: int | None = None,
+) -> PropagationRow:
+    """Mint one row with import-derived close surfaces and exclusion evidence."""
+    from implement_admission.propagation_close_surfaces import (
+        compose_close_surfaces,
+        compose_proof_for_surfaces,
+        excluded_surfaces_to_payload,
+    )
+
+    sw = safe_window or default_safe_window(service)
+    composition = compose_close_surfaces(service, proof_class, land_paths)
+    excluded_payload = excluded_surfaces_to_payload(composition.excluded_surfaces)
+    proof = compose_proof_for_surfaces(
+        service,
+        proof_class,
+        composition.close_surfaces,
+        expected_x_mcp_count=expected_x_mcp_count,
+    )
+    return PropagationRow(
+        service=service,
+        code_ref=code_ref,
+        safe_window=sw,
+        proof=proof,
+        proof_class=proof_class,
+        reason=reason,
+        close_surfaces=composition.close_surfaces,
+        excluded_surfaces=tuple(excluded_payload) if excluded_payload else None,
+    )
+
+
 def rows_from_lib_consumers(
     paths: list[str],
     *,
@@ -493,11 +537,10 @@ def rows_from_lib_consumers(
                 pc = default_proof_class(slug)
                 tags = format_verification_tags(derived="consumers", import_path=status)
                 rows.append(
-                    PropagationRow(
+                    _row_with_close_surfaces(
                         service=slug,
                         code_ref=code_ref,
-                        safe_window=default_safe_window(slug),
-                        proof=compose_proof(slug, pc),
+                        land_paths=paths,
                         proof_class=pc,
                         reason=(
                             f"shared lib land: {path}; {_PATH_DERIVED_OBLIGATION_REASON}; "
@@ -549,11 +592,10 @@ def rows_from_service_paths(
             derived="path_prefix", import_path="not_probed"
         )
         rows.append(
-            PropagationRow(
+            _row_with_close_surfaces(
                 service=slug,
                 code_ref=code_ref,
-                safe_window=default_safe_window(slug),
-                proof=compose_proof(slug, pc),
+                land_paths=paths,
                 proof_class=pc,
                 reason=f"{_PATH_DERIVED_OBLIGATION_REASON}; {tags}",
             )

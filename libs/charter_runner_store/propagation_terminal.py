@@ -22,6 +22,7 @@ from .propagation_ledger import (
     OpenPropagationProjection,
     close_row,
     fail_row,
+    get_open_proof_payload,
     list_open_rows,
     set_defer_reason,
     set_settle_boundary,
@@ -74,7 +75,21 @@ def _is_literal_head(code_ref: str) -> bool:
 
 
 def _projection_to_row(row: OpenPropagationProjection) -> PropagationRow:
+    from implement_admission.propagation_close_surfaces import resolve_close_surfaces
+
     proof = row.proof or default_proof(row.service, row.proof_class)
+    proof_payload = get_open_proof_payload(row.row_id)
+    close_surfaces = resolve_close_surfaces(
+        service=row.service,
+        proof_class=row.proof_class,
+        close_surfaces=None,
+        proof_payload=proof_payload,
+    )
+    excluded = None
+    if isinstance(proof_payload, dict):
+        raw_excluded = proof_payload.get("excluded_surfaces")
+        if isinstance(raw_excluded, list):
+            excluded = tuple(item for item in raw_excluded if isinstance(item, dict))
     return PropagationRow(
         service=row.service,
         code_ref=row.code_ref,
@@ -83,7 +98,12 @@ def _projection_to_row(row: OpenPropagationProjection) -> PropagationRow:
         proof_class=row.proof_class,
         allow_self_preempt=row.allow_self_preempt,
         force=row.force,
+        close_surfaces=tuple(sorted(close_surfaces)),
     )
+
+
+def _open_proof_payload(row: OpenPropagationProjection) -> dict[str, Any] | None:
+    return get_open_proof_payload(row.row_id)
 
 
 def _probe_for_projection(row: OpenPropagationProjection) -> dict[str, Any] | None:
@@ -113,6 +133,7 @@ def _proof_matches_projection(
         payload,
         before=before,
         settle_not_before_monotonic=settle_not_before_monotonic,
+        proof_payload=_open_proof_payload(row),
     )
 
 
@@ -155,6 +176,7 @@ def settle_open_row(
     from services.git_integration_worker.cursor_auto.propagation_proof_reconcile import (
         reconcile_unsupported_proof_class,
     )
+    from implement_admission.propagation_close_surfaces import resolve_close_surfaces
 
     row = _fresh_projection(row)
     boundary = _effective_settle_boundary(row, settle_not_before_monotonic)
@@ -238,7 +260,16 @@ def settle_open_row(
             detail="probe from outgoing generation",
         )
 
-    if not proof_evaluable(payload, proof_class=row.proof_class):
+    if not proof_evaluable(
+        payload,
+        proof_class=row.proof_class,
+        close_surfaces=resolve_close_surfaces(
+            service=row.service,
+            proof_class=row.proof_class,
+            close_surfaces=None,
+            proof_payload=_open_proof_payload(row),
+        ),
+    ):
         detail = (
             "proof predicate unevaluable on payload shape — "
             "declared proof class cannot run against this probe"

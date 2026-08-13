@@ -113,20 +113,29 @@ def _probe_process_live_row(row: PropagationRow) -> dict[str, Any] | None:
 
 def _probe_client_visible_row(row: PropagationRow) -> dict[str, Any] | None:
     from deploy_identity.mcp_health_probe_url import resolve_mcp_health_probe_url
+    from implement_admission.propagation_close_surfaces import resolve_close_surfaces
 
     from services.git_integration_worker.cursor_auto.propagation_probe import (
         _fetch_cortex_api_health,
     )
 
-    mcp_health = _fetch_json(resolve_mcp_health_probe_url())
-    cortex_health = _fetch_cortex_api_health()
+    owed = resolve_close_surfaces(
+        service=row.service,
+        proof_class=row.proof_class,
+        close_surfaces=row.close_surfaces,
+        proof_payload=None,
+    )
+    mcp_health = _fetch_json(resolve_mcp_health_probe_url()) if "mcp_health" in owed else None
+    cortex_health = _fetch_cortex_api_health() if "cortex_api" in owed else None
     if mcp_health is None and cortex_health is None:
         return None
     payload: dict[str, Any] = {
-        "mcp_health": mcp_health,
-        "cortex_api": cortex_health,
         "proof_class_executed": "client_visible",
     }
+    if mcp_health is not None:
+        payload["mcp_health"] = mcp_health
+    if cortex_health is not None:
+        payload["cortex_api"] = cortex_health
     for section in (mcp_health, cortex_health):
         if isinstance(section, dict):
             version = section.get("code_version")
@@ -462,7 +471,17 @@ def dispatch_for_projection(row: OpenPropagationProjection) -> ProbeDispatchResu
 
 
 def _projection_to_row(row: OpenPropagationProjection) -> PropagationRow:
+    from charter_runner_store.propagation_ledger import get_open_proof_payload
+    from implement_admission.propagation_close_surfaces import resolve_close_surfaces
+
     proof = row.proof or default_proof(row.service, row.proof_class)
+    proof_payload = get_open_proof_payload(row.row_id)
+    close_surfaces = resolve_close_surfaces(
+        service=row.service,
+        proof_class=row.proof_class,
+        close_surfaces=None,
+        proof_payload=proof_payload,
+    )
     return PropagationRow(
         service=row.service,
         code_ref=row.code_ref,
@@ -472,6 +491,7 @@ def _projection_to_row(row: OpenPropagationProjection) -> PropagationRow:
         proof_class_requested=row.proof_class,  # type: ignore[arg-type]
         allow_self_preempt=row.allow_self_preempt,
         force=row.force,
+        close_surfaces=tuple(sorted(close_surfaces)),
     )
 
 

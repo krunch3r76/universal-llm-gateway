@@ -107,14 +107,21 @@ def upsert_open_rows(
                 )
             row_id = _row_key(row)
             row_ids.append(row_id)
+            mint_payload: dict[str, Any] | None = None
+            if row.close_surfaces or row.excluded_surfaces:
+                mint_payload = {}
+                if row.close_surfaces:
+                    mint_payload["close_surfaces"] = list(row.close_surfaces)
+                if row.excluded_surfaces:
+                    mint_payload["excluded_surfaces"] = list(row.excluded_surfaces)
             execute_with_retry(
                 db,
                 """
                 INSERT INTO propagation_ledger (
                   row_id, service, action, code_ref, safe_window, hazard, reason,
                   proof, proof_class, mint_thread, mint_turn, status, age_in_harvests,
-                  created_at, updated_at, allow_self_preempt, force
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', 0, ?, ?, ?, ?)
+                  created_at, updated_at, allow_self_preempt, force, proof_payload
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', 0, ?, ?, ?, ?, ?)
                 ON CONFLICT(row_id) DO UPDATE SET
                   hazard=excluded.hazard,
                   reason=excluded.reason,
@@ -124,6 +131,7 @@ def upsert_open_rows(
                   mint_turn=COALESCE(excluded.mint_turn, propagation_ledger.mint_turn),
                   allow_self_preempt=excluded.allow_self_preempt,
                   force=excluded.force,
+                  proof_payload=COALESCE(excluded.proof_payload, propagation_ledger.proof_payload),
                   updated_at=excluded.updated_at
                 WHERE propagation_ledger.status='open'
                 """,
@@ -143,6 +151,7 @@ def upsert_open_rows(
                     now,
                     int(bool(row.allow_self_preempt)),
                     int(bool(row.force)),
+                    json.dumps(mint_payload) if mint_payload else None,
                 ),
             )
     finally:

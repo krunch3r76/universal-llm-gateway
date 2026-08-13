@@ -594,6 +594,7 @@ def proof_observed(
     probed_surface: str | None = None,
     authority_identity: dict[str, Any] | None = None,
     intent_id: str | None = None,
+    proof_payload: dict[str, Any] | None = None,
 ) -> bool:
     """Return whether *payload* closes the row's proof_class obligation.
 
@@ -647,15 +648,26 @@ def proof_observed(
         )
         return attestation == "changed"
     if row.proof_class == "client_visible" and row.service == "mcp":
+        from implement_admission.propagation_close_surfaces import resolve_close_surfaces
+
+        owed = resolve_close_surfaces(
+            service=row.service,
+            proof_class=row.proof_class,
+            close_surfaces=row.close_surfaces,
+            proof_payload=proof_payload,
+        )
         mcp_health = payload.get("mcp_health")
-        cortex_health = payload.get("cortex_api")
-        if not isinstance(mcp_health, dict) or not isinstance(cortex_health, dict):
-            return False
-        if not (
-            _section_code_ref_satisfied(mcp_health, row.code_ref)
-            and _section_code_ref_satisfied(cortex_health, row.code_ref)
-        ):
-            return False
+        if "mcp_health" in owed:
+            if not isinstance(mcp_health, dict):
+                return False
+            if not _section_code_ref_satisfied(mcp_health, row.code_ref):
+                return False
+        if "cortex_api" in owed:
+            cortex_health = payload.get("cortex_api")
+            if not isinstance(cortex_health, dict):
+                return False
+            if not _section_code_ref_satisfied(cortex_health, row.code_ref):
+                return False
         attestation = proof_identity_attestation(
             before,
             payload,

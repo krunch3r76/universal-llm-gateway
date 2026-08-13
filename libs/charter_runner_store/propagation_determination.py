@@ -87,7 +87,11 @@ def classify_probe(
     return "contradicted"
 
 
-def proof_payload_requirements(proof_class: str) -> frozenset[str]:
+def proof_payload_requirements(
+    proof_class: str,
+    *,
+    close_surfaces: frozenset[str] | None = None,
+) -> frozenset[str]:
     """Structured payload sections a ``proof_class`` predicate reads.
 
     Mirrors ``proof_observed`` — not parsed from row ``proof`` prose. Each
@@ -96,6 +100,8 @@ def proof_payload_requirements(proof_class: str) -> frozenset[str]:
     artifact results, ``process_live`` requires a readable ``code_version``.
     """
     if proof_class == "client_visible":
+        if close_surfaces is not None:
+            return close_surfaces
         return frozenset({"mcp_health", "cortex_api"})
     if proof_class == "served_artifact":
         return frozenset({"surfaces"})
@@ -106,6 +112,7 @@ def proof_evaluable(
     payload: dict[str, Any] | None,
     *,
     proof_class: str,
+    close_surfaces: frozenset[str] | None = None,
 ) -> bool:
     """True when payload contains sections the row's proof predicate can read.
 
@@ -116,7 +123,7 @@ def proof_evaluable(
     """
     if not isinstance(payload, dict):
         return False
-    required = proof_payload_requirements(proof_class)
+    required = proof_payload_requirements(proof_class, close_surfaces=close_surfaces)
     if proof_class == "client_visible":
         return all(
             isinstance(payload.get(key), dict) for key in required

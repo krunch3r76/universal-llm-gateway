@@ -28,14 +28,17 @@ def _row(
     code_ref: str,
     *,
     proof_class: str = "process_live",
+    **kwargs: object,
 ) -> PropagationRow:
-    return PropagationRow(
-        service=service,
-        code_ref=code_ref,
-        safe_window="standalone_ok",
-        proof="test probe",
-        proof_class=proof_class,
-    )
+    base: dict[str, object] = {
+        "service": service,
+        "code_ref": code_ref,
+        "safe_window": "standalone_ok",
+        "proof": "test probe",
+        "proof_class": proof_class,
+    }
+    base.update(kwargs)
+    return PropagationRow(**base)  # type: ignore[arg-type]
 
 
 def test_process_identity_prefers_pid() -> None:
@@ -340,6 +343,19 @@ def test_client_visible_mcp_instance2_replay_mcp_only_match() -> None:
         "cortex_api": {"code_version": _SHA_STALE},
     }
     assert proof_observed(row, mcp_only) is False
+
+
+def test_client_visible_mcp_mcp_health_only_surface_closes() -> None:
+    """When cortex_api excluded at mint, stale cortex must not block closure."""
+    row = _row(
+        "mcp",
+        _SHA_A,
+        proof_class="client_visible",
+        close_surfaces=("mcp_health",),
+    )
+    before = {"mcp_health": {"code_version": _SHA_OLD, "pid": 1}}
+    after = {"mcp_health": {"code_version": _SHA_A, "pid": 2}}
+    assert proof_observed(row, after, before=before) is True
 
 
 def test_client_visible_mcp_missing_cortex_api() -> None:
