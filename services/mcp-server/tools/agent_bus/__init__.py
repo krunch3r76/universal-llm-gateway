@@ -34,6 +34,9 @@ from .fetch import (
     _get_dispatch,
     _get_impl,
 )
+from .graph_write import (
+    _graph_write_dispatch,
+)
 from .hop import (
     _hop_dispatch,
 )
@@ -90,6 +93,7 @@ AGENT_BUS_OPS: dict[str, Callable[..., Any]] = {
     "send": _send_dispatch,
     "request": _request_dispatch,
     "hop": _hop_dispatch,
+    "substrate_graph_write": _graph_write_dispatch,
     "post": _post_dispatch,
     "reply": _reply_dispatch,
     "fetch": _fetch_dispatch,
@@ -138,6 +142,7 @@ __all__ = [
     "_format_agent_bus_error",
     "_get_dispatch",
     "_get_impl",
+    "_graph_write_dispatch",
     "_hop_dispatch",
     "_mark_read_dispatch",
     "_post_dispatch",
@@ -208,6 +213,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
           remove_tags     (thread, tags[], from?) — remove listed tags only; other tags preserved
           request       (new_slug XOR thread, to='cursor', subject, body, from?, from_agent?, summary?, tags?, sidecar_content?, sidecar_slug?, desired_model?, desired_effort?, contract?, require_attended?) — life-callable Cursor Auto channel. Injects lane:cursor-auto; arms Auto when a live handler heartbeats (else handler_status=no-auto-handler); returns {thread, turn, handler_status, poll_hint}. ``summary`` = standing ULG so-what title (also fail-soft from body ``so_what:`` / ``ulg_gain:``). require_attended=true (wire or DIRECTIVE body OR) ⇒ terminal status:needs-attended reason=operator_require_attended. ¬ dual-tag lane:life-to-code on degrade. ``contract`` ∈ answer|confer|investigate|implement|verify|execute|propagate|seed|recon — unknown value ⇒ 422 request_contract_unknown before the turn is written; legacy ``consult`` aliases to ``confer`` with a deprecation note. ``execute`` fires ONE tier-M tool op in seat against the allowlist manifest (body: ``tool_op: <tool>.<op>`` + ``effects_expected:`` + optional single-line JSON ``tool_args:``); closeout carries the raw payload under ``tool_payload``. ``propagate`` mints structured propagation ledger rows and coordinates drain-gated ``sync_restart`` via manage.sock (body: ``effects_expected:`` + ``## propagation`` YAML or ``scope: propagation sync_restart <service>``); ``manage.*`` via ``execute`` remains denied. ``seed`` requests a closable work item via the seed path (architecture may be open). Optional ``request_id`` is an idempotency key echoed enqueue→closeout (minted when omitted; a replayed key is refused 422 ``duplicate_request_id``). DIRECTIVE ``deadline: +15m`` (or ISO-8601) terminates a still-queued job ``status:failed reason=expired``. Narrower alternative for approval-gated harnesses: the dedicated ``cursor_request`` tool.
           hop           (thread, reason, from?, from_agent?, cse_chat_url?, cse_registration_id?, desired_model?, desired_effort?, request_id?, after_turn?, subject?) — mechanical continuity hop on an existing private lane. Authors TYPE: CONTINUITY_HANDOFF (one shared author with cadence) and enqueues with continuity_hop=true. Returns {thread, turn, handler_status, continuity_hop, poll_hint, successor}. Reports *armed*, never status:done — successor handle is execution_id on the terminal turn. ¬ a contract token. Hop-before-healthy degrades (no-auto-handler) rather than arming.
+          substrate_graph_write (entity_id, claim, confidence?, derivation_type?, evidence?, evidence_uris?) — cortex assert request-surface verb via shared substrate_graph_write lib. Returns assertion payload with assertion_id + entity_id stamped. Requires entity_id + claim (422 graph_write_entity_required | graph_write_claim_required). Does not mint on 404, enqueue bus turns, or accept hop/request fields. ¬ a contract token.
           threads       (status?, tags?, lifecycle_state?, limit?, last?, has_unread?, query?) — list threads; status: active|blocked|waiting|closed|all (default active); tags: AND-filter; lifecycle_state: pending|admitted|delivered|failed (exact match). Default limit=50 when neither limit nor last is set; response includes limit_applied and truncated.
           create_thread (slug, summary?, tags?, enroll_charter_runner?, lifecycle_state?, thread_id?) — create a thread without a turn; use lifecycle_state="pending" for lifecycle-managed threads that will be dispatched later; ``enroll_charter_runner=true`` required to include tag ``charter-runner``
           fetch_unread  (to?, thread?, mark_read?, compact?, active_since?, limit?, all?) — recipient scope (to set, thread unset): enriched per-thread unread digest (slug, last_subject, last_activity_at; default 14d window, limit 50; unwindowed totals in response). thread scope: that thread's full unread turn list (no count cap; compact controls bodies). At least one of to/thread required.

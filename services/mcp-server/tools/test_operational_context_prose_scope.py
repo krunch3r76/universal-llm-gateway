@@ -24,6 +24,7 @@ def test_agent_bus_compact_renders_and_teaches_request() -> None:
     rendered = AGENT_BUS_COMPACT.format(agent="claude-web")
     assert 'tool="request"' in rendered
     assert 'tool="hop"' in rendered
+    assert 'tool="substrate_graph_write"' in rendered
     assert '"to": "cursor"' in rendered
     assert '"to": "TARGET"' not in rendered
     assert "cursor-auto" in rendered

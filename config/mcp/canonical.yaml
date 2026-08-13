@@ -2146,6 +2146,50 @@ tools:
   mandate_safety: write
   cache_priority: always_loaded
   introduced: 2026-08-13
+- canonical_name: agent_bus_substrate_graph_write
+  domain: agent_bus
+  operation: substrate_graph_write
+  dispatcher_call_shape:
+    tool: agent_bus
+    dispatch_key: op
+    dispatch_value: substrate_graph_write
+  flat_call_shape:
+    tool: agent_bus_substrate_graph_write
+    substrate_qualified: user-vortex__agent_bus_substrate_graph_write
+  fol_descriptor: "∀ args: entity_id ∈ args ∧ claim ∈ args\n  ⟹ cortex assert via substrate_graph_write lib (assertion_id + entity_id stamped).\nRequires entity_id + claim (422 graph_write_entity_required | graph_write_claim_required).\n¬ mint on 404 · ¬ bus turn · ¬ hop/request fields · ¬ a contract token. Life-callable (mcp_claude). Mutating.\n"
+  json_schema:
+    type: object
+    properties:
+      entity_id:
+        type: string
+        description: Target cortex entity for the assert (e.g. todo:slug). Required.
+      claim:
+        type: string
+        description: Assertion claim text. Required.
+      confidence:
+        type: string
+        description: Cortex confidence (default confirmed).
+      derivation_type:
+        type: string
+        description: Cortex derivation_type (default direct_observation).
+      evidence:
+        type: string
+        description: Evidence string (default substrate_graph_write).
+      evidence_uris:
+        type: array
+        items:
+          type: string
+        description: Optional evidence URI list.
+    required:
+    - entity_id
+    - claim
+  skill_uri: agent_skill:agent_bus
+  seat_visibility:
+  - mcp
+  - mcp_claude
+  mandate_safety: write
+  cache_priority: always_loaded
+  introduced: 2026-08-13
 - canonical_name: agent_bus_triage
   domain: agent_bus
   operation: triage

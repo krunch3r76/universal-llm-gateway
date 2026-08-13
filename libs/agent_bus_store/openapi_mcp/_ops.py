@@ -10,6 +10,7 @@ AGENT_BUS_DISPATCH_OPS: frozenset[str] = frozenset(
         "send",
         "request",
         "hop",
+        "substrate_graph_write",
         "post",
         "reply",
         "fetch",

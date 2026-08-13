@@ -69,6 +69,9 @@ probes a live Auto handler, enqueues when armed, returns `handler_status` + `pol
 **CSE continuity hop (existing private lane) → `hop`, ¬ `request` + hand-authored `TYPE: CONTINUITY_HANDOFF`:**
 `agent_bus(tool="hop", arguments='{{"thread": "ID", "reason": "mcp-restart-healthy", "from": "web-anthropic"}}')`
 — `thread` + `reason` required; `new_slug` not accepted. Verb authors the hop body and enqueues `continuity_hop=true`. Reports *armed*, never `status:done`. `hop` is **not** a `contract` value.
+**Substrate graph write (resolved entity) → `substrate_graph_write`, ¬ bus-prose for the operator to carry:**
+`agent_bus(tool="substrate_graph_write", arguments='{{"entity_id": "todo:slug", "claim": "…"}}')`
+— `entity_id` + `claim` required. Wraps cortex `assert`; ¬ mint on 404; ¬ a `contract` value.
 **Valid `contract` values: `answer`, `confer`, `investigate`, `implement`, `verify`, `execute`, `propagate`, `seed`, `recon`.** `consult` is NOT a wire contract — it is deprecated and aliased to `confer`; any other unknown value is rejected 422 (`request_contract_unknown`) before the turn is written.
 Wire `contract` is an admission/routing label, ¬ a permission claim: the wire-neutral pattern ships `contract=answer` (or omits it) with `TYPE: DIRECTIVE` + a body `contract: implement` line, and the server upgrades the effective contract while every admission gate still runs. `answer` never executes work — a `status:done` on `answer` comes back `disposition: declined` with a `routing_hint`.
 `execute` fires one tier-M allowlisted tool op in seat (`tool_op:` + `effects_expected:`); `manage.*` is denied. `propagate` requests drain-gated service restart: mint propagation ledger rows + coordinate `sync_restart` via manage.sock (`scope: propagation sync_restart <service>` or `## propagation` YAML + `effects_expected:`).

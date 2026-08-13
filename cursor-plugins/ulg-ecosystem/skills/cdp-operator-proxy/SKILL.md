@@ -425,6 +425,10 @@ cadence) and enqueues `continuity_hop=true`. Cursor-auto then fires
 6. Predecessor Cowork stream may end **after** successor launch is confirmed; page
    stream-end + why (inv 22 · inv 30).
 
+**Substrate graph write — assert onto a resolved entity (same request surface family as hop):**
+`agent_bus(tool="substrate_graph_write", arguments='{"entity_id": "<todo:…|entity>", "claim": "<assertion text>", "evidence_uris": ["agent-bus:<thread>"]}')`
+— wraps cortex `assert` via shared lib; requires `entity_id` + `claim`; ¬ mint on 404; ¬ a contract token.
+
 **Hop ≠ backtrack (row 21 BINDING):** `tool="hop"` (verb-authored first-line
 `TYPE: CONTINUITY_HANDOFF`) does **not** supersede an in-flight commission. Auto skips
 same-thread supersede, posts a harvest residual naming the live `dispatch_id`, and
