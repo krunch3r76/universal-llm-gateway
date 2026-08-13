@@ -32,7 +32,22 @@ def _expanded_env_path(key: str, default: str) -> str:
     return str(Path(os.environ.get(key, default)).expanduser())
 
 
+def _path_with_venv_first(path: str, venv_bin: str) -> str:
+    """Return PATH with *venv_bin* first, even when it already appears later.
+
+    Presence-only prepend left ``~/.local/bin`` winning when both were on PATH
+    (arc 7190: GIW closeout lint resolved ruff 0.12.2 instead of the venv pin).
+    """
+    parts = [p for p in path.split(":") if p and p != venv_bin]
+    return f"{venv_bin}:{':'.join(parts)}" if parts else venv_bin
+
+
 def _runtime_env() -> dict[str, str]:
+    """Env overlay for the GIW uvicorn subprocess, including PATH.
+
+    ``PATH`` always puts ``~/.venvs/universal/bin`` first so ruff/pytest
+    resolve to the repo pin even when ``~/.local/bin`` is already present.
+    """
     repo = _expanded_env_path("GIT_INTEGRATION_SOURCE_REPO", _DEFAULT_SOURCE_REPO)
     stargate = str(Path(repo) / "services" / "universal-stargate")
     libs = str(Path(repo) / "libs")
@@ -50,11 +65,11 @@ def _runtime_env() -> dict[str, str]:
     green_gate = os.environ.get("GIT_INTEGRATION_GREEN_GATE_CMD")
     if green_gate:
         env["GIT_INTEGRATION_GREEN_GATE_CMD"] = green_gate
-    # Prefer venv bin so fastmcp-remote resolves even when unit PATH is thin.
+    # Always prepend venv bin so it wins over ~/.local/bin, not only when
+    # absent. Every GIW-spawned tool (ruff, pytest, fastmcp-remote) inherits.
     venv_bin = str(Path.home() / ".venvs" / "universal" / "bin")
     path = os.environ.get("PATH", "/usr/bin:/bin")
-    if venv_bin not in path.split(":"):
-        env["PATH"] = f"{venv_bin}:{path}"
+    env["PATH"] = _path_with_venv_first(path, venv_bin)
     return env
 
 

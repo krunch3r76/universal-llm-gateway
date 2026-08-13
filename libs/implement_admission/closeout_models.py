@@ -110,6 +110,11 @@ class Verification(BaseModel):
     stdout: str | None = None
     stderr: str | None = None
     output_truncated: bool = False
+    # Toolchain identity on process-observed lint rows (arc 7190). Absent on
+    # derived gates, skips, and historical JSON. A stale-PATH ruff shows up
+    # here instead of as an unfalsifiable work_outcome.
+    executable: str | None = None
+    tool_version: str | None = None
 
 
 def unattributed_process_verification(
@@ -149,12 +154,16 @@ def observed_process_verification(
     stdout: str | None = None,
     stderr: str | None = None,
     output_truncated: bool = False,
+    executable: str | None = None,
+    tool_version: str | None = None,
 ) -> Verification:
     """Pack a process-observed exit from ``subprocess`` / shell returncode.
 
     Mints ``invocation_id`` when omitted so each process run stays distinct.
     Used for closeout-time lint, harvested pytest shells, and quality_gate test
     siblings — never for Gate-D (use ``derived_gate_verification``).
+    ``executable`` / ``tool_version`` name the binary that produced
+    ``exit_code`` when the packer resolved it (closeout lint).
     """
     return Verification(
         command=command,
@@ -165,6 +174,8 @@ def observed_process_verification(
         stdout=stdout,
         stderr=stderr,
         output_truncated=output_truncated,
+        executable=executable,
+        tool_version=tool_version,
     )
 
 

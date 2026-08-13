@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -291,6 +292,31 @@ def _decode_retained_stream(raw: bytes | str | None) -> tuple[str, bool]:
     )
 
 
+def _ruff_toolchain_identity() -> tuple[str, str]:
+    """Return ``(executable, version)`` for the ``ruff`` PATH will run.
+
+    Version is probed from that binary (``ruff version``), not
+    ``importlib.metadata`` — a venv-installed wheel next to a shadowed
+    ``~/.local/bin/ruff`` is exactly the mismatch this stamp exists to name.
+    """
+    executable = shutil.which("ruff") or "ruff"
+    try:
+        probe = subprocess.run(
+            [executable, "version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return executable, "unknown"
+    text = (probe.stdout or probe.stderr or "").strip()
+    if not text:
+        return executable, "unknown"
+    parts = text.split()
+    return executable, parts[-1]
+
+
 def run_touched_files_lint(
     source_repo: Path,
     change_set: ChangeSet,
@@ -305,6 +331,10 @@ def run_touched_files_lint(
     On non-zero exit, stdout/stderr are retained on the verification row
     (each truncated at ``_LINT_OUTPUT_RETAIN_CHARS``) so a later
     ``checks_failed`` grade remains interrogable.
+
+    The verification row carries ``executable`` / ``tool_version`` for the
+    binary PATH resolved (arc 7190) so ``work_outcome`` is falsifiable
+    against a known toolchain, not an implicit GIW PATH.
     """
     py_paths = [
         path
@@ -324,6 +354,7 @@ def run_touched_files_lint(
     abs_paths = [str(source_repo / path) for path in py_paths]
     command = f"ruff check {len(py_paths)} touched files"
     invocation_id = f"lint:{uuid4().hex}"
+    executable, tool_version = _ruff_toolchain_identity()
     try:
         # Pin cwd to the owning repo root so isort/first-party discovery matches
         # in-tree measurement (orphan cwd → phantom I001 on otherwise-clean files).
@@ -369,6 +400,8 @@ def run_touched_files_lint(
             stdout=stdout,
             stderr=stderr,
             output_truncated=output_truncated,
+            executable=executable,
+            tool_version=tool_version,
         ),
         None,
     )

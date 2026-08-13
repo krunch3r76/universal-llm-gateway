@@ -20,6 +20,7 @@ import pytest
 
 from services.git_integration_worker.cursor_sdk_capture_status import ChangeSet
 from services.git_integration_worker.cursor_sdk_closeout import (
+    _ruff_toolchain_identity,
     run_giw_subtree_f821_lint,
     run_touched_files_lint,
 )
@@ -76,6 +77,10 @@ def test_run_touched_files_lint_pins_cwd_to_source_repo(
         "services.git_integration_worker.cursor_sdk_closeout.subprocess.run",
         fake_run,
     )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout._ruff_toolchain_identity",
+        lambda: ("/venv/bin/ruff", "0.15.6"),
+    )
     verification, note = run_touched_files_lint(
         _REPO,
         ChangeSet(created=(_CLEAN_REL,), modified=(), deleted=()),
@@ -85,6 +90,8 @@ def test_run_touched_files_lint_pins_cwd_to_source_repo(
     assert captured["kwargs"].get("cwd") == str(_REPO)
     assert verification.stdout is None
     assert verification.stderr is None
+    assert verification.executable == "/venv/bin/ruff"
+    assert verification.tool_version == "0.15.6"
 
 
 def test_run_touched_files_lint_retains_streams_on_nonzero(
@@ -104,6 +111,10 @@ def test_run_touched_files_lint_retains_streams_on_nonzero(
         "services.git_integration_worker.cursor_sdk_closeout.subprocess.run",
         fake_run,
     )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout._ruff_toolchain_identity",
+        lambda: ("/venv/bin/ruff", "0.15.6"),
+    )
     verification, note = run_touched_files_lint(
         _REPO,
         ChangeSet(created=(_CLEAN_REL,), modified=(), deleted=()),
@@ -113,6 +124,8 @@ def test_run_touched_files_lint_retains_streams_on_nonzero(
     assert verification.stdout == "file.py:1:1: F401 unused import\n"
     assert verification.stderr == ""
     assert verification.output_truncated is False
+    assert verification.executable == "/venv/bin/ruff"
+    assert verification.tool_version == "0.15.6"
 
 
 def test_run_touched_files_lint_truncates_oversized_streams(
@@ -137,6 +150,10 @@ def test_run_touched_files_lint_truncates_oversized_streams(
         "services.git_integration_worker.cursor_sdk_closeout.subprocess.run",
         fake_run,
     )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout._ruff_toolchain_identity",
+        lambda: ("/venv/bin/ruff", "0.15.6"),
+    )
     verification, note = run_touched_files_lint(
         _REPO,
         ChangeSet(created=(_CLEAN_REL,), modified=(), deleted=()),
@@ -149,6 +166,19 @@ def test_run_touched_files_lint_truncates_oversized_streams(
     assert len(verification.stderr) == _LINT_OUTPUT_RETAIN_CHARS + len(
         "\n...[truncated]"
     )
+
+
+def test_ruff_toolchain_identity_names_path_binary_not_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stamp the binary PATH will run — importlib.metadata would hide a shadow."""
+    fake = tmp_path / "ruff"
+    fake.write_text("#!/bin/sh\necho 'ruff 0.12.2'\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    executable, version = _ruff_toolchain_identity()
+    assert executable == str(fake)
+    assert version == "0.12.2"
 
 
 def test_run_giw_subtree_f821_lint_passes_on_clean_subtree() -> None:
