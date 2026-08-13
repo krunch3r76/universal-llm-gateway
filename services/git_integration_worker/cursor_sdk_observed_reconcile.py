@@ -20,11 +20,66 @@ from services.git_integration_worker.cursor_sdk_stream_capture import (
 
 _ASSERTION_IDENTITY_RE = re.compile(r"^assertion:(\d+)$")
 _CORTEX_TOOL_NAMES = frozenset({"cortex", "cortex_brief"})
-_CORTEX_WRITE_OPS = frozenset({"assert", "supersede", "observe", "friction"})
+_CORTEX_WRITE_OPS = frozenset(
+    {"assert", "supersede", "observe", "friction", "entity_create", "relationship_create"}
+)
+_CORTEX_READ_OPS = frozenset(
+    {
+        "search",
+        "entity_get",
+        "journal_read",
+        "relationships",
+        "stats",
+        "entity_search",
+        "brief",
+        "doc_template",
+    }
+)
+
+
+def _cortex_sub_op_from_detail(detail: object, *, fallback_op: str = "") -> str:
+    mapping = detail if isinstance(detail, Mapping) else {}
+    args = mapping.get("args") if isinstance(mapping.get("args"), Mapping) else mapping
+    if isinstance(args, Mapping):
+        sub = str(args.get("tool") or args.get("op") or "").strip().lower()
+        if sub:
+            return sub
+    fallback = str(fallback_op or "").strip().lower()
+    if fallback in _CORTEX_TOOL_NAMES:
+        return ""
+    return fallback
+
+
+def _cortex_sub_op_from_observation(obs: ToolCallObservation) -> str:
+    args = obs.args if isinstance(obs.args, Mapping) else {}
+    inner = args.get("arguments") if isinstance(args.get("arguments"), Mapping) else args
+    if isinstance(inner, Mapping):
+        return str(inner.get("tool") or args.get("tool") or "").strip().lower()
+    return ""
+
+
+def _is_cortex_write_entry(entry: EffectEntry) -> bool:
+    if entry.op in _CORTEX_WRITE_OPS:
+        return True
+    sub_op = _cortex_sub_op_from_detail(entry.detail or {}, fallback_op=entry.op)
+    if sub_op in _CORTEX_READ_OPS:
+        return False
+    if sub_op in _CORTEX_WRITE_OPS:
+        return True
+    if entry.op in _CORTEX_TOOL_NAMES and not sub_op:
+        return True
+    return False
 
 
 def _cortex_write_op_from_observation(obs: ToolCallObservation) -> bool:
-    return obs.tool_name.lower() in _CORTEX_TOOL_NAMES
+    if obs.tool_name.lower() not in _CORTEX_TOOL_NAMES:
+        return False
+    sub_op = _cortex_sub_op_from_observation(obs)
+    if sub_op in _CORTEX_READ_OPS:
+        return False
+    if sub_op in _CORTEX_WRITE_OPS:
+        return True
+    return not sub_op
 
 
 def _committed_assertion_ids(section_entries: list[EffectEntry]) -> set[str]:
@@ -68,11 +123,8 @@ def _seat_claimed_without_ack(
 ) -> list[str]:
     unobserved: list[str] = []
     for entry in entries:
-        if entry.op not in _CORTEX_WRITE_OPS and entry.op not in _CORTEX_TOOL_NAMES:
-            detail = entry.detail or {}
-            op = str(detail.get("op") or detail.get("tool") or entry.op or "")
-            if op not in _CORTEX_WRITE_OPS:
-                continue
+        if not _is_cortex_write_entry(entry):
+            continue
         ident = entry.identity or entry.target or entry.op
         if ident and ident.startswith("assertion:"):
             aid = ident.split(":", 1)[1]

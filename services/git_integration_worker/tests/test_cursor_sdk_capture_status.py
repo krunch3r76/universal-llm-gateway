@@ -501,7 +501,7 @@ def test_ac4_residual_twin_work_outcome_shipped_status_complete(tmp_path: Path) 
     import json
 
     payload = json.loads(body)
-    assert payload["work_outcome"] == "unverified"
+    assert payload["work_outcome"] == "shipped"
     assert payload["status"] == "partial"
     assert payload["capture_status"] == "partial"
 
@@ -800,7 +800,7 @@ def test_g2_ac4_bare_filename_fixture_8b2fdfd6ae7d(tmp_path: Path) -> None:
     import json
 
     payload = json.loads(body)
-    assert payload["work_outcome"] == "unverified"
+    assert payload["work_outcome"] == "shipped"
     assert payload["status"] == "partial"
     assert payload["capture_status"] == "unavailable"
     assert "degraded:sdk_git_probe_absent" in deviations
@@ -1290,6 +1290,22 @@ def test_capture_incomplete_blocks_optimistic_shipped() -> None:
     )
     assert status_absent == CloseoutStatus.PARTIAL
     assert wo_absent != WorkOutcome.SHIPPED
+
+
+def test_capture_incomplete_with_positive_evidence_preserves_shipped() -> None:
+    from services.git_integration_worker.cursor_sdk_capture_status import (
+        apply_capture_incompleteness_gate,
+    )
+
+    status, wo = apply_capture_incompleteness_gate(
+        status=CloseoutStatus.COMPLETE,
+        work_outcome=WorkOutcome.SHIPPED,
+        deliverables_expected=True,
+        capture_status="unavailable",
+        positive_deliverable_evidence=True,
+    )
+    assert wo == WorkOutcome.SHIPPED
+    assert status == CloseoutStatus.PARTIAL
 
 
 def test_exit_code_register_verdicts_all_states() -> None:

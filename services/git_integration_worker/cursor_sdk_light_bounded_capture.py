@@ -1,14 +1,11 @@
 """Light-bounded dispatch deliverable capture — disk/cortex-existence verify.
 
-Light-bounded dispatch packets almost always name a durable output path in
-prose rather than the structured ``files_expected:`` field an implement
-packet carries, so the baseline-diff capture machinery in
-``cursor_sdk_capture_status`` never applies to them — admit-time git-baseline
-capture is implement-only, so ``baseline`` is unconditionally ``None`` for a
-light-bounded dispatch. This module is the independent signal for that case:
-extract path-like tokens from write-imperative windows in dispatch prose, then
-answer completeness by checking whether each named path exists on disk (source
-repo) or in the cortex sandbox post-dispatch — no git diff involved.
+Light-bounded dispatches carry ``baseline=None`` (implement-only admit snapshot),
+so ``cursor_sdk_capture_status`` baseline diff never applies. This module is the
+independent completeness signal: paths come **only** from the packet's
+``files_expected:`` deliverable field (AC8 — prose citations and read-loci must
+not enter the expected set), then disk/cortex presence post-dispatch is the sole
+signal — no git diff involved.
 """
 
 from __future__ import annotations
@@ -56,14 +53,10 @@ _EXTENSION_PATH_RE = re.compile(
     r"[\w][\w./-]*\.(?:" + "|".join(_DURABLE_EXTENSIONS) + r")\b", re.IGNORECASE
 )
 _SCHEME_PATH_RE = re.compile(r"(?:cortex|workspaces)://[\w./-]+", re.IGNORECASE)
-_IMPERATIVE_RE = re.compile(
-    r"(?i)\b("
-    r"write|writes|written|create|creates|save|saves|persist|persists|"
-    r"append|appends|produce|produces|emit|emits|output|outputs|"
-    r"deliverable|deliverables|files_expected"
-    r")\b"
-)
+_FILES_EXPECTED_LINE_RE = re.compile(r"(?i)^files_expected:\s*(.*)$")
+_TOP_LEVEL_FIELD_RE = re.compile(r"^[a-z][a-z0-9_]*:\s", re.IGNORECASE)
 _BULLET_PREFIX_RE = re.compile(r"^[-*]\s+")
+_NONE_TOKENS = frozenset({"none", "n/a", "na", "null"})
 
 
 def _normalize_match(raw: str) -> str:
@@ -108,52 +101,57 @@ def _extract_paths_from_line(line: str, *, leading_token_only: bool) -> list[str
     return ordered
 
 
-def _is_path_block_line(line: str) -> bool:
-    stripped = line.strip()
-    if not stripped:
-        return False
-    content = _BULLET_PREFIX_RE.sub("", stripped)
-    return any(pattern.match(content) for pattern in _path_patterns())
+def _files_expected_field_text(prose: str) -> str:
+    """Return body text under the ``files_expected:`` field only."""
+    if not prose:
+        return ""
+    lines = prose.splitlines()
+    block: list[str] = []
+    in_field = False
+    for line in lines:
+        stripped = line.strip()
+        if not in_field:
+            match = _FILES_EXPECTED_LINE_RE.match(stripped)
+            if not match:
+                continue
+            in_field = True
+            inline = match.group(1).strip()
+            if inline:
+                block.append(inline)
+            continue
+        if not stripped:
+            continue
+        if _TOP_LEVEL_FIELD_RE.match(stripped):
+            break
+        if block and not _BULLET_PREFIX_RE.match(stripped):
+            break
+        block.append(stripped)
+    return "\n".join(block)
 
 
 def extract_instructed_paths(prose: str) -> tuple[str, ...]:
-    """Extract deliverable paths from write-imperative windows in dispatch prose.
+    """Extract deliverable paths declared in the packet ``files_expected:`` field.
 
-    Candidates come only from lines matching a write-family imperative, the
-    immediately following line, and an optional path block (contiguous lines
-    whose leading token is path-shaped, after skipping at most one blank line).
-    Citation-only prose outside those windows is ignored.
+    Body prose — citations, read-loci, out-of-scope paths — is ignored (AC8).
+    English-only values (``cortex seed artifacts + todo mint``) yield an empty
+    tuple so the incompleteness gate does not false-probe prose obligations.
     """
-    if not prose:
+    field_text = _files_expected_field_text(prose)
+    if not field_text:
         return ()
-    lines = prose.splitlines()
+    lowered = field_text.strip().lower()
+    if lowered in _NONE_TOKENS:
+        return ()
     seen: set[str] = set()
     ordered: list[str] = []
-
-    def _record(paths: list[str]) -> None:
-        for path in paths:
+    for line in field_text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        for path in _extract_paths_from_line(stripped, leading_token_only=False):
             if path and path not in seen:
                 seen.add(path)
                 ordered.append(path)
-
-    for index, line in enumerate(lines):
-        if not _IMPERATIVE_RE.search(line):
-            continue
-        _record(_extract_paths_from_line(line, leading_token_only=False))
-        if index + 1 < len(lines):
-            _record(_extract_paths_from_line(lines[index + 1], leading_token_only=False))
-        block_start = index + 1
-        if block_start < len(lines) and not lines[block_start].strip():
-            block_start = index + 2
-        cursor = block_start
-        while cursor < len(lines):
-            candidate = lines[cursor]
-            if not candidate.strip():
-                break
-            if not _is_path_block_line(candidate):
-                break
-            _record(_extract_paths_from_line(candidate, leading_token_only=True))
-            cursor += 1
     return tuple(ordered)
 
 

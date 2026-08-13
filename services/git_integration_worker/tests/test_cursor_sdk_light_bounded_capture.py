@@ -1,9 +1,4 @@
-"""Unit tests for light-bounded disk/cortex-existence deliverable capture.
-
-Covers write-imperative-window path extraction and the disk-verify completeness
-signal that bypasses the implement-only baseline-diff machinery
-(todo:cursor-sdk-deliverables-expected-light-bounded).
-"""
+"""Unit tests for light-bounded disk/cortex-existence deliverable capture."""
 
 from __future__ import annotations
 
@@ -16,15 +11,22 @@ from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
 
 
 class TestExtractInstructedPaths:
-    def test_known_prefix_path_extracted_on_imperative_line(self) -> None:
-        prose = "Write your findings to tasks/journal/2026-06-30-review.md when done."
+    def test_files_expected_inline_scheme_path(self) -> None:
+        prose = (
+            "files_expected: cortex://notes/system/threads/x.md\n"
+            "contract: light-bounded\n"
+        )
+        assert extract_instructed_paths(prose) == ("notes/system/threads/x.md",)
+
+    def test_files_expected_repo_relative_bullet(self) -> None:
+        prose = (
+            "files_expected:\n"
+            "- tasks/journal/2026-06-30-review.md\n"
+            "authority: lead\n"
+        )
         assert extract_instructed_paths(prose) == (
             "tasks/journal/2026-06-30-review.md",
         )
-
-    def test_cortex_scheme_prefix_stripped(self) -> None:
-        prose = "Save the analysis to cortex://notes/system/threads/x.md."
-        assert extract_instructed_paths(prose) == ("notes/system/threads/x.md",)
 
     def test_citation_only_prose_returns_empty(self) -> None:
         prose = (
@@ -33,41 +35,40 @@ class TestExtractInstructedPaths:
         )
         assert extract_instructed_paths(prose) == ()
 
-    def test_non_imperative_path_mention_returns_empty(self) -> None:
-        prose = "Drop the summary at /tmp/summaries/report.md for review."
-        assert extract_instructed_paths(prose) == ()
+    def test_read_locus_cited_in_body_not_extracted(self) -> None:
+        """877fe5-class — file:line read citation must not enter expected paths."""
+        prose = (
+            "scope: read routes/cursor_sdk.py:1813-1826 only\n"
+            "out-of-scope: No checkout edits to routes/cursor_sdk.py\n"
+            "files_expected: cortex://notes/system/reviews/challenge-r2.md\n"
+        )
+        paths = extract_instructed_paths(prose)
+        assert paths == ("notes/system/reviews/challenge-r2.md",)
+        assert "routes/cursor_sdk.py" not in paths
 
-    def test_no_path_mentioned_returns_empty(self) -> None:
-        prose = "Just answer the question inline, no file needed."
+    def test_english_only_files_expected_returns_empty(self) -> None:
+        prose = "files_expected: cortex seed artifacts + todo mint\n"
         assert extract_instructed_paths(prose) == ()
 
     def test_empty_prose_returns_empty(self) -> None:
         assert extract_instructed_paths("") == ()
 
-    def test_duplicate_mentions_deduped_preserving_order(self) -> None:
-        prose = "Write tasks/journal/x.md now. Confirm tasks/journal/x.md landed."
+    def test_duplicate_paths_deduped(self) -> None:
+        prose = (
+            "files_expected:\n"
+            "- tasks/journal/x.md\n"
+            "- tasks/journal/x.md\n"
+        )
         assert extract_instructed_paths(prose) == ("tasks/journal/x.md",)
 
-    def test_imperative_next_line_extracts_path(self) -> None:
-        prose = "Write the deliverable here:\nlibs/foo/bar.py"
-        assert extract_instructed_paths(prose) == ("libs/foo/bar.py",)
-
-    def test_skeptic_o1_falsifier_extracts_two_scheme_paths(self) -> None:
+    def test_comma_separated_files_expected(self) -> None:
         prose = (
-            "Write a comprehensive analysis script … Save the script and its "
-            "output report.\n\n"
-            "cortex://analysis.py\n"
-            "cortex://report.json"
+            "files_expected: cortex://analysis.py, cortex://report.json\n"
         )
         assert extract_instructed_paths(prose) == ("analysis.py", "report.json")
 
-    def test_skeptic_o1_round2_trailing_descriptions_ignored(self) -> None:
-        prose = (
-            "Write the core modules to durable storage.\n\n"
-            "cortex://core_logic.py - contains the main algorithm\n"
-            "cortex://status_utils.py - handles status reporting"
-        )
-        assert extract_instructed_paths(prose) == ("core_logic.py", "status_utils.py")
+    def test_files_expected_none_token(self) -> None:
+        assert extract_instructed_paths("files_expected: none\n") == ()
 
 
 class TestLightBoundedCaptureStatus:
@@ -120,7 +121,6 @@ class TestLightBoundedCaptureStatus:
         )
 
     def test_wrote_elsewhere_still_flagged(self, tmp_path: Path) -> None:
-        """Writing to a different path than named must not satisfy the check."""
         source_repo = tmp_path / "repo"
         cortex_root = tmp_path / "cortex"
         source_repo.mkdir()

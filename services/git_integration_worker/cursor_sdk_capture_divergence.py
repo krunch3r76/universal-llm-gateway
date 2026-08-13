@@ -166,8 +166,8 @@ def _agent_bus_turn_absent(manifest: EffectsManifest | None) -> str | None:
         if not target or "#" not in target:
             continue
         _thread, turn = target.split("#", 1)
-        if turn.strip() and not turn.strip().isdigit():
-            return f"divergence:bus_turn_absent:{target}"
+        if not turn.strip().isdigit():
+            continue
     return None
 
 
@@ -241,7 +241,11 @@ def _repo_surface_cross_check(
         reason = _divergence_from_divergent_rel(rel_entry)
         if reason:
             return reason
-    for raw_path in sorted(_repo_manifest_paths(manifest, source_repo=source_repo)):
+    from services.git_integration_worker.cursor_sdk_manifest import manifest_repo_write_paths
+
+    for raw_path in sorted(
+        manifest_repo_write_paths(manifest, source_repo=source_repo)
+    ):
         if _is_cortex_expected_path(raw_path):
             cortex_rel = _cortex_expected_rel(raw_path)
             if (cortex_root / cortex_rel).exists():
@@ -441,8 +445,12 @@ def closeout_divergence_reason(
             if reason:
                 return reason
         if manifest is not None:
+            from services.git_integration_worker.cursor_sdk_manifest import (
+                manifest_repo_write_paths,
+            )
+
             for raw_path in sorted(
-                _repo_manifest_paths(manifest, source_repo=source_repo)
+                manifest_repo_write_paths(manifest, source_repo=source_repo)
             ):
                 canon = canonicalize_capture_path(raw_path, source_repo=source_repo)
                 if canon.scope == "control_plane":

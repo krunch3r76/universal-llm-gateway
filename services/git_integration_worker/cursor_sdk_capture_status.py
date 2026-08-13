@@ -913,13 +913,14 @@ def apply_capture_incompleteness_gate(
     work_outcome: WorkOutcome | None,
     deliverables_expected: bool,
     capture_status: CaptureStatus | None,
+    positive_deliverable_evidence: bool = False,
 ) -> tuple[CloseoutStatus, WorkOutcome | None]:
     """C2/C3 — incomplete or absent capture forbids optimistic complete/shipped."""
     if not deliverables_expected:
         return status, work_outcome
     if capture_status not in ("partial", "unavailable"):
         return status, work_outcome
-    if work_outcome == WorkOutcome.SHIPPED:
+    if not positive_deliverable_evidence and work_outcome == WorkOutcome.SHIPPED:
         work_outcome = WorkOutcome.UNVERIFIED
     if status == CloseoutStatus.COMPLETE:
         status = CloseoutStatus.PARTIAL

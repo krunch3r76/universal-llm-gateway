@@ -64,6 +64,7 @@ from services.git_integration_worker.cursor_sdk_capture_status import (
     gitignored_manifest_paths,
     normalize_wt_baseline,
     partition_gitignored_from_change_set,
+    positive_deliverable_evidence,
     project_status_from_work_outcome,
     resolve_closeout_capture_fields,
     resolve_work_outcome,
@@ -1081,11 +1082,28 @@ def build_implement_closeout_body(
         status = project_status_from_work_outcome(
             resolved_work_outcome, degraded_reason
         )
+    positive_evidence = False
+    if (
+        source_repo is not None
+        and cortex_root is not None
+        and deliverables_expected
+    ):
+        positive_evidence = positive_deliverable_evidence(
+            files_offgit_produced=offgit_deliverable_uris or [],
+            artifact_paths=artifact_paths,
+            light_bounded_expected_paths=light_bounded_expected_paths,
+            files_expected=files_expected or [],
+            manifest=effects_manifest or outcome.effects_manifest,
+            source_repo=source_repo,
+            cortex_root=cortex_root,
+            baseline=baseline,
+        )
     status, resolved_work_outcome = apply_capture_incompleteness_gate(
         status=status,
         work_outcome=resolved_work_outcome,
         deliverables_expected=deliverables_expected,
         capture_status=capture_status,
+        positive_deliverable_evidence=positive_evidence,
     )
     status, resolved_work_outcome = apply_escalation_harvest_gate(
         status=status,
