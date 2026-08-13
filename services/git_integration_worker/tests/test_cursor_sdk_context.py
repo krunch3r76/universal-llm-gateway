@@ -230,3 +230,30 @@ def test_build_agent_options_wires_model_and_local(
     assert opts.local is not None
     assert opts.mcp_servers is not None
     assert "user-vortex" in opts.mcp_servers
+
+
+def test_mcp_servers_set_contract_env_for_implement(tmp_path: Path) -> None:
+    repo = _stub_repo(tmp_path)
+    env = build_mcp_servers(repo, handoff_contract="implement")["user-vortex"].env or {}
+    assert env.get("ULG_MCP_CONTRACT") == "implement"
+
+
+def test_mcp_servers_set_contract_env_for_pure_mechanical(tmp_path: Path) -> None:
+    repo = _stub_repo(tmp_path)
+    env = (
+        build_mcp_servers(repo, handoff_contract="pure-mechanical")["user-vortex"].env
+        or {}
+    )
+    assert env.get("ULG_MCP_CONTRACT") == "pure-mechanical"
+
+
+def test_mcp_servers_omit_contract_env_for_light_bounded(tmp_path: Path) -> None:
+    repo = _stub_repo(tmp_path)
+    env = build_mcp_servers(repo, handoff_contract="light-bounded")["user-vortex"].env or {}
+    assert "ULG_MCP_CONTRACT" not in env
+
+
+def test_mcp_servers_omit_contract_env_when_unset(tmp_path: Path) -> None:
+    repo = _stub_repo(tmp_path)
+    env = build_mcp_servers(repo)["user-vortex"].env or {}
+    assert "ULG_MCP_CONTRACT" not in env

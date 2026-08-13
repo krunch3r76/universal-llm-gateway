@@ -33,6 +33,8 @@ _VORTEX_MCP_SERVER = "user-vortex"
 _MCP_BRIDGE_RELPATH = Path("scripts/mcp-fastmcp-remote-bridge.py")
 _FASTMCP_REMOTE_CMD = "fastmcp-remote"
 _SETTING_SOURCES: tuple[str, ...] = ("all",)
+ULG_MCP_CONTRACT_ENV = "ULG_MCP_CONTRACT"
+_CONTRACT_MCP_FILTER: frozenset[str] = frozenset({"implement", "pure-mechanical"})
 _MCP_YAML_REL = Path(".gateway") / "mcp.yaml"
 _CURSOR_XDG_AUTH = Path(".config") / "cursor" / "auth.json"
 
@@ -206,10 +208,14 @@ def build_mcp_servers(
     source_repo: Path,
     *,
     real_home: Path | str | None = None,
+    handoff_contract: str | None = None,
 ) -> dict[str, StdioMcpServerConfig]:
     """Stdio vortex MCP via ``fastmcp-remote`` bridge (see module docstring)."""
     bridge = resolve_mcp_bridge(source_repo)
-    env = _resolve_mcp_token_env(real_home=real_home)
+    env = dict(_resolve_mcp_token_env(real_home=real_home))
+    contract = (handoff_contract or "").strip().lower()
+    if contract in _CONTRACT_MCP_FILTER:
+        env[ULG_MCP_CONTRACT_ENV] = contract
     return {
         _VORTEX_MCP_SERVER: StdioMcpServerConfig(
             command=sys.executable,
@@ -228,6 +234,7 @@ def build_agent_options(
     real_home: Path | str | None = None,
     substrate_ctx: SubstrateDispatchContext | None = None,
     state_root: Path | str | None = None,
+    handoff_contract: str | None = None,
 ) -> AgentOptions:
     """Full create_agent options for IDE-parity cursor-sdk dispatch."""
     local = build_local_agent_options(dispatch_workspace, state_root=state_root)
@@ -236,5 +243,9 @@ def build_agent_options(
         model=model,
         mode="agent",
         local=local,
-        mcp_servers=build_mcp_servers(source_repo, real_home=real_home),
+        mcp_servers=build_mcp_servers(
+            source_repo,
+            real_home=real_home,
+            handoff_contract=handoff_contract,
+        ),
     )

@@ -827,6 +827,7 @@ def _run_sdk_sync(
     execution_id: str | None = None,
     gate_loop: asyncio.AbstractEventLoop,
     live_counter: _LiveToolCallCounter | None = None,
+    handoff_contract: str | None = None,
 ) -> SdkRunOutcome:
     # Pin operator home via passwd — never trust process HOME (may be a leaked
     # dispatch overlay; CURSOR_VENV_CONFIG / agent-bus:6468).
@@ -866,6 +867,7 @@ def _run_sdk_sync(
             real_home=real_home,
             substrate_ctx=substrate_ctx,
             state_root=str(bridge_state),
+            handoff_contract=handoff_contract,
         )
 
         with _dispatch_home_overlay(
@@ -1843,6 +1845,7 @@ async def _run_sdk_dispatch_gated(
             execution_id=req.execution_id,
             gate_loop=gate_loop,
             live_counter=live_counter,
+            handoff_contract=req.handoff_contract,
         ),
         op_id=f"{req.dispatch_id}:worker",
     )

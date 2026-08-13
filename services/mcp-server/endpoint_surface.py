@@ -95,6 +95,20 @@ def domain_endpoints_for(
     return list(table.get(domain, table["__default__"]))
 
 
+def _domains_to_primary_tool_names(
+    domains: list[str],
+    *,
+    canonical_yaml_path: Path,
+) -> frozenset[str]:
+    manifest = derive_claude_manifest(canonical_yaml_path)
+    domain_to_tool = {e["domain"]: e["tool_name"] for e in manifest}
+    tools: set[str] = set()
+    for domain in domains:
+        tool_name = domain_to_tool.get(domain, domain)
+        tools.add(tool_name)
+    return frozenset(tools)
+
+
 def derive_surface_primary_tools(
     surface: Surface,
     canonical_yaml_path: Path | None = None,
@@ -105,13 +119,28 @@ def derive_surface_primary_tools(
     domains: list[str] = list(
         (data.get("surface_primary_domains") or {}).get(surface) or []
     )
-    manifest = derive_claude_manifest(path)
-    domain_to_tool = {e["domain"]: e["tool_name"] for e in manifest}
-    tools: set[str] = set()
-    for domain in domains:
-        tool_name = domain_to_tool.get(domain, domain)
-        tools.add(tool_name)
-    return frozenset(tools)
+    return _domains_to_primary_tool_names(domains, canonical_yaml_path=path)
+
+
+def derive_contract_primary_tools(
+    contract: str | None,
+    canonical_yaml_path: Path | None = None,
+) -> frozenset[str]:
+    """Primary ``tools/list`` names for a cursor-sdk handoff contract.
+
+    Contracts without a ``contract_primary_domains`` row fall back to the full
+    ``/mcp/code`` primary set (IDE and unscoped sdk behavior unchanged).
+    """
+    path = canonical_yaml_path or _DEFAULT_CANONICAL
+    contract_key = (contract or "").strip().lower()
+    if not contract_key:
+        return derive_surface_primary_tools("code", path)
+    data = _load_registry(path)
+    domains_raw = (data.get("contract_primary_domains") or {}).get(contract_key)
+    if domains_raw is None:
+        return derive_surface_primary_tools("code", path)
+    domains = list(domains_raw)
+    return _domains_to_primary_tool_names(domains, canonical_yaml_path=path)
 
 
 def derive_code_extra_primary_tools(

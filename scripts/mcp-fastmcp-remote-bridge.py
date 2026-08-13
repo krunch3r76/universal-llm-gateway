@@ -4,6 +4,10 @@
 Replaces the deprecated custom ``mcp-stdio-proxy.py`` for cursor-sdk dispatches.
 Upstream FastMCP handles streamable-HTTP proxying; this launcher resolves
 auth/URL, emits startup telemetry, and execs ``fastmcp-remote``.
+
+When ``ULG_MCP_CONTRACT`` is ``implement`` or ``pure-mechanical``, spawns
+``fastmcp-remote`` as a child and filters ``tools/list`` primary names instead
+of execve (G5 lead-kit surface scoping).
 """
 
 from __future__ import annotations
@@ -19,6 +23,11 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from scripts.mcp_bridge_contract_filter import (  # noqa: E402
+    resolve_contract_allow_list,
+    run_filtered_stdio_proxy,
+    should_filter_stdio,
+)
 from services.git_integration_worker.cursor_sdk_context import (  # noqa: E402
     CursorSdkParityError,
     resolve_fastmcp_remote_cmd,
@@ -74,7 +83,7 @@ def _emit_event_sync(sock_path: str, signal: str, **payload: object) -> None:
             sock.close()
 
 
-def _emit_startup(*, mcp_url: str, bridge_cmd: str) -> None:
+def _emit_startup(*, mcp_url: str, bridge_cmd: str, filtered: bool = False) -> None:
     if not _EVENTS_ENABLED:
         return
     _emit_event_sync(
@@ -84,7 +93,24 @@ def _emit_startup(*, mcp_url: str, bridge_cmd: str) -> None:
         bridge="fastmcp-remote",
         bridge_cmd=bridge_cmd,
         mcp_url=mcp_url,
+        contract_filter=filtered,
     )
+
+
+def _fastmcp_argv(*, bridge_cmd: str, mcp_url: str) -> list[str]:
+    return [
+        bridge_cmd,
+        mcp_url,
+        "--auth",
+        "none",
+        "--header",
+        "Authorization: Bearer ${MCP_TOKEN}",
+        "--silent",
+    ]
+
+
+def _run_execve(*, bridge_cmd: str, mcp_url: str, env: dict[str, str]) -> None:
+    os.execve(bridge_cmd, _fastmcp_argv(bridge_cmd=bridge_cmd, mcp_url=mcp_url), env)
 
 
 def main() -> None:
@@ -111,22 +137,23 @@ def main() -> None:
         print(f"mcp-fastmcp-remote-bridge: {exc}", file=sys.stderr, flush=True)
         raise SystemExit(2) from exc
 
-    _emit_startup(mcp_url=mcp_url, bridge_cmd=bridge_cmd)
     env = os.environ.copy()
     env["MCP_TOKEN"] = token
-    os.execve(
-        bridge_cmd,
-        [
-            bridge_cmd,
-            mcp_url,
-            "--auth",
-            "none",
-            "--header",
-            "Authorization: Bearer ${MCP_TOKEN}",
-            "--silent",
-        ],
-        env,
-    )
+
+    if should_filter_stdio(env):
+        contract = (env.get("ULG_MCP_CONTRACT") or "").strip().lower()
+        allow = resolve_contract_allow_list(contract)
+        _emit_startup(mcp_url=mcp_url, bridge_cmd=bridge_cmd, filtered=True)
+        rc = run_filtered_stdio_proxy(
+            child_cmd=bridge_cmd,
+            child_args=_fastmcp_argv(bridge_cmd=bridge_cmd, mcp_url=mcp_url)[1:],
+            child_env=env,
+            allow=allow,
+        )
+        raise SystemExit(rc)
+
+    _emit_startup(mcp_url=mcp_url, bridge_cmd=bridge_cmd, filtered=False)
+    _run_execve(bridge_cmd=bridge_cmd, mcp_url=mcp_url, env=env)
 
 
 if __name__ == "__main__":

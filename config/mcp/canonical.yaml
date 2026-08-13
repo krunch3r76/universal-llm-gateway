@@ -4783,3 +4783,24 @@ contract_vocabulary:
     - trivial
     - recon_pending
     introduced: '2026-06-29'
+contract_primary_domains:
+  implement:
+  - cortex
+  - cortex_brief
+  - agent_bus
+  - agent_bus_read
+  - fs
+  - tool_search
+  - dispatch
+  - manage
+  - observability
+  pure-mechanical:
+  - cortex
+  - cortex_brief
+  - agent_bus
+  - agent_bus_read
+  - fs
+  - tool_search
+  - dispatch
+  - manage
+  - observability
