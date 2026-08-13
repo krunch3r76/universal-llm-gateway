@@ -470,6 +470,8 @@ def _projection_to_row(row: OpenPropagationProjection) -> PropagationRow:
         proof=proof,
         proof_class=row.proof_class,  # type: ignore[arg-type]
         proof_class_requested=row.proof_class,  # type: ignore[arg-type]
+        allow_self_preempt=row.allow_self_preempt,
+        force=row.force,
     )
 
 

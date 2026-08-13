@@ -122,3 +122,42 @@ def test_unrelated_observation_fails_deploy_line_without_rewriting_intent(
     assert payload["observed_code_version"] == observed
     assert payload["failure_reason"] == "unsatisfiable_deploy_line"
     assert payload["status_claim_kind"] == "observed_of_attempt"
+
+
+def test_upsert_persists_allow_self_preempt_and_force(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    upsert_open_rows(
+        [
+            _row(
+                service="mcp",
+                allow_self_preempt=False,
+                force=True,
+            )
+        ]
+    )
+    open_rows = list_open_rows()
+    assert len(open_rows) == 1
+    assert open_rows[0].allow_self_preempt is False
+    assert open_rows[0].force is True
+
+
+def test_upsert_omitted_flags_use_model_defaults(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    upsert_open_rows([_row(service="mcp")])
+    open_rows = list_open_rows()
+    assert len(open_rows) == 1
+    assert open_rows[0].allow_self_preempt is True
+    assert open_rows[0].force is False
+
+
+def test_projection_to_row_round_trips_force_flags(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    from scripts.model_manager.ui.controller.charter_runner.propagation_execute import (
+        _projection_to_row,
+    )
+
+    upsert_open_rows([_row(service="mcp", allow_self_preempt=False, force=True)])
+    projection = list_open_rows()[0]
+    rebuilt = _projection_to_row(projection)
+    assert rebuilt.allow_self_preempt is False
+    assert rebuilt.force is True

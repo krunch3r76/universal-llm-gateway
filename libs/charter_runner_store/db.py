@@ -42,6 +42,10 @@ from .migrations.migration_008_harvest_wanted import (
     MIGRATION_ID as MIGRATION_008_ID,
     migrate as migrate_008,
 )
+from .migrations.migration_009_propagation_force_flags import (
+    MIGRATION_ID as MIGRATION_009_ID,
+    migrate as migrate_009,
+)
 
 logger = get_logger(__name__)
 
@@ -106,6 +110,7 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
         (MIGRATION_006_ID, migrate_006),
         (MIGRATION_007_ID, migrate_007),
         (MIGRATION_008_ID, migrate_008),
+        (MIGRATION_009_ID, migrate_009),
     ]
     for mig_id, migrate_fn in pending:
         if mig_id in applied:

@@ -51,6 +51,8 @@ class OpenPropagationProjection:
     proof_kind: str = PROOF_KIND_OBLIGATION
     consumption_token: str | None = None
     consumption_claimed_at: float | None = None
+    allow_self_preempt: bool = True
+    force: bool = False
 
 
 def _row_key(row: PropagationRow) -> str:
@@ -111,8 +113,8 @@ def upsert_open_rows(
                 INSERT INTO propagation_ledger (
                   row_id, service, action, code_ref, safe_window, hazard, reason,
                   proof, proof_class, mint_thread, mint_turn, status, age_in_harvests,
-                  created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', 0, ?, ?)
+                  created_at, updated_at, allow_self_preempt, force
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', 0, ?, ?, ?, ?)
                 ON CONFLICT(row_id) DO UPDATE SET
                   hazard=excluded.hazard,
                   reason=excluded.reason,
@@ -120,6 +122,8 @@ def upsert_open_rows(
                   proof_class=excluded.proof_class,
                   mint_thread=COALESCE(excluded.mint_thread, propagation_ledger.mint_thread),
                   mint_turn=COALESCE(excluded.mint_turn, propagation_ledger.mint_turn),
+                  allow_self_preempt=excluded.allow_self_preempt,
+                  force=excluded.force,
                   updated_at=excluded.updated_at
                 WHERE propagation_ledger.status='open'
                 """,
@@ -137,6 +141,8 @@ def upsert_open_rows(
                     row.mint_turn,
                     now,
                     now,
+                    int(bool(row.allow_self_preempt)),
+                    int(bool(row.force)),
                 ),
             )
     finally:
@@ -155,7 +161,7 @@ def list_open_rows(*, conn: sqlite3.Connection | None = None) -> list[OpenPropag
             SELECT row_id, service, code_ref, safe_window, age_in_harvests,
                    mint_thread, mint_turn, defer_reason, proof_class, hazard, reason,
                    settle_boundary_monotonic, proof, consumption_token,
-                   consumption_claimed_at
+                   consumption_claimed_at, allow_self_preempt, force
             FROM propagation_ledger
             WHERE status='open'
             ORDER BY age_in_harvests DESC, service ASC
@@ -179,6 +185,14 @@ def list_open_rows(*, conn: sqlite3.Connection | None = None) -> list[OpenPropag
                 proof_kind=PROOF_KIND_OBLIGATION,
                 consumption_token=row["consumption_token"],
                 consumption_claimed_at=row["consumption_claimed_at"],
+                allow_self_preempt=(
+                    True
+                    if row["allow_self_preempt"] is None
+                    else bool(row["allow_self_preempt"])
+                ),
+                force=(
+                    False if row["force"] is None else bool(row["force"])
+                ),
             )
             for row in cur.fetchall()
         ]

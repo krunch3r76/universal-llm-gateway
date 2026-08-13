@@ -81,6 +81,8 @@ def _projection_to_row(row: OpenPropagationProjection) -> PropagationRow:
         safe_window=row.safe_window,
         proof=proof,
         proof_class=row.proof_class,
+        allow_self_preempt=row.allow_self_preempt,
+        force=row.force,
     )
 
 
