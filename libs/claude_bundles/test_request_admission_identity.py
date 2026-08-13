@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
+
 from claude_bundles.request_admission_identity import (
     gate_request_admission,
     get_identity_counters,

@@ -40,8 +40,8 @@ from services.git_integration_worker.cursor_auto.hop_cadence_predecessor import 
     PredecessorHandle,
     PredecessorVerdict,
     non_holder_handles,
-    prior_registration_for_confirm,
     predecessor_for_confirm,
+    prior_registration_for_confirm,
 )
 from services.git_integration_worker.cursor_auto.hop_cadence_succession_release import (
     RELEASE_IDLE_STREAK_REQUIRED,
@@ -504,7 +504,6 @@ def reconcile_release_obligations(
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Retry outstanding release obligations without re-confirming succession."""
     retries: list[dict[str, Any]] = []
-    changed = False
     for thread_id, row in list(watches.items()):
         obligation = row.get("release_obligation")
         if not isinstance(obligation, dict):
@@ -519,7 +518,6 @@ def reconcile_release_obligations(
         updated = apply_release_outcome_to_row(row, handle, outcome, now=now)
         if updated != row:
             watches[thread_id] = updated
-            changed = True
         retries.append({"thread_id": thread_id, **outcome})
     return watches, retries
 
