@@ -75,7 +75,7 @@ def test_status_ignores_read_at_when_no_later_turn():
     for turns in (pending_unread, pending_read):
         assert (
             derive_status(thread, turns, after_turn=1, completion=comp)
-            == "awaiting_first_reply"
+            == "no_new_turn"
         )
 
     # Qualifying reply lands → complete.
@@ -194,7 +194,7 @@ def test_no_awaiting_push_status_exists():
     from agent_bus_store.wait_status import WaitStatus
 
     assert set(get_args(WaitStatus)) == {
-        "awaiting_first_reply",
+        "no_new_turn",
         "predicate_unmet",
         "complete",
     }

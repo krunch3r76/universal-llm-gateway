@@ -871,7 +871,7 @@ that already moved (arc 7182 / thread 7197). Four rules at authoring moment:
 2. **Job ledger phase?** `job_state` with `include_terminal=true` when the job may already
    be dead. Treat `job_state_unreachable` as unknown, not queued. Worker down **omits**
    `thread_get.cursor_auto_job` (looks like no live job).
-3. **`wait.status` is the predicate, not a claim probe.** `awaiting_first_reply` = no turn
+3. **`wait.status` is the predicate, not a claim probe.** `no_new_turn` = no turn
    exists after `after_turn`. `predicate_unmet` = turns already advanced (`turn_count` /
    a later turn exists) but the completion predicate is still false (typical:
    `status:admitted` while waiting for `status:done`). Neither means "never claimed."
@@ -884,7 +884,7 @@ that already moved (arc 7182 / thread 7197). Four rules at authoring moment:
 | Bad | Good |
 |---|---|
 | Abort / `files_created:[]` / on-thread status trusted as world-state | Negative status = claim; await cursor contradiction |
-| `wait.status=awaiting_first_reply` (or a 55s `status:done` hold) read as never-claimed → re-issue | Fetch the admit turn; `predicate_unmet` means turns advanced, predicate unmet; `job_state include_terminal=true` |
+| `wait.status=no_new_turn` (or a 55s `status:done` hold) read as never-claimed → re-issue | Fetch the admit turn; `predicate_unmet` means turns advanced, predicate unmet; `job_state include_terminal=true` |
 | Closeout prose without structured fields | `deltas_to_spec` / `decisions_taken`; explicit `deltas_to_spec: none` |
 | Ref-only closeouts | Verdicts inline; evidence by ref |
 | Facts only in Cowork | Write them into DIRECTIVE / CLOSEOUT / CHECKPOINT |

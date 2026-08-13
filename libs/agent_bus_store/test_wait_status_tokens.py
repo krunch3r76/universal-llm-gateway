@@ -28,7 +28,7 @@ def test_status_done_incomplete_then_complete():
     assert not is_complete(thread, turns, after_turn=1, completion=comp)
     assert (
         derive_status(thread, turns, after_turn=1, completion=comp)
-        == "awaiting_first_reply"
+        == "no_new_turn"
     )
     turns.append(_turn(2, "cursor-auto", subject="status:admitted — x"))
     assert not is_complete(thread, turns, after_turn=1, completion=comp)
@@ -41,11 +41,11 @@ def test_status_done_incomplete_then_complete():
     assert derive_status(thread, turns, after_turn=1, completion=comp) == "complete"
 
 
-def test_status_done_admit_turn_is_predicate_unmet_not_awaiting_first_reply():
+def test_status_done_admit_turn_is_predicate_unmet_not_no_new_turn():
     """AC2: liveness read distinguishes turn_count-advanced from no-reply.
 
     Incident shape (thread 7197): completion=status:done over a live
-    status:admitted turn must not say awaiting_first_reply.
+    status:admitted turn must not say no_new_turn.
     """
     thread = {"status": ThreadStatus.ACTIVE}
     turns = [
@@ -61,7 +61,7 @@ def test_status_done_admit_turn_is_predicate_unmet_not_awaiting_first_reply():
     empty_after = [_turn(54, "web-anthropic", subject="request")]
     assert (
         derive_status(thread, empty_after, after_turn=54, completion=comp)
-        == "awaiting_first_reply"
+        == "no_new_turn"
     )
 
 
@@ -134,5 +134,5 @@ def test_empty_snapshot_does_not_falsely_complete():
         )
         assert (
             derive_status(thread, turns, after_turn=1, completion={"mode": mode})
-            == "awaiting_first_reply"
+            == "no_new_turn"
         )

@@ -10,11 +10,13 @@ read_at stayed null while the web seat actively processed). Push-vs-processing
 distinction, if ever needed, is a server-owned ack (Phase 4), not recipient
 read state.
 
-C's no-reply token remains ``awaiting_first_reply``. A third observable,
-``predicate_unmet``, reports a *store-owned* fact C never forbade: turns exist
-after ``after_turn`` but the caller's completion predicate is still false.
-Collapsing that into ``awaiting_first_reply`` answers "has anyone replied?"
-with a confident no while an admit turn already exists (arc 7182 / thread 7197).
+The quiet-wait token is ``no_new_turn``: the store has no turn after
+``after_turn``. That is not "literally no reply yet" — an admit turn is a
+turn. A third observable, ``predicate_unmet``, reports a *store-owned* fact:
+turns exist after ``after_turn`` but the caller's completion predicate is
+still false. Collapsing those into a no-reply word answers "has anyone
+replied?" with a confident no while an admit turn already exists
+(arc 7182 / thread 7197). No compatibility alias for the retired word.
 
 ``thread_closed`` completion gates on ThreadStatus.CLOSED (the ThreadDetail
 ``status`` column), NEVER on any turn's TurnStatus — a closed thread can still
@@ -32,7 +34,7 @@ from .close_on_read import CLOSE_ON_READ_TAG
 from .disposition import first_line_is_disposition_type, resolve_bus_lifecycle
 from .turns_models import ThreadStatus
 
-WaitStatus = Literal["awaiting_first_reply", "predicate_unmet", "complete"]
+WaitStatus = Literal["no_new_turn", "predicate_unmet", "complete"]
 
 # Terminal Auto-orchestrator status tokens (agent_bus.request completion).
 STATUS_COMPLETION_MODES: frozenset[str] = frozenset(
@@ -315,8 +317,9 @@ def derive_status(
     """Map thread state to an observable wait status.
 
     ``complete`` — the caller's completion predicate holds.
-    ``awaiting_first_reply`` — predicate unmet and no turn exists after
-    ``after_turn`` (literally no reply yet).
+    ``no_new_turn`` — predicate unmet and no turn exists after ``after_turn``.
+    Not "no reply yet": absence of a later turn, including the admit-turn
+    counterexample where a reply-shaped word would lie.
     ``predicate_unmet`` — predicate unmet but at least one later turn exists
     (turn_count already advanced; e.g. ``status:admitted`` while waiting for
     ``status:done``). Never derived from ``read_at``.
@@ -325,4 +328,4 @@ def derive_status(
         return "complete"
     if _any_turn_after(turns, after_turn=after_turn):
         return "predicate_unmet"
-    return "awaiting_first_reply"
+    return "no_new_turn"

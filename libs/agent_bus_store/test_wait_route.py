@@ -14,7 +14,7 @@ def _app(tmp_path):
     return app
 
 
-def test_wait_zero_returns_snapshot_awaiting_first_reply(tmp_path) -> None:
+def test_wait_zero_returns_snapshot_no_new_turn(tmp_path) -> None:
     with TestClient(_app(tmp_path)) as client:
         created = client.post(
             "/threads/with-turn",
@@ -35,7 +35,7 @@ def test_wait_zero_returns_snapshot_awaiting_first_reply(tmp_path) -> None:
         )
         assert resp.status_code == 200
         body = resp.json()
-        assert body["status"] == "awaiting_first_reply"
+        assert body["status"] == "no_new_turn"
         assert body["complete"] is False
         assert body["push_required"] is False
         assert body["thread_id"] == thread_id
@@ -210,7 +210,7 @@ def test_wait_disposition_ratify_does_not_422(tmp_path) -> None:
 
 
 def test_wait_status_done_with_admit_turn_is_predicate_unmet(tmp_path) -> None:
-    """HTTP snapshot: status:done wait over an admit turn is not awaiting_first_reply."""
+    """HTTP snapshot: status:done wait over an admit turn is not no_new_turn."""
     with TestClient(_app(tmp_path)) as client:
         created = client.post(
             "/threads/with-turn",
@@ -242,7 +242,7 @@ def test_wait_status_done_with_admit_turn_is_predicate_unmet(tmp_path) -> None:
             "?after_turn=2&wait=0&completion=status:done"
         )
         assert empty.status_code == 200
-        assert empty.json()["status"] == "awaiting_first_reply"
+        assert empty.json()["status"] == "no_new_turn"
         assert empty.json()["complete"] is False
         assert empty.json()["qualifying_reply_turn"] is None
 
