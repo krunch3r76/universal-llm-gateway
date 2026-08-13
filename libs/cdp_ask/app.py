@@ -373,10 +373,15 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             raise HTTPException(404, f"unknown execution_id: {execution_id}")
 
         outcome: AbortCleanupOutcome
+        retain_idle = not bool(record.streaming) and not bool(record.tool_pause)
         if record.registration_id:
             reg = lookup_active_registration(record.registration_id)
             if reg is not None:
-                outcome = abort_cleanup(reg, purpose=record.purpose)
+                outcome = abort_cleanup(
+                    reg,
+                    purpose=record.purpose,
+                    retain_idle=retain_idle,
+                )
             else:
                 outcome = "no_registration"
         else:

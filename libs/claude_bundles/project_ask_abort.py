@@ -142,10 +142,17 @@ def _process_owns_driver(registration_id: str) -> bool:
     return isinstance(holder_pid, int) and holder_pid == os.getpid()
 
 
-def deregister_on_exit(reg: cdp_registry.Registration, *, purpose: str | None) -> None:
+def deregister_on_exit(
+    reg: cdp_registry.Registration, *, purpose: str | None, skip_wake_debt: bool = False
+) -> None:
+    """Deregister the lane on exit; kill follows ``purpose_kill_default`` unless primary profile.
+
+    When ``skip_wake_debt`` is True (retain-idle abort), deregister even if wake debt
+    remains — the satellite execution terminalizes while Chrome stays retained.
+    """
     from claude_bundles.cse_wake_retain import registration_has_wake_debt
 
-    if registration_has_wake_debt(reg.registration_id):
+    if not skip_wake_debt and registration_has_wake_debt(reg.registration_id):
         return
     if not registration_owns_port(reg.registration_id, reg.port):
         return
@@ -288,13 +295,16 @@ def bounded_stop_via_cdp(
 
 
 def _try_deregister(
-    reg: cdp_registry.Registration, *, purpose: str | None
+    reg: cdp_registry.Registration,
+    *,
+    purpose: str | None,
+    skip_wake_debt: bool = False,
 ) -> AbortCleanupOutcome:
     # M1: pre-click ¬hasStop (already_idle) folds here; aborted=True is deliberate
     # even when the stream finished naturally — operator abort semantics, not proof
     # the Stop click halted an active generation.
     try:
-        deregister_on_exit(reg, purpose=purpose)
+        deregister_on_exit(reg, purpose=purpose, skip_wake_debt=skip_wake_debt)
     except Exception:
         return "stopped_deregister_failed"
     global _ABORT_DONE
@@ -304,8 +314,17 @@ def _try_deregister(
 
 
 def abort_cleanup(
-    reg: cdp_registry.Registration, *, purpose: str | None
+    reg: cdp_registry.Registration,
+    *,
+    purpose: str | None,
+    retain_idle: bool = False,
 ) -> AbortCleanupOutcome:
+    """Stop-then-attest cleanup, or retain-idle deregister when the turn ended.
+
+    When ``retain_idle`` is True (not streaming and not tool_pause), skip
+    wake-debt and Stop-chrome attestation — visible Stop on an idle retained
+    CSE is expected — and deregister the execution without killing Chrome.
+    """
     with _ABORT_LOCK:
         if _ABORT_DONE:
             return "already_done"
@@ -318,7 +337,7 @@ def abort_cleanup(
 
     from claude_bundles.cse_wake_retain import registration_has_wake_debt
 
-    if registration_has_wake_debt(reg.registration_id):
+    if not retain_idle and registration_has_wake_debt(reg.registration_id):
         return "still_attached"
 
     if not _process_owns_driver(reg.registration_id):
@@ -327,6 +346,9 @@ def abort_cleanup(
             return "detached_remote_running"
         if not registration_owns_port(reg.registration_id, reg.port):
             return "ownership_lost"
+
+    if retain_idle:
+        return _try_deregister(reg, purpose=purpose, skip_wake_debt=True)
 
     attest = bounded_stop_via_cdp(reg.cdp_url)
     if not attest.probe_ok:
@@ -341,6 +363,7 @@ def abort_cleanup(
 def install_abort_handlers(
     reg: cdp_registry.Registration, *, purpose: str | None
 ) -> None:
+    """Register SIGTERM/SIGHUP handlers that run ``abort_cleanup`` for this registration."""
     def _handle(_signum: int, _frame: object | None) -> None:
         outcome = abort_cleanup(reg, purpose=purpose)
         print(f"abort_cleanup outcome={outcome}", flush=True)
@@ -352,6 +375,7 @@ def install_abort_handlers(
 def lookup_active_registration(
     registration_id: str,
 ) -> cdp_registry.Registration | None:
+    """Return the active ``Registration`` row for *registration_id*, or None."""
     for reg in cdp_registry.list_active():
         if reg.registration_id == registration_id:
             return reg
@@ -359,6 +383,7 @@ def lookup_active_registration(
 
 
 def abort_cleanup_registration_id(registration_id: str) -> int:
+    """Run ``abort_cleanup`` for *registration_id*; return process exit code (always 0)."""
     reg = lookup_active_registration(registration_id)
     if reg is None:
         return 0

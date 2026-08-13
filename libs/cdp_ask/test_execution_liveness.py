@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -16,6 +17,8 @@ from cdp_ask.page_liveness import (
     LadderCallbacks,
     advance_ladder_from_harvest,
 )
+
+pytestmark = pytest.mark.offline
 
 
 @pytest.fixture
@@ -141,6 +144,65 @@ async def test_poll_execution_retains_liveness_past_turn_idle(
     done = client.get(f"/v1/project-ask/executions/{record.execution_id}").json()
     assert done["streaming"] is None
     assert done["liveness_observed_at"] is None
+
+    sleeper.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await sleeper
+
+
+@pytest.mark.asyncio
+async def test_abort_retain_idle_running_execution_terminalizes(
+    store: ExecutionStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_abort_cleanup(
+        reg: object, *, purpose: str | None, retain_idle: bool = False
+    ) -> str:
+        captured["retain_idle"] = retain_idle
+        captured["purpose"] = purpose
+        return "attested_stopped_and_deregistered"
+
+    monkeypatch.setattr(
+        "claude_bundles.project_ask_abort.abort_cleanup",
+        _fake_abort_cleanup,
+    )
+    monkeypatch.setattr(
+        "claude_bundles.project_ask_abort.lookup_active_registration",
+        lambda rid: SimpleNamespace(
+            registration_id=rid,
+            port=9234,
+            purpose="operator-proxy",
+            cdp_url="http://127.0.0.1:9234",
+        ),
+    )
+
+    record = await store.create(holder="test", purpose="operator-proxy")
+    await store.set_registration_id(record.execution_id, "reg-test")
+    sleeper = asyncio.create_task(asyncio.sleep(3600))
+    await store.attach_task(record.execution_id, sleeper)
+    await store.update_liveness(
+        record.execution_id,
+        streaming=False,
+        stop=True,
+        tool_pause=False,
+        liveness_observed_at=time.time(),
+    )
+
+    client = TestClient(create_app(store=store))
+    resp = client.post(f"/v1/project-ask/executions/{record.execution_id}/abort")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["aborted"] is True
+    assert body["status"] == "aborted"
+    assert body["abort_outcome"] == "attested_stopped_and_deregistered"
+    assert captured["retain_idle"] is True
+    assert captured["purpose"] == "operator-proxy"
+
+    refreshed = await store.get(record.execution_id)
+    assert refreshed is not None
+    assert refreshed.status == "aborted"
 
     sleeper.cancel()
     with pytest.raises(asyncio.CancelledError):

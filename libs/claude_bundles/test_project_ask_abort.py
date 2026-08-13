@@ -246,6 +246,100 @@ def test_deregister_on_exit_emits_exit_kill_decision_event(
     ]
 
 
+def test_abort_cleanup_retain_idle_operator_proxy_deregisters_despite_has_stop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, bool, str | None]] = []
+    stop_calls: list[str] = []
+
+    monkeypatch.setattr(
+        paa.cdp_registry,
+        "_load_active",
+        lambda: {"abc123": {"status": "active", "port": 9234}},
+    )
+    monkeypatch.setattr(
+        paa.cdp_registry,
+        "deregister_lane",
+        _capture_deregister(calls),
+    )
+    monkeypatch.setattr(paa._events, "emit", lambda _event: None)
+    monkeypatch.setattr(
+        paa,
+        "bounded_stop_via_cdp",
+        lambda url: stop_calls.append(url)
+        or paa.AttestResult(has_stop=True, probe_ok=True),
+    )
+    paa._ABORT_DONE = False
+    outcome = paa.abort_cleanup(
+        _reg(purpose="operator-proxy"),
+        purpose="operator-proxy",
+        retain_idle=True,
+    )
+    assert outcome == "attested_stopped_and_deregistered"
+    assert stop_calls == []
+    assert calls == [("abc123", False, "retained")]
+
+
+def test_abort_cleanup_retain_idle_skips_wake_debt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, bool, str | None]] = []
+
+    monkeypatch.setattr(
+        paa.cdp_registry,
+        "_load_active",
+        lambda: {"abc123": {"status": "active", "port": 9234}},
+    )
+    monkeypatch.setattr(
+        paa.cdp_registry,
+        "deregister_lane",
+        _capture_deregister(calls),
+    )
+    monkeypatch.setattr(paa._events, "emit", lambda _event: None)
+    monkeypatch.setattr(
+        "claude_bundles.cse_wake_retain.registration_has_wake_debt",
+        lambda _rid: True,
+    )
+    paa._ABORT_DONE = False
+    outcome = paa.abort_cleanup(
+        _reg(purpose="operator-proxy"),
+        purpose="operator-proxy",
+        retain_idle=True,
+    )
+    assert outcome == "attested_stopped_and_deregistered"
+    assert calls == [("abc123", False, "retained")]
+
+
+def test_abort_cleanup_streaming_has_stop_still_attached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, bool, str | None]] = []
+
+    monkeypatch.setattr(
+        paa.cdp_registry,
+        "_load_active",
+        lambda: {"abc123": {"status": "active", "port": 9234}},
+    )
+    monkeypatch.setattr(
+        paa.cdp_registry,
+        "deregister_lane",
+        _capture_deregister(calls),
+    )
+    monkeypatch.setattr(
+        paa,
+        "bounded_stop_via_cdp",
+        lambda _url: paa.AttestResult(has_stop=True, probe_ok=True),
+    )
+    paa._ABORT_DONE = False
+    outcome = paa.abort_cleanup(
+        _reg(purpose="operator-proxy"),
+        purpose="operator-proxy",
+        retain_idle=False,
+    )
+    assert outcome == "still_attached"
+    assert calls == []
+
+
 def test_abort_cleanup_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
     stops = {"n": 0}
     dereg: list[str] = []
@@ -264,7 +358,7 @@ def test_abort_cleanup_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         paa,
         "deregister_on_exit",
-        lambda reg, *, purpose: dereg.append(reg.registration_id),
+        lambda reg, *, purpose, **_: dereg.append(reg.registration_id),
     )
     paa._ABORT_DONE = False
     reg = _reg()
