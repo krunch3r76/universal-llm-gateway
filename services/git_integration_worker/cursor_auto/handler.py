@@ -165,9 +165,9 @@ async def process_job(
     # Concurrent enqueue task normally claims first; this is the claim-race
     # and defense-in-depth path when the serial worker holds the hop.
     if job.continuity_hop:
-        incumbent = queue.claimed_for_thread(job.thread_id)
-        if incumbent is not None and incumbent.job_id == job.job_id:
-            incumbent = None
+        incumbent = queue.incumbent_for_thread(
+            job.thread_id, exclude_job_id=job.job_id
+        )
         return await complete_continuity_hop(
             job,
             queue=queue,

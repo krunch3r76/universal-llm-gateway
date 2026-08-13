@@ -67,6 +67,8 @@ def test_shared_author_pattern_asserts_successor_birth_id() -> None:
     assert "Identity key is" in body
     assert "successor_birth_id (this structural header)" in body
     assert "Identity is chat_url" not in body
+    assert "wake-guide" in body
+    assert "unobservable" in body
 
 
 def test_pinned_birth_id_is_byte_stable_for_adapter_parity() -> None:

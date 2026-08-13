@@ -123,7 +123,10 @@ def build_continuity_handoff_body(
             "delete only trigger_ids this seat recorded (never class-delete).",
             "CDP one-off work from the mission runner remains fine; keep-alive is not",
             "ready for fleet hops under the current pattern.",
-            "(cursor-auto cannot reach Cowork-internal timers — seat duty.)",
+            "Predecessor Cowork send_later is unobservable to cursor-auto",
+            "(predecessor_wake_status=unobservable). wake-guide §7: a one-shot",
+            "armed before this hop may still fire into the retired seat; that",
+            "seat must read the lane and stand down — do not act on remembered rank.",
         ]
     )
     return "\n".join(lines) + "\n"

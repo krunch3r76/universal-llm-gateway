@@ -38,3 +38,5 @@ def test_cadence_hop_body_forbids_monitor_arm() -> None:
     assert "Arm Monitor + send_later" not in body
     assert "KEEP-ALIVE" in body or "keep-alive" in body.lower()
     assert "PRIMARY" in body or "primary" in body.lower()
+    assert "wake-guide" in body
+    assert "unobservable" in body

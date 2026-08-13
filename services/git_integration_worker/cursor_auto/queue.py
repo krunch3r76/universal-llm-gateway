@@ -182,7 +182,8 @@ class AutoJobQueue:
 
         Jobs whose nested SDK already finished (CLOSEOUT still relaying) stay
         ``claimed`` for restart triage but are not supersede candidates.
-        Hop cadence and continuity-hop incumbent lookup use this helper.
+        Hop harvest uses :meth:`incumbent_for_thread` so queued commissions
+        are named; this helper stays claimed-only.
         """
         with self._lock:
             for jid in self._order:
@@ -195,6 +196,44 @@ class AutoJobQueue:
                     return job
         return None
 
+    def _incumbent_unlocked(
+        self,
+        thread_id: str,
+        *,
+        exclude_job_id: str | None = None,
+    ) -> AutoJob | None:
+        """Claimed in-flight first, else oldest queued. Caller holds the lock."""
+        queued_candidate: AutoJob | None = None
+        for jid in self._order:
+            if exclude_job_id is not None and jid == exclude_job_id:
+                continue
+            job = self._jobs[jid]
+            if job.thread_id != thread_id:
+                continue
+            if job.status == "claimed" and not job.nested_sdk_finished:
+                return job
+            if job.status == "queued" and queued_candidate is None:
+                queued_candidate = job
+        return queued_candidate
+
+    def incumbent_for_thread(
+        self,
+        thread_id: str,
+        *,
+        exclude_job_id: str | None = None,
+    ) -> AutoJob | None:
+        """Return the live Auto commission on *thread_id* for hop harvest.
+
+        Same FIFO as :meth:`supersede_candidate_for_thread` (claimed in-flight
+        first, else oldest queued) so a queued window is not reported as a
+        clear lane. Pass *exclude_job_id* so a just-enqueued hop does not
+        name itself. Reporting only — hop still does not supersede.
+        """
+        with self._lock:
+            return self._incumbent_unlocked(
+                thread_id, exclude_job_id=exclude_job_id
+            )
+
     def supersede_candidate_for_thread(self, thread_id: str) -> AutoJob | None:
         """Return the same-thread supersede target: claimed in-flight, else queued.
 
@@ -203,16 +242,7 @@ class AutoJobQueue:
         is irrelevant to candidacy.
         """
         with self._lock:
-            queued_candidate: AutoJob | None = None
-            for jid in self._order:
-                job = self._jobs[jid]
-                if job.thread_id != thread_id:
-                    continue
-                if job.status == "claimed" and not job.nested_sdk_finished:
-                    return job
-                if job.status == "queued" and queued_candidate is None:
-                    queued_candidate = job
-            return queued_candidate
+            return self._incumbent_unlocked(thread_id)
 
     def mark_superseded(self, job_id: str, *, superseded_by: str) -> AutoJob | None:
         """Flag an in-flight job as displaced by *superseded_by* and return it."""

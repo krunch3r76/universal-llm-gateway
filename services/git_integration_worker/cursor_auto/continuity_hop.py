@@ -17,28 +17,31 @@ from universal_logging import get_logger
 from services.git_integration_worker.cursor_auto.admit_report import (
     build_admit_report_body,
 )
-from services.git_integration_worker.cursor_auto.envelope_fields import (
-    envelope_values_from_job,
-)
-from services.git_integration_worker.cursor_auto.field_parity import (
-    compute_field_parity_for_job,
-)
-from services.git_integration_worker.cursor_auto.propagate_admission import (
-    PROPAGATE_CONTRACT,
-    admit_propagate_body,
-)
 from services.git_integration_worker.cursor_auto.cdp_escalation import (
     commission_cdp_escalation,
 )
 from services.git_integration_worker.cursor_auto.directive import (
     split_continuity_hop_legs,
 )
+from services.git_integration_worker.cursor_auto.envelope_fields import (
+    envelope_values_from_job,
+)
+from services.git_integration_worker.cursor_auto.field_parity import (
+    compute_field_parity_for_job,
+)
 from services.git_integration_worker.cursor_auto.handler_terminal import (
     post_terminal_status,
+)
+from services.git_integration_worker.cursor_auto.harvest_residual import (
+    build_harvest_residual_payload,
 )
 from services.git_integration_worker.cursor_auto.hop_orientation import (
     build_hop_orientation,
     prepend_orientation,
+)
+from services.git_integration_worker.cursor_auto.propagate_admission import (
+    PROPAGATE_CONTRACT,
+    admit_propagate_body,
 )
 from services.git_integration_worker.cursor_auto.queue import AutoJob, AutoJobQueue
 from services.git_integration_worker.cursor_auto.reflex_events import (
@@ -151,35 +154,9 @@ async def post_harvest_residual(
 ) -> dict[str, Any]:
     """Name any live commission so the successor has a harvest target."""
     mailbox = normalize_bus_address(job.from_agent)
-    if incumbent is None:
-        payload = {
-            "type": "CONTINUITY_HARVEST_RESIDUAL",
-            "incumbent_job_id": None,
-            "incumbent_dispatch_id": dispatch_id,
-            "incumbent_subject": None,
-            "hop_job_id": job.job_id,
-            "hop_matched_token": job.continuity_matched_token,
-            "re_issue_subject": None,
-            "note": (
-                "No claimed Auto commission on this lane at hop time. "
-                "CDP successor still commissioned; harvest any non-Auto "
-                "in-flight work from the lane tip."
-            ),
-        }
-    else:
-        payload = {
-            "type": "CONTINUITY_HARVEST_RESIDUAL",
-            "incumbent_job_id": incumbent.job_id,
-            "incumbent_dispatch_id": dispatch_id,
-            "incumbent_subject": incumbent.subject,
-            "hop_job_id": job.job_id,
-            "hop_matched_token": job.continuity_matched_token,
-            "re_issue_subject": incumbent.subject,
-            "note": (
-                "In-flight commission on this lane was preserved (hop≠backtrack). "
-                "Harvest its CLOSEOUT; do not treat it as superseded."
-            ),
-        }
+    payload = build_harvest_residual_payload(
+        job, incumbent=incumbent, dispatch_id=dispatch_id
+    )
     reply = await client.reply(
         thread_id=job.thread_id,
         to_agent=mailbox,

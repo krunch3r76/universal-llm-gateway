@@ -154,7 +154,7 @@ def test_pre_commit_repo_only_skips_served_binding_gate(
     monkeypatch.setattr(
         codegen,
         "_check_service_detailed",
-        lambda _s: ManifestCheckResult((), ()),
+        lambda _s, **_k: ManifestCheckResult((), ()),
     )
     monkeypatch.setattr(
         codegen,
@@ -165,11 +165,18 @@ def test_pre_commit_repo_only_skips_served_binding_gate(
             {"check_result": ManifestCheckResult((), ())},
         )(),
     )
+    from openapi_mcp import commit_snapshot as snap
+
     from services.git_integration_worker.cursor_auto import (
         propagation_descriptor_drift,
         propagation_served_binding_drift,
     )
 
+    monkeypatch.setattr(
+        snap,
+        "check_services_from_commit_tree",
+        lambda services, **_k: [(s, ManifestCheckResult((), ())) for s in services],
+    )
     monkeypatch.setattr(
         propagation_descriptor_drift,
         "check_descriptor_drift",

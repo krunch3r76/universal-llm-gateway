@@ -130,13 +130,27 @@ def _emit_check_result(service: str, result: ManifestCheckResult) -> None:
         print(f"{service}: {msg}", file=sys.stderr)
 
 
-def _run_check(services: list[str], *, include_served_binding_drift: bool = True) -> int:
+def _run_check(
+    services: list[str],
+    *,
+    include_served_binding_drift: bool = True,
+    from_commit_tree: bool = False,
+) -> int:
     exit_code = 0
-    for service in services:
-        result = _check_service_detailed(service)
-        _emit_check_result(service, result)
-        if result.exit_code != 0:
-            exit_code = 1
+    if from_commit_tree:
+        from openapi_mcp.commit_snapshot import check_services_from_commit_tree
+
+        pairs = check_services_from_commit_tree(services, repo=_REPO)
+        for service, result in pairs:
+            _emit_check_result(service, result)
+            if result.exit_code != 0:
+                exit_code = 1
+    else:
+        for service in services:
+            result = _check_service_detailed(service)
+            _emit_check_result(service, result)
+            if result.exit_code != 0:
+                exit_code = 1
     tier_m = check_tier_m_manifest_coverage().check_result
     for msg in tier_m.fatal_messages:
         print(f"tier-m: {msg}", file=sys.stderr)
@@ -190,7 +204,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--repo-only",
         action="store_true",
-        help="Repo-only gates (pre-commit): skip served-binding-drift fleet probe",
+        help=(
+            "Pre-commit: skip served-binding-drift; compare the git index "
+            "(resulting commit tree), not the working tree"
+        ),
     )
     parser.add_argument(
         "--census",
@@ -321,17 +338,27 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.check:
         fleet_gates = not args.repo_only
+        from_commit_tree = args.repo_only
         if args.staged:
             touched = services_touched_by_staged(_git_staged_paths())
             if not touched:
                 return 0
-            return _run_check(sorted(touched), include_served_binding_drift=fleet_gates)
+            return _run_check(
+                sorted(touched),
+                include_served_binding_drift=fleet_gates,
+                from_commit_tree=from_commit_tree,
+            )
         if service == "all":
             return _run_check(
                 ["cortex", "agent-bus", "rag", "giw"],
                 include_served_binding_drift=fleet_gates,
+                from_commit_tree=from_commit_tree,
             )
-        return _run_check([service], include_served_binding_drift=fleet_gates)
+        return _run_check(
+            [service],
+            include_served_binding_drift=fleet_gates,
+            from_commit_tree=from_commit_tree,
+        )
 
     parser.print_help()
     return 2

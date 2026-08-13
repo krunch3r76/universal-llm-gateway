@@ -227,3 +227,225 @@ async def test_post_harvest_residual_re_issue_subject_when_incumbent_present():
     assert body["re_issue_subject"] == "real in-flight work"
     assert body["incumbent_job_id"] == incumbent.job_id
     assert body["incumbent_dispatch_id"] == "auto-dispatch-xyz"
+    assert body["incumbent_phase"] == "queued"
+    assert body["predecessor_wake_status"] == "unobservable"
+    assert "incumbent_phase=queued" in body["note"]
+
+
+def _hop_and_commission(q, *, thread_id: str, claim_commission: bool):
+    hop = q.enqueue(
+        thread_id=thread_id,
+        turn_number=1,
+        subject="hop job",
+        body="TYPE: CONTINUITY_HANDOFF\n",
+        from_agent="web-anthropic",
+        to_agent="cursor-auto",
+        desired_model="cdp/opus-5",
+        desired_effort="high",
+        contract="light-bounded",
+        continuity_hop=True,
+        continuity_matched_token="cadence:auto",
+    )
+    commission = q.enqueue(
+        thread_id=thread_id,
+        turn_number=0,
+        subject="queued-window commission",
+        body="TYPE: DIRECTIVE\n",
+        from_agent="web-anthropic",
+        to_agent="cursor-auto",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="implement",
+    )
+    if claim_commission:
+        assert q.claim_job(commission.job_id) is not None
+    return hop, commission
+
+
+@pytest.mark.asyncio
+async def test_post_harvest_residual_claimed_phase_preserves_hop_not_backtrack():
+    """AC4: claimed incumbent still named; hop does not supersede."""
+    from services.git_integration_worker.cursor_auto import continuity_hop as hop_mod
+    from services.git_integration_worker.cursor_auto import queue as queue_mod
+
+    q = queue_mod.reset_queue_for_tests(durable=False)
+    hop, commission = _hop_and_commission(
+        q, thread_id="T-residual-claimed", claim_commission=True
+    )
+    replies: list[dict] = []
+
+    async def _reply(**kwargs):
+        replies.append(kwargs)
+        return MagicMock(status_code=200)
+
+    client = MagicMock()
+    client.reply = _reply
+    result = await hop_mod.post_harvest_residual(
+        hop,
+        client=client,
+        incumbent=commission,
+        dispatch_id="auto-claimed-xyz",
+    )
+    assert result["ok"] is True
+    body = json.loads(replies[0]["body"])
+    assert body["incumbent_job_id"] == commission.job_id
+    assert body["incumbent_phase"] == "claimed"
+    assert "hop≠backtrack" in body["note"] or "hop!=backtrack" in body["note"]
+    assert q.get(commission.job_id).status == "claimed"
+    assert not q.is_superseded(commission.job_id)
+
+
+@pytest.mark.asyncio
+async def test_post_harvest_residual_none_phase_distinguishes_empty_lane():
+    """AC2: empty lane is incumbent_phase=none, not an overloaded null."""
+    from services.git_integration_worker.cursor_auto import continuity_hop as hop_mod
+    from services.git_integration_worker.cursor_auto import queue as queue_mod
+
+    q = queue_mod.reset_queue_for_tests(durable=False)
+    hop = q.enqueue(
+        thread_id="T-residual-none",
+        turn_number=1,
+        subject="hop job",
+        body="TYPE: CONTINUITY_HANDOFF\n",
+        from_agent="web-anthropic",
+        to_agent="cursor-auto",
+        desired_model="cdp/opus-5",
+        desired_effort="high",
+        contract="light-bounded",
+        continuity_hop=True,
+        continuity_matched_token="cadence:auto",
+    )
+    replies: list[dict] = []
+
+    async def _reply(**kwargs):
+        replies.append(kwargs)
+        return MagicMock(status_code=200)
+
+    client = MagicMock()
+    client.reply = _reply
+    result = await hop_mod.post_harvest_residual(
+        hop, client=client, incumbent=None, dispatch_id=None
+    )
+    assert result["ok"] is True
+    body = json.loads(replies[0]["body"])
+    assert body["incumbent_job_id"] is None
+    assert body["incumbent_phase"] == "none"
+    assert body["predecessor_wake_status"] == "unobservable"
+    assert "incumbent_phase=none" in body["note"]
+
+
+@pytest.mark.asyncio
+async def test_cadence_hop_names_queued_incumbent(monkeypatch):
+    """AC1: hop residual minted while a job is queued names that job."""
+    from services.git_integration_worker.cursor_auto import hop_cadence as cadence_mod
+    from services.git_integration_worker.cursor_auto import queue as queue_mod
+
+    q = queue_mod.reset_queue_for_tests(durable=False)
+    queued = q.enqueue(
+        thread_id="T-cadence-queued",
+        turn_number=1,
+        subject="queued window commission",
+        body="TYPE: DIRECTIVE\ncontract: implement\n## Scope\nx\n",
+        from_agent="web-anthropic",
+        to_agent="cursor-auto",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="implement",
+    )
+    assert queued.status == "queued"
+    assert q.claimed_for_thread("T-cadence-queued") is None
+
+    captured: list[dict] = []
+
+    async def _capture_hop(job, *, queue, incumbent=None):
+        captured.append(
+            {
+                "hop_job_id": job.job_id,
+                "incumbent_job_id": incumbent.job_id if incumbent else None,
+                "incumbent_status": incumbent.status if incumbent else None,
+                "incumbent_subject": incumbent.subject if incumbent else None,
+            }
+        )
+        return {
+            "ok": True,
+            "reason": "continuity_hop_cdp_commissioned",
+            "execution_id": "e-queued",
+        }
+
+    monkeypatch.setattr(cadence_mod, "run_continuity_hop_concurrent", _capture_hop)
+    monkeypatch.setattr(
+        cadence_mod, "capacity_blocks_hop", lambda **_: CapacityGateResult.fail_open()
+    )
+    monkeypatch.setattr(cadence_mod, "mark_hop_fired", lambda *a, **k: None)
+    monkeypatch.setattr(
+        cadence_mod,
+        "assess_standing_handoff",
+        lambda tid: StandingHandoffFreshness("current", f"cortex://x/{tid}.md", None, 1.0),
+    )
+
+    decision = HopDecision(
+        thread_id="T-cadence-queued",
+        action="fire",
+        reason="age_exceeded",
+        age_s=2000.0,
+        threshold_s=1500.0,
+        signal="watch_seated_at",
+    )
+    outcome = await fire_hop_for_decision(
+        decision,
+        queue=q,
+        row={"from_agent": "web-anthropic", "registration_id": "reg-q"},
+    )
+
+    assert outcome["ok"] is True
+    assert captured, "cadence must invoke continuity hop"
+    assert captured[0]["incumbent_job_id"] == queued.job_id
+    assert captured[0]["incumbent_status"] == "queued"
+    assert q.get(queued.job_id).status == "queued"
+    assert not q.is_superseded(queued.job_id)
+
+
+def test_incumbent_for_thread_queued_then_claimed_prefers_claimed():
+    """Claimed in-flight wins over an older queued peer (AC4 lookup order)."""
+    from services.git_integration_worker.cursor_auto import queue as queue_mod
+
+    q = queue_mod.reset_queue_for_tests(durable=False)
+    older_queued = q.enqueue(
+        thread_id="T-pref",
+        turn_number=1,
+        subject="older queued",
+        body="x",
+        from_agent="web-anthropic",
+        to_agent="cursor-auto",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="implement",
+    )
+    claimed = q.enqueue(
+        thread_id="T-pref",
+        turn_number=2,
+        subject="claimed later",
+        body="y",
+        from_agent="web-anthropic",
+        to_agent="cursor-auto",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="implement",
+    )
+    assert q.claim_job(claimed.job_id) is not None
+    hop = q.enqueue(
+        thread_id="T-pref",
+        turn_number=3,
+        subject="hop",
+        body="TYPE: CONTINUITY_HANDOFF\n",
+        from_agent="web-anthropic",
+        to_agent="cursor-auto",
+        desired_model="auto",
+        desired_effort="high",
+        contract="light-bounded",
+        continuity_hop=True,
+    )
+    found = q.incumbent_for_thread("T-pref", exclude_job_id=hop.job_id)
+    assert found is not None
+    assert found.job_id == claimed.job_id
+    assert q.get(older_queued.job_id).status == "queued"

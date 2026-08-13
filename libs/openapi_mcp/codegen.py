@@ -185,7 +185,11 @@ def check_manifest(
     *,
     manifest_path: Path,
 ) -> ManifestCheckResult:
-    """Compare live manifest against on-disk committed module (two-tier)."""
+    """Compare live manifest against the working-tree module (two-tier).
+
+    Pre-commit ``--repo-only`` uses ``commit_snapshot`` (git index) instead —
+    this path is the developer/CI worktree check.
+    """
     if not manifest_path.is_file():
         return ManifestCheckResult(
             fatal_messages=(f"FATAL: missing manifest {manifest_path}",),
