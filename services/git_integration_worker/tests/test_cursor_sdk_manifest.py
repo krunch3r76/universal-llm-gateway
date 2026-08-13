@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from implement_admission.closeout_models import EffectsManifest
+
 from services.git_integration_worker.cursor_sdk_capture_status import ChangeSet
 from services.git_integration_worker.cursor_sdk_closeout import (
     SdkRunOutcome,
@@ -10,12 +12,16 @@ from services.git_integration_worker.cursor_sdk_closeout import (
 from services.git_integration_worker.cursor_sdk_manifest import (
     build_effects_manifest,
     classify_mcp_capture_branch,
+    compact_manifest_for_body,
     merge_artifact_paths,
     merge_stream_tool_calls,
+    merge_wrapper_manifest,
     repo_change_set_from_manifest,
     resolve_repo_change_set,
 )
-from services.git_integration_worker.cursor_sdk_stream_capture import ToolCallObservation
+from services.git_integration_worker.cursor_sdk_stream_capture import (
+    ToolCallObservation,
+)
 
 
 def _toolcall_step(message: dict) -> object:
@@ -228,7 +234,11 @@ def test_merge_mcp_event_entries_skips_non_mapping_events() -> None:
         thread_id="t-bad-events",
         turns=[],
         capture_branch="B",
-        mcp_events=["not-a-mapping", None, {"tool_name": "manage", "operation": "sync_restart"}],
+        mcp_events=[
+            "not-a-mapping",
+            None,
+            {"tool_name": "manage", "operation": "sync_restart"},
+        ],
     )
     assert "service" in manifest.surfaces
     assert len(manifest.surfaces["service"].entries) == 1
@@ -339,7 +349,9 @@ def test_merge_stream_tool_calls_dedupes_existing_paths() -> None:
     merged = merge_stream_tool_calls(manifest, tool_calls)
     assert merged is not None
     repo_entries = merged.surfaces["repo"].entries
-    assert sum(1 for entry in repo_entries if entry.target == "services/existing.py") == 1
+    assert (
+        sum(1 for entry in repo_entries if entry.target == "services/existing.py") == 1
+    )
 
 
 def test_merge_artifact_paths_empty_noop() -> None:
@@ -368,3 +380,52 @@ def test_merge_artifact_paths_folds_non_empty() -> None:
     paths = {entry.target for entry in merged.surfaces["repo"].entries}
     assert "artifacts/output.md" in paths
     assert "artifacts" in merged.capture_sources
+
+
+def test_build_effects_manifest_carries_contract() -> None:
+    manifest = build_effects_manifest(
+        dispatch_id="d-contract",
+        thread_id="t-contract",
+        turns=[],
+        capture_branch="B",
+        contract="implement",
+    )
+    assert manifest.contract == "implement"
+
+
+def test_effects_manifest_loads_historical_json_without_contract() -> None:
+    loaded = EffectsManifest.model_validate(
+        {"dispatch_id": "d-legacy", "thread_id": "t-legacy"}
+    )
+    assert loaded.contract is None
+
+
+def test_merge_wrapper_preserves_contract_on_no_code_change() -> None:
+    base = build_effects_manifest(
+        dispatch_id="d-preserve",
+        thread_id="t-preserve",
+        turns=[],
+        capture_branch="B",
+        contract="light-bounded",
+    )
+    merged = merge_wrapper_manifest(
+        dispatch_id="d-preserve",
+        thread_id="t-preserve",
+        base=base,
+        cortex_artifact_paths=[],
+        git_change_set=ChangeSet(created=(), modified=(), deleted=()),
+    )
+    assert merged.contract == "light-bounded"
+
+
+def test_compact_manifest_for_body_includes_contract() -> None:
+    manifest = build_effects_manifest(
+        dispatch_id="d-compact",
+        thread_id="t-compact",
+        turns=[],
+        capture_branch="B",
+        contract="pure-mechanical",
+    )
+    compact = compact_manifest_for_body(manifest)
+    assert isinstance(compact, dict)
+    assert compact["contract"] == "pure-mechanical"

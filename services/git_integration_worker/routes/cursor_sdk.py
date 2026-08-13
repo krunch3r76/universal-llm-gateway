@@ -1016,6 +1016,7 @@ def _run_sdk_sync(
                     thread_id=thread_id,
                     turns=turns,
                     capture_branch=capture_branch,
+                    contract=handoff_contract,
                 )
                 effects_manifest = merge_stream_tool_calls(
                     effects_manifest,

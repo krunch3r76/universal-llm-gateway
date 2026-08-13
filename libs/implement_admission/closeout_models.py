@@ -64,6 +64,10 @@ class EffectsManifest(BaseModel):
     coverage: dict[str, CoverageStatus] = Field(default_factory=dict)
     external_effects: Literal["scoped_out"] = "scoped_out"
     reconciliation: list[ObservedReconciliation] = Field(default_factory=list)
+    # Dispatch contract that produced this capture. Optional so historical
+    # closeout JSON still loads. Lets the G5 visibility matrix be measured
+    # per contract instead of only asserted.
+    contract: str | None = None
 
 
 class Verification(BaseModel):

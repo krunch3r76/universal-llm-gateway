@@ -115,7 +115,9 @@ def _manifest_declares_runtime_surface(base: EffectsManifest | None) -> bool:
     if manifest_repo_write_paths(base):
         return True
     repo_section = base.surfaces.get("repo")
-    if repo_section and any(entry.op == _REPO_SHELL_OP for entry in repo_section.entries):
+    if repo_section and any(
+        entry.op == _REPO_SHELL_OP for entry in repo_section.entries
+    ):
         return True
     for name, section in base.surfaces.items():
         if name in _PLUMBING_SURFACES or name == "repo":
@@ -167,6 +169,7 @@ def build_effects_manifest(
     mcp_events: list[Mapping[str, Any]] | None = None,
     wrapper_effects: dict[str, list[EffectEntry]] | None = None,
     capture_branch: CaptureBranch | None = None,
+    contract: str | None = None,
 ) -> EffectsManifest:
     """Pure manifest builder — never raises on unparsed wire dicts."""
     branch = capture_branch or classify_mcp_capture_branch(turns)
@@ -220,6 +223,7 @@ def build_effects_manifest(
         capture_sources=sources,
         surfaces={k: v for k, v in surfaces.items() if v.entries},
         coverage=coverage,
+        contract=contract,
     )
     return ensure_subagents_surface(manifest)
 
@@ -534,7 +538,9 @@ def _cortex_entry_from_stream_observation(
     if obs.tool_name.lower() not in _CORTEX_TOOLS:
         return None
     raw_args = obs.args if isinstance(obs.args, Mapping) else {}
-    nested = raw_args.get("args") if isinstance(raw_args.get("args"), Mapping) else raw_args
+    nested = (
+        raw_args.get("args") if isinstance(raw_args.get("args"), Mapping) else raw_args
+    )
     effective = _effective_mcp_args(nested) if nested else {}
     op = _cortex_op_from_args(effective)
     if op not in _CORTEX_WRITE_OPS:
@@ -594,6 +600,7 @@ def compact_manifest_for_body(
         "surface_counts": manifest_surface_counts(manifest),
         "capture_sources": manifest.capture_sources,
         "external_effects": manifest.external_effects,
+        "contract": manifest.contract,
     }
     if not manifest.surfaces:
         compact["surfaces"] = {}
@@ -657,12 +664,14 @@ def merge_wrapper_manifest(
             capture_sources=sources,
             surfaces=preserved,
             coverage=preserved_coverage,
+            contract=base.contract if base is not None else None,
         )
     wrapper = build_effects_manifest(
         dispatch_id=dispatch_id,
         thread_id=thread_id,
         turns=(),
         capture_branch="B",
+        contract=base.contract if base is not None else None,
         wrapper_effects=wrapper_effects_for_closeout(
             thread_id=thread_id,
             dispatch_id=dispatch_id,
