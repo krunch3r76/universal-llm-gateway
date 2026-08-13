@@ -286,6 +286,7 @@ async def dispatch_cursor_sdk_worker_message(
     model: str,
     message: str,
     execution_id: str,
+    handoff_contract: str,
     caller_agent: str | None = None,
     model_knobs: dict[str, str] | None = None,
     read_only: bool = False,
@@ -294,7 +295,7 @@ async def dispatch_cursor_sdk_worker_message(
     lane: Literal["A", "B"] | None = None,
     refuse_if_lease_held: bool = False,
 ) -> tuple[bool, dict[str, Any]]:
-    """POST ``/api/v1/cursor/dispatch`` with ``message`` (consult path)."""
+    """POST ``/api/v1/cursor/dispatch`` with ``message`` (prompt= path)."""
     effective_dispatch_id = dispatch_id or f"{request_id}-{uuid.uuid4().hex[:8]}"
     payload = {
         "thread_id": thread_id,
@@ -302,6 +303,7 @@ async def dispatch_cursor_sdk_worker_message(
         "message": message,
         "dispatch_id": effective_dispatch_id,
         "execution_id": execution_id,
+        "handoff_contract": handoff_contract,
     }
     if caller_agent is not None:
         payload["caller_agent"] = caller_agent

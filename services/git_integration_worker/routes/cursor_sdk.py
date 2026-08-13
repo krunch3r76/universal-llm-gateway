@@ -1846,7 +1846,7 @@ async def _run_sdk_dispatch_gated(
             execution_id=req.execution_id,
             gate_loop=gate_loop,
             live_counter=live_counter,
-            handoff_contract=req.handoff_contract,
+            handoff_contract=contract,
         ),
         op_id=f"{req.dispatch_id}:worker",
     )

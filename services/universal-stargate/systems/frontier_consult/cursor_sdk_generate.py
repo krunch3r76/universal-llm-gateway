@@ -85,6 +85,7 @@ async def dispatch_prepared_cursor_sdk(
             model=handle.resolved_model,
             message=handle.message or "",
             execution_id=handle.execution_id,
+            handoff_contract=handle.handoff_contract,
             caller_agent=handle.caller_agent,
             model_knobs=handle.aligned_knobs,
             read_only=handle.read_only,
