@@ -1,8 +1,11 @@
 """Shared compose attestation — mode fingerprint, poll-until-attest, submit wait.
 
 Dual-primary (friction 25051/25052): selector repair + poll-until-attest, not
-poll-only. Cowork success: ``mode==cowork`` or approval present. Chat success:
-``mode==chat`` and approval is None.
+poll-only. Chip toggle may attest Cowork while approval is still Manual.
+Ship gate (Start task): Cowork requires aria ``Automatically approve`` —
+``mode==cowork`` alone or any approval chip (Manual/Skip) is not success.
+Chat success: ``mode==chat`` and approval is None. Project-shell rows without
+chips are a named skip, not a silent Auto waiver on ``/new``.
 """
 
 from __future__ import annotations
@@ -35,6 +38,9 @@ _EXCLUDE_SUBMIT_RE = re.compile(
 )
 
 _POLL_MS = 400
+_AUTO_ARIA_RE = re.compile(r"Automatically approve", re.I)
+_MANUAL_ARIA_RE = re.compile(r"Manually approve", re.I)
+_SKIP_ARIA_RE = re.compile(r"Skip all approvals|Never pause", re.I)
 _SUBMIT_ROLE = {
     "cowork": re.compile(r"start task", re.I),
     "chat": re.compile(r"send message", re.I),
@@ -71,8 +77,60 @@ async def compose_mode_fingerprint(page) -> dict[str, Any]:
     return {"title": title, "mode": mode, "approval": approval, "url": page.url}
 
 
-def _compose_attested(fp: dict[str, Any], mode: ComposeMode) -> bool:
+def _approval_aria(fp: dict[str, Any]) -> str:
+    """Return the approval chip aria-label, or empty when chrome is absent."""
+    approval = fp.get("approval")
+    if not isinstance(approval, dict):
+        return ""
+    return str(approval.get("aria") or "")
+
+
+def _approval_is_auto(fp: dict[str, Any]) -> bool:
+    """True iff the fingerprint's approval aria is Automatically approve."""
+    return bool(_AUTO_ARIA_RE.search(_approval_aria(fp)))
+
+
+def cowork_auto_refuse_reason(fp: dict[str, Any]) -> str | None:
+    """Fail-closed refuse text when a Cowork dispatch must not Start task.
+
+    Callers (``send_prompt``) raise this string so Manual/Skip cannot ship.
+    Chat (no approval chrome) and Project-shell rows without chips return
+    None — named skip, not a silent Auto waiver on ``/new`` or ``/cowork/cse_``.
+    """
+    aria = _approval_aria(fp)
+    mode = fp.get("mode")
+    if mode == "chat" and not aria:
+        return None
+    if not aria and mode != "cowork":
+        return None
+    if _AUTO_ARIA_RE.search(aria):
+        return None
+    if _MANUAL_ARIA_RE.search(aria):
+        return (
+            "cowork dispatch refused: approval aria "
+            f"{aria!r} (need Automatically approve)"
+        )
+    if _SKIP_ARIA_RE.search(aria):
+        return (
+            "cowork dispatch refused: approval aria "
+            f"{aria!r} (need Automatically approve; Skip all is not Auto)"
+        )
+    return (
+        "cowork dispatch refused: Automatically approve not attested "
+        f"(mode={mode!r} approval={fp.get('approval')!r})"
+    )
+
+
+def _compose_attested(
+    fp: dict[str, Any],
+    mode: ComposeMode,
+    *,
+    require_auto: bool = True,
+) -> bool:
+    """Cowork ship-attest. ``require_auto=False`` is chip/title only (Manual ok)."""
     if mode == "cowork":
+        if require_auto:
+            return fp.get("mode") == "cowork" and _approval_is_auto(fp)
         return fp.get("mode") == "cowork" or bool(fp.get("approval"))
     return fp.get("mode") == "chat" and not fp.get("approval")
 
@@ -83,19 +141,30 @@ async def await_compose_attest(
     *,
     timeout_s: float = 8.0,
     poll_ms: int = _POLL_MS,
+    require_auto: bool = True,
 ) -> dict[str, Any]:
-    """Poll ``compose_mode_fingerprint`` until mode attests or timeout."""
+    """Poll ``compose_mode_fingerprint`` until mode attests or timeout.
+
+    Default ``require_auto=True`` is the Start-task ship gate: Cowork must
+    show Automatically approve. Chip toggle (``select_compose_mode``) passes
+    ``require_auto=False`` so Cowork+Manual can attest mode before Auto flip.
+    """
     elapsed = 0.0
     last = await compose_mode_fingerprint(page)
-    if _compose_attested(last, mode):
-        return {"ok": True, "step": f"attested_{mode}", "fingerprint": last, "elapsed_ms": 0}
+    if _compose_attested(last, mode, require_auto=require_auto):
+        return {
+            "ok": True,
+            "step": f"attested_{mode}",
+            "fingerprint": last,
+            "elapsed_ms": 0,
+        }
 
     limit_ms = int(timeout_s * 1000)
     while elapsed < limit_ms:
         await page.wait_for_timeout(poll_ms)
         elapsed += poll_ms
         last = await compose_mode_fingerprint(page)
-        if _compose_attested(last, mode):
+        if _compose_attested(last, mode, require_auto=require_auto):
             return {
                 "ok": True,
                 "step": f"attested_{mode}",
@@ -161,7 +230,9 @@ async def await_submit_visible(
     }
 
 
-def resolve_submit_strategy(url: str, fp: dict[str, Any] | None = None) -> SubmitStrategy:
+def resolve_submit_strategy(
+    url: str, fp: dict[str, Any] | None = None
+) -> SubmitStrategy:
     """Return ``live_discover`` on warm chat/CSE URLs; ``mode_locked`` on bare ``/new``."""
     _ = fp  # reserved — URL is the lifecycle signal (tier1-anchors / A bind)
     if in_active_chat(url or ""):
@@ -174,7 +245,9 @@ def warm_submit_settle_ms() -> int:
     return _WARM_SUBMIT_SETTLE_MS
 
 
-def is_excluded_submit_control(*, aria: str = "", text: str = "", name: str = "") -> bool:
+def is_excluded_submit_control(
+    *, aria: str = "", text: str = "", name: str = ""
+) -> bool:
     """True when control matches DOM-sample exclude list (model/approval/stop/etc.)."""
     blob = " ".join(p for p in (aria, text, name) if p).strip()
     if not blob:
@@ -317,7 +390,9 @@ async def await_live_submit_visible(
     }
 
 
-async def click_discovered_submit(page, discovery: dict[str, Any], *, composer=None) -> None:
+async def click_discovered_submit(
+    page, discovery: dict[str, Any], *, composer=None
+) -> None:
     """Click a submit control returned by ``discover_live_submit`` (composer-local)."""
     from claude_bundles.composer_submit import click_submit_button
 
@@ -355,7 +430,7 @@ async def probe_compose_toggle_timeline(
             {
                 "t_ms": ms,
                 "fingerprint": fp,
-                "attested": _compose_attested(fp, mode),
+                "attested": _compose_attested(fp, mode, require_auto=False),
             }
         )
         prev_ms = ms

@@ -198,7 +198,7 @@ async def select_compose_mode(page, mode: ComposeMode) -> dict[str, Any]:
             if js:
                 clicked_via = "js_brute"
 
-    attest = await await_compose_attest(page, mode, timeout_s=8.0)
+    attest = await await_compose_attest(page, mode, timeout_s=8.0, require_auto=False)
     after = attest.get("fingerprint") or await compose_mode_fingerprint(page)
     ok = bool(attest.get("ok"))
     return {
@@ -351,3 +351,28 @@ async def ensure_cowork_auto(page) -> dict[str, Any]:
         "mode": mode,
         "approval": approval,
     }
+
+
+async def ensure_approval_auto(page) -> dict[str, Any]:
+    """Re-apply Automatically approve when the approval chip exists.
+
+    Used immediately before Start task / warm Send so model-picker or paste
+    cannot ship Cowork+Manual after ``ensure_cowork_auto`` already attested
+    on ``/new``. Skips when chrome is absent (Chat / Project shell). Does not
+    toggle Cowork — callers that need the chip use ``ensure_cowork_auto``.
+    """
+    before = await compose_mode_fingerprint(page)
+    if not before.get("approval"):
+        return {
+            "ok": True,
+            "step": "approval_chrome_absent",
+            "skipped": True,
+            "before": before,
+            "after": before,
+        }
+    approval = await set_approval_mode(page, "auto")
+    if not approval.get("ok"):
+        await page.wait_for_timeout(800)
+        approval = await set_approval_mode(page, "auto")
+        approval["retried"] = True
+    return approval

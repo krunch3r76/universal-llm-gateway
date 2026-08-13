@@ -99,6 +99,44 @@ def test_emit_from_result_projects_mode_block() -> None:
     assert event.payload["execution_id"].startswith("0b692df9")
 
 
+@pytest.mark.offline
+def test_emit_from_result_prefers_approval_after_not_mode_manual() -> None:
+    """Cowork+Auto success must not emit the pre-flip Manual mode fingerprint."""
+    result = {
+        "ok": True,
+        "step": "cowork_auto",
+        "mode": {
+            "ok": True,
+            "step": "selected_cowork",
+            "after": {
+                "title": "New task - Claude",
+                "mode": "cowork",
+                "approval": {"aria": "Manually approve", "text": "Manual"},
+                "url": "https://claude.ai/new",
+            },
+        },
+        "approval": {
+            "ok": True,
+            "step": "selected_auto",
+            "after": {
+                "title": "New task - Claude",
+                "mode": "cowork",
+                "approval": {"aria": "Automatically approve", "text": "Auto"},
+                "url": "https://claude.ai/new",
+            },
+        },
+    }
+    event = emit_compose_attested_from_result(
+        result,
+        execution_id="sg-uuid",
+        satellite_execution_id="sathex0123456789abcdef0123456789",
+    )
+    assert event is not None
+    fp = event.payload["fingerprint"]
+    assert fp["approval"]["aria"] == "Automatically approve"
+    assert event.payload["ok"] is True
+
+
 @pytest.mark.asyncio
 async def test_try_click_records_size_gate_reject() -> None:
     """Click path size reject is captured — not silent continue."""

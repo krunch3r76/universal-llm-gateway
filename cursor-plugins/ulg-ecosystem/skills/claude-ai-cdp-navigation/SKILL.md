@@ -111,7 +111,8 @@ ensure_chrome(port, profile) ⇒ attach_cdp
 
 ```
 ∀ new project-ask on bare /new:
-  ensure_cowork_auto MUST attest mode=cowork ∨ approval present
+  ensure_cowork_auto MUST attest mode=cowork ∧ approval aria Automatically approve
+  Cowork+Manual / Skip all ⇏ attested; Project shell without chips = named skip
   select_*_no_attest ⇒ reopen friction — NOT "retry Chat"
   submit(/new) ⇐ Start task ∨ Send message; submit(warm) ⇐ live_discover  # ¬ Enter
 ```

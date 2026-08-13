@@ -58,7 +58,10 @@ def test_resolve_submit_strategy_warm_chat() -> None:
 
 
 def test_resolve_submit_strategy_bare_new() -> None:
-    assert resolve_submit_strategy("https://claude.ai/new", {"mode": "cowork"}) == "mode_locked"
+    assert (
+        resolve_submit_strategy("https://claude.ai/new", {"mode": "cowork"})
+        == "mode_locked"
+    )
 
 
 def test_is_excluded_submit_control_model_and_approval() -> None:
@@ -163,7 +166,11 @@ async def test_select_compose_mode_polls_until_fingerprint_attests_cowork(
         return chat_fp if fp_calls["n"] <= 2 else cowork_fp
 
     async def mock_try_click(_page, _label):
-        return None, {"gate_rejects": [], "surface_radiogroup_count": 0, "radiogroup_names": []}
+        return None, {
+            "gate_rejects": [],
+            "surface_radiogroup_count": 0,
+            "radiogroup_names": [],
+        }
 
     monkeypatch.setattr(
         "claude_bundles.chat_cowork_mode.compose_mode_fingerprint",
@@ -215,7 +222,9 @@ async def test_select_compose_mode_polls_until_chip_click_succeeds(
             return None, probe
         return "playwright_surface", {**probe, "via": "playwright_surface"}
 
-    async def mock_attest(_page, mode, *, timeout_s=8.0, poll_ms=400) -> dict:
+    async def mock_attest(
+        _page, mode, *, timeout_s=8.0, poll_ms=400, **_kwargs
+    ) -> dict:
         return {"ok": True, "step": f"attested_{mode}", "fingerprint": cowork_fp}
 
     monkeypatch.setattr(

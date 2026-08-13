@@ -115,13 +115,28 @@ def emit_compose_attested_from_result(
     execution_id: str = "",
     satellite_execution_id: str = "",
 ) -> Event | None:
-    """Map ensure_/select_compose_mode result fields onto dual-keyed emit payload."""
+    """Project ensure_cowork_auto result onto dual-id compose_attested telemetry.
+
+    Prefers ``approval.after`` so a successful Auto flip is not reported as the
+    pre-flip Manual fingerprint from the mode block. Best-effort emit; never
+    raises. ``ok`` follows the ensure result, not the nested mode chip alone.
+    """
     mode_block = result.get("mode") if isinstance(result.get("mode"), dict) else result
     if not isinstance(mode_block, dict):
         mode_block = {}
-    probe = mode_block.get("click_probe") if isinstance(mode_block.get("click_probe"), dict) else {}
+    approval_block = (
+        result.get("approval") if isinstance(result.get("approval"), dict) else {}
+    )
+    probe = (
+        mode_block.get("click_probe")
+        if isinstance(mode_block.get("click_probe"), dict)
+        else {}
+    )
+    # Prefer approval.after so Cowork+Auto emit is not the pre-flip Manual
+    # fingerprint from the mode block (ensure_cowork_auto sequences mode then Auto).
     fp = (
-        mode_block.get("compose_mode_fingerprint")
+        approval_block.get("after")
+        or mode_block.get("compose_mode_fingerprint")
         or mode_block.get("after")
         or mode_block.get("before")
         or {}
@@ -130,7 +145,9 @@ def emit_compose_attested_from_result(
         fp = {}
     candidates = mode_block.get("candidates")
     if not isinstance(candidates, list):
-        candidates = probe.get("candidates") if isinstance(probe.get("candidates"), list) else []
+        candidates = (
+            probe.get("candidates") if isinstance(probe.get("candidates"), list) else []
+        )
     return emit_compose_attested(
         ok=bool(result.get("ok")),
         surface=surface,
@@ -144,9 +161,7 @@ def emit_compose_attested_from_result(
             or 0
         ),
         radiogroup_names=list(
-            mode_block.get("radiogroup_names")
-            or probe.get("radiogroup_names")
-            or []
+            mode_block.get("radiogroup_names") or probe.get("radiogroup_names") or []
         ),
         gate_rejects=list(
             mode_block.get("gate_rejects") or probe.get("gate_rejects") or []

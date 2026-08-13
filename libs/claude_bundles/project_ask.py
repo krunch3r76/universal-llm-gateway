@@ -41,6 +41,7 @@ from claude_bundles.compose_attest import (
     await_submit_visible,
     click_discovered_submit,
     compose_mode_fingerprint,
+    cowork_auto_refuse_reason,
     resolve_submit_strategy,
     warm_submit_settle_ms,
 )
@@ -114,7 +115,9 @@ def artifact_cards_from_state(state: dict[str, Any]) -> list[dict[str, str]]:
     return cards
 
 
-def _attest_model(requested: str, state: dict[str, Any], selected: dict[str, Any]) -> str | None:
+def _attest_model(
+    requested: str, state: dict[str, Any], selected: dict[str, Any]
+) -> str | None:
     """Return attested label or None if mismatch against requested model.
 
     Uses the same UI-pattern matcher as ``select_model`` (friction a24692) —
@@ -128,9 +131,7 @@ def _attest_model(requested: str, state: dict[str, Any], selected: dict[str, Any
     if effort is None:
         effort = sealed_ask_default_effort(family)
     if not label_satisfies_request(req, label, effort=effort):
-        raise RuntimeError(
-            f"model attestation mismatch: wanted {req!r}, got {label!r}"
-        )
+        raise RuntimeError(f"model attestation mismatch: wanted {req!r}, got {label!r}")
     return label
 
 
@@ -192,9 +193,7 @@ def archive_harvest(
             )
     path.parent.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).isoformat()
-    exec_line = (
-        f"- execution_id: `{execution_id}`\n" if execution_id else ""
-    )
+    exec_line = f"- execution_id: `{execution_id}`\n" if execution_id else ""
     card_lines = ""
     if artifact_cards:
         card_lines = f"- artifact_cards: `{artifact_cards}`\n"
@@ -221,9 +220,10 @@ def archive_harvest(
             existing_text = ""
         existing_body = _archive_body_section(existing_text)
         if existing_body:
-            same_body = hashlib.sha256(existing_body.encode()).digest() == hashlib.sha256(
-                body.encode()
-            ).digest()
+            same_body = (
+                hashlib.sha256(existing_body.encode()).digest()
+                == hashlib.sha256(body.encode()).digest()
+            )
             same_exec = (
                 execution_id is not None
                 and read_archive_execution_id(archive_path) == execution_id
@@ -231,8 +231,7 @@ def archive_harvest(
             upgrade = same_exec and len(body) > len(existing_body)
             if not same_body and not upgrade:
                 raise HarvestArchiveError(
-                    "archive path sha256 mismatch — refusing overwrite: "
-                    f"{archive_path}"
+                    f"archive path sha256 mismatch — refusing overwrite: {archive_path}"
                 )
     tmp = path.with_suffix(f"{path.suffix}.tmp")
     tmp.write_text(text, encoding="utf-8")
@@ -403,7 +402,14 @@ async def send_prompt(
     )
     await page.wait_for_timeout(600)
 
-    fp = await compose_mode_fingerprint(page)
+    from claude_bundles.chat_cowork_mode import ensure_approval_auto
+
+    auto = await ensure_approval_auto(page)
+    fp = auto.get("after") or await compose_mode_fingerprint(page)
+    refuse = cowork_auto_refuse_reason(fp)
+    if refuse:
+        raise RuntimeError(refuse)
+
     strategy = resolve_submit_strategy(page.url or "", fp)
 
     if strategy == "live_discover":
