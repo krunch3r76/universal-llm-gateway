@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "6d129c004c6bb7a1e41341f25cfde9279b3916627866fd0a48217b4b4fbcd83a"
+OPENAPI_SHA256 = "73d50c2c66b3635e81c7c856d4231d02ec5c999e16fc73f58f9d18e8f490021c"
 FACADE_TOOL = "agent-bus"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "branch_associate": {
