@@ -173,6 +173,40 @@ def cdp_ask_followup_reattach_result(
     )
 
 
+@event_factory
+def cdp_ask_fresh_run_inheritance(
+    *,
+    registration_id: str | None,
+    resolution_path: str,
+    target_binding: str,
+    reattach_used: bool,
+    declared: bool,
+    purpose: str | None,
+) -> Event:
+    """Emit the fresh-run verdict when a followup paste inherits a live CSE.
+
+    Emission means context inheritance actually occurred: the paste landed on an
+    existing conversation. ``declared`` records whether the caller named that
+    target (``chat_url`` / ``registration_id``) or the resolver chose it —
+    ``declared=False`` is a silent-inheritance witness against
+    ``decision:fresh-run-no-silent-inheritance``.
+    """
+    return Event(
+        signal="cdp_ask.fresh_run.inheritance",
+        role="observation",
+        scope="node",
+        payload={
+            "registration_id": registration_id,
+            "resolution_path": resolution_path,
+            "target_binding": target_binding,
+            "reattach_used": reattach_used,
+            "declared": declared,
+            "silent": not declared,
+            "purpose": purpose,
+        },
+    )
+
+
 def _ndjson_payload(event: Event) -> bytes:
     """Serialize one ingest line matching Event Service UDS/TCP NDJSON wire."""
     payload: dict[str, Any] = {
