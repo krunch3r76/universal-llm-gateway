@@ -11,6 +11,9 @@ from services.git_integration_worker.cursor_auto.admit_gates import (
     AdmitGateResult,
     blocking_admit_gate,
 )
+from services.git_integration_worker.cursor_auto.envelope_fields import (
+    envelope_values_from_job,
+)
 from services.git_integration_worker.cursor_auto.field_parity import (
     compute_field_parity_for_job,
 )
@@ -262,6 +265,7 @@ async def process_job(
         contract=str(contract),
         propagate_admission=gate_result.propagate_admission,
         execute_admission=gate_result.execute_admission,
+        envelope=envelope_values_from_job(job),
         wire_dropped=tuple(job.wire_dropped_fields),
     )
     base_admit_body = build_admit_report_body(

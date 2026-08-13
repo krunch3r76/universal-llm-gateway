@@ -10,6 +10,7 @@ import pytest
 from services.git_integration_worker.cursor_auto.admit_report import build_admit_report_body
 from services.git_integration_worker.cursor_auto.continuity_hop import _post_hop_admit_report
 from services.git_integration_worker.cursor_auto.field_parity import (
+    compute_envelope_parity,
     compute_field_parity_for_job,
     render_field_parity_line,
 )
@@ -143,5 +144,83 @@ async def test_hop_admit_report_surfaces_field_parity_line() -> None:
         effort=effort,
     )
     assert posted
-    assert "field_parity: status=uncomputable(no_row_model)" in posted[0]
+    assert "field_parity: status=ok scope=envelope" in posted[0]
     assert "Auto admit-report (hop; no gate)" in posted[0]
+
+
+_PROSE_EFFORT_HOP = """\
+TYPE: CONTINUITY_HANDOFF
+desired_effort: xhigh
+Carry the arc forward; the successor should run deep.
+"""
+
+
+@pytest.mark.asyncio
+async def test_hop_parity_flags_effort_authored_as_prose() -> None:
+    """Instance 3 — ``desired_effort`` in prose never reaches the wire (§AC5)."""
+    posted: list[str] = []
+
+    class _Client:
+        async def reply(self, **kwargs):  # type: ignore[no-untyped-def]
+            posted.append(str(kwargs.get("body") or ""))
+            return MagicMock(status_code=200, body="")
+
+    job = AutoJob(
+        job_id="j-hop-prose-effort",
+        thread_id="7119",
+        turn_number=3,
+        subject="hop",
+        body=_PROSE_EFFORT_HOP,
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="light-bounded",
+        continuity_hop=True,
+    )
+    await _post_hop_admit_report(
+        job,
+        client=_Client(),
+        cdp_model="cdp/opus-5",
+        effort=resolve_desired_effort(job.desired_effort),
+    )
+    assert posted
+    assert "field_parity: status=WARN scope=envelope" in posted[0]
+    assert "desired_effort(authored=xhigh row=medium)" in posted[0]
+
+
+def test_envelope_parity_counts_prose_keys_without_listing_them() -> None:
+    body = "TYPE: DIRECTIVE\narc: 7119\nauthority: operator\ndensity: judgment\n"
+    report = compute_envelope_parity(body, {"desired_effort": "medium"})
+    assert report.status == "ok"
+    assert report.unknown == 3
+    assert report.unknown_tokens == ()
+
+
+def test_envelope_parity_ok_when_prose_agrees_with_live_envelope() -> None:
+    body = "TYPE: CONTINUITY_HANDOFF\ndesired_effort: medium\n"
+    report = compute_envelope_parity(body, {"desired_effort": "medium"})
+    assert report.status == "ok"
+    assert report.consumed == 1
+    assert report.dropped_effect == ()
+
+
+def test_envelope_parity_ignores_fenced_and_backticked_authorship() -> None:
+    body = (
+        "TYPE: CONTINUITY_HANDOFF\n"
+        "I wrote `desired_effort: xhigh` deliberately\n"
+        "```\ndesired_effort: xhigh\n```\n"
+    )
+    report = compute_envelope_parity(body, {"desired_effort": "medium"})
+    assert report.status == "ok"
+    assert report.dropped_effect == ()
+
+
+def test_answer_contract_stays_out_of_parity_scope() -> None:
+    report = compute_field_parity_for_job(
+        body="desired_effort: xhigh\n",
+        contract="answer",
+        envelope={"desired_effort": "medium"},
+    )
+    assert report.status == "uncomputable(no_row_model)"
+    assert report.scope == "answer"

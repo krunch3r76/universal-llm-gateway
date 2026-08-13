@@ -13,6 +13,10 @@ from implement_admission.field_parity_metadata import (
 from services.git_integration_worker.cursor_auto.authored_key_scan import (
     authored_keys_for_parity,
 )
+from services.git_integration_worker.cursor_auto.envelope_fields import (
+    envelope_field_names,
+    parity_class_for_envelope_field,
+)
 from services.git_integration_worker.cursor_auto.execute_admission import (
     EXECUTE_CONTRACT,
     ExecuteAdmission,
@@ -21,6 +25,9 @@ from services.git_integration_worker.cursor_auto.propagate_admission import (
     PROPAGATE_CONTRACT,
     PropagateAdmission,
 )
+
+# Contracts the bind leaves out of parity scope entirely (§AC2 state 11).
+_NO_ROW_MODEL_CONTRACTS = frozenset({"answer", "confer"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,15 +47,18 @@ class FieldParityReport:
     normalized: tuple[str, ...] = ()
 
 
-def _row_field_value(row: Any, key: str) -> str:
-    if row is None:
-        return "?"
-    val = getattr(row, key, None)
+def _display_value(val: Any) -> str:
     if val is None:
         return "none"
     if isinstance(val, bool):
         return str(val).lower()
     return str(val)
+
+
+def _row_field_value(row: Any, key: str) -> str:
+    if row is None:
+        return "?"
+    return _display_value(getattr(row, key, None))
 
 
 def _format_drop(key: str, *, authored: str | None, row_val: str) -> str:
@@ -176,12 +186,79 @@ def compute_execute_parity(
     )
 
 
+def _normalize_authored_value(raw: str | None) -> str:
+    """First token of an authored value, stripped of quoting and trailing punctuation."""
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    token = text.split()[0]
+    return token.strip("`'\",;").lower()
+
+
+def compute_envelope_parity(
+    body: str,
+    envelope: dict[str, Any],
+    *,
+    wire_dropped: tuple[str, ...] = (),
+) -> FieldParityReport:
+    """Parity for contracts with no row model — authored prose vs the live envelope.
+
+    Catches the class where a knob is authored as prose in the body, never
+    reaches the wire, and the job silently runs on the default. Hops have no
+    admission object at all, so their parity must come from this generic scan
+    rather than a contract parser (§AC5 reason 1).
+
+    Effect-class drops are ``WARN``, not ``REFUSED``: hops are liveness-critical
+    and the false-positive volume of the authored scan against real DIRECTIVE
+    bodies is unmeasured (§AC6.6). Off-vocabulary keys are counted but not
+    listed and do not move the status — prose bodies carry many, and a signal
+    that fires always is read never (§AC2 state 7).
+    """
+    authored_keys, authored_values, _ = authored_keys_for_parity(body)
+    known_fields = envelope_field_names()
+
+    dropped_effect: list[str] = []
+    dropped_descriptive: list[str] = []
+    unknown_count = 0
+    consumed = 0
+
+    for key in sorted(authored_keys):
+        if key not in known_fields:
+            unknown_count += 1
+            continue
+        authored_val = _normalize_authored_value(authored_values.get(key))
+        if not authored_val:
+            continue
+        live_val = _display_value(envelope.get(key))
+        if authored_val == live_val.strip().lower():
+            consumed += 1
+            continue
+        drop = _format_drop(key, authored=authored_val, row_val=live_val)
+        if parity_class_for_envelope_field(key) == "descriptive":
+            dropped_descriptive.append(drop)
+        else:
+            dropped_effect.append(drop)
+
+    status = "WARN" if (dropped_effect or dropped_descriptive) else "ok"
+    return FieldParityReport(
+        status=status,
+        scope="envelope",
+        consumed=consumed,
+        unconsumed=len(dropped_effect),
+        unknown=unknown_count,
+        dropped_effect=tuple(dropped_effect),
+        dropped_descriptive=tuple(dropped_descriptive),
+        wire_dropped=wire_dropped,
+    )
+
+
 def compute_field_parity_for_job(
     *,
     body: str,
     contract: str,
     propagate_admission: PropagateAdmission | None = None,
     execute_admission: ExecuteAdmission | None = None,
+    envelope: dict[str, Any] | None = None,
     wire_dropped: tuple[str, ...] = (),
 ) -> FieldParityReport:
     """Dispatch parity computation by contract — always returns an explicit report."""
@@ -202,11 +279,13 @@ def compute_field_parity_for_job(
                 wire_dropped=wire_dropped,
             )
         return compute_execute_parity(body, execute_admission, wire_dropped=wire_dropped)
-    return FieldParityReport(
-        status=f"uncomputable(no_row_model)",
-        scope=normalized_contract or "answer",
-        wire_dropped=wire_dropped,
-    )
+    if normalized_contract in _NO_ROW_MODEL_CONTRACTS or envelope is None:
+        return FieldParityReport(
+            status="uncomputable(no_row_model)",
+            scope=normalized_contract or "answer",
+            wire_dropped=wire_dropped,
+        )
+    return compute_envelope_parity(body, envelope, wire_dropped=wire_dropped)
 
 
 def render_field_parity_line(report: FieldParityReport) -> str:
@@ -234,6 +313,7 @@ def render_field_parity_line(report: FieldParityReport) -> str:
 
 __all__ = [
     "FieldParityReport",
+    "compute_envelope_parity",
     "compute_field_parity_for_job",
     "compute_propagate_parity",
     "render_field_parity_line",
