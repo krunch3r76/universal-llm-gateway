@@ -58,6 +58,14 @@ _DEVIATION_REGISTRY: dict[str, tuple[DeviationDisposition, DegradeTarget]] = {
         DeviationDisposition.ANNOTATE,
         DegradeTarget.CAPTURE,
     ),
+    "degraded:sdk_git_probe_absent": (
+        DeviationDisposition.ANNOTATE,
+        DegradeTarget.CAPTURE,
+    ),
+    "stream_only_effect": (
+        DeviationDisposition.ANNOTATE,
+        DegradeTarget.CAPTURE,
+    ),
     "divergence:repo_diff_paths_unattributed:": (
         DeviationDisposition.HARD_FAIL,
         DegradeTarget.WORK,
