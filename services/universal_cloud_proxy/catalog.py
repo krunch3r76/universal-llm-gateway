@@ -28,10 +28,16 @@ _STARTUP_FETCH_ATTEMPTS = 3
 _STARTUP_FETCH_BASE_DELAY_S = 1.0
 
 
-def _per_million(pricing: dict[str, Any], key: str) -> float:
+def _as_mapping(value: Any) -> dict[str, Any]:
+    """Return ``value`` when it is a dict; otherwise an empty mapping."""
+    return value if isinstance(value, dict) else {}
+
+
+def _per_million(pricing: Any, key: str) -> float:
     """Convert per-token string price to per-million-token float."""
+    mapping = _as_mapping(pricing)
     try:
-        return round(float(pricing.get(key, "0.0")) * 1_000_000, 4)
+        return round(float(mapping.get(key, "0.0")) * 1_000_000, 4)
     except (ValueError, TypeError):
         return 0.0
 
@@ -89,8 +95,8 @@ class CatalogManager:
 
     Lifecycle:
         1. ``await startup()`` — initial fetch for all providers
-        2. Background refresh loop re-fetches periodically
-        3. ``await shutdown()`` — cancel refresh loop
+        2. ``await refresh()`` — on-demand re-fetch (``POST /api/refresh``)
+        3. ``await shutdown()``
     """
 
     def __init__(
@@ -110,17 +116,11 @@ class CatalogManager:
         self._on_provider_catalog_refresh_failed = on_provider_catalog_refresh_failed
         self._on_dispatch_catalog_miss = on_dispatch_catalog_miss
         self._catalogs: dict[str, ProviderCatalog] = {}
-        self._refresh_task: asyncio.Task[None] | None = None
 
     async def startup(self) -> None:
         """Fetch initial catalogs from all providers."""
         for provider_config in self._providers:
-            await self._fetch_provider_with_startup_retries(provider_config)
-
-        if self._providers:
-            self._refresh_task = asyncio.create_task(
-                self._refresh_loop(), name="catalog-refresh"
-            )
+            await self._ingest_provider(provider_config, with_startup_retries=True)
 
         total = sum(len(c.models) for c in self._catalogs.values())
         logger.info(
@@ -129,15 +129,43 @@ class CatalogManager:
             total,
         )
 
+    async def refresh(self) -> dict[str, int]:
+        """Re-fetch every configured provider catalog once.
+
+        New model IDs appear only via this call or process start. A single
+        provider failure does not abort the others; prior cache is kept.
+        """
+        counts: dict[str, int] = {}
+        for provider_config in self._providers:
+            await self._ingest_provider(provider_config, with_startup_retries=False)
+            cached = self._catalogs.get(provider_config.provider)
+            counts[provider_config.provider] = (
+                len(cached.models) if cached is not None else 0
+            )
+        return counts
+
     async def shutdown(self) -> None:
-        """Cancel background refresh task."""
-        if self._refresh_task and not self._refresh_task.done():
-            self._refresh_task.cancel()
-            try:
-                await self._refresh_task
-            except asyncio.CancelledError:
-                pass
+        """Release catalog-manager resources."""
         logger.debug("CatalogManager shut down")
+
+    async def _ingest_provider(
+        self, config: ProviderConfig, *, with_startup_retries: bool
+    ) -> None:
+        """Ingest one provider; log and emit on unexpected failure."""
+        try:
+            if with_startup_retries:
+                await self._fetch_provider_with_startup_retries(config)
+            else:
+                await self._fetch_provider(config)
+        except Exception as exc:
+            logger.exception(
+                "Error fetching catalog for '%s'",
+                config.provider,
+            )
+            if self._on_provider_catalog_refresh_failed is not None:
+                await self._on_provider_catalog_refresh_failed(
+                    config.provider, str(exc)
+                )
 
     def get_all_models(self) -> list[dict[str, Any]]:
         """Return the full cached catalog as a list of dicts.
@@ -212,6 +240,8 @@ class CatalogManager:
 
         models: list[CatalogModel] = []
         for entry in raw_models:
+            if not isinstance(entry, dict):
+                continue
             raw_mid = str(entry.get("id", "")).strip()
             if not raw_mid:
                 continue
@@ -221,7 +251,7 @@ class CatalogManager:
                 if not any(mid.startswith(p) for p in config.allow_prefixes):
                     continue
 
-            pricing = entry.get("pricing") or {}
+            pricing = _as_mapping(entry.get("pricing"))
             try:
                 dispatch = to_wire_dict(resolve(mid))
             except CatalogMissError as exc:
@@ -289,18 +319,3 @@ class CatalogManager:
                 delay_s,
             )
             await asyncio.sleep(delay_s)
-
-    async def _refresh_loop(self) -> None:
-        """Periodically re-fetch model lists from all providers."""
-        while True:
-            min_interval = min(p.refresh_interval_hours for p in self._providers)
-            interval_s = max(min_interval * 3600, 600)
-            await asyncio.sleep(interval_s)
-
-            for config in self._providers:
-                try:
-                    await self._fetch_provider(config)
-                except Exception:
-                    logger.exception(
-                        "Error refreshing catalog for '%s'", config.provider
-                    )

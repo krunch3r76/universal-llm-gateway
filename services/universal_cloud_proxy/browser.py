@@ -152,10 +152,16 @@ class BrowserCatalogCache:
 # ── Processing ──────────────────────────────────────────────────────
 
 
-def _per_million(pricing: dict[str, Any], key: str) -> float:
+def _as_mapping(value: Any) -> dict[str, Any]:
+    """Return ``value`` when it is a dict; otherwise an empty mapping."""
+    return value if isinstance(value, dict) else {}
+
+
+def _per_million(pricing: Any, key: str) -> float:
     """Convert per-token string price to per-million-token float."""
+    mapping = _as_mapping(pricing)
     try:
-        return round(float(pricing.get(key, "0.0")) * 1_000_000, 4)
+        return round(float(mapping.get(key, "0.0")) * 1_000_000, 4)
     except (ValueError, TypeError):
         return 0.0
 
@@ -167,10 +173,10 @@ def _process_model(raw: dict[str, Any]) -> dict[str, Any]:
     Provider is extracted from the model ID (format: provider/model-name).
     Capability tags are derived from model ID patterns and modality.
     """
-    pricing = raw.get("pricing") or {}
+    pricing = _as_mapping(raw.get("pricing"))
     model_id = raw.get("id", "")
     provider = model_id.split("/", 1)[0] if "/" in model_id else ""
-    raw_architecture = raw.get("architecture") or {}
+    raw_architecture = _as_mapping(raw.get("architecture"))
     modality = raw_architecture.get("modality", "")
     completion_cost = _per_million(pricing, "completion")
     tags = derive_tags(model_id, modality)

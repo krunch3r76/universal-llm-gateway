@@ -161,9 +161,17 @@ def register_browser_routes(
             )
 
     @router.post("/api/refresh")
-    async def browser_refresh() -> JSONResponse:
-        """Force re-fetch of the full OpenRouter catalog."""
+    async def catalog_refresh() -> JSONResponse:
+        """Force re-fetch of routing catalogs and the OpenRouter browser cache."""
+        catalog = get_catalog()
         browser_cache = get_browser_cache()
+        if catalog is None:
+            return _error_response(
+                code=ErrorCode.UNEXPECTED_ERROR,
+                message="Routing catalog is not initialized",
+                status_code=500,
+                data={"component": "catalog"},
+            )
         if browser_cache is None:
             return _error_response(
                 code=ErrorCode.UNEXPECTED_ERROR,
@@ -173,6 +181,7 @@ def register_browser_routes(
             )
 
         try:
+            providers = await catalog.refresh()
             count = await browser_cache.refresh()
             event_bus = get_event_bus()
             if event_bus is not None:
@@ -182,7 +191,14 @@ def register_browser_routes(
                         model_count=count,
                     )
                 )
-            return JSONResponse(content={"status": "refreshed", "count": count})
+            return JSONResponse(
+                content={
+                    "status": "refreshed",
+                    "count": count,
+                    "browser_count": count,
+                    "providers": providers,
+                }
+            )
         except Exception as exc:
             event_bus = get_event_bus()
             if event_bus is not None:
@@ -194,7 +210,7 @@ def register_browser_routes(
                 )
             return _error_response(
                 code=ErrorCode.UNEXPECTED_ERROR,
-                message="Manual browser catalog refresh failed",
+                message="Manual catalog refresh failed",
                 status_code=502,
                 retryable=True,
                 data={"trigger": "manual"},

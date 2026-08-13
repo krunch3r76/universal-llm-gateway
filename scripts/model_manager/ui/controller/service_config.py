@@ -1377,7 +1377,6 @@ socket_path: "/tmp/universal-protocol/cloud-proxy.sock"
 #     api_key_env: ANTHROPIC_API_KEY
 #     base_url: https://api.anthropic.com/v1
 #     max_concurrent: 20
-#     refresh_interval_hours: 6
 #     allow_prefixes:
 #       - "anthropic/"
 #
@@ -1385,7 +1384,6 @@ socket_path: "/tmp/universal-protocol/cloud-proxy.sock"
 #     api_key_env: OPENAI_API_KEY
 #     base_url: https://api.openai.com/v1
 #     max_concurrent: 20
-#     refresh_interval_hours: 6
 #     allow_prefixes:
 #       - "openai/"
 """

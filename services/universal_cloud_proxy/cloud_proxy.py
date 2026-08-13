@@ -15,7 +15,7 @@ Endpoints:
     POST /api/v1/providers/openai/responses   — native OpenAI Responses API (raw model id)
     GET  /                    — model browser UI
     GET  /api/models          — full OpenRouter catalog with pricing
-    POST /api/refresh         — force re-fetch of browser catalog
+    POST /api/refresh         — force re-fetch of routing + browser catalogs
     GET  /api/models/{id}     — single model pricing lookup
 """
 

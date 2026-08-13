@@ -27,7 +27,6 @@ DEFAULT_PORT = 8200
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_MAX_CONCURRENT = 5
-DEFAULT_REFRESH_INTERVAL_HOURS = 24
 
 
 @dataclass(slots=True, kw_only=True)
@@ -38,7 +37,6 @@ class ProviderConfig:
     api_key: str
     base_url: str = DEFAULT_BASE_URL
     max_concurrent: int = DEFAULT_MAX_CONCURRENT
-    refresh_interval_hours: int = DEFAULT_REFRESH_INTERVAL_HOURS
     allow_prefixes: list[str] = field(default_factory=list)
     native_tools: list[str] = field(default_factory=list)
     mcp_server_url: str | None = None
@@ -187,15 +185,6 @@ def _parse_provider(
             f"got: {max_concurrent}"
         )
 
-    refresh_interval_hours = entry.get(
-        "refresh_interval_hours", DEFAULT_REFRESH_INTERVAL_HOURS
-    )
-    if not isinstance(refresh_interval_hours, int) or refresh_interval_hours < 1:
-        raise ValueError(
-            f"providers[{provider}].refresh_interval_hours must be a positive integer, "
-            f"got: {refresh_interval_hours}"
-        )
-
     base_url = entry.get("base_url", _default_base_url(provider))
     _validate_base_url(provider, base_url)
 
@@ -271,7 +260,6 @@ def _parse_provider(
         api_key=api_key,
         base_url=base_url,
         max_concurrent=max_concurrent,
-        refresh_interval_hours=refresh_interval_hours,
         allow_prefixes=allow_prefixes,
         native_tools=native_tools,
         mcp_server_url=mcp_server_url,

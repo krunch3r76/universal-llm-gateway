@@ -49,7 +49,7 @@ Workspace IDs (`anthropic/...`, `xai/...`) stay on `POST /v1/chat/completions`. 
 | `GET /catalog/pricing` | GET | Models with per-token pricing for cost-aware routing |
 | `GET /api/models` | GET | Full provider catalog with pricing metadata |
 | `GET /api/models/{id}` | GET | Single model pricing lookup |
-| `POST /api/refresh` | POST | Force catalog refresh from providers |
+| `POST /api/refresh` | POST | Force routing + browser catalog refresh |
 
 ### Model Selection
 
@@ -95,7 +95,6 @@ providers:
   - provider: openrouter
     api_key_env: OPENROUTER_API_KEY    # env var name (preferred over inline key)
     max_concurrent: 20
-    refresh_interval_hours: 24
     allow_prefixes:
       - "anthropic/"
       - "openai/"
@@ -131,7 +130,8 @@ providers:
 | `providers[].max_concurrent` | Concurrent request limit per provider |
 | `providers[].native_tools` | Tool-use allowlist per provider |
 | `providers[].mcp_server_url` | Publish `provider/model-mcp` variants that auto-attach the remote MCP server |
-| `providers[].refresh_interval_hours` | Catalog refresh frequency |
+
+Routing catalogs refresh at process start or `POST /api/refresh`. There is no background timer.
 
 ## Events
 
@@ -145,7 +145,7 @@ Covers provider requests, catalog refreshes, selection decisions, errors.
 |------|---------------|
 | `cloud_proxy.py` | FastAPI app, endpoint routing |
 | `forwarder.py` | Request forwarding with auth injection and SSE relay |
-| `catalog.py` | Provider catalog management and periodic refresh |
+| `catalog.py` | Provider catalog management (startup + explicit refresh) |
 | `local_catalog.py` | Stargate model catalog integration |
 | `config.py` | Configuration dataclasses and YAML parsing |
 | `tagging.py` | Task tag classification for model selection |
