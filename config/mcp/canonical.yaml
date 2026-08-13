@@ -2206,7 +2206,7 @@ tools:
     properties:
       owner:
         type: string
-        description: Target owner entity (service:/agent_skill:/ai_agent: or bare slug → service:). Required unless service= is set.
+        description: "Target owner entity (service:/agent_skill:/ai_agent: or bare slug -> service:). Required unless service= is set."
       service:
         type: string
         description: Alias for owner=.
