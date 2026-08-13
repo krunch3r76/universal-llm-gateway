@@ -1405,6 +1405,58 @@ def emit_sdk_worker_timeout(
 
 
 @event_factory
+def FrontierSdkWorkerResumed(  # noqa: N802
+    dispatch_id: str,
+    resume_of: str,
+    sdk_agent_id: str,
+    state_root: str,
+    thread_id: str,
+    execution_id: str,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.worker.resumed",
+        payload={
+            "dispatch_id": dispatch_id,
+            "resume_of": resume_of,
+            "sdk_agent_id": sdk_agent_id,
+            "state_root": state_root,
+            "thread_id": thread_id,
+            "execution_id": execution_id,
+        },
+        scope="node",
+        role="observation",
+    )
+
+
+def emit_sdk_worker_resumed(
+    *,
+    dispatch_id: str,
+    resume_of: str,
+    sdk_agent_id: str,
+    state_root: str,
+    thread_id: str,
+    execution_id: str,
+) -> None:
+    """Publish child resume admission — lineage authority transition (advisory)."""
+    _emit(
+        FrontierSdkWorkerResumed(
+            dispatch_id=dispatch_id,
+            resume_of=resume_of,
+            sdk_agent_id=sdk_agent_id,
+            state_root=state_root,
+            thread_id=thread_id,
+            execution_id=execution_id,
+        )
+    )
+    logger.info(
+        "cursor sdk worker resumed: child=%s resume_of=%s agent=%s",
+        dispatch_id,
+        resume_of,
+        sdk_agent_id,
+    )
+
+
+@event_factory
 def FrontierSdkWorkerOrphaned(  # noqa: N802
     dispatch_id: str,
     thread_id: str,

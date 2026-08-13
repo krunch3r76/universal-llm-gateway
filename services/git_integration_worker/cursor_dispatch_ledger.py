@@ -220,6 +220,7 @@ class LedgerRow:
     contract: str | None = None
     read_only: bool = False
     record_json: str = "{}"
+    resume_of: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -845,6 +846,10 @@ class CursorDispatchLedger:
                 conn.execute(
                     "ALTER TABLE cursor_sdk_dispatches ADD COLUMN work_key TEXT"
                 )
+            if "resume_of" not in cols:
+                conn.execute(
+                    "ALTER TABLE cursor_sdk_dispatches ADD COLUMN resume_of TEXT"
+                )
             _migrate_queued_status(conn)
             _migrate_parked_waiting_status(conn)
             _migrate_lease_key_column(conn)
@@ -874,6 +879,10 @@ class CursorDispatchLedger:
                 "ON cursor_sdk_dispatches(work_fingerprint, status) "
                 "WHERE status IN ('queued','admitted','running') "
                 "AND work_fingerprint IS NOT NULL"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_resume_of "
+                "ON cursor_sdk_dispatches(resume_of)"
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_parked "
@@ -1149,8 +1158,8 @@ class CursorDispatchLedger:
                 "(dispatch_id, fingerprint, thread_id, execution_id, caller_agent, "
                 " resolved_model, packet_path, message_present, status, record_json, "
                 " wt_baseline, contract, source_repo, lease_key, read_only, worker_instance, "
-                " queued_at, source_ref, work_key, work_fingerprint) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " queued_at, source_ref, work_key, work_fingerprint, resume_of) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     req.dispatch_id,
                     fingerprint,
@@ -1172,6 +1181,7 @@ class CursorDispatchLedger:
                     source_ref,
                     work_key,
                     content_wf,
+                    req.resume_of,
                 ),
             )
             if nested_park_parent is not None:

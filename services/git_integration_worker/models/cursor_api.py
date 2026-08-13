@@ -40,6 +40,15 @@ class CursorDispatchRequest(BaseModel):
     )
     admitted_via: Literal["cursor-auto", "stargate"] | None = None
     work_key: str | None = None
+    resume_of: str | None = None
+
+    @model_validator(mode="after")
+    def _resume_of_consistency(self) -> CursorDispatchRequest:
+        if self.resume_of and self.nest_under:
+            raise ValueError("resume_of and nest_under are mutually exclusive")
+        if self.resume_of and self.resume_of == self.dispatch_id:
+            raise ValueError("resume_of must not equal dispatch_id")
+        return self
 
     @model_validator(mode="after")
     def _packet_xor_message(self) -> CursorDispatchRequest:

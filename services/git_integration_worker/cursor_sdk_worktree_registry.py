@@ -133,6 +133,25 @@ def unregister_dispatch_worktree(*, dispatch_id: str) -> None:
         )
 
 
+def transfer_dispatch_worktree(
+    *,
+    parent_dispatch_id: str,
+    child_dispatch_id: str,
+) -> DispatchWorktreeRecord | None:
+    """Move a Lane-B registry row from parent to child without reminting."""
+    record = lookup_dispatch_worktree(dispatch_id=parent_dispatch_id)
+    if record is None:
+        return None
+    register_dispatch_worktree(
+        dispatch_id=child_dispatch_id,
+        worktree_path=record.worktree_path,
+        branch_name=record.branch_name,
+        branch_point=record.branch_point,
+    )
+    unregister_dispatch_worktree(dispatch_id=parent_dispatch_id)
+    return record
+
+
 def lookup_dispatch_worktree(*, dispatch_id: str) -> DispatchWorktreeRecord | None:
     """Return registered worktree metadata for a dispatch, if any."""
     with _connect() as conn:

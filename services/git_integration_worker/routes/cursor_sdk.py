@@ -133,6 +133,7 @@ from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_worker_orphaned,
     emit_sdk_worker_progress,
     emit_sdk_worker_queued,
+    emit_sdk_worker_resumed,
     emit_sdk_worker_timeout,
     emit_sdk_worker_unclassified_terminal,
     emit_write_lease_acquired,
@@ -203,6 +204,14 @@ from services.git_integration_worker.cursor_sdk_restart_orphan import (
     emit_restart_survivor_terminal,
     load_ledger_row,
     salvage_restart_survivor_worktree,
+)
+from services.git_integration_worker.cursor_sdk_resume import (
+    load_parent_row,
+    load_resume_run_context,
+    persist_timeout_retain,
+    reject_resume_if_ineligible,
+    sdk_agent_id_from_agent,
+    start_or_resume_agent,
 )
 from services.git_integration_worker.cursor_sdk_stream_capture import (
     StreamCapture,
@@ -825,8 +834,12 @@ def _run_sdk_sync(
     dispatch_home = setup_cursor_dispatch_home(dispatch_id, real_home=real_home)
     repo_venv = resolve_repo_venv(real_home=real_home)
     validate_repo_venv(repo_venv)
-    bridge_state = dispatch_home / "bridge-state"
-    bridge_state.mkdir(parents=True, exist_ok=True)
+    resume_ctx = load_resume_run_context(dispatch_id=dispatch_id)
+    if resume_ctx is not None:
+        bridge_state = Path(resume_ctx.state_root)
+    else:
+        bridge_state = dispatch_home / "bridge-state"
+        bridge_state.mkdir(parents=True, exist_ok=True)
     CursorDispatchLedger.instance().record_state_root(
         dispatch_id=dispatch_id, state_root=str(bridge_state)
     )
@@ -852,6 +865,7 @@ def _run_sdk_sync(
             selection,
             real_home=real_home,
             substrate_ctx=substrate_ctx,
+            state_root=str(bridge_state),
         )
 
         with _dispatch_home_overlay(
@@ -934,11 +948,13 @@ def _run_sdk_sync(
                 }
 
             try:
-                agent = client.create_agent(agent_options)
+                agent, run = start_or_resume_agent(
+                    client=client,
+                    agent_options=agent_options,
+                    prompt=prompt,
+                    resume_ctx=resume_ctx,
+                )
                 # Local bridge Send rejects Idempotency-Key (cloud-only in SDK v1).
-                run = agent.send(prompt)
-                # Publish the run before the blocking wait: this is the only
-                # handle a same-thread supersede can cancel mid-flight.
                 register_live_run(
                     dispatch_id=dispatch_id,
                     thread_id=thread_id,
@@ -947,7 +963,7 @@ def _run_sdk_sync(
                 )
                 CursorDispatchLedger.instance().record_sdk_identity(
                     dispatch_id=dispatch_id,
-                    agent_id=getattr(agent, "id", None),
+                    agent_id=sdk_agent_id_from_agent(agent),
                     run_id=getattr(run, "id", None),
                 )
                 # Drain the live stream BEFORE wait() — safe/additive: a fully
@@ -1894,6 +1910,7 @@ async def _run_sdk_dispatch_gated(
             body=f"```json\n{json.dumps(env, indent=2)}\n```",
         )
         await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
+        await asyncio.to_thread(persist_timeout_retain, dispatch_id=req.dispatch_id)
         await _mark_terminal_and_promote(
             dispatch_id=req.dispatch_id,
             terminal_status="failed",
@@ -2321,6 +2338,9 @@ async def cursor_dispatch(
             req.dispatch_id[:8],
             lane_advisories,
         )
+    resume_reject = reject_resume_if_ineligible(req)
+    if resume_reject is not None:
+        return resume_reject
     source_repo_str = str(cfg.source_repo.resolve())
     minted_lane_b = False
     mint_wait_ms = 0.0
@@ -2336,7 +2356,10 @@ async def cursor_dispatch(
         )
         mint_wait_ms = (time.monotonic() - mint_started) * 1000.0
         minted_lane_b = (
-            selected_lane == "B" and not req.nest_under and req.worktree_path is None
+            selected_lane == "B"
+            and not req.nest_under
+            and req.worktree_path is None
+            and not req.resume_of
         )
         isolation_materialized = b_worktree_materialized(
             admit_lane=selected_lane,
@@ -2574,6 +2597,18 @@ async def cursor_dispatch(
                 lease_key=lease_key or source_repo_str,
             )
         return JSONResponse(status_code=status_code, content=cached.model_dump())
+
+    if req.resume_of:
+        parent_row = load_parent_row(ledger, parent_id=req.resume_of)
+        if parent_row is not None and parent_row.state_root and parent_row.sdk_agent_id:
+            emit_sdk_worker_resumed(
+                dispatch_id=req.dispatch_id,
+                resume_of=req.resume_of,
+                sdk_agent_id=parent_row.sdk_agent_id,
+                state_root=parent_row.state_root,
+                thread_id=req.thread_id,
+                execution_id=req.execution_id,
+            )
 
     if not effective_read_only and concurrency_posture is not None:
         emit_write_lease_acquired(

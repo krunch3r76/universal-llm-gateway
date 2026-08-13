@@ -42,3 +42,19 @@ def test_completed_event_null_usage_is_explicit() -> None:
     assert event.payload["usage"] is None
     assert event.payload["usage_capture_status"] == "missing"
     assert "model_knobs_requested" not in event.payload
+
+
+def test_resumed_event_factory() -> None:
+    from services.git_integration_worker.cursor_sdk_events import FrontierSdkWorkerResumed
+
+    event = FrontierSdkWorkerResumed(
+        dispatch_id="child",
+        resume_of="parent",
+        sdk_agent_id="agent-1",
+        state_root="/tmp/state",
+        thread_id="t1",
+        execution_id="e1",
+    )
+    assert event.signal == "frontier.sdk.worker.resumed"
+    assert event.payload["resume_of"] == "parent"
+    assert event.role == "observation"

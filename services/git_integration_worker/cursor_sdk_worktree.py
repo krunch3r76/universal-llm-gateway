@@ -211,6 +211,21 @@ def resolve_admit_binding(
     lane: Literal["A", "B"],
 ) -> tuple[Path, str]:
     """Return ``(dispatch_workspace, lease_key)`` for ledger admit."""
+    if req.resume_of:
+        from services.git_integration_worker.cursor_sdk_worktree_registry import (
+            transfer_dispatch_worktree,
+        )
+
+        parent_key = _lookup_parent_lease_key(req.resume_of)
+        if parent_key is None:
+            raise WorktreeMintError(f"resume parent not found: {req.resume_of!r}")
+        transfer_dispatch_worktree(
+            parent_dispatch_id=req.resume_of,
+            child_dispatch_id=req.dispatch_id,
+        )
+        workspace = Path(parent_key).resolve()
+        return workspace, str(workspace)
+
     if req.nest_under:
         parent_key = _lookup_parent_lease_key(req.nest_under)
         if parent_key is None:

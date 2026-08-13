@@ -19,6 +19,7 @@ from pathlib import Path
 from cursor_sdk.types import (
     AgentOptions,
     LocalAgentOptions,
+    LocalAgentStoreConfig,
     ModelSelection,
     StdioMcpServerConfig,
 )
@@ -182,11 +183,22 @@ def _resolve_mcp_token_env(*, real_home: Path | str | None = None) -> dict[str, 
     return env
 
 
-def build_local_agent_options(dispatch_workspace: Path) -> LocalAgentOptions:
+def build_local_agent_options(
+    dispatch_workspace: Path,
+    *,
+    state_root: Path | str | None = None,
+) -> LocalAgentOptions:
     """Mirror IDE Composer ambient settings; cwd = dispatch write-surface anchor."""
+    store = None
+    if state_root is not None:
+        store = LocalAgentStoreConfig(
+            type="sqlite",
+            root_dir=str(Path(state_root).resolve()),
+        )
     return LocalAgentOptions(
         cwd=str(dispatch_workspace.resolve()),
         setting_sources=_SETTING_SOURCES,
+        store=store,
     )
 
 
@@ -215,9 +227,10 @@ def build_agent_options(
     *,
     real_home: Path | str | None = None,
     substrate_ctx: SubstrateDispatchContext | None = None,
+    state_root: Path | str | None = None,
 ) -> AgentOptions:
     """Full create_agent options for IDE-parity cursor-sdk dispatch."""
-    local = build_local_agent_options(dispatch_workspace)
+    local = build_local_agent_options(dispatch_workspace, state_root=state_root)
     local = merge_substrate_tools(local, substrate_ctx)
     return AgentOptions(
         model=model,
