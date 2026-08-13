@@ -10,6 +10,7 @@ from claude_bundles.request_admission_identity import (
     gate_request_admission,
     get_identity_counters,
     load_active_work_snap,
+    load_active_work_snap_result,
     observe_identity_on_gate,
     reset_identity_counters_for_tests,
     resolve_request_admission_identity,
@@ -116,10 +117,6 @@ def test_gate_refuses_unresolvable_on_watched_lane():
             return_value={"7188": {"thread_id": "7188"}},
         ),
         patch(
-            "claude_bundles.request_admission_identity.load_active_work_snap",
-            return_value={"rows": []},
-        ),
-        patch(
             "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
             return_value=None,
         ),
@@ -127,6 +124,7 @@ def test_gate_refuses_unresolvable_on_watched_lane():
         refusal = gate_request_admission(
             thread_id="7188",
             caller_registration_id=None,
+            active_work_snap={"rows": []},
         )
     assert refusal is None
     counters = get_identity_counters()
@@ -175,10 +173,6 @@ def test_gate_admits_holder_via_single_seat_bind_without_wire_id():
             return_value={"7188": row},
         ),
         patch(
-            "claude_bundles.request_admission_identity.load_active_work_snap",
-            return_value=snap,
-        ),
-        patch(
             "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
             return_value=None,
         ),
@@ -186,6 +180,7 @@ def test_gate_admits_holder_via_single_seat_bind_without_wire_id():
         refusal = gate_request_admission(
             thread_id="7188",
             caller_registration_id=None,
+            active_work_snap=snap,
         )
     assert refusal is None
 
@@ -214,10 +209,6 @@ def test_gate_refuses_predecessor_bound_via_single_seat_active_work():
             return_value={"7188": row},
         ),
         patch(
-            "claude_bundles.request_admission_identity.load_active_work_snap",
-            return_value=snap,
-        ),
-        patch(
             "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
             return_value=None,
         ),
@@ -225,6 +216,7 @@ def test_gate_refuses_predecessor_bound_via_single_seat_active_work():
         refusal = gate_request_admission(
             thread_id="7188",
             caller_registration_id=None,
+            active_work_snap=snap,
         )
     assert refusal is not None
     assert refusal["code"] == "seat.lease_lost"
@@ -318,3 +310,255 @@ def test_request_dispatch_uses_gate_before_impl():
         )
     impl_mock.assert_not_called()
     assert result.get("code") == "seat.lease_lost"
+
+
+def test_identity_gated_emits_on_both_outcomes_and_unwatched():
+    """AC1: dual-arm — fail if emit re-gated on watch-only or reject-only."""
+    row = {
+        "registration_id": "5420b367-new",
+        "superseded_registration_id": "5420b367-old",
+        "successor_execution_id": "exec-new",
+        "pending_satellite_execution_id": "sat-live",
+    }
+    refuse_snap = {
+        "rows": [
+            {
+                "execution_id": "sat-live",
+                "registration_id": "5420b367-old",
+                "parent_thread": "7188",
+                "purpose": "operator-proxy",
+                "status": "running",
+            }
+        ]
+    }
+    admit_snap = {
+        "rows": [
+            {
+                "execution_id": "sat-live",
+                "registration_id": "5420b367-new",
+                "parent_thread": "7199",
+                "purpose": "operator-proxy",
+                "status": "running",
+            }
+        ]
+    }
+    with patch(
+        "claude_bundles.request_admission_identity._emit_identity_gated"
+    ) as emit_mock:
+        with (
+            patch(
+                "claude_bundles.hop_seat_cutover.load_watches",
+                return_value={"7188": {"thread_id": "7188"}},
+            ),
+            patch(
+                "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+                return_value=None,
+            ),
+            patch(
+                "claude_bundles.request_admission_identity.load_active_work_snap_result",
+                return_value=({"rows": []}, False),
+            ),
+        ):
+            gate_request_admission(thread_id="7188", caller_registration_id=None)
+
+        with (
+            patch(
+                "claude_bundles.hop_seat_cutover.load_watches",
+                return_value={},
+            ),
+            patch(
+                "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+                return_value=None,
+            ),
+            patch(
+                "claude_bundles.request_admission_identity.load_active_work_snap_result",
+                return_value=(admit_snap, False),
+            ),
+        ):
+            gate_request_admission(thread_id="7199", caller_registration_id=None)
+
+        with (
+            patch(
+                "claude_bundles.hop_seat_cutover.load_watches",
+                return_value={"7188": row},
+            ),
+            patch(
+                "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+                return_value=None,
+            ),
+            patch(
+                "claude_bundles.request_admission_identity.load_active_work_snap_result",
+                return_value=(refuse_snap, False),
+            ),
+        ):
+            gate_request_admission(thread_id="7188", caller_registration_id=None)
+
+    assert emit_mock.call_count == 3
+    outcomes = [c.kwargs["outcome"] for c in emit_mock.call_args_list]
+    assert outcomes == ["admit", "admit", "reject"]
+    watch_flags = [
+        c.kwargs["identity"].watch_present for c in emit_mock.call_args_list
+    ]
+    assert watch_flags == [True, False, True]
+
+
+def test_unresolvable_reason_missing_thread_id():
+    identity = resolve_request_admission_identity(
+        thread_id=None,
+        caller_registration_id=None,
+        active_work_snap={"rows": []},
+    )
+    assert identity.source == "unresolvable"
+    assert identity.unresolvable_reason == "missing_thread_id"
+
+
+def test_unresolvable_reason_snap_load_failed():
+    with patch(
+        "claude_bundles.hop_seat_cutover.load_watches",
+        return_value={"7188": {"thread_id": "7188"}},
+    ):
+        identity = resolve_request_admission_identity(
+            thread_id="7188",
+            caller_registration_id=None,
+            active_work_snap={},
+            snap_load_failed=True,
+        )
+    assert identity.source == "unresolvable"
+    assert identity.unresolvable_reason == "snap_load_failed"
+
+
+def test_unresolvable_reason_empty_snap():
+    with patch(
+        "claude_bundles.hop_seat_cutover.load_watches",
+        return_value={"7188": {"thread_id": "7188"}},
+    ):
+        identity = resolve_request_admission_identity(
+            thread_id="7188",
+            caller_registration_id=None,
+            active_work_snap={"rows": []},
+            snap_load_failed=False,
+        )
+    assert identity.unresolvable_reason == "empty_snap"
+
+
+def test_unresolvable_reason_zero_matches():
+    snap = {
+        "rows": [
+            {
+                "execution_id": "other-lane",
+                "registration_id": "5420b367-other",
+                "parent_thread": "9999",
+                "purpose": "operator-proxy",
+                "status": "running",
+            }
+        ]
+    }
+    with patch(
+        "claude_bundles.hop_seat_cutover.load_watches",
+        return_value={"7188": {"thread_id": "7188"}},
+    ):
+        identity = resolve_request_admission_identity(
+            thread_id="7188",
+            caller_registration_id=None,
+            active_work_snap=snap,
+        )
+    assert identity.unresolvable_reason == "zero_matches"
+
+
+def test_unresolvable_reason_ambiguous_matches():
+    snap = {
+        "rows": [
+            {
+                "execution_id": "a",
+                "registration_id": "5420b367-a",
+                "parent_thread": "7188",
+                "purpose": "operator-proxy",
+                "status": "running",
+            },
+            {
+                "execution_id": "b",
+                "registration_id": "5420b367-b",
+                "parent_thread": "7188",
+                "purpose": "operator-proxy",
+                "status": "running",
+            },
+        ]
+    }
+    with patch(
+        "claude_bundles.hop_seat_cutover.load_watches",
+        return_value={"7188": {"thread_id": "7188"}},
+    ):
+        identity = resolve_request_admission_identity(
+            thread_id="7188",
+            caller_registration_id=None,
+            active_work_snap=snap,
+        )
+    assert identity.unresolvable_reason == "ambiguous_matches"
+
+
+def test_gate_snap_load_failed_emits_reason_not_empty_snap():
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={"7188": {"thread_id": "7188"}},
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value=None,
+        ),
+        patch(
+            "claude_bundles.request_admission_identity.load_active_work_snap_result",
+            return_value=({}, True),
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._emit_identity_gated"
+        ) as emit_mock,
+    ):
+        refusal = gate_request_admission(
+            thread_id="7188",
+            caller_registration_id=None,
+        )
+    assert refusal is None
+    emit_mock.assert_called_once()
+    identity = emit_mock.call_args.kwargs["identity"]
+    assert identity.unresolvable_reason == "snap_load_failed"
+
+
+def test_load_active_work_snap_result_failed_flag():
+    with patch(
+        "cdp_ask.client.CdpAskClient",
+        side_effect=RuntimeError("active-work unavailable"),
+    ):
+        snap, failed = load_active_work_snap_result()
+    assert snap == {}
+    assert failed is True
+
+
+def test_mirror_to_event_service_includes_iso_timestamp():
+    import json as json_mod
+    from unittest.mock import MagicMock
+
+    from claude_bundles.hop_cadence_lease_events import (
+        GiwCursorAutoHopCadenceIdentityBound,
+        _mirror_to_event_service,
+    )
+
+    sent: list[bytes] = []
+    mock_sock = MagicMock()
+    mock_sock.sendall = lambda data: sent.append(data)
+
+    with patch("socket.socket") as socket_cls:
+        socket_cls.return_value.__enter__.return_value = mock_sock
+        _mirror_to_event_service(
+            GiwCursorAutoHopCadenceIdentityBound(
+                thread_id="7188",
+                identity_source="single_seat_active_work",
+                watch_present=True,
+                registration_id="5420b367-test",
+            )
+        )
+
+    payload = json_mod.loads(sent[0].decode())
+    assert payload["timestamp"]
+    assert "T" in payload["timestamp"]
+    assert payload["ts_unix_ms"] > 0

@@ -6,7 +6,7 @@ import contextlib
 import json
 import os
 import socket
-import time
+from datetime import UTC, datetime
 
 from universal_event_bus.events.event import Event
 from universal_event_bus.events.factory import event_factory
@@ -104,12 +104,14 @@ def _mirror_to_event_service(event: Event) -> None:
     sock_path = os.environ.get(
         "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
     )
+    now = datetime.now(UTC)
     payload = {
         "signal": event.signal,
         "source": _SOURCE,
         "role": event.role,
         "scope": event.scope,
-        "ts_unix_ms": int(time.time() * 1000),
+        "timestamp": now.isoformat(),
+        "ts_unix_ms": int(now.timestamp() * 1000),
         "payload": event.payload,
     }
     with contextlib.suppress(Exception):
