@@ -83,6 +83,22 @@ def test_admit_shorthand_propagation() -> None:
     assert admission.rows[0].code_ref == "cafebabe00000000000000000000000000000000"
 
 
+def test_admit_shorthand_allow_self_preempt_false() -> None:
+    """Shorthand path must parse allow_self_preempt, not default it to True."""
+    body = """\
+TYPE: DIRECTIVE
+contract: propagate
+scope: propagation sync_restart mcp
+code_ref: HEAD
+allow_self_preempt: false
+effects_expected: propagation row persisted; restart executed or deferred
+"""
+    admission = admit_propagate_body(body)
+    assert admission.approved
+    assert admission.rows[0].allow_self_preempt is False
+    assert "allow_self_preempt" in admission.consumed_keys
+
+
 def test_admit_yaml_allow_self_preempt_false() -> None:
     body = _MCP_YAML_BODY.replace(
         "proof_class: client_visible",

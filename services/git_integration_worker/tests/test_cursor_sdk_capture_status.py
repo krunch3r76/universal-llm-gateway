@@ -471,9 +471,9 @@ def test_ac4_residual_twin_work_outcome_shipped_status_complete(tmp_path: Path) 
         deviations=deviations,
         deliverables_expected=True,
     )
-    assert work_outcome == WorkOutcome.SHIPPED
+    assert work_outcome == WorkOutcome.UNVERIFIED
     assert (
-        project_status_from_work_outcome(work_outcome, None) == CloseoutStatus.COMPLETE
+        project_status_from_work_outcome(work_outcome, None) == CloseoutStatus.PARTIAL
     )
 
     body = build_implement_closeout_body(
@@ -501,7 +501,7 @@ def test_ac4_residual_twin_work_outcome_shipped_status_complete(tmp_path: Path) 
     import json
 
     payload = json.loads(body)
-    assert payload["work_outcome"] == "shipped"
+    assert payload["work_outcome"] == "unverified"
     assert payload["status"] == "partial"
     assert payload["capture_status"] == "partial"
 
@@ -762,16 +762,16 @@ def test_g2_ac4_bare_filename_fixture_8b2fdfd6ae7d(tmp_path: Path) -> None:
     )
     status = project_status_from_work_outcome(work_outcome, None)
 
-    assert work_outcome == WorkOutcome.SHIPPED
-    assert status == CloseoutStatus.COMPLETE
+    assert work_outcome == WorkOutcome.UNVERIFIED
+    assert status == CloseoutStatus.PARTIAL
     assert capture_status == "unavailable"
     assert divergence_reason == (
         "capture:expected_paths_all_malformed:fable-arch-bind-2026-07-31.md"
     )
-    # H4 triple: work_outcome=shipped, status=complete, capture_status=unavailable
+    # H4 triple after arc 7190: empty verification cannot ship.
     assert (
-        work_outcome == WorkOutcome.SHIPPED
-        and status == CloseoutStatus.COMPLETE
+        work_outcome == WorkOutcome.UNVERIFIED
+        and status == CloseoutStatus.PARTIAL
         and capture_status == "unavailable"
     )
 
@@ -800,7 +800,7 @@ def test_g2_ac4_bare_filename_fixture_8b2fdfd6ae7d(tmp_path: Path) -> None:
     import json
 
     payload = json.loads(body)
-    assert payload["work_outcome"] == "shipped"
+    assert payload["work_outcome"] == "unverified"
     assert payload["status"] == "partial"
     assert payload["capture_status"] == "unavailable"
     assert "degraded:sdk_git_probe_absent" in deviations
@@ -990,9 +990,9 @@ def test_g1_trace_ii_auto_625a11ce0892_admit_with_cortex_artifacts(
         deviations=["degraded:sdk_git_probe_absent"],
         deliverables_expected=True,
     )
-    assert work_outcome == WorkOutcome.SHIPPED
+    assert work_outcome == WorkOutcome.UNVERIFIED
     assert (
-        project_status_from_work_outcome(work_outcome, None) == CloseoutStatus.COMPLETE
+        project_status_from_work_outcome(work_outcome, None) == CloseoutStatus.PARTIAL
     )
 
 
@@ -1018,9 +1018,9 @@ def test_g1_trace_iii_auto_028dbc284356_admit_probe_absent_ignored(
         deviations=["degraded:sdk_git_probe_absent"],
         deliverables_expected=True,
     )
-    assert work_outcome == WorkOutcome.SHIPPED
+    assert work_outcome == WorkOutcome.UNVERIFIED
     assert (
-        project_status_from_work_outcome(work_outcome, None) == CloseoutStatus.COMPLETE
+        project_status_from_work_outcome(work_outcome, None) == CloseoutStatus.PARTIAL
     )
 
 
@@ -1406,9 +1406,9 @@ def _verification_row_for_register(
         ("derived", 0, WorkOutcome.UNVERIFIED),
         ("derived", 1, WorkOutcome.CHECKS_FAILED),
         ("unknown", 0, WorkOutcome.UNVERIFIED),
-        ("unknown", 1, WorkOutcome.CHECKS_FAILED),
+        ("unknown", 1, WorkOutcome.UNVERIFIED),
         ("unattributed", 0, WorkOutcome.UNVERIFIED),
-        ("unattributed", 1, WorkOutcome.CHECKS_FAILED),
+        ("unattributed", 1, WorkOutcome.UNVERIFIED),
     ],
 )
 def test_land_positive_register_exit_matrix(
@@ -1449,8 +1449,8 @@ def test_land_positive_register_exit_matrix(
         )
 
 
-def test_land_positive_empty_verification_legacy_ladder(tmp_path: Path) -> None:
-    """Empty verification[] keeps legacy positive→SHIPPED (todo:closeout-grade-trust-join)."""
+def test_land_positive_empty_verification_does_not_ship(tmp_path: Path) -> None:
+    """Empty verification[] cannot ride positive artifacts to SHIPPED (arc 7190)."""
     repo, cortex_root, rel = _land_positive_fixture(tmp_path)
     work_outcome = resolve_work_outcome(
         degraded_reason=None,
@@ -1462,7 +1462,106 @@ def test_land_positive_empty_verification_legacy_ladder(tmp_path: Path) -> None:
         cortex_root=cortex_root,
         deliverables_expected=True,
     )
+    assert work_outcome == WorkOutcome.UNVERIFIED
+
+
+def test_pytest_usage_error_positive_is_unverified_not_checks_failed(
+    tmp_path: Path,
+) -> None:
+    """Survival 1 — could-not-run (pytest 4) ≠ ran-and-failed."""
+    repo, cortex_root, rel = _land_positive_fixture(tmp_path)
+    verification = [
+        observed_process_verification(
+            command="pytest -q missing.py",
+            exit_code=4,
+            invocation_id="test:usage",
+        )
+    ]
+    work_outcome = resolve_work_outcome(
+        degraded_reason=None,
+        verification=verification,
+        files_offgit_produced=[f"cortex://{rel}"],
+        artifact_paths=[],
+        manifest=None,
+        source_repo=repo,
+        cortex_root=cortex_root,
+        deliverables_expected=True,
+    )
+    assert work_outcome == WorkOutcome.UNVERIFIED
+    assert work_outcome != WorkOutcome.CHECKS_FAILED
+    assert work_outcome != WorkOutcome.SHIPPED
+
+
+def test_pytest_vacuous_collection_does_not_ship(tmp_path: Path) -> None:
+    """False-green: pytest exit 5 must not ride positive artifacts to SHIPPED."""
+    repo, cortex_root, rel = _land_positive_fixture(tmp_path)
+    verification = [
+        observed_process_verification(
+            command="pytest -q empty_dir",
+            exit_code=5,
+            invocation_id="test:vacuous",
+        )
+    ]
+    work_outcome = resolve_work_outcome(
+        degraded_reason=None,
+        verification=verification,
+        files_offgit_produced=[f"cortex://{rel}"],
+        artifact_paths=[],
+        manifest=None,
+        source_repo=repo,
+        cortex_root=cortex_root,
+        deliverables_expected=True,
+    )
+    assert work_outcome == WorkOutcome.UNVERIFIED
+    assert work_outcome != WorkOutcome.SHIPPED
+
+
+def test_accept_exits_declared_nonzero_can_ship(tmp_path: Path) -> None:
+    """Survival 2 — designed-fail probe declared at the invocation site."""
+    repo, cortex_root, rel = _land_positive_fixture(tmp_path)
+    verification = [
+        observed_process_verification(
+            command="pytest -q oracle.py  # accept-exits:1",
+            exit_code=1,
+            invocation_id="test:oracle",
+        )
+    ]
+    work_outcome = resolve_work_outcome(
+        degraded_reason=None,
+        verification=verification,
+        files_offgit_produced=[f"cortex://{rel}"],
+        artifact_paths=[],
+        manifest=None,
+        source_repo=repo,
+        cortex_root=cortex_root,
+        deliverables_expected=True,
+    )
     assert work_outcome == WorkOutcome.SHIPPED
+
+
+def test_uninterpreted_exit_degrades_unverified(tmp_path: Path) -> None:
+    """Survival 4 — opaque exit integer never checks_failed and never shipped."""
+    repo, cortex_root, rel = _land_positive_fixture(tmp_path)
+    verification = [
+        observed_process_verification(
+            command="pytest -q suite.py",
+            exit_code=99,
+            invocation_id="test:opaque",
+        )
+    ]
+    work_outcome = resolve_work_outcome(
+        degraded_reason=None,
+        verification=verification,
+        files_offgit_produced=[f"cortex://{rel}"],
+        artifact_paths=[],
+        manifest=None,
+        source_repo=repo,
+        cortex_root=cortex_root,
+        deliverables_expected=True,
+    )
+    assert work_outcome == WorkOutcome.UNVERIFIED
+    assert work_outcome != WorkOutcome.CHECKS_FAILED
+    assert work_outcome != WorkOutcome.SHIPPED
 
 
 def test_negative_evidence_nonzero_stays_unverified_a28572(tmp_path: Path) -> None:

@@ -691,7 +691,8 @@ def test_prepare_closeout_delivery_light_bounded_written_path_complete(
     )
     payload = json.loads(delivery.body)
     assert payload["capture_status"] == "complete"
-    assert payload["status"] == "complete"
+    assert payload["status"] == "partial"
+    assert payload["work_outcome"] == "unverified"
 
 
 def test_prepare_closeout_delivery_light_bounded_missing_path_partial(
@@ -2337,7 +2338,8 @@ def test_prepare_closeout_delivery_normal_size_has_no_body_relocated(
     payload = json.loads(delivery.body)
     assert len(delivery.body) <= MAX_TURN_BODY_CHARS
     assert "body_relocated" not in payload
-    assert payload["status"] == "complete"
+    assert payload["status"] == "partial"
+    assert payload["work_outcome"] == "unverified"
     sidecar_text = delivery.sidecar_path.read_text(encoding="utf-8")
     assert "## structured_closeout_full" in sidecar_text
     full_json = sidecar_text.split("## structured_closeout_full\n\n", 1)[1]

@@ -227,7 +227,7 @@ def test_ac6_positive_offgit_under_unavailable_keeps_shipped(tmp_path: Path) -> 
         cortex_root=cortex_root,
         deliverables_expected=True,
     )
-    assert work_outcome == WorkOutcome.SHIPPED
+    assert work_outcome == WorkOutcome.UNVERIFIED
     status, capped = apply_capture_incompleteness_gate(
         status=CloseoutStatus.COMPLETE,
         work_outcome=work_outcome,
@@ -243,7 +243,7 @@ def test_ac6_positive_offgit_under_unavailable_keeps_shipped(tmp_path: Path) -> 
             cortex_root=cortex_root,
         ),
     )
-    assert capped == WorkOutcome.SHIPPED
+    assert capped == WorkOutcome.UNVERIFIED
     assert status == CloseoutStatus.PARTIAL
 
 
@@ -431,5 +431,5 @@ def test_ac1_closeout_shipped_with_unavailable_capture_and_offgit(tmp_path: Path
         deliverables_expected=True,
     )
     payload = json.loads(body)
-    assert payload["work_outcome"] == "shipped"
+    assert payload["work_outcome"] == "unverified"
     assert payload["capture_status"] == "unavailable"

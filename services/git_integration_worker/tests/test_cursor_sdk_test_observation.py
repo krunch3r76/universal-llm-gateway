@@ -233,8 +233,8 @@ _E93F_RESULT = {
 }
 
 
-def test_specimen_auto_e93f739c279c_harvests_observed_test_sibling() -> None:
-    """Replay live e93f shell ToolCallObservation; require observed pytest sibling."""
+def test_specimen_auto_e93f739c279c_harvests_unattributed_trailing_echo() -> None:
+    """Replay live e93f shell: trailing echo makes outer exit unattributed."""
     obs = ToolCallObservation(
         call_id=_E93F_CALL_ID,
         tool_name="shell",
@@ -250,10 +250,10 @@ def test_specimen_auto_e93f739c279c_harvests_observed_test_sibling() -> None:
     rows = harvest_test_verifications((obs,))
     assert len(rows) == 1
     row = rows[0]
-    assert row.exit_code_register == "observed"
+    assert row.exit_code_register == "unattributed"
     assert row.exit_code == 0
     assert row.basis == "shell_tool_result.exitCode"
-    assert is_pytest_witness(row) is True
+    assert is_pytest_witness(row) is False
     assert row.invocation_id == f"test:{_E93F_CALL_ID}"
 
 
@@ -362,6 +362,7 @@ def test_harvest_specimen_a_compound_echo_is_unattributed_and_blocks_all_pass() 
 def test_is_proven_simple_allows_ruff_and_pytest_and_chain() -> None:
     assert is_proven_simple_pytest_command("pytest -q foo.py") is True
     assert is_proven_simple_pytest_command("ruff check a.py && pytest -q foo.py") is True
+    assert is_proven_simple_pytest_command("pytest -q foo.py; echo done") is False
     assert (
         is_proven_simple_pytest_command(
             "pytest -q foo.py | tee /tmp/out.txt; echo done"

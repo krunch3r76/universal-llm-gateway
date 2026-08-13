@@ -58,14 +58,6 @@ def _chain_segments(command: str) -> list[str]:
     return segments
 
 
-def _pytest_segment(command: str) -> str | None:
-    """Return the last chain segment that invokes pytest, or None."""
-    for segment in reversed(_chain_segments(_strip_shell_literals(command))):
-        if is_pytest_command(segment):
-            return segment
-    return None
-
-
 def is_proven_simple_pytest_command(command: str) -> bool:
     """True when shell exit can name the pytest process under test.
 
@@ -73,8 +65,9 @@ def is_proven_simple_pytest_command(command: str) -> bool:
 
     - **Deny** — ``pytest … | tee …; echo "SUITE_EXIT:${PIPESTATUS[0]}"`` (pipeline
       wrapper masks pytest exit; outer shell exit is the trailing ``echo``).
-    - **Allow** — sole/direct ``pytest`` invoke (specimen e93f: ``pytest -q …`` line
-      has no ``|``; trailing ``echo "PYTEST_EXIT=$?"`` is diagnostic only).
+    - **Deny** — trailing ``; echo`` / newline-echo after pytest (outer exit is
+      the echo; pytest failure is laundered). Last chain segment must invoke
+      pytest (arc 7190 survival-3).
     - **Allow** — ``ruff … && pytest …`` with pytest terminal in the ``&&`` chain.
     - **Allow** — ``pytest | …`` pipeline only when ``set -o pipefail`` appears
       earlier in the raw script (pipefail binds pipeline exit to pytest).
@@ -83,9 +76,10 @@ def is_proven_simple_pytest_command(command: str) -> bool:
     if not cmd or not is_pytest_command(cmd):
         return False
 
-    segment = _pytest_segment(cmd)
-    if segment is None:
+    segments = _chain_segments(_strip_shell_literals(cmd))
+    if not segments or not is_pytest_command(segments[-1]):
         return False
+    segment = segments[-1]
 
     if "|" not in segment:
         return True

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from implement_admission.closeout_models import observed_process_verification
 from implement_admission.spec import CloseoutStatus, WorkOutcome
 
 from services.git_integration_worker.cursor_sdk_authored_status_reconcile import (
@@ -17,6 +18,28 @@ from services.git_integration_worker.cursor_sdk_closeout import (
 from services.git_integration_worker.cursor_sdk_deliverables import (
     sidecar_workspaces_ref,
 )
+from services.git_integration_worker.cursor_sdk_stream_capture import (
+    ToolCallObservation,
+)
+
+
+def _passing_pytest_obs() -> ToolCallObservation:
+    result = {
+        "status": "success",
+        "value": {"stdout": "1 passed", "stderr": "", "exitCode": 0},
+    }
+    return ToolCallObservation(
+        call_id="call-pytest-pass",
+        tool_name="shell",
+        status="completed",
+        arg_bytes=1,
+        result_bytes=1,
+        truncated_fields=(),
+        args={"command": "pytest -q foo.py"},
+        result=result,
+        result_body=result,
+        result_body_status="present",
+    )
 
 _PARTIAL_SECTION2 = """## Closeout
 
@@ -156,6 +179,7 @@ def test_build_body_partial_section2_preserves_machine_grade(
             status="finished",
             duration_ms=100,
             tool_call_count=3,
+            tool_calls=(_passing_pytest_obs(),),
         ),
         degraded_reason=None,
         sidecar_ref=sidecar_workspaces_ref("row20-partial-vs-shipped"),
@@ -167,6 +191,13 @@ def test_build_body_partial_section2_preserves_machine_grade(
         source_repo=source_repo,
         cortex_root=cortex_root,
         deliverables_expected=True,
+        verification=[
+            observed_process_verification(
+                command="pytest -q foo.py",
+                exit_code=0,
+                invocation_id="test:row20",
+            )
+        ],
     )
     payload = json.loads(body)
     assert payload["status"] == "complete"
@@ -218,11 +249,6 @@ def test_build_body_auto40eacccc1b48_absent_section2_records_disagreement(
         isolation_materialized=True,
     )
     payload = json.loads(body)
-    assert payload["status"] == "complete"
-    assert payload["work_outcome"] == "shipped"
-    assert payload["status_authority_disagreement"]["authored_status"] is None
-    assert payload["status_authority_disagreement"]["machine_work_outcome"] == "shipped"
-    assert (
-        "status_disagreement:authored_absent_vs_machine_complete"
-        in payload["deviations"]
-    )
+    assert payload["status"] == "partial"
+    assert payload["work_outcome"] == "unverified"
+    assert payload.get("status_authority_disagreement") is None

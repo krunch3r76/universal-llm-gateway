@@ -210,21 +210,21 @@ def compute_envelope_parity(
 
     Effect-class drops are ``WARN``, not ``REFUSED``: hops are liveness-critical
     and the false-positive volume of the authored scan against real DIRECTIVE
-    bodies is unmeasured (§AC6.6). Off-vocabulary keys are counted but not
-    listed and do not move the status — prose bodies carry many, and a signal
-    that fires always is read never (§AC2 state 7).
+    bodies is unmeasured (§AC6.6). Off-vocabulary keys are counted **and**
+    listed; ``unknown > 0`` moves status to ``WARN`` so an authored field the
+    substrate does not consume cannot hide behind ``status=ok`` (arc 7190).
     """
     authored_keys, authored_values, _ = authored_keys_for_parity(body)
     known_fields = envelope_field_names()
 
     dropped_effect: list[str] = []
     dropped_descriptive: list[str] = []
-    unknown_count = 0
+    unknown_tokens: list[str] = []
     consumed = 0
 
     for key in sorted(authored_keys):
         if key not in known_fields:
-            unknown_count += 1
+            unknown_tokens.append(key)
             continue
         authored_val = _normalize_authored_value(authored_values.get(key))
         if not authored_val:
@@ -239,15 +239,18 @@ def compute_envelope_parity(
         else:
             dropped_effect.append(drop)
 
-    status = "WARN" if (dropped_effect or dropped_descriptive) else "ok"
+    status = "ok"
+    if dropped_effect or dropped_descriptive or unknown_tokens:
+        status = "WARN"
     return FieldParityReport(
         status=status,
         scope="envelope",
         consumed=consumed,
         unconsumed=len(dropped_effect),
-        unknown=unknown_count,
+        unknown=len(unknown_tokens),
         dropped_effect=tuple(dropped_effect),
         dropped_descriptive=tuple(dropped_descriptive),
+        unknown_tokens=tuple(unknown_tokens),
         wire_dropped=wire_dropped,
     )
 

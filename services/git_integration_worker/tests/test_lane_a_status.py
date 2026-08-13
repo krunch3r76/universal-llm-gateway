@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from implement_admission.closeout_models import observed_process_verification
 from implement_admission.spec import CloseoutStatus, WorkOutcome
 
 from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
@@ -15,15 +16,15 @@ from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
     merge_plane_register_markers,
     status_dispositions_equivalent,
 )
-from services.git_integration_worker.cursor_auto.closeout_status_polarity import (
-    classify_status_incomplete_class,
-    merge_plane_legend_markers,
-    resolve_status_disagreement_authority,
-)
 from services.git_integration_worker.cursor_auto.closeout_relay_common import (
     resolve_measurement_status,
     resolve_measurement_status_from_wrapper,
     resolve_relay_status,
+)
+from services.git_integration_worker.cursor_auto.closeout_status_polarity import (
+    classify_status_incomplete_class,
+    merge_plane_legend_markers,
+    resolve_status_disagreement_authority,
 )
 from services.git_integration_worker.cursor_auto.lane_a_status import (
     extract_status_claim,
@@ -38,6 +39,28 @@ from services.git_integration_worker.cursor_sdk_closeout import (
 from services.git_integration_worker.cursor_sdk_deliverables import (
     sidecar_workspaces_ref,
 )
+from services.git_integration_worker.cursor_sdk_stream_capture import (
+    ToolCallObservation,
+)
+
+
+def _passing_pytest_obs() -> ToolCallObservation:
+    result = {
+        "status": "success",
+        "value": {"stdout": "1 passed", "stderr": "", "exitCode": 0},
+    }
+    return ToolCallObservation(
+        call_id="call-pytest-pass",
+        tool_name="shell",
+        status="completed",
+        arg_bytes=1,
+        result_bytes=1,
+        truncated_fields=(),
+        args={"command": "pytest -q foo.py"},
+        result=result,
+        result_body=result,
+        result_body_status="present",
+    )
 
 
 def test_status_dispositions_equivalent_normalizes_failed_and_gated() -> None:
@@ -260,10 +283,7 @@ def test_lane_b_downgrade_refreshes_disagreement_for_post_gate_measurement(
     )
     payload = json.loads(body)
     assert payload["status"] == "partial"
-    disagreement = payload["status_authority_disagreement"]
-    assert disagreement is not None
-    assert disagreement["machine_status"] == "partial"
-    assert disagreement["authored_status"] == "partial"
+    assert payload.get("status_authority_disagreement") is None
     assert payload["status_incomplete_class"] == "work"
     assert "land:lane_b_unlanded" in (payload.get("deviations") or [])
     assert resolve_measurement_status_from_wrapper(body) == "partial:work"
@@ -332,6 +352,7 @@ checkpoint_claim: committed deadbeef paths=1
             status="finished",
             duration_ms=100,
             tool_call_count=3,
+            tool_calls=(_passing_pytest_obs(),),
         ),
         degraded_reason=None,
         sidecar_ref=sidecar_workspaces_ref("7070-contaminated-specimen"),
@@ -343,6 +364,13 @@ checkpoint_claim: committed deadbeef paths=1
         source_repo=source_repo,
         cortex_root=cortex_root,
         deliverables_expected=True,
+        verification=[
+            observed_process_verification(
+                command="pytest -q foo.py",
+                exit_code=0,
+                invocation_id="test:7070",
+            )
+        ],
     )
     payload = json.loads(body)
     assert payload["status"] == "complete"

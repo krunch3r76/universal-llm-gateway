@@ -7,8 +7,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from services.git_integration_worker.cursor_auto.admit_report import build_admit_report_body
-from services.git_integration_worker.cursor_auto.continuity_hop import _post_hop_admit_report
+from services.git_integration_worker.cursor_auto.admit_report import (
+    build_admit_report_body,
+)
+from services.git_integration_worker.cursor_auto.continuity_hop import (
+    _post_hop_admit_report,
+)
 from services.git_integration_worker.cursor_auto.field_parity import (
     compute_envelope_parity,
     compute_field_parity_for_job,
@@ -33,7 +37,9 @@ effects_expected: propagation row persisted; restart executed or deferred
 
 
 def test_render_field_parity_line_always_has_status_first() -> None:
-    from services.git_integration_worker.cursor_auto.field_parity import FieldParityReport
+    from services.git_integration_worker.cursor_auto.field_parity import (
+        FieldParityReport,
+    )
 
     line = render_field_parity_line(
         FieldParityReport(status="ok", scope="propagate_row", consumed=2, unknown=1)
@@ -50,7 +56,8 @@ def test_shorthand_propagate_parity_refuses_dropped_effect_fields() -> None:
     )
     assert report.status == "REFUSED"
     assert any("safe_window" in item for item in report.dropped_effect)
-    assert any("allow_self_preempt" in item for item in report.dropped_effect)
+    assert not any("allow_self_preempt" in item for item in report.dropped_effect)
+    assert admission.rows[0].allow_self_preempt is False
 
 
 def test_build_admit_report_body_includes_field_parity_line() -> None:
@@ -189,12 +196,12 @@ async def test_hop_parity_flags_effort_authored_as_prose() -> None:
     assert "desired_effort(authored=xhigh row=medium)" in posted[0]
 
 
-def test_envelope_parity_counts_prose_keys_without_listing_them() -> None:
+def test_envelope_parity_warns_on_unknown_prose_keys() -> None:
     body = "TYPE: DIRECTIVE\narc: 7119\nauthority: operator\ndensity: judgment\n"
     report = compute_envelope_parity(body, {"desired_effort": "medium"})
-    assert report.status == "ok"
+    assert report.status == "WARN"
     assert report.unknown == 3
-    assert report.unknown_tokens == ()
+    assert report.unknown_tokens == ("arc", "authority", "density")
 
 
 def test_envelope_parity_ok_when_prose_agrees_with_live_envelope() -> None:

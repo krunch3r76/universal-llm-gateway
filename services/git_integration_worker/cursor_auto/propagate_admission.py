@@ -31,6 +31,7 @@ from implement_admission.propagation_block_parser import (
 from implement_admission.propagation_row import (
     PropagationRow,
     code_ref_is_version_pin,
+    coerce_allow_self_preempt_flag,
     default_proof,
     default_proof_class,
     default_safe_window,
@@ -40,7 +41,6 @@ from implement_admission.propagation_row import (
 )
 
 from services.git_integration_worker.config import load_config
-
 from services.git_integration_worker.cursor_auto.fix_hints import (
     PROPAGATE_MISSING_FIX_HINT,
     PROPAGATE_SCOPE_FIX_HINT,
@@ -55,6 +55,7 @@ _SCOPE_SYNC_RESTART_RE = re.compile(
 _SERVICE_FIELD_RE = re.compile(r"(?im)^service:\s*([a-z][a-z0-9_]*)")
 _CODE_REF_FIELD_RE = re.compile(r"(?im)^code_ref:\s*(\S+)")
 _EFFECTS_EXPECTED_RE = re.compile(r"(?im)^effects_expected:\s*\S+")
+_ALLOW_SELF_PREEMPT_RE = re.compile(r"(?im)^allow_self_preempt:\s*(\S+)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +124,8 @@ def consumed_keys_from_shorthand(body: str) -> frozenset[str]:
             keys.add("service")
     if _CODE_REF_FIELD_RE.search(body):
         keys.add("code_ref")
+    if _ALLOW_SELF_PREEMPT_RE.search(body):
+        keys.add("allow_self_preempt")
     return frozenset(keys)
 
 
@@ -154,6 +157,10 @@ def _rows_from_shorthand(body: str) -> tuple[PropagationRow, ...]:
         normalize_code_ref(raw_ref), service=service
     )
     proof_class = default_proof_class(service)
+    preempt_match = _ALLOW_SELF_PREEMPT_RE.search(body)
+    allow_self_preempt = coerce_allow_self_preempt_flag(
+        preempt_match.group(1) if preempt_match else None
+    )
     return (
         PropagationRow(
             service=service,
@@ -162,6 +169,7 @@ def _rows_from_shorthand(body: str) -> tuple[PropagationRow, ...]:
             proof_class=proof_class,
             proof=default_proof(service, proof_class),
             reason="operator restart request via cursor-auto",
+            allow_self_preempt=allow_self_preempt,
         ),
     )
 

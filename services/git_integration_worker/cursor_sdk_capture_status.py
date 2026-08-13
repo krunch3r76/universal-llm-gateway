@@ -683,10 +683,36 @@ def _repo_has_shell_entry(manifest: EffectsManifest | None) -> bool:
 
 
 def verification_has_failure(verification: list[Verification] | None) -> bool:
-    """True when any verification row carries a non-zero exit_code."""
+    """True when any verification row *ran and failed*.
+
+    Could-not-run (pytest 2/3/4), vacuous collection (pytest 5), uninterpreted
+    integers, and unattributed compound exits are not failures of a check that
+    ran — they cannot mint ``checks_failed``.
+    """
     if not verification:
         return False
-    return any(item.exit_code != 0 for item in verification)
+    from services.git_integration_worker.cursor_sdk_exit_interpretation import (
+        row_is_failed_check,
+    )
+
+    return any(row_is_failed_check(item) for item in verification)
+
+
+def _observed_row_earns_i2(item: Verification) -> bool:
+    """True when an observed row may credit the I2 SHIPPED short-circuit.
+
+    Standing GIW-subtree F821 is a land/salvage gate packed onto every closeout
+    for audit. A pass on the worker's own tree must not be the agent's green
+    check (arc 7190 — empty agent verification must not ship).
+    """
+    if item.exit_code_register != "observed":
+        return False
+    if item.command.startswith("gate_d:"):
+        return False
+    command = item.command
+    if "--select F821" in command and "services/git_integration_worker/" in command:
+        return False
+    return True
 
 
 def verification_all_pass(verification: list[Verification] | None) -> bool:
@@ -704,24 +730,28 @@ def verification_all_pass(verification: list[Verification] | None) -> bool:
 
     Fail-closed rules:
     - empty list → False
-    - any non-zero exit (observed, derived, unknown, or unattributed) → False
-    - zero exits but no ``observed`` row → False (derived-only / unknown-only)
+    - any blocking exit class (failed / could_not_run / vacuous /
+      uninterpreted / unattributed) → False
+    - passing classes but no ``observed`` row → False (derived-only / unknown-only)
     - clause (c): pytest-class row with register ≠ ``observed`` → False
     """
     if not verification:
         return False
-    if any(item.exit_code != 0 for item in verification):
-        return False
+    from services.git_integration_worker.cursor_sdk_exit_interpretation import (
+        row_blocks_all_pass,
+    )
     from services.git_integration_worker.cursor_sdk_test_observation import (
         is_pytest_command,
     )
 
+    if any(row_blocks_all_pass(item) for item in verification):
+        return False
     for item in verification:
         if item.command.startswith("gate_d:"):
             continue
         if is_pytest_command(item.command) and item.exit_code_register != "observed":
             return False
-    return any(item.exit_code_register == "observed" for item in verification)
+    return any(_observed_row_earns_i2(item) for item in verification)
 
 
 def _is_closeout_receipt_path(path: str) -> bool:
@@ -821,7 +851,8 @@ def resolve_work_outcome(
     (derived / unknown / unattributed / absent register) projects UNVERIFIED
     and cannot be upgraded by positive or vacuous paths. Absence of
     ``exit_code_register`` resolves to ``unknown``, not toward trusting.
-    Empty ``verification[]`` keeps the legacy positive/vacuous ladder.
+    Empty ``verification[]`` cannot ride positive artifacts to SHIPPED
+    (arc 7190 — a verification row never populated is not a green check).
     """
     if degraded_reason and degraded_reason.startswith("run_status="):
         return WorkOutcome.NOT_SHIPPED
@@ -856,8 +887,10 @@ def resolve_work_outcome(
             return WorkOutcome.SHIPPED
         return WorkOutcome.UNVERIFIED
 
+    # Empty verification[] — never SHIPPED. Positive artifacts without a
+    # trusted check are unverified work, not a green suite.
     if positive and not has_failure:
-        return WorkOutcome.SHIPPED
+        return WorkOutcome.UNVERIFIED
 
     if degraded_reason in NO_RUN_DEGRADED_REASONS:
         return WorkOutcome.NOT_SHIPPED
@@ -870,7 +903,7 @@ def resolve_work_outcome(
     if not deliverables_expected:
         if has_failure:
             return WorkOutcome.CHECKS_FAILED
-        return WorkOutcome.SHIPPED
+        return WorkOutcome.UNVERIFIED
     return WorkOutcome.UNVERIFIED
 
 
@@ -1109,6 +1142,3 @@ def resolve_closeout_capture_fields(
     return capture_status, divergence_reason, deviations, manifest
 
 
-from services.git_integration_worker.cursor_auto.closeout_status_polarity import (  # noqa: E402
-    classify_status_incomplete_class,
-)
