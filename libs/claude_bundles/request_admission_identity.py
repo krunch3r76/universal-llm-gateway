@@ -14,6 +14,13 @@ from typing import Any, Literal
 
 from universal_logging import get_logger
 
+from claude_bundles import hop_seat_cutover
+from claude_bundles.hop_cadence_lease_events import emit_identity_bound, emit_lease_lost
+from claude_bundles.hop_seat_cutover import resolve_request_refusal
+from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
+
+logger = get_logger(__name__)
+
 UnresolvableReason = Literal[
     "missing_thread_id",
     "snap_load_failed",
@@ -22,14 +29,6 @@ UnresolvableReason = Literal[
     "ambiguous_matches",
 ]
 GateOutcome = Literal["admit", "reject"]
-
-from claude_bundles import hop_seat_cutover
-from claude_bundles.hop_cadence_lease_events import emit_identity_bound, emit_lease_lost
-from claude_bundles.hop_seat_cutover import resolve_request_refusal
-from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
-
-logger = get_logger(__name__)
-
 IdentitySource = Literal[
     "caller_supplied",
     "origin_cse",
