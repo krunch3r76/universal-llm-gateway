@@ -103,6 +103,13 @@ def test_operator_proxy_mission_seat_map_names_reachable_independent_check() -> 
     assert "prefer `cursor/gpt-5.6-terra` when bindable" not in seat_section
 
 
+def test_briefing_one_operator_cse_per_lane() -> None:
+    out = ensure_operator_proxy_mission_prompt("# Mission\n")
+    assert "One operator CSE per lane" in out
+    assert "predecessors, not peers" in out
+    assert "Never touch operator CSEs on other lanes" in out
+
+
 def test_briefing_receipt_example_parses_d3() -> None:
     out = ensure_operator_proxy_mission_prompt("# Mission\n")
     marker = "```act-receipt"

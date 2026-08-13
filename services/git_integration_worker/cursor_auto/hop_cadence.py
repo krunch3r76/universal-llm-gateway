@@ -74,15 +74,21 @@ def build_cadence_hop_body(
     decision: HopDecision,
     *,
     registration_id: str | None = None,
+    chat_url: str | None = None,
 ) -> str:
     """Author the structural CONTINUITY_HANDOFF body Auto self-enqueues on fire."""
     handoff = decision.handoff or assess_standing_handoff(decision.thread_id)
+    you_are = (chat_url or "").strip() or (
+        "this successor CSE — identity is the chat_url of the Cowork session you are in"
+    )
     lines = [
         "TYPE: CONTINUITY_HANDOFF",
         "contract: light-bounded",
         "source: cursor-auto-hop-cadence",
         f"trigger: {decision.signal or 'watch_seated_at'}",
         f"thread_id: {decision.thread_id}",
+        f"you_are: {you_are}",
+        f"parent_thread: {decision.thread_id}",
         f"cse_age_s: {decision.age_s:.1f}" if decision.age_s is not None else "cse_age_s: unknown",
         f"threshold_s: {decision.threshold_s:.1f}"
         if decision.threshold_s is not None
@@ -100,6 +106,9 @@ def build_cadence_hop_body(
             "Resume as operator-proxy on this private lane.",
             "Read the standing handoff URI above before trusting any wake prose.",
             "This is a CONTINUITY HOP (seat refresh) — do NOT emit MISSION_CLOSEOUT.",
+            "You are the operator CSE on parent_thread above. Identity is chat_url",
+            "(you_are). Extras on this lane are predecessors, not peers.",
+            "Never touch operator CSEs on other lanes.",
             "Arc continues; predecessor wakes must be torn down only after this",
             "successor launch is confirmed.",
             "",
@@ -278,6 +287,7 @@ async def fire_hop_for_decision(
     body = build_cadence_hop_body(
         decision,
         registration_id=str(row.get("registration_id") or "") or None,
+        chat_url=str(row.get("successor_chat_url") or "") or None,
     )
     from_agent = str(row.get("from_agent") or "web-anthropic")
     job = queue.enqueue(

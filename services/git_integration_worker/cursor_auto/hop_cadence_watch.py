@@ -366,6 +366,15 @@ def mark_hop_fired(
             path=path,
         )
         return False
+    if capture.verdict.value == "indeterminate":
+        from services.git_integration_worker.cursor_auto.hop_cadence_events import (
+            emit_binding_indeterminate,
+        )
+
+        emit_binding_indeterminate(
+            thread_id=thread_id,
+            reason=capture.absence_reason or "indeterminate",
+        )
     row.update(capture.as_watch_fields())
     row = record_succession_claim(
         row,

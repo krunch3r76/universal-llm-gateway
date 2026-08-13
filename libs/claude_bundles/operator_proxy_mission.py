@@ -106,6 +106,8 @@ def _build_briefing_block() -> str:
 | **cursor-auto → nested cursor-sdk** | **Executor** — B1 direct nest under Auto lease, or B2 mint+release for tick admit (`nest_under` when gate shared — silence ⇒ stall). Address it as `to="cursor"` via `agent_bus.request`. |
 | **charter-runner** | **Sole launcher** for enrollments — mint+`enroll_rows` belt path; Auto does not improvise tip enqueue |
 
+**One operator CSE per lane (BINDING):** this Cowork session is the operator seat. Identity is this CSE's `chat_url`. Extras on this lane are predecessors, not peers. Never touch operator CSEs on other lanes.
+
 ## Life surface act path (BINDING)
 
 Legal verbs on `/mcp/life` (hand-maintained mirror of `surface_primary_domains.life`; SoT `config/mcp/canonical.yaml`): {_legal_tools_line()}.

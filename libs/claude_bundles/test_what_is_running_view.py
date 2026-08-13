@@ -156,3 +156,55 @@ def test_no_raw_running_access_bypasses_serve_filter() -> None:
 
     assert producer_sites
     assert read_sites
+
+
+def test_compose_view_has_no_timestamp_lane_join() -> None:
+    src = Path(view_mod.__file__).read_text(encoding="utf-8")
+    assert "def lane_from_hop_watches" not in src
+    assert "tolerance_s" not in src
+
+
+def test_compose_view_joins_lane_from_parent_thread() -> None:
+    active = _active_work(
+        rows=[
+            {
+                "execution_id": "exec-a",
+                "registration_id": "reg-1",
+                "holder": "cdp/opus-5",
+                "purpose": "operator-proxy",
+                "status": "running",
+                "parent_thread": "6655",
+            },
+            {
+                "execution_id": "exec-b",
+                "registration_id": "reg-2",
+                "holder": "cdp/opus-5",
+                "purpose": "operator-proxy",
+                "status": "running",
+                "parent_thread": "6655",
+            },
+        ]
+    )
+    registry = {
+        "reg-1": {**_registry()["reg-1"], "parent_thread": "6655"},
+        "reg-2": {
+            "status": "active",
+            "purpose": "operator-proxy",
+            "holder": "cdp/opus-5",
+            "chat_url": "https://claude.ai/cowork/cse_extra",
+            "port": 9228,
+            "parent_thread": "6655",
+        },
+    }
+    view = compose_view(
+        active_work=active,
+        registry=registry,
+        sessions=_sessions(),
+        hop_watches={},
+        sources={"project_ask_url": "http://127.0.0.1:8765"},
+        now=_NOW,
+    )
+    lanes = {r.get("lane") for r in view["running"]}
+    assert lanes == {"6655"}
+    verdicts = {f["verdict"] for f in view["findings"]}
+    assert "OVERLAP" in verdicts

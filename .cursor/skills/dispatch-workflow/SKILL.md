@@ -23,6 +23,10 @@ stamp honest deferral / operator bridge — ¬ call CODE_EXTRA from life.
 
 Read `consult-routing` before consult/review routing. **All recipes in this section = code MCP only.**
 
+Non-mechanical `team_dispatch` (cursor-sdk generate `light-bounded`/`consult`, and
+consult/light-bounded handoff) auto-invokes `reasoning-posture`. Mechanical
+`implement` / `pure-mechanical` skip. Independent of life/operator-proxy.
+
 | Goal | Surface |
 |---|---|
 | Model answer/reasoning | `team_dispatch(op="generate", role=<api_role>, contract=…, dispatch_thread_id=…, model?="provider/model")` |

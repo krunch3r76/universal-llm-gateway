@@ -14,6 +14,7 @@ from claude_bundles.cse_session_obligations import (
     stamp_session_ids,
 )
 from claude_bundles.cse_wake_retain import (
+    discharge_superseded_seat_obligations,
     get_open_wake_owed_for_registration,
     registration_has_wake_debt,
     release_lane_if_debt_cleared,
@@ -214,3 +215,14 @@ def test_release_lane_blocked_by_open_stop_ack_owed(
     )
     assert release_lane_if_debt_cleared("reg-stop", purpose="operator-proxy") is False
     deregister.assert_not_called()
+
+
+def test_discharge_superseded_clears_wake_debt(
+    isolated_obligations: Path,
+) -> None:
+    _seed_wake_debt()
+    assert registration_has_wake_debt("reg-6661") is True
+    assert discharge_superseded_seat_obligations(
+        "reg-6661", successor_registration_id="reg-hop"
+    ) == 1
+    assert registration_has_wake_debt("reg-6661") is False

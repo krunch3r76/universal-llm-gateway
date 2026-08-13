@@ -101,41 +101,6 @@ def lane_for_registration(
     return None
 
 
-def lane_from_hop_watches(
-    watches: dict[str, dict[str, Any]],
-    *,
-    registration_id: str | None,
-    started_at: Any,
-    tolerance_s: float = 60.0,
-) -> str | None:
-    """Resolve lane from hop-cadence watches by registration_id or hop-time proximity.
-
-    Prefer exact ``registration_id`` match; else bind the watch whose
-    ``last_hop_at`` / ``seated_at`` is within ``tolerance_s`` of registry
-    ``started_at`` (hop commissions mint the registration near that stamp).
-    """
-    if registration_id:
-        for thread_id, watch in watches.items():
-            if not isinstance(watch, dict):
-                continue
-            if watch.get("registration_id") == registration_id:
-                return str(watch.get("thread_id") or thread_id)
-    if not isinstance(started_at, (int, float)):
-        return None
-    best: tuple[float, str] | None = None
-    for thread_id, watch in watches.items():
-        if not isinstance(watch, dict):
-            continue
-        for key in ("last_hop_at", "seated_at"):
-            stamp = watch.get(key)
-            if not isinstance(stamp, (int, float)):
-                continue
-            delta = abs(float(started_at) - float(stamp))
-            if delta <= tolerance_s and (best is None or delta < best[0]):
-                best = (delta, str(watch.get("thread_id") or thread_id))
-    return best[1] if best else None
-
-
 def kind_for(purpose: str | None, holder: str | None) -> str:
     """Map purpose/holder into a coarse seat kind for the occupancy table."""
     p = (purpose or "").strip() or "unspecified"
@@ -161,10 +126,11 @@ def compose_view(
 
     Returns a JSON-serializable dict with ``running`` rows, ``scalars_actual``,
     ``intended`` rules, and ``findings`` (OVERLAP / HYGIENE_DRIFT / ALIGNED).
-    Side effects: none.
+    Side effects: none. ``hop_watches`` is accepted for caller compat; lane
+    join is ``parent_thread`` then CSR ``lane_thread`` (no timestamp guess).
     """
     now = time.time() if now is None else now
-    watches = hop_watches or {}
+    _ = hop_watches
     rows_out: list[dict[str, Any]] = []
     for row in active_work.get("rows") or []:
         if not isinstance(row, dict):
@@ -176,10 +142,10 @@ def compose_view(
         purpose_s = purpose if isinstance(purpose, str) else None
         holder_s = holder if isinstance(holder, str) else None
         rid_s = str(rid) if rid else None
-        lane = lane_for_registration(sessions, rid_s) or lane_from_hop_watches(
-            watches,
-            registration_id=rid_s,
-            started_at=reg.get("started_at"),
+        lane = (
+            (str(row.get("parent_thread")).strip() if row.get("parent_thread") else None)
+            or (str(reg.get("parent_thread")).strip() if reg.get("parent_thread") else None)
+            or lane_for_registration(sessions, rid_s)
         )
         row_observed = ts_to_iso_z(now)
         row_expires = ts_to_iso_z(now + DEFAULT_LIVENESS_TTL_S)

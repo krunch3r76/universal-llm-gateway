@@ -250,6 +250,33 @@ async def test_stale_registration_id_proceeds_when_chat_url_unique(
 
 
 @pytest.mark.asyncio
+async def test_same_lane_extra_does_not_block_explicit_holder_chat_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same-lane extras are non-holders; explicit holder chat_url still resolves."""
+    store = ExecutionStore()
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.cdp_registry.list_active",
+        lambda: [_reg("reg-hop"), _reg("reg-old", cdp="http://127.0.0.1:9228")],
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.cdp_registry.chat_url_for_registration",
+        lambda rid: CSE_A if rid == "reg-hop" else CSE_B,
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(return_value=[CSE_A]),
+    )
+    req = FollowupProjectAskRequest(chat_url=CSE_A, prompt_text="x")
+    target, err, path, _binding = await resolve_followup_target(req, store)
+    assert err is None
+    assert target is not None
+    assert target.registration_id == "reg-hop"
+    assert target.chat_url == CSE_A
+    assert path == "chat_url"
+
+
+@pytest.mark.asyncio
 async def test_execution_id_registration_conflict_still_fail_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

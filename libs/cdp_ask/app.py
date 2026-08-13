@@ -183,11 +183,22 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         snap = await execution_store.active_work_snapshot()
         from cdp_ask.lane_admission import purpose_lane_refusal
 
-        refuse, label = purpose_lane_refusal(snap, purpose=req.purpose, unattended=True)
+        refuse, label = purpose_lane_refusal(
+            snap,
+            purpose=req.purpose,
+            unattended=True,
+            hop_succession=(str(req.mission_kind or "").strip().lower() == "hop"),
+            parent_thread=req.parent_thread,
+        )
         if refuse:
             detail = f"cdp lane admission refused ({label or 'hard'})"
             raise HTTPException(status_code=429, detail=detail)
-        record = await execution_store.create(holder=req.holder, purpose=req.purpose)
+        record = await execution_store.create(
+            holder=req.holder,
+            purpose=req.purpose,
+            parent_thread=req.parent_thread,
+            mission_kind=req.mission_kind,
+        )
 
         async def _abort_check() -> bool:
             current = await execution_store.get(record.execution_id)

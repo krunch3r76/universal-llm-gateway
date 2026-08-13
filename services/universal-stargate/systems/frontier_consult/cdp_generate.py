@@ -25,6 +25,7 @@ from claude_bundles.cdp_model_endpoint_staging import (
     stage_cdp_prompt_with_skills,
 )
 from claude_bundles.chat_model_match import compose_cdp_model_with_effort
+from claude_bundles.operator_proxy_mission import is_operator_proxy_mission_purpose
 from model_id import ModelId
 
 from .admission import FrontierEndpointError
@@ -51,6 +52,25 @@ def is_cdp_model(model: str | None) -> bool:
         return ModelId.parse(model).backend_type == "cdp"
     except (TypeError, ValueError):
         return False
+
+
+def default_operator_seat_binding(
+    *,
+    purpose: str,
+    parent_thread: str | None,
+    mission_kind: str | None,
+    thread_id: str,
+) -> tuple[str | None, str | None]:
+    """Default ``parent_thread`` / ``mission_kind`` for operator-proxy purposes.
+
+    ``mission_kind="hop"`` is never overwritten. ``parent_thread`` defaults from
+    the generate ``thread_id`` when omitted.
+    """
+    if not is_operator_proxy_mission_purpose(purpose):
+        return parent_thread, mission_kind
+    lane = parent_thread or str(thread_id)
+    kind = mission_kind or "root"
+    return lane, kind
 
 
 def reject_cursor_sdk_seat_with_cdp(
@@ -323,6 +343,13 @@ async def dispatch_cdp_generate(
         if isinstance(parent_thread_raw, str) and parent_thread_raw.strip()
         else None
     )
+    if is_operator_proxy_mission_purpose(purpose):
+        parent_thread, mission_kind = default_operator_seat_binding(
+            purpose=purpose,
+            parent_thread=parent_thread,
+            mission_kind=mission_kind,
+            thread_id=str(thread_id),
+        )
     opts = getattr(body, "generation_options", None) or {}
     worker_kwargs: dict[str, Any] = {
         "execution_id": execution_id,

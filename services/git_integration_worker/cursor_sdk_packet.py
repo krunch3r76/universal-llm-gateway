@@ -1,4 +1,11 @@
-"""Packet contract/source-ref parsing and prompt preamble assembly (cursor-sdk)."""
+"""Packet contract/source-ref parsing and prompt preamble assembly for cursor-sdk.
+
+Who calls: GIW ``_resolve_prompt`` and Stargate cursor-sdk generate — every
+``team_dispatch(op=generate, seat=cursor-sdk)`` worker, including Auto nested
+POSTs. Not Auto/life-only. Invariant: non-mechanical contracts get a
+``reasoning-posture`` invoke unless the packet already carries one;
+mechanical/quick contracts skip.
+"""
 
 from __future__ import annotations
 
@@ -27,7 +34,7 @@ _DELIVERABLE_ROUTING_PREAMBLE = (
     'order with op="append" to the same path. Verify the final file size afterward '
     "(fs read or list) before reporting the deliverable done.\n\n"
     "CORTEX READ-MODIFY-WRITE (mandatory): when patching an existing cortex:// "
-    "artifact, fs(op=\"read\") first and pass expected_sha256=<read_sha256 from the "
+    'artifact, fs(op="read") first and pass expected_sha256=<read_sha256 from the '
     "read response> on overwrite/replace/append — stale or partial reads fail closed "
     "instead of silently truncating durable binds."
 )
@@ -37,7 +44,7 @@ _BREADTH_RECON_PREAMBLE = (
     "When breadth recon is owed — loci unknown, question spans ≥3 files or an "
     "unfamiliar subsystem, you are about a 2nd speculative Grep/Glob round, or "
     "the packet contract is investigate/light-bounded recon — your default read "
-    "move is Task(subagent_type=\"explore\", …). Explore is the Cursor subagent "
+    'move is Task(subagent_type="explore", …). Explore is the Cursor subagent '
     "(¬ in-seat Grep spray, ¬ a separate tool).\n"
     "Anti-triggers (in-seat Grep/Read OK): loci known (path in hand ∨ one grep "
     "away); you need file contents verbatim because you are about to edit them; "
@@ -71,6 +78,21 @@ _IMPLEMENT_PREAMBLE = (
     "closeout automatically. Produce your result as your final message only."
 )
 
+# Cursor-sdk analog of CDP ``ensure_cdp_judgment_skills`` — prompt invoke, not
+# ``skills=`` mount (cursor-sdk skips skills_mount). Mechanical/quick skip.
+_REASONING_POSTURE_PREAMBLE = (
+    "Use the `reasoning-posture` skill — pin Question/OOS/detent before merits; "
+    "steelman / calibrate / courage; thinking_off does not waive."
+)
+# Keep in lockstep with Stargate ``handoff_reasoning_posture.REASONING_POSTURE_SKIP_CONTRACTS``.
+_REASONING_POSTURE_SKIP_CONTRACTS = frozenset(
+    {"implement", "pure-mechanical", "propagate", "execute", "answer"}
+)
+_REASONING_POSTURE_INVOKE_RE = re.compile(
+    r"Use the `?reasoning-posture`? skill",
+    re.IGNORECASE,
+)
+
 _CONTRACT_FRONTMATTER_RE = re.compile(
     r"^contract:\s*(\S+)\s*$",
     re.IGNORECASE | re.MULTILINE,
@@ -78,6 +100,7 @@ _CONTRACT_FRONTMATTER_RE = re.compile(
 
 
 def infer_contract_from_text(text: str) -> str | None:
+    """Return the ``contract:`` frontmatter token from *text*, or None if absent."""
     match = _CONTRACT_FRONTMATTER_RE.search(text)
     if not match:
         return None
@@ -110,13 +133,24 @@ def extract_source_ref_from_packet(text: str) -> str | None:
     return None
 
 
+def _already_invokes_reasoning_posture(*texts: str | None) -> bool:
+    """True when any text already carries the Cursor invoke cue."""
+    return any(bool(t) and _REASONING_POSTURE_INVOKE_RE.search(t) for t in texts)
+
+
 def resolve_prompt_preamble(
     *,
     handoff_contract: str | None,
     prompt_preamble: str | None,
     inferred_contract: str | None,
     lane: str | None = None,
+    existing_text: str | None = None,
 ) -> str:
+    """Assemble the worker prompt prefix for one cursor-sdk dispatch.
+
+    Non-mechanical contracts get a ``reasoning-posture`` invoke line unless
+    *prompt_preamble* or *existing_text* already carries one (idempotent).
+    """
     contract = (handoff_contract or inferred_contract or "consult").lower()
     if prompt_preamble:
         preamble = prompt_preamble.strip()
@@ -128,6 +162,11 @@ def resolve_prompt_preamble(
     parts = [_DELIVERABLE_ROUTING_PREAMBLE, _BREADTH_RECON_PREAMBLE]
     if lane == "B":
         parts.append(_LANE_B_REPO_EDIT_PREAMBLE)
+    if (
+        contract not in _REASONING_POSTURE_SKIP_CONTRACTS
+        and not _already_invokes_reasoning_posture(prompt_preamble, existing_text)
+    ):
+        parts.append(_REASONING_POSTURE_PREAMBLE)
     if preamble:
         parts.append(preamble.strip())
     return "\n\n".join(parts) + "\n\n"

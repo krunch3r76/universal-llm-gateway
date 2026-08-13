@@ -146,7 +146,7 @@ Required: `active_project_tag`, `cortex_brief_confirmed: true`, `related_thread_
 
 ### Block 2 `<invariants>` skill refs
 
-ULG code consults: include `architecture-invariants`, `ulg-architecture`, `docstring-quality`. Minimum web set:
+ULG code consults: include `reasoning-posture`, `architecture-invariants`, `ulg-architecture`, `docstring-quality`. Minimum web set:
 `lead-seat-boot` or `cortex_brief_confirmed`; `life-handoff-corpus`; `consult-routing` when implement-ready possible;
 ≥1 task-class skill; all `required_skills`.
 

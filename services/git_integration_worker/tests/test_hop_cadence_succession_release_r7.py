@@ -109,7 +109,6 @@ def _idle_streak_for_abort() -> int:
     ("bit", "reason"),
     [
         ("streaming", "predecessor_streaming"),
-        ("stop", "predecessor_stop"),
         ("tool_pause", "predecessor_tool_pause"),
     ],
 )
@@ -129,10 +128,35 @@ def test_predecessor_in_flight_idle_running() -> None:
     assert reason is None
 
 
+def test_predecessor_in_flight_stop_without_streaming_is_retain_idle() -> None:
+    mid, reason = predecessor_in_flight(_poll(stop=True, streaming=False))
+    assert mid is False
+    assert reason is None
+
+
+def test_predecessor_in_flight_streaming_with_stop_stays_protected() -> None:
+    mid, reason = predecessor_in_flight(_poll(stop=True, streaming=True))
+    assert mid is True
+    assert reason == "predecessor_streaming"
+
+
 def test_release_skipped_for_first_seat_verdict() -> None:
     result = release_superseded_on_confirm(_handle(verdict=PredecessorVerdict.FIRST_SEAT_ON_LANE))
     assert result["action"] == "skipped"
     assert result["reason"] == "verdict_first_seat_on_lane"
+
+
+def test_release_skipped_for_indeterminate_verdict() -> None:
+    result = release_superseded_on_confirm(
+        PredecessorHandle(
+            registration_id=PRIOR_NONE_REGISTRATION,
+            execution_id=PRIOR_NONE_EXECUTION,
+            verdict=PredecessorVerdict.INDETERMINATE,
+            absence_reason="empty_watch_no_lane_incumbent",
+        )
+    )
+    assert result["action"] == "skipped"
+    assert result["reason"] == "verdict_indeterminate"
 
 
 def test_release_skipped_for_lookup_failed_verdict() -> None:
@@ -201,7 +225,6 @@ def test_release_unrecognised_abort_outcome_fails_toward_error() -> None:
     ("bit", "reason"),
     [
         ("streaming", "predecessor_streaming"),
-        ("stop", "predecessor_stop"),
         ("tool_pause", "predecessor_tool_pause"),
     ],
 )
@@ -216,6 +239,17 @@ def test_release_deferred_mid_turn_each_bit(bit: str, reason: str) -> None:
     assert result["reason"] == reason
     assert result["idle_streak"] == 0
     client.abort.assert_not_called()
+
+
+def test_release_stop_without_streaming_is_releasable_after_idle_streak() -> None:
+    client = _client(poll=_poll(stop=True, streaming=False))
+    result = release_superseded_on_confirm(
+        _handle(),
+        client=client,
+        idle_streak=_idle_streak_for_abort(),
+    )
+    assert result["action"] == "terminalized"
+    client.abort.assert_called_once_with(_INCUMBENT_EXEC)
 
 
 def test_release_deferred_when_idle_streak_not_yet_satisfied() -> None:
@@ -295,6 +329,9 @@ def _reconcile_patches(watches: dict[str, Any]):
         ),
         patch(
             "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_registration_advanced",
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_seat_rebound",
         ),
     )
 
@@ -425,9 +462,12 @@ def test_obligation_reaches_failed_after_max_retries() -> None:
     assert watches["6885"]["release_obligation"]["failure_reason"] == "max_retries_exhausted"
 
 
-def test_reconcile_skips_release_for_first_seat_verdict() -> None:
+def test_reconcile_legacy_first_seat_releases_non_holders() -> None:
+    """Legacy FIRST_SEAT watch is INDETERMINATE; same-lane extras still release."""
     snap = _snap_three_operator_proxy()
-    watches = {
+    for row in snap["rows"]:
+        row["parent_thread"] = "6885"
+        watches = {
         "6885": {
             **_watch_incumbent(registration_id="reg-old"),
             "superseded_registration_id": PRIOR_NONE_REGISTRATION,
@@ -435,17 +475,27 @@ def test_reconcile_skips_release_for_first_seat_verdict() -> None:
             "predecessor_verdict": PredecessorVerdict.FIRST_SEAT_ON_LANE.value,
         }
     }
+    released: list[str] = []
+
+    def _release(handle: PredecessorHandle, idle_streak: int = 0) -> dict[str, Any]:
+        if handle.verdict != PredecessorVerdict.INCUMBENT_RECORDED:
+            return {"action": "skipped", "reason": f"verdict_{handle.verdict.value}"}
+        released.append(handle.execution_id)
+        return {"action": "terminalized", "execution_id": handle.execution_id}
 
     with _enter_reconcile_patches(watches):
         result = reconcile_succession_confirmations(
             snapshot_reader=lambda: snap,
-            release_fn=release_superseded_on_confirm,
+            release_fn=_release,
         )
 
     assert len(result["confirmations"]) == 1
     assert result["releases"][0]["action"] == "skipped"
-    assert result["releases"][0]["reason"] == "verdict_first_seat_on_lane"
-    assert snap["admission_count"] == 3
+    assert result["releases"][0]["reason"] == "verdict_indeterminate"
+    assert _INCUMBENT_EXEC in released
+    assert _OTHER_A in released
+    assert _OTHER_B in released
+    assert _SUCCESSOR_EXEC not in released
 
 
 def test_invariant8_three_rows_one_superseded_ends_at_two(tmp_path: Path) -> None:

@@ -38,6 +38,17 @@ def test_packet_preamble_includes_breadth_recon_block() -> None:
     assert "BREADTH RECON — EXPLORE DEFAULT" in preamble
     assert 'Task(subagent_type="explore"' in preamble
     assert "recon_method:" in preamble
+    assert "reasoning-posture" not in preamble
+
+
+def test_packet_preamble_light_bounded_includes_reasoning_posture() -> None:
+    preamble = resolve_prompt_preamble(
+        handoff_contract="light-bounded",
+        prompt_preamble=None,
+        inferred_contract=None,
+    )
+    assert "BREADTH RECON — EXPLORE DEFAULT" in preamble
+    assert "Use the `reasoning-posture` skill" in preamble
 
 
 @pytest.mark.parametrize(

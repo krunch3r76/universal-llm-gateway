@@ -29,6 +29,7 @@ from universal_logging import get_logger
 from services.git_integration_worker.cursor_auto.hop_cadence_events import (
     emit_registration_advanced,
     emit_revoke_breaker,
+    emit_seat_rebound,
     emit_succession_confirmed,
     emit_succession_revoked,
 )
@@ -36,6 +37,7 @@ from services.git_integration_worker.cursor_auto.hop_cadence_predecessor import 
     PredecessorConfirmError,
     PredecessorHandle,
     PredecessorVerdict,
+    non_holder_handles,
     prior_registration_for_confirm,
     predecessor_for_confirm,
 )
@@ -578,16 +580,30 @@ def reconcile_succession_confirmations(
             prior_registration_id=prior_reg,
             superseded_execution_id=superseded_exec,
         )
-        release_outcome = release(handle)
+        release_outcome = _call_release(release, handle)
         releases.append({"thread_id": thread_id, **release_outcome})
         updated = apply_release_outcome_to_row(updated, handle, release_outcome, now=ts)
         watches[thread_id] = updated
+        holder_exec = str((aw_row or {}).get("execution_id") or matched_key)
+        for extra in non_holder_handles(
+            snap, thread_id=thread_id, holder_execution_id=holder_exec
+        ):
+            if extra.execution_id == handle.execution_id:
+                continue
+            extra_outcome = _call_release(release, extra)
+            releases.append({"thread_id": thread_id, **extra_outcome})
         if new_reg:
             emit_registration_advanced(
                 thread_id=thread_id,
                 prior_registration_id=prior_reg,
                 new_registration_id=new_reg,
                 superseding_execution_id=matched_key,
+                superseded_execution_id=superseded_exec,
+            )
+            emit_seat_rebound(
+                thread_id=thread_id,
+                prior_registration_id=prior_reg,
+                new_registration_id=new_reg,
                 superseded_execution_id=superseded_exec,
             )
         confirmations.append(

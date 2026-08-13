@@ -9,7 +9,6 @@ import pytest
 from cdp_ask.lane_admission import (
     ADVISOR_RESERVE,
     LANE_HARD_LIMIT,
-    SEAT_HARD,
     admission_regime,
     count_by_purpose_class,
     effective_abs_hard,
@@ -210,6 +209,69 @@ def test_purpose_lane_refusal_blocks_seat_at_cap() -> None:
     )
     assert refuse is True
     assert label == "seat_cap"
+
+
+def test_purpose_lane_refusal_wires_hop_succession() -> None:
+    rows = [_row("operator-proxy") for _ in range(2)]
+    snap = _snap(rows)
+    refuse, label = purpose_lane_refusal(
+        snap, purpose="operator-proxy", unattended=True, hop_succession=True
+    )
+    assert refuse is False
+    assert label is None
+
+
+def test_same_lane_seat_cap_refuses_second_holder() -> None:
+    rows = [
+        {**_row("operator-proxy"), "parent_thread": "6655", "execution_id": "a"},
+    ]
+    snap = _snap(rows)
+    refuse, label = purpose_lane_refusal(
+        snap, purpose="operator-proxy", parent_thread="6655"
+    )
+    assert refuse is True
+    assert label == "seat_cap"
+
+
+def test_same_lane_hop_overlap_admits_one_successor() -> None:
+    rows = [
+        {**_row("operator-proxy"), "parent_thread": "6655", "execution_id": "a"},
+    ]
+    snap = _snap(rows)
+    refuse, label = purpose_lane_refusal(
+        snap,
+        purpose="operator-proxy",
+        parent_thread="6655",
+        hop_succession=True,
+    )
+    assert refuse is False
+    assert label is None
+
+
+def test_same_lane_hop_refuses_third() -> None:
+    rows = [
+        {**_row("operator-proxy"), "parent_thread": "6655", "execution_id": "a"},
+        {**_row("operator-proxy"), "parent_thread": "6655", "execution_id": "b"},
+    ]
+    snap = _snap(rows)
+    refuse, label = purpose_lane_refusal(
+        snap,
+        purpose="operator-proxy",
+        parent_thread="6655",
+        hop_succession=True,
+    )
+    assert refuse is True
+    assert label == "seat_cap"
+
+
+def test_unbound_legacy_row_skips_same_lane_cap() -> None:
+    rows = [_row("operator-proxy")]
+    snap = _snap(rows)
+    refuse, label = purpose_lane_refusal(
+        snap, purpose="operator-proxy", parent_thread="6655"
+    )
+    assert refuse is False
+    assert label is None
 
 
 def test_effective_abs_hard_raises_by_exactly_reserve() -> None:

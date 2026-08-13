@@ -3,12 +3,12 @@
 On ``giw.cursor_auto.hop_cadence_succession_confirmed`` with
 ``incumbent_recorded``, terminalize the recorded predecessor execution via the
 cdp-ask satellite so ``admission_count`` decrements. Non-incumbent verdicts and
-mid-turn predecessors (streaming / stop / tool_pause) are skipped or deferred —
+mid-turn predecessors (streaming / tool_pause) are skipped or deferred —
 never silently dropped.
 
-Interim widen gate (until running split lands): refuse on the full page-liveness
-in-flight OR ``streaming ∨ stop ∨ tool_pause``, and require a sustained idle
-streak across consecutive reconcile samples before calling abort.
+Running split: in-flight ⇔ ``status ∈ {pending,running}`` ∧
+(``streaming`` ∨ ``tool_pause``). ``stop=true`` ∧ ¬streaming is retain-idle
+and is releasable after the idle streak.
 """
 
 from __future__ import annotations
@@ -18,6 +18,9 @@ from typing import Any
 from cdp_ask.client import CdpAskClient, CdpAskClientError
 from universal_logging import get_logger
 
+from services.git_integration_worker.cursor_auto.hop_cadence_events import (
+    emit_release_deferred,
+)
 from services.git_integration_worker.cursor_auto.hop_cadence_predecessor import (
     PredecessorHandle,
     PredecessorVerdict,
@@ -27,21 +30,22 @@ logger = get_logger(__name__)
 
 _ACTIVE_STATUSES = frozenset({"pending", "running"})
 
-# Interim idle-streak gate — running split is the real closer; until then require
-# consecutive idle samples (~2s harvest cadence × 3 samples ≈ 6s window).
+# Consecutive idle samples (~2s harvest cadence × 3 samples ≈ 6s window).
 RELEASE_IDLE_STREAK_REQUIRED = 3
 RELEASE_IDLE_SAMPLE_WINDOW_S = 2.0
 
 
 def predecessor_in_flight(poll: dict[str, Any]) -> tuple[bool, str | None]:
-    """Return ``(in_flight, reason)`` when poll shows an active mid-turn predecessor."""
+    """Return ``(in_flight, reason)`` when poll shows an active mid-turn predecessor.
+
+    Retain-idle (``stop=true`` ∧ ¬streaming) is not in-flight — the Cowork turn
+    ended; Stop chrome is visible. Streaming with stop still set stays protected.
+    """
     status = str(poll.get("status") or "")
     if status not in _ACTIVE_STATUSES:
         return False, None
     if poll.get("streaming"):
         return True, "predecessor_streaming"
-    if poll.get("stop"):
-        return True, "predecessor_stop"
     if poll.get("tool_pause"):
         return True, "predecessor_tool_pause"
     return False, None
@@ -90,6 +94,11 @@ def release_superseded_on_confirm(
 
     in_flight, defer_reason = predecessor_in_flight(poll)
     if in_flight:
+        emit_release_deferred(
+            execution_id=exec_id,
+            reason=defer_reason or "predecessor_in_flight",
+            idle_streak=0,
+        )
         logger.info(
             "hop_cadence succession release deferred exec=%s reason=%s",
             exec_id,
@@ -105,6 +114,11 @@ def release_superseded_on_confirm(
 
     new_streak = idle_streak + 1
     if new_streak < RELEASE_IDLE_STREAK_REQUIRED:
+        emit_release_deferred(
+            execution_id=exec_id,
+            reason="predecessor_idle_streak_unsatisfied",
+            idle_streak=new_streak,
+        )
         logger.info(
             "hop_cadence succession release deferred exec=%s reason=predecessor_idle_streak_unsatisfied streak=%d/%d",
             exec_id,

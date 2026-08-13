@@ -138,12 +138,50 @@ def test_enrich_injects_handoff_packet_authoring_by_default() -> None:
     assert "`handoff-packet-authoring`" in result.text
 
 
+def test_enrich_injects_reasoning_posture_on_consult() -> None:
+    cortex = _StubCortex()
+    result = enrich_handoff_packet(_THIN_WEB_PACKET, cortex=cortex)
+    assert "reasoning-posture" in result.skills_added
+    assert "`reasoning-posture`" in result.text
+
+
+def test_enrich_injects_reasoning_posture_from_route_contract() -> None:
+    """Route-derived contract wins when the packet omits frontmatter contract."""
+    packet = _THIN_WEB_PACKET.replace("contract: consult\n", "")
+    cortex = _StubCortex()
+    skipped = enrich_handoff_packet(packet, cortex=cortex)
+    assert "reasoning-posture" not in skipped.skills_added
+    injected = enrich_handoff_packet(
+        packet, cortex=cortex, handoff_contract="light-bounded"
+    )
+    assert "reasoning-posture" in injected.skills_added
+
+
+def test_enrich_skips_reasoning_posture_on_implement() -> None:
+    packet = _THIN_WEB_PACKET.replace("contract: consult", "contract: implement")
+    cortex = _StubCortex()
+    result = enrich_handoff_packet(packet, cortex=cortex)
+    assert "reasoning-posture" not in result.skills_added
+    assert "reasoning-posture" not in result.skills_already_wired
+    routed = enrich_handoff_packet(
+        packet.replace("contract: implement\n", ""),
+        cortex=cortex,
+        handoff_contract="implement",
+    )
+    assert "reasoning-posture" not in routed.skills_added
+
+
 def test_enrich_reports_already_wired_not_readded() -> None:
     """Pre-existing slug lines land in skills_already_wired, not skills_added."""
     cortex = _StubCortex()
     first = enrich_handoff_packet(_THIN_WEB_PACKET, cortex=cortex)
     second = enrich_handoff_packet(first.text, cortex=cortex)
-    for slug in ("lead-seat-boot", "consult-routing", "handoff-packet-authoring"):
+    for slug in (
+        "lead-seat-boot",
+        "consult-routing",
+        "handoff-packet-authoring",
+        "reasoning-posture",
+    ):
         assert slug in second.skills_already_wired
         assert slug not in second.skills_added
     assert not second.changed

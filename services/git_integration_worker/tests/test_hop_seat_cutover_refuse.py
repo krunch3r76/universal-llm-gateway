@@ -189,6 +189,8 @@ def test_build_cadence_hop_body_superseded_registration_id_line():
     body = build_cadence_hop_body(decision, registration_id="reg-incumbent")
     lines = body.splitlines()
     assert any(line == "superseded_registration_id: reg-incumbent" for line in lines)
+    assert any(line == "parent_thread: 6885" for line in lines)
+    assert any(line.startswith("you_are:") for line in lines)
     assert not any(line.startswith("registration_id:") for line in lines)
 
 

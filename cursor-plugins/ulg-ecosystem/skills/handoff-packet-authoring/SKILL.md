@@ -87,7 +87,7 @@ Web-anthropic: `inline_authoritative` (full body + sha256) **or** verified serve
 | # | Block | Holds |
 |---|---|---|
 | 1 | `<scope>` | target, path, selection mode |
-| 2 | `<invariants>` | rules; skill refs + ≤15 task lines |
+| 2 | `<invariants>` | rules; skill refs + ≤15 task lines. Consult / light-bounded: include `reasoning-posture` (enrich auto-inserts if omitted). |
 | 3 | `<task_guidance>` | work; **acceptance** for implement |
 | 4 | `<corpus>` | pointers |
 | 5 | `<mcp_capabilities>` | life-on/code-off or code plan |

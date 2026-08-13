@@ -222,6 +222,166 @@ def emit_registration_advanced(
     )
 
 
+@event_factory
+def GiwCursorAutoHopCadenceReleaseDeferred(  # noqa: N802
+    execution_id: str,
+    reason: str,
+    idle_streak: int,
+    thread_id: str = "",
+) -> Event:
+    """Succession release refused this tick; reason is the running-split or idle-streak gate."""
+    return Event(
+        signal="giw.cursor_auto.hop_cadence_release_deferred",
+        payload={
+            "thread_id": thread_id,
+            "execution_id": execution_id,
+            "reason": reason,
+            "idle_streak": idle_streak,
+        },
+        scope="node",
+        role="observation",
+    )
+
+
+def emit_release_deferred(
+    *,
+    execution_id: str,
+    reason: str,
+    idle_streak: int,
+    thread_id: str = "",
+) -> None:
+    """Emit ``giw.cursor_auto.hop_cadence_release_deferred`` when abort is refused."""
+    emit_frontier_event(
+        GiwCursorAutoHopCadenceReleaseDeferred(
+            execution_id=execution_id,
+            reason=reason,
+            idle_streak=idle_streak,
+            thread_id=thread_id,
+        )
+    )
+    logger.info(
+        "hop_cadence release_deferred exec=%s reason=%s idle_streak=%s",
+        execution_id,
+        reason,
+        idle_streak,
+    )
+
+
+@event_factory
+def GiwCursorAutoHopCadenceBindingIndeterminate(  # noqa: N802
+    thread_id: str,
+    reason: str,
+) -> Event:
+    """Predecessor binding could not be resolved; not a first-seat claim."""
+    return Event(
+        signal="giw.cursor_auto.hop_cadence_binding_indeterminate",
+        payload={"thread_id": thread_id, "reason": reason},
+        scope="node",
+        role="observation",
+    )
+
+
+@event_factory
+def GiwCursorAutoHopCadenceSeatRebound(  # noqa: N802
+    thread_id: str,
+    prior_registration_id: str,
+    new_registration_id: str,
+    superseded_execution_id: str,
+) -> Event:
+    """Seat holder on a lane rebound to the successor registration."""
+    return Event(
+        signal="giw.cursor_auto.hop_cadence_seat_rebound",
+        payload={
+            "thread_id": thread_id,
+            "prior_registration_id": prior_registration_id,
+            "new_registration_id": new_registration_id,
+            "superseded_execution_id": superseded_execution_id,
+        },
+        scope="node",
+        role="observation",
+    )
+
+
+def emit_binding_indeterminate(*, thread_id: str, reason: str) -> None:
+    """Emit ``giw.cursor_auto.hop_cadence_binding_indeterminate``."""
+    emit_frontier_event(
+        GiwCursorAutoHopCadenceBindingIndeterminate(thread_id=thread_id, reason=reason)
+    )
+    logger.warning(
+        "hop_cadence binding_indeterminate thread=%s reason=%s",
+        thread_id,
+        reason,
+    )
+
+
+def emit_seat_rebound(
+    *,
+    thread_id: str,
+    prior_registration_id: str,
+    new_registration_id: str,
+    superseded_execution_id: str,
+) -> None:
+    """Emit ``giw.cursor_auto.hop_cadence_seat_rebound`` after holder advances."""
+    emit_frontier_event(
+        GiwCursorAutoHopCadenceSeatRebound(
+            thread_id=thread_id,
+            prior_registration_id=prior_registration_id,
+            new_registration_id=new_registration_id,
+            superseded_execution_id=superseded_execution_id,
+        )
+    )
+    logger.info(
+        "hop_cadence seat_rebound thread=%s prior=%s new=%s superseded_exec=%s",
+        thread_id,
+        prior_registration_id,
+        new_registration_id,
+        superseded_execution_id,
+    )
+    prior = (prior_registration_id or "").strip()
+    if prior and not prior.startswith("__none:"):
+        try:
+            from claude_bundles.cse_wake_retain import (
+                discharge_superseded_seat_obligations,
+            )
+
+            discharge_superseded_seat_obligations(
+                prior,
+                successor_registration_id=new_registration_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — rebind must not crash cadence
+            logger.warning(
+                "hop_cadence seat_rebound obligation discharge failed prior=%s: %s",
+                prior,
+                exc,
+            )
+
+
+@event_factory
+def GiwCursorAutoHopCadenceOverlap(  # noqa: N802
+    lane: str,
+    execution_ids: list[str],
+) -> Event:
+    """≥2 operator-purpose streams on one recorded lane (census OVERLAP)."""
+    return Event(
+        signal="giw.cursor_auto.hop_cadence_overlap",
+        payload={"lane": lane, "execution_ids": execution_ids},
+        scope="node",
+        role="observation",
+    )
+
+
+def emit_overlap(*, lane: str, execution_ids: list[str]) -> None:
+    """Emit ``giw.cursor_auto.hop_cadence_overlap`` for a census OVERLAP finding."""
+    emit_frontier_event(
+        GiwCursorAutoHopCadenceOverlap(lane=lane, execution_ids=execution_ids)
+    )
+    logger.warning(
+        "hop_cadence overlap lane=%s execution_ids=%s",
+        lane,
+        execution_ids,
+    )
+
+
 def emit_cadence_refuse(
     *,
     thread_id: str,
@@ -248,9 +408,13 @@ def emit_cadence_refuse(
 
 
 __all__ = [
+    "emit_binding_indeterminate",
     "emit_cadence_refuse",
+    "emit_overlap",
     "emit_registration_advanced",
+    "emit_release_deferred",
     "emit_revoke_breaker",
+    "emit_seat_rebound",
     "emit_succession_confirmed",
     "emit_succession_revoked",
 ]

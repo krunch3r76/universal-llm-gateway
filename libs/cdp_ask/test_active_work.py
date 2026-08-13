@@ -33,6 +33,8 @@ def _row(
     cdp_url: str | None = None,
     chat_url: str | None = None,
     source: str | None = None,
+    parent_thread: str | None = None,
+    mission_kind: str | None = None,
 ) -> dict[str, object]:
     return {
         "execution_id": execution_id,
@@ -43,6 +45,8 @@ def _row(
         "cdp_url": cdp_url,
         "chat_url": chat_url,
         "source": source,
+        "parent_thread": parent_thread,
+        "mission_kind": mission_kind,
     }
 
 
@@ -358,3 +362,72 @@ async def test_active_work_row_registry_projection(
     assert row["cdp_url"] == "http://127.0.0.1:9223"
     assert row["chat_url"] == chat
     assert row["source"] == "cse-session-registry"
+
+
+@pytest.mark.asyncio
+async def test_active_work_snapshot_projects_parent_thread_from_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "claude_bundles.cdp_orphans.probe_live_ports",
+        lambda port_range=None: [],
+    )
+    store = ExecutionStore()
+    record = await store.create(
+        holder="test",
+        purpose="operator-proxy",
+        parent_thread="6655",
+        mission_kind="hop",
+    )
+    snap = await store.active_work_snapshot()
+    row = snap["rows"][0]
+    assert row["parent_thread"] == "6655"
+    assert row["mission_kind"] == "hop"
+
+
+@pytest.mark.asyncio
+async def test_active_work_snapshot_projects_parent_thread_from_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import dataclass
+    from pathlib import Path
+
+    @dataclass
+    class _Reg:
+        registration_id: str
+        port: int
+        profile_suffix: str
+        profile: Path
+        cdp_url: str
+        holder: str
+        purpose: str | None = None
+        parent_thread: str | None = None
+        mission_kind: str | None = None
+
+    reg = _Reg(
+        registration_id="reg-bind",
+        port=9228,
+        profile_suffix="s",
+        profile=Path("/tmp/p"),
+        cdp_url="http://127.0.0.1:9228",
+        holder="h",
+        purpose="operator-proxy",
+        parent_thread="6655",
+        mission_kind="root",
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_orphans.probe_live_ports",
+        lambda port_range=None: [],
+    )
+    monkeypatch.setattr("claude_bundles.cdp_registry.list_active", lambda: [reg])
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.chat_url_for_registration",
+        lambda rid: None,
+    )
+    store = ExecutionStore()
+    record = await store.create(holder="test", purpose="operator-proxy")
+    await store.set_registration_id(record.execution_id, "reg-bind")
+    snap = await store.active_work_snapshot()
+    row = snap["rows"][0]
+    assert row["parent_thread"] == "6655"
+    assert row["mission_kind"] == "root"

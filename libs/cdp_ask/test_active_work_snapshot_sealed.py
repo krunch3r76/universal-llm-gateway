@@ -120,6 +120,8 @@ async def test_sealed_snapshot_wire_identical_for_qualified_fields(
                 "cdp_url": None,
                 "chat_url": None,
                 "source": None,
+                "parent_thread": None,
+                "mission_kind": None,
             }
         ],
     )

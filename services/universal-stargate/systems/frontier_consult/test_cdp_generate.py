@@ -562,6 +562,45 @@ def test_team_dispatch_generate_body_purpose_optional() -> None:
     assert body.purpose is None
 
 
+def test_default_operator_seat_binding_from_thread_id() -> None:
+    from systems.frontier_consult.cdp_generate import default_operator_seat_binding
+
+    lane, kind = default_operator_seat_binding(
+        purpose="operator-proxy",
+        parent_thread=None,
+        mission_kind=None,
+        thread_id="6655",
+    )
+    assert lane == "6655"
+    assert kind == "root"
+
+
+def test_default_operator_seat_binding_preserves_hop() -> None:
+    from systems.frontier_consult.cdp_generate import default_operator_seat_binding
+
+    lane, kind = default_operator_seat_binding(
+        purpose="operator-proxy",
+        parent_thread="6655",
+        mission_kind="hop",
+        thread_id="other",
+    )
+    assert lane == "6655"
+    assert kind == "hop"
+
+
+def test_default_operator_seat_binding_skips_ask() -> None:
+    from systems.frontier_consult.cdp_generate import default_operator_seat_binding
+
+    lane, kind = default_operator_seat_binding(
+        purpose="ask",
+        parent_thread=None,
+        mission_kind=None,
+        thread_id="6655",
+    )
+    assert lane is None
+    assert kind is None
+
+
 @pytest.mark.asyncio
 async def test_dispatch_cdp_generate_forwards_generation_options(
     monkeypatch: pytest.MonkeyPatch, tmp_path

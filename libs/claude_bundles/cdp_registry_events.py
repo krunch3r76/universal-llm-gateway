@@ -196,6 +196,38 @@ def cdp_wake_alarm_fired(
     )
 
 
+@event_factory
+def cdp_seat_superseded(
+    *,
+    outgoing_registration_id: str,
+    successor_registration_id: str | None,
+    reason: str,
+) -> Event:
+    """Rebind closed open wake_owed / stop_ack_owed on the outgoing registration."""
+    return Event(
+        signal="cdp.seat.superseded",
+        role="coordination",
+        scope="node",
+        payload={
+            "outgoing_registration_id": outgoing_registration_id,
+            "successor_registration_id": successor_registration_id,
+            "reason": reason,
+            "registration_id": outgoing_registration_id,
+        },
+    )
+
+
+@event_factory
+def cdp_occupancy_overlap(*, lane: str, execution_ids: list[str]) -> Event:
+    """Census OVERLAP: ≥2 operator-purpose streams on one recorded lane."""
+    return Event(
+        signal="cdp.occupancy.overlap",
+        role="observation",
+        scope="node",
+        payload={"lane": lane, "execution_ids": execution_ids},
+    )
+
+
 def _payload(reg: Registration) -> dict:
     return {
         "registration_id": reg.registration_id,

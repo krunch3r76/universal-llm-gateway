@@ -102,6 +102,35 @@ def publish_cortex(view: dict[str, Any]) -> Path:
     return dest
 
 
+def _emit_overlap_findings(view: dict[str, Any]) -> None:
+    """Promote OVERLAP findings to an emitted signal (compose_view stays pure)."""
+    if str(_REPO) not in sys.path:
+        sys.path.insert(0, str(_REPO))
+    findings = [
+        f for f in (view.get("findings") or []) if f.get("verdict") == "OVERLAP"
+    ]
+    if not findings:
+        return
+    try:
+        from claude_bundles.cdp_registry_events import cdp_occupancy_overlap, emit
+    except Exception:
+        emit = None  # type: ignore[assignment]
+        cdp_occupancy_overlap = None  # type: ignore[assignment]
+    try:
+        from services.git_integration_worker.cursor_auto.hop_cadence_events import (
+            emit_overlap,
+        )
+    except Exception:
+        emit_overlap = None  # type: ignore[assignment]
+    for finding in findings:
+        lane = str(finding.get("lane") or "")
+        execs = [str(x) for x in (finding.get("execution_ids") or [])]
+        if emit_overlap is not None:
+            emit_overlap(lane=lane, execution_ids=execs)
+        if emit is not None and cdp_occupancy_overlap is not None:
+            emit(cdp_occupancy_overlap(lane=lane, execution_ids=execs))
+
+
 def build_from_env(
     *,
     project_ask_url: str | None = None,
@@ -173,6 +202,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.publish:
         path = publish_cortex(view)
         print(f"published {SNAPSHOT_URI} path={path}", file=sys.stderr)
+        _emit_overlap_findings(view)
     served = serve_view(view)
     if args.json:
         print(json.dumps(served, indent=2, sort_keys=True))

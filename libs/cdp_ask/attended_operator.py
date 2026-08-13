@@ -79,19 +79,46 @@ def _port_from_cdp_url(cdp_url: str) -> int | None:
     return None
 
 
+def _holder_key(lane: Any) -> str:
+    """Lane key for holder collapse: ``parent_thread`` or unbound registration."""
+    thread = str(getattr(lane, "parent_thread", None) or "").strip()
+    if thread:
+        return f"lane:{thread}"
+    return f"unbound:{getattr(lane, 'registration_id', '')}"
+
+
+def _is_better_holder(new: Any, old: Any) -> bool:
+    """Prefer hop successor, else later ``started_at``."""
+    new_kind = str(getattr(new, "mission_kind", None) or "")
+    old_kind = str(getattr(old, "mission_kind", None) or "")
+    if new_kind == "hop" and old_kind != "hop":
+        return True
+    if old_kind == "hop" and new_kind != "hop":
+        return False
+    return float(getattr(new, "started_at", 0) or 0) >= float(
+        getattr(old, "started_at", 0) or 0
+    )
+
+
 def _mission_candidates() -> tuple[list[AttendedCandidate], int]:
-    """Build purpose-filtered registry candidates with bound chat_url."""
+    """Build purpose-filtered registry candidates collapsed to one holder per lane."""
     lanes = list(cdp_registry.list_active())
     purpose_filtered = [
         lane
         for lane in lanes
         if (lane.purpose or "").strip() in OPERATOR_PROXY_MISSION_PURPOSES
     ]
-    candidates: list[AttendedCandidate] = []
+    holders: dict[str, Any] = {}
     for lane in purpose_filtered:
         chat_url = cdp_registry.chat_url_for_registration(lane.registration_id)
         if not chat_url:
             continue
+        key = _holder_key(lane)
+        prev = holders.get(key)
+        if prev is None or _is_better_holder(lane, prev[0]):
+            holders[key] = (lane, chat_url)
+    candidates: list[AttendedCandidate] = []
+    for lane, chat_url in holders.values():
         purpose = (lane.purpose or "").strip()
         candidates.append(
             AttendedCandidate(

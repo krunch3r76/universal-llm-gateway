@@ -21,6 +21,7 @@ from claude_bundles.cse_session_fold import (
 from claude_bundles.cse_session_obligations import get_open_wake_owed
 
 __all__ = [
+    "discharge_superseded_seat_obligations",
     "get_open_wake_owed_for_registration",
     "registration_has_wake_debt",
     "release_lane_if_debt_cleared",
@@ -124,3 +125,50 @@ def release_lane_if_debt_cleared(
             deregister_on_exit(reg, purpose=purpose or reg.purpose)
             return True
     return False
+
+
+def discharge_superseded_seat_obligations(
+    outgoing_registration_id: str,
+    *,
+    successor_registration_id: str | None = None,
+    reason: str = "superseded",
+) -> int:
+    """Close open wake/stop-ack debt on a registration that lost the seat.
+
+    Obligations follow the holder: a superseded seat must not keep unpaid
+    ``wake_owed`` that blocks hygiene release. Returns the count of sessions
+    whose open obligations were discharged (0 when the registration is empty).
+    """
+    outgoing = (outgoing_registration_id or "").strip()
+    if not outgoing:
+        return 0
+    fold_pending_transitions()
+    sessions = load_sessions()
+    if (
+        get_open_wake_owed_for_registration(sessions, outgoing) is None
+        and not _registration_has_open_stop_ack_debt(sessions, outgoing)
+    ):
+        return 0
+    from claude_bundles import cdp_registry_events as events
+
+    successor = (successor_registration_id or "").strip() or None
+    evt = events.cdp_seat_superseded(
+        outgoing_registration_id=outgoing,
+        successor_registration_id=successor,
+        reason=reason,
+    )
+    append_session_transition_locked(
+        {
+            "event_id": f"seat.superseded:{outgoing}:{int(time.time() * 1000)}",
+            "event": "cdp.seat.superseded",
+            "ts": time.time(),
+            "payload": {
+                "outgoing_registration_id": outgoing,
+                "successor_registration_id": successor,
+                "reason": reason,
+                "registration_id": outgoing,
+            },
+        },
+        event=evt,
+    )
+    return 1

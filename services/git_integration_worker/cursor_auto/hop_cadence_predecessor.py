@@ -1,7 +1,8 @@
 """Typed predecessor handle for hop-cadence succession confirm (arc 7119 R10).
 
-Separates genuine first-seat-on-lane (explicit sentinel) from lookup failure
-( loud error ) from incumbent recorded (both registration and execution ids).
+Missing binding resolves INDETERMINATE (observe the world or signal), never a
+positive first-seat / nothing-to-release claim. Legacy ``FIRST_SEAT_ON_LANE``
+watch rows read as INDETERMINATE.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ class PredecessorVerdict(str, Enum):
     INCUMBENT_RECORDED = "incumbent_recorded"
     FIRST_SEAT_ON_LANE = "first_seat_on_lane"
     LOOKUP_FAILED = "lookup_failed"
+    INDETERMINATE = "indeterminate"
 
 
 @dataclass(frozen=True)
@@ -78,20 +80,84 @@ def execution_id_for_registration(
     return None
 
 
+def incumbents_on_lane(
+    snap: dict[str, Any],
+    thread_id: str,
+) -> list[tuple[str, str]]:
+    """Return ``(registration_id, execution_id)`` for running OP rows on ``parent_thread``.
+
+    Unbound rows (missing ``parent_thread``) do not join — they cannot prove
+    incumbency. Empty result is observation, not a first-seat claim.
+    """
+    lane = (thread_id or "").strip()
+    if not lane:
+        return []
+    found: list[tuple[str, str]] = []
+    rows = snap.get("rows") if isinstance(snap.get("rows"), list) else []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        status = str(row.get("status") or "")
+        if status not in {"pending", "running"}:
+            continue
+        purpose = str(row.get("purpose") or "").strip().lower()
+        if purpose not in {"operator-proxy", "mission", "operator_proxy"}:
+            continue
+        row_lane = str(row.get("parent_thread") or "").strip()
+        if row_lane != lane:
+            continue
+        exec_id = str(row.get("execution_id") or "").strip()
+        reg = str(row.get("registration_id") or "").strip()
+        if exec_id:
+            found.append((reg, exec_id))
+    return found
+
+
+def non_holder_handles(
+    snap: dict[str, Any],
+    *,
+    thread_id: str,
+    holder_execution_id: str,
+) -> list[PredecessorHandle]:
+    """Incumbent-recorded handles for same-lane OP rows that are not the holder."""
+    holder = (holder_execution_id or "").strip()
+    out: list[PredecessorHandle] = []
+    for reg, exec_id in incumbents_on_lane(snap, thread_id):
+        if exec_id == holder:
+            continue
+        out.append(
+            PredecessorHandle(
+                registration_id=reg,
+                execution_id=exec_id,
+                verdict=PredecessorVerdict.INCUMBENT_RECORDED,
+            )
+        )
+    return out
+
+
 def capture_predecessor_at_hop(
     row: dict[str, Any],
     snap: dict[str, Any] | None,
 ) -> PredecessorHandle | PredecessorConfirmError:
-    """Resolve predecessor handle at hop fire; fail closed when lookup should succeed."""
+    """Resolve predecessor handle at hop fire; observe the world before claiming absence."""
     predecessor_reg = str(row.get("registration_id") or "").strip()
+    thread_id = str(row.get("thread_id") or "")
+    snap_dict = snap if isinstance(snap, dict) else {}
     if not predecessor_reg:
+        incumbents = incumbents_on_lane(snap_dict, thread_id)
+        if incumbents:
+            reg, exec_id = incumbents[0]
+            return PredecessorHandle(
+                registration_id=reg,
+                execution_id=exec_id,
+                verdict=PredecessorVerdict.INCUMBENT_RECORDED,
+            )
         return PredecessorHandle(
             registration_id=PRIOR_NONE_REGISTRATION,
             execution_id=PRIOR_NONE_EXECUTION,
-            verdict=PredecessorVerdict.FIRST_SEAT_ON_LANE,
-            absence_reason="no_registration_id_on_watch_at_hop_fire",
+            verdict=PredecessorVerdict.INDETERMINATE,
+            absence_reason="empty_watch_no_lane_incumbent",
         )
-    snap_dict = snap if isinstance(snap, dict) else {}
     exec_id = execution_id_for_registration(snap_dict, predecessor_reg)
     if exec_id:
         return PredecessorHandle(
@@ -99,7 +165,14 @@ def capture_predecessor_at_hop(
             execution_id=exec_id,
             verdict=PredecessorVerdict.INCUMBENT_RECORDED,
         )
-    thread_id = str(row.get("thread_id") or "")
+    incumbents = incumbents_on_lane(snap_dict, thread_id)
+    if incumbents:
+        reg, found_exec = incumbents[0]
+        return PredecessorHandle(
+            registration_id=reg or predecessor_reg,
+            execution_id=found_exec,
+            verdict=PredecessorVerdict.INCUMBENT_RECORDED,
+        )
     logger.error(
         "hop_cadence predecessor lookup failed thread=%s reg=%s",
         thread_id,
@@ -170,18 +243,22 @@ def predecessor_from_watch(row: dict[str, Any]) -> PredecessorHandle | Predecess
     reg = str(row.get("superseded_registration_id") or "").strip()
     exec_id = str(row.get("superseded_execution_id") or "").strip()
 
-    if verdict_raw == PredecessorVerdict.FIRST_SEAT_ON_LANE.value:
-        if reg and reg != PRIOR_NONE_REGISTRATION:
-            return PredecessorConfirmError(
-                thread_id=thread_id,
-                reason="first_seat_sentinel_mismatch",
-                detail={"superseded_registration_id": reg},
-            )
+    if verdict_raw == PredecessorVerdict.INDETERMINATE.value:
         return PredecessorHandle(
             registration_id=reg or PRIOR_NONE_REGISTRATION,
             execution_id=exec_id or PRIOR_NONE_EXECUTION,
-            verdict=PredecessorVerdict.FIRST_SEAT_ON_LANE,
+            verdict=PredecessorVerdict.INDETERMINATE,
             absence_reason=str(row.get("predecessor_absence_reason") or "") or None,
+        )
+
+    if verdict_raw == PredecessorVerdict.FIRST_SEAT_ON_LANE.value:
+        # Legacy sentinel: never a positive nothing-to-release claim.
+        return PredecessorHandle(
+            registration_id=reg or PRIOR_NONE_REGISTRATION,
+            execution_id=exec_id or PRIOR_NONE_EXECUTION,
+            verdict=PredecessorVerdict.INDETERMINATE,
+            absence_reason=str(row.get("predecessor_absence_reason") or "")
+            or "legacy_first_seat_sentinel",
         )
 
     if verdict_raw == PredecessorVerdict.INCUMBENT_RECORDED.value:
@@ -224,7 +301,7 @@ def predecessor_from_watch(row: dict[str, Any]) -> PredecessorHandle | Predecess
     return PredecessorHandle(
         registration_id=PRIOR_NONE_REGISTRATION,
         execution_id=PRIOR_NONE_EXECUTION,
-        verdict=PredecessorVerdict.FIRST_SEAT_ON_LANE,
+        verdict=PredecessorVerdict.INDETERMINATE,
         absence_reason="legacy_row_no_predecessor_fields",
     )
 
@@ -242,6 +319,8 @@ __all__ = [
     "PredecessorVerdict",
     "capture_predecessor_at_hop",
     "execution_id_for_registration",
+    "incumbents_on_lane",
+    "non_holder_handles",
     "predecessor_for_confirm",
     "predecessor_from_watch",
     "prior_registration_for_confirm",

@@ -30,6 +30,9 @@ class _FakeReg:
     cdp_url: str
     holder: str
     purpose: str | None = None
+    parent_thread: str | None = None
+    mission_kind: str | None = None
+    started_at: float | None = None
 
 
 def _reg(
@@ -37,6 +40,8 @@ def _reg(
     *,
     purpose: str = "operator-proxy",
     port: int = 9223,
+    parent_thread: str | None = None,
+    mission_kind: str | None = None,
 ) -> _FakeReg:
     return _FakeReg(
         registration_id=reg_id,
@@ -46,6 +51,8 @@ def _reg(
         cdp_url=f"http://127.0.0.1:{port}",
         holder="holder-a",
         purpose=purpose,
+        parent_thread=parent_thread,
+        mission_kind=mission_kind,
     )
 
 
@@ -103,6 +110,36 @@ def test_ac1_two_mission_registrations_ambiguous(
     assert outcome.candidates is not None
     assert len(outcome.candidates) == 2
     assert refused_http_status(outcome.code) == 409
+
+
+def test_same_lane_extras_collapse_to_one_holder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    holder = _reg("reg-hop", port=9230, parent_thread="6655", mission_kind="hop")
+    extra = _reg("reg-old", port=9228, parent_thread="6655", mission_kind="root")
+    monkeypatch.setattr(
+        "cdp_ask.attended_operator.cdp_registry.list_active",
+        lambda: [extra, holder],
+    )
+    monkeypatch.setattr(
+        "cdp_ask.attended_operator.cdp_registry.chat_url_for_registration",
+        lambda rid: CSE_U if rid == "reg-hop" else f"{CSE_U}-{rid}",
+    )
+    monkeypatch.setattr(
+        "cdp_ask.attended_operator.cdp_orphans.probe_live_ports",
+        lambda port_range=None: [
+            LivePort(
+                port=9230,
+                profile=None,
+                page_urls=(CSE_U,),
+                has_live_cse=True,
+            )
+        ],
+    )
+    outcome = resolve_attended_operator()
+    assert isinstance(outcome, AttendedResolveSuccess)
+    assert outcome.registration_id == "reg-hop"
+    assert outcome.chat_url == CSE_U
 
 
 def test_ac1_zero_mission_registrations(

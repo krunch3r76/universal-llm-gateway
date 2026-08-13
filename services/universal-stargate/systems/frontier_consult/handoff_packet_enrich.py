@@ -2,7 +2,9 @@
 
 Merges canonical skill slugs into <invariants>, mirrors related_thread_ids as
 agent_bus(fetch) steps. Platform seats load skill bodies via native triggers —
-not fs(agent-skills/…) lines.
+not fs(agent-skills/…) lines. Non-mechanical contracts also get a
+``reasoning-posture`` Use-line (team_dispatch handoff counterpart to GIW
+preamble inject on generate).
 """
 
 from __future__ import annotations
@@ -39,6 +41,10 @@ from .handoff_life_mirror import (
     RecipientReachability,
     is_life_web_receiver,
     mirror_workspaces_pointers_for_web,
+)
+from .handoff_reasoning_posture import (
+    REASONING_POSTURE_SLUG,
+    handoff_wants_reasoning_posture,
 )
 from .handoff_web_mcp_default import apply_web_mcp_default
 
@@ -391,8 +397,15 @@ def _entity_required_skills(cortex: CortexEntityReader, entity_id: str) -> list[
     return [str(s).strip() for s in raw if str(s).strip()]
 
 
-def _collect_skill_slugs(text: str, cortex: CortexEntityReader) -> list[str]:
+def _collect_skill_slugs(
+    text: str,
+    cortex: CortexEntityReader,
+    *,
+    handoff_contract: str | None = None,
+) -> list[str]:
     slugs: list[str] = list(_DEFAULT_DENSIFY_SLUGS)
+    if handoff_wants_reasoning_posture(text, handoff_contract):
+        slugs.insert(0, REASONING_POSTURE_SLUG)
     for entity_id in _bound_entity_ids(text):
         for slug in _entity_required_skills(cortex, entity_id):
             if slug not in slugs:
@@ -550,9 +563,10 @@ def enrich_handoff_packet(
     to_agent: str | None = None,
     thread_id: str | None = None,
     skill_delivery: str | None = None,
+    handoff_contract: str | None = None,
 ) -> EnrichResult:
     """Non-destructively enrich an MCP-seat handoff packet (web or cursor) in memory."""
-    skill_slugs = _collect_skill_slugs(text, cortex)
+    skill_slugs = _collect_skill_slugs(text, cortex, handoff_contract=handoff_contract)
     inline_materialized = False
     inline_total_bytes = 0
     skills_inlined: list[str] = []

@@ -42,23 +42,40 @@ _REGISTRY_SOURCE = "cse-session-registry"
 
 
 def _registry_projection(registration_id: str | None) -> dict[str, str | None]:
-    """Additive cdp_url/chat_url/source from CSE session registry."""
+    """Additive cdp_url/chat_url/source plus seat-binding fields from the registry."""
+    empty = {
+        "cdp_url": None,
+        "chat_url": None,
+        "source": None,
+        "parent_thread": None,
+        "mission_kind": None,
+    }
     if not registration_id:
-        return {"cdp_url": None, "chat_url": None, "source": None}
+        return empty
     from claude_bundles import cdp_registry
 
     chat_url = cdp_registry.chat_url_for_registration(registration_id)
     cdp_url: str | None = None
+    parent_thread: str | None = None
+    mission_kind: str | None = None
     for lane in cdp_registry.list_active():
         if lane.registration_id == registration_id:
             cdp_url = lane.cdp_url
+            parent_thread = getattr(lane, "parent_thread", None)
+            mission_kind = getattr(lane, "mission_kind", None)
             break
     if not chat_url and not cdp_url:
-        return {"cdp_url": None, "chat_url": None, "source": None}
+        return {
+            **empty,
+            "parent_thread": parent_thread,
+            "mission_kind": mission_kind,
+        }
     return {
         "cdp_url": cdp_url,
         "chat_url": chat_url,
         "source": _REGISTRY_SOURCE,
+        "parent_thread": parent_thread,
+        "mission_kind": mission_kind,
     }
 
 
@@ -84,6 +101,8 @@ class ExecutionRecord:
     stop: bool | None = None
     tool_pause: bool | None = None
     liveness_observed_at: float | None = None
+    parent_thread: str | None = None
+    mission_kind: str | None = None
 
 
 class ExecutionStore:
@@ -132,6 +151,8 @@ class ExecutionStore:
         *,
         holder: str,
         purpose: str | None,
+        parent_thread: str | None = None,
+        mission_kind: str | None = None,
     ) -> ExecutionRecord:
         now = time.time()
         execution_id = uuid.uuid4().hex
@@ -142,6 +163,8 @@ class ExecutionStore:
             updated_at=now,
             holder=holder,
             purpose=purpose,
+            parent_thread=(str(parent_thread).strip() or None) if parent_thread else None,
+            mission_kind=(str(mission_kind).strip() or None) if mission_kind else None,
         )
         async with self._lock:
             self._records[execution_id] = record
@@ -196,17 +219,23 @@ class ExecutionStore:
                 if rec.status in {"pending", "running"}
             ]
             execution_ids = [rec.execution_id for rec in active]
-            rows = [
-                {
-                    "execution_id": rec.execution_id,
-                    "registration_id": rec.registration_id,
-                    "holder": rec.holder,
-                    "purpose": rec.purpose,
-                    "status": rec.status,
-                    **_registry_projection(rec.registration_id),
-                }
-                for rec in active
-            ]
+            rows = []
+            for rec in active:
+                proj = _registry_projection(rec.registration_id)
+                rows.append(
+                    {
+                        "execution_id": rec.execution_id,
+                        "registration_id": rec.registration_id,
+                        "holder": rec.holder,
+                        "purpose": rec.purpose,
+                        "status": rec.status,
+                        "cdp_url": proj["cdp_url"],
+                        "chat_url": proj["chat_url"],
+                        "source": proj["source"],
+                        "parent_thread": rec.parent_thread or proj.get("parent_thread"),
+                        "mission_kind": rec.mission_kind or proj.get("mission_kind"),
+                    }
+                )
         running_count = len(execution_ids)
         live_cse_count = self._live_cse_count()
         admission_count = running_count

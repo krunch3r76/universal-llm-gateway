@@ -15,7 +15,6 @@ from claude_bundles.operator_proxy_mission import OPERATOR_PROXY_MISSION_PURPOSE
 LANE_SOFT_LIMIT = 2
 LANE_HARD_LIMIT = 3
 ADVISOR_RESERVE = 1
-SEAT_HARD = LANE_HARD_LIMIT - ADVISOR_RESERVE
 
 SEAT_PURPOSES = OPERATOR_PROXY_MISSION_PURPOSES
 
@@ -84,7 +83,10 @@ def evaluate_new_admission(
         return False, "abs_hard"
 
     if incoming_seat:
-        if regime == "carved" and seat_count >= SEAT_HARD:
+        # Advisor reserve: carved occupancy may not spend the last hard slot
+        # on a seat. Per-lane uniqueness is holder-plus-one-successor in
+        # purpose_lane_refusal — not a global seat-count cap.
+        if regime == "carved" and seat_count >= LANE_HARD_LIMIT - ADVISOR_RESERVE:
             return False, "seat_cap"
         if regime == "additive" and seat_count >= LANE_HARD_LIMIT:
             return False, "abs_hard"
@@ -99,7 +101,7 @@ def evaluate_new_admission(
             return False, "soft"
         return False, "abs_hard"
 
-    if seat_count >= SEAT_HARD and other_count < ADVISOR_RESERVE:
+    if seat_count >= LANE_HARD_LIMIT - ADVISOR_RESERVE and other_count < ADVISOR_RESERVE:
         return True, None
 
     if unattended and total >= LANE_SOFT_LIMIT:
@@ -130,20 +132,58 @@ def escalation_lane_refusal(
     return True, label
 
 
+def count_seats_on_lane(rows: list[dict[str, Any]], parent_thread: str) -> int:
+    """Count pending/running operator-purpose rows bound to ``parent_thread``.
+
+    Rows without ``parent_thread`` are unbound — they do not join a lane and
+    must not be treated as holders (INDETERMINATE, not a refuse).
+    """
+    lane = (parent_thread or "").strip()
+    if not lane:
+        return 0
+    count = 0
+    for row in rows:
+        status = str(row.get("status") or "")
+        if status not in {"pending", "running"}:
+            continue
+        if not is_seat_purpose(row.get("purpose")):
+            continue
+        row_lane = str(row.get("parent_thread") or "").strip()
+        if row_lane == lane:
+            count += 1
+    return count
+
+
 def purpose_lane_refusal(
     snap: dict[str, Any],
     *,
     purpose: str | None,
     unattended: bool = True,
+    hop_succession: bool = False,
+    parent_thread: str | None = None,
 ) -> tuple[bool, AdmissionRefusal | None]:
-    """General submit-path gate keyed on incoming purpose."""
+    """General submit-path gate keyed on incoming purpose and seat binding.
+
+    Same-lane uniqueness: one operator holder per ``parent_thread``, plus one
+    hop-succession overlap. Unbound incoming (no ``parent_thread``) skips the
+    per-lane cap — missing binding is INDETERMINATE, not a silent refuse.
+    """
     rows = snap.get("rows") or []
+    lane = str(parent_thread or "").strip()
+    if lane and is_seat_purpose(purpose):
+        same = count_seats_on_lane(rows, lane)
+        if hop_succession:
+            if same >= 2:
+                return True, "seat_cap"
+        elif same >= 1:
+            return True, "seat_cap"
     seat_count, other_count = count_by_purpose_class(rows)
     admit, label = evaluate_new_admission(
         purpose,
         seat_count=seat_count,
         other_count=other_count,
         unattended=unattended,
+        hop_succession=hop_succession,
     )
     if admit:
         return False, None

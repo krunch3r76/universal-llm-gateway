@@ -52,6 +52,19 @@ Poll `poll_hint` with `agent_bus(wait)`, not `pipeline(result)`.
 
 Use admit `reply_from_agent` for `wait(from_agent=…)` — ¬ infer from `resolved_model`.
 
+## Judgment skill (BINDING)
+
+Non-mechanical cursor `team_dispatch` auto-invokes `reasoning-posture` — fleet-wide,
+independent of life/operator-proxy. Mechanical implement skips.
+
+| Path | How |
+|---|---|
+| `op=generate` `seat=cursor-sdk` | GIW preamble on `light-bounded` / `consult`; skip `implement` / `pure-mechanical` / quick (`answer` / `execute` / `propagate`). `skills=` is a no-op on cursor-sdk. |
+| `op=handoff` consult / light-bounded | Enrich Block 2 `Use the reasoning-posture skill`; skip implement / `cursor-implement`. |
+| CDP `model=cdp/…` generate | `skills=` merge (`ensure_cdp_judgment_skills`) |
+
+Packet MAY still open with the invoke as belt-and-suspenders. SOT: skill `reasoning-posture` § Always-on injection.
+
 ## Code vs non-code (`dispatch_lane`)
 
 SoT: `config/routing/route_policy.yaml`. Substrate-derived — ¬ role proliferation.

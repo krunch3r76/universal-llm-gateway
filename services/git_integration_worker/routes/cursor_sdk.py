@@ -552,6 +552,7 @@ def _resolve_prompt(req: CursorDispatchRequest, source_repo: Path) -> str:
         prompt_preamble=req.prompt_preamble,
         inferred_contract=inferred_contract,
         lane=lane,
+        existing_text=packet_text,
     )
     return f"{preamble}{packet_text}"
 

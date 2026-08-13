@@ -522,6 +522,14 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           the sealed prompt. Staging always merges ``reasoning-posture`` into
           effective skills (including when ``skills`` is omitted on
           light-bounded — ``decision:reasoning-frontier-skill-pair``).
+          Cursor-sdk generate (any ``team_dispatch`` caller, not Auto-only):
+          GIW ``resolve_prompt_preamble`` auto-invokes
+          ``Use the reasoning-posture skill`` on non-mechanical contracts
+          (``light-bounded`` / ``consult``); ``implement`` / ``pure-mechanical``
+          and quick (``answer`` / ``execute`` / ``propagate``) skip.
+          ``skills=`` is not mounted on cursor-sdk.
+          Handoff consult / light-bounded: enrich inserts the same Use-line
+          into ``<invariants>``; implement skips.
           MCP-predicated skills on a non-MCP dispatch reject 422
           ``skills_mcp_predicated`` naming the offenders; scope-default
           predicated skills are skipped with an event, never rejected.

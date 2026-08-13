@@ -81,6 +81,7 @@ def _fold_one(
         "cdp.stop_ack.opened": _fold_stop_ack_opened,
         "cdp.stop_ack.discharged": _fold_stop_ack_discharged,
         "cdp.stop_ack.alarm_fired": _fold_stop_ack_alarm,
+        "cdp.seat.superseded": _fold_seat_superseded,
     }
     handler = handlers.get(event)
     if handler is None:
@@ -366,3 +367,41 @@ def _fold_stop_ack_alarm(
                 sessions[key] = row
                 return sessions, True
     return sessions, False
+
+
+def _fold_seat_superseded(
+    record: dict[str, Any],
+    sessions: dict[str, dict[str, Any]],
+    payload: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], bool]:
+    """Close open wake_owed / stop_ack_owed on the outgoing registration."""
+    outgoing = str(payload.get("outgoing_registration_id") or "").strip()
+    if not outgoing:
+        return sessions, False
+    reason = str(payload.get("reason") or "superseded")
+    successor = str(payload.get("successor_registration_id") or "").strip() or None
+    changed = False
+    for key, row in sessions.items():
+        ids = row.get("ids") or {}
+        row_reg = str(ids.get("registration_id") or "")
+        obligations = list(row.get("obligations") or [])
+        row_changed = False
+        for ob in obligations:
+            ob_reg = str(ob.get("cse_registration_id") or "")
+            if row_reg != outgoing and ob_reg != outgoing:
+                continue
+            kind = ob.get("kind")
+            if kind not in (OBLIGATION_KIND_WAKE_OWED, OBLIGATION_KIND_STOP_ACK_OWED):
+                continue
+            if ob.get("status") not in (STATUS_OPEN, STATUS_ALARMED):
+                continue
+            ob["status"] = STATUS_DISCHARGED
+            ob["discharge_reason"] = reason
+            if successor:
+                ob["successor_registration_id"] = successor
+            row_changed = True
+        if row_changed:
+            row["obligations"] = obligations
+            sessions[key] = row
+            changed = True
+    return sessions, changed

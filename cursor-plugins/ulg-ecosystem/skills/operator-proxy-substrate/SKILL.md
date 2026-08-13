@@ -167,12 +167,18 @@ the operator lane — **paste ≠ commission**. Operator-facing contract: `cdp-o
 
 **Judgment skill is MANDATORY on cursor-sdk break-in (BINDING).** Pass
 `skills=["reasoning-posture"]` on every terra (or Opus)
-break-in `team_dispatch`. CDP generate auto-merges that skill
-(`decision:reasoning-frontier-skill-pair` / `cdp_model_endpoint_staging`); **cursor-sdk does
-not** — omitting `skills=` is how fire #2a (`c9501ca9ebe7-5bbda0e8`) skipped Question/OOS
-rails instead of binding them. Packet body SHOULD also open with
-`Use the reasoning-posture skill` as belt-and-
-suspenders for seats that ignore the wire `skills=` list.
+break-in `team_dispatch`. That is one consumer of the **fleet-wide** inject —
+`team_dispatch` generate `seat=cursor-sdk` (any caller) and consult handoff
+get the same rails, not Auto/life-only. CDP generate auto-merges that skill
+(`decision:reasoning-frontier-skill-pair` / `cdp_model_endpoint_staging`).
+GIW `resolve_prompt_preamble` auto-invokes `Use the reasoning-posture skill`
+on non-mechanical cursor-sdk contracts (`light-bounded` / `consult`); skip
+`implement` / `pure-mechanical` and quick (`answer` / `execute` / `propagate`).
+Handoff enrich inserts the same Use-line on consult / light-bounded packets.
+Packet body SHOULD still open with `Use the reasoning-posture skill` as
+belt-and-suspenders — cursor-sdk does not consume `skills=` mount (fire #2a
+`c9501ca9ebe7-5bbda0e8` skipped rails when both wire skills and prompt
+invoke were omitted).
 
 **Proceed-anyway pin (BINDING).** The packet MUST require terra to answer on the bound break-in
 review contract — emit `TYPE: BREAK_IN` or `TYPE: NO_BREAK_IN` only; ¬ halt for a different model.

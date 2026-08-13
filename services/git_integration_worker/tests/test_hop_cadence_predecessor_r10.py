@@ -75,13 +75,61 @@ def test_capture_incumbent_present_and_recorded() -> None:
     assert handle.execution_id == _INCUMBENT_EXEC
 
 
-def test_capture_genuinely_no_incumbent() -> None:
+def test_capture_empty_watch_without_lane_join_is_indeterminate() -> None:
     row = {"thread_id": "7119"}
     handle = capture_predecessor_at_hop(row, _incumbent_snap())
-    assert handle.verdict == PredecessorVerdict.FIRST_SEAT_ON_LANE
-    assert handle.registration_id == PRIOR_NONE_REGISTRATION
-    assert handle.execution_id == PRIOR_NONE_EXECUTION
-    assert handle.absence_reason == "no_registration_id_on_watch_at_hop_fire"
+    assert handle.verdict == PredecessorVerdict.INDETERMINATE
+    assert handle.absence_reason == "empty_watch_no_lane_incumbent"
+
+
+def test_non_holder_handles_skips_holder() -> None:
+    from services.git_integration_worker.cursor_auto.hop_cadence_predecessor import (
+        non_holder_handles,
+    )
+
+    snap = {
+        "rows": [
+            {
+                "execution_id": "holder",
+                "registration_id": "reg-new",
+                "status": "running",
+                "purpose": "operator-proxy",
+                "parent_thread": "6655",
+            },
+            {
+                "execution_id": "extra-a",
+                "registration_id": "reg-a",
+                "status": "running",
+                "purpose": "operator-proxy",
+                "parent_thread": "6655",
+            },
+            {
+                "execution_id": "other-lane",
+                "registration_id": "reg-x",
+                "status": "running",
+                "purpose": "operator-proxy",
+                "parent_thread": "9999",
+            },
+        ]
+    }
+    extras = non_holder_handles(snap, thread_id="6655", holder_execution_id="holder")
+    assert [h.execution_id for h in extras] == ["extra-a"]
+    row = {"thread_id": "6655"}
+    snap = {
+        "rows": [
+            {
+                "execution_id": _INCUMBENT_EXEC,
+                "registration_id": "reg-old",
+                "status": "running",
+                "purpose": "operator-proxy",
+                "parent_thread": "6655",
+            }
+        ]
+    }
+    handle = capture_predecessor_at_hop(row, snap)
+    assert handle.verdict == PredecessorVerdict.INCUMBENT_RECORDED
+    assert handle.execution_id == _INCUMBENT_EXEC
+    assert handle.registration_id == "reg-old"
 
 
 def test_capture_lookup_fails_when_incumbent_missing_from_snapshot() -> None:
@@ -216,7 +264,7 @@ def test_confirm_first_seat_uses_explicit_sentinel() -> None:
         "predecessor_absence_reason": "no_registration_id_on_watch_at_hop_fire",
     }
     handle = predecessor_from_watch(row)
-    assert handle.verdict == PredecessorVerdict.FIRST_SEAT_ON_LANE
+    assert handle.verdict == PredecessorVerdict.INDETERMINATE
     assert handle.registration_id == PRIOR_NONE_REGISTRATION
 
 

@@ -800,6 +800,7 @@ async def team_handoff(
                         cortex=reader,
                         to_agent=to_agent,
                         skill_delivery=skill_delivery,
+                        handoff_contract=handoff_contract,
                     )
                 except SkillInlineBudgetExceeded as exc:
                     _publish(
