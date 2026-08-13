@@ -8,6 +8,8 @@ from claude_bundles.pickup_awaits import (
     PICKUP_AWAITS_STOP_FIX_HINT,
     PICKUP_DECLARATION_FIX_HINT,
     PriorTurn,
+    _cites_turn,
+    has_pickup_declaration,
     is_architecture_bind_post,
     is_cease_to_act,
     refusal_envelope,
@@ -181,6 +183,66 @@ def test_cease_without_prior_turns_does_not_guess() -> None:
         validate_pickup_awaits_on_cease(
             body="TYPE: PARKED\nwake: chat_delivery\n",
             prior_turns=None,
+        ).ok
+        is True
+    )
+
+
+def test_infix_discharge_phrase_not_declaration() -> None:
+    """AC2(a): infix ``binds pickup:`` is not a line-start field declaration."""
+    assert has_pickup_declaration("binds pickup: t3036") is False
+    assert has_pickup_declaration("TYPE: DISPOSITION\npickup: cursor-auto\n") is True
+    assert has_pickup_declaration("  pickup: cursor-auto\n") is True
+
+
+@pytest.mark.parametrize(
+    ("text", "turn_number"),
+    [
+        ("re: #3041", 3041),
+        ("binds pickup: t3041", 3041),
+        ("see turn: 3041 for context", 3041),
+        ("binds pickup: 6655#3041", 3041),
+        ("agent-bus:6655#3041", 3041),
+    ],
+    ids=["hash_n", "t_n", "turn_colon_n", "thread_hash_n", "agent_bus_thread_hash_n"],
+)
+def test_cites_turn_isolation(text: str, turn_number: int) -> None:
+    """AC2(b): each citation pattern independently discharges a turn."""
+    assert _cites_turn(text, turn_number) is True
+    assert _cites_turn("unrelated prose with no cite", turn_number) is False
+
+
+def test_cease_citing_via_infix_discharge_not_new_declaration() -> None:
+    """AC2(c): cease citing prior via infix ``binds pickup:`` must not arm next cease."""
+    prior = [
+        PriorTurn(
+            turn_number=3041,
+            subject="DISPOSITION",
+            body="TYPE: DISPOSITION\npickup: cursor-auto\n",
+        ),
+    ]
+    cease_body = (
+        "TYPE: DISPOSITION\n"
+        "binds pickup: 6655#3041 — see §0; t3041; turn: 3041\n"
+    )
+    assert (
+        validate_pickup_awaits_on_cease(
+            body=cease_body,
+            prior_turns=prior,
+        ).ok
+        is True
+    )
+    prior_with_cease = prior + [
+        PriorTurn(
+            turn_number=3070,
+            subject="TYPE: DISPOSITION",
+            body=cease_body,
+        ),
+    ]
+    assert (
+        validate_pickup_awaits_on_cease(
+            body="TYPE: PARKED\nwake: chat_delivery\n",
+            prior_turns=prior_with_cease,
         ).ok
         is True
     )
