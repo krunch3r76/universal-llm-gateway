@@ -62,7 +62,7 @@ Until operator override or substrate change (friction 24906):
 | Lead stages RAG then “merges” into deliverable when MCP `rag` is available (life or code) | Executing agent owns MCP `rag`; mapped URI is priming only |
 | `project_ask(op="abort")` from IDE because arc path changed | Poll **private bus lane** + paste into live converse; abort only with explicit operator auth (`session-abort-authorization_ulg.mdc`) |
 | `active_work` empty ⇒ "CDP unreachable / arc dead" | Transport idle ≠ bus idle — operator-proxy commissions live on `agent_bus.request` thread |
-| Skip MCP/`cdp_ask` restart because it “would drop Cowork attach” | `drop(attach) ∧ ¬end(CSE)` — tab survives; recover after `wait_healthy` (`restart-drain-discipline` § CSE vs service) |
+| Skip `mcp`/`cdp_ask` (or any service) restart because it “would drop Cowork attach” | claude.ai is **resilient to all service restarts** — `drop(attach) ∧ ¬end(CSE)`; recover after `wait_healthy` (`restart-drain-discipline` § CSE vs service) |
 | Re-poll aborted `execution_id` expecting reconnect | Dead id — warm submit same `holder` + `converse=true` for Cowork CSE; bus continuity = request thread |
 | Blame poller retain when Opus self-stopped after a leg | Load `cdp-operator-proxy` inv 30; page `cse-stream-stop` if unauthorized |
 | Treat card-toolbar **Google Drive** label as file location / Drive write | It is the **export-dropdown trigger** (choices: optional Drive — fleet never uses — ∨ **Download**); artifact bytes live in Outputs / in-chat card body — skill § File-card chrome |

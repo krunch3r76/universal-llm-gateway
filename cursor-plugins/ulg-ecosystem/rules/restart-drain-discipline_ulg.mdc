@@ -43,23 +43,25 @@ Both are wrong.
 
 ```
 identity(CSE) = chat_url
+claude.ai / Cowork is resilient to all fleet service restarts
 restart(mcp | cdp_ask | …) ⇒ drop(attach) ∧ ¬end(CSE)
 ```
 
 A Cowork CSE is a Chrome tab. Satellite `execution_id`, Playwright, and the MCP
 socket are **attach handles**. Recycling those processes is reconnect, not
-session-kill. Cowork is **not tightly coupled** to mcp/cdp_ask — the tab
-survives; recover after `wait_healthy`. `cdp_ask` `sync_restart` is **never
-coupled to mcp** (`api_dispatch._sync_restart`). After `cdp_ask` recycle:
-`wait_healthy` → `project_ask(op=followup)` / `reattach=true` by `chat_url`
-(tab should still be open). Continuity hop (new window, same private lane) is
-for **MCP tooling/chip refresh**, not because a satellite row died.
+session-kill. Cowork is **not tightly coupled** to mcp, **cdp_ask**, or any other
+fleet service — the tab survives; recover after `wait_healthy`. `cdp_ask`
+`sync_restart` is **never coupled to mcp** (`api_dispatch._sync_restart`). After
+`cdp_ask` recycle: `wait_healthy` → `project_ask(op=followup)` / `reattach=true`
+by `chat_url` (tab should still be open). Continuity hop (new window, same
+private lane) is for **MCP tooling/chip refresh**, not because a satellite row
+died.
 
 MCP other-window **streaming** wait still applies — that protects another seat's
 in-tab tools mid-turn, not CSE lifetime. Do not narrate `running_count` /
-`execution_id` gone as “the CSE is dead.” **Forbidden:** skip, park, or
-withhold MCP `sync_restart` because it “would drop Cowork attach.” Attach-loss
-is expected and recoverable.
+`execution_id` gone as “the CSE is dead.” **Forbidden:** skip, park, or withhold
+`mcp` **or** `cdp_ask` (or any other) `sync_restart` because it “would drop
+Cowork attach.” Attach-loss is expected and recoverable.
 
 ## The three wrong moves
 
@@ -67,7 +69,7 @@ is expected and recoverable.
 |---|---|---|
 | `force=true` to kill **another** seat's streaming / write lease | Preempts unrelated in-flight work | Wait (MCP other-window) or arm durable drain (GIW) |
 | "Busy / a dispatch or CSE is running, so I won't restart" | Leaves the fix landed-not-live; treats `cdp_ask` attach-loss as session-kill | Arm the restart. After `cdp_ask`: recover the tab by `chat_url`. MCP-force only when the classifier says so |
-| "MCP restart would drop Cowork attach / kill the CSE" | Conflates attach handle with CSE identity (`chat_url`) | Restart per classifier. Recover: followup/reattach or continuity hop after healthy |
+| "MCP/`cdp_ask` restart would drop Cowork attach / kill the CSE" | Conflates attach handle with CSE identity (`chat_url`); claude.ai is resilient to all service restarts | Restart per classifier. Recover: followup/reattach or continuity hop after healthy |
 | Sit in-window polling `wait_healthy` while holding a lease | The lease you hold is what the drain waits on — never converges (friction 25989) | Arm, then **exit**; probe after |
 
 ## Mechanism already exists — use it, do not reinvent
@@ -131,7 +133,7 @@ Anti-patterns:
 - treat `mcp.busy=false` + `in_flight=0` as proof Cowork life is idle
 - treat `live_cse_count>0` / `busy=true` as automatic wait (missing the streaming test)
 - treat ghost/idle `live_cse` as "other window"
-- skip MCP/`cdp_ask` restart to “protect Cowork”; narrate `drop(attach)` as ending the CSE
+- skip `mcp` / `cdp_ask` / any service restart to “protect Cowork”; narrate `drop(attach)` as ending the CSE
 
 ## Procedure (binding)
 

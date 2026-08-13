@@ -137,10 +137,11 @@ MCP tools are reached via `CallMcpTool` against the configured servers
   are host-managed via `./manage` (subprocess or uvicorn on loopback TCP). Gateway
   runs in edge containers; MCP runs in its own container. Lifecycle: `manage` MCP
   tool against the local control socket — not systemd by default.
-- **MCP/`cdp_ask` recycle ≠ Cowork death.** `identity(CSE)=chat_url`. Restart
-  drops attach handles (socket, Playwright, `execution_id`); the Chrome tab
-  survives and recovers after `wait_healthy` (followup/reattach or continuity
-  hop). Do **not** skip MCP `sync_restart` to “protect Cowork attach.” Rule:
+- **claude.ai / Cowork is resilient to all service restarts** (mcp, **cdp_ask**,
+  and the rest). `identity(CSE)=chat_url`. Restart drops attach handles (socket,
+  Playwright, `execution_id`); the Chrome tab survives and recovers after
+  `wait_healthy` (followup/reattach or continuity hop). Do **not** skip `mcp` or
+  `cdp_ask` `sync_restart` to “protect Cowork attach.” Rule:
   `restart-drain-discipline`.
 - **Host UDS paths** (code SOT: `libs/transport_utils/client_factory.py`; snapshot:
   `~/.gateway/topology.yaml`):

@@ -74,14 +74,15 @@ cumulative elapsed time; retain/reattach guidance is unchanged. Self-stop author
 inv 30.
 
 **Service recycle ≠ CSE death (BINDING — 2026-08-12; recover 2026-08-13):** `identity(CSE) = chat_url`.
-`restart(mcp | cdp_ask | …) ⇒ drop(attach) ∧ ¬end(tab)`. Cowork is **not tightly
-coupled** to mcp/cdp_ask — the tab survives; recover after `wait_healthy`. After
+claude.ai / Cowork is **resilient to all fleet service restarts** (mcp, **cdp_ask**,
+and the rest). `restart(mcp | cdp_ask | …) ⇒ drop(attach) ∧ ¬end(tab)`. The tab is
+**not tightly coupled** to those processes — recover after `wait_healthy`. After
 **`cdp_ask`** recycle: `wait_healthy` → warm follow-up / `reattach=true` on this
 `chat_url` — do **not** mint a new window because the satellite `execution_id` died.
 Continuity hop (new CSE, same private lane) is for **MCP tooling/chip refresh** only
 (`Refresh ≠ follow-up` below). ¬ park a `cdp_ask` restart on `live_cse_count` / a
-running hop execution. **Cursor IDE lead:** ¬ skip MCP restart citing “would drop
-Cowork attach.” This seat recovers (followup / hop).
+running hop execution. **Cursor IDE lead:** ¬ skip `mcp` **or** `cdp_ask` restart
+citing “would drop Cowork attach.” This seat recovers (followup / hop).
 
 **Refresh ≠ follow-up (BINDING)** — two moves against the same CSE; pick by *what is stale*:
 
@@ -883,7 +884,7 @@ before re-issuing. Full templates arrive in the mission briefing inject.
 | Cowork CSE open / chatty tone ⇒ the operator is human | Inv 0: the model seat is operator until a human **explicitly declares** |
 | Minting a new CDP window to deliver what a warm follow-up would carry — or warm-pasting when the CSE needs refreshed chips | Refresh ≠ follow-up: pick by what is stale |
 | Treating `wall_clock_exceeded` / poller FAILED / `cdp_ask` restart as mission-dead, or killing the open CSE | Retain; reattach by `chat_url`. Satellite process death is attach loss, not session-kill |
-| Skip MCP restart because it “would drop Cowork attach” | Recycle; recover after `wait_healthy` — tab is not tightly coupled to the process |
+| Skip `mcp`/`cdp_ask` (or any service) restart because it “would drop Cowork attach” | Recycle; recover after `wait_healthy` — claude.ai is resilient to all service restarts |
 | Ending the Cowork stream after a **leg** DISPOSITION ("Mission leg complete" / "Nothing needs you") | Stream stays live; next DIRECTIVE or idle wait (inv 30) |
 | On a persistent lane, emitting `MISSION_CLOSEOUT` because a roadmap row / work unit finished | Leg — stream continues; update standing handoff; carve-out (inv 30) |
 | On a persistent lane, posting a status report then going quiet while a dispatch is in flight | Report while continuing; poll/harvest/act — going quiet ≡ stop (inv 30) |
