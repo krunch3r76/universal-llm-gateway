@@ -76,7 +76,13 @@ def build_cadence_hop_body(
     registration_id: str | None = None,
     chat_url: str | None = None,
 ) -> str:
-    """Author the structural CONTINUITY_HANDOFF body Auto self-enqueues on fire."""
+    """Author the structural CONTINUITY_HANDOFF body Auto self-enqueues on fire.
+
+    The Read-URI instruction is gated on ``assess_standing_handoff`` status:
+    ``missing`` is a job for the arriving seat (author the S7 state file),
+    not a broken link. First-hop vs later-missing is not distinguishable from
+    ``HopDecision`` at this call site — one missing branch.
+    """
     handoff = decision.handoff or assess_standing_handoff(decision.thread_id)
     you_are = (chat_url or "").strip() or (
         "this successor CSE — identity is the chat_url of the Cowork session you are in"
@@ -89,7 +95,9 @@ def build_cadence_hop_body(
         f"thread_id: {decision.thread_id}",
         f"you_are: {you_are}",
         f"parent_thread: {decision.thread_id}",
-        f"cse_age_s: {decision.age_s:.1f}" if decision.age_s is not None else "cse_age_s: unknown",
+        f"cse_age_s: {decision.age_s:.1f}"
+        if decision.age_s is not None
+        else "cse_age_s: unknown",
         f"threshold_s: {decision.threshold_s:.1f}"
         if decision.threshold_s is not None
         else f"threshold_s: {age_threshold_s():.1f}",
@@ -100,11 +108,21 @@ def build_cadence_hop_body(
         lines.append(f"standing_handoff_age_s: {handoff.age_s:.1f}")
     if registration_id:
         lines.append(f"superseded_registration_id: {registration_id}")
+    if handoff.status == "missing":
+        resume_read: tuple[str, ...] = (
+            "The S7 standing-handoff state file is absent.",
+            "Lane-tip reconstruction is degraded, not equivalent.",
+            "Author the standing handoff before you leave.",
+        )
+    else:
+        resume_read = (
+            "Read the standing handoff URI above before trusting any wake prose.",
+        )
     lines.extend(
         [
             "",
             "Resume as operator-proxy on this private lane.",
-            "Read the standing handoff URI above before trusting any wake prose.",
+            *resume_read,
             "This is a CONTINUITY HOP (seat refresh) — do NOT emit MISSION_CLOSEOUT.",
             "You are the operator CSE on parent_thread above. Identity is chat_url",
             "(you_are). Extras on this lane are predecessors, not peers.",
@@ -314,9 +332,7 @@ async def fire_hop_for_decision(
     incumbent = queue.claimed_for_thread(decision.thread_id)
     if incumbent is not None and incumbent.job_id == job.job_id:
         incumbent = None
-    result = await run_continuity_hop_concurrent(
-        job, queue=queue, incumbent=incumbent
-    )
+    result = await run_continuity_hop_concurrent(job, queue=queue, incumbent=incumbent)
     execution_id = str(result.get("execution_id") or "").strip() or None
     if result.get("reason") == "hop_not_queued":
         hop_ok = False
@@ -427,7 +443,11 @@ async def hop_cadence_loop(app: Any) -> None:
             reconcile_stall_revocations()
             reconcile_succession_confirmations(snapshot_reader=read_cdp_lane_snapshot)
             outcomes = await scan_and_fire(queue=get_queue())
-            due = [o for o in outcomes if o.get("ok") or o.get("reason") == "capacity_blocked"]
+            due = [
+                o
+                for o in outcomes
+                if o.get("ok") or o.get("reason") == "capacity_blocked"
+            ]
             if due:
                 logger.info("hop_cadence scan outcomes=%s", due)
             elif outcomes:

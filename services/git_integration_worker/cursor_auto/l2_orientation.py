@@ -13,6 +13,7 @@ from __future__ import annotations
 import textwrap
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from claude_bundles.cdp_registry_store import load_sessions
@@ -26,6 +27,12 @@ from git_integrate.recent_commits import (
     source_repo_path,
 )
 
+from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
+    StandingHandoffFreshness,
+    assess_standing_handoff,
+    standing_handoff_path,
+)
+
 # Binding verdict (7119 L2 AC1): generated artifacts carry live state — safe
 # because regenerated at read/generation time, not authored once. The v2 manual
 # card's pointer-only constitution applies to static files only.
@@ -34,6 +41,17 @@ L2_CONSTITUTION = "live-snapshot"
 _ARRIVAL_CARD_URI = "cortex://notes/system/threads/{thread_id}-arrival-card.md"
 _STANDING_HANDOFF_URI = "cortex://notes/system/threads/{thread_id}-standing-handoff.md"
 _ARRIVAL_RULES_URI = "cortex://notes/system/threads/{thread_id}-arrival-card.md"
+
+
+def arrival_card_path(thread_id: str) -> Path:
+    """On-disk path for the optional seat-authored manual rules card.
+
+    Existence is the cite-gate for L2 ``## Pointers`` — the hop path never
+    writes this file. Callers: ``render_arrival_card``. Root is the same
+    cortex files tree ``standing_handoff_path`` already names; import of that
+    public helper does not dirty ``hop_cadence_watch``.
+    """
+    return standing_handoff_path(thread_id).with_name(f"{thread_id}-arrival-card.md")
 
 # Screen budget: ~45 lines × ~90 cols (operator "one screen" on 7119 L2).
 MAX_ARRIVAL_LINES = 45
@@ -275,7 +293,9 @@ def format_obligations_section(obligations: list[dict[str, Any]]) -> str:
         counts[key] = counts.get(key, 0) + 1
     for (kind, status), count in sorted(counts.items()):
         suffix = f" x{count}" if count > 1 else ""
-        lines.append(f"  - {kind} status={status}{suffix} source=sessions.json|agent_bus")
+        lines.append(
+            f"  - {kind} status={status}{suffix} source=sessions.json|agent_bus"
+        )
     lines.append(
         "  NOTE: arc-level open items in leg doc are hand-maintained — not included above."
     )
@@ -346,11 +366,23 @@ def render_arrival_card(
     tip: LaneTipSlice,
     obligations: list[dict[str, Any]],
     admit_bind: AdmitTurnBind | None,
+    rules_card_exists: bool | None = None,
+    standing_handoff: StandingHandoffFreshness | None = None,
 ) -> tuple[str, list[str]]:
-    """Render ≤1-screen generated arrival card; return (card, dropped_sections)."""
+    """Render ≤1-screen generated arrival card; return (card, dropped_sections).
+
+    Pointers are existence-honest: the manual-rules line is emitted only when
+    that file is on disk, and the standing-handoff line carries the freshness
+    token from ``assess_standing_handoff`` (not a second probe). Tests inject
+    ``rules_card_exists`` / ``standing_handoff``; production leaves them None.
+    """
     dropped: list[str] = []
     rules_uri = _ARRIVAL_RULES_URI.format(thread_id=thread_id)
     standing_uri = _STANDING_HANDOFF_URI.format(thread_id=thread_id)
+    if rules_card_exists is None:
+        rules_card_exists = arrival_card_path(thread_id).is_file()
+    if standing_handoff is None:
+        standing_handoff = assess_standing_handoff(thread_id)
 
     lines = [
         f"# {thread_id} — GENERATED ARRIVAL CARD (L2)",
@@ -383,20 +415,34 @@ def render_arrival_card(
     else:
         lines.append("- latest admit: absent — inheritance loop open")
 
+    rules_heading = (
+        "## Durable rules (abbreviated — full set in manual card)"
+        if rules_card_exists
+        else "## Durable rules (abbreviated)"
+    )
+    pointer_lines = [
+        "",
+        "## Pointers",
+    ]
+    if rules_card_exists:
+        pointer_lines.append(f"- Manual rules card: {rules_uri}")
+    pointer_lines.extend(
+        [
+            f"- Adjudication only: {standing_uri} "
+            f"(standing_handoff_freshness: {standing_handoff.status})",
+            f"- Re-verify tip: agent_bus_read thread={thread_id}",
+        ]
+    )
     lines.extend(
         [
             "",
-            "## Durable rules (abbreviated — full set in manual card)",
+            rules_heading,
             "- Probe inherited NOs before obeying capability limits.",
             "- Set from_agent on every bus send/request.",
             "- Diff authored directive against minted row (field parity).",
             "- Queue = lane tip, not this card or standing handoff Next intent.",
             "- Never retire on commissioning claim; successor must author a turn.",
-            "",
-            "## Pointers",
-            f"- Manual rules card: {rules_uri}",
-            f"- Adjudication only: {standing_uri}",
-            f"- Re-verify tip: agent_bus_read thread={thread_id}",
+            *pointer_lines,
         ]
     )
 

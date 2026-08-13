@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import pytest
 
+from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
+    StandingHandoffFreshness,
+)
 from services.git_integration_worker.cursor_auto.l2_orientation import (
     L2_CONSTITUTION,
     compose_handoff_prompt,
@@ -15,7 +18,9 @@ from services.git_integration_worker.cursor_auto.l2_orientation import (
 )
 
 
-def _turn(*, n: int, body: str, subject: str = "test", from_agent: str = "seat-a") -> dict:
+def _turn(
+    *, n: int, body: str, subject: str = "test", from_agent: str = "seat-a"
+) -> dict:
     return {
         "id": 1000 + n,
         "turn_number": n,
@@ -43,7 +48,12 @@ def test_extract_lane_tip_picks_latest() -> None:
 def test_find_latest_admit_turn() -> None:
     turns = [
         _turn(n=1, body="x", from_agent="cursor-auto", subject="status:admitted job-1"),
-        _turn(n=9, body="admit body", from_agent="cursor-auto", subject="status:admitted job-2"),
+        _turn(
+            n=9,
+            body="admit body",
+            from_agent="cursor-auto",
+            subject="status:admitted job-2",
+        ),
         _turn(n=10, body="other", from_agent="human"),
     ]
     bind = find_latest_admit_turn(turns)
@@ -118,6 +128,13 @@ def test_arrival_card_respects_line_budget() -> None:
         tip=tip,
         obligations=[{"kind": "wake_owed", "status": "open"}],
         admit_bind=None,
+        rules_card_exists=True,
+        standing_handoff=StandingHandoffFreshness(
+            status="current",
+            uri="cortex://notes/system/threads/6655-standing-handoff.md",
+            mtime_epoch=1.0,
+            age_s=10.0,
+        ),
     )
     assert "GENERATED ARRIVAL CARD" in card
     assert len(card.splitlines()) <= 45
@@ -136,4 +153,6 @@ def test_generate_with_admit_closes_inheritance_loop() -> None:
     )
     assert result.inheritance_loop_closed is True
     assert "admit_turn_bind" in result.handoff_prompt
-    assert any(s.slice_name == "arc_open_items" and not s.queryable for s in result.sources)
+    assert any(
+        s.slice_name == "arc_open_items" and not s.queryable for s in result.sources
+    )
