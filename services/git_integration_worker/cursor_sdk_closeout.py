@@ -1274,6 +1274,8 @@ def build_implement_closeout_body(
             payload.pop("commits_ahead_unfiltered", None)
         if landed is not None:
             payload["landed"] = landed
+        else:
+            payload.pop("landed", None)
         effects = attribution_effects_paths(
             created=repo_files.created,
             modified=repo_files.modified,
@@ -1877,6 +1879,21 @@ def _assemble_closeout_delivery(
                 ancestry_on_master=plane_obs.landed_local_master,
                 commits_ahead=capture_commits_ahead,
             )
+    from services.git_integration_worker.cursor_sdk_deliverables_expected import (
+        git_land_plane_uncomputable,
+        suppress_vacuous_git_landed,
+    )
+
+    capture_landed = suppress_vacuous_git_landed(
+        capture_landed,
+        uncomputable=git_land_plane_uncomputable(
+            created=repo_change_set.created,
+            modified=repo_change_set.modified,
+            deleted=repo_change_set.deleted,
+            untracked=files_untracked_or_ignored,
+            offgit=offgit_uris,
+        ),
+    )
     body = build_implement_closeout_body(
         dispatch_id=dispatch_id,
         outcome=outcome,

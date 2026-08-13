@@ -15,12 +15,19 @@ cannot launder a zero-artifact complete/shipped.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 
 from implement_admission.normalize import _files_from_packet
 
+from services.git_integration_worker.cursor_sdk_capture_status import (
+    is_allowlisted_control_plane_path,
+    is_swamp_excluded_path,
+)
 from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
     extract_instructed_paths,
 )
+
+GIT_UNREACHABLE_REASON = "git unreachable"
 
 _EVIDENCE_REQUIRED_RE = re.compile(
     r"^[ \t]*evidence_required\s*:\s*(.+)$",
@@ -31,6 +38,8 @@ _SHA_SUFFIX_RE = re.compile(
     r"\s*[·•]\s*sha256:.*$|\s+sha256:[0-9a-f]+.*$",
     re.IGNORECASE,
 )
+
+
 def _clean_uri_token(raw: str) -> str | None:
     token = raw.strip().strip("`\"'").rstrip(".,;:)>")
     token = _SHA_SUFFIX_RE.sub("", token).strip()
@@ -113,3 +122,62 @@ def admit_landed_true(
     if commits_ahead is None:
         return None
     return commits_ahead >= 1
+
+
+def _has_tracked_paths(
+    created: Iterable[str],
+    modified: Iterable[str],
+    deleted: Iterable[str],
+) -> bool:
+    return any(created) or any(modified) or any(deleted)
+
+
+def _has_git_unreachable_effects(
+    untracked: Iterable[str],
+    offgit: Iterable[str],
+) -> bool:
+    if any(uri for uri in offgit if str(uri).strip()):
+        return True
+    for path in untracked:
+        if not path or not str(path).strip():
+            continue
+        if is_allowlisted_control_plane_path(path):
+            continue
+        if is_swamp_excluded_path(path):
+            continue
+        return True
+    return False
+
+
+def git_land_plane_uncomputable(
+    *,
+    created: Iterable[str] = (),
+    modified: Iterable[str] = (),
+    deleted: Iterable[str] = (),
+    untracked: Iterable[str] = (),
+    offgit: Iterable[str] = (),
+) -> bool:
+    """True when git cannot see the deliverable — tracked empty, gitignored/off-git present.
+
+    Swamp (``.cursor/``) and control-plane closeout receipts do not count.
+    Side effects: none (pure).
+    """
+    if _has_tracked_paths(created, modified, deleted):
+        return False
+    return _has_git_unreachable_effects(untracked, offgit)
+
+
+def suppress_vacuous_git_landed(
+    landed: bool | None,
+    *,
+    uncomputable: bool,
+) -> bool | None:
+    """G₂ False is uninformative when git was not the land plane — emit None.
+
+    Does not upgrade True. Side effects: none (pure).
+    """
+    if landed is not False:
+        return landed
+    if uncomputable:
+        return None
+    return landed

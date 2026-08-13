@@ -192,6 +192,7 @@ def compute_closeout_tree_state(
         plane,
         commits_ahead=keys.commits_ahead,
         commits_ahead_presence=keys.commits_ahead_presence,
+        git_land_plane_uncomputable=keys.git_land_plane_uncomputable,
     )
     checkpoint = qualify_checkpoint_value(checkpoint)
     deployment_state = qualify_deployment_state(deployment_state)

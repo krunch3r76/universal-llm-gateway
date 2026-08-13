@@ -63,6 +63,8 @@ def _wrapper(
     branch: str | None,
     commits_ahead: int | None = None,
     landed: bool | None = None,
+    files_untracked_or_ignored: list[str] | None = None,
+    files_offgit_produced: list[str] | None = None,
 ) -> str:
     payload: dict[str, object] = {
         "schema_version": 1,
@@ -78,6 +80,10 @@ def _wrapper(
         payload["commits_ahead"] = commits_ahead
     if landed is not None:
         payload["landed"] = landed
+    if files_untracked_or_ignored is not None:
+        payload["files_untracked_or_ignored"] = files_untracked_or_ignored
+    if files_offgit_produced is not None:
+        payload["files_offgit_produced"] = files_offgit_produced
     return json.dumps(payload)
 
 
@@ -109,6 +115,7 @@ def test_parse_capture_plane_keys_extracts_commits_ahead() -> None:
     )
     assert keys.commits_ahead == 0
     assert keys.commits_ahead_presence == "present"
+    assert keys.git_land_plane_uncomputable is False
     keys_one = parse_capture_plane_keys(
         _wrapper(head_sha="abc1234", branch="cursor-sdk/x", commits_ahead=1)
     )
@@ -729,6 +736,36 @@ def test_genuine_land_commits_ahead_one_reports_landed(tmp_path: Path) -> None:
             wrapper_text=wrapper,
         )
     assert "landed@local-master" in state.plane_line
+    assert "NOT landed@local-master" not in state.plane_line
+
+
+def test_gitignored_only_commits_ahead_zero_plane_unknown_not_not_landed(
+    tmp_path: Path,
+) -> None:
+    """Git-unreachable-only effects: measured 0 must not project NOT landed."""
+    from services.git_integration_worker.cursor_sdk_deliverables_expected import (
+        GIT_UNREACHABLE_REASON,
+    )
+
+    repo = _init_repo(tmp_path)
+    head = _git(repo, "rev-parse", "HEAD")
+    wrapper = _wrapper(
+        head_sha=head,
+        branch="cursor-sdk/auto-gitignored",
+        commits_ahead=0,
+        files_untracked_or_ignored=[".claude/skills/x/SKILL.md"],
+    )
+    with patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "compute_lane_a_checkpoint_value",
+        return_value="nothing_authored",
+    ):
+        state = compute_closeout_tree_state(
+            source_repo=repo,
+            dispatch_id="auto-gitignored",
+            wrapper_text=wrapper,
+        )
+    assert f"unknown@local-master ({GIT_UNREACHABLE_REASON})" in state.plane_line
     assert "NOT landed@local-master" not in state.plane_line
 
 

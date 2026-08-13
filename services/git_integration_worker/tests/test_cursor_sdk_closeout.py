@@ -1776,6 +1776,12 @@ def test_closeout_gitignored_file_in_untracked_surface(
         check=True,
         capture_output=True,
     )
+    admit = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
     rel = "services/rag/property_index/test_skill_vocabulary.py"
     ignored_file = tmp_path / rel
     ignored_file.parent.mkdir(parents=True, exist_ok=True)
@@ -1810,7 +1816,7 @@ def test_closeout_gitignored_file_in_untracked_surface(
         degraded_reason=None,
         thread_id="t-gitignored",
         work_item_ref="todo:cursor-sdk-stargate-fs-view-divergence",
-        baseline={"codes": {}, "hashes": {}},
+        baseline={"codes": {}, "hashes": {}, "admit_head": admit},
         deliverables_expected=True,
         packet_text=f"<scope>\nFiles expected: - `{rel}`\n</scope>\n",
     )
@@ -1824,6 +1830,9 @@ def test_closeout_gitignored_file_in_untracked_surface(
     assert "divergence:repo_diff_gitignored_present" not in payload["deviations"]
     assert "capture:gitignored_present_unattributed" in payload["deviations"]
     assert "path(s) touched" in payload["summary"]
+    assert payload.get("commits_ahead") == 0
+    assert payload.get("landed") is None
+    assert "landed" not in payload
 
 
 def test_attribution_effects_paths_swamp_excluded_from_untracked_leg() -> None:

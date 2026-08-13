@@ -64,6 +64,7 @@ class CapturePlaneKeys:
     branch: str | None
     commits_ahead: int | None = None
     commits_ahead_presence: _FieldPresence = "absent"
+    git_land_plane_uncomputable: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,12 +142,30 @@ def parse_capture_plane_keys(wrapper_text: str | None) -> CapturePlaneKeys:
         data.get("commits_ahead"),
         key_present=commits_key_present,
     )
+    from services.git_integration_worker.cursor_sdk_deliverables_expected import (
+        git_land_plane_uncomputable as land_plane_uncomputable,
+    )
+
     return CapturePlaneKeys(
         head_sha=head_sha,
         branch=branch_name,
         commits_ahead=commits_ahead,
         commits_ahead_presence=commits_ahead_presence,
+        git_land_plane_uncomputable=land_plane_uncomputable(
+            created=_str_seq(data.get("files_created")),
+            modified=_str_seq(data.get("files_modified")),
+            deleted=_str_seq(data.get("files_deleted")),
+            untracked=_str_seq(data.get("files_untracked_or_ignored")),
+            offgit=_str_seq(data.get("files_offgit_produced")),
+        ),
     )
+
+
+def _str_seq(value: object) -> tuple[str, ...]:
+    """Coerce a closeout files_* JSON value to a string sequence."""
+    if not isinstance(value, list):
+        return ()
+    return tuple(item for item in value if isinstance(item, str))
 
 
 def _git_ok(source_repo: Path, *args: str) -> bool:
@@ -235,6 +254,7 @@ def apply_landed_admit_gate(
     *,
     commits_ahead: int | None,
     commits_ahead_presence: _FieldPresence = "absent",
+    git_land_plane_uncomputable: bool = False,
 ) -> PlaneObservation:
     """Project the landed axis to {True, False, None} under G₂ admit.
 
@@ -243,8 +263,11 @@ def apply_landed_admit_gate(
     definite claim. When presence is present, vacuous ``commits_ahead==0``
     demotes True→False; ``>=1`` leaves True. Ancestry False/None is unchanged
     by an absent meter (stranded NOT-landed stays grounded by the ancestry probe).
+    Git-unreachable-only effects (gitignored/off-git, no tracked paths) keep
+    G₂ False from becoming a negative — emit unknown with reason instead.
     """
     from services.git_integration_worker.cursor_sdk_deliverables_expected import (
+        GIT_UNREACHABLE_REASON,
         admit_landed_true,
     )
 
@@ -266,6 +289,12 @@ def apply_landed_admit_gate(
     measured = commits_ahead if commits_ahead is not None else 0
     if admit_landed_true(ancestry_on_master=True, commits_ahead=measured):
         return plane
+    if git_land_plane_uncomputable:
+        return replace(
+            plane,
+            landed_local_master=None,
+            unknown_reason=GIT_UNREACHABLE_REASON,
+        )
     return replace(plane, landed_local_master=False)
 
 

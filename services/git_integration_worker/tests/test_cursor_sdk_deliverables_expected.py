@@ -84,3 +84,58 @@ def test_g2_unknown_ancestry_emits_landed_null_not_false() -> None:
     assert admit_landed_true(ancestry_on_master=None, commits_ahead=0) is None
     assert admit_landed_true(ancestry_on_master=False, commits_ahead=3) is False
     assert admit_landed_true(ancestry_on_master=True, commits_ahead=None) is None
+
+
+def test_git_land_plane_uncomputable_gitignored_only() -> None:
+    from services.git_integration_worker.cursor_sdk_deliverables_expected import (
+        git_land_plane_uncomputable,
+    )
+
+    assert git_land_plane_uncomputable(
+        untracked=(".claude/skills/prose-discipline/SKILL.md",),
+    ) is True
+
+
+def test_git_land_plane_uncomputable_offgit_only() -> None:
+    from services.git_integration_worker.cursor_sdk_deliverables_expected import (
+        git_land_plane_uncomputable,
+    )
+
+    assert git_land_plane_uncomputable(
+        offgit=("cortex://notes/system/recon/x.md",),
+    ) is True
+
+
+def test_git_land_plane_uncomputable_swamp_only_is_false() -> None:
+    from services.git_integration_worker.cursor_sdk_deliverables_expected import (
+        git_land_plane_uncomputable,
+    )
+
+    assert git_land_plane_uncomputable(
+        untracked=(".cursor/rules/foo.mdc",),
+    ) is False
+    assert git_land_plane_uncomputable(
+        untracked=("tmp/reviews/closeouts/auto-x.md",),
+    ) is False
+
+
+def test_git_land_plane_uncomputable_mixed_tracked_is_false() -> None:
+    from services.git_integration_worker.cursor_sdk_deliverables_expected import (
+        git_land_plane_uncomputable,
+    )
+
+    assert git_land_plane_uncomputable(
+        modified=("services/git_integration_worker/cursor_sdk_closeout.py",),
+        untracked=(".claude/skills/x/SKILL.md",),
+    ) is False
+
+
+def test_suppress_vacuous_git_landed_false_when_uncomputable() -> None:
+    from services.git_integration_worker.cursor_sdk_deliverables_expected import (
+        suppress_vacuous_git_landed,
+    )
+
+    assert suppress_vacuous_git_landed(False, uncomputable=True) is None
+    assert suppress_vacuous_git_landed(False, uncomputable=False) is False
+    assert suppress_vacuous_git_landed(True, uncomputable=True) is True
+    assert suppress_vacuous_git_landed(None, uncomputable=True) is None
