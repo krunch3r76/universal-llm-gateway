@@ -5,7 +5,8 @@ the life seat. This module is the external actuator: age enrolled watches and
 self-enqueue structural ``TYPE: CONTINUITY_HANDOFF`` when the threshold elapses.
 
 Watch ledger / evaluate live in ``hop_cadence_watch``. This file owns capacity
-gating, hop body authorship, enqueue+commission, and the background loop.
+gating, hop body authorship (thin adapter over ``hop_handoff``), enqueue+commission,
+and the background loop.
 
 Invariants:
 - Hop ≠ close: only the existing continuity-hop path; never ``MISSION_CLOSEOUT``.
@@ -23,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from claude_bundles.hop_seat_cutover import refuse_cadence_hop_for_live_seat
+from hop_handoff import build_continuity_handoff_body
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_auto.cdp_escalation import (
@@ -78,70 +80,29 @@ def build_cadence_hop_body(
 ) -> str:
     """Author the structural CONTINUITY_HANDOFF body Auto self-enqueues on fire.
 
-    The Read-URI instruction is gated on ``assess_standing_handoff`` status:
-    ``missing`` is a job for the arriving seat (author the S7 state file),
-    not a broken link. First-hop vs later-missing is not distinguishable from
-    ``HopDecision`` at this call site — one missing branch.
+    Thin adapter over ``hop_handoff.build_continuity_handoff_body`` — cadence
+    supplies source/trigger/age; the identity and keep-alive doctrine live
+    in the shared author. The Read-URI instruction is gated on
+    ``assess_standing_handoff`` status: ``missing`` is a job for the arriving
+    seat (author the S7 state file), not a broken link. First-hop vs
+    later-missing is not distinguishable from ``HopDecision`` at this call
+    site — one missing branch.
     """
     handoff = decision.handoff or assess_standing_handoff(decision.thread_id)
-    you_are = (chat_url or "").strip() or (
-        "this successor CSE — identity is the chat_url of the Cowork session you are in"
+    return build_continuity_handoff_body(
+        thread_id=decision.thread_id,
+        trigger=decision.signal or "watch_seated_at",
+        source="cursor-auto-hop-cadence",
+        handoff=handoff,
+        you_are=(chat_url or "").strip() or None,
+        age_s=decision.age_s,
+        threshold_s=(
+            decision.threshold_s
+            if decision.threshold_s is not None
+            else age_threshold_s()
+        ),
+        superseded_registration_id=registration_id,
     )
-    lines = [
-        "TYPE: CONTINUITY_HANDOFF",
-        "contract: light-bounded",
-        "source: cursor-auto-hop-cadence",
-        f"trigger: {decision.signal or 'watch_seated_at'}",
-        f"thread_id: {decision.thread_id}",
-        f"you_are: {you_are}",
-        f"parent_thread: {decision.thread_id}",
-        f"cse_age_s: {decision.age_s:.1f}"
-        if decision.age_s is not None
-        else "cse_age_s: unknown",
-        f"threshold_s: {decision.threshold_s:.1f}"
-        if decision.threshold_s is not None
-        else f"threshold_s: {age_threshold_s():.1f}",
-        f"standing_handoff: {handoff.uri}",
-        f"standing_handoff_freshness: {handoff.status}",
-    ]
-    if handoff.age_s is not None:
-        lines.append(f"standing_handoff_age_s: {handoff.age_s:.1f}")
-    if registration_id:
-        lines.append(f"superseded_registration_id: {registration_id}")
-    if handoff.status == "missing":
-        resume_read: tuple[str, ...] = (
-            "The S7 standing-handoff state file is absent.",
-            "Lane-tip reconstruction is degraded, not equivalent.",
-            "Author the standing handoff before you leave.",
-        )
-    else:
-        resume_read = (
-            "Read the standing handoff URI above before trusting any wake prose.",
-        )
-    lines.extend(
-        [
-            "",
-            "Resume as operator-proxy on this private lane.",
-            *resume_read,
-            "This is a CONTINUITY HOP (seat refresh) — do NOT emit MISSION_CLOSEOUT.",
-            "You are the operator CSE on parent_thread above. Identity is chat_url",
-            "(you_are). Extras on this lane are predecessors, not peers.",
-            "Never touch operator CSEs on other lanes.",
-            "Arc continues; predecessor wakes must be torn down only after this",
-            "successor launch is confirmed.",
-            "",
-            "KEEP-ALIVE / wake cycle (BINDING — 6661 sole-wake · suspended pattern):",
-            "Do NOT arm Monitor loops. Do NOT re-arm send_later for durable wake.",
-            "Wake authority is the mission PRIMARY orchestrator only (monitor 6661 ↔",
-            "mission root) — hop successors are subordinates, not peer wake servers.",
-            "If you inherit a predecessor Monitor, TaskStop it after successor admit;",
-            "delete only trigger_ids this seat recorded (never class-delete).",
-            "CDP one-off work from the mission runner remains fine; keep-alive is not",
-            "ready for fleet hops under the current pattern.",
-            "(cursor-auto cannot reach Cowork-internal timers — seat duty.)",
-        ]
-    )
-    return "\n".join(lines) + "\n"
 
 
 @dataclass(frozen=True)

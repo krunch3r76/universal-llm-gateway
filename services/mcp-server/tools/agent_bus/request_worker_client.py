@@ -213,6 +213,7 @@ def enqueue_auto_job(
     request_id: str | None = None,
     cse_chat_url: str | None = None,
     cse_registration_id: str | None = None,
+    continuity_hop: bool = False,
     base_url: str | None = None,
     timeout_s: float = 10.0,
 ) -> dict[str, Any]:
@@ -238,6 +239,8 @@ def enqueue_auto_job(
         payload["cse_chat_url"] = cse_chat_url
     if cse_registration_id:
         payload["cse_registration_id"] = cse_registration_id
+    if continuity_hop:
+        payload["continuity_hop"] = True
     try:
         with httpx.Client(timeout=timeout_s) as client:
             resp = client.post(url, json=payload)
@@ -261,5 +264,3 @@ def enqueue_auto_job(
             "reason": "enqueue_unreachable",
             "error": str(exc),
         }
-
-

@@ -121,6 +121,28 @@ def test_cadence_hop_body_missing_instructs_author_not_read() -> None:
     assert "Author the standing handoff before you leave." in body
 
 
+def test_cadence_adapter_equals_shared_author() -> None:
+    """GIW adapter must not drift from hop_handoff.build_continuity_handoff_body."""
+    from hop_handoff import StandingHandoffFreshness, build_continuity_handoff_body
+
+    decision = _decision("current")
+    via_adapter = build_cadence_hop_body(decision)
+    via_lib = build_continuity_handoff_body(
+        thread_id=decision.thread_id,
+        trigger=decision.signal or "watch_seated_at",
+        source="cursor-auto-hop-cadence",
+        handoff=StandingHandoffFreshness(
+            status="current",
+            uri=_STANDING_URI,
+            mtime_epoch=1.0,
+            age_s=10.0,
+        ),
+        age_s=decision.age_s,
+        threshold_s=decision.threshold_s,
+    )
+    assert via_adapter == via_lib
+
+
 def test_emission_does_not_write_static_sidecars(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

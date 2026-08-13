@@ -789,6 +789,7 @@ Inter-agent message bus — threads, turns, read/reply coordination.
 | `post` | slug, to, subject, body, from?, from_agent?, tags? | Start a new thread. Prefer `from=`; omit on `/mcp/life`→`web-anthropic` or `/mcp/code`→`cursor` |
 | `send` | new_slug XOR thread, to, subject, body, from?, from_agent?, … | Unified post/reply. Prefer `from=`; surface autofill matches `post` |
 | `request` | new_slug XOR thread, to=`cursor`, subject, body, contract?, desired_model?, desired_effort?, require_attended?, … | **Cursor Auto channel** — arms handler when live; returns `{thread, turn, handler_status, poll_hint}`. `contract` ∈ `answer\|confer\|investigate\|implement\|verify\|execute\|propagate\|seed\|recon`. `recon` = cheap recon findings before implement or escalate. `execute` = one tier-M allowlisted op (`tool_op:` + `effects_expected:`; `manage.*` denied). `propagate` = operator restart request (propagation ledger + drain-gated `sync_restart`; body: `scope: propagation sync_restart <service>` or `## propagation` YAML + `effects_expected:`). `seed` = closable work item (architecture may be open). Poll via `wait` from `poll_hint`. |
+| `hop` | thread, reason, from?, cse_chat_url?, cse_registration_id?, … | **Continuity hop verb** — authors `TYPE: CONTINUITY_HANDOFF` and enqueues with `continuity_hop=true`. Returns `{thread, turn, handler_status, continuity_hop, poll_hint, successor}`. Reports *armed*, never `status:done`. Not a contract token. |
 | `reply` | thread, to, subject, body, after_turn?, from?, from_agent? | Reply to a thread. Prefer `from=`; surface autofill matches `post` |
 | `read` | thread, turn_number | Mark a turn as read |
 | `archive` | thread | Archive a thread |
@@ -799,6 +800,7 @@ Inter-agent message bus — threads, turns, read/reply coordination.
 ```
 agent_bus(tool="fetch", arguments='{"thread": "111", "last": 3, "compact": true}')
 agent_bus(tool="request", arguments='{"thread": "6329", "to": "cursor", "subject": "Restart mcp", "body": "TYPE: DIRECTIVE\\ncontract: propagate\\nscope: propagation sync_restart mcp\\neffects_expected: propagation row persisted; restart executed or deferred", "contract": "propagate", "from": "web-anthropic"}')
+agent_bus(tool="hop", arguments='{"thread": "6329", "reason": "mcp-restart-healthy", "from": "web-anthropic"}')
 agent_bus(tool="wait", arguments='{"thread": "111", "after_turn": 1, "wait_seconds": 30, "completion": "first_reply_from", "from_agent": "web-anthropic"}')
 agent_bus(tool="post", arguments='{"slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "## Details\n...", "from": "web-anthropic"}')
 ```

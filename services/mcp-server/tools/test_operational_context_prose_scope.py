@@ -23,7 +23,9 @@ def test_prose_discipline_v11_scope_in_operational_context() -> None:
 def test_agent_bus_compact_renders_and_teaches_request() -> None:
     rendered = AGENT_BUS_COMPACT.format(agent="claude-web")
     assert 'tool="request"' in rendered
+    assert 'tool="hop"' in rendered
     assert '"to": "cursor"' in rendered
     assert '"to": "TARGET"' not in rendered
     assert "cursor-auto" in rendered
     assert "never a valid `to`" in rendered
+    assert "is **not** a `contract` value" in rendered

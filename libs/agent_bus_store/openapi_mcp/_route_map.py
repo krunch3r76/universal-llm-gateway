@@ -22,7 +22,7 @@ from openapi_mcp.detector import unbound_dispatch_ops as _unbound_dispatch_ops
 from ._ops import AGENT_BUS_DISPATCH_OPS
 
 # Adapter-orchestration ops — structurally untypeable on HTTP SOT.
-UNTYPEABLE_OPS: frozenset[str] = frozenset({"request"})
+UNTYPEABLE_OPS: frozenset[str] = frozenset({"request", "hop"})
 
 
 def typed_routes_from_openapi(openapi_schema: Mapping) -> dict[str, TypedRoute]:

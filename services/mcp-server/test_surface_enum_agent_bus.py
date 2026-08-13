@@ -14,6 +14,7 @@ def test_advertised_agent_bus_ops_excludes_deprecated() -> None:
     assert AGENT_BUS_DEPRECATED_OPS.isdisjoint(advertised)
     assert "send" in advertised
     assert "request" in advertised
+    assert "hop" in advertised
     assert "fetch" in advertised
     assert advertised | AGENT_BUS_DEPRECATED_OPS == frozenset(AGENT_BUS_OPS)
 
@@ -51,4 +52,5 @@ def test_surface_enum_proxy_injects_agent_bus_ops() -> None:
     assert "post" not in tool_prop["enum"]
     assert "send" in tool_prop["enum"]
     assert "request" in tool_prop["enum"]
+    assert "hop" in tool_prop["enum"]
     assert "wait" in tool_prop["enum"]

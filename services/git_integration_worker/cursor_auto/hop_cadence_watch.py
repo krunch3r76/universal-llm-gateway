@@ -17,6 +17,15 @@ from typing import Any
 
 from agent_seat.registry import normalize_bus_address
 from claude_bundles.cdp_registry_store import load_active
+from hop_handoff import (
+    StandingHandoffFreshness,
+    assess_standing_handoff,
+    standing_handoff_path,
+    standing_handoff_uri,
+)
+from hop_handoff import (
+    cse_age_threshold_s as age_threshold_s,
+)
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_auto.hop_cadence_home_lane import (
@@ -27,28 +36,20 @@ from services.git_integration_worker.cursor_auto.queue import AutoJob
 
 logger = get_logger(__name__)
 
+# Re-exports from hop_handoff so existing GIW imports keep resolving.
+__all__ = (
+    "HopDecision",
+    "StandingHandoffFreshness",
+    "age_threshold_s",
+    "assess_standing_handoff",
+    "standing_handoff_path",
+    "standing_handoff_uri",
+)
+
 # Operator bind 2026-08-12 (arc 7119): cadence = 30 minutes wall-clock.
-_DEFAULT_AGE_THRESHOLD_S = 1800.0
 _DEFAULT_COOLDOWN_S = 1800.0
 _DEFAULT_SCAN_INTERVAL_S = 30.0
-_STANDING_HANDOFF_STALE_FACTOR = 2.0
-_MCP_FILES_ROOT = Path("/mnt/torus/mcp-data/files")
 _WATCH_FILENAME = "hop_cadence_watches.json"
-
-
-def age_threshold_s() -> float:
-    """Seconds of CSE/watch age before Auto fires a continuity hop.
-
-    Override with env ``CURSOR_AUTO_HOP_CSE_AGE_S`` (minimum 60s).
-    Default 1800s (30 min).
-    """
-    raw = os.environ.get("CURSOR_AUTO_HOP_CSE_AGE_S", "").strip()
-    if not raw:
-        return _DEFAULT_AGE_THRESHOLD_S
-    try:
-        return max(60.0, float(raw))
-    except ValueError:
-        return _DEFAULT_AGE_THRESHOLD_S
 
 
 def cooldown_s() -> float:
@@ -90,32 +91,6 @@ def watches_path() -> Path:
     return Path.home() / ".gateway" / "cdp-registry" / _WATCH_FILENAME
 
 
-def standing_handoff_path(thread_id: str) -> Path:
-    """On-disk path for the standing-handoff cortex note of a private lane."""
-    return (
-        _MCP_FILES_ROOT
-        / "notes"
-        / "system"
-        / "threads"
-        / f"{thread_id}-standing-handoff.md"
-    )
-
-
-def standing_handoff_uri(thread_id: str) -> str:
-    """Share URI the successor must read before trusting wake prose."""
-    return f"cortex://notes/system/threads/{thread_id}-standing-handoff.md"
-
-
-@dataclass(frozen=True)
-class StandingHandoffFreshness:
-    """Observed freshness of the standing handoff sidecar for one lane."""
-
-    status: str  # current | stale | missing
-    uri: str
-    mtime_epoch: float | None
-    age_s: float | None
-
-
 @dataclass(frozen=True)
 class HopDecision:
     """One evaluate() outcome for a watched private lane."""
@@ -127,26 +102,6 @@ class HopDecision:
     threshold_s: float | None = None
     signal: str | None = None
     handoff: StandingHandoffFreshness | None = None
-
-
-def assess_standing_handoff(
-    thread_id: str, *, now: float | None = None, stale_after_s: float | None = None
-) -> StandingHandoffFreshness:
-    """Classify standing-handoff freshness from filesystem mtime (observed only)."""
-    uri = standing_handoff_uri(thread_id)
-    path = standing_handoff_path(thread_id)
-    ts = time.time() if now is None else now
-    limit = (
-        stale_after_s
-        if stale_after_s is not None
-        else age_threshold_s() * _STANDING_HANDOFF_STALE_FACTOR
-    )
-    if not path.is_file():
-        return StandingHandoffFreshness("missing", uri, None, None)
-    mtime = path.stat().st_mtime
-    age = max(0.0, ts - mtime)
-    status = "stale" if age > limit else "current"
-    return StandingHandoffFreshness(status, uri, mtime, age)
 
 
 def load_watches(path: Path | None = None) -> dict[str, dict[str, Any]]:
@@ -173,7 +128,9 @@ def save_watches(watches: dict[str, dict[str, Any]], path: Path | None = None) -
     target = path or watches_path()
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix(".tmp")
-    tmp.write_text(json.dumps(watches, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.write_text(
+        json.dumps(watches, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     tmp.replace(target)
 
 
@@ -249,7 +206,9 @@ def observe_lane_from_enqueue(
             reg_started = registry_started_at(job.cse_registration_id)
             row["seated_at"] = float(reg_started) if reg_started is not None else ts
             row["enroll_source"] = (
-                "registry_started_at" if reg_started is not None else "first_auto_observe"
+                "registry_started_at"
+                if reg_started is not None
+                else "first_auto_observe"
             )
     row["thread_id"] = thread_id
     row["last_seen_at"] = ts
@@ -331,7 +290,8 @@ def evaluate_watch(
     age = max(0.0, ts - seated)
     signal = (
         "registry_started_at"
-        if registry_started_at(str(row.get("registration_id") or "") or None) is not None
+        if registry_started_at(str(row.get("registration_id") or "") or None)
+        is not None
         else "watch_seated_at"
     )
     handoff = assess_standing_handoff(thread_id, now=ts)

@@ -2088,6 +2088,64 @@ tools:
   mandate_safety: write
   cache_priority: always_loaded
   introduced: 2026-07-29
+- canonical_name: agent_bus_hop
+  domain: agent_bus
+  operation: hop
+  dispatcher_call_shape:
+    tool: agent_bus
+    dispatch_key: op
+    dispatch_value: hop
+  flat_call_shape:
+    tool: agent_bus_hop
+    substrate_qualified: user-vortex__agent_bus_hop
+  fol_descriptor: "∀ args: thread ∈ args ∧ reason ∈ args\n  ⟹ TurnSendCreated-shaped + handler_status ∈ {auto-admit-armed, no-auto-handler} + continuity_hop=true + poll_hint + successor.\nAuthors TYPE: CONTINUITY_HANDOFF via hop_handoff (same author as cadence). Enqueues EnqueueBody.continuity_hop=true — first producer of that wire field.\n¬ a contract token (hop ∉ CANONICAL_CONTRACTS). Reports armed, never status:done; successor handle is execution_id on the terminal turn.\nHop-before-healthy degrades (no-auto-handler) rather than arming. Life-callable (mcp_claude). Mutating.\n"
+  json_schema:
+    type: object
+    properties:
+      thread:
+        type: string
+        description: Existing private-lane thread to hop. Required — hop never mints a new thread.
+      reason:
+        type: string
+        description: Trigger line written into the CONTINUITY_HANDOFF body (why this hop fired).
+      from:
+        type: string
+        description: Preferred author seat. Autofilled web-anthropic on /mcp/life.
+      from_agent:
+        type: string
+        description: Permanent alias for from=.
+      cse_chat_url:
+        type: string
+        description: Predecessor CSE chat_url (you_are identity for the successor).
+      cse_registration_id:
+        type: string
+        description: Predecessor registration id (superseded_registration_id on the body).
+      desired_model:
+        type: string
+        description: Optional Auto hint (default auto).
+      desired_effort:
+        type: string
+        description: Optional Auto hint (default medium).
+      request_id:
+        type: string
+        description: Optional idempotency key; minted when omitted.
+      after_turn:
+        type: integer
+        description: Continue-thread ordering pointer (default 0).
+        default: 0
+      subject:
+        type: string
+        description: Optional turn subject; default CONTINUITY HANDOFF — hop (thread {id}).
+    required:
+    - thread
+    - reason
+  skill_uri: agent_skill:agent_bus
+  seat_visibility:
+  - mcp
+  - mcp_claude
+  mandate_safety: write
+  cache_priority: always_loaded
+  introduced: 2026-08-13
 - canonical_name: agent_bus_triage
   domain: agent_bus
   operation: triage

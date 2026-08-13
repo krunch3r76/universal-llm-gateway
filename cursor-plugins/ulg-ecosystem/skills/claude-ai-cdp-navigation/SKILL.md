@@ -75,7 +75,7 @@ identity(CSE) = chat_url
 restart(mcp | cdp_ask | …) ⇒ drop(attach) ∧ ¬end(CSE)
 ```
 
-Satellite `execution_id` / Playwright / MCP socket are attach handles. After **`cdp_ask`** recycle: `wait_healthy(cdp_ask)` → `project_ask(op=followup)` with `chat_url` (`reattach=true` if the page is not on a lane). Continuity hop (new window, same private lane) is for **MCP tooling/chip refresh**, not because a satellite row died. `cdp_ask` `sync_restart` is never coupled to mcp. ¬ park the restart on `live_cse_count` / a running hop execution.
+Satellite `execution_id` / Playwright / MCP socket are attach handles. After **`cdp_ask`** recycle: `wait_healthy(cdp_ask)` → `project_ask(op=followup)` with `chat_url` (`reattach=true` if the page is not on a lane). Continuity hop (new window, same private lane) is for **MCP tooling/chip refresh**, not because a satellite row died — life seat fires `agent_bus(tool="hop")` after `wait_healthy(mcp)`; ¬ `request` + hand-authored `TYPE: CONTINUITY_HANDOFF`. `cdp_ask` `sync_restart` is never coupled to mcp. ¬ park the restart on `live_cse_count` / a running hop execution.
 
 **Operator self-stop is a different plane (BINDING — 2026-08-01):** poller retain does **not** authorize the operator seat to end its Cowork turn. `end(stream) ⇔ continuity_handoff ∨ TYPE:MISSION_CLOSEOUT` — full discriminator + exception notify (`cse-stream-stop`) live in `cdp-operator-proxy` inv 30. IDE observing mid-mission idle with open residuals and no mission-close TYPE ⇒ load that skill and fire the awareness ping if Opus already went quiet.
 

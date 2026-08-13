@@ -71,6 +71,91 @@ def test_continuity_hop_wire_flag_alone():
     assert token == "wire:continuity_hop"
 
 
+def test_verb_shaped_body_plus_wire_flag_matches_type_token():
+    """MCP hop verb produces TYPE first-line AND continuity_hop=true."""
+    from hop_handoff import StandingHandoffFreshness, build_continuity_handoff_body
+
+    body = build_continuity_handoff_body(
+        thread_id="T-hop",
+        trigger="mcp-restart-healthy",
+        source="agent-bus-hop-verb",
+        handoff=StandingHandoffFreshness(
+            status="current",
+            uri="cortex://notes/system/threads/T-hop-standing-handoff.md",
+            mtime_epoch=1.0,
+            age_s=1.0,
+        ),
+    )
+    is_hop, token = is_continuity_hop_request(body, wire_flag=True)
+    assert is_hop is True
+    assert token == "TYPE:CONTINUITY_HANDOFF"
+
+
+@pytest.mark.asyncio
+async def test_verb_shaped_enqueue_skips_supersede(live_run, monkeypatch):
+    """Producer-side hop: wire flag + verb body admits as hop, incumbent survives."""
+    from hop_handoff import StandingHandoffFreshness, build_continuity_handoff_body
+    from services.git_integration_worker.cursor_auto import queue as queue_mod
+
+    q = queue_mod.reset_queue_for_tests(durable=False)
+    old = q.enqueue(
+        thread_id="T-hop",
+        turn_number=1,
+        subject="commission in flight",
+        body="TYPE: DIRECTIVE\ncontract: implement\n## Scope\nlibs/foo\n",
+        from_agent="cdp",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="implement",
+    )
+    assert q.claim_next().job_id == old.job_id
+
+    hop_tasks: list = []
+
+    async def _capture_hop(job, *, queue, incumbent=None):
+        hop_tasks.append((job.job_id, incumbent.job_id if incumbent else None))
+        return {"ok": True}
+
+    monkeypatch.setattr(routes_mod, "get_queue", lambda: q)
+    monkeypatch.setattr(routes_mod, "get_registry", lambda: MagicMock(is_live=lambda: True))
+    monkeypatch.setattr(routes_mod, "run_continuity_hop_concurrent", _capture_hop)
+
+    hop_body = build_continuity_handoff_body(
+        thread_id="T-hop",
+        trigger="mcp-restart-healthy",
+        source="agent-bus-hop-verb",
+        handoff=StandingHandoffFreshness(
+            status="current",
+            uri="cortex://notes/system/threads/T-hop-standing-handoff.md",
+            mtime_epoch=1.0,
+            age_s=1.0,
+        ),
+    )
+    body = EnqueueBody(
+        thread_id="T-hop",
+        turn_number=2,
+        subject="CONTINUITY HANDOFF — hop (thread T-hop)",
+        body=hop_body,
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        contract="answer",
+        continuity_hop=True,
+    )
+    resp = await enqueue(body, _enqueue_request())
+    assert resp.status_code == 200
+    content = resp.body
+    payload = json.loads(content.decode() if hasattr(content, "decode") else content)
+    assert payload["continuity_hop"] is True
+    assert payload["matched_token"] == "TYPE:CONTINUITY_HANDOFF"
+    assert payload["superseded"] is None
+    assert q.get(old.job_id).status == "claimed"
+    assert not q.is_superseded(old.job_id)
+    await asyncio.sleep(0)
+    assert hop_tasks and hop_tasks[0][1] == old.job_id
+    live_run.cancel.assert_not_called()
+
+
 def test_continuity_hop_type_not_first_line_is_not_hop():
     body = "arc: foo\nTYPE: CONTINUITY_HANDOFF\nscope: CDP\n"
     is_hop, token = is_continuity_hop_request(body)

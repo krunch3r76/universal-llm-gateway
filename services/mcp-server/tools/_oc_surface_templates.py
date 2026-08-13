@@ -144,7 +144,7 @@ def render_claude_web_tool_surface() -> str:
 (derived per mount — do not re-derive it from prose). `fs` writes land in the cortex
 sandbox; {ws_prose}.
 
-`/mcp/code` is OFF: `team_dispatch`, `panel_dispatch`, `pipeline`, `manage`, `observability`, `project_ask`, and every workspaces WRITE are absent from this mount — a REAL absence, not a deferred bind. Need one? Ask a code seat: `agent_bus(tool="request", to="cursor", …)` (Cursor Auto; poll `poll_hint` with `wait`) or `send` for an attended seat — skill `life-to-code-request-lane` (`lane:life-to-code`). Gate SoT: boot card `## Dispatch & Consult` + skill `consult-routing` § Surface gate.
+`/mcp/code` is OFF: `team_dispatch`, `panel_dispatch`, `pipeline`, `manage`, `observability`, `project_ask`, and every workspaces WRITE are absent from this mount — a REAL absence, not a deferred bind. Need one? Ask a code seat: `agent_bus(tool="request", to="cursor", …)` (Cursor Auto; poll `poll_hint` with `wait`) or `send` for an attended seat — skill `life-to-code-request-lane` (`lane:life-to-code`). CSE continuity hop on an existing private lane: `agent_bus(tool="hop")`, ¬ `request` + typed `TYPE: CONTINUITY_HANDOFF`. Gate SoT: boot card `## Dispatch & Consult` + skill `consult-routing` § Surface gate.
 Handoff defaults are read/coordination + bus reply. Graph walks or durable life
 writes require explicit task/output authority; they are not inferred from MCP-on.
 

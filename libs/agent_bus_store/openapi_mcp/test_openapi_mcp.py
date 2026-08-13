@@ -18,6 +18,7 @@ def test_extract_typed_routes_returns_nineteen_ops() -> None:
     assert "branch_associate" in routes
     assert "branch_current" in routes
     assert "request" not in routes
+    assert "hop" not in routes
     assert "add_tags" not in routes
     assert "remove_tags" not in routes
 
@@ -38,6 +39,7 @@ def test_unbound_ops_are_collision_losers_only() -> None:
     unbound = unbound_dispatch_ops(schema)
     assert unbound == ["add_tags", "remove_tags"]
     assert "request" not in unbound
+    assert "hop" not in unbound
 
 
 @pytest.mark.offline

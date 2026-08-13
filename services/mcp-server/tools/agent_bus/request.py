@@ -18,6 +18,13 @@ from mcp_events import record
 from .._agent_bus_author import resolve_dispatch_from_agent
 from .park_hint import build_poll_hint as _build_poll_hint
 from .park_hint import is_chat_delivery_capable
+from .request_failure import (
+    annotate_poll_hint_no_producer,
+    build_enqueue_failure,
+    enqueue_failure_reason,
+    error_class_from_enqueue,
+    error_class_from_liveness,
+)
 from .request_intake import (
     resolve_contract_intake,
     resolve_request_id_intake,
@@ -71,67 +78,6 @@ def _merge_lane_tags(tags: list[str] | None) -> list[str]:
     return merged
 
 
-def _annotate_poll_hint_no_producer(poll_hint: dict[str, Any]) -> dict[str, Any]:
-    return {**poll_hint, "producer": "none"}
-
-
-def _build_enqueue_failure(
-    *,
-    reason: str,
-    attempts: int,
-    error_class: str,
-    elapsed_s: float,
-) -> dict[str, Any]:
-    return {
-        "reason": reason,
-        "attempts": max(0, int(attempts)),
-        "error_class": error_class,
-        "elapsed_s": max(0.0, float(elapsed_s)),
-        "terminal_park": True,
-    }
-
-
-def _error_class_from_liveness(liveness: dict[str, Any]) -> str:
-    if liveness.get("error_class"):
-        return str(liveness["error_class"])
-    reason = str(liveness.get("reason", ""))
-    if reason == "no_live_handler":
-        return "handler_dead"
-    if reason == "liveness_http_error":
-        status = liveness.get("status_code")
-        if isinstance(status, int) and 500 <= status < 600:
-            return "http_5xx"
-        return "http_other"
-    return "unknown"
-
-
-def _enqueue_failure_reason(enq: dict[str, Any]) -> str:
-    if enq.get("reason"):
-        return str(enq["reason"])
-    enqueue_data = enq.get("enqueue") or {}
-    if enqueue_data.get("handler_status"):
-        return str(enqueue_data["handler_status"])
-    return str(enq.get("handler_status", "no-auto-handler"))
-
-
-def _error_class_from_enqueue(enq: dict[str, Any]) -> str:
-    reason = str(enq.get("reason") or "")
-    if reason == "enqueue_unreachable":
-        return "enqueue_unreachable"
-    enqueue_data = enq.get("enqueue") or {}
-    worker_status = str(
-        enqueue_data.get("handler_status") or enq.get("handler_status") or ""
-    )
-    if worker_status in {"no_live_auto_handler", "no-auto-handler"}:
-        return "handler_dead"
-    status = enq.get("status_code")
-    if isinstance(status, int) and 500 <= status < 600:
-        return "http_5xx"
-    if isinstance(status, int):
-        return "http_other"
-    return "unknown"
-
-
 def _request_impl(
     *,
     new_slug: str | None,
@@ -153,6 +99,7 @@ def _request_impl(
     cse_chat_url: str | None = None,
     cse_registration_id: str | None = None,
     escalation: str | None = None,
+    continuity_hop: bool = False,
 ) -> dict[str, Any]:
     """Write turn via send path, then arm/enqueue Auto when live."""
     from pager_notify.so_what import resolve_so_what_summary
@@ -216,7 +163,7 @@ def _request_impl(
         reason = str(liveness.get("reason", "no_live_handler"))
         attempts = int(liveness.get("attempts", 1))
         elapsed_s = float(liveness.get("elapsed_s", 0.0))
-        error_class = _error_class_from_liveness(liveness)
+        error_class = error_class_from_liveness(liveness)
         record(
             "mcp.agentbus.request.degraded",
             thread=thread_id,
@@ -230,7 +177,7 @@ def _request_impl(
             "thread": thread_obj,
             "turn": turn_obj,
             "handler_status": "no-auto-handler",
-            "poll_hint": _annotate_poll_hint_no_producer(
+            "poll_hint": annotate_poll_hint_no_producer(
                 _build_poll_hint(
                     thread_id=thread_id,
                     after_turn=turn_number,
@@ -238,7 +185,7 @@ def _request_impl(
                 )
             ),
             "liveness": liveness,
-            "enqueue_failure": _build_enqueue_failure(
+            "enqueue_failure": build_enqueue_failure(
                 reason=reason,
                 attempts=attempts,
                 error_class=error_class,
@@ -268,12 +215,13 @@ def _request_impl(
         cse_chat_url=cse_chat_url if capture_identity else None,
         cse_registration_id=cse_registration_id if capture_identity else None,
         escalation=escalation,
+        continuity_hop=continuity_hop,
     )
     if not enq.get("ok"):
-        reason = _enqueue_failure_reason(enq)
+        reason = enqueue_failure_reason(enq)
         attempts = int(liveness.get("attempts", 1))
         elapsed_s = float(liveness.get("elapsed_s", 0.0))
-        error_class = _error_class_from_enqueue(enq)
+        error_class = error_class_from_enqueue(enq)
         record(
             "mcp.agentbus.request.degraded",
             thread=thread_id,
@@ -287,7 +235,7 @@ def _request_impl(
             "thread": thread_obj,
             "turn": turn_obj,
             "handler_status": "no-auto-handler",
-            "poll_hint": _annotate_poll_hint_no_producer(
+            "poll_hint": annotate_poll_hint_no_producer(
                 _build_poll_hint(
                     thread_id=thread_id,
                     after_turn=turn_number,
@@ -295,7 +243,7 @@ def _request_impl(
                 )
             ),
             "enqueue": enq,
-            "enqueue_failure": _build_enqueue_failure(
+            "enqueue_failure": build_enqueue_failure(
                 reason=reason,
                 attempts=attempts,
                 error_class=error_class,
