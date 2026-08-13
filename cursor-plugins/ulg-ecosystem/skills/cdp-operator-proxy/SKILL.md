@@ -433,6 +433,10 @@ cadence) and enqueues `continuity_hop=true`. Cursor-auto then fires
 `agent_bus(tool="substrate_friction_file", arguments='{"owner": "<service:…|agent_skill:…>", "note": "<what went wrong>", "category": "tool_error"}')`
 — wraps cortex `friction` via shared lib; requires `owner` (or `service`) + `note` (or `claim`); ¬ mint on 404; ¬ a contract token.
 
+**Substrate entity mint — mint an entity or owner the envelope can validate (same request surface family as hop):**
+`agent_bus(tool="substrate_entity_mint", arguments='{"id": "<service:…|todo:…>", "type": "<service|todo|…>", "name": "<display name>", "attributes": {"density_triage": "mechanical"}}')`
+— wraps cortex `entity_create` via shared lib; requires `id` + `type` + `name`; 409 on exact-slug collision; todo `density_triage` lives in `attributes` (top-level is 422); ¬ rich-seed; ¬ a contract token.
+
 **Hop ≠ backtrack (row 21 BINDING):** `tool="hop"` (verb-authored first-line
 `TYPE: CONTINUITY_HANDOFF`) does **not** supersede an in-flight commission. Auto skips
 same-thread supersede, posts a harvest residual naming the live `dispatch_id`, and

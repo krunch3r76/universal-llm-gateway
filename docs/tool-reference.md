@@ -792,6 +792,7 @@ Inter-agent message bus — threads, turns, read/reply coordination.
 | `hop` | thread, reason, from?, cse_chat_url?, cse_registration_id?, … | **Continuity hop verb** — authors `TYPE: CONTINUITY_HANDOFF` and enqueues with `continuity_hop=true`. Returns `{thread, turn, handler_status, continuity_hop, poll_hint, successor}`. Reports *armed*, never `status:done`. Not a contract token. |
 | `substrate_graph_write` | entity_id, claim, confidence?, derivation_type?, evidence?, evidence_uris? | **Cortex assert verb** — POSTs cortex `assert` via shared `substrate_graph_write` lib. Returns `{assertion_id, entity_id, …}`. Requires entity_id + claim. Does not mint on 404 or enqueue bus turns. Not a contract token. |
 | `substrate_friction_file` | owner, note, service?, claim?, category?, suggestion?, evidence_uris?, confidence?, agent? | **Cortex friction verb** — POSTs cortex `friction` via shared `substrate_friction_file` lib. Returns `{assertion_id, owner, …}`. Requires owner (or service) + note (or claim). Does not mint on 404 or enqueue bus turns. Not a contract token. |
+| `substrate_entity_mint` | id, type, name, entity_id?, entity_type?, title?, description?, status?, workflow_state?, notes?, aliases?, attributes?, source_uri?, content_hash? | **Cortex entity_create verb** — POSTs cortex `entity_create` via shared `substrate_entity_mint` lib. Returns create payload with `entity_id` stamped from the response. Requires id + type + name. Forwards every dispatch-consumed field; retention / Option-C traits / top-level `density_triage` → named 422. Does not run rich-seed or enqueue bus turns. Not a contract token. |
 | `reply` | thread, to, subject, body, after_turn?, from?, from_agent? | Reply to a thread. Prefer `from=`; surface autofill matches `post` |
 | `read` | thread, turn_number | Mark a turn as read |
 | `archive` | thread | Archive a thread |
@@ -805,6 +806,7 @@ agent_bus(tool="request", arguments='{"thread": "6329", "to": "cursor", "subject
 agent_bus(tool="hop", arguments='{"thread": "6329", "reason": "mcp-restart-healthy", "from": "web-anthropic"}')
 agent_bus(tool="substrate_graph_write", arguments='{"entity_id": "todo:dispatch-verb-surface", "claim": "Substrate rot observed during implement."}')
 agent_bus(tool="substrate_friction_file", arguments='{"owner": "service:mcp-server", "note": "Life seat 404d filing friction as bus prose."}')
+agent_bus(tool="substrate_entity_mint", arguments='{"id": "service:cursor-auto", "type": "service", "name": "cursor-auto"}')
 agent_bus(tool="wait", arguments='{"thread": "111", "after_turn": 1, "wait_seconds": 30, "completion": "first_reply_from", "from_agent": "web-anthropic"}')
 agent_bus(tool="post", arguments='{"slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "## Details\n...", "from": "web-anthropic"}')
 ```

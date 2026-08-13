@@ -26,6 +26,7 @@ def test_agent_bus_compact_renders_and_teaches_request() -> None:
     assert 'tool="hop"' in rendered
     assert 'tool="substrate_graph_write"' in rendered
     assert 'tool="substrate_friction_file"' in rendered
+    assert 'tool="substrate_entity_mint"' in rendered
     assert '"to": "cursor"' in rendered
     assert '"to": "TARGET"' not in rendered
     assert "cursor-auto" in rendered

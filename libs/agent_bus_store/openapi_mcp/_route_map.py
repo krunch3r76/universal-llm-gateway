@@ -23,7 +23,13 @@ from ._ops import AGENT_BUS_DISPATCH_OPS
 
 # Adapter-orchestration ops — structurally untypeable on HTTP SOT.
 UNTYPEABLE_OPS: frozenset[str] = frozenset(
-    {"request", "hop", "substrate_graph_write", "substrate_friction_file"}
+    {
+        "request",
+        "hop",
+        "substrate_graph_write",
+        "substrate_friction_file",
+        "substrate_entity_mint",
+    }
 )
 
 

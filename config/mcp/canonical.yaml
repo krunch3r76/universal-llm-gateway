@@ -2241,6 +2241,72 @@ tools:
   mandate_safety: write
   cache_priority: always_loaded
   introduced: 2026-08-13
+- canonical_name: agent_bus_substrate_entity_mint
+  domain: agent_bus
+  operation: substrate_entity_mint
+  dispatcher_call_shape:
+    tool: agent_bus
+    dispatch_key: op
+    dispatch_value: substrate_entity_mint
+  flat_call_shape:
+    tool: agent_bus_substrate_entity_mint
+    substrate_qualified: user-vortex__agent_bus_substrate_entity_mint
+  fol_descriptor: "∀ args: (id ∈ args ∨ entity_id ∈ args) ∧ (type ∈ args ∨ entity_type ∈ args) ∧ (name ∈ args ∨ title ∈ args)\n  ⟹ cortex entity_create via substrate_entity_mint lib (entity_id stamped from response).\nRequires id (entity_id= alias) + type (entity_type= alias) + name (title= alias).\nForwards every dispatch-consumed field verbatim; retention / Option-C traits / top-level density_triage → named 422.\n¬ rich-seed · ¬ bus turn · ¬ hop/request fields · ¬ a contract token. Life-callable (mcp_claude). Mutating.\n"
+  json_schema:
+    type: object
+    properties:
+      id:
+        type: string
+        description: "Canonical entity id (e.g. service:cursor-auto). Required unless entity_id= is set."
+      entity_id:
+        type: string
+        description: Alias for id=.
+      type:
+        type: string
+        description: Entity type (service, todo, …). Required unless entity_type= is set.
+      entity_type:
+        type: string
+        description: Alias for type=.
+      name:
+        type: string
+        description: Display name. Required unless title= is set.
+      title:
+        type: string
+        description: Alias for name=.
+      description:
+        type: string
+        description: Optional description forwarded to entity_create.
+      status:
+        type: string
+        description: Optional EntityStatus forwarded to entity_create.
+      workflow_state:
+        type: string
+        description: Optional workflow_state forwarded to entity_create.
+      notes:
+        type: string
+        description: Optional notes forwarded to entity_create.
+      aliases:
+        type: array
+        items:
+          type: string
+        description: Optional aliases forwarded to entity_create.
+      attributes:
+        type: object
+        description: "Optional attributes dict. Todo creates require attributes.density_triage."
+      source_uri:
+        type: string
+        description: Optional source_uri forwarded to entity_create.
+      content_hash:
+        type: string
+        description: Optional content_hash forwarded to entity_create.
+    required: []
+  skill_uri: agent_skill:agent_bus
+  seat_visibility:
+  - mcp
+  - mcp_claude
+  mandate_safety: write
+  cache_priority: always_loaded
+  introduced: 2026-08-13
 - canonical_name: agent_bus_triage
   domain: agent_bus
   operation: triage

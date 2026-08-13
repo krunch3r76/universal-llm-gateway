@@ -34,6 +34,9 @@ from .fetch import (
     _get_dispatch,
     _get_impl,
 )
+from .entity_mint import (
+    _entity_mint_dispatch,
+)
 from .friction_file import (
     _friction_file_dispatch,
 )
@@ -98,6 +101,7 @@ AGENT_BUS_OPS: dict[str, Callable[..., Any]] = {
     "hop": _hop_dispatch,
     "substrate_graph_write": _graph_write_dispatch,
     "substrate_friction_file": _friction_file_dispatch,
+    "substrate_entity_mint": _entity_mint_dispatch,
     "post": _post_dispatch,
     "reply": _reply_dispatch,
     "fetch": _fetch_dispatch,
@@ -146,6 +150,7 @@ __all__ = [
     "_format_agent_bus_error",
     "_get_dispatch",
     "_get_impl",
+    "_entity_mint_dispatch",
     "_friction_file_dispatch",
     "_graph_write_dispatch",
     "_hop_dispatch",
@@ -220,6 +225,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
           hop           (thread, reason, from?, from_agent?, cse_chat_url?, cse_registration_id?, desired_model?, desired_effort?, request_id?, after_turn?, subject?) — mechanical continuity hop on an existing private lane. Authors TYPE: CONTINUITY_HANDOFF (one shared author with cadence) and enqueues with continuity_hop=true. Returns {thread, turn, handler_status, continuity_hop, poll_hint, successor}. Reports *armed*, never status:done — successor handle is execution_id on the terminal turn. ¬ a contract token. Hop-before-healthy degrades (no-auto-handler) rather than arming.
           substrate_graph_write (entity_id, claim, confidence?, derivation_type?, evidence?, evidence_uris?) — cortex assert request-surface verb via shared substrate_graph_write lib. Returns assertion payload with assertion_id + entity_id stamped. Requires entity_id + claim (422 graph_write_entity_required | graph_write_claim_required). Does not mint on 404, enqueue bus turns, or accept hop/request fields. ¬ a contract token.
           substrate_friction_file (owner, note, service?, claim?, category?, suggestion?, evidence_uris?, confidence?, agent?) — cortex friction request-surface verb via shared substrate_friction_file lib. Returns assertion payload with assertion_id + owner stamped. Requires owner (service= alias) + note (claim= alias) (422 friction_file_owner_required | friction_file_note_required). Does not mint on 404, enqueue bus turns, or accept hop/request fields. ¬ a contract token.
+          substrate_entity_mint (id, type, name, entity_id?, entity_type?, title?, description?, status?, workflow_state?, notes?, aliases?, attributes?, source_uri?, content_hash?) — cortex entity_create request-surface verb via shared substrate_entity_mint lib. Returns create payload with entity_id stamped from the response. Requires id (entity_id= alias) + type (entity_type= alias) + name (title= alias). Forwards every dispatch-consumed field verbatim; retention / Option-C traits / top-level density_triage → named 422 (not silent drop). Does not run rich-seed, enqueue bus turns, or accept hop/request fields. ¬ a contract token.
           threads       (status?, tags?, lifecycle_state?, limit?, last?, has_unread?, query?) — list threads; status: active|blocked|waiting|closed|all (default active); tags: AND-filter; lifecycle_state: pending|admitted|delivered|failed (exact match). Default limit=50 when neither limit nor last is set; response includes limit_applied and truncated.
           create_thread (slug, summary?, tags?, enroll_charter_runner?, lifecycle_state?, thread_id?) — create a thread without a turn; use lifecycle_state="pending" for lifecycle-managed threads that will be dispatched later; ``enroll_charter_runner=true`` required to include tag ``charter-runner``
           fetch_unread  (to?, thread?, mark_read?, compact?, active_since?, limit?, all?) — recipient scope (to set, thread unset): enriched per-thread unread digest (slug, last_subject, last_activity_at; default 14d window, limit 50; unwindowed totals in response). thread scope: that thread's full unread turn list (no count cap; compact controls bodies). At least one of to/thread required.
