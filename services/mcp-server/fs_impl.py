@@ -115,6 +115,7 @@ def fs_impl(
     position: str = "",
     mode: str = "",
     thread: str | None = None,
+    since: str = "",
 ) -> dict[str, Any]:
     if not op:
         return {"error": "'op' is required"}
@@ -283,6 +284,7 @@ def fs_impl(
                 impl_registry,
                 FS_WORKFLOW_HINTS,
                 mode=mode,
+                since=since,
             )
         if isinstance(result, dict) and "error" not in result:
             result.update(ingress_meta)

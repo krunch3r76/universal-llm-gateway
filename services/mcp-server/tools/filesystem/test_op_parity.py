@@ -60,6 +60,7 @@ _OP_ARGS: dict[str, dict] = {
     "copy": {"path": "a.md", "target": "b.md"},
     "search": {"content": "query"},
     "find": {"content": "*.py"},
+    "recent_commits": {"path": "universal-llm-gateway"},
     "write_binary": {},
     "append_binary": {},
 }

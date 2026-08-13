@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 # Substrate-specific (capability flags, not forked ladders):
 #   write_binary, append_binary → cortex only.
 # search → both sandboxes (conversion-aware: PDF/DOCX/ODT/EML/HTML).
+# recent_commits → workspaces only (oneline subjects, no diffs).
 OP_SANDBOXES: dict[str, frozenset[str]] = {
     "read": frozenset({"cortex", "workspaces"}),
     "read_multi": frozenset({"cortex", "workspaces"}),
@@ -29,6 +30,7 @@ OP_SANDBOXES: dict[str, frozenset[str]] = {
     "insert_at_line": frozenset({"cortex", "workspaces"}),
     "list": frozenset({"cortex", "workspaces"}),
     "find": frozenset({"workspaces"}),
+    "recent_commits": frozenset({"workspaces"}),
     "delete": frozenset({"cortex", "workspaces"}),
     "move": frozenset({"cortex", "workspaces"}),
     "copy": frozenset({"cortex", "workspaces"}),
@@ -58,6 +60,10 @@ OP_DOC: dict[str, tuple[str, str]] = {
     "insert_at_line": ("(path, content, line)", "insert at line number"),
     "list": ("(path?, max_depth?)", "list directory (max_depth default 3)"),
     "find": ("(path?, content)", "glob filename find (workspaces only)"),
+    "recent_commits": (
+        "(path?, since?, limit?)",
+        "oneline git subjects (no diffs); life catch-up, not a project index",
+    ),
     "delete": ("(path)", "delete file"),
     "search": (
         "(path, content, mode?)",
@@ -133,6 +139,7 @@ OP_CONSUMES: dict[str, frozenset[str]] = {
     "insert_at_line": frozenset({"line"}),
     "list": frozenset(),
     "find": frozenset(),
+    "recent_commits": frozenset(),
     "search": frozenset({"mode"}),
     "move": frozenset({"target"}),
     "copy": frozenset({"target"}),
@@ -317,6 +324,7 @@ def dispatch_workspaces_op(
     overflow_registry: dict[str, Callable[..., Any]],
     workflow_hints: dict[str, Any],
     mode: str = "",
+    since: str = "",
 ) -> dict[str, Any]:
     """Dispatch a workspaces-sandbox fs op via the project adapter.
 
@@ -360,6 +368,11 @@ def dispatch_workspaces_op(
         if fn is None:
             return {"error": "list_project_files tool not available"}
         return fn(path, include_untracked=include_untracked, max_depth=max_depth)
+
+    if op == "recent_commits":
+        from tools.filesystem._recent_commits import recent_commits_impl
+
+        return recent_commits_impl(path=path, since=since, limit=limit)
 
     if op == "find":
         if not content:

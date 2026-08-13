@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from services.git_integration_worker.cursor_auto.l2_orientation import (
     L2_CONSTITUTION,
     compose_handoff_prompt,
@@ -64,6 +66,46 @@ def test_handoff_prompt_composes_three_slices() -> None:
     assert "lane_tip:" in handoff
     assert "open_obligations:" in handoff
     assert "inheritance loop NOT closed" in handoff
+    assert "recent_commits:" in handoff
+    assert 'query: fs(op="recent_commits"' in handoff
+
+
+def test_handoff_drops_recent_commits_body_when_over_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from services.git_integration_worker.cursor_auto import l2_orientation as mod
+
+    monkeypatch.setattr(mod, "MAX_ARRIVAL_LINES", 8)
+    monkeypatch.setattr(
+        mod,
+        "load_recent_commits_for_hop",
+        lambda: {
+            "head": "abc1234deadbeef",
+            "commits": [
+                {
+                    "sha": "abc1234deadbeef",
+                    "subject": "land foo",
+                    "author": "t",
+                    "authored_at": "2026-01-01T00:00:00Z",
+                }
+            ],
+            "since": "last 8",
+            "truncated": False,
+        },
+    )
+    cse = read_cse_state(thread_id="nonexistent-thread-xyz")
+    tip = extract_lane_tip(thread_id="6655", turns=[_turn(n=1, body="hello")])
+    handoff = compose_handoff_prompt(
+        cse=cse,
+        tip=tip,
+        obligations=[],
+        admit_bind=None,
+        generated_at="2026-08-12T16:00:00Z",
+    )
+    assert "body dropped for screen budget" in handoff
+    assert "land foo" not in handoff
+    assert 'query: fs(op="recent_commits"' in handoff
+    assert 'since="abc1234deadbeef"' in handoff
 
 
 def test_arrival_card_respects_line_budget() -> None:

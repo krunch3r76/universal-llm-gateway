@@ -324,6 +324,7 @@ def _build_server(
         position: str = "",
         mode: str = "",
         thread: str | None = None,
+        since: str = "",
     ) -> dict[str, Any]:
         """Sandboxed file I/O (cortex, workspaces). Full catalog in tool description."""
         try:
@@ -352,6 +353,7 @@ def _build_server(
                 position=position,
                 mode=mode,
                 thread=thread,
+                since=since,
             )
         except Exception as exc:
             return _tool_error_envelope("fs", op, exc)

@@ -1,9 +1,11 @@
 """L2 orientation generator — arrival card + handoff_prompt from live substrate.
 
-Composes ``handoff_prompt = cse_state + lane tip + open obligations`` (7119 L2 /
-CSR Phase 4 shape). Generation replaces hand-maintained leg docs for orientation;
-regenerated snapshots carry live state with ``generated_at`` (see constitution
-verdict in module docstring on ``L2_CONSTITUTION``).
+Composes ``handoff_prompt = cse_state + lane tip + open obligations +
+recent_commits`` (7119 L2 / CSR Phase 4 shape). Generation replaces
+hand-maintained leg docs for orientation; regenerated snapshots carry live
+state with ``generated_at`` (see constitution verdict in module docstring on
+``L2_CONSTITUTION``). The recent_commits slice is hop-only — never written
+into the static arrival-card file.
 """
 
 from __future__ import annotations
@@ -16,6 +18,13 @@ from typing import Any
 from claude_bundles.cdp_registry_store import load_sessions
 from claude_bundles.cse_session_common import find_session_by_thread
 from claude_bundles.cse_session_obligations import get_open_wake_owed
+from git_integrate.recent_commits import (
+    HOP_N,
+    format_hop_slice,
+    format_hop_unavailable,
+    log_oneline,
+    source_repo_path,
+)
 
 # Binding verdict (7119 L2 AC1): generated artifacts carry live state — safe
 # because regenerated at read/generation time, not authored once. The v2 manual
@@ -273,6 +282,15 @@ def format_obligations_section(obligations: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def load_recent_commits_for_hop() -> dict[str, Any]:
+    """Live oneline log for hop inject; fail-soft to empty on git errors."""
+    repo = source_repo_path()
+    try:
+        return log_oneline(repo, n=HOP_N)
+    except (OSError, ValueError):
+        return {"head": "", "commits": [], "since": f"last {HOP_N}", "truncated": False}
+
+
 def compose_handoff_prompt(
     *,
     cse: CseStateSlice,
@@ -281,7 +299,7 @@ def compose_handoff_prompt(
     admit_bind: AdmitTurnBind | None,
     generated_at: str,
 ) -> str:
-    """Mechanical compose: cse_state + lane tip + open obligations (+ admit bind)."""
+    """Mechanical compose: cse_state + lane tip + open obligations (+ admit bind) + recent_commits."""
     parts = [
         f"handoff_prompt generated_at={generated_at} constitution={L2_CONSTITUTION}",
         format_cse_state_section(cse),
@@ -302,7 +320,22 @@ def compose_handoff_prompt(
             "admit_turn_bind: absent — inheritance loop NOT closed; fetch latest "
             f"cursor-auto admit on thread {tip.thread_id}"
         )
-    return "\n".join(parts)
+    rc_result = load_recent_commits_for_hop()
+    rc_full = (
+        format_hop_slice(rc_result, include_body=True)
+        if rc_result.get("head")
+        else format_hop_unavailable()
+    )
+    parts.append(rc_full)
+    joined = "\n".join(parts)
+    if len(joined.splitlines()) > MAX_ARRIVAL_LINES or len(joined) > MAX_ARRIVAL_CHARS:
+        parts[-1] = (
+            format_hop_slice(rc_result, include_body=False)
+            if rc_result.get("head")
+            else format_hop_unavailable()
+        )
+        joined = "\n".join(parts)
+    return joined
 
 
 def render_arrival_card(

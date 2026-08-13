@@ -90,6 +90,7 @@
 "git.integrate.retried" = "Non-ff CAS advance; optimistic retry loop continues. Emitted by `integrate_op`."
 "git.path.commit.completed" = "Gated path-scoped commit succeeded. Emitted by `commit_op` after `commit_paths` advances the branch."
 "git.path.commit.rejected" = "Gated path-scoped commit refused (validation or commit failure). No branch advance. Emitted by `commit_op`."
+"git.log.read" = "Oneline git history query (no diffs). Emitted by fs(op=recent_commits). Payload: head, n, since, truncated."
 "git.status.read" = "Read-only status probe served (MCP `git_status` path). Emitted by `status_op`."
 "grokbuild.dispatch.accepted" = "Async build admitted by tracker; HTTP 202 emitted."
 "grokbuild.dispatch.cancelled" = "Operator-driven cancel via `DELETE /dispatches/{id}`. `noop` means the entry was already terminal at cancel time."

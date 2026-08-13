@@ -80,6 +80,10 @@ Exception: when a downstream consumer needs the post-edit file hash (for example
 
 Successful `read` responses include `read_sha256`: bare lowercase hex of the on-disk source file bytes, computed before decode/conversion and independent of `offset`/`limit` windowing on `content`. Callers compose `sha256:` / `spec_sha256:` when citing on assertions — the field has no prefix. Symmetric to `written_sha256` on write ops.
 
+## Recent commits (life catch-up)
+
+`fs(op="recent_commits", sandbox="workspaces", path="universal-llm-gateway", since="<sha>")` is the life catch-up query for parallel git work — oneline subjects, no diffs, not a project index. Default last 15 (cap 20). `git_*` stays banned on life; do not commission Auto for `git log`.
+
 Full guide: `markdown-navigation`; canonical tool reference: `universal-llm-gateway/docs/tool-reference.md`.
 
 ## Alternatives

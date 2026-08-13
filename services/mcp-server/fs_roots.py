@@ -30,6 +30,7 @@ LIFE_WORKSPACES_READ_OPS: frozenset[str] = frozenset(
         "md_read",
         "md_list",
         "md_to_dict",
+        "recent_commits",
     }
 )
 

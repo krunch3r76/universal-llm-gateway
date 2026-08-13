@@ -468,6 +468,14 @@ Leg-current — cadence hops point at it; they do not author it. Detail:
 `decisions_taken`; touched outside directive scope ⇒ `deltas_to_spec`. Test: *did cursor touch
 something the DIRECTIVE did not scope in?*
 
+### Parallel-git catch-up (BINDING)
+
+At ARRIVAL and after idle on the same CSE: if `workspaces_read_at_head` ≠ last
+watermark, run `fs(op="recent_commits", sandbox="workspaces",
+path="universal-llm-gateway", since=<watermark>)` **in-seat**. ¬ `cursor_request`
+for `git log`. Land-claim harvest still uses file read + path-scoped SHA
+(commission Auto only for `git show` when fs content is not enough).
+
 ### Closeout harvest — land claim read-back (BINDING)
 
 When harvesting a nested CLOSEOUT or dispositioning a land/commit claim, run the

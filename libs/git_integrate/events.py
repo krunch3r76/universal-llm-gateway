@@ -154,6 +154,26 @@ def GitStatusRead(  # noqa: N802
     )
 
 
+@event_factory
+def GitLogRead(  # noqa: N802
+    head: str,
+    n: int,
+    since: str,
+    truncated: bool,
+) -> Event:
+    """Oneline git history query (no diffs). Sibling of ``git.status.read``."""
+    return Event(
+        signal="git.log.read",
+        payload={
+            "head": head,
+            "n": n,
+            "since": since,
+            "truncated": truncated,
+        },
+        scope="global",
+    )
+
+
 def emit_git_integrate_requested(
     *,
     integration_id: str,
@@ -262,6 +282,23 @@ def emit_git_status_read(
             worktree_path=worktree_path,
             dirty=dirty,
             branch=branch,
+        )
+    )
+
+
+def emit_git_log_read(
+    *,
+    head: str,
+    n: int,
+    since: str,
+    truncated: bool,
+) -> None:
+    _emit(
+        GitLogRead(
+            head=head,
+            n=n,
+            since=since,
+            truncated=truncated,
         )
     )
 

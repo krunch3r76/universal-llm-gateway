@@ -475,6 +475,17 @@ def test_life_workspaces_enabled_grant_preserves_md_ops(
     assert LIFE_WORKSPACES_READ_OPS <= granted
 
 
+def test_life_workspaces_grant_includes_recent_commits() -> None:
+    """Life catch-up query is a workspaces read; git_* stays overflow-banned."""
+    from fs_roots import LIFE_WORKSPACES_READ_OPS, permitted_ops
+
+    assert "recent_commits" in LIFE_WORKSPACES_READ_OPS
+    assert "recent_commits" in permitted_ops("life", "workspaces")
+    assert "recent_commits" in permitted_ops("code", "workspaces")
+    assert "git_status" not in permitted_ops("life", "workspaces")
+    assert "git_log" not in permitted_ops("life", "workspaces")
+
+
 def test_life_workspaces_enabled_grant_excludes_delete_move(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
