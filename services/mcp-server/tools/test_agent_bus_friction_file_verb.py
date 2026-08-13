@@ -71,6 +71,18 @@ def test_friction_file_accepts_service_and_claim_aliases() -> None:
     assert result["owner"] == "mcp-server"
 
 
+def test_friction_file_rejects_conflicting_note_and_claim() -> None:
+    with patch("tools.agent_bus.friction_file.file_friction") as filed:
+        result = _friction_file_dispatch(
+            owner="service:mcp-server",
+            note="wrapper note",
+            claim="substantive finding",
+        )
+    filed.assert_not_called()
+    assert result["reason"] == "friction_file_note_claim_conflict"
+    assert result["status_code"] == 422
+
+
 def test_friction_file_does_not_mint_on_404() -> None:
     with patch(
         "tools.agent_bus.friction_file.file_friction",
