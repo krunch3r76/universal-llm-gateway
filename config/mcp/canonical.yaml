@@ -1949,7 +1949,7 @@ tools:
   flat_call_shape:
     tool: agent_bus_request
     substrate_qualified: user-vortex__agent_bus_request
-  fol_descriptor: "∀ args: (new_slug ∈ args XOR thread ∈ args) ∧ to='cursor' ∧ subject ∧ body\n  ⟹ TurnSendCreated-shaped + handler_status ∈ {auto-admit-armed, no-auto-handler} + poll_hint.\nInjects lane:cursor-auto (dedupe). Arm predicate = live Auto handler heartbeat — ¬ turn-write alone (F1).\nDegrade keeps lane:cursor-auto; ¬ dual-tag lane:life-to-code.\ndesired_model/desired_effort/contract/require_attended? are structured hints; Auto reports requested vs actual.\ncontract ∈ answer|confer|investigate|implement|verify|execute|propagate|seed; execute=one tier-M op; propagate=operator restart (ledger+drain-gated sync_restart); seed=closable work item (architecture may be open).\nrequire_attended=true (wire or DIRECTIVE body OR) ⇒ terminal status:needs-attended reason=operator_require_attended.\nLife-callable (mcp_claude). Mutating.\n"
+  fol_descriptor: "∀ args: (new_slug ∈ args XOR thread ∈ args) ∧ to='cursor' ∧ subject ∧ body\n  ⟹ TurnSendCreated-shaped + handler_status ∈ {auto-admit-armed, no-auto-handler} + poll_hint.\nInjects lane:cursor-auto (dedupe). Arm predicate = live Auto handler heartbeat — ¬ turn-write alone (F1).\nDegrade keeps lane:cursor-auto; ¬ dual-tag lane:life-to-code.\ndesired_model/desired_effort/contract/require_attended? are structured hints; Auto reports requested vs actual.\ncontract ∈ answer|confer|investigate|implement|verify|execute|propagate|seed|recon; execute=one tier-M op; propagate=operator restart (ledger+drain-gated sync_restart); seed=closable work item (architecture may be open).\nrequire_attended=true (wire or DIRECTIVE body OR) ⇒ terminal status:needs-attended reason=operator_require_attended.\nLife-callable (mcp_claude). Mutating.\n"
   json_schema:
     type: object
     properties:
@@ -1992,7 +1992,7 @@ tools:
         description: Optional CDP escalation leg — cdp/opus-5 | cdp/fable only; absent/empty ⇒ no CDP leg; orthogonal to desired_model.
       contract:
         type: string
-        description: answer | confer | investigate | implement | verify | execute | propagate | seed (default answer).
+        description: answer | confer | investigate | implement | verify | execute | propagate | seed | recon (default answer).
       require_attended:
         type: boolean
         description: When true, refuse unattended nested dispatch and in-seat Auto substitute; terminal status:needs-attended with reason=operator_require_attended. ORs with DIRECTIVE body require_attended or executor_bind attended.
@@ -2022,7 +2022,7 @@ tools:
   flat_call_shape:
     tool: cursor_request
     substrate_qualified: user-vortex__cursor_request
-  fol_descriptor: "∀ args: (new_slug ∈ args XOR thread ∈ args) ∧ subject ∧ body\n  ⟹ TurnSendCreated-shaped + handler_status ∈ {auto-admit-armed, no-auto-handler} + poll_hint.\nDedicated narrow registration of agent_bus request — recipient to=cursor fixed; ¬ exposed as caller param.\nInjects lane:cursor-auto (dedupe). Arm predicate = live Auto handler heartbeat.\ncontract ∈ answer|confer|investigate|implement|verify|execute|propagate|seed. Mutating. Life+code callable.\n"
+  fol_descriptor: "∀ args: (new_slug ∈ args XOR thread ∈ args) ∧ subject ∧ body\n  ⟹ TurnSendCreated-shaped + handler_status ∈ {auto-admit-armed, no-auto-handler} + poll_hint.\nDedicated narrow registration of agent_bus request — recipient to=cursor fixed; ¬ exposed as caller param.\nInjects lane:cursor-auto (dedupe). Arm predicate = live Auto handler heartbeat.\ncontract ∈ answer|confer|investigate|implement|verify|execute|propagate|seed|recon. Mutating. Life+code callable.\n"
   json_schema:
     type: object
     properties:
@@ -2061,7 +2061,7 @@ tools:
         description: Optional CDP escalation leg — cdp/opus-5 | cdp/fable only; absent/empty ⇒ no CDP leg; orthogonal to desired_model.
       contract:
         type: string
-        description: answer | confer | investigate | implement | verify | execute | propagate | seed (default answer).
+        description: answer | confer | investigate | implement | verify | execute | propagate | seed | recon (default answer).
       require_attended:
         type: boolean
         description: When true, refuse unattended nested dispatch and in-seat Auto substitute; terminal status:needs-attended with reason=operator_require_attended.

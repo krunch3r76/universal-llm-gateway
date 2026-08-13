@@ -151,7 +151,7 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         **Contract vocabulary**
 
         ``contract`` ∈ answer | confer | investigate | implement | verify | execute |
-        propagate | seed. Unknown ⇒ 422 before turn write. ``consult`` aliases confer.
+        propagate | seed | recon. Unknown ⇒ 422 before turn write. ``consult`` aliases confer.
 
         **Codework lanes — IDE command wraps skill (BINDING)**
 
@@ -180,6 +180,7 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         | execute | one tier-M op raw payload (body: tool_op + effects_expected) |
         | propagate | propagation ledger + drain-gated restart status |
         | seed | todo slug + consult URI (if any) + ``abstraction-layering`` entry gate |
+        | recon | recon_core findings (+ optional recon_extra) |
 
         **Second read (advisory — may appear on any nested-contract CLOSEOUT)**
 

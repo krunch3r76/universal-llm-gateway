@@ -35,22 +35,22 @@ def test_canonical_names_stable() -> None:
         "execute",
         "propagate",
         "seed",
+        "recon",
     )
     assert DEFAULT_CONTRACT == "answer"
     assert DEPRECATED_ALIASES == {"consult": "confer"}
     assert "hop" not in CANONICAL_CONTRACTS
-    assert "recon" not in CANONICAL_CONTRACTS
 
 
 def test_flag_sets_match_pre_consolidation_frozensets() -> None:
     assert nested_scope_contracts() == frozenset(
-        {"implement", "investigate", "verify", "seed"}
+        {"implement", "investigate", "verify", "seed", "recon"}
     )
     assert vision_required_contracts() == frozenset(
-        {"implement", "investigate", "seed"}
+        {"implement", "investigate", "seed", "recon"}
     )
     assert code_work_contracts() == frozenset(
-        {"implement", "investigate", "verify", "seed"}
+        {"implement", "investigate", "verify", "seed", "recon"}
     )
 
 
@@ -77,7 +77,6 @@ def test_wire_map_contract_literal_lists_canonical_names() -> None:
     for name in CANONICAL_CONTRACTS:
         assert f'"{name}"' in block
     assert "hop" not in block
-    assert "recon" not in block
 
 
 def test_consumer_flag_sets_agree_with_records() -> None:

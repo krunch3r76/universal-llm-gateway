@@ -16,7 +16,15 @@ from cursor_capabilities import (
 from effort_vocabulary import WIRE_LADDER, normalize_effort
 
 Contract = Literal[
-    "answer", "confer", "investigate", "implement", "verify", "execute", "propagate", "seed"
+    "answer",
+    "confer",
+    "investigate",
+    "implement",
+    "verify",
+    "execute",
+    "propagate",
+    "seed",
+    "recon",
 ]
 Disposition = Literal[
     "answered",
@@ -169,6 +177,7 @@ def resolve_desired_model(
             "implement": "cursor/composer-2.5",
             "verify": "cursor/composer-2.5",
             "seed": "cursor/grok-4.6",
+            "recon": "cursor/grok-4.6",
         }
         model_id = by_contract.get(contract, "cursor/composer-2.5")
         return {
@@ -428,6 +437,7 @@ def resolve_contract_disposition(contract: str | None) -> dict[str, Any]:
         "execute": "executed",
         "propagate": "propagated",
         "seed": "dispatched-and-relayed",
+        "recon": "dispatched-and-relayed",
     }
     return {
         "requested": raw,

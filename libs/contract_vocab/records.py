@@ -87,6 +87,15 @@ RECORDS: tuple[ContractRecord, ...] = (
         code_work=True,
         briefing_stanza="seed",
     ),
+    ContractRecord(
+        name="recon",
+        purpose="cheap recon findings before implement or escalate",
+        closeout_shape="recon_core findings (+ optional recon_extra)",
+        nested_scope=True,
+        vision_required=True,
+        code_work=True,
+        briefing_stanza="codework",
+    ),
 )
 
 DEPRECATED_ALIASES: dict[str, str] = {"consult": "confer"}
