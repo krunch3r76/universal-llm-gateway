@@ -30,12 +30,16 @@ from implement_admission.propagation_block_parser import (
 )
 from implement_admission.propagation_row import (
     PropagationRow,
+    code_ref_is_version_pin,
     default_proof,
     default_proof_class,
     default_safe_window,
+    enrich_operator_row_with_close_surfaces,
     row_from_mapping,
     rows_from_parsed_block,
 )
+
+from services.git_integration_worker.config import load_config
 
 from services.git_integration_worker.cursor_auto.fix_hints import (
     PROPAGATE_MISSING_FIX_HINT,
@@ -162,6 +166,28 @@ def _rows_from_shorthand(body: str) -> tuple[PropagationRow, ...]:
     )
 
 
+def _enrich_admitted_rows(
+    rows: tuple[PropagationRow, ...],
+    version_pins: tuple[bool, ...],
+) -> tuple[PropagationRow, ...]:
+    """Compose close surfaces on operator rows so settle cannot inflate defaults."""
+    source_repo = load_config().source_repo
+    return tuple(
+        enrich_operator_row_with_close_surfaces(
+            row,
+            source_repo=source_repo,
+            version_pin=version_pin,
+        )
+        for row, version_pin in zip(rows, version_pins, strict=True)
+    )
+
+
+def _version_pins_from_parsed_block(
+    raw_rows: list[dict[str, Any]],
+) -> tuple[bool, ...]:
+    return tuple(code_ref_is_version_pin(raw.get("code_ref")) for raw in raw_rows)
+
+
 def _validate_admitted_rows(
     rows: tuple[PropagationRow, ...],
 ) -> tuple[tuple[PropagationRow, ...], dict[str, Any] | None]:
@@ -200,7 +226,10 @@ def admit_propagate_body(body: str) -> PropagateAdmission:
         validated, ref_error = _validate_admitted_rows(rows)
         if ref_error is not None:
             return PropagateAdmission(flags=flags, consumed_keys=consumed, error=ref_error)
-        return PropagateAdmission(rows=validated, flags=flags, consumed_keys=consumed)
+        raw_rows, _ = parse_propagation_block(text)
+        version_pins = _version_pins_from_parsed_block(raw_rows)
+        enriched = _enrich_admitted_rows(validated, version_pins)
+        return PropagateAdmission(rows=enriched, flags=flags, consumed_keys=consumed)
 
     try:
         shorthand_rows = _rows_from_shorthand(text)
@@ -210,8 +239,13 @@ def admit_propagate_body(body: str) -> PropagateAdmission:
             error=admit_error_for_unresolvable_code_ref(exc.code_ref),
         )
     if shorthand_rows:
+        code_ref_match = _CODE_REF_FIELD_RE.search(text)
+        version_pin = code_ref_is_version_pin(
+            code_ref_match.group(1).strip() if code_ref_match else None
+        )
+        enriched = _enrich_admitted_rows(shorthand_rows, (version_pin,))
         return PropagateAdmission(
-            rows=shorthand_rows,
+            rows=enriched,
             consumed_keys=consumed_keys_from_shorthand(text),
         )
 

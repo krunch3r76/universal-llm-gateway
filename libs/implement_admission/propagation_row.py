@@ -16,6 +16,7 @@ import importlib
 import logging
 import re
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any, Literal
 
 from deploy_identity.code_version import normalize_code_ref
@@ -463,6 +464,52 @@ def land_paths_for_propagation(
     ]
 
 
+def code_ref_is_version_pin(raw_code_ref: object | None) -> bool:
+    """True when ``code_ref`` is absent or HEAD — a version pin, not a land SHA."""
+    if raw_code_ref is None:
+        return True
+    text = str(raw_code_ref).strip()
+    if not text:
+        return True
+    return text.upper() == "HEAD"
+
+
+def enrich_operator_row_with_close_surfaces(
+    row: PropagationRow,
+    *,
+    source_repo: Path,
+    version_pin: bool,
+) -> PropagationRow:
+    """Compose mint-time close surfaces for operator ``contract:propagate`` rows."""
+    from implement_admission.propagation_close_surfaces import (
+        compose_close_surfaces,
+        compose_proof_for_surfaces,
+        excluded_surfaces_to_payload,
+    )
+    from services.git_integration_worker.cursor_sdk_git_head import (
+        land_paths_from_merge_sha,
+    )
+
+    land_paths: list[str] = []
+    if not version_pin:
+        land_paths = list(land_paths_from_merge_sha(source_repo, row.code_ref))
+    composition = compose_close_surfaces(row.service, row.proof_class, land_paths)
+    excluded_payload = excluded_surfaces_to_payload(composition.excluded_surfaces)
+    proof = compose_proof_for_surfaces(
+        row.service,
+        row.proof_class,
+        composition.close_surfaces,
+        expected_x_mcp_count=row.expected_x_mcp_count,
+    )
+    return row.model_copy(
+        update={
+            "proof": proof,
+            "close_surfaces": composition.close_surfaces,
+            "excluded_surfaces": tuple(excluded_payload) if excluded_payload else None,
+        }
+    )
+
+
 def _row_with_close_surfaces(
     *,
     service: str,
@@ -678,12 +725,14 @@ def rows_from_closeout_payload(
 __all__ = [
     "MissingProofTemplateError",
     "PropagationRow",
+    "code_ref_is_version_pin",
     "coerce_allow_self_preempt_flag",
     "coerce_force_flag",
     "compose_proof",
     "default_proof",
     "default_proof_class",
     "default_safe_window",
+    "enrich_operator_row_with_close_surfaces",
     "is_lib_test_module",
     "land_paths_for_propagation",
     "proof_claims_performed_ancestry",

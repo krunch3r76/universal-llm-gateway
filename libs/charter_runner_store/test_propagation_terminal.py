@@ -438,6 +438,71 @@ def test_mcp_client_visible_does_not_retire_on_matching_code_version_alone(
     assert len(list_open_rows()) == 1
 
 
+def test_mcp_health_only_mint_settles_without_cortex_api(
+    tmp_path, monkeypatch
+) -> None:
+    """AC2: operator-style mcp_health-only mint closes without cortex_api probe."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    sha = "abc1230000000000000000000000000000000000"
+    upsert_open_rows(
+        [
+            _row(
+                service="mcp",
+                code_ref=sha,
+                proof_class="client_visible",
+                close_surfaces=("mcp_health",),
+                excluded_surfaces=(
+                    {
+                        "surface": "cortex_api",
+                        "import_path": "not_probed",
+                        "evidence_paths": [],
+                    },
+                ),
+                proof=(
+                    "client_visible: GET /health → "
+                    "AFTER restart VERIFY mcp /health satisfies the code_ref "
+                    "ancestry check"
+                ),
+            )
+        ]
+    )
+    row = list_open_rows()[0]
+    from charter_runner_store.propagation_ledger import set_open_proof_payload
+
+    set_open_proof_payload(
+        row.row_id,
+        proof_payload={
+            "close_surfaces": ["mcp_health"],
+            "excluded_surfaces": [
+                {
+                    "surface": "cortex_api",
+                    "import_path": "not_probed",
+                    "evidence_paths": [],
+                }
+            ],
+            "proof_before": {
+                "mcp_health": {
+                    "code_version": "old000000000000000000000000000000000000",
+                    "pid": 1,
+                }
+            },
+        },
+    )
+
+    def probe(_service: str) -> dict[str, object]:
+        return {
+            "mcp_health": {
+                "code_version": sha,
+                "pid": 2,
+                "process_start_time": "t2",
+            }
+        }
+
+    result = settle_open_row(row, probe, defer_if_unreachable=True)
+    assert result.outcome == "closed"
+    assert list_open_rows() == []
+
+
 def test_ancestry_satisfied_descendant_version_closes_not_failed(
     tmp_path, monkeypatch
 ) -> None:

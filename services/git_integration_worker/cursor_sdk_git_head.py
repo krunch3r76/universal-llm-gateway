@@ -167,6 +167,14 @@ def tip_window_meter_counts(
     return len(authored), len(unfiltered)
 
 
+def land_paths_from_merge_sha(source_repo: Path, sha: str) -> tuple[str, ...]:
+    """Recover land-shaped paths from a merge (or any) commit SHA.
+
+    Uses ``diff-tree -m --name-only`` only — never ``git show --name-only``.
+    """
+    return tuple(sorted(paths_in_commit(source_repo, sha)))
+
+
 def paths_in_commit(source_repo: Path, sha: str) -> frozenset[str]:
     """Paths touched by a single commit (diff-tree name-only)."""
     try:

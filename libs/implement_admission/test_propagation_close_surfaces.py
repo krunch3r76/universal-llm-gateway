@@ -67,6 +67,16 @@ def test_commit_paths_reach_no_optional_consumer() -> None:
     assert composition.excluded_surfaces[0].import_path == "not_probed"
 
 
+def test_compose_close_surfaces_empty_land_paths_excludes_cortex_api() -> None:
+    """Empty land_paths (operator version-pin mint) — mcp_health only + not_probed."""
+    composition = compose_close_surfaces("mcp", "client_visible", [])
+    assert composition.close_surfaces == ("mcp_health",)
+    assert len(composition.excluded_surfaces) == 1
+    assert composition.excluded_surfaces[0].surface == "cortex_api"
+    assert composition.excluded_surfaces[0].import_path == "not_probed"
+    assert composition.excluded_surfaces[0].evidence_paths == ()
+
+
 def test_rows_from_lib_consumers_single_consumer_mints_exclusion_record() -> None:
     """Mint path persists exclusion on the row for downstream settle."""
     paths = ["libs/deploy_identity/__init__.py"]

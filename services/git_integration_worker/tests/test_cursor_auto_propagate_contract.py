@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -11,6 +13,31 @@ from services.git_integration_worker.cursor_auto.directive import has_actionable
 from services.git_integration_worker.cursor_auto.propagate_admission import (
     admit_propagate_body,
 )
+
+_RESOLVED_HEAD_SHA = "deadbeef00000000000000000000000000000000"
+
+
+@pytest.fixture(autouse=True)
+def _resolve_propagate_test_code_refs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pad test tokens to resolvable 40-char SHAs for admit enrichment paths."""
+
+    def _fake(code_ref: str, *, service: str | None = None) -> str:
+        text = str(code_ref).strip().lower()
+        if text == "head":
+            return _RESOLVED_HEAD_SHA
+        if len(text) >= 40 and all(c in "0123456789abcdef" for c in text):
+            return text[:40]
+        return (text + "0" * 40)[:40]
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.propagate_admission.require_resolvable_code_ref",
+        _fake,
+    )
+    monkeypatch.setattr(
+        "charter_runner_store.propagation_code_ref_mint.require_resolvable_code_ref",
+        _fake,
+    )
+
 
 _MCP_YAML_BODY = """\
 TYPE: DIRECTIVE
@@ -46,14 +73,14 @@ def test_admit_yaml_propagation_rows() -> None:
     assert admission.approved
     assert len(admission.rows) == 1
     assert admission.rows[0].service == "mcp"
-    assert admission.rows[0].code_ref == "deadbeef"
+    assert admission.rows[0].code_ref == "deadbeef00000000000000000000000000000000"
 
 
 def test_admit_shorthand_propagation() -> None:
     admission = admit_propagate_body(_SHORTHAND_BODY)
     assert admission.approved
     assert admission.rows[0].service == "mcp"
-    assert admission.rows[0].code_ref == "cafebabe"
+    assert admission.rows[0].code_ref == "cafebabe00000000000000000000000000000000"
 
 
 def test_admit_yaml_allow_self_preempt_false() -> None:
@@ -86,6 +113,104 @@ effects_expected: nothing to do
     admission = admit_propagate_body(body)
     assert not admission.approved
     assert admission.error["reason"] == "propagate_rows_missing"
+
+
+def test_admit_operator_mcp_version_pin_mints_mcp_health_only() -> None:
+    """AC1: HEAD / version-pin operator propagate composes mcp_health + exclusion."""
+    body = _SHORTHAND_BODY.replace("cafebabe", "HEAD")
+    admission = admit_propagate_body(body)
+    assert admission.approved
+    row = admission.rows[0]
+    assert row.close_surfaces == ("mcp_health",)
+    assert row.excluded_surfaces is not None
+    assert row.excluded_surfaces[0]["surface"] == "cortex_api"
+    assert row.excluded_surfaces[0]["import_path"] == "not_probed"
+    assert "cortex-api" not in row.proof.lower()
+    assert "GET /health" in row.proof
+
+
+def test_admit_operator_merge_sha_uses_paths_in_commit(tmp_path: Path) -> None:
+    """AC3: explicit merge SHA recovers paths via diff-tree -m before compose-empty."""
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.email", "t@e.com"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.name", "t"],
+        check=True,
+        capture_output=True,
+    )
+    lib_path = tmp_path / "libs" / "deploy_identity" / "__init__.py"
+    lib_path.parent.mkdir(parents=True)
+    lib_path.write_text("# base\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "add", "libs/deploy_identity/__init__.py"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "commit", "-m", "base"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "checkout", "-b", "feat"],
+        check=True,
+        capture_output=True,
+    )
+    lib_path.write_text("# changed\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "add", "libs/deploy_identity/__init__.py"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "commit", "-m", "feat"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "checkout", "-"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "merge", "--no-ff", "feat", "-m", "merge"],
+        check=True,
+        capture_output=True,
+    )
+    merge_sha = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+    ).stdout.decode().strip()
+    body = _MCP_YAML_BODY.replace("deadbeef", merge_sha)
+    with patch(
+        "implement_admission.propagation_close_surfaces.verify_consumer_import",
+        side_effect=lambda slug, _path: "verified" if slug == "cortex_api" else "contradicted",
+    ), patch(
+        "services.git_integration_worker.cursor_auto.propagate_admission.require_resolvable_code_ref",
+        return_value=merge_sha,
+    ), patch(
+        "services.git_integration_worker.cursor_auto.propagate_admission.load_config",
+    ) as load_config:
+        from services.git_integration_worker.config import WorkerConfig
+
+        load_config.return_value = WorkerConfig(
+            host="127.0.0.1",
+            port=8091,
+            source_repo=tmp_path,
+            worktree_root=tmp_path / "wt",
+            dispatch_workspace=tmp_path,
+            green_gate_cmd=["true"],
+        )
+        admission = admit_propagate_body(body)
+    assert admission.approved
+    row = admission.rows[0]
+    assert row.close_surfaces == ("mcp_health", "cortex_api")
+    assert row.excluded_surfaces in (None, ())
 
 
 @pytest.mark.asyncio

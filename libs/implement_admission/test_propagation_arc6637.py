@@ -65,7 +65,31 @@ def test_arc6637_turn46_loud_rejection_names_safe_window_fault():
 
 
 def test_propagation_block_present_rejects_shorthand_prose_fallback():
+    import subprocess
+
+    from deploy_identity.code_version import reset_code_version_cache_for_tests
+    from universal_workspace import get_workspace_root
+
+    reset_code_version_cache_for_tests()
+    head = subprocess.run(
+        ["git", "-C", str(get_workspace_root()), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+    ).stdout.decode().strip()
     body = _TURN_46_BODY.replace("safe_window: normal", "safe_window: harvest")
+    body = body.replace(
+        "  - service: rag",
+        f"  - service: rag\n    code_ref: {head}",
+        1,
+    ).replace(
+        "  - service: mcp",
+        f"  - service: mcp\n    code_ref: {head}",
+        1,
+    ).replace(
+        "  - service: git_integration_worker",
+        f"  - service: git_integration_worker\n    code_ref: {head}",
+        1,
+    )
     admission = admit_propagate_body(body)
     assert admission.approved
     assert [row.service for row in admission.rows] == [
