@@ -202,6 +202,10 @@ confirms the target is **paste-eligible**, not merely "busy":
 | `cdp_registry` active lane + open CSE page on that lane | Followup can resolve without `lane_not_attached` | Preferred |
 | Jupiter CDP port probe (`/json/list` has `/cowork/cse_…`) | Tab exists; use with `chat_url` + `reattach=true` | Escape when registry empty |
 
+`restart(cdp_ask) ⇏ dead(CSE)`. A missing satellite `execution_id` after recycle is attach
+loss — recover with `chat_url` + `reattach=true`; do **not** disenroll or hop a new window.
+Continuity hop is for MCP tooling/chip refresh (`cdp-operator-proxy` · `restart-drain-discipline`).
+
 If no attach path and no live CSE tab: **disenroll** the paste target — NOTE on the MONITOR
 sibling (`break_in_target_disenrolled`), stop cadence fires against that CSE, do **not** paste.
 Re-enroll only when a new live CSE is attached (continuity hop / reattach).

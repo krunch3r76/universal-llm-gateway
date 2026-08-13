@@ -73,6 +73,13 @@ measures seconds since the last observed fingerprint progress (reset on each del
 cumulative elapsed time; retain/reattach guidance is unchanged. Self-stop authorization:
 inv 30.
 
+**Service recycle ≠ CSE death (BINDING — 2026-08-12):** `identity(CSE) = chat_url`.
+`restart(mcp | cdp_ask | …) ⇒ drop(attach) ∧ ¬end(tab)`. After **`cdp_ask`** recycle:
+`wait_healthy` → warm follow-up / `reattach=true` on this `chat_url` — do **not** mint a
+new window because the satellite `execution_id` died. Continuity hop (new CSE, same
+private lane) is for **MCP tooling/chip refresh** only (`Refresh ≠ follow-up` below).
+¬ park a `cdp_ask` restart on `live_cse_count` / a running hop execution.
+
 **Refresh ≠ follow-up (BINDING)** — two moves against the same CSE; pick by *what is stale*:
 
 | Need | Move | Fired by |
@@ -97,10 +104,12 @@ When mcp is restarted to refresh the **tooling / descriptor / connector surface*
 changed tools, OpenAPI, life connector behavior), this seat **must** rebind via the
 **continuity protocol** — not a same-CSE warm follow-up. Ordered sequence is binding:
 
-1. Land the restart (`contract: propagate` on mcp/cdp_ask). Same-window ⇒ force /
-   auto self-preempt is correct; set `allow_self_preempt: false` only to veto.
-   Cursor-auto auto-applies self-preempt when `allow_self_preempt` is true (default)
-   and the busy reason is this CSE, and advises MCP disconnect in the closeout.
+1. Land the restart. **MCP tooling:** `contract: propagate` on mcp; same-window ⇒
+   force / auto self-preempt (`allow_self_preempt: false` only to veto). Cursor-auto
+   auto-applies self-preempt when `allow_self_preempt` is true (default) and the
+   busy reason is this CSE, and advises MCP disconnect in the closeout.
+   **`cdp_ask` satellite code:** recycle `cdp_ask`; do **not** mint a new CSE —
+   recover by `chat_url` after healthy.
 2. **Wait until mcp is healthy** — commission cursor (code-seat `manage`) for
    `wait_healthy(service=mcp)` or an equivalent live probe; do **not** proceed on
    restart-admit alone or on a deferred/queued closeout.
@@ -855,7 +864,7 @@ before re-issuing. Full templates arrive in the mission briefing inject.
 | A DISPOSITION that only accepts/rejects an `investigate` conclusion | Name the **first wrong step** + the evidence that settles it |
 | Cowork CSE open / chatty tone ⇒ the operator is human | Inv 0: the model seat is operator until a human **explicitly declares** |
 | Minting a new CDP window to deliver what a warm follow-up would carry — or warm-pasting when the CSE needs refreshed chips | Refresh ≠ follow-up: pick by what is stale |
-| Treating `wall_clock_exceeded` / poller FAILED as mission-dead, or killing the open CSE | Retain until a confirmed continuity handoff or a rare human gate — reattach; `wall_clock_exceeded` means no fingerprint progress for `max_wall_s`, not cumulative job time |
+| Treating `wall_clock_exceeded` / poller FAILED / `cdp_ask` restart as mission-dead, or killing the open CSE | Retain; reattach by `chat_url`. Satellite process death is attach loss, not session-kill |
 | Ending the Cowork stream after a **leg** DISPOSITION ("Mission leg complete" / "Nothing needs you") | Stream stays live; next DIRECTIVE or idle wait (inv 30) |
 | On a persistent lane, emitting `MISSION_CLOSEOUT` because a roadmap row / work unit finished | Leg — stream continues; update standing handoff; carve-out (inv 30) |
 | On a persistent lane, posting a status report then going quiet while a dispatch is in flight | Report while continuing; poll/harvest/act — going quiet ≡ stop (inv 30) |

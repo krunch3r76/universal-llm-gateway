@@ -319,23 +319,19 @@ async def await_live_submit_visible(
 
 async def click_discovered_submit(page, discovery: dict[str, Any], *, composer=None) -> None:
     """Click a submit control returned by ``discover_live_submit`` (composer-local)."""
+    from claude_bundles.composer_submit import click_submit_button
+
     name = str(discovery.get("name") or discovery.get("aria") or "")
     if not name:
         raise RuntimeError("discovered submit missing name/aria")
     aria = str(discovery.get("aria") or "")
     if aria:
         loc = page.locator(f"button[aria-label='{aria}']")
-        if await loc.count():
-            btn = loc.first
-            if await btn.is_visible() and not await btn.is_disabled():
-                await btn.click(force=True)
-                return
-    loc = page.get_by_role("button", name=re.compile(re.escape(name), re.I))
-    if await loc.count():
-        btn = loc.first
-        if await btn.is_visible() and not await btn.is_disabled():
-            await btn.click(force=True)
+        if await loc.count() and await click_submit_button(loc.first):
             return
+    loc = page.get_by_role("button", name=re.compile(re.escape(name), re.I))
+    if await loc.count() and await click_submit_button(loc.first):
+        return
     raise RuntimeError(f"discovered submit not clickable: {name!r}")
 
 

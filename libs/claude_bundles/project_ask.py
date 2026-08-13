@@ -367,7 +367,9 @@ async def send_prompt(
     Contract: leading ``/<slug>\\n`` tokens name Customize skills to attach via
     ``+`` → Skills → pick-each (not typed); remaining body (incl. hybrid escape
     Use-the lines / ``<skills_inline>``) pastes via insert_text. Fail-closed
-    submit (no Enter fallback) via compose attestation / live_discover.
+    submit: composer-local Send click, then prove the draft needle left the
+    composer (Control/Meta+Enter retry). Bare Enter remains refused. Click
+    self-report is not submit proof.
 
     Correlation ids optional: threaded into channel-attest telemetry only;
     empty strings are valid for non-seating harness callers.
@@ -428,26 +430,26 @@ async def send_prompt(
         submit = await await_submit_visible(page, mode, timeout_s=8.0)
         clicked = False
         if submit.get("ok"):
+            from claude_bundles.composer_submit import click_submit_button
+
             role_re = _SUBMIT_ROLE_RES[0 if mode == "cowork" else 1]
             loc = page.get_by_role("button", name=role_re)
             if await loc.count():
-                btn = loc.first
-                if await btn.is_visible() and not await btn.is_disabled():
-                    await btn.click(force=True)
-                    clicked = True
+                clicked = await click_submit_button(loc.first)
             if not clicked:
                 aria = _SUBMIT_ARIA_SUBSTRS[0 if mode == "cowork" else 1]
                 loc = page.locator(f"button[aria-label*='{aria}' i]")
                 if await loc.count():
-                    btn = loc.first
-                    if await btn.is_visible() and not await btn.is_disabled():
-                        await btn.click(force=True)
-                        clicked = True
+                    clicked = await click_submit_button(loc.first)
         if not clicked:
             raise RuntimeError(
                 "submit control missing: need visible Start task (Cowork) or "
                 "Send message (Chat) — refusing Enter fallback"
             )
+
+    from claude_bundles.composer_submit import prove_composer_submitted
+
+    await prove_composer_submitted(page, text)
 
     required_authority = extract_cdp_required_authority(text)
     attach_slugs, inline_slugs, _rest = parse_cdp_sealed_skill_channels(text)

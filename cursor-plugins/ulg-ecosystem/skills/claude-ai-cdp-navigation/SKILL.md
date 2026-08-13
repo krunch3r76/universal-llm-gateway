@@ -68,6 +68,15 @@ running → turn_idle → content_proof → archiving → terminal | failed
 
 **Operator-proxy CSE retain (BINDING):** for `purpose=operator-proxy|mission`, the generate poller must **not** Stop-click / kill the CSE on `max_wall_s` or `no_progress_s`. Idle between DIRECTIVE legs is expected. Clean CSE break is allowed only for **continuity handoff** (after a new CSE launch is confirmed) or rare human escalation — see `cdp-operator-proxy` § CSE lifetime. `wall_clock_exceeded` on a mission is poller-detach / false FAILED if it still appears — reattach; ¬ treat as arc dead. Generate `max_wall_s` measures seconds since the last observed fingerprint progress (reset on each delta), not cumulative job elapsed time; mission retain posture is unchanged.
 
+### Service restart recovery (BINDING — 2026-08-12)
+
+```
+identity(CSE) = chat_url
+restart(mcp | cdp_ask | …) ⇒ drop(attach) ∧ ¬end(CSE)
+```
+
+Satellite `execution_id` / Playwright / MCP socket are attach handles. After **`cdp_ask`** recycle: `wait_healthy(cdp_ask)` → `project_ask(op=followup)` with `chat_url` (`reattach=true` if the page is not on a lane). Continuity hop (new window, same private lane) is for **MCP tooling/chip refresh**, not because a satellite row died. `cdp_ask` `sync_restart` is never coupled to mcp. ¬ park the restart on `live_cse_count` / a running hop execution.
+
 **Operator self-stop is a different plane (BINDING — 2026-08-01):** poller retain does **not** authorize the operator seat to end its Cowork turn. `end(stream) ⇔ continuity_handoff ∨ TYPE:MISSION_CLOSEOUT` — full discriminator + exception notify (`cse-stream-stop`) live in `cdp-operator-proxy` inv 30. IDE observing mid-mission idle with open residuals and no mission-close TYPE ⇒ load that skill and fire the awareness ping if Opus already went quiet.
 
 **Post-idle cadence (a:26348):** once `turn_idle` **or** `stop=true`, re-poll **≤5–10s** until `archive_uri` | verified `content_proof` | `failed`+`stall_stage`. Chat may skip `content_proof_uri` — do not wait for a rung that never comes. Forbidden: multi-minute sleeps between polls.
@@ -235,7 +244,7 @@ A retained operator-proxy CSE is a **live correspondent**, not an archive. Reach
 
 | Situation | Move | Receipt |
 |---|---|---|
-| Wake / correction / ladder-fix / advisory to a **retained** CSE on an **attached** lane | `project_ask(op=followup, …)` — identity omitted ⇒ attended resolve-or-refuse on satellite (`target_binding=resolver`); explicit `cdp_url`+`chat_url` ⇒ `target_binding=explicit`. Paste-verified (`send_verified` / `receipt`), no reply harvest | `dom_paste` default; `dom_committed` when reload retains marker in committed user-turn nodes |
+| Wake / correction / ladder-fix / advisory to a **retained** CSE on an **attached** lane | `project_ask(op=followup, …)` — identity omitted ⇒ attended resolve-or-refuse on satellite (`target_binding=resolver`); explicit `cdp_url`+`chat_url` ⇒ `target_binding=explicit`. Paste-verified (`send_verified` / `receipt`), no reply harvest | `dom_paste` default; `dom_committed` when marker survives settle in committed user-turn nodes (never reload an unsent draft) |
 | New turn with no retained CSE — or its context is stale / Customize skills refreshed | `team_dispatch(model=cdp/…)` (default) · `project_ask(op=submit, …)` (escape) — a **fresh window**, ¬ warm paste | n/a |
 | Audit trail for either | bus turn **accompanies** — ¬ substitutes | n/a |
 

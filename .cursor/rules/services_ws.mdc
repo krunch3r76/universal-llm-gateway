@@ -172,6 +172,7 @@ All services are managed through `./manage`. There are no standalone/docker-comp
 | `services/universal-stargate/` | `stargate` | `manage(action="sync_restart", service="stargate")` |
 | `services/rag/` | `rag` | `manage(action="sync_restart", service="rag")` |
 | `services/git_integration_worker/`, `libs/git_integrate/` | `git_integration_worker` | `manage(action="sync_restart", service="git_integration_worker")` |
+| `libs/claude_bundles/`, `libs/cdp_ask/` | `cdp_ask` | `manage(action="sync_restart", service="cdp_ask")` — host satellite; CSE tabs survive; recover by `chat_url` (`restart-drain-discipline` § CSE vs service process). Never coupled to mcp |
 | `services/mcp-server/tools/git_integrate.py` | `mcp` **and** `git_integration_worker` | MCP catalog relay + worker routes — restart **both** after land/diff tool changes |
 
 **MCP container invariant**: `services/mcp-server/` is baked into `universal-mcp-server:local` at build time (`/app/services/mcp-server/`). The NFS bind mount `/mnt/torus/projects:/data/project` does **not** reach `/app/` — source edits are invisible to the running container until rebuilt. `sync_restart cortex_api` restarts only the Cortex API host subprocess; it has no effect on the MCP container.

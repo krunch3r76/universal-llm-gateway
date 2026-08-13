@@ -190,7 +190,7 @@ CLI parity: `--keep-chat` ≡ `delete_after=false`.
 
 ## Warm follow-up — same CSE window (BINDING — 2026-07-31)
 
-**Receipt ladder (v1 live rungs):** `dom_paste` (marker in composer-excluded committed-turn nodes or count growth + snippet) → `dom_committed` (marker survives page reload in committed user-turn nodes). DOM on an automation-attached page proves **satellite-scope** rendering — never server commit, never attended-session visibility. Reserved (not implemented): `attended`, `server_transcript`, `human_visible`.
+**Receipt ladder (v1 live rungs):** `dom_paste` (composer empty of the needle, plus marker in composer-excluded committed-turn nodes or count growth + snippet) → `dom_committed` (marker survives a short settle in committed user-turn nodes — **not** `page.reload()`, which wipes unsent drafts). DOM on an automation-attached page proves **satellite-scope** rendering — never server commit, never attended-session visibility. Reserved (not implemented): `attended`, `server_transcript`, `human_visible`.
 
 ```
 ∀ follow-up on retained /cowork/cse_* ∨ /chat/* URL:

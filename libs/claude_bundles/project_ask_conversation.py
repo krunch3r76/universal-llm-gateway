@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Awaitable, Callable
 
 from claude_bundles.chat_reply_wait import harvest_assistant, wait_assistant_reply
 from claude_bundles.chat_session_hygiene import (
     delete_chat_if_active,
     pick_chat_page,
+)
+from claude_bundles.composer_submit import (
+    composer_holds_draft,
+    marker_survives_settle,
+    verification_marker,
 )
 from claude_bundles.cowork_output_download import (
     ExpectedSize,
@@ -28,9 +32,6 @@ from claude_bundles.project_ask import (
 )
 from claude_bundles.project_chrome import project_url
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp
-
-# Prefer BREAK_IN / MONITOR unique markers over shared headers (TYPE: BREAK_IN).
-_UNIQUE_MARKER_RE = re.compile(r"#\d+-unique:\s*\S+")
 
 _TRANSCRIPT_MARKER_JS = """
 () => {
@@ -107,24 +108,6 @@ _MARKER_IN_COMMITTED_JS = """
 """
 
 
-def verification_marker(prompt: str) -> str:
-    """Distinctive substring that must appear in the CSE after paste.
-
-    Count-only DOM growth is not delivery proof (reattach races + wrong-packet
-    re-pastes). Prefer ``#N-unique:…``; else a mid-body slice so shared headers
-    alone cannot verify.
-    """
-    text = (prompt or "").strip()
-    if not text:
-        return ""
-    match = _UNIQUE_MARKER_RE.search(text)
-    if match:
-        return match.group(0)
-    if len(text) >= 120:
-        return text[40:120].strip()
-    return text[:80]
-
-
 def _transcript_grew(before: dict, after: dict) -> bool:
     return after.get("count", 0) > before.get("count", 0)
 
@@ -141,6 +124,8 @@ async def send_followup_paste_half(
 
     Send-only contract: calls ``send_prompt`` then **fail-closed** on marker
     presence in composer-excluded committed-turn nodes (not ``body.innerText``).
+    A draft still in the composer is ``send_unverified`` — never reload.
+    ``dom_committed`` is settle-survival of the marker, not ``page.reload()``.
     Does **not** call ``wait_assistant_reply`` or ``resolve_harvest_body``.
     Mid-turn ``streaming_at_paste`` is reported (allow + report).
 
@@ -154,13 +139,40 @@ async def send_followup_paste_half(
     url = page.url or ""
     marker = verification_marker(prompt)
     before = await page.evaluate(_TRANSCRIPT_MARKER_JS)
-    await send_prompt(
-        page,
-        prompt,
-        stargate_execution_id=stargate_execution_id,
-        satellite_execution_id=satellite_execution_id,
-    )
+    try:
+        await send_prompt(
+            page,
+            prompt,
+            stargate_execution_id=stargate_execution_id,
+            satellite_execution_id=satellite_execution_id,
+        )
+    except Exception as exc:  # noqa: BLE001 — paste-half fail-closed envelope
+        state = await harvest_assistant(page)
+        return {
+            "send_verified": False,
+            "receipt": None,
+            "streaming_at_paste": bool(state.get("streaming")),
+            "url": str(state.get("url") or page.url or url),
+            "pasted_at": time.time(),
+            "verification_marker": marker,
+            "error": "send_unverified",
+            "detail": str(exc),
+            "target_binding": target_binding,
+        }
     after = await page.evaluate(_TRANSCRIPT_MARKER_JS)
+    if marker and await composer_holds_draft(page, marker):
+        state = await harvest_assistant(page)
+        return {
+            "send_verified": False,
+            "receipt": None,
+            "streaming_at_paste": bool(state.get("streaming")),
+            "url": str(state.get("url") or page.url or url),
+            "pasted_at": time.time(),
+            "verification_marker": marker,
+            "error": "send_unverified",
+            "detail": "composer still holds draft",
+            "target_binding": target_binding,
+        }
     marker_in_committed = False
     if marker:
         marker_in_committed = bool(
@@ -172,13 +184,9 @@ async def send_followup_paste_half(
         marker_in_committed or (count_grew and in_snippet)
     )
     receipt: str | None = "dom_paste" if dom_paste else None
-    if dom_paste:
-        try:
-            await page.reload(wait_until="domcontentloaded")
-            if marker and await page.evaluate(_MARKER_IN_COMMITTED_JS, marker):
-                receipt = "dom_committed"
-        except Exception:
-            receipt = "dom_paste"
+    if receipt and marker and marker_in_committed:
+        if await marker_survives_settle(page, marker):
+            receipt = "dom_committed"
     state = await harvest_assistant(page)
     pasted_at = time.time()
     send_verified = receipt is not None

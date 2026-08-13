@@ -22,7 +22,8 @@ trigger_match_terms:
   - other window
   - continuity hop
   - ghost live_cse
-  - streaming
+  - cdp_ask restart
+  - CSE recover
 ---
 # Restart drain discipline
 
@@ -38,12 +39,31 @@ Both are wrong.
 (GIW write lease vs MCP streaming vs idle/ghost CSE), then choose wait vs force.
 `busy=true` / `live_cse_count>0` alone never licenses “park forever” or “skip restart.”
 
+## CSE vs service process (BINDING — 2026-08-12)
+
+```
+identity(CSE) = chat_url
+restart(mcp | cdp_ask | …) ⇒ drop(attach) ∧ ¬end(CSE)
+```
+
+A Cowork CSE is a Chrome tab. Satellite `execution_id`, Playwright, and the MCP
+socket are **attach handles**. Recycling those processes is reconnect, not
+session-kill. `cdp_ask` `sync_restart` is **never coupled to mcp**
+(`api_dispatch._sync_restart`). After `cdp_ask` recycle: `wait_healthy` →
+`project_ask(op=followup)` / `reattach=true` by `chat_url` (tab should still be
+open). Continuity hop (new window, same private lane) is for **MCP
+tooling/chip refresh**, not because a satellite row died.
+
+MCP other-window **streaming** wait still applies — that protects another seat's
+in-tab tools mid-turn, not CSE lifetime. Do not narrate `running_count` /
+`execution_id` gone as “the CSE is dead.”
+
 ## The three wrong moves
 
 | Wrong | Why | Right |
 |---|---|---|
 | `force=true` to kill **another** seat's streaming / write lease | Preempts unrelated in-flight work | Wait (MCP other-window) or arm durable drain (GIW) |
-| "Busy / a dispatch is running, so I won't restart" | Leaves the fix landed-not-live | Arm the restart (or MCP-force when classifier says so) |
+| "Busy / a dispatch or CSE is running, so I won't restart" | Leaves the fix landed-not-live; treats `cdp_ask` attach-loss as session-kill | Arm the restart. After `cdp_ask`: recover the tab by `chat_url`. MCP-force only when the classifier says so |
 | Sit in-window polling `wait_healthy` while holding a lease | The lease you hold is what the drain waits on — never converges (friction 25989) | Arm, then **exit**; probe after |
 
 ## Mechanism already exists — use it, do not reinvent
