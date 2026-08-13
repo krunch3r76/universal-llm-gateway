@@ -198,7 +198,7 @@ Name: `todo:{slug}` · entry gate · consult URI · recon URI.
 
 ## Commissioning register (operator bind 2026-08-02)
 
-This path is the **default shape for handing an idea to `cursor/grok-4.5` as sub-PM** —
+This path is the **default shape for handing an idea to `cursor/grok-4.6` as sub-PM** —
 grok receives the idea in the register a lead receives it and drives S1–S6 itself,
 fanning out to Explore (S2 breadth), Composer (mechanical leg), Opus/Fable (S3 fork it
 cannot rank), and grok again (parallel seeds). `¬` a hard rule — an emergent shape; the
@@ -218,7 +218,7 @@ Cadence: fewer, fatter commissions amortize round-trip latency vs. paying it per
 micro-step. **Life seats** commission via `agent_bus.request` with `desired_model` and
 `desired_effort` on the **wire** — do not pin effort in the DIRECTIVE body
 (`effort_pin_refused`). **Code-side** `team_dispatch` shape: `seat=cursor-sdk` ·
-`model=cursor/grok-4.5` · `model_knobs={"effort":"high","fast":"false"}` on the dispatch
+`model=cursor/grok-4.6` · `model_knobs={"effort":"high","fast":"false"}` on the dispatch
 wire (catalog default is **`fast=true`**; `fast` has no wire param on `agent_bus.request`;
 `reasoning_effort` is rejected 422 on `seat=cursor-sdk`). Operator-proxy SOT:
 `libs/claude_bundles/operator_proxy_mission.py` § Knob relay.

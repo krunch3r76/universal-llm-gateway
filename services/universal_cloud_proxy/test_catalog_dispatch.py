@@ -26,7 +26,7 @@ from services.universal_cloud_proxy.native_boundary import (
 )
 
 _OPUS = "anthropic/claude-opus-4-8"
-_GROK = "xai/grok-4.5"
+_GROK = "xai/grok-4.6"
 
 
 def _manager_with(provider: str, model: CatalogModel) -> CatalogManager:

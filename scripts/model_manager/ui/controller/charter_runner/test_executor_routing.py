@@ -217,7 +217,7 @@ def test_judgment_window_is_never_gate_checked() -> None:
 @pytest.mark.offline
 @pytest.mark.parametrize(
     ("fired_model", "other_model"),
-    [("cursor/composer-2.5", "grok-4.5"), ("cursor/grok-4.5", "composer-2.5")],
+    [("cursor/composer-2.5", "grok-4.6"), ("cursor/grok-4.6", "composer-2.5")],
 )
 @pytest.mark.skip(reason="Phase 3: admit.py deleted — port to window_exec")
 def test_admit_notification_names_the_model_that_actually_fired(

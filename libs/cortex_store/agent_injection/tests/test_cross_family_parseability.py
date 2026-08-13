@@ -41,7 +41,7 @@ def test_cross_family_models_emit_parseable_citations():
     # When the gate is open the real implementation would:
     #   - materialize_d2(some_small_entity)
     #   - build prompt = "Cite each fact using [assertion:ID] exactly once: " + d2["rendered"]
-    #   - for each of ("anthropic/claude-opus-4-7", "openai/gpt-5.5", "xai/grok-4.5"):
+    #   - for each of ("anthropic/claude-opus-4-7", "openai/gpt-5.5", "xai/grok-4.6"):
     #       resp = dispatch_to(model, prompt)
     #       v = validate_output(resp)
     #       missing = [f for f in v.findings if f.kind == "output_citation_missing_assertion"]

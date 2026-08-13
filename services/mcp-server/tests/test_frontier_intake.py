@@ -131,8 +131,8 @@ def test_strip_mcp_no_false_positive_on_other_suffixes() -> None:
     assert (
         normalize_dispatch_model("openai/gpt-5-search-api") == "openai/gpt-5-search-api"
     )
-    assert normalize_dispatch_model("xai/grok-4.5") == (
-        "xai/grok-4.5"
+    assert normalize_dispatch_model("xai/grok-4.6") == (
+        "xai/grok-4.6"
     )
     assert normalize_dispatch_model("hermes-3-...-16384-hybrid") == (
         "hermes-3-...-16384-hybrid"

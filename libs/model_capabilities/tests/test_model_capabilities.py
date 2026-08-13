@@ -39,6 +39,8 @@ def test_shared_card_constants_for_provider_variants() -> None:
 def test_derived_mcp_capable_and_inline_only() -> None:
     assert mcp_capable("openai/gpt-5.5") is True
     assert inline_only("openai/gpt-5.5") is False
+    assert mcp_capable("xai/grok-4.6") is True
+    assert inline_only("xai/grok-4.6") is False
     assert mcp_capable("xai/grok-4.5") is True
     assert inline_only("xai/grok-4.5") is False
 
@@ -85,6 +87,7 @@ def test_cursor_model_is_out_of_card_domain() -> None:
         ("google/gemini-3-pro", True),
         ("google/gemini-3.1-pro", True),
         ("google/gemini-2.5-pro", True),
+        ("xai/grok-4.6", True),
         ("xai/grok-4.5", True),
         ("xai/grok-4.3", True),
         ("openai/gpt-5.5", True),
@@ -104,7 +107,7 @@ def test_openai_remote_connector_false() -> None:
 
 
 def test_server_side_tools_and_mount_backend() -> None:
-    assert server_side_tools("xai/grok-4.5") == (
+    assert server_side_tools("xai/grok-4.6") == (
         "web_search",
         "x_search",
         "code_interpreter",

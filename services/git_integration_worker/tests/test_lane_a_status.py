@@ -321,7 +321,7 @@ access: ok
 
 coverage: n/a
 
-model_actual: cursor/grok-4.5
+model_actual: cursor/grok-4.6
 
 checkpoint_claim: committed deadbeef paths=1
 """

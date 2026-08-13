@@ -68,7 +68,7 @@ def test_seed_hint_unchanged_but_in_seat_omits_outcome(tmp_path: Path) -> None:
             job,
             client=client,
             queue=MagicMock(),
-            model={"requested": "auto", "resolved_model_id": "cursor/grok-4.5"},
+            model={"requested": "auto", "resolved_model_id": "cursor/grok-4.6"},
             effort={"requested": "low", "resolved_effort": "low"},
             contract_info={
                 "contract": "seed",

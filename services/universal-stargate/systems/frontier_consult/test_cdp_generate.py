@@ -26,7 +26,7 @@ from systems.frontier_consult.cdp_generate_worker import (
 
 def test_is_cdp_model() -> None:
     assert is_cdp_model("cdp/opus-4.8") is True
-    assert is_cdp_model("cursor/grok-4.5") is False
+    assert is_cdp_model("cursor/grok-4.6") is False
     assert is_cdp_model("anthropic/claude-opus-4-8") is False
     assert is_cdp_model(None) is False
 
@@ -36,7 +36,7 @@ def test_reject_cursor_sdk_seat_with_cdp() -> None:
         seat=None, model="cdp/opus-4.8", request_id="r1"
     )
     reject_cursor_sdk_seat_with_cdp(
-        seat="cursor-sdk", model="cursor/grok-4.5", request_id="r1"
+        seat="cursor-sdk", model="cursor/grok-4.6", request_id="r1"
     )
     with pytest.raises(FrontierEndpointError) as exc:
         reject_cursor_sdk_seat_with_cdp(
@@ -73,7 +73,7 @@ def test_reject_dispatch_lane_with_cdp() -> None:
     )
     reject_dispatch_lane_with_cdp(
         dispatch_lane="cursor-implement",
-        model="cursor/grok-4.5",
+        model="cursor/grok-4.6",
         request_id="r1",
     )
     with pytest.raises(FrontierEndpointError) as exc:

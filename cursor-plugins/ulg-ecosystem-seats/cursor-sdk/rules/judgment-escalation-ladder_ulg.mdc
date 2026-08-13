@@ -47,7 +47,7 @@ or blocking.
 | **2a** | `cdp/opus-5` | Producer not Anthropic |
 | **2b** | `cdp/fable` | Opus producer or Opus unsure |
 | **2c** | `cursor/gpt-5.6-terra` / `cursor/gpt-5.6-sol` (targeted) | Fable unsure or lineage-correlated risk |
-| **2d** | `cursor/grok-4.5` (≤ high) | Cheap breadth — not substitute for 2b–2c on material binds |
+| **2d** | `cursor/grok-4.6` (≤ high) | Cheap breadth — not substitute for 2b–2c on material binds |
 
 `anthropic/*` API **prohibited** — CDP/Fable web lane only.
 

@@ -44,7 +44,7 @@ Zoom-out on recon/investigate is **required** (template `cortex://notes/system/t
 
 | Role | Job | Standing bind |
 |---|---|---|
-| `thin_seeder` | Scaffold todo / OPEN FORKS / corpus pointers; ¬ `implement_ready` | Grok 4.5 High (cursor) / Sonnet 5 (mobile) |
+| `thin_seeder` | Scaffold todo / OPEN FORKS / corpus pointers; ¬ `implement_ready` | Grok 4.6 High (cursor) / Sonnet 5 (mobile) |
 | `strategic_framer` | Gates / insertion / excludes; bind-shaped | Opus 4.8 High (web-anthropic) |
 | `densify_adjudicator` | Close forks, distill attrs, may stamp densify-close | Opus 4.8 Max (web-anthropic) |
 | rare escalate | Pre-codify / novel authority-class frame only | Fable 5 (credits/promo — never standing; B6 no-API-Fable-default) |
@@ -96,7 +96,7 @@ Write the dense spec at `cortex://notes/system/specs/{slug}.md`: 8 sections (pro
 
 ### 6. Check / skeptic ratification (gate distinct from Gate 2)
 
-**Spine default check:** one merged GPT check (prefer gpt-5.6-terra/Sol; split only on residual/amend) after densify-close — the standing cross-family falsifier (`decision:autonomous-work-item-spine`). ¬ dual GPT-5.5; ¬ web as check substitute. Code-lane live-source / `workspaces://` ⇒ `seat=cursor-sdk` + `model=cursor/gpt-5.6-*` (or `cursor/grok-4.5`); API reviewer only when fully pre-staged (friction a24082). Densify-close `implement_ready` ≠ Gate-6 ratification; access-only REVISE ≠ Gate-6 close.
+**Spine default check:** one merged GPT check (prefer gpt-5.6-terra/Sol; split only on residual/amend) after densify-close — the standing cross-family falsifier (`decision:autonomous-work-item-spine`). ¬ dual GPT-5.5; ¬ web as check substitute. Code-lane live-source / `workspaces://` ⇒ `seat=cursor-sdk` + `model=cursor/gpt-5.6-*` (or `cursor/grok-4.6`); API reviewer only when fully pre-staged (friction a24082). Densify-close `implement_ready` ≠ Gate-6 ratification; access-only REVISE ≠ Gate-6 close.
 
 **Admission still requires** (when `judgment_required` and not waived): `status(todo, skeptic_ratified, current)` whose `evidence_uris` include (1) the **ratifying** check/skeptic thread — the thread whose turn carries a literal `FILE_EVIDENCE_PATHS:` block (bare paths — no bullets, no fence) — and (2) the dense spec's **exact** current `spec_sha256:<hex>` as a literal list member. Prefer `agent-bus:{id}#turn-{N}` pinning the FILE_EVIDENCE turn. The grounding parser (`select_agent_bus_evidence`) uses the **first** `agent-bus:` URI; citing an orchestration root / densify arc / WIP thread instead of the ratifying check thread → `skeptic_evidence_missing` / `stamp_missing`. Thread-only citation without the hash → `422 skeptic_pass_missing` with no hint (friction 21656). The GPT merged-check turn is the usual FILE_EVIDENCE home on spine arcs.
 

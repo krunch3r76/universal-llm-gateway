@@ -21,7 +21,7 @@ Work class: outbound letters, correspondence, prose critique+rewrite. Complement
 
 | Model / path | Rule |
 |---|---|
-| `xai/grok-4.5` / `cursor/grok-4.5` | **PROHIBITED** for writing |
+| `xai/grok-4.6` / `cursor/grok-4.6` | **PROHIBITED** for writing |
 | `openai/gpt-5.5` | **OPERATOR-GATED** |
 | Standing writing multi-model | `role=reviewer` → `openai/gpt-5.6-terra` + `role=synthesizer` → Gemini; ¬ default `panel_dispatch` |
 | Lead / web-anthropic in-seat | OK when corpus staged |
@@ -54,7 +54,7 @@ reference-annex packet-class row *ULG service home / placement / extract / hosti
 ## Autonomous work-item spine — extensions
 
 **Gate-6 substrate (a24082):** code-lane live-source / `workspaces://` citations ⇒
-`team_dispatch(op=generate, seat=cursor-sdk, model=cursor/gpt-5.6-terra|sol|luna|cursor/grok-4.5,
+`team_dispatch(op=generate, seat=cursor-sdk, model=cursor/gpt-5.6-terra|sol|luna|cursor/grok-4.6,
 contract=light-bounded, …)`; poll `reply_from_agent` from admit. API `role=reviewer` + terra only when
 **all** reading pre-staged inline (`code-on-api`). Access-only REVISE ≠ Gate-6 close.
 

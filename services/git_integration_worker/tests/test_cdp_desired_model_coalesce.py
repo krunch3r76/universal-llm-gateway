@@ -19,7 +19,7 @@ pytestmark = pytest.mark.offline
         ("cdp/fable-5", "cdp/fable"),
         ("cdp/opus-5", "cdp/opus-5"),
         ("cdp/opus", "cdp/opus-5"),
-        ("grok-4.5", None),
+        ("grok-4.6", None),
         ("auto", None),
     ],
 )

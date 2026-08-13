@@ -116,7 +116,7 @@ def test_complete_panel_stamp_no_warn_when_execution_uris_ok(tmp_path: Path) -> 
         panel_executions={"skeptic": "eb94f022", "reviewer": "fe7abdb4"},
         decisive_falsifier="missing adjudication artifact fraction",
         panel_adjudication_artifact="cortex:notes/system/threads/1206-panel.md",
-        member_models={"skeptic": "xai/grok-4.5", "reviewer": "openai/gpt-5.5"},
+        member_models={"skeptic": "xai/grok-4.6", "reviewer": "openai/gpt-5.5"},
     )
     eid = "decision:dispatch-test-complete"
     _insert_decision(conn, eid)

@@ -26,7 +26,7 @@ from .proposal_store import (
 )
 
 _CORTEX_TIMEOUT = 15.0
-_RECON_MODEL = "cursor/grok-4.5"
+_RECON_MODEL = "cursor/grok-4.6"
 
 
 class WorkerAdmissionIndeterminateError(Exception):

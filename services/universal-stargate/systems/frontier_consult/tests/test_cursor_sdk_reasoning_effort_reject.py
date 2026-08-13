@@ -87,7 +87,7 @@ def test_grok_max_lists_supported_no_forward(
     with pytest.raises(FrontierEndpointError) as exc_info:
         reject_nonempty_reasoning_effort(
             request_id="r1",
-            resolved_model="cursor/grok-4.5",
+            resolved_model="cursor/grok-4.6",
             reasoning_effort="max",
         )
     details = exc_info.value.details

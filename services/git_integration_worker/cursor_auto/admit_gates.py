@@ -245,7 +245,7 @@ async def blocking_admit_gate(
                     f"Empty directive scope — {resolved_model_id} is outside the "
                     "roaming tier, so a contract override does not waive the scope "
                     "bound (empty_directive_scope). Bound the work or bind "
-                    "composer-2.5/grok-4.5."
+                    "composer-2.5/grok-4.6."
                 )
             emit_frontier_sdk_auto_empty_directive_scope_blocked(
                 thread_id=job.thread_id,
@@ -402,7 +402,7 @@ async def blocking_admit_gate(
                 "post_ack": post_ack,
                 "scope": f"thread:{job.thread_id}",
                 "recommended_next": (
-                    "contract:confer — ask cursor/grok-4.5 or CDP Opus whether "
+                    "contract:confer — ask cursor/grok-4.6 or CDP Opus whether "
                     "auth path is automatable; else operator human gate"
                 ),
             },

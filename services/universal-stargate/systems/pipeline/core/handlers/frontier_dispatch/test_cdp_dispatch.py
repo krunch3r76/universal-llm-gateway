@@ -30,7 +30,7 @@ def test_is_cdp_dispatch_model() -> None:
     assert is_cdp_dispatch_model("cdp/opus-5") is True
     assert is_cdp_dispatch_model("cdp/sonnet-5") is True
     assert is_cdp_dispatch_model("openai/gpt-5") is False
-    assert is_cdp_dispatch_model("cursor/grok-4.5") is False
+    assert is_cdp_dispatch_model("cursor/grok-4.6") is False
 
 
 def test_cdp_picker_forwarded_for_sonnet_5() -> None:

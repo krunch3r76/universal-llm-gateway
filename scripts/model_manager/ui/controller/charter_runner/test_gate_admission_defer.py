@@ -357,7 +357,7 @@ async def test_clear_gate_defer_on_successful_admit(
             "thread_id": "agent-bus:worker-1",
             "dispatch_id": "disp-ok",
             "packet_path": "tmp/p.md",
-            "executor": {"model": "cursor/grok-4.5", "contract": "light-bounded"},
+            "executor": {"model": "cursor/grok-4.6", "contract": "light-bounded"},
         }
 
     monkeypatch.setattr(

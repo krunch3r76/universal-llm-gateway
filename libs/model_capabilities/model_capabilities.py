@@ -132,6 +132,7 @@ MODEL_CAPABILITY_CARDS: Final[dict[str, ModelCapabilityCard]] = {
     "openai/o3": _OPENAI_API,
     "openai/o3-deep-research": _OPENAI_DEEP_RESEARCH,
     "perplexity/sonar-deep-research": _PERPLEXITY_DEEP_RESEARCH,
+    "xai/grok-4.6": _XAI_STANDARD,
     "xai/grok-4.5": _XAI_STANDARD,
     "xai/grok-4.3": _XAI_STANDARD,
     "xai/grok-4-fast-reasoning": _XAI_STANDARD,

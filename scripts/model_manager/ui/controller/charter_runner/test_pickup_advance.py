@@ -123,12 +123,12 @@ def test_gated_pickup_strips_markdown_backticks_on_executor() -> None:
     """Prose tips often write executor=`cursor/…` — must not empty-hopper (6237)."""
     live = pickup_advance.gated_pickup_from_parsed(
         _parsed(
-            "G2 — A + Gate-2 · detent=standard · executor=`cursor/grok-4.5` · "
+            "G2 — A + Gate-2 · detent=standard · executor=`cursor/grok-4.6` · "
             "executor_lane: judgment"
         )
     )
     assert live is not None
-    assert live.executor == "cursor/grok-4.5"
+    assert live.executor == "cursor/grok-4.6"
     assert pickup_advance.tip_executor_is_explicitly_unbound(live) is False
 
 

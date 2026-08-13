@@ -19,7 +19,7 @@ _SIGNAL_RE = re.compile(r"^[a-z]+(\.[a-z]+){1,4}$")
 def _bundle(meta: AgentMeta | None = None) -> HydrationBundle:
     return HydrationBundle(
         briefing_card_md="# briefing",
-        agent_meta=meta or AgentMeta(default_model="xai/grok-4.5"),
+        agent_meta=meta or AgentMeta(default_model="xai/grok-4.6"),
     )
 
 
@@ -42,7 +42,7 @@ async def test_role_path_caller_overflow_returns_skills_422(
     ) -> HydrationBundle:
         return HydrationBundle(
             briefing_card_md="# briefing",
-            agent_meta=AgentMeta(default_model="xai/grok-4.5"),
+            agent_meta=AgentMeta(default_model="xai/grok-4.6"),
             inline_only=True,
             required_body_unresolved=True,
             required_body_dropped=_layer_c_budget_drop("architecture-invariants"),
@@ -58,7 +58,7 @@ async def test_role_path_caller_overflow_returns_skills_422(
         messages=[{"role": "user", "content": "x"}],
         role="grok-api-multi",
         dispatch_thread_id=_DISPATCH_THREAD,
-        model="xai/grok-4.5",
+        model="xai/grok-4.6",
         skills=["architecture-invariants"],
     )
     with pytest.raises(FrontierEndpointError) as exc_info:
@@ -88,7 +88,7 @@ async def test_role_path_coding_bundle_overflow_keeps_infra_error(
     ) -> HydrationBundle:
         return HydrationBundle(
             briefing_card_md="# briefing",
-            agent_meta=AgentMeta(default_model="xai/grok-4.5"),
+            agent_meta=AgentMeta(default_model="xai/grok-4.6"),
             inline_only=True,
             required_body_unresolved=True,
             required_body_dropped=[
@@ -126,7 +126,7 @@ async def test_role_path_critical_drop_keeps_infra_error(
     ) -> HydrationBundle:
         return HydrationBundle(
             briefing_card_md="# briefing",
-            agent_meta=AgentMeta(default_model="xai/grok-4.5"),
+            agent_meta=AgentMeta(default_model="xai/grok-4.6"),
             inline_only=True,
             required_body_unresolved=True,
             required_body_dropped=[
@@ -144,7 +144,7 @@ async def test_role_path_critical_drop_keeps_infra_error(
         role="grok-api-multi",
         dispatch_thread_id=_DISPATCH_THREAD,
         skills=["architecture-invariants"],
-        model="xai/grok-4.5",
+        model="xai/grok-4.6",
     )
     with pytest.raises(FrontierEndpointError) as exc_info:
         await build_dispatch_body(req)
@@ -166,7 +166,7 @@ async def test_role_less_path_caller_overflow_returns_422_not_500(
     events: list[Any] = []
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "x"}],
-        model="xai/grok-4.5",
+        model="xai/grok-4.6",
         skills=["architecture-invariants"],
     )
     with pytest.raises(FrontierEndpointError) as exc_info:
@@ -199,7 +199,7 @@ async def test_role_less_path_within_budget_ok(
 
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "x"}],
-        model="xai/grok-4.5",
+        model="xai/grok-4.6",
         skills=["architecture-invariants"],
     )
     body = await build_dispatch_body(req)
@@ -236,7 +236,7 @@ async def test_role_less_scope_default_overflow_soft_degrades(
 
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "x"}],
-        model="xai/grok-4.5",
+        model="xai/grok-4.6",
     )
     body = await build_dispatch_body(req)
     assert "inject:FAIL_CLOSED" in body["pipeline_options"]["system"]
@@ -246,7 +246,7 @@ def test_dispatch_skills_inline_rejected_event_catalog_signal() -> None:
     event = DispatchSkillsInlineRejected(
         request_id="req-test",
         role="reviewer",
-        model="xai/grok-4.5",
+        model="xai/grok-4.6",
         skills=["architecture-invariants"],
         budget_bytes=INJECTED_BODY_BUDGET_BYTES,
     )

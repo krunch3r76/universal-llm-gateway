@@ -59,8 +59,8 @@ def test_default_reflex_model_is_grok_not_opus(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("CURSOR_AUTO_REFLEX_MODEL", raising=False)
-    assert _DEFAULT_MODEL == "cursor/grok-4.5"
-    assert reflex_model() == "cursor/grok-4.5"
+    assert _DEFAULT_MODEL == "cursor/grok-4.6"
+    assert reflex_model() == "cursor/grok-4.6"
 
 
 def test_reflex_model_env_override_still_honors_opus(
@@ -85,7 +85,7 @@ def test_effort_clamps_down_to_model_ceiling() -> None:
     # grok tops out at high; xhigh must degrade rather than drop the knob entirely,
     # which would silently hand the bridge the catalog default.
     knobs = compose_model_knobs(
-        {"resolved_model_id": "cursor/grok-4.5"}, {"resolved_effort": "xhigh"}
+        {"resolved_model_id": "cursor/grok-4.6"}, {"resolved_effort": "xhigh"}
     )
     assert knobs == {"effort": "high"}
 

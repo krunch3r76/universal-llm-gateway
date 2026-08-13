@@ -67,7 +67,7 @@ PHASE1_SEEDS: tuple[SeedConfirm, ...] = (
         root_id="6171",
         pickup_gid="G9",
         pickup_lane="judgment",
-        pickup_executor="cursor/grok-4.5",
+        pickup_executor="cursor/grok-4.6",
         attendance="attended",
         scoreboard_uri="cortex://notes/system/threads/6171-charter-scoreboard.md",
     ),

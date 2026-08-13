@@ -1,6 +1,6 @@
 ---
 name: presence-discipline
-description: Presence and determinacy discipline — always-applied to all Cursor-surface models. Fills the determinacy gap Opus covers through reasoning depth. Load-bearing for Sonnet 4.6, Composer 2.5, GPT-5.5, Grok 4.5, Gemini 3.5 Flash. Triggered by in-IDE work on any tier below Opus.
+description: Presence and determinacy discipline — always-applied to all Cursor-surface models. Fills the determinacy gap Opus covers through reasoning depth. Load-bearing for Sonnet 4.6, Composer 2.5, GPT-5.5, Grok 4.6, Gemini 3.5 Flash. Triggered by in-IDE work on any tier below Opus.
 alwaysApply: true
 ---
 # Presence Discipline
@@ -29,7 +29,7 @@ Arc-status ascriptions are completion claims (per `completion-provenance-discipl
 
 ## Scope
 
-Applies to ALL Cursor-surface models (Sonnet 4.6, Composer 2.5, GPT-5.5, Grok 4.5, Gemini 3.5 Flash). Opus-class reasoning makes these implicit; below Opus they are explicit obligations.
+Applies to ALL Cursor-surface models (Sonnet 4.6, Composer 2.5, GPT-5.5, Grok 4.6, Gemini 3.5 Flash). Opus-class reasoning makes these implicit; below Opus they are explicit obligations.
 
 ¬ scope: headless dispatch trust (anti-fabrication for unattended workers) — see `todo:cursor-sdk-dispatch-report-verification`.
 ¬ scope: durable-artifact completion provenance at session close — see `provenance-discipline.mdc` (its trigger set is a strict superset of P3 for session-close events; P3 governs the in-turn behavioral layer).

@@ -29,7 +29,7 @@ Disposition = Literal[
 
 _MODEL_TABLE: dict[str, str] = {
     "composer-2.5": "cursor/composer-2.5",
-    "grok-4.5": "cursor/grok-4.5",
+    "grok-4.6": "cursor/grok-4.6",
     "opus-5": "cursor/claude-opus-5",
 }
 BINDABLE_WIRE_IDS: tuple[str, ...] = tuple(sorted(_MODEL_TABLE))
@@ -164,12 +164,12 @@ def resolve_desired_model(
     raw = (desired_model or "auto").strip().lower() or "auto"
     if raw == "auto":
         by_contract = {
-            "answer": "cursor/grok-4.5",
-            "confer": "cursor/grok-4.5",
-            "investigate": "cursor/grok-4.5",
+            "answer": "cursor/grok-4.6",
+            "confer": "cursor/grok-4.6",
+            "investigate": "cursor/grok-4.6",
             "implement": "cursor/composer-2.5",
             "verify": "cursor/composer-2.5",
-            "seed": "cursor/grok-4.5",
+            "seed": "cursor/grok-4.6",
         }
         model_id = by_contract.get(contract, "cursor/composer-2.5")
         return {

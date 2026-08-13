@@ -53,7 +53,7 @@ Detent = the one-line declarable aperture setting. IO/CoT/single-fork are limite
 
 Close trigger (falsifier): `|material_sub_parts| ≤ 2 ⇒ step down to closed`.
 
-**Closed-detent quick recipe (summary — single light consult, ¬ the bundled arc):** scope-lock (4 fields) → thin L2 fill (2–3 decorrelated rivals + research-anchor gloss) → single-seat dissent beat (one line, ¬ N-way debate) → bind with falsifier. Transport `team_dispatch(op=generate, seat=cursor-sdk, model=cursor/grok-4.5, contract=light-bounded, effort=low)`; preflight `manage(busy_status)` before firing. Sufficient iff `|material_sub_parts| ≤ 2` ∧ loci pre-selected ∧ ¬ architecture-suitability in scope — escalate to the bundled arc the moment a rival bind touches an invariant or the fix is not self-verifiable. Full recipe + friction-conveyor detent triage: **annex A**.
+**Closed-detent quick recipe (summary — single light consult, ¬ the bundled arc):** scope-lock (4 fields) → thin L2 fill (2–3 decorrelated rivals + research-anchor gloss) → single-seat dissent beat (one line, ¬ N-way debate) → bind with falsifier. Transport `team_dispatch(op=generate, seat=cursor-sdk, model=cursor/grok-4.6, contract=light-bounded, effort=low)`; preflight `manage(busy_status)` before firing. Sufficient iff `|material_sub_parts| ≤ 2` ∧ loci pre-selected ∧ ¬ architecture-suitability in scope — escalate to the bundled arc the moment a rival bind touches an invariant or the fix is not self-verifiable. Full recipe + friction-conveyor detent triage: **annex A**.
 
 ## Cascade header grammar (copy, don't re-derive)
 
@@ -90,20 +90,20 @@ Primary delivery is an explicit slug line, not a paste. Caller composes:
 
 - **Quality ≠ transport.** “Opus 5 Max / High”, “Fable Max”, “Grok-4.5 High” name **effort**, not a dispatch path.
 - **Anthropic family** (`decision:anthropic-family-dispatch-substrate`): `model=anthropic/*` via Stargate API is **PROHIBITED**; wide consult / R-admit ⇒ **web-anthropic CDP**; `cursor/claude-opus-*` acceptable when live codebase navigation is needed. ¬ unlock API via routine `cost_intent`.
-- **xAI on the code lane** (friction 25081): **A** / coding-lane Grok judgment / closed-detent light consult ⇒ **`seat=cursor-sdk, model=cursor/grok-4.5, contract=light-bounded`**; bundled-arc **Q** defaults to **CDP Fable** (¬ Grok). `role=artisan, model=xai/grok-4.5` on a checkout-present coding consult is **PROHIBITED** (`xai/grok-4.5` stays OK for engineering axis-2 skeptic on specs/design; Grok is **PROHIBITED** for outbound prose).
+- **xAI on the code lane** (friction 25081): **A** / coding-lane Grok judgment / closed-detent light consult ⇒ **`seat=cursor-sdk, model=cursor/grok-4.6, contract=light-bounded`**; bundled-arc **Q** defaults to **CDP Fable** (¬ Grok). `role=artisan, model=xai/grok-4.6` on a checkout-present coding consult is **PROHIBITED** (`xai/grok-4.6` stays OK for engineering axis-2 skeptic on specs/design; Grok is **PROHIBITED** for outbound prose).
 - **Composer** = Stage-B implement only — never the A (L1+L2) leg. Detail: `consult-routing` § Anthropic-family substrate · § xAI coding-substrate · annex C.
 
 ## Dispatch cascade + R positions (essentials — mechanics in annex A)
 
 ```
 recon → Q (lead CDP Fable L0) → A (cursor-sdk Grok L1+L2 + bind) →[halt] R-admit (lead CDP web-anthropic Opus, default-on)
-  →[ADMIT] implement (Composer) → R-after (/work-item-review · cursor/grok-4.5, default-on) → closeout
+  →[ADMIT] implement (Composer) → R-after (/work-item-review · cursor/grok-4.6, default-on) → closeout
 ```
 
 - **Lead orchestrates, does not author.** ¬ in-seat L0/L1/L2 reasoning or hand-implement on `judgment_required` arcs unless the operator explicitly overrides.
 - **Q∧A are coupled (P1).** Never A without a Q sidecar/verdict; never Q without a following A. An operator frame is **input to Q**, never a substitute (`q_skipped` retired). Absence of frame stamps ⇒ unframed ⇒ normal **CDP Fable Q** → Grok A; ¬ escalate to the human for a frame. **Closed-detent quick recipe** (above) stays Grok-only — that carve-out is ¬ the bundled arc.
-- **Default seating (operator 2026-07-28):** Q = CDP Fable (explore width); A = `cursor/grok-4.5`; R-admit = Opus CDP — so Q and R are **not** the same seat. Downgrade Q to Grok only under closed detent or explicit operator skip.
-- **R is one posture at two pins**, both default-on: **R-admit** (before implement · web-anthropic CDP Opus · lead-owned — a headless worker "running R" collapses to self-certify) and **R-after** (after ship · `cursor/grok-4.5` on cursor-sdk · checkout-native delivery critique). Verdict grammar `RATIFY | REVISE | SCOPE-DRIFT` / `ADMIT | ADMIT_WITH_AMENDMENTS | RATIFY_WITH_CONDITIONS | RETURN`.
+- **Default seating (operator 2026-07-28):** Q = CDP Fable (explore width); A = `cursor/grok-4.6`; R-admit = Opus CDP — so Q and R are **not** the same seat. Downgrade Q to Grok only under closed detent or explicit operator skip.
+- **R is one posture at two pins**, both default-on: **R-admit** (before implement · web-anthropic CDP Opus · lead-owned — a headless worker "running R" collapses to self-certify) and **R-after** (after ship · `cursor/grok-4.6` on cursor-sdk · checkout-native delivery critique). Verdict grammar `RATIFY | REVISE | SCOPE-DRIFT` / `ADMIT | ADMIT_WITH_AMENDMENTS | RATIFY_WITH_CONDITIONS | RETURN`.
 - **R ≠ skeptic ≠ Gate-6.** ¬ stamp `recon_waived` / `skeptic_ratified` / lead self-ADMIT as a substitute for CDP R. Lead confidence that a bind is "mechanical" is **self-signal** — R exists to challenge that claim.
 - **Skip is a closed set:** operator `check_requested=false`, or transport genuinely down (CDP for R-admit / cursor-sdk for R-after) — log `reason_code` on the review sidecar + open `friction(owner=agent_skill:path-sim)`. "Mechanical" / "simple bind" / "credits thin" / "A already RATIFY'd" are **forbidden** rationalizations.
 - **Long-running ≠ stalled.** `completion_phase=running` ∧ `stall_stage=null` ⇒ keep polling in short slices across turns; ¬ abort, ¬ invent `cdp_unavailable`, ¬ advance on `turn_idle` or wall-clock alone.
@@ -115,7 +115,7 @@ recon → Q (lead CDP Fable L0) → A (cursor-sdk Grok L1+L2 + bind) →[halt] R
 | → A | Q sidecar with verdict (ranked Q table, or `frame_verdict` + `frame_delta` when framed) |
 | → R-admit | A sidecar with ranked L1 ∧ L2 + recommended bind; **Gate-2 densify closeout done** — todo `source_uri` = `cortex://notes/system/specs/{slug}.md`, `doc_validate` gates 6/8/9 PASS, non-empty `files_expected` + `acceptance_criteria`, `implement_ready` assertion citing current `spec_sha256:` |
 | → Stage-B implement | R-admit sidecar citing a real **CDP harvest URI** (`archive_uri`, or `content_proof` after consumer fs-read + sha re-verify) + admit-class verdict, **or** closed-set skip evidence; `implement_ready_preflight(source_ref=todo:{slug}).admitted === true`; amended binds re-validated + `spec_sha256` refreshed; halt on a duplicate non-terminal `contract=implement` for the same `source_ref` |
-| → R-after | Stage-B closeout present; spec + attrs current; lead fires `/work-item-review todo:{slug}` on `seat=cursor-sdk, model=cursor/grok-4.5` |
+| → R-after | Stage-B closeout present; spec + attrs current; lead fires `/work-item-review todo:{slug}` on `seat=cursor-sdk, model=cursor/grok-4.6` |
 | → Closeout | R-after verdict sidecar (or skip evidence); REVISE applied or follow-up seeded; **docstring criticals=0**; event-instrumentation closeout one-liner when applicable |
 
 `¬ fire Stage-B` when the R sidecar is lead-authored prose without CDP harvest (self-certify theater). Ordered Gate-2 steps, the `doc_template` freeform ban, Stage-B packet shape, and the full anti-pattern table live in **annex A**.

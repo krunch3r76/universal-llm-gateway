@@ -31,7 +31,7 @@ from services.git_integration_worker.cursor_auto.work_journal import (
 def test_wire_map_confer_contract():
     assert (
         resolve_desired_model("auto", contract="confer")["resolved_model_id"]
-        == "cursor/grok-4.5"
+        == "cursor/grok-4.6"
     )
     assert resolve_contract_disposition("confer")["disposition_hint"] == "conferred"
     assert resolve_handoff_contract("confer") == "light-bounded"

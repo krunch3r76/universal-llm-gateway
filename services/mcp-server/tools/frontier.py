@@ -484,7 +484,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           ``decision:code-review-panel-cursor-substrate``); ``role=reviewer`` omit-model
           coerces to ``seat=cursor-sdk``. Explicit ``model=openai/*`` keeps API. CDP remains
           judgment / path-sim R-admit. Supported cursor-sdk option for the same work is
-          ``seat=cursor-sdk`` + ``model=cursor/gpt-5.6-*`` or ``cursor/grok-4.5`` —
+          ``seat=cursor-sdk`` + ``model=cursor/gpt-5.6-*`` or ``cursor/grok-4.6`` —
           poll ``reply_from_agent`` (reviewer/skeptic), not ``cursor-sdk``.
         - ``op="to_thread"``: admits dispatch; Stargate posts the role's
           reply to ``thread`` on its behalf after the dispatch completes

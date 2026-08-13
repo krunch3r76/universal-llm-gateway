@@ -73,7 +73,7 @@ def test_project_knob_resolution_anthropic_token_budget_unmapped_rejects() -> No
 
 def test_project_knob_resolution_xai_defaulted() -> None:
     result = project_knob_resolution(
-        resolved_model="xai/grok-4.5",
+        resolved_model="xai/grok-4.6",
         requested_effort=None,
     )
     assert result["status"] == "defaulted"

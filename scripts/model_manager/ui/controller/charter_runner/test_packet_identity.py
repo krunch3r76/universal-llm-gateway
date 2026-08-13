@@ -162,7 +162,7 @@ _CP_W20 = """\
 TYPE: CHECKPOINT
 
 ## Next pickup
-1. G5 — R-after · `/work-item-review` · todo:cursor-auto-closeout-auto-nudge · cursor-sdk cursor/grok-4.5
+1. G5 — R-after · `/work-item-review` · todo:cursor-auto-closeout-auto-nudge · cursor-sdk cursor/grok-4.6
 
 ## Steps
 1. [x] Prior: capture-attribution path-sim arc closed (w8–w14)

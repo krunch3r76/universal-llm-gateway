@@ -79,7 +79,7 @@ _GOLDEN: dict[str, dict] = {
         },
     },
     # xAI shares the Responses surface and carries reasoning.default = "high".
-    "xai/grok-4.5": {
+    "xai/grok-4.6": {
         "api_surface": "openai_responses",
         "max_output": {
             "default": 131072,

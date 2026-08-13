@@ -41,7 +41,7 @@ Probes measure tool-loop FIRE+CONSUME. They are **not** reviews. Fat `team_dispa
 
 Rules:
 
-1. Default probe surface = `/v1/chat/completions` with model ending `-mcp` (e.g. `openai/gpt-5.5-mcp`, `xai/grok-4.5-mcp`), only the tool under test exposed, `max_tool_turns≤3` for L0 (raise only as ladder needs).
+1. Default probe surface = `/v1/chat/completions` with model ending `-mcp` (e.g. `openai/gpt-5.5-mcp`, `xai/grok-4.6-mcp`), only the tool under test exposed, `max_tool_turns≤3` for L0 (raise only as ladder needs).
 2. If you must use `team_dispatch(op=generate, mcp=true)` to tag the production native Responses loop: use `role=artisan` or `role=skeptic` (or bare frontier dispatch) — **never** `role=reviewer`.
 3. Set `caller_agent` to `mcp-l0-probe` / `mcp-l1-probe` / `mcp-l3-probe` / `mcp-trace-matrix` so traces and the admission guard can identify probes.
 4. Still tag the surface column — chat `-mcp` ≠ frontier client loop; do not compare across surfaces without noting it.
@@ -84,7 +84,7 @@ Run **golden control** (`openai/gpt-5.5-mcp` on chat proxy, or `openai/gpt-5.5` 
 curl -sS http://localhost:9999/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "xai/grok-4.5-mcp",
+    "model": "xai/grok-4.6-mcp",
     "max_tokens": 256,
     "messages": [{
       "role": "user",
@@ -99,7 +99,7 @@ Alternate (production-surface validation only — tag `frontier client loop`):
 POST http://localhost:9999/api/v1/frontier/dispatch
 {
   "op": "generate",
-  "model": "xai/grok-4.5",
+  "model": "xai/grok-4.6",
   "mcp": true,
   "max_tool_turns": 3,
   "caller_agent": "mcp-l0-probe",

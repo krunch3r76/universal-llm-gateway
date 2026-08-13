@@ -16,7 +16,7 @@ Copy this — do not re-derive routing each time:
 4. **Bind** — recommended patch locus + falsifier.
 
 **Transport (pinned — code lane):**
-`team_dispatch(op=generate, seat=cursor-sdk, model=cursor/grok-4.5, contract=light-bounded, effort=low)`
+`team_dispatch(op=generate, seat=cursor-sdk, model=cursor/grok-4.6, contract=light-bounded, effort=low)`
 — ¬ `xai/grok-*` (checkout present), ¬ `anthropic/*` API (§ substrate house rules).
 
 **Substrate preflight (before firing):** confirm the delivery chain is up
@@ -75,7 +75,7 @@ token. Mid-window escalate: CHECKPOINT with raised detent + STOP.
 
 ```
 recon → Q (lead CDP Fable L0) → A (cursor-sdk Grok L1+L2 + bind) →[halt] R-admit (lead CDP web-anthropic Opus, default-on)
-  →[ADMIT] implement (Composer) → R-after (/work-item-review · cursor/grok-4.5, default-on) → closeout
+  →[ADMIT] implement (Composer) → R-after (/work-item-review · cursor/grok-4.6, default-on) → closeout
 ```
 
 Order is binding: **recon then Q** (soft gate — ¬ invent a hard RAG/Tier-1 blocker; see § Recon). Closed-detent quick recipe (§ above) stays Grok-only and is **not** this cascade.
@@ -85,18 +85,18 @@ R-admit and R-after are the **same R posture** at two timeline pins (§ R positi
 | Pin | Substrate | Why |
 |---|---|---|
 | **R-admit** | web-anthropic CDP · **Opus 5** | Cross-weight-class pin vs Q (Fable) and vs A (Grok); staged corpus is enough for bind critique — Q and R must **not** be the same seat |
-| **R-after** | **`cursor/grok-4.5`** · `seat=cursor-sdk` · `contract=light-bounded` | Delivery critique needs **live checkout** (`files_expected` ∩ ship); prefer packaged `cortex://` hot paths for speed, but `workspaces://` is readable on web when exploration is named. Independence trade: same family as A, **≠** Composer implement — document; R-admit remains the cross-family / cross-weight pin |
+| **R-after** | **`cursor/grok-4.6`** · `seat=cursor-sdk` · `contract=light-bounded` | Delivery critique needs **live checkout** (`files_expected` ∩ ship); prefer packaged `cortex://` hot paths for speed, but `workspaces://` is readable on web when exploration is named. Independence trade: same family as A, **≠** Composer implement — document; R-admit remains the cross-family / cross-weight pin |
 
 Both pins **default-on** for bundled `judgment_required` arcs — skip only the closed set (`check_requested=false` / operator no-check, or transport unavailable: CDP down for R-admit / cursor-sdk unavailable for R-after). R-admit cannot see the ship; R-after is the delivery half (acceptance ledger, drift, docstring scan, event-instrumentation challenge).
 
 | Phase | Executor | Model (post-Fable window) | Sidecar |
 |---|---|---|---|
-| 0 Recon | **Orchestrated by lead** — breadth default = **Explore subagent** (`Task(subagent_type="explore")`; ¬ Explore tool; UI "Exploring" ≠ Explore). Adjudicate anchors sidecar. Narrow known-locus Greps MAY stay in-seat. If Task unavailable → `team_dispatch(seat=cursor-sdk, contract=light-bounded)` per model split. `rag(op=recon)` optional. | **Explore subagent** for breadth/unknown locus. **Dispatched fallback:** investigate/judgment → `cursor/grok-4.5`; pure mechanical inventory only → `cursor/composer-2.5`. **¬** Composer as default recon. | `cortex://notes/system/recon/{slug}/…` (Tier-1 anchors required when breadth/unknown locus) |
+| 0 Recon | **Orchestrated by lead** — breadth default = **Explore subagent** (`Task(subagent_type="explore")`; ¬ Explore tool; UI "Exploring" ≠ Explore). Adjudicate anchors sidecar. Narrow known-locus Greps MAY stay in-seat. If Task unavailable → `team_dispatch(seat=cursor-sdk, contract=light-bounded)` per model split. `rag(op=recon)` optional. | **Explore subagent** for breadth/unknown locus. **Dispatched fallback:** investigate/judgment → `cursor/grok-4.6`; pure mechanical inventory only → `cursor/composer-2.5`. **¬** Composer as default recon. | `cortex://notes/system/recon/{slug}/…` (Tier-1 anchors required when breadth/unknown locus) |
 | 1 Q (L0) | **Lead fires CDP Fable** — default bundled/full arc. Primary: `team_dispatch(model=cdp/fable, contract=light-bounded, …)` (Use the `claude-ai-cdp-navigation` skill · consult-routing Anthropic substrate). Escape: `project_ask` / CLI with `model=fable-5`. Operator-framed only via **positive attestation** (`operator_framed` + `pinned_question` + resolvable `frame_uri`) ⇒ **bounded adopt-or-contradict Q** (`frame_verdict` + `frame_delta`) then A — **¬** `q_skipped`, **¬** frame-as-Q. Unframed/isolated ⇒ normal **Fable Q** → Grok A — ¬ escalate to human (§ L0 / Q pairing). **Downgrade Q to Grok** only under closed detent (§ Closed-detent quick recipe) or explicit operator skip. **¬** default Q to Opus CDP (R-admit owns Opus — keep Q≠R seats). | Fable Max (CDP) | `cortex://notes/system/threads/path-sim-{slug}-fable-l0-q.md` |
-| 2 A (L1+L2) | **`team_dispatch(op=generate, seat=cursor-sdk, model=cursor/grok-4.5, contract=light-bounded, …)`** — **halts at admit-gate, ¬ implement** | Grok-4.5 High | `…/path-sim-{slug}-grok-a-l1l2.md` |
+| 2 A (L1+L2) | **`team_dispatch(op=generate, seat=cursor-sdk, model=cursor/grok-4.6, contract=light-bounded, …)`** — **halts at admit-gate, ¬ implement** | Grok-4.5 High | `…/path-sim-{slug}-grok-a-l1l2.md` |
 | 3 R-admit | **LEAD fires CDP `project-ask` bus-nudge** (Use the `claude-ai-cdp-navigation` skill) | web-anthropic **Opus 5** | **default-on, lead-owned** — skip only closed set |
 | 4 Implement | **`team_dispatch(op=generate, seat=cursor-sdk, contract=implement, source_ref=todo:{slug})`** — **separate dispatch, after R-admit ADMIT** | cursor-sdk Composer 2.5 (role default) | code diff + closeout sidecar |
-| 5 R-after | **LEAD fires `/work-item-review todo:{slug}`** via **`seat=cursor-sdk, model=cursor/grok-4.5`** — after Stage-B ship | **Grok-4.5 High (cursor-sdk)** | **default-on, lead-owned** — same closed skip set; entry SOT = `.cursor/commands/work-item-review.md`. Checkout-native delivery critique (≠ R-admit web seat). |
+| 5 R-after | **LEAD fires `/work-item-review todo:{slug}`** via **`seat=cursor-sdk, model=cursor/grok-4.6`** — after Stage-B ship | **Grok-4.5 High (cursor-sdk)** | **default-on, lead-owned** — same closed skip set; entry SOT = `.cursor/commands/work-item-review.md`. Checkout-native delivery critique (≠ R-admit web seat). |
 | 6 Closeout | lead (orchestrator) | — | `…/path-sim-{slug}-implement-closeout.md` (+ R-after verdict URI) |
 
 ### Recon (phase 0) — orchestrated; Tier-1 durable; RAG optional
@@ -152,7 +152,7 @@ R is one posture (scope-lock grammar · `RATIFY|REVISE|SCOPE-DRIFT` · external 
 | Position | Entry | Timing | Question pinned by | Substrate |
 |---|---|---|---|---|
 | **R-admit** | `/path-sim` phase 3 (lead CDP) | *before* implement | A-bind / cascade scope-lock | web-anthropic · Opus 5 |
-| **R-after** | `/work-item-review` — **default-on after path-sim Stage-B** | *after* ship | work-item `acceptance_criteria` + `files_expected` | **`cursor/grok-4.5`** · cursor-sdk |
+| **R-after** | `/work-item-review` — **default-on after path-sim Stage-B** | *after* ship | work-item `acceptance_criteria` + `files_expected` | **`cursor/grok-4.6`** · cursor-sdk |
 
 Same R semantics live in the parent skill. `/work-item-review` owns after-ship timing + charter-scoped file derivation + **R-after substrate bind**; it defers disposition/falsifier/reviewer-rule grammar to path-sim. Reflect-axis doctrine (external PRM vs self-signal; G4/G5) lives in `expand-growth-loop_ws.mdc` — ¬ restated here.
 
@@ -179,7 +179,7 @@ Same R semantics live in the parent skill. `/work-item-review` owns after-ship t
 
 **Pairing invariant (P1):** path-sim always runs **Q∧A as a coupled unit** — never A without a Q sidecar/verdict, never Q without a following A. The operator frame is **input to Q**, never a substitute for Q (P2 rejected — destroys the falsifier).
 
-**Default executor for path-sim Q is CDP Fable** (`team_dispatch(model=cdp/fable)` / `project_ask` `fable-5` escape — Use the `claude-ai-cdp-navigation` skill; ¬ `anthropic/*` API). Rationale (operator 2026-07-28): Fable owns explore / L0 width; **R-admit stays Opus CDP** so Q and R are not the same seat; **A stays `cursor/grok-4.5`**. Do **¬** default Q to Opus CDP. Do **¬** default Q to Grok on the bundled arc — Grok Q is the **closed-detent / explicit-skip** carve-out only. A strong frame makes Q **cheap** (bounded adopt-or-contradict), not **absent**.
+**Default executor for path-sim Q is CDP Fable** (`team_dispatch(model=cdp/fable)` / `project_ask` `fable-5` escape — Use the `claude-ai-cdp-navigation` skill; ¬ `anthropic/*` API). Rationale (operator 2026-07-28): Fable owns explore / L0 width; **R-admit stays Opus CDP** so Q and R are not the same seat; **A stays `cursor/grok-4.6`**. Do **¬** default Q to Opus CDP. Do **¬** default Q to Grok on the bundled arc — Grok Q is the **closed-detent / explicit-skip** carve-out only. A strong frame makes Q **cheap** (bounded adopt-or-contradict), not **absent**.
 
 Vision / architecture-suitability framing belongs on the **operator seat**, which must engage `reasoning-posture` (pin Question · Out-of-scope · detent ≺ widen; then steelman / calibrate) so it sees further and wider — Use the `cdp-operator-proxy` skill § Invariants. Path-sim then **tests** that frame when attested (falsifiable feedback), ¬ rubber-stamps it.
 
@@ -216,7 +216,7 @@ Default when Question is pre-pinned by a non-operator lead: still **dispatch thi
 
 **¬ skip A dispatch.** Unframed never means "skip A" or "wait for the operator." Framed never means "skip Q."
 
-**Two-stage, not one worker:** `/path-sim` on fresh `judgment_required` pickup = **lead-orchestrated** bundled arc: **recon → lead CDP Fable Q** → worker Stage-A (A + Gate-2 → **halt**) → **lead CDP R-admit** (web-anthropic Opus) → worker Stage-B (implement) → **lead fires R-after** (`/work-item-review` · `cursor/grok-4.5`) → lead closeout. "Bundled" = the lead auto-advances the stages without operator "go" — **not** one cursor-sdk dispatch spanning Q or R-admit. Mid-cascade may run Q-only then A/implement separately — still off-seat.
+**Two-stage, not one worker:** `/path-sim` on fresh `judgment_required` pickup = **lead-orchestrated** bundled arc: **recon → lead CDP Fable Q** → worker Stage-A (A + Gate-2 → **halt**) → **lead CDP R-admit** (web-anthropic Opus) → worker Stage-B (implement) → **lead fires R-after** (`/work-item-review` · `cursor/grok-4.6`) → lead closeout. "Bundled" = the lead auto-advances the stages without operator "go" — **not** one cursor-sdk dispatch spanning Q or R-admit. Mid-cascade may run Q-only then A/implement separately — still off-seat.
 
 ### Q-only dispatch (phase 1)
 
@@ -251,7 +251,7 @@ project_ask(
 
 ```
 team_dispatch(
-  op=generate, seat=cursor-sdk, model=cursor/grok-4.5,
+  op=generate, seat=cursor-sdk, model=cursor/grok-4.6,
   contract=light-bounded,
   dispatch_thread_id=<bus thread id>,
   packet_path=tmp/prompts/path-sim-{slug}-grok-q-packet.md,
@@ -307,7 +307,7 @@ Lead auto-advances legs without operator "go": **recon → lead CDP Fable Q** �
 
 ```
 team_dispatch(
-  op=generate, seat=cursor-sdk, model=cursor/grok-4.5,
+  op=generate, seat=cursor-sdk, model=cursor/grok-4.6,
   contract=light-bounded,
   dispatch_thread_id=<bus thread id>,
   packet_path=tmp/prompts/path-sim-{slug}-dispatch-packet.md,
@@ -433,7 +433,7 @@ Lead MUST verify before auto-advancing:
 | → A | Q sidecar present with verdict (unframed: ranked Q table; framed: `frame_verdict` + `frame_delta` on record) — **¬** advance on `q_skipped` (retired) |
 | → R | A sidecar present with ranked L1∧L2 + recommended bind; todo `source_uri` set to `cortex://notes/system/specs/{slug}.md`; dense spec passes `doc_validate` gates 6/8/9; `files_expected` + `acceptance_criteria` non-empty; `implement_ready` assertion cites current `spec_sha256:` |
 | → Stage-B implement | R-admit sidecar present with **CDP harvest URI** (`archive_uri` **or** `completion_phase=content_proof` after consumer fs-read + sha re-verify on `content_proof_uri`) + verdict ∈ `{ADMIT, ADMIT_WITH_AMENDMENTS, RATIFY, RATIFY_WITH_CONDITIONS}` **or** allowed skip evidence from the closed set above; **`implement_ready_preflight(source_ref=todo:{slug}).admitted === true`** (safety-net — surfaces gate-9 `missing_sections` early); if R-admit amended bind: dense spec re-validated + assertion `spec_sha256` refreshed. **Halt** if same `source_ref` already has a non-terminal cursor-sdk `contract=implement` (probe `manage(busy_status)` for write-lease/holder awareness — platform ledger reject on duplicate same-ref is authoritative; checklist is co-control, not a substitute). **Forbidden:** advance on `turn_idle` alone or sidecar path without consumer sha re-verify; `delete_after` / cleanup requires archive-proof — never content-proof alone |
-| → R-after | Stage-B implement closeout present; dense spec + `files_expected` + `acceptance_criteria` still current; lead fires `/work-item-review todo:{slug}` with **`seat=cursor-sdk, model=cursor/grok-4.5, contract=light-bounded`** (default-on) **or** allowed skip evidence from the closed set |
+| → R-after | Stage-B implement closeout present; dense spec + `files_expected` + `acceptance_criteria` still current; lead fires `/work-item-review todo:{slug}` with **`seat=cursor-sdk, model=cursor/grok-4.6, contract=light-bounded`** (default-on) **or** allowed skip evidence from the closed set |
 | → Closeout / todo-close | R-after verdict sidecar present (`RATIFY|REVISE|SCOPE-DRIFT` + cursor-sdk dispatch/harvest URI) **or** allowed skip evidence; REVISE findings applied or follow-up todo seeded; docstring criticals=0; event-instrumentation closeout one-liner when applicable |
 
 `¬ fire Stage-B` when R sidecar is lead-authored prose without CDP harvest (self-certify theater). Lead MAY run `implement_ready_preflight` before R when spec is still stub — early surface only; **not** a substitute for Stage-A Gate-2 closeout.
@@ -481,9 +481,9 @@ team_dispatch(
 | Stage-B / closeout without docstring-quality (criticals uncleared) | `skills=` includes `docstring-quality`; lead + R-after scan criticals=0; CDP enhance if warnings starve feedstock |
 | R-admit skips AC docstring challenge on public-surface bind | Amend/return until dense-spec AC names docstring conformance |
 | R-after reviews ship without docstring-quality scan | Scan `files_expected`; criticals=0 or RETURN |
-| Skip R-after after path-sim Stage-B (no closed-set evidence) | Fire `/work-item-review` · `cursor/grok-4.5` — delivery half of external R (§ R positions) |
+| Skip R-after after path-sim Stage-B (no closed-set evidence) | Fire `/work-item-review` · `cursor/grok-4.6` — delivery half of external R (§ R positions) |
 | R-after via web-anthropic CDP / `anthropic/*` as default | R-after substrate = cursor-sdk Grok (checkout-native); R-admit stays web Opus |
-| Dispatch R-after with `xai/grok-*` artisan | `seat=cursor-sdk, model=cursor/grok-4.5` (coding lane) |
+| Dispatch R-after with `xai/grok-*` artisan | `seat=cursor-sdk, model=cursor/grok-4.6` (coding lane) |
 | R-after silent on event-bearing ON_CHARTER delivery | Challenge closeout one-liner + missed log→event/prune (§ Event instrumentation in review) |
 | Path-sim without RAG ⇒ incomplete / block Q | Tier-1 anchors when needed; RAG optional (§ Recon) |
 

@@ -62,12 +62,12 @@ def test_confer_envelope_marks_model_plane_admit_resolved() -> None:
         post_operator_confer(
             _job(contract="confer"),
             dispatch_id="auto-confer-a",
-            model_id="cursor/grok-4.5",
+            model_id="cursor/grok-4.6",
             status="complete",
             closeout_body="confer body",
             bus=bus,
         )
     )
     sent = bus.reply.await_args.kwargs["body"]
-    assert "model: cursor/grok-4.5" in sent
+    assert "model: cursor/grok-4.6" in sent
     assert "model_plane: admit-resolved" in sent

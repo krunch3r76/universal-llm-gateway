@@ -249,7 +249,7 @@ def test_sdk_live_line_shows_elapsed_before_idle() -> None:
         state="running",
         root_id="6469",
         thread_id="6479",
-        model="cursor/grok-4.5",
+        model="cursor/grok-4.6",
         elapsed_ms=372_000,
         idle_age_ms=0,
         emitters_seen=("worker",),

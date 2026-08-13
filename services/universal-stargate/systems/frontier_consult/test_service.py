@@ -150,8 +150,8 @@ async def test_explicit_model_override_can_fill_any_role(
     ) -> HydrationBundle:
         return _bundle(
             AgentMeta(
-                default_model="xai/grok-4.5",
-                allowed_models=["xai/grok-4.5"],
+                default_model="xai/grok-4.6",
+                allowed_models=["xai/grok-4.6"],
                 allowed_options=None,
             ),
         )
@@ -186,15 +186,15 @@ async def test_explicit_model_override_can_fill_any_role(
 async def test_team_dispatch_xai_agent_enables_mcp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """xAI team roles (skeptic, artisan) on grok-4.5 get mcp=True (standard card)."""
+    """xAI team roles (skeptic, artisan) on grok-4.6 get mcp=True (standard card)."""
 
     async def fake_hydrate(
         agent: str, transcript_id: str | None = None, **_k: Any
     ) -> HydrationBundle:
         return _bundle(
             AgentMeta(
-                default_model="xai/grok-4.5",
-                allowed_models=["xai/grok-4.5"],
+                default_model="xai/grok-4.6",
+                allowed_models=["xai/grok-4.6"],
                 allowed_options=None,
             ),
         )
@@ -215,7 +215,7 @@ async def test_team_dispatch_xai_agent_enables_mcp(
     assert caps["role"] == "skeptic"
     assert caps["inline_only"] is False
     assert caps["mcp_connector_active"] is True
-    assert caps["resolved_model"] == "xai/grok-4.5"
+    assert caps["resolved_model"] == "xai/grok-4.6"
 
 
 @pytest.mark.asyncio
@@ -445,8 +445,8 @@ async def test_build_dispatch_body_server_tools_noop_on_card_empty_model(
         ("google/gemini-3.5-flash", True, True),
         ("google/gemini-3.5-flash", None, False),
         ("google/gemini-2.5-pro", True, True),
-        ("xai/grok-4.5", True, True),
-        ("xai/grok-4.5", None, False),
+        ("xai/grok-4.6", True, True),
+        ("xai/grok-4.6", None, False),
         ("openai/gpt-5.4-mini", True, True),
         ("openai/gpt-5.4-mini", None, False),
         ("openai/gpt-5.4-mini", False, False),
@@ -634,8 +634,8 @@ async def test_team_dispatch_collapses_to_latest_user_turn(
 @pytest.mark.parametrize(
     ("model", "expected"),
     [
-        # grok-4.5 standard card admits client-side MCP tool loop.
-        ("xai/grok-4.5", True),
+        # grok-4.6 standard card admits client-side MCP tool loop.
+        ("xai/grok-4.6", True),
         ("anthropic/claude-opus-4-8", True),
         ("openai/gpt-5.5", True),
         # Gemini is MCP-capable now (agents.yaml gemini/api tool_surface=mcp) —
@@ -664,10 +664,10 @@ def test_mcp_enabled_for_team_dispatch_shared_client_loop_clamp(
         ("anthropic/claude-opus-4-8", False, False),
         ("openai/gpt-5.5", False, False),
         ("openai/gpt-5.5", None, True),
-        # grok-4.5 honors caller intent (MCP-capable standard card).
-        ("xai/grok-4.5", True, True),
-        ("xai/grok-4.5", False, False),
-        ("xai/grok-4.5", None, True),
+        # grok-4.6 honors caller intent (MCP-capable standard card).
+        ("xai/grok-4.6", True, True),
+        ("xai/grok-4.6", False, False),
+        ("xai/grok-4.6", None, True),
     ],
 )
 def test_mcp_enabled_for_team_dispatch_honors_caller_intent(
@@ -914,7 +914,7 @@ async def test_required_criticality_fails_closed_service(
     ) -> HydrationBundle:
         return HydrationBundle(
             briefing_card_md="# briefing",
-            agent_meta=AgentMeta(default_model="xai/grok-4.5"),
+            agent_meta=AgentMeta(default_model="xai/grok-4.6"),
             inline_only=True,
             required_body_unresolved=True,
             injection_meta={
@@ -946,7 +946,7 @@ async def test_event_emitted_enriched(monkeypatch: pytest.MonkeyPatch) -> None:
     ) -> HydrationBundle:
         return HydrationBundle(
             briefing_card_md="# briefing",
-            agent_meta=AgentMeta(default_model="xai/grok-4.5"),
+            agent_meta=AgentMeta(default_model="xai/grok-4.6"),
             inline_only=True,
             injected_bodies_md="<!-- injected-body:rule:foo digest:sha256:abc -->",
             injection_meta={
@@ -994,7 +994,7 @@ async def test_event_emitted_enriched(monkeypatch: pytest.MonkeyPatch) -> None:
         messages=[{"role": "user", "content": "x"}],
         role="grok-api-multi",
         dispatch_thread_id=_DISPATCH_THREAD,
-        model="xai/grok-4.5",
+        model="xai/grok-4.6",
     )
     await build_dispatch_body(req, event_publisher=events.append)
 
@@ -1175,7 +1175,7 @@ async def test_inline_only_uses_hydrate_injected_bodies_only(
     ) -> HydrationBundle:
         return HydrationBundle(
             briefing_card_md="# briefing",
-            agent_meta=AgentMeta(default_model="xai/grok-4.5"),
+            agent_meta=AgentMeta(default_model="xai/grok-4.6"),
             inline_only=True,
             injected_bodies_md="<!-- injected-body:rule:foo digest:sha256:abc -->",
             injection_meta={"injected": [{"bytes": 1}], "dropped": [], "metrics": {}},

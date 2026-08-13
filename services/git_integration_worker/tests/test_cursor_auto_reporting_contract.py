@@ -148,12 +148,12 @@ status: complete
         CloseoutRelayPayload(body=body, status="complete", source="section2_sidecar"),
         wrapper_text=None,
         requested_model="composer-2.5",
-        resolved_model="cursor/grok-4.5",
+        resolved_model="cursor/grok-4.6",
         caller_auditable=True,
     )
     assert "MODEL ACTUAL" in payload.body
     assert "requested=composer-2.5" in payload.body
-    assert "resolved=cursor/grok-4.5" in payload.body
+    assert "resolved=cursor/grok-4.6" in payload.body
 
 
 def test_reporting_contract_block_is_deliverable_text() -> None:

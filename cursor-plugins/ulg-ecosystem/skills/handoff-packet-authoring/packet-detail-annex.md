@@ -86,7 +86,7 @@ Blocked until N≥5 runs.
 team_dispatch(op=generate, seat=cursor-sdk, dispatch_thread_id=…, contract=light-bounded|pure-mechanical)
 ```
 
-Load `cursor-sdk-instruction-standard` (D1–D4). Model split: recon+investigate → `cursor/grok-4.5`; implement → Composer.
+Load `cursor-sdk-instruction-standard` (D1–D4). Model split: recon+investigate → `cursor/grok-4.6`; implement → Composer.
 
 ## Friction-ticket packet preflight
 

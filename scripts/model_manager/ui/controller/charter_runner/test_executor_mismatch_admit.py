@@ -1,7 +1,7 @@
 """Tip executor must never ADMIT_WORKER when family ∉ cursor/* (a:26659).
 
 Falsifies the 6110 G9 storm: tip ``executor=cdp/opus`` + attended ledger still
-chose ``ADMIT_WORKER`` / ``cursor/grok-4.5``. Gate lives in ``kernel_tick`` after
+chose ``ADMIT_WORKER`` / ``cursor/grok-4.6``. Gate lives in ``kernel_tick`` after
 ``decide``; tip authority is ``LivePickup.executor`` from Next-pickup prose.
 
 Stage-B: ``cdp/*`` tips positively rebind to ``QUEUE_CONSULT`` (never bare
@@ -112,7 +112,7 @@ def _seed(conn, *, gid: str = "G9", lane: str = "judgment", attendance: str = "a
             root_id=_ROOT,
             pickup_gid=gid,
             pickup_lane=lane,
-            pickup_executor="cursor/grok-4.5",
+            pickup_executor="cursor/grok-4.6",
             attendance=attendance,
             scoreboard_uri="cortex://notes/system/threads/6110-charter-scoreboard.md",
         ),
@@ -158,7 +158,7 @@ def _tick(tmp_path: Path, turns: list[dict[str, Any]]):
         (None, True),
         ("", True),
         ("pending", True),
-        ("cursor/grok-4.5", True),
+        ("cursor/grok-4.6", True),
         ("cursor/composer-2.5", True),
         ("cdp/opus", False),
         ("cdp/opus-5", False),
@@ -175,7 +175,7 @@ def test_worker_substrate_compatible(executor: str | None, expected: bool) -> No
     [
         (None, False),
         ("pending", False),
-        ("cursor/grok-4.5", False),
+        ("cursor/grok-4.6", False),
         ("cdp/opus", True),
         ("cdp/opus-5", True),
         ("anthropic/claude-opus-5", False),
@@ -258,7 +258,7 @@ def test_post_park_second_tick_admits_consult_not_worker(
 def test_compatible_cursor_executor_still_admits(
     ledger, local_logs, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Tip executor=cursor/grok-4.5 must not false-positive the refuse gate."""
+    """Tip executor=cursor/grok-4.6 must not false-positive the refuse gate."""
     _seed(ledger)
     monkeypatch.setattr(kernel_tick, "admit_worker_window", _admit_ok)
     outcome = _tick(
@@ -268,8 +268,8 @@ def test_compatible_cursor_executor_still_admits(
                 3,
                 "CHECKPOINT — tip",
                 _tip(
-                    "G9 — continue · executor=cursor/grok-4.5",
-                    footer_executor="cursor/grok-4.5",
+                    "G9 — continue · executor=cursor/grok-4.6",
+                    footer_executor="cursor/grok-4.6",
                 ),
             )
         ],

@@ -38,7 +38,7 @@ def test_cursor_reviewer_omits_reasoning_effort() -> None:
     )
     assert "reasoning_effort" not in body
     api_body = build_team_dispatch_body(
-        spec=PanelMemberSpec(role="skeptic", model="xai/grok-4.5"),
+        spec=PanelMemberSpec(role="skeptic", model="xai/grok-4.6"),
         dispatch_thread_id="t1",
         reasoning_effort="high",
     )
@@ -47,17 +47,17 @@ def test_cursor_reviewer_omits_reasoning_effort() -> None:
 
 def test_build_body_keeps_role_for_api_skeptic() -> None:
     body = build_team_dispatch_body(
-        spec=PanelMemberSpec(role="skeptic", model="xai/grok-4.5"),
+        spec=PanelMemberSpec(role="skeptic", model="xai/grok-4.6"),
         dispatch_thread_id="t1",
     )
     assert body["role"] == "skeptic"
-    assert body["model"] == "xai/grok-4.5"
+    assert body["model"] == "xai/grok-4.6"
     assert "seat" not in body
 
 
 def test_provider_family_label_for_cursor_gpt() -> None:
     assert provider_family_label("cursor/gpt-5.6-terra") == "GPT"
-    assert provider_family_label("xai/grok-4.5") == "Grok"
+    assert provider_family_label("xai/grok-4.6") == "Grok"
 
 
 def test_default_panel_has_two_families() -> None:

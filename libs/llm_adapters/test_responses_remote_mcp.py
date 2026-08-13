@@ -55,7 +55,7 @@ def test_remote_mcp_appends_tool_entry(model: str) -> None:
 
 
 def test_remote_mcp_xai_raises_unsupported() -> None:
-    req = _base_req("grok-4.5", remote_mcp=True)
+    req = _base_req("grok-4.6", remote_mcp=True)
     with pytest.raises(
         RemoteMcpUnsupportedError, match="disabled by capability policy"
     ):

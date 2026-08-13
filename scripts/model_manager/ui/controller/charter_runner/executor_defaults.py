@@ -1,7 +1,7 @@
 """Charter-runner executor binds — judgment (default) and implement.
 
-Operator bind 2026-07-20: default agent = **Grok 4.5** on the coding
-substrate. Wire: ``seat=cursor-sdk``, ``model=cursor/grok-4.5``.
+Operator bind 2026-07-20: default agent = **Grok 4.6** on the coding
+substrate. Wire: ``seat=cursor-sdk``, ``model=cursor/grok-4.6``.
 
 Operator bind 2026-07-26 (iteration speed): both judgment and implement
 windows pin ``fast=true``. Grok keeps ``effort=high`` with fast on (not the
@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 DEFAULT_SEAT = "cursor-sdk"
-DEFAULT_MODEL = "cursor/grok-4.5"
+DEFAULT_MODEL = "cursor/grok-4.6"
 DEFAULT_CONTRACT = "light-bounded"
 # Iteration-speed bind (operator 2026-07-26): high effort + fast.
 DEFAULT_MODEL_KNOBS: dict[str, str] = {"effort": "high", "fast": "true"}
@@ -111,7 +111,7 @@ def autonomous_generate_body(
 ) -> dict[str, Any]:
     """Wire body for the autonomous background-lead window.
 
-    Same generate wire as ``default_judgment_body`` (cursor-sdk Grok 4.5 fast).
+    Same generate wire as ``default_judgment_body`` (cursor-sdk Grok 4.6 fast).
     The autonomous mandate lives in the materialized packet + root WIP pointer
     — generate schema rejects ``subject`` / ``tags`` (handoff-only fields).
     """

@@ -29,7 +29,7 @@ def executor_slug_for_sms(
         return "cursor"
     if (executor_lane or "").strip().lower() == "implement":
         return "cursor/composer-2.5"
-    return "cursor/grok-4.5"
+    return "cursor/grok-4.6"
 
 
 def consult_role_from_pickup(next_pickup: list[str]) -> str | None:

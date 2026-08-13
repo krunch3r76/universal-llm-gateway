@@ -35,7 +35,7 @@ models:
     output_rate_per_m: 3.0
     source: manual_seed
     pinned: true
-  - model_id: cursor/grok-4.5
+  - model_id: cursor/grok-4.6
     input_rate_per_m: 2.0
     cache_read_rate_per_m: 0.5
     output_rate_per_m: 6.0
@@ -72,7 +72,7 @@ models:
     output_rate_per_m: 0.6
     source: manual_seed
     pinned: true
-  - model_id: xai/grok-4.5
+  - model_id: xai/grok-4.6
     input_rate_per_m: 3.0
     output_rate_per_m: 15.0
     source: manual_seed

@@ -29,8 +29,8 @@ def test_format_closed_attribution_example_shape() -> None:
         == "G3@cdp/opus-5@5975"
     )
     assert (
-        format_closed_attribution("G2", "cursor/grok-4.5", "6004")
-        == "G2@cursor/grok-4.5@6004"
+        format_closed_attribution("G2", "cursor/grok-4.6", "6004")
+        == "G2@cursor/grok-4.6@6004"
     )
 
 
@@ -38,7 +38,7 @@ def test_format_closed_human_includes_slug_and_task() -> None:
     line = format_closed_human(
         ClosedAttribution(
             gid="G1",
-            executor_slug="cursor/grok-4.5",
+            executor_slug="cursor/grok-4.6",
             root_id="6037",
             thread_slug="pager-tick-endpoint-attribution",
             task_hint="implement harvest-close SMS attribution",
@@ -48,7 +48,7 @@ def test_format_closed_human_includes_slug_and_task() -> None:
     assert "G1 done" in line
     assert "pager-tick-endpoint-attribution" in line
     assert "#6037" in line
-    assert "grok-4.5" in line
+    assert "grok-4.6" in line
     assert "implement harvest-close" in line
 
 
@@ -56,7 +56,7 @@ def test_format_closed_human_prefers_so_what() -> None:
     line = format_closed_human(
         ClosedAttribution(
             gid="G5",
-            executor_slug="cursor/grok-4.5",
+            executor_slug="cursor/grok-4.6",
             root_id="6004",
             thread_slug="ignored-slug",
             so_what="ULG: reliable closeout SMS with outcome titles",
@@ -73,7 +73,7 @@ def test_format_tick_subject_close_headline() -> None:
         closed=[
             ClosedAttribution(
                 gid="G1",
-                executor_slug="cursor/grok-4.5",
+                executor_slug="cursor/grok-4.6",
                 root_id="6037",
                 thread_slug="pager-tick-endpoint-attribution",
             )
@@ -134,7 +134,7 @@ def test_format_tick_sms_body_includes_closed_attributions() -> None:
             ),
             ClosedAttribution(
                 gid="G2",
-                executor_slug="cursor/grok-4.5",
+                executor_slug="cursor/grok-4.6",
                 root_id="6004",
                 thread_slug="pager-v1",
             ),
@@ -150,7 +150,7 @@ def test_format_tick_sms_body_truncates_to_budget() -> None:
     long_attrs = [
         ClosedAttribution(
             gid=f"G{i}",
-            executor_slug="cursor/grok-4.5",
+            executor_slug="cursor/grok-4.6",
             root_id=str(6000 + i),
             thread_slug=f"very-long-charter-slug-name-{i}" * 3,
             task_hint="implement " * 20,

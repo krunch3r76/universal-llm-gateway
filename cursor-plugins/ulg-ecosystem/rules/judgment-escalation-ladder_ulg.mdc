@@ -81,7 +81,7 @@ Try in order; stop at the first that clears independence for the artifact in han
 | **2a** | `cdp/opus-5` | family (vs Composer / Grok / GPT producers) | Default step 2 — producer is **not** Anthropic |
 | **2b** | **`cdp/fable`** | **weight class** (vs Opus) | Producer is `cdp/opus-5` (incl. its own output), **or** Opus is unsure. **Preferred before crossing families** — Fable is the in-lane escalation, not a formality |
 | **2c** | **`cursor/gpt-5.6-terra`** (code-lane default) · **`cursor/gpt-5.6-sol`** (**targeted, low-token only**) · `openai/gpt-5.6-*` API only life/checkout-free | family + lineage | **Fable** is unsure, **or** the risk is Anthropic-lineage **correlated error** the family may share |
-| **2d** | `cursor/grok-4.5` (≤ `high`) | family | Cheap breadth / third opinion; ¬ a substitute for 2b–2c on material binds |
+| **2d** | `cursor/grok-4.6` (≤ `high`) | family | Cheap breadth / third opinion; ¬ a substitute for 2b–2c on material binds |
 
 `anthropic/*` API stays **PROHIBITED** — CDP/Fable is the Anthropic web product lane,
 per `anthropic-dispatch-authorization`.

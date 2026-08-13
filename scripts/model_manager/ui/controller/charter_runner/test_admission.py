@@ -102,7 +102,7 @@ def test_decide_idle_judgment_autonomous_queues_consult() -> None:
 @pytest.mark.offline
 def test_decide_idle_judgment_autonomous_cursor_executor_admits_worker() -> None:
     """a:27165 — tip/typed cursor/* on judgment breaks the force-consult loop."""
-    row = replace(_idle_row(), pickup_executor="cursor/grok-4.5")
+    row = replace(_idle_row(), pickup_executor="cursor/grok-4.6")
     transition = decide(
         row,
         EnvFacts(substrate_up=True, has_wip=False, attendance="autonomous"),
@@ -113,7 +113,7 @@ def test_decide_idle_judgment_autonomous_cursor_executor_admits_worker() -> None
 
 @pytest.mark.offline
 def test_decide_consult_pending_queues_even_with_cursor_executor() -> None:
-    row = replace(_idle_row(), pickup_executor="cursor/grok-4.5")
+    row = replace(_idle_row(), pickup_executor="cursor/grok-4.6")
     transition = decide(
         row,
         EnvFacts(
@@ -121,7 +121,7 @@ def test_decide_consult_pending_queues_even_with_cursor_executor() -> None:
             has_wip=False,
             attendance="autonomous",
             consult_pending=True,
-            tip_executor="cursor/grok-4.5",
+            tip_executor="cursor/grok-4.6",
         ),
         _open_caps(),
     )
@@ -252,7 +252,7 @@ def _seed_6171(conn, *, attendance: str = "attended") -> RootLedgerRow:
             root_id="6171",
             pickup_gid="G9",
             pickup_lane="judgment",
-            pickup_executor="cursor/grok-4.5",
+            pickup_executor="cursor/grok-4.6",
             attendance=attendance,
             scoreboard_uri="cortex://notes/system/threads/6171-charter-scoreboard.md",
         ),
@@ -338,9 +338,9 @@ def test_decide_empty_hopper_fences_autonomous_queue_consult() -> None:
         ),
         ("G9 — standing wait · executor=", True),
         ("G9 — continue slice", False),
-        ("G9 — implement · executor=cursor/grok-4.5", False),
+        ("G9 — implement · executor=cursor/grok-4.6", False),
         (
-            "G2 — A + Gate-2 · executor=`cursor/grok-4.5` · executor_lane: judgment",
+            "G2 — A + Gate-2 · executor=`cursor/grok-4.6` · executor_lane: judgment",
             False,
         ),
         (
@@ -432,7 +432,7 @@ def test_kernel_concrete_executor_may_admit(
             _turn(
                 3,
                 "CHECKPOINT — work",
-                _tip_body("G9 — implement slice · executor=cursor/grok-4.5"),
+                _tip_body("G9 — implement slice · executor=cursor/grok-4.6"),
             )
         ],
     )

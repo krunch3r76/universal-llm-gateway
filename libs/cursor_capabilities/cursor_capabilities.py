@@ -254,10 +254,9 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         default_variant={"context": "1m", "reasoning": "medium", "fast": "false"},
         instruction_profile="reasoner",
     ),
-    # Cursor Grok 4.5 — live ListModels 2026-07-14: effort + fast only
-    # (no thinking/context knobs). Catalog default is fast=true; override via
-    # model_knobs when non-fast is wanted.
-    "grok-4.5": ModelCapability(
+    # Cursor Grok 4.6 — effort + fast only (no thinking/context knobs).
+    # Catalog default is fast=true; override via model_knobs when non-fast is wanted.
+    "grok-4.6": ModelCapability(
         knobs={
             "effort": KnobSpec(accepted=("low", "medium", "high"), default="high"),
             "fast": KnobSpec(accepted=("false", "true"), default="true"),

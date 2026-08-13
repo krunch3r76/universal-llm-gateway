@@ -99,11 +99,11 @@ async def _run(body: dict) -> tuple[dict, list[dict]]:
 )
 @pytest.mark.asyncio
 async def test_effort_tier_injected(suffix: str, expected_effort: str) -> None:
-    body = {"model": f"grok-4.5__effort_{suffix}", "input": "ping"}
+    body = {"model": f"grok-4.6__effort_{suffix}", "input": "ping"}
     _, calls = await _run(body)
     assert calls, "forwarder not called"
     upstream = calls[0]
-    assert upstream["model"] == "grok-4.5", (
+    assert upstream["model"] == "grok-4.6", (
         f"suffix not stripped — got {upstream['model']!r}"
     )
     assert upstream.get("reasoning", {}).get("effort") == expected_effort, (
@@ -120,14 +120,14 @@ async def test_effort_tier_injected(suffix: str, expected_effort: str) -> None:
 async def test_caller_wins_precedence() -> None:
     """Suffix=low but caller sets reasoning.effort=high — high must win."""
     body = {
-        "model": "grok-4.5__effort_low",
+        "model": "grok-4.6__effort_low",
         "input": "ping",
         "reasoning": {"effort": "high"},
     }
     _, calls = await _run(body)
     assert calls
     upstream = calls[0]
-    assert upstream["model"] == "grok-4.5"
+    assert upstream["model"] == "grok-4.6"
     assert upstream["reasoning"]["effort"] == "high", (
         f"caller-wins failed — got effort={upstream['reasoning']['effort']!r}"
     )
@@ -145,11 +145,11 @@ async def test_bogus_suffix_passes_through() -> None:
     Cloud-proxy is not the enforcement boundary for xAI enum validation.
     The suffix is still stripped from the model ID.
     """
-    body = {"model": "grok-4.5__effort_bogus", "input": "ping"}
+    body = {"model": "grok-4.6__effort_bogus", "input": "ping"}
     _, calls = await _run(body)
     assert calls
     upstream = calls[0]
-    assert upstream["model"] == "grok-4.5", "model not stripped for bogus suffix"
+    assert upstream["model"] == "grok-4.6", "model not stripped for bogus suffix"
     assert upstream.get("reasoning", {}).get("effort") == "bogus", (
         f"bogus effort not injected: {upstream.get('reasoning')}"
     )

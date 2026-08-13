@@ -90,7 +90,7 @@ def _gated_work_tip() -> str:
 _None this window._
 
 ## Next pickup
-- G2 — implement slice · lane=judgment · executor=cursor/grok-4.5
+- G2 — implement slice · lane=judgment · executor=cursor/grok-4.6
 
 ## Steps
 1. [ ] G2 — implement slice
@@ -103,7 +103,7 @@ _None this window._
     footer = emit_footer(
         schema_version=1,
         status="CHECKPOINT",
-        next_pickup={"gid": "G2", "lane": "judgment", "executor": "cursor/grok-4.5"},
+        next_pickup={"gid": "G2", "lane": "judgment", "executor": "cursor/grok-4.6"},
         wip=None,
         consult={"role": None, "poll_hint": None, "from": None},
         revise_count=0,

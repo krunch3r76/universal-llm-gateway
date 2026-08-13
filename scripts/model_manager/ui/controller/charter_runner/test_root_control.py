@@ -43,7 +43,7 @@ from scripts.model_manager.ui.controller.service_ctl.core import ServiceControll
 
 
 def _idle_row(
-    root_id: str = "r1", *, executor: str | None = "cursor/grok-4.5"
+    root_id: str = "r1", *, executor: str | None = "cursor/grok-4.6"
 ) -> RootLedgerRow:
     return RootLedgerRow(
         root_id=root_id,
@@ -177,7 +177,7 @@ async def test_block_stops_admission(ledger, bus_recorder, events_log) -> None:
     _seed(ledger, "r1")
     row = load_root(ledger, "r1")
     assert row is not None
-    upsert_root(ledger, replace(row, pickup_executor="cursor/grok-4.5"))
+    upsert_root(ledger, replace(row, pickup_executor="cursor/grok-4.6"))
     await root_control.block_root("r1", reason="6489 refire")
     row = load_root(ledger, "r1")
     assert row is not None
@@ -195,7 +195,7 @@ async def test_unblock_re_admits(ledger, bus_recorder, events_log) -> None:
     _seed(ledger, "r1")
     row = load_root(ledger, "r1")
     assert row is not None
-    upsert_root(ledger, replace(row, pickup_executor="cursor/grok-4.5"))
+    upsert_root(ledger, replace(row, pickup_executor="cursor/grok-4.6"))
     await root_control.block_root("r1", reason="hold")
     await root_control.unblock_root("r1")
     row = load_root(ledger, "r1")

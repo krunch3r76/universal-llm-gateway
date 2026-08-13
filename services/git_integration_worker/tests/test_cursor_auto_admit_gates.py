@@ -264,7 +264,7 @@ async def test_blocking_admit_gate_missing_vision_blocks_investigate() -> None:
         body=_SCOPED_DIRECTIVE,
         from_agent="web-anthropic",
         to_agent="cursor",
-        desired_model="grok-4.5",
+        desired_model="grok-4.6",
         desired_effort="medium",
         contract="investigate",
     )

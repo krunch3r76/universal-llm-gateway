@@ -20,7 +20,7 @@ _GOVERNED_INSTRUCTION_PROFILES: dict[str, str] = {
     "claude-sonnet-4-6": "reasoner",
     "claude-sonnet-5": "reasoner",
     "gpt-5.5": "reasoner",
-    "grok-4.5": "reasoner",
+    "grok-4.6": "reasoner",
 }
 
 
@@ -80,5 +80,5 @@ def test_effort_knob_name_prefers_effort_then_reasoning() -> None:
 def test_suggest_effort_knobs_accepted_and_empty() -> None:
     assert suggest_effort_knobs("claude-opus-5", "low") == {"effort": "low"}
     assert suggest_effort_knobs("gpt-5.6-sol", "low") == {"reasoning": "low"}
-    assert suggest_effort_knobs("grok-4.5", "max") == {}
+    assert suggest_effort_knobs("grok-4.6", "max") == {}
     assert suggest_effort_knobs("composer-2.5", "low") == {}

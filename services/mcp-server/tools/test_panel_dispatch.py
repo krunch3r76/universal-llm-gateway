@@ -122,7 +122,7 @@ async def test_panel_dispatch_rejects_role_keys_in_generation_options(
             messages=[{"role": "user", "content": "review this"}],
             dispatch_thread_id="panel-thread-mm-2",
             poll=False,
-            generation_options={"skeptic": {"model": "xai/grok-4.5"}},
+            generation_options={"skeptic": {"model": "xai/grok-4.6"}},
         )
 
     relay.assert_not_called()

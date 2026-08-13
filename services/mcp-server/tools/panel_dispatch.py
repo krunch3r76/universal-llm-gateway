@@ -239,7 +239,7 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
                 within the dedupe window returns the prior envelope without a
                 second paid member fan-out.
             member_models: Optional role → ``provider/model`` overrides for the
-                fixed roster (e.g. ``{"skeptic": "xai/grok-4.5"}``). Honored by
+                fixed roster (e.g. ``{"skeptic": "xai/grok-4.6"}``). Honored by
                 the ≥2-family gate and forwarded per member. Do NOT smuggle
                 model overrides through ``generation_options`` — those are
                 provider generation params and are invisible to family

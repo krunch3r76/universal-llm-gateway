@@ -10,7 +10,7 @@ L2 carries the one-line substrate rule and the VISION-ALIGN block grammar.
 **Do not read this table as “who fires Q.”** Transport binds live in annex A § Dispatch bindings
 and the xAI/Anthropic rows below. A `cdp/opus-5` event on a path-sim thread is usually
 **R-admit** (default-on after Stage-A), not L0 Q — e.g. agent-bus:6178
-`cdp.generate.admitted` @ 08:29:14Z on thread 6178 while Q ran `cursor/grok-4.5` on worker
+`cdp.generate.admitted` @ 08:29:14Z on thread 6178 while Q ran `cursor/grok-4.6` on worker
 thread 6179 @ 08:23:27Z (`frontier.sdk.generate.requested`).
 
 | Window | Q effort (when Fable Q fires) | A effort | R-admit effort |
@@ -19,7 +19,7 @@ thread 6179 @ 08:23:27Z (`frontier.sdk.generate.requested`).
 | Post-Fable (no pay-for-usage Fable) | Fable unavailable ⇒ **Q-CASCADE fallback** Opus 5 Max (rare) | Grok-4.5 High | Opus 5 (CDP) |
 
 - **Default bundled Q transport:** CDP Fable (`cdp/fable`) — operator 2026-07-28 (a:26714). Grok Q only under closed detent or explicit skip.
-- **Default A transport:** `cursor/grok-4.5` on cursor-sdk — unchanged across Fable window.
+- **Default A transport:** `cursor/grok-4.6` on cursor-sdk — unchanged across Fable window.
 - **Default R-admit transport:** CDP Opus (`cdp/opus-5`) — **always Opus on bundled arcs**; this is the common Opus dispatch in event history, not L0.
 - **Fable→Opus (cascade principle):** greater pass explores question space; lesser pass answers under narrower aperture — implemented as **Fable Q → Grok A → Opus R-admit**, not Opus-for-Q by default.
 - **Post-Fable Q fallback only:** when Fable is unavailable, Q-CASCADE may sharpen via Opus Max (annex A § Q-cascade) — not the standing bundled default.
@@ -44,10 +44,10 @@ Window params above name **quality** (Grok-4.5 High). Transport on the code lane
 
 | Path | Default |
 |---|---|
-| Path-sim **A** (L1+L2) / coding-lane Grok judgment / closed-detent light consult | **`seat=cursor-sdk, model=cursor/grok-4.5, contract=light-bounded`** |
+| Path-sim **A** (L1+L2) / coding-lane Grok judgment / closed-detent light consult | **`seat=cursor-sdk, model=cursor/grok-4.6, contract=light-bounded`** |
 | Path-sim bundled **Q** (L0) | **CDP Fable** — `team_dispatch(model=cdp/fable)` / `project_ask` `fable-5` (annex A); Grok Q only under closed detent or explicit skip |
-| `team_dispatch` `role=artisan, model=xai/grok-4.5` for checkout-present coding consult | **PROHIBITED** |
-| Engineering axis-2 skeptic (specs / design) | **OK** — `xai/grok-4.5` |
+| `team_dispatch` `role=artisan, model=xai/grok-4.6` for checkout-present coding consult | **PROHIBITED** |
+| Engineering axis-2 skeptic (specs / design) | **OK** — `xai/grok-4.6` |
 | Writing / correspondence / outbound prose | **PROHIBITED** for Grok — Terra+Gemini (or lead/web); `openai/gpt-5.5` operator-gated (`consult-routing` § Writing consult substrate) |
 | Quality tier "Grok-4.5 High" | Names effort — transport = cursor-sdk on code lane |
 

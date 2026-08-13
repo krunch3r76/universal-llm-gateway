@@ -516,7 +516,7 @@ def test_layer_g4_check_family_diverse_seat_bind() -> None:
     assert layer_g4_check_family_diverse()
     assert not layer_g4_check_family_diverse(g3_seat=LAYER_G3_SEAT, g4_seat=LAYER_G3_SEAT)
     assert not layer_g4_check_family_diverse(
-        g3_seat="cursor/grok-4.5", g4_seat="cursor/grok-4.5-high"
+        g3_seat="cursor/grok-4.6", g4_seat="cursor/grok-4.6-high"
     )
     assert layer_g4_check_family_diverse(
         g3_seat=LAYER_G3_SEAT, g4_seat=LAYER_G4_SEAT

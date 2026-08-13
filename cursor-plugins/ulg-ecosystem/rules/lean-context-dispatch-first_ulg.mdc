@@ -54,7 +54,7 @@ the non-primary gate below). Full gate + verification: `subagent-strategy`.
 | Need | Path | Autonomy |
 |---|---|---|
 | Mechanical implement | `team_dispatch(op=generate, seat=cursor-sdk)` → `cursor/composer-2.5` | Autonomous (default) |
-| Investigate / judgment | `cursor/grok-4.5` effort ∈ {low, medium, **high**} (+ fast) — ¬ xhigh/max | In-seat or gated seat switch |
+| Investigate / judgment | `cursor/grok-4.6` effort ∈ {low, medium, **high**} (+ fast) — ¬ xhigh/max | In-seat or gated seat switch |
 | Greater reasoning | **CDP** via `team_dispatch(model=cdp/opus-5)` or `team_dispatch(model=cdp/fable)` when outside check / Opus-unsure binder (`project_ask` = **escape only** — IF6 / satellite-direct; missions use `purpose=operator-proxy` on `team_dispatch`); cursor usually prompts Fable | **AUTONOMOUS** under trigger below |
 | Premium metered | `cursor/claude-opus-5` effort ∈ {low, medium, high, **xhigh**, **max**} | **INFORM-THEN-PROCEED** when escalation warrants (live checkout / premium judgment) — one announce line; ¬ wait for approval by default. **Wait** if the operator paused premium spend, or for `xhigh`/`max` without a standing trigger |
 
@@ -74,7 +74,7 @@ work class, else **OPERATOR-GATED** (propose the slug + why, wait).
 | **Non-primary** | Any other explicit bind — e.g. `gpt-5.6-sol-*`, off-table Task slugs, or a ladder model used for the **wrong** work class (Sol/Opus for mechanical after judgment closed). |
 
 **Exception:** another workflow/rule already specifies that exact model for that class
-(e.g. path-sim A → `cursor/grok-4.5`, path-sim Q → `cdp/fable`; implement → `cursor/composer-2.5`; CDP
+(e.g. path-sim A → `cursor/grok-4.6`, path-sim Q → `cdp/fable`; implement → `cursor/composer-2.5`; CDP
 trigger → `cdp/opus-5`; **escalation-warranted `cursor/claude-opus-5`** under the premium **inform-then-proceed** row). Then fire without re-asking — still announce.
 
 **Anti-pattern:** re-spend frontier reasoning (`sol` / Opus / Fable) to *implement*

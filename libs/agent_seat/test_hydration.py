@@ -38,7 +38,7 @@ class _Scripted:
         ("google/gemini-2.5-pro", False),
         ("openai/gpt-5.5", False),
         ("anthropic/claude-opus-4-8", False),
-        ("xai/grok-4.5", False),
+        ("xai/grok-4.6", False),
     ],
 )
 def test_card_inline_only_matches_model(model: str, expected: bool) -> None:
@@ -81,7 +81,7 @@ async def test_hydrate_skeptic_with_explicit_gemini_clears_capability_tier(
 async def test_hydrate_skeptic_default_grok_45_is_mcp_capable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """skeptic default xai/grok-4.5 is MCP-capable (standard card)."""
+    """skeptic default xai/grok-4.6 is MCP-capable (standard card)."""
     monkeypatch.setattr(_hyd, "_cortex_get", _Scripted({"/": {}}))
     monkeypatch.setattr(_hyd, "_bus_get", _Scripted({}))
 
@@ -95,12 +95,12 @@ async def test_hydrate_skeptic_default_grok_45_is_mcp_capable(
 async def test_hydrate_reviewer_with_xai_grok_45_is_mcp_capable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """reviewer + xai/grok-4.5 follows standard card (MCP-capable)."""
+    """reviewer + xai/grok-4.6 follows standard card (MCP-capable)."""
     monkeypatch.setattr(_hyd, "_cortex_get", _Scripted({"/": {}}))
     monkeypatch.setattr(_hyd, "_bus_get", _Scripted({}))
 
     bundle = await hydrate_agent(
-        "reviewer", model="xai/grok-4.5"
+        "reviewer", model="xai/grok-4.6"
     )
 
     assert bundle.inline_only is False
@@ -131,13 +131,13 @@ async def test_hydrate_skeptic_gemini_capability_vs_mcp_authorization(
 async def test_hydrate_skeptic_no_explicit_model_uses_default_grok_45(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """skeptic without model= uses role default xai/grok-4.5 → MCP-capable."""
+    """skeptic without model= uses role default xai/grok-4.6 → MCP-capable."""
     monkeypatch.setattr(_hyd, "_cortex_get", _Scripted({"/": {}}))
     monkeypatch.setattr(_hyd, "_bus_get", _Scripted({}))
 
     bundle = await hydrate_agent("skeptic")
 
-    assert bundle.agent_meta.default_model == "xai/grok-4.5"
+    assert bundle.agent_meta.default_model == "xai/grok-4.6"
     assert bundle.inline_only is False
 
 
@@ -151,7 +151,7 @@ async def test_hydrate_effective_none_boot_role_default_fallback_unchanged(
 
     bundle = await hydrate_agent("skeptic", model=None)
 
-    assert bundle.agent_meta.default_model == "xai/grok-4.5"
+    assert bundle.agent_meta.default_model == "xai/grok-4.6"
     assert bundle.inline_only is False
     assert bundle.agent_meta.capability_tier != "inline-only"
 
@@ -160,10 +160,10 @@ async def test_hydrate_effective_none_boot_role_default_fallback_unchanged(
     ("role", "model"),
     [
         ("skeptic", "google/gemini-3.1-pro-preview"),
-        ("skeptic", "xai/grok-4.5"),
+        ("skeptic", "xai/grok-4.6"),
         ("skeptic", None),
         ("reviewer", "google/gemini-2.5-pro"),
-        ("reviewer", "xai/grok-4.5"),
+        ("reviewer", "xai/grok-4.6"),
         ("gatherer", "openai/gpt-5.5"),
     ],
 )
@@ -427,9 +427,9 @@ async def test_already_present_includes_continuation(
 
     async def fake_meta(_agent: str) -> AgentMeta:
         return AgentMeta(
-            default_model="xai/grok-4.5",
+            default_model="xai/grok-4.6",
             frontier_kind="xai",
-            allowed_models=["xai/grok-4.5"],
+            allowed_models=["xai/grok-4.6"],
         )
 
     async def fake_continuation(
@@ -446,7 +446,7 @@ async def test_already_present_includes_continuation(
     bundle = await hydrate_agent(
         "grok-api-multi",
         transcript_id="abc123",
-        model="xai/grok-4.5",
+        model="xai/grok-4.6",
     )
 
     assert bundle.inline_only is False

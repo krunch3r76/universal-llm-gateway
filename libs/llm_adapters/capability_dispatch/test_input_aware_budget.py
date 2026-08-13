@@ -70,7 +70,7 @@ def test_responses_surface_static_context_windows() -> None:
     """Responses-surface models carry curated static context windows."""
     gpt = resolve_dispatch("openai/gpt-5.5").max_output
     assert gpt.context_window == 1_050_000
-    grok = resolve_dispatch("xai/grok-4.5").max_output
+    grok = resolve_dispatch("xai/grok-4.6").max_output
     assert grok.context_window == 500_000
     legacy = resolve_dispatch("openai/gpt-5.2").max_output
     assert legacy.context_window == 200_000

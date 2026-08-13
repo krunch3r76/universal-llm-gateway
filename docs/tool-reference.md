@@ -86,7 +86,7 @@ entity, assembles birth + briefing + continuation, and rejects violations before
 | Arg | Type | Description |
 |---|---|---|
 | `op` | `"generate"\|"to_thread"\|"handoff"` | Output channel |
-| `role` | API (`generate`/`to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic`. Handoff only: `web-consult`, `web-implement`, `cursor-consult`, `cursor-implement` | Functional role roster only — **not** a substrate selector. SDK peer slug via `role=` → 422 `role_is_not_a_seat` (use `seat=`). Seat aliases like `claude-web` → 422 `handoff_role_invalid`. **`skeptic`**: default `xai/grok-4.5` (MCP-capable standard card) — pre-stage context on `dispatch_thread_id`; admission returns `capabilities.inline_only` / `capabilities.mcp_enabled`. |
+| `role` | API (`generate`/`to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic`. Handoff only: `web-consult`, `web-implement`, `cursor-consult`, `cursor-implement` | Functional role roster only — **not** a substrate selector. SDK peer slug via `role=` → 422 `role_is_not_a_seat` (use `seat=`). Seat aliases like `claude-web` → 422 `handoff_role_invalid`. **`skeptic`**: default `xai/grok-4.6` (MCP-capable standard card) — pre-stage context on `dispatch_thread_id`; admission returns `capabilities.inline_only` / `capabilities.mcp_enabled`. |
 | `seat` | Auto-dispatch (`generate`/`to_thread`): `cursor-sdk`. Handoff: manual bus seats (`web-anthropic`, `cursor`, …) — not auto seats | Mutually exclusive with `role` on generate/to_thread. SDK implement peer: `seat=cursor-sdk`. `op=handoff` + auto seat → 422 `seat_not_manual`. |
 | `contract` | `"light-bounded"\|"pure-mechanical"\|"implement"\|"wrap"` | **Required** for `op="generate"`/`op="to_thread"`. Authority grant: `light-bounded` (bounded consult/execution), `pure-mechanical` (deterministic write loop), `implement` (bound mechanical implement — default via `source_ref=todo:{slug}` server materialization on `seat=cursor-sdk`; legacy `packet_path` escape-hatch), `wrap` (materialize-only, no Composer spawn; requires `source_ref`, forbids `packet_path`). `consult` is dropped — migrate to `light-bounded`. |
 | `dispatch_thread_id` | `str` | Compaction key for server-owned thread persistence (`thread:dispatch:{id}`). Stable per arc/session. When no explicit `packet_path`, `prompt`, or `sidecar_ref` is supplied, context falls back to this thread's latest role-addressed turn. Unused by `op="handoff"`. |
@@ -303,7 +303,7 @@ team_dispatch(op="generate", role="reviewer", dispatch_thread_id="arc-123",
               contract="light-bounded")
 
 # Grok consult
-team_dispatch(op="generate", role="artisan", model="xai/grok-4.5",
+team_dispatch(op="generate", role="artisan", model="xai/grok-4.6",
               dispatch_thread_id="arc-123",
               contract="light-bounded")
 ```
@@ -361,7 +361,7 @@ envelope and Menu D assert stamp — not wire-pinned models.
 
 **Capability envelope:** `panel_capabilities` maps each member role to effective
 `inline_only`, `mcp_enabled`, `tool_surface`, and `resolved_model` (mixed tiers:
-skeptic + reviewer MCP-capable (grok-4.5 standard card)). Each member `dispatches` entry may also
+skeptic + reviewer MCP-capable (grok-4.6 standard card)). Each member `dispatches` entry may also
 carry `capabilities` from team_dispatch admission.
 
 **Generate-only by design:** no `op=to_thread` or `op=handoff` fan-out — member outputs

@@ -22,7 +22,7 @@ logger = get_logger(__name__)
 REVISE_CAP_DEFAULT = 3
 
 # Layer G3/G4 seat bind — single locus for family-diversity enforcement (6524 R4).
-LAYER_G3_SEAT = "cursor/grok-4.5"
+LAYER_G3_SEAT = "cursor/grok-4.6"
 LAYER_G4_SEAT = "cursor/gpt-5.6-terra"
 
 

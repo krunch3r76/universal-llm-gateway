@@ -105,7 +105,7 @@ Tick recognizes `[GR]\d+` only — layer names never replace G-ordinals in Steps
 |---|---|---|---|---|
 | 1 | Architecture | Fable/wide CDP · **arch skill floor** | `[consult:judgment_gap]` | `fable-answer.md` |
 | 2 | Frame | Opus · **inherit arch floor** (¬ “skills optional”) | `[consult:judgment_gap]` | `opus-grok-instructions.md` ≤120L |
-| 3 | Densify | `cursor/grok-4.5` | `[judgment]` | `specs/{slug}.md` + Gate-2 |
+| 3 | Densify | `cursor/grok-4.6` | `[judgment]` | `specs/{slug}.md` + Gate-2 |
 | 4 | Check | `cursor/gpt-5.6-terra` | `[judgment]` | check sidecar |
 | 5 | Implement | `cursor/composer-2.5` | `[implement]` | code + quality gate |
 | 6 | Verify | inline | `[inline]` | ACs, docstrings, close |

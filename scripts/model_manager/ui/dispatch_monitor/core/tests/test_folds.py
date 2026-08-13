@@ -120,7 +120,7 @@ def test_readmit_clears_parked_from_prior_window_terminal() -> None:
             {
                 "dispatch_id": "w6177",
                 "thread_id": "6177",
-                "resolved_model": "cursor/grok-4.5",
+                "resolved_model": "cursor/grok-4.6",
             },
         )
     )
@@ -283,14 +283,14 @@ def test_completed_closes_execution_id_sibling_ghost() -> None:
         Event(
             "frontier.sdk.worker.progress",
             1_100,
-            {"execution_id": "exec-ghost", "resolved_model": "cursor/grok-4.5"},
+            {"execution_id": "exec-ghost", "resolved_model": "cursor/grok-4.6"},
         )
     )
     model.apply(
         Event(
             "frontier.sdk.worker.progress",
             1_200,
-            {"dispatch_id": "real-dispatch", "resolved_model": "cursor/grok-4.5"},
+            {"dispatch_id": "real-dispatch", "resolved_model": "cursor/grok-4.6"},
         )
     )
     model.apply(
@@ -319,7 +319,7 @@ def test_toolcall_updates_last_tool_and_idle() -> None:
         Event(
             "frontier.sdk.worker.progress",
             1_000,
-            {"dispatch_id": "d1", "resolved_model": "cursor/grok-4.5"},
+            {"dispatch_id": "d1", "resolved_model": "cursor/grok-4.6"},
         )
     )
     model.apply(
@@ -344,7 +344,7 @@ def test_progress_carries_live_tool_call_count() -> None:
             1_000,
             {
                 "dispatch_id": "d-tc",
-                "resolved_model": "cursor/grok-4.5",
+                "resolved_model": "cursor/grok-4.6",
                 "tool_call_count": 3,
             },
         )
@@ -448,7 +448,7 @@ def test_queued_and_generate_requested_carry_model() -> None:
             {
                 "request_id": "5ed13fdd78a1",
                 "execution_id": "39369a01-0936",
-                "resolved_model": "cursor/grok-4.5",
+                "resolved_model": "cursor/grok-4.6",
                 "role": "cursor-sdk",
             },
         )
@@ -461,14 +461,14 @@ def test_queued_and_generate_requested_carry_model() -> None:
                 "dispatch_id": "5ed13fdd78a1-abc",
                 "thread_id": "6170",
                 "queue_position": 2,
-                "resolved_model": "cursor/grok-4.5",
+                "resolved_model": "cursor/grok-4.6",
             },
         )
     )
     frame = model.derive(2_000)
     queued = _row(frame.sdk, "dispatch_id", "5ed13fdd78a1-abc")
     assert queued.state == "queued"
-    assert queued.model == "cursor/grok-4.5"
+    assert queued.model == "cursor/grok-4.6"
 
 
 def test_hold_paused_and_resumed_project_to_health() -> None:

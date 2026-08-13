@@ -43,7 +43,7 @@ from services.git_integration_worker.cursor_auto.wire_map import (
 # Roaming tier: cheap enough per agent step that an unbounded loop is affordable.
 # Every other cursor model costs multiples per step for the same walk.
 ROAMING_TIER_BARE_MODELS: frozenset[str] = frozenset(
-    {"composer-2.5", "composer-2.5-fast", "grok-4.5"}
+    {"composer-2.5", "composer-2.5-fast", "grok-4.6"}
 )
 
 AUTONOMOUS_EFFORT_CEILING = "high"

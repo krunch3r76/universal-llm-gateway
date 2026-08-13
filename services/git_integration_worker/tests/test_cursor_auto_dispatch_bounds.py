@@ -78,7 +78,7 @@ def _effort(value: str) -> dict[str, object]:
 
 @pytest.mark.parametrize(
     "model_id",
-    ["composer-2.5", "cursor/composer-2.5", "grok-4.5", "cursor/grok-4.5"],
+    ["composer-2.5", "cursor/composer-2.5", "grok-4.6", "cursor/grok-4.6"],
 )
 def test_roaming_tier_membership(model_id: str) -> None:
     assert is_roaming_tier(model_id)
@@ -113,7 +113,7 @@ def test_effort_at_or_below_ceiling_is_identity(requested: str) -> None:
 @pytest.mark.parametrize("requested", ["xhigh", "max"])
 def test_roaming_tier_keeps_full_effort_range(requested: str) -> None:
     payload = _effort(requested)
-    assert clamp_effort_to_autonomous_ceiling("cursor/grok-4.5", payload) is payload
+    assert clamp_effort_to_autonomous_ceiling("cursor/grok-4.6", payload) is payload
 
 
 def test_sdk_clamp_does_not_define_cdp_wire_effort() -> None:
@@ -157,7 +157,7 @@ def test_reasoning_model_keeps_the_bind_leg() -> None:
     assert out["resolved_model_id"] == "cursor/claude-opus-5"
 
 
-@pytest.mark.parametrize("requested", ["composer-2.5", "cursor/grok-4.5", "auto"])
+@pytest.mark.parametrize("requested", ["composer-2.5", "cursor/grok-4.6", "auto"])
 def test_roaming_tier_runs_mechanical_work_untouched(requested: str) -> None:
     model = resolve_desired_model(requested, contract="implement")
     before = model["resolved_model_id"]

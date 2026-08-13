@@ -144,7 +144,7 @@ Routes are for one bounded pickup only. If you are deriving per-phase routes, yo
 
 `DISPATCH ∧ contract=implement ∧ density_triage=judgment_required ∧ check_requested ⇒ finish this checklist before team_dispatch`. Gate contracts: consult-routing § Implement admission gates; lifecycle: todo-lifecycle §6–7.
 
-**Gate-6 substrate (friction a24082):** before dispatching the check — if the packet cites `workspaces://` or needs live-code verify ⇒ `seat=cursor-sdk` + `model=cursor/gpt-5.6-terra|sol|luna` (or `cursor/grok-4.5`), `contract=light-bounded`. API `role=reviewer` only when every required artifact is inlined (`code-on-api`). Access-only REVISE (missing fs/checkout / note-body 404) ⇒ re-dispatch on cursor-sdk; ¬ Gate-6 close; ¬ Composer. Densify `implement_ready` ≠ ratification. Bound: address the SDK peer via `seat=cursor-sdk` on `op=generate` (role≠substrate; `todo:team-dispatch-role-substrate-cohesion`).
+**Gate-6 substrate (friction a24082):** before dispatching the check — if the packet cites `workspaces://` or needs live-code verify ⇒ `seat=cursor-sdk` + `model=cursor/gpt-5.6-terra|sol|luna` (or `cursor/grok-4.6`), `contract=light-bounded`. API `role=reviewer` only when every required artifact is inlined (`code-on-api`). Access-only REVISE (missing fs/checkout / note-body 404) ⇒ re-dispatch on cursor-sdk; ¬ Gate-6 close; ¬ Composer. Densify `implement_ready` ≠ ratification. Bound: address the SDK peer via `seat=cursor-sdk` on `op=generate` (role≠substrate; `todo:team-dispatch-role-substrate-cohesion`).
 
 **Happy path**
 

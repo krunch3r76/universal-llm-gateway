@@ -43,7 +43,7 @@ def test_resolve_panel_members_optional_synthesizer() -> None:
 
 def test_panel_provider_families_distinct_providers() -> None:
     models = {
-        "skeptic": "xai/grok-4.5",
+        "skeptic": "xai/grok-4.6",
         "reviewer": "openai/gpt-5.6-terra",
     }
     families = panel_provider_families(models)
@@ -69,13 +69,13 @@ def test_admit_panel_plan_member_models_honored_in_families() -> None:
     result = admit_panel_plan(
         disposition="panel",
         member_models={
-            "skeptic": "xai/grok-4.5",
+            "skeptic": "xai/grok-4.6",
             "reviewer": "openai/gpt-5.5",
         },
     )
     assert not isinstance(result, dict)
     models = {m.role: effective_model_for_member(m) for m in result.members}
-    assert models["skeptic"] == "xai/grok-4.5"
+    assert models["skeptic"] == "xai/grok-4.6"
     assert models["reviewer"] == "openai/gpt-5.5"
     families = panel_provider_families(models)
     assert set(families) == {"Grok", "GPT"}
@@ -98,7 +98,7 @@ def test_admit_panel_plan_member_models_single_family_rejected() -> None:
 def test_admit_panel_plan_member_models_unknown_role_rejected() -> None:
     result = admit_panel_plan(
         disposition="panel",
-        member_models={"artisan": "xai/grok-4.5"},
+        member_models={"artisan": "xai/grok-4.6"},
     )
     assert isinstance(result, dict)
     assert result["error"]["code"] == "validation_error"
@@ -108,7 +108,7 @@ def test_admit_panel_plan_member_models_unknown_role_rejected() -> None:
 def test_admit_panel_plan_member_models_disallowed_model_rejected() -> None:
     result = admit_panel_plan(
         disposition="panel",
-        member_models={"reviewer": "xai/grok-4.5"},
+        member_models={"reviewer": "xai/grok-4.6"},
     )
     assert isinstance(result, dict)
     assert result["error"]["code"] == "validation_error"
@@ -193,7 +193,7 @@ def test_build_panel_assert_attributes_menu_d() -> None:
         decisive_falsifier="lack-of-adjudication-artifact fraction rises",
         panel_adjudication_artifact="cortex:notes/system/threads/1206-panel-adjudication-artifact.md",
         member_models={
-            "skeptic": "xai/grok-4.5",
+            "skeptic": "xai/grok-4.6",
             "reviewer": "openai/gpt-5.6-terra",
         },
     )
@@ -231,7 +231,7 @@ def test_lint_panel_messages_accepts_string() -> None:
 def test_panel_result_envelope_submission_plan() -> None:
     plan = admit_panel_plan(disposition="panel")
     assert not isinstance(plan, dict)
-    member_models = {"skeptic": "xai/grok-4.5", "reviewer": "openai/gpt-5.6-terra"}
+    member_models = {"skeptic": "xai/grok-4.6", "reviewer": "openai/gpt-5.6-terra"}
     envelope = panel_result_envelope(
         plan=plan,
         dispatches={
@@ -242,7 +242,7 @@ def test_panel_result_envelope_submission_plan() -> None:
         submission_plan=[
             {
                 "role": "skeptic",
-                "model": "xai/grok-4.5",
+                "model": "xai/grok-4.6",
                 "execution_id": "e1",
                 "dispatch_key": "base:skeptic",
             },
@@ -354,7 +354,7 @@ def test_build_panel_poll_summary_failed() -> None:
 def test_panel_result_envelope_poll_summary_do_not_resubmit() -> None:
     plan = admit_panel_plan(disposition="panel")
     assert not isinstance(plan, dict)
-    member_models = {"skeptic": "xai/grok-4.5", "reviewer": "openai/gpt-5.6-terra"}
+    member_models = {"skeptic": "xai/grok-4.6", "reviewer": "openai/gpt-5.6-terra"}
     poll_summary = build_panel_poll_summary(
         dispatches={
             "skeptic": {"execution_id": "e1"},
@@ -393,7 +393,7 @@ def test_panel_result_envelope_member_knob_resolution() -> None:
     plan = admit_panel_plan(disposition="panel")
     assert not isinstance(plan, dict)
     member_models = {
-        "skeptic": "xai/grok-4.5",
+        "skeptic": "xai/grok-4.6",
         "reviewer": "openai/gpt-5.6-terra",
     }
     envelope = panel_result_envelope(

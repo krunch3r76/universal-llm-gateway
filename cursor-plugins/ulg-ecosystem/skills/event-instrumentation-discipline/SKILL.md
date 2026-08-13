@@ -99,6 +99,6 @@ Cite this slug with the architecture + docstring floor on ULG code handoffs.
 `architecture-invariants` · `ulg-architecture` · `docstring-quality` (parallel
 write-time floor bar) · `implement-todo` §5 (floor load + closeout) · `path-sim`
 Stage-B (`skills=`) · `path-sim` § Event instrumentation in review (R-after
-challenge on **cursor/grok-4.5**) · `/work-item-review` (default-on after path-sim
+challenge on **cursor/grok-4.6**) · `/work-item-review` (default-on after path-sim
 Stage-B · Grok substrate) · `debug-with-events` (query technique) ·
 `docs/event-contracts.md` (role/scope taxonomy) · `scripts/gen-event-catalog`.

@@ -26,7 +26,7 @@ from systems.pipeline.core.handlers.frontier_dispatch import (
     native_loop as fd_native_mod,
 )
 
-_XAI_SKEPTIC_MODEL = "xai/grok-4.5"
+_XAI_SKEPTIC_MODEL = "xai/grok-4.6"
 
 
 def _card_server_tools(model: str) -> list[dict[str, str]]:
@@ -190,7 +190,7 @@ async def test_handler_team_mode_fires_hydrated_event(
 
     step = _FakeStep()
     context = _make_context(
-        options={"model": "xai/grok-4.5", "role": "skeptic"},
+        options={"model": "xai/grok-4.6", "role": "skeptic"},
     )
 
     out = await handler.execute(step, context)
@@ -347,7 +347,7 @@ async def test_handler_exhausted_emits_exhausted_signal(
     monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
-    context = _make_context(options={"model": "xai/grok-4.5"})
+    context = _make_context(options={"model": "xai/grok-4.6"})
 
     out = await handler.execute(step, context)
     signals = [e.signal for e in published_events]
@@ -942,7 +942,7 @@ async def test_handler_grok43_defaults_to_high_reasoning_effort(
     handler: FrontierDispatchHandler,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``xai/grok-4.5`` with no caller-supplied ``reasoning_effort`` must
+    """``xai/grok-4.6`` with no caller-supplied ``reasoning_effort`` must
     default to ``high`` — measured plan-quality gap closes at high effort
     (cortex thread 1024, 2026-05-17). Applies across every dispatch surface
     that routes through ``frontier_dispatch_v1``.
@@ -956,7 +956,7 @@ async def test_handler_grok43_defaults_to_high_reasoning_effort(
     monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
-    context = _make_context(options={"model": "xai/grok-4.5", "mcp": False})
+    context = _make_context(options={"model": "xai/grok-4.6", "mcp": False})
 
     await handler.execute(step, context)
 
@@ -986,7 +986,7 @@ async def test_handler_grok43_caller_effort_wins_over_default(
     step = _FakeStep()
     context = _make_context(
         options={
-            "model": "xai/grok-4.5",
+            "model": "xai/grok-4.6",
             "mcp": False,
             "generation_parameters": {"reasoning_effort": "medium"},
         }
@@ -1018,7 +1018,7 @@ async def test_handler_grok43_empty_string_effort_triggers_default(
     step = _FakeStep()
     context = _make_context(
         options={
-            "model": "xai/grok-4.5",
+            "model": "xai/grok-4.6",
             "mcp": False,
             "generation_parameters": {"reasoning_effort": ""},
         }
@@ -1057,10 +1057,10 @@ async def test_handler_non_default_model_unaffected_by_default_resolution(
 
 
 def test_resolve_default_reasoning_effort_grok43_returns_high() -> None:
-    """Unit test: ``xai/grok-4.5`` resolves to ``high``."""
+    """Unit test: ``xai/grok-4.6`` resolves to ``high``."""
     from .frontier_dispatch.request import resolve_default_reasoning_effort
 
-    assert resolve_default_reasoning_effort("xai/grok-4.5") == "high"
+    assert resolve_default_reasoning_effort("xai/grok-4.6") == "high"
 
 
 @pytest.mark.parametrize(
@@ -1123,8 +1123,8 @@ def test_resolve_remote_mcp_defaults_by_card() -> None:
         ("anthropic/claude-sonnet-4-6", False, False),
         ("openai/gpt-5.4", True, False),
         ("google/gemini-2.5-pro", True, False),
-        ("xai/grok-4.5", True, False),
-        ("xai/grok-4.5", True, False),
+        ("xai/grok-4.6", True, False),
+        ("xai/grok-4.6", True, False),
     ]
     for model, mcp_enabled, expected in cases:
         result = resolve_remote_mcp(model=model, mcp_enabled=mcp_enabled)
@@ -1272,7 +1272,7 @@ def test_check_agent_model_consistency_rejects_concrete_seat_mismatch() -> None:
 def test_check_boot_provider_compatibility_skips_when_mcp_client_tool_loop_supported() -> (
     None
 ):
-    """grok-4.5 standard card admits client tool loop — no suppression telemetry."""
+    """grok-4.6 standard card admits client tool loop — no suppression telemetry."""
     from systems.pipeline.core.handlers.frontier_dispatch.admission_checks import (
         check_boot_provider_compatibility,
     )
@@ -1292,7 +1292,7 @@ def test_check_boot_provider_compatibility_skips_when_mcp_client_tool_loop_suppo
 
 
 def test_check_agent_model_consistency_accepts_valid_family() -> None:
-    """Matching agent/provider with xai/grok-4.5 must not raise or emit."""
+    """Matching agent/provider with xai/grok-4.6 must not raise or emit."""
     from systems.pipeline.core.handlers.frontier_dispatch.admission_checks import (
         check_agent_model_consistency,
     )
@@ -1301,7 +1301,7 @@ def test_check_agent_model_consistency_accepts_valid_family() -> None:
 
     check_agent_model_consistency(
         agent="skeptic",
-        model="xai/grok-4.5",
+        model="xai/grok-4.6",
         model_entity_id=_TEST_MODEL_ENTITY_ID,
         provider="xai",
         execution_id="exec-test-0001",
@@ -1345,7 +1345,7 @@ def test_check_agent_model_consistency_accepts_standard_grok_for_api_multi_seat(
 
     check_agent_model_consistency(
         agent="grok-api-multi",
-        model="xai/grok-4.5",
+        model="xai/grok-4.6",
         model_entity_id=_TEST_MODEL_ENTITY_ID,
         provider="xai",
         execution_id="exec-test-0002",
@@ -1411,7 +1411,7 @@ def test_check_agent_model_consistency_accepts_agents_without_variant_requiremen
 def test_registry_default_model_satisfies_own_requirement(agent: str) -> None:
     """Default model for skeptic must satisfy any seat variant requirement.
 
-    Regression guard: after grok-4.5 migration, skeptic has no multi-agent
+    Regression guard: after grok-4.6 migration, skeptic has no multi-agent
     requirement; check still returns None for the role default.
     """
     from agent_seat.registry import check_agent_model_requirement, resolve_agent_model
@@ -1433,7 +1433,7 @@ async def test_handler_persona_free_accepts_multi_agent_model(
     """agent=None + multi-agent model is accepted — the invariant is one-way.
 
     skeptic binds to multi-agent; multi-agent does not bind the caller to skeptic.
-    Locks the asymmetry: persona-free dispatches with xai/grok-4.5
+    Locks the asymmetry: persona-free dispatches with xai/grok-4.6
     must not trigger the admission gate.
     """
 
@@ -1444,7 +1444,7 @@ async def test_handler_persona_free_accepts_multi_agent_model(
 
     step = _FakeStep()
     context = _make_context(
-        options={"model": "xai/grok-4.5", "mcp": False},
+        options={"model": "xai/grok-4.6", "mcp": False},
     )
     out = await handler.execute(step, context)
 
@@ -1504,7 +1504,7 @@ async def test_skeptic_injects_xai_builtin_tools_by_default(
     po = captured["req"].provider_options
     assert po is not None
     assert po.get("xai", {}).get("tools") == _card_server_tools(_XAI_SKEPTIC_MODEL)
-    # grok-4.5 standard card admits client-side MCP tools
+    # grok-4.6 standard card admits client-side MCP tools
     assert captured["req"].tools is not None
 
 
@@ -1632,7 +1632,7 @@ async def test_grok45_server_tools_false_mcp_true_regression(
     monkeypatch: pytest.MonkeyPatch,
     published_events: list[Any],
 ) -> None:
-    """grok-4.5: server_tools=False suppresses built-ins; MCP client tools remain."""
+    """grok-4.6: server_tools=False suppresses built-ins; MCP client tools remain."""
     captured = _make_skeptic_fixtures(monkeypatch)
 
     await handler.execute(
@@ -1732,7 +1732,7 @@ async def test_inline_only_capability_tier_forces_empty_tool_surface(
     monkeypatch: pytest.MonkeyPatch,
     published_events: list[Any],
 ) -> None:
-    """Artisan runs ``xai/grok-4.5`` (NOT a multi-agent model),
+    """Artisan runs ``xai/grok-4.6`` (NOT a multi-agent model),
     so the existing provider-derived suppression does not catch it. With
     ``capability_tier=inline-only`` set on the entity, the agent-tier check
     must coerce ``tools=[]`` and emit ``tool.suppressed`` with reason
@@ -1758,7 +1758,7 @@ async def test_inline_only_capability_tier_forces_empty_tool_surface(
     monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     context = _make_context(
-        options={"model": "xai/grok-4.5", "role": "artisan"},
+        options={"model": "xai/grok-4.6", "role": "artisan"},
     )
     await handler.execute(_FakeStep(), context)
 

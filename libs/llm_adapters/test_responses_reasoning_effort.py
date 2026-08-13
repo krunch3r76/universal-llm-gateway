@@ -6,7 +6,7 @@ Post-Fence-D contract:
 - The ResponsesAPIAdapter injects ``reasoning.effort`` UNCONDITIONALLY — the
   adapter no longer silently drops unsupported effort. Unsupported effort is
   rejected loudly at the ``resolve_dispatch`` boundary (G9 ``ProtocolError``).
-- Reasoning OpenAI models (gpt-5.x, o-series) + xAI grok-3/grok-4.5 still inject
+- Reasoning OpenAI models (gpt-5.x, o-series) + xAI grok-3/grok-4.6 still inject
   effort; the boundary rejects gpt-4o / pre-4.3 grok with a declared effort.
 """
 
@@ -107,7 +107,7 @@ def test_xai_grok3_sends_effort(model: str) -> None:
     )
 
 
-@pytest.mark.parametrize("model", ["grok-4.5", "grok-4.3"])
+@pytest.mark.parametrize("model", ["grok-4.6", "grok-4.3"])
 def test_xai_grok45_sends_effort(model: str) -> None:
     assert xai_supports_reasoning_effort(model) is True
     req = _req_with_effort(model, effort="medium")

@@ -1,8 +1,8 @@
 """Manage-hosted charter runner host.
 
 Periodic supervisor that watches enrollments on the roster and launches one run
-per eligible enrollment. Default substrate is unattended Grok 4.5
-(``cursor/grok-4.5``, effort=high, fast=true) via generate dispatch.
+per eligible enrollment. Default substrate is unattended Grok 4.6
+(``cursor/grok-4.6``, effort=high, fast=true) via generate dispatch.
 Per-root todo ``attendance=autonomous`` selects the background-lead packet and
 auto-arms hard stall at ``DEFAULT_AUTONOMOUS_STALE_S`` (3600s) unless
 ``CHARTER_UNATTENDED_STALE_S`` overrides (incl. ``0`` = force OFF).

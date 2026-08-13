@@ -91,7 +91,7 @@ def test_stargate_execution_id_then_worker_dispatch_id_one_live_row() -> None:
                 "dispatch_id": dispatch_id,
                 "execution_id": execution_id,
                 "thread_id": "6164",
-                "resolved_model": "cursor/grok-4.5",
+                "resolved_model": "cursor/grok-4.6",
                 "tool_call_count": 5,
             },
         )

@@ -28,7 +28,7 @@ logger = get_logger(__name__)
 # Scoreboard G-rows and charter R-beats — same shape checkpoint_parse gates on.
 _GID_RE = re.compile(r"\b([GR]\d+[a-z]?)\b")
 # Optional markdown backticks around the value — tips routinely write
-# ``executor=`cursor/grok-4.5` ``; without allowing `` ` `` the token regex
+# ``executor=`cursor/grok-4.6` ``; without allowing `` ` `` the token regex
 # captured empty and tip_is_empty_hopper permanently fenced admit (6237 after
 # harvest heal).
 _EXECUTOR_RE = re.compile(r"executor\s*=\s*`?([A-Za-z0-9._/\-]+)`?")

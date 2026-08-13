@@ -32,11 +32,11 @@ from services.git_integration_worker.cursor_auto.wire_map import (
 def test_wire_map_auto_by_contract():
     assert (
         resolve_desired_model("auto", contract="answer")["resolved_model_id"]
-        == "cursor/grok-4.5"
+        == "cursor/grok-4.6"
     )
     assert (
         resolve_desired_model("auto", contract="investigate")["resolved_model_id"]
-        == "cursor/grok-4.5"
+        == "cursor/grok-4.6"
     )
     assert (
         resolve_desired_model("auto", contract="implement")["resolved_model_id"]
@@ -57,10 +57,10 @@ def test_wire_map_auto_by_contract():
 
 def test_wire_map_accepts_cursor_prefixed_model():
     assert (
-        resolve_desired_model("cursor/grok-4.5")["resolved_model_id"]
-        == "cursor/grok-4.5"
+        resolve_desired_model("cursor/grok-4.6")["resolved_model_id"]
+        == "cursor/grok-4.6"
     )
-    assert resolve_desired_model("cursor/grok-4.5")["honored"] is True
+    assert resolve_desired_model("cursor/grok-4.6")["honored"] is True
     assert (
         resolve_desired_model("cursor/composer-2.5")["resolved_model_id"]
         == "cursor/composer-2.5"
@@ -93,13 +93,13 @@ def test_assess_model_pin_fable_refusal_names_escalation():
 
 def test_assess_model_pin_blocks_body_desired_model():
     model, block = assess_model_pin(
-        "grok-4.5",
+        "grok-4.6",
         contract="investigate",
-        body="TYPE: DIRECTIVE\ndesired_model: grok-4.5\n",
+        body="TYPE: DIRECTIVE\ndesired_model: grok-4.6\n",
     )
     assert block is not None
     assert "wire-only" in block
-    assert model["resolved_model_id"] == "cursor/grok-4.5"
+    assert model["resolved_model_id"] == "cursor/grok-4.6"
 
 
 def test_assess_effort_pin_blocks_body_effort_line():
@@ -224,7 +224,7 @@ def test_process_job_admits_wire_effort_first_attempt(monkeypatch):
         ),
         from_agent="web-anthropic",
         to_agent="cursor",
-        desired_model="cursor/grok-4.5",
+        desired_model="cursor/grok-4.6",
         desired_effort="high",
         contract="implement",
     )
@@ -330,11 +330,11 @@ def test_admit_model_override_rule_line_auto_ladder():
     assert line is not None
     assert line.startswith("model_override_rule:")
     assert model["notes"] in line
-    assert "auto chose cursor/grok-4.5 for contract=investigate" in line
+    assert "auto chose cursor/grok-4.6 for contract=investigate" in line
 
 
 def test_admit_model_override_rule_line_honored_explicit_bare_pin():
-    model = resolve_desired_model("grok-4.5")
+    model = resolve_desired_model("grok-4.6")
     line = admit_model_override_rule_line(model)
     assert line is not None
     assert model["notes"] in line
@@ -342,7 +342,7 @@ def test_admit_model_override_rule_line_honored_explicit_bare_pin():
 
 
 def test_admit_model_override_rule_line_unchanged_when_requested_equals_resolved():
-    model = resolve_desired_model("cursor/grok-4.5")
+    model = resolve_desired_model("cursor/grok-4.6")
     assert model["requested"] == model["resolved_model_id"]
     assert admit_model_override_rule_line(model) is None
 
@@ -421,7 +421,7 @@ def test_process_job_admit_omits_override_rule_when_requested_matches_resolved(
         body="TYPE: DIRECTIVE\ndensity: dense\n## Scope\nfoo\nvision: test\n",
         from_agent="web-anthropic",
         to_agent="cursor",
-        desired_model="cursor/grok-4.5",
+        desired_model="cursor/grok-4.6",
         desired_effort="medium",
         contract="investigate",
     )
@@ -432,7 +432,7 @@ def test_process_job_admit_omits_override_rule_when_requested_matches_resolved(
 
 
 def test_admit_model_pin_flags_surfaces_effort_clamp():
-    model = resolve_desired_model("grok-4.5")
+    model = resolve_desired_model("grok-4.6")
     effort = resolve_desired_effort("bogus")
     flags = admit_model_pin_flags(model, effort)
     assert any("effort_clamped" in flag for flag in flags)
@@ -499,7 +499,7 @@ def test_process_job_admit_surfaces_model_honored(monkeypatch):
         body="TYPE: DIRECTIVE\ndensity: dense\n## Scope\nfoo\nvision: test\n",
         from_agent="web-anthropic",
         to_agent="cursor",
-        desired_model="cursor/grok-4.5",
+        desired_model="cursor/grok-4.6",
         desired_effort="bogus",
         contract="investigate",
     )

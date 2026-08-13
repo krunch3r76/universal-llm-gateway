@@ -31,7 +31,7 @@ def test_reviewer_role_execution_attributes_mcp_capable() -> None:
 
 
 def test_resolve_dispatch_capabilities_skeptic_default() -> None:
-    caps = resolve_dispatch_capabilities(model="xai/grok-4.5")
+    caps = resolve_dispatch_capabilities(model="xai/grok-4.6")
     assert caps["inline_only"] is False
     assert caps["mcp_connector_active"] is True
     assert caps["mcp_mechanism"] == "client_side_injection"

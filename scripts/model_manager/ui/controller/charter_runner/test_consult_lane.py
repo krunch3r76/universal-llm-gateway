@@ -133,7 +133,7 @@ _GATED_TIP = """\
 # CHECKPOINT — agent-bus:5975
 
 ## Next-pickup
-- G7 — judgment consult · executor=cursor/grok-4.5
+- G7 — judgment consult · executor=cursor/grok-4.6
 
 ## Steps
 1. [ ] Advance G7

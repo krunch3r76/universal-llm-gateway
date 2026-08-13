@@ -38,7 +38,7 @@ these binds; `premium_bind` announced premium spend and nothing gated it.
 | **Scope** | a `contract:` override no longer waives the empty-scope refusal outside the roaming tier | `frontier.sdk.auto.empty_directive_scope_blocked` |
 | **Effort** | `xhigh`/`max` clamp to `high` (those rungs need a standing trigger the lane lacks) | admit turn `resolved_effort` |
 
-**Roaming tier** = `composer-2.5`, `composer-2.5-fast`, `grok-4.5`. Everything else —
+**Roaming tier** = `composer-2.5`, `composer-2.5-fast`, `grok-4.6`. Everything else —
 opus, sonnet, fable, `gpt-5.6-*` — is bounded. `desired_model: auto` resolves *into*
 the roaming tier, so the default mechanical path is untouched.
 
@@ -60,7 +60,7 @@ Fire **two legs** (or bind in-seat + compose dispatch) when **ANY**:
 
 | Leg | Seat / model | Contract | Output |
 |---|---|---|---|
-| **1 — Bind** | `cdp/opus-5`, `cdp/fable`, `cursor/grok-4.5`, or `cursor/claude-opus-5` (inform-then-proceed) | `light-bounded` | Dense packet, spec, or sidecar: scope, invariants, `files_expected`, `acceptance_criteria` — **no repo writes** unless bind requires a spec file |
+| **1 — Bind** | `cdp/opus-5`, `cdp/fable`, `cursor/grok-4.6`, or `cursor/claude-opus-5` (inform-then-proceed) | `light-bounded` | Dense packet, spec, or sidecar: scope, invariants, `files_expected`, `acceptance_criteria` — **no repo writes** unless bind requires a spec file |
 | **2 — Compose** | `seat=cursor-sdk` (omit `model=` → Composer) | `implement` or `pure-mechanical` | Edits + verify per packet; poll `poll_hint` |
 
 ```python

@@ -64,7 +64,7 @@ _THINKING_VARIANTS: dict[str, dict[str, Any] | None] = {
     "adaptive": {"type": "adaptive"},
 }
 
-_RESPONSES_MODELS: tuple[str, ...] = ("gpt-5.5", "grok-4.5")
+_RESPONSES_MODELS: tuple[str, ...] = ("gpt-5.5", "grok-4.6")
 _GOOGLE_MODELS: tuple[str, ...] = ("gemini-3-pro",)
 _CLOUD_PROXY_MODELS: tuple[str, ...] = ("claude-opus-4-8", "claude-sonnet-4-6")
 
@@ -151,7 +151,7 @@ def _build_reasoning_table() -> dict[str, Any]:
         ("anthropic", "anthropic/claude-opus-4-8"),  # adaptive
         ("anthropic", "anthropic/claude-sonnet-4-5"),  # budget-mode
         ("openai", "openai/gpt-5.5"),
-        ("xai", "xai/grok-4.5"),
+        ("xai", "xai/grok-4.6"),
         ("google", "google/gemini-3-pro"),
     )
     for provider, model in translate_matrix:
@@ -159,9 +159,9 @@ def _build_reasoning_table() -> dict[str, Any]:
         for effort in efforts:
             key = f"translate|{provider}|{model}|{effort}"
             table[key] = wrapper.translate_reasoning(effort)
-    for model in ("xai/grok-4.5", "openai/gpt-5.5", "anthropic/claude-opus-4-8"):
+    for model in ("xai/grok-4.6", "openai/gpt-5.5", "anthropic/claude-opus-4-8"):
         table[f"default_effort|{model}"] = default_reasoning_effort(model)
-    for model in ("grok-4.5", "grok-4.20-0309-non-reasoning", "grok-3-mini"):
+    for model in ("grok-4.6", "grok-4.20-0309-non-reasoning", "grok-3-mini"):
         table[f"xai_supports|{model}"] = xai_supports_reasoning_effort(model)
     for model in ("gpt-5.5", "o3", "gpt-4o", "o4-mini"):
         table[f"openai_supports|{model}"] = openai_supports_reasoning_effort(model)

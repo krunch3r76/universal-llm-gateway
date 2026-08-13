@@ -118,7 +118,7 @@ def _seed_conveyor(
             root_id="6171",
             pickup_gid=pickup_gid,
             pickup_lane="judgment",
-            pickup_executor="cursor/grok-4.5",
+            pickup_executor="cursor/grok-4.6",
             attendance="attended",
             scoreboard_uri="cortex://notes/system/threads/6171-charter-scoreboard.md",
         ),
@@ -209,7 +209,7 @@ def test_wake_on_fresh_append_then_admit(
     _seed_conveyor(ledger, phase="dormant", cursor=0)
     row_text = (
         "G2 — `todo:friction-99` follow-on from root 100 "
-        "(spawned_by_friction=99) · note · executor=cursor/grok-4.5"
+        "(spawned_by_friction=99) · note · executor=cursor/grok-4.6"
     )
     turns = [_turn(6, "CHECKPOINT — conveyor", _work_body(row_text))]
     fired: list[bool] = []
@@ -235,7 +235,7 @@ def test_wake_test_fails_without_wake_edge(
     """AC(i): must fail if wake edge is missed — fresh append while dormant."""
     _seed_conveyor(ledger, phase="dormant", cursor=0)
     row_text = (
-        "G3 — `todo:friction-100` follow-on · executor=cursor/grok-4.5"
+        "G3 — `todo:friction-100` follow-on · executor=cursor/grok-4.6"
     )
     turns = [_turn(7, "CHECKPOINT — conveyor", _work_body(row_text))]
 
@@ -333,7 +333,7 @@ def test_host_emits_root_skipped_dormant_telemetry(
 @pytest.mark.offline
 def test_open_gated_g_rows_structured() -> None:
     parsed = parse_checkpoint(
-        _work_body("G1 — follow-on · executor=cursor/grok-4.5")
+        _work_body("G1 — follow-on · executor=cursor/grok-4.6")
     )
     assert len(conveyor_phase.open_gated_g_rows(parsed)) == 1
     empty = parse_checkpoint(_dormant_body())
@@ -352,7 +352,7 @@ def test_ordinary_idle_ungated_active_phase_state_closes_via_no_gated_pickup(
             status=RootStatus.IDLE,
             pickup_gid="G1",
             pickup_lane="judgment",
-            pickup_executor="cursor/grok-4.5",
+            pickup_executor="cursor/grok-4.6",
             attendance="attended",
             scoreboard_uri="cortex://notes/system/threads/5705-charter-scoreboard.md",
             conveyor_phase="active",

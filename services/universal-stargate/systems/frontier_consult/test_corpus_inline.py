@@ -36,7 +36,7 @@ def _packet(*, corpus_line: str, body: str = "review task") -> str:
 """
 
 
-def _bundle(model: str = "xai/grok-4.5") -> HydrationBundle:
+def _bundle(model: str = "xai/grok-4.6") -> HydrationBundle:
     return HydrationBundle(
         briefing_card_md="# briefing",
         agent_meta=AgentMeta(default_model=model, allowed_models=[model]),
@@ -45,7 +45,7 @@ def _bundle(model: str = "xai/grok-4.5") -> HydrationBundle:
 
 
 def _force_corpus_inline_gate(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Corpus inline is card-gated; grok-4.5 is MCP-capable — force gate for unit tests."""
+    """Corpus inline is card-gated; grok-4.6 is MCP-capable — force gate for unit tests."""
     monkeypatch.setattr(
         "systems.frontier_consult.service.corpus_inline_gated",
         lambda _model: True,
@@ -135,7 +135,7 @@ async def test_inline_only_inlines_corpus_from_packet_path(
         messages=[{"role": "user", "content": "ignored when packet_path set"}],
         role="skeptic",
         dispatch_thread_id=_DISPATCH_THREAD,
-        model="xai/grok-4.5",
+        model="xai/grok-4.6",
         packet_path=f"workspaces://universal-llm-gateway/{packet_rel}",
     )
     body = await build_dispatch_body(req, event_publisher=events.append)
@@ -211,7 +211,7 @@ async def test_unresolved_corpus_uri_soft_drops(
         messages=[{"role": "user", "content": packet_text}],
         role="skeptic",
         dispatch_thread_id=_DISPATCH_THREAD,
-        model="xai/grok-4.5",
+        model="xai/grok-4.6",
         mcp=False,
     )
     body = await build_dispatch_body(req, event_publisher=events.append)
@@ -236,7 +236,7 @@ async def test_skill_layer_c_retained_under_corpus_budget_pressure(
     async def fake_hydrate(agent: str, **_k: Any) -> HydrationBundle:
         return HydrationBundle(
             briefing_card_md="# briefing",
-            agent_meta=AgentMeta(default_model="xai/grok-4.5"),
+            agent_meta=AgentMeta(default_model="xai/grok-4.6"),
             inline_only=True,
             injected_bodies_md=skill_md,
             injection_meta={
@@ -261,7 +261,7 @@ async def test_skill_layer_c_retained_under_corpus_budget_pressure(
         messages=[{"role": "user", "content": packet_text}],
         role="skeptic",
         dispatch_thread_id=_DISPATCH_THREAD,
-        model="xai/grok-4.5",
+        model="xai/grok-4.6",
     )
     body = await build_dispatch_body(req)
     system = body["pipeline_options"]["system"]
@@ -291,7 +291,7 @@ async def test_dispatch_thread_body_resolves_corpus(
         messages=[{"role": "user", "content": packet_text}],
         role="skeptic",
         dispatch_thread_id=_DISPATCH_THREAD,
-        model="xai/grok-4.5",
+        model="xai/grok-4.6",
     )
     body = await build_dispatch_body(req)
     system = body["pipeline_options"]["system"]
@@ -303,7 +303,7 @@ def test_event_factories_match_catalog_shape() -> None:
     inlined = PipelineFrontierDispatchCorpusInlined(
         request_id="abc",
         role="skeptic",
-        model="xai/grok-4.5",
+        model="xai/grok-4.6",
         injected_count=1,
         dropped_count=0,
         injected_bytes=100,
@@ -313,7 +313,7 @@ def test_event_factories_match_catalog_shape() -> None:
     unresolved = PipelineFrontierDispatchCorpusUnresolved(
         request_id="abc",
         role="skeptic",
-        model="xai/grok-4.5",
+        model="xai/grok-4.6",
         uri="workspaces://universal-llm-gateway/missing.md",
     )
     assert _SIGNAL_RE.match(inlined.signal)

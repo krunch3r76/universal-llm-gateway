@@ -17,7 +17,7 @@ remains for non-path-sim work items. Skip only the closed set shared with R-admi
 | Pin | Default substrate |
 |---|---|
 | R-admit | web-anthropic CDP · Opus 4.8 (staged corpus) |
-| **R-after (this command)** | **`seat=cursor-sdk, model=cursor/grok-4.5, contract=light-bounded`** — live checkout |
+| **R-after (this command)** | **`seat=cursor-sdk, model=cursor/grok-4.6, contract=light-bounded`** — live checkout |
 
 Independence trade (documented, not hidden): Grok may already have run path-sim Q;
 R-after is still ≠ Composer implement and has checkout the web seat lacks. Override
@@ -51,10 +51,10 @@ admitted under, across however many sessions produced it.
 /work-item-review todo:{slug}
 /work-item-review a:{assertion_id}
 /work-item-review plan:{slug}
-/work-item-review todo:{slug} [model]     # optional override — default cursor/grok-4.5
+/work-item-review todo:{slug} [model]     # optional override — default cursor/grok-4.6
 ```
 
-**Default:** `cursor/grok-4.5` on cursor-sdk (`contract=light-bounded`). Operator model
+**Default:** `cursor/grok-4.6` on cursor-sdk (`contract=light-bounded`). Operator model
 token overrides when explicitly supplied. **¬** default to web-anthropic / CDP for
 R-after (that seat is R-admit).
 
@@ -153,7 +153,7 @@ Slug line in packet: `Use the path-sim skill` (R-after pin) · `Use the event-in
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
-  model=cursor/grok-4.5,
+  model=cursor/grok-4.6,
   contract=light-bounded,
   dispatch_thread_id=<bus thread id or path-sim-{slug}>,
   packet_path=tmp/prompts/work-item-review-{slug}-grok-packet.md,
@@ -200,8 +200,8 @@ cortex(tool="assert", arguments='{"entity_id":"<work-item-id>",
 | Rubber-stamp | Acceptance ledger with cited evidence + decisive falsifier |
 | Fork the shared review body | Embed `review-task-guidance` by reference |
 | Re-catch the same finding class every item | G4 distill → mint a rule/skill |
-| Default R-after to web-anthropic / CDP Opus | `cursor/grok-4.5` on cursor-sdk (R-admit keeps web Opus) |
-| `role=artisan, model=xai/grok-*` for checkout review | `seat=cursor-sdk, model=cursor/grok-4.5` |
+| Default R-after to web-anthropic / CDP Opus | `cursor/grok-4.6` on cursor-sdk (R-admit keeps web Opus) |
+| `role=artisan, model=xai/grok-*` for checkout review | `seat=cursor-sdk, model=cursor/grok-4.6` |
 | Skip after path-sim Stage-B without closed-set evidence | Path-sim fires R-after by default — run it |
 | Silent on event-bearing ON_CHARTER delivery | Challenge closeout one-liner + missed add/prune |
 | Route REVISE through `/review-apply` | Direct patch or implement dispatch (24952) |

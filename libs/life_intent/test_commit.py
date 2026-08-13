@@ -34,7 +34,7 @@ class _FakeHandle:
     execution_id: str = "exec1"
     dispatch_id: str = "req1-aaaaaaaa"
     thread_id: str = "thread-1"
-    resolved_model: str = "cursor/grok-4.5"
+    resolved_model: str = "cursor/grok-4.6"
     role: str = "cursor-sdk"
     family: str = "cursor"
     platform: str = "sdk"

@@ -63,7 +63,7 @@ SoT: `config/routing/route_policy.yaml`. Substrate-derived — ¬ role prolifera
 
 Settled implement/recon/review → `cursor-sdk` (R2). **Model split:** `implement` → Composer;
 IDE/Task breadth recon → **Explore subagent** (`Task(subagent_type="explore")`; ¬ tool);
-recon+investigate judgment residual → `cursor/grok-4.5` + `light-bounded`; pure inventory /
+recon+investigate judgment residual → `cursor/grok-4.6` + `light-bounded`; pure inventory /
 Task-unavailable fallback → Composer. `cursor/*` only on `cursor-sdk` → else `422`.
 
 ## Bind-then-compose split (judgment closed → nested Composer)
@@ -74,7 +74,7 @@ Rule stub: `bind-then-compose-dispatch_ulg.mdc`.
 
 | Leg | Model / seat | Contract | Delivers |
 |---|---|---|---|
-| Bind | `cdp/opus-5`, `cdp/fable`, `cursor/grok-4.5`, `cursor/claude-opus-5` (bind scope only) | `light-bounded` | Dense packet / spec: `files_expected`, `acceptance_criteria`, invariants — ¬ repo implement |
+| Bind | `cdp/opus-5`, `cdp/fable`, `cursor/grok-4.6`, `cursor/claude-opus-5` (bind scope only) | `light-bounded` | Dense packet / spec: `files_expected`, `acceptance_criteria`, invariants — ¬ repo implement |
 | Compose | `seat=cursor-sdk` (Composer default) | `implement` \| `pure-mechanical` | Mechanical edits + verify |
 
 ```python
@@ -122,10 +122,10 @@ Rule: `anthropic-dispatch-authorization_ws.mdc`. Fable = CDP only (`cdp/fable` /
 
 | Path | Default |
 |---|---|
-| Coding Grok (path-sim **A**, recon+investigate, closed-detent light consult) | `cursor-sdk` + `cursor/grok-4.5` + `light-bounded` |
+| Coding Grok (path-sim **A**, recon+investigate, closed-detent light consult) | `cursor-sdk` + `cursor/grok-4.6` + `light-bounded` |
 | Path-sim bundled **Q** (L0) | **CDP Fable** — `team_dispatch(model=cdp/fable)` (`project_ask` `fable-5` = escape; path-sim annex A); ¬ default Grok Q on full arc |
-| API `xai/grok-4.5` on coding work | **PROHIBITED** |
-| Engineering skeptic | `role=skeptic` + `xai/grok-4.5` |
+| API `xai/grok-4.6` on coding work | **PROHIBITED** |
+| Engineering skeptic | `role=skeptic` + `xai/grok-4.6` |
 | Writing / correspondence | Grok **PROHIBITED** — L3 annex |
 
 ## Implement lane — default source_ref
