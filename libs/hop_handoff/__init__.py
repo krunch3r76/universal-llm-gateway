@@ -7,7 +7,13 @@ mcp-server nor git_integration_worker imports the other.
 
 from __future__ import annotations
 
-from hop_handoff.body import build_continuity_handoff_body
+from hop_handoff.body import (
+    build_continuity_handoff_body,
+    build_seat_registration_stamp,
+    is_successor_birth_id,
+    mint_successor_birth_id,
+    parse_successor_birth_id,
+)
 from hop_handoff.standing_handoff import (
     StandingHandoffFreshness,
     assess_standing_handoff,
@@ -20,7 +26,11 @@ __all__ = [
     "StandingHandoffFreshness",
     "assess_standing_handoff",
     "build_continuity_handoff_body",
+    "build_seat_registration_stamp",
     "cse_age_threshold_s",
+    "is_successor_birth_id",
+    "mint_successor_birth_id",
+    "parse_successor_birth_id",
     "standing_handoff_path",
     "standing_handoff_uri",
 ]

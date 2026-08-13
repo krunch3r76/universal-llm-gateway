@@ -72,8 +72,12 @@ def test_hop_impl_forwards_continuity_hop_and_handoff_body() -> None:
     assert first == "TYPE: CONTINUITY_HANDOFF"
     assert "source: agent-bus-hop-verb" in body
     assert "trigger: mcp-restart-healthy" in body
+    assert "successor_birth_id:" in body
     assert result["continuity_hop"] is True
-    assert result["successor"]["handle"] == "execution_id"
+    assert result["successor"]["handle"] == "successor_birth_id"
+    assert result["successor"]["names"] == "successor"
+    assert result["successor"]["value"]
+    assert "predecessor's receipt" in result["successor"]["note"]
     assert result["handler_status"] == "auto-admit-armed"
     assert "status:done" not in str(result)
 

@@ -238,6 +238,9 @@ def test_build_cadence_hop_body_superseded_registration_id_line():
     assert any(line == "parent_thread: 6885" for line in lines)
     assert any(line.startswith("you_are:") for line in lines)
     assert not any(line.startswith("registration_id:") for line in lines)
+    birth_lines = [line for line in lines if line.startswith("successor_birth_id:")]
+    assert len(birth_lines) == 1
+    assert birth_lines[0].split(":", 1)[1].strip()
 
 
 def test_registration_advanced_once_on_confirm():
@@ -282,6 +285,46 @@ def test_registration_advanced_once_on_confirm():
         assert result2["confirmations"] == []
         assert confirmed_mock.call_count == 0
         assert advanced_mock.call_count == 0
+
+
+def test_confirm_posts_seat_registration_stamp_echoing_birth_id():
+    birth = "d" * 32
+    row = {
+        "thread_id": "6885",
+        "registration_id": "reg-old",
+        "successor_execution_id": "stargate-uuid",
+        "pending_satellite_execution_id": "satellite-live",
+        "superseded_registration_id": "reg-old",
+        "superseded_execution_id": "exec-incumbent-old",
+        "predecessor_verdict": "incumbent_recorded",
+        "successor_birth_id": birth,
+    }
+    watches = {"6885": dict(row)}
+    snap = _snap(registration_id="reg-new", execution_id="satellite-live")
+    posted: list[tuple[str, str]] = []
+
+    with patch(
+        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.load_watches",
+        side_effect=lambda path=None: watches,
+    ), patch(
+        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.save_watches",
+        side_effect=lambda data, path=None: watches.update(data) or None,
+    ), patch(
+        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_succession_confirmed",
+    ), patch(
+        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_registration_advanced",
+    ):
+        reconcile_succession_confirmations(
+            snapshot_reader=lambda: snap,
+            stamp_poster=lambda thread_id, body: posted.append((thread_id, body)),
+        )
+    assert len(posted) == 1
+    thread_id, stamp = posted[0]
+    assert thread_id == "6885"
+    assert stamp.startswith("TYPE: SEAT_REGISTRATION\n")
+    assert f"successor_birth_id: {birth}" in stamp
+    assert "registration_id: reg-new" in stamp
+    assert "execution_id: satellite-live" in stamp
 
 
 def test_advance_registration_on_confirm_unit():

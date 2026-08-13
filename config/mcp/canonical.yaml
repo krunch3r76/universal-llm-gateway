@@ -2110,7 +2110,7 @@ tools:
   flat_call_shape:
     tool: agent_bus_hop
     substrate_qualified: user-vortex__agent_bus_hop
-  fol_descriptor: "∀ args: thread ∈ args ∧ reason ∈ args\n  ⟹ TurnSendCreated-shaped + handler_status ∈ {auto-admit-armed, no-auto-handler} + continuity_hop=true + poll_hint + successor.\nAuthors TYPE: CONTINUITY_HANDOFF via hop_handoff (same author as cadence). Enqueues EnqueueBody.continuity_hop=true — first producer of that wire field.\n¬ a contract token (hop ∉ CANONICAL_CONTRACTS). Reports armed, never status:done; successor handle is execution_id on the terminal turn.\nHop-before-healthy degrades (no-auto-handler) rather than arming. Life-callable (mcp_claude). Mutating.\n"
+  fol_descriptor: "∀ args: thread ∈ args ∧ reason ∈ args\n  ⟹ TurnSendCreated-shaped + handler_status ∈ {auto-admit-armed, no-auto-handler} + continuity_hop=true + poll_hint + successor.\nAuthors TYPE: CONTINUITY_HANDOFF via hop_handoff (same author as cadence). Enqueues EnqueueBody.continuity_hop=true — first producer of that wire field.\n¬ a contract token (hop ∉ CANONICAL_CONTRACTS). Reports armed, never status:done; successor handle is successor_birth_id on the structural hop body (MCP return is the predecessor's receipt).\nHop-before-healthy degrades (no-auto-handler) rather than arming. Life-callable (mcp_claude). Mutating.\n"
   json_schema:
     type: object
     properties:

@@ -324,6 +324,7 @@ def mark_hop_fired(
     execution_id: str | None = None,
     satellite_execution_id: str | None = None,
     active_work_snap: dict[str, Any] | None = None,
+    successor_birth_id: str | None = None,
 ) -> bool:
     """Reset seated_at after a cadence hop so the successor is not immediately re-hopped.
 
@@ -373,6 +374,9 @@ def mark_hop_fired(
     if execution_id:
         row["last_hop_execution_id"] = execution_id
         row["successor_execution_id"] = execution_id
+    birth = (successor_birth_id or "").strip()
+    if birth:
+        row["successor_birth_id"] = birth
     watches[thread_id] = row
     save_watches(watches, path)
     superseded = str(row.get("superseded_registration_id") or "").strip()
@@ -389,6 +393,24 @@ def mark_hop_fired(
             or pending_dict.get("satellite_execution_id"),
         )
     return True
+
+
+def persist_successor_birth_id(
+    thread_id: str,
+    successor_birth_id: str,
+    *,
+    path: Path | None = None,
+) -> None:
+    """Record the hop-body I6 key on the watch row for later stamp echo."""
+    birth = (successor_birth_id or "").strip()
+    if not birth or not thread_id.strip():
+        return
+    watches = load_watches(path)
+    row = dict(watches.get(thread_id) or {"thread_id": thread_id})
+    row["thread_id"] = thread_id
+    row["successor_birth_id"] = birth
+    watches[thread_id] = row
+    save_watches(watches, path)
 
 
 def advance_registration_on_confirm(

@@ -14,6 +14,7 @@ from typing import Any
 from hop_handoff import (
     assess_standing_handoff,
     build_continuity_handoff_body,
+    parse_successor_birth_id,
 )
 from mcp_events import record
 
@@ -42,8 +43,9 @@ def _hop_dispatch(
     ``thread`` is required (a hop is always on an existing private lane).
     ``reason`` becomes the body ``trigger:`` line. The verb reports
     *armed* (``handler_status``) — never ``status:done``. The successor
-    handle is ``execution_id`` on the terminal turn once the successor
-    has authored one.
+    selection key is ``successor_birth_id`` on the structural hop body
+    (echoed onto the registration stamp). The MCP return is the
+    predecessor's receipt and must not be read as the caller's own id.
     """
     if isinstance(thread, int):
         thread = str(thread)
@@ -124,8 +126,19 @@ def _hop_dispatch(
     )
     stamped = dict(result)
     stamped["continuity_hop"] = True
+    birth_id = parse_successor_birth_id(body)
     stamped["successor"] = {
-        "handle": "execution_id",
-        "where": "terminal turn on this lane",
+        "handle": "successor_birth_id",
+        "names": "successor",
+        "value": birth_id,
+        "where": (
+            "structural TYPE: CONTINUITY_HANDOFF body on this lane "
+            "(successor first-turn tokens); echoed onto TYPE: "
+            "SEAT_REGISTRATION stamp at registration observation"
+        ),
+        "note": (
+            "this MCP return is the predecessor's receipt — "
+            "successor_birth_id names the successor, not the caller"
+        ),
     }
     return stamped

@@ -125,8 +125,9 @@ def test_cadence_adapter_equals_shared_author() -> None:
     """GIW adapter must not drift from hop_handoff.build_continuity_handoff_body."""
     from hop_handoff import StandingHandoffFreshness, build_continuity_handoff_body
 
+    pin = "c" * 32
     decision = _decision("current")
-    via_adapter = build_cadence_hop_body(decision)
+    via_adapter = build_cadence_hop_body(decision, successor_birth_id=pin)
     via_lib = build_continuity_handoff_body(
         thread_id=decision.thread_id,
         trigger=decision.signal or "watch_seated_at",
@@ -139,6 +140,7 @@ def test_cadence_adapter_equals_shared_author() -> None:
         ),
         age_s=decision.age_s,
         threshold_s=decision.threshold_s,
+        successor_birth_id=pin,
     )
     assert via_adapter == via_lib
 

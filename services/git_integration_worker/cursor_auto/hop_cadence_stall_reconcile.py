@@ -528,6 +528,7 @@ def reconcile_succession_confirmations(
     now: float | None = None,
     snapshot_reader: Callable[[], dict[str, Any]] | None = None,
     release_fn: Callable[[PredecessorHandle], dict[str, Any]] | None = None,
+    stamp_poster: Callable[[str, str], None] | None = None,
 ) -> dict[str, Any]:
     """Observe live active-work membership and advance watch registration ids once."""
     ts = time.time() if now is None else now
@@ -632,6 +633,19 @@ def reconcile_succession_confirmations(
                 prior_registration_id=prior_reg,
                 new_registration_id=new_reg,
                 superseded_execution_id=superseded_exec,
+            )
+            from services.git_integration_worker.cursor_auto.hop_cadence_seat_stamp import (
+                post_seat_registration_if_keyed,
+            )
+
+            aw = aw_row if isinstance(aw_row, dict) else {}
+            post_seat_registration_if_keyed(
+                thread_id=thread_id,
+                successor_birth_id=str(updated.get("successor_birth_id") or ""),
+                registration_id=new_reg,
+                execution_id=matched_key,
+                chat_url=str(aw.get("chat_url") or "") or None,
+                stamp_poster=stamp_poster,
             )
         confirmations.append(
             {

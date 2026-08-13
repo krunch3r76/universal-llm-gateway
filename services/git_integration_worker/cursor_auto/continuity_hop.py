@@ -352,6 +352,21 @@ async def complete_continuity_hop(
     }
     if hop_disposition is not None:
         hop_payload["disposition"] = hop_disposition
+    from hop_handoff import parse_successor_birth_id
+
+    birth_id = parse_successor_birth_id(job.body)
+    if birth_id:
+        hop_payload["successor_birth_id"] = birth_id
+        try:
+            from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
+                persist_successor_birth_id,
+            )
+
+            persist_successor_birth_id(job.thread_id, birth_id)
+        except Exception as exc:  # noqa: BLE001 — hop must not fail on watch persist
+            logger.warning(
+                "persist successor_birth_id failed job=%s: %s", job.job_id, exc
+            )
     terminal = await post_terminal_status(
         job,
         client=bus,

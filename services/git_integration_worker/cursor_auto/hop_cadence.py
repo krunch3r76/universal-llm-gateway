@@ -77,6 +77,7 @@ def build_cadence_hop_body(
     *,
     registration_id: str | None = None,
     chat_url: str | None = None,
+    successor_birth_id: str | None = None,
 ) -> str:
     """Author the structural CONTINUITY_HANDOFF body Auto self-enqueues on fire.
 
@@ -102,6 +103,7 @@ def build_cadence_hop_body(
             else age_threshold_s()
         ),
         superseded_registration_id=registration_id,
+        successor_birth_id=successor_birth_id,
     )
 
 
@@ -309,11 +311,14 @@ async def fire_hop_for_decision(
             job_id=job.job_id,
         )
     else:
+        from hop_handoff import parse_successor_birth_id
+
         fired = mark_hop_fired(
             decision.thread_id,
             execution_id=execution_id,
             path=path,
             active_work_snap=snap if isinstance(snap, dict) else None,
+            successor_birth_id=parse_successor_birth_id(body),
         )
         hop_ok = fired is not False
     logger.info(
