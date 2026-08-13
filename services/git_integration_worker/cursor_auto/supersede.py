@@ -141,8 +141,18 @@ async def supersede_same_thread_inflight(
             mark=mark,
         )
         bus = client or CursorBusClient()
-        await post_superseded_terminal(
-            old_job, client=bus, queue=queue, dispatch_id=None
+        from services.git_integration_worker.cursor_auto.superseded_seat_notify import (
+            notify_superseded_seat,
+        )
+
+        await notify_superseded_seat(
+            old_job,
+            new_job,
+            mark=mark,
+            client=bus,
+            queue=queue,
+            dispatch_id=None,
+            post_bus_terminal=True,
         )
     else:
         live = live_run_for_thread(new_job.thread_id)
@@ -177,6 +187,20 @@ async def supersede_same_thread_inflight(
             superseded_dispatch_id=superseded_dispatch_id,
             source_repo=source_repo,
             mark=mark,
+        )
+        bus = client or CursorBusClient()
+        from services.git_integration_worker.cursor_auto.superseded_seat_notify import (
+            notify_superseded_seat,
+        )
+
+        await notify_superseded_seat(
+            old_job,
+            new_job,
+            mark=mark,
+            client=bus,
+            queue=queue,
+            dispatch_id=superseded_dispatch_id,
+            post_bus_terminal=live is None,
         )
     logger.warning(
         "cursor-auto supersede thread=%s superseded_job=%s by_job=%s "

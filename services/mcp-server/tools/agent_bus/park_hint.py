@@ -60,6 +60,7 @@ def build_poll_hint(
             "status:failed",
             "status:needs-attended",
             "status:blocked",
+            "status:superseded",
         ],
     }
     if is_chat_delivery_capable(from_agent):

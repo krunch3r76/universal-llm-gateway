@@ -55,3 +55,4 @@ def test_build_poll_hint_wait_arguments_unchanged():
     assert args["after_turn"] == 7
     assert args["completion"] == "status:done"
     assert args["wait_seconds"] == 0
+    assert "status:superseded" in hint["alternate_completions"]

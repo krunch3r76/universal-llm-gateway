@@ -36,6 +36,32 @@ from .send import _send_dispatch
 _LANE_TAG = "lane:cursor-auto"
 
 
+def _load_active_work_snap() -> dict[str, Any]:
+    """Best-effort active-work snapshot for identity observation."""
+    try:
+        from cdp_ask.client import CdpAskClient
+
+        snap = CdpAskClient()._request("GET", "/v1/project-ask/active-work")
+    except Exception:
+        return {}
+    return snap if isinstance(snap, dict) else {}
+
+
+def _observe_request_admission_identity(
+    *,
+    thread_id: str | None,
+    cse_registration_id: str | None,
+) -> None:
+    """Resolve server-side identity and record counterfactual refusal metrics."""
+    from claude_bundles.request_admission_identity import observe_identity_on_gate
+
+    observe_identity_on_gate(
+        thread_id=thread_id,
+        caller_registration_id=cse_registration_id,
+        active_work_snap=_load_active_work_snap(),
+    )
+
+
 def _resolve_hop_seat_request_refusal(
     *,
     thread_id: str | None,
@@ -395,6 +421,10 @@ def _request_dispatch(
     if rid_intake.error is not None:
         return rid_intake.error
 
+    _observe_request_admission_identity(
+        thread_id=thread_hint,
+        cse_registration_id=cse_registration_id,
+    )
     seat_refusal = _resolve_hop_seat_request_refusal(
         thread_id=thread_hint,
         cse_registration_id=cse_registration_id,
