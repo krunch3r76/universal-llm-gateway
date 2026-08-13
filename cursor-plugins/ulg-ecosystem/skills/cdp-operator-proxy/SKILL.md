@@ -160,11 +160,13 @@ separate plane.
 13. **Escalation runs downward from cursor, ¬ sideways from the operator.** When a job needs greater reasoning or an outside check, **cursor** dispatches Opus / Fable and reports back **the shape of things** — architecture, tradeoffs, risk, what changed — ¬ code detail. This is the deep form of inv 3: the write boundary is preserved by giving the operator a shape-level report path, not by starving it of judgment. **Operator-doctrine carve-out (subject-matter test):** when the *subject* of an escalation is this seat's own posture, doctrine, protocol, or scope — `agent_skill:cdp-operator-proxy`, `cdp-operator-proxy-v0.md`, `decision:operator-proxy-seat-posture` — the operator seat is the **principal**, not a consult resource. Cursor must not (a) seal a prompt on that subject, (b) mint a child ask-thread to put it to CDP Opus, or (c) open or drive this lane. Its legal move is not a halt but `TYPE: OPERATOR_GATE` — one line naming the open question plus corpus URIs — which is **compliant**, not a stall. Commissioning authority only: cursor-auto still executes every resulting write. Cursor's escalation about **cursor's own arc** is untouched.
 14. **Reasoning posture when framing.** Before pinning Questions, DIRECTIVE intent, or architecture-suitability calls that path-sim or satellite work will consume: `pin(Question) ≺ merits` · `declare(Out-of-scope)` · `detent ≺ widen`, then steelman / calibrate / courage — engage `/reasoning-posture`. When seeding ticks / DIRECTIVEs, **stamp jointly** `operator_framed=true` + `pinned_question` + a resolvable `frame_uri` + the op-lane turn in `evidence_uris` — **one Question per tick**. The frame is *input* to path-sim Q, never a substitute for Q; read `frame_verdict` off the run. **This seat stamps; it does not run path-sim** (`cursor_only` — a stale Customize body is not its SOT). Detection is positive-attestation only: unstamped work proceeds Fable Q → Grok A without paging the human, and path-sim does ¬ re-buy Opus CDP Q under an attested frame.
 15. **Codework → layer lane.** Codebase change ⇒ `abstraction-layering` G1–G6 at the highest open gate (`/layer` IDE command wraps that skill; cursor-sdk/auto: `Use the abstraction-layering skill` — ¬ the slash command). No closable todo ⇒ `work-item-seed-path` first (`/work-item-seed` / `contract: seed`). Non-codework Q→A ⇒ `path-sim` (commission cursor — `cursor_only` on this seat). Silence on routing ≠ direct implement.
-16. **One live request per private thread — and know exactly what does and does not protect you.** A second `agent_bus.request` on a thread cancels a predecessor **only when that predecessor is already `claimed` by Auto** (in flight, nested SDK not finished) **and** the path is not a continuity hop. Predecessors still `queued` are **not** cancelled — they accumulate, and **both will run**, the second against a world the first has moved. Scope is **per-thread, not per-requester**: a foreign seat's *claimed* job on your thread is a supersede candidate; a foreign seat's *queued* job is not, for exactly the same reason your own queued job is not.
+16. **One live request per private thread — and know exactly what does and does not protect you.** A second `agent_bus.request` on a thread supersedes the *first eligible predecessor*, queued or claimed — it does not append. The candidate predicate prefers a claimed job that has not passed nested-SDK terminal, else the oldest queued peer. The claimed arm stops the process (`run_cancel`, or `pre_register_live_run` for displacement without process-stop); the queued arm withdraws the job before it ever claims (`queue_withdraw`, `terminal_status=displaced_queued`). In neither case do both run. Exceptions, both real: a continuity hop skips supersede entirely, and a claimed job already `nested_sdk_finished` is not a candidate. Scope is **per-thread, not per-requester**: a foreign seat's eligible job on your thread is a supersede candidate for the same reason yours is.
 
-   **The protection is weakest precisely when you most want to re-issue.** A backed-up queue makes admits slow; a slow admit looks like a lost enqueue; a re-issue then lands against a predecessor that has not been claimed yet, so nothing is cancelled and you have two live jobs carrying the same intent. Under backlog: **wait.** A missing admit turn is not a lost enqueue.
+   **The hazard inverted.** The old text told seats a queued predecessor was safe from their re-issue and that both would run. The live path is the opposite: re-issuing against a still-queued predecessor *destroys* it, before it does any work. A seat that reasons from the old rationale will make the wrong call at exactly the moment it matters.
 
-   **Reading the receipt.** `superseded: null` is **not** a tell that the lane is clear — it is equally what you see when predecessors are merely queued, when the path was a continuity hop, and when there was nothing there at all. A **populated** block is one-directional positive evidence of an interrupt **attempt**, and the method decides what was attempted: `method: run_cancel` means a live bridge handle was cancelled; `method: pre_register_live_run` means the job was displaced **without** any process-stop claim. Neither a null nor a populated block licenses "the lane is now mine."
+   **The protection is weakest precisely when you most want to re-issue.** A backed-up queue makes admits slow; a slow admit looks like a lost enqueue; a re-issue then lands against a predecessor that has not been claimed yet, and **withdraws it**. Under backlog: **wait** — not to avoid a dual run, but to avoid killing a job that was about to start. A missing admit turn is not a lost enqueue.
+
+   **Reading the receipt.** `superseded: null` means no eligible predecessor was found. It no longer implies "the predecessor is queued and survives." A **populated** block names `method` ∈ `run_cancel` | `pre_register_live_run` | `queue_withdraw` — one-directional positive evidence of an interrupt **attempt** (`run_cancel` = live bridge handle cancelled; `pre_register_live_run` = displaced without process-stop; `queue_withdraw` = queued job withdrawn before claim). Neither a null nor a populated block licenses "the lane is now mine."
 
    **The detector that actually works is to read the thread, not the field** — a `status:admitted` turn for an *older* request arriving after a newer one is what caught the 7034 collision. No field on the enqueue receipt would have.
 
@@ -326,11 +328,13 @@ around the block rather than declaring one. Distinct from the synthesized ack an
 
 ## Interrupt / supersede (BINDING)
 
-**Rule.** **One live request per private thread — and know exactly what does and does not protect you.** A second `agent_bus.request` on a thread cancels a predecessor **only when that predecessor is already `claimed` by Auto** (in flight, nested SDK not finished) **and** the path is not a continuity hop. Predecessors still `queued` are **not** cancelled — they accumulate, and **both will run**, the second against a world the first has moved. Scope is **per-thread, not per-requester**: a foreign seat's *claimed* job on your thread is a supersede candidate; a foreign seat's *queued* job is not, for exactly the same reason your own queued job is not.
+**Rule.** **One live request per private thread — and know exactly what does and does not protect you.** A second `agent_bus.request` on a thread supersedes the *first eligible predecessor*, queued or claimed — it does not append. The candidate predicate prefers a claimed job that has not passed nested-SDK terminal, else the oldest queued peer. The claimed arm stops the process (`run_cancel`, or `pre_register_live_run` for displacement without process-stop); the queued arm withdraws the job before it ever claims (`queue_withdraw`, `terminal_status=displaced_queued`). In neither case do both run. Exceptions, both real: a continuity hop skips supersede entirely, and a claimed job already `nested_sdk_finished` is not a candidate. Scope is **per-thread, not per-requester**: a foreign seat's eligible job on your thread is a supersede candidate for the same reason yours is.
 
-**The protection is weakest precisely when you most want to re-issue.** A backed-up queue makes admits slow; a slow admit looks like a lost enqueue; a re-issue then lands against a predecessor that has not been claimed yet, so nothing is cancelled and you have two live jobs carrying the same intent. Under backlog: **wait.** A missing admit turn is not a lost enqueue.
+**The hazard inverted.** The old text told seats a queued predecessor was safe from their re-issue and that both would run. The live path is the opposite: re-issuing against a still-queued predecessor *destroys* it, before it does any work. A seat that reasons from the old rationale will make the wrong call at exactly the moment it matters.
 
-**Reading the receipt.** `superseded: null` is **not** a tell that the lane is clear — it is equally what you see when predecessors are merely queued, when the path was a continuity hop, and when there was nothing there at all. A **populated** block is one-directional positive evidence of an interrupt **attempt**, and the method decides what was attempted: `method: run_cancel` means a live bridge handle was cancelled; `method: pre_register_live_run` means the job was displaced **without** any process-stop claim. Neither a null nor a populated block licenses "the lane is now mine."
+**The protection is weakest precisely when you most want to re-issue.** A backed-up queue makes admits slow; a slow admit looks like a lost enqueue; a re-issue then lands against a predecessor that has not been claimed yet, and **withdraws it**. Under backlog: **wait** — not to avoid a dual run, but to avoid killing a job that was about to start. A missing admit turn is not a lost enqueue.
+
+**Reading the receipt.** `superseded: null` means no eligible predecessor was found. It no longer implies "the predecessor is queued and survives." A **populated** block names `method` ∈ `run_cancel` | `pre_register_live_run` | `queue_withdraw` — one-directional positive evidence of an interrupt **attempt** (`run_cancel` = live bridge handle cancelled; `pre_register_live_run` = displaced without process-stop; `queue_withdraw` = queued job withdrawn before claim). Neither a null nor a populated block licenses "the lane is now mine."
 
 **The detector that actually works is to read the thread, not the field** — a `status:admitted` turn for an *older* request arriving after a newer one is what caught the 7034 collision. No field on the enqueue receipt would have.
 
@@ -338,21 +342,22 @@ Parallel asks still need separate lanes, or one bundled DIRECTIVE. That imperati
 
 ### Provenance (source-read — NOT instance attestation)
 
-The mechanism is warranted by source at HEAD `a949a22c` (gate unchanged since intro `5e9ca722`, 2026-07-27):
+The mechanism is warranted by source-read at worktree HEAD `a2d003b0` (2026-08-13). Re-verify the loci below at current HEAD — a sha pin without a re-read is how this table went stale after `c6366d55` (queued arm, 2026-08-11). Claimed-gate intro remains `5e9ca722` (2026-07-27).
 
 | Claim | Locus |
 |---|---|
-| Gate is `claimed`, not pending | `cursor_auto/supersede.py:100-102` |
-| `claimed` predicate: thread_id + status + `not nested_sdk_finished` | `cursor_auto/queue.py:144-159` |
-| `run_cancel` requires live registry handle | `cursor_sdk_supersede.py:156-157` |
-| Enqueue wire + `superseded` field; hop skips supersede | `routes/cursor_auto.py:217-246` |
+| Candidate prefers claimed ∧ ¬`nested_sdk_finished`, else oldest queued | `cursor_auto/queue.py:198-215` |
+| Queued arm: `queue_withdraw` + `terminal_status=displaced_queued` | `cursor_auto/supersede.py:123-156` |
+| Claimed, no live handle: `pre_register_live_run` | `cursor_auto/supersede.py:168-181` |
+| `run_cancel` requires live registry handle | `cursor_sdk_supersede.py:156-158` |
+| Enqueue wire + `superseded` field; hop skips supersede | `routes/cursor_auto.py:311-328` |
 | Scope bind, per-thread | `supersede.py` module docstring |
-| No requester filter exists | absent at the predicate (`queue.py:144-159`) |
+| No requester filter exists | absent at the predicate (`queue.py:198-215`) |
 
 #### Illustrations (instances — subordinate to the mechanism, warranting nothing on their own)
 
-- **Fires:** `agent-bus:6655` t2005/2007/2009 — `"method": "run_cancel"`. `agent-bus:7034` t33 (2026-08-09 10:25:17Z) — `run_cancel`, `reason: same_thread_request_turn_33`, `error: null`, with `superseded_dispatch_id` present.
-- **Does not fire:** `agent-bus:6930` t282 — `"superseded": null`, `same_thread_pending: 2`, **`same_thread_claimed: 0`**. `agent-bus:7034` t12/t13 — both queued, both ran.
+- **Fires (claimed, current):** `agent-bus:6655` t2005/2007/2009 — `"method": "run_cancel"`. `agent-bus:7034` t33 (2026-08-09 10:25:17Z) — `run_cancel`, `reason: same_thread_request_turn_33`, `error: null`, with `superseded_dispatch_id` present.
+- **Pre-`c6366d55` gate (illustrations, not current mechanism):** `agent-bus:6930` t282 — `"superseded": null`, `same_thread_pending: 2`, **`same_thread_claimed: 0`**. `agent-bus:7034` t12/t13 — two sequential requests 69s apart. Dual-run claim (both queued, both ran) is **doctrine-internal, not independently re-observed** (limb 2 confirmed the two turns exist; did not pull `job_state`). Do not upgrade that to observed.
 
 **Why this heading is worded this way.** The shipped sentence became wrong because two instance attestations sat under a heading reading `Provenance (observed)` beneath a universally quantified rule. Two instances cannot earn a universal. The repair is that the universal now rests on the predicate itself, and the instances illustrate it.
 
@@ -362,13 +367,15 @@ private thread**. No extra tool, no body token, no `manage`, no GIW restart.
 **Silent cancellation.** When an interrupt does fire, it is **silent at the point of
 decision** — no error, no in-flight warning. Evidence lives in the enqueue payload's
 `superseded` block (e.g. `superseded_job_id`, `superseded_dispatch_id`,
-`method: run_cancel`, `reason: same_thread_request_turn_<N>`) and afterwards as a
+`method` ∈ `run_cancel` | `pre_register_live_run` | `queue_withdraw`, `reason: same_thread_request_turn_<N>`) and afterwards as a
 `status:superseded` terminal turn that reads like housekeeping. A seat that dispatches
 and moves on loses work with no error unless it reads those surfaces.
 
-**What you observe (when `run_cancel` / supersede fires).** The live nested run is
-cancelled; the dead job closes as **`status:superseded`**; the void episode's
-**git-tracked** writes revert to its admit baseline; your new DIRECTIVE opens with a
+**What you observe (when supersede fires).** Claimed arm: the live nested run is
+cancelled (`run_cancel`) or displaced without process-stop (`pre_register_live_run`);
+queued arm: the job is withdrawn before claim (`queue_withdraw`, `terminal_status=displaced_queued`).
+The dead job closes as **`status:superseded`**; the void episode's
+**git-tracked** writes revert to its admit baseline when it had any; your new DIRECTIVE opens with a
 `SUPERSEDE NOTICE` naming the void dispatch and any residue.
 
 **What you wait on.** A superseded episode never returns `status:done` — a
@@ -835,7 +842,8 @@ is not clearance. **Propagate scope:** `scope: propagation …` or a `## propaga
 
 **Blocked replies** carry `missed_tokens` + `fix_hint` naming the exact lines to add — fix the
 named lines and re-issue on the same thread (one live request per thread; a re-issue
-`run_cancel`s any in-flight job — see § Interrupt / supersede). **Answer contract** executes
+supersedes the first eligible predecessor — `run_cancel` / `pre_register_live_run` if claimed,
+`queue_withdraw` if still queued — see § Interrupt / supersede). **Answer contract** executes
 nothing in seat: `status:done` with empty content is
 structurally impossible; expect `disposition: declined` + `routing_hint` unless the body carries
 substantive answer content. **Wire-neutral authoring** (pending ratification): wire
