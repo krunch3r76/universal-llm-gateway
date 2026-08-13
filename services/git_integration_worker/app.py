@@ -74,6 +74,7 @@ from services.git_integration_worker.routes.triggers import router as triggers_r
 from services.git_integration_worker.startup_persistence import (
     schedule_startup_persistence,
 )
+from services.git_integration_worker.toolchain_path import apply_toolchain_path
 from services.git_integration_worker.trigger_service.loop import trigger_fire_loop
 from services.git_integration_worker.ulg_story_projector import ulg_story_projector_loop
 
@@ -101,6 +102,8 @@ def _resolve_version() -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    path_report = apply_toolchain_path()
+    app.state.toolchain_path = path_report
     register_uds_publisher(publish_lib_signal)
     register_cursor_sdk_event_publisher(publish_lib_signal)
     register_git_worker_drain_event_publisher(publish_lib_signal)
@@ -143,11 +146,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     supervise(app, "lane_b_sweeper", lambda: lane_b_sweeper_loop(app))
     logger.info(
         "git-integration-worker started: version=%s port=%d source_repo=%s "
-        "worker_id=%s startup_persistence=background",
+        "worker_id=%s startup_persistence=background "
+        "path_spawn_first=%s path_effective_first=%s path_corrected=%s",
         app.state.worker_version,
         cfg.port,
         cfg.source_repo,
         app.state.worker_id,
+        path_report.spawn_first,
+        path_report.effective_first,
+        path_report.corrected,
     )
     try:
         emit_git_worker_started(

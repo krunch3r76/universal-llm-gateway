@@ -21,6 +21,9 @@ from services.git_integration_worker.cursor_auto.execute_admission import (
     EXECUTE_CONTRACT,
     ExecuteAdmission,
 )
+from services.git_integration_worker.cursor_auto.packet_fields import (
+    packet_field_names,
+)
 from services.git_integration_worker.cursor_auto.propagate_admission import (
     PROPAGATE_CONTRACT,
     PropagateAdmission,
@@ -39,10 +42,12 @@ class FieldParityReport:
     consumed: int = 0
     unconsumed: int = 0
     unknown: int = 0
+    deferred: int = 0
     dropped_effect: tuple[str, ...] = ()
     dropped_descriptive: tuple[str, ...] = ()
     dropped_narrowing: tuple[str, ...] = ()
     unknown_tokens: tuple[str, ...] = ()
+    deferred_tokens: tuple[str, ...] = ()
     wire_dropped: tuple[str, ...] = ()
     normalized: tuple[str, ...] = ()
 
@@ -213,18 +218,26 @@ def compute_envelope_parity(
     bodies is unmeasured (§AC6.6). Off-vocabulary keys are counted **and**
     listed; ``unknown > 0`` moves status to ``WARN`` so an authored field the
     substrate does not consume cannot hide behind ``status=ok`` (arc 7190).
+    Recognised DIRECTIVE/operator-proxy prose that this envelope scope does
+    not bind is ``deferred`` — listed, not WARN (wallpaper on every well-formed
+    DIRECTIVE trained seats to ignore the line that catches a real drop).
     """
     authored_keys, authored_values, _ = authored_keys_for_parity(body)
     known_fields = envelope_field_names()
+    packet_fields = packet_field_names()
 
     dropped_effect: list[str] = []
     dropped_descriptive: list[str] = []
     unknown_tokens: list[str] = []
+    deferred_tokens: list[str] = []
     consumed = 0
 
     for key in sorted(authored_keys):
         if key not in known_fields:
-            unknown_tokens.append(key)
+            if key in packet_fields:
+                deferred_tokens.append(key)
+            else:
+                unknown_tokens.append(key)
             continue
         authored_val = _normalize_authored_value(authored_values.get(key))
         if not authored_val:
@@ -248,9 +261,11 @@ def compute_envelope_parity(
         consumed=consumed,
         unconsumed=len(dropped_effect),
         unknown=len(unknown_tokens),
+        deferred=len(deferred_tokens),
         dropped_effect=tuple(dropped_effect),
         dropped_descriptive=tuple(dropped_descriptive),
         unknown_tokens=tuple(unknown_tokens),
+        deferred_tokens=tuple(deferred_tokens),
         wire_dropped=wire_dropped,
     )
 
@@ -296,7 +311,7 @@ def render_field_parity_line(report: FieldParityReport) -> str:
     head = (
         f"field_parity: status={report.status} scope={report.scope} "
         f"consumed={report.consumed} unconsumed={report.unconsumed} "
-        f"unknown={report.unknown}"
+        f"unknown={report.unknown} deferred={report.deferred}"
     )
     lines = [head]
     if report.dropped_effect:
@@ -307,6 +322,8 @@ def render_field_parity_line(report: FieldParityReport) -> str:
         lines.append(f"  dropped_narrowing=[{', '.join(report.dropped_narrowing)}]")
     if report.unknown_tokens:
         lines.append(f"  unknown=[{', '.join(report.unknown_tokens)}]")
+    if report.deferred_tokens:
+        lines.append(f"  deferred=[{', '.join(report.deferred_tokens)}]")
     if report.wire_dropped:
         lines.append(f"  wire_dropped=[{', '.join(report.wire_dropped)}]")
     if report.normalized:

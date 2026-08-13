@@ -196,12 +196,46 @@ async def test_hop_parity_flags_effort_authored_as_prose() -> None:
     assert "desired_effort(authored=xhigh row=medium)" in posted[0]
 
 
-def test_envelope_parity_warns_on_unknown_prose_keys() -> None:
+def test_envelope_parity_defers_recognised_packet_keys() -> None:
     body = "TYPE: DIRECTIVE\narc: 7119\nauthority: operator\ndensity: judgment\n"
     report = compute_envelope_parity(body, {"desired_effort": "medium"})
+    assert report.status == "ok"
+    assert report.unknown == 0
+    assert report.unknown_tokens == ()
+    assert report.deferred == 3
+    assert report.deferred_tokens == ("arc", "authority", "density")
+
+
+def test_envelope_parity_warns_on_unrecognised_token() -> None:
+    body = "TYPE: DIRECTIVE\narcx: 7119\ndensiy: judgment\n"
+    report = compute_envelope_parity(body, {"desired_effort": "medium"})
     assert report.status == "WARN"
-    assert report.unknown == 3
-    assert report.unknown_tokens == ("arc", "authority", "density")
+    assert report.unknown == 2
+    assert report.unknown_tokens == ("arcx", "densiy")
+    assert report.deferred == 0
+
+
+def test_envelope_parity_defers_standard_directive_vocab() -> None:
+    body = (
+        "TYPE: DIRECTIVE\n"
+        "arc: 7190\n"
+        "assumed_state: manage is stale\n"
+        "authority: cursor-sdk\n"
+        "budget: <=3\n"
+        "density: dense\n"
+        "evidence_required: /proc/environ\n"
+        "files_expected: you determine\n"
+        "vision: check inheritance not ancestry\n"
+    )
+    report = compute_envelope_parity(body, {"desired_effort": "high"})
+    assert report.status == "ok"
+    assert report.unknown == 0
+    assert report.deferred == 8
+    rendered = render_field_parity_line(report)
+    assert "status=ok" in rendered
+    assert "deferred=8" in rendered
+    assert "unknown=0" in rendered
+    assert "deferred=[arc, assumed_state, authority, budget, density, " in rendered
 
 
 def test_envelope_parity_ok_when_prose_agrees_with_live_envelope() -> None:
