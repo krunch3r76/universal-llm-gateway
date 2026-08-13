@@ -21,6 +21,7 @@ from cdp_ask.followup_events import (
     cdp_ask_followup_reattach_attempt,
     cdp_ask_followup_reattach_result,
     cdp_ask_followup_unbound_capped,
+    cdp_ask_fresh_run_inheritance,
 )
 from cdp_ask.followup_events import (
     emit as emit_followup_event,
@@ -283,6 +284,9 @@ async def execute_followup(
     reattach_outcome: ReattachOutcome | None = None
     reattach_used = False
     lane_created = False
+    declared_target = bool(
+        (req.chat_url or "").strip() or (req.registration_id or "").strip()
+    )
 
     target, err, resolution_path, target_binding = await resolve_followup_target(
         req, store
@@ -392,6 +396,17 @@ async def execute_followup(
                 target_binding=binding,
             )
         )
+        if send_verified:
+            emit_followup_event(
+                cdp_ask_fresh_run_inheritance(
+                    registration_id=target.registration_id,
+                    resolution_path=resolution_path,
+                    target_binding=binding,
+                    reattach_used=reattach_used,
+                    declared=declared_target,
+                    purpose=req.purpose,
+                )
+            )
 
         resp = _paste_response(
             req=req,

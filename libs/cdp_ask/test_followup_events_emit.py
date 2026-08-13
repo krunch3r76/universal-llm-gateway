@@ -13,6 +13,7 @@ from cdp_ask.followup_events import (
     cdp_ask_attended_resolve,
     cdp_ask_followup_reattach_attempt,
     cdp_ask_followup_unbound_capped,
+    cdp_ask_fresh_run_inheritance,
     emit,
 )
 
@@ -134,6 +135,36 @@ def test_factory_still_builds_reattach_attempt() -> None:
         purpose=None,
     )
     assert event.signal == "cdp_ask.followup.reattach_attempt"
+
+
+def test_fresh_run_inheritance_factory_declared() -> None:
+    event = cdp_ask_fresh_run_inheritance(
+        registration_id="r1",
+        resolution_path="registration_id",
+        target_binding="explicit",
+        reattach_used=False,
+        declared=True,
+        purpose="operator-proxy",
+    )
+    assert event.signal == "cdp_ask.fresh_run.inheritance"
+    assert event.role == "observation"
+    assert event.payload["declared"] is True
+    assert event.payload["silent"] is False
+
+
+def test_fresh_run_inheritance_factory_silent() -> None:
+    event = cdp_ask_fresh_run_inheritance(
+        registration_id="r2",
+        resolution_path="resolver",
+        target_binding="resolver",
+        reattach_used=True,
+        declared=False,
+        purpose=None,
+    )
+    assert event.signal == "cdp_ask.fresh_run.inheritance"
+    assert event.role == "observation"
+    assert event.payload["declared"] is False
+    assert event.payload["silent"] is True
 
 
 def test_attended_and_unbound_factories() -> None:
