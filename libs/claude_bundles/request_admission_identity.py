@@ -1,8 +1,8 @@
-"""Server-side caller identity resolution at ``agent_bus.request`` admission.
+"""Server-side caller identity resolution and lease gate at ``agent_bus.request``.
 
-Resolves ``registration_id`` from the hop watch row when the caller omits
-``cse_registration_id``. Observation-only in this slice — admission refusal
-still keys off caller-supplied identity only (measure-before-you-fence).
+Resolves ``registration_id`` in bind order: caller wire → origin CSR → exactly-one
+operator-purpose active-work row on the lane → unresolvable. Watch-row
+``registration_id`` is lease SOT only — never promoted to admission identity.
 """
 
 from __future__ import annotations
@@ -12,21 +12,27 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from universal_protocol.errors import ProtocolError
+
 from claude_bundles import hop_seat_cutover
+from claude_bundles.hop_cadence_lease_events import emit_identity_bound, emit_lease_lost
 from claude_bundles.hop_seat_cutover import resolve_request_refusal
+from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
 
 IdentitySource = Literal[
     "caller_supplied",
-    "watch_row",
+    "origin_cse",
+    "single_seat_active_work",
     "unresolvable",
 ]
 
+_ACTIVE_STATUSES = frozenset({"pending", "running"})
 _COUNTERS: dict[str, int] = defaultdict(int)
 
 
 @dataclass(frozen=True)
 class AdmissionIdentity:
-    """Resolved seat identity for one request admission observation."""
+    """Resolved seat identity for one request admission bind."""
 
     registration_id: str | None
     source: IdentitySource
@@ -47,24 +53,77 @@ def _increment(name: str) -> None:
     _COUNTERS[name] += 1
 
 
+def load_active_work_snap() -> dict[str, Any]:
+    """Best-effort active-work snapshot for admission bind (lib-owned)."""
+    try:
+        from cdp_ask.client import CdpAskClient
+
+        snap = CdpAskClient()._request("GET", "/v1/project-ask/active-work")
+    except Exception:
+        return {}
+    return snap if isinstance(snap, dict) else {}
+
+
+def _resolve_origin_cse_registration(thread_id: str) -> str | None:
+    """Registration from CSR projection for the lane thread, when present."""
+    from claude_bundles.cdp_registry_store import load_sessions
+    from claude_bundles.cse_session_common import find_session_by_thread
+
+    sessions = load_sessions()
+    found = find_session_by_thread(sessions, thread_id)
+    if found is None:
+        return None
+    _, row = found
+    ids = row.get("ids") or {}
+    reg = str(ids.get("registration_id") or "").strip()
+    return reg or None
+
+
+def _single_seat_active_work_registration(
+    thread_id: str,
+    snap: dict[str, Any],
+) -> str | None:
+    """Bind from the lone operator-purpose stream on ``thread_id``, else None."""
+    matches: list[str] = []
+    for row in snap.get("rows") or []:
+        if not isinstance(row, dict):
+            continue
+        status = str(row.get("status") or "")
+        if status not in _ACTIVE_STATUSES:
+            continue
+        purpose = str(row.get("purpose") or "")
+        if purpose not in OPERATOR_PURPOSES:
+            continue
+        lane = str(row.get("parent_thread") or "").strip()
+        if lane != thread_id:
+            continue
+        reg = str(row.get("registration_id") or "").strip()
+        if reg:
+            matches.append(reg)
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
 def resolve_request_admission_identity(
     *,
     thread_id: str | None,
     caller_registration_id: str | None,
+    active_work_snap: dict[str, Any] | None = None,
     path: Path | None = None,
 ) -> AdmissionIdentity:
-    """Resolve caller registration_id without altering admission inputs."""
+    """Resolve caller registration_id for admission bind (never from watch row)."""
+    tid = (thread_id or "").strip()
+    watch_present = bool(tid and hop_seat_cutover.load_watches(path).get(tid))
+
     caller = (caller_registration_id or "").strip()
     if caller:
-        tid = (thread_id or "").strip()
-        watch_present = bool(tid and hop_seat_cutover.load_watches(path).get(tid))
         return AdmissionIdentity(
             registration_id=caller,
             source="caller_supplied",
             watch_present=watch_present,
         )
 
-    tid = (thread_id or "").strip()
     if not tid:
         return AdmissionIdentity(
             registration_id=None,
@@ -72,26 +131,115 @@ def resolve_request_admission_identity(
             watch_present=False,
         )
 
-    row = hop_seat_cutover.load_watches(path).get(tid)
-    if not row:
+    snap = active_work_snap if active_work_snap is not None else {}
+
+    origin = _resolve_origin_cse_registration(tid)
+    if origin:
         return AdmissionIdentity(
-            registration_id=None,
-            source="unresolvable",
-            watch_present=False,
+            registration_id=origin,
+            source="origin_cse",
+            watch_present=watch_present,
         )
 
-    reg = str(row.get("registration_id") or "").strip()
-    if reg:
+    single = _single_seat_active_work_registration(tid, snap)
+    if single:
         return AdmissionIdentity(
-            registration_id=reg,
-            source="watch_row",
-            watch_present=True,
+            registration_id=single,
+            source="single_seat_active_work",
+            watch_present=watch_present,
         )
+
     return AdmissionIdentity(
         registration_id=None,
         source="unresolvable",
-        watch_present=True,
+        watch_present=watch_present,
     )
+
+
+def _lease_lost_envelope(
+    *,
+    message: str,
+    thread_id: str,
+    identity: AdmissionIdentity,
+    data: dict[str, Any],
+) -> dict[str, Any]:
+    payload = {
+        "thread_id": thread_id,
+        "identity_source": identity.source,
+        **data,
+    }
+    return ProtocolError(
+        code="seat.lease_lost",
+        message=message,
+        source="rpc",
+        retryable=False,
+        data=payload,
+    ).to_dict()
+
+
+def gate_request_admission(
+    *,
+    thread_id: str | None,
+    caller_registration_id: str | None,
+    active_work_snap: dict[str, Any] | None = None,
+    path: Path | None = None,
+) -> dict[str, Any] | None:
+    """Return ``None`` to admit, or a ``seat.lease_lost`` ProtocolError envelope."""
+    tid = (thread_id or "").strip()
+    snap = active_work_snap if active_work_snap is not None else load_active_work_snap()
+    identity = resolve_request_admission_identity(
+        thread_id=tid or None,
+        caller_registration_id=caller_registration_id,
+        active_work_snap=snap,
+        path=path,
+    )
+    _increment(f"identity_source:{identity.source}")
+
+    if identity.watch_present:
+        _increment("watch_lane_requests")
+        emit_identity_bound(
+            thread_id=tid,
+            identity_source=identity.source,
+            watch_present=True,
+            registration_id=identity.registration_id,
+        )
+
+    if identity.watch_present and identity.source == "unresolvable":
+        _increment("unresolvable_on_watch_lane")
+        return _lease_lost_envelope(
+            message=(
+                "request: lane write authority requires a resolvable seat identity"
+            ),
+            thread_id=tid,
+            identity=identity,
+            data={"reason": "identity_unresolvable_on_watch_lane"},
+        )
+
+    bound = (identity.registration_id or "").strip()
+    if not bound:
+        return None
+
+    refusal = resolve_request_refusal(
+        thread_id=tid,
+        cse_registration_id=bound,
+        snap=snap,
+        path=path,
+        identity_source=identity.source,
+    )
+    if refusal is None:
+        _increment("admit")
+        return None
+
+    _increment("lease_lost")
+    data = refusal.get("data") if isinstance(refusal.get("data"), dict) else {}
+    emit_lease_lost(
+        thread_id=tid,
+        registration_id=bound,
+        identity_source=identity.source,
+        superseded_registration_id=str(data.get("superseded_registration_id") or ""),
+        successor_execution_id=data.get("successor_execution_id"),
+    )
+    return refusal
 
 
 def observe_identity_on_gate(
@@ -101,10 +249,11 @@ def observe_identity_on_gate(
     active_work_snap: dict[str, Any] | None,
     path: Path | None = None,
 ) -> AdmissionIdentity:
-    """Record identity source + counterfactual refusal for watch-bearing lanes."""
+    """Backward-compatible observation wrapper — delegates to bind + counterfactual."""
     identity = resolve_request_admission_identity(
         thread_id=thread_id,
         caller_registration_id=caller_registration_id,
+        active_work_snap=active_work_snap,
         path=path,
     )
     _increment(f"identity_source:{identity.source}")
@@ -123,6 +272,7 @@ def observe_identity_on_gate(
             cse_registration_id=counterfactual_reg,
             snap=active_work_snap,
             path=path,
+            identity_source=identity.source,
         )
         would_refuse = refusal is not None
 
@@ -131,26 +281,20 @@ def observe_identity_on_gate(
     else:
         _increment("counterfactual_would_admit")
 
-    try:
-        from mcp_events import record
-
-        record(
-            "mcp.agentbus.request.identity_observed",
-            thread=thread_id,
-            identity_source=identity.source,
-            watch_present=identity.watch_present,
-            registration_id=identity.registration_id,
-            counterfactual_would_refuse=would_refuse,
-        )
-    except Exception:
-        pass
-
+    emit_identity_bound(
+        thread_id=str(thread_id or ""),
+        identity_source=identity.source,
+        watch_present=True,
+        registration_id=identity.registration_id,
+    )
     return identity
 
 
 __all__ = [
     "AdmissionIdentity",
+    "gate_request_admission",
     "get_identity_counters",
+    "load_active_work_snap",
     "observe_identity_on_gate",
     "reset_identity_counters_for_tests",
     "resolve_request_admission_identity",

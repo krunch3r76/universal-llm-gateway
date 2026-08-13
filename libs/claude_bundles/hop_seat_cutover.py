@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from universal_logging import get_logger
+from universal_protocol.errors import ProtocolError
 
 from claude_bundles.hop_cadence_id_map import claim_join_keys
 
@@ -107,6 +109,51 @@ def successor_confirm_active(row: dict[str, Any], snap: dict[str, Any]) -> bool:
     return matched_key is not None
 
 
+def joinable_pending_succession(
+    row: dict[str, Any],
+    *,
+    now: float | None = None,
+) -> bool:
+    """True when a hop claim recorded joinable ``pending_succession`` state."""
+    if row.get("succession_status") == "revoked":
+        return False
+    pending = row.get("pending_succession")
+    if not isinstance(pending, dict):
+        return False
+    exec_id = str(pending.get("execution_id") or "").strip()
+    if not exec_id:
+        return False
+    ts = time.time() if now is None else now
+    claimed_at = pending.get("claimed_at")
+    if claimed_at is None:
+        return True
+    try:
+        age = ts - float(claimed_at)
+    except (TypeError, ValueError):
+        return True
+    max_age = float(pending.get("join_max_age_s") or 600.0)
+    return age <= max_age
+
+
+def lease_fence_active(
+    row: dict[str, Any],
+    snap: dict[str, Any],
+    *,
+    now: float | None = None,
+) -> bool:
+    """True when successor confirm or a joinable pending claim arms the fence."""
+    return successor_confirm_active(row, snap) or joinable_pending_succession(row, now=now)
+
+
+def clear_lease_fence_fields(row: dict[str, Any]) -> dict[str, Any]:
+    """Clear request-fence identity after CSE-terminal reclaim."""
+    updated = dict(row)
+    updated.pop("superseded_registration_id", None)
+    updated.pop("superseded_execution_id", None)
+    updated.pop("predecessor_verdict", None)
+    return updated
+
+
 def refuse_cadence_hop_for_live_seat(
     row: dict[str, Any],
     snap: dict[str, Any],
@@ -140,8 +187,9 @@ def resolve_request_refusal(
     cse_registration_id: str | None,
     snap: dict[str, Any],
     path: Path | None = None,
+    identity_source: str | None = None,
 ) -> dict[str, Any] | None:
-    """Return a 422 refusal payload for a superseded predecessor, else None."""
+    """Return a ``seat.lease_lost`` envelope for a superseded predecessor, else None."""
     tid = (thread_id or "").strip()
     reg_id = (cse_registration_id or "").strip()
     if not tid or not reg_id:
@@ -152,7 +200,7 @@ def resolve_request_refusal(
     superseded = str(row.get("superseded_registration_id") or "").strip()
     if not superseded or reg_id != superseded:
         return None
-    if not successor_confirm_active(row, snap):
+    if not lease_fence_active(row, snap):
         return None
     matched_key, _ = matched_active_work_row(row, snap)
     successor = str(row.get("successor_execution_id") or "").strip()
@@ -166,19 +214,26 @@ def resolve_request_refusal(
         stargate_keys.add(str(pending.get("execution_id") or "").strip())
     stargate_keys.discard("")
     satellite_id = matched_key if matched_key and matched_key not in stargate_keys else None
-    return {
-        "error": (
-            "request: lane write authority cut over to successor; "
-            f"registration {reg_id!r} is superseded"
-        ),
-        "reason": _REFUSE_REASON_REQUEST,
-        "status_code": 422,
+    data: dict[str, Any] = {
         "thread_id": tid,
         "superseded_registration_id": superseded,
         "successor_execution_id": successor or None,
         "successor_satellite_execution_id": satellite_id,
         "signal": "cdp_ask_active_work_membership",
+        "reason": _REFUSE_REASON_REQUEST,
     }
+    if identity_source:
+        data["identity_source"] = identity_source
+    return ProtocolError(
+        code="seat.lease_lost",
+        message=(
+            "request: lane write authority cut over to successor; "
+            f"registration {reg_id!r} is superseded"
+        ),
+        source="rpc",
+        retryable=False,
+        data=data,
+    ).to_dict()
 
 
 def effective_seated_at_after_hop(
@@ -208,7 +263,10 @@ def effective_seated_at_after_hop(
 
 
 __all__ = [
+    "clear_lease_fence_fields",
     "effective_seated_at_after_hop",
+    "joinable_pending_succession",
+    "lease_fence_active",
     "load_watches",
     "matched_active_work_row",
     "refuse_cadence_hop_for_live_seat",

@@ -2,6 +2,18 @@
 
 from __future__ import annotations
 
+from claude_bundles.hop_cadence_lease_events import (
+    emit_fence_started as emit_fence_started,
+)
+from claude_bundles.hop_cadence_lease_events import (
+    emit_identity_bound as emit_identity_bound,
+)
+from claude_bundles.hop_cadence_lease_events import (
+    emit_lease_lost as emit_lease_lost,
+)
+from claude_bundles.hop_cadence_lease_events import (
+    emit_lease_reclaimed as emit_lease_reclaimed,
+)
 from universal_event_bus import Event, event_factory
 from universal_logging import get_logger
 
@@ -410,6 +422,10 @@ def emit_cadence_refuse(
 __all__ = [
     "emit_binding_indeterminate",
     "emit_cadence_refuse",
+    "emit_fence_started",
+    "emit_identity_bound",
+    "emit_lease_lost",
+    "emit_lease_reclaimed",
     "emit_overlap",
     "emit_registration_advanced",
     "emit_release_deferred",

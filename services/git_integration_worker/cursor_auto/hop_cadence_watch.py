@@ -375,6 +375,19 @@ def mark_hop_fired(
         row["successor_execution_id"] = execution_id
     watches[thread_id] = row
     save_watches(watches, path)
+    superseded = str(row.get("superseded_registration_id") or "").strip()
+    if superseded and row.get("pending_succession"):
+        from claude_bundles.hop_cadence_lease_events import emit_fence_started
+
+        pending = row.get("pending_succession")
+        pending_dict = pending if isinstance(pending, dict) else {}
+        emit_fence_started(
+            thread_id=thread_id,
+            superseded_registration_id=superseded,
+            execution_id=execution_id,
+            satellite_execution_id=satellite_execution_id
+            or pending_dict.get("satellite_execution_id"),
+        )
     return True
 
 

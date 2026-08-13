@@ -141,13 +141,62 @@ def test_resolve_request_refusal_after_successor_confirm():
             snap=snap,
         )
     assert refusal is not None
-    assert refusal["reason"] == "superseded_predecessor_refuse_at_request"
-    assert refusal["successor_execution_id"] == "stargate-uuid"
-    assert refusal["successor_satellite_execution_id"] == "satellite-live"
-    assert refusal["signal"] == "cdp_ask_active_work_membership"
+    assert refusal["code"] == "seat.lease_lost"
+    data = refusal["data"]
+    assert data["reason"] == "superseded_predecessor_refuse_at_request"
+    assert data["successor_execution_id"] == "stargate-uuid"
+    assert data["successor_satellite_execution_id"] == "satellite-live"
+    assert data["signal"] == "cdp_ask_active_work_membership"
 
 
-def test_resolve_request_refusal_envelope_additive_fields():
+def test_i4_predecessor_refused_15s_after_confirm_holder_readmits():
+    """I4 verbatim AC: bound predecessor refused; holder re-issue admits empty wire."""
+    row = {
+        "registration_id": "reg-new",
+        "superseded_registration_id": "reg-old",
+        "successor_execution_id": "stargate-uuid",
+        "pending_satellite_execution_id": "satellite-live",
+        "succession_confirmed_at": time.time() - 15.0,
+    }
+    snap = _snap(registration_id="reg-new", execution_id="satellite-live")
+    with patch(
+        "claude_bundles.hop_seat_cutover.load_watches",
+        return_value={"7188": row},
+    ), patch(
+        "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+        return_value=None,
+    ):
+        from claude_bundles.request_admission_identity import gate_request_admission
+
+        predecessor = gate_request_admission(
+            thread_id="7188",
+            caller_registration_id="reg-old",
+            active_work_snap=snap,
+        )
+        assert predecessor is not None
+        assert predecessor["code"] == "seat.lease_lost"
+        for key in ("code", "message", "source", "retryable", "data"):
+            assert key in predecessor
+
+        holder = gate_request_admission(
+            thread_id="7188",
+            caller_registration_id=None,
+            active_work_snap={
+                "rows": [
+                    {
+                        "execution_id": "satellite-live",
+                        "registration_id": "reg-new",
+                        "parent_thread": "7188",
+                        "purpose": "operator-proxy",
+                        "status": "running",
+                    }
+                ]
+            },
+        )
+        assert holder is None
+
+
+def test_resolve_request_refusal_envelope_protocol_error_shape():
     row = {
         "superseded_registration_id": "reg-old",
         "successor_execution_id": "exec-new",
@@ -163,19 +212,16 @@ def test_resolve_request_refusal_envelope_additive_fields():
             snap=snap,
         )
     assert refusal is not None
-    for key in (
-        "error",
-        "reason",
-        "status_code",
-        "thread_id",
-        "superseded_registration_id",
-        "successor_execution_id",
-        "signal",
-    ):
+    for key in ("code", "message", "source", "retryable", "data"):
         assert key in refusal
-    assert refusal["status_code"] == 422
-    assert "successor_satellite_execution_id" in refusal
-    assert refusal["signal"] == "cdp_ask_active_work_membership"
+    assert refusal["code"] == "seat.lease_lost"
+    assert refusal["source"] == "rpc"
+    assert refusal["retryable"] is False
+    data = refusal["data"]
+    assert data["thread_id"] == "6885"
+    assert data["superseded_registration_id"] == "reg-old"
+    assert data["successor_execution_id"] == "exec-new"
+    assert data["signal"] == "cdp_ask_active_work_membership"
 
 
 def test_build_cadence_hop_body_superseded_registration_id_line():

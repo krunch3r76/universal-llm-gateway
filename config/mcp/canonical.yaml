@@ -1990,6 +1990,12 @@ tools:
       escalation:
         type: string
         description: Optional CDP escalation leg — cdp/opus-5 | cdp/fable only; absent/empty ⇒ no CDP leg; orthogonal to desired_model.
+      cse_chat_url:
+        type: string
+        description: Optional CSE chat_url for identity capture on operator-proxy lanes.
+      cse_registration_id:
+        type: string
+        description: Optional caller CSE registration id; server bind is authoritative when omitted.
       contract:
         type: string
         description: answer | confer | investigate | implement | verify | execute | propagate | seed | recon (default answer).
@@ -2059,6 +2065,12 @@ tools:
       escalation:
         type: string
         description: Optional CDP escalation leg — cdp/opus-5 | cdp/fable only; absent/empty ⇒ no CDP leg; orthogonal to desired_model.
+      cse_chat_url:
+        type: string
+        description: Optional CSE chat_url for identity capture on operator-proxy lanes.
+      cse_registration_id:
+        type: string
+        description: Optional caller CSE registration id; server bind is authoritative when omitted.
       contract:
         type: string
         description: answer | confer | investigate | implement | verify | execute | propagate | seed | recon (default answer).

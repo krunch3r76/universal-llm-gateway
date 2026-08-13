@@ -20,6 +20,7 @@ from claude_bundles.hop_cadence_id_map import (
     submitted_updates_claim,
 )
 from claude_bundles.hop_seat_cutover import (
+    clear_lease_fence_fields,
     matched_active_work_row,
     successor_confirm_active,
 )
@@ -27,6 +28,7 @@ from transport_utils import EVENTS_QUERY_SOCK, make_sync_client
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_auto.hop_cadence_events import (
+    emit_lease_reclaimed,
     emit_registration_advanced,
     emit_revoke_breaker,
     emit_seat_rebound,
@@ -451,12 +453,35 @@ def apply_release_outcome_to_row(
     """Update watch row obligation fields from a release attempt outcome."""
     action = outcome.get("action")
     if action == "terminalized":
-        return clear_release_obligation(row, terminal_status=_RELEASE_OBLIGATION_RELEASED)
+        updated = clear_release_obligation(row, terminal_status=_RELEASE_OBLIGATION_RELEASED)
+        return _clear_fence_after_reclaim(updated, handle, action="terminalized")
     if action == "already_terminal":
-        return clear_release_obligation(row, terminal_status=_RELEASE_OBLIGATION_RELEASED)
+        updated = clear_release_obligation(row, terminal_status=_RELEASE_OBLIGATION_RELEASED)
+        return _clear_fence_after_reclaim(updated, handle, action="already_terminal")
     if action in {"deferred", "error"}:
         return persist_release_obligation(row, handle, outcome, now=now)
     return row
+
+
+def _clear_fence_after_reclaim(
+    row: dict[str, Any],
+    handle: PredecessorHandle,
+    *,
+    action: str,
+) -> dict[str, Any]:
+    """Clear request-fence fields and emit lease_reclaimed on CSE-terminal release."""
+    superseded = str(row.get("superseded_registration_id") or handle.registration_id or "")
+    updated = clear_lease_fence_fields(row)
+    thread_id = str(row.get("thread_id") or "")
+    exec_id = str(handle.execution_id or "")
+    if superseded and thread_id and exec_id:
+        emit_lease_reclaimed(
+            thread_id=thread_id,
+            superseded_registration_id=superseded,
+            execution_id=exec_id,
+            action=action,
+        )
+    return updated
 
 
 def _call_release(
