@@ -41,14 +41,18 @@ longer has to borrow `files_expected: none` to clear the scope gate. `vision:`
 is still required for `implement` / `investigate`. A blocked reply carries
 `missed_tokens` plus a `fix_hint` naming the exact lines to add: fix the named
 lines and re-issue on the same thread. **One live request per private thread** —
-a second `agent_bus.request` cancels a predecessor **only when that predecessor
-is already `claimed`** (and the path is not a continuity hop). Queued predecessors
-are **not** cancelled — both may run. The protection is weakest under backlog
-(slow admit → re-issue against still-queued → both run): **wait**; a missing admit
-is not a lost enqueue. `superseded: null` is not "lane clear"; a populated block
-is an interrupt **attempt** (`run_cancel` = stop; `pre_register_live_run` =
-displacement without process-stop). Parallel asks need separate lanes or one
-bundled DIRECTIVE. See `cdp-operator-proxy` § Interrupt / supersede.
+a second `agent_bus.request` supersedes the *first eligible predecessor*, queued
+or claimed — it does not append (`run_cancel` / `pre_register_live_run` for
+claimed; `queue_withdraw` for queued). Both do not run. Continuity hops skip;
+`nested_sdk_finished` claimed jobs are not candidates. **The hazard inverted:**
+the old text said a queued predecessor was safe and both would run; re-issuing
+against a still-queued predecessor *destroys* it before it starts. Under backlog:
+**wait** — not to avoid a dual run, but to avoid killing a job about to start.
+`superseded: null` means no eligible predecessor was found; it no longer implies
+the predecessor is queued and survives. A populated block names `method` ∈
+`run_cancel` | `pre_register_live_run` | `queue_withdraw`. Parallel asks need
+separate lanes or one bundled DIRECTIVE. See `cdp-operator-proxy` § Interrupt /
+supersede.
 
 Optional on any DIRECTIVE: `deadline: +15m` (or an ISO-8601 stamp) — a job still
 queued past it terminates `status:failed reason=expired` instead of running stale
@@ -189,8 +193,9 @@ _DEGRADE_LADDER = """\
 - `no-auto-handler` — the turn was written but nothing will act on it; the ask is
   parked. Re-`request` after liveness returns, or `send` + park. Never long-wait.
 - `status:blocked (reason)` — authoring defect; fix per `missed_tokens` +
-  `fix_hint` and re-issue on the same thread (same-thread re-issue supersedes a
-  **claimed** in-flight job only — queued peers are not cancelled; see § Interrupt /
+  `fix_hint` and re-issue on the same thread (same-thread re-issue supersedes the
+  first eligible predecessor, queued or claimed — `queue_withdraw` destroys a
+  still-queued peer before it claims; see § Interrupt /
   supersede).
 - `status:needs-attended (reason)` — surface the reason verbatim to the operator;
   Auto refuses to run it unattended.
