@@ -1,0 +1,63 @@
+---
+description: Read-side lean context for the cursor-sdk seat — Explore-first recon when loci are unknown. Dispatch ladder, CDP trigger, and model gates are lead duties, pruned from this seat.
+alwaysApply: true
+rule_category: workflow
+apply_tier: required_gate
+trigger_match_terms:
+  - lean-context-dispatch-first
+  - lean context
+  - explore
+  - Explore subagent
+  - recon
+  - loci unknown
+---
+# Lean Context — cursor-sdk seat
+
+**Seat wall.** The IDE rule is pruned from this dispatch HOME. You are the **compose
+leg** of a bind-then-compose split: the dispatch ladder, the CDP escalation trigger,
+the premium-model inform-then-proceed row, and the non-primary model gate are all
+**lead** duties. You do not choose a seat for this work — you are it.
+
+What survives for you is the **read** side.
+
+## Invariant
+
+`loci_unknown ⇒ Explore ≺ speculative_grep_rounds`
+
+## Explore-first (autonomous — no announce, no gate)
+
+**Explore ≡ `Task(subagent_type="explore")`** — a read-only subagent on a fast model
+that returns a summary. It is not a standalone tool, and in-seat `Grep`/`Read` is not
+Explore.
+
+Fire it when **ANY**:
+
+- you cannot name the file(s) that answer the question
+- the question spans **≥3 files** or an unfamiliar subsystem
+- you are about to run a **2nd speculative** `Grep`/`Glob` round to locate something
+- **≥2 independent** recon questions — launch them in **parallel** (one message)
+
+**Stay in-seat when:** loci known (path in hand ∨ one grep away) · you need file
+contents verbatim because you are about to edit them · latency-sensitive tight-loop
+debugging.
+
+Omit `model=` — Explore's own default is the workflow-primary; an explicit slug
+re-enters a gate that is not yours to clear.
+
+## Verification budget
+
+Explore returns a **summary**, not evidence. Before you edit on its say-so, read the
+named loci yourself. A subagent's file/line claim is a pointer to verify, not a fact
+to inherit — `presence-discipline` P3 still binds on your closeout.
+
+## Nested dispatch
+
+Packet-authorized nested `team_dispatch` stays available for genuinely separable
+mechanical remainder, with `nest_under` set to your own dispatch when the parent
+holds the gate. Absent packet authorization, do the work.
+
+## Composes with
+
+- `interagent-posture_ulg` — closeout register
+- `operator-request-front-door_ulg` — soldier mode; no human ack
+- `presence-discipline_ulg` — evidence before any done claim

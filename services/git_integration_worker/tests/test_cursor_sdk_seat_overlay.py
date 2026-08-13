@@ -39,6 +39,9 @@ def _fake_dispatch_cursor_dir(tmp_path: Path) -> Path:
         ("operator-request-front-door_ulg.mdc", "ask Kaywan\n"),
         ("judgment-escalation-ladder_ulg.mdc", "consult human operator\n"),
         ("cdp-operator-proxy_ulg.mdc", "Kaywan explicitly declares\n"),
+        ("lean-context-dispatch-first_ulg.mdc", "CDP escalation ladder\n"),
+        ("restart-drain-discipline_ulg.mdc", "same-window force classifier\n"),
+        ("skill-surface_ulg.mdc", "claude.ai Customize upload\n"),
     ):
         (plugin_root / "rules" / name).write_text(body, encoding="utf-8")
     for relpath in LEAD_ONLY_PLUGIN_PATHS:
@@ -64,6 +67,15 @@ def _fake_overlay(tmp_path: Path) -> Path:
     )
     (root / "rules" / "judgment-escalation-ladder_ulg.mdc").write_text(
         "status: blocked ESCALATE\n", encoding="utf-8"
+    )
+    (root / "rules" / "lean-context-dispatch-first_ulg.mdc").write_text(
+        "compose leg — Explore-first\n", encoding="utf-8"
+    )
+    (root / "rules" / "restart-drain-discipline_ulg.mdc").write_text(
+        "landed is not live\n", encoding="utf-8"
+    )
+    (root / "rules" / "skill-surface_ulg.mdc").write_text(
+        "install-ecosystem-plugin.sh in this dispatch\n", encoding="utf-8"
     )
     return root
 
@@ -91,6 +103,23 @@ def test_human_register_pruned_and_interagent_grafted(tmp_path: Path) -> None:
         plugin_root / "rules" / "judgment-escalation-ladder_ulg.mdc"
     ).read_text(encoding="utf-8")
     assert not (plugin_root / "rules" / "cdp-operator-proxy_ulg.mdc").exists()
+
+    # Mixed rules: lead doctrine gone, the executor-actionable slice grafted back.
+    lean = (plugin_root / "rules" / "lean-context-dispatch-first_ulg.mdc").read_text(
+        encoding="utf-8"
+    )
+    assert "Explore-first" in lean
+    assert "CDP escalation ladder" not in lean
+    drain = (plugin_root / "rules" / "restart-drain-discipline_ulg.mdc").read_text(
+        encoding="utf-8"
+    )
+    assert "landed is not live" in drain
+    assert "same-window force classifier" not in drain
+    surface = (plugin_root / "rules" / "skill-surface_ulg.mdc").read_text(
+        encoding="utf-8"
+    )
+    assert "install-ecosystem-plugin.sh" in surface
+    assert "Customize upload" not in surface
 
     # Lead-only doctrine costs a re-send per agent step and governs nothing here.
     for relpath in LEAD_ONLY_PLUGIN_PATHS:
@@ -160,3 +189,21 @@ def test_repo_overlay_sot_is_present_and_named() -> None:
     assert "status: blocked" in ladder
     assert "ESCALATE" in ladder
     assert "Cowork Ask" not in ladder
+
+    # Thinned mixed rules keep the executor-actionable slice and shed lead doctrine.
+    lean = (root / "rules" / "lean-context-dispatch-first_ulg.mdc").read_text(
+        encoding="utf-8"
+    )
+    assert 'subagent_type="explore"' in lean
+    assert "cdp/opus-5" not in lean
+    drain = (root / "rules" / "restart-drain-discipline_ulg.mdc").read_text(
+        encoding="utf-8"
+    )
+    assert "restart_intent_id" in drain
+    assert "Landed ≠ live" in drain
+    assert "caller_must_exit" not in drain  # lead-envelope vocabulary stays out
+
+    # The one surviving skill-surface duty: SoT edit implies install in the same run.
+    surface = (root / "rules" / "skill-surface_ulg.mdc").read_text(encoding="utf-8")
+    assert "install-ecosystem-plugin.sh" in surface
+    assert "Reload Window" not in surface.split("## Invariant", 1)[1]

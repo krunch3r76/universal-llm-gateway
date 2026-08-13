@@ -48,6 +48,12 @@ PRUNED_PLUGIN_PATHS: tuple[Path, ...] = (
     Path("rules") / "operator-request-front-door_ulg.mdc",
     Path("rules") / "judgment-escalation-ladder_ulg.mdc",
     Path("rules") / "cdp-operator-proxy_ulg.mdc",  # catalog — not this seat; prune only
+    # Mixed rules: each carries a slice the seat does act on (Explore-first recon;
+    # landed≠live + drain-gated restart) wrapped in lead doctrine it cannot. Thinned
+    # seat variants are grafted back rather than deleting the whole rule.
+    Path("rules") / "lean-context-dispatch-first_ulg.mdc",
+    Path("rules") / "restart-drain-discipline_ulg.mdc",
+    Path("rules") / "skill-surface_ulg.mdc",
 )
 # Subset of PRUNED with no same-name graft — must be absent after overlay.
 PRUNE_ONLY_PLUGIN_PATHS: tuple[Path, ...] = (
@@ -59,8 +65,13 @@ PRUNE_ONLY_PLUGIN_PATHS: tuple[Path, ...] = (
 # Lead/orchestrator-only rules pruned for context economy, not register correctness.
 # Each is always-applied, so the IDE copy re-sends it on every agent step; a headless
 # seat never performs the behavior any of them govern. Measured 2026-08-09: the
-# resident prime is ~81K tokens per step and these seven are ~6.6K of it, charged
+# resident prime is ~81K tokens per step and the first seven are ~6.6K of it, charged
 # across ~3.5K steps/day. Absence here is tolerated — a missing file is a no-op.
+#
+# The prune floor is behavioral, not byte-ranked: rules a headless seat *does* act on
+# stay resident even when large (`python-universal-venv`, `commit-and-git-scope`,
+# `presence-discipline`, `shared-checkout-housekeeping`). A rule qualifies here only
+# when the seat structurally cannot perform what it governs.
 LEAD_ONLY_PLUGIN_PATHS: tuple[Path, ...] = (
     Path("rules") / "expand-growth-loop_ulg.mdc",
     Path("rules") / "dispatch-in-flight-supremacy_ulg.mdc",

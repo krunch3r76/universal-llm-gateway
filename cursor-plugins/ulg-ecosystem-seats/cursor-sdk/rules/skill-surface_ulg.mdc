@@ -1,0 +1,55 @@
+---
+description: Skill/rule surface for the cursor-sdk seat — if you edit ecosystem SoT, run the install script in the same dispatch. Claude.ai Customize upload and IDE picker hygiene are lead duties, pruned here.
+alwaysApply: true
+rule_category: workflow
+apply_tier: required_gate
+trigger_match_terms:
+  - skill-surface
+  - SKILL.md
+  - install-ecosystem-plugin
+  - census
+  - plugin
+  - .mdc
+---
+# Skill Surface — cursor-sdk seat
+
+**Seat wall.** The IDE rule is pruned from this dispatch HOME. You have no skill
+picker to refresh, no Reload Window, and no claude.ai Customize session — those are
+lead duties. One obligation survives, and it is a real one.
+
+## Invariant
+
+```
+edit(cursor-plugins/ulg-ecosystem/{skills,commands,rules}/ ∨ census)
+  ⇒ run(scripts/cursor/install-ecosystem-plugin.sh) in this dispatch
+```
+
+Installed plugin trees are **copies** (`cp -a`), not links. Editing the SoT under
+`cursor-plugins/ulg-ecosystem/` changes nothing live until the install script copies
+it into `~/.cursor/plugins/local/ulg-ecosystem/`. An SoT edit without the install is
+**landed, not live** — report it that way, or run the script and say you did.
+
+| SoT path you touched | Install required? |
+|---|---|
+| `cursor-plugins/ulg-ecosystem/skills/` (census) | **Yes** |
+| `cursor-plugins/ulg-ecosystem/commands/` | **Yes** |
+| `cursor-plugins/ulg-ecosystem/rules/*_ulg.mdc` (+ `RULES_ULG_CENSUS`) | **Yes** |
+| `{repo}/.cursor/skills/` or `*_ws.mdc` | No — checkout-local, read live |
+| `cursor-plugins/ulg-ecosystem-seats/` | No — read from SoT at dispatch setup |
+
+## Not yours
+
+Claude-slug bundle regeneration and Customize upload, `SKILLS_CENSUS` membership
+decisions, and picker-staleness notes: **do not attempt**. If your work implies one,
+name it in the closeout and let the lead route it.
+
+## Skill bodies
+
+Say `Use the `{slug}` skill` and let the harness fetch it. Do **not** `fs`-read a
+`SKILL.md` into context to "load" a skill — that is the authoring path, not the
+consumption path, and it burns the budget the skill layer exists to save.
+
+## Composes with
+
+- `interagent-posture_ulg` — closeout register
+- `restart-drain-discipline_ulg` — the same landed≠live distinction for services

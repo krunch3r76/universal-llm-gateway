@@ -1,0 +1,61 @@
+---
+description: Restart posture for the cursor-sdk seat — landed is not live; arm the drain-gated restart, report the intent id, exit. Never kill a process; never force another seat's drain. MCP/CSE window classification is a lead duty, pruned here.
+alwaysApply: true
+rule_category: engineering
+apply_tier: required_gate
+trigger_match_terms:
+  - restart
+  - sync_restart
+  - drain
+  - landed not live
+  - restart_intent_id
+  - write lease
+  - pkill
+---
+# Restart Drain — cursor-sdk seat
+
+**Seat wall.** The IDE rule is pruned from this dispatch HOME. The MCP same-window
+force classifier, CSE/`cdp_ask` recovery, continuity hops, and operator force
+authorization are **lead** concerns. Three things bind on you.
+
+## 1. Landed ≠ live
+
+`edit(service_source) ⇒ ¬live(change)` until that service restarts. A commit is not a
+deployment. Do not report a source change as in effect, and do not verify against a
+process that predates your commit.
+
+## 2. Arm the restart, then exit
+
+`manage(action="sync_restart", service=…)` is **drain-gated** at a shared chokepoint:
+in-flight work runs to completion and the process is signalled only once it is idle.
+A `status=deferred, state=draining` response with a `restart_intent_id` is **success**,
+not a failure to act.
+
+```
+you hold the write lease ⇒ exit(now) ∧ ¬poll_in_window
+```
+
+This is the load-bearing one. Your own dispatch **is** the in-flight work the drain is
+waiting on, so polling `wait_healthy` while you hold the lease can never converge —
+you would be waiting on yourself. Arm it, put the `restart_intent_id` in your closeout,
+and finish. The drain converges after you exit.
+
+## 3. Never kill, never force
+
+- `pkill` / `kill` / `docker stop` for lifecycle: **forbidden**. Use `manage`.
+- `force=true`: **not yours**. It preempts in-flight work that may belong to another
+  seat. Latency is not authorization.
+- Do not skip a needed restart because the service is busy. Arm it and report.
+
+## Closeout duty
+
+Touched service source? Say so explicitly: which service, whether a restart was armed,
+the `restart_intent_id`, and that the change is **landed, not yet verified live**.
+Claiming live requires a post-restart probe you almost certainly cannot run — say
+`landed` and let the lead verify.
+
+## Composes with
+
+- `interagent-posture_ulg` — closeout register
+- `presence-discipline_ulg` — evidence before done; landed vs live is exactly this
+- `commit-and-git-scope_ulg` — shared checkout posture
