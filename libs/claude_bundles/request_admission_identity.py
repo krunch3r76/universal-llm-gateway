@@ -12,12 +12,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from universal_protocol.errors import ProtocolError
+from universal_logging import get_logger
 
 from claude_bundles import hop_seat_cutover
 from claude_bundles.hop_cadence_lease_events import emit_identity_bound, emit_lease_lost
 from claude_bundles.hop_seat_cutover import resolve_request_refusal
 from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
+
+logger = get_logger(__name__)
 
 IdentitySource = Literal[
     "caller_supplied",
@@ -54,14 +56,25 @@ def _increment(name: str) -> None:
 
 
 def load_active_work_snap() -> dict[str, Any]:
-    """Best-effort active-work snapshot for admission bind (lib-owned)."""
+    """Best-effort active-work snapshot for admission bind (lib-owned).
+
+    Fail-open: GET errors and non-dict payloads still return ``{}`` so the
+    gate admits. Failed loads increment ``active_work_snap_load_failed`` and
+    log a warning so they are distinguishable from a successful empty snap.
+    """
     try:
         from cdp_ask.client import CdpAskClient
 
         snap = CdpAskClient()._request("GET", "/v1/project-ask/active-work")
-    except Exception:
+    except Exception as exc:
+        _increment("active_work_snap_load_failed")
+        logger.warning("active-work snap load failed err=%s", exc)
         return {}
-    return snap if isinstance(snap, dict) else {}
+    if not isinstance(snap, dict):
+        _increment("active_work_snap_load_failed")
+        logger.warning("active-work snap load non-dict type=%s", type(snap).__name__)
+        return {}
+    return snap
 
 
 def _resolve_origin_cse_registration(thread_id: str) -> str | None:
@@ -156,27 +169,6 @@ def resolve_request_admission_identity(
     )
 
 
-def _lease_lost_envelope(
-    *,
-    message: str,
-    thread_id: str,
-    identity: AdmissionIdentity,
-    data: dict[str, Any],
-) -> dict[str, Any]:
-    payload = {
-        "thread_id": thread_id,
-        "identity_source": identity.source,
-        **data,
-    }
-    return ProtocolError(
-        code="seat.lease_lost",
-        message=message,
-        source="rpc",
-        retryable=False,
-        data=payload,
-    ).to_dict()
-
-
 def gate_request_admission(
     *,
     thread_id: str | None,
@@ -184,7 +176,13 @@ def gate_request_admission(
     active_work_snap: dict[str, Any] | None = None,
     path: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Return ``None`` to admit, or a ``seat.lease_lost`` ProtocolError envelope."""
+    """Return ``None`` to admit, or a ``seat.lease_lost`` ProtocolError envelope.
+
+    Unresolvable identity on a watched lane fail-opens: the branch counts
+    ``unresolvable_on_watch_lane`` and admits. Spec Step 2 default-deny stays
+    parked until a holder-admit-with-empty-wire is observed on a watch-bearing
+    lane.
+    """
     tid = (thread_id or "").strip()
     snap = active_work_snap if active_work_snap is not None else load_active_work_snap()
     identity = resolve_request_admission_identity(
@@ -206,14 +204,7 @@ def gate_request_admission(
 
     if identity.watch_present and identity.source == "unresolvable":
         _increment("unresolvable_on_watch_lane")
-        return _lease_lost_envelope(
-            message=(
-                "request: lane write authority requires a resolvable seat identity"
-            ),
-            thread_id=tid,
-            identity=identity,
-            data={"reason": "identity_unresolvable_on_watch_lane"},
-        )
+        return None
 
     bound = (identity.registration_id or "").strip()
     if not bound:

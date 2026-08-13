@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from claude_bundles.request_admission_identity import (
     gate_request_admission,
     get_identity_counters,
+    load_active_work_snap,
     observe_identity_on_gate,
     reset_identity_counters_for_tests,
     resolve_request_admission_identity,
@@ -36,12 +37,15 @@ def test_resolve_caller_supplied_wins_over_watch():
 
 def test_resolve_from_origin_cse_when_caller_omits_registration():
     snap = {"rows": []}
-    with patch(
-        "claude_bundles.hop_seat_cutover.load_watches",
-        return_value={"7188": {"registration_id": "5420b367-watch"}},
-    ), patch(
-        "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
-        return_value="5420b367-origin",
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={"7188": {"registration_id": "5420b367-watch"}},
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value="5420b367-origin",
+        ),
     ):
         identity = resolve_request_admission_identity(
             thread_id="7188",
@@ -65,12 +69,15 @@ def test_resolve_single_seat_active_work_when_empty_wire():
             }
         ]
     }
-    with patch(
-        "claude_bundles.hop_seat_cutover.load_watches",
-        return_value={"7188": {"registration_id": "5420b367-watch"}},
-    ), patch(
-        "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
-        return_value=None,
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={"7188": {"registration_id": "5420b367-watch"}},
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value=None,
+        ),
     ):
         identity = resolve_request_admission_identity(
             thread_id="7188",
@@ -82,12 +89,15 @@ def test_resolve_single_seat_active_work_when_empty_wire():
 
 
 def test_unresolvable_on_watch_lane_without_bind_sources():
-    with patch(
-        "claude_bundles.hop_seat_cutover.load_watches",
-        return_value={"7188": {"thread_id": "7188"}},
-    ), patch(
-        "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
-        return_value=None,
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={"7188": {"thread_id": "7188"}},
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value=None,
+        ),
     ):
         identity = resolve_request_admission_identity(
             thread_id="7188",
@@ -100,25 +110,45 @@ def test_unresolvable_on_watch_lane_without_bind_sources():
 
 
 def test_gate_refuses_unresolvable_on_watched_lane():
-    with patch(
-        "claude_bundles.hop_seat_cutover.load_watches",
-        return_value={"7188": {"thread_id": "7188"}},
-    ), patch(
-        "claude_bundles.request_admission_identity.load_active_work_snap",
-        return_value={"rows": []},
-    ), patch(
-        "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
-        return_value=None,
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={"7188": {"thread_id": "7188"}},
+        ),
+        patch(
+            "claude_bundles.request_admission_identity.load_active_work_snap",
+            return_value={"rows": []},
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value=None,
+        ),
     ):
         refusal = gate_request_admission(
             thread_id="7188",
             caller_registration_id=None,
         )
-    assert refusal is not None
-    assert refusal["code"] == "seat.lease_lost"
-    assert refusal["source"] == "rpc"
-    assert refusal["retryable"] is False
-    assert refusal["data"]["identity_source"] == "unresolvable"
+    assert refusal is None
+    counters = get_identity_counters()
+    assert counters["unresolvable_on_watch_lane"] == 1
+
+
+def test_load_active_work_snap_failed_get_is_distinguishable_from_empty():
+    with patch(
+        "cdp_ask.client.CdpAskClient",
+        side_effect=RuntimeError("active-work unavailable"),
+    ):
+        failed = load_active_work_snap()
+    assert failed == {}
+    assert get_identity_counters()["active_work_snap_load_failed"] == 1
+
+    reset_identity_counters_for_tests()
+    mock_client = MagicMock()
+    mock_client._request.return_value = {}
+    with patch("cdp_ask.client.CdpAskClient", return_value=mock_client):
+        empty = load_active_work_snap()
+    assert empty == {}
+    assert "active_work_snap_load_failed" not in get_identity_counters()
 
 
 def test_gate_admits_holder_via_single_seat_bind_without_wire_id():
@@ -139,15 +169,19 @@ def test_gate_admits_holder_via_single_seat_bind_without_wire_id():
             }
         ]
     }
-    with patch(
-        "claude_bundles.hop_seat_cutover.load_watches",
-        return_value={"7188": row},
-    ), patch(
-        "claude_bundles.request_admission_identity.load_active_work_snap",
-        return_value=snap,
-    ), patch(
-        "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
-        return_value=None,
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={"7188": row},
+        ),
+        patch(
+            "claude_bundles.request_admission_identity.load_active_work_snap",
+            return_value=snap,
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value=None,
+        ),
     ):
         refusal = gate_request_admission(
             thread_id="7188",
@@ -174,15 +208,19 @@ def test_gate_refuses_predecessor_bound_via_single_seat_active_work():
             }
         ]
     }
-    with patch(
-        "claude_bundles.hop_seat_cutover.load_watches",
-        return_value={"7188": row},
-    ), patch(
-        "claude_bundles.request_admission_identity.load_active_work_snap",
-        return_value=snap,
-    ), patch(
-        "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
-        return_value=None,
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={"7188": row},
+        ),
+        patch(
+            "claude_bundles.request_admission_identity.load_active_work_snap",
+            return_value=snap,
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value=None,
+        ),
     ):
         refusal = gate_request_admission(
             thread_id="7188",
@@ -196,12 +234,15 @@ def test_gate_refuses_predecessor_bound_via_single_seat_active_work():
 
 
 def test_watch_row_is_not_admission_bind():
-    with patch(
-        "claude_bundles.hop_seat_cutover.load_watches",
-        return_value={"7188": {"registration_id": "5420b367-watch-only"}},
-    ), patch(
-        "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
-        return_value=None,
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={"7188": {"registration_id": "5420b367-watch-only"}},
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value=None,
+        ),
     ):
         identity = resolve_request_admission_identity(
             thread_id="7188",
@@ -227,12 +268,15 @@ def test_counterfactual_refuse_when_bound_predecessor_after_confirm():
             }
         ]
     }
-    with patch(
-        "claude_bundles.hop_seat_cutover.load_watches",
-        return_value={"7188": row},
-    ), patch(
-        "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
-        return_value="5420b367-old",
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={"7188": row},
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value="5420b367-old",
+        ),
     ):
         observe_identity_on_gate(
             thread_id="7188",
@@ -252,12 +296,20 @@ def test_request_dispatch_uses_gate_before_impl():
     sys.path.insert(0, str(mcp_root))
     from tools.agent_bus.request import _request_dispatch
 
-    with patch(
-        "tools.agent_bus.request._resolve_hop_seat_request_refusal",
-        return_value={"code": "seat.lease_lost", "source": "rpc", "retryable": False, "data": {}},
-    ), patch(
-        "tools.agent_bus.request._request_impl",
-    ) as impl_mock:
+    with (
+        patch(
+            "tools.agent_bus.request._resolve_hop_seat_request_refusal",
+            return_value={
+                "code": "seat.lease_lost",
+                "source": "rpc",
+                "retryable": False,
+                "data": {},
+            },
+        ),
+        patch(
+            "tools.agent_bus.request._request_impl",
+        ) as impl_mock,
+    ):
         result = _request_dispatch(
             thread="7188",
             subject="s",
