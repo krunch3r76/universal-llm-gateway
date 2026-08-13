@@ -95,7 +95,6 @@ def _dispatch_cursor_request(parsed: dict[str, Any]) -> Any:
 def register_cursor_request_tool(mcp: FastMCP) -> None:
     """Register the narrow ``cursor_request`` tool on the MCP server."""
 
-    @mcp.tool(title="Cursor Auto Request")
     def cursor_request(
         subject: str,
         body: str,
@@ -237,3 +236,8 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
             raise
         finally:
             toolprogress_end(t_prog, prog_timer, "cursor_request", error=err)
+
+    mcp.tool(
+        title="Cursor Auto Request",
+        description=cursor_request.__doc__ or "",
+    )(cursor_request)

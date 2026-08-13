@@ -12,6 +12,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from contract_vocab import CANONICAL_CONTRACTS, RECORDS
 from request_profile import bind_request
 
 from tools.cursor_request import (
@@ -27,11 +28,13 @@ class _ToolNameRecorder:
     def __init__(self) -> None:
         self.registered: list[str] = []
         self.functions: dict[str, Any] = {}
+        self.kwargs: dict[str, dict[str, Any]] = {}
 
-    def tool(self, **_kwargs: Any) -> Any:
+    def tool(self, **kwargs: Any) -> Any:
         def decorator(fn: Any) -> Any:
             self.registered.append(fn.__name__)
             self.functions[fn.__name__] = fn
+            self.kwargs[fn.__name__] = kwargs
             return fn
 
         return decorator
@@ -41,6 +44,13 @@ def test_cursor_request_registers_without_error() -> None:
     recorder = _ToolNameRecorder()
     register_cursor_request_tool(recorder)  # type: ignore[arg-type]
     assert recorder.registered == ["cursor_request"]
+    description = recorder.kwargs["cursor_request"].get("description") or ""
+    assert description
+    for record in RECORDS:
+        assert record.name in description
+        assert record.closeout_shape in description
+    for name in CANONICAL_CONTRACTS:
+        assert name in description
 
 
 def test_valid_call_delegates_to_request_dispatch_with_to_cursor() -> None:
@@ -134,3 +144,9 @@ def test_cursor_request_present_on_surface_tool_list(surface: str) -> None:
     tool_names = {t.name for t in tools}
     assert "cursor_request" in tool_names
     assert "cursor_request" in derive_surface_primary_tools(surface)  # type: ignore[arg-type]
+    cursor_request = next(tool for tool in tools if tool.name == "cursor_request")
+    description = cursor_request.description or ""
+    assert description, "schema compaction dropped cursor_request description"
+    for record in RECORDS:
+        assert record.name in description, record.name
+        assert record.closeout_shape in description, record.closeout_shape

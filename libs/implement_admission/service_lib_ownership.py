@@ -36,11 +36,11 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
     ),
     "git_integration_worker": ServiceOwnership(
         path_prefix="services/git_integration_worker/",
-        owned_libs=frozenset({"agent_bus_store", "agent_seat", "cdp_ask", "charter_runner_store", "claude_bundles", "cortex_store", "cursor_capabilities", "deploy_identity", "email_routing", "foo", "gen_rules", "git_integrate", "implement_admission", "llm_adapters", "markdown_fence", "markdown_sections", "markdown_xml_blocks", "model_capabilities", "model_id", "ocr_core", "pager_notify", "predicate_form", "process_ipc", "role_lint", "sse", "stargate_chat", "transport_utils", "universal_concurrency", "universal_event_bus", "universal_logging", "universal_protocol", "universal_transport", "universal_workspace"}),
+        owned_libs=frozenset({"agent_bus_store", "agent_seat", "cdp_ask", "charter_runner_store", "claude_bundles", "contract_vocab", "cortex_store", "cursor_capabilities", "deploy_identity", "email_routing", "foo", "gen_rules", "git_integrate", "implement_admission", "llm_adapters", "markdown_fence", "markdown_sections", "markdown_xml_blocks", "model_capabilities", "model_id", "ocr_core", "pager_notify", "predicate_form", "process_ipc", "role_lint", "sse", "stargate_chat", "transport_utils", "universal_concurrency", "universal_event_bus", "universal_logging", "universal_protocol", "universal_transport", "universal_workspace"}),
     ),
     "mcp": ServiceOwnership(
         path_prefix="services/mcp-server/",
-        owned_libs=frozenset({"agent_bus_store", "agent_seat", "cdp_ask", "claude_bundles", "cortex_store", "cursor_capabilities", "deploy_identity", "document_text", "durable_sink", "email_routing", "gen_rules", "implement_admission", "life_intent", "llm_adapters", "markdown_fence", "markdown_sections", "markdown_xml_blocks", "mcp_dispatch", "model_capabilities", "model_id", "ocr_core", "pager_notify", "predicate_form", "provider_model_limits", "role_lint", "sse", "stargate_chat", "transport_utils", "universal_event_bus", "universal_logging", "universal_workspace"}),
+        owned_libs=frozenset({"agent_bus_store", "agent_seat", "cdp_ask", "claude_bundles", "contract_vocab", "cortex_store", "cursor_capabilities", "deploy_identity", "document_text", "durable_sink", "email_routing", "gen_rules", "implement_admission", "life_intent", "llm_adapters", "markdown_fence", "markdown_sections", "markdown_xml_blocks", "mcp_dispatch", "model_capabilities", "model_id", "ocr_core", "pager_notify", "predicate_form", "provider_model_limits", "role_lint", "sse", "stargate_chat", "transport_utils", "universal_event_bus", "universal_logging", "universal_workspace"}),
     ),
     "rag": ServiceOwnership(
         path_prefix="services/rag/",

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from contract_vocab import CANONICAL_CONTRACTS
 from cursor_capabilities import (
     canonical_cursor_bare_id,
     effort_knob_name,
@@ -145,9 +146,7 @@ _CDP_DESIRED_MODEL_ALIASES: dict[str, str] = {
     "cdp/fable-5": "cdp/fable",
     "cdp/fable5": "cdp/fable",
 }
-_CONTRACTS = frozenset(
-    {"answer", "confer", "investigate", "implement", "verify", "execute", "propagate", "seed"}
-)
+_CONTRACTS = frozenset(CANONICAL_CONTRACTS)
 
 
 def resolve_desired_model(

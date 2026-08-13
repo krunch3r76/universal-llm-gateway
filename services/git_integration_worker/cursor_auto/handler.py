@@ -5,17 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 from agent_seat.registry import normalize_bus_address
+from contract_vocab import nested_scope_contracts
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_auto.admit_gates import (
     AdmitGateResult,
     blocking_admit_gate,
-)
-from services.git_integration_worker.cursor_auto.envelope_fields import (
-    envelope_values_from_job,
-)
-from services.git_integration_worker.cursor_auto.field_parity import (
-    compute_field_parity_for_job,
 )
 from services.git_integration_worker.cursor_auto.admit_report import (
     build_admit_report_body,
@@ -42,12 +37,18 @@ from services.git_integration_worker.cursor_auto.dispatch_bounds import (
 from services.git_integration_worker.cursor_auto.dispatch_progress import (
     ProgressEmitter,
 )
+from services.git_integration_worker.cursor_auto.envelope_fields import (
+    envelope_values_from_job,
+)
 from services.git_integration_worker.cursor_auto.episode_briefing import (
     compose_admit_body,
     maybe_briefing_for_admit,
 )
 from services.git_integration_worker.cursor_auto.execute_admission import (
     EXECUTE_CONTRACT,
+)
+from services.git_integration_worker.cursor_auto.field_parity import (
+    compute_field_parity_for_job,
 )
 from services.git_integration_worker.cursor_auto.gate_serialize import (
     NESTED_IN_SEAT_REASON,
@@ -123,7 +124,7 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
 logger = get_logger(__name__)
 
 _FROM_AUTO = "cursor-auto"
-_NESTED_CONTRACTS = frozenset({"confer", "implement", "investigate", "verify", "seed"})
+_NESTED_CONTRACTS = nested_scope_contracts() | {"confer"}
 
 
 def _close_dispatch_ticket(

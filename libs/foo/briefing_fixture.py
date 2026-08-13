@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from contract_vocab import code_work_contracts
+
 BRIEFING_HEADER = "TYPE: BRIEFING"
 MAX_BRIEFING_LINES = 12
 
@@ -17,7 +19,7 @@ ADMIT_SUBJECT_PRIOR = f"{ADMIT_SUBJECT_PREFIX} — prior"
 BASE_ADMIT_BODY = "Auto admitted lane:cursor-auto request."
 MINI_BRIEFING_SAMPLE = f"{BRIEFING_HEADER}\nops offer"
 
-CODE_WORK_CONTRACTS = frozenset({"implement", "investigate", "verify", "seed"})
+CODE_WORK_CONTRACTS = code_work_contracts()
 
 BRIEFING_REQUIRED_SUBSTRINGS = (
     "cursor-auto lane",

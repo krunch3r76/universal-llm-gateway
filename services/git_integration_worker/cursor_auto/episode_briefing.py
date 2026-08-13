@@ -6,6 +6,7 @@ import os
 from typing import Any
 
 import httpx
+from contract_vocab import code_work_contracts
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 
 _FROM_AUTO = "cursor-auto"
@@ -13,7 +14,7 @@ _ADMIT_SUBJECT_PREFIX = "status:admitted"
 _TURN_FETCH_LIMIT = 200
 _MAX_BRIEFING_LINES = 12
 # Codebase-maintenance contracts — denser hello stanza; other contracts stay soft.
-_CODE_WORK_CONTRACTS = frozenset({"implement", "investigate", "verify", "seed"})
+_CODE_WORK_CONTRACTS = code_work_contracts()
 
 
 def is_first_episode_admit(turns: list[dict[str, Any]]) -> bool:

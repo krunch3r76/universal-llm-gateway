@@ -16,18 +16,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-CANONICAL_CONTRACTS: tuple[str, ...] = (
-    "answer",
-    "confer",
-    "investigate",
-    "implement",
-    "verify",
-    "execute",
-    "propagate",
-    "seed",
+from contract_vocab import (
+    CANONICAL_CONTRACTS,
+    DEFAULT_CONTRACT,
+    vocab_line,
 )
-DEPRECATED_CONTRACT_ALIASES: dict[str, str] = {"consult": "confer"}
-DEFAULT_CONTRACT = "answer"
+from contract_vocab import (
+    DEPRECATED_ALIASES as DEPRECATED_CONTRACT_ALIASES,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,7 +50,7 @@ class ContractIntake:
 
 
 def _valid_set_line() -> str:
-    return " | ".join(CANONICAL_CONTRACTS)
+    return vocab_line()
 
 
 def normalize_wire_contract(contract: str | None) -> ContractIntake:

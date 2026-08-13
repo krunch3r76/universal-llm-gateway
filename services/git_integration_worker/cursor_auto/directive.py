@@ -6,6 +6,8 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from contract_vocab import nested_scope_contracts, vision_required_contracts
+
 if TYPE_CHECKING:
     from services.git_integration_worker.cursor_auto.queue import AutoJob
 
@@ -170,8 +172,8 @@ _EFFECTS_EXPECTED_RE = re.compile(r"(?im)^effects_expected:\s*\S+")
 _PROPAGATION_SCOPE_RE = re.compile(r"(?im)^scope:\s*propagation\b")
 _PROPAGATION_HEADING_RE = re.compile(r"(?im)^##\s+propagation(?:\s*\([^)]*\))?\s*$")
 _VISION_FIELD_RE = re.compile(r"^vision\s*:", re.MULTILINE | re.IGNORECASE)
-NESTED_SCOPE_CONTRACTS = frozenset({"implement", "investigate", "verify", "seed"})
-VISION_REQUIRED_CONTRACTS = frozenset({"implement", "investigate", "seed"})
+NESTED_SCOPE_CONTRACTS = nested_scope_contracts()
+VISION_REQUIRED_CONTRACTS = vision_required_contracts()
 
 
 def has_actionable_scope(body: str) -> bool:
