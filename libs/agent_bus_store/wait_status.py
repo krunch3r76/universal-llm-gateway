@@ -3,12 +3,18 @@
 Pure functions over (thread_row, turns) — no I/O, no MCP. The thread store is
 the single source of truth for thread state; this module only interprets it.
 
-Honest-status contract (decision: ship C; gpt-5.5 review): the only pre-reply
-status is ``awaiting_first_reply``. We do NOT derive ``awaiting_push`` from
-``read_at`` — a cooperative client-side mark_read cannot back a correctness-
-bearing state machine (thread-1230 falsifier: pointer read_at stayed null while
-the web seat actively processed). Push-vs-processing distinction, if ever
-needed, is a server-owned ack (Phase 4), not recipient read state.
+Honest-status contract (decision: ship C; gpt-5.5 review): we do NOT derive
+``awaiting_push`` from ``read_at`` — a cooperative client-side mark_read cannot
+back a correctness-bearing state machine (thread-1230 falsifier: pointer
+read_at stayed null while the web seat actively processed). Push-vs-processing
+distinction, if ever needed, is a server-owned ack (Phase 4), not recipient
+read state.
+
+C's no-reply token remains ``awaiting_first_reply``. A third observable,
+``predicate_unmet``, reports a *store-owned* fact C never forbade: turns exist
+after ``after_turn`` but the caller's completion predicate is still false.
+Collapsing that into ``awaiting_first_reply`` answers "has anyone replied?"
+with a confident no while an admit turn already exists (arc 7182 / thread 7197).
 
 ``thread_closed`` completion gates on ThreadStatus.CLOSED (the ThreadDetail
 ``status`` column), NEVER on any turn's TurnStatus — a closed thread can still
@@ -26,7 +32,7 @@ from .close_on_read import CLOSE_ON_READ_TAG
 from .disposition import first_line_is_disposition_type, resolve_bus_lifecycle
 from .turns_models import ThreadStatus
 
-WaitStatus = Literal["awaiting_first_reply", "complete"]
+WaitStatus = Literal["awaiting_first_reply", "predicate_unmet", "complete"]
 
 # Terminal Auto-orchestrator status tokens (agent_bus.request completion).
 STATUS_COMPLETION_MODES: frozenset[str] = frozenset(
@@ -294,6 +300,11 @@ def is_complete(
     )
 
 
+def _any_turn_after(turns: list[dict[str, Any]], *, after_turn: int) -> bool:
+    """True when the store already has a turn past ``after_turn``."""
+    return any(int(t["turn_number"]) > after_turn for t in turns)
+
+
 def derive_status(
     thread_row: dict[str, Any],
     turns: list[dict[str, Any]],
@@ -301,11 +312,17 @@ def derive_status(
     after_turn: int,
     completion: Completion,
 ) -> WaitStatus:
-    """Map current thread state to an OBSERVABLE wait status (C: two states).
+    """Map thread state to an observable wait status.
 
-    Operator push leaves no thread mutation until a reply lands, so the only
-    honest pre-completion state is ``awaiting_first_reply``.
+    ``complete`` — the caller's completion predicate holds.
+    ``awaiting_first_reply`` — predicate unmet and no turn exists after
+    ``after_turn`` (literally no reply yet).
+    ``predicate_unmet`` — predicate unmet but at least one later turn exists
+    (turn_count already advanced; e.g. ``status:admitted`` while waiting for
+    ``status:done``). Never derived from ``read_at``.
     """
     if is_complete(thread_row, turns, after_turn=after_turn, completion=completion):
         return "complete"
+    if _any_turn_after(turns, after_turn=after_turn):
+        return "predicate_unmet"
     return "awaiting_first_reply"

@@ -64,8 +64,8 @@ def test_thread_closed_uses_thread_status_not_turn_status():
     assert is_complete(thread, turns, after_turn=1, completion=comp)
 
 
-def test_status_is_two_state_only():
-    """C contract: pre-reply is always awaiting_first_reply; never awaiting_push."""
+def test_status_ignores_read_at_when_no_later_turn():
+    """C contract: no-reply status ignores pointer read_at; never awaiting_push."""
     thread = {"status": ThreadStatus.ACTIVE}
     comp = {"mode": "first_reply_from", "from_agent": "claude-web"}
 
@@ -193,7 +193,12 @@ def test_no_awaiting_push_status_exists():
 
     from agent_bus_store.wait_status import WaitStatus
 
-    assert set(get_args(WaitStatus)) == {"awaiting_first_reply", "complete"}
+    assert set(get_args(WaitStatus)) == {
+        "awaiting_first_reply",
+        "predicate_unmet",
+        "complete",
+    }
+    assert "awaiting_push" not in get_args(WaitStatus)
 
 
 def _disposition_turn(n: int, *, verdict: str) -> dict:

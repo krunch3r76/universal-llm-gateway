@@ -95,14 +95,17 @@ Warm follow-up does **not** reload chips or MCP; a new window inherits no chat c
 the handoff. Either way: **¬ mint a second private lane.**
 
 **mcp tooling-surface restart ⇒ continuity after healthy (BINDING — operator 2026-08-02;
-same-window force 2026-08-05).** SOT for force vs wait: rule `restart-drain-discipline`
-§ MCP force vs wait — same-window protocol. Summary for this seat:
+force generalized 2026-08-13).** SOT: rule `restart-drain-discipline` § Force is
+permitted — GIW is the sole exception. **Force is permitted on every service except
+`git_integration_worker`** — no operator authorization, no streaming/window test. What
+the window classification now tells you is only what recovery to expect:
 
 | Blocker | Move |
 |---|---|
-| No stream / ghost `live_cse` | Restart (`force` if false busy) |
-| **This** CSE streaming | `force` OK — MCP surface dies mid-stream; CDP recovers via **continuity** after healthy |
-| **Other** window streaming | Wait → then call (no force) |
+| No stream / ghost `live_cse` | Restart (`force` if false busy) — nothing to recover |
+| **This** CSE streaming | `force` — MCP surface dies mid-stream; recover via **continuity** after healthy |
+| **Other** window streaming | `force` permitted; peer recovers by `chat_url`. Prefer a short wait if not urgent — courtesy, not a gate |
+| **`git_integration_worker`** | **Never force** — drain-gated; arm it, report `restart_intent_id`, exit |
 
 When mcp is restarted to refresh the **tooling / descriptor / connector surface** (new or
 changed tools, OpenAPI, life connector behavior), this seat **must** rebind via the
@@ -215,13 +218,15 @@ lifecycle / tree contradiction / any tool on vortex-code but not life. **Service
 **You need not pass `force: true`** — cursor-auto **auto-applies** self-preempt force
 on that deferral and advises that **MCP will disconnect momentarily** (force lands the
 container; it does not refresh this stream's MCP binding — continuity advised).
-¬ force when the live stream is **another** window — wait. ¬ force GIW under this
-carve-out. Same auto-force applies to **cdp_ask** when the busy reason is this CSE —
+Force through **another** window's live stream is **permitted** (2026-08-13) — prefer a
+short wait only as courtesy when your restart is not urgent. **`git_integration_worker`
+is never forced** — it drains, because a forced stop truncates a dispatch mid-commit.
+Same auto-force applies to **cdp_ask** when the busy reason is this CSE —
 auto must not harvest_wanted-pushback an operator-proxy restart of either service.
 If the restart is for **tooling / descriptor surface**, follow the ordered sequence
 under Refresh ≠ follow-up: restart → **wait mcp healthy** (cursor/`manage`) → **then**
 `agent_bus(tool="hop")` — never hop before healthy.
-Full table: `restart-drain-discipline` § MCP force vs wait.
+Full table: `restart-drain-discipline` § Force is permitted — GIW is the sole exception.
 (`charter_reload` restarts the tick loop and returns `count=0`; it does not re-import modules,
 so charter-runner code changes need a manage quit/start.) Prefer conferring with cursor on
 *operational* "what's optimal next"; operator gates stay for proceed / implement / irreversible
@@ -857,11 +862,29 @@ follow `routing_hint` · `disposition: propagated` / `executed` / `queued` → r
 (`queued` = manage drain accepted; poll liveness). Negative statuses are **claims** — observe
 before re-issuing. Full templates arrive in the mission briefing inject.
 
+**Liveness reads (life seat — codeblind).** These payloads are the only sense organs. A
+confident wrong word does not degrade gracefully; it commissions a re-issue against a world
+that already moved (arc 7182 / thread 7197). Four rules at authoring moment:
+
+1. **Has Auto posted admit/terminal?** `get`/`fetch` the turn. Not `thread_get.turn_count`.
+   Not `wait(completion=status:done)`.
+2. **Job ledger phase?** `job_state` with `include_terminal=true` when the job may already
+   be dead. Treat `job_state_unreachable` as unknown, not queued. Worker down **omits**
+   `thread_get.cursor_auto_job` (looks like no live job).
+3. **`wait.status` is the predicate, not a claim probe.** `awaiting_first_reply` = no turn
+   exists after `after_turn`. `predicate_unmet` = turns already advanced (`turn_count` /
+   a later turn exists) but the completion predicate is still false (typical:
+   `status:admitted` while waiting for `status:done`). Neither means "never claimed."
+   Read `completion` and `qualifying_reply_turn` on the same payload.
+4. **Admit-visible wait:** `wait(completion=first_reply_from, from_agent=cursor-auto)`.
+   Park-hint `completion=status:done` holds until the job finishes.
+
 ## Anti-patterns
 
 | Bad | Good |
 |---|---|
 | Abort / `files_created:[]` / on-thread status trusted as world-state | Negative status = claim; await cursor contradiction |
+| `wait.status=awaiting_first_reply` (or a 55s `status:done` hold) read as never-claimed → re-issue | Fetch the admit turn; `predicate_unmet` means turns advanced, predicate unmet; `job_state include_terminal=true` |
 | Closeout prose without structured fields | `deltas_to_spec` / `decisions_taken`; explicit `deltas_to_spec: none` |
 | Ref-only closeouts | Verdicts inline; evidence by ref |
 | Facts only in Cowork | Write them into DIRECTIVE / CLOSEOUT / CHECKPOINT |

@@ -117,8 +117,9 @@ async def wait_thread_route(
 
     ``completion`` ∈ {first_reply_from, thread_closed, status:done,
     status:failed, status:needs-attended, status:superseded}. ``from_agent`` is
-    required for first_reply_from. Pre-reply status is always
-    ``awaiting_first_reply`` (C) — push state is not inferred from read_at.
+    required for first_reply_from. Incomplete status is ``awaiting_first_reply``
+    when no turn exists after ``after_turn``, else ``predicate_unmet`` (turns
+    advanced, predicate still false). Push state is not inferred from read_at.
     """
     thread_id = normalize_thread_id(thread_id)
     allowed = ("first_reply_from", "thread_closed", *sorted(STATUS_COMPLETION_MODES))

@@ -207,3 +207,52 @@ def test_wait_disposition_ratify_does_not_422(tmp_path) -> None:
         )
         assert resp.status_code == 200
         assert resp.json()["complete"] is False
+
+
+def test_wait_status_done_with_admit_turn_is_predicate_unmet(tmp_path) -> None:
+    """HTTP snapshot: status:done wait over an admit turn is not awaiting_first_reply."""
+    with TestClient(_app(tmp_path)) as client:
+        created = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "wait-predicate-unmet",
+                "from": "web-anthropic",
+                "to": "cursor-auto",
+                "subject": "request",
+                "body": "DIRECTIVE",
+            },
+        )
+        assert created.status_code == 201
+        thread_id = created.json()["thread"]["id"]
+        admit = client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "cursor-auto",
+                "to": "web-anthropic",
+                "subject": "status:admitted — nested dispatch",
+                "body": "admitted",
+                "after_turn": 1,
+            },
+        )
+        assert admit.status_code == 201
+
+        empty = client.get(
+            f"/threads/{thread_id}/wait"
+            "?after_turn=2&wait=0&completion=status:done"
+        )
+        assert empty.status_code == 200
+        assert empty.json()["status"] == "awaiting_first_reply"
+        assert empty.json()["complete"] is False
+        assert empty.json()["qualifying_reply_turn"] is None
+
+        advanced = client.get(
+            f"/threads/{thread_id}/wait"
+            "?after_turn=1&wait=0&completion=status:done"
+        )
+        assert advanced.status_code == 200
+        body = advanced.json()
+        assert body["status"] == "predicate_unmet"
+        assert body["complete"] is False
+        assert body["turn_count"] == 2
+        assert body["qualifying_reply_turn"] is None
