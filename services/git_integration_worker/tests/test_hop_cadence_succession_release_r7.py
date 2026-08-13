@@ -18,6 +18,7 @@ from services.git_integration_worker.cursor_auto.hop_cadence_predecessor import 
 )
 from services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile import (
     MAX_RELEASE_OBLIGATION_RETRIES,
+    persist_release_obligation,
     reconcile_succession_confirmations,
 )
 from services.git_integration_worker.cursor_auto.hop_cadence_succession_release import (
@@ -460,6 +461,59 @@ def test_obligation_reaches_failed_after_max_retries() -> None:
     assert result["obligation_retries"][0]["action"] == "error"
     assert watches["6885"]["release_obligation"]["status"] == "failed"
     assert watches["6885"]["release_obligation"]["failure_reason"] == "max_retries_exhausted"
+
+
+def test_streaming_defers_do_not_exhaust_release_retries() -> None:
+    handle = _handle()
+    row: dict[str, Any] = {
+        "thread_id": "6885",
+        "superseded_execution_id": _INCUMBENT_EXEC,
+        "superseded_registration_id": "reg-old",
+        "predecessor_verdict": PredecessorVerdict.INCUMBENT_RECORDED.value,
+        "release_obligation": {
+            "execution_id": _INCUMBENT_EXEC,
+            "registration_id": "reg-old",
+            "verdict": PredecessorVerdict.INCUMBENT_RECORDED.value,
+            "status": "pending",
+            "retry_count": 0,
+            "idle_streak": 0,
+        },
+    }
+    outcome = {
+        "action": "deferred",
+        "execution_id": _INCUMBENT_EXEC,
+        "reason": "predecessor_streaming",
+        "idle_streak": 0,
+        "idle_streak_required": RELEASE_IDLE_STREAK_REQUIRED,
+    }
+    for i in range(MAX_RELEASE_OBLIGATION_RETRIES):
+        row = persist_release_obligation(row, handle, outcome, now=float(i + 1))
+    obligation = row["release_obligation"]
+    assert obligation["status"] == "pending"
+    assert obligation["retry_count"] == 0
+    assert "failure_reason" not in obligation
+
+
+def test_idle_streak_defers_do_not_exhaust_release_retries() -> None:
+    handle = _handle()
+    row: dict[str, Any] = {
+        "thread_id": "6885",
+        "superseded_execution_id": _INCUMBENT_EXEC,
+        "superseded_registration_id": "reg-old",
+        "predecessor_verdict": PredecessorVerdict.INCUMBENT_RECORDED.value,
+    }
+    outcome = {
+        "action": "deferred",
+        "execution_id": _INCUMBENT_EXEC,
+        "reason": "predecessor_idle_streak_unsatisfied",
+        "idle_streak": 1,
+        "idle_streak_required": RELEASE_IDLE_STREAK_REQUIRED,
+    }
+    for i in range(MAX_RELEASE_OBLIGATION_RETRIES):
+        row = persist_release_obligation(row, handle, outcome, now=float(i + 1))
+    obligation = row["release_obligation"]
+    assert obligation["status"] == "pending"
+    assert obligation["retry_count"] == 0
 
 
 def test_reconcile_legacy_first_seat_releases_non_holders() -> None:

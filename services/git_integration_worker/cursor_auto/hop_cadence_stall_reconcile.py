@@ -389,12 +389,16 @@ def persist_release_obligation(
     *,
     now: float,
 ) -> dict[str, Any]:
-    """Record an outstanding release obligation when release deferred or errored."""
+    """Record an outstanding release obligation when release deferred or errored.
+
+    ``retry_count`` advances only on ``action=error``. Streaming / idle-streak
+    deferrals stay pending so a live predecessor cannot exhaust the cap.
+    """
     updated = dict(row)
     prior = updated.get("release_obligation")
     prior_dict = prior if isinstance(prior, dict) else {}
     retry_count = int(prior_dict.get("retry_count") or 0)
-    if prior_dict.get("status") == _RELEASE_OBLIGATION_PENDING:
+    if outcome.get("action") == "error":
         retry_count += 1
     streak = int(outcome.get("idle_streak") or prior_dict.get("idle_streak") or 0)
     if outcome.get("action") == "deferred" and outcome.get("reason") != "predecessor_idle_streak_unsatisfied":

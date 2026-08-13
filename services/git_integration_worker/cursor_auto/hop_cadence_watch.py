@@ -19,6 +19,10 @@ from agent_seat.registry import normalize_bus_address
 from claude_bundles.cdp_registry_store import load_active
 from universal_logging import get_logger
 
+from services.git_integration_worker.cursor_auto.hop_cadence_home_lane import (
+    home_lane_from_mailbox,
+    watch_thread_for_job,
+)
 from services.git_integration_worker.cursor_auto.queue import AutoJob
 
 logger = get_logger(__name__)
@@ -223,42 +227,52 @@ def registry_started_at(registration_id: str | None) -> float | None:
 def observe_lane_from_enqueue(
     job: AutoJob, *, now: float | None = None, path: Path | None = None
 ) -> dict[str, Any] | None:
-    """Enroll or refresh a hop watch from a web-* Auto enqueue (writes disk)."""
+    """Enroll or refresh a hop watch from a web-* Auto enqueue (writes disk).
+
+    ``cdp-operator-{lane}-*`` jobs key the standing private lane, not
+    ``job.thread_id``. Work-thread posts refresh that lane only.
+    """
     if not should_observe_job(job):
         return None
     ts = time.time() if now is None else now
     watches = load_watches(path)
-    thread_id = str(job.thread_id)
+    job_thread = str(job.thread_id)
+    thread_id = watch_thread_for_job(job)
+    aliased = job_thread != thread_id
     row = dict(watches.get(thread_id) or {})
     seated = row.get("seated_at")
     if seated is None:
-        reg_started = registry_started_at(job.cse_registration_id)
-        row["seated_at"] = float(reg_started) if reg_started is not None else ts
-        row["enroll_source"] = (
-            "registry_started_at" if reg_started is not None else "first_auto_observe"
-        )
+        if aliased:
+            row["seated_at"] = ts
+            row["enroll_source"] = "first_auto_observe"
+        else:
+            reg_started = registry_started_at(job.cse_registration_id)
+            row["seated_at"] = float(reg_started) if reg_started is not None else ts
+            row["enroll_source"] = (
+                "registry_started_at" if reg_started is not None else "first_auto_observe"
+            )
     row["thread_id"] = thread_id
     row["last_seen_at"] = ts
     row["from_agent"] = normalize_bus_address(job.from_agent)
-    if job.cse_registration_id:
-        row["registration_id"] = job.cse_registration_id
-    # Bus thread watch ≠ registry Chrome host. Prefer job-supplied session
-    # address; else join from registry row (bind_session_address at birth).
-    chat_url = (job.cse_chat_url or "").strip() or None
-    if not chat_url and job.cse_registration_id:
-        from claude_bundles.cdp_registry import chat_url_for_registration
+    if not aliased:
+        if job.cse_registration_id:
+            row["registration_id"] = job.cse_registration_id
+        chat_url = (job.cse_chat_url or "").strip() or None
+        if not chat_url and job.cse_registration_id:
+            from claude_bundles.cdp_registry import chat_url_for_registration
 
-        chat_url = chat_url_for_registration(job.cse_registration_id)
-    if chat_url:
-        row["chat_url"] = chat_url
+            chat_url = chat_url_for_registration(job.cse_registration_id)
+        if chat_url:
+            row["chat_url"] = chat_url
     row["purpose"] = "operator-proxy"
     watches[thread_id] = row
     save_watches(watches, path)
     logger.info(
-        "hop_cadence observe thread=%s seated_at=%s age_s=%.1f",
+        "hop_cadence observe thread=%s seated_at=%s age_s=%.1f aliased_from=%s",
         thread_id,
         row.get("seated_at"),
         ts - float(row["seated_at"]),
+        job_thread if aliased else "",
     )
     return row
 
@@ -284,6 +298,16 @@ def evaluate_watch(
     thread_id = str(row.get("thread_id") or "")
     if not thread_id:
         return HopDecision("", "skip", "missing_thread_id")
+    home = home_lane_from_mailbox(str(row.get("from_agent") or ""))
+    if home and home != thread_id:
+        logger.info(
+            "hop_cadence evaluate skip thread=%s reason=not_home_lane home=%s",
+            thread_id,
+            home,
+        )
+        return HopDecision(
+            thread_id, "skip", "not_home_lane", threshold_s=thr, signal="not_home_lane"
+        )
     from services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile import (
         breaker_blocks_hop,
     )
