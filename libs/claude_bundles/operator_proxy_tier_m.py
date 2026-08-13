@@ -7,9 +7,10 @@ authority: Fable CDP↔cursor-auto lane consult (2026-07-29) §2, §3.2, §5.
 
 from __future__ import annotations
 
-# Shared-lib propagation consumers — harvest mints one row per slug (harvest-restart-propagation AC6).
-# GIW reaches this module via operator_proxy_mission; mcp never imports it.
+# CONSUMERS = import-nomination (GIW loads this via mission). INJECTORS = seat
+# paste path. Harvest that read only CONSUMERS restarted GIW and left cdp_ask stale.
 CONSUMERS: tuple[str, ...] = ("git_integration_worker",)
+INJECTORS: tuple[str, ...] = ("cdp_ask",)
 
 TIER_M_HEADING = "## Tier-M tool ask — DIRECTIVE template (BINDING)"
 WIRE_NEUTRAL_HEADING = "## Wire-neutral authoring (BINDING)"
@@ -165,7 +166,7 @@ yields process-identity prose; do not rely on the service's default class.
 
 **Derivation tags (BINDING):** a propagation row ``reason`` carries
 ``derived:`` / ``import_path:`` tags **iff** a generator derived the row
-(path-prefix service mint, CONSUMERS mint, or tagged RESIDUE coerce). Hand-authored
+(path-prefix service mint, CONSUMERS/INJECTORS mint, or tagged RESIDUE coerce). Hand-authored
 rows in this DIRECTIVE stay **untagged** — do not invent tags. Absence means
 seat-authored; that silence is informative only while every derived row is tagged.
 

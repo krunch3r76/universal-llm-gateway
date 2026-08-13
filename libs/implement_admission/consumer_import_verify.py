@@ -40,7 +40,9 @@ ImportPathStatus = Literal[
     "not_probed",
     "indeterminate",
 ]
-DerivedSource = Literal["consumers", "path_prefix", "ownership", "import_graph"]
+DerivedSource = Literal[
+    "consumers", "injectors", "path_prefix", "ownership", "import_graph"
+]
 
 _LIBS_DIR = "libs"
 _ABS_IMPORT_RE = re.compile(
@@ -226,7 +228,7 @@ def format_verification_tags(
 
 
 _VERIFICATION_TAGS_RE = re.compile(
-    r"derived:(?P<derived>consumers|path_prefix|ownership|import_graph);\s*"
+    r"derived:(?P<derived>consumers|injectors|path_prefix|ownership|import_graph);\s*"
     r"import_path:(?P<import_path>verified|unverified|contradicted|not_probed|indeterminate)"
     r"(?:;\s*import_grammar_blind:(?P<blinds>[\w|]+))?"
 )
@@ -270,10 +272,11 @@ def escalate_consumer_line(
     *,
     status: ImportPathStatus,
     blinds: frozenset[str],
+    derived: DerivedSource = "consumers",
 ) -> str:
-    """Lead-visible escalate line for one non-minted CONSUMERS slug."""
+    """Lead-visible escalate line for one non-minted CONSUMERS or INJECTORS slug."""
     tags = format_verification_tags(
-        derived="consumers", import_path=status, blinds=blinds or None
+        derived=derived, import_path=status, blinds=blinds or None
     )
     return (
         f"libs_touched: {path} — shared lib; lead must decide consumer "
@@ -286,8 +289,9 @@ def residue_actions_for_lib_consumers(
     consumers: tuple[str, ...],
     *,
     root: Path | None = None,
+    derived: DerivedSource = "consumers",
 ) -> tuple[str, ...]:
-    """Build RESIDUE action lines for CONSUMERS after module-path verify.
+    """Build RESIDUE action lines for CONSUMERS/INJECTORS after module-path verify.
 
     Verified → ``sync_restart``. ``unverified`` always escalates. ``contradicted``
     escalates only when import-grammar blinds measure applicable for that slug;
@@ -302,24 +306,30 @@ def residue_actions_for_lib_consumers(
         status = verify_consumer_import(slug, path, root=base)
         blinds = measure_import_grammar_blinds(slug, str(base))
         if status == "verified":
-            tags = format_verification_tags(derived="consumers", import_path=status)
+            tags = format_verification_tags(derived=derived, import_path=status)
             verified.append(
                 f'sync_restart: {slug} — manage(action="sync_restart", '
                 f'service="{slug}"); {tags}'
             )
         elif status == "unverified":
             escalations.append(
-                escalate_consumer_line(path, slug, status=status, blinds=blinds)
+                escalate_consumer_line(
+                    path, slug, status=status, blinds=blinds, derived=derived
+                )
             )
         elif status == "contradicted":
             if blinds:
                 escalations.append(
-                    escalate_consumer_line(path, slug, status=status, blinds=blinds)
+                    escalate_consumer_line(
+                        path, slug, status=status, blinds=blinds, derived=derived
+                    )
                 )
             # else: earned silent omit
         elif status in ("not_probed", "indeterminate"):
             escalations.append(
-                escalate_consumer_line(path, slug, status=status, blinds=blinds)
+                escalate_consumer_line(
+                    path, slug, status=status, blinds=blinds, derived=derived
+                )
             )
         else:
             raise ValueError(

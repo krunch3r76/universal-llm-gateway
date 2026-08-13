@@ -181,17 +181,22 @@ def test_relay_residue_falls_back_to_relay_body_when_no_wrapper():
 
 
 def test_structured_rows_tier_m_consumers_mint_giw_not_mcp():
-    """tier_m CONSUMERS is GIW (verified); mcp never imported these briefing modules."""
+    """tier_m CONSUMERS is GIW; INJECTORS adds cdp_ask; mcp still omitted."""
     payload = _closeout_payload(
         files_modified=["libs/claude_bundles/operator_proxy_tier_m.py"],
         evidence_uris={"git_refs": ["consumer-land-sha"]},
     )
     rows = structured_propagation_rows(payload)
-    assert {row.service for row in rows} == {"git_integration_worker"}
+    by_service = {row.service: row for row in rows}
+    assert set(by_service) == {"cdp_ask", "git_integration_worker"}
+    assert "derived:injectors" in (by_service["cdp_ask"].reason or "")
+    assert "derived:consumers" in (by_service["git_integration_worker"].reason or "")
     assert all("import_path:verified" in (row.reason or "") for row in rows)
     block = residue_for_closeout(payload)
     assert block is not None
     assert "sync_restart: git_integration_worker" in block
+    assert "sync_restart: cdp_ask" in block
+    assert "derived:injectors" in block
     assert "import_path:verified" in block
     assert "sync_restart: mcp" not in block
     assert "libs_touched" not in block

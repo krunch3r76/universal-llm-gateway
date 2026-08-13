@@ -6,16 +6,16 @@ import json
 from collections.abc import Sequence
 
 from claim_register import claimed_derived, render_claim
-from implement_admission.consumer_import_verify import (
-    format_verification_tags,
-    residue_actions_for_lib_consumers,
+from implement_admission.consumer_import_verify import format_verification_tags
+from implement_admission.injector_map import (
+    nominations_for_lib_path,
+    residue_actions_for_nominations,
 )
 from implement_admission.propagation_block_parser import (
     propagation_rows_from_markdown_sources,
 )
 from implement_admission.propagation_row import (
     PropagationRow,
-    consumers_for_lib_path,
     is_lib_test_module,
     land_paths_for_propagation,
     resolve_code_ref,
@@ -176,9 +176,9 @@ def _actions_for_path(path: str) -> tuple[str, ...]:
         return (_unresolved_line(path),)
 
     if path.startswith("libs/") and path.endswith(".py"):
-        consumers = consumers_for_lib_path(path)
-        if consumers:
-            return residue_actions_for_lib_consumers(path, consumers)
+        nominations = nominations_for_lib_path(path)
+        if nominations:
+            return residue_actions_for_nominations(path, nominations)
         return (_libs_touched_line(path),)
 
     return ()

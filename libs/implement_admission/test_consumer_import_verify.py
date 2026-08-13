@@ -142,7 +142,7 @@ def test_deploy_identity_package_init_remains_verified_negative_control():
 
 @pytest.mark.offline
 def test_operator_proxy_briefings_declare_giw_not_mcp():
-    """Briefing modules declare GIW-only CONSUMERS (corrected authorship shape)."""
+    """Briefing modules declare GIW-only CONSUMERS (import-nomination shape)."""
     clear_verify_caches()
     decls = dict(iter_consumers_declarations())
     for path in _OPERATOR_PROXY_BRIEFINGS:

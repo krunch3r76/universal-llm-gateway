@@ -553,16 +553,19 @@ def rows_from_lib_consumers(
     *,
     code_ref: str,
 ) -> tuple[list[PropagationRow], list[str]]:
-    """Mint verified CONSUMERS rows; return lead-visible escalations separately.
+    """Mint verified CONSUMERS+INJECTORS rows; return lead-visible escalations.
 
     Returns ``(rows, escalations)`` — escalations are ``libs_touched:…`` prose,
     never ``PropagationRow`` (appending a row would mint a restart and suppress
     the ``rows_from_service_paths`` fallback). Mint only on measured
     ``import_path:verified``. ``unverified`` always escalates; ``contradicted``
     escalates only when import-grammar blinds measure applicable for that slug.
+    Injector slugs mint first (``derived:injectors``) so a seat-facing paste
+    path cannot be omitted when CONSUMERS only names the importer.
     """
     from implement_admission.consumer_import_blinds import measure_import_grammar_blinds
     from implement_admission.consumer_import_verify import escalate_consumer_line
+    from implement_admission.injector_map import nominations_for_lib_path
 
     rows: list[PropagationRow] = []
     escalations: list[str] = []
@@ -570,10 +573,10 @@ def rows_from_lib_consumers(
     for path in paths:
         if is_lib_test_module(path):
             continue
-        consumers = consumers_for_lib_path(path)
-        if not consumers:
+        nominations = nominations_for_lib_path(path)
+        if not nominations:
             continue
-        for slug in consumers:
+        for slug, derived in nominations:
             status = verify_consumer_import(slug, path)
             blinds = measure_import_grammar_blinds(slug)
             if status == "verified":
@@ -582,7 +585,7 @@ def rows_from_lib_consumers(
                     continue
                 seen.add(key)
                 pc = default_proof_class(slug)
-                tags = format_verification_tags(derived="consumers", import_path=status)
+                tags = format_verification_tags(derived=derived, import_path=status)
                 rows.append(
                     _row_with_close_surfaces(
                         service=slug,
@@ -597,18 +600,26 @@ def rows_from_lib_consumers(
                 )
             elif status == "unverified":
                 escalations.append(
-                    escalate_consumer_line(path, slug, status=status, blinds=blinds)
+                    escalate_consumer_line(
+                        path, slug, status=status, blinds=blinds, derived=derived
+                    )
                 )
             elif status == "contradicted":
                 if blinds:
                     escalations.append(
                         escalate_consumer_line(
-                            path, slug, status=status, blinds=blinds
+                            path,
+                            slug,
+                            status=status,
+                            blinds=blinds,
+                            derived=derived,
                         )
                     )
             elif status in ("not_probed", "indeterminate"):
                 escalations.append(
-                    escalate_consumer_line(path, slug, status=status, blinds=blinds)
+                    escalate_consumer_line(
+                        path, slug, status=status, blinds=blinds, derived=derived
+                    )
                 )
             else:
                 raise ValueError(
