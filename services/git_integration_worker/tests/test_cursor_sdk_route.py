@@ -1076,7 +1076,7 @@ def test_run_sdk_sync_injects_venv_env(
     monkeypatch.setattr(
         route_mod,
         "build_agent_options",
-        lambda _repo, _ws, _sel: MagicMock(local=True),
+        lambda *_a, **_k: MagicMock(local=True),
     )
     monkeypatch.setattr(route_mod.Client, "launch_bridge", _fake_launch_bridge)
     monkeypatch.setattr(
@@ -1180,7 +1180,7 @@ def test_dispatch_path_prepend_pins_cursor_agent_before_grok(
     monkeypatch.setattr(
         route_mod,
         "build_agent_options",
-        lambda _repo, _ws, _sel: MagicMock(local=True),
+        lambda *_a, **_k: MagicMock(local=True),
     )
     monkeypatch.setattr(route_mod.Client, "launch_bridge", _fake_launch_bridge)
     monkeypatch.setattr(route_mod, "operator_real_home", lambda: operator_home)
@@ -1246,7 +1246,7 @@ async def test_dispatch_venv_config_error_posts_bus_reply(
     monkeypatch.setattr(
         route_mod,
         "build_agent_options",
-        lambda _repo, _ws, _sel: MagicMock(local=True),
+        lambda *_a, **_k: MagicMock(local=True),
     )
     monkeypatch.setattr(route_mod.Client, "launch_bridge", _track_launch)
 
@@ -2393,7 +2393,7 @@ def test_run_sdk_sync_folds_stream_paths_and_artifacts(
     monkeypatch.setattr(
         route_mod,
         "build_agent_options",
-        lambda _repo, _ws, _sel: MagicMock(local=True),
+        lambda *_a, **_k: MagicMock(local=True),
     )
     monkeypatch.setattr(route_mod.Client, "launch_bridge", _fake_launch_bridge)
     monkeypatch.setattr(
@@ -2543,7 +2543,7 @@ def test_run_sdk_sync_local_bridge_post_wait_request_id(
     monkeypatch.setattr(
         route_mod,
         "build_agent_options",
-        lambda _repo, _ws, _sel: MagicMock(local=True),
+        lambda *_a, **_k: MagicMock(local=True),
     )
     monkeypatch.setattr(route_mod.Client, "launch_bridge", _fake_launch_bridge)
     monkeypatch.setattr(
