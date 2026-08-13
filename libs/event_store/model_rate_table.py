@@ -107,19 +107,82 @@ def _row_from_mapping(
     )
 
 
-def load_manual_rows(
-    path: Path | None = None,
-) -> tuple[dict[str, ModelRateRow], dict[str, str]]:
-    """Load seed/override rows and alias map from YAML."""
+def _load_rates_payload(path: Path | None = None) -> dict[str, Any]:
+    """Parse the manual rates YAML; empty dict on missing or invalid file."""
     yaml_path = path or rates_yaml_path()
     if not yaml_path.is_file():
-        return {}, {}
+        return {}
     try:
         payload = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
     except (OSError, yaml.YAMLError) as exc:
         logger.warning("Failed to load model rates YAML %s: %s", yaml_path, exc)
-        return {}, {}
-    if not isinstance(payload, dict):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _normalize_knob_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value).strip().lower()
+
+
+def _normalize_knobs(raw: Any) -> dict[str, str]:
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key, value in raw.items():
+        name = str(key or "").strip()
+        if not name or value is None:
+            continue
+        out[name] = _normalize_knob_value(value)
+    return out
+
+
+@dataclass(frozen=True, slots=True)
+class KnobVariantRate:
+    """Pinned rates for a (model_id, knobs-subset) join — not a fake model_id."""
+
+    model_id: str
+    knobs: tuple[tuple[str, str], ...]
+    row: ModelRateRow
+
+    def matches(self, requested: dict[str, str]) -> bool:
+        return all(requested.get(key) == value for key, value in self.knobs)
+
+
+def load_knob_variants(path: Path | None = None) -> list[KnobVariantRate]:
+    """Load knob-priced variants from the same YAML as manual model rows."""
+    payload = _load_rates_payload(path)
+    entries = payload.get("knob_variants") or []
+    if not isinstance(entries, list):
+        return []
+    variants: list[KnobVariantRate] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        model_id = str(entry.get("model_id") or "").strip()
+        knobs = _normalize_knobs(entry.get("knobs"))
+        if not model_id or not knobs:
+            continue
+        row = _row_from_mapping(model_id, entry, default_source="manual_seed")
+        if row is None:
+            continue
+        variants.append(
+            KnobVariantRate(
+                model_id=model_id,
+                knobs=tuple(sorted(knobs.items())),
+                row=row,
+            )
+        )
+    return variants
+
+
+def load_manual_rows(
+    path: Path | None = None,
+) -> tuple[dict[str, ModelRateRow], dict[str, str]]:
+    """Load seed/override rows and alias map from YAML."""
+    payload = _load_rates_payload(path)
+    if not payload:
         return {}, {}
 
     aliases_raw = payload.get("aliases") or {}
@@ -299,9 +362,10 @@ def resolve_rate(
     model_id: str | None,
     resolved_model: str | None = None,
     *,
+    knobs: dict[str, Any] | None = None,
     path: Path | None = None,
 ) -> ModelRateRow | None:
-    """Lookup rate by model_id, alias map, then resolved_model key."""
+    """Lookup rate by (model_id, knobs) variant, then model_id / alias / resolved_model."""
     manual_rows, aliases = load_manual_rows(path)
     keys: list[str] = []
     for candidate in (model_id, resolved_model):
@@ -311,6 +375,16 @@ def resolve_rate(
         alias_target = aliases.get(candidate)
         if alias_target and alias_target not in keys:
             keys.append(alias_target)
+
+    requested = _normalize_knobs(knobs)
+    if requested and keys:
+        matches = [
+            variant
+            for variant in load_knob_variants(path)
+            if variant.model_id in keys and variant.matches(requested)
+        ]
+        if matches:
+            return max(matches, key=lambda variant: len(variant.knobs)).row
 
     merged: dict[str, ModelRateRow] = {}
     for catalog_id, row in load_catalog_rows_from_disk().items():

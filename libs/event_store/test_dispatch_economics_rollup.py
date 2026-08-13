@@ -58,6 +58,22 @@ def test_map_sdk_preserves_null_not_zero() -> None:
     assert row["usage_capture_status"] == "captured"
 
 
+def test_map_sdk_preserves_model_knobs_requested() -> None:
+    row = map_sdk_row(
+        {"seq": 1},
+        {
+            "dispatch_id": "d1",
+            "execution_id": "e1",
+            "resolved_model": "cursor/grok-4.6",
+            "model_knobs_requested": {"fast": "true", "effort": "high"},
+            "usage_capture_status": "captured",
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        },
+    )
+    assert row["model_id"] == "cursor/grok-4.6"
+    assert row["model_knobs_requested"] == {"fast": "true", "effort": "high"}
+
+
 def test_map_snapshot_nested_usage_parent_signal() -> None:
     row = map_snapshot_row(
         {"seq": 2, "request_id": "req-1"},

@@ -75,9 +75,7 @@ def _member_usage(
         return usage if isinstance(usage, dict) else {}, status
     if substrate == _SUBSTRATE_PIPELINE:
         usage = {
-            key: payload[key]
-            for key in (*_WIRE_USD_KEYS, "credits")
-            if key in payload
+            key: payload[key] for key in (*_WIRE_USD_KEYS, "credits") if key in payload
         }
         return usage, "captured"
     return {}, "missing"
@@ -139,7 +137,9 @@ def _index_wire_members(
     return by_eid
 
 
-def _select_wire(members: list[dict[str, Any]] | None) -> tuple[float | None, str | None]:
+def _select_wire(
+    members: list[dict[str, Any]] | None,
+) -> tuple[float | None, str | None]:
     if not members:
         return None, None
     ranked = sorted(
@@ -172,10 +172,7 @@ def _rate_x_tokens(row: dict[str, Any], rate: ModelRateRow) -> float | None:
     if prompt is not None:
         total += (prompt / 1_000_000) * rate.input_rate_per_m
         has_component = True
-    if (
-        cache_write is not None
-        and rate.cache_write_rate_per_m is not None
-    ):
+    if cache_write is not None and rate.cache_write_rate_per_m is not None:
         total += (cache_write / 1_000_000) * rate.cache_write_rate_per_m
         has_component = True
     if cache_read is not None and rate.cache_read_rate_per_m is not None:
@@ -193,7 +190,10 @@ def _price_row(
 ) -> dict[str, Any]:
     priced = dict(row)
     wire_usd, wire_key = _select_wire(wire_members)
-    rate = resolve_rate(row.get("model_id"))
+    rate = resolve_rate(
+        row.get("model_id"),
+        knobs=row.get("model_knobs_requested"),
+    )
 
     if wire_usd is not None:
         priced["cost_usd"] = wire_usd
@@ -202,9 +202,7 @@ def _price_row(
     elif rate is not None:
         # All-zero catalog/provider rates are missing prices, not free inference.
         # Intentional local zeros use source=manual_seed_local and may price at $0.
-        zero_rate = (
-            rate.input_rate_per_m == 0.0 and rate.output_rate_per_m == 0.0
-        )
+        zero_rate = rate.input_rate_per_m == 0.0 and rate.output_rate_per_m == 0.0
         if zero_rate and rate.source != "manual_seed_local":
             priced["cost_usd"] = None
             priced["cost_source"] = "unavailable"
@@ -248,9 +246,7 @@ def _build_pricing_audit(rows: list[dict[str, Any]]) -> dict[str, Any]:
     cdp_stub_count = sum(
         1 for row in rows if row.get("substrate") == "web-anthropic-cdp"
     )
-    pricable_rows = [
-        row for row in rows if row.get("substrate") != "web-anthropic-cdp"
-    ]
+    pricable_rows = [row for row in rows if row.get("substrate") != "web-anthropic-cdp"]
     pricable_unavailable = sum(
         1 for row in pricable_rows if row.get("cost_source") == "unavailable"
     )

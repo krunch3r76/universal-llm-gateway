@@ -29,12 +29,16 @@ models:
     output_rate_per_m: 2.5
     source: manual_seed
     pinned: true
-  # sot_absent on Cursor docs (Composer 2.5 / Composer 1 only) — leave prior pin; ¬ invent.
+  # Composer Fast is a distinct model_id (roaming-tier slug). Grok Fast is not —
+  # see knob_variants. Leave this pin; G7 does not restamp Composer rates.
   - model_id: cursor/composer-2.5-fast
     input_rate_per_m: 0.625
     output_rate_per_m: 3.0
     source: manual_seed
     pinned: true
+  # Non-fast Grok 4.6. Cursor pool table 2026-08-13: $2 / - / $0.5 / $6.
+  # Fast is a knob on this id (cursor_capabilities grok-4.6 default_variant),
+  # not a cursor/grok-4.6-fast model_id — nothing would join a fake -fast slug.
   - model_id: cursor/grok-4.6
     input_rate_per_m: 2.0
     cache_read_rate_per_m: 0.5
@@ -91,4 +95,18 @@ models:
     input_rate_per_m: 0.0
     output_rate_per_m: 0.0
     source: manual_seed_local
+    pinned: true
+
+# Join key = (model_id, knobs), not a fake -fast slug. Live cursor-sdk records
+# resolved_model=cursor/grok-4.6 + model_knobs_requested.fast.
+# Grok 4.6 (Fast) Cursor pool table 2026-08-13: $4 / - / $1 / $12.
+# Effort variants: sot_absent on the pool table — ¬ invent multipliers.
+knob_variants:
+  - model_id: cursor/grok-4.6
+    knobs:
+      fast: "true"
+    input_rate_per_m: 4.0
+    cache_read_rate_per_m: 1.0
+    output_rate_per_m: 12.0
+    source: manual_seed
     pinned: true

@@ -46,6 +46,7 @@ def map_sdk_row(row: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
         "dispatch_id": dispatch_id,
         "thread_id": payload.get("thread_id"),
         "model_id": payload.get("resolved_model"),
+        "model_knobs_requested": payload.get("model_knobs_requested"),
         "signal_seq": row.get("seq"),
         "usage_capture_status": status,
         "prompt_tokens": int_or_none(usage.get("input_tokens")),
@@ -84,7 +85,9 @@ def map_pipeline_row(row: dict[str, Any], payload: dict[str, Any]) -> dict[str, 
     execution_id = payload.get("execution_id") or row.get("execution_id") or ""
     prompt = int_or_none(payload.get("prompt_tokens"))
     completion = int_or_none(payload.get("completion_tokens"))
-    total = prompt + completion if prompt is not None and completion is not None else None
+    total = (
+        prompt + completion if prompt is not None and completion is not None else None
+    )
     return {
         "substrate": _SUBSTRATE_PIPELINE,
         "primary_key": execution_id,
@@ -99,7 +102,9 @@ def map_pipeline_row(row: dict[str, Any], payload: dict[str, Any]) -> dict[str, 
         "cache_read_tokens": int_or_none(payload.get("cached_tokens")),
         "cache_write_tokens": None,
         "total_tokens": total,
-        "rollup_row_id": rollup_row_id(_SUBSTRATE_PIPELINE, execution_id, row.get("seq")),
+        "rollup_row_id": rollup_row_id(
+            _SUBSTRATE_PIPELINE, execution_id, row.get("seq")
+        ),
     }
 
 
@@ -169,7 +174,11 @@ def coalesce_group(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 if row.get(column) is not None
             }
     base["usage_capture_status"] = next(
-        (row["usage_capture_status"] for row in ranked if row.get("usage_capture_status")),
+        (
+            row["usage_capture_status"]
+            for row in ranked
+            if row.get("usage_capture_status")
+        ),
         "missing",
     )
     sdk_row = next((row for row in rows if row["substrate"] == _SUBSTRATE_SDK), None)
@@ -177,6 +186,9 @@ def coalesce_group(rows: list[dict[str, Any]]) -> dict[str, Any]:
         for field in ("dispatch_id", "thread_id"):
             if sdk_row.get(field):
                 base[field] = sdk_row[field]
+        knobs = sdk_row.get("model_knobs_requested")
+        if knobs is not None:
+            base["model_knobs_requested"] = knobs
     base["join_quality"] = "coalesced"
     base["merge_conflict"] = merge_conflict
     if merge_conflict:
