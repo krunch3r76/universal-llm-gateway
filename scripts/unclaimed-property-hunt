@@ -1,0 +1,7 @@
+#!/usr/bin/env python3
+"""Entry point for the CA SCO ClaimIt hunter one-shot."""
+
+from unclaimed_property_hunter.cli import main
+
+if __name__ == "__main__":
+    raise SystemExit(main())
