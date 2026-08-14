@@ -219,7 +219,11 @@ async def complete_continuity_hop(
     incumbent: AutoJob | None = None,
     client: CursorBusClient | None = None,
 ) -> dict[str, Any]:
-    """Harvest residual → CDP commission → terminal (job already claimed).
+    """Harvest residual → CDP commission → armed or failed (job already claimed).
+
+    Stargate admit with an ``execution_id`` posts ``status:armed`` — never
+    ``status:done`` / ``dispatched-and-relayed``. Generate harvest posts the
+    later terminal via ``hop_harvest_terminal`` (append, not amend).
 
     Called from the concurrent enqueue task after ``claim_job``, or from
     ``process_job`` when the serial worker won the claim race — never runs
@@ -282,20 +286,18 @@ async def complete_continuity_hop(
             failed=True,
             payload={
                 "summary": "continuity hop CDP commission failed",
+                "reason": "continuity_hop_cdp_commission_failed",
                 "continuity_hop": True,
                 "matched_token": job.continuity_matched_token,
                 "harvest_residual": residual,
                 "commission": commissioned,
                 "deferred_job_id": deferred_job_id,
                 "deferred_leg_enqueued": deferred_job_id is not None,
+                "hop_phase": "commission_failed",
                 **effort_echo,
             },
         )
         return terminal
-    from services.git_integration_worker.cursor_auto.disposition_outcome import (
-        m1_cdp_commission,
-        outcome_disposition_for_stamp,
-    )
 
     execution_id = commissioned.get("execution_id")
     emit_cdp_effort_bind(
@@ -306,10 +308,8 @@ async def complete_continuity_hop(
         resolved_effort=str(wire_effort or effort.get("resolved_effort") or ""),
         lane="cursor-auto-continuity-hop",
     )
-    hop_disposition = outcome_disposition_for_stamp(
-        "dispatched-and-relayed",
-        m1_satisfied=m1_cdp_commission(execution_id=execution_id),
-    )
+    # Admit ≠ harvest. MCP hop verb reports armed; cadence jobs must match.
+    # ``dispatched-and-relayed`` waits for generate proof (harvest terminal).
     hop_payload: dict[str, Any] = {
         "summary": f"continuity hop CDP commissioned model={model}",
         "reason": "continuity_hop_cdp_commissioned",
@@ -325,15 +325,16 @@ async def complete_continuity_hop(
         "orientation_inheritance_loop_closed": bool(
             orientation.get("inheritance_loop_closed")
         ),
+        "hop_phase": "armed",
+        "generate_harvest": "open",
         **effort_echo,
     }
-    if hop_disposition is not None:
-        hop_payload["disposition"] = hop_disposition
     from hop_handoff import parse_successor_birth_id
 
     birth_id = parse_successor_birth_id(job.body)
     if birth_id:
         hop_payload["successor_birth_id"] = birth_id
+        hop_payload["successor_seated"] = False
         try:
             from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
                 persist_successor_birth_id,
@@ -349,9 +350,9 @@ async def complete_continuity_hop(
         client=bus,
         queue=queue,
         summary=f"continuity hop CDP commissioned model={model}",
-        disposition=hop_disposition,
+        disposition=None,
         contract=job.contract,
-        terminal_status="status:done",
+        terminal_status="status:armed",
         payload=hop_payload,
     )
     if execution_id and not terminal.get("execution_id"):

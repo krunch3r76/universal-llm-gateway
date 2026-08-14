@@ -52,6 +52,10 @@ from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
     load_watches,
     save_watches,
 )
+from services.git_integration_worker.cursor_auto.hop_harvest_terminal import (
+    HarvestPoster,
+    post_harvest_terminal_for_action,
+)
 
 logger = get_logger(__name__)
 
@@ -307,8 +311,13 @@ def reconcile_stall_revocations(
     state_path: Path | None = None,
     now: float | None = None,
     query_fn: Callable[[str, list[Any], int], list[dict[str, Any]]] | None = None,
+    harvest_poster: HarvestPoster | None = None,
 ) -> dict[str, Any]:
-    """Scan Event Service for generate terminal events and reconcile watch ledger."""
+    """Scan Event Service for generate terminal events and reconcile watch ledger.
+
+    On ``revoked`` / proof-``confirmed``, append a hop harvest terminal
+    (``status:failed`` / ``status:done``). Prior admit turns are not amended.
+    """
     ts = time.time() if now is None else now
     state = load_reconcile_state(state_path)
     since_seq = int(state.get("last_seq") or 0)
@@ -335,6 +344,14 @@ def reconcile_stall_revocations(
                     "seq": seq,
                 }
             )
+            if action in {"revoked", "confirmed"}:
+                post_harvest_terminal_for_action(
+                    action,
+                    thread_id=thread_id,
+                    row=updated,
+                    payload=payload if isinstance(payload, dict) else {},
+                    poster=harvest_poster,
+                )
             if action == "revoked":
                 exec_id = normalize_id(payload.get("execution_id")) or ""
                 count = int(updated.get("revocation_count") or 0)
