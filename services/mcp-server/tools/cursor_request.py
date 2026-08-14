@@ -153,6 +153,13 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         ``contract`` ∈ answer | confer | investigate | implement | verify | execute |
         propagate | seed | recon. Unknown ⇒ 422 before turn write. ``consult`` aliases confer.
 
+        **Admit body gate (implement / investigate)**
+
+        ``contract`` ∈ {implement, investigate} ⇒ DIRECTIVE body MUST include a
+        ``vision:`` line or Auto blocks at admit (``vision_field_missing``) before
+        a model runs. ``vision: mechanical — <reason>`` suffices for tool ops.
+        See agent_skill:cdp-operator-proxy.
+
         **Codework lanes — IDE command wraps skill (BINDING)**
 
         Slash commands are attended-IDE wrappers only. cursor-sdk / cursor-auto /
