@@ -124,12 +124,15 @@ def test_authority_class_closeout_values_preserved() -> None:
     assert AuthorityClass.SELF_REPORTED.value == "self_reported"
 
 
-def test_builder_census_one_sealed_eight_pending() -> None:
+def test_builder_census_two_sealed_seven_pending() -> None:
     assert len(PUBLICATION_BUILDER_CENSUS) == 9
     sealed = [k for k, v in PUBLICATION_BUILDER_CENSUS.items() if v == "sealed"]
     pending = [k for k, v in PUBLICATION_BUILDER_CENSUS.items() if v == "pending"]
-    assert sealed == ["execution_store.active_work_snapshot"]
-    assert len(pending) == 8
+    assert sealed == [
+        "execution_store.active_work_snapshot",
+        "ImplementCloseout.model_dump",
+    ]
+    assert len(pending) == 7
 
 
 _KNOWN_BYPASS_BUILDERS = (

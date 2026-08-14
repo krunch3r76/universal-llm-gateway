@@ -248,9 +248,15 @@ def derived_gate_verification(
 
 
 class EvidenceUris(BaseModel):
+    """Pointers plus optional artifact digests for requester-side recompute."""
+
     dispatch_ids: list[str] = Field(default_factory=list)
     bus_threads: list[str] = Field(default_factory=list)
     artifact_paths: list[str] = Field(default_factory=list)
+    # Producer-published digests for artifact_paths. Gate C/D admit a path
+    # only when a requester recomputes sha256 and it matches. An empty map
+    # means no path can satisfy the hash-bind (pointer-only is not evidence).
+    artifact_digests: dict[str, str] = Field(default_factory=dict)
     cortex_assertions: list[str] | None = Field(default_factory=list)
     git_refs: list[str] = Field(default_factory=list)
 

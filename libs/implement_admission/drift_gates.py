@@ -13,7 +13,7 @@ from typing import Any, Literal
 from universal_logging import get_logger
 
 from implement_admission.admission_read import read_packet
-from implement_admission.closeout import flatten_evidence_uris
+from implement_admission.closeout import verify_evidence_uris
 from implement_admission.closeout_models import (
     AdapterResult,
     ImplementCloseout,
@@ -319,13 +319,15 @@ def evaluate_gate_c_checks(
         else str(source.source_kind)
     )
     primary = next((ar for ar in results if ar.adapter == primary_kind), None)
+    verified = verify_evidence_uris(closeout.evidence_uris)
     checks = {
         "empty_results": len(results) == 0,
         "primary_missing": primary is None,
         "primary_failed": primary is not None and primary.status == "failed",
+        "evidence_digest_mismatch": bool(verified.mismatch),
         "no_evidence": primary is None
         or primary.mutation is None
-        or not flatten_evidence_uris(closeout.evidence_uris),
+        or not verified.admitted,
     }
     for reason, tripped in checks.items():
         if tripped:

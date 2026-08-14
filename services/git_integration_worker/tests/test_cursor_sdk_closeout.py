@@ -3619,3 +3619,69 @@ def test_dispatch_6a9f673785c0_d7982bf6_self_contradiction_grades_checks_failed(
     )
     assert work_outcome == WorkOutcome.CHECKS_FAILED
     assert work_outcome != WorkOutcome.SHIPPED
+
+
+def test_closeout_seal_refuses_undeclared_bare_scalar() -> None:
+    """Behavioural: an unqualified bare scalar cannot publish.
+
+    Does not name the functions that compute status — the invariant is over
+    the dumped envelope (assertion 28923).
+    """
+    from admission_common.qualified_scalar import UnqualifiedScalarError
+    from services.git_integration_worker.cursor_sdk_closeout_seal import (
+        seal_closeout_payload,
+    )
+
+    payload = {
+        "schema_version": 1,
+        "public_api_changed": False,
+        "invented_coverage_count": 3,
+    }
+    with pytest.raises(UnqualifiedScalarError, match="invented_coverage_count"):
+        seal_closeout_payload(payload)
+
+
+def test_closeout_seal_allows_unobserved_exit_row() -> None:
+    """exit_code null is not a bare scalar — unobserved rows publish."""
+    from services.git_integration_worker.cursor_sdk_closeout_seal import (
+        seal_closeout_payload,
+    )
+
+    payload = {
+        "schema_version": 1,
+        "public_api_changed": False,
+        "verification": [
+            {
+                "command": "pytest -q",
+                "exit_code": None,
+                "exit_code_register": "unobserved",
+                "wrapper_exit_code": None,
+                "output_truncated": False,
+            }
+        ],
+    }
+    sealed = seal_closeout_payload(payload)
+    assert sealed["verification"][0]["exit_code"] is None
+    assert sealed["verification"][0]["exit_code_register"] == "unobserved"
+
+
+def test_build_implement_closeout_body_is_sealed() -> None:
+    outcome = SdkRunOutcome(
+        body="status: complete — done",
+        status="finished",
+        duration_ms=1500,
+        tool_call_count=5,
+    )
+    body = build_implement_closeout_body(
+        dispatch_id="d-seal",
+        outcome=outcome,
+        degraded_reason=None,
+        sidecar_ref=sidecar_workspaces_ref("d-seal"),
+        result_bytes=4,
+        thread_id="t-seal",
+        work_item_ref=None,
+        sidecar_markdown="status: complete — done",
+    )
+    payload = json.loads(body)
+    assert payload["schema_version"] == 1
+    assert "tool_call_count" in payload

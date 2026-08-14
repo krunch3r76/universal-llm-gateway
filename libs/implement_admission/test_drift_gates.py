@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 from unittest.mock import patch
@@ -247,12 +248,18 @@ def test_gate_c_primary_missing() -> None:
     assert result.reason == "primary_missing"
 
 
-def test_gate_c_primary_partial_ok() -> None:
+def test_gate_c_primary_partial_ok(tmp_path: Path) -> None:
+    artifact = tmp_path / "evidence.md"
+    artifact.write_text("ok\n", encoding="utf-8")
+    digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
     closeout = ImplementCloseout(
         status=CloseoutStatus.COMPLETE,
         summary="x",
         source_ref="todo:foo",
-        evidence_uris=EvidenceUris(cortex_assertions=["assertion:1"]),
+        evidence_uris=EvidenceUris(
+            artifact_paths=[str(artifact)],
+            artifact_digests={str(artifact): digest},
+        ),
     )
     source = Source(
         source_ref="todo:foo",
@@ -761,3 +768,119 @@ def test_bridge_gate_ra_applies_to_packet_lane() -> None:
                 headless_vs_human="headless",
             )
     assert exc.value.code == "handoff_review_attestation_blocked"
+
+
+def test_gate_c_pointer_only_bus_and_dispatch_trips_no_evidence() -> None:
+    """Slice 3 AC-4: self-minted bus_threads + dispatch_ids must not satisfy gate C.
+
+    Against HEAD this test fails (flatten_evidence_uris is non-empty). After
+    verifiable_evidence_uris the same closeout trips ``no_evidence``.
+    """
+    closeout = ImplementCloseout(
+        status=CloseoutStatus.COMPLETE,
+        summary="x",
+        source_ref="todo:foo",
+        evidence_uris=EvidenceUris(
+            bus_threads=["7210"],
+            dispatch_ids=["auto-pointer-only"],
+        ),
+    )
+    source = Source(
+        source_ref="todo:foo",
+        canonical_ref="todo:foo",
+        source_kind=SourceKind.TODO,
+    )
+    results = [
+        AdapterResult(
+            adapter="todo",
+            status="complete",
+            mutation="workflow_state=done",
+        )
+    ]
+    with patch(
+        "implement_admission.drift_gates.gate_state",
+        return_value=DriftGateState.ENFORCE,
+    ):
+        result = check_closeout_evidence(results, source=source, closeout=closeout)
+    assert result.action == "reject"
+    assert result.reason == "no_evidence"
+
+
+def test_gate_c_digest_match_admits(tmp_path: Path) -> None:
+    artifact = tmp_path / "sidecar.md"
+    artifact.write_text("published\n", encoding="utf-8")
+    digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    closeout = ImplementCloseout(
+        status=CloseoutStatus.COMPLETE,
+        summary="x",
+        source_ref="todo:foo",
+        evidence_uris=EvidenceUris(
+            artifact_paths=[str(artifact)],
+            artifact_digests={str(artifact): digest},
+        ),
+    )
+    source = Source(
+        source_ref="todo:foo",
+        canonical_ref="todo:foo",
+        source_kind=SourceKind.TODO,
+    )
+    results = [
+        AdapterResult(adapter="todo", status="complete", mutation="done")
+    ]
+    result = check_closeout_evidence(results, source=source, closeout=closeout)
+    assert result.action == "noop"
+
+
+def test_gate_c_digest_mismatch_trips(tmp_path: Path) -> None:
+    artifact = tmp_path / "sidecar.md"
+    artifact.write_text("published\n", encoding="utf-8")
+    closeout = ImplementCloseout(
+        status=CloseoutStatus.COMPLETE,
+        summary="x",
+        source_ref="todo:foo",
+        evidence_uris=EvidenceUris(
+            artifact_paths=[str(artifact)],
+            artifact_digests={str(artifact): "0" * 64},
+        ),
+    )
+    source = Source(
+        source_ref="todo:foo",
+        canonical_ref="todo:foo",
+        source_kind=SourceKind.TODO,
+    )
+    results = [
+        AdapterResult(adapter="todo", status="complete", mutation="done")
+    ]
+    with patch(
+        "implement_admission.drift_gates.gate_state",
+        return_value=DriftGateState.ENFORCE,
+    ):
+        result = check_closeout_evidence(results, source=source, closeout=closeout)
+    assert result.action == "reject"
+    assert result.reason == "evidence_digest_mismatch"
+
+
+def test_gate_c_path_without_digest_does_not_admit(tmp_path: Path) -> None:
+    artifact = tmp_path / "sidecar.md"
+    artifact.write_text("exists\n", encoding="utf-8")
+    closeout = ImplementCloseout(
+        status=CloseoutStatus.COMPLETE,
+        summary="x",
+        source_ref="todo:foo",
+        evidence_uris=EvidenceUris(artifact_paths=[str(artifact)]),
+    )
+    source = Source(
+        source_ref="todo:foo",
+        canonical_ref="todo:foo",
+        source_kind=SourceKind.TODO,
+    )
+    results = [
+        AdapterResult(adapter="todo", status="complete", mutation="done")
+    ]
+    with patch(
+        "implement_admission.drift_gates.gate_state",
+        return_value=DriftGateState.ENFORCE,
+    ):
+        result = check_closeout_evidence(results, source=source, closeout=closeout)
+    assert result.action == "reject"
+    assert result.reason == "no_evidence"

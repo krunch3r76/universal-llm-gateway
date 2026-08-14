@@ -208,7 +208,7 @@ def check_deliverable_verification(
     workspaces_root: Path | None = None,
 ) -> DriftGateResult:
     """Gate D — mechanical deliverable verification (fail-soft; always warn/trip)."""
-    from implement_admission.closeout import flatten_evidence_uris
+    from implement_admission.closeout import verifiable_evidence_uris
     from implement_admission.drift_gates import (
         DriftGateResult,  # noqa: F401
         _resolve_materialized_spec,
@@ -248,7 +248,11 @@ def check_deliverable_verification(
     if passed and closeout.verification:
         return DriftGateResult(gate_id="d", tripped=False, action="noop")
 
-    sidecar_ok = bool(flatten_evidence_uris(closeout.evidence_uris))
+    sidecar_ok = bool(
+        verifiable_evidence_uris(
+            closeout.evidence_uris, source_repo=workspaces_root
+        )
+    )
     entries = evaluate_deliverable_verification(
         spec=spec,
         closeout=closeout,
@@ -281,7 +285,7 @@ def apply_closeout_gate_d(
     source: Source,
     workspaces_root: Path | None = None,
 ) -> ImplementCloseout:
-    from implement_admission.closeout import flatten_evidence_uris
+    from implement_admission.closeout import verifiable_evidence_uris
     from implement_admission.drift_gates import _resolve_materialized_spec
     from implement_admission.source_ref import SourceRefError
     from implement_admission.spec import CloseoutStatus
@@ -299,7 +303,11 @@ def apply_closeout_gate_d(
     except SourceRefError:
         return closeout
 
-    sidecar_ok = bool(flatten_evidence_uris(closeout.evidence_uris))
+    sidecar_ok = bool(
+        verifiable_evidence_uris(
+            closeout.evidence_uris, source_repo=workspaces_root
+        )
+    )
     entries = closeout.verification or evaluate_deliverable_verification(
         spec=spec,
         closeout=closeout,

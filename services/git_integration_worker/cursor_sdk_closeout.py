@@ -25,6 +25,7 @@ from implement_admission.closeout_models import (
 from implement_admission.deliverable_verification import (
     evaluate_deliverable_verification,
 )
+from implement_admission.evidence_verify import hash_artifact_path
 from implement_admission.normalize import _files_from_packet
 from implement_admission.propagation_row import (
     land_paths_for_propagation,
@@ -70,6 +71,9 @@ from services.git_integration_worker.cursor_sdk_capture_status import (
     resolve_closeout_capture_fields,
     resolve_work_outcome,
     verification_has_failure,
+)
+from services.git_integration_worker.cursor_sdk_closeout_seal import (
+    seal_closeout_payload,
 )
 from services.git_integration_worker.cursor_sdk_deliverables import (
     artifact_paths_for_closeout,
@@ -1350,6 +1354,19 @@ def build_implement_closeout_body(
                 f"{payload['summary']}; {len(merged_effects)} path(s) touched "
                 "(untracked/gitignored/off-git)"
             )
+
+        evidence = payload.get("evidence_uris")
+        if isinstance(evidence, dict):
+            paths = evidence.get("artifact_paths") or []
+            published = dict(evidence.get("artifact_digests") or {})
+            for path in paths:
+                if not isinstance(path, str) or path in published:
+                    continue
+                digest = hash_artifact_path(path)
+                if digest is not None:
+                    published[path] = digest
+            evidence["artifact_digests"] = published
+        seal_closeout_payload(payload)
         return json.dumps(payload, separators=(",", ":"))
 
     body = _render_body(manifest_payload)

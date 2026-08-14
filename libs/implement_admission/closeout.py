@@ -12,6 +12,12 @@ from implement_admission.closeout_models import (
     ImplementCloseout,
     Verification,
 )
+from implement_admission.evidence_verify import (
+    EvidenceVerifyResult,
+    hash_artifact_path,
+    verifiable_evidence_uris,
+    verify_evidence_uris,
+)
 from implement_admission.spec import CloseoutAdapterKind, CloseoutStatus, Source
 
 __all__ = [
@@ -19,13 +25,17 @@ __all__ = [
     "AdapterResult",
     "CloseoutAdapter",
     "EvidenceUris",
+    "EvidenceVerifyResult",
     "ImplementCloseout",
     "Verification",
     "apply_closeout",
     "flatten_evidence_uris",
+    "hash_artifact_path",
     "reconcile_closeout",
     "run_adapters",
     "run_composition",
+    "verifiable_evidence_uris",
+    "verify_evidence_uris",
 ]
 
 

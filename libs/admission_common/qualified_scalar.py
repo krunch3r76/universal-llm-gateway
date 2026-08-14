@@ -135,7 +135,7 @@ PUBLICATION_BUILDER_CENSUS: dict[str, str] = {
     "sdk_dispatch_gate_stats": "pending",
     "concurrency_stats": "pending",
     "execution_store.active_work_snapshot": "sealed",
-    "ImplementCloseout.model_dump": "pending",
+    "ImplementCloseout.model_dump": "sealed",
     "lane_a_checkpoint prose injectors": "pending",
     "PropagationRow._apply_defaults": "pending",
     "mcp_drain.active_work_snapshot": "pending",
