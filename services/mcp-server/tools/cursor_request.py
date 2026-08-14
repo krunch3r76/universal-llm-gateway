@@ -49,6 +49,7 @@ CALLER_FIELDS: frozenset[str] = frozenset(
         "sidecar_slug",
         "require_attended",
         "after_turn",
+        "lane",
     }
 )
 
@@ -111,6 +112,7 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         contract: str = "answer",
         require_attended: bool = False,
         after_turn: int = 0,
+        lane: str | None = None,
     ) -> Any:
         """Sanctioned unattended cursor-auto request lane (agent_bus request only).
 
@@ -152,6 +154,9 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
 
         ``contract`` ∈ answer | confer | investigate | implement | verify | execute |
         propagate | seed | recon. Unknown ⇒ 422 before turn write. ``consult`` aliases confer.
+
+        ``lane``: optional GIW checkout-isolation ``A`` | ``B``. Omit for
+        current ``select_lane`` defaults. Distinct from ``lane_role``.
 
         **Admit body gate (implement / investigate)**
 
@@ -224,6 +229,8 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
                 "require_attended": require_attended,
                 "after_turn": after_turn,
             }
+            if lane is not None:
+                parsed["lane"] = lane
             if new_slug is not None:
                 parsed["new_slug"] = new_slug
             if thread is not None:

@@ -26,6 +26,7 @@ from .request_failure import (
     error_class_from_liveness,
 )
 from .request_intake import (
+    resolve_checkout_lane,
     resolve_contract_intake,
     resolve_request_id_intake,
     stamp_contract_deprecation,
@@ -94,6 +95,7 @@ def _request_impl(
     cse_registration_id: str | None = None,
     escalation: str | None = None,
     continuity_hop: bool = False,
+    lane: str | None = None,
 ) -> dict[str, Any]:
     """Write turn via send path, then arm/enqueue Auto when live."""
     from pager_notify.so_what import resolve_so_what_summary
@@ -210,6 +212,7 @@ def _request_impl(
         cse_registration_id=cse_registration_id if capture_identity else None,
         escalation=escalation,
         continuity_hop=continuity_hop,
+        lane=lane,
     )
     if not enq.get("ok"):
         reason = enqueue_failure_reason(enq)
@@ -253,14 +256,16 @@ def _request_impl(
         return result
 
     handler_status = "auto-admit-armed"
-    record(
-        "mcp.agentbus.request.posted",
-        thread=thread_id,
-        turn_number=turn_number,
-        handler_status=handler_status,
-        desired_model=desired_model,
-        contract=contract,
-    )
+    posted_kw: dict[str, Any] = {
+        "thread": thread_id,
+        "turn_number": turn_number,
+        "handler_status": handler_status,
+        "desired_model": desired_model,
+        "contract": contract,
+    }
+    if lane:
+        posted_kw["lane"] = lane
+    record("mcp.agentbus.request.posted", **posted_kw)
     if capture_identity and (cse_chat_url or cse_registration_id):
         from claude_bundles.cse_session_obligations import stamp_session_ids
 
@@ -301,6 +306,8 @@ def _request_impl(
         result["same_thread_claimed"] = lane_claimed
     if request_id:
         result["request_id"] = request_id
+    if lane:
+        result["lane"] = lane
     return result
 
 
@@ -325,6 +332,7 @@ def _request_dispatch(
     cse_chat_url: str | None = None,
     cse_registration_id: str | None = None,
     escalation: str | None = None,
+    lane: str | None = None,
 ) -> dict[str, Any]:
     """Validate + dispatch ``agent_bus.request``.
 
@@ -345,6 +353,12 @@ def _request_dispatch(
     deprecation note on the response. ``execute`` = one tier-M allowlisted op;
     ``propagate`` = operator restart request (propagation ledger + drain-gated
     sync_restart — not tier-M ``manage.*``).
+
+    ``lane``: optional GIW checkout-isolation ``A`` (local master) or ``B``
+    (``cursor-sdk/lane-{thread}``). Omit for current ``select_lane`` defaults.
+    Distinct from ``lane_role`` (bus-thread parentage) and tag
+    ``lane:cursor-auto``. Invalid values reject 422 ``request_lane_invalid``
+    before the turn is written.
     """
     if isinstance(thread, int):
         thread = str(thread)
@@ -396,6 +410,10 @@ def _request_dispatch(
     if seat_refusal is not None:
         return seat_refusal
 
+    checkout_lane, lane_err = resolve_checkout_lane(lane, from_agent=from_agent)
+    if lane_err is not None:
+        return lane_err
+
     result = _request_impl(
         new_slug=new_slug,
         thread=thread,
@@ -416,5 +434,6 @@ def _request_dispatch(
         cse_chat_url=cse_chat_url,
         cse_registration_id=cse_registration_id,
         escalation=escalation,
+        lane=checkout_lane,
     )
     return stamp_contract_deprecation(result, intake)

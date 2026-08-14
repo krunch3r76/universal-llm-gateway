@@ -112,3 +112,159 @@ def test_dispatch_honors_consult_as_confer_and_stamps_note() -> None:
         and payload.get("replacement") == "confer"
         for sig, payload in events
     )
+
+
+def test_dispatch_rejects_invalid_lane_before_turn_write() -> None:
+    """GIW checkout lane is A|B only — reject before the bus turn exists."""
+    with patch("tools.agent_bus.request._request_impl") as impl:
+        result = _request_dispatch(
+            new_slug="bad-lane",
+            to="cursor",
+            subject="probe",
+            body="TYPE: DIRECTIVE\nscope: libs/foo\nvision: mechanical",
+            from_agent="web-anthropic",
+            lane="C",
+        )
+    impl.assert_not_called()
+    assert result["reason"] == "request_lane_invalid"
+    assert result["status_code"] == 422
+    assert result["provided"] == "C"
+
+
+@pytest.mark.parametrize("raw,expected", [("a", "A"), ("B", "B"), ("", None)])
+def test_dispatch_normalizes_or_omits_checkout_lane(
+    raw: str, expected: str | None
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_impl(**kwargs):
+        captured.update(kwargs)
+        return {"handler_status": "auto-admit-armed"}
+
+    with patch("tools.agent_bus.request._request_impl", side_effect=fake_impl):
+        kwargs: dict[str, object] = {
+            "new_slug": "lane-ok",
+            "to": "cursor",
+            "subject": "probe",
+            "body": "TYPE: DIRECTIVE\nscope: libs/foo\nvision: mechanical",
+            "from_agent": "web-anthropic",
+        }
+        if raw:
+            kwargs["lane"] = raw
+        result = _request_dispatch(**kwargs)  # type: ignore[arg-type]
+    assert result["handler_status"] == "auto-admit-armed"
+    assert captured.get("lane") == expected
+
+
+def test_request_lane_reaches_select_lane_as_explicit() -> None:
+    """Wire lane is not dropped: enqueue sees it and select_lane reasons explicit."""
+    from pathlib import Path
+
+    from services.git_integration_worker.cursor_sdk_lane_select import select_lane
+    from services.git_integration_worker.models.cursor_api import CursorDispatchRequest
+
+    enq_kw: dict[str, object] = {}
+
+    def fake_send(**_kwargs):
+        return {
+            "send_path": "new_thread",
+            "thread": {"id": "7224", "slug": "lane-rt"},
+            "turn": {"id": 1, "thread": "7224", "turn_number": 1},
+        }
+
+    def fake_enq(**kwargs):
+        enq_kw.update(kwargs)
+        return {"ok": True, "handler_status": "auto-admit-armed", "enqueue": {}}
+
+    with (
+        patch("tools.agent_bus.request._send_dispatch", side_effect=fake_send),
+        patch(
+            "tools.agent_bus.request.probe_auto_liveness",
+            return_value={"live": True},
+        ),
+        patch("tools.agent_bus.request.enqueue_auto_job", side_effect=fake_enq),
+    ):
+        result = _request_dispatch(
+            new_slug="lane-rt",
+            to="cursor",
+            subject="probe",
+            body="TYPE: DIRECTIVE\nscope: libs/foo\nvision: mechanical",
+            from_agent="web-anthropic",
+            lane="B",
+        )
+    assert result.get("lane") == "B"
+    assert enq_kw.get("lane") == "B"
+
+    req = CursorDispatchRequest(
+        thread_id="7224",
+        model="composer-2.5",
+        dispatch_id="d-lane-rt",
+        execution_id="e-lane-rt",
+        message="do work",
+        lane=enq_kw["lane"],
+    )
+    selected, _advisories, reason = select_lane(
+        req=req,
+        regime_active=False,
+        source_repo=Path("/mnt/torus/projects/universal-llm-gateway"),
+        files_expected=["services/mcp-server/tools/agent_bus/request.py"],
+        contract="implement",
+    )
+    assert selected == "B"
+    assert reason == "explicit"
+
+
+def test_request_omitted_lane_keeps_select_lane_default() -> None:
+    """No wire lane ⇒ enqueue omits the key and select_lane stays opt_out."""
+    from pathlib import Path
+
+    from services.git_integration_worker.cursor_sdk_lane_select import select_lane
+    from services.git_integration_worker.models.cursor_api import CursorDispatchRequest
+
+    enq_kw: dict[str, object] = {}
+
+    def fake_send(**_kwargs):
+        return {
+            "send_path": "new_thread",
+            "thread": {"id": "7224", "slug": "lane-default"},
+            "turn": {"id": 1, "thread": "7224", "turn_number": 1},
+        }
+
+    def fake_enq(**kwargs):
+        enq_kw.update(kwargs)
+        return {"ok": True, "handler_status": "auto-admit-armed", "enqueue": {}}
+
+    with (
+        patch("tools.agent_bus.request._send_dispatch", side_effect=fake_send),
+        patch(
+            "tools.agent_bus.request.probe_auto_liveness",
+            return_value={"live": True},
+        ),
+        patch("tools.agent_bus.request.enqueue_auto_job", side_effect=fake_enq),
+    ):
+        result = _request_dispatch(
+            new_slug="lane-default",
+            to="cursor",
+            subject="probe",
+            body="TYPE: DIRECTIVE\nscope: libs/foo\nvision: mechanical",
+            from_agent="web-anthropic",
+        )
+    assert "lane" not in result
+    assert enq_kw.get("lane") is None
+
+    req = CursorDispatchRequest(
+        thread_id="7224",
+        model="composer-2.5",
+        dispatch_id="d-lane-default",
+        execution_id="e-lane-default",
+        message="do work",
+    )
+    selected, _advisories, reason = select_lane(
+        req=req,
+        regime_active=False,
+        source_repo=Path("/mnt/torus/projects/universal-llm-gateway"),
+        files_expected=["services/mcp-server/tools/agent_bus/request.py"],
+        contract="implement",
+    )
+    assert selected == "A"
+    assert reason == "opt_out"
