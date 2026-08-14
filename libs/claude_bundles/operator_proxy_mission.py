@@ -16,6 +16,7 @@ from claude_bundles.cowork_skill_delivery import (
     format_cdp_slash_prefix,
     split_leading_slash_skills,
 )
+from claude_bundles.operator_proxy_skill_introspect import skill_introspection_block
 from claude_bundles.operator_proxy_tier_m import tier_m_authoring_block
 from claude_bundles.operator_proxy_wake_brief import wake_briefing_paragraph
 
@@ -95,6 +96,7 @@ def _build_briefing_block() -> str:
     receipt_example = _receipt_example()
     tier_m_block = tier_m_authoring_block()
     wake_block = wake_briefing_paragraph().rstrip()
+    skill_block = skill_introspection_block(MISSION_SKILL_SLUGS).rstrip()
     return f"""\
 ## Mission seat map (BINDING — operator-proxy mission)
 
@@ -268,13 +270,7 @@ while an install sits uncommissioned.
 
 Work posting SOT: `cortex://notes/system/specs/cursor-auto-tick-work-posting.md`
 
-**Skill surface (BINDING):** the skills chipped above are the complete set attachable
-on this seat. The cursor-side mechanism behind this protocol — admit gates,
-`nest_under`/lease, budget enforcement, supersede revert, chip delivery — lives in
-`operator-proxy-substrate`, which is `cursor_only` and **cannot be attached here**;
-same for `claude-ai-cdp-navigation` and `path-sim`. Those are the cursor seat's duty:
-commission via `agent_bus.request`, ¬ attempt to load them.
-Split rationale: `decision:operator-proxy-skill-surface-split`.
+{skill_block}
 
 **Revocation (BINDING):** disable the trigger row via GIW schedule API for future fires;
 revoke in-flight code-side commission lanes via operator action on the endeavor root —

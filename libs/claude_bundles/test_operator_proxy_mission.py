@@ -9,6 +9,7 @@ from claude_bundles.operator_proxy_mission import (
     _FORBIDDEN_HEADING,
     LIFE_SURFACE_FORBIDDEN_TOOLS,
     LIFE_SURFACE_LEGAL_TOOLS,
+    MISSION_SKILL_SLUGS,
     ensure_operator_proxy_mission_prompt,
     is_operator_proxy_mission_purpose,
     purpose_implies_mission,
@@ -49,8 +50,9 @@ def test_ensure_injects_self_scheduled_wake_guide() -> None:
     assert "TaskStop" in out
     assert "Sole-wake" in out or "sole-wake" in out.lower() or "PRIMARY" in out
     # Historical arm recipes must not ship as first-dispatch defaults.
-    assert "persistent: true" not in out
-    assert "1800000ms" not in out
+    # §8 may *name* the forbidden tokens as a warning; they must not be arm instructions.
+    assert "Do not arm Monitor" in out
+    assert "does NOT make Monitor unbounded" in out
     assert "while true; do sleep 240" not in out
 
 
@@ -132,3 +134,21 @@ def test_propagate_contract_documents_allow_self_preempt() -> None:
     assert "not** the auto-escalation veto" in block or "not the auto-escalation veto" in block
     # Shorthand + structured example surfaces both name the knob.
     assert block.count("allow_self_preempt") >= 2
+
+
+def test_skill_surface_introspects_instead_of_asserting_loaded() -> None:
+    """Chips are a request; seat must introspect and self-fetch gaps."""
+    out = ensure_operator_proxy_mission_prompt("# Mission\n")
+    for slug in MISSION_SKILL_SLUGS:
+        assert f"`{slug}`" in out
+    assert "Use the `" in out
+    assert "`<slug>` skill" in out
+    assert "complete set attachable" not in out
+    for slug in (
+        "operator-proxy-substrate",
+        "claude-ai-cdp-navigation",
+        "path-sim",
+    ):
+        assert f"`{slug}`" in out
+    assert "decision:operator-proxy-skill-surface-split" in out
+    assert "request**, not" in out or "request, not a receipt" in out.lower()
