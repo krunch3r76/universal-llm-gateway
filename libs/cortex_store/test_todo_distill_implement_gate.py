@@ -13,7 +13,9 @@ from implement_admission.gate_distillation import prepare_gate_distillation
 from cortex_store import db
 from cortex_store._test_db_bootstrap import copy_template_db
 from cortex_store.dispatch_ops import execute_op
-from cortex_store.dispatch_ops._todo_gate_distillation_impl import _evaluate_from_persisted
+from cortex_store.dispatch_ops._todo_gate_distillation_impl import (
+    _evaluate_from_persisted,
+)
 from cortex_store.type_schemas import type_attribute_schema
 
 _VALID_DENSE_SPEC = """\
@@ -65,7 +67,6 @@ No fork remains OPEN.
 _GATE_KWARGS = {
     "files_expected": ["libs/a.py"],
     "acceptance_criteria": ["Admission passes without manual fixup."],
-    "required_skills": ["consult-routing"],
     "agent": "claude-cursor",
 }
 _SPEC_URI = "workspaces://universal-llm-gateway/tasks/specs/wire-gate.md"
@@ -92,14 +93,16 @@ def gate_env(
         now = "2026-06-15T00:00:00Z"
         conn.execute(
             "INSERT INTO entities "
-            "(id, type, name, workflow_state, attributes, created_at, updated_at) "
-            "VALUES (?, 'todo', ?, 'in_progress', ?, ?, ?)",
+            "(id, type, name, source_uri, workflow_state, attributes, created_at, updated_at) "
+            "VALUES (?, 'todo', ?, ?, 'in_progress', ?, ?, ?)",
             (
                 "todo:wire-gate",
                 "wire-gate",
+                _SPEC_URI,
                 json.dumps(
                     {
                         "density_triage": "judgment_required",
+                        "check_requested": True,
                         "consult_thread": "agent-bus:8801",
                         "verdict": "proceed_with_amendments",
                         "consultant_family": "anthropic",
@@ -266,6 +269,20 @@ def test_todo_distill_post_check_rejects_missing_skeptic(gate_env: Path) -> None
     result = _distill()
     assert result.get("ok") is not True, result
     assert result.get("gate_code") == "skeptic_pass_missing"
+
+    entity = execute_op("entity_get", {"entity_id": "todo:wire-gate", "intent": "full"})
+    attrs = entity["attributes"]
+    assert attrs.get("implement_ready_assertion_id") is None
+    assert attrs.get("bind_status") != "settled"
+
+    with db.cortex_conn() as conn:
+        row = conn.execute(
+            "SELECT valid_until FROM assertions WHERE id = 1",
+        ).fetchone()
+        assertion_count = conn.execute("SELECT COUNT(*) FROM assertions").fetchone()[0]
+    assert assertion_count == 1
+    assert row is not None
+    assert row["valid_until"] is not None
 
 
 @pytest.mark.offline

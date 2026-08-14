@@ -112,6 +112,33 @@ def _retract_assertion(assertion_id: int) -> dict[str, Any]:
     return _op_assertion_update(assertion_id=assertion_id, valid_until=now_iso)
 
 
+def _rollback_distill_gate_stamp(
+    *,
+    entity_id: str,
+    assertion_id: int,
+    prior_attrs: dict[str, Any],
+    prior_source_uri: str | None,
+) -> dict[str, Any] | None:
+    """Retract a fresh gate assertion and restore pre-distillation entity attrs."""
+    retract = _retract_assertion(assertion_id)
+    if "error" in retract:
+        return retract
+    restore = _op_entity_update(
+        entity_id=entity_id,
+        source_uri=prior_source_uri,
+        attributes=prior_attrs,
+    )
+    if "error" in restore:
+        return restore
+    record(
+        "cortex.todo_distill_implement_gate.retracted",
+        todo_id=entity_id,
+        assertion_id=assertion_id,
+        reason="gate_check_rejected",
+    )
+    return None
+
+
 def _load_assertion(conn: Any, assertion_id: int) -> dict[str, Any] | None:
     rows = query(
         conn,
@@ -520,6 +547,42 @@ def distill_todo_implement_gate(
             attr_patch["recon_waived"] = incoming_waiver.to_attr_json()
 
         card_patch = _apply_gate_state_card(prior_attrs, attr_patch)
+        pre_verdict = _evaluate_from_persisted(
+            entity_id=resolved.entity_id,
+            prepared=prepared,
+            persisted_attrs=card_patch,
+            persisted_source_uri=prepared.spec_path,
+            persisted_name=row.get("name"),
+        )
+        if not pre_verdict.admitted:
+            retract = _retract_assertion(assertion_id)
+            if "error" in retract:
+                return {
+                    "error": (
+                        f"gate pre-check rejected ({pre_verdict.reason}) and assertion "
+                        f"{assertion_id} retraction failed ({retract['error']})"
+                    ),
+                    "step": "retract",
+                }
+            record(
+                "cortex.todo_distill_implement_gate.retracted",
+                todo_id=resolved.entity_id,
+                assertion_id=assertion_id,
+                gate_code=pre_verdict.code,
+            )
+            logger.warning(
+                "todo_distill_implement_gate pre-check rejected %s: %s",
+                resolved.entity_id,
+                pre_verdict.reason,
+            )
+            return {
+                "ok": False,
+                "todo_id": resolved.entity_id,
+                "source_uri": prepared.spec_path,
+                "gate_code": pre_verdict.code,
+                "gate_reason": pre_verdict.reason,
+            }
+
         card_keys = ("workflow", "stage", "bind_status", "next_action")
         update = _op_entity_update(
             entity_id=resolved.entity_id,
@@ -544,28 +607,36 @@ def distill_todo_implement_gate(
             )
             return {"error": update["error"], "step": "entity_update"}
 
-        merged_attrs = card_patch
-        verdict = _evaluate_from_persisted(
+        post_verdict = _evaluate_from_persisted(
             entity_id=resolved.entity_id,
             prepared=prepared,
-            persisted_attrs=merged_attrs,
-            persisted_source_uri=prepared.spec_path,
-            persisted_name=row.get("name"),
         )
-        if not verdict.admitted:
+        if not post_verdict.admitted:
+            rollback_err = _rollback_distill_gate_stamp(
+                entity_id=resolved.entity_id,
+                assertion_id=assertion_id,
+                prior_attrs=prior_attrs,
+                prior_source_uri=row.get("source_uri"),
+            )
+            if rollback_err is not None:
+                return {
+                    "error": (
+                        f"gate post-check rejected ({post_verdict.reason}) and rollback "
+                        f"failed ({rollback_err.get('error', rollback_err)})"
+                    ),
+                    "step": "rollback",
+                }
             logger.warning(
                 "todo_distill_implement_gate post-check rejected %s: %s",
                 resolved.entity_id,
-                verdict.reason,
+                post_verdict.reason,
             )
             return {
                 "ok": False,
                 "todo_id": resolved.entity_id,
                 "source_uri": prepared.spec_path,
-                "implement_ready_assertion_id": assertion_id,
-                "evidence_uris": prepared.evidence_uris,
-                "gate_code": verdict.code,
-                "gate_reason": verdict.reason,
+                "gate_code": post_verdict.code,
+                "gate_reason": post_verdict.reason,
             }
 
         record(
