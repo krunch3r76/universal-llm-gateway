@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from implement_admission.check_review_substrate import (
     CHECK_REVIEW_DEFAULT_MODEL,
     CheckReviewAdmissionReject,
@@ -11,13 +9,17 @@ from implement_admission.check_review_substrate import (
     resolve_check_review_model,
     verify_check_review_default_conformance,
 )
-from implement_admission.routing import load_route_policy, verify_check_review_default_policy
+from implement_admission.routing import (
+    load_route_policy,
+    verify_check_review_default_policy,
+)
 
 
 def test_omit_model_resolves_reviewer_to_terra() -> None:
     resolution = resolve_check_review_model("reviewer", None)
     assert resolution.resolved_model == CHECK_REVIEW_DEFAULT_MODEL
-    assert resolution.substrate == "api"
+    # decision:code-review-panel-cursor-substrate — omit model lands on cursor-sdk, not API.
+    assert resolution.substrate == "cursor-sdk"
 
 
 def test_cursor_luna_resolves_sdk_substrate() -> None:

@@ -15,20 +15,20 @@ from systems.frontier_consult.generate_admission_context_store import (
     try_claim_spawn_pending,
     write_admission_context,
 )
+from systems.frontier_consult.packet_review_surface import (
+    FOOTER_BY_SURFACE,
+    NEGATIVE_SPACE_BY_SURFACE,
+)
 from systems.frontier_consult.review_child_spawn_hook import (
     _SPAWN_PROVENANCE,
-    _ReviewPromptBuild,
     _build_generate_lane_review_prompt,
+    _ReviewPromptBuild,
     handle_worker_completed_event,
     is_review_child_execution,
     reset_review_child_spawn_hook_for_tests,
     resolve_executor_family,
     select_cross_family_reviewer,
     should_spawn_review_child,
-)
-from systems.frontier_consult.packet_review_surface import (
-    FOOTER_BY_SURFACE,
-    NEGATIVE_SPACE_BY_SURFACE,
 )
 from systems.frontier_consult.skill_suggest_durable_state import DurableTerminalEvent
 
@@ -94,7 +94,8 @@ def test_d3_cross_family_openai_executor_gets_cursor_opus() -> None:
 def test_d3_cross_family_cursor_executor_gets_openai() -> None:
     sel = select_cross_family_reviewer("cursor/claude-sonnet-4-6")
     assert sel is not None
-    assert sel.model == "openai/gpt-5.5"
+    # Anthropic-family executor → check/review default (terra = openai-family).
+    assert sel.model == "cursor/gpt-5.6-terra"
     assert sel.family == "openai"
 
 
@@ -496,7 +497,10 @@ async def test_generate_lane_review_prompt_includes_ac_observer_footer() -> None
         )
     assert build is not None
     assert "Packet AC observer (advisory)" in build.prompt
-    assert "Self-check PASS is evidence to inspect, not completion authority" in build.prompt
+    assert (
+        "Self-check PASS is evidence to inspect, not completion authority"
+        in build.prompt
+    )
     assert "PASS or FAIL per packet AC" in build.prompt
 
 
@@ -576,7 +580,10 @@ def test_densify_build_reviewer_prompt_default_byte_identical() -> None:
         f"<composer_draft>\n{draft}\n</composer_draft>\n"
         f"<reasoning_trace>\n{trace}\n</reasoning_trace>"
     )
-    assert build_reviewer_prompt(staged_draft_body=draft, reasoning_trace_body=trace) == golden
+    assert (
+        build_reviewer_prompt(staged_draft_body=draft, reasoning_trace_body=trace)
+        == golden
+    )
 
 
 def test_render_and_diff_sidecar_vs_source_prompts() -> None:

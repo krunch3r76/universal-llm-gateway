@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from implement_admission.check_review_substrate import (
-    CHECK_REVIEW_DEFAULT_MODEL,
     CHECK_REVIEW_DECISION_CITATION,
+    CHECK_REVIEW_DEFAULT_MODEL,
     coerce_check_review_omit_to_cursor_seat,
     families_independently_measured,
     independence_family,

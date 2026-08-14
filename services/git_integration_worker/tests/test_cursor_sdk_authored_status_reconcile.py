@@ -155,6 +155,71 @@ def test_reconcile_noop_when_section2_complete() -> None:
     assert deviations == []
 
 
+_COMPLETE_SECTION2_PAPER_OVER = """## §2
+
+status_claim: complete
+
+ac_verdict: all 6 AC members pass (table below)
+"""
+
+
+def test_reconcile_authored_complete_does_not_upgrade_checks_failed() -> None:
+    """auto-32296c7fe474 class — §2 complete must not launder observed check failure."""
+    status, work_outcome, disagreement, deviations = (
+        reconcile_structured_with_authored(
+            status=CloseoutStatus.PARTIAL,
+            work_outcome=WorkOutcome.CHECKS_FAILED,
+            sidecar_markdown=_COMPLETE_SECTION2_PAPER_OVER,
+            deliverables_expected=True,
+        )
+    )
+    assert status == CloseoutStatus.PARTIAL
+    assert work_outcome == WorkOutcome.CHECKS_FAILED
+    assert disagreement is None
+    assert deviations == []
+
+
+def test_build_body_authored_complete_keeps_observed_ruff_fail_checks_failed() -> None:
+    """Specimen auto-32296c7fe474: observed ruff exit 1 + §2 complete stays checks_failed."""
+    ruff_stdout = (
+        "I001 [*] Import block is un-sorted or un-formatted\n"
+        "  --> libs/implement_admission/test_check_review_substrate_default.py:3:1\n"
+        "Found 4 errors.\n"
+    )
+    verification = [
+        observed_process_verification(
+            command="ruff check 8 touched files",
+            exit_code=1,
+            invocation_id="lint:ce70f1e4cdfb49b3bcec4a96a81216e9",
+            basis="subprocess.run.returncode",
+            stdout=ruff_stdout,
+            executable="/home/io/.venvs/universal/bin/ruff",
+            tool_version="0.15.6",
+        )
+    ]
+    body = build_implement_closeout_body(
+        dispatch_id="auto-32296c7fe474",
+        outcome=SdkRunOutcome(
+            body="status_claim: complete\nac_verdict: all 6 AC members pass",
+            status="finished",
+            duration_ms=505400,
+            tool_call_count=145,
+        ),
+        degraded_reason=None,
+        sidecar_ref=sidecar_workspaces_ref("auto-32296c7fe474"),
+        result_bytes=7497,
+        thread_id="7217",
+        work_item_ref="todo:closeout-envelope-section2-honesty",
+        sidecar_markdown=_COMPLETE_SECTION2_PAPER_OVER,
+        verification=verification,
+        deliverables_expected=True,
+    )
+    payload = json.loads(body)
+    assert payload["work_outcome"] == WorkOutcome.CHECKS_FAILED.value
+    assert payload["status"] == CloseoutStatus.PARTIAL.value
+    assert payload.get("status_authority_disagreement") is None
+
+
 def test_build_body_partial_section2_preserves_machine_grade(
     tmp_path: Path,
 ) -> None:
