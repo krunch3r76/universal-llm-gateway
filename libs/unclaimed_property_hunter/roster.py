@@ -40,11 +40,9 @@ class HunterRoster:
 
 
 def load_roster(path: Path) -> HunterRoster:
-    """Parse roster config; raises on empty subjects."""
+    """Parse roster config; empty subjects are allowed (caller handles roster_empty)."""
     data: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     raw_subjects = data.get("subjects") or []
-    if not raw_subjects:
-        raise ValueError(f"roster {path} has no subjects")
     subjects: list[RosterSubject] = []
     for row in raw_subjects:
         surname = str(row.get("surname", "")).strip()

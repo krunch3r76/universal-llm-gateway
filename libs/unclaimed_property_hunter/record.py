@@ -49,8 +49,11 @@ def _write_bytes(rel: Path, data: bytes) -> tuple[str, str]:
 
 def write_raw_and_normalized(record: RunRecord, raw_bytes: bytes) -> RunRecord:
     """Save raw payload + normalized JSON; return record with raw_payload_uri set."""
-    if record.run_kind in ("bulk_extract", "estates_extract"):
-        if record.corpus_fingerprint is None or not record.corpus_fingerprint.zip_sha256:
+    roster_only = record.check_failure_reason == "roster_empty"
+    if record.run_kind in ("bulk_extract", "estates_extract") and not record.check_failed:
+        if not roster_only and (
+            record.corpus_fingerprint is None or not record.corpus_fingerprint.zip_sha256
+        ):
             raise RuntimeError(
                 f"refuse {record.run_kind} persist without corpus zip_sha256"
             )
@@ -69,6 +72,7 @@ def write_raw_and_normalized(record: RunRecord, raw_bytes: bytes) -> RunRecord:
         corpus_fingerprint=record.corpus_fingerprint,
         notify_outcome=record.notify_outcome,
         check_failed=record.check_failed,
+        check_failure_reason=record.check_failure_reason,
     )
     norm_rel = _RUNS_REL / f"{record.run_id}.normalized.json"
     _write_bytes(norm_rel, json.dumps(updated.to_json_dict(), indent=2).encode())
@@ -176,6 +180,7 @@ def load_run_from_normalized(path: Path) -> RunRecord:
         corpus_fingerprint=_load_fingerprint(data.get("corpus_fingerprint")),
         notify_outcome=data.get("notify_outcome"),
         check_failed=bool(data.get("check_failed", False)),
+        check_failure_reason=str(data.get("check_failure_reason") or ""),
     )
 
 

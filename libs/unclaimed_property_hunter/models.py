@@ -87,6 +87,7 @@ class RunRecord:
     corpus_fingerprint: CorpusFingerprint | None = None
     notify_outcome: dict[str, Any] | None = None
     check_failed: bool = False
+    check_failure_reason: str = ""
 
     def to_json_dict(self) -> dict[str, Any]:
         """Serialize for the normalized sidecar (no property records invented)."""

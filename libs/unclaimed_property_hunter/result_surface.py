@@ -16,17 +16,23 @@ ExecutionBlockReason = Literal[
     "requires_js_cloudflare_turnstile_sws_session",
     "ingest_unparsed",
     "search_not_executed",
+    "corpus_zero_rows",
 ]
 
 HitCountMeaning = Literal["completed_search", "not_a_completed_search"]
 
 
 def execution_block_reason(
-    run_kind: RunKind, search_executed: bool
+    run_kind: RunKind,
+    search_executed: bool,
+    *,
+    corpus_rows_scanned: int | None = None,
 ) -> ExecutionBlockReason | None:
     """Map a non-executed run to a stable reason token for operator surfaces."""
     if search_executed:
         return None
+    if run_kind in ("bulk_extract", "estates_extract") and corpus_rows_scanned == 0:
+        return "corpus_zero_rows"
     if run_kind == "transport_probe":
         return "requires_js_cloudflare_turnstile_sws_session"
     if run_kind == "ingest_unparsed":
@@ -46,9 +52,20 @@ def resolved_hit_count(record: RunRecord) -> int | None:
     return len(record.hits)
 
 
+def _corpus_rows_scanned(record: RunRecord) -> int | None:
+    if record.corpus_fingerprint is None:
+        return None
+    return record.corpus_fingerprint.rows_scanned
+
+
 def public_run_dict(record: RunRecord) -> dict[str, Any]:
     """Normalized public projection for sidecars, CLI JSON, and aggregators."""
-    reason = execution_block_reason(record.run_kind, record.search_executed)
+    rows_scanned = _corpus_rows_scanned(record)
+    reason = execution_block_reason(
+        record.run_kind,
+        record.search_executed,
+        corpus_rows_scanned=rows_scanned,
+    )
     count = resolved_hit_count(record)
     return {
         "run_id": record.run_id,
@@ -84,6 +101,7 @@ def public_run_dict(record: RunRecord) -> dict[str, Any]:
         "raw_sha256": record.raw_sha256,
         "notes": record.notes,
         "check_failed": record.check_failed,
+        "check_failure_reason": record.check_failure_reason or None,
         "notify_outcome": record.notify_outcome,
         "corpus_fingerprint": _fingerprint_dict(record.corpus_fingerprint),
     }
@@ -104,7 +122,11 @@ def _fingerprint_dict(fp: CorpusFingerprint | None) -> dict[str, Any] | None:
 
 def format_entity_description(record: RunRecord) -> str:
     """Cortex run-document description — never ``hits=0`` when search did not run."""
-    reason = execution_block_reason(record.run_kind, record.search_executed)
+    reason = execution_block_reason(
+        record.run_kind,
+        record.search_executed,
+        corpus_rows_scanned=_corpus_rows_scanned(record),
+    )
     if record.search_executed:
         return (
             f"{record.run_kind} search_executed=True "
@@ -129,7 +151,11 @@ def format_entity_attributes(record: RunRecord) -> dict[str, Any]:
         "hit_count_meaning": hit_count_meaning(record.search_executed),
     }
     count = resolved_hit_count(record)
-    reason = execution_block_reason(record.run_kind, record.search_executed)
+    reason = execution_block_reason(
+        record.run_kind,
+        record.search_executed,
+        corpus_rows_scanned=_corpus_rows_scanned(record),
+    )
     if count is None:
         attrs["hit_count"] = None
         attrs["execution_block_reason"] = reason
@@ -141,12 +167,18 @@ def format_entity_attributes(record: RunRecord) -> dict[str, Any]:
     if record.notify_outcome is not None:
         attrs["notify_outcome"] = record.notify_outcome
     attrs["check_failed"] = record.check_failed
+    if record.check_failure_reason:
+        attrs["check_failure_reason"] = record.check_failure_reason
     return attrs
 
 
 def format_assertion_claim(record: RunRecord) -> str:
     """Run assertion text — explicit that non-executed ≠ zero-hit."""
-    reason = execution_block_reason(record.run_kind, record.search_executed)
+    reason = execution_block_reason(
+        record.run_kind,
+        record.search_executed,
+        corpus_rows_scanned=_corpus_rows_scanned(record),
+    )
     if record.search_executed:
         return (
             f"CA SCO hunt {record.run_kind} for surname {record.query.surname}: "
@@ -215,7 +247,11 @@ def surface_report_row(
 
 def format_operator_stderr(record: RunRecord) -> str:
     """One-line operator-visible signal when the search did not execute."""
-    reason = execution_block_reason(record.run_kind, record.search_executed)
+    reason = execution_block_reason(
+        record.run_kind,
+        record.search_executed,
+        corpus_rows_scanned=_corpus_rows_scanned(record),
+    )
     if record.search_executed:
         return ""
     return f"SEARCH NOT EXECUTED: reason={reason}"

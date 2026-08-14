@@ -22,6 +22,14 @@ HOLDER_COL = "HOLDER_NAME"
 ID_COL = "PROPERTY_ID"
 
 
+class HeaderDriftError(ValueError):
+    """SCO CSV header no longer matches expected OWNER_NAME / PROPERTY_ID columns."""
+
+    def __init__(self, header: list[str]) -> None:
+        self.header = list(header)
+        super().__init__(f"header_drift:unexpected header: {header}")
+
+
 @dataclass(frozen=True)
 class ZipDownloadResult:
     path: Path
@@ -120,7 +128,7 @@ def filter_zip_for_surnames(zip_path: Path, surnames: list[str]) -> tuple[list[d
             reader = csv.reader(text)
             header = next(reader)
             if OWNER_COL not in header or ID_COL not in header:
-                raise ValueError(f"unexpected header: {header}")
+                raise HeaderDriftError(header)
             owner_idx = header.index(OWNER_COL)
             hits: list[dict[str, str]] = []
             scanned = 0

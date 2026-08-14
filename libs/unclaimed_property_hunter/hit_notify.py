@@ -21,6 +21,7 @@ PAGE_AMOUNT_FLOOR = 6.00
 CHECK_FAILED_PAGE_THRESHOLD = 3
 PAGE_TAG = "unclaimed-hit"
 DIGEST_TAG = "unclaimed-hit-digest"
+INFRA_TAG = "unclaimed-hunter-infra"
 
 _AMOUNT_RE = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)")
 
@@ -90,6 +91,32 @@ def decide_notifications(
     )
 
 
+def decide_check_failed_notification(
+    *,
+    failure_reason: str,
+    consecutive_check_failed: int,
+) -> NotifyDecision:
+    """Infrastructure notify for header drift or check_failed streak threshold."""
+    if failure_reason.startswith("header_drift:"):
+        return NotifyDecision(
+            page_hits=(),
+            digest_hits=(),
+            reason="header_drift",
+        )
+    if consecutive_check_failed >= CHECK_FAILED_PAGE_THRESHOLD:
+        return NotifyDecision(
+            page_hits=(),
+            digest_hits=(),
+            reason=f"check_failed_streak={consecutive_check_failed}",
+        )
+    return NotifyDecision(page_hits=(), digest_hits=(), reason="check_failed_no_page")
+
+
+def decide_roster_empty_notification() -> NotifyDecision:
+    """One-shot pager when scheduled extract has no roster subjects."""
+    return NotifyDecision(page_hits=(), digest_hits=(), reason="roster_empty")
+
+
 def format_page_body(record: RunRecord, hit: Hit) -> str:
     """Operational cash-alert body — not a ULG growth-map page."""
     amount = hit.amount_or_range or "unknown"
@@ -140,6 +167,54 @@ async def notify_hit_pages(
 def notify_hit_pages_sync(record: RunRecord, decision: NotifyDecision) -> dict[str, Any]:
     """Sync wrapper for CLI / systemd oneshot callers."""
     return asyncio.run(notify_hit_pages(record, decision))
+
+
+async def notify_infrastructure(
+    record: RunRecord,
+    decision: NotifyDecision,
+) -> dict[str, Any]:
+    """Fire pager for roster_empty, header drift, or check_failed streak."""
+    from pager_notify.client import NotifyResult, notify_pager
+
+    reason = decision.reason
+    if reason == "roster_empty":
+        subject = "CA SCO hunter roster_empty"
+        body = (
+            f"Scheduled extract skipped: roster_empty run={record.run_id} "
+            f"surname={record.query.surname}"
+        )
+    elif reason == "header_drift":
+        subject = "CA SCO hunter header_drift"
+        body = (
+            f"Bulk CSV header drift run={record.run_id} "
+            f"reason={record.check_failure_reason or reason}"
+        )
+    elif reason.startswith("check_failed_streak="):
+        subject = "CA SCO hunter check_failed streak"
+        body = (
+            f"check_failed streak run={record.run_id} surname={record.query.surname} "
+            f"{reason} last_reason={record.check_failure_reason!r}"
+        )
+    else:
+        return {"decision_reason": reason, "pages": []}
+    result: NotifyResult = await notify_pager(subject, body, tag=INFRA_TAG)
+    return {
+        "decision_reason": reason,
+        "pages": [
+            {
+                "status": result.status,
+                "reason": result.reason,
+                "error": result.error,
+                "subject": subject,
+                "body": body,
+                "tag": INFRA_TAG,
+            }
+        ],
+    }
+
+
+def notify_infrastructure_sync(record: RunRecord, decision: NotifyDecision) -> dict[str, Any]:
+    return asyncio.run(notify_infrastructure(record, decision))
 
 
 async def probe_pager_from_service_context(*, skip_peer_wait: bool = False) -> dict[str, Any]:

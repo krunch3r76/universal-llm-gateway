@@ -15,12 +15,19 @@ from pathlib import Path
 
 from unclaimed_property_hunter.cli_surfaces import register_surface_commands
 from unclaimed_property_hunter.diff_runs import RunDiff
-from unclaimed_property_hunter.extract_pipeline import run_extract, run_id, utc_now
+from unclaimed_property_hunter.extract_pipeline import (
+    run_extract,
+    run_extract_or_persist_failure,
+    run_id,
+    utc_now,
+)
 from unclaimed_property_hunter.hit_notify import (
     PAGE_AMOUNT_FLOOR,
     decide_notifications,
+    decide_roster_empty_notification,
     format_digest_note,
     notify_hit_pages_sync,
+    notify_infrastructure_sync,
     probe_pager_from_service_context_sync,
 )
 from unclaimed_property_hunter.ingest import parse_html_hits, parse_json_hits
@@ -35,8 +42,6 @@ from unclaimed_property_hunter.result_surface import (
     public_run_dict,
 )
 from unclaimed_property_hunter.roster import (
-    EXAMPLE_ROSTER_REL,
-    ROSTER_PATH_ENV,
     default_roster_path,
     load_roster,
 )
@@ -128,30 +133,69 @@ def _cmd_extract(args: argparse.Namespace) -> int:
     return 0
 
 
+def _handle_roster_empty(config_path: Path) -> int:
+    """Log roster_empty, notify once, exit 0 — missing or empty roster."""
+    when = utc_now()
+    surname = "roster"
+    query = Query(
+        surname=surname,
+        intended_query_string="scheduled-extract",
+        exact_http_request=f"roster path={config_path}",
+        endpoint_url="",
+    )
+    notes = f"roster_empty path={config_path}"
+    pending = RunRecord(
+        run_id=run_id(surname, when),
+        utc_timestamp=when,
+        query=query,
+        run_kind="bulk_extract",
+        search_executed=False,
+        raw_payload_uri="",
+        raw_sha256="",
+        hits=[],
+        notes=notes,
+        check_failure_reason="roster_empty",
+    )
+    decision = decide_roster_empty_notification()
+    notify_outcome = notify_infrastructure_sync(pending, decision)
+    record = RunRecord(
+        run_id=run_id(surname, when),
+        utc_timestamp=when,
+        query=query,
+        run_kind="bulk_extract",
+        search_executed=False,
+        raw_payload_uri="",
+        raw_sha256="",
+        hits=[],
+        notes=notes,
+        notify_outcome=notify_outcome,
+        check_failure_reason="roster_empty",
+    )
+    record = write_raw_and_normalized(
+        record,
+        json.dumps({"roster_empty": True, "config_path": str(config_path)}).encode(),
+    )
+    persist_run(record)
+    print(f"roster_empty path={config_path}", file=sys.stderr)
+    return 0
+
+
 def _cmd_scheduled_extract(args: argparse.Namespace) -> int:
     config_path = Path(args.config).expanduser() if args.config else default_roster_path()
     if not config_path.exists():
-        print(
-            f"roster not found: {config_path} — copy {EXAMPLE_ROSTER_REL} there and fill "
-            f"in subjects, or set {ROSTER_PATH_ENV}. Never commit the live roster.",
-            file=sys.stderr,
-        )
-        return 2
+        return _handle_roster_empty(config_path)
     roster = load_roster(config_path)
-    exit_code = 0
+    if not roster.subjects:
+        return _handle_roster_empty(config_path)
     for subject in roster.subjects:
-        try:
-            run_extract(
-                surname=subject.surname,
-                also=list(subject.also),
-                zip_path=roster.zip_cache,
-                download=True,
-                notify=True,
-            )
-        except Exception as exc:
-            print(f"check_failed surname={subject.surname} error={exc}", file=sys.stderr)
-            exit_code = 1
-    return exit_code
+        run_extract_or_persist_failure(
+            surname=subject.surname,
+            also=list(subject.also),
+            zip_path=roster.zip_cache,
+            download=True,
+            notify=True,
+        )
+    return 0
 
 
 def _cmd_probe_pager(args: argparse.Namespace) -> int:
