@@ -44,8 +44,11 @@ def _hop_dispatch(
     ``reason`` becomes the body ``trigger:`` line. The verb reports
     *armed* (``handler_status``) — never ``status:done``. The successor
     selection key is ``successor_birth_id`` on the structural hop body
-    (echoed onto the registration stamp). The MCP return is the
-    predecessor's receipt and must not be read as the caller's own id.
+    (echoed onto the registration stamp). When the seated CSE calls
+    ``agent_bus.hop`` via MCP, the return is the predecessor's receipt and
+    must not be read as the caller's own id. The cadence path
+    (``hop_cadence.py``) enqueues continuity hops without an MCP return —
+    it delivers no predecessor receipt to any caller.
     """
     if isinstance(thread, int):
         thread = str(thread)
@@ -137,8 +140,10 @@ def _hop_dispatch(
             "SEAT_REGISTRATION stamp at registration observation"
         ),
         "note": (
-            "this MCP return is the predecessor's receipt — "
-            "successor_birth_id names the successor, not the caller"
+            "when this seated CSE calls agent_bus.hop via MCP, this return "
+            "is the predecessor's receipt — successor_birth_id names the "
+            "successor, not the caller; the cadence path delivers no such "
+            "return"
         ),
     }
     return stamped
