@@ -110,6 +110,45 @@ def resolve_contract_intake(
     return intake
 
 
+_CHECKOUT_LANES = frozenset({"A", "B"})
+
+
+def resolve_checkout_lane(
+    lane: str | None,
+    *,
+    from_agent: str,
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Validate optional GIW checkout-isolation ``lane`` (``A``|``B``).
+
+    Distinct from ``lane_role`` (bus-thread parentage) and from tag
+    ``lane:cursor-auto``. Empty/None means omit — ``select_lane`` defaults
+    stay unchanged. Invalid values reject before the turn is written.
+    """
+    raw = (lane or "").strip()
+    if not raw:
+        return None, None
+    normalized = raw.upper()
+    if normalized not in _CHECKOUT_LANES:
+        record(
+            "mcp.agentbus.request.rejected",
+            reason="request_lane_invalid",
+            lane=raw,
+            caller=from_agent,
+        )
+        return None, {
+            "error": (
+                "request: lane must be 'A' or 'B' (GIW checkout isolation); "
+                f"got {raw!r}. Omit for default select_lane. Distinct from "
+                "lane_role (bus-thread parentage)."
+            ),
+            "reason": "request_lane_invalid",
+            "status_code": 422,
+            "field": "lane",
+            "provided": raw,
+        }
+    return normalized, None
+
+
 def stamp_contract_deprecation(
     result: dict[str, Any],
     intake: ContractIntake,
@@ -132,6 +171,7 @@ def reset_request_id_registry_for_tests() -> None:
 
 __all__ = [
     "RequestIdIntake",
+    "resolve_checkout_lane",
     "resolve_contract_intake",
     "resolve_request_id_intake",
     "reset_request_id_registry_for_tests",

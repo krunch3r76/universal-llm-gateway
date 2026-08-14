@@ -156,6 +156,105 @@ async def test_nested_from_agent_cursor_auto_does_not_set_caller_agent(
     assert "caller_agent" not in captured
 
 
+@pytest.mark.asyncio
+async def test_nested_submit_omits_lane_when_unset(monkeypatch) -> None:
+    """AC-4: unspecified lane must not appear on the nested POST body."""
+    captured: dict[str, object] = {}
+
+    class _Resp:
+        status_code = 200
+        content = b'{"admitted": true}'
+
+        def json(self) -> dict[str, object]:
+            return {"admitted": True}
+
+    class _Client:
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+        async def post(self, _url: str, json: dict[str, object]) -> _Resp:
+            captured.update(json)
+            return _Resp()
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.nested_sdk.httpx.AsyncClient",
+        lambda **_kw: _Client(),
+    )
+
+    job = AutoJob(
+        job_id="j-lane-omit",
+        thread_id="7224",
+        turn_number=1,
+        subject="implement",
+        body="TYPE: DIRECTIVE",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="composer-2.5",
+        desired_effort="medium",
+        contract="implement",
+    )
+    await submit_nested_dispatch(
+        job,
+        model_id="composer-2.5",
+        handoff_contract="implement",
+        message="do work",
+    )
+    assert "lane" not in captured
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lane", ["A", "B"])
+async def test_nested_submit_forwards_checkout_lane(monkeypatch, lane: str) -> None:
+    captured: dict[str, object] = {}
+
+    class _Resp:
+        status_code = 200
+        content = b'{"admitted": true}'
+
+        def json(self) -> dict[str, object]:
+            return {"admitted": True}
+
+    class _Client:
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+        async def post(self, _url: str, json: dict[str, object]) -> _Resp:
+            captured.update(json)
+            return _Resp()
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.nested_sdk.httpx.AsyncClient",
+        lambda **_kw: _Client(),
+    )
+
+    job = AutoJob(
+        job_id=f"j-lane-{lane}",
+        thread_id="7224",
+        turn_number=1,
+        subject="implement",
+        body="TYPE: DIRECTIVE",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="composer-2.5",
+        desired_effort="medium",
+        contract="implement",
+        lane=lane,
+    )
+    await submit_nested_dispatch(
+        job,
+        model_id="composer-2.5",
+        handoff_contract="implement",
+        message="do work",
+    )
+    assert captured["lane"] == lane
+
+
 def test_load_promoted_request_recovers_admitted_via(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

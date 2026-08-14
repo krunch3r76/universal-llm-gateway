@@ -540,3 +540,55 @@ def test_request_continue_does_not_pass_lifecycle_state():
             summary=None,
         )
     assert captured.get("lifecycle_state") is None
+
+
+def test_enqueue_omits_lane_when_unset() -> None:
+    """AC-4: MCP→GIW enqueue must not send lane when the caller omitted it."""
+    from tools.agent_bus.request_worker_client import enqueue_auto_job
+
+    with patch("tools.agent_bus.request_worker_client.httpx.Client") as client_cls:
+        client = client_cls.return_value.__enter__.return_value
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.content = b'{"ok": true}'
+        resp.json.return_value = {"ok": True}
+        client.post.return_value = resp
+        enqueue_auto_job(
+            thread_id="7224",
+            turn_number=1,
+            subject="s",
+            body="b",
+            from_agent="web-anthropic",
+            to_agent="cursor",
+            desired_model="auto",
+            desired_effort="medium",
+            contract="answer",
+        )
+    payload = client.post.call_args.kwargs["json"]
+    assert "lane" not in payload
+
+
+def test_enqueue_includes_lane_when_set() -> None:
+    from tools.agent_bus.request_worker_client import enqueue_auto_job
+
+    with patch("tools.agent_bus.request_worker_client.httpx.Client") as client_cls:
+        client = client_cls.return_value.__enter__.return_value
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.content = b'{"ok": true}'
+        resp.json.return_value = {"ok": True}
+        client.post.return_value = resp
+        enqueue_auto_job(
+            thread_id="7224",
+            turn_number=1,
+            subject="s",
+            body="b",
+            from_agent="web-anthropic",
+            to_agent="cursor",
+            desired_model="auto",
+            desired_effort="medium",
+            contract="answer",
+            lane="A",
+        )
+    payload = client.post.call_args.kwargs["json"]
+    assert payload["lane"] == "A"

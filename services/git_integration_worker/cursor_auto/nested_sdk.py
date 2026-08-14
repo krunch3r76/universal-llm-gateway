@@ -153,6 +153,8 @@ async def submit_nested_dispatch(
         payload["model_knobs"] = model_knobs
     if read_only is not None:
         payload["read_only"] = read_only
+    if job.lane:
+        payload["lane"] = job.lane
     url = _dispatch_url()
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:

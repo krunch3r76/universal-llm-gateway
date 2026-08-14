@@ -214,10 +214,15 @@ def enqueue_auto_job(
     cse_chat_url: str | None = None,
     cse_registration_id: str | None = None,
     continuity_hop: bool = False,
+    lane: str | None = None,
     base_url: str | None = None,
     timeout_s: float = 10.0,
 ) -> dict[str, Any]:
-    """POST admit-on-request enqueue to the Auto worker."""
+    """POST admit-on-request enqueue to the Auto worker.
+
+    ``lane`` is optional GIW checkout isolation (``A``|``B``). I3: omit the
+    JSON key when unset so older GIW receivers keep ``select_lane`` defaults.
+    """
     url = _auto_url("/enqueue", base_url=base_url)
     payload = {
         "thread_id": str(thread_id),
@@ -241,6 +246,8 @@ def enqueue_auto_job(
         payload["cse_registration_id"] = cse_registration_id
     if continuity_hop:
         payload["continuity_hop"] = True
+    if lane:
+        payload["lane"] = lane
     try:
         with httpx.Client(timeout=timeout_s) as client:
             resp = client.post(url, json=payload)

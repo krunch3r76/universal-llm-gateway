@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -70,6 +70,9 @@ class EnqueueBody(BaseModel):
     cse_registration_id: str | None = None
     # Row 21: structural hop flag (OR with first-line TYPE: CONTINUITY_HANDOFF).
     continuity_hop: bool = False
+    # GIW checkout isolation — same lever as POST /api/v1/cursor/dispatch.
+    # Distinct from lane_role (bus parentage) and tag lane:cursor-auto.
+    lane: Literal["A", "B"] | None = None
     wire_dropped_fields: tuple[str, ...] = ()
 
     @model_validator(mode="before")
@@ -233,6 +236,7 @@ async def enqueue(body: EnqueueBody, request: Request):
         continuity_hop=is_hop,
         continuity_matched_token=matched_token,
         wire_dropped_fields=tuple(body.wire_dropped_fields),
+        lane=body.lane,
     )
     deferred_job_id: str | None = None
     if deferred_body is not None:
@@ -255,6 +259,7 @@ async def enqueue(body: EnqueueBody, request: Request):
             cse_registration_id=body.cse_registration_id,
             continuity_hop=False,
             continuity_matched_token=None,
+            lane=body.lane,
         )
         deferred_job_id = deferred.job_id
         logger.info(

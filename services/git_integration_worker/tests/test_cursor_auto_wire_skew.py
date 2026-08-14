@@ -85,3 +85,17 @@ def test_new_sender_old_receiver_enqueue_200_job_admitted_skew_logged(
     assert job.thread_id == "6333"
     assert job.status in {"queued", "claimed"}
     assert get_wire_skew_aggregate().get("mcp→giw/enqueue", 0) >= 1
+
+
+def test_enqueue_body_accepts_checkout_lane() -> None:
+    reset_wire_skew_state_for_tests()
+    body = EnqueueBody(
+        thread_id="7224",
+        turn_number=1,
+        subject="lane wire",
+        body="",
+        from_agent="mcp-server",
+        lane="B",
+    )
+    assert body.lane == "B"
+    assert "lane" not in (body.wire_dropped_fields or ())

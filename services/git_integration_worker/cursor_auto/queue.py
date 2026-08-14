@@ -35,6 +35,8 @@ class AutoJob:
     continuity_matched_token: str | None = None
     # Wire keys dropped at L1 enqueue (``extra=ignore`` observation).
     wire_dropped_fields: tuple[str, ...] = ()
+    # GIW checkout-isolation lane (``A``|``B``); None ⇒ select_lane defaults.
+    lane: str | None = None
     enqueued_at: float = field(default_factory=time.monotonic)
     status: str = "queued"  # queued | claimed | done | failed | report_undelivered | superseded
     superseded_by: str | None = None
