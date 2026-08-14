@@ -30,7 +30,6 @@ from services.git_integration_worker.cursor_sdk_capacity_invariant import (
 )
 from services.git_integration_worker.cursor_sdk_workspace import (
     default_write_path_is_lane_a,
-    isolated_write_headroom,
     write_lease_slots,
 )
 
@@ -46,7 +45,11 @@ def _standard_limit() -> int:
     )
 
     if lane_b_regime_active():
-        return isolated_write_headroom()
+        from services.git_integration_worker.cursor_sdk_worktree_registry import (
+            isolated_write_ceiling,
+        )
+
+        return isolated_write_ceiling()
     raw = os.environ.get("CURSOR_SDK_DISPATCH_CONCURRENCY", "1")
     return max(1, int(raw))
 
@@ -458,7 +461,7 @@ def _write_capacity_fields(
         configured_headroom = configured_ceiling
         lane_a_slots = write_lease_slots("A", gate_limit=configured_headroom)
         lane_b_slots = write_lease_slots("B")
-        disposition = evaluate_i1(configured_ceiling, 0, mintable)
+        disposition = evaluate_i1(configured_ceiling, 0, configured_ceiling)
         _maybe_emit_regime_on_derivation_events(
             configured_ceiling=configured_ceiling,
             mintable=mintable,

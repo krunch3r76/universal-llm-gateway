@@ -187,14 +187,26 @@ def test_ac_s2_2_two_concurrent_lane_b_distinct_lease_keys(
     _mock_task: MagicMock,
     client: TestClient,
 ) -> None:
-    """AC-S2.2: two lane='B' dispatches admit concurrently on distinct lease keys."""
+    """AC-S2.2: two lane='B' dispatches on distinct threads get distinct lease keys."""
     first = client.post(
         "/api/v1/cursor/dispatch",
-        json=_body(dispatch_id="b-one", execution_id="exec-b-one", lane="B", source_ref="todo:b-one"),
+        json=_body(
+            dispatch_id="b-one",
+            execution_id="exec-b-one",
+            thread_id="6661",
+            lane="B",
+            source_ref="todo:b-one",
+        ),
     )
     second = client.post(
         "/api/v1/cursor/dispatch",
-        json=_body(dispatch_id="b-two", execution_id="exec-b-two", lane="B", source_ref="todo:b-two"),
+        json=_body(
+            dispatch_id="b-two",
+            execution_id="exec-b-two",
+            thread_id="6662",
+            lane="B",
+            source_ref="todo:b-two",
+        ),
     )
     assert first.status_code == 200
     assert second.status_code == 200

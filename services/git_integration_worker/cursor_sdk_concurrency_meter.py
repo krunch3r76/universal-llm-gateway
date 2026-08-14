@@ -360,13 +360,13 @@ def lane_b_inventory_snapshot(*, source_repo: Path) -> dict[str, Any]:
     aged_orphans: list[dict[str, Any]] = []
 
     with _connect() as conn:
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS cursor_sdk_dispatch_worktrees ("
-            "dispatch_id TEXT PRIMARY KEY, worktree_path TEXT NOT NULL, "
-            "branch_name TEXT NOT NULL, branch_point TEXT NOT NULL, minted_at TEXT NOT NULL)"
+        from services.git_integration_worker.cursor_sdk_worktree_registry import (
+            ensure_worktree_schema,
         )
+
+        ensure_worktree_schema(conn)
         wt_rows = conn.execute(
-            "SELECT worktree_path, branch_name FROM cursor_sdk_dispatch_worktrees"
+            "SELECT worktree_path, branch_name FROM cursor_sdk_lane_worktrees"
         ).fetchall()
     registered_branches = {row["branch_name"] for row in wt_rows}
     for row in wt_rows:

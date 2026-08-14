@@ -26,13 +26,12 @@ from services.git_integration_worker.cursor_sdk_resume import (
     timeout_retain_active,
 )
 from services.git_integration_worker.cursor_sdk_worktree_prune import (
-    maybe_prune_worktree_on_terminal,
     prune_dispatch_worktree,
 )
 from services.git_integration_worker.cursor_sdk_worktree_registry import (
     lookup_dispatch_worktree,
     register_dispatch_worktree,
-    transfer_dispatch_worktree,
+    touch_lane_worktree_dispatch,
 )
 from services.git_integration_worker.models.cursor_api import CursorDispatchRequest
 
@@ -234,7 +233,7 @@ def test_non_timeout_failed_still_prunes(
         ),
     )
     assert not timeout_retain_active(dispatch_id="fail-disp")
-    result = maybe_prune_worktree_on_terminal(
+    result = prune_dispatch_worktree(
         dispatch_id="fail-disp",
         source_repo=source_repo,
     )
@@ -280,23 +279,27 @@ def test_parent_row_byte_stable_after_child_admit() -> None:
     assert before_blob == after_blob
 
 
-def test_transfer_dispatch_worktree() -> None:
-    wt_path = Path("/tmp/wt-transfer")
+def test_lane_worktree_reuse_updates_last_dispatch() -> None:
+    wt_path = Path("/tmp/wt-lane")
     register_dispatch_worktree(
         dispatch_id="parent-disp",
         worktree_path=wt_path,
-        branch_name="cursor-sdk/x",
+        branch_name="cursor-sdk/lane-t-reuse",
         branch_point="abc",
+        thread_id="t-reuse",
     )
-    record = transfer_dispatch_worktree(
-        parent_dispatch_id="parent-disp",
-        child_dispatch_id="child-disp",
-    )
-    assert record is not None
-    assert lookup_dispatch_worktree(dispatch_id="parent-disp") is None
+    touch_lane_worktree_dispatch(thread_id="t-reuse", dispatch_id="child-disp")
     child = lookup_dispatch_worktree(dispatch_id="child-disp")
     assert child is not None
     assert child.worktree_path == wt_path
+    assert child.thread_id == "t-reuse"
+    from services.git_integration_worker.cursor_sdk_worktree_registry import (
+        lookup_lane_worktree,
+    )
+
+    lane = lookup_lane_worktree(thread_id="t-reuse")
+    assert lane is not None
+    assert lane.last_dispatch_id == "child-disp"
 
 
 def test_start_or_resume_agent_branches() -> None:

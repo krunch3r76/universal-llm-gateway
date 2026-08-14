@@ -87,7 +87,7 @@ def _create_orphan_branch(
         worktree_root=worktree_root,
         dispatch_id=dispatch_id,
     )
-    branch = f"cursor-sdk/{dispatch_id}"
+    branch = f"cursor-sdk/lane-{dispatch_id}"
     branch_point = resolve_master_branch_point(source_repo)
     target = wt / rel_path
     target.parent.mkdir(parents=True, exist_ok=True)

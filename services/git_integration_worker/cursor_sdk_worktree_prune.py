@@ -215,8 +215,9 @@ def maybe_prune_worktree_on_terminal(
     dispatch_id: str,
     source_repo: Path,
 ) -> PruneResult:
-    """Prune-on-terminal for minted Lane-B worktrees."""
-    return prune_dispatch_worktree(dispatch_id=dispatch_id, source_repo=source_repo)
+    """Lane trees outlive dispatches; terminal is not a prune trigger."""
+    _ = dispatch_id, source_repo
+    return PruneResult(pruned=False)
 
 
 def active_managed_worktree_paths(*, worktree_root: Path) -> set[str]:
@@ -258,8 +259,13 @@ def _git_worktree_prune(*, source_repo: Path) -> bool:
 
 def _registered_branch_names() -> set[str]:
     with _connect() as conn:
+        from services.git_integration_worker.cursor_sdk_worktree_registry import (
+            ensure_worktree_schema,
+        )
+
+        ensure_worktree_schema(conn)
         rows = conn.execute(
-            "SELECT branch_name FROM cursor_sdk_dispatch_worktrees"
+            "SELECT branch_name FROM cursor_sdk_lane_worktrees"
         ).fetchall()
     return {row["branch_name"] for row in rows}
 
@@ -382,8 +388,18 @@ def reap_orphan_worktrees(
             continue
         if not is_reapable_dispatch_status(status):
             continue
+        wt = Path(row["worktree_path"])
+        if wt.is_dir() and is_worktree_dirty(wt):
+            continue
+        state = branch_state(
+            source_repo.resolve(),
+            branch_name=row["branch_name"],
+            branch_point=row["branch_point"],
+        )
+        if not state.safe_to_delete:
+            continue
         result = prune_dispatch_worktree(
-            dispatch_id=row["dispatch_id"],
+            dispatch_id=row["dispatch_id"] or row["thread_id"],
             source_repo=source_repo,
         )
         if result.salvage_refused:

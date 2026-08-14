@@ -91,18 +91,19 @@ def test_ac_s4_1_regime_off_write_capacity_and_disposition(
 def test_ac_s4_2_regime_on_write_capacity_and_detail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC-S4.2: regime on ⇒ write_capacity=std+op; lane_a.slots always 1."""
+    """AC-S4.2: regime on ⇒ write_capacity=ceiling; lane_a.slots always 1."""
     monkeypatch.setenv("CURSOR_SDK_DISPATCH_CONCURRENCY", "1")
     monkeypatch.setenv("CURSOR_SDK_OPERATOR_DISPATCH_CONCURRENCY", "3")
+    monkeypatch.setenv("CURSOR_SDK_ISOLATED_WRITE_CEILING", "6")
     set_lane_b_regime(active=True)
 
     gate = sdk_dispatch_gate_stats()
-    assert gate["write_capacity"] == 4
+    assert gate["write_capacity"] == 6
     assert gate["capacity_disposition"] == "ok"
     detail = gate["write_capacity_detail"]
     assert isinstance(detail, dict)
     assert detail["lane_a"]["slots"] == 1
-    assert detail["lane_b"]["slots"] == 4
+    assert detail["lane_b"]["slots"] == 6
 
 
 def test_ac_s4_3_write_lease_slots_lane_b_gate_limits() -> None:
@@ -137,21 +138,21 @@ def test_ac_s4_4_active_by_lane_matches_ledger(tmp_path: Path) -> None:
 
     _admit_active(
         ledger,
-        _req(dispatch_id="lane-a-1"),
+        _req(dispatch_id="lane-a-1", message="lane-a work"),
         source_repo=repo,
         lease_key=repo,
         lane="A",
     )
     _admit_active(
         ledger,
-        _req(dispatch_id="lane-b-1"),
+        _req(dispatch_id="lane-b-1", message="lane-b-1 work"),
         source_repo=repo,
         lease_key=lane_b_key,
         lane="B",
     )
     _admit_active(
         ledger,
-        _req(dispatch_id="lane-b-2"),
+        _req(dispatch_id="lane-b-2", message="lane-b-2 work"),
         source_repo=repo,
         lease_key=str(tmp_path / "worktrees" / "cursor-sdk-b2"),
         lane="B",

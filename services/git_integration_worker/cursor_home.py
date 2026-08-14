@@ -132,16 +132,25 @@ def dispatch_home_path(dispatch_id: str, *, root: Path | None = None) -> Path:
     return base / f"{dispatch_id}-home"
 
 
-def dispatch_git_identity(dispatch_id: str) -> tuple[str, str]:
-    """Author/committer identity naming the dispatch for joinable lane commits."""
-    name = f"cursor-sdk/{dispatch_id}"
+def dispatch_git_identity(
+    dispatch_id: str,
+    *,
+    thread_id: str | None = None,
+) -> tuple[str, str]:
+    """Author/committer identity naming the lane (or dispatch) for joinable commits."""
+    label = f"lane-{thread_id}" if thread_id else dispatch_id
+    name = f"cursor-sdk/{label}"
     email = f"{dispatch_id}@{DISPATCH_GIT_EMAIL_DOMAIN}"
     return name, email
 
 
-def dispatch_git_env_vars(dispatch_id: str) -> dict[str, str]:
+def dispatch_git_env_vars(
+    dispatch_id: str,
+    *,
+    thread_id: str | None = None,
+) -> dict[str, str]:
     """Env overrides so git commits succeed when HOME is a dispatch overlay."""
-    name, email = dispatch_git_identity(dispatch_id)
+    name, email = dispatch_git_identity(dispatch_id, thread_id=thread_id)
     return {
         "GIT_AUTHOR_NAME": name,
         "GIT_AUTHOR_EMAIL": email,

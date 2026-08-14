@@ -9,9 +9,13 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
     LedgerRow,
 )
 from services.git_integration_worker.cursor_sdk_events import emit_sdk_worker_orphaned
-from services.git_integration_worker.cursor_sdk_worktree_prune import (
-    PruneResult,
-    maybe_prune_worktree_on_terminal,
+from services.git_integration_worker.cursor_sdk_lane_b_commit import (
+    is_worktree_dirty,
+    salvage_commit,
+)
+from services.git_integration_worker.cursor_sdk_worktree_prune import PruneResult
+from services.git_integration_worker.cursor_sdk_worktree_registry import (
+    lookup_dispatch_worktree,
 )
 
 _RESTART_SURVIVOR_TIMEOUT_S = 0.0
@@ -39,10 +43,23 @@ def salvage_restart_survivor_worktree(
     dispatch_id: str,
     source_repo: Path,
 ) -> PruneResult:
-    """Salvage dirty Lane-B trees before marking restart survivors terminal (S6)."""
-    return maybe_prune_worktree_on_terminal(
-        dispatch_id=dispatch_id,
-        source_repo=source_repo,
+    """Salvage dirty lane trees onto the branch; the tree itself stays."""
+    _ = source_repo
+    record = lookup_dispatch_worktree(dispatch_id=dispatch_id)
+    if record is None or not record.worktree_path.is_dir():
+        return PruneResult(pruned=False)
+    if not is_worktree_dirty(record.worktree_path):
+        return PruneResult(pruned=False, branch_retained=True)
+    salvage = salvage_commit(
+        record.worktree_path,
+        message=f"cursor-sdk: restart salvage {dispatch_id}",
+    )
+    return PruneResult(
+        pruned=False,
+        branch_retained=True,
+        salvaged=salvage.committed,
+        head_sha=salvage.head_sha,
+        salvage_refused=salvage.refused,
     )
 
 

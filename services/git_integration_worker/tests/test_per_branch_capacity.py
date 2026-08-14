@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -17,7 +16,6 @@ from services.git_integration_worker.cursor_sdk_gate import (
 )
 from services.git_integration_worker.cursor_sdk_lane_regime import set_lane_b_regime
 from services.git_integration_worker.cursor_sdk_workspace import (
-    isolated_write_headroom,
     write_lease_slots,
 )
 from services.git_integration_worker.cursor_sdk_worktree_registry import (
@@ -93,8 +91,9 @@ def _seed_live_worktree(
     register_dispatch_worktree(
         dispatch_id=dispatch_id,
         worktree_path=wt,
-        branch_name=f"branch-{idx}",
+        branch_name=f"cursor-sdk/lane-t-live-{idx}",
         branch_point="abc123",
+        thread_id=f"t-live-{idx}",
     )
     req = _req(
         dispatch_id=dispatch_id,
@@ -154,51 +153,40 @@ def test_ac3_regime_off_limit_one(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_ac4_busy_status_honesty() -> None:
-    """AC4: advertised standard.limit equals derived headroom under regime-ON."""
+    """AC4: advertised standard.limit equals the configured ceiling under regime-ON."""
+    from services.git_integration_worker.cursor_sdk_worktree_registry import (
+        isolated_write_ceiling,
+    )
+
     CursorDispatchLedger.instance()
-    derived = isolated_write_headroom()
+    ceiling = isolated_write_ceiling()
     stats = sdk_dispatch_gate_stats()
-    assert int(stats["standard"]["limit"]) == derived
-    assert int(stats["write_capacity"]) == derived
+    assert int(stats["standard"]["limit"]) == ceiling
+    assert int(stats["write_capacity"]) == ceiling
     assert int(stats["configured_headroom"]) == 4
     detail = stats["write_capacity_detail"]
     assert isinstance(detail, dict)
-    assert int(detail["lane_b"]["slots"]) == derived
+    assert int(detail["lane_b"]["slots"]) == ceiling
 
 
-def test_ac5_i1_clamp_edge(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """AC5: headroom below ceiling clamps limit and emits I1 transition event."""
+def test_ac5_live_load_does_not_clamp_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC5: live worktrees do not shrink the advertised standard limit."""
     monkeypatch.setenv("CURSOR_SDK_ISOLATED_WRITE_CEILING", "4")
     reset_capacity_derivation_state()
-    emitted: list[object] = []
+    CursorDispatchLedger.instance()
+    ok_stats = sdk_dispatch_gate_stats()
+    assert ok_stats["capacity_disposition"] == "ok"
+    assert int(ok_stats["standard"]["limit"]) == 4
 
-    def _capture(event: object) -> None:
-        emitted.append(event)
+    ledger = CursorDispatchLedger.instance()
+    for idx in range(3):
+        _seed_live_worktree(tmp_path, ledger, dispatch_id=f"live-{idx}", idx=idx)
 
-    with patch(
-        "services.git_integration_worker.cursor_sdk_events._emit",
-        side_effect=_capture,
-    ):
-        CursorDispatchLedger.instance()
-        ok_stats = sdk_dispatch_gate_stats()
-        assert ok_stats["capacity_disposition"] == "ok"
-
-        ledger = CursorDispatchLedger.instance()
-        for idx in range(3):
-            _seed_live_worktree(tmp_path, ledger, dispatch_id=f"live-{idx}", idx=idx)
-
-        clamp_stats = sdk_dispatch_gate_stats()
-
-    assert clamp_stats["capacity_disposition"] == "clamp"
-    assert int(clamp_stats["standard"]["limit"]) == 1
-    signals = [getattr(e, "signal", None) for e in emitted]
-    assert "frontier.sdk.gate.i1_clamp_transition" in signals
-    assert "frontier.sdk.gate.limit_derived" in signals
-    transition = next(
-        e for e in emitted if getattr(e, "signal", None) == "frontier.sdk.gate.i1_clamp_transition"
-    )
-    assert transition.payload["from_disposition"] == "ok"
-    assert transition.payload["to_disposition"] == "clamp"
+    after = sdk_dispatch_gate_stats()
+    assert after["capacity_disposition"] == "ok"
+    assert int(after["standard"]["limit"]) == 4
 
 
 def test_ac8_falsifier_unconstructible() -> None:
@@ -232,6 +220,6 @@ def test_ac8_falsifier_unconstructible() -> None:
 def test_regime_on_write_lease_slots_ignores_gate_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Lane-B under regime-ON derives from headroom, not gate_limit param."""
+    """Lane-B under regime-ON derives from the ceiling, not gate_limit param."""
     monkeypatch.setenv("CURSOR_SDK_ISOLATED_WRITE_CEILING", "4")
     assert write_lease_slots("B", gate_limit=99) == 4

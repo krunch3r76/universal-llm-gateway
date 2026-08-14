@@ -63,9 +63,7 @@ def write_lease_slot_limit(
             raw = os.environ.get("CURSOR_SDK_OPERATOR_DISPATCH_CONCURRENCY", "3")
             return max(1, int(raw))
         return 1
-    std = max(1, int(os.environ.get("CURSOR_SDK_DISPATCH_CONCURRENCY", "1")))
-    op = max(1, int(os.environ.get("CURSOR_SDK_OPERATOR_DISPATCH_CONCURRENCY", "3")))
-    return std + op
+    return 1
 
 
 def posture_from_record_json(record_json: str | None) -> Posture | None:

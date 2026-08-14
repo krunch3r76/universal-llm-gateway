@@ -126,11 +126,11 @@ def test_falsifier_f_a4_prune_on_terminal_and_reaper_path(
         worker_instance="worker-a",
     )
     ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="failed")
-    assert maybe_prune_worktree_on_terminal(
+    assert not maybe_prune_worktree_on_terminal(
         dispatch_id=dispatch_id,
         source_repo=source_repo,
     ).pruned
-    assert not wt.exists()
+    assert wt.is_dir()
 
     orphan_id = "fa4-orphan"
     orphan_wt = mint_dispatch_worktree(
@@ -139,10 +139,11 @@ def test_falsifier_f_a4_prune_on_terminal_and_reaper_path(
         dispatch_id=orphan_id,
     )
     assert orphan_wt.is_dir()
-    assert reap_orphan_worktrees(
+    sweep = reap_orphan_worktrees(
         source_repo=source_repo,
         worktree_root=worktree_root,
-    ).reaped >= 1
+    )
+    assert sweep.reaped >= 1
     assert not orphan_wt.exists()
 
 
@@ -177,7 +178,7 @@ def test_falsifier_ac1_lane_b_mints_worktree_under_root(
 def test_falsifier_ac_s6_1_reaper_salvages_dirty_terminal(
     source_repo: Path, tmp_path: Path
 ) -> None:
-    """AC-S6.1: reaper on terminal dirty tree salvages, prunes, retains branch."""
+    """AC-S6.1: reaper leaves an unmerged dirty lane tree in place."""
     worktree_root = tmp_path / "worktrees"
     dispatch_id = "s6-dirty-reap"
     wt = mint_dispatch_worktree(
@@ -186,7 +187,7 @@ def test_falsifier_ac_s6_1_reaper_salvages_dirty_terminal(
         dispatch_id=dispatch_id,
     )
     (wt / "dirty.py").write_text("payload\n", encoding="utf-8")
-    branch = f"cursor-sdk/{dispatch_id}"
+    branch = f"cursor-sdk/lane-{dispatch_id}"
     ledger = CursorDispatchLedger.instance()
     req = CursorDispatchRequest(
         thread_id="t1",
@@ -218,25 +219,16 @@ def test_falsifier_ac_s6_1_reaper_salvages_dirty_terminal(
         source_repo=source_repo,
         worktree_root=worktree_root,
     )
-    assert sweep.reaped == 1
-    assert sweep.salvaged == 1
-    assert sweep.branches_retained == 1
-    assert not wt.exists()
+    assert sweep.reaped == 0
+    assert wt.is_dir()
+    assert (wt / "dirty.py").read_text(encoding="utf-8") == "payload\n"
     assert branch in _git("branch", "--list", branch, cwd=source_repo).stdout
-    show = subprocess.run(
-        ["git", "-C", str(source_repo), "show", f"{branch}:dirty.py"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert show.returncode == 0
-    assert "payload" in show.stdout
 
 
 def test_falsifier_ac_s6_2_restart_survivor_salvages_before_terminal(
     source_repo: Path, tmp_path: Path
 ) -> None:
-    """AC-S6.2: restart survivor salvage commits dirty work before terminal prune."""
+    """AC-S6.2: restart survivor salvage commits dirty work; the lane tree stays."""
     worktree_root = tmp_path / "worktrees"
     dispatch_id = "s6-restart"
     wt = mint_dispatch_worktree(
@@ -246,15 +238,15 @@ def test_falsifier_ac_s6_2_restart_survivor_salvages_before_terminal(
     )
     rel = "survivor.py"
     (wt / rel).write_text("survive\n", encoding="utf-8")
-    branch = f"cursor-sdk/{dispatch_id}"
+    branch = f"cursor-sdk/lane-{dispatch_id}"
     result = salvage_restart_survivor_worktree(
         dispatch_id=dispatch_id,
         source_repo=source_repo,
     )
-    assert result.pruned
+    assert not result.pruned
     assert result.salvaged
     assert result.branch_retained
-    assert not wt.exists()
+    assert wt.is_dir()
     show = subprocess.run(
         ["git", "-C", str(source_repo), "show", f"{branch}:{rel}"],
         capture_output=True,

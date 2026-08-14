@@ -53,6 +53,12 @@ def test_dispatch_git_identity_names_dispatch() -> None:
     assert email == "auto-deadbeef@dispatch.git-integration-worker"
 
 
+def test_dispatch_git_identity_names_lane_when_thread_given() -> None:
+    name, email = dispatch_git_identity("auto-deadbeef", thread_id="7223")
+    assert name == "cursor-sdk/lane-7223"
+    assert email == "auto-deadbeef@dispatch.git-integration-worker"
+
+
 def test_setup_seeds_gitconfig_in_dispatch_home(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

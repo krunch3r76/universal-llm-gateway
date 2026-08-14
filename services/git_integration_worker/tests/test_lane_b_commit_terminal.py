@@ -25,7 +25,6 @@ from services.git_integration_worker.cursor_sdk_lane_b_commit import (
     salvage_commit,
 )
 from services.git_integration_worker.cursor_sdk_worktree import (
-    maybe_prune_worktree_on_terminal,
     mint_dispatch_worktree,
     prune_dispatch_worktree,
     resolve_master_branch_point,
@@ -121,7 +120,7 @@ def test_ac_s3_1_terminal_dirty_tree_commits_on_branch(
     )
     payload = json.loads(delivery.body)
     branch = payload["branch"]
-    assert branch == f"cursor-sdk/{dispatch_id}"
+    assert branch == f"cursor-sdk/lane-{dispatch_id}"
     assert payload["commits_ahead"] >= 1
     head_sha = payload["head_sha"]
     assert head_sha == _git("rev-parse", "HEAD", cwd=wt).stdout.strip()
@@ -144,8 +143,8 @@ def test_ac_s3_2_prune_recovers_file_from_branch(
     )
     rel = "Q"
     (wt / rel).write_text("recover-me\n", encoding="utf-8")
-    branch = f"cursor-sdk/{dispatch_id}"
-    result = maybe_prune_worktree_on_terminal(
+    branch = f"cursor-sdk/lane-{dispatch_id}"
+    result = prune_dispatch_worktree(
         dispatch_id=dispatch_id,
         source_repo=source_repo,
     )
@@ -173,7 +172,7 @@ def test_ac_s3_3_unmerged_branch_retained_after_prune(
         worktree_root=worktree_root,
         dispatch_id=dispatch_id,
     )
-    branch = f"cursor-sdk/{dispatch_id}"
+    branch = f"cursor-sdk/lane-{dispatch_id}"
     (wt / "keep.py").write_text("x\n", encoding="utf-8")
     result = prune_dispatch_worktree(
         dispatch_id=dispatch_id,
@@ -196,7 +195,7 @@ def test_ac_s3_4_merged_branch_deleted_after_prune(
         worktree_root=worktree_root,
         dispatch_id=dispatch_id,
     )
-    branch = f"cursor-sdk/{dispatch_id}"
+    branch = f"cursor-sdk/lane-{dispatch_id}"
     (wt / "merged.py").write_text("merged\n", encoding="utf-8")
     _git("add", "-A", cwd=wt)
     _git("commit", "-m", "lane b work", cwd=wt)
@@ -307,7 +306,7 @@ def test_branch_state_counts_since_branch_point(source_repo: Path, tmp_path: Pat
         worktree_root=worktree_root,
         dispatch_id=dispatch_id,
     )
-    branch = f"cursor-sdk/{dispatch_id}"
+    branch = f"cursor-sdk/lane-{dispatch_id}"
     branch_point = resolve_master_branch_point(source_repo)
     (wt / "a.py").write_text("a\n", encoding="utf-8")
     commit_on_terminal(
@@ -353,7 +352,7 @@ def test_branch_state_measured_zero_stays_zero(source_repo: Path, tmp_path: Path
         worktree_root=worktree_root,
         dispatch_id=dispatch_id,
     )
-    branch = f"cursor-sdk/{dispatch_id}"
+    branch = f"cursor-sdk/lane-{dispatch_id}"
     branch_point = resolve_master_branch_point(source_repo)
     state = branch_state(
         source_repo,
@@ -410,7 +409,7 @@ def test_prune_fails_closed_when_salvage_refused(
         worktree_root=worktree_root,
         dispatch_id=dispatch_id,
     )
-    branch = f"cursor-sdk/{dispatch_id}"
+    branch = f"cursor-sdk/lane-{dispatch_id}"
     _install_refusing_hook(source_repo)
     (wt / "at_risk.py").write_text("only copy\n", encoding="utf-8")
 
@@ -437,7 +436,7 @@ def test_prune_retains_dirty_empty_branch_when_salvage_does_not_commit(
         worktree_root=worktree_root,
         dispatch_id=dispatch_id,
     )
-    branch = f"cursor-sdk/{dispatch_id}"
+    branch = f"cursor-sdk/lane-{dispatch_id}"
     (wt / "at_risk.py").write_text("only copy\n", encoding="utf-8")
 
     with patch(
@@ -466,7 +465,7 @@ def _commit_branch_file(
         worktree_root=worktree_root,
         dispatch_id=dispatch_id,
     )
-    branch = f"cursor-sdk/{dispatch_id}"
+    branch = f"cursor-sdk/lane-{dispatch_id}"
     branch_point = resolve_master_branch_point(source_repo)
     (wt / name).write_text(body, encoding="utf-8")
     commit_on_terminal(
@@ -540,7 +539,7 @@ def test_zero_commit_branch_is_empty_not_merged(
         worktree_root=worktree_root,
         dispatch_id=dispatch_id,
     )
-    branch = f"cursor-sdk/{dispatch_id}"
+    branch = f"cursor-sdk/lane-{dispatch_id}"
     merged_listing = _git("branch", "--merged", "master", cwd=source_repo).stdout
     assert branch in merged_listing
 

@@ -248,6 +248,7 @@ from services.git_integration_worker.cursor_sdk_worktree_prune import (
 )
 from services.git_integration_worker.cursor_sdk_worktree_registry import (
     lookup_dispatch_worktree,
+    lookup_lane_worktree,
 )
 from services.git_integration_worker.git_worker_lifecycle_events import (
     FailureLayer,
@@ -2316,6 +2317,12 @@ async def cursor_dispatch(
             execution_id=req.execution_id,
         )
     files_expected = _files_from_packet(packet_text) if packet_text else []
+    prior_lane = lookup_lane_worktree(thread_id=req.thread_id)
+    prior_lane_tree = (
+        prior_lane.worktree_path
+        if prior_lane is not None and prior_lane.worktree_path.is_dir()
+        else None
+    )
     try:
         selected_lane, lane_advisories, lane_reason = select_lane(
             req=req,
@@ -2323,6 +2330,7 @@ async def cursor_dispatch(
             source_repo=cfg.source_repo,
             files_expected=files_expected,
             contract=contract,
+            lane_worktree=prior_lane_tree,
         )
     except LaneScopeRefused as exc:
         return _reject_pre_admission(
@@ -2364,6 +2372,7 @@ async def cursor_dispatch(
             and not req.nest_under
             and req.worktree_path is None
             and not req.resume_of
+            and prior_lane_tree is None
         )
         isolation_materialized = b_worktree_materialized(
             admit_lane=selected_lane,

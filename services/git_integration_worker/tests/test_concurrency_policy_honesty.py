@@ -56,6 +56,11 @@ def test_lane_a_slot_limit_inert_without_switch() -> None:
     assert write_lease_slot_limit(admit_lane="A", posture="sole_a") == 1
 
 
+def test_lane_b_slot_limit_is_one() -> None:
+    assert write_lease_slot_limit(admit_lane="B", posture="multi_b") == 1
+    assert write_lease_slot_limit(admit_lane="B", posture="nest_child") == 1
+
+
 def test_lane_a_slot_limit_when_switch_on(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CURSOR_SDK_OPERATOR_MULTI_A_ENABLED", "1")
     monkeypatch.setenv("CURSOR_SDK_OPERATOR_DISPATCH_CONCURRENCY", "3")

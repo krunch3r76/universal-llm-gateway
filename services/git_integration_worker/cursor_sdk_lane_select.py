@@ -19,6 +19,7 @@ LaneSelectionReason = Literal[
     "scope_veto",
     "read_only",
     "nest_inherit",
+    "lane_bound",
 ]
 
 _IMPLEMENT_CLASS_CONTRACTS = frozenset({"implement", "light-bounded"})
@@ -81,6 +82,7 @@ def select_lane(
     source_repo: Path,
     files_expected: list[str],
     contract: str | None = None,
+    lane_worktree: Path | None = None,
 ) -> tuple[Lane, list[str], LaneSelectionReason]:
     """Choose admit lane; row-10 routes implement-class contracts to Lane-B when regime is on."""
     advisories: list[str] = []
@@ -113,6 +115,8 @@ def select_lane(
         return "B", advisories, "explicit"
 
     if not files_expected:
+        if lane_worktree is not None:
+            return "B", advisories, "lane_bound"
         return "A", advisories, "opt_out"
 
     if not scope_is_single_repo(files_expected, source_repo):

@@ -104,7 +104,7 @@ def test_s1b_lane_b_resolve_admit_binding_mints(
 
 
 def test_s1b_prune_on_terminal(source_repo: Path, tmp_path: Path) -> None:
-    """A4: terminal dispatch prunes its registered worktree."""
+    """Lane trees outlive dispatches: terminal does not prune the worktree."""
     worktree_root = tmp_path / "worktrees"
     dispatch_id = "prune-me"
     wt = mint_dispatch_worktree(
@@ -117,12 +117,16 @@ def test_s1b_prune_on_terminal(source_repo: Path, tmp_path: Path) -> None:
         dispatch_id=dispatch_id,
         source_repo=source_repo,
     )
-    assert result.pruned
-    assert not wt.exists()
+    assert not result.pruned
+    assert wt.is_dir()
 
 
 def test_s1b_prune_retains_branch_when_dirty(source_repo: Path, tmp_path: Path) -> None:
-    """S3: dirty prune retains unmerged dispatch branch."""
+    """S3: explicit dirty prune retains the unmerged lane branch."""
+    from services.git_integration_worker.cursor_sdk_worktree_prune import (
+        prune_dispatch_worktree,
+    )
+
     worktree_root = tmp_path / "worktrees"
     dispatch_id = "prune-dirty"
     wt = mint_dispatch_worktree(
@@ -131,8 +135,8 @@ def test_s1b_prune_retains_branch_when_dirty(source_repo: Path, tmp_path: Path) 
         dispatch_id=dispatch_id,
     )
     (wt / "dirty.py").write_text("x\n", encoding="utf-8")
-    branch = f"cursor-sdk/{dispatch_id}"
-    result = maybe_prune_worktree_on_terminal(
+    branch = f"cursor-sdk/lane-{dispatch_id}"
+    result = prune_dispatch_worktree(
         dispatch_id=dispatch_id,
         source_repo=source_repo,
     )
@@ -145,7 +149,7 @@ def test_s1b_prune_retains_branch_when_dirty(source_repo: Path, tmp_path: Path) 
 def test_s1b_reaper_clears_orphan_registry_row(
     source_repo: Path, tmp_path: Path
 ) -> None:
-    """A4: boot/periodic reaper removes worktrees for terminal/missing dispatches."""
+    """Empty (merged-equivalent) lane trees are reaped; unmerged trees stay."""
     worktree_root = tmp_path / "worktrees"
     dispatch_id = "orphan-a"
     wt = mint_dispatch_worktree(

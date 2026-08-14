@@ -1,9 +1,9 @@
-"""Per-dispatch worktree mint, prune, and orphan recovery (S1b A4/A5).
+"""Lane-owned worktree mint and orphan recovery (S1b A4/A5).
 
-Lane-B dispatches mint an isolated tree under ``worktree_root`` with
-master-keyed mint serialization and an explicitly resolved branch point.
-Terminal dispatches prune their tree; boot/periodic reaper clears orphans
-using the same sweeper shape as ``stale_lease_sweeper``.
+Lane-B dispatches bind a stable tree under ``worktree_root`` keyed by
+``thread_id`` (dir ``lane-{thread}``, branch ``cursor-sdk/lane-{thread}``).
+Mint is once per lane; later admits reuse the tree. The reaper removes a
+lane tree only when it has no live writer and the branch has merged.
 """
 
 from __future__ import annotations
@@ -26,9 +26,11 @@ from services.git_integration_worker.cursor_sdk_worktree_registry import (
     DispatchWorktreeRecord,
     acquire_mint_mutex_blocking,
     lookup_dispatch_worktree,
+    lookup_lane_worktree,
     master_mint_mutex_key,
-    register_dispatch_worktree,
+    register_lane_worktree,
     release_mint_mutex,
+    touch_lane_worktree_dispatch,
 )
 from services.git_integration_worker.models.cursor_api import CursorDispatchRequest
 
@@ -50,14 +52,24 @@ def is_managed_worktree(path: Path, worktree_root: Path) -> bool:
         return False
 
 
-def _branch_name(dispatch_id: str) -> str:
-    safe = _BRANCH_SAFE.sub("-", dispatch_id).strip("-") or "dispatch"
-    return f"cursor-sdk/{safe}"
+def lane_branch_name(thread_id: str) -> str:
+    """Stable ``cursor-sdk/lane-{thread_id}`` branch for a lane."""
+    safe = _BRANCH_SAFE.sub("-", thread_id).strip("-") or "lane"
+    return f"cursor-sdk/lane-{safe}"
 
 
-def _worktree_dir(worktree_root: Path, dispatch_id: str) -> Path:
-    safe = _BRANCH_SAFE.sub("-", dispatch_id).strip("-") or "dispatch"
-    return worktree_root / f"cursor-sdk-{safe}"
+def lane_worktree_dir(worktree_root: Path, thread_id: str) -> Path:
+    """Worktree directory ``lane-{thread_id}`` under ``worktree_root``."""
+    safe = _BRANCH_SAFE.sub("-", thread_id).strip("-") or "lane"
+    return worktree_root / f"lane-{safe}"
+
+
+def _branch_name(thread_id: str) -> str:
+    return lane_branch_name(thread_id)
+
+
+def _worktree_dir(worktree_root: Path, thread_id: str) -> Path:
+    return lane_worktree_dir(worktree_root, thread_id)
 
 
 def resolve_master_branch_point(source_repo: Path, *, ref: str = "refs/heads/master") -> str:
@@ -123,14 +135,16 @@ def mint_dispatch_worktree(
     source_repo: Path,
     worktree_root: Path,
     dispatch_id: str,
+    thread_id: str | None = None,
     branch_point: str | None = None,
 ) -> Path:
-    """Mint an isolated dispatch worktree under master-keyed serialization."""
+    """Mint a lane-owned worktree once under master-keyed serialization."""
+    lane_id = thread_id or dispatch_id
     worktree_root.mkdir(parents=True, exist_ok=True)
-    wt_path = _worktree_dir(worktree_root, dispatch_id)
+    wt_path = _worktree_dir(worktree_root, lane_id)
     if wt_path.exists():
         raise WorktreeMintError(f"worktree path already exists: {wt_path}")
-    branch = _branch_name(dispatch_id)
+    branch = _branch_name(lane_id)
     commit = branch_point or resolve_master_branch_point(source_repo)
     mutex_key = acquire_mint_mutex_blocking(source_repo=source_repo, holder_id=dispatch_id)
     try:
@@ -140,11 +154,12 @@ def mint_dispatch_worktree(
             branch_name=branch,
             branch_point=commit,
         )
-        register_dispatch_worktree(
-            dispatch_id=dispatch_id,
+        register_lane_worktree(
+            thread_id=lane_id,
             worktree_path=wt_path,
             branch_name=branch,
             branch_point=commit,
+            last_dispatch_id=dispatch_id,
         )
         return wt_path.resolve()
     finally:
@@ -157,8 +172,10 @@ def accept_dispatch_worktree(
     worktree_root: Path,
     dispatch_id: str,
     source_repo: Path,
+    thread_id: str | None = None,
 ) -> Path:
     """Validate and register a caller-supplied Lane-B worktree path."""
+    lane_id = thread_id or dispatch_id
     resolved = worktree_path.resolve()
     if not is_managed_worktree(resolved, worktree_root):
         raise WorktreeMintError(
@@ -180,13 +197,14 @@ def accept_dispatch_worktree(
         timeout=_GIT_TIMEOUT_S,
         check=False,
     )
-    branch = branch_proc.stdout.strip() or _branch_name(dispatch_id)
+    branch = branch_proc.stdout.strip() or _branch_name(lane_id)
     commit = resolve_master_branch_point(source_repo)
-    register_dispatch_worktree(
-        dispatch_id=dispatch_id,
+    register_lane_worktree(
+        thread_id=lane_id,
         worktree_path=resolved,
         branch_name=branch,
         branch_point=commit,
+        last_dispatch_id=dispatch_id,
     )
     return resolved
 
@@ -212,18 +230,15 @@ def resolve_admit_binding(
 ) -> tuple[Path, str]:
     """Return ``(dispatch_workspace, lease_key)`` for ledger admit."""
     if req.resume_of:
-        from services.git_integration_worker.cursor_sdk_worktree_registry import (
-            transfer_dispatch_worktree,
-        )
-
         parent_key = _lookup_parent_lease_key(req.resume_of)
         if parent_key is None:
             raise WorktreeMintError(f"resume parent not found: {req.resume_of!r}")
-        transfer_dispatch_worktree(
-            parent_dispatch_id=req.resume_of,
-            child_dispatch_id=req.dispatch_id,
-        )
         workspace = Path(parent_key).resolve()
+        if req.thread_id:
+            touch_lane_worktree_dispatch(
+                thread_id=req.thread_id,
+                dispatch_id=req.dispatch_id,
+            )
         return workspace, str(workspace)
 
     if req.nest_under:
@@ -234,12 +249,33 @@ def resolve_admit_binding(
         return workspace, str(workspace)
 
     if lane == "B":
+        existing = lookup_lane_worktree(thread_id=req.thread_id)
+        if existing is not None and existing.worktree_path.is_dir():
+            touch_lane_worktree_dispatch(
+                thread_id=req.thread_id,
+                dispatch_id=req.dispatch_id,
+            )
+            workspace = existing.worktree_path.resolve()
+            return workspace, str(workspace)
+
+        expected = lane_worktree_dir(worktree_root, req.thread_id)
+        if expected.is_dir():
+            workspace = accept_dispatch_worktree(
+                worktree_path=expected,
+                worktree_root=worktree_root,
+                dispatch_id=req.dispatch_id,
+                source_repo=source_repo,
+                thread_id=req.thread_id,
+            )
+            return workspace, str(workspace)
+
         if req.worktree_path:
             workspace = accept_dispatch_worktree(
                 worktree_path=Path(req.worktree_path),
                 worktree_root=worktree_root,
                 dispatch_id=req.dispatch_id,
                 source_repo=source_repo,
+                thread_id=req.thread_id,
             )
             return workspace, str(workspace)
 
@@ -247,6 +283,7 @@ def resolve_admit_binding(
             source_repo=source_repo,
             worktree_root=worktree_root,
             dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
         )
         return workspace, str(workspace)
 
@@ -276,7 +313,10 @@ __all__ = [
     "WorktreeMintError",
     "accept_dispatch_worktree",
     "is_managed_worktree",
+    "lane_branch_name",
+    "lane_worktree_dir",
     "lookup_dispatch_worktree",
+    "lookup_lane_worktree",
     "master_mint_mutex_key",
     "maybe_prune_worktree_on_terminal",
     "mint_dispatch_worktree",

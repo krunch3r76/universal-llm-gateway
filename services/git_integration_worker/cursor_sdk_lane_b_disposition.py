@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 from services.git_integration_worker.cursor_dispatch_ledger import _connect
-
-_BRANCH_SAFE = re.compile(r"[^A-Za-z0-9._/-]+")
 
 _DISPOSITION_DDL = """
 CREATE TABLE IF NOT EXISTS cursor_sdk_lane_b_branch_dispositions (
@@ -154,10 +151,16 @@ def mark_lane_b_disposition(
     return record
 
 
+def branch_name_for_lane(thread_id: str) -> str:
+    """Derive the stable ``cursor-sdk/lane-{thread_id}`` branch name."""
+    from services.git_integration_worker.cursor_sdk_worktree import lane_branch_name
+
+    return lane_branch_name(thread_id)
+
+
 def branch_name_for_dispatch(dispatch_id: str) -> str:
-    """Derive the minted ``cursor-sdk/*`` branch name for a dispatch id."""
-    safe = _BRANCH_SAFE.sub("-", dispatch_id).strip("-") or "dispatch"
-    return f"cursor-sdk/{safe}"
+    """Legacy alias — lane-keyed name using ``dispatch_id`` as the lane key."""
+    return branch_name_for_lane(dispatch_id)
 
 
 def mark_lane_b_disposition_for_dispatch(
@@ -177,8 +180,10 @@ def mark_lane_b_disposition_for_dispatch(
     )
 
     record = lookup_dispatch_worktree(dispatch_id=dispatch_id)
-    branch_name = record.branch_name if record is not None else branch_name_for_dispatch(
-        dispatch_id
+    branch_name = (
+        record.branch_name
+        if record is not None
+        else branch_name_for_lane(dispatch_id)
     )
     repo = source_repo.resolve()
     if record is not None:

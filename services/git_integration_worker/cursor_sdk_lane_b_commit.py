@@ -323,13 +323,21 @@ def branch_tip_age_s(source_repo: Path, *, branch_name: str) -> float | None:
     return max(0.0, time.time() - float(tip_ts))
 
 
-def origin_dispatch_id_from_branch(branch_name: str) -> str | None:
-    """Extract dispatch id suffix from ``cursor-sdk/<id>`` when present."""
+def origin_lane_id_from_branch(branch_name: str) -> str | None:
+    """Extract the lane id from ``cursor-sdk/lane-{thread}`` (or legacy suffix)."""
+    lane_prefix = "cursor-sdk/lane-"
+    if branch_name.startswith(lane_prefix):
+        return branch_name[len(lane_prefix) :] or None
     prefix = "cursor-sdk/"
     if not branch_name.startswith(prefix):
         return None
     suffix = branch_name[len(prefix) :]
     return suffix or None
+
+
+def origin_dispatch_id_from_branch(branch_name: str) -> str | None:
+    """Legacy alias — lane id (or historic dispatch suffix) from a branch name."""
+    return origin_lane_id_from_branch(branch_name)
 
 
 def _patches_present_in_master(repo: Path, *, branch_name: str) -> bool:

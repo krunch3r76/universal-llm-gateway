@@ -102,7 +102,11 @@ def write_lease_slots(
             )
         return 1
     if lane_b_regime_active():
-        return isolated_write_headroom()
+        from services.git_integration_worker.cursor_sdk_worktree_registry import (
+            isolated_write_ceiling,
+        )
+
+        return isolated_write_ceiling()
     if gate_limit is not None:
         return max(1, gate_limit)
     std = max(1, int(os.environ.get("CURSOR_SDK_DISPATCH_CONCURRENCY", "1")))
