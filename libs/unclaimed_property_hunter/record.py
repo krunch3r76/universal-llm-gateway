@@ -76,6 +76,9 @@ def write_raw_and_normalized(record: RunRecord, raw_bytes: bytes) -> RunRecord:
     )
     norm_rel = _RUNS_REL / f"{record.run_id}.normalized.json"
     _write_bytes(norm_rel, json.dumps(updated.to_json_dict(), indent=2).encode())
+    from unclaimed_property_hunter.ledger import regenerate_ledger
+
+    regenerate_ledger()
     return updated
 
 
