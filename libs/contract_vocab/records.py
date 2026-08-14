@@ -125,5 +125,25 @@ def vision_required_contracts() -> frozenset[str]:
     return frozenset(record.name for record in RECORDS if record.vision_required)
 
 
+def vision_required_admit_disclosure(*, wire_style: bool = False) -> str:
+    """Operator prose for the vision-field admit gate — derived from ``RECORDS``.
+
+    ``wire_style=True`` matches fol_descriptor / inline tool copy (no backticks).
+    """
+    members = sorted(vision_required_contracts())
+    joined = "|".join(members)
+    if wire_style:
+        return (
+            f"{joined} DIRECTIVE body requires vision: else admit blocks "
+            "vision_field_missing (pre-model). See agent_skill:cdp-operator-proxy."
+        )
+    contract_set = ", ".join(members)
+    return (
+        f"``contract`` ∈ {{{contract_set}}} ⇒ DIRECTIVE body MUST include a "
+        f"``vision:`` line or Auto blocks at admit (``vision_field_missing``) "
+        f"before a model runs."
+    )
+
+
 def code_work_contracts() -> frozenset[str]:
     return frozenset(record.name for record in RECORDS if record.code_work)

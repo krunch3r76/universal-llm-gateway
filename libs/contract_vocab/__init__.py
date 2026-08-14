@@ -15,6 +15,7 @@ from contract_vocab.records import (
     closeout_table,
     code_work_contracts,
     nested_scope_contracts,
+    vision_required_admit_disclosure,
     vision_required_contracts,
     vocab_line,
 )
@@ -29,5 +30,6 @@ __all__ = [
     "code_work_contracts",
     "nested_scope_contracts",
     "vocab_line",
+    "vision_required_admit_disclosure",
     "vision_required_contracts",
 ]

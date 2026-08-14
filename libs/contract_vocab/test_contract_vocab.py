@@ -11,6 +11,7 @@ from contract_vocab import (
     closeout_table,
     code_work_contracts,
     nested_scope_contracts,
+    vision_required_admit_disclosure,
     vision_required_contracts,
     vocab_line,
 )
@@ -99,6 +100,16 @@ def test_handler_nested_contracts_are_nested_scope_plus_confer() -> None:
     from services.git_integration_worker.cursor_auto.handler import _NESTED_CONTRACTS
 
     assert _NESTED_CONTRACTS == nested_scope_contracts() | {"confer"}
+
+
+def test_vision_required_admit_disclosure_lists_all_enforced_contracts() -> None:
+    disclosure = vision_required_admit_disclosure()
+    wire = vision_required_admit_disclosure(wire_style=True)
+    for name in vision_required_contracts():
+        assert name in disclosure
+        assert name in wire
+    stale = "contract ∈ {implement, investigate}"
+    assert stale not in disclosure
 
 
 def test_disposition_hints_cover_every_canonical_contract() -> None:

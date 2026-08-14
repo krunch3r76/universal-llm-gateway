@@ -1,0 +1,10 @@
+[Unit]
+Description=Thursday 06:00 America/Los_Angeles CA SCO hunter extract
+
+[Timer]
+OnCalendar=Thu *-*-* 06:00:00 America/Los_Angeles
+Persistent=true
+Unit=unclaimed-property-hunter.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,17 @@
+# Template for the scheduled CA SCO bulk extract roster — placeholders only.
+#
+# The live roster names real people and MUST NOT live in this tree (public
+# remote). Copy this file to ~/.gateway/unclaimed_property_hunter/roster.yaml
+# (chmod 600) and fill in real subjects there, or point
+# UNCLAIMED_PROPERTY_ROSTER_PATH at another out-of-repo location.
+#
+#   mkdir -p ~/.gateway/unclaimed_property_hunter
+#   cp config/unclaimed_property_hunter/roster.example.yaml \
+#      ~/.gateway/unclaimed_property_hunter/roster.yaml
+#   chmod 600 ~/.gateway/unclaimed_property_hunter/roster.yaml
+#
+# One row per subject needle set. `also` holds extra spellings to match.
+subjects:
+  - surname: EXAMPLE_SURNAME
+    also: []
+zip_cache: /home/YOUR_USER/.cache/unclaimed-property/All_Records.zip

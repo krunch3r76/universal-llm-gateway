@@ -8,11 +8,13 @@ invent rows; a surname with zero matches is a completed zero-hit search.
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 
-from unclaimed_property_hunter.models import Hit
+from unclaimed_property_hunter.models import CorpusFingerprint, Hit
 from unclaimed_property_hunter.transport import BULK_ZIP_URL
 
 OWNER_COL = "OWNER_NAME"
@@ -20,23 +22,59 @@ HOLDER_COL = "HOLDER_NAME"
 ID_COL = "PROPERTY_ID"
 
 
-def download_bulk_zip(dest: Path, *, timeout_s: float = 600.0) -> Path:
-    """Stream `BULK_ZIP_URL` to `dest` and return the path.
+@dataclass(frozen=True)
+class ZipDownloadResult:
+    path: Path
+    fingerprint: CorpusFingerprint
 
-    Overwrites `dest`. Caller supplies the cache location; this function does
-    not invent a default under /tmp.
-    """
+
+def download_bulk_zip(dest: Path, *, timeout_s: float = 600.0) -> ZipDownloadResult:
+    """Stream ``BULK_ZIP_URL`` to ``dest``; hash bytes while downloading."""
     import httpx
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
+    hasher = hashlib.sha256()
+    last_modified = ""
+    etag = ""
+    content_length = 0
     with httpx.stream("GET", BULK_ZIP_URL, timeout=timeout_s, follow_redirects=True) as resp:
         resp.raise_for_status()
+        last_modified = resp.headers.get("last-modified", "")
+        etag = resp.headers.get("etag", "")
+        cl = resp.headers.get("content-length")
+        if cl and cl.isdigit():
+            content_length = int(cl)
         with tmp.open("wb") as fh:
             for chunk in resp.iter_bytes(1024 * 1024):
+                hasher.update(chunk)
                 fh.write(chunk)
     tmp.replace(dest)
-    return dest
+    if not content_length:
+        content_length = dest.stat().st_size
+    fingerprint = CorpusFingerprint(
+        url=BULK_ZIP_URL,
+        last_modified=last_modified,
+        etag=etag,
+        content_length=content_length,
+        zip_sha256=hasher.hexdigest(),
+    )
+    return ZipDownloadResult(path=dest, fingerprint=fingerprint)
+
+
+def fingerprint_existing_zip(path: Path) -> CorpusFingerprint:
+    """Hash an on-disk zip when download was skipped."""
+    hasher = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    return CorpusFingerprint(
+        url=BULK_ZIP_URL,
+        last_modified="",
+        etag="",
+        content_length=path.stat().st_size,
+        zip_sha256=hasher.hexdigest(),
+    )
 
 
 def _address(row: dict[str, str]) -> str:

@@ -69,11 +69,18 @@ async def notify_pager(
     body: str,
     *,
     tag: str = "",
+    wait_for_peer: bool = True,
 ) -> NotifyResult:
     """Fire Fi SMS pager. Returns sent/failed with machine-readable reason."""
     disabled_reason = _pager_disabled_reason()
     if disabled_reason is not None:
         return NotifyResult.failed(disabled_reason)
+    if wait_for_peer:
+        from pager_notify.peer_wait import wait_for_pager_peer
+
+        ready, reason = await wait_for_pager_peer()
+        if not ready:
+            return NotifyResult.failed("peer_not_ready", error=reason)
     payload = {
         "subject": (subject or "ULG")[:SMS_SUBJECT_MAX],
         "body": (body or "")[:SMS_BODY_MAX],

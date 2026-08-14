@@ -143,10 +143,26 @@ def _cmd_scheduled_extract(args: argparse.Namespace) -> int:
     return exit_code
 
 
-def _cmd_probe_pager(_args: argparse.Namespace) -> int:
-    payload = probe_pager_from_service_context_sync()
+def _cmd_probe_pager(args: argparse.Namespace) -> int:
+    skip_wait = bool(getattr(args, "no_wait", False))
+    if not skip_wait:
+        from pager_notify.peer_wait import wait_for_pager_peer_sync
+
+        ready, reason = wait_for_pager_peer_sync()
+        if not ready:
+            print(json.dumps({"status": "failed", "reason": "peer_not_ready", "error": reason}))
+            return 1
+    payload = probe_pager_from_service_context_sync(skip_peer_wait=skip_wait)
     print(json.dumps(payload, indent=2))
     return 0 if payload.get("status") == "sent" else 1
+
+
+def _cmd_wait_pager_peer(_args: argparse.Namespace) -> int:
+    from pager_notify.peer_wait import wait_for_pager_peer_sync
+
+    ready, reason = wait_for_pager_peer_sync()
+    print(json.dumps({"ready": ready, "reason": reason}))
+    return 0 if ready else 1
 
 
 def _cmd_notify_test(args: argparse.Namespace) -> int:
@@ -250,7 +266,14 @@ def main(argv: list[str] | None = None) -> int:
     sched.add_argument("--config", default="", help=f"default: {default_roster_path()}")
     sched.set_defaults(func=_cmd_scheduled_extract)
     probe = sub.add_parser("probe-pager")
+    probe.add_argument(
+        "--no-wait",
+        action="store_true",
+        help="skip peer-wait preflight (adverse-condition probe only)",
+    )
     probe.set_defaults(func=_cmd_probe_pager)
+    wait_peer = sub.add_parser("wait-pager-peer")
+    wait_peer.set_defaults(func=_cmd_wait_pager_peer)
     notify_test = sub.add_parser("notify-test")
     notify_test.add_argument("--surname", default="Testsubject")
     notify_test.add_argument("--mode", choices=("above", "below", "empty"), required=True)
