@@ -1,5 +1,5 @@
 ---
-description: Restart posture for the cursor-sdk seat — landed is not live; arm the drain-gated restart, report the intent id, exit. Never kill a process; never force another seat's drain. MCP/CSE window classification is a lead duty, pruned here.
+description: Restart posture for the cursor-sdk seat — landed is not live; arm the drain-gated restart, report the intent id, exit. Never kill a process; never force git_integration_worker (force is permitted elsewhere). MCP/CSE window classification is a lead duty, pruned here.
 alwaysApply: true
 rule_category: engineering
 apply_tier: required_gate
@@ -14,9 +14,9 @@ trigger_match_terms:
 ---
 # Restart Drain — cursor-sdk seat
 
-**Seat wall.** The IDE rule is pruned from this dispatch HOME. The MCP same-window
-force classifier, CSE/`cdp_ask` recovery, continuity hops, and operator force
-authorization are **lead** concerns. Three things bind on you.
+**Seat wall.** The IDE rule is pruned from this dispatch HOME. MCP/CSE window
+classification, `cdp_ask` recovery, and continuity hops are **lead** concerns.
+Three things bind on you.
 
 ## 1. Landed ≠ live
 
@@ -40,11 +40,16 @@ waiting on, so polling `wait_healthy` while you hold the lease can never converg
 you would be waiting on yourself. Arm it, put the `restart_intent_id` in your closeout,
 and finish. The drain converges after you exit.
 
-## 3. Never kill, never force
+## 3. Never kill — and never force GIW
 
 - `pkill` / `kill` / `docker stop` for lifecycle: **forbidden**. Use `manage`.
-- `force=true`: **not yours**. It preempts in-flight work that may belong to another
-  seat. Latency is not authorization.
+- `force=true` on **`git_integration_worker`**: **forbidden.** A forced stop can
+  truncate a dispatch mid-commit — quite possibly your own. Arm the drain and exit.
+- `force=true` on **anything else** (`mcp`, `cdp_ask`, `stargate`, `gateway`, `rag`,
+  `cortex_api`, `event_service`, `cloud_proxy`): **permitted** (operator bind
+  2026-08-13). No authorization needed. If a busy probe defers a restart you need,
+  re-fire with `force=true` and say so in the closeout. What breaks there is an
+  attach handle or a retryable request, not a durable write.
 - Do not skip a needed restart because the service is busy. Arm it and report.
 
 ## Closeout duty

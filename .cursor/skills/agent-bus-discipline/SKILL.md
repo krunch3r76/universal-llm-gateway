@@ -107,7 +107,7 @@ Session close for active root must include root thread id, roadmap path, latest 
 
 | Surface | Who | What |
 |---|---|---|
-| **Endeavor root** | cursor + operator | CHECKPOINT, scoreboard pointers, child registry, closeout summaries. Completeness **projection** = scoreboard (graph canonical). ¬ web rewrite traffic. |
+| **Endeavor root** | cursor + operator | CHECKPOINT, scoreboard pointers, **Child lanes** / **Cited lanes** (projected `parent_thread` + `lane_role`), closeout summaries. Completeness **projection** = scoreboard (graph canonical). ¬ web rewrite traffic. |
 | **One life side channel** | web-anthropic (+ cursor packets) | Everything web must **act** on for this endeavor: interrogate, rewrite, nit binds, lock claims; corpus admits/harvest when web is the actor. Samples/INDEX are **file context** (pseudo-RAG), not a second bus thread. |
 
 **Push rule:** operator pushes the **side channel** when web’s next turn is expected. Do not push the endeavor root for INFO/orchestration notes.
@@ -179,6 +179,10 @@ agent_bus(tool="send", arguments='{"new_slug":"topic","to":"grok-web","subject":
 ```
 
 The sidecar is the communication; the turn body is the table-of-contents entry. Use `allow_long_body=true` only when inline long-form is required by recipient contract.
+
+## Lane parentage (operator-visible)
+
+Folded lane parentage lives on **`thread_get`**, **unread TOC**, and CHECKPOINT derived zones as `parent_thread` + `lane_role` (store authority: append-only `thread_lane_associations`). Bind explicitly via `lane_bind` or atomically on `send(new_slug=…)` when both fields are supplied. Author prose may use `agent-bus:7188 (sub_mission of 7182)`; role-less bare citations get advisory lint only (non-blocking). CHECKPOINT derived zones split **Child lanes** (depth-1 substantiated) vs **Cited lanes** (citation-derived / deeper).
 
 Workspace mirrors (`tmp/reviews/...`) are secondary. For bus communication, cite the Cortex sidecar first.
 

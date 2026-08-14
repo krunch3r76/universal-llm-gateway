@@ -311,6 +311,8 @@ class UnreadThreadTocRow(BaseModel):
     slug: str
     last_subject: str | None = None
     last_activity_at: datetime
+    parent_thread: str | None = None
+    lane_role: str | None = None
 
 
 class UnreadThreadToc(BaseModel):
@@ -412,6 +414,8 @@ class ThreadDetail(BaseModel):
     updated_at: datetime
     bus_lifecycle_state: str | None = None
     dispatch_links: list[DispatchLinkSummary] = Field(default_factory=list)
+    parent_thread: str | None = None
+    lane_role: str | None = None
 
 
 class ThreadSummaryResponse(BaseModel):
@@ -521,6 +525,8 @@ class TurnSendCreate(BaseModel):
     mark_read: bool = False
     close: bool = False
     attachments: list[AttachmentCreate] | None = None
+    parent_thread: str | None = None
+    lane_role: str | None = None
 
 
 class TurnSendCreated(BaseModel):

@@ -294,6 +294,8 @@ async def list_unread_thread_toc(
             slug=r["slug"],
             last_subject=r.get("last_subject"),
             last_activity_at=datetime.fromisoformat(r["last_activity_at"]),
+            parent_thread=r.get("parent_thread"),
+            lane_role=r.get("lane_role"),
         )
         for r in rows
     ]

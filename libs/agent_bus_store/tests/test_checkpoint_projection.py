@@ -33,14 +33,21 @@ def _resolvers(
 
     def _child_registry(
         *, root_thread: str, cited_thread_ids: tuple[str, ...]
-    ) -> tuple[ChildThreadRow, ...]:
-        del root_thread
+    ) -> tuple[tuple[ChildThreadRow, ...], tuple[ChildThreadRow, ...]]:
         if child_raises:
             raise RuntimeError("bus unreachable")
         lookup = {row.thread_id: row for row in children}
-        return tuple(
-            lookup[tid] for tid in cited_thread_ids if tid in lookup
+        cited = tuple(
+            lookup[tid]
+            for tid in cited_thread_ids
+            if tid in lookup and tid != root_thread
         )
+        substantiated = tuple(
+            row for row in children if row.thread_id not in cited_thread_ids
+        )
+        if substantiated:
+            return substantiated, cited
+        return (), cited
 
     def _artifact_sha(uri: str) -> ArtifactAnchor | None:
         if artifact_raises:
@@ -71,9 +78,65 @@ def test_registry_rendering() -> None:
             )
         ),
     )
-    assert "agent-bus:6357 · active · turn 12" in body
-    assert "agent-bus:6341 · closed · turn 19" in body
+    assert "### Child lanes" in body
+    assert "### Cited lanes" in body
+    assert "agent-bus:6357 · unassociated · active · turn 12" in body
+    assert "agent-bus:6341" not in body.split("### Cited lanes")[1].split("### Artifact")[0]
     assert CANONICAL_RESUME_FOOTER in body
+
+
+def test_root_id_not_rendered_as_own_child() -> None:
+    residue = "See agent-bus:6341 for continuity."
+    body = project_checkpoint_body(
+        root_thread="6341",
+        residue=residue,
+        resolvers=_resolvers(
+            children=(ChildThreadRow("6341", "active", 3),)
+        ),
+    )
+    assert "### Child lanes" in body
+    assert "_none substantiated_" in body
+    assert "_none cited_" in body
+    assert "agent-bus:6341 · active · turn 3" not in body
+
+
+def test_grandchild_not_child_of_root() -> None:
+    child = ChildThreadRow(
+        "7188",
+        "active",
+        12,
+        lane_role="sub_mission",
+        parent_thread_id="7182",
+    )
+    grandchild = ChildThreadRow(
+        "7197",
+        "active",
+        4,
+        lane_role="spillover",
+        parent_thread_id="7188",
+    )
+
+    def _child_registry(
+        *, root_thread: str, cited_thread_ids: tuple[str, ...]
+    ) -> tuple[tuple[ChildThreadRow, ...], tuple[ChildThreadRow, ...]]:
+        del cited_thread_ids
+        assert root_thread == "7182"
+        return (child,), (grandchild,)
+
+    body = project_checkpoint_body(
+        root_thread="7182",
+        residue="agent-bus:7188 and agent-bus:7197",
+        resolvers=ProjectionResolvers(
+            child_registry=_child_registry,
+            artifact_sha=lambda uri: None,
+            citation_row=lambda token: None,
+        ),
+    )
+    assert "agent-bus:7188 · sub_mission · active · turn 12" in body
+    assert (
+        "agent-bus:7197 · spillover of agent-bus:7188 · active · turn 4" in body
+    )
+    assert body.index("### Child lanes") < body.index("### Cited lanes")
 
 
 def test_snippet_and_staleness_flags() -> None:

@@ -40,6 +40,12 @@ _CITATION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("agent_bus", re.compile(r"\bagent-bus:(\d+)\b", re.IGNORECASE)),
 )
 
+_AGENT_BUS_ID = re.compile(r"\bagent-bus:(\d+)\b", re.IGNORECASE)
+_LANE_ROLE_CLAUSE = re.compile(
+    r"\(\s*(sub_mission|hop|spillover|dispatch|side|parallel)\s+of\s+\d+\s*\)",
+    re.IGNORECASE,
+)
+
 
 @dataclass(frozen=True, slots=True)
 class AmbiguousFalsifierRef:
@@ -68,9 +74,17 @@ class CitationResolver(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class LaneCitationAdvisory:
+    raw: str
+    thread_id: str
+    offset: int
+
+
+@dataclass(frozen=True, slots=True)
 class CheckpointCitationFindings:
     ambiguous_refs: tuple[AmbiguousFalsifierRef, ...]
     citation_tokens: tuple[CitationToken, ...]
+    lane_citation_advisories: tuple[LaneCitationAdvisory, ...] = ()
 
     @property
     def clean(self) -> bool:
@@ -150,6 +164,23 @@ def _extract_citation_tokens(body: str) -> tuple[CitationToken, ...]:
     return tuple(ordered)
 
 
+def _find_lane_citation_advisories(body: str) -> tuple[LaneCitationAdvisory, ...]:
+    findings: list[LaneCitationAdvisory] = []
+    for match in _AGENT_BUS_ID.finditer(body):
+        start = match.start()
+        window = body[max(0, start - 80) : start + len(match.group(0)) + 80]
+        if _LANE_ROLE_CLAUSE.search(window):
+            continue
+        findings.append(
+            LaneCitationAdvisory(
+                raw=match.group(0),
+                thread_id=match.group(1),
+                offset=start,
+            )
+        )
+    return tuple(findings)
+
+
 def lint_checkpoint_citations(
     body: str,
     *,
@@ -161,9 +192,11 @@ def lint_checkpoint_citations(
         _find_ambiguous_f_refs(body) + _find_ambiguous_falsifier_refs(body)
     )
     citations = _extract_citation_tokens(body)
+    lane_advisories = _find_lane_citation_advisories(body)
     return CheckpointCitationFindings(
         ambiguous_refs=ambiguous,
         citation_tokens=citations,
+        lane_citation_advisories=lane_advisories,
     )
 
 
@@ -174,5 +207,6 @@ __all__ = [
     "CitationResolver",
     "CitationToken",
     "FALSIFIER_NAMESPACE_PREFIXES",
+    "LaneCitationAdvisory",
     "lint_checkpoint_citations",
 ]

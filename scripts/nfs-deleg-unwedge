@@ -1,0 +1,307 @@
+#!/usr/bin/env bash
+# Recurrence path for the NFSv4 read-delegation / __break_lease wedge on a
+# live local checkout that is also nfsd-exported (observed 2026-08-13 on io).
+#
+# Discovers inodes and clients from /proc — no memorized IPs or inodes.
+# Never restarts nfsd, never pkills git / nfsd / git_integration_worker.
+#
+# Usage:
+#   scripts/nfs-deleg-unwedge status          # no root
+#   sudo scripts/nfs-deleg-unwedge probe      # new-grant verdict (kernel NFS client)
+#   sudo scripts/nfs-deleg-unwedge drain      # expire live v4 clients (leftover DELEGs after GATES)
+#   sudo scripts/nfs-deleg-unwedge unwedge    # expire the client holding a BREAKING deleg
+set -euo pipefail
+
+# Trap-visible: `local mnt` is gone by the time EXIT runs (set -u → unbound).
+PROBE_MNT=
+
+EXPORTS=/proc/fs/nfsd/exports
+LOCKS=/proc/locks
+CLIENTS=/proc/fs/nfsd/clients
+LEASES=/proc/sys/fs/leases-enable
+PROBE_DIR=/mnt/torus/tmp/nfs-deleg-probe
+REPO=/mnt/torus/projects/universal-llm-gateway
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+need_root() { [[ "$(id -u)" -eq 0 ]] || die "this subcommand needs root (operator sudo)"; }
+
+cleanup_probe_mnt() {
+  if [[ -n "${PROBE_MNT:-}" ]]; then
+    umount "$PROBE_MNT" 2>/dev/null || true
+    rmdir "$PROBE_MNT" 2>/dev/null || true
+    PROBE_MNT=
+  fi
+}
+
+lock_summary() {
+  awk '{print $2,$3,$4}' "$LOCKS" | sort | uniq -c | sort -rn
+}
+
+deleg_active_count() {
+  awk '/DELEG  ACTIVE    READ/{c++} END{print c+0}' "$LOCKS"
+}
+
+breaking_lines() {
+  grep BREAKING "$LOCKS" || true
+}
+
+inode_from_lock_id() {
+  # /proc/locks id field looks like fc:01:37239106
+  local id="$1"
+  echo "${id##*:}"
+}
+
+lock_lines_for_inode() {
+  local ino="$1"
+  awk -v ino="$ino" '$0 ~ ":"ino" " || $0 ~ ":"ino"$"' "$LOCKS" || true
+}
+
+wchan_break_lease() {
+  local found=0
+  local pid comm wchan
+  for w in /proc/[0-9]*/wchan; do
+    [[ -r "$w" ]] || continue
+    wchan=$(cat "$w" 2>/dev/null || true)
+    [[ "$wchan" == *__break_lease* ]] || continue
+    pid=$(basename "$(dirname "$w")")
+    comm=$(cat "/proc/$pid/comm" 2>/dev/null || echo "?")
+    echo "pid=$pid comm=$comm wchan=$wchan"
+    found=1
+  done
+  [[ "$found" -eq 1 ]] || echo "NO_BREAK_LEASE_WCHAN"
+}
+
+ipaddress_match() {
+  # stdlib only — must work under sudo (HOME may be /root).
+  /usr/bin/python3 - "$1" "$2" <<'PY'
+import ipaddress, sys
+print("yes" if ipaddress.ip_address(sys.argv[1]) in ipaddress.ip_network(sys.argv[2], strict=False) else "no")
+PY
+}
+
+pick_local_export_addr() {
+  local cidrs addr c
+  mapfile -t cidrs < <(awk '
+    /^#/ {next}
+    {
+      for (i = 1; i <= NF; i++) {
+        if ($i ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\/[0-9]+/) {
+          split($i, a, "(")
+          print a[1]
+        }
+      }
+    }
+  ' "$EXPORTS")
+  [[ ${#cidrs[@]} -gt 0 ]] || die "no IPv4 CIDRs in $EXPORTS"
+  while read -r addr; do
+    [[ -n "$addr" ]] || continue
+    for c in "${cidrs[@]}"; do
+      if [[ "$(ipaddress_match "$addr" "$c")" == yes ]]; then
+        echo "$addr"
+        return 0
+      fi
+    done
+  done < <(ip -4 -o addr show | awk '{print $4}' | cut -d/ -f1)
+  die "no local IPv4 matches a live export CIDR"
+}
+
+cmd_status() {
+  echo "hostname=$(hostname) user=$(id -un)"
+  echo "addrs=$(hostname -I)"
+  echo "leases-enable=$(cat "$LEASES")"
+  echo "=== /proc/locks ==="
+  lock_summary
+  echo "=== BREAKING ==="
+  local br
+  br=$(breaking_lines)
+  if [[ -z "$br" ]]; then
+    echo NO_BREAKING
+  else
+    echo "$br"
+  fi
+  echo "=== __break_lease wchan ==="
+  wchan_break_lease
+  echo "=== ss :2049 ==="
+  ss -tn 'sport = :2049' || true
+  echo "=== git status (hang probe) ==="
+  TIMEFORMAT='git_status_wall=%R'
+  time timeout 15 git -C "$REPO" status --porcelain=v1 >/dev/null
+  echo "git_status_exit=$?"
+}
+
+cmd_probe() {
+  need_root
+  mkdir -p "$PROBE_DIR"
+  local probe="${1:-}"
+  if [[ -z "$probe" ]]; then
+    probe="$PROBE_DIR/grant-$(date +%s)-$$"
+    printf 'nfs-deleg-grant-probe\n' > "$probe"
+  fi
+  [[ -f "$probe" ]] || die "probe file missing: $probe"
+  local ino addr rel before after
+  ino=$(stat -c '%i' "$probe")
+  addr=$(pick_local_export_addr)
+  rel="${probe#/mnt/torus/}"
+  [[ "$rel" != "$probe" ]] || die "probe must live under /mnt/torus so the export can see it"
+  before=$(deleg_active_count)
+  echo "leases-enable=$(cat "$LEASES")"
+  echo "probe_path=$probe"
+  echo "probe_inode=$ino"
+  echo "nfs_server_addr=$addr"
+  echo "deleg_before=$before"
+  echo "probe_deleg_before=$(lock_lines_for_inode "$ino" | wc -l)"
+  PROBE_MNT=$(mktemp -d /tmp/nfs-deleg-mnt.XXXXXX)
+  trap cleanup_probe_mnt EXIT
+  mount -t nfs4 -o vers=4.2,proto=tcp,sec=sys "${addr}:/mnt/torus" "$PROBE_MNT"
+  echo "mount_ok=${addr}:/mnt/torus -> $PROBE_MNT"
+  # Hold the OPEN while we re-read locks (grant happens on OPEN).
+  exec 3< "$PROBE_MNT/$rel"
+  stat -c 'nfs_stat inode=%i size=%s' "$PROBE_MNT/$rel"
+  after=$(deleg_active_count)
+  local hits
+  hits=$(lock_lines_for_inode "$ino")
+  echo "deleg_after=$after"
+  echo "=== probe inode lock lines ==="
+  if [[ -z "$hits" ]]; then
+    echo NONE
+  else
+    echo "$hits"
+  fi
+  exec 3<&-
+  cleanup_probe_mnt
+  trap - EXIT
+  if [[ -n "$hits" ]] && echo "$hits" | grep -q 'DELEG'; then
+    echo "VERDICT=DOES_NOT_GATE"
+    echo "evidence: kernel NFSv4 OPEN of inode $ino produced a new DELEG while leases-enable=$(cat "$LEASES")"
+    return 2
+  fi
+  echo "VERDICT=GATES"
+  echo "evidence: kernel NFSv4 OPEN+hold of inode $ino produced no DELEG (deleg $before -> $after)"
+}
+
+list_clients() {
+  [[ -d "$CLIENTS" ]] || die "cannot read $CLIENTS"
+  local d
+  for d in "$CLIENTS"/*/; do
+    [[ -d "$d" ]] || continue
+    echo "---- $(basename "$d") ----"
+    cat "${d}info" 2>/dev/null || echo "(no info)"
+  done
+}
+
+client_ids_holding_inode() {
+  local ino="$1"
+  local d
+  for d in "$CLIENTS"/*/; do
+    [[ -f "${d}states" ]] || continue
+    if grep -Eq "(^|[^0-9])${ino}([^0-9]|$)" "${d}states" 2>/dev/null; then
+      basename "$d"
+    fi
+  done
+}
+
+cmd_unwedge() {
+  need_root
+  local br
+  br=$(breaking_lines)
+  if [[ -z "$br" ]]; then
+    echo "NO_BREAKING — refuse expire-for-hygiene"
+    echo "leftover DELEG ACTIVE READ=$(deleg_active_count)"
+    echo "run status; expire only when a DELEG is BREAKING or a local write is stuck in __break_lease"
+    exit 0
+  fi
+  echo "=== BREAKING ==="
+  echo "$br"
+  echo "=== __break_lease wchan ==="
+  wchan_break_lease
+  local ino id
+  ino=$(echo "$br" | awk '{print $6}' | head -1 | awk -F: '{print $NF}')
+  [[ -n "$ino" ]] || die "could not parse inode from BREAKING line"
+  echo "wedged_inode=$ino"
+  echo "=== live clients ==="
+  list_clients
+  mapfile -t hits < <(client_ids_holding_inode "$ino")
+  echo "=== clients whose states mention inode $ino ==="
+  if [[ ${#hits[@]} -eq 0 ]]; then
+    echo NONE
+    die "no client states mention inode $ino — not guessing; re-run and pass nothing. Inspect states files."
+  fi
+  if [[ ${#hits[@]} -gt 1 ]]; then
+    printf '%s\n' "${hits[@]}"
+    die "multiple clients hold inode $ino — not guessing"
+  fi
+  id="${hits[0]}"
+  echo "expire_client=$id"
+  echo expire > "$CLIENTS/$id/ctl"
+  echo "expire_written=$CLIENTS/$id/ctl"
+  sleep 1
+  echo "=== BREAKING after expire ==="
+  br=$(breaking_lines)
+  if [[ -z "$br" ]]; then
+    echo NO_BREAKING
+  else
+    echo "$br"
+  fi
+  echo "deleg_active=$(deleg_active_count)"
+}
+
+umount_stale_probe_mnts() {
+  local t
+  for t in /tmp/nfs-deleg-mnt.*; do
+    [[ -d "$t" ]] || continue
+    if findmnt -n "$t" >/dev/null 2>&1; then
+      echo "umount_stale=$t"
+      umount "$t" || die "umount failed: $t"
+    fi
+    rmdir "$t" 2>/dev/null || true
+  done
+}
+
+cmd_drain() {
+  # Leftover DELEGs after a GATES probe: expire every live v4 client.
+  # Requires leases-enable=0 so nfsd cannot refill the pile.
+  need_root
+  local le before after d id
+  le=$(cat "$LEASES")
+  [[ "$le" == 0 ]] || die "refuse drain: leases-enable=$le (need 0 so expire does not refill)"
+  before=$(deleg_active_count)
+  echo "leases-enable=$le"
+  echo "deleg_before=$before"
+  echo "=== live clients ==="
+  list_clients
+  umount_stale_probe_mnts
+  for d in "$CLIENTS"/*/; do
+    [[ -d "$d" ]] || continue
+    id=$(basename "$d")
+    echo expire > "${d}ctl"
+    echo "expire_written=${d}ctl client=$id"
+  done
+  sleep 1
+  after=$(deleg_active_count)
+  echo "deleg_after=$after"
+  echo "=== BREAKING after drain ==="
+  local br
+  br=$(breaking_lines)
+  if [[ -z "$br" ]]; then
+    echo NO_BREAKING
+  else
+    echo "$br"
+  fi
+  echo "=== ss :2049 ==="
+  ss -tn 'sport = :2049' || true
+}
+
+usage() {
+  sed -n '2,17p' "$0"
+}
+
+cmd="${1:-status}"
+shift || true
+case "$cmd" in
+  status) cmd_status "$@" ;;
+  probe) cmd_probe "$@" ;;
+  drain) cmd_drain "$@" ;;
+  unwedge) cmd_unwedge "$@" ;;
+  -h|--help|help) usage ;;
+  *) die "unknown command: $cmd (status|probe|drain|unwedge)" ;;
+esac

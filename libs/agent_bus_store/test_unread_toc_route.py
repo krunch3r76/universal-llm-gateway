@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
-
 from fastapi.testclient import TestClient
 
 from agent_bus_store import create_app
@@ -41,9 +39,17 @@ def _add_turn(client, *, thread, frm, to, subject, body):
 
 def test_unread_toc_enriched_recipient_scoped(tmp_path) -> None:
     with TestClient(_app(tmp_path)) as client:
+        root_resp = client.post("/threads", json={"slug": "toc-root"})
+        assert root_resp.status_code == 201, root_resp.text
+        root = root_resp.json()["id"]
         t1 = _new_thread(
             client, slug="toc-a", frm="cursor", to="web", subject="a1", body="body-a1"
         )
+        bind = client.post(
+            f"/threads/{t1}/lane-bind",
+            json={"parent_thread_id": root, "lane_role": "sub_mission"},
+        )
+        assert bind.status_code == 200, bind.text
         _add_turn(
             client, thread=t1, frm="cursor", to="web", subject="a2", body="body-a2"
         )
@@ -60,6 +66,10 @@ def test_unread_toc_enriched_recipient_scoped(tmp_path) -> None:
 
         rows = {row["thread"]: row for row in data["threads"]}
         assert set(rows) == {t1, t2}
+        assert rows[t1]["parent_thread"] == root
+        assert rows[t1]["lane_role"] == "sub_mission"
+        assert rows[t2]["parent_thread"] is None
+        assert rows[t2]["lane_role"] is None
         assert rows[t1]["unread_count"] == 2
         assert rows[t1]["slug"] == "toc-a"
         assert rows[t1]["last_subject"] == "a2"

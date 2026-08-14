@@ -338,6 +338,9 @@ def list_threads_v2(
         tag_map = _load_thread_tags(conn, [r["id"] for r in rows])
         for row in rows:
             row["tags"] = tag_map.get(row["id"], [])
+        from .lane_associations import merge_lane_fields
+
+        merge_lane_fields(rows)
         return rows
 
 
@@ -351,6 +354,9 @@ def get_thread(thread_id: str) -> dict[str, Any] | None:
         detail = dict(row)
         detail["tags"] = _load_thread_tags(conn, [thread_id]).get(thread_id, [])
         detail.setdefault("dispatch_links", [])
+        from .lane_associations import merge_lane_fields
+
+        merge_lane_fields([detail])
         return detail
 
 
@@ -364,6 +370,9 @@ def get_thread_with_links(thread_id: str) -> dict[str, Any] | None:
         detail = dict(row)
         detail["tags"] = _load_thread_tags(conn, [thread_id]).get(thread_id, [])
         detail["dispatch_links"] = _load_dispatch_links(conn, thread_id)
+        from .lane_associations import merge_lane_fields
+
+        merge_lane_fields([detail])
         return detail
 
 

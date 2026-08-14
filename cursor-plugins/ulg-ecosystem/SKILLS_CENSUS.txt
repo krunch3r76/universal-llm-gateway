@@ -33,4 +33,5 @@ reasoning-posture
 residual-imprint
 satellite-workspace
 modularize-path
+teach-once-routine-mint
 work-item-seed-path

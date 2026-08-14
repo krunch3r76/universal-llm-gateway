@@ -100,3 +100,16 @@ def test_citation_resolver_protocol_is_importable() -> None:
 
     assert CitationResolver is not None
     _ = CitationToken(raw="a:1", kind="assertion", identifier="1", offset=0)
+
+
+def test_lane_citation_advisory_does_not_break_clean() -> None:
+    findings = lint_checkpoint_citations("Follow up on agent-bus:7188 next.")
+    assert findings.lane_citation_advisories
+    assert findings.clean is True
+
+
+def test_lane_role_clause_not_flagged() -> None:
+    body = "Proxy lane agent-bus:7188 (sub_mission of 7182) is active."
+    findings = lint_checkpoint_citations(body)
+    assert findings.lane_citation_advisories == ()
+    assert findings.clean is True

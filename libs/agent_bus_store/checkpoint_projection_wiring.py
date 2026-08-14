@@ -16,27 +16,47 @@ from .checkpoint_projection import (
 def build_post_resolvers(*, root_thread: str) -> ProjectionResolvers:
     """Default resolver bundle for the store HTTP post path."""
     from .db import get_thread, get_thread_turn_count
+    from .db.lane_associations import (
+        get_current_lane,
+        list_substantiated_child_thread_ids,
+    )
 
     del root_thread
 
+    def _child_row(thread_id: str) -> ChildThreadRow | None:
+        row = get_thread(thread_id)
+        if row is None:
+            return None
+        lane = get_current_lane(thread_id=thread_id)
+        return ChildThreadRow(
+            thread_id=thread_id,
+            status=str(row.get("status", "unknown")),
+            last_turn=get_thread_turn_count(thread_id),
+            lane_role=lane.get("lane_role"),
+            parent_thread_id=lane.get("parent_thread"),
+        )
+
     def _child_registry(
         *, root_thread: str, cited_thread_ids: tuple[str, ...]
-    ) -> tuple[ChildThreadRow, ...]:
-        del root_thread
-        rows: list[ChildThreadRow] = []
+    ) -> tuple[tuple[ChildThreadRow, ...], tuple[ChildThreadRow, ...]]:
+        substantiated_ids = list_substantiated_child_thread_ids(
+            parent_thread_id=root_thread
+        )
+        substantiated_set = set(substantiated_ids)
+        substantiated: list[ChildThreadRow] = []
+        for thread_id in substantiated_ids:
+            child = _child_row(thread_id)
+            if child is not None:
+                substantiated.append(child)
+
+        cited: list[ChildThreadRow] = []
         for thread_id in cited_thread_ids:
-            row = get_thread(thread_id)
-            if row is None:
+            if thread_id == root_thread or thread_id in substantiated_set:
                 continue
-            last_turn = get_thread_turn_count(thread_id)
-            rows.append(
-                ChildThreadRow(
-                    thread_id=thread_id,
-                    status=str(row.get("status", "unknown")),
-                    last_turn=last_turn,
-                )
-            )
-        return tuple(rows)
+            child = _child_row(thread_id)
+            if child is not None:
+                cited.append(child)
+        return tuple(substantiated), tuple(cited)
 
     def _artifact_sha(uri: str) -> ArtifactAnchor | None:
         """Resolve cortex:// or workspaces:// to sha256 at post time.

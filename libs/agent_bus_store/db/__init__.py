@@ -7,6 +7,11 @@ from .branch_associations import (
     reject_client_ordering_tokens,
 )
 from .connection import init_db
+from .lane_associations import (
+    associate_lane,
+    get_current_lane,
+    merge_lane_fields,
+)
 from .messages import get_messages, insert_message, list_threads, mark_read
 from .threads import (
     ThreadHasReadTurns,
@@ -67,6 +72,7 @@ __all__ = [
     "admit_dispatch",
     "add_tags",
     "associate_branch",
+    "associate_lane",
     "claim_and_post_turn",
     "close_thread",
     "consume_triage_confirm_token",
@@ -82,6 +88,7 @@ __all__ = [
     "get_messages",
     "get_dispatch_link_by_execution_id",
     "get_current_branch",
+    "get_current_lane",
     "get_thread",
     "get_thread_summary",
     "get_thread_turns_asc",
@@ -100,6 +107,7 @@ __all__ = [
     "list_threads_v2",
     "list_triage_candidates",
     "mark_read",
+    "merge_lane_fields",
     "mark_turn_read",
     "normalize_thread_id",
     "reject_client_ordering_tokens",

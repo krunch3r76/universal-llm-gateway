@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from .checkpoint_citation_lint import CitationToken, lint_checkpoint_citations
+from .checkpoint_projection_lanes import render_lane_derived_sections
 from .turns_models import MAX_TURN_BODY_CHARS
 
 CANONICAL_RESUME_FOOTER = (
@@ -43,6 +44,8 @@ class ChildThreadRow:
     thread_id: str
     status: str
     last_turn: int
+    lane_role: str | None = None
+    parent_thread_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,7 +68,7 @@ class EntityAssertionRow:
 class ChildRegistryResolver(Protocol):
     def __call__(
         self, *, root_thread: str, cited_thread_ids: tuple[str, ...]
-    ) -> tuple[ChildThreadRow, ...]: ...
+    ) -> tuple[tuple[ChildThreadRow, ...], tuple[ChildThreadRow, ...]]: ...
 
 
 class ArtifactShaResolver(Protocol):
@@ -158,14 +161,6 @@ def _truncate_claim(text: str, limit: int = _CLAIM_HEAD_MAX) -> str:
     return cleaned[: limit - 1] + "…"
 
 
-def _render_child(row: ChildThreadRow, *, compressed: bool) -> str:
-    if compressed and row.status.lower() in _CLOSED_THREAD_STATUSES:
-        return f"- agent-bus:{row.thread_id} closed@{row.last_turn}"
-    return (
-        f"- agent-bus:{row.thread_id} · {row.status} · turn {row.last_turn}"
-    )
-
-
 def _render_anchor(anchor: ArtifactAnchor) -> str:
     return f"- {anchor.uri} · sha256:{anchor.sha256}"
 
@@ -193,7 +188,8 @@ def _render_entity_row(row: EntityAssertionRow) -> str:
 def _render_derived_zone(
     *,
     unprojected: bool,
-    children: tuple[ChildThreadRow, ...],
+    child_lanes: tuple[ChildThreadRow, ...],
+    cited_lanes: tuple[ChildThreadRow, ...],
     anchors: tuple[ArtifactAnchor, ...],
     unresolved_uris: tuple[str, ...],
     rows: tuple[EntityAssertionRow, ...],
@@ -203,18 +199,13 @@ def _render_derived_zone(
     if unprojected:
         parts.append(_UNPROJECTED_BANNER)
     parts.append("")
-    parts.append("### Child registry")
-    if children:
-        for child in children:
-            parts.append(
-                _render_child(
-                    child,
-                    compressed=compress_closed_children
-                    and child.status.lower() in _CLOSED_THREAD_STATUSES,
-                )
-            )
-    else:
-        parts.append("_none cited_")
+    parts.extend(
+        render_lane_derived_sections(
+            child_lanes=child_lanes,
+            cited_lanes=cited_lanes,
+            compress_closed_children=compress_closed_children,
+        )
+    )
     parts.append("")
     parts.append("### Artifact anchors")
     if anchors or unresolved_uris:
@@ -245,11 +236,11 @@ def project_checkpoint_body(
 
     unprojected = False
     try:
-        children = resolvers.child_registry(
+        child_lanes, cited_lanes = resolvers.child_registry(
             root_thread=root_thread, cited_thread_ids=cited_threads
         )
     except Exception:
-        children = ()
+        child_lanes, cited_lanes = (), ()
         unprojected = True
 
     anchors: list[ArtifactAnchor] = []
@@ -280,7 +271,8 @@ def project_checkpoint_body(
 
     return _assemble_body(
         unprojected=unprojected,
-        children=children,
+        child_lanes=child_lanes,
+        cited_lanes=cited_lanes,
         anchors=tuple(anchors),
         unresolved_uris=tuple(unresolved_uris),
         rows=tuple(entity_rows),
@@ -292,7 +284,8 @@ def project_checkpoint_body(
 def _assemble_body(
     *,
     unprojected: bool,
-    children: tuple[ChildThreadRow, ...],
+    child_lanes: tuple[ChildThreadRow, ...],
+    cited_lanes: tuple[ChildThreadRow, ...],
     anchors: tuple[ArtifactAnchor, ...],
     unresolved_uris: tuple[str, ...],
     rows: tuple[EntityAssertionRow, ...],
@@ -301,7 +294,8 @@ def _assemble_body(
 ) -> str:
     derived = _render_derived_zone(
         unprojected=unprojected,
-        children=children,
+        child_lanes=child_lanes,
+        cited_lanes=cited_lanes,
         anchors=anchors,
         unresolved_uris=unresolved_uris,
         rows=rows,
@@ -316,13 +310,15 @@ def _assemble_body(
     )
     if len(body) <= MAX_TURN_BODY_CHARS:
         return body
-    if compress_closed_children or not children:
+    all_lanes = child_lanes + cited_lanes
+    if compress_closed_children or not all_lanes:
         raise CheckpointBodyTooLargeError(
             body_chars=len(body), limit_chars=MAX_TURN_BODY_CHARS
         )
     return _assemble_body(
         unprojected=unprojected,
-        children=children,
+        child_lanes=child_lanes,
+        cited_lanes=cited_lanes,
         anchors=anchors,
         unresolved_uris=unresolved_uris,
         rows=rows,

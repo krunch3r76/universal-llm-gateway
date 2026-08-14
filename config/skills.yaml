@@ -454,6 +454,9 @@ skills:
   tax:
     surface_class: cursor_only
     mcp_surface_required: none
+  teach-once-routine-mint:
+    surface_class: cursor_only
+    mcp_surface_required: none
   thirdparty-api-mirror:
     surface_class: cursor_only
     mcp_surface_required: code

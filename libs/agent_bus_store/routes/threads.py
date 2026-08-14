@@ -51,6 +51,21 @@ from ..db import (
     update_thread,
 )
 from ..db.branch_associations import ClientOrderingTokenError
+from ..db.lane_associations import (
+    ClientOrderingTokenError as LaneClientOrderingTokenError,
+)
+from ..db.lane_associations import (
+    LaneBindCreate,
+    LaneBindResponse,
+    LaneCurrentResponse,
+    associate_lane,
+    get_current_lane,
+    invalid_lane_role_envelope,
+    lane_bind_incomplete_envelope,
+)
+from ..db.lane_associations import (
+    reject_client_ordering_tokens as reject_lane_ordering_tokens,
+)
 from ..db.turns import UnreadTurnsExist
 from ..enrollment_guard import EnrollmentTagError, enrollment_denied_http
 from ..supersedes_turn_boundary import (
@@ -183,6 +198,8 @@ def _thread_detail(row: dict[str, Any]) -> ThreadDetail:
         updated_at=datetime.fromisoformat(row["updated_at"]),
         bus_lifecycle_state=row.get("bus_lifecycle_state"),
         dispatch_links=links,
+        parent_thread=row.get("parent_thread"),
+        lane_role=row.get("lane_role"),
     )
 
 
@@ -570,6 +587,7 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
             )
         thread_id = thread_row["id"]
         send_path = "new_thread"
+        _maybe_auto_bind_lane_on_send(body=body, thread_id=thread_id)
     else:
         thread_id = normalize_thread_id(body.thread)
         if get_thread(thread_id) is None:
@@ -817,6 +835,8 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
                 ) from exc
             raise
         prepared = spill_holder.get("prepared")
+        _maybe_auto_bind_lane_on_send(body=body, thread_id=thread_row["id"])
+        thread_row = get_thread(thread_row["id"]) or thread_row
         return TurnSendCreated(
             send_path="new_thread",
             thread=_thread_detail(thread_row),
@@ -1290,9 +1310,22 @@ async def delete_thread_route(
     force: bool = Query(False),
 ) -> dict[str, Any]:
     """Delete a thread, requiring force when acknowledged turns already exist."""
+    import sqlite3
+
     thread_id = normalize_thread_id(thread_id)
     try:
         return delete_thread(thread_id, force=force)
+    except sqlite3.IntegrityError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "lane_parent_delete_restricted",
+                "message": str(exc),
+                "retryable": False,
+                "source": "agent_bus_store.routes.threads",
+                "data": {"thread_id": thread_id},
+            },
+        ) from exc
     except KeyError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1353,3 +1386,107 @@ async def branch_current_route(thread_id: str) -> BranchCurrentResponse:
             detail=f"Thread {thread_id} not found",
         )
     return BranchCurrentResponse(**result)
+
+
+def _maybe_auto_bind_lane_on_send(*, body: TurnSendCreate, thread_id: str) -> None:
+    """Auto-bind a freshly minted lane when both parent_thread and lane_role are set."""
+    has_parent = body.parent_thread is not None
+    has_role = body.lane_role is not None
+    if not has_parent and not has_role:
+        return
+    if not has_parent or not has_role:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=lane_bind_incomplete_envelope(
+                provided=[k for k, v in (("parent_thread", has_parent), ("lane_role", has_role)) if v]
+            ),
+        )
+    try:
+        associate_lane(
+            thread_id=thread_id,
+            parent_thread_id=body.parent_thread,
+            lane_role=body.lane_role,
+        )
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        if "lane_role" in str(exc):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=invalid_lane_role_envelope(
+                    lane_role=body.lane_role or "",
+                    reason=str(exc),
+                ),
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": str(exc), "reason": "invalid_lane_bind"},
+        ) from exc
+
+
+@router.post(
+    "/threads/{thread_id}/lane-bind",
+    response_model=LaneBindResponse,
+    openapi_extra=x_mcp("lane_bind", tool="agent_bus"),
+)
+async def lane_bind_route(
+    thread_id: str,
+    body: LaneBindCreate,
+) -> LaneBindResponse:
+    """Append one lane parentage association; current is derived from MAX(id)."""
+    thread_id = normalize_thread_id(thread_id)
+    try:
+        reject_lane_ordering_tokens(body.model_dump())
+        result = associate_lane(
+            thread_id=thread_id,
+            parent_thread_id=body.parent_thread_id,
+            lane_role=body.lane_role,
+            bound_by=body.bound_by,
+            evidence=body.evidence,
+        )
+    except LaneClientOrderingTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": "client_ordering_token", "reason": str(exc)},
+        )
+    except LookupError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Thread {thread_id} not found",
+        )
+    except ValueError as exc:
+        msg = str(exc)
+        if "lane_role" in msg:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=invalid_lane_role_envelope(
+                    lane_role=body.lane_role,
+                    reason=msg,
+                ),
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": msg, "reason": "invalid_lane_bind"},
+        ) from exc
+    return LaneBindResponse(**result)
+
+
+@router.get(
+    "/threads/{thread_id}/lane-current",
+    response_model=LaneCurrentResponse,
+    openapi_extra=x_mcp("lane_current", tool="agent_bus"),
+)
+async def lane_current_route(thread_id: str) -> LaneCurrentResponse:
+    """Return derived current lane parentage for a thread from association history."""
+    thread_id = normalize_thread_id(thread_id)
+    try:
+        result = get_current_lane(thread_id=thread_id)
+    except LookupError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Thread {thread_id} not found",
+        )
+    return LaneCurrentResponse(**result)

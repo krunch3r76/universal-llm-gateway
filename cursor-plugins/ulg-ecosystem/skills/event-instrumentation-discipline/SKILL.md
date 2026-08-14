@@ -64,6 +64,19 @@ by who consumes it, not by importance-feel.
   region is regenerated via `scripts/gen-event-catalog`, never hand-edited
   (`docs-write-guard_ws`).
 
+## Cited failure path (binding)
+
+```
+∀ named_path P cited as the reason to add an observation event ∨ falsifier:
+  verify(P exists in live call graph) ≺ emit_or_instrument(P)
+¬ instrument(doctrine_as_written) when P does not exist
+```
+
+An event on a path that never runs reads clean forever (slogan without a
+falsifier). Doctrine/spec names are hypotheses until the call site is read.
+Taught instance: `a:28973` — cited warm-submit inheritance did not exist;
+instrument followup **resolution**, not submit.
+
 ## Ship consideration (not a hard scan gate)
 
 Unlike docstrings, there is **no criticals=0 event scan** — add/prune is a
