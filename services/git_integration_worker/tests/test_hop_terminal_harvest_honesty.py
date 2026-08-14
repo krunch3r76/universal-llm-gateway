@@ -28,7 +28,7 @@ _THREAD = "7230"
 
 
 def _hop_job(queue, *, body: str = "TYPE: CONTINUITY_HANDOFF\n"):
-    job = queue.enqueue(
+    queue.enqueue(
         thread_id=_THREAD,
         turn_number=1,
         subject=f"cursor-auto hop cadence — continuity hop thread={_THREAD}",
