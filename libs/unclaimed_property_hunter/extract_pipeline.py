@@ -127,6 +127,7 @@ def persist_check_failed_extract(
                     "content_length": fingerprint.content_length,
                     "zip_sha256": fingerprint.zip_sha256,
                     "rows_scanned": fingerprint.rows_scanned,
+                    "corpus_source": fingerprint.corpus_source,
                 }
                 if fingerprint
                 else None
@@ -248,6 +249,7 @@ def run_extract(
                 "content_length": fingerprint.content_length,
                 "zip_sha256": fingerprint.zip_sha256,
                 "rows_scanned": fingerprint.rows_scanned,
+                "corpus_source": fingerprint.corpus_source,
             },
         },
         indent=2,

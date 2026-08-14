@@ -66,6 +66,7 @@ def download_estates_xlsx(dest: Path, *, timeout_s: float = 120.0) -> XlsxDownlo
         etag=etag,
         content_length=content_length,
         zip_sha256=hasher.hexdigest(),
+        corpus_source="state_download",
     )
     return XlsxDownloadResult(path=dest, fingerprint=fingerprint)
 
@@ -77,11 +78,12 @@ def fingerprint_existing_xlsx(path: Path) -> CorpusFingerprint:
         for chunk in iter(lambda: fh.read(1024 * 64), b""):
             hasher.update(chunk)
     return CorpusFingerprint(
-        url=ESTATES_XLSX_URL,
+        url=f"file://{path.resolve().as_posix()}",
         last_modified="",
         etag="",
         content_length=path.stat().st_size,
         zip_sha256=hasher.hexdigest(),
+        corpus_source="local_disk",
     )
 
 

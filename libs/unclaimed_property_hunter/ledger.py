@@ -13,7 +13,12 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from unclaimed_property_hunter.result_surface import execution_block_reason, verdict_token
+from unclaimed_property_hunter.result_surface import (
+    corpus_source_display,
+    execution_block_reason,
+    resolve_corpus_source,
+    verdict_token,
+)
 
 _LEDGER_REL = Path("notes/system/unclaimed-property/ledger.md")
 _RUNS_REL = Path("notes/system/unclaimed-property/runs")
@@ -87,6 +92,10 @@ def normalize_sidecar(data: dict) -> dict:
     verdict = data.get("verdict")
     if not verdict:
         verdict = verdict_token(search_executed=search_executed, hit_count=hit_count)
+    corpus_source = resolve_corpus_source(
+        corpus_fingerprint=fp,
+        top_level=data.get("corpus_source"),
+    )
     return {
         **data,
         "search_executed": search_executed,
@@ -95,6 +104,7 @@ def normalize_sidecar(data: dict) -> dict:
         "execution_block_reason": reason,
         "check_failed": bool(data.get("check_failed", False)),
         "check_failure_reason": data.get("check_failure_reason") or None,
+        "corpus_source": corpus_source,
     }
 
 
@@ -148,14 +158,21 @@ def _detail_cell(data: dict) -> str:
     return "; ".join(parts)
 
 
+def _verdict_cell(data: dict) -> str:
+    verdict = str(data.get("verdict", ""))
+    if verdict.startswith("EXECUTED"):
+        label = corpus_source_display(data.get("corpus_source", "unknown"))
+        return f"**{verdict}** · corpus: {label}"
+    return f"**{verdict}**"
+
+
 def render_run_row(data: dict) -> str:
     """One markdown table row for a persisted run."""
-    verdict = str(data.get("verdict", ""))
     surname = str(data.get("query", {}).get("surname", ""))
     kind = str(data.get("run_kind", ""))
     ts = str(data.get("utc_timestamp", ""))
     return (
-        f"| {ts} | {surname} | {kind} | **{verdict}** | {_detail_cell(data)} | "
+        f"| {ts} | {surname} | {kind} | {_verdict_cell(data)} | {_detail_cell(data)} | "
         f"{_record_link(data)} |"
     )
 
@@ -200,6 +217,7 @@ def render_ledger_markdown(runs: list[dict], gaps: list[GapRow]) -> str:
             f"Last `{_CADENCE_KIND}` run: {last_bulk}",
             "",
             "Verdict legend: `NOT EXECUTED` ≠ `EXECUTED ZERO` — only the latter is a completed search with no hits.",
+            "Executed rows include corpus provenance (`state download` | `local disk` | `unestablished`) — hits do not imply state-sourced data unless labeled `state download`.",
             "",
             "| When (UTC) | Surname | Kind | Verdict | Detail | Record |",
             "| --- | --- | --- | --- | --- | --- |",

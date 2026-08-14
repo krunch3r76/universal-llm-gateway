@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from unclaimed_property_hunter.models import CorpusFingerprint, RunKind, RunRecord
+from unclaimed_property_hunter.models import CorpusFingerprint, CorpusSource, RunKind, RunRecord
 from unclaimed_property_hunter.surfaces import Surface
 
 ExecutionBlockReason = Literal[
@@ -20,6 +20,36 @@ ExecutionBlockReason = Literal[
 ]
 
 HitCountMeaning = Literal["completed_search", "not_a_completed_search"]
+
+_VALID_CORPUS_SOURCES = frozenset({"state_download", "local_disk", "unknown"})
+
+
+def resolve_corpus_source(
+    *,
+    corpus_fingerprint: dict[str, Any] | CorpusFingerprint | None = None,
+    top_level: str | None = None,
+) -> CorpusSource:
+    """Derive corpus provenance — legacy sidecars without a token become ``unknown``."""
+    if top_level in _VALID_CORPUS_SOURCES:
+        return top_level  # type: ignore[return-value]
+    if isinstance(corpus_fingerprint, CorpusFingerprint):
+        if corpus_fingerprint.corpus_source in _VALID_CORPUS_SOURCES:
+            return corpus_fingerprint.corpus_source
+        return "unknown"
+    if isinstance(corpus_fingerprint, dict):
+        src = corpus_fingerprint.get("corpus_source")
+        if src in _VALID_CORPUS_SOURCES:
+            return src  # type: ignore[return-value]
+    return "unknown"
+
+
+def corpus_source_display(source: CorpusSource) -> str:
+    """Human-readable ledger label — ``unknown`` reads as unestablished provenance."""
+    return {
+        "state_download": "state download",
+        "local_disk": "local disk",
+        "unknown": "unestablished",
+    }[source]
 
 
 def execution_block_reason(
@@ -67,6 +97,7 @@ def public_run_dict(record: RunRecord) -> dict[str, Any]:
         corpus_rows_scanned=rows_scanned,
     )
     count = resolved_hit_count(record)
+    corpus_source = resolve_corpus_source(corpus_fingerprint=record.corpus_fingerprint)
     return {
         "run_id": record.run_id,
         "utc_timestamp": record.utc_timestamp,
@@ -84,6 +115,7 @@ def public_run_dict(record: RunRecord) -> dict[str, Any]:
         "verdict": verdict_token(search_executed=record.search_executed, hit_count=count),
         "hit_count_meaning": hit_count_meaning(record.search_executed),
         "execution_block_reason": reason,
+        "corpus_source": corpus_source,
         "hits": [
             {
                 "property_id": h.property_id,
@@ -117,6 +149,7 @@ def _fingerprint_dict(fp: CorpusFingerprint | None) -> dict[str, Any] | None:
         "content_length": fp.content_length,
         "zip_sha256": fp.zip_sha256,
         "rows_scanned": fp.rows_scanned,
+        "corpus_source": fp.corpus_source,
     }
 
 
@@ -164,6 +197,9 @@ def format_entity_attributes(record: RunRecord) -> dict[str, Any]:
         attrs["execution_block_reason"] = None
     if record.corpus_fingerprint is not None:
         attrs["corpus_fingerprint"] = _fingerprint_dict(record.corpus_fingerprint)
+        attrs["corpus_source"] = resolve_corpus_source(
+            corpus_fingerprint=record.corpus_fingerprint
+        )
     if record.notify_outcome is not None:
         attrs["notify_outcome"] = record.notify_outcome
     attrs["check_failed"] = record.check_failed
