@@ -1,4 +1,8 @@
-"""Observed stream/conversation vs commit-ack reconciliation (item 9 / AC-9f)."""
+"""Observed stream/conversation vs commit-ack reconciliation (item 9 / AC-9f).
+
+A missing identity on a cortex write is unknown, not unobserved — ascribing
+``seat_claimed_unobserved`` to a bare op name is itself an unearned assertion.
+"""
 
 from __future__ import annotations
 
@@ -115,6 +119,18 @@ def _entry_entity_slug(entry: EffectEntry) -> str | None:
     return None
 
 
+def _bare_write_op_label(value: str | None) -> bool:
+    """True when *value* is only a write-op name, not a harvested identity.
+
+    Reconcile used to fall through ``identity or target or op`` and treat
+    ``relationship_create`` as an unobserved write. That ascribes an absence
+    the instrument did not earn — identity was never harvested, so the honest
+    state is unknown, not unobserved.
+    """
+    label = (value or "").strip().lower()
+    return bool(label) and label in _CORTEX_WRITE_OPS
+
+
 def _seat_claimed_without_ack(
     entries: list[EffectEntry],
     committed: set[str],
@@ -136,6 +152,10 @@ def _seat_claimed_without_ack(
             joined_aid = entity_to_aid.get(entity_slug)
             if joined_aid and joined_aid in committed:
                 continue
+        if _bare_write_op_label(str(ident) if ident else None):
+            continue
+        if entity_slug and _bare_write_op_label(entity_slug):
+            continue
         if ident and ident not in committed:
             unobserved.append(str(ident))
     return unobserved
