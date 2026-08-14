@@ -521,3 +521,6 @@ def test_layer_g4_check_family_diverse_seat_bind() -> None:
     assert layer_g4_check_family_diverse(
         g3_seat=LAYER_G3_SEAT, g4_seat=LAYER_G4_SEAT
     )
+    assert not layer_g4_check_family_diverse(
+        g3_seat="cursor/claude-opus-5", g4_seat="cdp/fable"
+    )

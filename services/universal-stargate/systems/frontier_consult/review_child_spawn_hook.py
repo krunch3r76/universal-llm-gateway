@@ -76,13 +76,23 @@ def _default_cross_family_reviewer_model() -> str:
 
 
 def select_cross_family_reviewer(resolved_model: str) -> ReviewerSelection | None:
+    """Pick a reviewer whose measured weight-class family differs from the executor.
+
+    Returns ``None`` when no admitted alternate exists or either family is
+    unmeasured — a pair must not certify independence this function did not
+    measure.
+    """
     family = resolve_executor_family(resolved_model)
     if family == "openai":
         model = _OPENAI_EXECUTOR_ALTERNATE
     else:
         model = _default_cross_family_reviewer_model()
     reviewer_family = resolve_executor_family(model)
-    if reviewer_family == family:
+    from implement_admission.check_review_substrate import (
+        families_independently_measured,
+    )
+
+    if not families_independently_measured(family, reviewer_family):
         return None
     if not _reviewer_model_admitted(model):
         return None

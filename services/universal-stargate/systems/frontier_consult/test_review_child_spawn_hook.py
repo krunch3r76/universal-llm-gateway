@@ -88,7 +88,7 @@ def test_d3_cross_family_openai_executor_gets_cursor_opus() -> None:
     sel = select_cross_family_reviewer("openai/gpt-5.5")
     assert sel is not None
     assert sel.model == "cursor/claude-opus-5"
-    assert sel.family == "cursor"
+    assert sel.family == "anthropic"
 
 
 def test_d3_cross_family_cursor_executor_gets_openai() -> None:
@@ -96,6 +96,15 @@ def test_d3_cross_family_cursor_executor_gets_openai() -> None:
     assert sel is not None
     assert sel.model == "openai/gpt-5.5"
     assert sel.family == "openai"
+
+
+def test_cdp_fable_executor_does_not_echo_substrate_as_family() -> None:
+    """cdp/fable is anthropic-family; reviewer must be a measured other family."""
+    assert resolve_executor_family("cdp/fable") == "anthropic"
+    sel = select_cross_family_reviewer("cdp/fable")
+    assert sel is not None
+    assert sel.family != "cdp"
+    assert sel.family != "anthropic"
 
 
 def test_d3_fail_closed_when_alternate_not_admitted() -> None:

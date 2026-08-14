@@ -32,9 +32,15 @@ def layer_g4_check_family_diverse(
     g4_seat: str = LAYER_G4_SEAT,
 ) -> bool:
     """True when declared G4 Check seat family differs from G3 Densify seat family."""
-    from implement_admission.check_review_substrate import independence_family
+    from implement_admission.check_review_substrate import (
+        families_independently_measured,
+        independence_family,
+    )
 
-    return independence_family(g3_seat) != independence_family(g4_seat)
+    return families_independently_measured(
+        independence_family(g3_seat),
+        independence_family(g4_seat),
+    )
 
 _LAYER_ARC_FLOOR = (
     "- Use the `checkpoint-discipline` skill "

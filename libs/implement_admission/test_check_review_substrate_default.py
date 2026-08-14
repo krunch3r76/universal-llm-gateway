@@ -8,6 +8,7 @@ from implement_admission.check_review_substrate import (
     CHECK_REVIEW_DEFAULT_MODEL,
     CHECK_REVIEW_DECISION_CITATION,
     coerce_check_review_omit_to_cursor_seat,
+    families_independently_measured,
     independence_family,
     load_check_review_default_model,
     resolve_check_review_model,
@@ -63,6 +64,30 @@ def test_independence_family_ignores_cursor_substrate() -> None:
     assert independence_family("cursor/claude-opus-5") == "anthropic"
     assert independence_family("cursor/composer-2.5") == "composer"
     assert independence_family("openai/gpt-5.6-terra") == "openai"
+
+
+def test_independence_family_cdp_fable_is_anthropic() -> None:
+    """CDP picker slugs measure Anthropic weight-class, not substrate ``cdp``."""
+    assert independence_family("cdp/fable") == "anthropic"
+    assert independence_family("cdp/fable-5") == "anthropic"
+    assert independence_family("cdp/opus-5") == "anthropic"
+    assert independence_family("cursor/claude-fable-5") == "anthropic"
+    assert independence_family("cdp/fable") == independence_family(
+        "cursor/claude-opus-5"
+    )
+    assert not families_independently_measured(
+        independence_family("cdp/fable"),
+        independence_family("cursor/claude-opus-5"),
+    )
+
+
+def test_independence_family_unmeasured_is_unknown() -> None:
+    assert independence_family("cdp/not-a-real-model") == "unknown"
+    assert independence_family("cursor/mystery-9") == "unknown"
+    assert not families_independently_measured("unknown", "openai")
+    assert not families_independently_measured("anthropic", "unknown")
+    assert families_independently_measured("anthropic", "openai") is True
+    assert families_independently_measured("anthropic", "anthropic") is False
 
 
 def test_conformance_requires_decision_when_drifted() -> None:
