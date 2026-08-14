@@ -10,6 +10,7 @@ import pytest
 from implement_admission.closeout_models import (
     EffectEntry,
     EffectsManifest,
+    ImplementCloseout,
     SurfaceSection,
     Verification,
     derived_gate_verification,
@@ -32,6 +33,7 @@ from services.git_integration_worker.cursor_sdk_capture_status import (
     resolve_work_outcome,
     stated_intent_no_write_capture_violation,
     verification_all_pass,
+    verification_has_failure,
 )
 from services.git_integration_worker.cursor_sdk_manifest import (
     repo_change_set_from_manifest,
@@ -1620,3 +1622,65 @@ def test_specimen_unattributed_zero_red_suite_does_not_ship(tmp_path: Path) -> N
     assert (
         project_status_from_work_outcome(work_outcome, None) != CloseoutStatus.COMPLETE
     )
+
+
+def test_null_exit_row_projects_unverified_never_checks_failed(tmp_path: Path) -> None:
+    """AC5 — absence is not failure; null exit must not mint CHECKS_FAILED."""
+    repo, cortex_root, rel = _land_positive_fixture(tmp_path)
+    row = Verification(command="pytest -q suite.py")
+    assert row.exit_code is None
+    assert row.wrapper_exit_code is None
+    assert verification_has_failure([row]) is False
+    assert verification_all_pass([row]) is False
+    work_outcome = resolve_work_outcome(
+        degraded_reason=None,
+        verification=[row],
+        files_offgit_produced=[f"cortex://{rel}"],
+        artifact_paths=[],
+        manifest=None,
+        source_repo=repo,
+        cortex_root=cortex_root,
+        deliverables_expected=True,
+    )
+    assert work_outcome == WorkOutcome.UNVERIFIED
+    assert work_outcome != WorkOutcome.CHECKS_FAILED
+
+
+def test_unattributed_null_exit_still_blocks_clause_c() -> None:
+    """AC3 — exit_code_register unattributed still consulted; clause c holds."""
+    lint = observed_process_verification(
+        command="ruff check 2 touched files",
+        exit_code=0,
+        invocation_id="lint:clause-c-null",
+        basis="subprocess.run.returncode",
+    )
+    pytest_row = unattributed_process_verification(
+        command=(
+            "pytest -q services/foo/test_bar.py 2>&1 | tee /tmp/out; "
+            'echo "SUITE_EXIT:${PIPESTATUS[0]}"'
+        ),
+        exit_code=0,
+        invocation_id="test:clause-c-null",
+        basis="shell_tool_result.exitCode",
+    )
+    assert pytest_row.exit_code is None
+    assert pytest_row.wrapper_exit_code == 0
+    assert pytest_row.exit_code_register == "unattributed"
+    assert verification_all_pass([lint, pytest_row]) is False
+    assert verification_has_failure([lint, pytest_row]) is False
+
+
+def test_legacy_closeout_json_bare_integer_exit_code_still_validates() -> None:
+    """AC6 — field widens; historical integer exit_code still loads."""
+    payload = {
+        "status": "complete",
+        "summary": "legacy",
+        "source_ref": "todo:legacy-exit-widen",
+        "verification": [
+            {"command": "ruff check 1 touched files", "exit_code": 0},
+        ],
+    }
+    closeout = ImplementCloseout.model_validate(payload)
+    assert closeout.verification[0].exit_code == 0
+    assert closeout.verification[0].wrapper_exit_code is None
+    assert closeout.verification[0].exit_code_register == "unknown"

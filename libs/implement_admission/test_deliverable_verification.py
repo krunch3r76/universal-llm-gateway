@@ -257,5 +257,6 @@ def test_unattributed_register_packs_without_observed_semantics() -> None:
         basis="shell_tool_result.exitCode",
     )
     assert row.exit_code_register == "unattributed"
-    assert row.exit_code == 0
+    assert row.exit_code is None
+    assert row.wrapper_exit_code == 0
     assert row.basis == "shell_tool_result.exitCode"

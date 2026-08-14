@@ -25,6 +25,7 @@ ExitClass = Literal[
     "accepted",
     "uninterpreted",
     "unattributed",
+    "unobserved",
 ]
 
 # Pytest: https://docs.pytest.org/en/latest/reference/exit-codes.html
@@ -64,6 +65,7 @@ _BLOCKING_CLASSES: frozenset[ExitClass] = frozenset(
         "vacuous",
         "uninterpreted",
         "unattributed",
+        "unobserved",
     }
 )
 
@@ -86,24 +88,31 @@ def interpret_exit(row: Verification) -> ExitClass:
 
     Precedence:
     1. ``exit_code_register == unattributed`` — compound shape cannot name the
-       process under test; refuse to treat the integer as a check result.
-    2. Invocation-site ``ACCEPT_EXITS`` / ``accept-exits:`` — designed-fail
+       process under test; refuse to treat the wrapper integer as a check
+       result. Distinct from ``unobserved`` (nothing was seen).
+    2. ``exit_code is None`` — unobserved; blocking and non-failing (absence
+       is not ``checks_failed``).
+    3. Invocation-site ``ACCEPT_EXITS`` / ``accept-exits:`` — designed-fail
        probes that declared the observed code.
-    3. Command-family tables (pytest, ruff, ``gate_d:*``).
-    4. Generic: ``0`` → passed; any other integer → ``uninterpreted``.
+    4. Command-family tables (pytest, ruff, ``gate_d:*``).
+    5. Generic: ``0`` → passed; any other integer → ``uninterpreted``.
     """
     if row.exit_code_register == "unattributed":
         return "unattributed"
 
+    code = row.exit_code
+    if code is None:
+        return "unobserved"
+
     accepted = parse_accept_exits(row.command)
-    if row.exit_code in accepted:
+    if code in accepted:
         return "accepted"
 
     command = row.command or ""
     if command.startswith("gate_d:"):
-        if row.exit_code == 0:
+        if code == 0:
             return "passed"
-        if row.exit_code == 1:
+        if code == 1:
             return "failed"
         return "uninterpreted"
 
@@ -118,8 +127,8 @@ def interpret_exit(row: Verification) -> ExitClass:
         table = _RUFF_EXIT
 
     if table is not None:
-        return table.get(row.exit_code, "uninterpreted")
-    if row.exit_code == 0:
+        return table.get(code, "uninterpreted")
+    if code == 0:
         return "passed"
     return "uninterpreted"
 

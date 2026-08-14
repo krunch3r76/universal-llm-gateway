@@ -686,8 +686,9 @@ def verification_has_failure(verification: list[Verification] | None) -> bool:
     """True when any verification row *ran and failed*.
 
     Could-not-run (pytest 2/3/4), vacuous collection (pytest 5), uninterpreted
-    integers, and unattributed compound exits are not failures of a check that
-    ran — they cannot mint ``checks_failed``.
+    integers, unattributed compound exits, and ``exit_code is None``
+    (unobserved) are not failures of a check that ran — they cannot mint
+    ``checks_failed``.
     """
     if not verification:
         return False
@@ -721,8 +722,9 @@ def verification_all_pass(verification: list[Verification] | None) -> bool:
     A row is trusted only when ``exit_code_register == "observed"`` (proven
     process-under-test returncode). Observed lint and harvested pytest siblings
     both count; ``gate_d:*`` rows are derived structural gates — never pytest
-    witnesses. ``unattributed`` rows keep the exit integer for audit but must
-    not launder SHIPPED (clause c).
+    witnesses. ``unattributed`` rows keep the wrapper integer on
+    ``wrapper_exit_code`` for audit but must not launder SHIPPED (clause c).
+    Any row with ``exit_code is None`` is fail-closed.
 
     Derived Gate-D / lint-skip booleans packed as ``exit_code: 0`` are emitter
     self-reports — they must not launder SHIPPED above G₁
@@ -730,12 +732,15 @@ def verification_all_pass(verification: list[Verification] | None) -> bool:
 
     Fail-closed rules:
     - empty list → False
+    - any ``exit_code is None`` → False
     - any blocking exit class (failed / could_not_run / vacuous /
-      uninterpreted / unattributed) → False
+      uninterpreted / unattributed / unobserved) → False
     - passing classes but no ``observed`` row → False (derived-only / unknown-only)
     - clause (c): pytest-class row with register ≠ ``observed`` → False
     """
     if not verification:
+        return False
+    if any(item.exit_code is None for item in verification):
         return False
     from services.git_integration_worker.cursor_sdk_exit_interpretation import (
         row_blocks_all_pass,

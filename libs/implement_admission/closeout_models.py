@@ -93,6 +93,12 @@ class Verification(BaseModel):
     a sibling does **not** earn "no tests ran" — semantics
     ``presence_legible_absence_not`` (7065#162).
 
+    ``exit_code`` is ``int | None``. ``None`` is unobserved: the type cannot
+    represent "a shell ran and the process exit cannot be established" as an
+    integer (a required ``int`` forced a success-shaped value).
+    ``wrapper_exit_code`` holds a tool-reported integer whose attribution to
+    ``command`` is unproven; no reader grades it.
+
     Default ``unknown`` keeps historical closeout JSON loadable
     (``ImplementCloseout.model_validate`` / pipeline apply). New packers MUST
     set register + invocation_id via the helpers below — bare two-field
@@ -100,7 +106,8 @@ class Verification(BaseModel):
     """
 
     command: str
-    exit_code: int
+    exit_code: int | None = None
+    wrapper_exit_code: int | None = None
     exit_code_register: ExitCodeRegister = "unknown"
     invocation_id: str | None = None
     basis: str | None = None
@@ -131,11 +138,15 @@ def unattributed_process_verification(
 
     Used when ``shell_tool_result.exitCode`` is present but the command shape
     (pipeline wrappers, trailing echo, etc.) cannot prove the integer is the
-    exit of the check named by ``command``. Row is kept for audit — not dropped.
+    exit of the check named by ``command``. The integer is stored on
+    ``wrapper_exit_code``; ``exit_code`` stays ``None`` so an unattributed
+    wrapper cannot be read as the process exit. Row is kept for audit — not
+    dropped.
     """
     return Verification(
         command=command,
-        exit_code=exit_code,
+        exit_code=None,
+        wrapper_exit_code=exit_code,
         exit_code_register="unattributed",
         invocation_id=invocation_id or f"proc:{uuid4().hex}",
         basis=basis,

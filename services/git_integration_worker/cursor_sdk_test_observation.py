@@ -186,19 +186,56 @@ def _command_from_observation(obs: ToolCallObservation) -> str | None:
     return None
 
 
-def _shell_exit_code(obs: ToolCallObservation) -> int | None:
+_RETAIN_CHARS = 4000
+
+
+def _retain_text(raw: object) -> tuple[str | None, bool]:
+    """Cap a retained shell stream; empty/absent stays ``None`` only when missing."""
+    if raw is None:
+        return None, False
+    text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+    if len(text) <= _RETAIN_CHARS:
+        return text, False
+    return text[:_RETAIN_CHARS] + "\n...[truncated]", True
+
+
+def _shell_result_map(obs: ToolCallObservation) -> Mapping[str, object] | None:
     raw = obs.result_body if obs.result_body is not None else obs.result
     if not isinstance(raw, Mapping):
         return None
     if raw.get("status") == "error":
         err = raw.get("error")
-        if isinstance(err, Mapping):
-            return _coerce_exit_code(err.get("exitCode") or err.get("exit_code"))
-        return None
+        return err if isinstance(err, Mapping) else None
     value = raw.get("value")
-    if isinstance(value, Mapping):
-        return _coerce_exit_code(value.get("exitCode"))
-    return None
+    return value if isinstance(value, Mapping) else None
+
+
+def _shell_exit_code(obs: ToolCallObservation) -> int | None:
+    payload = _shell_result_map(obs)
+    if payload is None:
+        return None
+    raw_exit = payload.get("exitCode")
+    if raw_exit is None:
+        raw_exit = payload.get("exit_code")
+    return _coerce_exit_code(raw_exit)
+
+
+def _shell_harvest_basis(
+    payload: Mapping[str, object] | None, *, unattributed: bool
+) -> str:
+    stem = (
+        "shell_tool_result.exitCode:unattributed"
+        if unattributed
+        else "shell_tool_result.exitCode"
+    )
+    if payload is None:
+        return stem
+    parts = [stem]
+    if "signal" in payload:
+        parts.append(f"signal={payload.get('signal', '')}")
+    if "executionTime" in payload:
+        parts.append(f"executionTime={payload.get('executionTime')}")
+    return ";".join(parts)
 
 
 def _quality_gate_test_exit(obs: ToolCallObservation) -> tuple[int | None, str | None]:
@@ -224,20 +261,27 @@ def _harvest_shell_pytest(obs: ToolCallObservation) -> Verification | None:
     command = _command_from_observation(obs)
     if not command or not is_pytest_command(command):
         return None
+    payload = _shell_result_map(obs)
     exit_code = _shell_exit_code(obs)
     if exit_code is None:
         return None
     invocation_id = f"test:{obs.call_id}" if obs.call_id else None
+    unattributed = not is_proven_simple_pytest_command(command)
     pack = (
-        observed_process_verification
-        if is_proven_simple_pytest_command(command)
-        else unattributed_process_verification
+        unattributed_process_verification
+        if unattributed
+        else observed_process_verification
     )
+    stdout, trunc_out = _retain_text(None if payload is None else payload.get("stdout"))
+    stderr, trunc_err = _retain_text(None if payload is None else payload.get("stderr"))
     return pack(
         command=command,
         exit_code=exit_code,
         invocation_id=invocation_id,
-        basis="shell_tool_result.exitCode",
+        basis=_shell_harvest_basis(payload, unattributed=unattributed),
+        stdout=stdout,
+        stderr=stderr,
+        output_truncated=trunc_out or trunc_err,
     )
 
 

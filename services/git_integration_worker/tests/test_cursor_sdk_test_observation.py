@@ -97,7 +97,10 @@ def test_harvest_emits_observed_sibling_for_pytest_shell() -> None:
     row = rows[0]
     assert row.exit_code_register == "observed"
     assert row.exit_code == 0
+    assert row.wrapper_exit_code is None
     assert row.basis == "shell_tool_result.exitCode"
+    assert row.stdout == "ok"
+    assert row.stderr == ""
     assert row.invocation_id == "test:call-pytest-1"
     assert is_pytest_command(row.command)
 
@@ -251,8 +254,13 @@ def test_specimen_auto_e93f739c279c_harvests_unattributed_trailing_echo() -> Non
     assert len(rows) == 1
     row = rows[0]
     assert row.exit_code_register == "unattributed"
-    assert row.exit_code == 0
-    assert row.basis == "shell_tool_result.exitCode"
+    assert row.exit_code is None
+    assert row.wrapper_exit_code == 0
+    assert row.basis == (
+        "shell_tool_result.exitCode:unattributed;signal=;executionTime=637"
+    )
+    assert row.stdout is not None and "10 passed" in row.stdout
+    assert row.stderr == ""
     assert is_pytest_witness(row) is False
     assert row.invocation_id == f"test:{_E93F_CALL_ID}"
 
@@ -345,7 +353,9 @@ def test_harvest_specimen_a_compound_echo_is_unattributed_and_blocks_all_pass() 
     assert len(rows) == 1
     row = rows[0]
     assert row.exit_code_register == "unattributed"
-    assert row.exit_code == 0
+    assert row.exit_code is None
+    assert row.wrapper_exit_code == 0
+    assert row.basis == "shell_tool_result.exitCode:unattributed"
     assert is_proven_simple_pytest_command(_SPECIMEN_A_COMMAND) is False
     assert wrapper_exit_demotion_deviation(row) == (
         f"wrapper_exit_demoted:{_SPECIMEN_A_CALL_ID}"
@@ -369,3 +379,21 @@ def test_is_proven_simple_allows_ruff_and_pytest_and_chain() -> None:
         )
         is False
     )
+
+
+def test_wrapper_unavailable_harvest_emits_null_not_zero() -> None:
+    """AC2 — compound wrapper cannot be recorded as process exit 0."""
+    obs = _shell_obs(
+        call_id="call-wrapper-unavailable",
+        command=_SPECIMEN_A_COMMAND,
+        exit_code=0,
+    )
+    rows = harvest_test_verifications((obs,))
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.exit_code is None
+    assert row.exit_code != 0
+    assert row.wrapper_exit_code == 0
+    assert row.exit_code_register == "unattributed"
+    assert row.stdout == "ok"
+    assert row.stderr == ""
