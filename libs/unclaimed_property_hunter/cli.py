@@ -10,37 +10,30 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import UTC, datetime
+from dataclasses import replace
 from pathlib import Path
 
-from unclaimed_property_hunter.bulk_extract import (
-    download_bulk_zip,
-    filter_zip_for_surnames,
-    hits_from_rows,
-)
 from unclaimed_property_hunter.diff_runs import RunDiff
+from unclaimed_property_hunter.extract_pipeline import run_extract, utc_now, run_id
+from unclaimed_property_hunter.hit_notify import (
+    PAGE_AMOUNT_FLOOR,
+    decide_notifications,
+    format_digest_note,
+    notify_hit_pages_sync,
+    probe_pager_from_service_context_sync,
+)
 from unclaimed_property_hunter.ingest import parse_html_hits, parse_json_hits
-from unclaimed_property_hunter.models import Query, RunRecord
-from unclaimed_property_hunter.record import (
-    diff_latest,
-    persist_run,
-    write_raw_and_normalized,
+from unclaimed_property_hunter.models import Hit, Query, RunRecord
+from unclaimed_property_hunter.record import diff_latest, persist_run, write_raw_and_normalized
+from unclaimed_property_hunter.result_surface import format_operator_stderr, public_run_dict
+from unclaimed_property_hunter.roster import (
+    EXAMPLE_ROSTER_REL,
+    ROSTER_PATH_ENV,
+    default_roster_path,
+    load_roster,
 )
-from unclaimed_property_hunter.transport import (
-    BULK_ZIP_URL,
-    CLAIMIT_URL,
-    intended_query_string,
-    probe_transport,
-)
-
-
-def _utc_now() -> str:
-    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def _run_id(surname: str, when: str) -> str:
-    stamp = when.replace(":", "").replace("-", "")
-    return f"{surname.lower()}-{stamp}"
+from unclaimed_property_hunter.cli_surfaces import register_surface_commands
+from unclaimed_property_hunter.transport import CLAIMIT_URL, intended_query_string, probe_transport
 
 
 def _print_diff(diff: RunDiff | None) -> None:
@@ -52,16 +45,36 @@ def _print_diff(diff: RunDiff | None) -> None:
         print(f"  changed {change.property_id}: {change.before} -> {change.after}")
 
 
+def _summarize_writes(writes: dict) -> dict:
+    run_entity = writes.get("run_entity") or {}
+    run_assert = writes.get("run_assertion") or {}
+    return {
+        "run_entity_id": run_entity.get("id") or run_entity.get("entity_id"),
+        "run_assertion_id": (run_assert.get("item") or {}).get("id")
+        or run_assert.get("id")
+        or run_assert.get("assertion_id"),
+        "hit_writes": len(writes.get("hits") or []),
+    }
+
+
+def _emit_run_json(record: RunRecord, *, extra: dict | None = None) -> None:
+    payload = public_run_dict(record)
+    if extra:
+        payload.update(extra)
+    print(json.dumps(payload, indent=2))
+    stderr_line = format_operator_stderr(record)
+    if stderr_line:
+        print(stderr_line, file=sys.stderr)
+
+
 def _cmd_sweep(args: argparse.Namespace) -> int:
-    """Probe live ClaimIt and record a transport_probe (search_executed=false)."""
-    when = _utc_now()
+    when = utc_now()
     intended = intended_query_string(args.surname, args.first_name, args.city)
     probe = probe_transport()
     notes = (
         f"claimit.sco.ca.gov error={probe.claimit_sco_error!r}; "
         f"ucpi status={probe.ucpi_status} location={probe.ucpi_location!r}; "
-        f"landing {probe.landing_status} {probe.landing_url} "
-        f"ctype={probe.landing_content_type!r} bytes={len(probe.landing_body)}"
+        f"landing {probe.landing_status} {probe.landing_url}"
     )
     query = Query(
         surname=args.surname,
@@ -72,7 +85,7 @@ def _cmd_sweep(args: argparse.Namespace) -> int:
         endpoint_url=probe.landing_url or CLAIMIT_URL,
     )
     record = RunRecord(
-        run_id=_run_id(args.surname, when),
+        run_id=run_id(args.surname, when),
         utc_timestamp=when,
         query=query,
         run_kind="transport_probe",
@@ -82,119 +95,105 @@ def _cmd_sweep(args: argparse.Namespace) -> int:
         hits=[],
         notes=notes,
     )
-    raw = (
-        notes
-        + "\n--- landing body ---\n"
-        + probe.landing_body
-    ).encode()
-    record = write_raw_and_normalized(record, raw)
-    writes = persist_run(record)
-    print(json.dumps({
-        "run_id": record.run_id,
-        "utc_timestamp": record.utc_timestamp,
-        "intended_query_string": intended,
-        "exact_http_request": query.exact_http_request,
-        "endpoint_url": query.endpoint_url,
-        "search_executed": False,
-        "hit_count": 0,
-        "hit_count_meaning": "not_a_completed_search",
-        "raw_payload_uri": record.raw_payload_uri,
-        "raw_sha256": record.raw_sha256,
-        "notes": notes,
-        "cortex": _summarize_writes(writes),
-    }, indent=2))
+    record = write_raw_and_normalized(record, (notes + probe.landing_body).encode())
+    persist_run(record)
+    _emit_run_json(record)
     _print_diff(diff_latest(args.surname))
     return 0
 
 
-def _summarize_writes(writes: dict) -> dict:
-    run_entity = writes.get("run_entity") or {}
-    run_assert = writes.get("run_assertion") or {}
-    return {
-        "run_entity_id": run_entity.get("id") or run_entity.get("entity_id"),
-        "run_assertion_id": (run_assert.get("item") or {}).get("id")
-        or run_assert.get("id")
-        or run_assert.get("assertion_id"),
-        "run_entity_keys": sorted(run_entity.keys()),
-        "run_assertion_keys": sorted(run_assert.keys()),
-        "hit_writes": len(writes.get("hits") or []),
-        "run_entity": run_entity,
-        "run_assertion": run_assert,
-    }
-
-
 def _cmd_extract(args: argparse.Namespace) -> int:
-    """Filter the SCO All_Records zip and record a completed search."""
-    when = _utc_now()
-    zip_path = Path(args.zip_path)
-    if args.download or not zip_path.is_file():
-        zip_path = download_bulk_zip(zip_path)
-    surnames = [args.surname, *list(args.also or [])]
-    rows, scanned = filter_zip_for_surnames(zip_path, surnames)
-    hits = hits_from_rows(rows)
-    intended = intended_query_string(args.surname, args.first_name, args.city)
-    if args.also:
-        intended = intended + "&also=" + ",".join(args.also)
-    query = Query(
+    record = run_extract(
         surname=args.surname,
+        also=list(args.also or []),
+        zip_path=Path(args.zip_path),
+        download=args.download,
         first_name=args.first_name,
         city=args.city,
-        intended_query_string=intended,
-        exact_http_request=f"GET {BULK_ZIP_URL} filter OWNER_NAME in {surnames!r}",
-        endpoint_url=BULK_ZIP_URL,
+        notify=not args.no_notify,
     )
-    record = RunRecord(
-        run_id=_run_id(args.surname, when),
+    _emit_run_json(record, extra={"rows_scanned": record.corpus_fingerprint.rows_scanned if record.corpus_fingerprint else None})
+    _print_diff(diff_latest(args.surname))
+    return 0
+
+
+def _cmd_scheduled_extract(args: argparse.Namespace) -> int:
+    config_path = Path(args.config).expanduser() if args.config else default_roster_path()
+    if not config_path.exists():
+        print(
+            f"roster not found: {config_path} — copy {EXAMPLE_ROSTER_REL} there and fill "
+            f"in subjects, or set {ROSTER_PATH_ENV}. Never commit the live roster.",
+            file=sys.stderr,
+        )
+        return 2
+    roster = load_roster(config_path)
+    exit_code = 0
+    for subject in roster.subjects:
+        try:
+            run_extract(
+                surname=subject.surname,
+                also=list(subject.also),
+                zip_path=roster.zip_cache,
+                download=True,
+                notify=True,
+            )
+        except Exception as exc:
+            print(f"check_failed surname={subject.surname} error={exc}", file=sys.stderr)
+            exit_code = 1
+    return exit_code
+
+
+def _cmd_probe_pager(_args: argparse.Namespace) -> int:
+    payload = probe_pager_from_service_context_sync()
+    print(json.dumps(payload, indent=2))
+    return 0 if payload.get("status") == "sent" else 1
+
+
+def _cmd_notify_test(args: argparse.Namespace) -> int:
+    """Force notify paths for AC evidence — does not persist a full extract."""
+    when = utc_now()
+    query = Query(surname=args.surname, intended_query_string=f"lastName={args.surname}")
+    base = RunRecord(
+        run_id=run_id(args.surname, when),
         utc_timestamp=when,
         query=query,
         run_kind="bulk_extract",
         search_executed=True,
-        raw_payload_uri="",
-        raw_sha256="",
-        hits=hits,
-        notes=f"bulk_extract scanned={scanned} matched={len(rows)} zip={zip_path}",
+        raw_payload_uri="cortex://notes/system/unclaimed-property/runs/notify-test.raw",
+        raw_sha256="notify-test",
+        hits=[],
     )
-    raw = json.dumps({"scanned": scanned, "surnames": surnames, "hits": rows}, indent=2).encode()
-    record = write_raw_and_normalized(record, raw)
-    writes = persist_run(record)
-    prudential = [h.property_id for h in hits if h.is_prudential()]
-    print(json.dumps({
-        "run_id": record.run_id,
-        "utc_timestamp": record.utc_timestamp,
-        "intended_query_string": intended,
-        "search_executed": True,
-        "hit_count": len(hits),
-        "rows_scanned": scanned,
-        "prudential_hits": prudential,
-        "raw_payload_uri": record.raw_payload_uri,
-        "raw_sha256": record.raw_sha256,
-        "cortex": _summarize_writes(writes),
-    }, indent=2))
-    if prudential:
-        print(f"PRUDENTIAL-HOLDER HIT: {prudential}", file=sys.stderr)
-    _print_diff(diff_latest(args.surname))
+    if args.mode == "above":
+        hit = Hit(property_id="test-above", holder="Test", owner_name="Test", amount_or_range="25.00")
+        record = replace(base, hits=[hit])
+        decision = decide_notifications(record, RunDiff(added=["test-above"], disappeared=[], changed=[]))
+        outcome = notify_hit_pages_sync(record, decision)
+    elif args.mode == "below":
+        hit = Hit(property_id="test-below", holder="Test", owner_name="Test", amount_or_range="0.17")
+        record = replace(base, hits=[hit])
+        decision = decide_notifications(record, RunDiff(added=["test-below"], disappeared=[], changed=[]))
+        outcome = {"decision_reason": decision.reason, "pages": [], "digest": format_digest_note(decision.digest_hits)}
+    else:
+        decision = decide_notifications(base, None)
+        outcome = {"decision_reason": decision.reason, "pages": []}
+    print(json.dumps({"mode": args.mode, "floor": PAGE_AMOUNT_FLOOR, "outcome": outcome}, indent=2))
     return 0
 
 
 def _cmd_ingest(args: argparse.Namespace) -> int:
-    """Record operator-pasted JSON or HTML against the same provenance schema."""
-    when = _utc_now()
+    when = utc_now()
     raw_text = Path(args.raw_file).read_text(encoding="utf-8")
     intended = intended_query_string(args.surname, args.first_name, args.city)
     kind = "ingest_unparsed"
     executed = False
-    hits = []
+    hits: list[Hit] = []
     if args.format == "json":
         hits = parse_json_hits(raw_text)
         kind = "ingest_json"
         executed = True
     else:
         parsed = parse_html_hits(raw_text)
-        if parsed is None:
-            kind = "ingest_unparsed"
-            executed = False
-            hits = []
-        else:
+        if parsed is not None:
             kind = "ingest_html"
             executed = True
             hits = parsed
@@ -207,7 +206,7 @@ def _cmd_ingest(args: argparse.Namespace) -> int:
         endpoint_url=args.endpoint_url,
     )
     record = RunRecord(
-        run_id=_run_id(args.surname, when),
+        run_id=run_id(args.surname, when),
         utc_timestamp=when,
         query=query,
         run_kind=kind,
@@ -218,21 +217,8 @@ def _cmd_ingest(args: argparse.Namespace) -> int:
         notes=f"ingest format={args.format} parsed_hits={len(hits)} kind={kind}",
     )
     record = write_raw_and_normalized(record, raw_text.encode())
-    writes = persist_run(record)
-    prudential = [h.property_id for h in hits if h.is_prudential()]
-    print(json.dumps({
-        "run_id": record.run_id,
-        "utc_timestamp": record.utc_timestamp,
-        "intended_query_string": intended,
-        "search_executed": executed,
-        "hit_count": len(hits),
-        "prudential_hits": prudential,
-        "raw_payload_uri": record.raw_payload_uri,
-        "raw_sha256": record.raw_sha256,
-        "cortex": _summarize_writes(writes),
-    }, indent=2))
-    if prudential:
-        print(f"PRUDENTIAL-HOLDER HIT: {prudential}", file=sys.stderr)
+    persist_run(record)
+    _emit_run_json(record)
     _print_diff(diff_latest(args.surname))
     return 0
 
@@ -243,25 +229,33 @@ def _cmd_diff(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Parse argv and run sweep, ingest, or diff. Returns process exit status."""
-    parser = argparse.ArgumentParser(
-        description="CA SCO ClaimIt hunter — probe or ingest; never invent hits",
-    )
+    """Parse hunter subcommands and dispatch; return the command exit code."""
+    parser = argparse.ArgumentParser(description="CA SCO ClaimIt hunter")
     sub = parser.add_subparsers(dest="cmd", required=True)
-    sweep = sub.add_parser("sweep", help="live transport probe (not a completed search)")
+    sweep = sub.add_parser("sweep")
     sweep.add_argument("--surname", required=True)
     sweep.add_argument("--first-name", default="")
     sweep.add_argument("--city", default="")
     sweep.set_defaults(func=_cmd_sweep)
-    extract = sub.add_parser("extract", help="filter SCO All_Records zip (completed search)")
+    extract = sub.add_parser("extract")
     extract.add_argument("--surname", required=True)
-    extract.add_argument("--also", action="append", default=[], help="extra OWNER_NAME needles")
+    extract.add_argument("--also", action="append", default=[])
     extract.add_argument("--first-name", default="")
     extract.add_argument("--city", default="")
-    extract.add_argument("--zip-path", required=True, help="local All_Records.zip path")
-    extract.add_argument("--download", action="store_true", help="GET the zip to --zip-path first")
+    extract.add_argument("--zip-path", required=True)
+    extract.add_argument("--download", action="store_true")
+    extract.add_argument("--no-notify", action="store_true")
     extract.set_defaults(func=_cmd_extract)
-    ingest = sub.add_parser("ingest", help="record operator-pasted JSON/HTML")
+    sched = sub.add_parser("scheduled-extract")
+    sched.add_argument("--config", default="", help=f"default: {default_roster_path()}")
+    sched.set_defaults(func=_cmd_scheduled_extract)
+    probe = sub.add_parser("probe-pager")
+    probe.set_defaults(func=_cmd_probe_pager)
+    notify_test = sub.add_parser("notify-test")
+    notify_test.add_argument("--surname", default="Testsubject")
+    notify_test.add_argument("--mode", choices=("above", "below", "empty"), required=True)
+    notify_test.set_defaults(func=_cmd_notify_test)
+    ingest = sub.add_parser("ingest")
     ingest.add_argument("--surname", required=True)
     ingest.add_argument("--first-name", default="")
     ingest.add_argument("--city", default="")
@@ -269,9 +263,10 @@ def main(argv: list[str] | None = None) -> int:
     ingest.add_argument("--format", choices=("json", "html"), required=True)
     ingest.add_argument("--endpoint-url", default=CLAIMIT_URL)
     ingest.set_defaults(func=_cmd_ingest)
-    diff = sub.add_parser("diff", help="diff the two latest persisted runs")
+    diff = sub.add_parser("diff")
     diff.add_argument("--surname", required=True)
     diff.set_defaults(func=_cmd_diff)
+    register_surface_commands(sub)
     args = parser.parse_args(argv)
     return int(args.func(args))
 

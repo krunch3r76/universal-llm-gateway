@@ -21,6 +21,11 @@ from unclaimed_property_hunter.cortex_client import (
 )
 from unclaimed_property_hunter.diff_runs import RunDiff, diff_runs
 from unclaimed_property_hunter.models import Hit, RunRecord
+from unclaimed_property_hunter.result_surface import (
+    format_assertion_claim,
+    format_entity_attributes,
+    format_entity_description,
+)
 
 _FILES_ROOT = Path(os.environ.get("CORTEX_FILES_ROOT", "/mnt/torus/mcp-data/files"))
 _RUNS_REL = Path("notes/system/unclaimed-property/runs")
@@ -44,6 +49,11 @@ def _write_bytes(rel: Path, data: bytes) -> tuple[str, str]:
 
 def write_raw_and_normalized(record: RunRecord, raw_bytes: bytes) -> RunRecord:
     """Save raw payload + normalized JSON; return record with raw_payload_uri set."""
+    if record.run_kind in ("bulk_extract", "estates_extract"):
+        if record.corpus_fingerprint is None or not record.corpus_fingerprint.zip_sha256:
+            raise RuntimeError(
+                f"refuse {record.run_kind} persist without corpus zip_sha256"
+            )
     raw_rel = _RUNS_REL / f"{record.run_id}.raw"
     uri, digest = _write_bytes(raw_rel, raw_bytes)
     updated = RunRecord(
@@ -56,6 +66,9 @@ def write_raw_and_normalized(record: RunRecord, raw_bytes: bytes) -> RunRecord:
         raw_sha256=digest,
         hits=record.hits,
         notes=record.notes,
+        corpus_fingerprint=record.corpus_fingerprint,
+        notify_outcome=record.notify_outcome,
+        check_failed=record.check_failed,
     )
     norm_rel = _RUNS_REL / f"{record.run_id}.normalized.json"
     _write_bytes(norm_rel, json.dumps(updated.to_json_dict(), indent=2).encode())
@@ -88,29 +101,13 @@ def persist_run(record: RunRecord) -> dict[str, Any]:
         id=run_entity_id,
         type="document",
         name=f"CA SCO hunt {record.query.surname} {record.utc_timestamp}",
-        description=(
-            f"{record.run_kind} search_executed={record.search_executed} "
-            f"hits={len(record.hits)}"
-        ),
+        description=format_entity_description(record),
         source_uri=record.raw_payload_uri,
-        attributes={
-            "surname": record.query.surname,
-            "run_kind": record.run_kind,
-            "search_executed": record.search_executed,
-            "utc_timestamp": record.utc_timestamp,
-            "intended_query_string": record.query.intended_query_string,
-            "exact_http_request": record.query.exact_http_request,
-            "endpoint_url": record.query.endpoint_url,
-            "hit_count": len(record.hits),
-        },
+        attributes=format_entity_attributes(record),
     )
     run_assert = assert_claim(
         entity_id=run_entity_id,
-        claim=(
-            f"CA SCO hunt {record.run_kind} for surname {record.query.surname}: "
-            f"search_executed={record.search_executed} hit_count={len(record.hits)}. "
-            f"Not a completed zero-hit search unless search_executed is true."
-        ),
+        claim=format_assertion_claim(record),
         confidence="confirmed",
         evidence=(
             f"raw={record.raw_payload_uri} sha256={record.raw_sha256} "
@@ -176,6 +173,24 @@ def load_run_from_normalized(path: Path) -> RunRecord:
         raw_sha256=data["raw_sha256"],
         hits=hits,
         notes=data.get("notes", ""),
+        corpus_fingerprint=_load_fingerprint(data.get("corpus_fingerprint")),
+        notify_outcome=data.get("notify_outcome"),
+        check_failed=bool(data.get("check_failed", False)),
+    )
+
+
+def _load_fingerprint(raw: dict[str, Any] | None):
+    from unclaimed_property_hunter.models import CorpusFingerprint
+
+    if not raw:
+        return None
+    return CorpusFingerprint(
+        url=str(raw.get("url", "")),
+        last_modified=str(raw.get("last_modified", "")),
+        etag=str(raw.get("etag", "")),
+        content_length=int(raw.get("content_length", 0)),
+        zip_sha256=str(raw.get("zip_sha256", "")),
+        rows_scanned=int(raw.get("rows_scanned", 0)),
     )
 
 
@@ -201,6 +216,29 @@ def diff_latest(surname: str) -> RunDiff | None:
     previous = load_run_from_normalized(paths[-2])
     current = load_run_from_normalized(paths[-1])
     return diff_runs(previous, current)
+
+
+def consecutive_check_failed_runs(surname: str) -> int:
+    """Count trailing persisted runs with check_failed=True for ``surname``."""
+    paths = prior_runs_for_surname(surname)
+    streak = 0
+    for path in reversed(paths):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data.get("check_failed"):
+            streak += 1
+        else:
+            break
+    return streak
+
+
+def latest_run_for_kinds(surname: str, run_kinds: tuple[str, ...]) -> RunRecord | None:
+    """Most recent persisted run for ``surname`` whose ``run_kind`` is in ``run_kinds``."""
+    wanted = set(run_kinds)
+    for path in reversed(prior_runs_for_surname(surname)):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data.get("run_kind") in wanted:
+            return load_run_from_normalized(path)
+    return None
 
 
 def list_run_documents(surname: str) -> dict[str, Any]:

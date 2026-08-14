@@ -8,16 +8,29 @@ for "we did not search."
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 RunKind = Literal[
     "transport_probe",
     "bulk_extract",
+    "estates_extract",
     "ingest_json",
     "ingest_html",
     "ingest_unparsed",
 ]
+
+
+@dataclass(frozen=True)
+class CorpusFingerprint:
+    """Streaming hash + HTTP metadata for a bulk file — zip or estates xlsx."""
+
+    url: str
+    last_modified: str
+    etag: str
+    content_length: int
+    zip_sha256: str
+    rows_scanned: int = 0
 
 
 @dataclass(frozen=True)
@@ -71,10 +84,12 @@ class RunRecord:
     raw_sha256: str
     hits: list[Hit] = field(default_factory=list)
     notes: str = ""
+    corpus_fingerprint: CorpusFingerprint | None = None
+    notify_outcome: dict[str, Any] | None = None
+    check_failed: bool = False
 
     def to_json_dict(self) -> dict[str, Any]:
         """Serialize for the normalized sidecar (no property records invented)."""
-        payload = asdict(self)
-        payload["hit_count"] = len(self.hits)
-        payload["prudential_hits"] = [h.property_id for h in self.hits if h.is_prudential()]
-        return payload
+        from unclaimed_property_hunter.result_surface import public_run_dict
+
+        return public_run_dict(self)
