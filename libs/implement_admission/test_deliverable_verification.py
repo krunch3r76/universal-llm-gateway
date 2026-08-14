@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
-from implement_admission.closeout_models import ImplementCloseout
+from implement_admission.closeout_models import ExitCodeRegister, ImplementCloseout
 from implement_admission.deliverable_verification import (
     GATE_D_PREFIX,
     evaluate_deliverable_verification,
@@ -164,9 +165,7 @@ def test_mixed_repo_and_cortex_both_absent(tmp_path: Path) -> None:
     cortex_root.mkdir()
     repo = tmp_path / "repo"
     repo.mkdir()
-    spec = _ready_spec(
-        files_expected=["libs/missing.py", "cortex://notes/missing.md"]
-    )
+    spec = _ready_spec(files_expected=["libs/missing.py", "cortex://notes/missing.md"])
     entries = evaluate_deliverable_verification(
         spec=spec,
         closeout=_closeout(),
@@ -260,3 +259,23 @@ def test_unattributed_register_packs_without_observed_semantics() -> None:
     assert row.exit_code is None
     assert row.wrapper_exit_code == 0
     assert row.basis == "shell_tool_result.exitCode"
+
+
+@pytest.mark.offline
+def test_unobserved_register_packs_without_absorbing_unattributed() -> None:
+    """unobserved ≠ unattributed — no integer existed to attribute."""
+    from implement_admission.closeout_models import unobserved_process_verification
+
+    assert "unobserved" in get_args(ExitCodeRegister)
+    for prior in ("observed", "derived", "unknown", "unattributed"):
+        assert prior in get_args(ExitCodeRegister)
+
+    row = unobserved_process_verification(
+        command="pytest -q foo.py",
+        invocation_id="test:unobserved-pack",
+        basis="shell_tool_result.exitCode:unobserved",
+    )
+    assert row.exit_code_register == "unobserved"
+    assert row.exit_code is None
+    assert row.wrapper_exit_code is None
+    assert row.basis == "shell_tool_result.exitCode:unobserved"

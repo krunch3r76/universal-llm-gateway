@@ -105,13 +105,29 @@ def test_harvest_emits_observed_sibling_for_pytest_shell() -> None:
     assert is_pytest_command(row.command)
 
 
-def test_harvest_skips_when_exit_missing() -> None:
+def test_harvest_emits_unobserved_when_exit_missing() -> None:
+    """AC2/AC4 — no-integer path emits a row; the row exists and blocks all_pass."""
     obs = _shell_obs(
         call_id="call-no-exit",
         command="pytest -q foo.py",
         exit_code=None,
     )
-    assert harvest_test_verifications((obs,)) == []
+    rows = harvest_test_verifications((obs,))
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.exit_code is None
+    assert row.exit_code_register == "unobserved"
+    assert row.wrapper_exit_code is None
+    assert row.basis == "shell_tool_result.exitCode:unobserved"
+    assert row.invocation_id == "test:call-no-exit"
+    lint = observed_process_verification(
+        command="ruff check 2 touched files",
+        exit_code=0,
+        invocation_id="lint:unobserved",
+        basis="subprocess.run.returncode",
+    )
+    assert verification_all_pass([row]) is False
+    assert verification_all_pass([lint, row]) is False
 
 
 def test_harvest_absent_when_no_pytest_shell() -> None:
@@ -191,8 +207,7 @@ def test_specimen_independent_disagreement_fires() -> None:
 # Live observation record from auto-e93f739c279c (frontier.sdk.worker.toolcall
 # @ 2026-08-10T18:00:59.460908Z) + command from that dispatch's effects_manifest.
 _E93F_CALL_ID = (
-    "call-681ca700-785c-4ece-ae96-d9f27701fb74-20\n"
-    "fc_ovfiK6F-6SkKZu-14936c94-aws_ue1_2"
+    "call-681ca700-785c-4ece-ae96-d9f27701fb74-20\nfc_ovfiK6F-6SkKZu-14936c94-aws_ue1_2"
 )
 _E93F_COMMAND = """# use system universal venv
 export PATH="$HOME/.venvs/universal/bin:$PATH"
@@ -268,21 +283,19 @@ def test_specimen_auto_e93f739c279c_harvests_unattributed_trailing_echo() -> Non
 # False-positive specimens from auto-6281707f8c76 machine verification[] —
 # neither shell ran pytest; both were over-emitted as observed test siblings.
 _SPECIMEN_628_RG_CALL_ID = (
-    "call-66c7318a-b6d3-4cf3-ab44-770f59fe80dd-11\n"
-    "fc_ovfqB8U-6SkKZu-d45d5547-aws_ue1_3"
+    "call-66c7318a-b6d3-4cf3-ab44-770f59fe80dd-11\nfc_ovfqB8U-6SkKZu-d45d5547-aws_ue1_3"
 )
 _SPECIMEN_628_RG_COMMAND = (
-    'rg -l "harvest" services/git_integration_worker --glob \'*.py\' | head -40; '
+    "rg -l \"harvest\" services/git_integration_worker --glob '*.py' | head -40; "
     'rg -n "test_prepare_closeout_delivery_implement_clean_complete|'
-    'test_closeout_raw_shell_outside_repo_falsifier" -g \'*.py\' '
+    "test_closeout_raw_shell_outside_repo_falsifier\" -g '*.py' "
     "--glob '!**/node_modules/**' | head -40; "
     'rg -n "verification\\[\\]|harvest.*pytest|pytest.*harvest" '
     "services/git_integration_worker -g '*.py' | head -50"
 )
 
 _SPECIMEN_628_HEREDOC_CALL_ID = (
-    "call-74910aaf-e715-43b5-86b2-026cdcb70240-38\n"
-    "fc_ovfrFBC-6SkKZu-fa38b2a5-aws_ue1_0"
+    "call-74910aaf-e715-43b5-86b2-026cdcb70240-38\nfc_ovfrFBC-6SkKZu-fa38b2a5-aws_ue1_0"
 )
 _SPECIMEN_628_HEREDOC_COMMAND = """OUT=/tmp/verify-6655-both-directions-bisect.md
 cat > \"$OUT\" << 'EOF'
@@ -371,7 +384,9 @@ def test_harvest_specimen_a_compound_echo_is_unattributed_and_blocks_all_pass() 
 
 def test_is_proven_simple_allows_ruff_and_pytest_and_chain() -> None:
     assert is_proven_simple_pytest_command("pytest -q foo.py") is True
-    assert is_proven_simple_pytest_command("ruff check a.py && pytest -q foo.py") is True
+    assert (
+        is_proven_simple_pytest_command("ruff check a.py && pytest -q foo.py") is True
+    )
     assert is_proven_simple_pytest_command("pytest -q foo.py; echo done") is False
     assert (
         is_proven_simple_pytest_command(

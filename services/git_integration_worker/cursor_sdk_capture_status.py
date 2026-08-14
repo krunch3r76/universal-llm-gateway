@@ -737,6 +737,7 @@ def verification_all_pass(verification: list[Verification] | None) -> bool:
       uninterpreted / unattributed / unobserved) → False
     - passing classes but no ``observed`` row → False (derived-only / unknown-only)
     - clause (c): pytest-class row with register ≠ ``observed`` → False
+      (``unobserved`` is blocking — a missing integer is not a pass)
     """
     if not verification:
         return False
@@ -1145,5 +1146,3 @@ def resolve_closeout_capture_fields(
     ):
         capture_status = "complete"
     return capture_status, divergence_reason, deviations, manifest
-
-

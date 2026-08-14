@@ -23,7 +23,9 @@ AmbientRepoCause = Literal[
 # Row 29 member 5 — exit_code claim register (mirrors claim_register.ClaimRegister
 # + unknown degrade). Kept as Literal here so closeout_models stays free of a
 # hard import cycle into claim_register from every closeout consumer.
-ExitCodeRegister = Literal["observed", "derived", "unknown", "unattributed"]
+ExitCodeRegister = Literal[
+    "observed", "derived", "unknown", "unattributed", "unobserved"
+]
 
 
 class AmbientRepoMovement(BaseModel):
@@ -81,7 +83,10 @@ class Verification(BaseModel):
     - ``exit_code_register`` — ``observed`` (proven process-under-test returncode)
       vs ``derived`` (Gate-D boolean packed as 0/1) vs ``unattributed`` (shell
       exit integer present but compound shape cannot prove it names the check in
-      ``command``) vs ``unknown`` (legacy wire degrade / field omitted).
+      ``command``) vs ``unobserved`` (no exit integer existed to attribute) vs
+      ``unknown`` (legacy wire degrade / field omitted).
+      ``unobserved`` and ``unattributed`` are distinct: an integer that cannot
+      be attributed is not the same state as the absence of any integer.
     - ``invocation_id`` — binds the row to one process/gate evaluation so two
       runs of the same command are distinguishable. A register alone without
       identity does not fix the specimen class.
@@ -148,6 +153,36 @@ def unattributed_process_verification(
         exit_code=None,
         wrapper_exit_code=exit_code,
         exit_code_register="unattributed",
+        invocation_id=invocation_id or f"proc:{uuid4().hex}",
+        basis=basis,
+        stdout=stdout,
+        stderr=stderr,
+        output_truncated=output_truncated,
+    )
+
+
+def unobserved_process_verification(
+    *,
+    command: str,
+    wrapper_exit_code: int | None = None,
+    invocation_id: str | None = None,
+    basis: str | None = None,
+    stdout: str | None = None,
+    stderr: str | None = None,
+    output_truncated: bool = False,
+) -> Verification:
+    """Pack a pytest-class shell whose process exit integer was never seen.
+
+    Distinct from ``unattributed``: that state means an integer was observed
+    but could not be attributed to ``command``. Here no integer existed to
+    attribute. ``exit_code`` stays ``None``; ``wrapper_exit_code`` is
+    populated only when a wrapper integer is independently available.
+    """
+    return Verification(
+        command=command,
+        exit_code=None,
+        wrapper_exit_code=wrapper_exit_code,
+        exit_code_register="unobserved",
         invocation_id=invocation_id or f"proc:{uuid4().hex}",
         basis=basis,
         stdout=stdout,

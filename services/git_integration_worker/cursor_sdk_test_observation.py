@@ -15,6 +15,7 @@ from implement_admission.closeout_models import (
     Verification,
     observed_process_verification,
     unattributed_process_verification,
+    unobserved_process_verification,
 )
 
 from services.git_integration_worker.cursor_sdk_stream_capture import (
@@ -221,13 +222,17 @@ def _shell_exit_code(obs: ToolCallObservation) -> int | None:
 
 
 def _shell_harvest_basis(
-    payload: Mapping[str, object] | None, *, unattributed: bool
+    payload: Mapping[str, object] | None,
+    *,
+    unattributed: bool = False,
+    unobserved: bool = False,
 ) -> str:
-    stem = (
-        "shell_tool_result.exitCode:unattributed"
-        if unattributed
-        else "shell_tool_result.exitCode"
-    )
+    if unobserved:
+        stem = "shell_tool_result.exitCode:unobserved"
+    elif unattributed:
+        stem = "shell_tool_result.exitCode:unattributed"
+    else:
+        stem = "shell_tool_result.exitCode"
     if payload is None:
         return stem
     parts = [stem]
@@ -239,7 +244,9 @@ def _shell_harvest_basis(
 
 
 def _quality_gate_test_exit(obs: ToolCallObservation) -> tuple[int | None, str | None]:
-    payload = unwrap_tool_result(obs.result_body if obs.result_body is not None else obs.result)
+    payload = unwrap_tool_result(
+        obs.result_body if obs.result_body is not None else obs.result
+    )
     if not isinstance(payload, Mapping):
         return None, None
     tests = payload.get("tests")
@@ -263,17 +270,25 @@ def _harvest_shell_pytest(obs: ToolCallObservation) -> Verification | None:
         return None
     payload = _shell_result_map(obs)
     exit_code = _shell_exit_code(obs)
-    if exit_code is None:
-        return None
     invocation_id = f"test:{obs.call_id}" if obs.call_id else None
+    stdout, trunc_out = _retain_text(None if payload is None else payload.get("stdout"))
+    stderr, trunc_err = _retain_text(None if payload is None else payload.get("stderr"))
+    if exit_code is None:
+        return unobserved_process_verification(
+            command=command,
+            wrapper_exit_code=None,
+            invocation_id=invocation_id,
+            basis=_shell_harvest_basis(payload, unobserved=True),
+            stdout=stdout,
+            stderr=stderr,
+            output_truncated=trunc_out or trunc_err,
+        )
     unattributed = not is_proven_simple_pytest_command(command)
     pack = (
         unattributed_process_verification
         if unattributed
         else observed_process_verification
     )
-    stdout, trunc_out = _retain_text(None if payload is None else payload.get("stdout"))
-    stderr, trunc_err = _retain_text(None if payload is None else payload.get("stderr"))
     return pack(
         command=command,
         exit_code=exit_code,
@@ -286,7 +301,9 @@ def _harvest_shell_pytest(obs: ToolCallObservation) -> Verification | None:
 
 
 def _harvest_quality_gate(obs: ToolCallObservation) -> Verification | None:
-    if not _is_quality_gate_tool(obs.tool_name, obs.args if isinstance(obs.args, Mapping) else None):
+    if not _is_quality_gate_tool(
+        obs.tool_name, obs.args if isinstance(obs.args, Mapping) else None
+    ):
         return None
     exit_code, command = _quality_gate_test_exit(obs)
     if exit_code is None or command is None:

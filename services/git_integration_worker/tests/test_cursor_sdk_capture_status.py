@@ -16,6 +16,7 @@ from implement_admission.closeout_models import (
     derived_gate_verification,
     observed_process_verification,
     unattributed_process_verification,
+    unobserved_process_verification,
 )
 from implement_admission.spec import CloseoutStatus, WorkOutcome
 
@@ -1328,13 +1329,22 @@ def test_exit_code_register_verdicts_all_states() -> None:
         exit_code=0,
         invocation_id="test:unattributed",
     )
+    unobserved = unobserved_process_verification(
+        command="pytest -q foo.py",
+        invocation_id="test:unobserved",
+        basis="shell_tool_result.exitCode:unobserved",
+    )
     legacy = Verification(command="legacy probe", exit_code=0)
 
     assert verification_all_pass([observed]) is True
     assert verification_all_pass([derived]) is False
     assert verification_all_pass([unattributed]) is False
+    assert verification_all_pass([unobserved]) is False
     assert verification_all_pass([legacy]) is False
     assert legacy.exit_code_register == "unknown"
+    assert unobserved.exit_code_register == "unobserved"
+    assert unobserved.exit_code is None
+    assert unattributed.exit_code_register == "unattributed"
 
 
 def test_clause_c_observed_lint_plus_unattributed_pytest_blocks_all_pass() -> None:
@@ -1355,6 +1365,26 @@ def test_clause_c_observed_lint_plus_unattributed_pytest_blocks_all_pass() -> No
         basis="shell_tool_result.exitCode",
     )
     assert verification_all_pass([lint, pytest_row]) is False
+
+
+def test_clause_c_observed_lint_plus_unobserved_pytest_blocks_all_pass() -> None:
+    """Clause (c): observed lint-green + unobserved pytest-class ⇒ all_pass False."""
+    lint = observed_process_verification(
+        command="ruff check 2 touched files",
+        exit_code=0,
+        invocation_id="lint:clause-c-unobserved",
+        basis="subprocess.run.returncode",
+    )
+    pytest_row = unobserved_process_verification(
+        command="pytest -q services/foo/test_bar.py",
+        invocation_id="test:clause-c-unobserved",
+        basis="shell_tool_result.exitCode:unobserved",
+    )
+    assert pytest_row.exit_code is None
+    assert pytest_row.exit_code_register == "unobserved"
+    assert pytest_row.wrapper_exit_code is None
+    assert verification_all_pass([lint, pytest_row]) is False
+    assert verification_all_pass([pytest_row]) is False
 
 
 # --- todo:closeout-grade-trust-join (J1 bidirectional all_pass join) ---
