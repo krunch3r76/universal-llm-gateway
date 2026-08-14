@@ -13,8 +13,9 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
+from unclaimed_property_hunter.cli_surfaces import register_surface_commands
 from unclaimed_property_hunter.diff_runs import RunDiff
-from unclaimed_property_hunter.extract_pipeline import run_extract, utc_now, run_id
+from unclaimed_property_hunter.extract_pipeline import run_extract, run_id, utc_now
 from unclaimed_property_hunter.hit_notify import (
     PAGE_AMOUNT_FLOOR,
     decide_notifications,
@@ -24,16 +25,26 @@ from unclaimed_property_hunter.hit_notify import (
 )
 from unclaimed_property_hunter.ingest import parse_html_hits, parse_json_hits
 from unclaimed_property_hunter.models import Hit, Query, RunRecord
-from unclaimed_property_hunter.record import diff_latest, persist_run, write_raw_and_normalized
-from unclaimed_property_hunter.result_surface import format_operator_stderr, public_run_dict
+from unclaimed_property_hunter.record import (
+    diff_latest,
+    persist_run,
+    write_raw_and_normalized,
+)
+from unclaimed_property_hunter.result_surface import (
+    format_operator_stderr,
+    public_run_dict,
+)
 from unclaimed_property_hunter.roster import (
     EXAMPLE_ROSTER_REL,
     ROSTER_PATH_ENV,
     default_roster_path,
     load_roster,
 )
-from unclaimed_property_hunter.cli_surfaces import register_surface_commands
-from unclaimed_property_hunter.transport import CLAIMIT_URL, intended_query_string, probe_transport
+from unclaimed_property_hunter.transport import (
+    CLAIMIT_URL,
+    intended_query_string,
+    probe_transport,
+)
 
 
 def _print_diff(diff: RunDiff | None) -> None:
