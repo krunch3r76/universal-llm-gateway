@@ -11,7 +11,13 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
-RunKind = Literal["transport_probe", "ingest_json", "ingest_html", "ingest_unparsed"]
+RunKind = Literal[
+    "transport_probe",
+    "bulk_extract",
+    "ingest_json",
+    "ingest_html",
+    "ingest_unparsed",
+]
 
 
 @dataclass(frozen=True)

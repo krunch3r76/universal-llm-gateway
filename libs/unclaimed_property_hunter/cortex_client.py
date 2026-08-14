@@ -21,6 +21,16 @@ def dispatch(tool: str, arguments: dict[str, Any], *, timeout_s: float = 20.0) -
             "http://localhost/dispatch",
             json={"tool": tool, "arguments": arguments},
         )
+    if response.status_code == 409:
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {"body": payload}
+        payload.setdefault("error", "409 Conflict")
+        payload["status_code"] = 409
+        return payload
     response.raise_for_status()
     payload = response.json()
     if not isinstance(payload, dict):

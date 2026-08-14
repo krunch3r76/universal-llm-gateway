@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import httpx
 
 CLAIMIT_URL = "https://claimit.ca.gov/"
+BULK_ZIP_URL = "https://claimit.ca.gov/upd-property-records/00_All_Records.zip"
 PACKET_HOST_CLAIMIT_SCO = "https://claimit.sco.ca.gov/"
 PACKET_HOST_UCPI = "https://ucpi.sco.ca.gov/"
 USER_AGENT = (

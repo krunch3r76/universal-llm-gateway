@@ -1,7 +1,8 @@
-"""One-shot CLI for CA SCO ClaimIt: probe transport, ingest pasted results, diff runs.
+"""One-shot CLI for CA SCO ClaimIt: probe, bulk-extract, ingest pasted results, diff.
 
 Callers invoke `scripts/unclaimed-property-hunt`. Sweep never claims a completed
-surname search; ingest is the only path that can record hits or a true zero-hit.
+surname search. `extract` filters the public All_Records zip (search_executed
+true). Ingest records operator-pasted JSON/HTML from the interactive UI.
 """
 
 from __future__ import annotations
@@ -12,6 +13,11 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+from unclaimed_property_hunter.bulk_extract import (
+    download_bulk_zip,
+    filter_zip_for_surnames,
+    hits_from_rows,
+)
 from unclaimed_property_hunter.diff_runs import RunDiff
 from unclaimed_property_hunter.ingest import parse_html_hits, parse_json_hits
 from unclaimed_property_hunter.models import Query, RunRecord
@@ -21,6 +27,7 @@ from unclaimed_property_hunter.record import (
     write_raw_and_normalized,
 )
 from unclaimed_property_hunter.transport import (
+    BULK_ZIP_URL,
     CLAIMIT_URL,
     intended_query_string,
     probe_transport,
@@ -116,6 +123,59 @@ def _summarize_writes(writes: dict) -> dict:
     }
 
 
+def _cmd_extract(args: argparse.Namespace) -> int:
+    """Filter the SCO All_Records zip and record a completed search."""
+    when = _utc_now()
+    zip_path = Path(args.zip_path)
+    if args.download or not zip_path.is_file():
+        zip_path = download_bulk_zip(zip_path)
+    surnames = [args.surname, *list(args.also or [])]
+    rows, scanned = filter_zip_for_surnames(zip_path, surnames)
+    hits = hits_from_rows(rows)
+    intended = intended_query_string(args.surname, args.first_name, args.city)
+    if args.also:
+        intended = intended + "&also=" + ",".join(args.also)
+    query = Query(
+        surname=args.surname,
+        first_name=args.first_name,
+        city=args.city,
+        intended_query_string=intended,
+        exact_http_request=f"GET {BULK_ZIP_URL} filter OWNER_NAME in {surnames!r}",
+        endpoint_url=BULK_ZIP_URL,
+    )
+    record = RunRecord(
+        run_id=_run_id(args.surname, when),
+        utc_timestamp=when,
+        query=query,
+        run_kind="bulk_extract",
+        search_executed=True,
+        raw_payload_uri="",
+        raw_sha256="",
+        hits=hits,
+        notes=f"bulk_extract scanned={scanned} matched={len(rows)} zip={zip_path}",
+    )
+    raw = json.dumps({"scanned": scanned, "surnames": surnames, "hits": rows}, indent=2).encode()
+    record = write_raw_and_normalized(record, raw)
+    writes = persist_run(record)
+    prudential = [h.property_id for h in hits if h.is_prudential()]
+    print(json.dumps({
+        "run_id": record.run_id,
+        "utc_timestamp": record.utc_timestamp,
+        "intended_query_string": intended,
+        "search_executed": True,
+        "hit_count": len(hits),
+        "rows_scanned": scanned,
+        "prudential_hits": prudential,
+        "raw_payload_uri": record.raw_payload_uri,
+        "raw_sha256": record.raw_sha256,
+        "cortex": _summarize_writes(writes),
+    }, indent=2))
+    if prudential:
+        print(f"PRUDENTIAL-HOLDER HIT: {prudential}", file=sys.stderr)
+    _print_diff(diff_latest(args.surname))
+    return 0
+
+
 def _cmd_ingest(args: argparse.Namespace) -> int:
     """Record operator-pasted JSON or HTML against the same provenance schema."""
     when = _utc_now()
@@ -193,6 +253,14 @@ def main(argv: list[str] | None = None) -> int:
     sweep.add_argument("--first-name", default="")
     sweep.add_argument("--city", default="")
     sweep.set_defaults(func=_cmd_sweep)
+    extract = sub.add_parser("extract", help="filter SCO All_Records zip (completed search)")
+    extract.add_argument("--surname", required=True)
+    extract.add_argument("--also", action="append", default=[], help="extra OWNER_NAME needles")
+    extract.add_argument("--first-name", default="")
+    extract.add_argument("--city", default="")
+    extract.add_argument("--zip-path", required=True, help="local All_Records.zip path")
+    extract.add_argument("--download", action="store_true", help="GET the zip to --zip-path first")
+    extract.set_defaults(func=_cmd_extract)
     ingest = sub.add_parser("ingest", help="record operator-pasted JSON/HTML")
     ingest.add_argument("--surname", required=True)
     ingest.add_argument("--first-name", default="")
