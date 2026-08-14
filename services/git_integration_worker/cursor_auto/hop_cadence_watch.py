@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -249,8 +250,13 @@ def evaluate_watch(
     now: float | None = None,
     threshold: float | None = None,
     cool: float | None = None,
+    in_flight_probe: Callable[[str], bool] | None = None,
 ) -> HopDecision:
-    """Decide fire/skip for one watch row; pure — does not mutate the ledger."""
+    """Decide fire/skip for one watch row; does not mutate the ledger.
+
+    *in_flight_probe* is lane-keyed (thread id → running?). Absent probe
+    means no in-flight inhibit — production ``scan_and_fire`` injects one.
+    """
     ts = time.time() if now is None else now
     thr = age_threshold_s() if threshold is None else threshold
     cd = cooldown_s() if cool is None else cool
@@ -284,6 +290,14 @@ def evaluate_watch(
                 )
         except (TypeError, ValueError):
             pass
+    if in_flight_probe is not None and in_flight_probe(thread_id):
+        return HopDecision(
+            thread_id,
+            "skip",
+            "in_flight_commission",
+            threshold_s=thr,
+            signal="in_flight_commission",
+        )
     seated = effective_seated_at(row)
     if seated is None:
         return HopDecision(thread_id, "skip", "no_seated_at", threshold_s=thr)

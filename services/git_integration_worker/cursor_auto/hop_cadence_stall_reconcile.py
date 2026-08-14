@@ -16,6 +16,7 @@ from typing import Any
 from claude_bundles.hop_cadence_id_map import (
     claim_join_keys,
     normalize_id,
+    proof_observes_harvest,
     stall_matches_claim,
     submitted_updates_claim,
 )
@@ -289,7 +290,11 @@ def apply_event_to_watch(
         if row.get("succession_status") != "pending":
             return row, None
         proof_exec = normalize_id(payload.get("execution_id"))
-        if proof_exec and proof_exec in claim_join_keys(row):
+        if (
+            proof_exec
+            and proof_exec in claim_join_keys(row)
+            and proof_observes_harvest(payload)
+        ):
             return confirm_succession_claim(row, now=now), "confirmed"
         return row, None
 

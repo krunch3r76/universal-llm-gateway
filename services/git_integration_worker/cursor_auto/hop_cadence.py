@@ -36,6 +36,9 @@ from services.git_integration_worker.cursor_auto.continuity_hop import (
 from services.git_integration_worker.cursor_auto.hop_cadence_events import (
     emit_cadence_refuse,
 )
+from services.git_integration_worker.cursor_auto.hop_cadence_inflight import (
+    lane_in_flight_commission,
+)
 from services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile import (
     reconcile_stall_revocations,
     reconcile_succession_confirmations,
@@ -358,7 +361,13 @@ async def scan_and_fire(
     results: list[dict[str, Any]] = []
     fired = False
     for thread_id, row in sorted(watches.items()):
-        decision = evaluate_watch(row, now=ts)
+        decision = evaluate_watch(
+            row,
+            now=ts,
+            in_flight_probe=lambda tid, q=queue: lane_in_flight_commission(
+                tid, queue=q
+            ),
+        )
         if decision.action != "fire":
             results.append(
                 {

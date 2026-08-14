@@ -51,6 +51,18 @@ def event_join_keys(payload: dict[str, Any]) -> frozenset[str]:
     return frozenset(keys)
 
 
+def proof_observes_harvest(payload: dict[str, Any]) -> bool:
+    """True when a proof event carries an observed harvest URI, not just an id.
+
+    ``cdp.generate.proof`` may repeat a Stargate ``execution_id`` minted at
+    admit. Successor-produced confirmation requires an archive or content
+    proof URI — the observation that generate actually harvested.
+    """
+    archive = normalize_id(payload.get("archive_uri"))
+    content = normalize_id(payload.get("content_proof_uri"))
+    return bool(archive or content)
+
+
 def stall_matches_claim(
     stall_payload: dict[str, Any],
     row: dict[str, Any],
@@ -86,6 +98,7 @@ __all__ = [
     "claim_join_keys",
     "event_join_keys",
     "normalize_id",
+    "proof_observes_harvest",
     "stall_matches_claim",
     "submitted_updates_claim",
 ]

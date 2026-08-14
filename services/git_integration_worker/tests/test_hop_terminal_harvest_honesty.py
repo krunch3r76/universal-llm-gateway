@@ -211,3 +211,71 @@ def test_generate_stall_429_appends_failed_not_done(tmp_path: Path) -> None:
     assert payload["execution_id"] == _EXEC
     watches = load_watches(watch_path)
     assert watches[_THREAD]["succession_status"] == "revoked"
+
+
+def test_post_admit_generate_failure_never_successor_produced(tmp_path: Path) -> None:
+    """AC-1: post-admit generate failure never yields done / dispatched-and-relayed.
+
+    Injects a bare-id proof (admit-shaped) plus a 429 stall. Lifecycle must
+    stay non-successor at every posted harvest turn.
+    """
+    watch_path = tmp_path / "watches.json"
+    state_path = tmp_path / "state.json"
+    mark_hop_fired(
+        _THREAD,
+        now=_NOW,
+        path=watch_path,
+        execution_id=_EXEC,
+        successor_birth_id="fce45372d33d49f6993959f18113f839",
+        active_work_snap={
+            "rows": [
+                {
+                    "execution_id": "exec-incumbent",
+                    "registration_id": "reg-live",
+                    "status": "running",
+                }
+            ]
+        },
+    )
+    posted: list[tuple[str, str, str]] = []
+
+    def _poster(thread_id: str, subject: str, body: str) -> None:
+        posted.append((thread_id, subject, body))
+
+    def _query(_sql: str, _params: list, _limit: int) -> list[dict]:
+        return [
+            {
+                "seq": 2,
+                "signal": "cdp.generate.proof",
+                "payload": {"execution_id": _EXEC},
+            },
+            {
+                "seq": 3,
+                "signal": "cdp.generate.stalled",
+                "payload": {
+                    "execution_id": _EXEC,
+                    "stall_stage": "submit",
+                    "error": "project-ask HTTP 429",
+                },
+            },
+        ]
+
+    with patch(
+        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_succession_revoked"
+    ):
+        result = reconcile_stall_revocations(
+            watches_path=watch_path,
+            state_path=state_path,
+            now=_NOW + 20.0,
+            query_fn=_query,
+            harvest_poster=_poster,
+        )
+    assert any(a["action"] == "revoked" for a in result["actions"])
+    assert not any(a["action"] == "confirmed" for a in result["actions"])
+    for _thread_id, subject, body in posted:
+        assert "status:done" not in subject
+        assert "dispatched-and-relayed" not in body
+        payload = json.loads(body)
+        assert payload.get("disposition") != "dispatched-and-relayed"
+    watches = load_watches(watch_path)
+    assert watches[_THREAD]["succession_status"] == "revoked"

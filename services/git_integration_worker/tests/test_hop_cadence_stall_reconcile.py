@@ -7,6 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
+from claude_bundles.hop_cadence_id_map import proof_observes_harvest
+
 from services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile import (
     REVOKE_BREAKER_N,
     STALL_OBSERVE_FLOOR_S,
@@ -207,6 +209,26 @@ def test_proof_confirms_pending_claim_without_revoke() -> None:
     assert action == "confirmed"
     assert updated["succession_status"] == "confirmed"
     assert "pending_succession" not in updated
+
+
+def test_proof_observes_harvest_required_beyond_execution_id() -> None:
+    """AC-2: proof_observes_harvest must gate confirm; id membership is not enough.
+
+    Removing ``proof_observes_harvest`` from apply_event_to_watch's proof
+    branch makes this test fail — a bare execution_id would confirm.
+    """
+    bare = {"execution_id": _EXEC}
+    harvested = {"execution_id": _EXEC, "archive_uri": "cortex://notes/x.md"}
+    assert proof_observes_harvest(bare) is False
+    assert proof_observes_harvest(harvested) is True
+    row = _pending_row()
+    updated, action = apply_event_to_watch(
+        row,
+        {"seq": 51, "signal": "cdp.generate.proof", "payload": bare},
+        now=_NOW + 300.0,
+    )
+    assert action is None
+    assert updated.get("succession_status") == "pending"
 
 
 def test_mark_hop_fired_records_pending_claim(tmp_path: Path) -> None:
