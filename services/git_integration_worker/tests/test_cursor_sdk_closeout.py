@@ -3621,6 +3621,13 @@ def test_dispatch_6a9f673785c0_d7982bf6_self_contradiction_grades_checks_failed(
     assert work_outcome != WorkOutcome.SHIPPED
 
 
+def test_closeout_plain_census_stays_at_fourteen() -> None:
+    """Transcript carve-out must not consume the slice-2 ~15 plain halt."""
+    from services.git_integration_worker.cursor_sdk_closeout_seal import _PLAIN
+
+    assert len(_PLAIN) == 14
+
+
 def test_closeout_seal_refuses_undeclared_bare_scalar() -> None:
     """Behavioural: an unqualified bare scalar cannot publish.
 
@@ -3628,6 +3635,7 @@ def test_closeout_seal_refuses_undeclared_bare_scalar() -> None:
     the dumped envelope (assertion 28923).
     """
     from admission_common.qualified_scalar import UnqualifiedScalarError
+
     from services.git_integration_worker.cursor_sdk_closeout_seal import (
         seal_closeout_payload,
     )
@@ -3663,6 +3671,120 @@ def test_closeout_seal_allows_unobserved_exit_row() -> None:
     sealed = seal_closeout_payload(payload)
     assert sealed["verification"][0]["exit_code"] is None
     assert sealed["verification"][0]["exit_code_register"] == "unobserved"
+
+
+def _shell_timeout_manifest(*, dispatch_id: str, thread_id: str) -> object:
+    """Real shell-op effects_manifest: captured tool args include bare timeout."""
+    from implement_admission.closeout_models import (
+        EffectEntry,
+        EffectsManifest,
+        SurfaceSection,
+    )
+
+    return EffectsManifest(
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        capture_sources=["conversation"],
+        surfaces={
+            "repo": SurfaceSection(
+                surface="repo",
+                source="conversation",
+                entries=[
+                    EffectEntry(
+                        op="shell",
+                        target="pytest -q",
+                        identity="pytest -q",
+                        detail={
+                            "command": "pytest -q",
+                            "workingDirectory": (
+                                "/mnt/torus/projects/universal-llm-gateway"
+                            ),
+                            "timeout": 30000,
+                        },
+                    )
+                ],
+            )
+        },
+        coverage={"repo": "complete"},
+    )
+
+
+def test_build_implement_closeout_body_publishes_shell_detail_timeout() -> None:
+    """Publication path must accept captured shell tool-arg timeout.
+
+    Drives a real ``shell`` entry with ``detail.timeout`` through
+    ``ImplementCloseout.model_dump`` + ``seal_closeout_payload`` (the live
+    publication path). Slice-2 corpus was green without this fixture — 194
+    tests passed on ``cdd73c96`` and none exercised publication with a
+    shell-op effects_manifest.
+    """
+    outcome = SdkRunOutcome(
+        body="status: complete — done",
+        status="finished",
+        duration_ms=1500,
+        tool_call_count=1,
+        effects_manifest=_shell_timeout_manifest(
+            dispatch_id="d-shell-timeout",
+            thread_id="t-shell-timeout",
+        ),
+    )
+    body = build_implement_closeout_body(
+        dispatch_id="d-shell-timeout",
+        outcome=outcome,
+        degraded_reason=None,
+        sidecar_ref=sidecar_workspaces_ref("d-shell-timeout"),
+        result_bytes=4,
+        thread_id="t-shell-timeout",
+        work_item_ref=None,
+        sidecar_markdown="status: complete — done",
+        effects_manifest=outcome.effects_manifest,
+    )
+    payload = json.loads(body)
+    detail = payload["effects_manifest"]["surfaces"]["repo"]["entries"][0]["detail"]
+    assert detail["timeout"] == 30000
+    assert "timeout_scope" not in detail
+    assert "timeout_authority" not in detail
+
+
+def test_closeout_seal_still_refuses_claim_position_bare_scalar_beside_transcript() -> (
+    None
+):
+    """Scoped carve-out: a published-claim bare scalar is still refused."""
+    from admission_common.qualified_scalar import UnqualifiedScalarError
+
+    from services.git_integration_worker.cursor_sdk_closeout_seal import (
+        seal_closeout_payload,
+    )
+
+    payload = {
+        "schema_version": 1,
+        "public_api_changed": False,
+        "invented_coverage_count": 3,
+        "effects_manifest": {
+            "schema_version": 1,
+            "dispatch_id": "d-mix",
+            "thread_id": "t-mix",
+            "surfaces": {
+                "repo": {
+                    "surface": "repo",
+                    "source": "conversation",
+                    "entries": [
+                        {
+                            "op": "shell",
+                            "target": "true",
+                            "detail": {
+                                "command": "true",
+                                "workingDirectory": "/tmp",
+                                "timeout": 30000,
+                            },
+                        }
+                    ],
+                }
+            },
+        },
+    }
+    with pytest.raises(UnqualifiedScalarError, match="invented_coverage_count"):
+        seal_closeout_payload(payload)
 
 
 def test_build_implement_closeout_body_is_sealed() -> None:

@@ -114,6 +114,44 @@ def test_seal_raises_on_nested_undeclared_bare_scalar() -> None:
         seal(payload, decl)
 
 
+def test_seal_skips_transcript_subtree() -> None:
+    payload = {
+        "effects_manifest": {
+            "entries": [{"detail": {"timeout": 30000, "command": "true"}}]
+        }
+    }
+    decl = SurfaceDecl("ImplementCloseout.model_dump")
+    decl.transcript(
+        "detail",
+        reason="captured tool-argument transcript",
+        under="effects_manifest",
+    )
+    assert seal(payload, decl)["effects_manifest"]["entries"][0]["detail"]["timeout"] == (
+        30000
+    )
+
+
+def test_seal_refuses_bare_scalar_at_transcript_key() -> None:
+    """A number sitting *at* the transcript key is still a published claim."""
+    payload = {"detail": 30000}
+    decl = SurfaceDecl("ImplementCloseout.model_dump")
+    decl.transcript("detail", reason="captured tool-argument transcript")
+    with pytest.raises(UnqualifiedScalarError, match=r"\$\.detail"):
+        seal(payload, decl)
+
+
+def test_seal_refuses_transcript_key_outside_under_zone() -> None:
+    payload = {"other": {"detail": {"score": 7}}}
+    decl = SurfaceDecl("ImplementCloseout.model_dump")
+    decl.transcript(
+        "detail",
+        reason="captured tool-argument transcript",
+        under="effects_manifest",
+    )
+    with pytest.raises(UnqualifiedScalarError, match="other.detail.score"):
+        seal(payload, decl)
+
+
 def test_absence_semantics_closeout_values() -> None:
     assert AbsenceSemantics.ABSENCE_ZERO.value == "absence=zero"
     assert AbsenceSemantics.ABSENCE_UNKNOWN.value == "absence=unknown"

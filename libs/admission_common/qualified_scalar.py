@@ -6,7 +6,9 @@ emit site declares how the value was obtained; ``seal()`` checks sibling presenc
 not semantic truth of the label.
 
 ``seal`` is the terminal admission gate: undeclared bare scalars raise at build
-time instead of publishing an unqualified fact.
+time instead of publishing an unqualified fact. Captured-transcript subtrees
+(verbatim tool arguments) are omitted from the walk — a bare ``timeout`` in a
+tool-arg map is not a published claim.
 """
 
 from __future__ import annotations
@@ -76,14 +78,31 @@ class QualifiedScalar:
 
 @dataclass
 class SurfaceDecl:
-    """Declares which bare scalars on a surface are intentionally unqualified."""
+    """Declares plain-scalar exemptions and captured-transcript subtrees.
+
+    ``plain`` names leaves that may publish without qualifier siblings.
+    ``transcript`` names keys whose mapping/list subtree is captured verbatim
+    (tool arguments, not a published claim) and is omitted from the seal walk.
+    A bare scalar sitting *at* a transcript-named key is still a claim and is
+    refused unless also ``plain`` or qualified.
+    """
 
     surface: str
     _plain: dict[str, str] = field(default_factory=dict)
+    _transcript: dict[str, tuple[str, str]] = field(default_factory=dict)
 
     def plain(self, name: str, *, reason: str) -> None:
         """Register a bare scalar exempt from qualifier siblings (default-deny exception)."""
         self._plain[name] = reason
+
+    def transcript(self, name: str, *, reason: str, under: str = "") -> None:
+        """Omit walking this key's mapping/list subtree — captured, not a claim.
+
+        ``under`` when set requires the parent path to contain that fragment so
+        a same-named key outside that zone stays in seal scope. Does not grow
+        the plain-scalar census.
+        """
+        self._transcript[name] = (reason, under)
 
 
 class UnqualifiedScalarError(ValueError):
@@ -94,7 +113,9 @@ def seal(payload: dict[str, Any], decl: SurfaceDecl) -> dict[str, Any]:
     """Terminal gate: walk *payload* and refuse undeclared bare scalars.
 
     Every numeric/boolean leaf must either carry ``{key}_scope`` and ``{key}_authority``
-    siblings (from :meth:`QualifiedScalar.emit`) or be registered via :meth:`SurfaceDecl.plain`.
+    siblings (from :meth:`QualifiedScalar.emit`), be registered via
+    :meth:`SurfaceDecl.plain`, or sit inside a :meth:`SurfaceDecl.transcript`
+    subtree (captured verbatim — not a published claim).
     """
     _walk(payload, decl, path="$")
     return payload
@@ -110,9 +131,26 @@ def _walk(obj: Any, decl: SurfaceDecl, *, path: str) -> None:
         return
 
 
+def _is_transcript_subtree(
+    key: str, value: Any, *, path: str, decl: SurfaceDecl
+) -> bool:
+    """True when *key* names a captured-transcript mapping/list in zone."""
+    registered = decl._transcript.get(key)
+    if registered is None:
+        return False
+    if _is_bare_scalar(value):
+        return False
+    _reason, under = registered
+    if under and under not in path:
+        return False
+    return True
+
+
 def _walk_dict(d: dict[str, Any], decl: SurfaceDecl, *, path: str) -> None:
     for key, value in d.items():
         child_path = f"{path}.{key}"
+        if _is_transcript_subtree(key, value, path=path, decl=decl):
+            continue
         if _is_bare_scalar(value):
             if key in decl._plain:
                 continue

@@ -31,8 +31,10 @@ _USAGE_TOKEN_KEYS = (
 )
 
 # Intentionally-plain bare scalars. Count is the slice-2 halt (~15). Usage
-# token counts are qualified at seal-prep (they have real scope/authority)
-# and do not consume this list.
+# token counts and surface_counts are qualified at seal-prep (they have real
+# scope/authority) and do not consume this list. EffectEntry.detail is a
+# captured tool-argument transcript — registered via SurfaceDecl.transcript,
+# not plain, so a future producer cannot smuggle a claim named ``timeout``.
 _PLAIN: tuple[tuple[str, str], ...] = (
     ("schema_version", "envelope/manifest version pin, not a measurement"),
     ("public_api_changed", "boolean flag; no scoped count"),
@@ -66,6 +68,13 @@ def closeout_surface_decl() -> SurfaceDecl:
     decl = SurfaceDecl(surface="ImplementCloseout.model_dump")
     for name, reason in _PLAIN:
         decl.plain(name, reason=reason)
+    # Path-scoped: only skip ``detail`` under effects_manifest. A top-level
+    # bare ``detail: 30000`` remains a published claim and is still refused.
+    decl.transcript(
+        "detail",
+        reason="captured tool-argument transcript, not a published claim",
+        under="effects_manifest",
+    )
     return decl
 
 
