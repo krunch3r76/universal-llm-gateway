@@ -54,3 +54,27 @@ def test_path_python_wins_over_missing_home_venv() -> None:
     result = _run_resolver(env=env)
     assert result.returncode == 0
     assert result.stdout.strip() == real_python
+
+
+@pytest.mark.offline
+def test_home_venv_wins_over_stale_path_python(tmp_path: Path) -> None:
+    """Cursor agent-shell: HOME venv beats a present system python3 on PATH."""
+    home = tmp_path / "home"
+    venv_python = home / ".venvs" / "universal" / "bin" / "python3"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.write_text("#!/bin/sh\nexit 0\n")
+    venv_python.chmod(0o755)
+
+    stale_dir = tmp_path / "stale-bin"
+    stale_dir.mkdir()
+    stale_python = stale_dir / "python3"
+    stale_python.write_text("#!/bin/sh\nexit 0\n")
+    stale_python.chmod(0o755)
+
+    env = os.environ.copy()
+    env.pop("VIRTUAL_ENV", None)
+    env["PATH"] = f"{stale_dir}:/usr/bin:/bin"
+    env["HOME"] = str(home)
+    result = _run_resolver(env=env)
+    assert result.returncode == 0
+    assert result.stdout.strip() == str(venv_python)

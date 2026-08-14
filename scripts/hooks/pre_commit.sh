@@ -15,7 +15,7 @@ source "$SCRIPT_DIR/resolve_hook_python.sh"
 
 PYTHON="$(resolve_hook_python || true)"
 if [[ -z "$PYTHON" || ! -x "$PYTHON" ]]; then
-    echo "FATAL: pre-commit hook: no executable python3 (tried VIRTUAL_ENV, PATH, HOME/.venvs/universal)" >&2
+    echo "FATAL: pre-commit hook: no executable python3 (tried VIRTUAL_ENV, HOME/.venvs/universal, PATH)" >&2
     exit 1
 fi
 
