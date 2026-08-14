@@ -77,18 +77,72 @@ def test_first_reply_from_other_author_is_predicate_unmet():
     )
 
 
-def test_status_needs_attended_in_body():
+def test_status_needs_attended_body_only_does_not_complete():
+    """AC1: no live producer emits terminal tokens in body only — repointed from
+    test_status_needs_attended_in_body, which asserted the old substring bug."""
     thread = {"status": ThreadStatus.ACTIVE}
     turns = [
         _turn(1, "web-anthropic"),
         _turn(2, "cursor-auto", body="terminal status:needs-attended\n"),
     ]
     comp = {"mode": "status:needs-attended"}
-    assert is_complete(thread, turns, after_turn=1, completion=comp)
-    q = qualifying_status_turn(
-        turns, after_turn=1, status_token="status:needs-attended"
+    assert not is_complete(thread, turns, after_turn=1, completion=comp)
+    assert (
+        derive_status(thread, turns, after_turn=1, completion=comp)
+        == "predicate_unmet"
     )
-    assert q is not None and q["turn_number"] == 2
+    assert (
+        qualifying_status_turn(
+            turns, after_turn=1, status_token="status:needs-attended"
+        )
+        is None
+    )
+
+
+# Live thread 7233 turn 18 — admit subject prose mentions status:done (trailing space).
+_THREAD_7233_TURN_18_SUBJECT = (
+    "status:admitted — G1 — the hop verb's own contract says it never reports "
+    "status:done; the cadence "
+)
+
+
+def test_status_done_substring_in_admit_subject_is_not_terminal():
+    """Defends against admit-turn prose falsely completing status:done waiters."""
+    thread = {"status": ThreadStatus.ACTIVE}
+    turns = [
+        _turn(17, "web-anthropic", subject="request"),
+        _turn(18, "cursor-auto", subject=_THREAD_7233_TURN_18_SUBJECT),
+    ]
+    comp = {"mode": "status:done"}
+    assert not is_complete(thread, turns, after_turn=17, completion=comp)
+    assert (
+        derive_status(thread, turns, after_turn=17, completion=comp)
+        == "predicate_unmet"
+    )
+    assert (
+        qualifying_status_turn(turns, after_turn=17, status_token="status:done")
+        is None
+    )
+
+
+def test_status_done_in_body_prose_only_is_not_terminal():
+    """Defends against CLOSEOUT-adjacent body prose completing status:done wait."""
+    thread = {"status": ThreadStatus.ACTIVE}
+    turns = [
+        _turn(1, "web-anthropic", subject="request"),
+        _turn(
+            2,
+            "cursor-auto",
+            subject="progress — nested dispatch",
+            body="Poll with completion=status:done on the returned poll_hint.\n",
+        ),
+    ]
+    comp = {"mode": "status:done"}
+    assert not is_complete(thread, turns, after_turn=1, completion=comp)
+    assert (
+        derive_status(thread, turns, after_turn=1, completion=comp)
+        == "predicate_unmet"
+    )
 
 
 def test_status_failed_does_not_match_done():

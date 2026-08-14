@@ -26,6 +26,7 @@ contain turns whose per-turn status is ``open``
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal, TypedDict
 
 from agent_seat.registry import normalize_bus_address
@@ -62,12 +63,18 @@ class Completion(TypedDict, total=False):
     from_agent: str  # required when mode == "first_reply_from"
 
 
+_STATUS_SUBJECT_PREFIX = re.compile(
+    r"^status:(done|failed|needs-attended|superseded)\b"
+)
+
+
 def _turn_carries_status_token(turn: dict[str, Any], token: str) -> bool:
-    """True when subject or body contains the exact ``status:…`` token."""
-    needle = token if token.startswith("status:") else f"status:{token}"
+    """True when subject starts with ``status:…`` on a token boundary."""
+    if token not in STATUS_COMPLETION_MODES:
+        return False
     subject = str(turn.get("subject") or "")
-    body = str(turn.get("body") or "")
-    return needle in subject or needle in body
+    match = _STATUS_SUBJECT_PREFIX.match(subject)
+    return match is not None and f"status:{match.group(1)}" == token
 
 
 def qualifying_status_turn(
@@ -76,10 +83,10 @@ def qualifying_status_turn(
     after_turn: int,
     status_token: str,
 ) -> dict[str, Any] | None:
-    """First turn after ``after_turn`` whose subject/body carries ``status_token``.
+    """First turn after ``after_turn`` whose subject prefix carries ``status_token``.
 
-    Non-terminal statuses never qualify. Prefer subject-prefix matches but any
-    occurrence in subject or body satisfies (F5 tag-based completion).
+    Non-terminal statuses never qualify. Body prose mentioning a token does not
+    satisfy — only a constrained subject prefix (arc 7233 / hop-terminal liveness).
     """
     if status_token not in STATUS_COMPLETION_MODES:
         return None
