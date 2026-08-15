@@ -171,6 +171,8 @@ def hygiene_reclaim_extended(
     chrome_port_for_profile: Callable[[Path], int | None] | None = None,
 ) -> HygieneReclaimResult:
     """Reclaim released/orphaned rows and optionally sweep stale active or orphan profiles."""
+    from .dormant_drain import _streaming_protection_reason
+
     listen = is_listening or cdp_lane.is_listening
     reclaimed: list[int] = []
     removed: list[str] = []
@@ -182,6 +184,14 @@ def hygiene_reclaim_extended(
             active,
             listen,
             kill_listener=registry_package()._kill_listener,
+            is_attached=lambda rid: (
+                registry_package().is_driver_lock_held(rid)
+                or (
+                    rid in active
+                    and _streaming_protection_reason(active[rid], is_listening=listen)
+                    is not None
+                )
+            ),
             include_ttl_reap=include_stale_active,
         )
         keep: dict[str, dict[str, Any]] = {}

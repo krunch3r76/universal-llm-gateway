@@ -312,6 +312,42 @@ def test_drain_fails_closed_when_stream_probe_is_unavailable(
     assert _row(seat.registration_id)["status"] == "retained"
 
 
+def test_orphan_reaper_respects_streaming_monitoring_lease(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The legacy orphan TTL path must not bypass the stream safety rule."""
+    url = "https://claude.ai/cowork/cse_orphan_streaming"
+    seat = _seat(chat_url=url)
+    active = reg._load_active()
+    row = dict(active[seat.registration_id])
+    row.update({"status": "orphaned_alive", "orphaned_at": 0.0, "chrome_pid": 1})
+    active[seat.registration_id] = row
+    reg._store.write_active(active)
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.dormant_drain.cdp_orphans._fetch_json",
+        lambda _url: [
+            {
+                "type": "page",
+                "url": url,
+                "webSocketDebuggerUrl": "ws://orphan-streaming",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.dormant_drain.probe_page_liveness_sync",
+        lambda _port, _websocket: (
+            {"streaming": True, "stop": False, "tool_pause": False},
+            True,
+        ),
+    )
+
+    reg.hygiene_reclaim_extended(
+        is_listening=lambda _p: True,
+        empty_trash=False,
+    )
+    assert _row(seat.registration_id)["status"] == "orphaned_alive"
+
+
 def test_drain_releases_a_host_holding_no_session(isolated_registry: Path) -> None:
     seat = _seat()
     reg.deregister_lane(seat.registration_id, kill=False, reason="retained")

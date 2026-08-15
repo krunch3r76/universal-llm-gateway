@@ -496,6 +496,16 @@ unrelated browser targets. `registry_capacity_count` remains the recorded
 execution count; `busy` and `drain_busy_reason` do not derive from browser
 attachments or unique CSE sessions.
 
+Idle mission CSEs are parked as **dormant seats**: Chrome and its port are
+released while the `chat_url` and seeded profile persist, which is what bounds X
+clients and registry ports. Because dormant rows own no process, they are absent
+from every live-host count above; `what-is-running` reports them separately as
+`registry_dormant_seat_count`, alongside `registry_live_host_count` (all statuses
+that may still own a Chrome, not just `active`). `resolve_attended` answers 200
+with `dormant: true`, `reattachable: true`, and a null `cdp_url` for such a seat,
+and `followup` with a `chat_url` wakes it automatically and parks it again after
+the paste.
+
 ### Examples
 
 **Preferred CDP path** (consult / R-admit / binder):

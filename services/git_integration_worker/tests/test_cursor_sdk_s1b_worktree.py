@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import pytest
 
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
+    _connect,
 )
 from services.git_integration_worker.cursor_sdk_worktree import (
     WorktreeMintError,
