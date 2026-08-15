@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -31,12 +32,17 @@ class DebugClient:
 class UDSEventPublisher:
     """Non-blocking publisher that sends events to the event service over UDS.
 
-    Auto-reconnects on connection loss (handles event service restarts).
+    Auto-reconnects on connection loss and on ingest-socket inode replacement
+    (Event Service restart unlinks ``events.sock`` and binds a new inode;
+    a live StreamWriter to the old inode can stay half-open without EPIPE,
+    which is what silenced Stargate ``publish_cdp_*`` after 2026-08-15T08:03Z
+    while Gateway/Edge publishers that reconnected kept landing).
     Buffers events locally when disconnected; flushes on reconnect.
     Fire-and-forget: publishing never blocks the event path.
 
     INVARIANT: ¬blocking_io_on_event_path
     INVARIANT: buffer_size ≤ maxsize (oldest dropped on overflow)
+    INVARIANT: connected_inode == current_sock_inode ∨ reconnect
     """
 
     def __init__(
@@ -156,25 +162,42 @@ class UDSEventPublisher:
             except asyncio.QueueFull:
                 pass
 
+    def _socket_inode(self) -> int | None:
+        """Return the ingest socket inode, or None if the path is gone."""
+        try:
+            return os.stat(self._socket_path).st_ino
+        except OSError:
+            return None
+
     async def _connect_and_flush(self) -> None:
-        """Background loop: connect to UDS, drain buffer, reconnect on failure."""
+        """Connect to UDS, drain buffer, reconnect on failure or sock replacement."""
         while self._running:
             try:
                 _, self._writer = await asyncio.open_unix_connection(self._socket_path)
             except (FileNotFoundError, ConnectionRefusedError, OSError):
                 await asyncio.sleep(2.0)
                 continue
+            connected_inode = self._socket_inode()
 
             try:
                 while self._running:
                     try:
                         line = await asyncio.wait_for(self._buffer.get(), timeout=1.0)
                     except TimeoutError:
+                        current_inode = self._socket_inode()
+                        if current_inode is None or (
+                            connected_inode is not None
+                            and current_inode != connected_inode
+                        ):
+                            raise OSError(
+                                "events ingest socket replaced "
+                                f"(was inode={connected_inode}, now={current_inode})"
+                            )
                         continue
                     self._writer.write(line.encode("utf-8"))
                     await self._writer.drain()
             except (ConnectionResetError, BrokenPipeError, OSError) as e:
-                logger.debug("UDS connection lost, reconnecting... Error: %s", e)
+                logger.info("UDS connection lost, reconnecting... Error: %s", e)
                 if self._writer:
                     self._writer.close()
                     try:
