@@ -26,6 +26,10 @@ from .dormant import host_protection_reason, make_dormant
 from .models import _ListenFn
 from .registry_module import registry_package
 
+# Shadows package CONSUMERS: GIW imports the package, not this drain module.
+CONSUMERS: tuple[str, ...] = ("cdp_ask",)
+INJECTORS: tuple[str, ...] = ("cdp_ask",)
+
 _DRAINABLE_STATUSES = frozenset({"retained", "orphaned_alive"})
 _CSE_MARKER = "/cowork/cse_"
 
@@ -127,13 +131,19 @@ def _streaming_protection_reason(
     mission (or blank-purpose) seats — those hosts sit idle between tool
     calls. One-shot ``ask`` hosts still return ``None`` when idle so hygiene
     can park them.
+
+    Probe-source failure is not an empty page list. A wedged, silent, or
+    unparseable CDP port must protect — with a distinct reason so a leaked
+    host stays greppable. A successful list with no CSE page stays drainable.
     """
     port = row.get("port")
     if not isinstance(port, int) or not is_listening(port):
-        return None
+        return "cdp_port_unreachable"
     page_list = cdp_orphans._fetch_json(f"http://127.0.0.1:{port}/json/list")
     if page_list is None:
         return "stream_probe_unavailable"
+    if not isinstance(page_list, list):
+        return "cdp_list_unparseable"
     for page in cdp_orphans.cse_pages_from_list(page_list):
         websocket_url = page.get("webSocketDebuggerUrl")
         if not isinstance(websocket_url, str) or not websocket_url.strip():

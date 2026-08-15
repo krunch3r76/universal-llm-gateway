@@ -36,6 +36,10 @@ from .session_address import (
     list_active, list_capacity, log_orphan_scan,
 )
 
+# CONSUMERS = import-nomination (GIW hop watch). INJECTORS = cdp_ask hygiene/drain.
+CONSUMERS: tuple[str, ...] = ("git_integration_worker",)
+INJECTORS: tuple[str, ...] = ("cdp_ask",)
+
 REGISTRY_DIR = _store.REGISTRY_DIR
 REGISTRY_LOG = _store.REGISTRY_LOG
 ACTIVE_JSON = _store.ACTIVE_JSON

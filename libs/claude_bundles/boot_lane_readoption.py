@@ -22,11 +22,20 @@ BootVerdict = Literal["adopt", "orphan", "refuse"]
 
 BOOT_HOLDER = "cdp-ask-satellite"
 ADOPT_STATUS = "retained"
+_REACHABLE_CSE_AFFINITIES = frozenset(
+    {"bound_present", "unbound_present", "bound_missing"}
+)
 _CSE_URL_MARKER = "claude.ai/cowork/cse_"
 _REG_PROFILE_PREFIX = "claude-ai-chrome-profile-reg-"
 
 
 class HostObservation(StrEnum):
+    """How a registry row's Chrome host looks to the boot planner.
+
+    Distinguishes a matching live port from TCP-only, profile mismatch,
+    dead, and invalid-port cases so adopt/orphan verdicts stay explicit.
+    """
+
     LIVE_OK = "live_ok"
     LIVE_PROFILE_MISMATCH = "live_profile_mismatch"
     TCP_ONLY = "tcp_only"
@@ -271,6 +280,24 @@ def plan_boot_lane_readoption(
     )
 
 
+def _adopted_status(row: Mapping[str, Any], cse_affinity: CseAffinity) -> str:
+    """Choose boot-adopt status without restoring a driver lock.
+
+    Operator-proxy / mission / blank-purpose hosts with a reachable CSE page
+    keep ``active`` so a ``cdp_ask`` restart does not demote a live seat into
+    the drainable set. Ask hosts and hosts with no CSE stay ``retained`` —
+    drain parking and leaked-Chrome release depend on that demotion.
+    ``active`` here is reservation, not a claimed driver: the lock stays off.
+    """
+    from claude_bundles.cdp_registry.dormant_drain import _idle_reachable_protects
+
+    if cse_affinity in _REACHABLE_CSE_AFFINITIES and _idle_reachable_protects(
+        dict(row)
+    ):
+        return "active"
+    return ADOPT_STATUS
+
+
 def boot_adopt_lane(
     registration_id: str,
     *,
@@ -278,13 +305,15 @@ def boot_adopt_lane(
     cse_affinity: CseAffinity,
     holder: str | None = None,
 ) -> None:
-    """Reserve the surviving host as ``retained`` after process death (boot-only).
+    """Reserve a surviving host after process death (boot-only).
 
-    Adoption keeps the port and profile reserved, but the turn that owned the row
-    died with the previous process — the planner already refuses rows with a live
-    execution. Restoring ``active`` plus a driver lock therefore claimed a busy
-    seat nobody was driving, which no drain could ever reclaim; ``retained`` says
-    reserved-but-idle, so the dormant drain can park the host on the next pass.
+    Adoption keeps the port and profile reserved. The turn that owned the row
+    died with the previous process — the planner already refuses rows with a
+    live execution. Restoring ``active`` *plus* a driver lock claimed a busy
+    seat nobody was driving, which no drain could reclaim. This path never
+    restores the lock. Operator seats with a reachable CSE keep ``active``
+    (not drainable); ask hosts and CSE-less rows become ``retained`` so the
+    dormant drain can still park or release them.
     """
     from claude_bundles import cdp_registry_store as _store
 
@@ -299,8 +328,9 @@ def boot_adopt_lane(
             raise cdp_registry.RegistryError(
                 f"unknown registration_id: {registration_id!r}"
             )
+        adopted = _adopted_status(row, cse_affinity)
         updated = dict(row)
-        updated["status"] = ADOPT_STATUS
+        updated["status"] = adopted
         updated["holder"] = adopt_holder
         updated["holder_pid"] = os.getpid()
         updated.pop("orphaned_at", None)
@@ -314,7 +344,7 @@ def boot_adopt_lane(
                 "port": updated.get("port"),
                 "cse_affinity": cse_affinity,
                 "prior_status": prior_status,
-                "adopted_status": ADOPT_STATUS,
+                "adopted_status": adopted,
                 "reason": "boot_lane_readoption",
             },
         )
@@ -389,6 +419,7 @@ def rehearsal_boot_readoption_plan(
 
 
 def plan_as_dict(plan: BootReadoptionPlan) -> dict[str, Any]:
+    """Render a boot-readoption plan as JSON-ready adopt/orphan/refuse lists."""
     return {
         "would_adopt": list(plan.would_adopt),
         "would_orphan": list(plan.would_orphan),

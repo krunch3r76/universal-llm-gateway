@@ -210,16 +210,25 @@ def test_reclaim_dormant_rows_by_ttl_and_cap(isolated_registry: Path) -> None:
     assert len(aged) == 1
 
 
+def _successful_empty_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Probe succeeded and found no CSE page — the drainable signal-source case."""
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.dormant_drain.cdp_orphans._fetch_json",
+        lambda _url: [],
+    )
+
+
 def test_drain_parks_retained_hosts_and_protects_the_busy_one(
-    isolated_registry: Path,
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     parked_seat = _seat(chat_url="https://claude.ai/cowork/cse_drain1")
     busy_seat = _seat(chat_url="https://claude.ai/cowork/cse_drain2")
     for seat in (parked_seat, busy_seat):
         reg.deregister_lane(seat.registration_id, kill=False, reason="retained")
+    _successful_empty_list(monkeypatch)
 
     result = drain_live_hosts_to_dormant(
-        is_listening=lambda _p: False,
+        is_listening=lambda _p: True,
         is_busy=lambda rid: rid == busy_seat.registration_id,
     )
     assert result.dormant == [parked_seat.registration_id]
@@ -419,28 +428,118 @@ def test_orphan_reaper_respects_streaming_monitoring_lease(
     assert _row(seat.registration_id)["status"] == "orphaned_alive"
 
 
-def test_drain_releases_a_host_holding_no_session(isolated_registry: Path) -> None:
+def test_drain_releases_a_host_holding_no_session(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     seat = _seat()
     reg.deregister_lane(seat.registration_id, kill=False, reason="retained")
+    _successful_empty_list(monkeypatch)
 
-    result = drain_live_hosts_to_dormant(is_listening=lambda _p: False)
+    result = drain_live_hosts_to_dormant(is_listening=lambda _p: True)
     assert result.released == [seat.registration_id]
     assert _row(seat.registration_id)["status"] == "released"
 
 
-def test_boot_adopted_host_is_drainable(isolated_registry: Path) -> None:
-    """A host that survives a cdp_ask restart must not become an undrainable seat."""
+def test_drain_protects_when_port_is_unreachable(
+    isolated_registry: Path,
+) -> None:
+    """A silent CDP port is signal-source failure, not 'no operator seated'."""
+    seat = _seat(chat_url="https://claude.ai/cowork/cse_port_down")
+    reg.deregister_lane(seat.registration_id, kill=False, reason="retained")
+
+    result = drain_live_hosts_to_dormant(is_listening=lambda _p: False)
+    assert result.dormant == []
+    assert result.protected[seat.registration_id] == "cdp_port_unreachable"
+    assert _row(seat.registration_id)["status"] == "retained"
+
+
+def test_drain_protects_when_list_is_unparseable(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-list /json/list body is probe failure, not an empty CSE set."""
+    seat = _seat(chat_url="https://claude.ai/cowork/cse_list_junk")
+    reg.deregister_lane(seat.registration_id, kill=False, reason="retained")
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.dormant_drain.cdp_orphans._fetch_json",
+        lambda _url: {"error": "not a list"},
+    )
+
+    result = drain_live_hosts_to_dormant(is_listening=lambda _p: True)
+    assert result.dormant == []
+    assert result.protected[seat.registration_id] == "cdp_list_unparseable"
+    assert _row(seat.registration_id)["status"] == "retained"
+
+
+def test_drain_parks_when_probe_succeeds_with_empty_list(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Successful empty list is the drainable counterpart of probe failure."""
+    seat = _seat(chat_url="https://claude.ai/cowork/cse_empty_ok")
+    reg.deregister_lane(seat.registration_id, kill=False, reason="retained")
+    _successful_empty_list(monkeypatch)
+
+    result = drain_live_hosts_to_dormant(is_listening=lambda _p: True)
+    assert result.dormant == [seat.registration_id]
+    assert seat.registration_id not in result.protected
+    assert _row(seat.registration_id)["status"] == "dormant"
+
+
+def test_boot_adopt_preserves_active_for_reachable_operator(
+    isolated_registry: Path,
+) -> None:
+    """A listening operator CSE must not become drainable on cdp_ask restart."""
     from claude_bundles import boot_lane_readoption as blr
 
-    url = "https://claude.ai/cowork/cse_boot"
+    url = "https://claude.ai/cowork/cse_boot_keep"
     seat = _seat(chat_url=url)
+    blr.boot_adopt_lane(
+        seat.registration_id, prior_status="active", cse_affinity="bound_present"
+    )
+    assert _row(seat.registration_id)["status"] == "active"
+    assert not reg.is_driver_lock_held(seat.registration_id)
+
+    result = drain_live_hosts_to_dormant(is_listening=lambda _p: False)
+    assert result.dormant == []
+    assert seat.registration_id not in result.protected
+    assert _row(seat.registration_id)["status"] == "active"
+    assert _row(seat.registration_id)["chat_url"] == url
+
+
+def test_boot_adopted_ask_host_is_drainable(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ask hosts stay retained on adopt so idle leaked Chromes can still park."""
+    from claude_bundles import boot_lane_readoption as blr
+
+    url = "https://claude.ai/cowork/cse_boot_ask"
+    seat = _seat(purpose="ask", chat_url=url)
     blr.boot_adopt_lane(
         seat.registration_id, prior_status="active", cse_affinity="bound_present"
     )
     assert _row(seat.registration_id)["status"] == "retained"
     assert not reg.is_driver_lock_held(seat.registration_id)
+    _successful_empty_list(monkeypatch)
 
-    result = drain_live_hosts_to_dormant(is_listening=lambda _p: False)
+    result = drain_live_hosts_to_dormant(is_listening=lambda _p: True)
+    assert result.dormant == [seat.registration_id]
+    assert _row(seat.registration_id)["chat_url"] == url
+
+
+def test_boot_adopted_host_without_cse_is_drainable(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No reachable CSE on adopt stays retained — leaked Chrome release depends on it."""
+    from claude_bundles import boot_lane_readoption as blr
+
+    url = "https://claude.ai/cowork/cse_boot_none"
+    seat = _seat(chat_url=url)
+    blr.boot_adopt_lane(
+        seat.registration_id, prior_status="active", cse_affinity="none"
+    )
+    assert _row(seat.registration_id)["status"] == "retained"
+    _successful_empty_list(monkeypatch)
+
+    result = drain_live_hosts_to_dormant(is_listening=lambda _p: True)
     assert result.dormant == [seat.registration_id]
     assert _row(seat.registration_id)["chat_url"] == url
 
@@ -451,11 +550,12 @@ def test_drain_binds_a_probed_url_before_parking(
     url = "https://claude.ai/cowork/cse_probed"
     seat = _seat()
     reg.deregister_lane(seat.registration_id, kill=False, reason="retained")
+    _successful_empty_list(monkeypatch)
     monkeypatch.setattr(
         "claude_bundles.cdp_registry.session_address._default_probe_page_urls",
         lambda _port: [url],
     )
 
-    result = drain_live_hosts_to_dormant(is_listening=lambda _p: False)
+    result = drain_live_hosts_to_dormant(is_listening=lambda _p: True)
     assert result.dormant == [seat.registration_id]
     assert _row(seat.registration_id)["chat_url"] == url

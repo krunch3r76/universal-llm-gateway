@@ -8,6 +8,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from claude_bundles.boot_lane_readoption import (
+    ADOPT_STATUS,
+    _adopted_status,
     apply_boot_readoption_plan,
     plan_boot_lane_readoption,
     rehearsal_boot_readoption_plan,
@@ -214,6 +216,17 @@ def test_p3_unresolved_profile_refuses() -> None:
     live = [LivePort(port=9241, profile=None, page_urls=(), has_live_cse=False)]
     plan = _plan(active_rows={}, live_ports=live)
     assert any(item.get("reason") == "profile_unresolved" for item in plan.would_refuse)
+
+
+def test_adopted_status_preserves_active_for_reachable_operator() -> None:
+    """Restart must not demote a seated operator into the drainable set."""
+    row = {"purpose": "operator-proxy"}
+    assert _adopted_status(row, "bound_present") == "active"
+    assert _adopted_status(row, "unbound_present") == "active"
+    assert _adopted_status(row, "bound_missing") == "active"
+    assert _adopted_status(row, "none") == ADOPT_STATUS
+    assert _adopted_status({"purpose": "ask"}, "bound_present") == ADOPT_STATUS
+    assert _adopted_status({"purpose": ""}, "bound_present") == "active"
 
 
 def test_cse_affinity_bound_present() -> None:
