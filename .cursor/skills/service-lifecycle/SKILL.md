@@ -83,6 +83,14 @@ For **mcp** (container service):
 
 Never skip `wait_healthy` after start/restart/sync_restart.
 
+For an ordinary live claim, the loop above is sufficient. For a
+`live@<sha>` claim, commit the deployment paths path-explicitly **before**
+`sync_restart`, then retain the restart and health payloads and verify live
+`code_ref_satisfied` (equal or ancestor), process identity movement, and
+relevant dirty-path disclosure. A dirty checkout may still be restarted; report
+ordinary `live` plus tree state instead of exact `live@<sha>`. This ordering
+qualifies the claim, not the restart.
+
 ## Invariants (FOL)
 
 ∀ service op: via `manage` MCP tool (∨ `./manage` TUI) — ¬ direct start scripts.

@@ -201,6 +201,8 @@ def test_repo_overlay_sot_is_present_and_named() -> None:
     )
     assert "restart_intent_id" in drain
     assert "Landed ≠ live" in drain
+    assert "live@<sha>" in drain
+    assert "code_ref_satisfied" in drain
     assert "caller_must_exit" not in drain  # lead-envelope vocabulary stays out
 
     # The one surviving skill-surface duty: SoT edit implies install in the same run.

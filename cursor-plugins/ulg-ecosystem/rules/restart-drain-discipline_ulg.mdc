@@ -176,6 +176,16 @@ Anti-patterns:
    completed (process start time after the commit, or a live probe of the changed
    surface) before any claim that a fix is in effect.
 
+## Live claim classes
+
+`live` and `live@<sha>` are different claims. Ordinary `live` needs restart,
+health, and a changed-surface probe. `live@<sha>` additionally needs a
+path-explicit commit **before** restart, `code_ref_satisfied` (equal or ancestor),
+identity movement, and relevant dirty-path disclosure. This ordering binds the
+claim, not the restart: dirty-checkout restarts remain legal and are reported as
+`live` plus tree state, never exact `live@<sha>`. Never withhold a needed restart
+because the tree is dirty or a busy probe defers; downgrade the claim instead.
+
 ## `force=true` — permitted, one exception
 
 ```

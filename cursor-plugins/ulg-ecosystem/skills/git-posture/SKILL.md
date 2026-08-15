@@ -76,6 +76,13 @@ Commit enters only for explicit git workflow (`git_integrate` / `git_land`, arc
 worktrees, closeout HEAD attribution). It is **not** the gate between “edited”
 and “running.”
 
+There is one stronger reporting class: `live@<sha>`. Use it only when the
+deployment paths were committed path-explicitly **before** the attributed
+restart, the restart and health probe completed, and the live probe shows
+`code_ref_satisfied` (equal or ancestor) plus process identity movement. Disclose
+relevant dirty paths or served-ahead-of-HEAD state; do not imply exact clean
+attribution. A dirty-tree restart remains ordinary `live` and remains legal.
+
 **Anti-patterns this kills:** treating uncommitted-but-restarted code as illicit
 “live-ahead-of-HEAD”; refusing to propagate because tree is dirty; building FATAL
 gates that equate `served ≠ git HEAD` with a broken fleet when the shared

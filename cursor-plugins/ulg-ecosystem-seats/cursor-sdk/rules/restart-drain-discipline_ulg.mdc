@@ -24,6 +24,13 @@ Three things bind on you.
 deployment. Do not report a source change as in effect, and do not verify against a
 process that predates your commit.
 
+`live` and `live@<sha>` are different claims. A `live@<sha>` claim additionally
+requires a path-explicit commit before restart, equal-or-ancestor
+`code_ref_satisfied` proof, process identity movement, and dirty-path disclosure.
+Dirty-checkout restarts remain legal: report `live` plus tree state, never exact
+`live@<sha>`. This ordering binds the claim, not the restart; never withhold a
+needed restart because the tree is dirty.
+
 ## 2. Arm the restart, then exit
 
 `manage(action="sync_restart", service=…)` is **drain-gated** at a shared chokepoint:

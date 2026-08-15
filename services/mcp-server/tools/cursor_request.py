@@ -147,7 +147,9 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         Deploy / live (BINDING — decision:checkout-disk-is-executable):
         sync_restart / host / gateway / MCP load the live shared checkout on disk —
         committed or not. landed≠live = process ¬restarted, never ¬committed.
-        Commit is git workflow only, not the edited→running gate. ¬ frame
+        Commit is git workflow only, not the edited→running gate. A live@<sha>
+        claim is stronger: commit deployment paths before restart, then prove
+        code_ref_satisfied + identity movement and disclose dirty paths. ¬ frame
         served≠HEAD after dirty-checkout restart as illicit live-ahead-of-HEAD.
 
         **Contract vocabulary**

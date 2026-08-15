@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from unittest.mock import patch
 
-import pytest
-
 from implement_admission.propagation_row import PropagationRow, compose_proof
+
 from services.git_integration_worker.cursor_auto.handler_propagation import (
     _disposition_for,
     execution_for_manage_deferred,
@@ -16,6 +15,7 @@ from services.git_integration_worker.cursor_auto.handler_propagation import (
 from services.git_integration_worker.cursor_auto.propagation_probe import (
     AGE_FIELDS,
     IDENTIFIER_FIELDS,
+    proof_observed,
 )
 
 
@@ -24,6 +24,20 @@ def _sample_before() -> dict:
 
 def _sample_after() -> dict:
     return {"pid": 200, "process_start_time": "2026-01-02T00:00:00Z", "code_version": "abc"}
+
+
+def test_identity_movement_is_required_for_sha_attributed_proof() -> None:
+    """Matching code alone cannot establish the stronger live claim."""
+    sha = "abc1230000000000000000000000000000000000"
+    row = PropagationRow(
+        service="git_integration_worker",
+        code_ref=sha,
+        proof_class="process_live",
+    )
+    unchanged = _sample_before() | {"code_version": sha}
+    moved = _sample_after() | {"code_version": sha}
+    assert proof_observed(row, unchanged, before=_sample_before()) is False
+    assert proof_observed(row, moved, before=_sample_before()) is True
 
 
 # --- AC1 fail-first (must fail against current code before fixes) ---

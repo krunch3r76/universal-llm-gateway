@@ -33,13 +33,21 @@ For claimed durable artifacts, verify before reporting:
 - file → quote `written_sha256` (bare hex) from the **write tool response** for that store path, **or** `fs(op="read")` on the consumer-facing URI; ¬ narrate/recompute a content digest as delivery proof;
 - entity → `entity_get` 200;
 - bus turn → `fetch` confirms turn number/body;
-- commit → `git log -1 --format=%H`;
+- commit → path-scoped SHA plus a content probe (`git show <sha>:<path>`);
 - deploy/restart → service health or inspect payload with timestamp/status;
 - session close → `session_close` 201 payload IDs suffice as atomic read-back.
 
 `content_digest(plan) ≠ store_bound_write`. A sha256 of intended bytes (or a prior workspace copy) that was never returned as `written_sha256` on a write into the claimed sandbox is narrative completion — not DELIVERED. Wrong-host / wrong-prefix writes that hash-match intended content still fail when the consumer store lacks the artifact (incident: agent-bus:4986 turn 3 → friction 23972).
 
 Cross-store mirrors (`workspaces://` → `cortex://`): claim DELIVERED only after a write into the receiver's store with quoted `written_sha256`, or after receiver read-back succeeds.
+
+### SHA-attributed live claims
+
+`live@<sha>` is not established by a SHA existing. It requires the deployment
+paths to be committed before restart, restart/health evidence, live
+`code_ref_satisfied` (equal or ancestor) proof, process identity movement, and
+disclosure of relevant dirty or served-ahead paths. A dirty-tree restart may be
+ordinary `live`; it must not be reported as exact `live@<sha>`.
 
 ### 3. Closeouts are POINTERS, not substrate completion
 

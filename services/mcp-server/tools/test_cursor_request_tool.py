@@ -51,6 +51,11 @@ def test_cursor_request_registers_without_error() -> None:
         assert record.closeout_shape in description
     for name in CANONICAL_CONTRACTS:
         assert name in description
+    source = Path(__file__).resolve().parent.joinpath("cursor_request.py").read_text(
+        encoding="utf-8"
+    )
+    assert "live@<sha>" in source
+    assert "code_ref_satisfied" in source
 
 
 def test_valid_call_delegates_to_request_dispatch_with_to_cursor() -> None:
