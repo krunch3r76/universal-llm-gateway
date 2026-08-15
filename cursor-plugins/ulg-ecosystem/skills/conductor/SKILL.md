@@ -31,6 +31,28 @@ Not a model name. Not `mission-operator` (that skill is the formal
 `operator_proxy` DIRECTIVE/CLOSEOUT grammar, often CDP/life). Conductor is the
 **IDE/cursor-sdk off-tick drive** pattern dogfooded on rings 7286 and 7310.
 
+## Audience (binding)
+
+| Seat | Duty |
+|---|---|
+| **Continuity lead** (IDE / `/conductor`) | Read this skill to author/admit; **require** it on the conductor dispatch (below) |
+| **Conductor** (cursor-sdk) | Load this skill on pickup — nest, tier, scoreboard, ¬ hand-code G5 |
+
+**Continuity-lead required-skill gate (BINDING):** before
+`team_dispatch(op=generate, seat=cursor-sdk, …)` for a conductor packet, the
+lead MUST put `conductor` on the dispatch as a required skill:
+
+1. Packet `<invariants>` MUST include a line:
+   `Use the conductor skill — nest specialists; ¬ hand-code mechanical G-rows; cost tier from this skill.`
+2. Treat slug `conductor` as `required_skills` for the admit (same catalog duty as
+   Gate-2 — catalog-registered in `config/skills.yaml`).
+
+`team_dispatch(skills=[…])` is **not** mounted on cursor-sdk (`skills=` skipped
+when `backend_type=cursor_sdk`). Do **not** rely on `skills=["conductor"]` alone —
+the packet Use-line is the engagement channel. Reasoning-posture may still be
+auto-prepended by GIW for `light-bounded`; that does **not** substitute for
+`conductor`.
+
 ## Invariant
 
 ```
@@ -80,7 +102,7 @@ dominated by Sonnet 5 on every price tier, effort caps below `xhigh`).
 
 **Nested legs (always split by cost class):**
 - Mechanical implement → Composer (`omit model=`, `contract=implement`)
-- Investigate densify → usually T1 Grok; escalate T2/T3 only on open judgment forks
+- Investigate densify → usually T1 (Sonnet 5 @ `max`); escalate T2/T3 only on open judgment forks
 - Independent binder when conductor unsure → ladder (`judgment-escalation-ladder`); ¬ burn Opus to rubber-stamp its own bind
 
 **Anti-patterns (cost):**
@@ -111,6 +133,7 @@ Six-block handoff packet (`architecture-handoff-protocol`). Front-matter SHOULD
 set `packet_kind: conductor` and `role_name: conductor`.
 
 Required in `<scope>` / `<invariants>`:
+- **`Use the conductor skill — …`** (continuity-lead required-skill gate — see Audience)
 - Root thread id + charter + scoreboard URIs
 - Checkout regime (**Lane A** vs **Lane B**) — operator-bound, not inferred
 - Incident/sibling lanes (cite ≠ convert)
@@ -130,6 +153,7 @@ Opus — not the standing default).
 
 ```text
 # Default judgment conductor (T1) — prefer unless tier table says otherwise
+# Precondition: packet <invariants> already carries "Use the conductor skill — …"
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
@@ -139,12 +163,13 @@ team_dispatch(
   dispatch_thread_id={root},      # work child when G-rows live there (e.g. 7286)
   model_knobs={effort: max, thinking: "true", context: "1m"},
   lane="B",                       # when regime is Lane B — REQUIRED, not optional
+  # skills=["conductor"]  # optional document; ¬ mounted on cursor-sdk — Use-line wins
 )
 ```
 
-Preflight: `manage(busy_status)` — if the chosen lane's write lease is held
-by another dispatch, expect **queued**; record holder on the root CHECKPOINT.
-¬ nest_under an unrelated mission's lease.
+Preflight: packet Use-line present ∧ `manage(busy_status)` — if the chosen lane's
+write lease is held by another dispatch, expect **queued**; record holder on the
+root CHECKPOINT. ¬ nest_under an unrelated mission's lease.
 
 **Post-admit check (binding when Lane B):** quote `active_by_lane` / `holder_source_repo`
 from `busy_status`. Expected Lane B: `B≥1`, worktree under
@@ -205,6 +230,8 @@ re-ask when the operator already bound the answers in chat.
 
 | Bad | Good |
 |---|---|
+| Admit conductor packet without `Use the conductor skill` in `<invariants>` | Continuity-lead required-skill gate (Audience) |
+| Rely on `team_dispatch(skills=["conductor"])` alone for cursor-sdk | Packet Use-line — `skills=` is not mounted on cursor-sdk |
 | One flat `implement` "does the whole mission" | Conductor + nested contracts per G-row |
 | Page human "which remedy?" | Nest binder; `needs-attended` only for operator-only |
 | Conductor hand-codes G5 | Nest Composer |

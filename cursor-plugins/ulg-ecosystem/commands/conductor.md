@@ -27,7 +27,7 @@ Load in order (stop early if operator already pasted handles):
 4. Use the `conductor` skill (role split + **model/effort tier** + admit shape).
 
 Brief the operator in Been→Are→Going (≤6 lines). Include a one-line **recommended
-conductor tier** (T0 Composer / T1 Grok / T2 terra·sol / T3 Opus) with why.
+conductor tier** (T0 Composer / T1 Sonnet 5 / T2 terra·sol / T3 Opus) with why.
 
 ### 2 — Establishing questions (ask only unknowns)
 
@@ -66,15 +66,21 @@ Front-matter: `packet_kind: conductor`, `role_name: conductor`, checkout regime,
 bound `model` / `effort` (or "admit-time tier"), `off_tick: true` unless
 tick-enrolled.
 
-Validate: line-anchored six tags + `acceptance` in `<task_guidance>`.
+**Required skill on the dispatch (binding):** first line of `<invariants>` MUST be
+`Use the conductor skill — nest specialists; ¬ hand-code mechanical G-rows; cost
+tier from this skill.` (`team_dispatch(skills=…)` is not mounted on cursor-sdk —
+the Use-line is the engagement channel.)
 
+Validate: line-anchored six tags + `acceptance` in `<task_guidance>` + conductor
+Use-line present.
 ### 5 — Confirm → admit
 
-Show packet path + sha256 + **model tier** + admit knobs. On operator **go** /
-**admit**:
+Show packet path + sha256 + **model tier** + admit knobs + confirm conductor
+Use-line in `<invariants>`. On operator **go** / **admit**:
 
 ```text
 # Example: T1 default — substitute model/effort from Q7
+# Packet MUST already carry: Use the conductor skill — …
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
@@ -103,4 +109,5 @@ Poll hint for the worker. Lead does not steal G-rows while conductor is active
 
 Ring **7310** (`7244-ide-resolution`): Lane A finish of 7186 residual; packet
 `tmp/reviews/7310-conductor-packet.md`; sibling 7281 cite-only. Early dogfood
-admitted Opus — standing default is **T1 Grok** unless a T3 trigger fires.
+admitted Opus — standing default is **T1 `cursor/claude-sonnet-5` @ `effort=max`**
+unless a T3 trigger fires.
