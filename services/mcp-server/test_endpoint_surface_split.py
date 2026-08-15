@@ -34,6 +34,7 @@ LIFE_PRIMARY = frozenset(
         "imprint",
         "delegate",
         "notify",
+        "cse_session",
     }
 )
 CODE_EXTRA = frozenset(

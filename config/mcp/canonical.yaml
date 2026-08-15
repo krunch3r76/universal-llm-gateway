@@ -27,6 +27,7 @@ domains:
 - project_ask
 - fleet_liveness
 - operator_request
+- cse_session
 tools:
 - canonical_name: cortex_entities
   domain: cortex
@@ -38,7 +39,8 @@ tools:
   flat_call_shape:
     tool: cortex_entities
     substrate_qualified: user-vortex__cortex_entities
-  fol_descriptor: 'ProjectedRow: id always present; base columns pass through; other names
+  fol_descriptor: 'ProjectedRow: id always present; base columns pass through; other
+    names
 
     resolve via json_extract(attributes,''$.<name>'').
 
@@ -52,8 +54,9 @@ tools:
         type: string
       category:
         type: string
-        description: Genus category filter. matter → work, finance, case, opportunity. Intersects 
-          with type when both supplied; unknown category returns error with known list.
+        description: Genus category filter. matter → work, finance, case, 
+          opportunity. Intersects with type when both supplied; unknown category
+          returns error with known list.
       workflow_state:
         type: string
       limit:
@@ -64,17 +67,19 @@ tools:
         type: string
       content_hash:
         type: string
-        description: Exact-match on content_hash column. Accepts raw hex or sha256:<hex> form.
+        description: Exact-match on content_hash column. Accepts raw hex or 
+          sha256:<hex> form.
       fields:
         type: array
         items:
           type: string
-        description: Project only these fields. Base columns pass through; other names resolve from 
-          attributes JSON (e.g. applicable_agents). Collapses an N+1 attribute audit to one query.
+        description: Project only these fields. Base columns pass through; other
+          names resolve from attributes JSON (e.g. applicable_agents). Collapses
+          an N+1 attribute audit to one query.
       include_non_active:
         type: boolean
-        description: Include inactive agent_skill rows (draft, deprecated, retired, merged, NULL 
-          lifecycle).
+        description: Include inactive agent_skill rows (draft, deprecated, 
+          retired, merged, NULL lifecycle).
   skill_uri: rule:cortex
   seat_visibility:
   - mcp
@@ -107,8 +112,8 @@ tools:
     properties:
       content_hash:
         type: string
-        description: Required. Exact-match on content_hash column. Accepts raw hex or sha256:<hex> 
-          form.
+        description: Required. Exact-match on content_hash column. Accepts raw 
+          hex or sha256:<hex> form.
       type:
         type: string
         description: Optional entity type filter (e.g. "document").
@@ -147,7 +152,8 @@ tools:
     properties:
       entity_id:
         type: string
-        description: Required. Entity to project (alias-resolved, like entity_get).
+        description: Required. Entity to project (alias-resolved, like 
+          entity_get).
     required:
     - entity_id
   skill_uri: rule:cortex
@@ -197,7 +203,8 @@ tools:
   flat_call_shape:
     tool: cortex_entity_get
     substrate_qualified: user-vortex__cortex_entity_get
-  fol_descriptor: '∀ intent ∈ {"full","card"}: response shape differs by projection depth.
+  fol_descriptor: '∀ intent ∈ {"full","card"}: response shape differs by projection
+    depth.
 
     Idempotent. See agent_skill:cortex.
 
@@ -218,7 +225,8 @@ tools:
         description: 'body intent: md_read one section by heading/path'
       full_body:
         type: boolean
-        description: 'body intent: false=section manifest only; omit or true=whole body (default)'
+        description: 'body intent: false=section manifest only; omit or true=whole
+          body (default)'
       include_edges:
         type: boolean
     required:
@@ -295,8 +303,8 @@ tools:
         - full
         - card
         default: full
-        description: Post-update read-back shape. full (default) returns legacy EntityDetail echo; 
-          card returns bounded Card v0 (opt-in).
+        description: Post-update read-back shape. full (default) returns legacy 
+          EntityDetail echo; card returns bounded Card v0 (opt-in).
       name:
         type: string
       description:
@@ -305,9 +313,9 @@ tools:
         type: string
       attributes:
         type: object
-        description: Shallow top-level merge into existing attributes; omitted keys are preserved. 
-          Cannot delete attribute keys via PATCH — use explicit null only where the API documents 
-          field clearing.
+        description: Shallow top-level merge into existing attributes; omitted 
+          keys are preserved. Cannot delete attribute keys via PATCH — use 
+          explicit null only where the API documents field clearing.
     required:
     - entity_id
   skill_uri: rule:cortex
@@ -345,7 +353,8 @@ tools:
       force:
         type: boolean
         default: false
-        description: Bypass matter_genus_retype_blocked guard for deliberate remediation.
+        description: Bypass matter_genus_retype_blocked guard for deliberate 
+          remediation.
     required:
     - entity_id
     - new_type
@@ -488,7 +497,8 @@ tools:
   flat_call_shape:
     tool: cortex_supersede
     substrate_qualified: user-vortex__cortex_supersede
-  fol_descriptor: "∀ old_assertion_id: atomic close-and-create; old row superseded.\n    See agent_skill:cortex.\n"
+  fol_descriptor: "∀ old_assertion_id: atomic close-and-create; old row superseded.\n\
+    \    See agent_skill:cortex.\n"
   json_schema:
     type: object
     properties:
@@ -564,7 +574,8 @@ tools:
   flat_call_shape:
     tool: cortex_journal_read
     substrate_qualified: user-vortex__cortex_journal_read
-  fol_descriptor: 'Default limit=3 when limit omitted. Results ordered by id DESC (insertion order).
+  fol_descriptor: 'Default limit=3 when limit omitted. Results ordered by id DESC
+    (insertion order).
 
     See agent_skill:cortex.
 
@@ -592,7 +603,8 @@ tools:
   flat_call_shape:
     tool: close_stage
     substrate_qualified: user-vortex__close_stage
-  fol_descriptor: 'Open/reopen this session''s close draft; response = known-state + remaining checklist.
+  fol_descriptor: 'Open/reopen this session''s close draft; response = known-state
+    + remaining checklist.
 
     Per-agent uncommitted-draft cap enforced.
 
@@ -626,10 +638,10 @@ tools:
   flat_call_shape:
     tool: close_draft
     substrate_qualified: user-vortex__close_draft
-  fol_descriptor: 'Accumulate/revise close fields; every write bumps draft revision; big payloads via
-    path params. Prefer nested `fields`; top-level aliases for known keys (summary,
-    session_summary_md, …) are folded into fields. Commit does not accept summary —
-    draft then check then commit.
+  fol_descriptor: 'Accumulate/revise close fields; every write bumps draft revision;
+    big payloads via path params. Prefer nested `fields`; top-level aliases for known
+    keys (summary, session_summary_md, …) are folded into fields. Commit does not
+    accept summary — draft then check then commit.
 
     '
   json_schema:
@@ -641,7 +653,8 @@ tools:
         type: object
       summary:
         type: string
-        description: Flat alias folded into fields.summary (≥20 chars required before check PASS)
+        description: Flat alias folded into fields.summary (≥20 chars required 
+          before check PASS)
       session_summary_md:
         type: string
         description: Flat alias folded into fields.session_summary_md
@@ -686,7 +699,8 @@ tools:
   flat_call_shape:
     tool: close_check
     substrate_qualified: user-vortex__close_check
-  fol_descriptor: 'Full server preflight + audit; PASS stamps revision; FAIL returns remediation report.
+  fol_descriptor: 'Full server preflight + audit; PASS stamps revision; FAIL returns
+    remediation report.
 
     '
   json_schema:
@@ -713,7 +727,8 @@ tools:
   flat_call_shape:
     tool: close_commit
     substrate_qualified: user-vortex__close_commit
-  fol_descriptor: 'Atomic close of checked draft; CAS on checked revision; idempotent; returns STOP payload.
+  fol_descriptor: 'Atomic close of checked draft; CAS on checked revision; idempotent;
+    returns STOP payload.
 
     '
   json_schema:
@@ -775,12 +790,12 @@ tools:
   flat_call_shape:
     tool: cortex_session_close
     substrate_qualified: user-vortex__cortex_session_close
-  fol_descriptor: "∀ session_id ∈ str ∧ agent ∈ str ∧ (transcript_jsonl_path ∨ transcript_md) ≠ ∅:\n \
-    \ session_close(...) ⟹\n    transcript_entity_id ∈ Cortex ∧ journal_row_id ∈ ℕ ∧ content_hash ∈ sha256.\n\
-    Atomic. Mutating. Idempotent by session_id (second close → 422 session.already_closed).\nRequires
-    validate_attestation from doc_validate(session_close) PASS before atomic write.\nBEFORE close: Use
-    the `session-close-kernel` skill (+ skill `session-close-audit` for web/API).\nCursor: session-close.mdc.
-    See agent_skill:session-close-kernel.\n"
+  fol_descriptor: "∀ session_id ∈ str ∧ agent ∈ str ∧ (transcript_jsonl_path ∨ transcript_md)
+    ≠ ∅:\n  session_close(...) ⟹\n    transcript_entity_id ∈ Cortex ∧ journal_row_id
+    ∈ ℕ ∧ content_hash ∈ sha256.\nAtomic. Mutating. Idempotent by session_id (second
+    close → 422 session.already_closed).\nRequires validate_attestation from doc_validate(session_close)
+    PASS before atomic write.\nBEFORE close: Use the `session-close-kernel` skill
+    (+ skill `session-close-audit` for web/API).\nCursor: session-close.mdc. See agent_skill:session-close-kernel.\n"
   json_schema:
     type: object
     properties:
@@ -796,18 +811,19 @@ tools:
         type: string
       session_summary_md_path:
         type: string
-        description: 'Optional CORTEX_FILES_ROOT-relative path to the structural summary. When set, file
-          contents populate session_summary_md (path wins if both are supplied). Prefer for light closes
-          with quote-heavy markdown.
+        description: 'Optional CORTEX_FILES_ROOT-relative path to the structural summary.
+          When set, file contents populate session_summary_md (path wins if both are
+          supplied). Prefer for light closes with quote-heavy markdown.
 
           '
       summary:
         type: string
       promote_todos:
         type: array
-        description: 'Opt-in recon-pending todo promotions seeded from named session objectives at close.
-          Each item: {slug, name, required_skills?, source_uri?}. Malformed items (missing slug/name)
-          are reported as explicit drop diagnostics, not silently skipped.
+        description: 'Opt-in recon-pending todo promotions seeded from named session
+          objectives at close. Each item: {slug, name, required_skills?, source_uri?}.
+          Malformed items (missing slug/name) are reported as explicit drop diagnostics,
+          not silently skipped.
 
           '
         items:
@@ -828,8 +844,8 @@ tools:
           - name
       validate_attestation:
         type: array
-        description: 'Attestation tokens from doc_validate(doc_type=session_close) PASS — must include
-          session_close_validate:pass and session_id:{id}.
+        description: 'Attestation tokens from doc_validate(doc_type=session_close)
+          PASS — must include session_close_validate:pass and session_id:{id}.
 
           '
         items:
@@ -856,10 +872,11 @@ tools:
   flat_call_shape:
     tool: cortex_session_close_preflight
     substrate_qualified: user-vortex__cortex_session_close_preflight
-  fol_descriptor: "∀ session_id ∈ str ∧ agent ∈ str ∧ (transcript_jsonl_path ∨ transcript_md) ≠ ∅:\n \
-    \ session_close_preflight(...) ⟹\n    ok ∈ bool ∧ (ok ⟹ audit ∧ turn_count ∈ ℕ) ∧ (¬ok ⟹ reason ∈
-    str).\nRead-only. ¬side-effects (in-memory assembly; no file, no DB row, no audit emit).\nRun BEFORE
-    session_close to learn of a bad JSONL or blocked audit-gate first.\nSee agent_skill:session-close-audit.\n"
+  fol_descriptor: "∀ session_id ∈ str ∧ agent ∈ str ∧ (transcript_jsonl_path ∨ transcript_md)
+    ≠ ∅:\n  session_close_preflight(...) ⟹\n    ok ∈ bool ∧ (ok ⟹ audit ∧ turn_count
+    ∈ ℕ) ∧ (¬ok ⟹ reason ∈ str).\nRead-only. ¬side-effects (in-memory assembly; no
+    file, no DB row, no audit emit).\nRun BEFORE session_close to learn of a bad JSONL
+    or blocked audit-gate first.\nSee agent_skill:session-close-audit.\n"
   json_schema:
     type: object
     properties:
@@ -875,8 +892,9 @@ tools:
         type: string
       session_summary_md_path:
         type: string
-        description: 'Optional CORTEX_FILES_ROOT-relative path to the structural summary. When set, file
-          contents populate session_summary_md (path wins if both are supplied).
+        description: 'Optional CORTEX_FILES_ROOT-relative path to the structural summary.
+          When set, file contents populate session_summary_md (path wins if both are
+          supplied).
 
           '
       summary:
@@ -919,7 +937,8 @@ tools:
     properties:
       source_ref:
         type: string
-        description: Required. todo:{slug} or any source_ref. Non-todo refs return admitted=true.
+        description: Required. todo:{slug} or any source_ref. Non-todo refs 
+          return admitted=true.
     required:
     - source_ref
   skill_uri: rule:implement-todo
@@ -940,8 +959,8 @@ tools:
   flat_call_shape:
     tool: cortex_doc_template
     substrate_qualified: user-vortex__cortex_doc_template
-  fol_descriptor: 'session_close templates inline required+optional fields, 13 audit codes, transcript_depth
-    rules,
+  fol_descriptor: 'session_close templates inline required+optional fields, 13 audit
+    codes, transcript_depth rules,
 
     and hybrid pointer+digest to session-close skills; variants differ only by overlay.
 
@@ -953,8 +972,8 @@ tools:
     properties:
       doc_type:
         type: string
-        description: Template kind. Default implement_dense_spec. session_close[:web|:cursor] for 
-          close payload contract.
+        description: Template kind. Default implement_dense_spec. 
+          session_close[:web|:cursor] for close payload contract.
     required: []
   skill_uri: rule:implement-todo
   seat_visibility:
@@ -974,15 +993,17 @@ tools:
   flat_call_shape:
     tool: cortex_doc_validate
     substrate_qualified: user-vortex__cortex_doc_validate
-  fol_descriptor: 'implement_dense_spec: exactly one of text, path, or source_ref required.
+  fol_descriptor: 'implement_dense_spec: exactly one of text, path, or source_ref
+    required.
 
-    Delegates to preflight_implement_ready; evaluates skeptic evidence grounding (status skeptic_hash_missing
-    when ungrounded).
+    Delegates to preflight_implement_ready; evaluates skeptic evidence grounding (status
+    skeptic_hash_missing when ungrounded).
 
-    On pass, attestation_tokens[] additive (doc_validate:pass, template_version, spec_sha256, skill_digest).
+    On pass, attestation_tokens[] additive (doc_validate:pass, template_version, spec_sha256,
+    skill_digest).
 
-    session_close variants: delegates to session_close_preflight; pass emits session-keyed session_close_validate
-    tokens.
+    session_close variants: delegates to session_close_preflight; pass emits session-keyed
+    session_close_validate tokens.
 
     See agent_skill:implement-todo.
 
@@ -992,8 +1013,8 @@ tools:
     properties:
       doc_type:
         type: string
-        description: Doc kind. Default implement_dense_spec. session_close consumes close payload 
-          fields.
+        description: Doc kind. Default implement_dense_spec. session_close 
+          consumes close payload fields.
       text:
         type: string
         description: Inline dense-spec bytes to validate.
@@ -1061,13 +1082,10 @@ tools:
   flat_call_shape:
     tool: cortex_search
     substrate_qualified: user-vortex__cortex_search
-  fol_descriptor: "Hybrid search: FTS5 fulltext + vector similarity, CombMAX score fusion; search_mode
-    in response. total=0 ⟹ items=[] with explicit total — zero hits ≠ retrieval failure; check search_mode
-    and query bounds before inferring absence (ACI observation hygiene).
-
-    See agent_skill:cortex.
-
-    "
+  fol_descriptor: "Hybrid search: FTS5 fulltext + vector similarity, CombMAX score
+    fusion; search_mode in response. total=0 ⟹ items=[] with explicit total — zero
+    hits ≠ retrieval failure; check search_mode and query bounds before inferring
+    absence (ACI observation hygiene).\nSee agent_skill:cortex.\n"
   json_schema:
     type: object
     properties:
@@ -1201,7 +1219,8 @@ tools:
   flat_call_shape:
     tool: cortex_edge_create
     substrate_qualified: user-vortex__cortex_edge_create
-  fol_descriptor: "∀ session_id: edge_create creates typed edge; ¬idempotent on duplicate.\n    See agent_skill:cortex.\n"
+  fol_descriptor: "∀ session_id: edge_create creates typed edge; ¬idempotent on duplicate.\n\
+    \    See agent_skill:cortex.\n"
   json_schema:
     type: object
     properties:
@@ -1335,8 +1354,8 @@ tools:
   flat_call_shape:
     tool: cortex_relationship_create
     substrate_qualified: user-vortex__cortex_relationship_create
-  fol_descriptor: "∀ (source_id, target_id, type_id): creates relationship row; ¬idempotent.\n    See
-    agent_skill:cortex.\n"
+  fol_descriptor: "∀ (source_id, target_id, type_id): creates relationship row; ¬idempotent.\n\
+    \    See agent_skill:cortex.\n"
   json_schema:
     type: object
     properties:
@@ -1372,13 +1391,12 @@ tools:
   flat_call_shape:
     tool: cortex_friction
     substrate_qualified: user-vortex__cortex_friction
-  fol_descriptor: 'owner ∈ {service:,agent_skill:,ai_agent:} (bare slug -> service:); service= is the
-    back-compat alias; exactly one of owner/service required.
+  fol_descriptor: 'owner ∈ {service:,agent_skill:,ai_agent:} (bare slug -> service:);
+    service= is the back-compat alias; exactly one of owner/service required.
 
-    Protocol category (actionable): exactly one anchor variant —
-    charter{charter_root, window_index} or continuity{root_thread, cp_ordinal}
-    (see file_charter_protocol_friction). Down-casting to schema_gap is a filing
-    error once continuity is available.
+    Protocol category (actionable): exactly one anchor variant — charter{charter_root,
+    window_index} or continuity{root_thread, cp_ordinal} (see file_charter_protocol_friction).
+    Down-casting to schema_gap is a filing error once continuity is available.
 
     Used for agent self-diagnosis. See agent_skill:cortex and operational-context-*.md.
 
@@ -1433,8 +1451,8 @@ tools:
   flat_call_shape:
     tool: cortex_observe
     substrate_qualified: user-vortex__cortex_observe
-  fol_descriptor: "∃ session-local observation: observe writes suspected/believed assertion.\n    See
-    agent_skill:cortex.\n"
+  fol_descriptor: "∃ session-local observation: observe writes suspected/believed
+    assertion.\n    See agent_skill:cortex.\n"
   json_schema:
     type: object
     properties:
@@ -1467,8 +1485,8 @@ tools:
   flat_call_shape:
     tool: cortex_rj_write
     substrate_qualified: user-vortex__cortex_rj_write
-  fol_descriptor: "∀ agent: rj_write appends reflective journal entry; ¬idempotent per call.\n    See
-    agent_skill:cortex.\n"
+  fol_descriptor: "∀ agent: rj_write appends reflective journal entry; ¬idempotent
+    per call.\n    See agent_skill:cortex.\n"
   json_schema:
     type: object
     properties:
@@ -1573,7 +1591,8 @@ tools:
   flat_call_shape:
     tool: cortex_rj_link
     substrate_qualified: user-vortex__cortex_rj_link
-  fol_descriptor: "∀ entry_id: rj_link attaches cross-entry or entry→entity link.\n    See agent_skill:cortex.\n"
+  fol_descriptor: "∀ entry_id: rj_link attaches cross-entry or entry→entity link.\n\
+    \    See agent_skill:cortex.\n"
   json_schema:
     type: object
     properties:
@@ -1606,7 +1625,8 @@ tools:
   flat_call_shape:
     tool: cortex_rj_consolidate
     substrate_qualified: user-vortex__cortex_rj_consolidate
-  fol_descriptor: "∀ agent: rj_consolidate synthesizes prior reflective entries atomically.\n    See agent_skill:cortex.\n"
+  fol_descriptor: "∀ agent: rj_consolidate synthesizes prior reflective entries atomically.\n\
+    \    See agent_skill:cortex.\n"
   json_schema:
     type: object
     properties:
@@ -1667,9 +1687,9 @@ tools:
   flat_call_shape:
     tool: agent_bus_threads
     substrate_qualified: user-vortex__agent_bus_threads
-  fol_descriptor: "∀ args ∈ ThreadsArgs: threads(args) ⟹\n  result ∈ List[ThreadSummary]\n  ∧ |result|
-    ≤ args.limit (default 50 when limit and last are both unset).\nRead-only. ¬side-effects. Response
-    includes limit_applied and truncated. See agent_skill:agent_bus.\n"
+  fol_descriptor: "∀ args ∈ ThreadsArgs: threads(args) ⟹\n  result ∈ List[ThreadSummary]\n\
+    \  ∧ |result| ≤ args.limit (default 50 when limit and last are both unset).\n\
+    Read-only. ¬side-effects. Response includes limit_applied and truncated. See agent_skill:agent_bus.\n"
   json_schema:
     type: object
     properties:
@@ -1706,8 +1726,9 @@ tools:
   flat_call_shape:
     tool: agent_bus_fetch
     substrate_qualified: user-vortex__agent_bus_fetch
-  fol_descriptor: "∀ thread ∈ ℕ: fetch(thread) ⟹\n  result ∈ List[Turn]\n  ∧ args.compact = true ⟹ ∀ t
-    ∈ result: t.body is null (metadata-only projection, not truncated).\nRead-only. ¬side-effects. See agent_skill:agent_bus.\n"
+  fol_descriptor: "∀ thread ∈ ℕ: fetch(thread) ⟹\n  result ∈ List[Turn]\n  ∧ args.compact
+    = true ⟹ ∀ t ∈ result: t.body is null (metadata-only projection, not truncated).\n\
+    Read-only. ¬side-effects. See agent_skill:agent_bus.\n"
   json_schema:
     type: object
     properties:
@@ -1736,8 +1757,8 @@ tools:
   flat_call_shape:
     tool: agent_bus_get
     substrate_qualified: user-vortex__agent_bus_get
-  fol_descriptor: "∀ thread ∈ ℕ ∧ turn_number ∈ ℕ ∪ {latest}:\n  get(thread, turn_number) ⟹ Turn ∨ raises
-    NotFound.\nRead-only. ¬side-effects. See agent_skill:agent_bus.\n"
+  fol_descriptor: "∀ thread ∈ ℕ ∧ turn_number ∈ ℕ ∪ {latest}:\n  get(thread, turn_number)
+    ⟹ Turn ∨ raises NotFound.\nRead-only. ¬side-effects. See agent_skill:agent_bus.\n"
   json_schema:
     type: object
     properties:
@@ -1769,10 +1790,10 @@ tools:
   flat_call_shape:
     tool: agent_bus_reply
     substrate_qualified: user-vortex__agent_bus_reply
-  fol_descriptor: "∀ thread ∈ ℕ ∧ body ∈ str:\n  reply(thread, body, from?|from_agent?) ⟹ turn_number
-    ∈ ℕ.\nDEPRECATED 2026-06-14 — use agent_bus_send instead; removed 2026-09-01.\nfrom/from_agent
-    optional on dual mounts — server autofills from mcp_surface (life→web-anthropic,
-    code→cursor). Mutating. ¬idempotent. See agent_skill:agent_bus.\n"
+  fol_descriptor: "∀ thread ∈ ℕ ∧ body ∈ str:\n  reply(thread, body, from?|from_agent?)
+    ⟹ turn_number ∈ ℕ.\nDEPRECATED 2026-06-14 — use agent_bus_send instead; removed
+    2026-09-01.\nfrom/from_agent optional on dual mounts — server autofills from mcp_surface
+    (life→web-anthropic, code→cursor). Mutating. ¬idempotent. See agent_skill:agent_bus.\n"
   json_schema:
     type: object
     properties:
@@ -1784,17 +1805,18 @@ tools:
         type: string
       from:
         type: string
-        description: Preferred author seat bus address. Autofilled from mcp_surface when omitted on 
-          /mcp/life or /mcp/code.
+        description: Preferred author seat bus address. Autofilled from 
+          mcp_surface when omitted on /mcp/life or /mcp/code.
       from_agent:
         type: string
-        description: Permanent alias for from=. Explicit from/from_agent always wins over surface 
-          autofill.
+        description: Permanent alias for from=. Explicit from/from_agent always 
+          wins over surface autofill.
       subject:
         type: string
       supersedes_turn:
         type: integer
-        description: Database turn id to supersede structurally (sets prior turn status=superseded).
+        description: Database turn id to supersede structurally (sets prior turn
+          status=superseded).
     required:
     - thread
     - body
@@ -1818,10 +1840,10 @@ tools:
   flat_call_shape:
     tool: agent_bus_post
     substrate_qualified: user-vortex__agent_bus_post
-  fol_descriptor: "∀ body ∈ str ∧ to ∈ str:\n  post(body, to, from?|from_agent?) ⟹ thread_id ∈ ℕ ∧ turn_number
-    = 1.\nDEPRECATED 2026-06-14 — use agent_bus_send(new_slug=…) instead; removed 2026-09-01.\nfrom/from_agent
-    optional on dual mounts — server autofills from mcp_surface. Creates new thread.
-    Mutating. ¬idempotent. See agent_skill:agent_bus.\n"
+  fol_descriptor: "∀ body ∈ str ∧ to ∈ str:\n  post(body, to, from?|from_agent?) ⟹
+    thread_id ∈ ℕ ∧ turn_number = 1.\nDEPRECATED 2026-06-14 — use agent_bus_send(new_slug=…)
+    instead; removed 2026-09-01.\nfrom/from_agent optional on dual mounts — server
+    autofills from mcp_surface. Creates new thread. Mutating. ¬idempotent. See agent_skill:agent_bus.\n"
   json_schema:
     type: object
     properties:
@@ -1829,11 +1851,12 @@ tools:
         type: string
       from:
         type: string
-        description: Preferred author seat bus address. Autofilled from mcp_surface when omitted on 
-          /mcp/life or /mcp/code.
+        description: Preferred author seat bus address. Autofilled from 
+          mcp_surface when omitted on /mcp/life or /mcp/code.
       from_agent:
         type: string
-        description: Permanent alias for from=. Legacy aliases (claude-web, …) still resolve.
+        description: Permanent alias for from=. Legacy aliases (claude-web, …) 
+          still resolve.
       to:
         type: string
       subject:
@@ -1861,24 +1884,26 @@ tools:
   flat_call_shape:
     tool: agent_bus_send
     substrate_qualified: user-vortex__agent_bus_send
-  fol_descriptor: "∀ args: (new_slug ∈ args XOR thread ∈ args) ∧ to ∈ args\n  ⟹ TurnSendCreated ∧ send_path
-    ∈ {new_thread, continue}.\nfrom/from_agent optional on dual mounts — server autofills from mcp_surface.\n\
-    new_slug ∈ args ∧ slug_collision ⟹ 409 slug_exists.\n¬(new_slug ∈ args XOR thread ∈ args) ⟹ 400 send_xor_violation.\n\
-    sidecar_content ∈ args ⟹ server writes cortex://notes/system/threads/<thread>-<slug>.md\n  before
-    turn insert ∧ response carries sidecar_uri + sidecar_sha256.\nsidecar_write_failed ⟹ no turn row (thread_id
-    echoed when newly created).\nMutating. ¬idempotent. Replaces post + reply (post/reply remove 2026-09-01).\n\
-    parent_thread and lane_role are optional birth-binding fields and must be supplied together.\n\
-    See agent_skill:agent_bus.\n"
+  fol_descriptor: "∀ args: (new_slug ∈ args XOR thread ∈ args) ∧ to ∈ args\n  ⟹ TurnSendCreated
+    ∧ send_path ∈ {new_thread, continue}.\nfrom/from_agent optional on dual mounts
+    — server autofills from mcp_surface.\nnew_slug ∈ args ∧ slug_collision ⟹ 409 slug_exists.\n\
+    ¬(new_slug ∈ args XOR thread ∈ args) ⟹ 400 send_xor_violation.\nsidecar_content
+    ∈ args ⟹ server writes cortex://notes/system/threads/<thread>-<slug>.md\n  before
+    turn insert ∧ response carries sidecar_uri + sidecar_sha256.\nsidecar_write_failed
+    ⟹ no turn row (thread_id echoed when newly created).\nMutating. ¬idempotent. Replaces
+    post + reply (post/reply remove 2026-09-01).\nparent_thread and lane_role are
+    optional birth-binding fields and must be supplied together.\nSee agent_skill:agent_bus.\n"
   json_schema:
     type: object
     properties:
       new_slug:
         type: string
-        description: Human label for NEW thread. Mutually exclusive with thread. Slug uniqueness 
-          enforced (409 on collision).
+        description: Human label for NEW thread. Mutually exclusive with thread.
+          Slug uniqueness enforced (409 on collision).
       thread:
         type: string
-        description: ID of EXISTING thread to continue. Mutually exclusive with new_slug.
+        description: ID of EXISTING thread to continue. Mutually exclusive with 
+          new_slug.
       to:
         type: string
       subject:
@@ -1887,14 +1912,16 @@ tools:
         type: string
       from:
         type: string
-        description: Preferred author seat bus address. Autofilled from mcp_surface when omitted on 
-          /mcp/life or /mcp/code.
+        description: Preferred author seat bus address. Autofilled from 
+          mcp_surface when omitted on /mcp/life or /mcp/code.
       from_agent:
         type: string
-        description: Permanent alias for from=. No default when surface is unknown.
+        description: Permanent alias for from=. No default when surface is 
+          unknown.
       summary:
         type: string
-        description: Thread summary (new_slug path only; ignored on continue path).
+        description: Thread summary (new_slug path only; ignored on continue 
+          path).
       tags:
         type: array
         items:
@@ -1904,7 +1931,8 @@ tools:
         description: Bus lifecycle (new_slug path only; 400 on continue path).
       after_turn:
         type: integer
-        description: Concurrency guard. 0 = skip (default). Must be 0 or absent on new_slug path.
+        description: Concurrency guard. 0 = skip (default). Must be 0 or absent 
+          on new_slug path.
       status:
         type: string
       mark_read:
@@ -1917,21 +1945,24 @@ tools:
       sidecar_content:
         type: string
         description: Long-form markdown written to 
-          cortex://notes/system/threads/<thread_id>-<slug>.md before turn insert. Cap 256KB. Server 
-          appends trailing Sidecar pointer to body.
+          cortex://notes/system/threads/<thread_id>-<slug>.md before turn 
+          insert. Cap 256KB. Server appends trailing Sidecar pointer to body.
       sidecar_slug:
         type: string
-        description: Optional filename slug (defaults to slugify(subject)). Used as 
-          <thread_id>-<sidecar_slug>.md.
+        description: Optional filename slug (defaults to slugify(subject)). Used
+          as <thread_id>-<sidecar_slug>.md.
       supersedes_turn:
         type: integer
-        description: Database turn id to supersede structurally (continue path only; sets prior turn status=superseded).
+        description: Database turn id to supersede structurally (continue path 
+          only; sets prior turn status=superseded).
       parent_thread:
         type: string
-        description: Optional parent lane for atomic birth binding; must be paired with lane_role.
+        description: Optional parent lane for atomic birth binding; must be 
+          paired with lane_role.
       lane_role:
         type: string
-        description: Optional lane role for atomic birth binding; must be paired with parent_thread.
+        description: Optional lane role for atomic birth binding; must be paired
+          with parent_thread.
     required:
     - to
     - subject
@@ -1958,7 +1989,19 @@ tools:
   flat_call_shape:
     tool: agent_bus_request
     substrate_qualified: user-vortex__agent_bus_request
-  fol_descriptor: "∀ args: (new_slug ∈ args XOR thread ∈ args) ∧ to='cursor' ∧ subject ∧ body\n  ⟹ TurnSendCreated-shaped + handler_status ∈ {auto-admit-armed, no-auto-handler} + poll_hint.\nInjects lane:cursor-auto (dedupe). Arm predicate = live Auto handler heartbeat — ¬ turn-write alone (F1).\nDegrade keeps lane:cursor-auto; ¬ dual-tag lane:life-to-code.\nparent_thread + lane_role are optional birth-binding fields and must be supplied together.\ndesired_model/desired_effort/contract/require_attended? are structured hints; Auto reports requested vs actual.\ncontract ∈ answer|confer|investigate|implement|verify|execute|propagate|seed|recon; execute=one tier-M op; propagate=operator restart (ledger+drain-gated sync_restart); seed=closable work item (architecture may be open).\nimplement|investigate DIRECTIVE body requires vision: else admit blocks vision_field_missing (pre-model). See agent_skill:cdp-operator-proxy.\nrequire_attended=true (wire or DIRECTIVE body OR) ⇒ terminal status:needs-attended reason=operator_require_attended.\nLife-callable (mcp_claude). Mutating.\n"
+  fol_descriptor: "∀ args: (new_slug ∈ args XOR thread ∈ args) ∧ to='cursor' ∧ subject
+    ∧ body\n  ⟹ TurnSendCreated-shaped + handler_status ∈ {auto-admit-armed, no-auto-handler}
+    + poll_hint.\nInjects lane:cursor-auto (dedupe). Arm predicate = live Auto handler
+    heartbeat — ¬ turn-write alone (F1).\nDegrade keeps lane:cursor-auto; ¬ dual-tag
+    lane:life-to-code.\nparent_thread + lane_role are optional birth-binding fields
+    and must be supplied together.\ndesired_model/desired_effort/contract/require_attended?
+    are structured hints; Auto reports requested vs actual.\ncontract ∈ answer|confer|investigate|implement|verify|execute|propagate|seed|recon;
+    execute=one tier-M op; propagate=operator restart (ledger+drain-gated sync_restart);
+    seed=closable work item (architecture may be open).\nimplement|investigate DIRECTIVE
+    body requires vision: else admit blocks vision_field_missing (pre-model). See
+    agent_skill:cdp-operator-proxy.\nrequire_attended=true (wire or DIRECTIVE body
+    OR) ⇒ terminal status:needs-attended reason=operator_require_attended.\nLife-callable
+    (mcp_claude). Mutating.\n"
   json_schema:
     type: object
     properties:
@@ -1967,7 +2010,8 @@ tools:
         description: Human label for NEW thread. Mutually exclusive with thread.
       thread:
         type: string
-        description: ID of EXISTING thread to continue. Mutually exclusive with new_slug.
+        description: ID of EXISTING thread to continue. Mutually exclusive with 
+          new_slug.
       to:
         type: string
         description: v0 fixed to cursor.
@@ -1978,7 +2022,8 @@ tools:
         type: string
       from:
         type: string
-        description: Preferred author seat. Autofilled web-anthropic on /mcp/life.
+        description: Preferred author seat. Autofilled web-anthropic on 
+          /mcp/life.
       from_agent:
         type: string
         description: Permanent alias for from=.
@@ -1998,25 +2043,34 @@ tools:
         description: low | medium | high | max (default medium).
       escalation:
         type: string
-        description: Optional CDP escalation leg — cdp/opus-5 | cdp/fable only; absent/empty ⇒ no CDP leg; orthogonal to desired_model.
+        description: Optional CDP escalation leg — cdp/opus-5 | cdp/fable only; 
+          absent/empty ⇒ no CDP leg; orthogonal to desired_model.
       cse_chat_url:
         type: string
-        description: Optional CSE chat_url for identity capture on operator-proxy lanes.
+        description: Optional CSE chat_url for identity capture on 
+          operator-proxy lanes.
       cse_registration_id:
         type: string
-        description: Optional caller CSE registration id; server bind is authoritative when omitted.
+        description: Optional caller CSE registration id; server bind is 
+          authoritative when omitted.
       parent_thread:
         type: string
-        description: Optional parent lane for atomic new-thread binding; must be paired with lane_role.
+        description: Optional parent lane for atomic new-thread binding; must be
+          paired with lane_role.
       lane_role:
         type: string
-        description: Optional lane role for atomic new-thread binding; must be paired with parent_thread.
+        description: Optional lane role for atomic new-thread binding; must be 
+          paired with parent_thread.
       contract:
         type: string
-        description: answer | confer | investigate | implement | verify | execute | propagate | seed | recon (default answer).
+        description: answer | confer | investigate | implement | verify | 
+          execute | propagate | seed | recon (default answer).
       require_attended:
         type: boolean
-        description: When true, refuse unattended nested dispatch and in-seat Auto substitute; terminal status:needs-attended with reason=operator_require_attended. ORs with DIRECTIVE body require_attended or executor_bind attended.
+        description: When true, refuse unattended nested dispatch and in-seat 
+          Auto substitute; terminal status:needs-attended with 
+          reason=operator_require_attended. ORs with DIRECTIVE body 
+          require_attended or executor_bind attended.
         default: false
     required:
     - subject
@@ -2043,7 +2097,13 @@ tools:
   flat_call_shape:
     tool: cursor_request
     substrate_qualified: user-vortex__cursor_request
-  fol_descriptor: "∀ args: (new_slug ∈ args XOR thread ∈ args) ∧ subject ∧ body\n  ⟹ TurnSendCreated-shaped + handler_status ∈ {auto-admit-armed, no-auto-handler} + poll_hint.\nDedicated narrow registration of agent_bus request — recipient to=cursor fixed; ¬ exposed as caller param.\nInjects lane:cursor-auto (dedupe). Arm predicate = live Auto handler heartbeat.\ncontract ∈ answer|confer|investigate|implement|verify|execute|propagate|seed|recon. Mutating. Life+code callable.\nimplement|investigate DIRECTIVE body requires vision: else admit blocks vision_field_missing (pre-model). See agent_skill:cdp-operator-proxy.\n"
+  fol_descriptor: "∀ args: (new_slug ∈ args XOR thread ∈ args) ∧ subject ∧ body\n\
+    \  ⟹ TurnSendCreated-shaped + handler_status ∈ {auto-admit-armed, no-auto-handler}
+    + poll_hint.\nDedicated narrow registration of agent_bus request — recipient to=cursor
+    fixed; ¬ exposed as caller param.\nInjects lane:cursor-auto (dedupe). Arm predicate
+    = live Auto handler heartbeat.\ncontract ∈ answer|confer|investigate|implement|verify|execute|propagate|seed|recon.
+    Mutating. Life+code callable.\nimplement|investigate DIRECTIVE body requires vision:
+    else admit blocks vision_field_missing (pre-model). See agent_skill:cdp-operator-proxy.\n"
   json_schema:
     type: object
     properties:
@@ -2052,14 +2112,16 @@ tools:
         description: Human label for NEW thread. Mutually exclusive with thread.
       thread:
         type: string
-        description: ID of EXISTING thread to continue. Mutually exclusive with new_slug.
+        description: ID of EXISTING thread to continue. Mutually exclusive with 
+          new_slug.
       subject:
         type: string
       body:
         type: string
       from:
         type: string
-        description: Preferred author seat. Autofilled web-anthropic on /mcp/life.
+        description: Preferred author seat. Autofilled web-anthropic on 
+          /mcp/life.
       from_agent:
         type: string
         description: Permanent alias for from=.
@@ -2079,19 +2141,25 @@ tools:
         description: low | medium | high | max (default medium).
       escalation:
         type: string
-        description: Optional CDP escalation leg — cdp/opus-5 | cdp/fable only; absent/empty ⇒ no CDP leg; orthogonal to desired_model.
+        description: Optional CDP escalation leg — cdp/opus-5 | cdp/fable only; 
+          absent/empty ⇒ no CDP leg; orthogonal to desired_model.
       cse_chat_url:
         type: string
-        description: Optional CSE chat_url for identity capture on operator-proxy lanes.
+        description: Optional CSE chat_url for identity capture on 
+          operator-proxy lanes.
       cse_registration_id:
         type: string
-        description: Optional caller CSE registration id; server bind is authoritative when omitted.
+        description: Optional caller CSE registration id; server bind is 
+          authoritative when omitted.
       contract:
         type: string
-        description: answer | confer | investigate | implement | verify | execute | propagate | seed | recon (default answer).
+        description: answer | confer | investigate | implement | verify | 
+          execute | propagate | seed | recon (default answer).
       require_attended:
         type: boolean
-        description: When true, refuse unattended nested dispatch and in-seat Auto substitute; terminal status:needs-attended with reason=operator_require_attended.
+        description: When true, refuse unattended nested dispatch and in-seat 
+          Auto substitute; terminal status:needs-attended with 
+          reason=operator_require_attended.
         default: false
       after_turn:
         type: integer
@@ -2102,11 +2170,12 @@ tools:
         description: Standing ULG so-what title.
       parent_thread:
         type: string
-        description: Parent thread this lane is born under. Both-or-neither with lane_role.
+        description: Parent thread this lane is born under. Both-or-neither with
+          lane_role.
       lane_role:
         type: string
-        description: Role of this lane under its parent — operator_proxy for a mission.
-          Both-or-neither with parent_thread.
+        description: Role of this lane under its parent — operator_proxy for a 
+          mission. Both-or-neither with parent_thread.
       request_id:
         type: string
         description: Caller idempotency key; correlates admit and closeout.
@@ -2135,9 +2204,9 @@ tools:
   flat_call_shape:
     tool: operator_request
     substrate_qualified: user-vortex__operator_request
-  fol_descriptor: "∀ args: (new_slug ∈ args XOR thread ∈ args) ∧ subject ∧ body\n  ⟹
-    TurnSendCreated-shaped + handler_status ∈ {auto-admit-armed, no-auto-handler} +
-    poll_hint.\nRecipient-neutral approval-gated operator request lane — the operator
+  fol_descriptor: "∀ args: (new_slug ∈ args XOR thread ∈ args) ∧ subject ∧ body\n\
+    \  ⟹ TurnSendCreated-shaped + handler_status ∈ {auto-admit-armed, no-auto-handler}
+    + poll_hint.\nRecipient-neutral approval-gated operator request lane — the operator
     is a role, not a model.\nparent_thread + lane_role=operator_proxy (both-or-neither)
     births a parented mission lane.\nInjects lane:cursor-auto (dedupe). Arm predicate
     = live Auto handler heartbeat.\ncontract ∈ answer|confer|investigate|implement|verify|execute|propagate|seed|recon.
@@ -2151,14 +2220,16 @@ tools:
         description: Human label for NEW thread. Mutually exclusive with thread.
       thread:
         type: string
-        description: ID of EXISTING thread to continue. Mutually exclusive with new_slug.
+        description: ID of EXISTING thread to continue. Mutually exclusive with 
+          new_slug.
       subject:
         type: string
       body:
         type: string
       from:
         type: string
-        description: Preferred author seat. Autofilled web-anthropic on /mcp/life.
+        description: Preferred author seat. Autofilled web-anthropic on 
+          /mcp/life.
       from_agent:
         type: string
         description: Permanent alias for from=.
@@ -2178,16 +2249,17 @@ tools:
         description: low | medium | high | max (default medium).
       escalation:
         type: string
-        description: Optional CDP escalation leg — cdp/opus-5 | cdp/fable only; absent/empty
-          ⇒ no CDP leg; orthogonal to desired_model.
+        description: Optional CDP escalation leg — cdp/opus-5 | cdp/fable only; 
+          absent/empty ⇒ no CDP leg; orthogonal to desired_model.
       contract:
         type: string
-        description: answer | confer | investigate | implement | verify | execute |
-          propagate | seed | recon (default answer).
+        description: answer | confer | investigate | implement | verify | 
+          execute | propagate | seed | recon (default answer).
       require_attended:
         type: boolean
-        description: When true, refuse unattended nested dispatch and in-seat Auto
-          substitute; terminal status:needs-attended with reason=operator_require_attended.
+        description: When true, refuse unattended nested dispatch and in-seat 
+          Auto substitute; terminal status:needs-attended with 
+          reason=operator_require_attended.
         default: false
       after_turn:
         type: integer
@@ -2198,11 +2270,12 @@ tools:
         description: Standing ULG so-what title.
       parent_thread:
         type: string
-        description: Parent thread this lane is born under. Both-or-neither with lane_role.
+        description: Parent thread this lane is born under. Both-or-neither with
+          lane_role.
       lane_role:
         type: string
-        description: Role of this lane under its parent — operator_proxy for a mission.
-          Both-or-neither with parent_thread.
+        description: Role of this lane under its parent — operator_proxy for a 
+          mission. Both-or-neither with parent_thread.
       request_id:
         type: string
         description: Caller idempotency key; correlates admit and closeout.
@@ -2231,7 +2304,10 @@ tools:
   flat_call_shape:
     tool: agent_bus_lane_bind
     substrate_qualified: user-vortex__agent_bus_lane_bind
-  fol_descriptor: "∀ args: thread ∈ args ∧ parent_thread ∈ args ∧ lane_role ∈ args\n  ⟹ append-only lane parentage association; current = MAX(id).\nRoles ∈ sub_mission|hop|spillover|dispatch|side|parallel; root is not a lane role.\nDistinct from branch_associate (git). Mutating; life+code callable; ¬ a contract token.\n"
+  fol_descriptor: "∀ args: thread ∈ args ∧ parent_thread ∈ args ∧ lane_role ∈ args\n\
+    \  ⟹ append-only lane parentage association; current = MAX(id).\nRoles ∈ sub_mission|hop|spillover|dispatch|side|parallel;
+    root is not a lane role.\nDistinct from branch_associate (git). Mutating; life+code
+    callable; ¬ a contract token.\n"
   json_schema:
     type: object
     properties:
@@ -2277,7 +2353,9 @@ tools:
   flat_call_shape:
     tool: agent_bus_lane_current
     substrate_qualified: user-vortex__agent_bus_lane_current
-  fol_descriptor: "∀ args: thread ∈ args ⟹ derived current lane parentage from append-only association history.\nReturns state=none when the thread has no lane association. Read-only; life+code callable; ¬ a contract token.\n"
+  fol_descriptor: "∀ args: thread ∈ args ⟹ derived current lane parentage from append-only
+    association history.\nReturns state=none when the thread has no lane association.
+    Read-only; life+code callable; ¬ a contract token.\n"
   json_schema:
     type: object
     properties:
@@ -2303,28 +2381,40 @@ tools:
   flat_call_shape:
     tool: agent_bus_hop
     substrate_qualified: user-vortex__agent_bus_hop
-  fol_descriptor: "∀ args: thread ∈ args ∧ reason ∈ args\n  ⟹ TurnSendCreated-shaped + handler_status ∈ {auto-admit-armed, no-auto-handler} + continuity_hop=true + poll_hint + successor.\nAuthors TYPE: CONTINUITY_HANDOFF via hop_handoff (same author as cadence). Enqueues EnqueueBody.continuity_hop=true — first producer of that wire field.\n¬ a contract token (hop ∉ CANONICAL_CONTRACTS). Reports armed, never status:done; successor handle is successor_birth_id on the structural hop body (MCP return is the predecessor's receipt).\nHop-before-healthy degrades (no-auto-handler) rather than arming. Life-callable (mcp_claude). Mutating.\n"
+  fol_descriptor: "∀ args: thread ∈ args ∧ reason ∈ args\n  ⟹ TurnSendCreated-shaped
+    + handler_status ∈ {auto-admit-armed, no-auto-handler} + continuity_hop=true +
+    poll_hint + successor.\nAuthors TYPE: CONTINUITY_HANDOFF via hop_handoff (same
+    author as cadence). Enqueues EnqueueBody.continuity_hop=true — first producer
+    of that wire field.\n¬ a contract token (hop ∉ CANONICAL_CONTRACTS). Reports armed,
+    never status:done; successor handle is successor_birth_id on the structural hop
+    body (MCP return is the predecessor's receipt).\nHop-before-healthy degrades (no-auto-handler)
+    rather than arming. Life-callable (mcp_claude). Mutating.\n"
   json_schema:
     type: object
     properties:
       thread:
         type: string
-        description: Existing private-lane thread to hop. Required — hop never mints a new thread.
+        description: Existing private-lane thread to hop. Required — hop never 
+          mints a new thread.
       reason:
         type: string
-        description: Trigger line written into the CONTINUITY_HANDOFF body (why this hop fired).
+        description: Trigger line written into the CONTINUITY_HANDOFF body (why 
+          this hop fired).
       from:
         type: string
-        description: Preferred author seat. Autofilled web-anthropic on /mcp/life.
+        description: Preferred author seat. Autofilled web-anthropic on 
+          /mcp/life.
       from_agent:
         type: string
         description: Permanent alias for from=.
       cse_chat_url:
         type: string
-        description: Predecessor CSE chat_url (you_are identity for the successor).
+        description: Predecessor CSE chat_url (you_are identity for the 
+          successor).
       cse_registration_id:
         type: string
-        description: Predecessor registration id (superseded_registration_id on the body).
+        description: Predecessor registration id (superseded_registration_id on 
+          the body).
       desired_model:
         type: string
         description: Optional Auto hint (default auto).
@@ -2340,7 +2430,8 @@ tools:
         default: 0
       subject:
         type: string
-        description: Optional turn subject; default CONTINUITY HANDOFF — hop (thread {id}).
+        description: Optional turn subject; default CONTINUITY HANDOFF — hop 
+          (thread {id}).
     required:
     - thread
     - reason
@@ -2361,13 +2452,18 @@ tools:
   flat_call_shape:
     tool: agent_bus_substrate_graph_write
     substrate_qualified: user-vortex__agent_bus_substrate_graph_write
-  fol_descriptor: "∀ args: entity_id ∈ args ∧ claim ∈ args\n  ⟹ cortex assert via substrate_graph_write lib (assertion_id + entity_id stamped).\nRequires entity_id + claim (422 graph_write_entity_required | graph_write_claim_required).\n¬ mint on 404 · ¬ bus turn · ¬ hop/request fields · ¬ a contract token. Life-callable (mcp_claude). Mutating.\n"
+  fol_descriptor: "∀ args: entity_id ∈ args ∧ claim ∈ args\n  ⟹ cortex assert via
+    substrate_graph_write lib (assertion_id + entity_id stamped).\nRequires entity_id
+    + claim (422 graph_write_entity_required | graph_write_claim_required).\n¬ mint
+    on 404 · ¬ bus turn · ¬ hop/request fields · ¬ a contract token. Life-callable
+    (mcp_claude). Mutating.\n"
   json_schema:
     type: object
     properties:
       entity_id:
         type: string
-        description: Target cortex entity for the assert (e.g. todo:slug). Required.
+        description: Target cortex entity for the assert (e.g. todo:slug). 
+          Required.
       claim:
         type: string
         description: Assertion claim text. Required.
@@ -2405,13 +2501,18 @@ tools:
   flat_call_shape:
     tool: agent_bus_substrate_friction_file
     substrate_qualified: user-vortex__agent_bus_substrate_friction_file
-  fol_descriptor: "∀ args: (owner ∈ args ∨ service ∈ args) ∧ (note ∈ args ∨ claim ∈ args)\n  ⟹ cortex friction via substrate_friction_file lib (assertion_id + owner stamped).\nRequires owner (service= alias) + note (claim= alias) (422 friction_file_owner_required | friction_file_note_required).\n¬ mint on 404 · ¬ bus turn · ¬ hop/request fields · ¬ a contract token. Life-callable (mcp_claude). Mutating.\n"
+  fol_descriptor: "∀ args: (owner ∈ args ∨ service ∈ args) ∧ (note ∈ args ∨ claim
+    ∈ args)\n  ⟹ cortex friction via substrate_friction_file lib (assertion_id + owner
+    stamped).\nRequires owner (service= alias) + note (claim= alias) (422 friction_file_owner_required
+    | friction_file_note_required).\n¬ mint on 404 · ¬ bus turn · ¬ hop/request fields
+    · ¬ a contract token. Life-callable (mcp_claude). Mutating.\n"
   json_schema:
     type: object
     properties:
       owner:
         type: string
-        description: "Target owner entity (service:/agent_skill:/ai_agent: or bare slug -> service:). Required unless service= is set."
+        description: "Target owner entity (service:/agent_skill:/ai_agent: or bare
+          slug -> service:). Required unless service= is set."
       service:
         type: string
         description: Alias for owner=.
@@ -2456,19 +2557,27 @@ tools:
   flat_call_shape:
     tool: agent_bus_substrate_entity_mint
     substrate_qualified: user-vortex__agent_bus_substrate_entity_mint
-  fol_descriptor: "∀ args: (id ∈ args ∨ entity_id ∈ args) ∧ (type ∈ args ∨ entity_type ∈ args) ∧ (name ∈ args ∨ title ∈ args)\n  ⟹ cortex entity_create via substrate_entity_mint lib (entity_id stamped from response).\nRequires id (entity_id= alias) + type (entity_type= alias) + name (title= alias).\nForwards every dispatch-consumed field verbatim; retention / Option-C traits / top-level density_triage → named 422.\n¬ rich-seed · ¬ bus turn · ¬ hop/request fields · ¬ a contract token. Life-callable (mcp_claude). Mutating.\n"
+  fol_descriptor: "∀ args: (id ∈ args ∨ entity_id ∈ args) ∧ (type ∈ args ∨ entity_type
+    ∈ args) ∧ (name ∈ args ∨ title ∈ args)\n  ⟹ cortex entity_create via substrate_entity_mint
+    lib (entity_id stamped from response).\nRequires id (entity_id= alias) + type
+    (entity_type= alias) + name (title= alias).\nForwards every dispatch-consumed
+    field verbatim; retention / Option-C traits / top-level density_triage → named
+    422.\n¬ rich-seed · ¬ bus turn · ¬ hop/request fields · ¬ a contract token. Life-callable
+    (mcp_claude). Mutating.\n"
   json_schema:
     type: object
     properties:
       id:
         type: string
-        description: "Canonical entity id (e.g. service:cursor-auto). Required unless entity_id= is set."
+        description: "Canonical entity id (e.g. service:cursor-auto). Required unless
+          entity_id= is set."
       entity_id:
         type: string
         description: Alias for id=.
       type:
         type: string
-        description: Entity type (service, todo, …). Required unless entity_type= is set.
+        description: Entity type (service, todo, …). Required unless 
+          entity_type= is set.
       entity_type:
         type: string
         description: Alias for type=.
@@ -2522,10 +2631,11 @@ tools:
   flat_call_shape:
     tool: agent_bus_triage
     substrate_qualified: user-vortex__agent_bus_triage
-  fol_descriptor: "∀ agent, older_than: triage(agent, older_than, dry_run=true) ⟹\n  {candidates, total_candidates,
-    capped, confirm_token, expires_at}.\ntriage(dry_run=false, confirm_token) ⟹ mutate bound set only.\n\
-    Floors: mark_read ≥24h; close ≥7d. Cap 50 threads/call.\nCandidate threads: all unread to-agent alias-resolve
-    to caller; exclude to:all, other-recipient unread, blocked, pending/admitted.\n409 confirm_token_invalid|expired|filter_mismatch
+  fol_descriptor: "∀ agent, older_than: triage(agent, older_than, dry_run=true) ⟹\n\
+    \  {candidates, total_candidates, capped, confirm_token, expires_at}.\ntriage(dry_run=false,
+    confirm_token) ⟹ mutate bound set only.\nFloors: mark_read ≥24h; close ≥7d. Cap
+    50 threads/call.\nCandidate threads: all unread to-agent alias-resolve to caller;
+    exclude to:all, other-recipient unread, blocked, pending/admitted.\n409 confirm_token_invalid|expired|filter_mismatch
     on bad token.\nagent_bus only — ¬ mirrored on agent_bus_read. See agent_skill:agent_bus.\n"
   json_schema:
     type: object
@@ -2535,8 +2645,8 @@ tools:
         description: Calling agent seat (inbox owner).
       older_than:
         type: string
-        description: Required. ISO8601 UTC or Nd/Nh shorthand — threads with last unread activity at
-          or before (now − older_than) qualify.
+        description: Required. ISO8601 UTC or Nd/Nh shorthand — threads with 
+          last unread activity at or before (now − older_than) qualify.
       status:
         type: string
         enum:
@@ -2555,7 +2665,8 @@ tools:
         default: true
       confirm_token:
         type: string
-        description: Required when dry_run=false — single-use token from preview.
+        description: Required when dry_run=false — single-use token from 
+          preview.
     required:
     - from_agent
     - older_than
@@ -2656,14 +2767,14 @@ tools:
   flat_call_shape:
     tool: agent_bus_read_fetch_unread
     substrate_qualified: user-vortex__agent_bus_read_fetch_unread
-  fol_descriptor: 'fetch_unread(to) ∧ ¬thread ⟹ result ∈ UnreadThreadToc (enriched rows: thread, slug,
-    unread_count, latest_turn_number, last_subject, last_activity_at; default 14d window, limit 50; unwindowed
-    totals).
+  fol_descriptor: 'fetch_unread(to) ∧ ¬thread ⟹ result ∈ UnreadThreadToc (enriched
+    rows: thread, slug, unread_count, latest_turn_number, last_subject, last_activity_at;
+    default 14d window, limit 50; unwindowed totals).
 
     fetch_unread(thread) ⟹ result ∈ List[Turn] (no count cap).
 
-    mark_read=true marks matching unread turns read (read-cursor side effect). Projection of agent_bus.
-    See agent_skill:agent_bus.
+    mark_read=true marks matching unread turns read (read-cursor side effect). Projection
+    of agent_bus. See agent_skill:agent_bus.
 
     '
   json_schema:
@@ -2703,8 +2814,8 @@ tools:
   flat_call_shape:
     tool: agent_bus_read_get
     substrate_qualified: user-vortex__agent_bus_read_get
-  fol_descriptor: '∀ thread ∈ ℕ ∧ turn_number ∈ ℕ ∪ {latest}: get(thread, turn_number) ⟹ Turn ∨ raises
-    NotFound.
+  fol_descriptor: '∀ thread ∈ ℕ ∧ turn_number ∈ ℕ ∪ {latest}: get(thread, turn_number)
+    ⟹ Turn ∨ raises NotFound.
 
     Read-only. ¬side-effects. Read-only projection of agent_bus. See agent_skill:agent_bus.
 
@@ -2740,7 +2851,8 @@ tools:
   flat_call_shape:
     tool: agent_bus_read_wait
     substrate_qualified: user-vortex__agent_bus_read_wait
-  fol_descriptor: '∀ thread ∈ ℕ: wait(thread) ⟹ server-side short-block snapshot ∨ completion.
+  fol_descriptor: '∀ thread ∈ ℕ: wait(thread) ⟹ server-side short-block snapshot ∨
+    completion.
 
     Read-only. ¬content-mutation (server-side block only). See agent_skill:agent_bus.
 
@@ -2777,7 +2889,13 @@ tools:
   flat_call_shape:
     tool: fs_read
     substrate_qualified: user-vortex__fs_read
-  fol_descriptor: "∀ path ∈ str: fs(read, …) routes by sandbox∨Share URI.\nOptional offset/limit window (ACI): response includes line_range + total_lines + truncated; returned=0 carries observation explaining empty window ≠ missing file.\nEmpty decoded text carries observation (success, zero content).\nthread (optional): agent-bus thread id. When set with sandbox=\"workspaces\", the operation is rooted in the worktree of that lane's current branch instead of the shared checkout; refuses when the lane has no branch association.\nSee agent_skill:fs.\n"
+  fol_descriptor: "∀ path ∈ str: fs(read, …) routes by sandbox∨Share URI.\nOptional
+    offset/limit window (ACI): response includes line_range + total_lines + truncated;
+    returned=0 carries observation explaining empty window ≠ missing file.\nEmpty
+    decoded text carries observation (success, zero content).\nthread (optional):
+    agent-bus thread id. When set with sandbox=\"workspaces\", the operation is rooted
+    in the worktree of that lane's current branch instead of the shared checkout;
+    refuses when the lane has no branch association.\nSee agent_skill:fs.\n"
   json_schema:
     type: object
     properties:
@@ -2790,7 +2908,8 @@ tools:
         type: string
       thread:
         type: string
-        description: agent-bus thread id; with sandbox=workspaces roots fs in lane worktree
+        description: agent-bus thread id; with sandbox=workspaces roots fs in 
+          lane worktree
     required:
     - path
   skill_uri: rule:fs
@@ -2810,9 +2929,10 @@ tools:
   flat_call_shape:
     tool: fs_write
     substrate_qualified: user-vortex__fs_write
-  fol_descriptor: "∀ path ∈ str: fs(write, …) routes by sandbox∨Share URI.\nsandbox optional when path
-    carries Share URI; on /mcp/life blank sandbox + relative path defaults to cortex. On /mcp/code bare
-    paths still need sandbox or Share URI. See agent_skill:fs.\n"
+  fol_descriptor: "∀ path ∈ str: fs(write, …) routes by sandbox∨Share URI.\nsandbox
+    optional when path carries Share URI; on /mcp/life blank sandbox + relative path
+    defaults to cortex. On /mcp/code bare paths still need sandbox or Share URI. See
+    agent_skill:fs.\n"
   json_schema:
     type: object
     properties:
@@ -2842,7 +2962,9 @@ tools:
   flat_call_shape:
     tool: fs_list
     substrate_qualified: user-vortex__fs_list
-  fol_descriptor: "∀ path ∈ str: fs(list, …) routes by sandbox∨Share URI.\nZero files: status ∈ {path_not_found, empty_directory, ok} + observation — empty list ≠ silent success (ACI empty-success hygiene).\nSee agent_skill:fs.\n"
+  fol_descriptor: "∀ path ∈ str: fs(list, …) routes by sandbox∨Share URI.\nZero files:
+    status ∈ {path_not_found, empty_directory, ok} + observation — empty list ≠ silent
+    success (ACI empty-success hygiene).\nSee agent_skill:fs.\n"
   json_schema:
     type: object
     properties:
@@ -2868,9 +2990,10 @@ tools:
   flat_call_shape:
     tool: fs_delete
     substrate_qualified: user-vortex__fs_delete
-  fol_descriptor: "∀ path ∈ str: fs(delete, …) routes by sandbox∨Share URI.\nsandbox optional when path
-    carries Share URI; on /mcp/life blank sandbox + relative path defaults to cortex. On /mcp/code bare
-    paths still need sandbox or Share URI. See agent_skill:fs.\n"
+  fol_descriptor: "∀ path ∈ str: fs(delete, …) routes by sandbox∨Share URI.\nsandbox
+    optional when path carries Share URI; on /mcp/life blank sandbox + relative path
+    defaults to cortex. On /mcp/code bare paths still need sandbox or Share URI. See
+    agent_skill:fs.\n"
   json_schema:
     type: object
     properties:
@@ -2897,8 +3020,9 @@ tools:
   flat_call_shape:
     tool: fs_append
     substrate_qualified: user-vortex__fs_append
-  fol_descriptor: "∀ sandbox ∈ {\"cortex\",\"workspaces\"} ∧ path ∈ str ∧ content ∈ str:\n  fs_append(sandbox,
-    path, content) ⟹ file.end += content.\nMutating. ¬idempotent (repeated appends accumulate). See agent_skill:fs.\n"
+  fol_descriptor: "∀ sandbox ∈ {\"cortex\",\"workspaces\"} ∧ path ∈ str ∧ content
+    ∈ str:\n  fs_append(sandbox, path, content) ⟹ file.end += content.\nMutating.
+    ¬idempotent (repeated appends accumulate). See agent_skill:fs.\n"
   json_schema:
     type: object
     properties:
@@ -2928,9 +3052,9 @@ tools:
   flat_call_shape:
     tool: fs_replace
     substrate_qualified: user-vortex__fs_replace
-  fol_descriptor: "∀ sandbox ∈ {\"cortex\",\"workspaces\"} ∧ path ∈ str ∧ target ∈ str ∧ content ∈ str:\n\
-    \  fs_replace(sandbox, path, target, content) ⟹\n    file.occurrences(target) ← content.\nMutating.
-    Idempotent when target absent. See agent_skill:fs.\n"
+  fol_descriptor: "∀ sandbox ∈ {\"cortex\",\"workspaces\"} ∧ path ∈ str ∧ target ∈
+    str ∧ content ∈ str:\n  fs_replace(sandbox, path, target, content) ⟹\n    file.occurrences(target)
+    ← content.\nMutating. Idempotent when target absent. See agent_skill:fs.\n"
   json_schema:
     type: object
     properties:
@@ -2965,9 +3089,10 @@ tools:
   flat_call_shape:
     tool: fs_move
     substrate_qualified: user-vortex__fs_move
-  fol_descriptor: "∀ path ∈ str: fs(move, …) routes by sandbox∨Share URI.\nsandbox optional when path
-    carries Share URI; on /mcp/life blank sandbox + relative path defaults to cortex. On /mcp/code bare
-    paths still need sandbox or Share URI. See agent_skill:fs.\n"
+  fol_descriptor: "∀ path ∈ str: fs(move, …) routes by sandbox∨Share URI.\nsandbox
+    optional when path carries Share URI; on /mcp/life blank sandbox + relative path
+    defaults to cortex. On /mcp/code bare paths still need sandbox or Share URI. See
+    agent_skill:fs.\n"
   json_schema:
     type: object
     properties:
@@ -2997,9 +3122,10 @@ tools:
   flat_call_shape:
     tool: fs_copy
     substrate_qualified: user-vortex__fs_copy
-  fol_descriptor: "∀ path ∈ str: fs(copy, …) routes by sandbox∨Share URI.\nsandbox optional when path
-    carries Share URI; on /mcp/life blank sandbox + relative path defaults to cortex. On /mcp/code bare
-    paths still need sandbox or Share URI. See agent_skill:fs.\n"
+  fol_descriptor: "∀ path ∈ str: fs(copy, …) routes by sandbox∨Share URI.\nsandbox
+    optional when path carries Share URI; on /mcp/life blank sandbox + relative path
+    defaults to cortex. On /mcp/code bare paths still need sandbox or Share URI. See
+    agent_skill:fs.\n"
   json_schema:
     type: object
     properties:
@@ -3031,13 +3157,15 @@ tools:
   flat_call_shape:
     tool: fs_search
     substrate_qualified: user-vortex__fs_search
-  fol_descriptor: "∀ sandbox ∈ {\"cortex\",\"workspaces\"} ∧ path ∈ str ∧ content ∈ str:\n  fs_search(sandbox,
-    path, content) ⟹\n    result.mode ∈ {\"file\",\"directory\"} ∧ matches are regex line hits.\nCapped
-    at max_results (default 50); truncated=true when cap hit. matches=[] ⟹ status=no_matches + observation
-    (successful search, zero line hits — ACI empty-success hygiene).\nmode
-    ∈ {\"auto\",\"content\",\"filename\"} (default auto = annotated filename\nheuristic; content forces
-    content regex search; filename = glob find,\nworkspaces only — cortex rejects it). Invalid mode ⟹
-    structured error.\nConversion-aware (PDF/DOCX/ODT/EML/HTML). Read-only. See agent_skill:fs.\n"
+  fol_descriptor: "∀ sandbox ∈ {\"cortex\",\"workspaces\"} ∧ path ∈ str ∧ content
+    ∈ str:\n  fs_search(sandbox, path, content) ⟹\n    result.mode ∈ {\"file\",\"\
+    directory\"} ∧ matches are regex line hits.\nCapped at max_results (default 50);
+    truncated=true when cap hit. matches=[] ⟹ status=no_matches + observation (successful
+    search, zero line hits — ACI empty-success hygiene).\nmode ∈ {\"auto\",\"content\"\
+    ,\"filename\"} (default auto = annotated filename\nheuristic; content forces content
+    regex search; filename = glob find,\nworkspaces only — cortex rejects it). Invalid
+    mode ⟹ structured error.\nConversion-aware (PDF/DOCX/ODT/EML/HTML). Read-only.
+    See agent_skill:fs.\n"
   json_schema:
     type: object
     properties:
@@ -3073,9 +3201,9 @@ tools:
   flat_call_shape:
     tool: fs_read_multi
     substrate_qualified: user-vortex__fs_read_multi
-  fol_descriptor: "∀ sandbox ∈ {\"cortex\",\"workspaces\"} ∧ paths ∈ List[str]:\n  fs_read_multi(sandbox,
-    paths) ⟹\n    ∀ p ∈ paths: result[p] ∈ FileContent ∨ result[p].error ∈ str.\nRead-only. Batch. See
-    agent_skill:fs.\n"
+  fol_descriptor: "∀ sandbox ∈ {\"cortex\",\"workspaces\"} ∧ paths ∈ List[str]:\n\
+    \  fs_read_multi(sandbox, paths) ⟹\n    ∀ p ∈ paths: result[p] ∈ FileContent ∨
+    result[p].error ∈ str.\nRead-only. Batch. See agent_skill:fs.\n"
   json_schema:
     type: object
     properties:
@@ -3104,8 +3232,9 @@ tools:
   flat_call_shape:
     tool: fs_md_read
     substrate_qualified: user-vortex__fs_md_read
-  fol_descriptor: "∀ sandbox ∈ {\"cortex\",\"workspaces\"} ∧ path ∈ str ∧ section ∈ str:\n  fs_md_read(sandbox,
-    path, section) ⟹ section_content ∈ str.\nRead-only. Section-level access for large docs. See agent_skill:fs.\n"
+  fol_descriptor: "∀ sandbox ∈ {\"cortex\",\"workspaces\"} ∧ path ∈ str ∧ section
+    ∈ str:\n  fs_md_read(sandbox, path, section) ⟹ section_content ∈ str.\nRead-only.
+    Section-level access for large docs. See agent_skill:fs.\n"
   json_schema:
     type: object
     properties:
@@ -3135,8 +3264,8 @@ tools:
   flat_call_shape:
     tool: fs_md_list
     substrate_qualified: user-vortex__fs_md_list
-  fol_descriptor: "∀ sandbox ∈ {\"cortex\",\"workspaces\"} ∧ path ∈ str:\n  fs_md_list(sandbox, path)
-    ⟹ toc ∈ List[HeadingEntry].\nRead-only. TOC extraction. See agent_skill:fs.\n"
+  fol_descriptor: "∀ sandbox ∈ {\"cortex\",\"workspaces\"} ∧ path ∈ str:\n  fs_md_list(sandbox,
+    path) ⟹ toc ∈ List[HeadingEntry].\nRead-only. TOC extraction. See agent_skill:fs.\n"
   json_schema:
     type: object
     properties:
@@ -3163,11 +3292,12 @@ tools:
   flat_call_shape:
     tool: fs_md_replace
     substrate_qualified: user-vortex__fs_md_replace
-  fol_descriptor: "∀ sandbox ∈ {\"cortex\",\"workspaces\"} ∧ path ∈ str ∧ section ∈ Headings(path):\n\
-    \  fs_md_replace(sandbox, path, section, content) ⟹\n    section.body ← content.\nMutating. Text files
-    only. Content must be heading-less (body only); the op\nowns the section heading. If content opens
-    with an ATX heading matching\nsection on level and text, the op strips it and returns normalized_heading:
-    true.\nSee agent_skill:fs.\n"
+  fol_descriptor: "∀ sandbox ∈ {\"cortex\",\"workspaces\"} ∧ path ∈ str ∧ section
+    ∈ Headings(path):\n  fs_md_replace(sandbox, path, section, content) ⟹\n    section.body
+    ← content.\nMutating. Text files only. Content must be heading-less (body only);
+    the op\nowns the section heading. If content opens with an ATX heading matching\n\
+    section on level and text, the op strips it and returns normalized_heading: true.\n\
+    See agent_skill:fs.\n"
   json_schema:
     type: object
     properties:
@@ -3200,11 +3330,12 @@ tools:
   flat_call_shape:
     tool: fs_md_append
     substrate_qualified: user-vortex__fs_md_append
-  fol_descriptor: "∀ sandbox ∈ {\"cortex\",\"workspaces\"} ∧ path ∈ str ∧ section ∈ Headings(path):\n\
-    \  fs_md_append(sandbox, path, section, content) ⟹\n    section.end += content.\nMutating. Text files
-    only. Content must be heading-less (body only); the op\nowns the section heading. If content opens
-    with an ATX heading matching\nsection on level and text, the op strips it and returns normalized_heading:
-    true.\nSee agent_skill:fs.\n"
+  fol_descriptor: "∀ sandbox ∈ {\"cortex\",\"workspaces\"} ∧ path ∈ str ∧ section
+    ∈ Headings(path):\n  fs_md_append(sandbox, path, section, content) ⟹\n    section.end
+    += content.\nMutating. Text files only. Content must be heading-less (body only);
+    the op\nowns the section heading. If content opens with an ATX heading matching\n\
+    section on level and text, the op strips it and returns normalized_heading: true.\n\
+    See agent_skill:fs.\n"
   json_schema:
     type: object
     properties:
@@ -3237,13 +3368,14 @@ tools:
   flat_call_shape:
     tool: fs_md_insert
     substrate_qualified: user-vortex__fs_md_insert
-  fol_descriptor: "∀ sandbox ∈ {\"cortex\",\"workspaces\"} ∧ path ∈ str ∧ heading ∈ str ∧ level ∈ {1..6}\n\
-    \  ∧ position ∈ {\"end\",\"after\",\"before\"}:\n  fs_md_insert(sandbox, path, heading, level, position,
-    section?, content?) ⟹\n    a new ATX section with heading at level is inserted at position.\nMutating.
-    Text files only. Content must be heading-less (body only); the op\nowns the section heading. If content
-    opens with an ATX heading matching\nheading on level and text, the op strips it and returns normalized_heading:
-    true.\nposition=end appends at document end; position=after|before require section\nas anchor. See
-    agent_skill:fs.\n"
+  fol_descriptor: "∀ sandbox ∈ {\"cortex\",\"workspaces\"} ∧ path ∈ str ∧ heading
+    ∈ str ∧ level ∈ {1..6}\n  ∧ position ∈ {\"end\",\"after\",\"before\"}:\n  fs_md_insert(sandbox,
+    path, heading, level, position, section?, content?) ⟹\n    a new ATX section with
+    heading at level is inserted at position.\nMutating. Text files only. Content
+    must be heading-less (body only); the op\nowns the section heading. If content
+    opens with an ATX heading matching\nheading on level and text, the op strips it
+    and returns normalized_heading: true.\nposition=end appends at document end; position=after|before
+    require section\nas anchor. See agent_skill:fs.\n"
   json_schema:
     type: object
     properties:
@@ -3283,9 +3415,9 @@ tools:
   flat_call_shape:
     tool: fs_md_delete
     substrate_qualified: user-vortex__fs_md_delete
-  fol_descriptor: "∀ sandbox ∈ {\"cortex\",\"workspaces\"} ∧ path ∈ str ∧ section ∈ Headings(path):\n\
-    \  fs_md_delete(sandbox, path, section) ⟹\n    section ∉ Headings(path).\nMutating. Destructive within
-    file. See agent_skill:fs.\n"
+  fol_descriptor: "∀ sandbox ∈ {\"cortex\",\"workspaces\"} ∧ path ∈ str ∧ section
+    ∈ Headings(path):\n  fs_md_delete(sandbox, path, section) ⟹\n    section ∉ Headings(path).\n\
+    Mutating. Destructive within file. See agent_skill:fs.\n"
   json_schema:
     type: object
     properties:
@@ -3346,8 +3478,9 @@ tools:
   flat_call_shape:
     tool: pipeline_run
     substrate_qualified: user-vortex__pipeline_run
-  fol_descriptor: "∀ pipeline ∈ PipelineID ∧ input ∈ dict:\n  pipeline_run(pipeline, input) ⟹\n    execution_id
-    ∈ str ∧ status ∈ {\"pending\",\"running\",\"complete\",\"error\"}.\nAsync. Mutating. See agent_skill:pipeline.\n"
+  fol_descriptor: "∀ pipeline ∈ PipelineID ∧ input ∈ dict:\n  pipeline_run(pipeline,
+    input) ⟹\n    execution_id ∈ str ∧ status ∈ {\"pending\",\"running\",\"complete\"\
+    ,\"error\"}.\nAsync. Mutating. See agent_skill:pipeline.\n"
   json_schema:
     type: object
     properties:
@@ -3376,8 +3509,9 @@ tools:
   flat_call_shape:
     tool: pipeline_iterate
     substrate_qualified: user-vortex__pipeline_iterate
-  fol_descriptor: "∀ execution_id ∈ str: pipeline_iterate(execution_id) ⟹\n  (result ∈ StepOutput ∧ status
-    = \"running\")\n  ∨ (result = null ∧ status = \"complete\").\nPolling. Read-only per call. See agent_skill:pipeline.\n"
+  fol_descriptor: "∀ execution_id ∈ str: pipeline_iterate(execution_id) ⟹\n  (result
+    ∈ StepOutput ∧ status = \"running\")\n  ∨ (result = null ∧ status = \"complete\"\
+    ).\nPolling. Read-only per call. See agent_skill:pipeline.\n"
   json_schema:
     type: object
     properties:
@@ -3402,8 +3536,8 @@ tools:
   flat_call_shape:
     tool: pipeline_consult
     substrate_qualified: user-vortex__pipeline_consult
-  fol_descriptor: "∀ question ∈ str: pipeline_consult(question) ⟹\n  advice ∈ str ∧ sources ∈ List[str].\n\
-    Read-only. RAG-backed. ¬side-effects. See agent_skill:pipeline.\n"
+  fol_descriptor: "∀ question ∈ str: pipeline_consult(question) ⟹\n  advice ∈ str
+    ∧ sources ∈ List[str].\nRead-only. RAG-backed. ¬side-effects. See agent_skill:pipeline.\n"
   json_schema:
     type: object
     properties:
@@ -3430,11 +3564,12 @@ tools:
   flat_call_shape:
     tool: rag_search
     substrate_qualified: user-vortex__rag_search
-  fol_descriptor: "∀ query ∈ str ∧ scope ∈ RAGScope:\n  rag_search(query, scope) ⟹\n    result ∈ List[Chunk]
-    ∧ ∀ c ∈ result: c.score ≥ 0.\n  mapped=true ⇒ exact (scope,query) durable-pack hit via
-    config/mcp/rag_mapped_index.yaml (identical envelope) ∨ live rag-context fallback.\nEmpty content
-    ⟹ error envelope {\"error\": \"Pipeline returned empty results.\"} — not silent ok (ACI).\nRead-only.
-    Semantic + keyword. ¬side-effects. See agent_skill:rag.\n"
+  fol_descriptor: "∀ query ∈ str ∧ scope ∈ RAGScope:\n  rag_search(query, scope) ⟹\n\
+    \    result ∈ List[Chunk] ∧ ∀ c ∈ result: c.score ≥ 0.\n  mapped=true ⇒ exact
+    (scope,query) durable-pack hit via config/mcp/rag_mapped_index.yaml (identical
+    envelope) ∨ live rag-context fallback.\nEmpty content ⟹ error envelope {\"error\"\
+    : \"Pipeline returned empty results.\"} — not silent ok (ACI).\nRead-only. Semantic
+    + keyword. ¬side-effects. See agent_skill:rag.\n"
   json_schema:
     type: object
     properties:
@@ -3446,7 +3581,8 @@ tools:
         type: integer
       mapped:
         type: boolean
-        description: Exact (scope, query) durable-pack lookup; miss falls through to live rag-context
+        description: Exact (scope, query) durable-pack lookup; miss falls 
+          through to live rag-context
     required:
     - query
   skill_uri: agent_skill:rag
@@ -3466,11 +3602,12 @@ tools:
   flat_call_shape:
     tool: rag_recon
     substrate_qualified: user-vortex__rag_recon
-  fol_descriptor: "∀ label ∈ str ∧ themes ∈ List[Theme], Theme = {name, scopes, queries}:\n  rag_recon(label,
-    themes, durable_sink) ⟹\n    ∀ t ∈ themes: sidecar(t) ∈ DurableSink ∧\n    evidence_uris ⊆ {cortex://notes/system/recon/<label>/<theme>.md}.\n\
-    Mutating (writes sidecars). durable_sink ∈ {auto, cortex, filesystem, null};\nauto = cortex→filesystem→null
-    fallback; cortex = error if unreachable\n(¬silent NullSink). Multi-theme recon front-end; rag_search
-    is single-query.\nSee agent_skill:rag.\n"
+  fol_descriptor: "∀ label ∈ str ∧ themes ∈ List[Theme], Theme = {name, scopes, queries}:\n\
+    \  rag_recon(label, themes, durable_sink) ⟹\n    ∀ t ∈ themes: sidecar(t) ∈ DurableSink
+    ∧\n    evidence_uris ⊆ {cortex://notes/system/recon/<label>/<theme>.md}.\nMutating
+    (writes sidecars). durable_sink ∈ {auto, cortex, filesystem, null};\nauto = cortex→filesystem→null
+    fallback; cortex = error if unreachable\n(¬silent NullSink). Multi-theme recon
+    front-end; rag_search is single-query.\nSee agent_skill:rag.\n"
   json_schema:
     type: object
     properties:
@@ -3524,8 +3661,9 @@ tools:
   flat_call_shape:
     tool: rag_upsert_article
     substrate_qualified: user-vortex__rag_upsert_article
-  fol_descriptor: "∀ source_uri ∈ str ∧ content ∈ str:\n  rag_upsert_article(source_uri, content) ⟹\n\
-    \    source_uri ∈ RAGCorpus.\nMutating. Idempotent by source_uri. See agent_skill:rag.\n"
+  fol_descriptor: "∀ source_uri ∈ str ∧ content ∈ str:\n  rag_upsert_article(source_uri,
+    content) ⟹\n    source_uri ∈ RAGCorpus.\nMutating. Idempotent by source_uri. See
+    agent_skill:rag.\n"
   json_schema:
     type: object
     properties:
@@ -3555,8 +3693,8 @@ tools:
   flat_call_shape:
     tool: rag_list_sources
     substrate_qualified: user-vortex__rag_list_sources
-  fol_descriptor: "∀ scope ∈ RAGScope: rag_list_sources(scope) ⟹\n  result ∈ List[SourceMeta].\nRead-only.
-    ¬side-effects. See agent_skill:rag.\n"
+  fol_descriptor: "∀ scope ∈ RAGScope: rag_list_sources(scope) ⟹\n  result ∈ List[SourceMeta].\n\
+    Read-only. ¬side-effects. See agent_skill:rag.\n"
   json_schema:
     type: object
     properties:
@@ -3579,8 +3717,8 @@ tools:
   flat_call_shape:
     tool: rag_coverage
     substrate_qualified: user-vortex__rag_coverage
-  fol_descriptor: "∀ scope ∈ RAGScope: rag_coverage(scope) ⟹\n  stats ∈ CoverageReport ∧ stats.total_chunks
-    ∈ ℕ.\nRead-only. ¬side-effects. See agent_skill:rag.\n"
+  fol_descriptor: "∀ scope ∈ RAGScope: rag_coverage(scope) ⟹\n  stats ∈ CoverageReport
+    ∧ stats.total_chunks ∈ ℕ.\nRead-only. ¬side-effects. See agent_skill:rag.\n"
   json_schema:
     type: object
     properties:
@@ -3603,9 +3741,10 @@ tools:
   flat_call_shape:
     tool: git_integrate
     substrate_qualified: user-vortex__git_integrate
-  fol_descriptor: "∀ arc ∈ PlanSlugs ∧ worktree ∈ ArcWorktrees ∧ sha256 ∈ DiffFingerprints:\n  git_integrate(arc,
-    phase, worktree, approval, sha256) ⟹\n    master advanced at ref level ∨ status = rejected.\nMutating.
-    Atomic. ¬green_gate_cmd in MCP args (server-owned). See decision:lead-agent-git-integration.\n"
+  fol_descriptor: "∀ arc ∈ PlanSlugs ∧ worktree ∈ ArcWorktrees ∧ sha256 ∈ DiffFingerprints:\n\
+    \  git_integrate(arc, phase, worktree, approval, sha256) ⟹\n    master advanced
+    at ref level ∨ status = rejected.\nMutating. Atomic. ¬green_gate_cmd in MCP args
+    (server-owned). See decision:lead-agent-git-integration.\n"
   json_schema:
     type: object
     properties:
@@ -3644,10 +3783,11 @@ tools:
   flat_call_shape:
     tool: git_land
     substrate_qualified: user-vortex__git_land
-  fol_descriptor: "∀ arc ∈ PlanSlugs ∧ worktree ∈ ArcWorktrees ∧ sha256 ∈ DiffFingerprints:\n  git_land(arc,
-    phase, worktree, approval, sha256) ⟹\n    (commit-if-dirty ∧ merge master ∧ green-gate ∧ ref-advance
-    ∧ teardown)\n    ∨ status = rejected.\nMutating. Atomic. One operator-gated land. commit_message required
-    when worktree\ndirty. ¬green_gate_cmd in MCP args (server-owned). See decision:lead-agent-git-integration.\n"
+  fol_descriptor: "∀ arc ∈ PlanSlugs ∧ worktree ∈ ArcWorktrees ∧ sha256 ∈ DiffFingerprints:\n\
+    \  git_land(arc, phase, worktree, approval, sha256) ⟹\n    (commit-if-dirty ∧
+    merge master ∧ green-gate ∧ ref-advance ∧ teardown)\n    ∨ status = rejected.\n\
+    Mutating. Atomic. One operator-gated land. commit_message required when worktree\n\
+    dirty. ¬green_gate_cmd in MCP args (server-owned). See decision:lead-agent-git-integration.\n"
   json_schema:
     type: object
     properties:
@@ -3689,8 +3829,9 @@ tools:
   flat_call_shape:
     tool: git_status
     substrate_qualified: user-vortex__git_status
-  fol_descriptor: "∀ worktree ∈ ArcWorktrees:\n  git_status(worktree) ⟹\n    result ∈ {ok, rejected} ∧
-    branch ∈ str ∧ dirty ∈ bool.\nRead-only. ¬acquires integrate gate. See decision:lead-agent-git-integration.\n"
+  fol_descriptor: "∀ worktree ∈ ArcWorktrees:\n  git_status(worktree) ⟹\n    result
+    ∈ {ok, rejected} ∧ branch ∈ str ∧ dirty ∈ bool.\nRead-only. ¬acquires integrate
+    gate. See decision:lead-agent-git-integration.\n"
   json_schema:
     type: object
     properties:
@@ -3714,10 +3855,11 @@ tools:
   flat_call_shape:
     tool: git_diff
     substrate_qualified: user-vortex__git_diff
-  fol_descriptor: "∀ worktree ∈ ArcWorktrees:\n  git_diff(worktree) ⟹\n    diff_sha256 ∈ SHA256Hex ∧ diffstat
-    ∈ DiffStat ∧ branch ∈ str.\n  git_diff(worktree, include_full_diff=true) ⟹ diff ∈ str.\nRead-only.
-    Default compact (no inline diff); pass include_full_diff=true to\nopt in to the full unified diff
-    body. Fingerprint feeds git_integrate approval binding.\n"
+  fol_descriptor: "∀ worktree ∈ ArcWorktrees:\n  git_diff(worktree) ⟹\n    diff_sha256
+    ∈ SHA256Hex ∧ diffstat ∈ DiffStat ∧ branch ∈ str.\n  git_diff(worktree, include_full_diff=true)
+    ⟹ diff ∈ str.\nRead-only. Default compact (no inline diff); pass include_full_diff=true
+    to\nopt in to the full unified diff body. Fingerprint feeds git_integrate approval
+    binding.\n"
   json_schema:
     type: object
     properties:
@@ -3748,10 +3890,11 @@ tools:
     tool: git_commit
     substrate_qualified: user-vortex__git_commit
   fol_descriptor: "∀ worktree ∈ GitWorktrees ∧ paths ⊆ RepoPaths ∧ paths ≠ ∅:\n  git_commit(worktree,
-    expected_branch, paths, dry_run=true) ⟹\n    expected_paths_sha256 ∈ SHA256Hex ∧ numstat ∈ str.\n\
-    \  git_commit(worktree, expected_branch, paths, approval, sha256, message) ⟹\n    (commit_sha ∈ SHA256Hex
-    ∧ status = completed) ∨ status = rejected.\nPath-explicit (¬--all); commit isolates to named paths.
-    Non-arc complement\nto git_land. Fingerprint binds approval. See decision:git-commit-non-arc-op.\n"
+    expected_branch, paths, dry_run=true) ⟹\n    expected_paths_sha256 ∈ SHA256Hex
+    ∧ numstat ∈ str.\n  git_commit(worktree, expected_branch, paths, approval, sha256,
+    message) ⟹\n    (commit_sha ∈ SHA256Hex ∧ status = completed) ∨ status = rejected.\n\
+    Path-explicit (¬--all); commit isolates to named paths. Non-arc complement\nto
+    git_land. Fingerprint binds approval. See decision:git-commit-non-arc-op.\n"
   json_schema:
     type: object
     properties:
@@ -3795,9 +3938,9 @@ tools:
   flat_call_shape:
     tool: observability_recent_failures
     substrate_qualified: user-vortex__observability_recent_failures
-  fol_descriptor: "∀ limit ∈ ℕ: observability_recent_failures(limit) ⟹\n  result ∈ List[Event]\n  ∧ ∀
-    e ∈ result: e.level ∈ {\"ERROR\",\"CRITICAL\"}.\nRead-only. Event Service query. ¬side-effects. See
-    agent_skill:observability.\n"
+  fol_descriptor: "∀ limit ∈ ℕ: observability_recent_failures(limit) ⟹\n  result ∈
+    List[Event]\n  ∧ ∀ e ∈ result: e.level ∈ {\"ERROR\",\"CRITICAL\"}.\nRead-only.
+    Event Service query. ¬side-effects. See agent_skill:observability.\n"
   json_schema:
     type: object
     properties:
@@ -3824,9 +3967,10 @@ tools:
   flat_call_shape:
     tool: observability_query
     substrate_qualified: user-vortex__observability_query
-  fol_descriptor: "∀ op_name ∈ str: observability_query(op_name, params) ⟹\n  result ∈ List[Event].\n\
-    Zero events ⟹ empty list with query metadata — distinguish from probe_error via status fields;
-    empty ≠ \"service down\" without checking error envelope (ACI).\nRead-only. Event Service parameterized query. See agent_skill:observability.\n"
+  fol_descriptor: "∀ op_name ∈ str: observability_query(op_name, params) ⟹\n  result
+    ∈ List[Event].\nZero events ⟹ empty list with query metadata — distinguish from
+    probe_error via status fields; empty ≠ \"service down\" without checking error
+    envelope (ACI).\nRead-only. Event Service parameterized query. See agent_skill:observability.\n"
   json_schema:
     type: object
     properties:
@@ -3855,8 +3999,9 @@ tools:
   flat_call_shape:
     tool: observability_preview
     substrate_qualified: user-vortex__observability_preview
-  fol_descriptor: "∀ (): observability_preview() ⟹\n  schema ∈ List[EventSpec] ∧ ∀ s ∈ schema: s.op_name
-    ∈ str.\nRead-only. Returns available event op names. See agent_skill:observability.\n"
+  fol_descriptor: "∀ (): observability_preview() ⟹\n  schema ∈ List[EventSpec] ∧ ∀
+    s ∈ schema: s.op_name ∈ str.\nRead-only. Returns available event op names. See
+    agent_skill:observability.\n"
   json_schema:
     type: object
     properties:
@@ -3879,8 +4024,8 @@ tools:
   flat_call_shape:
     tool: manage_status
     substrate_qualified: user-vortex__manage_status
-  fol_descriptor: "∀ service ∈ ManagedServices ∪ {∅}:\n  manage_status(service) ⟹\n    result ∈ ServiceStatus.\n\
-    Read-only. ¬side-effects. See agent_skill:manage.\n"
+  fol_descriptor: "∀ service ∈ ManagedServices ∪ {∅}:\n  manage_status(service) ⟹\n\
+    \    result ∈ ServiceStatus.\nRead-only. ¬side-effects. See agent_skill:manage.\n"
   json_schema:
     type: object
     properties:
@@ -3905,8 +4050,8 @@ tools:
     substrate_qualified: user-vortex__fleet_liveness
   fol_descriptor: "Fresh manage-authoritative evidence joins dirty master paths to
     service-specific load surfaces. Container-copy paths are content-hashed at the
-    running load location; host-process time order and bind-mounted bytes remain
-    explicitly indeterminate. See agent_skill:manage."
+    running load location; host-process time order and bind-mounted bytes remain explicitly
+    indeterminate. See agent_skill:manage."
   json_schema:
     type: object
     properties: {}
@@ -3927,8 +4072,8 @@ tools:
   flat_call_shape:
     tool: manage_health
     substrate_qualified: user-vortex__manage_health
-  fol_descriptor: "∀ service ∈ ManagedServices:\n  manage_health(service) ⟹\n    healthy ∈ bool ∧ uptime_s
-    ∈ ℕ.\nRead-only. ¬side-effects. See agent_skill:manage.\n"
+  fol_descriptor: "∀ service ∈ ManagedServices:\n  manage_health(service) ⟹\n    healthy
+    ∈ bool ∧ uptime_s ∈ ℕ.\nRead-only. ¬side-effects. See agent_skill:manage.\n"
   json_schema:
     type: object
     properties:
@@ -3953,8 +4098,9 @@ tools:
   flat_call_shape:
     tool: manage_restart
     substrate_qualified: user-vortex__manage_restart
-  fol_descriptor: "∀ service ∈ ManagedServices:\n  manage_restart(service) ⟹\n    service.state → restarted
-    ∧ old_pid ≠ new_pid.\nMutating. Side-effects (service interruption). See agent_skill:manage.\n"
+  fol_descriptor: "∀ service ∈ ManagedServices:\n  manage_restart(service) ⟹\n   \
+    \ service.state → restarted ∧ old_pid ≠ new_pid.\nMutating. Side-effects (service
+    interruption). See agent_skill:manage.\n"
   json_schema:
     type: object
     properties:
@@ -3979,8 +4125,9 @@ tools:
   flat_call_shape:
     tool: manage_rebuild
     substrate_qualified: user-vortex__manage_rebuild
-  fol_descriptor: "∀ service ∈ ManagedServices:\n  manage_rebuild(service) ⟹\n    new_image ∈ DockerImage
-    ∧ service.state → rebuilding.\nMutating. Long-running. ¬idempotent in time. See agent_skill:manage.\n"
+  fol_descriptor: "∀ service ∈ ManagedServices:\n  manage_rebuild(service) ⟹\n   \
+    \ new_image ∈ DockerImage ∧ service.state → rebuilding.\nMutating. Long-running.
+    ¬idempotent in time. See agent_skill:manage.\n"
   json_schema:
     type: object
     properties:
@@ -4005,8 +4152,9 @@ tools:
   flat_call_shape:
     tool: manage_wait_healthy
     substrate_qualified: user-vortex__manage_wait_healthy
-  fol_descriptor: "∀ service ∈ ManagedServices ∧ timeout ∈ ℕ:\n  manage_wait_healthy(service, timeout)
-    ⟹\n    (healthy = true ∧ elapsed ≤ timeout) ∨ raises Timeout.\nBlocking poll. ¬side-effects. See agent_skill:manage.\n"
+  fol_descriptor: "∀ service ∈ ManagedServices ∧ timeout ∈ ℕ:\n  manage_wait_healthy(service,
+    timeout) ⟹\n    (healthy = true ∧ elapsed ≤ timeout) ∨ raises Timeout.\nBlocking
+    poll. ¬side-effects. See agent_skill:manage.\n"
   json_schema:
     type: object
     properties:
@@ -4033,8 +4181,9 @@ tools:
   flat_call_shape:
     tool: dispatch_overflow
     substrate_qualified: user-vortex__dispatch_overflow
-  fol_descriptor: "∀ tool ∈ OverflowRegistry ∧ arguments ∈ JSONStr:\n  dispatch_overflow(tool, arguments)
-    ⟹ result ∈ Any.\nGeneral overflow routing. ∀ t ∉ PrimaryTools: reachable via dispatch.\nSee agent_skill:dispatch.\n"
+  fol_descriptor: "∀ tool ∈ OverflowRegistry ∧ arguments ∈ JSONStr:\n  dispatch_overflow(tool,
+    arguments) ⟹ result ∈ Any.\nGeneral overflow routing. ∀ t ∉ PrimaryTools: reachable
+    via dispatch.\nSee agent_skill:dispatch.\n"
   json_schema:
     type: object
     properties:
@@ -4061,9 +4210,10 @@ tools:
   flat_call_shape:
     tool: retrieve
     substrate_qualified: user-vortex__retrieve
-  fol_descriptor: "∀ id ∈ ResponseStoreKey:\n  retrieve_payload(id) ⟹ payload ∈ Any ∨ raises Expired.\n\
-    ∀ id matching \"rs_[A-Za-z0-9]+\": use this before re-calling the source tool.\nRead-only (consumes
-    stored response). ¬side-effects on Cortex. See agent_skill:retrieve.\n"
+  fol_descriptor: "∀ id ∈ ResponseStoreKey:\n  retrieve_payload(id) ⟹ payload ∈ Any
+    ∨ raises Expired.\n∀ id matching \"rs_[A-Za-z0-9]+\": use this before re-calling
+    the source tool.\nRead-only (consumes stored response). ¬side-effects on Cortex.
+    See agent_skill:retrieve.\n"
   json_schema:
     type: object
     properties:
@@ -4088,9 +4238,10 @@ tools:
   flat_call_shape:
     tool: tool_search
     substrate_qualified: user-vortex__tool_search
-  fol_descriptor: "∀ query ∈ str: tool_search_query(query) ⟹\n  results ∈ List[ManifestEntry]\n  ∧ ∀ e
-    ∈ results: e ∉ PrimaryTools.\ntotal_matches=0 ⟹ results=[] + _next explaining zero overflow hits
-    (may be expected for server-primary names) — not silent empty (ACI).\nRead-only. Keyword ranking over overflow manifest. See agent_skill:tool_search.\n"
+  fol_descriptor: "∀ query ∈ str: tool_search_query(query) ⟹\n  results ∈ List[ManifestEntry]\n\
+    \  ∧ ∀ e ∈ results: e ∉ PrimaryTools.\ntotal_matches=0 ⟹ results=[] + _next explaining
+    zero overflow hits (may be expected for server-primary names) — not silent empty
+    (ACI).\nRead-only. Keyword ranking over overflow manifest. See agent_skill:tool_search.\n"
   json_schema:
     type: object
     properties:
@@ -4117,26 +4268,32 @@ tools:
   flat_call_shape:
     tool: team_dispatch
     substrate_qualified: user-vortex__team_dispatch
-  fol_descriptor: "∀ role ∈ GenerateRoles ∧ dispatch_thread_id ∈ AgentBusThread ∧ contract ∈ {light-bounded,pure-mechanical,implement}:\n\
-    \  team_dispatch(op=generate, role, dispatch_thread_id, contract, packet_path?) ⟹\n    execution_id
-    ∈ UUIDv4 ∧ auto-provisions a result thread ∧ Stargate posts the role reply ON-BEHALF to it\n    ∧
-    poll poll_hint (agent-bus wait) for content — NOT pipeline(op=result)\n    ∧ knob_resolution ∈ Response
-    ∧ parity ∉ {claimed_by_default}\n    ∧ resolved_contract = contract.\n  Delivery is on-behalf (parity
-    with to_thread): the dispatch_thread_id latest turn becomes the model prompt verbatim — do NOT instruct
-    the model to \"reply on this thread\"; that plus mcp=true causes a redundant model self-post on top
-    of on-behalf delivery (friction #17396). For a specific existing thread use op=to_thread.\n  mcp (optional,
-    present in json_schema): reserve for genuine codebase investigation; omit for self-contained consults
-    to avoid the self-post failure mode.\n  skills (optional, present in json_schema): unified skills
-    input path; capability-selected delivery.\n  server_tools (optional, present in json_schema): omit
-    for default ALL server-side built-ins; set false to suppress card-derived provider built-ins.\n  ¬pointer_body
-    on generate/to_thread (validation_error — handoff-only; the dispatch-thread latest turn is the prompt;
-    previously silently dropped, friction 23301).\n  A dispatch-thread latest turn that is a server-posted
-    pointer/failure envelope rejects 422 dispatch_thread_latest_is_pointer — post a fresh prompt turn
-    or pass split_thread=true.\nGenerateRoles = generate/to_thread roles (reviewer/synthesizer/artisan/skeptic).\n\
-    cursor-sdk ∈ GenerateTargets via auto_dispatchable (substrate=sdk); ¬ cloud CapabilityDispatch.\n\
-    \  Default output_contract=thread for sdk; packet_path honored for cursor-sdk generate across {light-bounded,pure-mechanical,implement};
-    source_ref implement-only; dispatch-thread latest turn is fallback when no packet;\n  poll via poll_hint
-    (agent-bus wait), NOT pipeline(op=result), until the execution registry (Track 2).\n¬ web-consult/web-implement/cursor-consult/cursor-implement
+  fol_descriptor: "∀ role ∈ GenerateRoles ∧ dispatch_thread_id ∈ AgentBusThread ∧
+    contract ∈ {light-bounded,pure-mechanical,implement}:\n  team_dispatch(op=generate,
+    role, dispatch_thread_id, contract, packet_path?) ⟹\n    execution_id ∈ UUIDv4
+    ∧ auto-provisions a result thread ∧ Stargate posts the role reply ON-BEHALF to
+    it\n    ∧ poll poll_hint (agent-bus wait) for content — NOT pipeline(op=result)\n\
+    \    ∧ knob_resolution ∈ Response ∧ parity ∉ {claimed_by_default}\n    ∧ resolved_contract
+    = contract.\n  Delivery is on-behalf (parity with to_thread): the dispatch_thread_id
+    latest turn becomes the model prompt verbatim — do NOT instruct the model to \"\
+    reply on this thread\"; that plus mcp=true causes a redundant model self-post
+    on top of on-behalf delivery (friction #17396). For a specific existing thread
+    use op=to_thread.\n  mcp (optional, present in json_schema): reserve for genuine
+    codebase investigation; omit for self-contained consults to avoid the self-post
+    failure mode.\n  skills (optional, present in json_schema): unified skills input
+    path; capability-selected delivery.\n  server_tools (optional, present in json_schema):
+    omit for default ALL server-side built-ins; set false to suppress card-derived
+    provider built-ins.\n  ¬pointer_body on generate/to_thread (validation_error —
+    handoff-only; the dispatch-thread latest turn is the prompt; previously silently
+    dropped, friction 23301).\n  A dispatch-thread latest turn that is a server-posted
+    pointer/failure envelope rejects 422 dispatch_thread_latest_is_pointer — post
+    a fresh prompt turn or pass split_thread=true.\nGenerateRoles = generate/to_thread
+    roles (reviewer/synthesizer/artisan/skeptic).\ncursor-sdk ∈ GenerateTargets via
+    auto_dispatchable (substrate=sdk); ¬ cloud CapabilityDispatch.\n  Default output_contract=thread
+    for sdk; packet_path honored for cursor-sdk generate across {light-bounded,pure-mechanical,implement};
+    source_ref implement-only; dispatch-thread latest turn is fallback when no packet;\n\
+    \  poll via poll_hint (agent-bus wait), NOT pipeline(op=result), until the execution
+    registry (Track 2).\n¬ web-consult/web-implement/cursor-consult/cursor-implement
     (handoff-only). Async. Mutating. See agent_skill:dispatch."
   json_schema:
     type: object
@@ -4198,15 +4355,16 @@ tools:
   flat_call_shape:
     tool: team_dispatch_to_thread
     substrate_qualified: user-vortex__team_dispatch_to_thread
-  fol_descriptor: "∀ role ∈ GenerateRoles ∧ thread ∈ ThreadID ∧ dispatch_thread_id ∈ AgentBusThread ∧
-    contract ∈ {light-bounded,pure-mechanical}:\n  team_dispatch(op=to_thread, role, dispatch_thread_id,
-    contract, thread) ⟹\n    Stargate posts the role reply on its behalf to thread after dispatch completes.\n\
-    \  Context is read from dispatch_thread_id's latest agent-bus turn; messages[] is not a parameter.\n\
-    GenerateRoles = generate/to_thread roles (reviewer/synthesizer/artisan/skeptic).\nserver_tools (optional,
-    present in json_schema): omit for default ALL server-side built-ins; set false to suppress card-derived
-    provider built-ins.\nmcp (optional, present in json_schema): MCP-class tools only; omit for per-model
-    default.\nskills (optional, present in json_schema): unified skills input path.\nAsync. Mutating.
-    See agent_skill:dispatch."
+  fol_descriptor: "∀ role ∈ GenerateRoles ∧ thread ∈ ThreadID ∧ dispatch_thread_id
+    ∈ AgentBusThread ∧ contract ∈ {light-bounded,pure-mechanical}:\n  team_dispatch(op=to_thread,
+    role, dispatch_thread_id, contract, thread) ⟹\n    Stargate posts the role reply
+    on its behalf to thread after dispatch completes.\n  Context is read from dispatch_thread_id's
+    latest agent-bus turn; messages[] is not a parameter.\nGenerateRoles = generate/to_thread
+    roles (reviewer/synthesizer/artisan/skeptic).\nserver_tools (optional, present
+    in json_schema): omit for default ALL server-side built-ins; set false to suppress
+    card-derived provider built-ins.\nmcp (optional, present in json_schema): MCP-class
+    tools only; omit for per-model default.\nskills (optional, present in json_schema):
+    unified skills input path.\nAsync. Mutating. See agent_skill:dispatch."
   json_schema:
     type: object
     properties:
@@ -4265,19 +4423,22 @@ tools:
   flat_call_shape:
     tool: team_dispatch_handoff
     substrate_qualified: user-vortex__team_dispatch_handoff
-  fol_descriptor: "∀ seat ∈ HandoffSeat ∧ (packet_path ∈ WorkspacesPath ∨ source_ref ∈ SourceRef) ∧ subject
-    ∈ Str:\n  team_dispatch(op=handoff, seat, packet_path|source_ref, subject) ⟹\n    thread_id ∈ AgentBus
-    ∧ resolved_model = seat(seat) ∧ to_agent = seat(seat)\n    ∧ handoff_contract = derive(source_ref,
-    packet_path, role) ∧ result_handle.kind = agent_bus_thread\n    ∧ ¬execution_id.\nAt least one of
-    packet_path | source_ref; source_ref triggers normalize→materialize and the\nconfirmed-decision gate
-    (source_ref path only). Stargate owns resolution — relay pass-through only.\nHandoffSeat = web-anthropic
-    | cursor. Contract derived server-side (source_ref dispatch_lane →\npacket front-matter contract:
-    → role default_contract → consult).\nThe {platform}-{contract} shorthands (web-consult, web-implement,
-    cursor-consult, cursor-implement) remain accepted and encode (seat, contract).\nhandoff seat-map:
-    web-consult, web-implement → web-anthropic; cursor-consult, cursor-implement → cursor.\nOperator-only
-    overrides (hidden from default agent guidance): role=, op=, contract=.\n¬model on handoff. ¬handoff_contract
-    on request (derived server-side).\nAPI roles (reviewer, …) → 422 handoff_requires_web_seat.\nPoll
-    via agent_bus(tool=wait, …) from poll_hint — not pipeline(op=result)."
+  fol_descriptor: "∀ seat ∈ HandoffSeat ∧ (packet_path ∈ WorkspacesPath ∨ source_ref
+    ∈ SourceRef) ∧ subject ∈ Str:\n  team_dispatch(op=handoff, seat, packet_path|source_ref,
+    subject) ⟹\n    thread_id ∈ AgentBus ∧ resolved_model = seat(seat) ∧ to_agent
+    = seat(seat)\n    ∧ handoff_contract = derive(source_ref, packet_path, role) ∧
+    result_handle.kind = agent_bus_thread\n    ∧ ¬execution_id.\nAt least one of packet_path
+    | source_ref; source_ref triggers normalize→materialize and the\nconfirmed-decision
+    gate (source_ref path only). Stargate owns resolution — relay pass-through only.\n\
+    HandoffSeat = web-anthropic | cursor. Contract derived server-side (source_ref
+    dispatch_lane →\npacket front-matter contract: → role default_contract → consult).\n\
+    The {platform}-{contract} shorthands (web-consult, web-implement, cursor-consult,
+    cursor-implement) remain accepted and encode (seat, contract).\nhandoff seat-map:
+    web-consult, web-implement → web-anthropic; cursor-consult, cursor-implement →
+    cursor.\nOperator-only overrides (hidden from default agent guidance): role=,
+    op=, contract=.\n¬model on handoff. ¬handoff_contract on request (derived server-side).\n\
+    API roles (reviewer, …) → 422 handoff_requires_web_seat.\nPoll via agent_bus(tool=wait,
+    …) from poll_hint — not pipeline(op=result)."
   json_schema:
     type: object
     properties:
@@ -4332,10 +4493,10 @@ tools:
     tool: project_ask
     substrate_qualified: user-vortex__project_ask
   fol_descriptor: "Thin httpx relay to Jupiter CDP-ask satellite (PROJECT_ASK_URL).\n\
-    split submit/poll/abort/active_work/followup — ¬ server-side poll loop; ¬ Playwright in MCP handler.\n\
-    active_work is the fast recorded execution/admission projection; browser attachment\n\
-    occupancy is owned by the satellite drain-state surface, not stream admission.\n\
-    Poll returns archive_uri (cortex://) on completion. See agent_skill:claude-ai-cdp-navigation.\n\
+    split submit/poll/abort/active_work/followup — ¬ server-side poll loop; ¬ Playwright
+    in MCP handler.\nactive_work is the fast recorded execution/admission projection;
+    browser attachment\noccupancy is owned by the satellite drain-state surface, not
+    stream admission.\nPoll returns archive_uri (cortex://) on completion. See agent_skill:claude-ai-cdp-navigation.\n\
     NEVER curl localhost :8765 (web-fetcher) for /v1/project-ask/* — poll ONLY via\n\
     project_ask(op=poll, execution_id=…); cdp-ask satellite is :8770 via PROJECT_ASK_URL.\n"
   json_schema:
@@ -4376,8 +4537,8 @@ tools:
         type: string
       delete_after:
         type: boolean
-        description: Retain (false) or delete (true) Cowork chat after harvest; omit
-          for runner defaults (converse/turn-2 retain, single-ask delete).
+        description: Retain (false) or delete (true) Cowork chat after harvest; 
+          omit for runner defaults (converse/turn-2 retain, single-ask delete).
       timeout_s:
         type: integer
     required:
@@ -4400,13 +4561,15 @@ tools:
   flat_call_shape:
     tool: panel_dispatch
     substrate_qualified: user-vortex__panel_dispatch
-  fol_descriptor: "∀ messages ∈ List[Msg] ∧ dispatch_thread_id ∈ ThreadKey ∧ disposition = panel:\n  panel_dispatch(messages,
-    dispatch_thread_id, disposition=panel) ⟹\n    panel_executions ∧ panel_families ∧ per-role dispatches\n\
-    \    ∧ member_knob_resolution ∈ Response ∧ parity ∉ {claimed_by_default}.\nRuns skeptic + reviewer
-    (≥2 provider families) via team_dispatch admission.\nmember_models (role→provider/model, optional)
-    rebinds roster member models and is honored\nby the ≥2-family gate; values validate against role allowed_models.
-    ¬model overrides via\ngeneration_options (rejected when roster role keys present — friction 23301).\n\
-    Lead adjudication + Menu D assert NON-offloadable (Guard 2). Mutating.\nSee agent_skill:consensus-steelman-posture."
+  fol_descriptor: "∀ messages ∈ List[Msg] ∧ dispatch_thread_id ∈ ThreadKey ∧ disposition
+    = panel:\n  panel_dispatch(messages, dispatch_thread_id, disposition=panel) ⟹\n\
+    \    panel_executions ∧ panel_families ∧ per-role dispatches\n    ∧ member_knob_resolution
+    ∈ Response ∧ parity ∉ {claimed_by_default}.\nRuns skeptic + reviewer (≥2 provider
+    families) via team_dispatch admission.\nmember_models (role→provider/model, optional)
+    rebinds roster member models and is honored\nby the ≥2-family gate; values validate
+    against role allowed_models. ¬model overrides via\ngeneration_options (rejected
+    when roster role keys present — friction 23301).\nLead adjudication + Menu D assert
+    NON-offloadable (Guard 2). Mutating.\nSee agent_skill:consensus-steelman-posture."
   json_schema:
     type: object
     properties:
@@ -4442,7 +4605,8 @@ tools:
         type: integer
       member_models:
         type: object
-        description: role → provider/model override; honored by the ≥2-family gate
+        description: role → provider/model override; honored by the ≥2-family 
+          gate
     required:
     - messages
     - dispatch_thread_id
@@ -4464,20 +4628,22 @@ tools:
     tool: cortex_brief
     substrate_qualified: user-vortex__cortex_brief
   fol_descriptor: "∀ seat ∈ AgentSeats:\n  cortex_brief(seat?, role?, transcript_id?,
-    views?) ⟹\n    session_id minted ∧ briefing_card ∈ Markdown ∧ sections_available ∈ List[ManifestEntry]\n\
-    \    ∧ agent_skill bodies indexed (slug + trigger) — ¬inlined;\n    load by canonical slug (platform/server
-    inject; ¬ fs-read agent-skills/ paths).\nBlank call is mount-aware (life→web-anthropic, code→cursor);
-    seat= required when mount surface is unknown. agent=/family=/platform= retired from wire schema
-    (family+platform inferred from seat or mount).\nMints session id;
-    writes operational_context to disk on LIVE calls. Read-only fetch graph. See agent_skill:cortex.\n"
+    views?) ⟹\n    session_id minted ∧ briefing_card ∈ Markdown ∧ sections_available
+    ∈ List[ManifestEntry]\n    ∧ agent_skill bodies indexed (slug + trigger) — ¬inlined;\n\
+    \    load by canonical slug (platform/server inject; ¬ fs-read agent-skills/ paths).\n\
+    Blank call is mount-aware (life→web-anthropic, code→cursor); seat= required when
+    mount surface is unknown. agent=/family=/platform= retired from wire schema (family+platform
+    inferred from seat or mount).\nMints session id; writes operational_context to
+    disk on LIVE calls. Read-only fetch graph. See agent_skill:cortex.\n"
   json_schema:
     type: object
     properties:
       seat:
         type: string
-        description: Seat address or capability cell (web-anthropic, cursor, grok-api-multi, …).
-          Legacy aliases (claude-web, claude-cursor, …) still resolve. Blank defaults are
-          mount-aware (life→web, code→cursor). Family/platform are inferred — not wire params.
+        description: Seat address or capability cell (web-anthropic, cursor, 
+          grok-api-multi, …). Legacy aliases (claude-web, claude-cursor, …) 
+          still resolve. Blank defaults are mount-aware (life→web, code→cursor).
+          Family/platform are inferred — not wire params.
       role:
         type: string
       transcript_id:
@@ -4504,7 +4670,8 @@ tools:
   flat_call_shape:
     tool: cortex_deadline_resolve
     substrate_qualified: user-vortex__cortex_deadline_resolve
-  fol_descriptor: "∀ deadline_id: closes with confirmed assertion + outcome atomically.\n    See agent_skill:cortex.\n"
+  fol_descriptor: "∀ deadline_id: closes with confirmed assertion + outcome atomically.\n\
+    \    See agent_skill:cortex.\n"
   json_schema:
     type: object
     properties: {}
@@ -4526,7 +4693,8 @@ tools:
   flat_call_shape:
     tool: cortex_digest
     substrate_qualified: user-vortex__cortex_digest
-  fol_descriptor: "Journal entry digest: extract, verify, stage, ledger watermark.\n    See agent_skill:cortex.\n"
+  fol_descriptor: "Journal entry digest: extract, verify, stage, ledger watermark.\n\
+    \    See agent_skill:cortex.\n"
   json_schema:
     type: object
     properties:
@@ -4560,7 +4728,8 @@ tools:
   flat_call_shape:
     tool: cortex_friction_close
     substrate_qualified: user-vortex__cortex_friction_close
-  fol_descriptor: "¬idempotent: supersedes open friction with confirmed resolution row.\n    See agent_skill:cortex.\n"
+  fol_descriptor: "¬idempotent: supersedes open friction with confirmed resolution
+    row.\n    See agent_skill:cortex.\n"
   json_schema:
     type: object
     properties: {}
@@ -4582,8 +4751,8 @@ tools:
   flat_call_shape:
     tool: cortex_tag_assign
     substrate_qualified: user-vortex__cortex_tag_assign
-  fol_descriptor: "∀ (tag_name, entity_id): assigns tag to assertion; resolve_aliases optional.\n    See
-    agent_skill:cortex.\n"
+  fol_descriptor: "∀ (tag_name, entity_id): assigns tag to assertion; resolve_aliases
+    optional.\n    See agent_skill:cortex.\n"
   json_schema:
     type: object
     properties: {}
@@ -4605,8 +4774,8 @@ tools:
   flat_call_shape:
     tool: cortex_tag_resolve
     substrate_qualified: user-vortex__cortex_tag_resolve
-  fol_descriptor: "∀ (tag_name, entity_id): resolves tag assignment; resolve_aliases optional.\n    See
-    agent_skill:cortex.\n"
+  fol_descriptor: "∀ (tag_name, entity_id): resolves tag assignment; resolve_aliases
+    optional.\n    See agent_skill:cortex.\n"
   json_schema:
     type: object
     properties: {}
@@ -4628,7 +4797,8 @@ tools:
   flat_call_shape:
     tool: cortex_todo_close_sidecar
     substrate_qualified: user-vortex__cortex_todo_close_sidecar
-  fol_descriptor: "∀ todo_id: writes closure sidecar + sets attributes.closure_summary_uri.\n    See agent_skill:cortex.\n"
+  fol_descriptor: "∀ todo_id: writes closure sidecar + sets attributes.closure_summary_uri.\n\
+    \    See agent_skill:cortex.\n"
   json_schema:
     type: object
     properties: {}
@@ -4650,7 +4820,8 @@ tools:
   flat_call_shape:
     tool: cortex_thread_sidecar_write
     substrate_qualified: user-vortex__cortex_thread_sidecar_write
-  fol_descriptor: "∀ thread: writes agent-bus thread sidecar under notes/system/threads/.\n    See agent_skill:cortex.\n"
+  fol_descriptor: "∀ thread: writes agent-bus thread sidecar under notes/system/threads/.\n\
+    \    See agent_skill:cortex.\n"
   json_schema:
     type: object
     properties: {}
@@ -4672,7 +4843,8 @@ tools:
   flat_call_shape:
     tool: cortex_recon_sidecar_write
     substrate_qualified: user-vortex__cortex_recon_sidecar_write
-  fol_descriptor: "∀ label: writes recon sidecar artifact for bounded investigation output.\n    See agent_skill:cortex.\n"
+  fol_descriptor: "∀ label: writes recon sidecar artifact for bounded investigation
+    output.\n    See agent_skill:cortex.\n"
   json_schema:
     type: object
     properties: {}
@@ -4694,7 +4866,8 @@ tools:
   flat_call_shape:
     tool: cortex_relationship_update
     substrate_qualified: user-vortex__cortex_relationship_update
-  fol_descriptor: "Partial-patch relationship row; ¬creates new relationship.\n    See agent_skill:cortex.\n"
+  fol_descriptor: "Partial-patch relationship row; ¬creates new relationship.\n  \
+    \  See agent_skill:cortex.\n"
   json_schema:
     type: object
     properties: {}
@@ -4716,7 +4889,8 @@ tools:
   flat_call_shape:
     tool: cortex_edge_update
     substrate_qualified: user-vortex__cortex_edge_update
-  fol_descriptor: "Partial-patch edge strength/context/metadata; ¬creates new edge.\n    See agent_skill:cortex.\n"
+  fol_descriptor: "Partial-patch edge strength/context/metadata; ¬creates new edge.\n\
+    \    See agent_skill:cortex.\n"
   json_schema:
     type: object
     properties: {}
@@ -4738,7 +4912,8 @@ tools:
   flat_call_shape:
     tool: cortex_case_audit
     substrate_qualified: user-vortex__cortex_case_audit
-  fol_descriptor: "∀ subject: full case audit — graph + optional filesystem detectors.\n    See agent_skill:cortex.\n"
+  fol_descriptor: "∀ subject: full case audit — graph + optional filesystem detectors.\n\
+    \    See agent_skill:cortex.\n"
   json_schema:
     type: object
     properties: {}
@@ -4763,7 +4938,8 @@ tools:
   flat_call_shape:
     tool: cortex_fill_gaps
     substrate_qualified: user-vortex__cortex_fill_gaps
-  fol_descriptor: "Advisory gap-fill suggestions from audit findings; ¬mutates state.\n    See agent_skill:cortex.\n"
+  fol_descriptor: "Advisory gap-fill suggestions from audit findings; ¬mutates state.\n\
+    \    See agent_skill:cortex.\n"
   json_schema:
     type: object
     properties: {}
@@ -4788,7 +4964,8 @@ tools:
   flat_call_shape:
     tool: cortex_todo_audit
     substrate_qualified: user-vortex__cortex_todo_audit
-  fol_descriptor: "∀ stale_days: lists stale todos for implement/admission hygiene gates.\n    See agent_skill:cortex.\n"
+  fol_descriptor: "∀ stale_days: lists stale todos for implement/admission hygiene
+    gates.\n    See agent_skill:cortex.\n"
   json_schema:
     type: object
     properties: {}
@@ -4809,8 +4986,9 @@ tools:
   flat_call_shape:
     tool: imprint_propose
     substrate_qualified: user-vortex__imprint_propose
-  fol_descriptor: "When/how: natural save/pin → remember if ids resolved; propose if fuzzy; commit only
-    by proposal_id.\nRelay POST /graph/imprint/{propose|commit|remember}; vocab cortex.life/v1. See agent_skill:life-imprint-when-how.\n"
+  fol_descriptor: "When/how: natural save/pin → remember if ids resolved; propose
+    if fuzzy; commit only by proposal_id.\nRelay POST /graph/imprint/{propose|commit|remember};
+    vocab cortex.life/v1. See agent_skill:life-imprint-when-how.\n"
   json_schema:
     type: object
     properties:
@@ -4839,8 +5017,8 @@ tools:
   flat_call_shape:
     tool: imprint_commit
     substrate_qualified: user-vortex__imprint_commit
-  fol_descriptor: "When/how: apply only after propose/remember preview yielded proposal_id. Mutating.
-    See agent_skill:life-imprint-when-how.\n"
+  fol_descriptor: "When/how: apply only after propose/remember preview yielded proposal_id.
+    Mutating. See agent_skill:life-imprint-when-how.\n"
   json_schema:
     type: object
     properties:
@@ -4867,8 +5045,8 @@ tools:
   flat_call_shape:
     tool: imprint_remember
     substrate_qualified: user-vortex__imprint_remember
-  fol_descriptor: "When/how: default save/pin path when fully resolved; else propose preview (zero write).
-    See agent_skill:life-imprint-when-how.\n"
+  fol_descriptor: "When/how: default save/pin path when fully resolved; else propose
+    preview (zero write). See agent_skill:life-imprint-when-how.\n"
   json_schema:
     type: object
     properties:
@@ -4897,9 +5075,10 @@ tools:
   flat_call_shape:
     tool: delegate_propose
     substrate_qualified: user-vortex__delegate_propose
-  fol_descriptor: "Life intent propose — cortex.life-intent/v1 intent → work_order + proposal_id.\nRelay
-    POST /api/v1/life/intent/propose; zero side effects on propose.\nVerb meanings render from config/cortex/life_intent_v1.yaml
-    at serve time.\nReplies arrive on this thread.\n"
+  fol_descriptor: "Life intent propose — cortex.life-intent/v1 intent → work_order
+    + proposal_id.\nRelay POST /api/v1/life/intent/propose; zero side effects on propose.\n\
+    Verb meanings render from config/cortex/life_intent_v1.yaml at serve time.\nReplies
+    arrive on this thread.\n"
   json_schema:
     type: object
     properties:
@@ -4939,9 +5118,10 @@ tools:
   flat_call_shape:
     tool: delegate_commit
     substrate_qualified: user-vortex__delegate_commit
-  fol_descriptor: "Life intent commit — apply a short-lived proposal by proposal_id.\nRelay POST /api/v1/life/intent/commit;
-    commit availability follows route gating.\nWhen live-fire is off the route returns a typed reject
-    unchanged.\nReplies arrive on this thread.\n"
+  fol_descriptor: "Life intent commit — apply a short-lived proposal by proposal_id.\n\
+    Relay POST /api/v1/life/intent/commit; commit availability follows route gating.\n\
+    When live-fire is off the route returns a typed reject unchanged.\nReplies arrive
+    on this thread.\n"
   json_schema:
     type: object
     properties:
@@ -4972,19 +5152,19 @@ tools:
     substrate_qualified: user-vortex__notify
   fol_descriptor: "Attention pager — server-side proxy to email-bridge /pager/notify.\n\
     ref (turn or cortex:// URI) is caller-mandatory; missing ref degrades to (unreferenced).\n\
-    Server stamps from_agent + timestamp. Honors PAGER_NOTIFY_ENABLED=0. Delivery identity\n\
-    stays in email-bridge config — never in agent prose. Cowork operator seat only;\n\
-    agent_skill:pager-notify is cursor_only and not executable here.\n\
-    AUDIENCE — human register binds on this path (and only paths like it): the reader is\n\
-    the human operator, so write human register here even when the session is\n\
+    Server stamps from_agent + timestamp. Honors PAGER_NOTIFY_ENABLED=0. Delivery
+    identity\nstays in email-bridge config — never in agent prose. Cowork operator
+    seat only;\nagent_skill:pager-notify is cursor_only and not executable here.\n\
+    AUDIENCE — human register binds on this path (and only paths like it): the reader
+    is\nthe human operator, so write human register here even when the session is\n\
     agent-operated (web automation ⇏ agent audience — the path decides, not the session).\n\
     Architecture-first: name ULG systems and where they sit when that is the point;\n\
     ground in vision (what this serves); so-what first. The distinction is architecture\n\
-    vs implementation — ¬ lead with file paths, SHAs, function names, test names, or\n\
-    interagent closeout shape (status:, paths, evidence); those belong in ref. Subject\n\
-    COME TO IDE = interrupt (problem, options exhausted); any other subject is awareness\n\
-    and ¬ implies he must open Cursor. Inverse binds: ¬ human register on bus turns,\n\
-    packets, or bodies addressed to model seats. See agent_skill:pager-notify\n\
+    vs implementation — ¬ lead with file paths, SHAs, function names, test names,
+    or\ninteragent closeout shape (status:, paths, evidence); those belong in ref.
+    Subject\nCOME TO IDE = interrupt (problem, options exhausted); any other subject
+    is awareness\nand ¬ implies he must open Cursor. Inverse binds: ¬ human register
+    on bus turns,\npackets, or bodies addressed to model seats. See agent_skill:pager-notify\n\
     (when-to-page classes).\n"
   json_schema:
     type: object
@@ -5012,6 +5192,103 @@ tools:
   introduced: '2026-07-28'
   endpoint_visibility:
   - life
+- canonical_name: cse_session_provenance
+  domain: cse_session
+  operation: provenance
+  dispatcher_call_shape:
+    tool: cse_session
+    dispatch_key: op
+    dispatch_value: provenance
+  flat_call_shape:
+    tool: cse_session_provenance
+    substrate_qualified: user-vortex__cse_session_provenance
+  fol_descriptor: "Read-only provenance projection — claim vs proven lineage; execution_id
+    omitted unless supplied. See agent_skill:claude-ai-cdp-navigation.\n"
+  json_schema:
+    type: object
+    properties:
+      op:
+        type: string
+        enum:
+        - provenance
+      chat_url:
+        type: string
+      registration_id:
+        type: string
+      execution_id:
+        type: string
+    required:
+    - op
+  mandate_safety: read_only
+  seat_visibility:
+  - mcp
+  - mcp_claude
+  skill_uri: agent_skill:claude-ai-cdp-navigation
+  cache_priority: on_demand
+- canonical_name: cse_session_harvest
+  domain: cse_session
+  operation: harvest
+  dispatcher_call_shape:
+    tool: cse_session
+    dispatch_key: op
+    dispatch_value: harvest
+  flat_call_shape:
+    tool: cse_session_harvest
+    substrate_qualified: user-vortex__cse_session_harvest
+  fol_descriptor: "Read-only bounded harvest — no submit/followup/abort/lane mint/Chrome
+    relaunch; dormant yields dormant. See agent_skill:claude-ai-cdp-navigation.\n"
+  json_schema:
+    type: object
+    properties:
+      op:
+        type: string
+        enum:
+        - harvest
+      limit:
+        type: integer
+      after_turn:
+        type: integer
+    required:
+    - op
+  mandate_safety: read_only
+  seat_visibility:
+  - mcp
+  - mcp_claude
+  skill_uri: agent_skill:claude-ai-cdp-navigation
+  cache_priority: on_demand
+- canonical_name: cse_session_paste
+  domain: cse_session
+  operation: paste
+  dispatcher_call_shape:
+    tool: cse_session
+    dispatch_key: op
+    dispatch_value: paste
+  flat_call_shape:
+    tool: cse_session_paste
+    substrate_qualified: user-vortex__cse_session_paste
+  fol_descriptor: "Mutating authorized paste — hop-pair or explicit grant; idempotent
+    replay returns prior receipt. Receipt never implies ACK. See agent_skill:claude-ai-cdp-navigation.\n"
+  json_schema:
+    type: object
+    properties:
+      op:
+        type: string
+        enum:
+        - paste
+      chat_url:
+        type: string
+      registration_id:
+        type: string
+      idempotency_key:
+        type: string
+    required:
+    - op
+  mandate_safety: write
+  seat_visibility:
+  - mcp
+  - mcp_claude
+  skill_uri: agent_skill:claude-ai-cdp-navigation
+  cache_priority: on_demand
 domain_endpoints:
   default:
   - life
@@ -5074,6 +5351,7 @@ surface_primary_domains:
   - notify
   - fleet_liveness
   - operator_request
+  - cse_session
   code:
   - cortex
   - cortex_brief
@@ -5093,6 +5371,7 @@ surface_primary_domains:
   - project_ask
   - fleet_liveness
   - operator_request
+  - cse_session
 cortex_families:
   defaults:
     read:

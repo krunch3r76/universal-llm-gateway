@@ -568,6 +568,19 @@ CLI escape when no attached lane holds the CSE: `scripts/cortex/cowork_chat_foll
 
 When `PROJECT_ASK_URL` is unset, returns `{error: "PROJECT_ASK_URL not configured…"}`.
 
+## cse_session
+
+**Life + code primary** — cross-surface CSE provenance read, bounded harvest, and
+authorized paste via the `cdp-ask` satellite (`/v1/cse-session/*`). Thin httpx relay
+from MCP; per-op `mandate_safety`: `provenance`/`harvest` read-only, `paste` write.
+
+Ops: `provenance`, `harvest`, `paste` (typed `op` parameter; per-op catalog rows in
+`config/mcp/canonical.yaml`). Paste requires explicit target identity
+(`chat_url` or `registration_id`); hop-pair or explicit `grant` authorization;
+idempotent replay via `idempotency_key`. Receipt never implies ACK or release.
+
+See `agent_skill:claude-ai-cdp-navigation` for call-time doctrine.
+
 ## rag_search
 
 **Sole primary MCP/agent surface** for RAG. Returns raw context chunks with
