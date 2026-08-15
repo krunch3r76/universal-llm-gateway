@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import websocket
-
 _PROBE_TIMEOUT_S = 2.0
 
 # Harvest triple only — matches ``chat_reply_wait.HARVEST_JS`` / ``page_idle_from_state``.
@@ -82,6 +80,8 @@ def probe_page_liveness_sync(
     timeout_s: float = _PROBE_TIMEOUT_S,
 ) -> tuple[dict[str, Any] | None, bool]:
     """Evaluate the harvest triple on one page target; returns (state, probe_ok)."""
+    import websocket
+
     try:
         conn = websocket.create_connection(
             websocket_url,

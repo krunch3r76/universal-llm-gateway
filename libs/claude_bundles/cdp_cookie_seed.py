@@ -16,8 +16,6 @@ from __future__ import annotations
 import json
 import urllib.request
 
-import websocket
-
 PRIMARY_CDP_PORT = 9222
 COOKIE_DOMAIN_SUFFIX = "claude.ai"
 
@@ -61,6 +59,8 @@ def _browser_ws_url(port: int) -> str:
 
 def _cdp_call(port: int, method: str, params: dict | None = None) -> dict:
     """One browser-level CDP round trip; raises ``CookieSeedError`` on failure."""
+    import websocket
+
     ws_url = _browser_ws_url(port)
     try:
         conn = websocket.create_connection(
