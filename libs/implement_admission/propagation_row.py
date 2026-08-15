@@ -553,7 +553,7 @@ def rows_from_lib_consumers(
     *,
     code_ref: str,
 ) -> tuple[list[PropagationRow], list[str]]:
-    """Mint verified CONSUMERS+INJECTORS rows; return lead-visible escalations.
+    """Mint verified serves+CONSUMERS+INJECTORS rows; return lead-visible escalations.
 
     Returns ``(rows, escalations)`` — escalations are ``libs_touched:…`` prose,
     never ``PropagationRow`` (appending a row would mint a restart and suppress

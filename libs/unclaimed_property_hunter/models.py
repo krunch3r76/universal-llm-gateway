@@ -20,6 +20,8 @@ RunKind = Literal[
     "ingest_unparsed",
 ]
 
+CorpusSource = Literal["state_download", "local_disk", "unknown"]
+
 
 @dataclass(frozen=True)
 class CorpusFingerprint:
@@ -31,6 +33,7 @@ class CorpusFingerprint:
     content_length: int
     zip_sha256: str
     rows_scanned: int = 0
+    corpus_source: CorpusSource = "unknown"
 
 
 @dataclass(frozen=True)

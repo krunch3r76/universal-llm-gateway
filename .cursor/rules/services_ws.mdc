@@ -73,8 +73,9 @@ Confirm with `tmux capture-pane -t 0:0 -p` before sending keys.
 7. Re-`start` / `sync_restart` any services that stayed down (e.g. GIW)
 
 **Forbidden:** ask the operator to quit/start manage; `systemctl` / `pkill` / raw
-docker kill for lifecycle. **Permitted:** tmux drive of `0:0` for the manage
-process; MCP `manage` for everything else once the sock is up.
+docker kill for **fleet-service** lifecycle. **Permitted:** tmux drive of `0:0` for
+the manage process; MCP `manage` for everything else once the sock is up. Fleet
+roster + the auxiliary-unit carve-out: `core_ws.mdc` § Lifecycle authority.
 
 ### Charter control — global vs per-root
 
@@ -108,9 +109,10 @@ needs operator auth (`session-abort-authorization`). Spec:
 
 ## Scripts (CRITICAL)
 
-**NEVER** `systemctl start/restart/enable`
-**NEVER** `pkill -f "universal-"` or `docker restart`/`docker stop` (bypasses lifecycle management)
-**ONLY** `./manage` (TUI, human) or `manage` MCP tool (agent)
+**NEVER** `systemctl` at system scope — any invocation without `--user`
+**NEVER** `systemctl --user`, `pkill -f "universal-"`, or `docker restart`/`docker stop` against a **fleet service** (bypasses lifecycle management)
+**ONLY** `./manage` (TUI, human) or `manage` MCP tool (agent) for fleet services
+**PERMITTED** `systemctl --user` for **auxiliary** user units the seat authored that `manage` does not list — roster + test: `core_ws.mdc` § Lifecycle authority
 
 The agent MAY start, stop, restart, and rebuild services via `manage`.
 Human-initiated operations: always via `./manage` (TUI).
@@ -156,7 +158,9 @@ curl -sk https://<mcp-host>/health
 
 All services are managed through `./manage`. There are no standalone/docker-compose-only services.
 
-**Invariant**: default deployment uses `./manage` host subprocess lifecycle (PID files under `~/.gateway/`). Unit files under `services/*/systemd/` are optional operator-installed artifacts — ¬ the default ULG deploy shape. Agents must not instruct `systemctl` unless the operator explicitly runs that shape.
+**Invariant**: every service in the table above deploys via `./manage` host subprocess lifecycle (PID files under `~/.gateway/`) — that is the ULG deploy shape for **fleet services**, and `manage` is their sole lifecycle substrate. systemd never deploys a fleet service.
+
+Unit files under `services/*/systemd/` belong to **auxiliary** non-core jobs (e.g. `services/unclaimed_property_hunter/systemd/`), not to the fleet. For those the seat MAY install to `~/.config/systemd/user/` and run `systemctl --user daemon-reload` / `enable` / `start` itself — ¬ an operator hand-off. System-scope units remain forbidden. Compatible, not contradictory: `manage` owns the fleet; user-scope systemd owns seat-authored auxiliary timers. Roster + test: `core_ws.mdc` § Lifecycle authority.
 
 ## Source-edit → Deploy action
 

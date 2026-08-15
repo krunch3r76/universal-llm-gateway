@@ -189,6 +189,7 @@ def load_run_from_normalized(path: Path) -> RunRecord:
 
 def _load_fingerprint(raw: dict[str, Any] | None):
     from unclaimed_property_hunter.models import CorpusFingerprint
+    from unclaimed_property_hunter.result_surface import resolve_corpus_source
 
     if not raw:
         return None
@@ -199,6 +200,7 @@ def _load_fingerprint(raw: dict[str, Any] | None):
         content_length=int(raw.get("content_length", 0)),
         zip_sha256=str(raw.get("zip_sha256", "")),
         rows_scanned=int(raw.get("rows_scanned", 0)),
+        corpus_source=resolve_corpus_source(corpus_fingerprint=raw),
     )
 
 

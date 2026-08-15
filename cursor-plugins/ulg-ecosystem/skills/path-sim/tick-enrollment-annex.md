@@ -240,7 +240,9 @@ for CHECKPOINT authors: Use the `checkpoint-discipline` skill § Autonomous tick
 The materialized autonomous packet AC **explicitly authorizes** deploy-verify
 restart during the worker window, overriding `implement-work-item` §4B:
 `quality_gate → manage(sync_restart) → wait_healthy (manage busy_status) → live probe`.
-**Only the `manage` MCP** — never systemctl / pkill / docker / raw shell kill.
+**Only the `manage` MCP** for fleet services — never systemctl / pkill / docker /
+raw shell kill. (`systemctl --user` on auxiliary seat-authored units outside the
+`manage` roster is a separate, permitted case — `core_ws.mdc` § Lifecycle authority.)
 
 **Charter harvest propagation (BINDING — standard for all charter windows):**
 when the worker closeout carries ``propagation_residue`` (landed≠live), the

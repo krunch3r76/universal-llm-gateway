@@ -40,7 +40,7 @@ Do not copy `DigestTickLoop` as a template for a slow cadence: its 30s interval 
 
 ## Forbidden ops
 
-¬`pkill`, `docker restart/stop`, `systemctl`, direct script starts. Use `manage` MCP or `./manage` TUI.
+¬`pkill`, `docker restart/stop`, `systemctl`, direct script starts **against fleet services** — use `manage` MCP or `./manage` TUI. ¬ `systemctl` at system scope, ever. `systemctl --user` on auxiliary seat-authored units outside the `manage` roster is permitted; roster + test: `.cursor/rules/core_ws.mdc` § Lifecycle authority.
 
 ## Post-code-change loop
 

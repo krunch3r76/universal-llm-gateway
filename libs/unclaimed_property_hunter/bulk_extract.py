@@ -66,6 +66,7 @@ def download_bulk_zip(dest: Path, *, timeout_s: float = 600.0) -> ZipDownloadRes
         etag=etag,
         content_length=content_length,
         zip_sha256=hasher.hexdigest(),
+        corpus_source="state_download",
     )
     return ZipDownloadResult(path=dest, fingerprint=fingerprint)
 
@@ -77,11 +78,12 @@ def fingerprint_existing_zip(path: Path) -> CorpusFingerprint:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             hasher.update(chunk)
     return CorpusFingerprint(
-        url=BULK_ZIP_URL,
+        url=f"file://{path.resolve().as_posix()}",
         last_modified="",
         etag="",
         content_length=path.stat().st_size,
         zip_sha256=hasher.hexdigest(),
+        corpus_source="local_disk",
     )
 
 

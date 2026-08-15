@@ -156,6 +156,24 @@ def test_rows_from_closeout_payload_modified_lib_still_mints_consumers():
     assert prose is False
 
 
+def test_wait_status_land_mints_serving_agent_bus_not_owned_libs_blast():
+    """Replay 33083d61: serving process is nominated; seven-way owned_libs is not."""
+    from implement_admission.service_lib_ownership import declared_services_for_lib
+
+    rows, escalations = rows_from_lib_consumers(
+        ["libs/agent_bus_store/wait_status.py"],
+        code_ref="33083d61",
+    )
+    services = {row.service for row in rows}
+    owned = set(declared_services_for_lib("agent_bus_store"))
+    assert "agent_bus" in services
+    assert services <= {"agent_bus", "mcp"}
+    assert not owned <= services
+    assert any("derived:serves" in (row.reason or "") for row in rows)
+    assert all(row.code_ref == "33083d61" for row in rows)
+    assert escalations == []
+
+
 def test_rows_from_lib_consumers_oracle_omits_contradicted_mcp():
     from implement_admission.propagation_row import rows_from_lib_consumers
 

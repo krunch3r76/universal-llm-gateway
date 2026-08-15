@@ -78,6 +78,7 @@ def run_estates(
                 "content_length": fingerprint.content_length,
                 "zip_sha256": fingerprint.zip_sha256,
                 "rows_scanned": fingerprint.rows_scanned,
+                "corpus_source": fingerprint.corpus_source,
             },
         },
         indent=2,

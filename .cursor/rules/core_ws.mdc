@@ -47,9 +47,14 @@ Full policy: `subagent-strategy.mdc` (load before launching a Task subagent).
 Sole maintainers: gateway, stargate, inference_djinn, process_ipc, event_bus, logging, transport, protocol
 
 ## User Approval
-- **Allowed**: read, analyze, search, propose; service lifecycle via `manage` MCP; routine git commits
-- **Forbidden**: `systemctl`, `pkill`, `docker restart/stop`; shell mutations outside edit/commit flow
+- **Allowed**: read, analyze, search, propose; fleet-service lifecycle via `manage` MCP; routine git commits; `systemctl --user` (install, `daemon-reload`, enable/start/stop/status) for **auxiliary** user units the seat authored
+- **Forbidden**: `systemctl` at **system scope** — any invocation without `--user`; `systemctl` / `pkill` / `docker restart|stop` against **any fleet service**; shell mutations outside edit/commit flow
 - **Gated**: `git_integrate`/`git_land` require operator approval (`decision:lead-agent-git-integration`). Routine in-tree commits: NOT gated.
+
+### Lifecycle authority — scope by WHAT and by SCOPE, ¬ by tool name
+**Fleet service** = `gateway`, `stargate`, `mcp`, `rag`, `cortex_api`, `agent_bus`, `event_service`, `cloud_proxy`, `git_integration_worker`, `email_bridge`, `cdp_ask` — **and anything else `manage(action="status")` lists**. `manage` is their SOLE lifecycle substrate: bypassing it can truncate an in-flight dispatch or drop the fleet.
+**Auxiliary** = a user-scope unit the seat authored for non-core work that `manage` does **not** list (e.g. `services/unclaimed_property_hunter/systemd/` oneshot + timer). Seat installs and manages these itself — ¬ operator hands.
+**Unsure ⇒ fleet ⇒ `manage`.** Owner of this rule; other surfaces defer here (`services_ws.mdc`, `ulg-architecture/service-ops.md`, `path-sim` annex). Basis: `decision:ulg-scheduling-substrate-manage-over-systemd`.
 
 ## Output
 ¬summaries unless asked. Artifacts only (code, UML, verification).
