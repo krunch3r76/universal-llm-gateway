@@ -27,19 +27,50 @@ async def test_paste_identity_omission_refused() -> None:
 
 @pytest.mark.asyncio
 async def test_unauthorized_cross_lane_403_shape() -> None:
-    with patch(
-        "cdp_ask.cse_session_paste.resolve_provenance",
-        return_value={
-            "state": "current",
-            "registration_id": "target-reg",
-            "parent_thread_claim": "lane-1",
-        },
+    with (
+        patch(
+            "cdp_ask.cse_session_paste.resolve_provenance",
+            return_value={
+                "state": "current",
+                "registration_id": "target-reg",
+                "parent_thread_claim": "lane-1",
+            },
+        ),
+        patch(
+            "cdp_ask.cse_session_paste.execute_followup",
+            AsyncMock(),
+        ) as followup,
     ):
         result = await execute_paste(
             PasteRequest(registration_id="target-reg", prompt_text="hi"),
             ExecutionStore(),
         )
     assert result.code == "paste_unauthorized"
+    assert followup.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_self_supersession_refuses_paste() -> None:
+    with (
+        patch(
+            "cdp_ask.cse_session_paste.resolve_provenance",
+            return_value={"state": "current", "registration_id": "same-reg"},
+        ),
+        patch(
+            "cdp_ask.cse_session_paste.execute_followup",
+            AsyncMock(),
+        ) as followup,
+    ):
+        result = await execute_paste(
+            PasteRequest(
+                registration_id="same-reg",
+                caller_registration_id="same-reg",
+                prompt_text="hi",
+            ),
+            ExecutionStore(),
+        )
+    assert result.code == "self_supersession"
+    assert followup.await_count == 0
 
 
 @pytest.mark.asyncio

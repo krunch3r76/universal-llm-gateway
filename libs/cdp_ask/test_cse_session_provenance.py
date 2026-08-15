@@ -109,6 +109,7 @@ async def test_n_seat_candidates(monkeypatch, tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
+    shared_lane = {"parent_thread": "lane-7246"}
     for reg, url in (
         ("reg-a", "https://claude.ai/cowork/cse_a"),
         ("reg-b", "https://claude.ai/cowork/cse_b"),
@@ -119,8 +120,20 @@ async def test_n_seat_candidates(monkeypatch, tmp_path: Path) -> None:
             registration_id=reg,
             cdp_url="http://127.0.0.1:9223",
             lane_thread=f"thread-{reg}",
+            lineage=shared_lane,
         )
     result = await resolve_public_provenance(ProvenanceQuery())
     assert isinstance(result, dict)
-    names = {row["registration_id"] for row in result["candidates"]}
+    candidates = result["candidates"]
+    assert len(candidates) == 3
+    names = {row["registration_id"] for row in candidates}
     assert names == {"reg-a", "reg-b", "reg-c"}
+    url_by_reg = {row["registration_id"]: row["chat_url"] for row in candidates}
+    assert url_by_reg == {
+        "reg-a": "https://claude.ai/cowork/cse_a",
+        "reg-b": "https://claude.ai/cowork/cse_b",
+        "reg-c": "https://claude.ai/cowork/cse_c",
+    }
+    for row in candidates:
+        prov = row.get("provenance") or {}
+        assert prov.get("state") != "conflict", row
