@@ -11,6 +11,8 @@ trigger_match_terms:
   - rich-seed before layer
   - Stage 0 mint
   - seed work item
+  - attended charter birth
+  - standing coding mission
 related_skills:
   - abstraction-layering
   - friction-review
@@ -47,6 +49,7 @@ rich_seed_field_lists ∈ /todo ∨ decision:todo-creation-rich-seed-contract �
 | Non-codework Q→A | `/path-sim` |
 | Multi-phase plannable | `/plan-seed` |
 | Settled ship-only | `/address` |
+| Standing coding mission (charter / scoreboard / vision-align / new root) | `cortex://notes/system/playbooks/attended-charter-birth-with-cursor.md` — propose → vision-align → operator ratify → scoreboard → root. Worked example: agent-bus:7281. ¬ this seed path; ¬ implement before ratify |
 
 ## Kinds (attribute ¬ rival paths)
 
