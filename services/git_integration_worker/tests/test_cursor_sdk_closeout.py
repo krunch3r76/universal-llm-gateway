@@ -544,9 +544,13 @@ def test_prepare_closeout_delivery_demotes_compound_pytest_and_wires_annotator(
 
     sync_source = inspect.getsource(closeout_mod._assemble_closeout_delivery)
     async_source = inspect.getsource(closeout_mod.prepare_closeout_delivery_async)
+    assembly_async_source = inspect.getsource(
+        closeout_mod._assemble_closeout_delivery_async
+    )
     assert "annotate_test_observation_discrepancy" in sync_source
     assert "append_harvest_demotion_deviations" in sync_source
     assert "_assemble_closeout_delivery" in async_source
+    assert "await asyncio.to_thread(" in assembly_async_source
 
     _init_git_repo(tmp_path)
     command = (

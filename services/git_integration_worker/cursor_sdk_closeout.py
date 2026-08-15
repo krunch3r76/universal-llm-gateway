@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import shutil
@@ -2092,7 +2093,8 @@ async def _assemble_closeout_delivery_async(
     worktree_isolated: bool = False,
     resolved_model: str | None = None,
 ) -> CloseoutDelivery:
-    delivery = _assemble_closeout_delivery(
+    delivery = await asyncio.to_thread(
+        _assemble_closeout_delivery,
         source_repo=source_repo,
         binding=binding,
         dispatch_id=dispatch_id,

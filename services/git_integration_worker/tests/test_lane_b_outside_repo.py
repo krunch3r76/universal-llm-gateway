@@ -5,14 +5,15 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
-
 from implement_admission.closeout_models import (
     EffectEntry,
     EffectsManifest,
     SurfaceSection,
 )
+
 from services.git_integration_worker.config import WorkerConfig
 from services.git_integration_worker.cursor_sdk_capture_binding import CaptureBinding
 from services.git_integration_worker.cursor_sdk_closeout import (
@@ -76,6 +77,45 @@ def test_ac_s1_1_lane_b_snapshot_short_circuit_without_rglob(
         list(binding.repo_roots),
     )
     assert outside == frozenset()
+
+
+def test_outside_census_prunes_repositories_and_cache_trees(tmp_path: Path) -> None:
+    mount = tmp_path / "mount"
+    repo = mount / "repo"
+    mount.mkdir()
+    repo.mkdir()
+    (mount / "outside.md").write_text("outside\n", encoding="utf-8")
+
+    for directory in (".git", ".cursor", ".pytest_cache", "__pycache__"):
+        ignored = mount / directory
+        ignored.mkdir()
+        (ignored / "ignored.txt").write_text("ignored\n", encoding="utf-8")
+    worktree = mount / "ulg-arc-worktrees" / "dispatch"
+    worktree.mkdir(parents=True)
+    (worktree / "ignored.txt").write_text("ignored\n", encoding="utf-8")
+    (repo / "repo-only.py").write_text("repo\n", encoding="utf-8")
+
+    assert snapshot_outside_repo_paths(mount, [repo]) == frozenset({"outside.md"})
+
+
+def test_outside_census_emits_duration_observation(tmp_path: Path) -> None:
+    mount = tmp_path / "mount"
+    repo = mount / "repo"
+    mount.mkdir()
+    repo.mkdir()
+    (mount / "outside.md").write_text("outside\n", encoding="utf-8")
+
+    with patch(
+        "services.git_integration_worker.cursor_sdk_outside_census.emit_frontier_event"
+    ) as emit:
+        snapshot_outside_repo_paths(mount, [repo])
+
+    emit.assert_called_once()
+    event = emit.call_args.args[0]
+    assert event.signal == "frontier.sdk.closeout.outside_census"
+    assert event.payload["found_count"] == 1
+    assert event.payload["walked"] is True
+    assert event.payload["duration_ms"] >= 0
 
 
 def test_ac_s1_1_baseline_uses_binding_outside_repo_census(tmp_path: Path) -> None:

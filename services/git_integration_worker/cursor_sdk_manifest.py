@@ -20,8 +20,9 @@ from implement_admission.closeout_models import (
 from services.git_integration_worker.cursor_sdk_capture_status import (
     ChangeSet,
     canonicalize_capture_path,
-    filter_manifest_swamp,
-    is_swamp_excluded_path,
+)
+from services.git_integration_worker.cursor_sdk_outside_census import (
+    snapshot_outside_repo_paths as snapshot_outside_repo_paths,
 )
 from services.git_integration_worker.cursor_sdk_stream_capture import (
     ToolCallObservation,
@@ -34,6 +35,8 @@ from services.git_integration_worker.cursor_sdk_subagent_capture import (
 )
 from services.git_integration_worker.cursor_sdk_tool_result import (
     assertion_id_from_payload as _assertion_id_from_payload,
+)
+from services.git_integration_worker.cursor_sdk_tool_result import (
     unwrap_tool_result as _unwrap_tool_result,
 )
 from services.git_integration_worker.cursor_sdk_toolcall_retention import (
@@ -1375,39 +1378,6 @@ def manifest_offgit_deliverable_uris(
             seen.add(uri)
             ordered.append(uri)
     return ordered
-
-
-def snapshot_outside_repo_paths(
-    mount_root: Path,
-    repo_roots: list[Path] | None = None,
-) -> frozenset[str]:
-    """Workspaces-relative paths under *mount_root* but outside every registered repo."""
-    roots = repo_roots or registered_repo_roots(mount_root)
-    mount_resolved = mount_root.resolve()
-    roots_resolved = {repo.resolve() for repo in roots}
-    if roots_resolved == {mount_resolved}:
-        return frozenset()
-
-    def _under_repo(candidate: Path) -> bool:
-        resolved = candidate.resolve()
-        for repo in roots_resolved:
-            try:
-                resolved.relative_to(repo)
-                return True
-            except ValueError:
-                continue
-        return False
-
-    found: set[str] = set()
-    if not mount_resolved.is_dir():
-        return frozenset()
-    for path in mount_resolved.rglob("*"):
-        if not path.is_file() or _under_repo(path):
-            continue
-        rel = mount_relative_path(mount_resolved, path)
-        if rel is not None and not is_swamp_excluded_path(rel):
-            found.add(rel)
-    return frozenset(filter_manifest_swamp(found))
 
 
 def _normalize_repo_path(
