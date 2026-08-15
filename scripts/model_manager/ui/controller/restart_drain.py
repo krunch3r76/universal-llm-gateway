@@ -410,19 +410,25 @@ async def run_gated_deferred(
 _SUPERVISE_TASKS: set[asyncio.Task[None]] = set()
 
 
-def _drain_deferred_result(intent: Any, *, reason: str | None = None) -> dict[str, Any]:
+def _drain_deferred_result(
+    intent: Any,
+    *,
+    reason: str | None = None,
+    activation_validation_id: str | None = None,
+) -> dict[str, Any]:
     """The 202 envelope for a deferred, drain-supervised git-worker restart.
 
     ``caller_must_exit_to_release_lease`` is binding for cursor-sdk holders:
     waiting in-window for healthy while holding ``cursor_sdk_gate`` never
     converges (friction 25989). Arm the intent, then exit so active_count→0.
+    Activation proof is supervisor-owned after exit.
     """
     from scripts.model_manager.ui.controller.restart_intent_consumer import (
         project_restart_intent_consumer,
     )
 
     projected = project_restart_intent_consumer(intent)
-    return {
+    result = {
         "status": "deferred",
         "state": "draining",
         "service": intent.service,
@@ -435,18 +441,24 @@ def _drain_deferred_result(intent: Any, *, reason: str | None = None) -> dict[st
         "guidance": (
             "If you hold the git_integration_worker write lease (cursor-sdk), "
             "exit this dispatch now — do not wait_healthy in-window. "
-            "Probe only after restart completes / worker healthy."
+            "Activation proof is supervisor-owned; query via activation_validation_id "
+            "or fleet_liveness(code_ref=…)."
         ),
     }
+    if activation_validation_id is not None:
+        result["activation_validation_id"] = activation_validation_id
+    return result
 
 
 def _blocking_drain_result(
     *, service: str, action: str, intent_id: str, final: Any
 ) -> dict[str, Any]:
     """Terminal envelope for the fleet blocking path (ok vs error)."""
-    # "completed" mirrors restart_intent_store.STATUS_COMPLETED; literal keeps
-    # this module duck-typed (concrete-store-free).
-    drained_ok = final is not None and final.status == "completed"
+    drained_ok = final is not None and final.status in {
+        "completed",
+        "verifying_activation",
+        "activation_unverified",
+    }
     return {
         "status": "ok" if drained_ok else "error",
         "drain_status": (final.status if final is not None else "missing"),
@@ -454,6 +466,21 @@ def _blocking_drain_result(
         "action": action,
         "restart_intent_id": intent_id,
     }
+
+
+def _mint_activation_validation(store: Any, intent: Any) -> str:
+    from charter_runner_store.propagation_validation import (
+        latest_validation_for_intent,
+        mint_pending_validation_for_intent,
+    )
+
+    existing = latest_validation_for_intent(intent.intent_id)
+    if existing is not None and existing.outcome == "pending":
+        return existing.validation_id
+    return mint_pending_validation_for_intent(
+        intent,
+        advance_intent_fn=store.advance_if_status,
+    )
 
 
 async def _await_intent_terminal(
@@ -520,8 +547,11 @@ async def run_gated_drain_supervised(
     if outcome is not None:
         existing = store.active_for_service(service)
         if existing is not None:
+            validation_id = _mint_activation_validation(store, existing)
             return _drain_deferred_result(
-                existing, reason="drain already in progress for this service"
+                existing,
+                reason="drain already in progress for this service",
+                activation_validation_id=validation_id,
             )
         return outcome.to_result()
 
@@ -532,6 +562,7 @@ async def run_gated_drain_supervised(
         intent = store.create_intent(
             service=service, action=action, deadline_at=deadline_at, reason=reason
         )
+        validation_id = _mint_activation_validation(store, intent)
     except Exception:
         # Never leak the held slot if the durable write fails.
         await gate.release(service)
@@ -542,7 +573,7 @@ async def run_gated_drain_supervised(
         reason=f"git-worker drain {action}",
     )
     _spawn_supervised(gate, service, supervisor, intent)
-    return _drain_deferred_result(intent)
+    return _drain_deferred_result(intent, activation_validation_id=validation_id)
 
 
 async def run_gated_drain_supervised_blocking(

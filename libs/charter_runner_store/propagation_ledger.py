@@ -432,14 +432,10 @@ def close_row(
     *,
     proof_payload: dict[str, Any],
     conn: sqlite3.Connection | None = None,
+    restart_intent: str | None = None,
+    restart_boundary_monotonic: float | None = None,
 ) -> None:
-    """Close a row after observed proof — never on restart status alone.
-
-    ``status=closed`` is an attempt outcome (``STATUS_CLAIM_KIND=observed_of_attempt``),
-    not a standing liveness oracle.
-
-    Stamps ``identity_measurement`` at this chokepoint for every close writer.
-    """
+    """Close a row after observed proof — never on restart status alone."""
     own_conn = conn is None
     db = conn or open_ledger_db()
     now = time.time()
@@ -470,23 +466,12 @@ def close_row(
         "identity_measurement": identity_measurement,
         "status_claim_kind": _STATUS_CLAIM_KIND,
     }
-    from .propagation_validation import record_validation
+    boundary = restart_boundary_monotonic or payload.get("landed_at_monotonic")
+    from .propagation_validation import apply_close_validation
 
-    record_validation(
-        service=context.service,
-        code_ref=context.code_ref,
-        row_id=row_id,
-        restart_boundary_monotonic=payload.get("landed_at_monotonic"),
-        pre_observation=payload.get("proof_before"),
-        post_observation=payload,
-        observed_code_version=payload.get("code_version"),
-        code_ref_relation=payload.get("code_ref_relation"),
-        identity_measurement=identity_measurement,
-        outcome="validated",
-    )
     try:
-        execute_with_retry(
-            db,
+        db.execute("BEGIN IMMEDIATE")
+        cursor = db.execute(
             """
             UPDATE propagation_ledger
             SET status='closed',
@@ -498,6 +483,27 @@ def close_row(
             """,
             (json.dumps(payload), now, now, row_id),
         )
+        if cursor.rowcount != 1:
+            db.execute("ROLLBACK")
+            if own_conn:
+                db.close()
+            return
+        apply_close_validation(
+            conn=db,
+            service=context.service,
+            code_ref=context.code_ref,
+            row_id=row_id,
+            restart_intent=restart_intent,
+            restart_boundary_monotonic=boundary,
+            post_observation=payload,
+            observed_code_version=payload.get("code_version"),
+            code_ref_relation=payload.get("code_ref_relation"),
+            identity_measurement=identity_measurement,
+        )
+        db.commit()
+    except Exception:
+        db.execute("ROLLBACK")
+        raise
     finally:
         if own_conn:
             db.close()

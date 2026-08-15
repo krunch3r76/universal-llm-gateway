@@ -836,14 +836,21 @@ class ServiceController:
         return self.stop_git_integration_worker
 
     async def reconcile_pending_restart_intents(self) -> None:
-        """Resume persisted, non-terminal restart intents at manage boot (R-D).
+        """Resume persisted restart intents and pending validations at manage boot."""
+        from charter_runner_store.propagation_validation import (
+            repair_supersession_pairs,
+            sweep_stale_pending_validations,
+        )
 
-        For each pending intent: re-derive the supervisor (action-appropriate kill)
-        and resume supervision (idempotent begin-drain, resume_from the stored
-        ``last_seen_event_seq``; the final epoch-check guards a worker that already
-        restarted). Never crashes boot — a reconcile failure advances that intent to
-        ``failed`` and logs.
-        """
+        from scripts.model_manager.ui.controller.git_worker_activation_verify import (
+            resume_activation_verify,
+        )
+        from scripts.model_manager.ui.controller.restart_intent_states import (
+            STATUS_DRAINED_RESTARTING,
+            STATUS_PENDING_DRAIN,
+            STATUS_VERIFYING_ACTIVATION,
+        )
+
         try:
             pending = self._restart_intent_store.pending_intents()
         except Exception:
@@ -851,6 +858,17 @@ class ServiceController:
             return
         for intent in pending:
             try:
+                if intent.status == STATUS_VERIFYING_ACTIVATION:
+                    await resume_activation_verify(
+                        self._restart_intent_store, intent.intent_id
+                    )
+                    logger.info(
+                        "restart-intent reconcile: resumed activation verify intent_id=%s",
+                        intent.intent_id,
+                    )
+                    continue
+                if intent.status not in (STATUS_PENDING_DRAIN, STATUS_DRAINED_RESTARTING):
+                    continue
                 supervisor = self.build_git_worker_drain_supervisor(
                     kill=self.git_worker_kill_for(intent.action)
                 )
@@ -882,6 +900,11 @@ class ServiceController:
                         "restart-intent reconcile: cannot mark intent failed: %s",
                         intent.intent_id,
                     )
+        try:
+            repair_supersession_pairs(store=self._restart_intent_store)
+            sweep_stale_pending_validations()
+        except Exception:
+            logger.exception("restart-intent reconcile: validation sweep failed")
 
     async def restart_git_integration_worker(self) -> str:
         """Restart git-integration-worker (stop then start)."""

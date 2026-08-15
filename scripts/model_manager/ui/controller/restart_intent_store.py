@@ -2,13 +2,10 @@
 
 SQLite-backed (mirrors the cursor-dispatch ledger pattern: a small WAL db under
 the manage data dir, ``GATEWAY_DIR`` = ``~/.gateway``). One row per restart
-intent. The store is the single update path per intent; the existing per-service
-``FifoCapacityGate(limit=1)`` restart mutex coalesces concurrent restarts, and a
-partial unique index backstops "one live non-terminal intent per service".
-
-Phase 2 of ``task:git-worker-event-driven-drain`` (manage side). The supervisor
-(``git_worker_drain_supervisor.py``) consumes these rows; ``pending_intents`` is
-the startup-reconcile feed so an event-driven restart survives a manage restart.
+intent. ``_BLOCKS_NEW_RESTART`` statuses coalesce concurrent restarts; a partial
+unique index backstops that predicate. ``_NEEDS_RECONCILE`` is the boot feed and
+also includes ``verifying_activation`` so activation proof survives manage
+restart without a second begin-drain.
 """
 
 from __future__ import annotations
@@ -22,78 +19,37 @@ from typing import Any, TypedDict
 
 from universal_logging import get_logger
 
+from .restart_intent_migrate import _DDL, apply_restart_intent_schema
+from .restart_intent_states import (
+    _ALL_STATUSES,
+    _BLOCKS_NEW_RESTART,
+    _NEEDS_RECONCILE,
+    _TERMINAL,
+    STATUS_CANCELLED,
+    STATUS_COMPLETED,
+    STATUS_DRAINED_RESTARTING,
+    STATUS_FAILED,
+    STATUS_FORCE_REQUESTED,
+    STATUS_PENDING_DRAIN,
+    STATUS_TIMEOUT,
+)
 from .restart_window_store import (
-    DEFAULT_FLEET_TTL_S,
-    DEFAULT_SERVICE_TTL_S,
-    FLEET_WINDOW_SERVICES,
-    RETRY_AFTER_S,
     RestartWindow,
     RestartWindowStore,
     RestartWindowView,
-    window_status_view,
 )
 from .service_config import GATEWAY_DIR
 
 logger = get_logger(__name__)
 
-# Intent lifecycle states.
-STATUS_PENDING_DRAIN = "pending_drain"
-STATUS_DRAINED_RESTARTING = "drained_restarting"
-STATUS_COMPLETED = "completed"
-STATUS_FAILED = "failed"
-STATUS_TIMEOUT = "timeout"
-STATUS_FORCE_REQUESTED = "force_requested"
-STATUS_CANCELLED = "cancelled"
-
-_NON_TERMINAL = (STATUS_PENDING_DRAIN, STATUS_DRAINED_RESTARTING)
-_TERMINAL = frozenset(
-    {
-        STATUS_COMPLETED,
-        STATUS_FAILED,
-        STATUS_TIMEOUT,
-        STATUS_FORCE_REQUESTED,
-        STATUS_CANCELLED,
-    }
-)
-_ALL_STATUSES = frozenset(_NON_TERMINAL) | _TERMINAL
-
 
 class RestartIntentCancelError(Exception):
-    """Cancel refused: unknown id, already terminal (non-cancelled), or past kill commit.
-
-    ``status`` carries the row's current status when known so callers can shape a
-    structured refuse without a second store read.
-    """
+    """Cancel refused: unknown id, already terminal (non-cancelled), or past kill commit."""
 
     def __init__(self, reason: str, *, status: str | None = None) -> None:
         super().__init__(reason)
         self.reason = reason
         self.status = status
-
-
-_DDL = """
-CREATE TABLE IF NOT EXISTS restart_intents (
-    intent_id            TEXT PRIMARY KEY,
-    service              TEXT NOT NULL,
-    action               TEXT NOT NULL DEFAULT 'restart',
-    status               TEXT NOT NULL CHECK (status IN (
-        'pending_drain','drained_restarting','completed',
-        'failed','timeout','force_requested','cancelled')),
-    drain_epoch          INTEGER,
-    worker_id            TEXT,
-    worker_started_at    TEXT,
-    deadline_at          TEXT,
-    last_seen_event_seq  INTEGER NOT NULL DEFAULT 0,
-    reason               TEXT,
-    created_at           TEXT NOT NULL,
-    updated_at           TEXT NOT NULL
-);
--- One live (non-terminal) intent per service. Backstops the check-then-insert in
--- create_intent (the restart-mutex already serialises concurrent creates on-loop).
-CREATE UNIQUE INDEX IF NOT EXISTS idx_restart_intent_live
-    ON restart_intents(service)
-    WHERE status IN ('pending_drain','drained_restarting');
-"""
 
 
 def _now() -> str:
@@ -126,6 +82,7 @@ class Intent:
     deadline_at: str | None
     last_seen_event_seq: int
     reason: str | None
+    kill_boundary_at: str | None
     created_at: str
     updated_at: str
 
@@ -135,11 +92,6 @@ class Intent:
 
 
 class IntentStatusView(TypedDict):
-    """Compact live-intent fields shared by busy_status and the TUI restart pane.
-
-    Carries identity, lifecycle status, drain epoch, deadline, and elapsed time.
-    """
-
     restart_intent_id: str
     status: str
     drain_epoch: int | None
@@ -148,7 +100,6 @@ class IntentStatusView(TypedDict):
 
 
 def intent_status_view(intent: Intent, *, now: datetime) -> IntentStatusView:
-    """Project a restart intent into the five-field busy_status / TUI shape."""
     created = datetime.fromisoformat(intent.created_at)
     if created.tzinfo is None:
         created = created.replace(tzinfo=UTC)
@@ -162,6 +113,7 @@ def intent_status_view(intent: Intent, *, now: datetime) -> IntentStatusView:
 
 
 def _row_to_intent(row: sqlite3.Row) -> Intent:
+    keys = row.keys()
     return Intent(
         intent_id=row["intent_id"],
         service=row["service"],
@@ -173,18 +125,14 @@ def _row_to_intent(row: sqlite3.Row) -> Intent:
         deadline_at=row["deadline_at"],
         last_seen_event_seq=row["last_seen_event_seq"],
         reason=row["reason"],
+        kill_boundary_at=row["kill_boundary_at"] if "kill_boundary_at" in keys else None,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
 
 
 class RestartIntentStore:
-    """Durable singleton for restart intents. DB methods are synchronous.
-
-    Mirrors ``CursorDispatchLedger``: the path is captured once at construction
-    and the singleton is test-resettable via ``RestartIntentStore._instance =
-    None`` (or by constructing with an explicit ``db_path``).
-    """
+    """Durable singleton for restart intents. DB methods are synchronous."""
 
     _instance: RestartIntentStore | None = None
 
@@ -192,6 +140,8 @@ class RestartIntentStore:
         self._db_path: Path = db_path or _default_path()
         with self._connect() as conn:
             conn.executescript(_DDL)
+            apply_restart_intent_schema(conn)
+            conn.commit()
         self._windows = RestartWindowStore(self._db_path, self._connect)
 
     def _connect(self) -> sqlite3.Connection:
@@ -203,22 +153,16 @@ class RestartIntentStore:
             cls._instance = cls()
         return cls._instance
 
-    # --------------------------------------------------------------- mutations
     def create_intent(
         self, *, service: str, action: str, deadline_at: str, reason: str
     ) -> Intent:
-        """INSERT a ``pending_drain`` intent, or return the existing live one.
-
-        Enforces one live non-terminal intent per service (idempotent coalescing,
-        AC-6): a create while one is ``pending_drain``/``drained_restarting``
-        returns the existing intent and does NOT insert a second row.
-        """
+        """INSERT ``pending_drain``, or return existing if status blocks new restart."""
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             existing = conn.execute(
                 "SELECT * FROM restart_intents WHERE service=? AND status IN "
-                "(?, ?) ORDER BY created_at LIMIT 1",
-                (service, *_NON_TERMINAL),
+                f"({','.join('?' * len(_BLOCKS_NEW_RESTART))}) ORDER BY created_at LIMIT 1",
+                (service, *_BLOCKS_NEW_RESTART),
             ).fetchone()
             if existing is not None:
                 return _row_to_intent(existing)
@@ -233,8 +177,7 @@ class RestartIntentStore:
             row = conn.execute(
                 "SELECT * FROM restart_intents WHERE intent_id=?", (intent_id,)
             ).fetchone()
-        # deadline_at is set separately so the create stays a single INSERT shape;
-        # apply it now via advance-style update.
+            conn.commit()
         self._update(intent_id, deadline_at=deadline_at)
         out = _row_to_intent(row)
         out.deadline_at = deadline_at
@@ -260,21 +203,36 @@ class RestartIntentStore:
             raise ValueError(f"unknown intent status: {status!r}")
         self._update(intent_id, status=status)
 
+    def advance_if_status(
+        self,
+        intent_id: str,
+        *,
+        from_status: str,
+        to_status: str,
+        reason: str | None = None,
+    ) -> int:
+        """CAS status transition; returns rowcount (0 when already moved)."""
+        if to_status not in _ALL_STATUSES:
+            raise ValueError(f"unknown intent status: {to_status!r}")
+        now = _now()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE restart_intents
+                SET status=?, reason=COALESCE(?, reason), updated_at=?
+                WHERE intent_id=? AND status=?
+                """,
+                (to_status, reason, now, intent_id, from_status),
+            )
+            return int(cursor.rowcount)
+
+    def set_kill_boundary(self, intent_id: str, *, kill_boundary_at: str) -> None:
+        self._update(intent_id, kill_boundary_at=kill_boundary_at)
+
     def set_last_seen_seq(self, intent_id: str, seq: int) -> None:
         self._update(intent_id, last_seen_event_seq=seq)
 
     def cancel(self, intent_id: str) -> Intent:
-        """Write ``STATUS_CANCELLED`` for a cancellable ``pending_drain`` intent.
-
-        Allowed strictly while ``status == pending_drain`` (pre-kill-commit).
-        Idempotent when already ``cancelled``. Refuses ``drained_restarting`` and
-        every other non-pending status — that is the store-side half of the
-        ``_final_epoch_check`` ok refuse boundary (survival condition 2).
-
-        Callers that set a drain epoch MUST pair this with worker
-        ``release_drain`` / ``POST .../cancel-drain`` (survival condition 1);
-        this helper only owns the store transition.
-        """
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
@@ -303,7 +261,6 @@ class RestartIntentStore:
         return _row_to_intent(row)
 
     def _update(self, intent_id: str, **fields: Any) -> None:
-        """Patch the named columns + bump ``updated_at`` in one statement."""
         cols = [*fields.keys(), "updated_at"]
         vals = [*fields.values(), _now()]
         assignments = ", ".join(f"{c}=?" for c in cols)
@@ -313,7 +270,6 @@ class RestartIntentStore:
                 (*vals, intent_id),
             )
 
-    # ------------------------------------------------------------------- reads
     def get(self, intent_id: str) -> Intent | None:
         with self._connect() as conn:
             row = conn.execute(
@@ -322,12 +278,12 @@ class RestartIntentStore:
         return _row_to_intent(row) if row is not None else None
 
     def pending_intents(self) -> list[Intent]:
-        """Non-terminal rows, oldest first — the startup-reconcile feed."""
+        placeholders = ",".join("?" * len(_NEEDS_RECONCILE))
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM restart_intents WHERE status IN (?, ?) "
+                f"SELECT * FROM restart_intents WHERE status IN ({placeholders}) "
                 "ORDER BY created_at",
-                _NON_TERMINAL,
+                _NEEDS_RECONCILE,
             ).fetchall()
         return [_row_to_intent(r) for r in rows]
 
@@ -335,26 +291,13 @@ class RestartIntentStore:
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT * FROM restart_intents WHERE service=? AND status IN "
-                "(?, ?) ORDER BY created_at LIMIT 1",
-                (service, *_NON_TERMINAL),
+                f"({','.join('?' * len(_BLOCKS_NEW_RESTART))}) ORDER BY created_at LIMIT 1",
+                (service, *_BLOCKS_NEW_RESTART),
             ).fetchone()
         return _row_to_intent(row) if row is not None else None
 
-    # ---------------------------------------------------------- restart windows
-    def open_window(
-        self,
-        *,
-        scope: str,
-        service_set: list[str],
-        deadline_at: str,
-        reason: str,
-    ) -> RestartWindow:
-        return self._windows.open_window(
-            scope=scope,
-            service_set=service_set,
-            deadline_at=deadline_at,
-            reason=reason,
-        )
+    def open_window(self, **kwargs: Any) -> RestartWindow:
+        return self._windows.open_window(**kwargs)
 
     def clear_window(self, window_id: str) -> RestartWindow | None:
         return self._windows.clear_window(window_id)
@@ -365,9 +308,7 @@ class RestartIntentStore:
     def clear_open_fleet_windows(self) -> list[RestartWindow]:
         return self._windows.clear_open_fleet_windows()
 
-    def sweep_expired_windows(
-        self, *, now: datetime | None = None
-    ) -> list[RestartWindow]:
+    def sweep_expired_windows(self, *, now: datetime | None = None) -> list[RestartWindow]:
         return self._windows.sweep_expired_windows(now=now)
 
     def active_windows(self) -> list[RestartWindow]:
@@ -385,3 +326,27 @@ class RestartIntentStore:
         self, service: str, *, now: datetime | None = None
     ) -> RestartWindowView | None:
         return self._windows.service_projection(service, now=now)
+
+
+# Re-export status constants for backward compatibility.
+from .restart_intent_states import (  # noqa: E402
+    STATUS_ACTIVATION_UNVERIFIED,
+    STATUS_VERIFYING_ACTIVATION,
+)
+
+__all__ = [
+    "Intent",
+    "IntentStatusView",
+    "RestartIntentCancelError",
+    "RestartIntentStore",
+    "STATUS_ACTIVATION_UNVERIFIED",
+    "STATUS_CANCELLED",
+    "STATUS_COMPLETED",
+    "STATUS_DRAINED_RESTARTING",
+    "STATUS_FAILED",
+    "STATUS_FORCE_REQUESTED",
+    "STATUS_PENDING_DRAIN",
+    "STATUS_TIMEOUT",
+    "STATUS_VERIFYING_ACTIVATION",
+    "intent_status_view",
+]

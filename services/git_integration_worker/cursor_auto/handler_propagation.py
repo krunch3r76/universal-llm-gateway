@@ -121,6 +121,29 @@ def execution_for_manage_deferred(
         or "manage_deferred"
     )
     if restart_intent_persisted(manage_result):
+        activation_validation_id = manage_result.get("activation_validation_id")
+        if not activation_validation_id:
+            mark_harvest_wanted(row_id)
+            return {
+                "service": row.service,
+                "row_id": row_id,
+                "status": "harvest_wanted",
+                "reason": "manage_deferred_missing_activation_validation_id",
+                "manage": manage_result,
+                "next": "deferred restart lacked activation_validation_id — harvest_wanted",
+            }
+        from charter_runner_store.propagation_validation import bind_validation_to_row
+
+        if bind_validation_to_row(str(activation_validation_id), row_id) < 1:
+            mark_harvest_wanted(row_id)
+            return {
+                "service": row.service,
+                "row_id": row_id,
+                "status": "harvest_wanted",
+                "reason": "activation_validation_bind_failed",
+                "manage": manage_result,
+                "next": "validation bind failed — harvest_wanted",
+            }
         set_defer_reason(row_id, DEFER_MANAGE_QUEUED_DRAIN)
         return {
             "service": row.service,
@@ -129,8 +152,8 @@ def execution_for_manage_deferred(
             "reason": reason,
             "manage": manage_result,
             "next": (
-                "manage drain queue will fire sync_restart — poll liveness for "
-                "code_version and process identity change"
+                "manage drain queue will fire sync_restart — activation proof is "
+                "supervisor-owned; query fleet_liveness(code_ref=…) after converge"
             ),
         }
     mark_harvest_wanted(row_id)

@@ -6,6 +6,12 @@ import asyncio
 import logging
 from typing import Literal
 
+from charter_runner_store.propagation_activation_events import (
+    ManagePropagationSettleFailed,
+    publish_activation_event,
+)
+from charter_runner_store.propagation_validation import advance_validation
+
 from scripts.model_manager.observation_event import (
     emit_manage_propagation_settle_looked_empty,
 )
@@ -21,6 +27,8 @@ async def invoke_propagation_settle_for_service(
     settle_not_before_monotonic: float,
     source: SettleSource,
     window_deadline_at: str | None = None,
+    restart_intent: str | None = None,
+    validation_id: str | None = None,
 ) -> None:
     """Close or fail open propagation rows from observed liveness after restart."""
     from .propagation_ready_join import (
@@ -31,7 +39,7 @@ async def invoke_propagation_settle_for_service(
     )
 
     unreachable_defer_reason = DEFER_UNREACHABLE
-    if source == "lifecycle_wrapper" and service_needs_ready_join(service):
+    if service_needs_ready_join(service):
         join = await asyncio.to_thread(
             ready_join_for_settle,
             service,
@@ -67,10 +75,24 @@ async def invoke_propagation_settle_for_service(
                 item.outcome,
                 item.detail,
             )
-    except Exception:  # noqa: BLE001 — ledger settle must not fail the restart
+    except Exception as exc:  # noqa: BLE001
         logger.exception(
             "propagation ledger settle failed after restart complete service=%s",
             service,
+        )
+        if validation_id is not None:
+            advance_validation(
+                validation_id,
+                outcome="unvalidated_timeout",
+                failure_reason="settle_exception",
+            )
+        publish_activation_event(
+            ManagePropagationSettleFailed(
+                service=service,
+                validation_id=validation_id,
+                restart_intent=restart_intent,
+                reason=str(exc),
+            )
         )
 
 

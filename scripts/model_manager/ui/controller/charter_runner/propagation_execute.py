@@ -541,10 +541,22 @@ async def execute_propagation_plan(
         upsert_open_rows(plan.rows)
 
     bump_age_for_open_rows()
+    from charter_runner_store.propagation_validation import (
+        pending_unbound_validation_for_ref,
+        pending_validation_for_row,
+    )
+
+    def _pending_activation_row(row) -> bool:
+        if pending_validation_for_row(row.row_id) is not None:
+            return True
+        return pending_unbound_validation_for_ref(row.service, row.code_ref) is not None
+
     # D2: retire ancestor-satisfied rows (incl. harvest_wanted) before the fire
     # set. Equal-ref still enters harvest — post-restart close needs a
     # process-identity delta; settle-time equal retirement is a separate path.
     for row in list(list_open_rows()):
+        if _pending_activation_row(row):
+            continue
         pre_dispatch = dispatch_for_projection(row)
         if pre_dispatch.error is not None or not isinstance(pre_dispatch.payload, dict):
             continue
@@ -564,7 +576,9 @@ async def execute_propagation_plan(
     # failed events stay out of this list by design; seats asking current
     # liveness use observe_code_ref_live (does not open sqlite).
     open_rows = [
-        row for row in list_open_rows() if row.defer_reason != "harvest_wanted"
+        row
+        for row in list_open_rows()
+        if row.defer_reason != "harvest_wanted" and not _pending_activation_row(row)
     ]
     queue_snapshot = _fetch_json(_GIW_QUEUE_URL)
 

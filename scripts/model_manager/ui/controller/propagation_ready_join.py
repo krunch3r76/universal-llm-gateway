@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 from scripts.model_manager.ui.controller.restart_window_store import RETRY_AFTER_S
 
-READY_JOIN_SERVICES = frozenset({"cdp_ask"})
+READY_JOIN_SERVICES = frozenset({"cdp_ask", "git_integration_worker"})
 DEFAULT_READY_TIMEOUT_S = float(RETRY_AFTER_S)
 DEFER_READY_WAIT = "proof_pending_ready_wait"
 DEFER_READY_TIMEOUT = "proof_pending_ready_timeout"

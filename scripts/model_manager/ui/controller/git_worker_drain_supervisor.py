@@ -43,7 +43,9 @@ from .restart_intent_store import (
     STATUS_COMPLETED,
     STATUS_DRAINED_RESTARTING,
     STATUS_FAILED,
+    STATUS_PENDING_DRAIN,
     STATUS_TIMEOUT,
+    STATUS_VERIFYING_ACTIVATION,
     Intent,
     RestartIntentStore,
 )
@@ -290,6 +292,22 @@ class GitWorkerDrainSupervisor:
     # --------------------------------------------------------------- step 4
     async def _sigterm(self, intent: Intent, t0: float) -> None:
         """Deliver SIGTERM after kill-commit (``drained_restarting`` already set)."""
+        from datetime import UTC, datetime
+
+        from charter_runner_store.propagation_activation_events import (
+            ManageRestartVerifying,
+            publish_activation_event,
+        )
+        from charter_runner_store.propagation_validation import (
+            latest_validation_for_intent,
+            set_kill_boundary,
+        )
+
+        from .git_worker_activation_verify import (
+            arms_activation_verify,
+            schedule_activation_verify,
+        )
+
         current = self.store.get(intent.intent_id)
         if current is None or current.status == STATUS_CANCELLED:
             return
@@ -297,7 +315,7 @@ class GitWorkerDrainSupervisor:
             self.store.advance(intent.intent_id, status=STATUS_DRAINED_RESTARTING)
         try:
             message = await self.kill()
-        except Exception as exc:  # noqa: BLE001 — kill failure is a clean terminal
+        except Exception as exc:  # noqa: BLE001
             logger.exception("drain SIGTERM failed: intent_id=%s", intent.intent_id)
             self.store.advance(intent.intent_id, status=STATUS_FAILED)
             await events.emit_manage_restart_failed(
@@ -309,14 +327,41 @@ class GitWorkerDrainSupervisor:
             intent.intent_id,
             message[:200],
         )
-        self.store.advance(intent.intent_id, status=STATUS_COMPLETED)
+        kill_boundary_at = datetime.now(UTC).isoformat()
+        kill_mono = time.monotonic()
+        self.store.set_kill_boundary(intent.intent_id, kill_boundary_at=kill_boundary_at)
+        validation = latest_validation_for_intent(intent.intent_id)
+        if validation is not None:
+            set_kill_boundary(
+                validation.validation_id,
+                kill_boundary_at=kill_boundary_at,
+                boundary_source="kill_return",
+                restart_boundary_monotonic=kill_mono,
+            )
         await events.emit_manage_restart_completed(
             intent_id=intent.intent_id, duration_s=time.monotonic() - t0
         )
-        await self._settle_propagation_ledger(
-            intent.service,
-            settle_not_before_monotonic=self._settle_boundary_monotonic,
-        )
+        if arms_activation_verify(intent.action):
+            if self.store.advance_if_status(
+                intent.intent_id,
+                from_status=STATUS_DRAINED_RESTARTING,
+                to_status=STATUS_VERIFYING_ACTIVATION,
+            ):
+                if validation is not None:
+                    publish_activation_event(
+                        ManageRestartVerifying(
+                            intent_id=intent.intent_id,
+                            validation_id=validation.validation_id,
+                            service=intent.service,
+                            kill_boundary_at=kill_boundary_at,
+                            boundary_source="kill_return",
+                        )
+                    )
+                    schedule_activation_verify(
+                        self.store, intent.intent_id, validation.validation_id
+                    )
+            return
+        self.store.advance(intent.intent_id, status=STATUS_COMPLETED)
 
     # --------------------------------------------------------------- step 5
     async def _on_cancelled(self, intent: Intent) -> None:
@@ -362,17 +407,46 @@ class GitWorkerDrainSupervisor:
         self, intent: Intent, snapshot: dict[str, Any] | None
     ) -> None:
         """Final check failed: complete if the target generation is gone, else fail."""
+        from datetime import UTC, datetime
+
+        from charter_runner_store.propagation_validation import (
+            latest_validation_for_intent,
+            set_kill_boundary,
+        )
+
+        from .git_worker_activation_verify import (
+            arms_activation_verify,
+            schedule_activation_verify,
+        )
+
         if snapshot is None or self._generation_gone(snapshot, intent):
+            kill_boundary_at = datetime.now(UTC).isoformat()
+            kill_mono = time.monotonic()
+            self.store.set_kill_boundary(intent.intent_id, kill_boundary_at=kill_boundary_at)
+            validation = latest_validation_for_intent(intent.intent_id)
+            if validation is not None:
+                set_kill_boundary(
+                    validation.validation_id,
+                    kill_boundary_at=kill_boundary_at,
+                    boundary_source="generation_gone",
+                    restart_boundary_monotonic=kill_mono,
+                )
+            if arms_activation_verify(intent.action):
+                if self.store.advance_if_status(
+                    intent.intent_id,
+                    from_status=STATUS_PENDING_DRAIN,
+                    to_status=STATUS_VERIFYING_ACTIVATION,
+                ) and validation is not None:
+                    schedule_activation_verify(
+                        self.store, intent.intent_id, validation.validation_id
+                    )
+                    return
             self.store.advance(intent.intent_id, status=STATUS_COMPLETED)
             await events.emit_manage_restart_completed(intent_id=intent.intent_id, duration_s=0.0)
             logger.info(
                 "drain target worker generation already gone; intent completed "
                 "without kill: intent_id=%s",
                 intent.intent_id,
-            )
-            await self._settle_propagation_ledger(
-                intent.service,
-                settle_not_before_monotonic=self._settle_boundary_monotonic,
             )
             return
         self.store.advance(intent.intent_id, status=STATUS_FAILED)

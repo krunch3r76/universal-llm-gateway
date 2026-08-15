@@ -27,6 +27,7 @@ def _intent(
         deadline_at="2026-06-16T12:05:00+00:00",
         last_seen_event_seq=0,
         reason="manage restart (deferred drain)",
+        kill_boundary_at=None,
         created_at=created_at,
         updated_at=created_at,
     )

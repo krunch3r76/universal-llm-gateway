@@ -26,6 +26,7 @@ from scripts.model_manager.ui.controller.restart_intent_store import (
     STATUS_DRAINED_RESTARTING,
     STATUS_PENDING_DRAIN,
     STATUS_TIMEOUT,
+    STATUS_VERIFYING_ACTIVATION,
     RestartIntentCancelError,
     RestartIntentStore,
 )
@@ -229,7 +230,7 @@ def test_event_drives_completion_and_sigterm(
     assert kill.calls == 1
     assert worker.begun and worker.begun[0]["drain_epoch"] == 1
     got = store.get(intent.intent_id)
-    assert got is not None and got.status == STATUS_COMPLETED
+    assert got is not None and got.status == STATUS_VERIFYING_ACTIVATION
     signals = [s for s, _ in events_log]
     assert "manage.restart.deferred" in signals
     assert "manage.restart.completed" in signals
@@ -326,13 +327,13 @@ def test_reconcile_reuses_stored_epoch_no_extra_begin(
     assert worker.begun and worker.begun[0]["drain_epoch"] == 7
     assert kill.calls == 1
     got = store.get(intent.intent_id)
-    assert got is not None and got.status == STATUS_COMPLETED
+    assert got is not None and got.status == STATUS_VERIFYING_ACTIVATION
 
 
-def test_settle_uses_drain_start_boundary_not_completion(
+def test_settle_not_invoked_inline_from_supervisor(
     tmp_path: Any, events_log: list[tuple[str, dict[str, Any]]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """AC-17: propagation settle receives drain-start monotonic, not post-restart now()."""
+    """Propagation settle is activation-verify-owned, not inline after kill."""
     captured: list[float | None] = []
 
     def _fake_settle(
@@ -348,6 +349,10 @@ def test_settle_uses_drain_start_boundary_not_completion(
     monkeypatch.setattr(
         "charter_runner_store.propagation_terminal.settle_open_rows_for_service",
         _fake_settle,
+    )
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.git_worker_activation_verify.schedule_activation_verify",
+        lambda *args, **kwargs: None,
     )
     store = _store(tmp_path)
     intent = store.create_intent(
@@ -371,7 +376,7 @@ def test_settle_uses_drain_start_boundary_not_completion(
 
     _run(sup.supervise(intent))
 
-    assert captured == [drain_started_mono]
+    assert captured == []
 
 
 # ------------------------------------------------ A′ cancel verb (AC1–AC6)
