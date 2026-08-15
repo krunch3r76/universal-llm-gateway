@@ -87,27 +87,33 @@ CLI SOT for path-sim phase-3 R / disposable code-review asks. Cascade policy: Us
 
 ## Parallel Chrome — registry detail (BINDING)
 
-**DEFAULT — register a lane.** Registry SOT: `libs/claude_bundles/cdp_registry.py` + `~/.gateway/cdp-registry/`.
+**DEFAULT — register a lane.** Registry SOT: `libs/claude_bundles/cdp_registry/` +
+`~/.gateway/cdp-registry/`.
 
 ### Simultaneous lane capacity (a:25814)
 
-SOT: `libs/cdp_ask/execution_store.py` `active_work_snapshot()`.
+SOT: `libs/cdp_ask/work_projection.py` `drain_projection()` and
+`libs/cdp_ask/execution_store.py` `drain_state_snapshot()`.
 
 | Field | Meaning |
 |---|---|
-| `busy` | Restart-drain only — derived `effective_count > 0` — **¬** lane-full |
+| `busy` | Restart-drain only — recorded `running_count > 0` — **¬** lane-full |
 | `running_count` | In-flight executions (`AuthorityClass.RECORDED`) |
-| `live_cse_count` | Observed live CSE pages (`AuthorityClass.OBSERVED`) |
-| `effective_count` | `max(running_count, live_cse_count)` — admission + restart-drain |
+| `open_attachment_count` | CSE-bearing live CDP browser hosts (`AuthorityClass.OBSERVED`) |
+| `live_cse_target_count` | Qualifying `type=page` CSE targets, including duplicates |
+| `live_cse_count` | Unique normalized CSE session URLs on qualifying page targets |
+| `live_port_count` | Every responding registry-pool CDP `/json/version` port, including unrelated tabs |
+| `effective_count` | Recorded `running_count` alias — restart-drain only |
 | `soft_limit` / `hard_limit` | 2 / 3 |
-| `free_slots` | `max(0, hard_limit − effective_count)` |
-| `at_soft_limit` / `at_hard_limit` | `effective_count >= soft_limit` / `hard_limit` |
+| `free_slots` | Recorded stream admission headroom from `admission_count` |
+| `at_soft_limit` / `at_hard_limit` | Recorded admission thresholds, not browser occupancy |
 
 **Recorded-only vs effective (BINDING):** `list_capacity()` counts registry rows with
-`status == active` only — recorded lanes. `busy_status` / `/active-work` use
-`effective_count` because a live CSE without a recorded project-ask execution still
-blocks restart drain (Cowork keeps the life MCP connector hot between tool POSTs) and
-consumes admission headroom. Do **not** derive `free_slots` from `running_count` alone.
+`status == active` only — recorded host capacity. `busy_status` / `/drain-state`
+use recorded executions for restart state; a live CSE without one is diagnostic
+attachment evidence, not a restart lease. `/active-work` remains the fast
+recorded stream/admission projection; do not derive drain safety or stream
+headroom from one collapsed count.
 
 ```
 register_lane(holder) → (registration_id, port, profile_suffix, cdp_url)

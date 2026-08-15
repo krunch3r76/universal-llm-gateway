@@ -41,6 +41,9 @@ def _active_work(*, rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         "rows": rows,
         "running_count": len(rows),
         "live_cse_count": 0,
+        "open_attachment_count": 0,
+        "live_cse_target_count": 0,
+        "live_port_count": 1,
         "registry_capacity_count": 1,
         "effective_count": len(rows),
         "soft_limit": 2,
@@ -127,6 +130,34 @@ def test_obligations_survive_snapshot_expiry() -> None:
     assert all(f.get("expiring") is False for f in served["findings"])
     assert all(f.get("obligation") is True for f in served["findings"])
     assert served["findings"][0]["verdict"] == raw["findings"][0]["verdict"]
+
+
+def test_compose_view_labels_open_targets_and_unique_sessions_separately() -> None:
+    """The operator view must not turn duplicate targets into extra sessions."""
+    active = _active_work(rows=[])
+    active.update(
+        {
+            "open_attachment_count": 3,
+            "live_cse_target_count": 5,
+            "live_cse_count": 2,
+            "live_port_count": 4,
+            "registry_capacity_count": 1,
+        }
+    )
+
+    view = compose_view(
+        active_work=active,
+        registry=_registry(),
+        sessions=_sessions(),
+        sources={"project_ask_url": "http://127.0.0.1:8765"},
+        now=_NOW,
+    )
+
+    scalars = view["scalars_actual"]
+    assert scalars["attachments_open_count"] == 3
+    assert scalars["attachments_live_cse_target_count"] == 5
+    assert scalars["attachments_live_cse_count"] == 2
+    assert scalars["live_cdp_port_count"] == 4
 
 
 def test_no_raw_running_access_bypasses_serve_filter() -> None:

@@ -1,8 +1,8 @@
-"""Asynchronous CDP attachment occupancy projection for restart safety.
+"""Asynchronous CDP attachment occupancy projection for diagnostics.
 
-The execution store owns stream admission; this module owns only the observed
-browser-attachment side of the restart-drain decision.  A single background
-actor performs the blocking Chrome census in a worker thread, records the last
+The execution store owns stream admission and restart busy state; this module
+owns only observed browser-attachment telemetry. A single background actor
+performs the blocking Chrome census in a worker thread, records the last
 observation in memory, and exposes it synchronously to request handlers.
 Observation events are advisory telemetry and never become the state authority.
 """
@@ -18,6 +18,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from claude_bundles import cdp_registry_events
+from claude_bundles.cse_url import normalize_cse_url
 from universal_logging import get_logger
 
 logger = get_logger("cdp-ask.occupancy-projection")
@@ -29,6 +30,57 @@ _REGISTRY_BOOTSTRAP_SOURCE = "cse-session-registry"
 
 ProbeLivePorts = Callable[[], list[Any]]
 CapacityProbe = Callable[[], int]
+
+
+def _observed_counts(ports: list[Any]) -> tuple[int, int, int, int]:
+    """Separate live hosts, CSE-bearing hosts, page targets, and CSE sessions.
+
+    A CDP port is a browser-host attachment, a qualifying ``type=page`` target
+    is a page observation, and a normalized CSE URL is the session identity.
+    Unknown URL detail remains conservatively countable as one attachment and
+    one session so incomplete probes cannot make attachment telemetry
+    optimistic. These values do not gate restart state.
+    """
+    live_port_count = len(ports)
+    open_attachment_count = 0
+    live_cse_target_count = 0
+    unique_urls: set[str] = set()
+    unresolved_cse_hosts = 0
+
+    for port in ports:
+        raw_urls = getattr(port, "cse_urls", ())
+        cse_urls = (
+            tuple(str(url) for url in raw_urls)
+            if isinstance(raw_urls, (tuple, list, set))
+            else ()
+        )
+        has_live_cse = bool(getattr(port, "has_live_cse", False)) or bool(cse_urls)
+        if not has_live_cse:
+            continue
+
+        open_attachment_count += 1
+        valid_url_seen = False
+        for url in cse_urls:
+            normalized = normalize_cse_url(url)
+            if normalized:
+                unique_urls.add(normalized)
+                valid_url_seen = True
+        if not valid_url_seen:
+            unresolved_cse_hosts += 1
+
+        raw_target_count = getattr(port, "cse_target_count", 0)
+        try:
+            target_count = max(0, int(raw_target_count))
+        except (TypeError, ValueError):
+            target_count = 0
+        live_cse_target_count += max(target_count, len(cse_urls), 1)
+
+    return (
+        live_port_count,
+        open_attachment_count,
+        live_cse_target_count,
+        len(unique_urls) + unresolved_cse_hosts,
+    )
 
 
 def _positive_env(name: str, default: float) -> float:
@@ -83,6 +135,9 @@ class OccupancyObservation:
     """Last sampled attachment state and its provenance metadata."""
 
     live_cse_count: int | None = None
+    open_attachment_count: int | None = None
+    live_cse_target_count: int | None = None
+    live_port_count: int | None = None
     registry_capacity_count: int | None = None
     observed_at: float | None = None
     error: str | None = None
@@ -130,7 +185,7 @@ class CdpOccupancyProjection:
         self._task: asyncio.Task[None] | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._unsubscribe: Callable[[], None] | None = None
-        self._last_event_key: tuple[str, int | None, int | None] | None = None
+        self._last_event_key: tuple[object, ...] | None = None
 
     @property
     def running(self) -> bool:
@@ -176,6 +231,9 @@ class CdpOccupancyProjection:
         age = None if observed_at is None else max(0.0, current - observed_at)
         return {
             "live_cse_count": self._observation.live_cse_count,
+            "open_attachment_count": self._observation.open_attachment_count,
+            "live_cse_target_count": self._observation.live_cse_target_count,
+            "live_port_count": self._observation.live_port_count,
             "registry_capacity_count": self._observation.registry_capacity_count,
             "observed_at": observed_at,
             "observation_age_s": age,
@@ -184,18 +242,18 @@ class CdpOccupancyProjection:
             "source": self._observation.source,
         }
 
-    def safe_busy(self, running_count: int, *, now: float | None = None) -> bool:
-        """Return drain busy, refusing to claim idle on stale or unknown data."""
-        observation = self.snapshot(now=now)
-        if observation["freshness"] != "fresh":
-            return True
-        return running_count > 0 or int(observation["live_cse_count"] or 0) > 0
+    def safe_busy(self, running_count: int) -> bool:
+        """Return restart busy from recorded executions, never browser tabs."""
+        return running_count > 0
 
     def record_observation(
         self,
         live_cse_count: int,
         registry_capacity_count: int,
         *,
+        open_attachment_count: int | None = None,
+        live_cse_target_count: int | None = None,
+        live_port_count: int | None = None,
         observed_at: float | None = None,
     ) -> None:
         """Record a sampled census for tests or an owning sensor actor.
@@ -204,10 +262,28 @@ class CdpOccupancyProjection:
         ``refresh`` path emits the corresponding observation event off the
         request loop, keeping synchronous callers free of socket I/O.
         """
-        if live_cse_count < 0 or registry_capacity_count < 0:
+        counts = (
+            live_cse_count,
+            registry_capacity_count,
+            open_attachment_count,
+            live_cse_target_count,
+            live_port_count,
+        )
+        if any(count is not None and count < 0 for count in counts):
             raise ValueError("occupancy counts must be non-negative")
         self._observation = OccupancyObservation(
             live_cse_count=live_cse_count,
+            open_attachment_count=(
+                live_cse_count
+                if open_attachment_count is None
+                else open_attachment_count
+            ),
+            live_cse_target_count=(
+                live_cse_count
+                if live_cse_target_count is None
+                else live_cse_target_count
+            ),
+            live_port_count=live_port_count,
             registry_capacity_count=registry_capacity_count,
             observed_at=time.time() if observed_at is None else observed_at,
             error=None,
@@ -225,10 +301,19 @@ class CdpOccupancyProjection:
             except Exception as exc:  # noqa: BLE001 — projection must survive sensor faults
                 event = self._record_failure(exc)
             else:
-                live_cse_count = sum(
-                    1 for port in ports if bool(getattr(port, "has_live_cse", False))
+                (
+                    live_port_count,
+                    open_attachment_count,
+                    live_cse_target_count,
+                    live_cse_count,
+                ) = _observed_counts(ports)
+                event = self._record_success(
+                    live_cse_count,
+                    int(capacity),
+                    open_attachment_count=open_attachment_count,
+                    live_cse_target_count=live_cse_target_count,
+                    live_port_count=live_port_count,
                 )
-                event = self._record_success(live_cse_count, int(capacity))
         if event is not None:
             await asyncio.to_thread(cdp_registry_events.emit, event)
         return self.snapshot()
@@ -271,11 +356,22 @@ class CdpOccupancyProjection:
             else "stale"
         )
 
-    def _record_success(self, live_cse_count: int, capacity: int) -> Any:
+    def _record_success(
+        self,
+        live_cse_count: int,
+        capacity: int,
+        *,
+        open_attachment_count: int,
+        live_cse_target_count: int,
+        live_port_count: int,
+    ) -> Any:
         now = time.time()
         previous_status = self._freshness(now)
         self._observation = OccupancyObservation(
             live_cse_count=live_cse_count,
+            open_attachment_count=open_attachment_count,
+            live_cse_target_count=live_cse_target_count,
+            live_port_count=live_port_count,
             registry_capacity_count=capacity,
             observed_at=now,
             error=None,
@@ -294,6 +390,9 @@ class CdpOccupancyProjection:
         key = (
             status,
             self._observation.live_cse_count,
+            self._observation.open_attachment_count,
+            self._observation.live_cse_target_count,
+            self._observation.live_port_count,
             self._observation.registry_capacity_count,
         )
         if key == self._last_event_key:
@@ -301,6 +400,9 @@ class CdpOccupancyProjection:
         self._last_event_key = key
         return cdp_registry_events.cdp_occupancy_updated(
             live_cse_count=self._observation.live_cse_count,
+            open_attachment_count=self._observation.open_attachment_count,
+            live_cse_target_count=self._observation.live_cse_target_count,
+            live_port_count=self._observation.live_port_count,
             registry_capacity_count=self._observation.registry_capacity_count,
             freshness=status,
             previous_freshness=previous_status,

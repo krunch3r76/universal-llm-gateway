@@ -61,7 +61,10 @@ def _honest_empty_scalars(scalars: dict[str, Any]) -> dict[str, Any]:
     """Zero liveness scalars when the snapshot can no longer vouch for occupancy."""
     out = dict(scalars)
     out["streams_running_count"] = 0
+    out["attachments_open_count"] = 0
+    out["attachments_live_cse_target_count"] = 0
     out["attachments_live_cse_count"] = 0
+    out["live_cdp_port_count"] = 0
     out["registry_capacity_count"] = 0
     out["effective_count_drain_only"] = 0
     out["at_soft_limit"] = False
@@ -249,17 +252,30 @@ def compose_view(
         )
 
     live_cse = int(active_work.get("live_cse_count") or 0)
-    if live_cse > len(active_regs):
+    open_attachments = active_work.get("open_attachment_count")
+    open_attachments = (
+        live_cse if open_attachments is None else int(open_attachments or 0)
+    )
+    live_cse_targets = active_work.get("live_cse_target_count")
+    live_cse_targets = (
+        live_cse if live_cse_targets is None else int(live_cse_targets or 0)
+    )
+    live_ports = active_work.get("live_port_count")
+    live_ports = None if live_ports is None else int(live_ports or 0)
+    if open_attachments > len(active_regs):
         findings.append(
             {
                 "verdict": "HYGIENE_DRIFT",
                 "rule": "attachments_disposable_once_url_recorded",
-                "attachments": live_cse,
+                "attachments": open_attachments,
+                "unique_cse_sessions": live_cse,
+                "cse_page_targets": live_cse_targets,
                 "active_registrations": len(active_regs),
                 "detail": (
-                    f"{live_cse} open CSE attachments vs {len(active_regs)} active "
-                    "registrations — orphaned Chrome tabs inflate live_cse_count; "
-                    "attachments ≠ product chats on claude.ai "
+                    f"{open_attachments} open CSE attachments vs "
+                    f"{len(active_regs)} active registrations "
+                    f"({live_cse} unique CSE sessions, {live_cse_targets} "
+                    "page targets) — attachments ≠ product chats on claude.ai "
                     "(reclaim: todo:cdp-ask-ghost-live-cse-count)"
                 ),
                 **_obligation_marker(),
@@ -288,11 +304,18 @@ def compose_view(
         "ontology": {
             "session": "URL-addressed CSE (durable, free)",
             "attachment": (
-                "Chrome target / open CSE page (ephemeral, scarce) — "
+                "CSE-bearing Chrome host attachment (ephemeral, scarce) — "
                 "NOT product-chat count on claude.ai UI "
                 "(specimen 2026-08-07: 11 attachments vs 2 product chats; "
                 "agent-bus:6899)"
             ),
+            "cse_session": (
+                "unique normalized CSE URL observed on qualifying type=page targets"
+            ),
+            "cse_page_target": (
+                "qualifying type=page target; duplicates remain observable"
+            ),
+            "cdp_port": "responding registry-pool CDP /json/version endpoint",
             "lane": "agent-bus thread (durable)",
             "seat": "model instance on a lane (holder+purpose)",
             "registration": "time-bounded host bind (active/retained/orphaned_*)",
@@ -300,8 +323,14 @@ def compose_view(
         "scalars_actual": {
             "streams_running_count": running,
             "streams_running_count_noun": "stream",
+            "attachments_open_count": open_attachments,
+            "attachments_open_count_noun": "browser_attachment",
+            "attachments_live_cse_target_count": live_cse_targets,
+            "attachments_live_cse_target_count_noun": "cse_page_target",
             "attachments_live_cse_count": live_cse,
-            "attachments_live_cse_count_noun": "attachment",
+            "attachments_live_cse_count_noun": "unique_cse_session",
+            "live_cdp_port_count": live_ports,
+            "live_cdp_port_count_noun": "cdp_port",
             "registry_capacity_count": active_work.get("registry_capacity_count"),
             "registry_capacity_count_noun": "registration_host",
             "effective_count_drain_only": active_work.get("effective_count"),
@@ -372,7 +401,10 @@ def render_text(view: dict[str, Any], *, now: float | None = None) -> str:
         "",
         "## Scalars (actual — labeled)",
         f"  streams (running_count):     {s['streams_running_count']}",
-        f"  attachments (live_cse_count): {s['attachments_live_cse_count']}",
+        f"  open browser attachments:     {s['attachments_open_count']}",
+        f"  CSE page targets:             {s['attachments_live_cse_target_count']}",
+        f"  unique CSE sessions:           {s['attachments_live_cse_count']}",
+        f"  live CDP ports:                {s['live_cdp_port_count']}",
         f"  registry hosts (capacity):   {s['registry_capacity_count']}",
         f"  effective_count (drain ONLY, ≠ admission): "
         f"{s['effective_count_drain_only']}",

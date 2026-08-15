@@ -155,7 +155,7 @@ def test_live_cse_count_qualified_scalar_preserves_unknown() -> None:
 
     scalar = QualifiedScalar(
         value=None,
-        scope="open CSE attachments (Chrome pages), this host",
+        scope="unique normalized CSE session URLs on qualifying page targets, this host",
         authority=AuthorityClass.OBSERVED,
     )
     emitted = scalar.emit("live_cse_count")

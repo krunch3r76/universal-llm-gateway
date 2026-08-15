@@ -48,6 +48,9 @@ def _emit_sample() -> None:
     events.emit(
         events.cdp_occupancy_updated(
             live_cse_count=2,
+            open_attachment_count=2,
+            live_cse_target_count=3,
+            live_port_count=4,
             registry_capacity_count=3,
             freshness="fresh",
             previous_freshness="unobserved",

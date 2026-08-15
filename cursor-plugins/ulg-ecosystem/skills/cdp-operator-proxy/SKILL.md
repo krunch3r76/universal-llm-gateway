@@ -102,7 +102,7 @@ the window classification now tells you is only what recovery to expect:
 
 | Blocker | Move |
 |---|---|
-| No stream / ghost `live_cse` | Restart (`force` if false busy) — nothing to recover |
+| No recorded stream / ghost `live_cse` | Restart — an observed tab is not a lifecycle lease; nothing to recover |
 | **This** CSE streaming | `force` — MCP surface dies mid-stream; recover via **continuity** after healthy |
 | **Other** window streaming | `force` permitted; peer recovers by `chat_url`. Prefer a short wait if not urgent — courtesy, not a gate |
 | **`git_integration_worker`** | **Never force** — drain-gated; arm it, report `restart_intent_id`, exit |

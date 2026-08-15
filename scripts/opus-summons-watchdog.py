@@ -6,7 +6,7 @@ this loop owns only the *summons*. It never forces, aborts, or kills.
 
 **Fast path (2026-08-02):** when ``commission_seq > last_launched`` and
 ``running_count == 0``, summon immediately — a lingering ``live_cse`` must not
-block the successor. Idle-confirm path remains for same-seq reopen after CSE death.
+block the successor. Idle-confirm path remains a bounded retry after no running work.
 
 Stops on: arc_complete, non-incrementing commission_seq (replay guard),
 episode budget, wall-clock deadline, or two consecutive launch failures.
@@ -40,9 +40,6 @@ COMMISSION_URI = os.environ.get(
 )
 ACTIVE_WORK = os.environ.get(
     "OPUS_SUMMONS_ACTIVE_WORK", "http://jupiter:8770/v1/project-ask/active-work"
-)
-DRAIN_STATE = os.environ.get(
-    "OPUS_SUMMONS_DRAIN_STATE", "http://jupiter:8770/v1/project-ask/drain-state"
 )
 DISPATCH = os.environ.get(
     "OPUS_SUMMONS_DISPATCH", "http://localhost:9999/api/v1/team/dispatch"
@@ -216,15 +213,12 @@ def read_commission() -> tuple[int | None, bool]:
     return seq, complete
 
 
-def lane_counts() -> tuple[int | None, int | None]:
-    """Return recorded streams and observed live CSE counts, or unknown values on failure."""
+def lane_counts() -> int | None:
+    """Return recorded project-ask streams, or unknown on probe failure."""
     data = curl_json(ACTIVE_WORK, timeout=10)
-    drain = curl_json(DRAIN_STATE, timeout=10)
-    if data is None or drain is None:
-        return None, None
-    return int(data.get("running_count", 0) or 0), int(
-        drain.get("live_cse_count", 0) or 0
-    )
+    if data is None:
+        return None
+    return int(data.get("running_count", 0) or 0)
 
 
 def try_summon(
@@ -308,10 +302,7 @@ def await_attach(exec_id: str | None = None) -> bool:
             if want in ids or want in row_ids:
                 return True
             continue
-        drain = curl_json(DRAIN_STATE, timeout=10)
-        if int(data.get("running_count", 0) or 0) or (
-            drain is not None and int(drain.get("live_cse_count", 0) or 0)
-        ):
+        if int(data.get("running_count", 0) or 0):
             return True
     return False
 
@@ -346,7 +337,7 @@ def main() -> int:
         if complete:
             return stop("arc_complete", seq=seq, episodes=episodes)
 
-        running, live = lane_counts()
+        running = lane_counts()
         if running is None:
             log("probe_failed")
             idle_streak = 0
@@ -369,7 +360,7 @@ def main() -> int:
             time.sleep(POLL_S)
             continue
 
-        if running or live:
+        if running:
             idle_streak = 0
         else:
             idle_streak += 1

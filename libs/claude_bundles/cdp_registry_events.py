@@ -20,6 +20,83 @@ from universal_event_bus.events.factory import event_factory
 if TYPE_CHECKING:
     from claude_bundles.cdp_registry import Registration
 
+
+@event_factory
+def cdp_provenance_bound(
+    *,
+    episode_id: str,
+    chat_url: str,
+    registration_id: str,
+    cdp_url: str,
+    lane_thread: str | None,
+    parent_thread: str | None,
+    lane_role: str | None,
+    evidence_class: str,
+    attribution_source: str,
+    correlation_id: str | None,
+) -> Event:
+    """Report a durable CSE provenance episode and its observed lineage."""
+    return Event(
+        signal="cdp.provenance.bound",
+        role="observation",
+        scope="node",
+        payload={
+            "episode_id": episode_id,
+            "chat_url": chat_url,
+            "registration_id": registration_id,
+            "cdp_url": cdp_url,
+            "lane_thread": lane_thread,
+            "parent_thread": parent_thread,
+            "lane_role": lane_role,
+            "evidence_class": evidence_class,
+            "attribution_source": attribution_source,
+            "correlation_id": correlation_id,
+        },
+    )
+
+
+@event_factory
+def cdp_provenance_unresolved(
+    *, chat_url: str | None, reason: str, correlation_id: str | None = None
+) -> Event:
+    """Report a CSE identity that lacks sufficient evidence for a unique join."""
+    return Event(
+        signal="cdp.provenance.unresolved",
+        role="observation",
+        scope="node",
+        payload={"chat_url": chat_url, "reason": reason, "correlation_id": correlation_id},
+    )
+
+
+@event_factory
+def cdp_provenance_conflict(
+    *, chat_url: str, candidate_count: int, correlation_id: str | None = None
+) -> Event:
+    """Report multiple active provenance candidates for one CSE URL."""
+    return Event(
+        signal="cdp.provenance.conflict",
+        role="observation",
+        scope="node",
+        payload={
+            "chat_url": chat_url,
+            "candidate_count": candidate_count,
+            "correlation_id": correlation_id,
+        },
+    )
+
+
+@event_factory
+def cdp_provenance_historical(
+    *, episode_id: str, chat_url: str, reason: str
+) -> Event:
+    """Report a retained episode that is no longer the current CSE binding."""
+    return Event(
+        signal="cdp.provenance.historical",
+        role="observation",
+        scope="node",
+        payload={"episode_id": episode_id, "chat_url": chat_url, "reason": reason},
+    )
+
 _REGISTRY_TRANSITION_SIGNALS = frozenset(
     {
         "cdp.port.registered",
@@ -85,7 +162,7 @@ def cdp_port_exit_kill_decision(
         payload={
             "purpose": purpose,
             "registration_id": registration_id,
-            "port": port,
+            "port": port if isinstance(port, int) else None,
             "kill": kill,
         },
     )
@@ -256,18 +333,24 @@ def cdp_occupancy_overlap(*, lane: str, execution_ids: list[str]) -> Event:
 def cdp_occupancy_updated(
     *,
     live_cse_count: int | None,
+    open_attachment_count: int | None,
+    live_cse_target_count: int | None,
+    live_port_count: int | None,
     registry_capacity_count: int | None,
     freshness: str,
     previous_freshness: str,
     error: str | None = None,
 ) -> Event:
-    """Report a changed browser-attachment occupancy projection."""
+    """Report changed CDP host, target, and unique-session occupancy evidence."""
     return Event(
         signal="cdp.occupancy.updated",
         role="observation",
         scope="node",
         payload={
             "live_cse_count": live_cse_count,
+            "open_attachment_count": open_attachment_count,
+            "live_cse_target_count": live_cse_target_count,
+            "live_port_count": live_port_count,
             "registry_capacity_count": registry_capacity_count,
             "freshness": freshness,
             "previous_freshness": previous_freshness,
@@ -279,12 +362,16 @@ def cdp_occupancy_updated(
 def _payload(reg: Registration) -> dict:
     return {
         "registration_id": reg.registration_id,
-        "port": reg.port,
-        "profile_suffix": reg.profile_suffix,
-        "holder": reg.holder,
-        "purpose": reg.purpose,
-        "mission_kind": reg.mission_kind,
-        "parent_thread": reg.parent_thread,
+        "port": reg.port if isinstance(reg.port, int) else None,
+        "profile_suffix": str(reg.profile_suffix),
+        "holder": str(reg.holder),
+        "purpose": reg.purpose if isinstance(reg.purpose, str) else None,
+        "mission_kind": (
+            reg.mission_kind if isinstance(reg.mission_kind, str) else None
+        ),
+        "parent_thread": (
+            reg.parent_thread if isinstance(reg.parent_thread, str) else None
+        ),
     }
 
 

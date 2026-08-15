@@ -31,12 +31,19 @@ from cdp_ask.lane_admission import (
 _ACTIVE_WORK_SNAPSHOT = "active_work_snapshot"
 _DRAIN_STATE_SNAPSHOT = "drain_state_snapshot"
 _RUNNING_COUNT_SCOPE = "cdp_ask execution store, pending/running streams"
-_LIVE_CSE_COUNT_SCOPE = "open CSE attachments (Chrome pages), this host"
+_OPEN_ATTACHMENT_COUNT_SCOPE = (
+    "CSE-bearing live CDP browser-host attachments, this host"
+)
+_LIVE_CSE_TARGET_COUNT_SCOPE = "qualifying type=page CSE targets, this host"
+_LIVE_PORT_COUNT_SCOPE = (
+    "live CDP registry-pool ports responding to /json/version, this host"
+)
+_LIVE_CSE_COUNT_SCOPE = (
+    "unique normalized CSE session URLs on qualifying page targets, this host"
+)
 _ADMISSION_COUNT_SCOPE = "running/stream admissions, this host (soft=2 hard=3)"
 _REGISTRY_CAPACITY_SCOPE = "active registry Chrome hosts (ports/profiles), this host"
-_EFFECTIVE_COUNT_SCOPE = (
-    "restart-drain aggregate max(running_count, live_cse_count); NOT admission"
-)
+_EFFECTIVE_COUNT_SCOPE = "restart-drain recorded execution count; NOT admission"
 _REGISTRY_SOURCE = "cse-session-registry"
 
 
@@ -180,13 +187,16 @@ def drain_projection(
     execution_ids: list[str],
     occupancy: OccupancyProvider | None,
 ) -> dict[str, Any]:
-    """Build the fail-closed restart-drain projection from cached occupancy data only."""
+    """Build restart state from recorded executions plus diagnostic occupancy."""
     payload, _ = admission_projection(rows, execution_ids)
     occupancy_data = (
         occupancy.snapshot()
         if occupancy is not None
         else {
             "live_cse_count": None,
+            "open_attachment_count": None,
+            "live_cse_target_count": None,
+            "live_port_count": None,
             "registry_capacity_count": None,
             "observed_at": None,
             "observation_age_s": None,
@@ -197,24 +207,20 @@ def drain_projection(
     )
     freshness = str(occupancy_data.get("freshness") or "unobserved")
     live_cse_count = occupancy_data.get("live_cse_count")
+    open_attachment_count = occupancy_data.get("open_attachment_count")
+    if open_attachment_count is None:
+        open_attachment_count = live_cse_count
+    live_cse_target_count = occupancy_data.get("live_cse_target_count")
+    if live_cse_target_count is None:
+        live_cse_target_count = live_cse_count
+    live_port_count = occupancy_data.get("live_port_count")
     registry_capacity_count = occupancy_data.get("registry_capacity_count")
     running_count = len(execution_ids)
-    effective = (
-        max(running_count, int(live_cse_count))
-        if live_cse_count is not None
-        else None
-    )
-    if freshness != "fresh":
-        busy_reason = f"occupancy_{freshness}"
-    elif running_count > 0:
-        busy_reason = "execution"
-    elif int(live_cse_count or 0) > 0:
-        busy_reason = "attachment"
-    else:
-        busy_reason = "idle"
+    effective = running_count
+    busy_reason = "execution" if running_count > 0 else "idle"
     payload.update(
         {
-            "busy": occupancy.safe_busy(running_count) if occupancy else True,
+            "busy": running_count > 0,
             "drain_busy_reason": busy_reason,
             "occupancy_freshness": freshness,
             "occupancy_source": occupancy_data.get("source"),
@@ -238,6 +244,27 @@ def drain_projection(
     )
     payload.update(
         QualifiedScalar(
+            value=open_attachment_count,
+            scope=_OPEN_ATTACHMENT_COUNT_SCOPE,
+            authority=AuthorityClass.OBSERVED,
+        ).emit("open_attachment_count")
+    )
+    payload.update(
+        QualifiedScalar(
+            value=live_cse_target_count,
+            scope=_LIVE_CSE_TARGET_COUNT_SCOPE,
+            authority=AuthorityClass.OBSERVED,
+        ).emit("live_cse_target_count")
+    )
+    payload.update(
+        QualifiedScalar(
+            value=live_port_count,
+            scope=_LIVE_PORT_COUNT_SCOPE,
+            authority=AuthorityClass.OBSERVED,
+        ).emit("live_port_count")
+    )
+    payload.update(
+        QualifiedScalar(
             value=registry_capacity_count,
             scope=_REGISTRY_CAPACITY_SCOPE,
             authority=AuthorityClass.RECORDED,
@@ -247,7 +274,7 @@ def drain_projection(
         QualifiedScalar(
             value=effective,
             scope=_EFFECTIVE_COUNT_SCOPE,
-            authority=AuthorityClass.MAX_OF,
+            authority=AuthorityClass.RECORDED,
         ).emit("effective_count")
     )
     payload.update(
@@ -259,7 +286,7 @@ def drain_projection(
     )
     decl = SurfaceDecl(_DRAIN_STATE_SNAPSHOT)
     for name, reason in {
-        "busy": "fail-closed execution or occupancy drain decision",
+        "busy": "derived from pending/running execution rows",
         "drain_busy_reason": "derived drain-state reason",
         "occupancy_freshness": "projection freshness state",
         "occupancy_source": "projection source label",

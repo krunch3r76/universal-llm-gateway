@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from claude_bundles import cdp_orphans
-from claude_bundles.cdp_orphans import LivePort, Orphan, OrphanScanResult, RejectedPort
+from claude_bundles.cdp_orphans import LivePort, Orphan, OrphanScanResult
 
 pytestmark = pytest.mark.offline
 
@@ -185,6 +185,39 @@ def test_probe_live_ports_degrades_on_connection_error(
 ) -> None:
     monkeypatch.setattr(cdp_orphans, "_fetch_json", lambda _url: None)
     assert cdp_orphans.probe_live_ports(port_range=range(9223, 9225)) == []
+
+
+def test_probe_live_ports_ignores_iframes_and_deduplicates_page_sessions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only top-level CSE pages count; fragments and duplicate targets do not."""
+    cse_url = "https://claude.ai/cowork/cse_probe"
+    payload = [
+        {"type": "browser_ui", "url": cse_url},
+        {"type": "iframe", "url": cse_url + "#frame"},
+        {"type": "page", "url": cse_url + "#main", "id": "page-1"},
+        {"type": "page", "url": cse_url + "/", "id": "page-2"},
+        {"type": "page", "url": "https://claude.ai/new", "id": "page-3"},
+    ]
+
+    def _fetch(url: str) -> Any:
+        return {} if url.endswith("/json/version") else payload
+
+    monkeypatch.setattr(cdp_orphans, "_fetch_json", _fetch)
+    monkeypatch.setattr(cdp_orphans, "_pid_listening_on", lambda _port: None)
+
+    observed = cdp_orphans.probe_live_ports(port_range=range(9223, 9224))
+
+    assert len(observed) == 1
+    port = observed[0]
+    assert port.page_urls == (
+        cse_url + "#main",
+        cse_url + "/",
+        "https://claude.ai/new",
+    )
+    assert port.has_live_cse is True
+    assert port.cse_target_count == 2
+    assert port.cse_urls == (cse_url,)
 
 
 def test_orphan_scan_events_distinguish_zero_live_from_all_registered(

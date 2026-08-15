@@ -481,8 +481,20 @@ Dogfood fallback (hub checkout): `scripts/cortex/claude-ai-sync-jupiter project-
 
 The satellite's internal `/v1/project-ask/drain-state` surface is separate from
 the MCP `active_work` relay. It combines the recorded execution rows with the
-cached browser-attachment projection and reports observation freshness; stale
-or unobserved occupancy remains busy for restart safety.
+cached browser-attachment projection and reports observation freshness.
+Attachment observations are diagnostic only: a browser tab is a reconnectable
+attach handle, not a CSE lifecycle lease.
+
+Its occupancy scalars are intentionally distinct: `running_count` is the
+execution-store stream count; `open_attachment_count` is the count of
+CSE-bearing live CDP browser hosts used for drain safety; `live_cse_target_count`
+is the qualifying `type=page` target count, including duplicates; and
+`live_cse_count` is the count of unique normalized CSE session URLs.
+`live_port_count` includes every responding registry-pool CDP port, including
+unrelated browser targets. `registry_capacity_count` remains the recorded
+`active` registry-host count. `effective_count` is the drain-only recorded
+execution count; `busy` and `drain_busy_reason` do not derive from browser
+attachments or unique CSE sessions.
 
 ### Examples
 

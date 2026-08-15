@@ -6,7 +6,7 @@ of its wall time between POSTs (model thinking, tool planning), so
 ``NullBusyProbe`` treated that as permission to stop the container.
 
 This module gates MCP (and reports honest busy for ``busy_status``) on:
-1. ``cdp_ask`` drain-state — recorded executions **or** observed live CSE
+1. ``cdp_ask`` drain-state — recorded executions
 2. MCP ``/active-work`` — in-flight HTTP plus a short life-tools activity TTL
 
 Either signal alone is enough to defer. MCP probe failure is best-effort when
@@ -47,23 +47,17 @@ def mcp_active_work_base_url() -> str:
 
 
 def _cdp_busy(detail: dict[str, Any]) -> bool:
-    """True when cdp_ask reports recorded or observed in-flight Cowork work."""
-    if bool(detail.get("busy")):
-        return True
+    """True when cdp_ask reports a recorded pending or running execution."""
     try:
-        if int(detail.get("live_cse_count") or 0) > 0:
-            return True
-        if int(detail.get("running_count") or 0) > 0:
-            return True
-        if int(detail.get("effective_count") or 0) > 0:
-            return True
+        return int(detail["running_count"]) > 0
+    except KeyError:
+        return True
     except (TypeError, ValueError):
-        return bool(detail.get("busy"))
-    return False
+        return True
 
 
 class McpBusyProbe:
-    """Composite busy probe for MCP and CDP sessions during restart drain evaluation with fail-closed handling."""
+    """Composite busy probe for recorded CDP work and MCP activity."""
 
     def __init__(
         self,
@@ -110,8 +104,7 @@ class McpBusyProbe:
         if "cdp_ask_live" in detail["busy_reasons"]:
             cdp = detail.get("cdp_ask") or {}
             summary_bits.append(
-                f"cdp_ask live_cse={cdp.get('live_cse_count')} "
-                f"running={cdp.get('running_count')}"
+                f"cdp_ask running={cdp.get('running_count')}"
             )
         if "mcp_session_hot" in detail["busy_reasons"]:
             mcp = detail.get("mcp") or {}

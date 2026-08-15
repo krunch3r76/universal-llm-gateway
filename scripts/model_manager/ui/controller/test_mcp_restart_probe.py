@@ -47,7 +47,7 @@ def test_default_probes_registers_mcp(monkeypatch: pytest.MonkeyPatch) -> None:
     assert isinstance(probes["mcp"], McpBusyProbe)
 
 
-def test_mcp_probe_defers_on_live_cse_even_when_mcp_idle() -> None:
+def test_mcp_probe_ignores_live_cse_when_mcp_idle() -> None:
     probe = McpBusyProbe(
         cdp_probe=_StaticBusyProbe(
             ActiveWork(
@@ -65,8 +65,8 @@ def test_mcp_probe_defers_on_live_cse_even_when_mcp_idle() -> None:
         ),
     )
     work = _run(probe.snapshot())
-    assert work.busy is True
-    assert "cdp_ask_live" in work.detail["busy_reasons"]
+    assert work.busy is False
+    assert "cdp_ask_live" not in work.detail["busy_reasons"]
 
 
 def test_mcp_probe_defers_on_life_activity_when_cdp_idle() -> None:
@@ -94,8 +94,8 @@ def test_mcp_probe_defers_on_life_activity_when_cdp_idle() -> None:
     assert "mcp_session_hot" in work.detail["busy_reasons"]
 
 
-def test_mcp_probe_treats_live_cse_when_endpoint_busy_flag_stale() -> None:
-    """Defense in depth if an older cdp_ask still returns busy=false with CSE."""
+def test_mcp_probe_ignores_live_cse_when_endpoint_busy_flag_stale() -> None:
+    """A stale tab observation must not become restart busy."""
     probe = McpBusyProbe(
         cdp_probe=_StaticBusyProbe(
             ActiveWork(
@@ -111,7 +111,30 @@ def test_mcp_probe_treats_live_cse_when_endpoint_busy_flag_stale() -> None:
         mcp_probe=_StaticBusyProbe(ActiveWork(busy=False, detail={"busy": False})),
     )
     work = _run(probe.snapshot())
-    assert work.busy is True
+    assert work.busy is False
+
+
+def test_mcp_probe_ignores_open_attachment_when_no_execution_is_running() -> None:
+    """Open attachment telemetry does not represent a running execution."""
+    probe = McpBusyProbe(
+        cdp_probe=_StaticBusyProbe(
+            ActiveWork(
+                busy=False,
+                detail={
+                    "busy": False,
+                    "open_attachment_count": 2,
+                    "live_cse_count": 1,
+                    "running_count": 0,
+                    "effective_count": 2,
+                },
+            )
+        ),
+        mcp_probe=_StaticBusyProbe(ActiveWork(busy=False, detail={"busy": False})),
+    )
+
+    work = _run(probe.snapshot())
+
+    assert work.busy is False
 
 
 def test_evaluate_defers_mcp_when_composite_busy() -> None:
@@ -121,7 +144,7 @@ def test_evaluate_defers_mcp_when_composite_busy() -> None:
                 cdp_probe=_StaticBusyProbe(
                     ActiveWork(
                         busy=True,
-                        detail={"busy": True, "live_cse_count": 1, "running_count": 0},
+                        detail={"busy": True, "live_cse_count": 1, "running_count": 1},
                     )
                 ),
                 mcp_probe=None,

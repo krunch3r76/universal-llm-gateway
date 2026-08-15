@@ -225,7 +225,16 @@ body + `cortex://`* explicitly so the seat does not answer into an artifact card
 
 ## Parallel Chrome (BINDING)
 
-**DEFAULT:** `register_lane` / `project-ask --register`. Soft=**2**, hard=**3** concurrent — use `free_slots` / `at_hard_limit` from `effective_count = max(running_count, live_cse_count)`, not `busy` or recorded-only counts alone (a:25814). `--no-register --cdp-url :9222` = attended primary only. Registry + OptGuide + orphan observability: L3 `reference-annex.md`.
+**DEFAULT:** `register_lane` / `project-ask --register`. Soft=**2**, hard=**3**
+concurrent for recorded stream admission — use `free_slots` /
+`at_hard_limit` from the recorded admission projection, not drain-only
+`effective_count` is the recorded execution count for restart state; live
+browser attachments are diagnostic evidence only. `live_cse_count` remains
+unique normalized session URLs and `live_cse_target_count` preserves duplicate
+page evidence (a:25814). An open tab is a reconnectable attach handle, not a
+CSE lifecycle lease.
+`--no-register --cdp-url :9222` = attended primary only. Registry + OptGuide +
+orphan observability: L3 `reference-annex.md`.
 
 ## Entry points (bus-nudge minimum)
 

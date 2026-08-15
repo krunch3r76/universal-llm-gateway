@@ -349,10 +349,11 @@ async def _maybe_restart_remote_cdp_ask(
         )
         return
     if work.busy:
-        count = work.detail.get("running_count", 0)
+        running_count = work.detail.get("running_count", 0)
         sink.line(
             hostname,
-            f"  ⚠ cdp_ask sync_restart deferred ({count} execution(s) in flight)",
+            "  ⚠ cdp_ask sync_restart deferred "
+            f"({running_count} recorded execution(s))",
         )
         ids = work.detail.get("execution_ids") or []
         if ids:

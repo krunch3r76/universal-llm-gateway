@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from claude_bundles.cdp_orphans import LivePort
 from fastapi.testclient import TestClient
 
 from cdp_ask.app import create_app
@@ -24,7 +25,13 @@ pytestmark = pytest.mark.offline
 
 def _ports(live_count: int) -> list[Any]:
     return [
-        SimpleNamespace(has_live_cse=index < live_count)
+        SimpleNamespace(
+            has_live_cse=index < live_count,
+            cse_urls=(f"https://claude.ai/cowork/cse_{index}",)
+            if index < live_count
+            else (),
+            cse_target_count=1 if index < live_count else 0,
+        )
         for index in range(live_count + 1)
     ]
 
@@ -61,6 +68,9 @@ async def test_refresh_records_projection_and_deduplicates_events(
     first = await projection.refresh()
     await projection.refresh()
     assert first["live_cse_count"] == 2
+    assert first["open_attachment_count"] == 2
+    assert first["live_cse_target_count"] == 2
+    assert first["live_port_count"] == 3
     assert first["registry_capacity_count"] == 3
     assert first["freshness"] == "fresh"
     assert len(emitted) == 1
@@ -72,20 +82,80 @@ async def test_refresh_records_projection_and_deduplicates_events(
     assert projection.snapshot()["live_cse_count"] == 1
 
 
-def test_stale_and_unobserved_occupancy_fail_closed() -> None:
+@pytest.mark.asyncio
+async def test_occupancy_separates_hosts_targets_unique_sessions_and_stream_safety(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Duplicate targets collapse by CSE URL without becoming restart busy."""
+    parked_url = "https://claude.ai/cowork/cse_parked"
+    stale_url = "https://claude.ai/cowork/cse_stale"
+    ports = [
+        LivePort(
+            port=9223,
+            profile=None,
+            page_urls=(parked_url, parked_url + "#iframe"),
+            has_live_cse=True,
+            cse_urls=(parked_url,),
+            cse_target_count=2,
+        ),
+        LivePort(
+            port=9224,
+            profile=None,
+            page_urls=(parked_url,),
+            has_live_cse=True,
+            cse_urls=(parked_url,),
+            cse_target_count=1,
+        ),
+        LivePort(
+            port=9225,
+            profile=None,
+            page_urls=("chrome://newtab/",),
+            has_live_cse=False,
+        ),
+        LivePort(
+            port=9226,
+            profile=None,
+            page_urls=(stale_url,),
+            has_live_cse=True,
+            cse_urls=(stale_url,),
+            cse_target_count=1,
+        ),
+    ]
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_events.emit",
+        lambda _event: None,
+    )
+    projection = CdpOccupancyProjection(
+        probe=lambda: ports,
+        capacity_probe=lambda: 1,
+        freshness_ttl_s=10,
+    )
+
+    snapshot = await projection.refresh()
+
+    assert snapshot["live_port_count"] == 4
+    assert snapshot["open_attachment_count"] == 3
+    assert snapshot["live_cse_target_count"] == 4
+    assert snapshot["live_cse_count"] == 2
+    assert projection.safe_busy(0) is False
+    assert projection.safe_busy(1) is True
+
+
+def test_stale_and_unobserved_occupancy_do_not_gate_restart_state() -> None:
     projection = CdpOccupancyProjection(
         probe=lambda: [],
         capacity_probe=lambda: 0,
         freshness_ttl_s=1,
     )
     assert projection.snapshot(now=100)["freshness"] == "unobserved"
-    assert projection.safe_busy(0, now=100)
+    assert projection.safe_busy(0) is False
 
     projection.record_observation(0, 0, observed_at=100)
     assert projection.snapshot(now=100.5)["freshness"] == "fresh"
-    assert projection.safe_busy(0, now=100.5) is False
+    assert projection.safe_busy(0) is False
     assert projection.snapshot(now=102)["freshness"] == "stale"
-    assert projection.safe_busy(0, now=102)
+    assert projection.safe_busy(0) is False
+    assert projection.safe_busy(1) is True
 
 
 @pytest.mark.asyncio
@@ -201,7 +271,7 @@ async def test_registry_transition_wakes_background_sensor(
 async def test_drain_snapshot_uses_cached_projection_and_fails_closed_without_one() -> None:
     bare_store = ExecutionStore()
     bare = await bare_store.drain_state_snapshot()
-    assert bare["busy"] is True
+    assert bare["busy"] is False
     assert bare["occupancy_freshness"] == "unobserved"
 
     projection = CdpOccupancyProjection(

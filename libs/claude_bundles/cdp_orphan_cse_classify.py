@@ -1,4 +1,8 @@
-"""CSE attach ladder + closable/protected classification for orphan scan (S1)."""
+"""CSE attachment resolution and closable/protected orphan-target classification.
+
+This module joins durable registry evidence, execution liveness, and idle dwell
+without performing any close action; callers consume its scan-ephemeral verdicts.
+"""
 
 from __future__ import annotations
 
@@ -12,6 +16,7 @@ from typing import Any, Literal
 from claude_bundles import cdp_registry
 from claude_bundles.cdp_reclaim_refuse import reclaim_refuse_reason
 from claude_bundles.cse_idle_probe import in_flight_from_state, probe_page_liveness_sync
+from claude_bundles.cse_url import normalize_cse_url
 
 CSE_URL_MARKER = "claude.ai/cowork/cse_"
 _DEFAULT_CSE_IDLE_DWELL_S = 300.0
@@ -41,6 +46,7 @@ class CseTarget:
 
 
 def cse_idle_dwell_s() -> float:
+    """Return the positive idle dwell threshold before an unbound CSE is closable."""
     raw = os.environ.get("CDP_CSE_IDLE_DWELL_S", "").strip()
     if not raw:
         return _DEFAULT_CSE_IDLE_DWELL_S
@@ -51,24 +57,15 @@ def cse_idle_dwell_s() -> float:
     return value if value > 0 else _DEFAULT_CSE_IDLE_DWELL_S
 
 
-def normalize_cse_url(url: str) -> str:
-    """Normalize CSE URLs for exact comparison (strip fragment, trailing slash)."""
-    from urllib.parse import urlsplit, urlunsplit
-
-    raw = (url or "").strip()
-    if not raw:
-        return ""
-    parts = urlsplit(raw)
-    path = parts.path.rstrip("/") or parts.path
-    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, ""))
-
-
 def cse_pages_from_list(payload: Any) -> list[dict[str, Any]]:
+    """Return top-level CSE browser pages while excluding iframe and UI targets."""
     if not isinstance(payload, list):
         return []
     out: list[dict[str, Any]] = []
     for item in payload:
         if not isinstance(item, dict):
+            continue
+        if item.get("type") != "page":
             continue
         url = item.get("url")
         if isinstance(url, str) and CSE_URL_MARKER in url:
@@ -89,6 +86,7 @@ def build_chat_url_index(fetch_json: FetchJsonFn) -> dict[str, str]:
 
 
 def registration_id_for_profile(profile: Path) -> str | None:
+    """Resolve a listable registry registration by its Chrome profile path."""
     resolved = profile.resolve()
     for rid, row in cdp_registry._load_active().items():
         if row.get("status") not in cdp_registry._LISTABLE_STATUSES:
@@ -100,7 +98,7 @@ def registration_id_for_profile(profile: Path) -> str | None:
 
 
 def running_registration_ids() -> set[str]:
-    """Running-store registration ids when cdp-ask execution store is importable."""
+    """Return execution-store registration IDs marked pending or running when available."""
     try:
         from cdp_ask import app as cdp_app_module  # noqa: PLC0415
 
@@ -122,6 +120,7 @@ def resolve_attach(
     chat_url_index: dict[str, str],
     running_registration_ids: set[str],
 ) -> tuple[AttachResolution | None, str | None]:
+    """Resolve a CSE URL to registry or execution evidence using the attach ladder."""
     norm = normalize_cse_url(cse_url)
     if norm and norm in chat_url_index:
         return "chat_url", chat_url_index[norm]
@@ -146,6 +145,7 @@ def update_idle_dwell(
     is_idle: bool,
     now: float,
 ) -> float:
+    """Track idle dwell per port and normalized CSE URL, returning elapsed seconds."""
     key = (port, normalize_cse_url(cse_url))
     if not is_idle:
         _idle_since.pop(key, None)
@@ -163,6 +163,7 @@ def classify_cse_target(
     running_registration_ids: set[str],
     now: float,
 ) -> CseTarget:
+    """Classify one CSE page as protected or safely idle after all safety probes."""
     url = str(page.get("url") or "")
     target_id = page.get("id")
     tid = str(target_id) if target_id is not None else None
@@ -272,6 +273,7 @@ def classify_port_cse_targets(
     page_list: Any,
     fetch_json: FetchJsonFn,
 ) -> tuple[CseTarget, ...]:
+    """Classify all qualifying CSE page targets returned for one CDP port."""
     pages = cse_pages_from_list(page_list)
     if not pages:
         return ()

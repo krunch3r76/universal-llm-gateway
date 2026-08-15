@@ -255,10 +255,10 @@ async def test_active_work_endpoint_busy(
 
 
 @pytest.mark.asyncio
-async def test_drain_state_snapshot_reports_attachments_without_admission_impact(
+async def test_drain_state_snapshot_reports_attachments_without_busy_impact(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Open idle CSE tabs are drain hygiene, not stream admission."""
+    """Open idle CSE tabs are telemetry, not restart or stream busy state."""
     from claude_bundles.cdp_orphans import LivePort
 
     from cdp_ask.occupancy_projection import CdpOccupancyProjection
@@ -286,7 +286,9 @@ async def test_drain_state_snapshot_reports_attachments_without_admission_impact
     assert snap["running_count"] == 0
     assert snap["admission_count"] == 0
     assert snap["live_cse_count"] == 7
-    assert snap["busy"] is True
+    assert snap["busy"] is False
+    assert snap["effective_count"] == 0
+    assert snap["drain_busy_reason"] == "idle"
     assert snap["free_slots"] == LANE_HARD_LIMIT
     assert snap["at_soft_limit"] is False
     assert snap["at_hard_limit"] is False

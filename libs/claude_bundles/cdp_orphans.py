@@ -1,4 +1,8 @@
-"""Observation plane for live CDP ports — reads ground truth; emits scan events."""
+"""Observation plane for live CDP ports and CSE targets used by drain safety.
+
+The probe reads CDP truth without mutating Chrome, filters target types, and
+emits orphan-scan observations for later reconciliation or hygiene actions.
+"""
 
 from __future__ import annotations
 
@@ -15,9 +19,10 @@ from claude_bundles.cdp_orphan_cse_classify import (
     CseClassification,
     CseTarget,
     classify_port_cse_targets,
-    normalize_cse_url,
+    cse_pages_from_list,
 )
 from claude_bundles.cdp_reclaim_refuse import guard_cse_reclaim
+from claude_bundles.cse_url import normalize_cse_url
 
 LIVENESS_AUTHORITY_ATTACHMENT_ONLY = "attachment_only"
 
@@ -28,10 +33,14 @@ _PROBE_TIMEOUT_S = 1.5
 
 @dataclass(frozen=True)
 class LivePort:
+    """Observed CDP host plus qualifying CSE-page evidence from one port."""
+
     port: int
     profile: Path | None
     page_urls: tuple[str, ...]
     has_live_cse: bool
+    cse_urls: tuple[str, ...] = ()
+    cse_target_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -126,6 +135,7 @@ def _process_uptime_s(pid: int) -> float | None:
 
 
 def os_clk_tck() -> float:
+    """Return the host clock-tick frequency used to calculate process uptime."""
     import os
 
     return os.sysconf("SC_CLK_TCK")  # type: ignore[attr-defined]
@@ -141,15 +151,30 @@ def _fetch_json(url: str) -> Any | None:
 
 
 def _page_urls_from_list(payload: Any) -> tuple[str, ...]:
+    """Extract top-level browser page URLs from a CDP target listing."""
     if not isinstance(payload, list):
         return ()
     urls: list[str] = []
     for item in payload:
-        if isinstance(item, dict):
+        if isinstance(item, dict) and item.get("type") == "page":
             url = item.get("url")
             if isinstance(url, str):
                 urls.append(url)
     return tuple(urls)
+
+
+def _unique_cse_urls(page_urls: tuple[str, ...]) -> tuple[str, ...]:
+    """Normalize qualifying page URLs and preserve first-seen session order."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for url in page_urls:
+        if _CSE_URL_MARKER not in url:
+            continue
+        normalized = normalize_cse_url(url)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            out.append(normalized)
+    return tuple(out)
 
 
 def probe_live_ports(port_range: range | None = None) -> list[LivePort]:
@@ -162,15 +187,20 @@ def probe_live_ports(port_range: range | None = None) -> list[LivePort]:
             continue
         page_list = _fetch_json(f"http://127.0.0.1:{port}/json/list")
         page_urls = _page_urls_from_list(page_list)
+        cse_pages = cse_pages_from_list(page_list)
+        cse_page_urls = tuple(str(page.get("url") or "") for page in cse_pages)
+        cse_urls = _unique_cse_urls(cse_page_urls)
         pid = _pid_listening_on(port)
         profile = _profile_from_pid(pid) if pid is not None else None
-        has_live_cse = any(_CSE_URL_MARKER in url for url in page_urls)
+        has_live_cse = bool(cse_urls)
         out.append(
             LivePort(
                 port=port,
                 profile=profile,
                 page_urls=page_urls,
                 has_live_cse=has_live_cse,
+                cse_urls=cse_urls,
+                cse_target_count=len(cse_page_urls),
             )
         )
     return out
@@ -263,6 +293,7 @@ def _cse_target_as_dict(target: CseTarget) -> dict[str, Any]:
 
 
 def orphan_as_dict(orphan: Orphan) -> dict[str, Any]:
+    """Render one orphan port and its scan-ephemeral CSE classifications for JSON."""
     d = asdict(orphan)
     if orphan.profile is not None:
         d["profile"] = str(orphan.profile)
@@ -327,6 +358,7 @@ def attempt_reclaim_cse_target(target: CseTarget) -> dict[str, Any]:
 
 
 def orphan_scan_as_dict(scan: OrphanScanResult) -> dict[str, Any]:
+    """Render orphan-scan counts and classified ports for downstream observation consumers."""
     matched_dicts = [orphan_as_dict(o) for o in scan.matched]
     closable_total = sum(d.get("closable_count", 0) for d in matched_dicts)
     protected_total = sum(d.get("protected_count", 0) for d in matched_dicts)
@@ -377,6 +409,7 @@ def registered_lane_dicts() -> list[dict[str, Any]]:
 
 
 def list_surface_payload() -> dict[str, Any]:
+    """Return registered lanes, fresh orphan observations, and liveness authority for the registry list surface."""
     scan = find_orphans()
     return {
         "lanes": registered_lane_dicts(),
@@ -397,7 +430,6 @@ __all__ = [
     "find_orphans",
     "is_primary_profile",
     "list_surface_payload",
-    "normalize_cse_url",
     "orphan_as_dict",
     "orphan_scan_as_dict",
     "probe_live_ports",
