@@ -38,6 +38,7 @@ from services.git_integration_worker.cursor_auto.episode_residue import (
 from services.git_integration_worker.cursor_auto.job_ledger import (
     RELAY_PHASE_CLOSEOUT_POSTED,
     RELAY_PHASE_DISPATCHED,
+    RELAY_PHASE_NONE,
     get_ledger,
 )
 from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
@@ -95,6 +96,26 @@ def _dispatch_timeout_s() -> float:
     return max(30.0, float(raw))
 
 
+def _release_failed_submission(
+    job_id: str,
+    relay_ctx: CloseoutRelayContext | None,
+    *,
+    dispatch_id: str,
+) -> None:
+    """Undo both reservations taken before a nested submission that never ran.
+
+    ``bind_dispatch`` and ``try_admit`` are both claimed ahead of the POST, so a
+    submission the worker never accepted has to retire them here — nothing
+    downstream will. Leaving the ticket wedges ``active_count`` against drain;
+    leaving the binding at ``dispatched`` makes closeout replay wait on a
+    dispatch that does not exist.
+    """
+    get_ledger().set_relay_phase(job_id, relay_phase=RELAY_PHASE_NONE)
+    if relay_ctx is None or relay_ctx.admission_controller is None:
+        return
+    relay_ctx.admission_controller.close_ticket(dispatch_id, terminal_status="failed")
+
+
 async def submit_nested_dispatch(
     job: AutoJob,
     *,
@@ -127,6 +148,7 @@ async def submit_nested_dispatch(
                 route="cursor-auto/nested",
             )
         except Draining503 as exc:
+            _release_failed_submission(job.job_id, None, dispatch_id=dispatch_id)
             return {
                 "ok": False,
                 "dispatch_id": dispatch_id,
@@ -146,6 +168,8 @@ async def submit_nested_dispatch(
     }
     if job.from_agent != "cursor-auto":
         payload["caller_agent"] = job.from_agent
+    if job.request_id:
+        payload["request_id"] = job.request_id
     # AC2 corner: omit caller_agent when from_agent is cursor-auto (no self-stamp).
     if nest_under:
         payload["nest_under"] = nest_under
@@ -161,6 +185,7 @@ async def submit_nested_dispatch(
             resp = await client.post(url, json=payload)
         data = resp.json() if resp.content else {}
         if resp.status_code >= 400:
+            _release_failed_submission(job.job_id, relay_ctx, dispatch_id=dispatch_id)
             return {
                 "ok": False,
                 "dispatch_id": dispatch_id,
@@ -176,6 +201,7 @@ async def submit_nested_dispatch(
             "response": data,
         }
     except (httpx.HTTPError, ValueError, OSError) as exc:
+        _release_failed_submission(job.job_id, relay_ctx, dispatch_id=dispatch_id)
         logger.error("cursor-auto nested dispatch submit failed: %s", exc)
         return {
             "ok": False,
@@ -359,6 +385,8 @@ async def post_operator_closeout(
         meta["gate_class"] = gate_class
     if getattr(job, "contract", None):
         meta.setdefault("contract", job.contract)
+    envelope_execution_id = str(meta.get("execution_id") or f"exec-{dispatch_id}")
+    meta.setdefault("execution_id", envelope_execution_id)
     meta = stamp_meta_terminal_status_status_of(meta)
     from services.git_integration_worker.cursor_auto.closeout_status_polarity import (
         measurement_incomplete_class,
@@ -400,7 +428,14 @@ async def post_operator_closeout(
     lines.extend(
         [
             f"dispatch_id: {dispatch_id}",
+            f"execution_id: {envelope_execution_id}",
             f"model: {model_id}",
+        ]
+    )
+    if job.request_id:
+        lines.append(f"request_id: {job.request_id}")
+    lines.extend(
+        [
             "model_plane: admit-resolved",
             f"request_turn: {job.turn_number}",
         ]

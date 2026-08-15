@@ -19,6 +19,7 @@ closeout. State is therefore never mutated from a worker thread.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from collections.abc import Coroutine
 from dataclasses import dataclass, field
@@ -34,6 +35,23 @@ logger = get_logger(__name__)
 
 _TICKET_PENDING = "pending"
 _TICKET_RUNNING = "running"
+
+# Relay tickets are minted by the cursor-auto caller *before* it POSTs the nested
+# dispatch, so this route is the one admission path whose ticket can outlive the
+# work it reserved: a submission that never reaches the worker leaves no ledger
+# row to retire it. See ``_leaked_relay_op_ids``.
+_RELAY_ROUTE = "cursor-auto/nested"
+_RELAY_LEAK_GRACE_S_DEFAULT = 900.0
+
+
+def _relay_leak_grace_s() -> float:
+    raw = os.environ.get("CURSOR_RELAY_TICKET_LEAK_GRACE_S", "").strip()
+    if not raw:
+        return _RELAY_LEAK_GRACE_S_DEFAULT
+    try:
+        return max(60.0, float(raw))
+    except ValueError:
+        return _RELAY_LEAK_GRACE_S_DEFAULT
 
 
 class Draining503(Exception):  # noqa: N818 — admission sentinel, caller maps to 503
@@ -152,6 +170,45 @@ class WorkAdmissionController:
         return self._drain_epoch
 
     # --------------------------------------------------------------- counting
+    def _leaked_relay_op_ids(self) -> list[str]:
+        """Relay tickets whose nested dispatch never reached the ledger.
+
+        ``submit_nested_dispatch`` reserves its ticket *before* POSTing, so this
+        is the one admission path whose reservation can outlive the work: a
+        submission rejected pre-admission (``CURSOR_WORKTREE_MINT_FAILED``) or
+        lost in transport leaves no row to retire it, and the ticket then counts
+        toward ``active_count`` forever — wedging drain convergence, which no
+        operator surface can clear because ``force`` is barred on this worker.
+
+        Absence of a ledger row — not age alone — is the leak signature. A queued
+        or running nested dispatch always has one under the same ``dispatch_id``,
+        so this never reaps live work. The grace period only covers the window
+        between the caller's reservation and the worker's ledger insert.
+        """
+        now = datetime.now(UTC)
+        grace_s = _relay_leak_grace_s()
+        leaked: list[str] = []
+        for ticket in self._tickets.values():
+            if ticket.route != _RELAY_ROUTE or ticket.state != _TICKET_PENDING:
+                continue
+            if (now - ticket.admitted_at).total_seconds() < grace_s:
+                continue
+            if self.ledger.dispatch_status_by_id(dispatch_id=ticket.op_id) is None:
+                leaked.append(ticket.op_id)
+        return leaked
+
+    def _reap_leaked_relay_tickets(self) -> None:
+        for op_id in self._leaked_relay_op_ids():
+            ticket = self._tickets.pop(op_id, None)
+            if ticket is None:
+                continue
+            logger.warning(
+                "reaped leaked relay admission ticket: op_id=%s route=%s admitted_at=%s",
+                op_id,
+                ticket.route,
+                ticket.admitted_at.isoformat(),
+            )
+
     def active_ops(self) -> list[dict[str, Any]]:
         """Authoritative projection: counted tickets ∪ ledger live-running
         dispatches (orphan-excluded), de-duplicated by ``op_id`` so a cursor-sdk
@@ -159,7 +216,13 @@ class WorkAdmissionController:
 
         Cursor-sdk rows carry ``resolved_model`` / ``subject_preview`` from the
         ledger so busy probes name the holder, not only an opaque dispatch id.
+
+        Leaked relay tickets are reaped here rather than in a background sweep so
+        that every count authority — busy probes, ``drain_state``, and the idle
+        re-check — reconciles on read; the ledger side already applies the same
+        live-task filter in ``live_dispatch_projections``.
         """
+        self._reap_leaked_relay_tickets()
         ops: list[dict[str, Any]] = []
         seen: set[str] = set()
         projections = {
