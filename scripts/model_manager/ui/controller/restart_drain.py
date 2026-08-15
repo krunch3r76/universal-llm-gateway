@@ -116,7 +116,7 @@ class NullBusyProbe:
 
 
 class HttpActiveWorkProbe:
-    """Probe an HTTP ``active-work`` endpoint returning ``{"busy": bool, ...}``."""
+    """Probe an HTTP busy-state endpoint and preserve its detail for drain policy consumers without blocking census work."""
 
     def __init__(self, base_url: str, path: str) -> None:
         self._base_url = base_url
@@ -151,7 +151,7 @@ def _default_probes() -> dict[str, BusyProbe]:
     if cfg is not None:
         _host, _port, base = cfg
         probes["cdp_ask"] = HttpActiveWorkProbe(
-            base, "/v1/project-ask/active-work"
+            base, "/v1/project-ask/drain-state"
         )
     return probes
 

@@ -4200,7 +4200,9 @@ tools:
     tool: project_ask
     substrate_qualified: user-vortex__project_ask
   fol_descriptor: "Thin httpx relay to Jupiter CDP-ask satellite (PROJECT_ASK_URL).\n\
-    split submit/poll/abort only — ¬ server-side poll loop; ¬ Playwright in MCP handler.\n\
+    split submit/poll/abort/active_work/followup — ¬ server-side poll loop; ¬ Playwright in MCP handler.\n\
+    active_work is the fast recorded execution/admission projection; browser attachment\n\
+    occupancy is owned by the satellite drain-state surface, not stream admission.\n\
     Poll returns archive_uri (cortex://) on completion. See agent_skill:claude-ai-cdp-navigation.\n\
     NEVER curl localhost :8765 (web-fetcher) for /v1/project-ask/* — poll ONLY via\n\
     project_ask(op=poll, execution_id=…); cdp-ask satellite is :8770 via PROJECT_ASK_URL.\n"
@@ -4213,6 +4215,9 @@ tools:
         - submit
         - poll
         - abort
+        - active_work
+        - followup
+        - resolve_attended
       execution_id:
         type: string
       prompt_text:

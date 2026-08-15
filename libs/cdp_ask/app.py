@@ -1,4 +1,8 @@
-"""FastAPI satellite for Jupiter CDP project-ask (submit / poll / abort)."""
+"""FastAPI satellite for Jupiter CDP project-ask execution and drain surfaces.
+
+The service exposes recorded execution admission separately from the cached
+browser-attachment projection used by restart safety.
+"""
 
 from __future__ import annotations
 
@@ -37,6 +41,7 @@ from cdp_ask.models import (
     SubmitProjectAskResponse,
     classify_stall_stage,
 )
+from cdp_ask.occupancy_projection import CdpOccupancyProjection
 from cdp_ask.page_liveness import LadderCallbacks
 from cdp_ask.registry_hygiene_loop import RegistryHygieneLoop
 from cdp_ask.runner import (
@@ -70,11 +75,13 @@ class HealthResponse(BaseModel):
 
 
 def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
+    """Create the CDP satellite application with execution and occupancy state."""
     app = FastAPI(
         title="CDP Project Ask",
         description="Jupiter satellite for claude.ai CDP sealed asks",
     )
     execution_store = store or ExecutionStore()
+    occupancy = CdpOccupancyProjection()
     registry_hygiene = RegistryHygieneLoop()
 
     def _deregister(registration_id: str) -> None:
@@ -83,6 +90,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         cdp_registry.deregister_lane(registration_id, kill=True)
 
     execution_store.bind_deregister(_deregister)
+    execution_store.bind_occupancy(occupancy)
 
     @app.on_event("startup")
     async def _startup() -> None:
@@ -100,14 +108,20 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
 
     @app.get("/v1/project-ask/active-work")
     async def active_work() -> dict[str, object]:
-        """In-flight executions for restart drain + multi-lane admission.
+        """Return recorded executions and stream-admission capacity.
 
-        ``busy`` ⇒ defer restart (any pending/running). Lane admission uses
-        ``free_slots`` / ``at_hard_limit`` (soft=2, hard=3) — ¬ equate busy
-        with lane-full (friction a:25814). ``rows`` lists per-flight
-        ``registration_id`` / ``holder`` / ``purpose`` for warm followup discovery.
+        ``busy`` describes pending/running satellite executions only. Lane
+        admission uses ``free_slots`` / ``at_hard_limit`` (soft=2, hard=3);
+        browser attachments are intentionally excluded from this contract.
+        ``rows`` lists per-flight ``registration_id`` / ``holder`` / ``purpose``
+        for warm followup discovery.
         """
         return await execution_store.active_work_snapshot()
+
+    @app.get("/v1/project-ask/drain-state")
+    async def drain_state() -> dict[str, object]:
+        """Return fail-closed restart-drain state from the cached occupancy projection."""
+        return await execution_store.drain_state_snapshot()
 
     @app.get("/v1/project-ask/attended-operator")
     async def attended_operator() -> JSONResponse:
@@ -432,5 +446,6 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         )
 
     app.state.execution_store = execution_store
+    app.state.occupancy = occupancy
     app.state.registry_hygiene = registry_hygiene
     return app

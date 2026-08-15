@@ -1,4 +1,8 @@
-"""CDP registry observation events — @event_factory + best-effort UDS ingest."""
+"""CDP registry observation events and local occupancy-monitor wake signals.
+
+Events mirror through configured local UDS or remote TCP ingest, while the
+registry remains the correctness authority for occupancy recovery.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +11,7 @@ import json
 import os
 import socket
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from universal_event_bus.events.event import Event
@@ -14,6 +19,25 @@ from universal_event_bus.events.factory import event_factory
 
 if TYPE_CHECKING:
     from claude_bundles.cdp_registry import Registration
+
+_REGISTRY_TRANSITION_SIGNALS = frozenset(
+    {
+        "cdp.port.registered",
+        "cdp.port.deregistered",
+        "cdp.port.reattached",
+    }
+)
+_TRANSITION_SUBSCRIBERS: set[Callable[[], None]] = set()
+
+
+def subscribe_registry_transitions(callback: Callable[[], None]) -> Callable[[], None]:
+    """Register a best-effort wake callback for local registry transitions in this process."""
+    _TRANSITION_SUBSCRIBERS.add(callback)
+
+    def _unsubscribe() -> None:
+        _TRANSITION_SUBSCRIBERS.discard(callback)
+
+    return _unsubscribe
 
 
 @event_factory
@@ -228,6 +252,30 @@ def cdp_occupancy_overlap(*, lane: str, execution_ids: list[str]) -> Event:
     )
 
 
+@event_factory
+def cdp_occupancy_updated(
+    *,
+    live_cse_count: int | None,
+    registry_capacity_count: int | None,
+    freshness: str,
+    previous_freshness: str,
+    error: str | None = None,
+) -> Event:
+    """Report a changed browser-attachment occupancy projection."""
+    return Event(
+        signal="cdp.occupancy.updated",
+        role="observation",
+        scope="node",
+        payload={
+            "live_cse_count": live_cse_count,
+            "registry_capacity_count": registry_capacity_count,
+            "freshness": freshness,
+            "previous_freshness": previous_freshness,
+            "error": error,
+        },
+    )
+
+
 def _payload(reg: Registration) -> dict:
     return {
         "registration_id": reg.registration_id,
@@ -241,7 +289,11 @@ def _payload(reg: Registration) -> dict:
 
 
 def emit(event: Event) -> None:
-    """Best-effort UDS ingest — never raises."""
+    """Best-effort local UDS or configured remote TCP ingest — never raises."""
+    if event.signal in _REGISTRY_TRANSITION_SIGNALS:
+        for callback in tuple(_TRANSITION_SUBSCRIBERS):
+            with contextlib.suppress(Exception):
+                callback()
     _mirror_to_event_service(event)
 
 
@@ -256,9 +308,6 @@ def emit_transition(event: Event, *, transition_record: dict) -> None:
 
 
 def _mirror_to_event_service(event: Event) -> None:
-    sock_path = os.environ.get(
-        "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
-    )
     payload = {
         "signal": event.signal,
         "source": "cdp-registry",
@@ -267,8 +316,21 @@ def _mirror_to_event_service(event: Event) -> None:
         "ts_unix_ms": int(time.time() * 1000),
         "payload": event.payload,
     }
+    line = (json.dumps(payload) + "\n").encode()
     with contextlib.suppress(Exception):
+        combined = os.environ.get("EVENTS_INGEST_TCP", "").strip()
+        if combined and ":" in combined:
+            host, _, port_s = combined.rpartition(":")
+            if host and port_s.isdigit():
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                    sock.settimeout(1.0)
+                    sock.connect((host.strip(), int(port_s)))
+                    sock.sendall(line)
+                return
+        sock_path = os.environ.get(
+            "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
+        )
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
             sock.settimeout(1.0)
             sock.connect(sock_path)
-            sock.sendall((json.dumps(payload) + "\n").encode())
+            sock.sendall(line)

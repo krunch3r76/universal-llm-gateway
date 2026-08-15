@@ -25,9 +25,6 @@ pytestmark = pytest.mark.offline
 _QUALIFIED_FIELD_GOLDEN: dict[str, Any] = {
     "running_count_authority": "recorded",
     "admission_count_authority": "recorded",
-    "live_cse_count_authority": "observed",
-    "registry_capacity_count_authority": "recorded",
-    "effective_count_authority": "max(recorded, observed)",
 }
 
 
@@ -37,11 +34,8 @@ def _capacity(
     running_count: int,
     execution_ids: list[str],
     rows: list[dict[str, object]] | None = None,
-    live_cse_count: int = 0,
-    registry_capacity_count: int = 0,
 ) -> dict[str, Any]:
     admission_count = running_count
-    effective = max(running_count, live_cse_count)
     rows_list = list(rows or [])
     seat_count, other_count = count_by_purpose_class(rows_list)
     regime = admission_regime(seat_count)
@@ -54,19 +48,6 @@ def _capacity(
         "admission_count": admission_count,
         "admission_count_scope": "running/stream admissions, this host (soft=2 hard=3)",
         "admission_count_authority": "recorded",
-        "live_cse_count": live_cse_count,
-        "live_cse_count_scope": "open CSE attachments (Chrome pages), this host",
-        "live_cse_count_authority": "observed",
-        "registry_capacity_count": registry_capacity_count,
-        "registry_capacity_count_scope": (
-            "active registry Chrome hosts (ports/profiles), this host"
-        ),
-        "registry_capacity_count_authority": "recorded",
-        "effective_count": effective,
-        "effective_count_scope": (
-            "restart-drain aggregate max(running_count, live_cse_count); NOT admission"
-        ),
-        "effective_count_authority": "max(recorded, observed)",
         "execution_ids": execution_ids,
         "rows": rows or [],
         "soft_limit": LANE_SOFT_LIMIT,
@@ -104,8 +85,6 @@ async def test_sealed_snapshot_wire_identical_for_qualified_fields(
     for key, expected in _QUALIFIED_FIELD_GOLDEN.items():
         assert snap[key] == expected, f"{key}: {snap[key]!r} != {expected!r}"
     assert snap["running_count"] == 1
-    assert snap["live_cse_count"] == 0
-    assert snap["effective_count"] == 1
     assert snap == _capacity(
         busy=True,
         running_count=1,
@@ -143,7 +122,7 @@ async def test_seal_raises_on_injected_undeclared_bare_numeric(
     decl = SurfaceDecl("active_work_snapshot")
     decl.plain(
         "busy",
-        reason="derived boolean: running_count > 0 or live_cse_count > 0",
+        reason="derived boolean: running_count > 0",
     )
     decl.plain("soft_limit", reason="configured stream admission constant")
     decl.plain("hard_limit", reason="configured stream admission constant")
@@ -171,7 +150,7 @@ async def test_seal_raises_on_injected_undeclared_bare_numeric(
         seal(snap, decl)
 
 
-def test_live_cse_count_none_when_unobserved() -> None:
+def test_live_cse_count_qualified_scalar_preserves_unknown() -> None:
     from admission_common.qualified_scalar import AuthorityClass, QualifiedScalar
 
     scalar = QualifiedScalar(

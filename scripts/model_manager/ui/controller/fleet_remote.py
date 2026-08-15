@@ -340,12 +340,12 @@ async def _maybe_restart_remote_cdp_ask(
     _host, _port, base = cfg
     try:
         work = await HttpActiveWorkProbe(
-            base, "/v1/project-ask/active-work"
+            base, "/v1/project-ask/drain-state"
         ).snapshot()
     except Exception as exc:
         sink.line(
             hostname,
-            f"  ⚠ cdp_ask sync_restart deferred (active-work probe failed: {exc})",
+            f"  ⚠ cdp_ask sync_restart deferred (drain-state probe failed: {exc})",
         )
         return
     if work.busy:

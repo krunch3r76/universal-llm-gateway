@@ -6,7 +6,7 @@ of its wall time between POSTs (model thinking, tool planning), so
 ``NullBusyProbe`` treated that as permission to stop the container.
 
 This module gates MCP (and reports honest busy for ``busy_status``) on:
-1. ``cdp_ask`` active-work — recorded executions **or** observed live CSE
+1. ``cdp_ask`` drain-state — recorded executions **or** observed live CSE
 2. MCP ``/active-work`` — in-flight HTTP plus a short life-tools activity TTL
 
 Either signal alone is enough to defer. MCP probe failure is best-effort when
@@ -63,7 +63,7 @@ def _cdp_busy(detail: dict[str, Any]) -> bool:
 
 
 class McpBusyProbe:
-    """Composite busy probe for ``service=mcp`` restart drain."""
+    """Composite busy probe for MCP and CDP sessions during restart drain evaluation with fail-closed handling."""
 
     def __init__(
         self,
@@ -136,7 +136,7 @@ def build_mcp_busy_probe() -> McpBusyProbe:
     cfg = cdp_ask_url_config()
     if cfg is not None:
         _host, _port, base = cfg
-        cdp_probe = HttpActiveWorkProbe(base, "/v1/project-ask/active-work")
+        cdp_probe = HttpActiveWorkProbe(base, "/v1/project-ask/drain-state")
     mcp_probe = HttpActiveWorkProbe(mcp_active_work_base_url(), _MCP_ACTIVE_WORK_PATH)
     return McpBusyProbe(cdp_probe=cdp_probe, mcp_probe=mcp_probe)
 

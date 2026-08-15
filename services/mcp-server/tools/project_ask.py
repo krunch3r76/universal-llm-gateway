@@ -199,13 +199,14 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
             ``turn_idle_at``, and ``stall_stage`` on failed terminals. ``archive_uri``
             remains archive-proof after successful harvest.
           abort — cancel in-flight execution and release CDP lane
-          active_work — in-flight satellite executions (no execution_id needed);
-            the discovery path when you hold a Stargate/dispatch execution id
-            rather than a satellite one. The two id spaces are disjoint: a
-            ``cdp/*`` dispatch mints its own id and the satellite mints another,
-            and only the satellite id polls (friction a:26175). Stargate-side
-            correlation is the ``cdp.generate.submitted`` event, which carries
-            both ids and now publishes at submit time.
+          active_work — in-flight satellite executions and stream-admission
+            capacity (no execution_id needed); browser attachment occupancy is
+            deliberately not part of this fast admission projection. The two
+            id spaces are disjoint: a ``cdp/*`` dispatch mints its own id and
+            the satellite mints another, and only the satellite id polls
+            (friction a:26175). Stargate-side correlation is the
+            ``cdp.generate.submitted`` event, which carries both ids and now
+            publishes at submit time.
           followup — warm paste into a live retained Cowork CSE on an attached
             lane (``chat_url`` ≻ ``registration_id`` ≻ ``execution_id``; identity
             omitted ⇒ attended resolve-or-refuse on satellite). Explicit
@@ -312,7 +313,8 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
             abort: {execution_id, status, aborted, attested, still_attached,
                 abort_outcome, stop_clicked?}
             active_work: {busy, running_count, execution_ids, rows, soft_limit,
-                hard_limit, free_slots, at_soft_limit, at_hard_limit}
+                hard_limit, free_slots, at_soft_limit, at_hard_limit}; ``busy``
+                covers recorded satellite executions only.
             followup: {ok, url?, registration_id?, execution_id?, pasted_at?,
                 send_verified, receipt?, streaming_at_paste?, error?, detail?,
                 candidates?, reattach_used?, lane_created?, target_binding?,

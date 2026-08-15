@@ -1,4 +1,8 @@
-"""In-memory execution store with TTL, idle reaper, and boot reconcile (F-1)."""
+"""In-memory execution store for execution records, TTL cleanup, and boot recovery.
+
+Admission reads remain limited to recorded pending/running executions. Browser
+attachment occupancy is supplied by the separate asynchronous projection.
+"""
 
 from __future__ import annotations
 
@@ -10,75 +14,18 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from admission_common.qualified_scalar import (
-    AuthorityClass,
-    QualifiedScalar,
-    SurfaceDecl,
-    seal,
-)
+from admission_common.qualified_scalar import seal
 
+from cdp_ask.lane_admission import LANE_HARD_LIMIT, LANE_SOFT_LIMIT
 from cdp_ask.models import CompletionPhase, ExecutionStatus, StallStage
 
-_ACTIVE_WORK_SNAPSHOT = "active_work_snapshot"
-_RUNNING_COUNT_SCOPE = "cdp_ask execution store, pending/running streams"
-_LIVE_CSE_COUNT_SCOPE = "open CSE attachments (Chrome pages), this host"
-_ADMISSION_COUNT_SCOPE = "running/stream admissions, this host (soft=2 hard=3)"
-_REGISTRY_CAPACITY_SCOPE = "active registry Chrome hosts (ports/profiles), this host"
-_EFFECTIVE_COUNT_SCOPE = (
-    "restart-drain aggregate max(running_count, live_cse_count); NOT admission"
-)
+__all__ = ["ExecutionRecord", "ExecutionStore", "LANE_HARD_LIMIT", "LANE_SOFT_LIMIT"]
 
 DeregisterFn = Callable[[str], None]
 
 # Operator bind (friction a:25814) + ontology split (arc 6885):
 # soft/hard gate **concurrent streams** (running executions), not open tabs.
 # Open idle attachments are hygiene once chat_url is recorded.
-# Registry Chrome hosts are a separate scarce resource (count_capacity_lanes).
-# Drain `busy` stays independent: any pending/running **or** live attachment.
-LANE_SOFT_LIMIT = 2
-LANE_HARD_LIMIT = 3
-_LIVE_CSE_CACHE_TTL_S = 10.0
-_REGISTRY_SOURCE = "cse-session-registry"
-
-
-def _registry_projection(registration_id: str | None) -> dict[str, str | None]:
-    """Additive cdp_url/chat_url/source plus seat-binding fields from the registry."""
-    empty = {
-        "cdp_url": None,
-        "chat_url": None,
-        "source": None,
-        "parent_thread": None,
-        "mission_kind": None,
-    }
-    if not registration_id:
-        return empty
-    from claude_bundles import cdp_registry
-
-    chat_url = cdp_registry.chat_url_for_registration(registration_id)
-    cdp_url: str | None = None
-    parent_thread: str | None = None
-    mission_kind: str | None = None
-    for lane in cdp_registry.list_active():
-        if lane.registration_id == registration_id:
-            cdp_url = lane.cdp_url
-            parent_thread = getattr(lane, "parent_thread", None)
-            mission_kind = getattr(lane, "mission_kind", None)
-            break
-    if not chat_url and not cdp_url:
-        return {
-            **empty,
-            "parent_thread": parent_thread,
-            "mission_kind": mission_kind,
-        }
-    return {
-        "cdp_url": cdp_url,
-        "chat_url": chat_url,
-        "source": _REGISTRY_SOURCE,
-        "parent_thread": parent_thread,
-        "mission_kind": mission_kind,
-    }
-
-
 @dataclass
 class ExecutionRecord:
     execution_id: str
@@ -106,7 +53,7 @@ class ExecutionRecord:
 
 
 class ExecutionStore:
-    """Track async project-ask executions with TTL + idle cleanup."""
+    """Track async project-ask executions with TTL, idle cleanup, and projection hooks for restart-safety read models."""
 
     def __init__(
         self,
@@ -123,18 +70,31 @@ class ExecutionStore:
         self._reaper_task: asyncio.Task[None] | None = None
         self._stop_ack_task: asyncio.Task[None] | None = None
         self._deregister: DeregisterFn | None = None
-        self._live_cse_cache: tuple[float, int] | None = None
+        self._occupancy: Any | None = None
 
     def bind_deregister(self, fn: DeregisterFn) -> None:
         self._deregister = fn
+
+    def bind_occupancy(self, occupancy: Any) -> None:
+        """Bind the background occupancy projection used only by drain state."""
+        self._occupancy = occupancy
+
+    def request_occupancy_refresh(self) -> None:
+        """Wake occupancy sensing after a registry-affecting execution change."""
+        if self._occupancy is not None:
+            self._occupancy.request_refresh()
 
     async def start(self) -> None:
         if self._reaper_task is None:
             self._reaper_task = asyncio.create_task(self._reaper_loop())
         if self._stop_ack_task is None:
             self._stop_ack_task = asyncio.create_task(self._stop_ack_checkin_loop())
+        if self._occupancy is not None:
+            await self._occupancy.start()
 
     async def stop(self) -> None:
+        if self._occupancy is not None:
+            await self._occupancy.stop()
         if self._stop_ack_task is not None:
             self._stop_ack_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -190,152 +150,27 @@ class ExecutionStore:
             if rec.registration_id and rec.status in {"pending", "running"}
         }
 
-    def _live_cse_count(self) -> int:
-        now = time.time()
-        cached = self._live_cse_cache
-        if cached is not None and now - cached[0] < _LIVE_CSE_CACHE_TTL_S:
-            return cached[1]
-        from claude_bundles import cdp_orphans
+    async def _active_rows_snapshot(self) -> tuple[list[dict[str, Any]], list[str]]:
+        """Copy pending/running rows for the admission and drain read models."""
+        from cdp_ask.work_projection import active_rows
 
-        count = sum(1 for port in cdp_orphans.probe_live_ports() if port.has_live_cse)
-        self._live_cse_cache = (now, count)
-        return count
+        async with self._lock:
+            return active_rows(self._records.values())
 
     async def active_work_snapshot(self) -> dict[str, Any]:
-        """Aggregate pending/running executions for drain + stream-admission probes.
+        """Return only recorded executions and stream-admission capacity."""
+        from cdp_ask.work_projection import admission_projection
 
-        Split (arc 6885):
-        - **Admission** (``free_slots`` / ``at_*_limit``): ``running_count`` only
-          (soft=2 prefer, hard=3 ceiling) — concurrent streams, not open tabs.
-        - **Attachment hygiene**: ``live_cse_count`` (open CSE pages) — disposable
-          when ``chat_url`` is recorded; does **not** fill hard limit.
-        - **Registry hosts**: ``registry_capacity_count`` — active Chrome ports.
-        - **Drain busy**: any in-flight stream **or** observed open attachment.
-        """
-        async with self._lock:
-            active = [
-                rec
-                for rec in self._records.values()
-                if rec.status in {"pending", "running"}
-            ]
-            execution_ids = [rec.execution_id for rec in active]
-            rows = []
-            for rec in active:
-                proj = _registry_projection(rec.registration_id)
-                rows.append(
-                    {
-                        "execution_id": rec.execution_id,
-                        "registration_id": rec.registration_id,
-                        "holder": rec.holder,
-                        "purpose": rec.purpose,
-                        "status": rec.status,
-                        "cdp_url": proj["cdp_url"],
-                        "chat_url": proj["chat_url"],
-                        "source": proj["source"],
-                        "parent_thread": rec.parent_thread or proj.get("parent_thread"),
-                        "mission_kind": rec.mission_kind or proj.get("mission_kind"),
-                    }
-                )
-        running_count = len(execution_ids)
-        live_cse_count = self._live_cse_count()
-        admission_count = running_count
-        from cdp_ask.lane_admission import (
-            ADVISOR_RESERVE,
-            admission_regime,
-            count_by_purpose_class,
-            effective_abs_hard,
-        )
-
-        seat_count, other_count = count_by_purpose_class(rows)
-        regime = admission_regime(seat_count)
-        abs_hard_effective = effective_abs_hard(seat_count)
-        free_slots = max(0, abs_hard_effective - admission_count)
-        # Restart-drain aggregate only — never drives at_hard_limit after 6885.
-        effective = max(running_count, live_cse_count)
-        from claude_bundles import cdp_registry
-
-        registry_capacity_count = cdp_registry.count_capacity_lanes()
-        # Restart drain must treat an observed open CSE attachment as in-flight
-        # even when no project-ask execution is recorded: Cowork keeps the life
-        # MCP connector hot between tool POSTs.
-        payload: dict[str, Any] = {
-            "busy": running_count > 0 or live_cse_count > 0,
-            "execution_ids": execution_ids,
-            "rows": rows,
-            "soft_limit": LANE_SOFT_LIMIT,
-            "hard_limit": LANE_HARD_LIMIT,
-            "free_slots": free_slots,
-            "at_soft_limit": admission_count >= LANE_SOFT_LIMIT,
-            "at_hard_limit": admission_count >= abs_hard_effective,
-            "seat_count": seat_count,
-            "other_count": other_count,
-            "advisor_reserve": ADVISOR_RESERVE,
-            "admission_regime": regime,
-            "effective_abs_hard": abs_hard_effective,
-        }
-        payload.update(
-            QualifiedScalar(
-                value=running_count,
-                scope=_RUNNING_COUNT_SCOPE,
-                authority=AuthorityClass.RECORDED,
-            ).emit("running_count")
-        )
-        payload.update(
-            QualifiedScalar(
-                value=admission_count,
-                scope=_ADMISSION_COUNT_SCOPE,
-                authority=AuthorityClass.RECORDED,
-            ).emit("admission_count")
-        )
-        payload.update(
-            QualifiedScalar(
-                value=live_cse_count,
-                scope=_LIVE_CSE_COUNT_SCOPE,
-                authority=AuthorityClass.OBSERVED,
-            ).emit("live_cse_count")
-        )
-        payload.update(
-            QualifiedScalar(
-                value=registry_capacity_count,
-                scope=_REGISTRY_CAPACITY_SCOPE,
-                authority=AuthorityClass.RECORDED,
-            ).emit("registry_capacity_count")
-        )
-        payload.update(
-            QualifiedScalar(
-                value=effective,
-                scope=_EFFECTIVE_COUNT_SCOPE,
-                authority=AuthorityClass.MAX_OF,
-            ).emit("effective_count")
-        )
-        decl = SurfaceDecl(_ACTIVE_WORK_SNAPSHOT)
-        decl.plain(
-            "busy",
-            reason="derived boolean: running_count > 0 or live_cse_count > 0",
-        )
-        decl.plain("soft_limit", reason="configured stream admission constant")
-        decl.plain("hard_limit", reason="configured stream admission constant")
-        decl.plain(
-            "free_slots",
-            reason="derived: effective_abs_hard - admission_count",
-        )
-        decl.plain("at_soft_limit", reason="derived: admission_count >= soft_limit")
-        decl.plain(
-            "at_hard_limit",
-            reason="derived: admission_count >= effective_abs_hard",
-        )
-        decl.plain("seat_count", reason="derived: pending/running seat-purpose rows")
-        decl.plain("other_count", reason="derived: pending/running non-seat rows")
-        decl.plain("advisor_reserve", reason="configured reserved advisor slot count")
-        decl.plain(
-            "admission_regime",
-            reason="additive when seat_count > hard_limit - reserve else carved",
-        )
-        decl.plain(
-            "effective_abs_hard",
-            reason="regime-aware absolute stream ceiling",
-        )
+        rows, execution_ids = await self._active_rows_snapshot()
+        payload, decl = admission_projection(rows, execution_ids)
         return seal(payload, decl)
+
+    async def drain_state_snapshot(self) -> dict[str, Any]:
+        """Return cached browser occupancy plus recorded execution drain state."""
+        from cdp_ask.work_projection import drain_projection
+
+        rows, execution_ids = await self._active_rows_snapshot()
+        return drain_projection(rows, execution_ids, self._occupancy)
 
     async def attach_task(self, execution_id: str, task: asyncio.Task[Any]) -> None:
         async with self._lock:
@@ -355,6 +190,7 @@ class ExecutionStore:
                 return
             rec.registration_id = registration_id
             rec.updated_at = time.time()
+        self.request_occupancy_refresh()
 
     async def update_ladder(
         self,
@@ -434,6 +270,7 @@ class ExecutionStore:
             rec.stop = None
             rec.tool_pause = None
             rec.liveness_observed_at = None
+        self.request_occupancy_refresh()
 
     async def mark_awaiting_wake(
         self,
@@ -473,14 +310,18 @@ class ExecutionStore:
         from claude_bundles.cse_wake_retain import registration_has_wake_debt
 
         live_exec = await self.list_running_registration_ids()
-        plan = blr.plan_boot_lane_readoption(
-            cdp_registry._load_active(),
-            cdp_orphans.probe_live_ports(),
-            running_registration_ids=set(live_exec),
-            wake_debt=registration_has_wake_debt,
-        )
-        _, orphaned = blr.apply_boot_readoption_plan(plan)
-        return orphaned
+
+        def _reconcile_sync() -> list[str]:
+            plan = blr.plan_boot_lane_readoption(
+                cdp_registry._load_active(),
+                cdp_orphans.probe_live_ports(),
+                running_registration_ids=set(live_exec),
+                wake_debt=registration_has_wake_debt,
+            )
+            _, orphaned = blr.apply_boot_readoption_plan(plan)
+            return orphaned
+
+        return await asyncio.to_thread(_reconcile_sync)
 
     async def iter_stop_ack_candidates(self, now: float) -> list[ExecutionRecord]:
         """Return mission stream-stop records past quiet gate (F1 predicate)."""
@@ -553,3 +394,4 @@ class ExecutionStore:
 
         with contextlib.suppress(Exception):
             cdp_registry.deregister_lane(registration_id, reason="probe_failed")
+        self.request_occupancy_refresh()

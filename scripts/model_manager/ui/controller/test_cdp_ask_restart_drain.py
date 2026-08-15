@@ -40,7 +40,7 @@ def test_default_probes_registers_cdp_ask_when_url_configured(
     assert isinstance(probes["stargate"], HttpActiveWorkProbe)
     assert isinstance(probes["git_integration_worker"], HttpActiveWorkProbe)
     assert isinstance(probes["cdp_ask"], HttpActiveWorkProbe)
-    assert probes["cdp_ask"]._path == "/v1/project-ask/active-work"
+    assert probes["cdp_ask"]._path == "/v1/project-ask/drain-state"
 
 
 def test_default_probes_omits_cdp_ask_when_unconfigured(

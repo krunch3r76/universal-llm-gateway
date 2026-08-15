@@ -476,8 +476,13 @@ Dogfood fallback (hub checkout): `scripts/cortex/claude-ai-sync-jupiter project-
 | `submit` | `{execution_id, status: "running", registration_id?}` |
 | `poll` | `{execution_id, status, archive_uri?, ok?, body?, error?, …}` — `archive_uri` present when completed |
 | `abort` | `{execution_id, status: "aborted", aborted: true}` |
-| `active_work` | `{busy, running_count, execution_ids, rows, soft_limit, hard_limit, free_slots, …}` — each `rows[]` entry projects `parent_thread` (seat-binding lane) and `mission_kind` (`root` \| `hop`) when known |
+| `active_work` | `{busy, running_count, execution_ids, rows, soft_limit, hard_limit, free_slots, …}` — fast recorded execution/admission projection; `busy` excludes browser attachments. Each `rows[]` entry projects `parent_thread` (seat-binding lane) and `mission_kind` (`root` \| `hop`) when known |
 | `followup` | `{ok, send_verified, url?, registration_id?, execution_id?, pasted_at?, error?, …}` — paste proof; no reply harvest |
+
+The satellite's internal `/v1/project-ask/drain-state` surface is separate from
+the MCP `active_work` relay. It combines the recorded execution rows with the
+cached browser-attachment projection and reports observation freshness; stale
+or unobserved occupancy remains busy for restart safety.
 
 ### Examples
 

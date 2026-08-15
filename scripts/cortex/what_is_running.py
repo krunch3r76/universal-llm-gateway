@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """CLI entry for the ontology-keyed fleet occupancy view (arc 6885 / 6899).
 
-Fetches cdp-ask ``active-work`` and the Jupiter registry (SSH), joins hub CSR
+Fetches cdp-ask ``drain-state`` and the Jupiter registry (SSH), joins hub CSR
 sessions, then prints intended-vs-actual. No LLM in the read path. Life seats
 cannot call ``manage`` / ``project_ask`` — use ``--publish`` and ``fs``-read the
 cortex snapshot. Compose/render logic lives in
@@ -41,8 +41,8 @@ def _fetch_json(url: str, *, timeout: float = 5.0) -> dict[str, Any]:
 
 
 def fetch_active_work(base_url: str) -> dict[str, Any]:
-    """GET satellite ``/v1/project-ask/active-work`` for labeled stream scalars."""
-    return _fetch_json(f"{base_url.rstrip('/')}/v1/project-ask/active-work")
+    """GET satellite drain state for labeled stream and attachment scalars."""
+    return _fetch_json(f"{base_url.rstrip('/')}/v1/project-ask/drain-state")
 
 
 def fetch_registry_via_ssh(ssh_target: str) -> dict[str, dict[str, Any]]:

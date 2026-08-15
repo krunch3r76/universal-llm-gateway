@@ -41,6 +41,9 @@ COMMISSION_URI = os.environ.get(
 ACTIVE_WORK = os.environ.get(
     "OPUS_SUMMONS_ACTIVE_WORK", "http://jupiter:8770/v1/project-ask/active-work"
 )
+DRAIN_STATE = os.environ.get(
+    "OPUS_SUMMONS_DRAIN_STATE", "http://jupiter:8770/v1/project-ask/drain-state"
+)
 DISPATCH = os.environ.get(
     "OPUS_SUMMONS_DISPATCH", "http://localhost:9999/api/v1/team/dispatch"
 )
@@ -64,6 +67,7 @@ DEADLINE_EPOCH = 0.0
 
 
 def log(event: str, **fields) -> None:
+    """Append one structured watchdog event to disk and mirror it to stdout."""
     rec = {"ts": datetime.now(UTC).isoformat(timespec="seconds"), "event": event}
     rec.update(fields)
     LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -165,6 +169,7 @@ def page_on_stop(reason: str, **fields) -> bool:
 
 
 def stop(reason: str, exit_code: int = 0, **fields) -> int:
+    """Record a terminal watchdog reason, page the operator, and return its exit code."""
     log("stop", reason=reason, **fields)
     page_on_stop(reason, **fields)
     return exit_code
@@ -188,7 +193,7 @@ def curl_json(url: str, payload: dict | None = None, timeout: int = 30) -> dict 
 
 
 def read_commission() -> tuple[int | None, bool]:
-    """Parse ``commission_seq`` and ``arc_complete`` from YAML front-matter."""
+    """Parse ``commission_seq`` and ``arc_complete`` from commission YAML front-matter without side effects."""
     try:
         text = COMMISSION.read_text()
     except OSError:
@@ -212,11 +217,14 @@ def read_commission() -> tuple[int | None, bool]:
 
 
 def lane_counts() -> tuple[int | None, int | None]:
-    """Return (running_count, live_cse_count); (None, None) when probe failed."""
+    """Return recorded streams and observed live CSE counts, or unknown values on failure."""
     data = curl_json(ACTIVE_WORK, timeout=10)
-    if data is None:
+    drain = curl_json(DRAIN_STATE, timeout=10)
+    if data is None or drain is None:
         return None, None
-    return int(data.get("running_count", 0) or 0), int(data.get("live_cse_count", 0) or 0)
+    return int(data.get("running_count", 0) or 0), int(
+        drain.get("live_cse_count", 0) or 0
+    )
 
 
 def try_summon(
@@ -227,7 +235,7 @@ def try_summon(
     failures: int,
     path: str,
 ) -> tuple[int, int, int]:
-    """Attempt one successor summon. Returns (last_launched, episodes, failures)."""
+    """Attempt one successor summon and return updated launch, episode, and failure counters."""
     if seq is None:
         raise SystemExit(stop("commission_unreadable", 1, episodes=episodes))
     if seq <= last_launched_seq:
@@ -300,14 +308,16 @@ def await_attach(exec_id: str | None = None) -> bool:
             if want in ids or want in row_ids:
                 return True
             continue
-        if int(data.get("running_count", 0) or 0) or int(
-            data.get("live_cse_count", 0) or 0
+        drain = curl_json(DRAIN_STATE, timeout=10)
+        if int(data.get("running_count", 0) or 0) or (
+            drain is not None and int(drain.get("live_cse_count", 0) or 0)
         ):
             return True
     return False
 
 
 def main() -> int:
+    """Run the bounded summons loop until the commission or drain policy stops it."""
     global DEADLINE_EPOCH
     if len(sys.argv) < 3:
         print(

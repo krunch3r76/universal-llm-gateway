@@ -56,11 +56,8 @@ def _capacity(
     running_count: int,
     execution_ids: list[str],
     rows: list[dict[str, object]] | None = None,
-    live_cse_count: int = 0,
-    registry_capacity_count: int = 0,
 ) -> dict[str, Any]:
     admission_count = running_count
-    effective = max(running_count, live_cse_count)
     rows_list = list(rows or [])
     seat_count, other_count = count_by_purpose_class(rows_list)
     regime = admission_regime(seat_count)
@@ -73,19 +70,6 @@ def _capacity(
         "admission_count": admission_count,
         "admission_count_scope": "running/stream admissions, this host (soft=2 hard=3)",
         "admission_count_authority": "recorded",
-        "live_cse_count": live_cse_count,
-        "live_cse_count_scope": "open CSE attachments (Chrome pages), this host",
-        "live_cse_count_authority": "observed",
-        "registry_capacity_count": registry_capacity_count,
-        "registry_capacity_count_scope": (
-            "active registry Chrome hosts (ports/profiles), this host"
-        ),
-        "registry_capacity_count_authority": "recorded",
-        "effective_count": effective,
-        "effective_count_scope": (
-            "restart-drain aggregate max(running_count, live_cse_count); NOT admission"
-        ),
-        "effective_count_authority": "max(recorded, observed)",
         "execution_ids": execution_ids,
         "rows": rows or [],
         "soft_limit": LANE_SOFT_LIMIT,
@@ -271,11 +255,13 @@ async def test_active_work_endpoint_busy(
 
 
 @pytest.mark.asyncio
-async def test_active_work_snapshot_idle_attachments_do_not_fill_admission(
+async def test_drain_state_snapshot_reports_attachments_without_admission_impact(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Arc 6885: open idle CSE tabs are hygiene, not stream admission."""
+    """Open idle CSE tabs are drain hygiene, not stream admission."""
     from claude_bundles.cdp_orphans import LivePort
+
+    from cdp_ask.occupancy_projection import CdpOccupancyProjection
 
     monkeypatch.setattr(
         "claude_bundles.cdp_orphans.probe_live_ports",
@@ -290,18 +276,24 @@ async def test_active_work_snapshot_idle_attachments_do_not_fill_admission(
         ],
     )
     store = ExecutionStore()
-    snap = await store.active_work_snapshot()
+    occupancy = CdpOccupancyProjection(
+        probe=lambda: [],
+        capacity_probe=lambda: 0,
+    )
+    occupancy.record_observation(7, 0)
+    store.bind_occupancy(occupancy)
+    snap = await store.drain_state_snapshot()
     assert snap["running_count"] == 0
     assert snap["admission_count"] == 0
     assert snap["live_cse_count"] == 7
-    assert snap["busy"] is True  # drain still sees attachments
+    assert snap["busy"] is True
     assert snap["free_slots"] == LANE_HARD_LIMIT
     assert snap["at_soft_limit"] is False
     assert snap["at_hard_limit"] is False
 
 
 @pytest.mark.asyncio
-async def test_active_work_snapshot_probe_cached(
+async def test_active_work_snapshot_does_not_probe_live_ports(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = {"n": 0}
@@ -314,7 +306,7 @@ async def test_active_work_snapshot_probe_cached(
     store = ExecutionStore()
     await store.active_work_snapshot()
     await store.active_work_snapshot()
-    assert calls["n"] == 1
+    assert calls["n"] == 0
 
 
 @pytest.mark.asyncio
@@ -373,7 +365,7 @@ async def test_active_work_snapshot_projects_parent_thread_from_store(
         lambda port_range=None: [],
     )
     store = ExecutionStore()
-    record = await store.create(
+    await store.create(
         holder="test",
         purpose="operator-proxy",
         parent_thread="6655",
