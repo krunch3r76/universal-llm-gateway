@@ -29,6 +29,8 @@ _SERVICE_HEALTH_TIMEOUT = 2.0
 
 
 class ServiceStatus(StrEnum):
+    """Process/probe status tokens returned by manage health checkers."""
+
     RUNNING = "running"
     STOPPED = "stopped"
     UNHEALTHY = "unhealthy"
@@ -38,6 +40,8 @@ class ServiceStatus(StrEnum):
 
 
 class ServiceOwnership(StrEnum):
+    """Whether manage owns the process or observed an external listener."""
+
     MANAGED = "managed"
     EXTERNAL = "external"
     UNKNOWN = "unknown"
@@ -121,7 +125,8 @@ class ServiceState:
                 port=None,
                 detail=pid_note or "",
             )
-        healthy = self._rag_probe_uds(socket_path)
+        healthy, probe_note = self._rag_probe_uds(socket_path)
+        fail = self._probe_fail_suffix(healthy, probe_note)
         listener_pid = self._find_unix_listener_pid(socket_path) if healthy else None
         if listener_pid is not None and listener_pid != pid:
             self._write_pid_file(self.RAG_PID_FILE, listener_pid)
@@ -139,7 +144,7 @@ class ServiceState:
                 pid=pid,
                 health_url=f"unix://{socket_path}/stats",
                 detail=self._with_note(
-                    f"PID {pid}{uptime_str}" + ("" if healthy else ", probe failed"),
+                    f"PID {pid}{uptime_str}{fail}",
                     pid_note,
                 ),
             )
@@ -155,24 +160,41 @@ class ServiceState:
             status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
             port=None,
             detail=self._with_note(
-                "Socket ready (PID file missing)"
+                f"Socket ready (PID file missing){fail}"
                 if healthy
-                else "Socket ready, probe failed",
+                else f"Socket ready{fail}",
                 pid_note,
             ),
         )
 
-    def _rag_probe_uds(self, socket_path: Path) -> bool:
-        """Perform readiness probe via UDS to /stats. Short timeout, fail closed."""
+    def _rag_probe_uds(self, socket_path: Path) -> tuple[bool, str | None]:
+        """UDS GET /stats readiness; fail closed. Note names the fail class.
+
+        ``status`` for RAG is this probe (HTTP 200) plus PID+socket, not
+        process-liveness. The note is what lets a later seat tell timeout
+        from connect-fail from a non-200 — the previous ``except: return False``
+        swallowed that class.
+        """
         from transport_utils import make_sync_client
 
         url = f"unix://{socket_path}"
         try:
             with make_sync_client(url, timeout=_SERVICE_HEALTH_TIMEOUT) as client:
                 resp = client.get("/stats")
-                return resp.status_code == 200
-        except Exception:
-            return False
+                if resp.status_code == 200:
+                    return True, None
+                return False, f"/stats returned {resp.status_code}"
+        except Exception as exc:
+            return False, type(exc).__name__
+
+    @staticmethod
+    def _probe_fail_suffix(healthy: bool, probe_note: str | None) -> str:
+        """Format the ``, probe failed (…)`` detail suffix from a probe note."""
+        if healthy:
+            return ""
+        if probe_note:
+            return f", probe failed ({probe_note})"
+        return ", probe failed"
 
     def _check_rag_tcp(
         self,

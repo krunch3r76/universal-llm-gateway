@@ -227,6 +227,75 @@ def test_snapshot_marks_tree_motion(monkeypatch: pytest.MonkeyPatch, tmp_path) -
     assert path["indeterminate_reason"] == "tree_moved_during_probe"
 
 
+def test_snapshot_copies_detail_pid_health_url(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """fleet_liveness must disclose the checker's already-known fail classes."""
+    empty_probe = {
+        "raw": "",
+        "paths": {},
+        "errors": [],
+        "branch": "master",
+        "head_sha": "head",
+        "clock": {},
+    }
+    probes = iter((empty_probe, empty_probe))
+    monkeypatch.setattr(live, "_tree_probe", lambda *_: next(probes))
+    monkeypatch.setattr(
+        live,
+        "_service_info",
+        lambda _state, service: (
+            ServiceInfo(
+                name="RAG",
+                status=ServiceStatus.UNHEALTHY,
+                pid=3471126,
+                health_url="unix:///tmp/universal-protocol/rag.sock/stats",
+                detail="PID 3471126 (17h 42m), probe failed (TimeoutError)",
+            )
+            if service == "rag"
+            else ServiceInfo(name=service, status=ServiceStatus.RUNNING, pid=1)
+        ),
+    )
+    monkeypatch.setattr(
+        live,
+        "_container_start",
+        lambda _container: {
+            "kind": "container_started_at",
+            "value_utc": None,
+            "granularity_s": 0.001,
+            "clock_domain": "docker_host",
+            "error": "test",
+        },
+    )
+    monkeypatch.setattr(
+        live,
+        "_mcp_reported_version",
+        lambda _container: {
+            "field": "code_version",
+            "value": None,
+            "denotes": "test",
+            "error": "test",
+        },
+    )
+    monkeypatch.setattr(
+        live,
+        "_process_start",
+        lambda _pid: {
+            "kind": "host_proc_start",
+            "value_utc": "2026-08-14T22:20:54Z",
+            "granularity_s": 0.01,
+            "clock_domain": "host_proc",
+            "error": None,
+        },
+    )
+    result = live.build_snapshot(tmp_path, SimpleNamespace())
+    rag = next(row for row in result["services"] if row["service"] == "rag")
+    assert rag["status"] == "unhealthy"
+    assert rag["detail"] == "PID 3471126 (17h 42m), probe failed (TimeoutError)"
+    assert rag["pid"] == 3471126
+    assert rag["health_url"] == "unix:///tmp/universal-protocol/rag.sock/stats"
+
+
 def test_mcp_reported_version_qualifies_working_tree_label(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

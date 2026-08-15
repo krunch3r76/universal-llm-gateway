@@ -128,7 +128,14 @@ def _service_info(service_state: ServiceState, service: str) -> ServiceInfo:
 
 
 def build_snapshot(root: Path, service_state: ServiceState) -> dict[str, Any]:
-    """Build a fresh evidence snapshot without mutating checkout or services."""
+    """Build a fresh evidence snapshot without mutating checkout or services.
+
+    ``status`` is copied from the manage ``ServiceInfo`` checker for that slug.
+    For ``rag`` in UDS mode that checker is a fail-closed 2.0s GET /stats
+    (HTTP 200) plus PID+socket — not process-liveness. ``detail``, ``pid``,
+    and ``health_url`` are copied so a reader can distinguish the checker's
+    already-known fail classes (socket not ready vs probe failed vs exception).
+    """
     started = time.time()
     before = _tree_probe(root)
     services: list[dict[str, Any]] = []
@@ -171,6 +178,9 @@ def build_snapshot(root: Path, service_state: ServiceState) -> dict[str, Any]:
             {
                 "service": service,
                 "status": status,
+                "detail": info.detail if info is not None else "",
+                "pid": info.pid if info is not None else None,
+                "health_url": info.health_url if info is not None else None,
                 "load_surface_kind": surface,
                 "load_marker": marker,
                 "reported_version": reported,
