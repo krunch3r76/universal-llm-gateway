@@ -1,4 +1,4 @@
-"""Tests for transactional close_row validation pairing."""
+"""Tests for transactional close_row validation pairing and preclosed row hygiene."""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ def _open_row(tmp_path, monkeypatch) -> str:
 
 
 def test_preclosed_row_creates_no_validation(tmp_path, monkeypatch) -> None:
+    """Closing an already-closed ledger row must not mint a pending validation record."""
     row_id = _open_row(tmp_path, monkeypatch)
     from charter_runner_store import propagation_validation
     from charter_runner_store.db import open_ledger_db

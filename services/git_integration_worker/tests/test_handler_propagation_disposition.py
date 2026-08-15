@@ -1,4 +1,4 @@
-"""Unit tests for propagate envelope disposition derived from executions[]."""
+"""Unit tests for propagate envelope disposition and summary derived from executions[]."""
 
 from __future__ import annotations
 
@@ -33,6 +33,7 @@ def _exec(
 
 
 def test_disposition_manage_error_not_propagated() -> None:
+    """Manage RPC errors must floor disposition to failed, never propagated."""
     executions = [
         _exec(
             "cortex-api",
@@ -50,7 +51,7 @@ def test_disposition_manage_error_not_propagated() -> None:
 
 
 def test_disposition_manage_error_row_status_submitted_still_failed() -> None:
-    """Manage error floors even when row status is optimistic."""
+    """Manage RPC error floors disposition even when the row status looks optimistic."""
     executions = [
         _exec(
             "mcp",
@@ -65,6 +66,7 @@ def test_disposition_manage_error_row_status_submitted_still_failed() -> None:
 
 
 def test_disposition_mixed_executed_submitted_queued_floors_to_queued() -> None:
+    """Mixed executed, submitted, and queued rows must floor disposition to queued."""
     executions = [
         _exec("mcp", "executed"),
         _exec("gateway", "submitted"),
@@ -74,6 +76,7 @@ def test_disposition_mixed_executed_submitted_queued_floors_to_queued() -> None:
 
 
 def test_disposition_mixed_executed_and_submitted_floors_to_submitted() -> None:
+    """Mixed executed and submitted rows must floor disposition to submitted."""
     executions = [
         _exec("mcp", "executed"),
         _exec("gateway", "submitted"),
@@ -82,6 +85,7 @@ def test_disposition_mixed_executed_and_submitted_floors_to_submitted() -> None:
 
 
 def test_disposition_mixed_executed_and_failed_floors_to_failed() -> None:
+    """Any failed row mixed with executed rows must floor disposition to failed."""
     executions = [
         _exec("mcp", "executed"),
         _exec("git_integration_worker", "failed", manage={"reason": "manage_error"}),
@@ -90,7 +94,7 @@ def test_disposition_mixed_executed_and_failed_floors_to_failed() -> None:
 
 
 def test_disposition_any_failed_row_never_propagated() -> None:
-    """Failed-axis: no execution set containing failed may yield propagated."""
+    """Failed-axis guard: no execution set containing failed may yield propagated."""
     failed_variants = [
         _exec("mcp", "failed", manage={"reason": "socket refused"}),
         _exec("cortex-api", "failed", manage={"status": "error", "reason": "manage_rpc_error"}),
@@ -119,6 +123,7 @@ def test_disposition_any_failed_row_never_propagated() -> None:
 
 
 def test_disposition_all_failed_returns_failed() -> None:
+    """Uniform failed executions must map disposition to failed."""
     executions = [
         _exec("mcp", "failed", manage={"reason": "socket refused"}),
         _exec("git_integration_worker", "failed", manage={"reason": "not running"}),
@@ -127,19 +132,22 @@ def test_disposition_all_failed_returns_failed() -> None:
 
 
 def test_disposition_empty_executions_returns_failed() -> None:
+    """Empty execution lists must fail closed with disposition failed."""
     assert _disposition_for([]) == "failed"
 
 
 def test_disposition_all_executed_maps_to_propagated() -> None:
+    """All executed rows with proof observed must map disposition to propagated."""
     assert _disposition_for([_exec("mcp", "executed")]) == "propagated"
 
 
 def test_disposition_all_submitted_returns_submitted() -> None:
+    """Uniform submitted rows must keep disposition submitted while proof is pending."""
     assert _disposition_for([_exec("mcp", "submitted")]) == "submitted"
 
 
 def test_disposition_submitted_never_propagated_while_proof_pending() -> None:
-    """AC-1: open-row (submitted) executions must not yield propagated envelope."""
+    """Open-row submitted executions must not yield propagated while proof is pending."""
     executions = [
         _exec(
             "mcp",
@@ -153,14 +161,17 @@ def test_disposition_submitted_never_propagated_while_proof_pending() -> None:
 
 
 def test_disposition_all_queued_unchanged() -> None:
+    """Uniform queued rows must keep disposition queued without upgrade."""
     assert _disposition_for([_exec("mcp", "queued", reason="draining")]) == "queued"
 
 
 def test_disposition_all_blocked_returns_blocked() -> None:
+    """Uniform blocked rows must map disposition to blocked."""
     assert _disposition_for([_exec("mcp", "blocked", reason="busy")]) == "blocked"
 
 
 def test_disposition_mixed_executed_and_blocked_floors_to_blocked() -> None:
+    """Mixed executed and blocked rows must floor disposition to blocked."""
     executions = [
         _exec("mcp", "executed"),
         _exec("gateway", "blocked", reason="busy"),
@@ -169,11 +180,13 @@ def test_disposition_mixed_executed_and_blocked_floors_to_blocked() -> None:
 
 
 def test_restart_intent_persisted_requires_intent_id() -> None:
+    """Deferred manage results require restart_intent_id to count as persisted."""
     assert restart_intent_persisted({"status": "deferred", "state": "draining"}) is False
     assert restart_intent_persisted({"status": "deferred", "restart_intent_id": "x"}) is True
 
 
 def test_execution_for_manage_deferred_without_intent_is_harvest_wanted() -> None:
+    """Deferred manage without restart intent must mark harvest_wanted for charter tick."""
     row = PropagationRow(
         service="mcp",
         code_ref="deadbeef",
@@ -199,6 +212,7 @@ def test_execution_for_manage_deferred_without_intent_is_harvest_wanted() -> Non
 
 
 def test_deferred_is_self_preemptable_for_mcp_cdp_ask_busy() -> None:
+    """MCP and cdp_ask busy deferrals may self-preempt; other services may not."""
     from services.git_integration_worker.cursor_auto.handler_propagation import (
         deferred_is_self_preemptable,
     )
@@ -222,6 +236,7 @@ def test_deferred_is_self_preemptable_for_mcp_cdp_ask_busy() -> None:
 
 
 def test_summary_propagated_self_preempt_includes_mcp_disconnect_advisory() -> None:
+    """Propagated self-preempt summaries must include MCP disconnect advisory text."""
     from services.git_integration_worker.cursor_auto.handler_propagation import (
         MCP_DISCONNECT_ADVISORY,
         _self_preempt_escalations_for,
@@ -249,6 +264,7 @@ def test_summary_propagated_self_preempt_includes_mcp_disconnect_advisory() -> N
 
 
 def test_summary_harvest_wanted_self_preempt_vetoed() -> None:
+    """Harvest-wanted summaries must report when self-preempt was vetoed."""
     from services.git_integration_worker.cursor_auto.handler_propagation import (
         _summary_for,
     )
@@ -268,6 +284,7 @@ def test_summary_harvest_wanted_self_preempt_vetoed() -> None:
 
 
 def test_execution_for_manage_deferred_with_intent_is_queued() -> None:
+    """Deferred manage with restart intent must queue supervisor-owned drain completion."""
     row = PropagationRow(
         service="git_integration_worker",
         code_ref="deadbeef",
@@ -302,10 +319,12 @@ def test_execution_for_manage_deferred_with_intent_is_queued() -> None:
 
 
 def test_disposition_all_harvest_wanted_returns_harvest_wanted() -> None:
+    """Uniform harvest_wanted rows must map disposition to harvest_wanted."""
     assert _disposition_for([_exec("mcp", "harvest_wanted", reason="cdp_ask_live")]) == "harvest_wanted"
 
 
 def test_summary_harvest_wanted_claims_charter_tick() -> None:
+    """Harvest-wanted summaries must claim charter tick will consume the deferral."""
     executions = [_exec("mcp", "harvest_wanted", reason="cdp_ask_live")]
     summary = _summary_for("harvest_wanted", executions)
     assert "charter tick will consume" in summary.lower()
@@ -316,6 +335,7 @@ def test_summary_harvest_wanted_claims_charter_tick() -> None:
 
 
 def test_disposition_d7_turn27_payload_replay() -> None:
+    """Replay D7 turn-27 manage error payload must floor disposition to failed."""
     executions = [
         {
             "service": "cortex-api",
@@ -339,6 +359,7 @@ def test_disposition_d7_turn27_payload_replay() -> None:
 
 
 def test_summary_all_failed_names_services_and_reasons() -> None:
+    """Failed summaries must name failing services and surface their manage reasons."""
     executions = [_exec("mcp", "failed", manage={"reason": "socket refused"})]
     summary = _summary_for("failed", executions)
     assert "mcp" in summary
@@ -347,6 +368,7 @@ def test_summary_all_failed_names_services_and_reasons() -> None:
 
 
 def test_summary_mixed_executed_and_failed_surfaces_partial_and_failure() -> None:
+    """Mixed executed and failed summaries must report partial progress and failure."""
     executions = [
         _exec("mcp", "executed"),
         _exec("git_integration_worker", "failed", manage={"reason": "manage_error"}),
@@ -359,6 +381,7 @@ def test_summary_mixed_executed_and_failed_surfaces_partial_and_failure() -> Non
 
 
 def test_summary_submitted_names_open_ledger() -> None:
+    """Submitted summaries must state the ledger row remains open pending proof."""
     executions = [_exec("mcp", "submitted")]
     summary = _summary_for("submitted", executions)
     assert "submitted" in summary.lower()
@@ -366,6 +389,7 @@ def test_summary_submitted_names_open_ledger() -> None:
 
 
 def test_summary_propagated_claims_proof_observed() -> None:
+    """Propagated summaries must claim proof-of-live was observed for executed rows."""
     executions = [_exec("mcp", "executed")]
     summary = _summary_for("propagated", executions)
     assert "proof-of-live observed" in summary.lower()

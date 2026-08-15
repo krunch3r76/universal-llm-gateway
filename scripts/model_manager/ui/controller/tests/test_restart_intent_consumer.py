@@ -1,4 +1,4 @@
-"""L5 measurement hygiene — restart intent consumer projection (7119)."""
+"""Tests for consumer-facing restart-intent projections and deadline ceiling semantics."""
 
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ def _intent(**overrides: object) -> Intent:
 
 
 def test_project_restart_intent_consumer_rewords_deadline_as_ceiling() -> None:
+    """Projected consumer view must expose deadline_at as a TTL ceiling, not fire time."""
     now = datetime(2026, 8, 12, 15, 31, 0, tzinfo=UTC)
     view = project_restart_intent_consumer(_intent(), now=now)
     assert view["deadline_ceiling_at"] == "2026-08-12T15:40:39.447241+00:00"
@@ -42,6 +43,7 @@ def test_project_restart_intent_consumer_rewords_deadline_as_ceiling() -> None:
 
 
 def test_drain_deferred_result_shape_includes_ceiling_fields() -> None:
+    """Deferred drain envelopes must carry reworded deadline ceiling fields for clients."""
     from scripts.model_manager.ui.controller.restart_drain import _drain_deferred_result
 
     payload = _drain_deferred_result(_intent(status="pending_drain"))

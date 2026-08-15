@@ -14,6 +14,7 @@ from charter_runner_store.propagation_activation_events import (
 
 
 def test_publish_activation_event_uds_envelope(tmp_path, monkeypatch) -> None:
+    """Activation events publish observation envelopes over the UDS events socket."""
     import charter_runner_store.propagation_activation_events as mod
 
     sock_path = tmp_path / "events.sock"
@@ -52,6 +53,7 @@ def test_publish_activation_event_uds_envelope(tmp_path, monkeypatch) -> None:
 
 
 def test_progress_factory_signal() -> None:
+    """Progress factory must emit the manage.restart.activation.progress signal name."""
     event = ManageRestartActivationProgress(
         intent_id="i",
         validation_id="v",

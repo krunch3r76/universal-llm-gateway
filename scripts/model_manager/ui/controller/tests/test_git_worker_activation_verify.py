@@ -1,4 +1,4 @@
-"""Tests for git_worker_activation_verify module."""
+"""Unit tests for post-drain git-worker activation verification and settle wiring."""
 
 from __future__ import annotations
 
@@ -20,18 +20,22 @@ from scripts.model_manager.ui.controller.restart_intent_states import (
 )
 from scripts.model_manager.ui.controller.restart_intent_store import RestartIntentStore
 
+_RESOLVABLE_CODE_REF = "ab53680e92543c316b16aef9a1412cd652c2a56b"
+
 
 def _run(coro):
     return asyncio.run(coro)
 
 
 def test_arms_activation_verify_restart_only() -> None:
+    """Only restart-shaped manage actions require post-kill activation verification."""
     assert arms_activation_verify("restart")
     assert arms_activation_verify("sync_restart")
     assert not arms_activation_verify("stop")
 
 
 def test_missing_kill_boundary_times_out(tmp_path, monkeypatch) -> None:
+    """Verify without a kill boundary must terminalize as activation_unverified quickly."""
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
     store = RestartIntentStore(db_path=tmp_path / "intents.db")
     intent = store.create_intent(
@@ -46,7 +50,9 @@ def test_missing_kill_boundary_times_out(tmp_path, monkeypatch) -> None:
         to_status=STATUS_VERIFYING_ACTIVATION,
     )
 
-    validation_id = mint_pending_validation_for_intent(intent)
+    validation_id = mint_pending_validation_for_intent(
+        intent, code_ref=_RESOLVABLE_CODE_REF
+    )
     _run(
         run_activation_verify(
             store,
@@ -83,7 +89,9 @@ def test_expired_kill_boundary_budget_terminalizes_without_reset(tmp_path, monke
         "services.git_integration_worker.cursor_auto.propagation_probe.probe_process_live",
         return_value=unreachable_probe,
     ):
-        validation_id = mint_pending_validation_for_intent(intent)
+        validation_id = mint_pending_validation_for_intent(
+            intent, code_ref=_RESOLVABLE_CODE_REF
+        )
         _run(
             run_activation_verify(
                 store,
@@ -101,7 +109,7 @@ def test_expired_kill_boundary_budget_terminalizes_without_reset(tmp_path, monke
 def test_activation_verify_invokes_settle_with_validation_ids(
     tmp_path, monkeypatch
 ) -> None:
-    """Ready-join/settle runs in verify with intent and validation identifiers."""
+    """Ready-join settle during verify must thread intent and validation identifiers."""
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
     store = RestartIntentStore(db_path=tmp_path / "intents.db")
     intent = store.create_intent(
@@ -117,7 +125,9 @@ def test_activation_verify_invokes_settle_with_validation_ids(
     )
     kill_boundary = datetime.now(UTC).isoformat()
     store.set_kill_boundary(intent.intent_id, kill_boundary_at=kill_boundary)
-    validation_id = mint_pending_validation_for_intent(intent)
+    validation_id = mint_pending_validation_for_intent(
+        intent, code_ref=_RESOLVABLE_CODE_REF
+    )
     settle_calls: list[dict[str, str | float | None]] = []
 
     async def _capture_settle(
@@ -198,7 +208,7 @@ def test_activation_verify_settle_closes_open_row(tmp_path, monkeypatch) -> None
         to_status=STATUS_VERIFYING_ACTIVATION,
     )
     store.set_kill_boundary(intent.intent_id, kill_boundary_at=datetime.now(UTC).isoformat())
-    validation_id = mint_pending_validation_for_intent(intent)
+    validation_id = mint_pending_validation_for_intent(intent, code_ref=sha)
     from charter_runner_store.propagation_terminal import settle_open_row
 
     def _fake_settle(service: str, _probe: object, **kwargs: object) -> list[object]:
