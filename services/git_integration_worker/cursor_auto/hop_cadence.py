@@ -195,7 +195,12 @@ async def fire_hop_for_decision(
     path: Path | None = None,
     snapshot_reader: Callable[[], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Self-enqueue a continuity hop and commission CDP for one fire decision."""
+    """Self-enqueue a continuity hop and commission CDP for one fire decision.
+
+    Capacity and liveness probes use the pre-commission snapshot; predecessor
+    capture reads again after commission so the successor is visible while
+    ``exclude_execution_id`` keeps it out of predecessor candidacy.
+    """
     if decision.action != "fire":
         return {"ok": False, "reason": decision.reason, "action": decision.action}
     reader = snapshot_reader or read_cdp_lane_snapshot
@@ -315,12 +320,22 @@ async def fire_hop_for_decision(
     else:
         from hop_handoff import parse_successor_birth_id
 
+        post_commission_snap: dict[str, Any] | None = None
+        if isinstance(snap, dict):
+            post_commission_snap = snap
+        try:
+            post_commission_snap = reader()
+        except Exception as exc:  # noqa: BLE001 — cadence must not crash the worker
+            logger.warning("hop_cadence post-commission snapshot failed: %s", exc)
         fired = mark_hop_fired(
             decision.thread_id,
             execution_id=execution_id,
             path=path,
-            active_work_snap=snap if isinstance(snap, dict) else None,
+            active_work_snap=(
+                post_commission_snap if isinstance(post_commission_snap, dict) else None
+            ),
             successor_birth_id=parse_successor_birth_id(body),
+            snapshot_reader=reader,
         )
         hop_ok = fired is not False
     logger.info(

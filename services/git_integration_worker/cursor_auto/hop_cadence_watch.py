@@ -339,14 +339,19 @@ def mark_hop_fired(
     satellite_execution_id: str | None = None,
     active_work_snap: dict[str, Any] | None = None,
     successor_birth_id: str | None = None,
+    snapshot_reader: Callable[[], dict[str, Any]] | None = None,
 ) -> bool:
     """Reset seated_at after a cadence hop so the successor is not immediately re-hopped.
 
     Returns False when predecessor execution lookup fails (handle incomplete).
+    On ``LOOKUP_FAILED`` with a live commission row in a fresh snapshot, advances
+    ``registration_id`` via ``advance_registration_on_confirm`` before recording
+    the failure — the hop still reports failure and takes cooldown.
     """
     from services.git_integration_worker.cursor_auto.hop_cadence_predecessor import (
         PredecessorConfirmError,
         capture_predecessor_at_hop,
+        op_row_for_execution_on_lane,
     )
     from services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile import (
         record_succession_claim,
@@ -356,8 +361,62 @@ def mark_hop_fired(
     watches = load_watches(path)
     row = dict(watches.get(thread_id) or {"thread_id": thread_id})
     row["thread_id"] = thread_id
-    capture = capture_predecessor_at_hop(row, active_work_snap)
+    capture = capture_predecessor_at_hop(
+        row,
+        active_work_snap,
+        exclude_execution_id=execution_id,
+    )
     if isinstance(capture, PredecessorConfirmError):
+        if (
+            capture.reason == "predecessor_execution_lookup_failed"
+            and execution_id
+        ):
+            heal_snap: dict[str, Any] | None = None
+            try:
+                if snapshot_reader is not None:
+                    heal_snap = snapshot_reader()
+                else:
+                    from services.git_integration_worker.cursor_auto.cdp_escalation import (
+                        read_cdp_lane_snapshot,
+                    )
+
+                    heal_snap = read_cdp_lane_snapshot()
+            except Exception as exc:  # noqa: BLE001 — heal must not crash fire path
+                logger.warning(
+                    "hop_cadence heal snapshot failed thread=%s: %s",
+                    thread_id,
+                    exc,
+                )
+            if isinstance(heal_snap, dict):
+                aw_row = op_row_for_execution_on_lane(
+                    heal_snap, thread_id, execution_id
+                )
+                if aw_row is not None:
+                    dead_reg = str(row.get("registration_id") or "").strip()
+                    updated, transition = advance_registration_on_confirm(
+                        row,
+                        matched_key=execution_id,
+                        active_work_row=aw_row,
+                        now=ts,
+                        prior_registration_id=dead_reg,
+                    )
+                    if transition is not None:
+                        watches[thread_id] = updated
+                        save_watches(watches, path)
+                        prior_reg, new_reg = transition
+                        from services.git_integration_worker.cursor_auto.hop_cadence_events import (
+                            emit_registration_advanced,
+                        )
+
+                        emit_registration_advanced(
+                            thread_id=thread_id,
+                            prior_registration_id=prior_reg,
+                            new_registration_id=new_reg,
+                            superseding_execution_id=execution_id,
+                            superseded_execution_id=str(
+                                row.get("superseded_execution_id") or ""
+                            ),
+                        )
         mark_hop_failed(
             thread_id,
             reason=capture.reason,

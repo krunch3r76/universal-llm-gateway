@@ -8,7 +8,7 @@ watch rows read as INDETERMINATE.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from claude_bundles.hop_cadence_seat_snap import identity_rows
@@ -25,7 +25,7 @@ PRIOR_NONE_REGISTRATION = "__none:first_seat_on_lane__"
 PRIOR_NONE_EXECUTION = "__none:no_incumbent_execution__"
 
 
-class PredecessorVerdict(str, Enum):
+class PredecessorVerdict(StrEnum):
     """Verdict for predecessor resolution at hop fire or confirm."""
 
     INCUMBENT_RECORDED = "incumbent_recorded"
@@ -85,6 +85,8 @@ def execution_id_for_registration(
 def incumbents_on_lane(
     snap: dict[str, Any],
     thread_id: str,
+    *,
+    exclude_execution_id: str | None = None,
 ) -> list[tuple[str, str]]:
     """Return ``(registration_id, execution_id)`` for running OP rows on ``parent_thread``.
 
@@ -92,10 +94,15 @@ def incumbents_on_lane(
     ``seated_rows``). Unbound rows (missing ``parent_thread``) do not join —
     they cannot prove incumbency. Empty result is observation, not a
     first-seat claim.
+
+    ``exclude_execution_id`` removes the just-commissioned successor from
+    candidacy: capture runs after commission, so without exclusion the
+    successor is resolved as its own predecessor and handed to release.
     """
     lane = (thread_id or "").strip()
     if not lane:
         return []
+    exclude = (exclude_execution_id or "").strip()
     found: list[tuple[str, str]] = []
     for row in identity_rows(snap):
         status = str(row.get("status") or "")
@@ -110,8 +117,36 @@ def incumbents_on_lane(
         exec_id = str(row.get("execution_id") or "").strip()
         reg = str(row.get("registration_id") or "").strip()
         if exec_id:
+            if exclude and exec_id == exclude:
+                continue
             found.append((reg, exec_id))
     return found
+
+
+def op_row_for_execution_on_lane(
+    snap: dict[str, Any],
+    thread_id: str,
+    execution_id: str,
+) -> dict[str, Any] | None:
+    """Return the live OP row on ``thread_id`` whose ``execution_id`` matches."""
+    lane = (thread_id or "").strip()
+    target = (execution_id or "").strip()
+    if not lane or not target:
+        return None
+    for row in identity_rows(snap):
+        status = str(row.get("status") or "")
+        if status not in {"pending", "running"}:
+            continue
+        purpose = str(row.get("purpose") or "").strip().lower()
+        if purpose not in {"operator-proxy", "mission", "operator_proxy"}:
+            continue
+        row_lane = str(row.get("parent_thread") or "").strip()
+        if row_lane != lane:
+            continue
+        exec_id = str(row.get("execution_id") or "").strip()
+        if exec_id == target:
+            return row
+    return None
 
 
 def non_holder_handles(
@@ -139,18 +174,26 @@ def non_holder_handles(
 def capture_predecessor_at_hop(
     row: dict[str, Any],
     snap: dict[str, Any] | None,
+    *,
+    exclude_execution_id: str | None = None,
 ) -> PredecessorHandle | PredecessorConfirmError:
     """Resolve predecessor handle at hop fire; observe the world before claiming absence.
 
     On ``LOOKUP_FAILED`` (watch registration miss and empty ``incumbents_on_lane``)
     emits ``giw.cursor_auto.hop_cadence_lookup_failed_observe`` then returns the
     same ``PredecessorConfirmError`` as before. Emit failures are swallowed.
+
+    ``exclude_execution_id`` must be this commission's id when capture runs after
+    commission — otherwise the successor is recorded as its own predecessor.
     """
     predecessor_reg = str(row.get("registration_id") or "").strip()
     thread_id = str(row.get("thread_id") or "")
     snap_dict = snap if isinstance(snap, dict) else {}
+    exclude = (exclude_execution_id or "").strip()
     if not predecessor_reg:
-        incumbents = incumbents_on_lane(snap_dict, thread_id)
+        incumbents = incumbents_on_lane(
+            snap_dict, thread_id, exclude_execution_id=exclude_execution_id
+        )
         if incumbents:
             reg, exec_id = incumbents[0]
             return PredecessorHandle(
@@ -165,13 +208,17 @@ def capture_predecessor_at_hop(
             absence_reason="empty_watch_no_lane_incumbent",
         )
     exec_id = execution_id_for_registration(snap_dict, predecessor_reg)
+    if exec_id and exclude and exec_id == exclude:
+        exec_id = None
     if exec_id:
         return PredecessorHandle(
             registration_id=predecessor_reg,
             execution_id=exec_id,
             verdict=PredecessorVerdict.INCUMBENT_RECORDED,
         )
-    incumbents = incumbents_on_lane(snap_dict, thread_id)
+    incumbents = incumbents_on_lane(
+        snap_dict, thread_id, exclude_execution_id=exclude_execution_id
+    )
     if incumbents:
         reg, found_exec = incumbents[0]
         return PredecessorHandle(
@@ -333,6 +380,7 @@ __all__ = [
     "execution_id_for_registration",
     "incumbents_on_lane",
     "non_holder_handles",
+    "op_row_for_execution_on_lane",
     "predecessor_for_confirm",
     "predecessor_from_watch",
     "prior_registration_for_confirm",

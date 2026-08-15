@@ -95,7 +95,7 @@ def GiwCursorAutoHopCadenceRegistrationAdvanced(  # noqa: N802
     superseding_execution_id: str,
     superseded_execution_id: str,
 ) -> Event:
-    """Watch ``registration_id`` advanced to the matched active-work row."""
+    """Watch ``registration_id`` advanced to the matched active-work row (succession confirm or join-half heal after LOOKUP_FAILED)."""
     return Event(
         signal="giw.cursor_auto.hop_cadence_registration_advanced",
         payload={
