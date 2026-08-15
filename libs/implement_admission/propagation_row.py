@@ -208,10 +208,13 @@ class PropagationRow(BaseModel):
         service = data.get("service")
         if not isinstance(service, str):
             return data
-        if not data.get("proof_class"):
+        authored_class = data.get("proof_class")
+        if not authored_class:
             data["proof_class"] = default_proof_class(service)
         if not data.get("proof_class_requested"):
-            data["proof_class_requested"] = data.get("proof_class")
+            # Authored class wins as requested; default fill-in is honest only
+            # when the operator did not name a class (7233#214/#217).
+            data["proof_class_requested"] = authored_class or data.get("proof_class")
         if not data.get("safe_window"):
             data["safe_window"] = default_safe_window(service)
         if not data.get("proof"):
@@ -347,6 +350,7 @@ def row_from_mapping_strict(
             reason=raw.get("reason"),
             proof=str(proof),
             proof_class=pc,  # type: ignore[arg-type]
+            proof_class_requested=pc,  # type: ignore[arg-type]
             expected_x_mcp_count=expected_x_mcp_count,
             mint_thread=raw.get("mint_thread"),
             mint_turn=raw.get("mint_turn"),

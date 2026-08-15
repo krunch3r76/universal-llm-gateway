@@ -1,4 +1,8 @@
-"""Parse §4 propagation YAML blocks from authored CLOSEOUT markdown."""
+"""Parse §4 / operator-packet propagation YAML — fenced closeout blocks and unfenced heading mappings.
+
+Callers: ``admit_propagate_body`` and closeout residue mint. A missing fence
+must not drop ``proof_class`` onto the shorthand default path.
+"""
 
 from __future__ import annotations
 
@@ -14,6 +18,8 @@ _FENCED_YAML_RE = re.compile(
     r"```(?:ya?ml)?\s*\n(?P<body>.*?)\n```",
     re.DOTALL | re.IGNORECASE,
 )
+_NEXT_HEADING_RE = re.compile(r"(?m)^##\s+")
+_UNFENCED_PROPAGATION_KEY_RE = re.compile(r"(?m)^propagation:")
 _PROOF_CLASS_VALUES = frozenset({"process_live", "client_visible", "served_artifact"})
 
 
@@ -64,8 +70,27 @@ def parse_propagation_yaml_document(yaml_text: str) -> tuple[list[dict[str, Any]
     return rows, flags
 
 
+def _unfenced_propagation_yaml(tail: str) -> str | None:
+    """Return unfenced YAML under ``## propagation`` when the fence was omitted.
+
+    Operator packets (7233#214) often author the mapping directly under the
+    heading. Treating a missing fence as "no block" drops ``proof_class`` onto
+    the shorthand path, which then stamps the service default as requested.
+    """
+    next_heading = _NEXT_HEADING_RE.search(tail)
+    block = tail[: next_heading.start()] if next_heading else tail
+    if _UNFENCED_PROPAGATION_KEY_RE.search(block) is None:
+        return None
+    stripped = block.strip()
+    return stripped or None
+
+
 def extract_propagation_yaml_block(markdown: str) -> str | None:
-    """Return fenced YAML under a ``## propagation`` heading, if present."""
+    """Return YAML under a ``## propagation`` heading — fenced or unfenced.
+
+    Fence-first so existing closeout §4 blocks stay unchanged. Unfenced
+    fallback is the operator-packet shape: heading + ``propagation:`` mapping.
+    """
     heading = _PROPAGATION_HEADING_RE.search(markdown)
     if heading is None:
         match = _FENCED_YAML_RE.search(markdown)
@@ -74,10 +99,10 @@ def extract_propagation_yaml_block(markdown: str) -> str | None:
         return None
     tail = markdown[heading.end() :]
     match = _FENCED_YAML_RE.search(tail)
-    if match is None:
-        return None
-    body = match.group("body")
-    return body if "propagation:" in body else None
+    if match is not None:
+        body = match.group("body")
+        return body if "propagation:" in body else None
+    return _unfenced_propagation_yaml(tail)
 
 
 def propagation_block_present(markdown: str) -> bool:

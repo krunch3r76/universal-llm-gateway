@@ -500,3 +500,40 @@ async def test_run_propagation_self_preempt_vetoed_by_allow_self_preempt_false()
     assert manage_calls[0]["force"] is False
     summary = str(result.get("summary") or "")
     assert "self-preempt vetoed" in summary.lower()
+
+
+# 7233#214 shape: ## propagation + unfenced YAML. Shorthand must not win.
+_UNFENCED_GIW_PROCESS_LIVE_BODY = """\
+TYPE: DIRECTIVE
+contract: propagate
+scope: propagation sync_restart git_integration_worker
+code_ref: 674a817c4d06c218e61e83cf389ea4345e4279a1
+allow_self_preempt: false
+effects_expected: propagation row persisted for git_integration_worker
+
+## propagation
+propagation:
+  - service: git_integration_worker
+    code_ref: 674a817c4d06c218e61e83cf389ea4345e4279a1
+    safe_window: drain_required
+    proof_class: process_live
+    allow_self_preempt: false
+"""
+
+
+def test_unfenced_yaml_preserves_authored_proof_class_requested() -> None:
+    """7233#214/#217: unfenced YAML must not launder the GIW default as requested.
+
+    Current defect: missing fence falls through to shorthand, which applies
+    ``default_proof_class(git_integration_worker)=served_artifact`` and copies
+    that into ``proof_class_requested``. ``allow_self_preempt: false`` and
+    ``safe_window: drain_required`` still "round-trip" (regex + matching
+    default), so the drop is invisible except on proof_class.
+    """
+    admission = admit_propagate_body(_UNFENCED_GIW_PROCESS_LIVE_BODY)
+    assert admission.approved
+    dumped = admission.rows[0].model_dump()
+    assert dumped["proof_class"] == "process_live"
+    assert dumped["proof_class_requested"] == "process_live"
+    assert dumped["allow_self_preempt"] is False
+    assert dumped["safe_window"] == "drain_required"

@@ -94,6 +94,18 @@ def test_row_model_requires_service_and_code_ref():
     row = PropagationRow(service="mcp", code_ref="abc")
     assert row.proof_class == "client_visible"
     assert row.safe_window == "standalone_ok"
+    assert row.proof_class_requested == "client_visible"
+
+
+def test_authored_proof_class_is_not_laundered_as_service_default():
+    """Explicit process_live on GIW must not report served_artifact as requested."""
+    row = PropagationRow(
+        service="git_integration_worker",
+        code_ref="abc",
+        proof_class="process_live",
+    )
+    assert row.proof_class == "process_live"
+    assert row.proof_class_requested == "process_live"
 
 
 def test_rows_from_lib_consumers_skips_test_module():

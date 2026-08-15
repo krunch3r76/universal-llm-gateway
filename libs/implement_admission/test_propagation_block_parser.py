@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from implement_admission.propagation_admit_validation import LEGAL_SAFE_WINDOW_LIST
 from implement_admission.propagation_block_parser import (
+    extract_propagation_yaml_block,
     parse_propagation_block,
     parse_propagation_yaml_document,
 )
@@ -89,6 +90,30 @@ propagation:
     rows, flags = parse_propagation_yaml_document(yaml_text)
     assert rows == [{"service": "rag", "proof_class": "client_visible"}]
     assert "propagation_row_0_invalid_shape" not in flags
+
+
+def test_unfenced_yaml_under_propagation_heading_is_extracted():
+    """Operator packets often omit the fence; heading + ``propagation:`` must parse."""
+    markdown = """\
+TYPE: DIRECTIVE
+contract: propagate
+effects_expected: row persisted
+
+## propagation
+propagation:
+  - service: git_integration_worker
+    code_ref: 674a817c4d06c218e61e83cf389ea4345e4279a1
+    safe_window: drain_required
+    proof_class: process_live
+    allow_self_preempt: false
+"""
+    yaml_text = extract_propagation_yaml_block(markdown)
+    assert yaml_text is not None
+    rows, flags = parse_propagation_block(markdown)
+    assert flags == []
+    assert len(rows) == 1
+    assert rows[0]["proof_class"] == "process_live"
+    assert rows[0]["allow_self_preempt"] is False
 
 
 def test_safe_window_normal_rejected_with_legal_values():
