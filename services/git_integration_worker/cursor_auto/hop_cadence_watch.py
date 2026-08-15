@@ -251,11 +251,15 @@ def evaluate_watch(
     threshold: float | None = None,
     cool: float | None = None,
     in_flight_probe: Callable[[str], bool] | None = None,
+    standdown_probe: Callable[[str], bool] | None = None,
 ) -> HopDecision:
     """Decide fire/skip for one watch row; does not mutate the ledger.
 
     *in_flight_probe* is lane-keyed (thread id → running?). Absent probe
     means no in-flight inhibit — production ``scan_and_fire`` injects one.
+    *standdown_probe* is lane-keyed (thread id → open stand-down ACK?).
+    Absent probe means no stand-down inhibit — production ``scan_and_fire``
+    injects one.
     """
     ts = time.time() if now is None else now
     thr = age_threshold_s() if threshold is None else threshold
@@ -297,6 +301,18 @@ def evaluate_watch(
             "in_flight_commission",
             threshold_s=thr,
             signal="in_flight_commission",
+        )
+    from services.git_integration_worker.cursor_auto.hop_cadence_standdown import (
+        STANDDOWN_ACK_OPEN_REASON,
+    )
+
+    if standdown_probe is not None and standdown_probe(thread_id):
+        return HopDecision(
+            thread_id,
+            "skip",
+            STANDDOWN_ACK_OPEN_REASON,
+            threshold_s=thr,
+            signal=STANDDOWN_ACK_OPEN_REASON,
         )
     seated = effective_seated_at(row)
     if seated is None:

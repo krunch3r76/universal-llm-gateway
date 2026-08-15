@@ -30,3 +30,35 @@ def classify_ack(
     if marker_hit or birth_hit:
         return "typed_ack"
     return "ordinary_content"
+
+
+MarkerType = Literal["stand_down_ack", "successor_attestation"]
+
+STAND_DOWN_ACK_TYPE_RE = re.compile(r"TYPE:\s*SEAT_STAND_DOWN_ACK\b", re.IGNORECASE)
+SUCCESSOR_ATTESTATION_TYPE_RE = re.compile(
+    r"TYPE:\s*SUCCESSOR_ATTESTATION\b", re.IGNORECASE
+)
+
+
+def marker_type(text: str) -> MarkerType | None:
+    """Return which typed-ACK TYPE token *text* carries, independent of replay nonce.
+
+    Callers: hop-cadence stand-down probe (historical bus-turn scan). Does not
+    consult marker/successor_birth_id. Empty or ordinary prose → None. Bare
+    ``TYPE: SEAT_STAND_DOWN`` (non-ACK) → None. When both tokens appear in one
+    body, the later match span wins (intra-turn latest-typed-marker-wins).
+    """
+    body = (text or "").strip()
+    if not body:
+        return None
+    stand_down = STAND_DOWN_ACK_TYPE_RE.search(body)
+    successor = SUCCESSOR_ATTESTATION_TYPE_RE.search(body)
+    if stand_down is None and successor is None:
+        return None
+    if stand_down is None:
+        return "successor_attestation"
+    if successor is None:
+        return "stand_down_ack"
+    if stand_down.start() >= successor.start():
+        return "stand_down_ack"
+    return "successor_attestation"

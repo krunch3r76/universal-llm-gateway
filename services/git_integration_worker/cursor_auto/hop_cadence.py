@@ -39,6 +39,9 @@ from services.git_integration_worker.cursor_auto.hop_cadence_events import (
 from services.git_integration_worker.cursor_auto.hop_cadence_inflight import (
     lane_in_flight_commission,
 )
+from services.git_integration_worker.cursor_auto.hop_cadence_standdown import (
+    lane_standdown_ack_open,
+)
 from services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile import (
     reconcile_stall_revocations,
     reconcile_succession_confirmations,
@@ -382,6 +385,7 @@ async def scan_and_fire(
             in_flight_probe=lambda tid, q=queue: lane_in_flight_commission(
                 tid, queue=q
             ),
+            standdown_probe=lambda tid: lane_standdown_ack_open(tid),
         )
         if decision.action != "fire":
             results.append(
