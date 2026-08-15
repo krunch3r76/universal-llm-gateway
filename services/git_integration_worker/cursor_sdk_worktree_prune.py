@@ -190,28 +190,32 @@ def prune_dispatch_worktree(
             head_sha=salvage.head_sha,
             trigger="reaper",
         )
+    branch_deleted = False
+    if state.safe_to_delete:
+        branch_deleted = _delete_orphan_branch(
+            repo=repo,
+            branch_name=branch,
+            reason="prune_terminal",
+            dispatch_id=dispatch_id,
+            tip_sha=state.head_sha,
+        )
+        if not branch_deleted:
+            branch_retained = True
     if branch_retained:
         emit_sdk_lane_b_branch_retained(
             dispatch_id=dispatch_id,
             branch=branch,
             commits_ahead=state.commits_ahead,
         )
-    if state.safe_to_delete:
-        subprocess.run(
-            ["git", "-C", str(repo), "branch", "-D", branch],
-            capture_output=True,
-            text=True,
-            timeout=_GIT_TIMEOUT_S,
-            check=False,
-        )
     unregister_dispatch_worktree(dispatch_id=dispatch_id)
-    emit_sdk_lane_b_reaped(
-        dispatch_id=dispatch_id,
-        branch_deleted=state.safe_to_delete,
-        branch=branch if state.safe_to_delete else None,
-        tip_sha=state.head_sha if state.safe_to_delete else None,
-        reason="prune_terminal" if state.safe_to_delete else None,
-    )
+    if not branch_deleted:
+        emit_sdk_lane_b_reaped(
+            dispatch_id=dispatch_id,
+            branch_deleted=False,
+            branch=None,
+            tip_sha=None,
+            reason=None,
+        )
     return PruneResult(
         pruned=True,
         branch_retained=branch_retained,
