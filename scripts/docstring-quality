@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Implementation module; invoked through the interpreter-resolving launcher.
 """Verify docstring quality for Python source files.
 
 Scans Python files using tree-sitter to extract docstrings and checks them
@@ -22,8 +23,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-import tree_sitter as _ts
-import tree_sitter_python as _tspython
+from runtime_python import ensure_preferred_python
+
+ensure_preferred_python(__file__)
+
+import tree_sitter as _ts  # noqa: E402
+import tree_sitter_python as _tspython  # noqa: E402
 
 _PY_LANG: _ts.Language = _ts.Language(_tspython.language())
 _PY_PARSER = _ts.Parser(_PY_LANG)
@@ -350,6 +355,7 @@ def _check_cmd(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    """Parse the quality-gate command and run the selected source inspection."""
     parser = argparse.ArgumentParser(
         description="Docstring quality verification",
         formatter_class=argparse.RawDescriptionHelpFormatter,

@@ -33,6 +33,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+from runtime_python import ensure_preferred_python
+
+ensure_preferred_python(__file__)
+
 # Allow direct execution from the workspace tree without PYTHONPATH gymnastics.
 _REPO = Path(__file__).resolve().parent.parent
 if str(_REPO / "libs") not in sys.path:
@@ -185,6 +189,7 @@ def _emit_command_map(root: Path, *, check: bool, dry_run: bool) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse generation options, run the selected emitter, and return its exit code."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--target",

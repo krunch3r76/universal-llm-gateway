@@ -19,7 +19,9 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-PYTHON="${VIRTUAL_ENV:-${HOME}/.venvs/universal}/bin/python3"
+# shellcheck source=hooks/resolve_hook_python.sh
+source scripts/hooks/resolve_hook_python.sh
+PYTHON="$(resolve_hook_python)"
 G1_BREAK_SCHEMA="scripts/fixtures/g1-break-schema.json"
 
 _run_registry_falsifier_tier() {
@@ -79,10 +81,10 @@ if [[ "${1:-}" == "--prove-falsifier-tier-not-skipped" ]]; then
   exit 0
 fi
 
-scripts/gen-rules --target cursor --check
-scripts/gen-rules --target command-map --check
-scripts/gen-rules --target agent-guides-rules --check
-scripts/gen-rules --target agent-skill-bundles --check
+"$PYTHON" scripts/gen-rules --target cursor --check
+"$PYTHON" scripts/gen-rules --target command-map --check
+"$PYTHON" scripts/gen-rules --target agent-guides-rules --check
+"$PYTHON" scripts/gen-rules --target agent-skill-bundles --check
 _run_registry_falsifier_tier
 "$PYTHON" scripts/gen-mcp-dispatch-role-docs --check
 # Blocking catalog gate + import guard (parity logic retired Phase 2).
