@@ -67,7 +67,7 @@ New MCP `requirements.txt` dependency ⇒ TUI Build Image or `scripts/sync-and-r
 
 1. `manage(action="sync_restart", service="mcp")` — restart deferred ~30s.
 2. During window: calls may return `-32099` `server_restarting` / `Retry-After: 30` — retry or `manage(action="wait_healthy", service="mcp")`.
-3. Authoritative check: `GET /health` shows `deploy_mode == source_synced` and recent `source_synced_at`. ¬`docker images … Created` timestamp checks.
+3. Authoritative check: `GET /health` shows `deploy_mode == source_synced` and recent `source_synced_at`. Routine sync copies the working tree, so read `source_sync_basis`, `code_version_semantics`, and `source_sync_worktree_state` before treating `code_version` as anything more than a checkout-HEAD ancestry label. ¬`docker images … Created` timestamp checks.
 
 ## Restart-window classification
 

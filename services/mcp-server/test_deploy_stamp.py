@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 
 import pytest
-
 from _deploy_stamp import health_json, read_source_sync_stamp
 
 
@@ -18,6 +17,9 @@ def test_read_source_sync_stamp_missing(
     assert read_source_sync_stamp() == {
         "source_synced_at": None,
         "deploy_mode": "image_only",
+        "source_sync_basis": None,
+        "code_version_semantics": None,
+        "source_sync_worktree_state": None,
     }
 
 
@@ -33,6 +35,32 @@ def test_read_source_sync_stamp_present(
     assert read_source_sync_stamp() == {
         "source_synced_at": "2026-06-02T21:30:00Z",
         "deploy_mode": "source_synced",
+        "source_sync_basis": "unspecified_legacy",
+        "code_version_semantics": "legacy_source_sync_commit_label",
+        "source_sync_worktree_state": "unknown",
+    }
+
+
+def test_read_source_sync_stamp_qualifies_working_tree_label(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stamp = tmp_path / ".source_sync_stamp"
+    stamp.write_text(
+        "2026-08-15T09:30:00Z\n"
+        "a28906fc180db15916f61f00eb61a633b7781689\n"
+        "source_basis=working_tree\n"
+        "code_version_semantics=checkout_head_at_source_sync\n"
+        "working_tree_state=dirty\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("_deploy_stamp._STAMP_PATH", stamp)
+
+    assert read_source_sync_stamp() == {
+        "source_synced_at": "2026-08-15T09:30:00Z",
+        "deploy_mode": "source_synced",
+        "source_sync_basis": "working_tree",
+        "code_version_semantics": "checkout_head_at_source_sync",
+        "source_sync_worktree_state": "dirty",
     }
 
 
@@ -46,6 +74,9 @@ def test_health_json_includes_stamp(
     assert payload["status"] == "ok"
     assert payload["source_synced_at"] == "2026-06-02T21:30:00Z"
     assert payload["deploy_mode"] == "source_synced"
+    assert payload["source_sync_basis"] == "unspecified_legacy"
+    assert payload["code_version_semantics"] == "legacy_source_sync_commit_label"
+    assert payload["source_sync_worktree_state"] == "unknown"
     assert "code_version" in payload
     assert isinstance(payload["code_version"], str)
     assert payload["pid"] == os.getpid()

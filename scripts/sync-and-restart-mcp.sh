@@ -235,11 +235,21 @@ wait_for_mcp_healthy() {
 
 write_source_sync_stamp() {
   local c=mcp-server
-  local stamp code_sha
+  local stamp code_sha working_tree_state status_output
   stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   code_sha="$(git -C "$WORKSPACE_ROOT" rev-parse HEAD)"
-  docker exec -u 0 "$c" sh -c "printf '%s\n%s\n' '${stamp}' '${code_sha}' > /app/.source_sync_stamp && chown mcp:mcp /app/.source_sync_stamp"
-  echo "Wrote source sync stamp: ${stamp} (code_version=${code_sha})"
+  if status_output="$(git -C "$WORKSPACE_ROOT" status --porcelain --untracked-files=all 2>/dev/null)"; then
+    if [[ -n "${status_output}" ]]; then
+      working_tree_state="dirty"
+    else
+      working_tree_state="clean"
+    fi
+  else
+    working_tree_state="unknown"
+  fi
+  docker exec -u 0 "$c" sh -c \
+    "printf '%s\n%s\nsource_basis=working_tree\ncode_version_semantics=checkout_head_at_source_sync\nworking_tree_state=${working_tree_state}\n' '${stamp}' '${code_sha}' > /app/.source_sync_stamp && chown mcp:mcp /app/.source_sync_stamp"
+  echo "Wrote source sync stamp: ${stamp} (checkout_head_label=${code_sha}, source_basis=working_tree, working_tree_state=${working_tree_state})"
 }
 
 # Written into the container *before* restart; must survive stop/start.

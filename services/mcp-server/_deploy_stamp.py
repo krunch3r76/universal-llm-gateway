@@ -1,4 +1,4 @@
-"""Source-sync deploy stamp — detect image-only vs synced MCP code."""
+"""Source-sync deploy stamp — qualify the loaded-source identity."""
 
 from __future__ import annotations
 
@@ -12,12 +12,40 @@ _STAMP_PATH = Path("/app/.source_sync_stamp")
 
 
 def read_source_sync_stamp() -> dict[str, str | None]:
-    """Return stamp fields for /health; absent stamp ⇒ image-baked /app only."""
+    """Return source-sync fields for /health.
+
+    ``code_version`` is a Git ancestry label used by propagation checks.  The
+    routine MCP path copies the working tree, so that label is not an exact
+    digest of the bytes loaded into ``/app`` when the checkout is dirty.  The
+    extra stamp fields make that qualification explicit without breaking the
+    two-line stamp reader in ``deploy_identity.code_version``.
+    """
     if not _STAMP_PATH.is_file():
-        return {"source_synced_at": None, "deploy_mode": "image_only"}
+        return {
+            "source_synced_at": None,
+            "deploy_mode": "image_only",
+            "source_sync_basis": None,
+            "code_version_semantics": None,
+            "source_sync_worktree_state": None,
+        }
     lines = _STAMP_PATH.read_text(encoding="utf-8").strip().splitlines()
     line = lines[0].strip() if lines else ""
-    return {"source_synced_at": line or None, "deploy_mode": "source_synced"}
+    metadata: dict[str, str] = {}
+    for raw in lines[2:]:
+        key, separator, value = raw.partition("=")
+        if separator and key.strip() and value.strip():
+            metadata[key.strip()] = value.strip()
+    return {
+        "source_synced_at": line or None,
+        "deploy_mode": "source_synced",
+        "source_sync_basis": metadata.get("source_basis", "unspecified_legacy"),
+        "code_version_semantics": metadata.get(
+            "code_version_semantics", "legacy_source_sync_commit_label"
+        ),
+        "source_sync_worktree_state": metadata.get(
+            "working_tree_state", "unknown"
+        ),
+    }
 
 
 def health_json() -> dict[str, Any]:

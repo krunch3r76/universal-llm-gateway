@@ -258,7 +258,12 @@ def container_start(container: str) -> dict[str, Any]:
 
 
 def mcp_reported_version(container: str) -> dict[str, Any]:
-    """Read the MCP process-start label without treating it as a byte hash."""
+    """Read the MCP checkout label and its source-sync qualification.
+
+    The routine MCP restart copies the working tree into ``/app``.  The stamp's
+    SHA remains useful for Git ancestry checks, but it is not an exact loaded
+    byte identity when the checkout was dirty.
+    """
     try:
         result = run(["docker", "exec", container, "cat", "/app/.source_sync_stamp"])
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -266,16 +271,27 @@ def mcp_reported_version(container: str) -> dict[str, Any]:
             "field": "code_version",
             "value": None,
             "source": "docker:/app/.source_sync_stamp",
-            "denotes": "source_sync_stamp_commit_label",
+            "denotes": "checkout_head_label_at_working_tree_sync",
             "error": f"stamp_read:{type(exc).__name__}",
         }
     lines = result.stdout.splitlines()
     value = lines[1].strip() if result.returncode == 0 and len(lines) > 1 else None
+    metadata: dict[str, str] = {}
+    for raw in lines[2:]:
+        key, separator, item = raw.partition("=")
+        if separator and key.strip() and item.strip():
+            metadata[key.strip()] = item.strip()
     return {
         "field": "code_version",
         "value": value,
         "source": "docker:/app/.source_sync_stamp",
-        "denotes": "source_sync_stamp_commit_label",
+        "denotes": metadata.get(
+            "code_version_semantics", "legacy_source_sync_commit_label"
+        ),
+        "source_sync_basis": metadata.get("source_basis", "unspecified_legacy"),
+        "source_sync_worktree_state": metadata.get(
+            "working_tree_state", "unknown"
+        ),
         "error": None if value else "stamp_value_unavailable",
     }
 

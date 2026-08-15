@@ -225,3 +225,32 @@ def test_snapshot_marks_tree_motion(monkeypatch: pytest.MonkeyPatch, tmp_path) -
         if item["path"] == "libs/example.py"
     )
     assert path["indeterminate_reason"] == "tree_moved_during_probe"
+
+
+def test_mcp_reported_version_qualifies_working_tree_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stamp = (
+        "2026-08-15T09:30:00Z\n"
+        "a28906fc180db15916f61f00eb61a633b7781689\n"
+        "source_basis=working_tree\n"
+        "code_version_semantics=checkout_head_at_source_sync\n"
+        "working_tree_state=dirty\n"
+    )
+    monkeypatch.setattr(
+        probe,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=stamp, stderr=""
+        ),
+    )
+
+    assert probe.mcp_reported_version("mcp-server") == {
+        "field": "code_version",
+        "value": "a28906fc180db15916f61f00eb61a633b7781689",
+        "source": "docker:/app/.source_sync_stamp",
+        "denotes": "checkout_head_at_source_sync",
+        "source_sync_basis": "working_tree",
+        "source_sync_worktree_state": "dirty",
+        "error": None,
+    }

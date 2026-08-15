@@ -79,7 +79,7 @@ For **mcp** (container service):
 1. `quality_gate(files=[...])`
 2. `manage(action="sync_restart", service="mcp")`
 3. `manage(action="wait_healthy", service="mcp", timeout=120)`
-4. Verify the deploy landed — `/health` must report `deploy_mode":"source_synced"` with a fresh `source_synced_at` after the sync_restart. `deploy_mode":"image_only"` means the container has not been source-synced since last image build. (The shell probe form is cursor-local — see `services_ws.mdc`.)
+4. Verify the deploy landed — `/health` must report `deploy_mode":"source_synced"` with a fresh `source_synced_at` after the sync_restart. The same payload qualifies `code_version`: routine MCP sync uses `source_sync_basis":"working_tree"` and `code_version_semantics":"checkout_head_at_source_sync"`, so the SHA is a Git ancestry label, not proof of exact loaded bytes when `source_sync_worktree_state":"dirty"`. `deploy_mode":"image_only"` means the container has not been source-synced since last image build. (The shell probe form is cursor-local — see `services_ws.mdc`.)
 
 Never skip `wait_healthy` after start/restart/sync_restart.
 

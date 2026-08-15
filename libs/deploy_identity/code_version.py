@@ -1,7 +1,12 @@
-"""Resolve the running process code version once, at process start.
+"""Resolve the running process code-version label once, at process start.
 
 Resolution order: ``ULG_CODE_VERSION`` env override, then deploy stamp line 2
 (written at source-sync time), then ``git rev-parse HEAD``.
+
+The value is a Git ancestry label, not necessarily an exact digest of loaded
+bytes.  In particular, MCP's routine source-sync path copies the working tree,
+while stamp line 2 records only the checkout ``HEAD`` at sync time.  Consumers
+that need byte identity must inspect the load surface or use a content digest.
 
 The git fallback is only attributable to the running process while the process
 is young: a checkout HEAD read minutes after start describes the checkout, not
@@ -44,7 +49,7 @@ def _stamp_path() -> Path:
 
 
 def _read_stamp_sha(path: Path) -> str | None:
-    """Return line-2 SHA from a source-sync stamp when present."""
+    """Return the Git ancestry label from stamp line 2 when present."""
     try:
         if not path.is_file():
             return None
@@ -130,7 +135,7 @@ def _resolve_env_override() -> str | None:
 
 @lru_cache(maxsize=1)
 def resolve_code_version() -> str:
-    """Return the process-start SHA or ``unknown`` when resolution fails."""
+    """Return the process-start code-version label or ``unknown``."""
     env_override = _resolve_env_override()
     if env_override is not None:
         return env_override

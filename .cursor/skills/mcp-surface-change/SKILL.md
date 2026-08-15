@@ -124,7 +124,7 @@ docker images universal-mcp-server --format "Created: {{.CreatedAt}}"   # ≤ ~5
 docker inspect mcp-server --format '{{.State.StartedAt}}'              # after restart initiation
 ```
 
-`/health` carries the deploy stamp from `_deploy_stamp.py`: `deploy_mode: "source_synced"` + a fresh `source_synced_at` confirm synced source, not a stale image.
+`/health` carries the deploy stamp from `_deploy_stamp.py`: `deploy_mode: "source_synced"` + a fresh `source_synced_at` confirm synced source, not a stale image. Routine sync copies the working tree, so `code_version` is qualified by `source_sync_basis: "working_tree"` and `code_version_semantics: "checkout_head_at_source_sync"`; a dirty `source_sync_worktree_state` means the SHA is not an exact loaded-byte identity.
 
 ---
 
