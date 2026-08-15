@@ -991,6 +991,165 @@ def emit_sdk_lane_b_reaped(
 
 
 @event_factory
+def SdkLaneBArchived(  # noqa: N802
+    branch: str,
+    tag: str,
+    tip_sha: str,
+) -> Event:
+    return Event(
+        signal="sdk.lane_b.archived",
+        payload={"branch": branch, "tag": tag, "tip_sha": tip_sha},
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_archived(*, branch: str, tag: str, tip_sha: str) -> None:
+    """Emit when a branch tip is preserved as an ``archive/*`` tag before delete."""
+    _emit(SdkLaneBArchived(branch=branch, tag=tag, tip_sha=tip_sha))
+
+
+@event_factory
+def SdkLaneBDebtOpened(  # noqa: N802
+    branch: str,
+    thread_id: str | None = None,
+    dispatch_id: str | None = None,
+    caller_agent: str | None = None,
+    tip_sha: str | None = None,
+) -> Event:
+    payload: dict[str, Any] = {"branch": branch}
+    for key, value in (
+        ("thread_id", thread_id),
+        ("dispatch_id", dispatch_id),
+        ("caller_agent", caller_agent),
+        ("tip_sha", tip_sha),
+    ):
+        if value is not None:
+            payload[key] = value
+    return Event(
+        signal="sdk.lane_b.debt_opened",
+        payload=payload,
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_debt_opened(
+    *,
+    branch: str,
+    thread_id: str | None = None,
+    dispatch_id: str | None = None,
+    caller_agent: str | None = None,
+    tip_sha: str | None = None,
+) -> None:
+    """Emit when an undeclared unlanded branch becomes an attributed debt."""
+    _emit(
+        SdkLaneBDebtOpened(
+            branch=branch,
+            thread_id=thread_id,
+            dispatch_id=dispatch_id,
+            caller_agent=caller_agent,
+            tip_sha=tip_sha,
+        )
+    )
+
+
+@event_factory
+def SdkLaneBDischarged(  # noqa: N802
+    branch: str,
+    verb: str,
+    tip_sha: str | None = None,
+    archive_tag: str | None = None,
+    thread_id: str | None = None,
+    note: str | None = None,
+) -> Event:
+    payload: dict[str, Any] = {"branch": branch, "verb": verb}
+    for key, value in (
+        ("tip_sha", tip_sha),
+        ("archive_tag", archive_tag),
+        ("thread_id", thread_id),
+        ("note", note),
+    ):
+        if value is not None:
+            payload[key] = value
+    return Event(
+        signal="sdk.lane_b.discharged",
+        payload=payload,
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_discharged(
+    *,
+    branch: str,
+    verb: str,
+    tip_sha: str | None = None,
+    archive_tag: str | None = None,
+    thread_id: str | None = None,
+    note: str | None = None,
+) -> None:
+    """Emit when a lane explicitly retires its branch (landed or discard)."""
+    _emit(
+        SdkLaneBDischarged(
+            branch=branch,
+            verb=verb,
+            tip_sha=tip_sha,
+            archive_tag=archive_tag,
+            thread_id=thread_id,
+            note=note,
+        )
+    )
+
+
+@event_factory
+def SdkLaneBDebtAged(  # noqa: N802
+    branch: str,
+    age_s: float,
+    thread_id: str | None = None,
+    dispatch_id: str | None = None,
+    caller_agent: str | None = None,
+    refusing: bool = False,
+) -> Event:
+    payload: dict[str, Any] = {
+        "branch": branch,
+        "age_s": age_s,
+        "refusing": refusing,
+    }
+    for key, value in (
+        ("thread_id", thread_id),
+        ("dispatch_id", dispatch_id),
+        ("caller_agent", caller_agent),
+    ):
+        if value is not None:
+            payload[key] = value
+    return Event(
+        signal="sdk.lane_b.debt_aged",
+        payload=payload,
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_debt_aged(
+    *,
+    branch: str,
+    age_s: float,
+    thread_id: str | None = None,
+    dispatch_id: str | None = None,
+    caller_agent: str | None = None,
+    refusing: bool = False,
+) -> None:
+    """Emit when an undischarged debt crosses the escalation horizon."""
+    _emit(
+        SdkLaneBDebtAged(
+            branch=branch,
+            age_s=age_s,
+            thread_id=thread_id,
+            dispatch_id=dispatch_id,
+            caller_agent=caller_agent,
+            refusing=refusing,
+        )
+    )
+
+
+@event_factory
 def SdkLaneBDispositionMarked(  # noqa: N802
     branch: str,
     reason: str,

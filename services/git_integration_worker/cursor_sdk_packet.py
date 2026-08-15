@@ -63,6 +63,21 @@ _LANE_B_REPO_EDIT_PREAMBLE = (
     "(sidecars, specs, reviews)."
 )
 
+_LANE_B_BRANCH_CONTRACT_TEMPLATE = (
+    "LANE-B BRANCH CONTRACT (mandatory): Your commits land on {branch}. That branch "
+    "is yours to retire — a lane that walks away from it leaves an attributed debt "
+    "against this thread, visible to whoever dispatches here next.\n"
+    "Declare the outcome in your closeout as a `land_disposition:` line:\n"
+    "  - `land_disposition: landed` — the work is on master. Verified by content "
+    "probe, not by assertion: a claim the tree does not show is refused and names "
+    "the paths that disagree.\n"
+    "  - `land_disposition: discard` + `land_reason: <why>` — deliberately "
+    "abandoned. A recorded reason is a complete, honest outcome.\n"
+    "Omitting the line while your branch carries commits master lacks grades the "
+    "closeout `partial` with `land:lane_b_unlanded` and opens the debt. Both "
+    "declared outcomes archive the tip first, so neither loses work."
+)
+
 _IMPLEMENT_PREAMBLE = (
     "Execute this task NOW using your tools. Make the code/file changes the packet "
     "specifies. If you are blocked, reply with `status: blocked` and the specific "
@@ -145,11 +160,16 @@ def resolve_prompt_preamble(
     inferred_contract: str | None,
     lane: str | None = None,
     existing_text: str | None = None,
+    lane_branch: str | None = None,
 ) -> str:
     """Assemble the worker prompt prefix for one cursor-sdk dispatch.
 
     Non-mechanical contracts get a ``reasoning-posture`` invoke line unless
     *prompt_preamble* or *existing_text* already carries one (idempotent).
+
+    Lane-B dispatches additionally carry the branch contract: the obligation to
+    declare a land disposition arrives with the work rather than after residue
+    already exists.
     """
     contract = (handoff_contract or inferred_contract or "consult").lower()
     if prompt_preamble:
@@ -162,6 +182,11 @@ def resolve_prompt_preamble(
     parts = [_DELIVERABLE_ROUTING_PREAMBLE, _BREADTH_RECON_PREAMBLE]
     if lane == "B":
         parts.append(_LANE_B_REPO_EDIT_PREAMBLE)
+        parts.append(
+            _LANE_B_BRANCH_CONTRACT_TEMPLATE.format(
+                branch=lane_branch or "your lane branch"
+            )
+        )
     if (
         contract not in _REASONING_POSTURE_SKIP_CONTRACTS
         and not _already_invokes_reasoning_posture(prompt_preamble, existing_text)

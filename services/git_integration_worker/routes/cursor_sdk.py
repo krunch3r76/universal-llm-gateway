@@ -258,6 +258,7 @@ from services.git_integration_worker.git_worker_lifecycle_events import (
     request_id_from_dispatch_id,
 )
 from services.git_integration_worker.models.cursor_api import (
+    BranchDischargeRequest,
     CursorDispatchRequest,
     CursorDispatchResponse,
 )
@@ -553,16 +554,62 @@ def _read_packet_text(req: CursorDispatchRequest, source_repo: Path) -> str:
     return packet.read_text(encoding="utf-8")
 
 
+def _branch_debt_refusal(req: CursorDispatchRequest) -> str | None:
+    """Last rung: refuse a Lane-B lane that ignored its aged debt past the horizon."""
+    if wire_lane_explicit(req) != "B":
+        return None
+    from services.git_integration_worker.cursor_sdk_branch_debt_escalation import (
+        debt_admit_refusal,
+    )
+
+    return debt_admit_refusal(req.thread_id)
+
+
+def _lane_branch_standing(req: CursorDispatchRequest) -> dict[str, Any]:
+    """Branch obligation plus the lane's open debt, for the admit response.
+
+    Shown at the moment a seat decides to dispatch again, which is where the
+    outstanding residue can still change the decision.
+    """
+    if wire_lane_explicit(req) != "B" or not req.thread_id:
+        return {}
+    from services.git_integration_worker.cursor_sdk_branch_debt import (
+        open_debts_for_thread,
+    )
+    from services.git_integration_worker.cursor_sdk_worktree import lane_branch_name
+
+    try:
+        debts = open_debts_for_thread(req.thread_id)
+    except Exception as exc:  # standing is advisory; never block admit on it
+        logger.warning(
+            "lane debt standing unavailable thread_id=%s: %s", req.thread_id, exc
+        )
+        return {"lane_branch": lane_branch_name(req.thread_id)}
+    return {
+        "lane_branch": lane_branch_name(req.thread_id),
+        "lane_open_debts": len(debts),
+        "lane_debt_branches": [debt.branch_name for debt in debts] or None,
+    }
+
+
 def _resolve_prompt(req: CursorDispatchRequest, source_repo: Path) -> str:
     packet_text = _read_packet_text(req, source_repo)
     inferred_contract = None if req.message else infer_contract_from_text(packet_text)
     lane = "B" if wire_lane_explicit(req) == "B" else None
+    lane_branch = None
+    if lane == "B" and req.thread_id:
+        from services.git_integration_worker.cursor_sdk_worktree import (
+            lane_branch_name,
+        )
+
+        lane_branch = lane_branch_name(req.thread_id)
     preamble = resolve_prompt_preamble(
         handoff_contract=req.handoff_contract,
         prompt_preamble=req.prompt_preamble,
         inferred_contract=inferred_contract,
         lane=lane,
         existing_text=packet_text,
+        lane_branch=lane_branch,
     )
     return f"{preamble}{packet_text}"
 
@@ -2264,11 +2311,23 @@ async def cursor_dispatch(
             )
         )
 
+    debt_refusal = await asyncio.to_thread(_branch_debt_refusal, req)
+    if debt_refusal is not None:
+        return _reject_pre_admission(
+            req,
+            worker_error_code="lane_branch_debt_unpaid",
+            failure_layer=FailureLayer.WORKER,
+            http_status=409,
+            detail_summary=debt_refusal,
+            retryable=False,
+        )
+
     admission = CursorDispatchResponse(
         admitted=True,
         dispatch_id=req.dispatch_id,
         thread_id=req.thread_id,
         model_id=config.model_id,
+        **_lane_branch_standing(req),
     )
     ledger = CursorDispatchLedger.instance()
     fingerprint = ledger.fingerprint(req)
@@ -2794,4 +2853,53 @@ async def cursor_concurrency_stats(
     payload.update(
         await asyncio.to_thread(active_work_lane_fields, source_repo=cfg.source_repo)
     )
+    return payload
+
+
+@router.get(
+    "/branch-debt",
+    summary="Open Lane-B branch debt: who owes which branch, and for how long.",
+)
+async def cursor_branch_debt() -> dict:
+    from services.git_integration_worker.cursor_sdk_branch_debt import (
+        lane_hygiene_snapshot,
+    )
+
+    return await asyncio.to_thread(lane_hygiene_snapshot)
+
+
+@router.post(
+    "/branch-discharge",
+    summary="Retire a lane branch: landed (content-probed) or discard (reasoned).",
+)
+async def cursor_branch_discharge(
+    req: BranchDischargeRequest, request: Request
+) -> dict:
+    """One call, both honest exits — the clean path a lane is asked to take."""
+    from services.git_integration_worker.cursor_sdk_branch_discharge import discharge
+
+    cfg = _config(request)
+    result = await asyncio.to_thread(
+        discharge,
+        repo=cfg.source_repo,
+        branch_name=req.branch,
+        verb=req.verb,
+        reason=req.reason,
+    )
+    payload = {
+        "discharged": result.discharged,
+        "branch": result.branch,
+        "verb": result.verb,
+        "tip_sha": result.tip_sha,
+        "archive_tag": result.archive_tag,
+        "refused_reason": result.refused_reason,
+    }
+    if result.probe is not None:
+        payload["probe"] = {
+            "landed": result.probe.landed,
+            "differing_paths": result.probe.differing_paths,
+            "missing_paths": result.probe.missing_paths,
+        }
+    if not result.discharged:
+        return JSONResponse(status_code=409, content=payload)  # type: ignore[return-value]
     return payload

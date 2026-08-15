@@ -127,6 +127,35 @@ foreign WIP. ``tree_residue: N`` counts dirty paths not in that set. Commit
 is disclosure on closeout, not a propagate/restart/done gate; ``deferred:`` stays
 legal forever.
 
+## Branch ownership — a lane retires its own branch
+
+`∀ Lane-B lane: mint(branch) ⇒ own(branch) until discharged`.
+
+Everything above says commits are not gates. Branches are different: a Lane-B
+lane's branch is a **standing obligation**, because nothing else can retire it.
+The lead lands lane work from the shared checkout with its own commits, so
+`git cherry` never marks the branch patch-equivalent and merged-ancestry GC
+never fires — the branch outlives every sweep unless its lane discharges it.
+
+Two honest exits, both archive-backed (`refs/tags/archive/*`), neither
+destructive:
+
+| Exit | Declare | Verified by |
+|---|---|---|
+| Landed | `land_disposition: landed` | Content probe against `master` — assertion is not accepted |
+| Discarded | `land_disposition: discard` + `land_reason:` | The recorded reason |
+
+Silence opens an attributed **branch debt** carried in the dispatch ledger,
+shown to whoever dispatches into that lane next. Aged debt escalates on the
+owning bus thread; at the hard horizon the lane's Lane-B admit is refused.
+Nothing is deleted on a timer — sweeping aged residue would destroy the
+evidence and clear the owner, which is the failure this replaced.
+
+Discharge anytime: `POST /cursor-sdk/branch-discharge`
+`{"branch": …, "verb": "landed"|"discard", "reason": …}`. Read standing:
+`GET /cursor-sdk/branch-debt` or `lane_hygiene` in `manage busy_status`.
+Full obligation text: `dispatch-report-discipline` § Branch discharge.
+
 ## What not to infer
 
 - ¬ uncommitted code ⇒ broken deploy or dead listener

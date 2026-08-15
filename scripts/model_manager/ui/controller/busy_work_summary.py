@@ -30,6 +30,9 @@ def format_active_work_summary(active_work: dict[str, Any] | None) -> str:
     orphan = _lane_b_orphan_clause(active_work)
     if orphan:
         parts.append(orphan)
+    hygiene = _lane_hygiene_clause(active_work)
+    if hygiene:
+        parts.append(hygiene)
     return "; ".join(parts)
 
 
@@ -74,6 +77,32 @@ def _lane_b_orphan_clause(work: dict[str, Any]) -> str:
     if not isinstance(aged, list) or not aged:
         return ""
     return _format_aged_orphan_line(aged[0])
+
+
+def _lane_hygiene_clause(work: dict[str, Any]) -> str:
+    """Open branch debt, named beside the lane that owes it."""
+    hygiene = None
+    lane_b = work.get("lane_b")
+    if isinstance(lane_b, dict):
+        hygiene = lane_b.get("lane_hygiene")
+    if not isinstance(hygiene, dict):
+        stats = work.get("concurrency_stats")
+        if isinstance(stats, dict):
+            hygiene = stats.get("lane_b_hygiene")
+    if not isinstance(hygiene, dict):
+        return ""
+    open_debts = hygiene.get("open_debts")
+    if not isinstance(open_debts, int) or open_debts < 1:
+        return ""
+    bits = [f"branch_debt={open_debts}"]
+    by_lane = hygiene.get("debts_by_lane")
+    if isinstance(by_lane, dict) and by_lane:
+        worst = max(by_lane.items(), key=lambda kv: kv[1])
+        bits.append(f"owing_lane={worst[0]}({worst[1]})")
+    oldest = hygiene.get("oldest_debt_age_s")
+    if isinstance(oldest, (int, float)):
+        bits.append(f"oldest_s={int(oldest)}")
+    return " ".join(bits)
 
 
 def _format_aged_orphan_line(entry: dict[str, Any]) -> str:

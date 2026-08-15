@@ -67,6 +67,14 @@ class CursorDispatchRequest(BaseModel):
         return self
 
 
+class BranchDischargeRequest(BaseModel):
+    """Explicit retirement of a lane branch — the closeout's declared outcome."""
+
+    branch: str
+    verb: Literal["landed", "discard"]
+    reason: str | None = None
+
+
 class CursorDispatchResponse(BaseModel):
     """Admission acknowledgement returned before background SDK run."""
 
@@ -74,9 +82,9 @@ class CursorDispatchResponse(BaseModel):
     dispatch_id: str
     thread_id: str
     model_id: str
-    status: Literal[
-        "admitted", "queued", "cancelled", "completed", "failed"
-    ] = "admitted"
+    status: Literal["admitted", "queued", "cancelled", "completed", "failed"] = (
+        "admitted"
+    )
     queue_position: int | None = None
     since: str | None = None
     holder_dispatch_id: str | None = None
@@ -86,3 +94,8 @@ class CursorDispatchResponse(BaseModel):
     holder_status: str | None = None
     holder_started_at: str | None = None
     holder_last_heartbeat_at: str | None = None
+    # Branch obligation, surfaced at admit so the contract and the lane's
+    # outstanding residue are both visible before any work is done.
+    lane_branch: str | None = None
+    lane_open_debts: int | None = None
+    lane_debt_branches: list[str] | None = None

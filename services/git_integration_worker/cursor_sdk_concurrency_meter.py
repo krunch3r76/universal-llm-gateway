@@ -36,7 +36,13 @@ _orphan_aged_emitted: set[tuple[str, str]] = set()
 
 
 def _orphan_visibility_ttl_s() -> float:
-    return float(os.environ.get("CURSOR_SDK_LANE_B_ORPHAN_VISIBILITY_TTL_S", "604800"))
+    """Age at which an unmarked orphan becomes reportable.
+
+    A week-long default meant residue only surfaced long after the seat that
+    left it had moved on. One day keeps the signal inside the window where the
+    owning lane is still the one dispatching.
+    """
+    return float(os.environ.get("CURSOR_SDK_LANE_B_ORPHAN_VISIBILITY_TTL_S", "86400"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -410,11 +416,16 @@ def lane_b_inventory_snapshot(*, source_repo: Path) -> dict[str, Any]:
                 origin_dispatch_id=origin_dispatch_id,
             )
 
+    from services.git_integration_worker.cursor_sdk_branch_debt import (
+        lane_hygiene_snapshot,
+    )
+
     return {
         "worktrees_live": worktrees_live,
         "branches_unlanded": branches_unlanded,
         "oldest_unlanded_age_s": oldest_unlanded_age_s,
         "aged_orphans": aged_orphans,
+        "lane_hygiene": lane_hygiene_snapshot(),
     }
 
 
@@ -492,4 +503,5 @@ def concurrency_stats(
         "lane_b_branches_unlanded": lane_b_inventory["branches_unlanded"],
         "lane_b_oldest_unlanded_age_s": lane_b_inventory["oldest_unlanded_age_s"],
         "lane_b_aged_orphans": lane_b_inventory["aged_orphans"],
+        "lane_b_hygiene": lane_b_inventory["lane_hygiene"],
     }

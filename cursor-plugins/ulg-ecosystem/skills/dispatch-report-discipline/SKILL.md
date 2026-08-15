@@ -148,6 +148,30 @@ never upgrade unknown to a positive plane. **Lane-B land discipline
 treat deliberate-unlanded Lane-B as `complete`. Other planes/lanes: `status:
 complete` may still be independent of origin publish.
 
+### Branch discharge is a closeout requirement, not a grading footnote
+
+`∀ Lane-B closeout: declare(land_disposition) ∨ own(branch_debt)`.
+
+The grade above says what the harvest *is*; discharge says what happens to the
+branch. Every Lane-B closeout carries one of two lines:
+
+| Line | Meaning | Effect |
+|---|---|---|
+| `land_disposition: landed` | The work is on master | GIW **content-probes** it, archives the tip, deletes the branch |
+| `land_disposition: discard` + `land_reason: <why>` | Deliberately abandoned | Archives the tip, deletes the branch, records the reason |
+
+Omit the line while the branch carries commits master lacks and GIW opens an
+attributed **branch debt** (`cursor_sdk_branch_debts`) naming your thread,
+dispatch, and caller. It surfaces in `busy_status` / `lane_hygiene` and in the
+admit response at this lane's *next* dispatch, escalates on the owning bus
+thread once aged, and refuses that lane's Lane-B admit at the hard horizon.
+
+`landed` is **measured, not asserted** — a claim the tree does not support is
+refused, names the paths that disagree, and opens the debt anyway. A reasoned
+`discard` is a complete honest outcome; a false `landed` is not. Discharge later
+via `POST /cursor-sdk/branch-discharge`; nothing is deleted unarchived, so
+neither exit loses work.
+
 ### Status claim×measure polarity (arc 6655 / P1)
 
 Polysemous ``partial`` splits into ``partial:work`` vs ``partial:capture`` on

@@ -13,6 +13,28 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _isolate_dispatch_ledger(tmp_path_factory: pytest.TempPathFactory):
+    """Point ``DATA_DIR`` at a tmp dir for the whole GIW session.
+
+    Without this, ``_ledger_path()`` falls back to ``~/.gateway`` and the suite
+    writes the live dispatch ledger: the production DB accumulated 21 fixture
+    disposition rows and a phantom lane worktree pointing into ``/tmp/pytest-of-io``
+    before anyone noticed. Session scope because ``CursorDispatchLedger`` caches
+    its resolved path in a singleton at first touch.
+    """
+    import os
+
+    data_dir = tmp_path_factory.mktemp("giw-data-dir")
+    prior = os.environ.get("DATA_DIR")
+    os.environ["DATA_DIR"] = str(data_dir)
+    yield data_dir
+    if prior is None:
+        os.environ.pop("DATA_DIR", None)
+    else:
+        os.environ["DATA_DIR"] = prior
+
+
 @pytest.fixture(autouse=True)
 def _hop_orientation_bus_stub(monkeypatch: pytest.MonkeyPatch):
     """Keep hop tests off the network — orientation fetches lane turns for real."""
@@ -27,8 +49,8 @@ def _cursor_auto_admit_bus_stubs(request: pytest.FixtureRequest, monkeypatch: py
     if "cursor_auto" not in request.node.nodeid:
         yield
         return
-    from services.git_integration_worker.cursor_auto import admit_gates
     import services.git_integration_worker.cursor_sdk_events as cursor_sdk_events
+    from services.git_integration_worker.cursor_auto import admit_gates
 
     monkeypatch.setattr(
         admit_gates,

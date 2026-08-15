@@ -56,6 +56,9 @@ from services.git_integration_worker.cursor_sdk_authored_status_reconcile import
 from services.git_integration_worker.cursor_sdk_boundary_finalize import (
     finalize_boundary_manifest,
 )
+from services.git_integration_worker.cursor_sdk_branch_terminal import (
+    settle_lane_branch,
+)
 from services.git_integration_worker.cursor_sdk_capture_binding import CaptureBinding
 from services.git_integration_worker.cursor_sdk_capture_status import (
     ChangeSet,
@@ -2006,6 +2009,17 @@ def _assemble_closeout_delivery(
         isolation_materialized=isolation_mat,
         escalation_harvest=escalation_harvest,
         resolved_model=resolved_model,
+    )
+    settle_lane_branch(
+        source_repo=source_repo,
+        branch_name=lane_b_branch,
+        thread_id=thread_id,
+        dispatch_id=dispatch_id,
+        closeout_text=text,
+        commits_ahead=capture_commits_ahead,
+        landed=capture_landed,
+        head_sha=capture_head_sha,
+        files=[*repo_change_set.created, *repo_change_set.modified],
     )
     usage_section = render_usage_sidecar_section(
         usage=outcome.usage,
