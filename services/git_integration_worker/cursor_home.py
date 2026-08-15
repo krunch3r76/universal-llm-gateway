@@ -1,7 +1,8 @@
 """Per-dispatch HOME isolation for cursor-sdk bridge dispatches.
 
 Each dispatch gets a private HOME with copied ``cli-config.json`` (identity),
-XDG ``auth.json`` (credential), and user-layer Cursor settings (``rules/``, ``plugins/`` (ulg-ecosystem census skills),
+XDG ``auth.json`` (credential), ``~/.gateway/mcp.yaml`` (vortex token), and
+user-layer Cursor settings (``rules/``, ``plugins/`` (ulg-ecosystem census skills),
 ``mcp.json``) so ``setting_sources=all`` matches the IDE Composer substrate.
 The bridge subprocess inherits HOME via ``os.environ`` (see ``routes/cursor_sdk``
 Branch B — ``launch_bridge`` snapshots ``os.environ`` at ``Popen``).
@@ -275,6 +276,12 @@ def setup_cursor_dispatch_home(
     _copy_path_if_present(
         real_cursor / CURSOR_PLUGINS_DIRNAME,
         cursor_dir / CURSOR_PLUGINS_DIRNAME,
+    )
+    # Vortex stdio bridge reads ~/.gateway/mcp.yaml via Path.home(). Omitting
+    # this copy is the cursor-sdk discovery outage (empty tools / 401).
+    _copy_path_if_present(
+        real / ".gateway" / "mcp.yaml",
+        home / ".gateway" / "mcp.yaml",
     )
     # Plugin parity with the IDE is wrong for the human-facing operator register:
     # a headless seat has no human reader. Swap it for the interagent counterpart.

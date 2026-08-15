@@ -10,7 +10,12 @@ from typing import Any
 from claude_bundles import cdp_registry_events as _events
 from claude_bundles import cdp_registry_store as _store
 
-from .models import _LISTABLE_STATUSES, Registration, _row_to_registration
+from .models import (
+    _CAPACITY_STATUSES,
+    _LISTABLE_STATUSES,
+    Registration,
+    _row_to_registration,
+)
 
 _CSE_URL_MARKER = "claude.ai/cowork/cse_"
 
@@ -121,18 +126,25 @@ def list_active() -> list[Registration]:
 
 
 def list_capacity() -> list[Registration]:
-    """Registry Chrome hosts that consume host-port capacity — ``active`` only."""
+    """Registry Chrome hosts that consume host-port capacity.
+
+    Occupancy axis (``_CAPACITY_STATUSES``), not lifecycle: ``active`` plus
+    ``retained`` (Chrome still reserved after kill=False / hygiene keep).
+    ``dormant`` is excluded — no process. ``orphaned_alive`` stays excluded
+    (existing seating contract). Registry-only — no Chrome probe — so a
+    wedged CDP list cannot hide a protected seat.
+    """
     active = _store.load_active()
     out = [
         _row_to_registration(row)
         for row in active.values()
-        if row.get("status") == "active"
+        if row.get("status") in _CAPACITY_STATUSES
     ]
     return sorted(out, key=lambda r: r.port)
 
 
 def count_capacity_lanes() -> int:
-    """Count active registry Chrome hosts (scarce host resource — not streams)."""
+    """Count registry Chrome hosts that occupy the scarce host-port capacity."""
     return len(list_capacity())
 
 

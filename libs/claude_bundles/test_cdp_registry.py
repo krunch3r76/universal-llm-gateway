@@ -273,7 +273,8 @@ def test_kill_false_exit_leaves_listable_retained(
     assert row["status"] == "retained"
     assert row["retain_reason"] == "kill_false_exit"
     assert [x.registration_id for x in reg.list_active()] == [r.registration_id]
-    assert reg.list_capacity() == []
+    assert [x.registration_id for x in reg.list_capacity()] == [r.registration_id]
+    assert reg.count_capacity_lanes() == 1
     visible = cdp_orphans.registered_lane_dicts()
     assert any(
         item["registration_id"] == r.registration_id and item["status"] == "retained"

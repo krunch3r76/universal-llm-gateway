@@ -28,6 +28,11 @@ _RECLAIMABLE_STATUSES = frozenset({"released", "orphaned_retry"})
 # Listable == "a Chrome process may still hold this CSE". Dormant is excluded so
 # no live-attachment consumer mistakes a released host for an open tab.
 _LISTABLE_STATUSES = frozenset({"active", "orphaned_alive", "retained"})
+# Occupancy axis — distinct from lifecycle status. Seating consults this set,
+# not ``status == "active"``. ``retained`` still occupies a host after
+# kill=False / hygiene keep; ``dormant`` does not (no Chrome). ``orphaned_alive``
+# stays off this axis (existing seating contract). Registry-only: no CDP probe.
+_CAPACITY_STATUSES = frozenset({"active", "retained"})
 STALE_ACTIVE_TTL_S = 6 * 3600
 _DEFAULT_DORMANT_TTL_S = 24 * 3600
 _DEFAULT_DORMANT_MAX_ROWS = 16

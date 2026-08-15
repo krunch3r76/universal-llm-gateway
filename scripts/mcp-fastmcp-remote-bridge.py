@@ -122,6 +122,13 @@ def main() -> None:
 
     token, _source = resolve_mcp_token()
     if not token:
+        # Dispatch HOME isolation copies mcp.json but historically omitted
+        # ~/.gateway/mcp.yaml, so Path.home() lookup fails closed. Fall back
+        # to the operator login home — same source GIW's build_mcp_servers uses.
+        from services.git_integration_worker.cursor_home import operator_real_home
+
+        token, _source = resolve_mcp_token(real_home=operator_real_home())
+    if not token:
         print(
             "mcp-fastmcp-remote-bridge: MCP token not configured "
             "(MCP_TOKEN / ~/.gateway/mcp.yaml)",

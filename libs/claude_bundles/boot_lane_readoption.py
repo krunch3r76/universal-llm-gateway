@@ -17,6 +17,11 @@ from claude_bundles import cdp_lane, cdp_orphans, cdp_registry
 from claude_bundles.cdp_orphans import LivePort, is_primary_profile
 from claude_bundles.cse_url import normalize_cse_url
 
+# File-level serving map — package CONSUMERS on cdp_registry/__init__ do not
+# cover this sibling module (unmapped_serving otherwise).
+CONSUMERS: tuple[str, ...] = ("cdp_ask",)
+INJECTORS: tuple[str, ...] = ("cdp_ask",)
+
 CseAffinity = Literal["bound_present", "bound_missing", "unbound_present", "none"]
 BootVerdict = Literal["adopt", "orphan", "refuse"]
 

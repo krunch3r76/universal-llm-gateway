@@ -106,9 +106,44 @@ def test_mcp_json_copy_present(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     cursor = real / ".cursor"
     cursor.mkdir(parents=True)
     (cursor / "mcp.json").write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+    plugin_skill = (
+        real
+        / ".cursor"
+        / "plugins"
+        / "local"
+        / "ulg-ecosystem"
+        / "skills"
+        / "residual-imprint"
+    )
+    plugin_skill.mkdir(parents=True)
+    (plugin_skill / "SKILL.md").write_text("# residual-imprint", encoding="utf-8")
     root = tmp_path / "homes"
     home = setup_cursor_dispatch_home("d1", real_home=real, root=root)
     assert (home / ".cursor" / "mcp.json").exists()
+
+
+def test_mcp_yaml_copy_present(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CURSOR_API_KEY", "test-key")
+    real = tmp_path / "real-home"
+    gateway = real / ".gateway"
+    gateway.mkdir(parents=True)
+    (gateway / "mcp.yaml").write_text("auth_token: test-token\n", encoding="utf-8")
+    plugin_skill = (
+        real
+        / ".cursor"
+        / "plugins"
+        / "local"
+        / "ulg-ecosystem"
+        / "skills"
+        / "residual-imprint"
+    )
+    plugin_skill.mkdir(parents=True)
+    (plugin_skill / "SKILL.md").write_text("# residual-imprint", encoding="utf-8")
+    root = tmp_path / "homes"
+    home = setup_cursor_dispatch_home("d1", real_home=real, root=root)
+    copied = home / ".gateway" / "mcp.yaml"
+    assert copied.read_text(encoding="utf-8") == "auth_token: test-token\n"
+    assert not copied.is_symlink()
 
 
 def test_plugins_copy_present(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

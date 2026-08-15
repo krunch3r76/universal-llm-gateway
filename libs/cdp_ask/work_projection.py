@@ -42,7 +42,9 @@ _LIVE_CSE_COUNT_SCOPE = (
     "unique normalized CSE session URLs on qualifying page targets, this host"
 )
 _ADMISSION_COUNT_SCOPE = "running/stream admissions, this host (soft=2 hard=3)"
-_REGISTRY_CAPACITY_SCOPE = "active registry Chrome hosts (ports/profiles), this host"
+_REGISTRY_CAPACITY_SCOPE = (
+    "active+retained registry Chrome hosts (ports/profiles), this host"
+)
 _EFFECTIVE_COUNT_SCOPE = "restart-drain recorded execution count; NOT admission"
 _REGISTRY_SOURCE = "cse-session-registry"
 
