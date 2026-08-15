@@ -15,12 +15,20 @@ from .hygiene import (
     RECLAIM_TRASH_DIR, _profile_path_from_row, hygiene_reclaim_extended,
     hygiene_reclaim_released, is_primary_profile, reclaim_best_effort,
 )
-from .lifecycle import _kill_listener, deregister_lane, reattach, register_lane
-from .models import (
-    HygieneReclaimResult, Registration, RegistryBusyError, RegistryError,
-    RegistryExhaustedError, STALE_ACTIVE_TTL_S, _LISTABLE_STATUSES, MISSION_KINDS,
-    _row_to_registration,
+from .lifecycle import (
+    _kill_listener, activate_allocating_row, deregister_lane, reattach, register_lane,
+    reserve_allocating_row,
 )
+from .models import (
+    DormantSeat, HygieneReclaimResult, Registration, RegistryBusyError, RegistryError,
+    RegistryExhaustedError, STALE_ACTIVE_TTL_S, STATUS_DORMANT, _LISTABLE_STATUSES,
+    MISSION_KINDS, _row_to_registration, dormant_max_rows, dormant_ttl_s,
+)
+from .dormant import (
+    dormant_candidate_reason, dormant_for_chat_url, host_protection_reason,
+    list_dormant, make_dormant, reclaim_dormant_rows, relaunch_dormant,
+)
+from .dormant_drain import DrainResult, drain_live_hosts_to_dormant
 from .ports import PORT_RANGE, select_free_registry_port, used_ports_snapshot
 from .session_address import (
     _load_active, backfill_orphaned_retry_chat_urls,

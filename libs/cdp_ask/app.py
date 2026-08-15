@@ -17,7 +17,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from cdp_ask.attended_operator import (
+    AttendedResolveDormant,
     AttendedResolveSuccess,
+    dormant_to_http_body,
     refused_http_status,
     refused_to_http_body,
     resolve_attended_operator,
@@ -125,7 +127,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
 
     @app.get("/v1/project-ask/attended-operator")
     async def attended_operator() -> JSONResponse:
-        """Resolve the unique live mission-operator attended CSE (read-only)."""
+        """Resolve the attended mission-operator CSE — live or dormant (read-only)."""
         outcome = resolve_attended_operator()
         if isinstance(outcome, AttendedResolveSuccess):
             emit_followup_event(
@@ -138,6 +140,17 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
                 )
             )
             return JSONResponse(status_code=200, content=success_to_http_body(outcome))
+        if isinstance(outcome, AttendedResolveDormant):
+            emit_followup_event(
+                cdp_ask_attended_resolve(
+                    registration_id=outcome.registration_id,
+                    cdp_url=None,
+                    chat_url=outcome.chat_url,
+                    purpose=outcome.purpose,
+                    source=outcome.source,
+                )
+            )
+            return JSONResponse(status_code=200, content=dormant_to_http_body(outcome))
         emit_followup_event(
             cdp_ask_attended_refused(
                 code=outcome.code,

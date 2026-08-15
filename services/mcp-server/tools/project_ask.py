@@ -207,15 +207,21 @@ def register_project_ask_tool(mcp: FastMCP) -> None:
             (friction a:26175). Stargate-side correlation is the
             ``cdp.generate.submitted`` event, which carries both ids and now
             publishes at submit time.
-          followup — warm paste into a live retained Cowork CSE on an attached
-            lane (``chat_url`` ≻ ``registration_id`` ≻ ``execution_id``; identity
-            omitted ⇒ attended resolve-or-refuse on satellite). Explicit
-            ``cdp_url`` (+ ``chat_url``) selects the ``(cdp_url, chat_url)``
-            registry pair. In-chat delivery ≻ bus NOTE; commission continuity
-            stays on the private ``agent_bus.request`` lane (transport ≠ bus).
+          followup — warm paste into a Cowork CSE (``chat_url`` ≻
+            ``registration_id`` ≻ ``execution_id``; identity omitted ⇒ attended
+            resolve on satellite). An open tab is NOT required: when the CSE is a
+            dormant seat, the satellite relaunches its Chrome, pastes, and parks
+            it again — ``reattach=true`` is needed only to borrow an unrelated
+            host or mint a new one. Explicit ``cdp_url`` (+ ``chat_url``) selects
+            the ``(cdp_url, chat_url)`` registry pair. In-chat delivery ≻ bus
+            NOTE; commission continuity stays on the private
+            ``agent_bus.request`` lane (transport ≠ bus).
           resolve_attended — read-only attended-operator triple from satellite
             ``GET /v1/project-ask/attended-operator`` (404/409/424 map to
-            ProtocolError envelope with honest ``retryable``).
+            ProtocolError envelope with honest ``retryable``). A released host
+            answers 200 with ``dormant: true``, ``reattachable: true``, and null
+            ``cdp_url``: the CSE URL is the durable identity, so dormant is
+            attended, not absent.
             (``send_verified``, ``receipt``, ``url``, ``target_binding``) — no reply harvest.
             ``send_verified`` aliases ``receipt >= dom_paste``; ``ok`` requires
             proven ``receipt`` to meet ``min_receipt`` (default ``dom_paste``).

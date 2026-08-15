@@ -281,6 +281,13 @@ def _request_impl(
             chat_url=cse_chat_url,
             registration_id=cse_registration_id,
         )
+        from .cse_provenance_enrich import enrich_request_provenance
+
+        enrich_request_provenance(
+            lane_thread=str(thread_id),
+            chat_url=cse_chat_url,
+            registration_id=cse_registration_id,
+        )
     # Promote lane discriminant out of the double-nested HTTP body so a
     # caller of agent_bus.request need not dig to enqueue.enqueue.* —
     # same keys remain beside superseded on the worker body for parity.

@@ -23,18 +23,73 @@ def test_hygiene_interval_defaults_and_env(monkeypatch: pytest.MonkeyPatch) -> N
     assert hygiene_interval_s() == 1200.0
 
 
-def test_run_hygiene_once_returns_summary(monkeypatch: pytest.MonkeyPatch) -> None:
-    class _Result:
-        reclaimed_ports = [9223]
-        removed_profiles = ["/tmp/fake-profile"]
+class _ReclaimResult:
+    reclaimed_ports = [9223]
+    removed_profiles = ["/tmp/fake-profile"]
 
+
+def _stub_sweep(monkeypatch: pytest.MonkeyPatch, order: list[str]) -> None:
+    """Neutralize every registry-touching leg of one hygiene pass but the order."""
+    from claude_bundles.cdp_registry import dormant_drain
+
+    def _drain(**kwargs: object) -> dormant_drain.DrainResult:
+        order.append("drain")
+        _drain.kwargs = kwargs  # type: ignore[attr-defined]
+        return dormant_drain.DrainResult(dormant=["reg-a"], released=[], protected={})
+
+    def _reclaim_dormant(**_: object) -> list[str]:
+        order.append("reclaim_dormant")
+        return ["reg-old"]
+
+    def _reclaim_extended(**_: object) -> _ReclaimResult:
+        order.append("reclaim_extended")
+        return _ReclaimResult()
+
+    monkeypatch.setattr(dormant_drain, "drain_live_hosts_to_dormant", _drain)
     monkeypatch.setattr(
-        "claude_bundles.cdp_registry.hygiene_reclaim_extended",
-        lambda **_: _Result(),
+        "claude_bundles.cdp_registry.reclaim_dormant_rows", _reclaim_dormant
     )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.hygiene_reclaim_extended", _reclaim_extended
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cse_session_obligations.sweep_wake_owed_ttl",
+        lambda **_: [],
+    )
+    _stub_sweep.drain = _drain  # type: ignore[attr-defined]
+
+
+def test_run_hygiene_once_returns_summary(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_sweep(monkeypatch, [])
     summary = run_hygiene_once()
     assert summary["reclaimed_ports"] == [9223]
     assert summary["removed_profiles"] == ["/tmp/fake-profile"]
+
+
+def test_hygiene_drains_to_dormant_before_reclaiming(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Parking frees ports in the same sweep that reclaims aged rows and profiles."""
+    order: list[str] = []
+    _stub_sweep(monkeypatch, order)
+
+    summary = run_hygiene_once()
+
+    assert order == ["drain", "reclaim_dormant", "reclaim_extended"]
+    assert summary["drained"]["dormant"] == ["reg-a"]
+    assert summary["dormant_reclaimed"] == ["reg-old"]
+
+
+def test_hygiene_protects_hosts_with_an_in_flight_paste(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The drain must consult the live lane lock, not just registry status."""
+    from cdp_ask import followup
+
+    _stub_sweep(monkeypatch, [])
+    run_hygiene_once()
+
+    assert _stub_sweep.drain.kwargs["is_busy"] is followup.lane_in_flight  # type: ignore[attr-defined]
 
 
 def test_run_orphan_scan_once_emits_event_without_registry_mutation(

@@ -16,12 +16,16 @@ from claude_bundles.project_ask_conversation import send_followup_paste_half
 from claude_bundles.skills_ui_panel import connect_cdp
 
 from cdp_ask.execution_store import ExecutionStore
+from cdp_ask.followup_dormant import (
+    park_relaunched_host,
+    reattach_chat_url,
+    reattach_reason,
+)
 from cdp_ask.followup_events import (
     cdp_ask_followup_paste_attempt,
     cdp_ask_followup_paste_verified,
     cdp_ask_followup_reattach_attempt,
     cdp_ask_followup_reattach_result,
-    cdp_ask_followup_unbound_capped,
     cdp_ask_fresh_run_inheritance,
 )
 from cdp_ask.followup_events import (
@@ -33,77 +37,29 @@ from cdp_ask.followup_reattach import (
     _teardown_attempt,
     ensure_cse_attached,
 )
+from cdp_ask.followup_receipts import (
+    apply_receipt_caps,
+    paste_response,
+    receipt_meets,
+    response_extra,
+)
 from cdp_ask.followup_resolve import (
     fail_followup,
     lane_not_attached_detail,
     resolve_followup_target,
 )
 from cdp_ask.models import (
-    FollowupMinReceipt,
     FollowupProjectAskRequest,
     FollowupProjectAskResponse,
-    FollowupReceipt,
     TargetBinding,
 )
 from cdp_ask.runner import resolve_followup_prompt
 
 _lane_locks: dict[str, asyncio.Lock] = {}
 _inflight_guard = asyncio.Lock()
-_REATTACH_ELIGIBLE_ERRORS = frozenset({"cse_not_found_on_lane", "lane_not_attached"})
-_RECEIPT_RANK: dict[str, int] = {"dom_paste": 1, "dom_committed": 2}
-_DOM_RECEIPTS = frozenset({"dom_paste", "dom_committed"})
-
-
-def _receipt_rank(receipt: FollowupReceipt | None) -> int:
-    if receipt is None:
-        return 0
-    return _RECEIPT_RANK.get(receipt, 0)
-
-
-def receipt_meets(
-    receipt: FollowupReceipt | None, min_receipt: FollowupMinReceipt
-) -> bool:
-    """True when proven *receipt* satisfies the caller gate."""
-    if min_receipt == "human_visible":
-        return False
-    return _receipt_rank(receipt) >= _RECEIPT_RANK.get(min_receipt, 0)
-
-
-def _cap_receipt_for_lane(
-    receipt: FollowupReceipt | None, *, lane_created: bool
-) -> FollowupReceipt | None:
-    """Cap receipt at DOM rungs when a satellite lane was minted (B2)."""
-    if receipt is None:
-        return None
-    if lane_created and receipt not in _DOM_RECEIPTS:
-        return "dom_committed" if _receipt_rank(receipt) >= 2 else "dom_paste"
-    return receipt
-
-
-def _cap_receipt_for_unbound(
-    receipt: FollowupReceipt | None,
-    *,
-    target_binding: TargetBinding | None,
-) -> FollowupReceipt | None:
-    """Further cap unbound pastes to automation-visible DOM rungs only."""
-    capped = _cap_receipt_for_lane(receipt, lane_created=False)
-    if target_binding != "unbound" or capped is None:
-        return capped
-    if capped not in _DOM_RECEIPTS:
-        return "dom_paste"
-    return capped
-
-
-def _apply_receipt_caps(
-    receipt: FollowupReceipt | None,
-    *,
-    lane_created: bool,
-    target_binding: TargetBinding | None,
-) -> FollowupReceipt | None:
-    capped = _cap_receipt_for_lane(receipt, lane_created=lane_created)
-    return _cap_receipt_for_unbound(capped, target_binding=target_binding)
-
-
+_REATTACH_ELIGIBLE_ERRORS = frozenset(
+    {"cse_not_found_on_lane", "lane_not_attached", "attended_dormant"}
+)
 async def _find_page_on_lane(cdp_url: str, chat_url: str) -> tuple[Any, Any] | None:
     """Connect to *cdp_url* and return ``(page, playwright)`` when URL matches."""
     pw, _browser, ctx, _page0 = await connect_cdp(cdp_url)
@@ -128,6 +84,16 @@ async def _acquire_lane(registration_id: str) -> bool:
         return True
 
 
+def lane_in_flight(registration_id: str) -> bool:
+    """True while a followup paste holds this host's in-process lane lock.
+
+    Hygiene consults this before parking a host: killing Chrome mid-paste would
+    lose the turn the caller is waiting on.
+    """
+    lock = _lane_locks.get(registration_id)
+    return bool(lock and lock.locked())
+
+
 def _release_lane(registration_id: str) -> None:
     lock = _lane_locks.get(registration_id)
     if lock and lock.locked():
@@ -143,95 +109,34 @@ async def _resolve_holder(req: FollowupProjectAskRequest, store: ExecutionStore)
     return "cdp-ask-satellite"
 
 
-def _response_extra(
-    *,
-    reattach_used: bool,
-    lane_created: bool,
-) -> dict[str, bool]:
-    return {"reattach_used": reattach_used, "lane_created": lane_created}
-
-
-def _paste_response(
-    *,
-    req: FollowupProjectAskRequest,
-    target_registration_id: str,
-    url: str | None,
-    pasted_at: float | None,
-    streaming: bool | None,
-    receipt: FollowupReceipt | None,
-    lane_created: bool,
-    reattach_used: bool,
-    target_binding: TargetBinding | None,
-) -> FollowupProjectAskResponse:
-    """Build followup response from proven receipt and caller gate."""
-    binding: TargetBinding = target_binding or ("unbound" if lane_created else "explicit")
-    receipt = _apply_receipt_caps(
-        receipt, lane_created=lane_created, target_binding=binding
-    )
-    if binding == "unbound" and receipt is not None:
-        emit_followup_event(
-            cdp_ask_followup_unbound_capped(
-                registration_id=target_registration_id,
-                receipt=receipt,
-                target_binding="unbound",
-            )
-        )
-    send_verified = receipt is not None
-    ok = receipt_meets(receipt, req.min_receipt)
-    extra = _response_extra(reattach_used=reattach_used, lane_created=lane_created)
-    if not ok:
-        return FollowupProjectAskResponse(
-            ok=False,
-            url=url,
-            registration_id=target_registration_id,
-            execution_id=req.execution_id,
-            pasted_at=pasted_at,
-            send_verified=send_verified,
-            receipt=receipt,
-            streaming_at_paste=streaming,
-            error="send_unverified",
-            target_binding=binding,
-            **extra,
-        )
-    return FollowupProjectAskResponse(
-        ok=True,
-        url=url,
-        registration_id=target_registration_id,
-        execution_id=req.execution_id,
-        pasted_at=pasted_at,
-        send_verified=send_verified,
-        receipt=receipt,
-        streaming_at_paste=streaming,
-        target_binding=binding,
-        **extra,
-    )
-
-
 async def _maybe_reattach(
     req: FollowupProjectAskRequest,
     store: ExecutionStore,
     err: FollowupProjectAskResponse,
 ) -> tuple[ReattachOutcome | None, FollowupProjectAskResponse | None]:
-    """Run opt-in reattach when resolution failed with an eligible typed error."""
-    if not req.reattach:
-        return None, err
-    if not (req.chat_url or "").strip():
-        return None, fail_followup("reattach_requires_chat_url")
+    """Reattach when the error is eligible and a dormant seat or opt-in allows it."""
     if err.error not in _REATTACH_ELIGIBLE_ERRORS:
+        return None, err
+    chat_url = reattach_chat_url(req, err)
+    if req.reattach and not chat_url:
+        return None, fail_followup("reattach_requires_chat_url")
+    reason = reattach_reason(req, chat_url)
+    if reason is None or not chat_url:
         return None, err
 
     holder = await _resolve_holder(req, store)
     emit_followup_event(
         cdp_ask_followup_reattach_attempt(
-            chat_url=req.chat_url or "",
+            chat_url=chat_url,
             holder=holder,
             purpose=req.purpose,
         )
     )
     outcome = await ensure_cse_attached(
-        req.chat_url or "",
+        chat_url,
         holder=holder,
         purpose=req.purpose,
+        allow_mint=bool(req.reattach),
     )
     emit_followup_event(
         cdp_ask_followup_reattach_result(
@@ -251,8 +156,14 @@ async def _reattach_teardown(
     *,
     retain_lane: bool,
 ) -> None:
-    """Tear down reattach side-effects — deregister created lanes or close opened tabs."""
+    """Tear down reattach side-effects — park woken seats, drop minted lanes."""
     if outcome is None or not outcome.ok:
+        return
+    if outcome.relaunched:
+        if retain_lane:
+            await _disconnect_playwright(outcome.pw)
+        else:
+            await park_relaunched_host(outcome)
         return
     if outcome.lane_created:
         if retain_lane:
@@ -306,7 +217,7 @@ async def execute_followup(
                 err.error or "followup_failed",
                 detail=err.detail,
                 candidates=err.candidates,
-                **_response_extra(
+                **response_extra(
                     reattach_used=reattach_used,
                     lane_created=lane_created,
                 ),
@@ -317,7 +228,7 @@ async def execute_followup(
     binding: TargetBinding = target_binding or target.target_binding
     if reattach_used and lane_created and binding != "resolver":
         binding = "explicit"
-    extra = _response_extra(reattach_used=reattach_used, lane_created=lane_created)
+    extra = response_extra(reattach_used=reattach_used, lane_created=lane_created)
 
     if not await _acquire_lane(target.registration_id):
         await _reattach_teardown(reattach_outcome, retain_lane=req.retain_lane)
@@ -379,7 +290,7 @@ async def execute_followup(
         streaming = paste.get("streaming_at_paste")
         url = paste.get("url") or target.chat_url
         pasted_at = paste.get("pasted_at")
-        capped = _apply_receipt_caps(
+        capped = apply_receipt_caps(
             receipt, lane_created=lane_created, target_binding=binding
         )
         send_verified = capped is not None
@@ -408,7 +319,7 @@ async def execute_followup(
                 )
             )
 
-        resp = _paste_response(
+        resp = paste_response(
             req=req,
             target_registration_id=target.registration_id,
             url=url,

@@ -15,6 +15,27 @@ from .models import _LISTABLE_STATUSES, Registration, _row_to_registration
 _CSE_URL_MARKER = "claude.ai/cowork/cse_"
 
 
+def _append_lane_less_episode(
+    *,
+    url: str,
+    registration_id: str,
+    updated: dict[str, Any],
+    execution_id: str | None,
+) -> None:
+    """Record a host receipt; registry ``parent_thread`` becomes ``lane_thread`` claim."""
+    from claude_bundles.cse_provenance import append_episode
+
+    parent_claim = str(updated.get("parent_thread") or "").strip() or None
+    append_episode(
+        chat_url=url,
+        registration_id=registration_id,
+        cdp_url=f"http://127.0.0.1:{updated['port']}",
+        lane_thread=parent_claim,
+        correlation_id=execution_id,
+        evidence_class="observed",
+    )
+
+
 def bind_session_address(
     registration_id: str,
     *,
@@ -42,16 +63,11 @@ def bind_session_address(
             execution_id is None
             or str(updated.get("execution_id") or "") == str(execution_id)
         ):
-            from claude_bundles.cse_provenance import append_episode
-
-            append_episode(
-                chat_url=url,
+            _append_lane_less_episode(
+                url=url,
                 registration_id=registration_id,
-                cdp_url=f"http://127.0.0.1:{updated['port']}",
-                lane_thread=updated.get("parent_thread"),
-                correlation_id=execution_id,
-                evidence_class="observed",
-                reason="idempotent_rebind",
+                updated=updated,
+                execution_id=execution_id,
             )
             return True
         updated["chat_url"] = url
@@ -71,15 +87,11 @@ def bind_session_address(
                 "target_id": target_id,
             },
         )
-        from claude_bundles.cse_provenance import append_episode
-
-        append_episode(
-            chat_url=url,
+        _append_lane_less_episode(
+            url=url,
             registration_id=registration_id,
-            cdp_url=f"http://127.0.0.1:{updated['port']}",
-            lane_thread=updated.get("parent_thread"),
-            correlation_id=execution_id,
-            evidence_class="observed",
+            updated=updated,
+            execution_id=execution_id,
         )
     return True
 

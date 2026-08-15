@@ -10,11 +10,14 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any, Protocol
 
 from claude_bundles import cdp_registry_store as store
 from claude_bundles.cse_url import normalize_cse_url
+
+HostListablePredicate = Callable[[str], bool]
 
 
 class LaneLineageReader(Protocol):
@@ -45,6 +48,12 @@ class ProvenanceEpisode:
     observed_at: float
     supersedes: str | None = None
     reason: str | None = None
+    lineage_state: str | None = None
+    association_id: int | None = None
+    lineage_observed_at: float | None = None
+
+
+_EPISODE_FIELDS = frozenset(ProvenanceEpisode.__dataclass_fields__)
 
 
 def _episode_record(episode: ProvenanceEpisode) -> dict[str, Any]:
@@ -56,13 +65,44 @@ def _episodes_for_chat_url(chat_url: str) -> list[ProvenanceEpisode]:
     return [episode for episode in read_episodes() if episode.chat_url == chat_url]
 
 
+def _legacy_episode_fields(record: dict[str, Any]) -> dict[str, Any]:
+    """Map pre-lineage_state journal rows onto the current episode shape."""
+    fields = {key: record.get(key) for key in _EPISODE_FIELDS}
+    if fields.get("parent_thread") is None and record.get("parent_thread"):
+        fields["parent_thread"] = record.get("parent_thread")
+    if fields.get("lane_role") is None and record.get("lane_role"):
+        fields["lane_role"] = record.get("lane_role")
+    if fields.get("lineage_state") == "proven" and fields.get("association_id") is None:
+        fields["lineage_state"] = "claimed" if fields.get("lane_thread") else "unresolved"
+        fields["association_id"] = None
+    elif fields.get("lineage_state") is None:
+        fields["lineage_state"] = "claimed" if fields.get("lane_thread") else "unresolved"
+    return fields
+
+
+def _emit_unresolved(chat_url: str, reason: str, correlation_id: str | None) -> None:
+    """Report evidence that exists but cannot complete a unique lineage join."""
+    from claude_bundles import cdp_registry_events
+
+    cdp_registry_events.emit(
+        cdp_registry_events.cdp_provenance_unresolved(
+            chat_url=chat_url,
+            reason=reason,
+            correlation_id=correlation_id,
+        )
+    )
+
+
 def append_episode(
     *,
     chat_url: str,
     registration_id: str,
     cdp_url: str,
-    lane_thread: str | None,
+    lane_thread: str | None = None,
     lineage: dict[str, Any] | None = None,
+    lineage_state: str | None = None,
+    association_id: int | None = None,
+    lineage_observed_at: float | None = None,
     correlation_id: str | None = None,
     evidence_class: str = "observed",
     attribution_source: str = "cdp-registry",
@@ -71,15 +111,22 @@ def append_episode(
 ) -> ProvenanceEpisode:
     """Append and fsync one immutable provenance episode to the registry journal.
 
-    A prior episode for the same URL is linked through ``supersedes`` rather
-    than replaced, so an earlier host stays retrievable as evidence.  Moving a
-    URL to a different host additionally reports the prior episode historical.
+    ``lane_thread`` is a registry claim; ``lineage`` copies ``parent_thread``
+    and ``lane_role`` from an explicit proof writer.  Prior bytes stay immutable
+    via ``supersedes`` linkage rather than in-place mutation.
     """
     normalized = normalize_cse_url(chat_url)
     if not normalized:
         raise ValueError("chat_url must be a CSE URL")
     if "/cowork/cse_" not in normalized:
         raise ValueError("chat_url must identify a Cowork CSE")
+    if lineage_state is None:
+        lineage_state = "claimed" if lane_thread else "unresolved"
+    if lineage_state == "proven":
+        if association_id is None:
+            raise ValueError("proven episodes require association_id")
+    elif association_id is not None:
+        raise ValueError("association_id requires lineage_state=proven")
     prior = _episodes_for_chat_url(normalized)
     superseded = prior[-1] if prior else None
     episode = ProvenanceEpisode(
@@ -97,6 +144,9 @@ def append_episode(
         observed_at=time.time(),
         supersedes=superseded.episode_id if superseded else None,
         reason=reason,
+        lineage_state=lineage_state,
+        association_id=association_id if lineage_state == "proven" else None,
+        lineage_observed_at=lineage_observed_at,
     )
     store.append_log("cse_provenance_episode", _episode_record(episode))
     from claude_bundles import cdp_registry_events
@@ -113,6 +163,8 @@ def append_episode(
             evidence_class=episode.evidence_class,
             attribution_source=episode.attribution_source,
             correlation_id=episode.correlation_id,
+            lineage_state=episode.lineage_state,
+            association_id=episode.association_id,
         )
     )
     if superseded is not None and superseded.registration_id != registration_id:
@@ -123,6 +175,8 @@ def append_episode(
                 reason="rebound_to_new_host",
             )
         )
+    if not lane_thread and lineage_state == "unresolved":
+        _emit_unresolved(normalized, reason or "lane_less_bind", correlation_id)
     return episode
 
 
@@ -137,35 +191,9 @@ def read_episodes() -> list[ProvenanceEpisode]:
         record = json.loads(raw)
         if record.get("event") != "cse.provenance.episode":
             continue
-        fields = {key: record.get(key) for key in ProvenanceEpisode.__dataclass_fields__}
+        fields = _legacy_episode_fields(record)
         rows.append(ProvenanceEpisode(**fields))
     return rows
-
-
-def _emit_conflict(chat_url: str, candidate_count: int, correlation_id: str | None) -> None:
-    """Report competing hosts for one URL without deciding the winner here."""
-    from claude_bundles import cdp_registry_events
-
-    cdp_registry_events.emit(
-        cdp_registry_events.cdp_provenance_conflict(
-            chat_url=chat_url,
-            candidate_count=candidate_count,
-            correlation_id=correlation_id,
-        )
-    )
-
-
-def _emit_unresolved(chat_url: str, reason: str, correlation_id: str | None) -> None:
-    """Report evidence that exists but cannot complete a unique lineage join."""
-    from claude_bundles import cdp_registry_events
-
-    cdp_registry_events.emit(
-        cdp_registry_events.cdp_provenance_unresolved(
-            chat_url=chat_url,
-            reason=reason,
-            correlation_id=correlation_id,
-        )
-    )
 
 
 def resolve(
@@ -173,61 +201,14 @@ def resolve(
     chat_url: str | None = None,
     registration_id: str | None = None,
     lineage_reader: LaneLineageReader | None = None,
+    host_listable: HostListablePredicate | None = None,
 ) -> dict[str, Any]:
-    """Resolve the latest evidence-bearing episode or return a typed state.
+    """Resolve the latest evidence-bearing episode or return a typed state."""
+    from claude_bundles.cse_provenance_resolve import resolve as _resolve
 
-    A URL identifies the binding when supplied, so a caller naming a host that
-    no longer holds the URL receives ``conflict`` instead of another host's
-    evidence.  Absent episodes stay a silent typed state because an unbound
-    lane is the ordinary case before its first bind.
-    """
-    target = normalize_cse_url(chat_url or "")
-    all_episodes = read_episodes()
-    if target:
-        episodes = [e for e in all_episodes if e.chat_url == target]
-    elif registration_id:
-        episodes = [e for e in all_episodes if e.registration_id == registration_id]
-    else:
-        episodes = []
-    if not episodes:
-        return {
-            "state": "unresolved",
-            "chat_url": target,
-            "evidence_class": "observed",
-            "reason": "no_episode",
-        }
-    current = episodes[-1]
-    if target and registration_id and current.registration_id != registration_id:
-        candidate_count = len({e.registration_id for e in episodes})
-        _emit_conflict(target, candidate_count, current.correlation_id)
-        return {
-            "state": "conflict",
-            "chat_url": target,
-            "reason": "registration_not_current_binding",
-            "requested_registration_id": registration_id,
-            "current_registration_id": current.registration_id,
-            "candidate_count": candidate_count,
-        }
-    if lineage_reader and current.lane_thread:
-        lineage = lineage_reader(current.lane_thread)
-        if lineage is None and current.parent_thread is not None:
-            _emit_unresolved(
-                current.chat_url,
-                "lane_lineage_missing",
-                current.correlation_id,
-            )
-            return {
-                "state": "unresolved",
-                "episode_id": current.episode_id,
-                "chat_url": current.chat_url,
-                "registration_id": current.registration_id,
-                "reason": "lane_lineage_missing",
-            }
-        current = ProvenanceEpisode(
-            **{
-                **asdict(current),
-                "parent_thread": (lineage or {}).get("parent_thread", current.parent_thread),
-                "lane_role": (lineage or {}).get("lane_role", current.lane_role),
-            }
-        )
-    return {"state": current.state, **asdict(current)}
+    return _resolve(
+        chat_url=chat_url,
+        registration_id=registration_id,
+        lineage_reader=lineage_reader,
+        host_listable=host_listable,
+    )

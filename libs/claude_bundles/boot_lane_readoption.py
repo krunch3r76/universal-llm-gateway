@@ -21,6 +21,7 @@ CseAffinity = Literal["bound_present", "bound_missing", "unbound_present", "none
 BootVerdict = Literal["adopt", "orphan", "refuse"]
 
 BOOT_HOLDER = "cdp-ask-satellite"
+ADOPT_STATUS = "retained"
 _CSE_URL_MARKER = "claude.ai/cowork/cse_"
 _REG_PROFILE_PREFIX = "claude-ai-chrome-profile-reg-"
 
@@ -277,7 +278,14 @@ def boot_adopt_lane(
     cse_affinity: CseAffinity,
     holder: str | None = None,
 ) -> None:
-    """Restore ``active`` and claim driver lock after process death (boot-only)."""
+    """Reserve the surviving host as ``retained`` after process death (boot-only).
+
+    Adoption keeps the port and profile reserved, but the turn that owned the row
+    died with the previous process — the planner already refuses rows with a live
+    execution. Restoring ``active`` plus a driver lock therefore claimed a busy
+    seat nobody was driving, which no drain could ever reclaim; ``retained`` says
+    reserved-but-idle, so the dormant drain can park the host on the next pass.
+    """
     from claude_bundles import cdp_registry_store as _store
 
     adopt_holder = (holder or BOOT_HOLDER).strip()
@@ -292,14 +300,13 @@ def boot_adopt_lane(
                 f"unknown registration_id: {registration_id!r}"
             )
         updated = dict(row)
-        updated["status"] = "active"
+        updated["status"] = ADOPT_STATUS
         updated["holder"] = adopt_holder
         updated["holder_pid"] = os.getpid()
         updated.pop("orphaned_at", None)
         updated.pop("orphan_reason", None)
         active[registration_id] = updated
         _store.write_active(active)
-        cdp_registry._claim_driver_lock(registration_id)
         _store.append_log(
             "boot_lane_readoption",
             {
@@ -307,6 +314,7 @@ def boot_adopt_lane(
                 "port": updated.get("port"),
                 "cse_affinity": cse_affinity,
                 "prior_status": prior_status,
+                "adopted_status": ADOPT_STATUS,
                 "reason": "boot_lane_readoption",
             },
         )
@@ -390,6 +398,7 @@ def plan_as_dict(plan: BootReadoptionPlan) -> dict[str, Any]:
 
 
 __all__ = [
+    "ADOPT_STATUS",
     "BOOT_HOLDER",
     "BootReadoptionPlan",
     "apply_boot_readoption_plan",

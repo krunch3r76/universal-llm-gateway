@@ -4,107 +4,34 @@ Reads ``cdp_registry`` snapshots only — never registers lanes, opens profiles,
 or navigates to CSE URLs. Fail-closed typed errors; ``ambiguous_identity``
 returns candidate rows for disambiguation. Identity omitted invokes the attended
 operator resolver (``attended_operator``).
+
+An open tab is not required for a known CSE URL: a dormant seat resolves to
+``attended_dormant`` carrying its ``chat_url``, and ``followup`` wakes it. That
+side effect stays in ``followup_reattach`` — this module remains pure.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
-
 from claude_bundles import cdp_registry
 from claude_bundles.cse_provenance import resolve as resolve_provenance
+from claude_bundles.cse_provenance_resolve import is_host_listable
 from claude_bundles.cse_url import normalize_cse_url
 from playwright.async_api import async_playwright
 
-from cdp_ask.attended_operator import (
-    AttendedResolveRefused,
-    AttendedResolveSuccess,
-    resolve_attended_operator,
-)
 from cdp_ask.execution_store import ExecutionStore
-from cdp_ask.followup_events import (
-    cdp_ask_attended_refused,
-    cdp_ask_attended_resolve,
-)
-from cdp_ask.followup_events import (
-    emit as emit_followup_event,
+from cdp_ask.followup_attended import resolve_attended_binding
+from cdp_ask.followup_envelope import (
+    FollowupCandidate,
+    fail_followup,
+    identity_keys,
+    identity_supplied,
+    lane_not_attached_detail,
 )
 from cdp_ask.models import (
-    FollowupCandidateInfo,
     FollowupProjectAskRequest,
     FollowupProjectAskResponse,
     TargetBinding,
 )
-
-_CLI_ESCAPE = "scripts/cortex/cowork_chat_followup.py"
-_HORIZON = "v1 requires an attached lane; post-deregister reattach is horizon"
-_REGISTRY_SOURCE = "cse-session-registry"
-
-
-def lane_not_attached_detail() -> str:
-    """Human hint for missing/detached lanes including the SSH CLI escape path."""
-    return (
-        f"{_HORIZON}. CLI escape: {_CLI_ESCAPE} "
-        "(list-lanes → curl :port/json/list → SSH paste)."
-    )
-
-
-def fail_followup(
-    error: str,
-    *,
-    detail: str | None = None,
-    candidates: list[FollowupCandidateInfo] | None = None,
-    send_verified: bool = False,
-    **extra: Any,
-) -> FollowupProjectAskResponse:
-    """Build a typed ``ok=false`` followup response with optional detail fields."""
-    return FollowupProjectAskResponse(
-        ok=False,
-        error=error,
-        detail=detail,
-        candidates=candidates,
-        send_verified=send_verified,
-        **extra,
-    )
-
-
-def identity_keys(
-    req: FollowupProjectAskRequest,
-) -> tuple[str | None, str | None, str | None, str | None]:
-    """Return normalized identity keys used by the shared provenance resolver."""
-    chat = (req.chat_url or "").strip() or None
-    reg = (req.registration_id or "").strip() or None
-    exe = (req.execution_id or "").strip() or None
-    cdp = (req.cdp_url or "").strip() or None
-    return chat, reg, exe, cdp
-
-
-def identity_supplied(req: FollowupProjectAskRequest) -> bool:
-    """True when any explicit identity or port override is present."""
-    chat_url, registration_id, execution_id, cdp_url = identity_keys(req)
-    return any((chat_url, registration_id, execution_id, cdp_url))
-
-
-@dataclass(frozen=True)
-class FollowupCandidate:
-    registration_id: str
-    chat_url: str
-    holder: str
-    purpose: str | None
-    cdp_url: str
-    target_binding: TargetBinding = "explicit"
-    provenance: dict[str, Any] | None = None
-
-    def as_info(self) -> FollowupCandidateInfo:
-        return FollowupCandidateInfo(
-            registration_id=self.registration_id,
-            chat_url=self.chat_url,
-            holder=self.holder,
-            purpose=self.purpose,
-            cdp_url=self.cdp_url,
-            source=_REGISTRY_SOURCE,
-            provenance=self.provenance,
-        )
 
 
 async def scan_lane_cse_urls(reg: cdp_registry.Registration) -> list[str]:
@@ -159,80 +86,13 @@ def _registry_pairs_for_chat_url(
                 cdp_url=lane.cdp_url,
                 target_binding="explicit",
                 provenance=resolve_provenance(
-                    chat_url=bound, registration_id=lane.registration_id
+                    chat_url=bound,
+                    registration_id=lane.registration_id,
+                    host_listable=is_host_listable,
                 ),
             )
         )
     return out
-
-
-def _refused_to_followup(
-    refused: AttendedResolveRefused,
-) -> FollowupProjectAskResponse:
-    """Map attended resolver refusal to followup envelope."""
-    extra: dict[str, Any] = {}
-    if refused.candidates:
-        extra["candidates"] = [
-            FollowupCandidateInfo(
-                registration_id=c["registration_id"],
-                chat_url=c["chat_url"],
-                holder="",
-                purpose=c.get("purpose"),
-                cdp_url=c.get("cdp_url"),
-                source=_REGISTRY_SOURCE,
-                provenance=c.get("provenance"),
-            )
-            for c in refused.candidates
-        ]
-    return fail_followup(refused.code, **extra)
-
-
-def _emit_attended_outcome(
-    outcome: AttendedResolveSuccess | AttendedResolveRefused,
-) -> None:
-    if isinstance(outcome, AttendedResolveSuccess):
-        emit_followup_event(
-            cdp_ask_attended_resolve(
-                registration_id=outcome.registration_id,
-                cdp_url=outcome.cdp_url,
-                chat_url=outcome.chat_url,
-                purpose=outcome.purpose,
-                source=outcome.source,
-            )
-        )
-        return
-    emit_followup_event(
-        cdp_ask_attended_refused(
-            code=outcome.code,
-            candidates_considered=outcome.candidates_considered or None,
-            candidate_count=len(outcome.candidates) if outcome.candidates else None,
-        )
-    )
-
-
-def _resolve_attended_binding() -> (
-    tuple[FollowupCandidate | None, FollowupProjectAskResponse | None, str | None]
-):
-    """Identity-omitted path: attended resolver bind or refuse."""
-    outcome = resolve_attended_operator()
-    _emit_attended_outcome(outcome)
-    if isinstance(outcome, AttendedResolveRefused):
-        return None, _refused_to_followup(outcome), None
-    lane = cdp_registry.list_active()
-    holder = "cdp-ask-satellite"
-    for reg in lane:
-        if reg.registration_id == outcome.registration_id:
-            holder = reg.holder
-            break
-    candidate = FollowupCandidate(
-        registration_id=outcome.registration_id,
-        chat_url=outcome.chat_url,
-        holder=holder,
-        purpose=outcome.purpose,
-        cdp_url=outcome.cdp_url,
-        target_binding="resolver",
-    )
-    return candidate, None, "attended_resolver"
 
 
 async def discover_candidates(
@@ -382,7 +242,7 @@ async def resolve_followup_target(
 ]:
     """Resolve to a single attached CSE target or return a typed error response."""
     if not identity_supplied(req):
-        target, err, path = _resolve_attended_binding()
+        target, err, path = resolve_attended_binding()
         binding: TargetBinding | None = target.target_binding if target else None
         return target, err, path, binding
 

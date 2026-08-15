@@ -24,26 +24,45 @@ _CSE_PATH_MARKER = "/cowork/cse_"
 
 @dataclass(frozen=True)
 class ReattachOutcome:
-    """Result of ``ensure_cse_attached`` — page/pw set only on success for teardown."""
+    """Result of ``ensure_cse_attached`` — page/pw set only on success for teardown.
+
+    ``relaunched`` marks a dormant seat woken for this paste: it keeps its own
+    registration and session, so teardown parks it again rather than releasing a
+    minted lane.
+    """
 
     ok: bool
     error: str | None = None
     registration_id: str | None = None
     cdp_url: str | None = None
     lane_created: bool = False
+    relaunched: bool = False
     page: Any | None = None
     pw: Any | None = None
 
 
 def _lane_order(
-    lanes: list[cdp_registry.Registration], purpose: str | None
+    lanes: list[cdp_registry.Registration], purpose: str | None, chat_url: str
 ) -> list[cdp_registry.Registration]:
-    """Prefer lanes whose ``purpose`` matches the request when one is supplied."""
-    if not purpose:
-        return lanes
-    matched = [lane for lane in lanes if lane.purpose == purpose]
-    rest = [lane for lane in lanes if lane.purpose != purpose]
-    return matched + rest
+    """Order live hosts: already bound to this CSE first, then purpose match.
+
+    Navigating a host that already holds the session is a resume; navigating an
+    unrelated host borrows someone else's glass, so it comes last.
+    """
+    target = normalize_cse_url(chat_url)
+    bound: list[cdp_registry.Registration] = []
+    rest: list[cdp_registry.Registration] = []
+    for lane in lanes:
+        current = cdp_registry.chat_url_for_registration(lane.registration_id)
+        if current and normalize_cse_url(current) == target:
+            bound.append(lane)
+        else:
+            rest.append(lane)
+    if purpose:
+        rest = [lane for lane in rest if lane.purpose == purpose] + [
+            lane for lane in rest if lane.purpose != purpose
+        ]
+    return bound + rest
 
 
 async def _verify_page_url(page: Any, chat_url: str) -> bool:
@@ -96,15 +115,50 @@ async def _teardown_attempt(
             await pw.stop()
 
 
+async def _wake_dormant_seat(chat_url: str, *, holder: str) -> ReattachOutcome | None:
+    """Relaunch the dormant seat bound to *chat_url* and open the CSE on it."""
+    seat = cdp_registry.dormant_for_chat_url(chat_url)
+    if seat is None:
+        return None
+    try:
+        reg = cdp_registry.relaunch_dormant(seat.registration_id, holder=holder)
+    except Exception:
+        return ReattachOutcome(ok=False, error="dormant_relaunch_failed")
+    opened = await _navigate_new_page(reg, chat_url)
+    if opened is None:
+        with contextlib.suppress(Exception):
+            cdp_registry.make_dormant(reg.registration_id, reason="relaunch_navigate_failed")
+        return ReattachOutcome(ok=False, error="reattach_navigate_failed")
+    page, pw = opened
+    return ReattachOutcome(
+        ok=True,
+        registration_id=reg.registration_id,
+        cdp_url=reg.cdp_url,
+        relaunched=True,
+        page=page,
+        pw=pw,
+    )
+
+
 async def ensure_cse_attached(
     chat_url: str,
     *,
     holder: str,
     purpose: str | None = None,
+    allow_mint: bool = True,
 ) -> ReattachOutcome:
-    """Attach a registry Chrome host and navigate to *chat_url* when needed."""
+    """Attach a registry Chrome host and navigate to *chat_url* when needed.
+
+    A dormant seat bound to the URL is woken first: it owns the session's profile,
+    so it resumes rather than borrowing another host's glass. With *allow_mint*
+    false, an unbound URL is refused instead of minting a fresh host.
+    """
+    woken = await _wake_dormant_seat(chat_url, holder=holder)
+    if woken is not None:
+        return woken
+
     lanes = list(cdp_registry.list_active())
-    for lane in _lane_order(lanes, purpose):
+    for lane in _lane_order(lanes, purpose, chat_url):
         opened = await _navigate_new_page(lane, chat_url)
         if opened is None:
             continue
@@ -119,6 +173,8 @@ async def ensure_cse_attached(
             pw=pw,
         )
 
+    if not allow_mint:
+        return ReattachOutcome(ok=False, error="reattach_no_host_available")
     if cdp_registry.count_capacity_lanes() >= LANE_HARD_LIMIT:
         return ReattachOutcome(ok=False, error="lane_capacity_exhausted")
 

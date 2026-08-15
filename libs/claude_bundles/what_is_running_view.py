@@ -18,6 +18,11 @@ from typing import Any
 SCHEMA = "what-is-running/v1"
 SNAPSHOT_URI = "cortex://notes/system/operational/what-is-running.json"
 OPERATOR_PURPOSES = frozenset({"operator-proxy", "mission"})
+# Statuses whose row may still own a running Chrome process (X clients, ports).
+_LIVE_HOST_STATUSES = frozenset(
+    {"allocating", "active", "retained", "orphaned_alive", "orphaned_retry"}
+)
+STATUS_DORMANT = "dormant"
 # Manual publish is deferred (todo:fleet-what-is-running); 5m TTL stops a forgotten
 # snapshot from vouching for liveness longer than one operational read cycle.
 DEFAULT_LIVENESS_TTL_S = 300.0
@@ -66,6 +71,7 @@ def _honest_empty_scalars(scalars: dict[str, Any]) -> dict[str, Any]:
     out["attachments_live_cse_count"] = 0
     out["live_cdp_port_count"] = 0
     out["registry_capacity_count"] = 0
+    out["registry_live_host_count"] = 0
     out["effective_count_drain_only"] = 0
     out["at_soft_limit"] = False
     out["at_hard_limit"] = False
@@ -180,6 +186,12 @@ def compose_view(
         for r in registry.values()
         if isinstance(r, dict) and r.get("status") == "active"
     ]
+    # Capacity counts `active` only, so it hid retained hosts whose Chrome was
+    # still running — the leak that exhausted the X server.
+    live_host_count = sum(
+        count for status, count in status_counts.items() if status in _LIVE_HOST_STATUSES
+    )
+    dormant_seat_count = status_counts.get(STATUS_DORMANT, 0)
     op_streams = [
         r for r in rows_out if (r.get("purpose") or "") in OPERATOR_PURPOSES
     ]
@@ -333,6 +345,10 @@ def compose_view(
             "live_cdp_port_count_noun": "cdp_port",
             "registry_capacity_count": active_work.get("registry_capacity_count"),
             "registry_capacity_count_noun": "registration_host",
+            "registry_live_host_count": live_host_count,
+            "registry_live_host_count_noun": "chrome_host",
+            "registry_dormant_seat_count": dormant_seat_count,
+            "registry_dormant_seat_count_noun": "dormant_seat",
             "effective_count_drain_only": active_work.get("effective_count"),
             "at_soft_limit": active_work.get("at_soft_limit"),
             "at_hard_limit": active_work.get("at_hard_limit"),
@@ -406,6 +422,10 @@ def render_text(view: dict[str, Any], *, now: float | None = None) -> str:
         f"  unique CSE sessions:           {s['attachments_live_cse_count']}",
         f"  live CDP ports:                {s['live_cdp_port_count']}",
         f"  registry hosts (capacity):   {s['registry_capacity_count']}",
+        f"  registry hosts (live chrome, all statuses): "
+        f"{s.get('registry_live_host_count')}",
+        f"  dormant seats (no chrome, reattachable): "
+        f"{s.get('registry_dormant_seat_count')}",
         f"  effective_count (drain ONLY, ≠ admission): "
         f"{s['effective_count_drain_only']}",
         f"  at_soft_limit={s['at_soft_limit']} at_hard_limit={s['at_hard_limit']} "

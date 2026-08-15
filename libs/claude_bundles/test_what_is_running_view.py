@@ -239,3 +239,47 @@ def test_compose_view_joins_lane_from_parent_thread() -> None:
     assert lanes == {"6655"}
     verdicts = {f["verdict"] for f in view["findings"]}
     assert "OVERLAP" in verdicts
+
+
+def test_live_hosts_and_dormant_seats_are_counted_separately() -> None:
+    """Occupancy is per Chrome process; a dormant seat owns none."""
+    registry = {
+        "reg-1": {
+            "status": "active",
+            "purpose": "operator-proxy",
+            "holder": "cdp/opus-5",
+            "chat_url": "https://claude.ai/cowork/cse_test",
+            "port": 9222,
+            "started_at": _NOW - 120.0,
+        },
+        "reg-2": {
+            "status": "retained",
+            "purpose": "mission",
+            "holder": "cdp/fable",
+            "chat_url": "https://claude.ai/cowork/cse_kept",
+            "port": 9223,
+        },
+        "reg-3": {
+            "status": "dormant",
+            "purpose": "mission",
+            "holder": "cdp/fable",
+            "chat_url": "https://claude.ai/cowork/cse_parked",
+            "dormant_at": _NOW - 30.0,
+        },
+        "reg-4": {
+            "status": "released",
+            "purpose": "ask",
+            "holder": "cdp/opus-5",
+        },
+    }
+
+    view = _compose(registry=registry)
+    scalars = view["scalars_actual"]
+
+    assert scalars["registry_live_host_count"] == 2
+    assert scalars["registry_dormant_seat_count"] == 1
+    assert view["registry_status_counts"]["dormant"] == 1
+
+    text = render_text(view, now=_NOW)
+    assert "registry hosts (live chrome, all statuses): 2" in text
+    assert "dormant seats (no chrome, reattachable): 1" in text

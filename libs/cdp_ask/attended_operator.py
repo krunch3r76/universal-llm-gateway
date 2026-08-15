@@ -14,8 +14,16 @@ from urllib.parse import urlparse
 
 from claude_bundles import cdp_orphans, cdp_registry
 from claude_bundles.cse_provenance import resolve as resolve_provenance
+from claude_bundles.cse_provenance_resolve import is_host_listable
 from claude_bundles.cse_url import normalize_cse_url
 from claude_bundles.operator_proxy_mission import OPERATOR_PROXY_MISSION_PURPOSES
+
+from cdp_ask.attended_conflict import (
+    purpose_filtered_url_conflicts,
+    shared_url_candidates,
+)
+from cdp_ask.attended_dormant import candidate_dict as dormant_candidate_dict
+from cdp_ask.attended_dormant import dormant_candidates
 
 _SOURCE = "cse-session-registry"
 _CSE_MARKER = "/cowork/cse_"
@@ -49,6 +57,21 @@ class AttendedResolveSuccess:
     source: str
     shadow_urls: list[dict[str, Any]]
     provenance: dict[str, Any] | None = None
+    conflict: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class AttendedResolveDormant:
+    """Attended seat whose Chrome host is released but reopenable by URL."""
+
+    registration_id: str
+    chat_url: str
+    purpose: str
+    source: str
+    shadow_urls: list[dict[str, Any]]
+    dormant_at: float | None = None
+    provenance: dict[str, Any] | None = None
+    reattachable: bool = True
 
 
 @dataclass(frozen=True)
@@ -59,9 +82,12 @@ class AttendedResolveRefused:
     candidate: dict[str, Any] | None = None
     probe: LivenessProbe | None = None
     shadow_urls: list[dict[str, Any]] | None = None
+    conflict: dict[str, Any] | None = None
 
 
-AttendedResolveOutcome = AttendedResolveSuccess | AttendedResolveRefused
+AttendedResolveOutcome = (
+    AttendedResolveSuccess | AttendedResolveDormant | AttendedResolveRefused
+)
 
 
 def _port_from_cdp_url(cdp_url: str) -> int | None:
@@ -74,7 +100,7 @@ def _port_from_cdp_url(cdp_url: str) -> int | None:
 
 
 def _holder_key(lane: Any) -> str:
-    """Lane key for holder collapse: ``parent_thread`` or unbound registration."""
+    """Claim-only lane key for holder collapse — registry ``parent_thread``, not bus proof."""
     thread = str(getattr(lane, "parent_thread", None) or "").strip()
     if thread:
         return f"lane:{thread}"
@@ -121,7 +147,8 @@ def _mission_candidates() -> tuple[list[AttendedCandidate], int]:
                 chat_url=chat_url,
                 purpose=purpose,
                 provenance=resolve_provenance(
-                    registration_id=lane.registration_id
+                    registration_id=lane.registration_id,
+                    host_listable=is_host_listable,
                 ),
             )
         )
@@ -175,7 +202,14 @@ def build_shadow_urls(
                     by_url.setdefault(norm, set()).add(live.port)
 
     return [
-        {"chat_url": url, "ports_seen": sorted(ports_seen)}
+        {
+            "chat_url": url,
+            "ports_seen": sorted(ports_seen),
+            "provenance": resolve_provenance(
+                chat_url=url,
+                host_listable=is_host_listable,
+            ),
+        }
         for url, ports_seen in sorted(by_url.items())
     ]
 
@@ -197,17 +231,70 @@ def _probe_dict(probe: LivenessProbe) -> dict[str, Any]:
     return out
 
 
+def _resolve_dormant(shadows: list[dict[str, Any]]) -> AttendedResolveOutcome | None:
+    """Resolve attendance from dormant seats when no host is live; None when empty."""
+    dormant = dormant_candidates()
+    if not dormant:
+        return None
+    if len(dormant) > 1:
+        return AttendedResolveRefused(
+            code="ambiguous_attended",
+            candidates=[dormant_candidate_dict(c) for c in dormant],
+            shadow_urls=shadows,
+        )
+    sole = dormant[0]
+    return AttendedResolveDormant(
+        registration_id=sole.registration_id,
+        chat_url=sole.chat_url,
+        purpose=sole.purpose,
+        source=_SOURCE,
+        shadow_urls=shadows,
+        dormant_at=sole.dormant_at,
+        provenance=sole.provenance,
+    )
+
+
+def _conflict_for_url(
+    chat_url: str,
+    conflicts: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    target = normalize_cse_url(chat_url)
+    for entry in conflicts:
+        if normalize_cse_url(entry.get("chat_url") or "") == target:
+            return entry
+    return None
+
+
 def resolve_attended_operator() -> AttendedResolveOutcome:
-    """Resolve the unique live attended mission-operator CSE or refuse.
+    """Resolve the attended mission-operator CSE — live, dormant, or refused.
 
     The result preserves registry provenance, liveness evidence, and shadow
-    observations so callers cannot turn an ambiguous page scan into a bind.
+    observations so callers cannot turn an ambiguous page scan into a bind. A
+    released host is reported dormant rather than absent: the CSE URL is the
+    durable identity, and an open tab is not what makes a seat attended.
     """
+    url_conflicts = purpose_filtered_url_conflicts()
     candidates, purpose_filtered_count = _mission_candidates()
+    if len(candidates) == 1:
+        shared = shared_url_candidates(candidates[0].chat_url)
+        conflict = _conflict_for_url(candidates[0].chat_url, url_conflicts)
+        if shared is not None and len(shared) >= 2:
+            live_ports = cdp_orphans.probe_live_ports()
+            shadows = build_shadow_urls(candidates, live_ports=live_ports)
+            return AttendedResolveRefused(
+                code="ambiguous_attended",
+                candidates=shared,
+                shadow_urls=shadows,
+                conflict=conflict,
+            )
+
     live_ports = cdp_orphans.probe_live_ports()
     shadows = build_shadow_urls(candidates, live_ports=live_ports)
 
     if len(candidates) == 0:
+        dormant = _resolve_dormant(shadows)
+        if dormant is not None:
+            return dormant
         return AttendedResolveRefused(
             code="no_attended_cse",
             candidates_considered=purpose_filtered_count,
@@ -215,10 +302,14 @@ def resolve_attended_operator() -> AttendedResolveOutcome:
         )
 
     if len(candidates) > 1:
+        conflict = None
+        if candidates:
+            conflict = _conflict_for_url(candidates[0].chat_url, url_conflicts)
         return AttendedResolveRefused(
             code="ambiguous_attended",
             candidates=[_candidate_dict(c) for c in candidates],
             shadow_urls=shadows,
+            conflict=conflict,
         )
 
     sole = candidates[0]
@@ -240,17 +331,42 @@ def resolve_attended_operator() -> AttendedResolveOutcome:
         source=_SOURCE,
         shadow_urls=shadows,
         provenance=sole.provenance,
+        conflict=_conflict_for_url(sole.chat_url, url_conflicts),
     )
 
 
 def success_to_http_body(outcome: AttendedResolveSuccess) -> dict[str, Any]:
     """Serialize a success with liveness and complete registry provenance evidence."""
-    return {
+    body: dict[str, Any] = {
         "registration_id": outcome.registration_id,
         "cdp_url": outcome.cdp_url,
         "chat_url": outcome.chat_url,
         "purpose": outcome.purpose,
         "probe": _probe_dict(outcome.probe),
+        "source": outcome.source,
+        "shadow_urls": outcome.shadow_urls,
+        "provenance": outcome.provenance,
+    }
+    if outcome.conflict is not None:
+        body["conflict"] = outcome.conflict
+    return body
+
+
+def dormant_to_http_body(outcome: AttendedResolveDormant) -> dict[str, Any]:
+    """Serialize a dormant seat: attended, not live, reopenable by ``chat_url``.
+
+    ``cdp_url`` is null on purpose — a caller must relaunch to obtain a port
+    instead of reusing one that another host may now own.
+    """
+    return {
+        "registration_id": outcome.registration_id,
+        "cdp_url": None,
+        "chat_url": outcome.chat_url,
+        "purpose": outcome.purpose,
+        "probe": {"live": False, "checked_at": time.time()},
+        "dormant": True,
+        "reattachable": outcome.reattachable,
+        "dormant_at": outcome.dormant_at,
         "source": outcome.source,
         "shadow_urls": outcome.shadow_urls,
         "provenance": outcome.provenance,
@@ -268,6 +384,8 @@ def refused_to_http_body(outcome: AttendedResolveRefused) -> dict[str, Any]:
         body["candidate"] = outcome.candidate
     if outcome.probe is not None:
         body["probe"] = _probe_dict(outcome.probe)
+    if outcome.conflict is not None:
+        body["conflict"] = outcome.conflict
     return body
 
 

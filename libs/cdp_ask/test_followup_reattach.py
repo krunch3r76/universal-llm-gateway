@@ -465,10 +465,10 @@ async def test_unbound_binding_caps_human_visible_claim(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """AC5: unbound + send_verified cannot satisfy human_visible gate."""
-    from cdp_ask.followup import _paste_response
+    from cdp_ask.followup_receipts import paste_response
 
     req = FollowupProjectAskRequest(prompt_text="x", min_receipt="human_visible")
-    resp = _paste_response(
+    resp = paste_response(
         req=req,
         target_registration_id="reg-1",
         url=CSE_A,
@@ -686,3 +686,308 @@ async def test_dom_committed_gate_fails_when_only_dom_paste(
     assert resp.receipt == "dom_paste"
     assert resp.send_verified is True
     assert resp.error == "send_unverified"
+
+
+@pytest.fixture(autouse=True)
+def _no_dormant_seats(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default every test to an empty dormant set; wake tests opt back in.
+
+    Without this the reattach path would consult the operator's real registry and
+    could relaunch a live seat during an offline test.
+    """
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.dormant_for_chat_url", lambda _url: None
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_dormant.cdp_registry.dormant_for_chat_url",
+        lambda _url: None,
+    )
+
+
+@dataclass(frozen=True)
+class _FakeSeat:
+    registration_id: str
+    chat_url: str
+    profile_suffix: str = "s"
+    purpose: str = "operator-proxy"
+    dormant_at: float = 10.0
+
+
+def _patch_dormant(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    seat: _FakeSeat | None,
+    relaunch: Any = None,
+) -> None:
+    for target in (
+        "claude_bundles.cdp_registry.dormant_for_chat_url",
+        "cdp_ask.followup_reattach.cdp_registry.dormant_for_chat_url",
+        "cdp_ask.followup_dormant.cdp_registry.dormant_for_chat_url",
+    ):
+        monkeypatch.setattr(target, lambda _url, _s=seat: _s)
+    if relaunch is not None:
+        monkeypatch.setattr(
+            "cdp_ask.followup_reattach.cdp_registry.relaunch_dormant", relaunch
+        )
+
+
+@pytest.mark.asyncio
+async def test_dormant_seat_is_woken_before_borrowing_another_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The seat that owns the session resumes it; other glass is not borrowed."""
+    other = _reg("reg-live", cdp="http://127.0.0.1:9224")
+    monkeypatch.setattr("claude_bundles.cdp_registry.list_active", lambda: [other])
+    woken = _reg("reg-parked")
+    relaunch = MagicMock(return_value=woken)
+    _patch_dormant(
+        monkeypatch, seat=_FakeSeat("reg-parked", CSE_A), relaunch=relaunch
+    )
+    register = MagicMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.register_lane", register
+    )
+    monkeypatch.setattr("cdp_ask.followup_reattach.connect_cdp", _connect_factory())
+
+    outcome = await ensure_cse_attached(CSE_A, holder="h", purpose="operator-proxy")
+
+    assert outcome.ok is True
+    assert outcome.relaunched is True
+    assert outcome.lane_created is False
+    assert outcome.registration_id == "reg-parked"
+    relaunch.assert_called_once_with("reg-parked", holder="h")
+    register.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dormant_relaunch_failure_is_reported_not_swallowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("claude_bundles.cdp_registry.list_active", lambda: [])
+    _patch_dormant(
+        monkeypatch,
+        seat=_FakeSeat("reg-parked", CSE_A),
+        relaunch=MagicMock(side_effect=RuntimeError("no port")),
+    )
+
+    outcome = await ensure_cse_attached(CSE_A, holder="h")
+
+    assert outcome.ok is False
+    assert outcome.error == "dormant_relaunch_failed"
+
+
+@pytest.mark.asyncio
+async def test_failed_navigation_after_wake_parks_the_seat_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wake that cannot reach the CSE must not leave a live host behind."""
+    monkeypatch.setattr("claude_bundles.cdp_registry.list_active", lambda: [])
+    _patch_dormant(
+        monkeypatch,
+        seat=_FakeSeat("reg-parked", CSE_A),
+        relaunch=MagicMock(return_value=_reg("reg-parked")),
+    )
+    parked = MagicMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.make_dormant", parked
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.connect_cdp", _connect_factory(bad_url=True)
+    )
+
+    outcome = await ensure_cse_attached(CSE_A, holder="h")
+
+    assert outcome.ok is False
+    assert outcome.error == "reattach_navigate_failed"
+    assert parked.call_args.args[0] == "reg-parked"
+
+
+@pytest.mark.asyncio
+async def test_park_relaunched_host_closes_tab_and_reparks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cdp_ask.followup_dormant import park_relaunched_host
+    from cdp_ask.followup_reattach import ReattachOutcome
+
+    page = _FakePage()
+    pw = _FakePw()
+    parked = MagicMock()
+    monkeypatch.setattr("cdp_ask.followup_dormant.cdp_registry.make_dormant", parked)
+
+    await park_relaunched_host(
+        ReattachOutcome(
+            ok=True,
+            registration_id="reg-parked",
+            relaunched=True,
+            page=page,
+            pw=pw,
+        )
+    )
+
+    assert page.closed is True
+    assert pw.stopped is True
+    parked.assert_called_once_with("reg-parked", reason="followup_complete")
+
+
+def test_reattach_runs_for_a_dormant_seat_without_the_opt_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Waking a seat the fleet parked itself is not the caller's opt-in to make."""
+    from cdp_ask.followup_dormant import reattach_reason
+
+    req = FollowupProjectAskRequest(chat_url=CSE_A, prompt_text="x")
+    assert reattach_reason(req, CSE_A) is None
+
+    _patch_dormant(monkeypatch, seat=_FakeSeat("reg-parked", CSE_A))
+    assert reattach_reason(req, CSE_A) == "dormant_seat"
+    assert (
+        reattach_reason(
+            FollowupProjectAskRequest(chat_url=CSE_A, prompt_text="x", reattach=True),
+            CSE_A,
+        )
+        == "requested"
+    )
+
+
+@pytest.mark.asyncio
+async def test_woken_seat_discharges_wake_debt_and_is_parked_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wake is a resume, not a mint: obligations discharge and the seat re-parks.
+
+    ``lane_created`` stays false for a woken seat precisely so the wake-discharge
+    gate still fires — a minted lane cannot prove delivery to the operator's page,
+    but the seat that owns the session can.
+    """
+    store = ExecutionStore()
+    reg = _reg("reg-parked")
+    _patch_list_active(monkeypatch, reg=reg, reattach_empty=True)
+    _patch_dormant(
+        monkeypatch,
+        seat=_FakeSeat("reg-parked", CSE_A),
+        relaunch=MagicMock(return_value=reg),
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(side_effect=[[], [CSE_A]]),
+    )
+    monkeypatch.setattr("cdp_ask.followup_reattach.connect_cdp", _connect_factory())
+    parked = MagicMock()
+    monkeypatch.setattr("cdp_ask.followup_dormant.cdp_registry.make_dormant", parked)
+    deregister = MagicMock()
+    monkeypatch.setattr("cdp_ask.followup.cdp_registry.deregister_lane", deregister)
+    page = MagicMock()
+    page.url = CSE_A
+    pw = AsyncMock()
+    pw.stop = AsyncMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup._find_page_on_lane", AsyncMock(return_value=(page, pw))
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup.send_followup_paste_half",
+        AsyncMock(
+            return_value={
+                "send_verified": True,
+                "receipt": "dom_committed",
+                "streaming_at_paste": False,
+                "url": CSE_A,
+                "pasted_at": 1.0,
+            }
+        ),
+    )
+    monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
+    discharged: list[str] = []
+    monkeypatch.setattr(
+        "claude_bundles.cse_session_obligations.resolve_wake_obligation_for_receipt",
+        lambda rid: ("6885", "obl-1"),
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cse_session_obligations.emit_wake_delivered_transition",
+        lambda **kw: discharged.append(kw["registration_id"]),
+    )
+
+    resp = await execute_followup(
+        FollowupProjectAskRequest(chat_url=CSE_A, prompt_text="x"),
+        store,
+    )
+
+    assert resp.ok is True
+    assert resp.reattach_used is True
+    assert resp.lane_created is False
+    assert discharged == ["reg-parked"]
+    parked.assert_called_once_with("reg-parked", reason="followup_complete")
+    deregister.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_identity_omitted_dormant_attendance_wakes_the_seat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An omitted identity plus a dormant attended seat resolves by waking it."""
+    from cdp_ask.attended_operator import (
+        AttendedResolveDormant,
+        AttendedResolveSuccess,
+        LivenessProbe,
+    )
+
+    store = ExecutionStore()
+    reg = _reg("reg-parked")
+    dormant = AttendedResolveDormant(
+        registration_id="reg-parked",
+        chat_url=CSE_A,
+        purpose="operator-proxy",
+        source="cse-session-registry",
+        shadow_urls=[],
+    )
+    live = AttendedResolveSuccess(
+        registration_id="reg-parked",
+        cdp_url=reg.cdp_url,
+        chat_url=CSE_A,
+        purpose="operator-proxy",
+        probe=LivenessProbe(live=True, checked_at=1.0),
+        source="cse-session-registry",
+        shadow_urls=[],
+    )
+    outcomes = iter([dormant, live])
+    monkeypatch.setattr(
+        "cdp_ask.followup_attended.resolve_attended_operator", lambda: next(outcomes)
+    )
+    monkeypatch.setattr("claude_bundles.cdp_registry.list_active", lambda: [reg])
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.cdp_registry.list_active", lambda: [reg]
+    )
+    relaunch = MagicMock(return_value=reg)
+    _patch_dormant(
+        monkeypatch, seat=_FakeSeat("reg-parked", CSE_A), relaunch=relaunch
+    )
+    monkeypatch.setattr("cdp_ask.followup_reattach.connect_cdp", _connect_factory())
+    monkeypatch.setattr("cdp_ask.followup_dormant.cdp_registry.make_dormant", MagicMock())
+    page = MagicMock()
+    page.url = CSE_A
+    pw = AsyncMock()
+    pw.stop = AsyncMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup._find_page_on_lane", AsyncMock(return_value=(page, pw))
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup.send_followup_paste_half",
+        AsyncMock(
+            return_value={
+                "send_verified": True,
+                "receipt": "dom_paste",
+                "streaming_at_paste": False,
+                "url": CSE_A,
+                "pasted_at": 1.0,
+            }
+        ),
+    )
+    monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
+
+    resp = await execute_followup(
+        FollowupProjectAskRequest(prompt_text="x"),
+        store,
+    )
+
+    assert resp.ok is True
+    assert resp.reattach_used is True
+    relaunch.assert_called_once()

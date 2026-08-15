@@ -29,10 +29,19 @@ def hygiene_interval_s() -> float:
 
 
 def run_hygiene_once() -> dict[str, Any]:
-    """Sync extended reclaim — safe to call from asyncio.to_thread."""
+    """Sync extended reclaim — safe to call from asyncio.to_thread.
+
+    Draining live hosts to dormant runs first so the reclaim pass sees the freed
+    ports and the aged-out dormant rows in the same sweep.
+    """
     from claude_bundles import cdp_registry
+    from claude_bundles.cdp_registry.dormant_drain import drain_live_hosts_to_dormant
     from claude_bundles.cse_session_obligations import sweep_wake_owed_ttl
 
+    from cdp_ask.followup import lane_in_flight
+
+    drain = drain_live_hosts_to_dormant(is_busy=lane_in_flight)
+    dormant_reclaimed = cdp_registry.reclaim_dormant_rows()
     result = cdp_registry.hygiene_reclaim_extended()
     wake_alarms = sweep_wake_owed_ttl(
         notify_pager=_sync_notify_pager,
@@ -41,6 +50,8 @@ def run_hygiene_once() -> dict[str, Any]:
         "reclaimed_ports": list(result.reclaimed_ports),
         "removed_profiles": list(result.removed_profiles),
         "wake_alarms": wake_alarms,
+        "drained": drain.as_dict(),
+        "dormant_reclaimed": dormant_reclaimed,
     }
 
 
@@ -105,6 +116,16 @@ class RegistryHygieneLoop:
                         "cdp registry hygiene reclaimed_ports=%s removed=%d",
                         summary["reclaimed_ports"],
                         len(summary["removed_profiles"]),
+                    )
+                drained = summary.get("drained", {}).get("counts", {})
+                if drained.get("dormant") or drained.get("released"):
+                    logger.info(
+                        "cdp hosts drained dormant=%d released=%d protected=%d "
+                        "dormant_reclaimed=%d",
+                        drained["dormant"],
+                        drained["released"],
+                        drained["protected"],
+                        len(summary.get("dormant_reclaimed", ())),
                     )
                 scan_summary = await asyncio.to_thread(run_orphan_scan_once)
                 if scan_summary["matched_count"] or scan_summary.get("closable_count"):

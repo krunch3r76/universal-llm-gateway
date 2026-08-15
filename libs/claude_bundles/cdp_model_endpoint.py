@@ -570,9 +570,12 @@ def run_cdp_generate(
     (``operator_proxy_mission.purpose_implies_mission``). Also matched when the
     prompt body declares ``purpose: operator-proxy``.
 
-    ``mission_kind`` / ``parent_thread``: Chrome-host lineage on the registry
-    (root|hop|side|parallel + bus parent lane). Hop succession sets
-    ``mission_kind=hop`` and ``parent_thread=<private lane>``.
+    ``mission_kind`` / ``parent_thread``: Chrome-host lineage claims on the
+    registry row (``root|hop|side|parallel`` plus bus parent lane id). These
+    are observations only — bus ``lane_role`` / ``association_id`` proof is
+    written later by hub-side ``cse_provenance_enrich`` when a lane thread is
+    known. Hop succession sets ``mission_kind=hop`` and
+    ``parent_thread=<private lane>``.
 
     ``skills`` (optional): catalog slugs prepended via
     ``stage_cdp_prompt_with_skills`` — ``shared_sync`` as leading ``/<slug>\\n``

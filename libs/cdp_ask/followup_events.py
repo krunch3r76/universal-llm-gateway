@@ -70,12 +70,16 @@ def cdp_ask_followup_paste_verified(
 def cdp_ask_attended_resolve(
     *,
     registration_id: str,
-    cdp_url: str,
+    cdp_url: str | None,
     chat_url: str,
     purpose: str,
     source: str,
 ) -> Event:
-    """Emit when attended-operator resolver returns a unique live target."""
+    """Emit when the attended-operator resolver returns a unique target.
+
+    ``cdp_url`` is None for a dormant seat, which is attended by URL with no
+    live host.
+    """
     return Event(
         signal="cdp_ask.attended.resolve",
         role="observation",
@@ -86,6 +90,7 @@ def cdp_ask_attended_resolve(
             "chat_url": chat_url,
             "purpose": purpose,
             "source": source,
+            "dormant": cdp_url is None,
         },
     )
 

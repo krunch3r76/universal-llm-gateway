@@ -6,6 +6,8 @@ import contextlib
 import os
 import time
 import uuid
+from pathlib import Path
+from typing import Any
 
 from claude_bundles import cdp_lane
 from claude_bundles import cdp_registry_events as _events
@@ -15,6 +17,7 @@ from .driver_locks import _claim_driver_lock, _release_driver_lock
 from .hygiene import reclaim_best_effort
 from .models import (
     MISSION_KINDS,
+    STATUS_DORMANT,
     Registration,
     RegistryError,
     _LaunchFn,
@@ -76,6 +79,69 @@ def _rollback_allocating(registration_id: str) -> None:
     _release_driver_lock(registration_id)
 
 
+def reserve_allocating_row(
+    *,
+    holder: str,
+    purpose: str | None,
+    mission_kind: str | None,
+    parent_thread: str | None,
+    listen: _ListenFn,
+    registration_id: str | None = None,
+    profile_suffix: str | None = None,
+    carry: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Reserve a free port under ``ports.lock`` and stamp an ``allocating`` row.
+
+    Passing *registration_id* / *profile_suffix* reuses an existing identity — the
+    dormant relaunch path keeps its profile and CSE binding through ``carry``.
+    """
+    with _store.ports_lock():
+        active = _store.load_active()
+        exclude = _used_ports(active) | _peer_lane_ports()
+        port = select_free_registry_port(listen, exclude=exclude)
+        if registration_id is None or profile_suffix is None:
+            registration_id, profile_suffix = _mint_ids(_used_suffixes(active))
+        row: dict[str, Any] = {
+            **(carry or {}),
+            "registration_id": registration_id,
+            "port": port,
+            "profile_suffix": profile_suffix,
+            "profile": str(cdp_lane.profile_for(profile_suffix)),
+            "holder": holder,
+            "purpose": purpose,
+            "display": cdp_lane.cdp_display(),
+            "mission_kind": mission_kind,
+            "parent_thread": parent_thread,
+            "status": "allocating",
+            "chrome_pid": None,
+            "holder_pid": os.getpid(),
+            "started_at": time.time(),
+        }
+        active[registration_id] = row
+        _store.write_active(active)
+        _store.append_log("allocating", row)
+        _claim_driver_lock(registration_id)
+    return row
+
+
+def activate_allocating_row(
+    registration_id: str, chrome_pid: int | None, *, log_event: str = "register"
+) -> dict[str, Any]:
+    """Flip a reserved row to ``active`` once Chrome answers on its port."""
+    with _store.ports_lock():
+        active = _store.load_active()
+        current = active.get(registration_id)
+        if current is None or current.get("status") != "allocating":
+            raise RegistryError(f"registration {registration_id!r} lost during launch")
+        current = dict(current)
+        current["status"] = "active"
+        current["chrome_pid"] = chrome_pid
+        active[registration_id] = current
+        _store.write_active(active)
+        _store.append_log(log_event, current)
+    return current
+
+
 def register_lane(
     *,
     holder: str,
@@ -102,51 +168,20 @@ def register_lane(
     listen = is_listening or cdp_lane.is_listening
     launch_fn = launch_chrome or cdp_lane._launch_chrome
 
-    with _store.ports_lock():
-        active = _store.load_active()
-        exclude = _used_ports(active) | _peer_lane_ports()
-        port = select_free_registry_port(listen, exclude=exclude)
-        registration_id, profile_suffix = _mint_ids(_used_suffixes(active))
-        profile = cdp_lane.profile_for(profile_suffix)
-        display = cdp_lane.cdp_display()
-        row = {
-            "registration_id": registration_id,
-            "port": port,
-            "profile_suffix": profile_suffix,
-            "profile": str(profile),
-            "holder": holder,
-            "purpose": purpose,
-            "display": display,
-            "mission_kind": kind,
-            "parent_thread": parent,
-            "status": "allocating",
-            "chrome_pid": None,
-            "holder_pid": os.getpid(),
-            "started_at": time.time(),
-        }
-        active[registration_id] = row
-        _store.write_active(active)
-        _store.append_log("allocating", row)
-        _claim_driver_lock(registration_id)
+    row = reserve_allocating_row(
+        holder=holder,
+        purpose=purpose,
+        mission_kind=kind,
+        parent_thread=parent,
+        listen=listen,
+    )
+    registration_id = str(row["registration_id"])
 
     chrome_pid: int | None = None
     try:
         if launch:
-            chrome_pid = launch_fn(port, profile)
-        with _store.ports_lock():
-            active = _store.load_active()
-            current = active.get(registration_id)
-            if current is None or current.get("status") != "allocating":
-                raise RegistryError(
-                    f"registration {registration_id!r} lost during launch"
-                )
-            current = dict(current)
-            current["status"] = "active"
-            current["chrome_pid"] = chrome_pid
-            active[registration_id] = current
-            _store.write_active(active)
-            _store.append_log("register", current)
-            row = current
+            chrome_pid = launch_fn(int(row["port"]), Path(str(row["profile"])))
+        row = activate_allocating_row(registration_id, chrome_pid)
     except Exception:
         _rollback_allocating(registration_id)
         raise
@@ -218,6 +253,11 @@ def deregister_lane(
                 port = int(row["port"])
                 if listen(port):
                     registry_package()._kill_listener(port)
+            _release_driver_lock(registration_id)
+            return
+        if status == STATUS_DORMANT:
+            # The recorded port is historical: another host may own it now, so a
+            # kill here could take down an unrelated Chrome.
             _release_driver_lock(registration_id)
             return
         if status in {"orphaned_alive", "retained"} and not kill:

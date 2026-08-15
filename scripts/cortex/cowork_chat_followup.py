@@ -13,7 +13,9 @@ _REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_REPO / "libs"))
 
 from cdp_ask.attended_operator import (  # noqa: E402
+    AttendedResolveDormant,
     AttendedResolveRefused,
+    dormant_to_http_body,
     refused_to_http_body,
     resolve_attended_operator,
     success_to_http_body,
@@ -39,6 +41,17 @@ def _resolve_target(
             "detail": "Provide both --cdp-url and --chat-url for explicit override",
         }
     outcome = resolve_attended_operator()
+    if isinstance(outcome, AttendedResolveDormant):
+        # Relaunching Chrome is a Jupiter-side act; this escape path cannot do it.
+        return {
+            "ok": False,
+            "error": "attended_dormant",
+            "detail": (
+                "attended CSE is dormant — reattach via "
+                "project_ask(op=followup, chat_url=…) on the satellite"
+            ),
+            **dormant_to_http_body(outcome),
+        }
     if isinstance(outcome, AttendedResolveRefused):
         body = refused_to_http_body(outcome)
         return {"ok": False, "error": body["code"], **body}

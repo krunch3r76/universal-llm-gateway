@@ -8,10 +8,13 @@ from pathlib import Path
 import pytest
 from claude_bundles.cdp_orphans import LivePort
 
+from cdp_ask.attended_dormant import DormantCandidate
 from cdp_ask.attended_operator import (
+    AttendedResolveDormant,
     AttendedResolveRefused,
     AttendedResolveSuccess,
     build_shadow_urls,
+    dormant_to_http_body,
     refused_http_status,
     resolve_attended_operator,
 )
@@ -215,6 +218,80 @@ def test_ac3_sole_candidate_liveness_failed_no_retry(
     assert outcome.probe is not None
     assert outcome.probe.live is False
     assert refused_http_status(outcome.code) == 424
+
+
+def _no_live_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "cdp_ask.attended_operator.cdp_registry.list_active", lambda: []
+    )
+    monkeypatch.setattr(
+        "cdp_ask.attended_operator.cdp_orphans.probe_live_ports",
+        lambda port_range=None: [],
+    )
+
+
+def _dormant(reg_id: str, url: str, *, dormant_at: float = 100.0) -> DormantCandidate:
+    return DormantCandidate(
+        registration_id=reg_id,
+        chat_url=url,
+        purpose="operator-proxy",
+        dormant_at=dormant_at,
+    )
+
+
+def test_dormant_seat_resolves_as_attended_not_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A parked host is attended by URL: an open tab is not what confers attendance."""
+    _no_live_hosts(monkeypatch)
+    monkeypatch.setattr(
+        "cdp_ask.attended_operator.dormant_candidates",
+        lambda: [_dormant("reg-parked", CSE_U)],
+    )
+
+    outcome = resolve_attended_operator()
+
+    assert isinstance(outcome, AttendedResolveDormant)
+    assert outcome.registration_id == "reg-parked"
+    assert outcome.chat_url == CSE_U
+    assert outcome.reattachable is True
+
+    body = dormant_to_http_body(outcome)
+    assert body["cdp_url"] is None
+    assert body["dormant"] is True
+    assert body["probe"]["live"] is False
+
+
+def test_two_dormant_seats_refuse_as_ambiguous(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _no_live_hosts(monkeypatch)
+    monkeypatch.setattr(
+        "cdp_ask.attended_operator.dormant_candidates",
+        lambda: [
+            _dormant("reg-a", CSE_U),
+            _dormant("reg-b", "https://claude.ai/cowork/cse_other"),
+        ],
+    )
+
+    outcome = resolve_attended_operator()
+
+    assert isinstance(outcome, AttendedResolveRefused)
+    assert outcome.code == "ambiguous_attended"
+    assert outcome.candidates is not None
+    assert [c["cdp_url"] for c in outcome.candidates] == [None, None]
+
+
+def test_no_hosts_and_no_dormant_seats_still_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _no_live_hosts(monkeypatch)
+    monkeypatch.setattr("cdp_ask.attended_operator.dormant_candidates", lambda: [])
+
+    outcome = resolve_attended_operator()
+
+    assert isinstance(outcome, AttendedResolveRefused)
+    assert outcome.code == "no_attended_cse"
 
 
 def test_build_shadow_urls_dedupes_ports() -> None:

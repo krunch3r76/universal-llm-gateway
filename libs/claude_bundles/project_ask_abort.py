@@ -114,9 +114,9 @@ def registration_owns_port(registration_id: str, expected_port: int) -> bool:
 def purpose_kill_default(purpose: str | None) -> bool:
     """Whether exit deregister should kill Chrome / drop the CSE.
 
-    Single-shot ``ask`` kills on exit. ``operator-proxy`` and ``mission`` must
-    retain the CSE after first-leg content_proof (detach/orphan-alive OK) so
-    nested Mode B can ``project_ask(op=followup)`` into the live window.
+    Single-shot ``ask`` kills on exit. ``operator-proxy`` and ``mission`` keep the
+    CSE, but as a dormant seat rather than a live tab: the bound ``chat_url`` is
+    the identity a later ``project_ask(op=followup)`` reattaches to.
     """
     return (purpose or "") == "ask"
 
@@ -140,6 +140,19 @@ def _process_owns_driver(registration_id: str) -> bool:
         return False
     holder_pid = row.get("holder_pid")
     return isinstance(holder_pid, int) and holder_pid == os.getpid()
+
+
+def _park_dormant(registration_id: str) -> bool:
+    """Park the row as dormant; False when refused or the row is already gone.
+
+    Exit cleanup must still complete when another process reclaimed the row first,
+    so a registry error here degrades to the retain/release path rather than
+    leaving the host unaccounted for.
+    """
+    try:
+        return cdp_registry.make_dormant(registration_id, reason="idle_exit") is not None
+    except cdp_registry.RegistryError:
+        return False
 
 
 def deregister_on_exit(
@@ -168,6 +181,10 @@ def deregister_on_exit(
             kill=kill,
         )
     )
+    if not kill and _park_dormant(reg.registration_id):
+        cdp_registry.reclaim_best_effort()
+        return
+    # Dormancy refused (debt, attached driver, primary, or no bound URL):
     # kill=False ⇒ status=retained (listable intentional retention), not released.
     cdp_registry.deregister_lane(
         reg.registration_id,

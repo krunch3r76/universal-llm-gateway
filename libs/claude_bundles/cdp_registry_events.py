@@ -12,7 +12,7 @@ import os
 import socket
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from universal_event_bus.events.event import Event
 from universal_event_bus.events.factory import event_factory
@@ -34,24 +34,31 @@ def cdp_provenance_bound(
     evidence_class: str,
     attribution_source: str,
     correlation_id: str | None,
+    lineage_state: str | None = None,
+    association_id: int | None = None,
 ) -> Event:
     """Report a durable CSE provenance episode and its observed lineage."""
+    payload: dict[str, Any] = {
+        "episode_id": episode_id,
+        "chat_url": chat_url,
+        "registration_id": registration_id,
+        "cdp_url": cdp_url,
+        "lane_thread": lane_thread,
+        "parent_thread": parent_thread,
+        "lane_role": lane_role,
+        "evidence_class": evidence_class,
+        "attribution_source": attribution_source,
+        "correlation_id": correlation_id,
+    }
+    if lineage_state is not None:
+        payload["lineage_state"] = lineage_state
+    if association_id is not None:
+        payload["association_id"] = association_id
     return Event(
         signal="cdp.provenance.bound",
         role="observation",
         scope="node",
-        payload={
-            "episode_id": episode_id,
-            "chat_url": chat_url,
-            "registration_id": registration_id,
-            "cdp_url": cdp_url,
-            "lane_thread": lane_thread,
-            "parent_thread": parent_thread,
-            "lane_role": lane_role,
-            "evidence_class": evidence_class,
-            "attribution_source": attribution_source,
-            "correlation_id": correlation_id,
-        },
+        payload=payload,
     )
 
 
@@ -164,6 +171,69 @@ def cdp_port_exit_kill_decision(
             "registration_id": registration_id,
             "port": port if isinstance(port, int) else None,
             "kill": kill,
+        },
+    )
+
+
+@event_factory
+def cdp_port_dormant(
+    *,
+    registration_id: str,
+    port: int | None,
+    purpose: str | None,
+    chat_url: str,
+    reason: str,
+) -> Event:
+    """Chrome released while the CSE URL and profile stay durable for relaunch."""
+    return Event(
+        signal="cdp.port.dormant",
+        role="observation",
+        scope="node",
+        payload={
+            "registration_id": registration_id,
+            "port": port if isinstance(port, int) else None,
+            "purpose": purpose,
+            "chat_url": chat_url,
+            "reason": reason,
+        },
+    )
+
+
+@event_factory
+def cdp_port_relaunched(
+    *,
+    registration_id: str,
+    port: int,
+    purpose: str | None,
+    chat_url: str,
+) -> Event:
+    """Dormant seat reopened on a fresh port using its retained profile."""
+    return Event(
+        signal="cdp.port.relaunched",
+        role="observation",
+        scope="node",
+        payload={
+            "registration_id": registration_id,
+            "port": port if isinstance(port, int) else None,
+            "purpose": purpose,
+            "chat_url": chat_url,
+        },
+    )
+
+
+@event_factory
+def cdp_port_dormant_reclaimed(
+    *, registration_ids: list[str], trigger: str
+) -> Event:
+    """Dormant rows dropped past TTL or over the row cap."""
+    return Event(
+        signal="cdp.port.dormant_reclaimed",
+        role="observation",
+        scope="node",
+        payload={
+            "registration_ids": registration_ids,
+            "count": len(registration_ids),
+            "trigger": trigger,
         },
     )
 

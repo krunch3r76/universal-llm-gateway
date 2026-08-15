@@ -60,14 +60,14 @@ async def test_identity_omitted_resolver_success(
         shadow_urls=[],
     )
     monkeypatch.setattr(
-        "cdp_ask.followup_resolve.resolve_attended_operator",
+        "cdp_ask.followup_attended.resolve_attended_operator",
         lambda: outcome,
     )
     monkeypatch.setattr(
         "cdp_ask.followup_resolve.cdp_registry.list_active",
         lambda: [_reg("reg-live")],
     )
-    monkeypatch.setattr("cdp_ask.followup_resolve.emit_followup_event", MagicMock())
+    monkeypatch.setattr("cdp_ask.followup_attended.emit_followup_event", MagicMock())
     req = FollowupProjectAskRequest(prompt_text="hi")
     target, err, path, binding = await resolve_followup_target(req, store)
     assert err is None
@@ -85,7 +85,7 @@ async def test_identity_omitted_ambiguous_attended_no_paste(
 
     store = ExecutionStore()
     monkeypatch.setattr(
-        "cdp_ask.followup_resolve.resolve_attended_operator",
+        "cdp_ask.followup_attended.resolve_attended_operator",
         lambda: AttendedResolveRefused(
             code="ambiguous_attended",
             candidates=[
@@ -99,7 +99,7 @@ async def test_identity_omitted_ambiguous_attended_no_paste(
             shadow_urls=[],
         ),
     )
-    monkeypatch.setattr("cdp_ask.followup_resolve.emit_followup_event", MagicMock())
+    monkeypatch.setattr("cdp_ask.followup_attended.emit_followup_event", MagicMock())
     paste = MagicMock()
     monkeypatch.setattr("cdp_ask.followup.send_followup_paste_half", paste)
     req = FollowupProjectAskRequest(prompt_text="hi")
