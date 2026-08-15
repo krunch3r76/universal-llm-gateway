@@ -26,6 +26,9 @@ from .branch_associations import (
     _branch_associate_dispatch,
     _branch_current_dispatch,
 )
+from .entity_mint import (
+    _entity_mint_dispatch,
+)
 from .fetch import (
     _fetch_dispatch,
     _fetch_impl,
@@ -33,9 +36,6 @@ from .fetch import (
     _fetch_unread_toc_impl,
     _get_dispatch,
     _get_impl,
-)
-from .entity_mint import (
-    _entity_mint_dispatch,
 )
 from .friction_file import (
     _friction_file_dispatch,
@@ -45,6 +45,10 @@ from .graph_write import (
 )
 from .hop import (
     _hop_dispatch,
+)
+from .lane_associations import (
+    _lane_bind_dispatch,
+    _lane_current_dispatch,
 )
 from .lifecycle import (
     _add_tags_dispatch,
@@ -122,6 +126,8 @@ AGENT_BUS_OPS: dict[str, Callable[..., Any]] = {
     "wait": _wait_dispatch,
     "branch_associate": _branch_associate_dispatch,
     "branch_current": _branch_current_dispatch,
+    "lane_bind": _lane_bind_dispatch,
+    "lane_current": _lane_current_dispatch,
 }
 
 
@@ -154,6 +160,8 @@ __all__ = [
     "_friction_file_dispatch",
     "_graph_write_dispatch",
     "_hop_dispatch",
+    "_lane_bind_dispatch",
+    "_lane_current_dispatch",
     "_mark_read_dispatch",
     "_post_dispatch",
     "_post_impl",
@@ -217,15 +225,17 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
         Write path — use ``send`` (``post``/``reply`` are legacy aliases until 2026-09-01):
 
         Operations:
-          send          (new_slug XOR thread, to, subject, body, from?, from_agent?, summary?, tags?, enroll_charter_runner?, lifecycle_state?, after_turn?, status?, mark_read?, close?, attachments?, allow_long_body?, sidecar_content?, sidecar_slug?, supersedes_turn?, supersedes_turn_id?) — **primary write op**. Exactly one of new_slug (new thread) or thread (continue) required; supersedes_turn (continue path only) is the same-thread **turn_number** to supersede structurally (deprecated alias supersedes_turn_id = row id, one release cycle). slug uniqueness enforced on new_slug path (409 slug_exists on collision). Tag ``charter-runner`` is **reserved enrollment** — newly adding it requires ``enroll_charter_runner=true`` (422 reserved_enrollment_tag otherwise); keeping/removing never needs the flag. Enrollment auto-stamps spine tag ``role:root``. When sidecar_content is set the server writes cortex://notes/system/threads/<thread_id>-<slug>.md before inserting the turn, appends a trailing Sidecar: pointer to the body, and returns sidecar_uri + sidecar_sha256. sidecar_content cap 256KB. Prefer ``from=``; ``from_agent`` is a permanent alias. When omitted on ``/mcp/life`` or ``/mcp/code``, the server autofills ``web-anthropic`` or ``cursor`` respectively.
+          send          (new_slug XOR thread, to, subject, body, from?, from_agent?, summary?, tags?, enroll_charter_runner?, lifecycle_state?, after_turn?, status?, mark_read?, close?, attachments?, allow_long_body?, sidecar_content?, sidecar_slug?, supersedes_turn?, supersedes_turn_id?, parent_thread?, lane_role?) — **primary write op**. Exactly one of new_slug (new thread) or thread (continue) required; supersedes_turn (continue path only) is the same-thread **turn_number** to supersede structurally (deprecated alias supersedes_turn_id = row id, one release cycle). slug uniqueness enforced on new_slug path (409 slug_exists on collision). Tag ``charter-runner`` is **reserved enrollment** — newly adding it requires ``enroll_charter_runner=true`` (422 reserved_enrollment_tag otherwise); keeping/removing never needs the flag. Enrollment auto-stamps spine tag ``role:root``. When sidecar_content is set the server writes cortex://notes/system/threads/<thread_id>-<slug>.md before inserting the turn, appends a trailing Sidecar: pointer to the body, and returns sidecar_uri + sidecar_sha256. sidecar_content cap 256KB. Prefer ``from=``; ``from_agent`` is a permanent alias. When omitted on ``/mcp/life`` or ``/mcp/code``, the server autofills ``web-anthropic`` or ``cursor`` respectively.
           thread_get      (thread) — single ThreadDetail (tags/status/summary/turn_count/…); missing thread → structured error
           add_tags        (thread, tags[], from?, enroll_charter_runner?) — additive tag merge; unspecified tags preserved
           remove_tags     (thread, tags[], from?) — remove listed tags only; other tags preserved
-          request       (new_slug XOR thread, to='cursor', subject, body, from?, from_agent?, summary?, tags?, sidecar_content?, sidecar_slug?, desired_model?, desired_effort?, contract?, require_attended?, lane?) — life-callable Cursor Auto channel. Injects lane:cursor-auto; arms Auto when a live handler heartbeats (else handler_status=no-auto-handler); returns {thread, turn, handler_status, poll_hint}. ``lane`` = optional GIW checkout-isolation ``A`` (local master) or ``B`` (``cursor-sdk/lane-{thread}``); omit for current ``select_lane`` defaults. Distinct from ``lane_role`` (bus-thread parentage) and from tag ``lane:cursor-auto``. ``summary`` = standing ULG so-what title (also fail-soft from body ``so_what:`` / ``ulg_gain:``). implement|investigate DIRECTIVE body requires ``vision:`` else admit blocks ``vision_field_missing`` (pre-model). See agent_skill:cdp-operator-proxy. require_attended=true (wire or DIRECTIVE body OR) ⇒ terminal status:needs-attended reason=operator_require_attended. ¬ dual-tag lane:life-to-code on degrade. ``contract`` ∈ answer|confer|investigate|implement|verify|execute|propagate|seed|recon — unknown value ⇒ 422 request_contract_unknown before the turn is written; legacy ``consult`` aliases to ``confer`` with a deprecation note. ``execute`` fires ONE tier-M tool op in seat against the allowlist manifest (body: ``tool_op: <tool>.<op>`` + ``effects_expected:`` + optional single-line JSON ``tool_args:``); closeout carries the raw payload under ``tool_payload``. ``propagate`` mints structured propagation ledger rows and coordinates drain-gated ``sync_restart`` via manage.sock (body: ``effects_expected:`` + ``## propagation`` YAML or ``scope: propagation sync_restart <service>``); ``manage.*`` via ``execute`` remains denied. ``seed`` requests a closable work item via the seed path (architecture may be open). Optional ``request_id`` is an idempotency key echoed enqueue→closeout (minted when omitted; a replayed key is refused 422 ``duplicate_request_id``). DIRECTIVE ``deadline: +15m`` (or ISO-8601) terminates a still-queued job ``status:failed reason=expired``. Narrower alternative for approval-gated harnesses: the dedicated ``cursor_request`` tool.
+          request       (new_slug XOR thread, to='cursor', subject, body, from?, from_agent?, summary?, tags?, sidecar_content?, sidecar_slug?, desired_model?, desired_effort?, contract?, require_attended?, lane?, parent_thread?, lane_role?) — life-callable Cursor Auto channel. Injects lane:cursor-auto; arms Auto when a live handler heartbeats (else handler_status=no-auto-handler); returns {thread, turn, handler_status, poll_hint}. ``lane`` = optional GIW checkout-isolation ``A`` (local master) or ``B`` (``cursor-sdk/lane-{thread}``); omit for current ``select_lane`` defaults. ``parent_thread`` + ``lane_role`` atomically bind a newly minted lane; both are required together when supplied. Distinct from ``lane_role`` (bus-thread parentage) and from tag ``lane:cursor-auto``. ``summary`` = standing ULG so-what title (also fail-soft from body ``so_what:`` / ``ulg_gain:``). implement|investigate DIRECTIVE body requires ``vision:`` else admit blocks ``vision_field_missing`` (pre-model). See agent_skill:cdp-operator-proxy. require_attended=true (wire or DIRECTIVE body OR) ⇒ terminal status:needs-attended reason=operator_require_attended. ¬ dual-tag lane:life-to-code on degrade. ``contract`` ∈ answer|confer|investigate|implement|verify|execute|propagate|seed|recon — unknown value ⇒ 422 request_contract_unknown before the turn is written; legacy ``consult`` aliases to ``confer`` with a deprecation note. ``execute`` fires ONE tier-M tool op in seat against the allowlist manifest (body: ``tool_op: <tool>.<op>`` + ``effects_expected:`` + optional single-line JSON ``tool_args:``); closeout carries the raw payload under ``tool_payload``. ``propagate`` mints structured propagation ledger rows and coordinates drain-gated ``sync_restart`` via manage.sock (body: ``effects_expected:`` + ``## propagation`` YAML or ``scope: propagation sync_restart <service>``); ``manage.*`` via ``execute`` remains denied. ``seed`` requests a closable work item via the seed path (architecture may be open). Optional ``request_id`` is an idempotency key echoed enqueue→closeout (minted when omitted; a replayed key is refused 422 ``duplicate_request_id``). DIRECTIVE ``deadline: +15m`` (or ISO-8601) terminates a still-queued job ``status:failed reason=expired``. Narrower alternative for approval-gated harnesses: the dedicated ``cursor_request`` tool.
           hop           (thread, reason, from?, from_agent?, cse_chat_url?, cse_registration_id?, desired_model?, desired_effort?, request_id?, after_turn?, subject?) — mechanical continuity hop on an existing private lane. Authors TYPE: CONTINUITY_HANDOFF (one shared author with cadence) and enqueues with continuity_hop=true. Returns {thread, turn, handler_status, continuity_hop, poll_hint, successor}. Reports *armed*, never status:done — successor handle is successor_birth_id on the structural hop body (MCP return is the predecessor's receipt). ¬ a contract token. Hop-before-healthy degrades (no-auto-handler) rather than arming.
           substrate_graph_write (entity_id, claim, confidence?, derivation_type?, evidence?, evidence_uris?) — cortex assert request-surface verb via shared substrate_graph_write lib. Returns assertion payload with assertion_id + entity_id stamped. Requires entity_id + claim (422 graph_write_entity_required | graph_write_claim_required). Does not mint on 404, enqueue bus turns, or accept hop/request fields. ¬ a contract token.
           substrate_friction_file (owner, note, service?, claim?, category?, suggestion?, evidence_uris?, confidence?, agent?) — cortex friction request-surface verb via shared substrate_friction_file lib. Returns assertion payload with assertion_id + owner stamped. Requires owner (service= alias) + note (claim= alias) (422 friction_file_owner_required | friction_file_note_required). Does not mint on 404, enqueue bus turns, or accept hop/request fields. ¬ a contract token.
           substrate_entity_mint (id, type, name, entity_id?, entity_type?, title?, description?, status?, workflow_state?, notes?, aliases?, attributes?, source_uri?, content_hash?) — cortex entity_create request-surface verb via shared substrate_entity_mint lib. Returns create payload with entity_id stamped from the response. Requires id (entity_id= alias) + type (entity_type= alias) + name (title= alias). Forwards every dispatch-consumed field verbatim; retention / Option-C traits / top-level density_triage → named 422 (not silent drop). Does not run rich-seed, enqueue bus turns, or accept hop/request fields. ¬ a contract token.
+          lane_bind     (thread, parent_thread, lane_role, bound_by?, evidence?) — append-only lane parentage. Relays POST /threads/{id}/lane-bind. Roles: sub_mission|hop|spillover|dispatch|side|parallel (no root). Distinct from branch_associate (git). ¬ a contract token.
+          lane_current  (thread) — derived current parentage via GET /threads/{id}/lane-current. state=none when never bound.
           threads       (status?, tags?, lifecycle_state?, limit?, last?, has_unread?, query?) — list threads; status: active|blocked|waiting|closed|all (default active); tags: AND-filter; lifecycle_state: pending|admitted|delivered|failed (exact match). Default limit=50 when neither limit nor last is set; response includes limit_applied and truncated.
           create_thread (slug, summary?, tags?, enroll_charter_runner?, lifecycle_state?, thread_id?) — create a thread without a turn; use lifecycle_state="pending" for lifecycle-managed threads that will be dispatched later; ``enroll_charter_runner=true`` required to include tag ``charter-runner``
           fetch_unread  (to?, thread?, mark_read?, compact?, active_since?, limit?, all?) — recipient scope (to set, thread unset): enriched per-thread unread digest (slug, last_subject, last_activity_at; default 14d window, limit 50; unwindowed totals in response). thread scope: that thread's full unread turn list (no count cap; compact controls bodies). At least one of to/thread required.

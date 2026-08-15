@@ -96,6 +96,8 @@ def _request_impl(
     escalation: str | None = None,
     continuity_hop: bool = False,
     lane: str | None = None,
+    parent_thread: str | None = None,
+    lane_role: str | None = None,
 ) -> dict[str, Any]:
     """Write turn via send path, then arm/enqueue Auto when live."""
     from pager_notify.so_what import resolve_so_what_summary
@@ -120,6 +122,8 @@ def _request_impl(
         after_turn=after_turn,
         sidecar_content=sidecar_content,
         sidecar_slug=sidecar_slug,
+        parent_thread=parent_thread,
+        lane_role=lane_role,
     )
     if isinstance(send_result, dict) and "error" in send_result:
         record("mcp.agentbus.request.failed", error=str(send_result.get("error")))
@@ -333,6 +337,8 @@ def _request_dispatch(
     cse_registration_id: str | None = None,
     escalation: str | None = None,
     lane: str | None = None,
+    parent_thread: str | None = None,
+    lane_role: str | None = None,
 ) -> dict[str, Any]:
     """Validate + dispatch ``agent_bus.request``.
 
@@ -356,7 +362,8 @@ def _request_dispatch(
 
     ``lane``: optional GIW checkout-isolation ``A`` (local master) or ``B``
     (``cursor-sdk/lane-{thread}``). Omit for current ``select_lane`` defaults.
-    Distinct from ``lane_role`` (bus-thread parentage) and tag
+    ``parent_thread`` + ``lane_role`` may atomically bind a newly minted
+    bus-thread lane; both must be supplied together. Distinct from tag
     ``lane:cursor-auto``. Invalid values reject 422 ``request_lane_invalid``
     before the turn is written.
     """
@@ -435,5 +442,7 @@ def _request_dispatch(
         cse_registration_id=cse_registration_id,
         escalation=escalation,
         lane=checkout_lane,
+        parent_thread=parent_thread,
+        lane_role=lane_role,
     )
     return stamp_contract_deprecation(result, intake)

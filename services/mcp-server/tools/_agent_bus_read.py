@@ -31,6 +31,7 @@ from .agent_bus import (
     _threads_dispatch,
     _wait_dispatch,
 )
+from .agent_bus.lane_associations import _lane_current_dispatch
 from .agent_bus.threads import _job_state_dispatch, _thread_get_dispatch
 
 if TYPE_CHECKING:
@@ -49,6 +50,7 @@ AGENT_BUS_READ_OPS: dict[str, Callable[..., Any]] = {
     "threads": _threads_dispatch,
     "job_state": _job_state_dispatch,
     "wait": _wait_dispatch,
+    "lane_current": _lane_current_dispatch,
 }
 
 
@@ -74,6 +76,7 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
           fetch_unread (to?, thread?, mark_read?, compact?, active_since?, limit?, all?)  — recipient scope: enriched per-thread unread digest; thread scope: that thread's full unread turn list
           get          (thread, turn_number)  — turn_number may be int or "latest"
           wait         (thread, after_turn?, wait_seconds?, completion?, from_agent?)
+          lane_current (thread) — derived current lane parentage (state=none when unbound)
 
         Note: mark_read=true mutates per-turn read pointers, not thread/turn
         content; it is permitted here as a read-cursor side effect.
