@@ -44,7 +44,10 @@ If you need a non-interactive/manual run for debugging, use the service scripts:
 - `services/universal-stargate/scripts/start-stargate.sh`
 - `services/_universal-llm-gateway/scripts/start-gateway.sh`
 
-Avoid `systemctl` for this project — use `./manage` or the direct scripts.
+Do not run this project's services under `systemctl` — their lifecycle is owned by
+`./manage` (or the direct scripts above). Unit files that ship under
+`services/*/systemd/` are for auxiliary scheduled jobs, not for the services themselves,
+and are installed at user scope (`systemctl --user`).
 
 ### Logs
 
