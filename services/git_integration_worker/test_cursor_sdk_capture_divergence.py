@@ -16,7 +16,10 @@ from services.git_integration_worker.cursor_sdk_capture_divergence import (
     closeout_divergence_reason,
 )
 from services.git_integration_worker.cursor_sdk_capture_policy import (
+    DegradeTarget,
     DeviationDisposition,
+    degrade_target_for_deviation,
+    deviation_degrades_capture_status,
     disposition_for_deviation,
 )
 from services.git_integration_worker.cursor_sdk_capture_status import ChangeSet
@@ -369,6 +372,19 @@ def test_deviation_registry_fail_closed_default() -> None:
     assert disposition_for_deviation("capture:totally_unknown_token") == (
         DeviationDisposition.HARD_FAIL
     )
+
+
+def test_reconcile_divergences_annotate_capture() -> None:
+    """Sister (a): honest uncertainty tokens must not HARD_FAIL capture."""
+    tokens = (
+        "divergence:seat_claimed_unobserved:document:honest-observability-class-architecture",
+        "divergence:observed_unclaimed:stream-cortex:todo:x",
+        "reconcile:observed_vs_committed",
+    )
+    for token in tokens:
+        assert disposition_for_deviation(token) == DeviationDisposition.ANNOTATE
+        assert degrade_target_for_deviation(token) == DegradeTarget.CAPTURE
+        assert deviation_degrades_capture_status(token) is False
 
 
 def test_git_posture_cross_links_25030() -> None:

@@ -7,10 +7,14 @@ import fcntl
 import json
 import os
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 REGISTRY_DIR = Path.home() / ".gateway" / "cdp-registry"
+# Same directory name as cursor_home._default_dispatch_home_root. Libs must
+# not import GIW; keep this fingerprint aligned if that root is renamed.
+DISPATCH_HOME_MARKER = "cursor-dispatch-homes"
 REGISTRY_LOG = REGISTRY_DIR / "registry.jsonl"
 ACTIVE_JSON = REGISTRY_DIR / "active.json"
 SESSIONS_JSON = REGISTRY_DIR / "sessions.json"
@@ -21,6 +25,60 @@ REGISTRATIONS_DIR = REGISTRY_DIR / "registrations"
 
 class RegistryStoreError(RuntimeError):
     """Corrupt or invalid registry on-disk state."""
+
+
+@dataclass(frozen=True)
+class RegistryRead:
+    """Scoped registry read — empty ``data`` is a scoped-null, not a global empty."""
+
+    data: dict[str, dict[str, Any]]
+    observed_home_kind: str
+    observed_home: Path
+    source_path: Path
+    present: bool
+
+    def miss_label(self) -> str:
+        return (
+            f"observed_home_kind={self.observed_home_kind} path={self.source_path}"
+        )
+
+
+def classify_observed_home_kind(home: Path | str) -> str:
+    """Return ``dispatch`` or ``operator`` for the home a registry path sits under."""
+    try:
+        parts = Path(home).expanduser().resolve().parts
+    except OSError:
+        parts = Path(home).parts
+    return "dispatch" if DISPATCH_HOME_MARKER in parts else "operator"
+
+
+def _registry_home() -> Path:
+    """Home implied by current ``REGISTRY_DIR`` (``{home}/.gateway/cdp-registry``)."""
+    return REGISTRY_DIR.parent.parent
+
+
+def _load_json_object(path: Path, *, label: str) -> tuple[dict[str, dict[str, Any]], bool]:
+    if not path.exists():
+        return {}, False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8") or "{}")
+    except json.JSONDecodeError as exc:
+        raise RegistryStoreError(f"corrupt {label}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise RegistryStoreError(f"{label} must be a JSON object")
+    return data, True
+
+
+def _scoped_read(path: Path, *, label: str) -> RegistryRead:
+    home = _registry_home()
+    data, present = _load_json_object(path, label=label)
+    return RegistryRead(
+        data=data,
+        observed_home_kind=classify_observed_home_kind(home),
+        observed_home=home,
+        source_path=path,
+        present=present,
+    )
 
 
 def ensure_dirs() -> None:
@@ -44,16 +102,14 @@ def ports_lock() -> Any:
         os.close(fd)
 
 
+def load_active_read() -> RegistryRead:
+    """Load ``active.json`` and name which home was observed."""
+    return _scoped_read(ACTIVE_JSON, label="active.json")
+
+
 def load_active() -> dict[str, dict[str, Any]]:
-    if not ACTIVE_JSON.exists():
-        return {}
-    try:
-        data = json.loads(ACTIVE_JSON.read_text(encoding="utf-8") or "{}")
-    except json.JSONDecodeError as exc:
-        raise RegistryStoreError(f"corrupt active.json: {exc}") from exc
-    if not isinstance(data, dict):
-        raise RegistryStoreError("active.json must be a JSON object")
-    return data
+    """Return the active map. Empty dict is a scoped-null — use ``load_active_read``."""
+    return load_active_read().data
 
 
 def write_active(active: dict[str, dict[str, Any]]) -> None:
@@ -72,17 +128,14 @@ def append_log(event: str, record: dict[str, Any]) -> None:
         os.fsync(fh.fileno())
 
 
+def load_sessions_read() -> RegistryRead:
+    """Load ``sessions.json`` and name which home was observed."""
+    return _scoped_read(SESSIONS_JSON, label="sessions.json")
+
+
 def load_sessions() -> dict[str, dict[str, Any]]:
-    """Load obligation projection — empty dict when absent."""
-    if not SESSIONS_JSON.exists():
-        return {}
-    try:
-        data = json.loads(SESSIONS_JSON.read_text(encoding="utf-8") or "{}")
-    except json.JSONDecodeError as exc:
-        raise RegistryStoreError(f"corrupt sessions.json: {exc}") from exc
-    if not isinstance(data, dict):
-        raise RegistryStoreError("sessions.json must be a JSON object")
-    return data
+    """Load obligation projection — empty dict is a scoped-null, not a global empty."""
+    return load_sessions_read().data
 
 
 def write_sessions(sessions: dict[str, dict[str, Any]]) -> None:

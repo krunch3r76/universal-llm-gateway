@@ -66,6 +66,22 @@ _DEVIATION_REGISTRY: dict[str, tuple[DeviationDisposition, DegradeTarget]] = {
         DeviationDisposition.ANNOTATE,
         DegradeTarget.CAPTURE,
     ),
+    # Sister (a) honest-observability-class: honest uncertainty is not a
+    # contract breach. Unregistered tokens fail closed to HARD_FAIL; these
+    # prefixes (and the reconcile cross_check that actually darkens capture)
+    # stay ANNOTATE/CAPTURE so they cannot HARD_FAIL.
+    "divergence:seat_claimed_unobserved:": (
+        DeviationDisposition.ANNOTATE,
+        DegradeTarget.CAPTURE,
+    ),
+    "divergence:observed_unclaimed:": (
+        DeviationDisposition.ANNOTATE,
+        DegradeTarget.CAPTURE,
+    ),
+    "reconcile:observed_vs_committed": (
+        DeviationDisposition.ANNOTATE,
+        DegradeTarget.CAPTURE,
+    ),
     "divergence:repo_diff_paths_unattributed:": (
         DeviationDisposition.HARD_FAIL,
         DegradeTarget.WORK,

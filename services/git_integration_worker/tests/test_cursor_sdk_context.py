@@ -181,6 +181,7 @@ def test_validate_dispatch_context_passes(
     assert report["mcp_token_source"] == "yaml:auth_token"
     assert report["cursor_auth_source"].startswith("file:")
     assert report["user_rules_dir_present"] is True
+    assert report["observed_home_kind"] == "operator"
 
 
 def test_validate_dispatch_context_missing_mcp_token(
@@ -195,7 +196,7 @@ def test_validate_dispatch_context_missing_mcp_token(
     (xdg / "auth.json").write_text("{}", encoding="utf-8")
     repo = _stub_repo(tmp_path)
 
-    with pytest.raises(CursorSdkParityError, match="MCP token"):
+    with pytest.raises(CursorSdkParityError, match="observed_home_kind=operator"):
         validate_dispatch_context(repo, real_home=home)
 
 

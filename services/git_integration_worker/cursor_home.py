@@ -88,6 +88,16 @@ def is_dispatch_home_path(path: Path | str, *, root: Path | None = None) -> bool
     return True
 
 
+def observed_home_kind(path: Path | str, *, root: Path | None = None) -> str:
+    """Return ``dispatch`` or ``operator`` for an observed home path.
+
+    A2 (honest-observability-class): name the scope of a HOME read so a
+    dispatch-scoped miss cannot be reported as an operator-global negative.
+    This classifies the path that was read — it does not retarget the read.
+    """
+    return "dispatch" if is_dispatch_home_path(path, root=root) else "operator"
+
+
 def operator_real_home(*, explicit: Path | str | None = None) -> Path:
     """Operator home for credential/venv resolution — never a dispatch HOME.
 

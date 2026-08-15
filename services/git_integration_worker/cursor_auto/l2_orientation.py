@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from claude_bundles.cdp_registry_store import load_sessions
+from claude_bundles.cdp_registry_store import load_sessions, load_sessions_read
 from claude_bundles.cse_session_common import find_session_by_thread
 from claude_bundles.cse_session_obligations import get_open_wake_owed
 from git_integrate.recent_commits import (
@@ -81,6 +81,7 @@ class CseStateSlice:
     obligations: list[dict[str, Any]] = field(default_factory=list)
     source: str = "sessions.json"
     absent: bool = False
+    observed_home_kind: str | None = None
 
 
 @dataclass
@@ -126,10 +127,15 @@ class L2GenerationResult:
 
 def read_cse_state(*, thread_id: str) -> CseStateSlice:
     """Read CSR projection row for ``thread_id`` from ``sessions.json``."""
-    sessions = load_sessions()
-    found = find_session_by_thread(sessions, thread_id)
+    observed = load_sessions_read()
+    found = find_session_by_thread(observed.data, thread_id)
     if found is None:
-        return CseStateSlice(thread_id=thread_id, absent=True, source="sessions.json")
+        return CseStateSlice(
+            thread_id=thread_id,
+            absent=True,
+            source=f"sessions.json observed_home_kind={observed.observed_home_kind}",
+            observed_home_kind=observed.observed_home_kind,
+        )
     _, row = found
     return CseStateSlice(
         thread_id=thread_id,
@@ -138,6 +144,7 @@ def read_cse_state(*, thread_id: str) -> CseStateSlice:
         obligations=list(row.get("obligations") or []),
         source="~/.gateway/cdp-registry/sessions.json",
         absent=False,
+        observed_home_kind=observed.observed_home_kind,
     )
 
 
@@ -250,9 +257,11 @@ def collect_open_obligations(
 def format_cse_state_section(cse: CseStateSlice) -> str:
     """Render cse_state slice for handoff_prompt."""
     if cse.absent:
+        kind = cse.observed_home_kind or "unscoped"
         return (
             f"cse_state: absent for thread {cse.thread_id} "
-            f"(no sessions.json row; query project_ask op=cse_state when Phase 4 lands)"
+            f"(no sessions.json row under observed_home_kind={kind}; "
+            f"query project_ask op=cse_state when Phase 4 lands)"
         )
     ob_summary: dict[tuple[str, str], int] = {}
     for o in cse.obligations:

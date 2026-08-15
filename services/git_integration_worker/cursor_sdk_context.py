@@ -24,6 +24,7 @@ from cursor_sdk.types import (
     StdioMcpServerConfig,
 )
 
+from services.git_integration_worker.cursor_home import observed_home_kind
 from services.git_integration_worker.cursor_sdk_substrate_tools import (
     SubstrateDispatchContext,
     merge_substrate_tools,
@@ -47,6 +48,12 @@ def _operator_home(real_home: Path | str | None = None) -> Path:
     if real_home is not None:
         return Path(real_home).expanduser()
     return Path(os.environ.get("HOME") or "~").expanduser()
+
+
+def _observe_home(real_home: Path | str | None = None) -> tuple[Path, str]:
+    """Return ``(home, observed_home_kind)`` for the path a token/auth read uses."""
+    home = _operator_home(real_home)
+    return home, observed_home_kind(home)
 
 
 def _read_mcp_yaml_scalar(home: Path, key: str) -> str:
@@ -83,7 +90,7 @@ def resolve_mcp_token(*, real_home: Path | str | None = None) -> tuple[str, str]
     if from_yaml:
         return from_yaml, "yaml:auth_token"
 
-    return "", ""
+    return "", f"miss:observed_home_kind={observed_home_kind(home)}"
 
 
 def resolve_cursor_auth_source(*, real_home: Path | str | None = None) -> str:
@@ -137,7 +144,7 @@ def validate_dispatch_context(
     real_home: Path | str | None = None,
 ) -> dict[str, object]:
     """Verify IDE-parity substrate before admitting a dispatch."""
-    home = _operator_home(real_home)
+    home, home_kind = _observe_home(real_home)
     bridge = resolve_mcp_bridge(source_repo)
     remote_cmd = resolve_fastmcp_remote_cmd()
 
@@ -145,14 +152,16 @@ def validate_dispatch_context(
     if not token:
         raise CursorSdkParityError(
             "MCP token not configured — set MCP_TOKEN/MCP_AUTH_TOKEN or "
-            f"{home / _MCP_YAML_REL} auth_token/auth_token_env"
+            f"{home / _MCP_YAML_REL} auth_token/auth_token_env "
+            f"(observed_home_kind={home_kind})"
         )
 
     cursor_auth = resolve_cursor_auth_source(real_home=home)
     if not cursor_auth:
         raise CursorSdkParityError(
             "Cursor credential not configured — set CURSOR_API_KEY or "
-            f"seed {home / _CURSOR_XDG_AUTH}"
+            f"seed {home / _CURSOR_XDG_AUTH} "
+            f"(observed_home_kind={home_kind})"
         )
 
     user_rules = home / ".cursor" / "rules"
@@ -164,6 +173,8 @@ def validate_dispatch_context(
         "mcp_token_source": token_source,
         "cursor_auth_source": cursor_auth,
         "user_rules_dir_present": user_rules.is_dir(),
+        "observed_home_kind": home_kind,
+        "observed_home": str(home),
     }
 
 
