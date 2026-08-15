@@ -15,11 +15,15 @@ _GOVERNED_INSTRUCTION_PROFILES: dict[str, str] = {
     "composer-2.5": "mechanical",
     "gemini-3.5-flash": "mechanical",
     "gemini-3.6-flash": "mechanical",
+    "gemini-3.7-flash": "mechanical",
+    "kimi-k2.7-code": "mechanical",
+    "claude-haiku-4-5": "mechanical",
     "claude-opus-5": "reasoner",
     "claude-opus-4-8": "reasoner",
     "claude-sonnet-4-6": "reasoner",
     "claude-sonnet-5": "reasoner",
     "gpt-5.5": "reasoner",
+    "glm-5.2": "reasoner",
     "grok-4.6": "reasoner",
 }
 
@@ -30,7 +34,7 @@ def test_model_capability_default_instruction_profile_is_mechanical() -> None:
 
 
 def test_governed_rows_carry_instruction_profile_classifications() -> None:
-    assert len(CURSOR_MODEL_CAPABILITIES) == 13
+    assert len(CURSOR_MODEL_CAPABILITIES) == 17
     for model_id, expected in _GOVERNED_INSTRUCTION_PROFILES.items():
         assert CURSOR_MODEL_CAPABILITIES[model_id].instruction_profile == expected
 
@@ -48,10 +52,10 @@ def test_model_capability_frozen_round_trip() -> None:
         cap.instruction_profile = "reasoner"  # type: ignore[misc]
 
 
-def test_opus_fixed_params_carries_cyber_outside_default_variant() -> None:
+def test_opus_default_variant_includes_cyber_for_live_parity() -> None:
     cap = CURSOR_MODEL_CAPABILITIES["claude-opus-4-8"]
     assert cap.fixed_params == {"cyber": "false"}
-    assert "cyber" not in cap.default_variant
+    assert cap.default_variant["cyber"] == "false"
 
 
 def test_to_model_card_dict_projects_knobs_and_fixed_params() -> None:
@@ -74,11 +78,14 @@ def test_effort_knob_name_prefers_effort_then_reasoning() -> None:
     assert effort_knob_name("claude-opus-5") == "effort"
     assert effort_knob_name("gpt-5.6-sol") == "reasoning"
     assert effort_knob_name("composer-2.5") is None
-    assert effort_knob_name("gemini-3.6-flash") is None
+    assert effort_knob_name("gemini-3.6-flash") == "effort"
+    assert effort_knob_name("gemini-3.7-flash") == "effort"
 
 
 def test_suggest_effort_knobs_accepted_and_empty() -> None:
     assert suggest_effort_knobs("claude-opus-5", "low") == {"effort": "low"}
     assert suggest_effort_knobs("gpt-5.6-sol", "low") == {"reasoning": "low"}
+    assert suggest_effort_knobs("gpt-5.6-sol", "xhigh") == {"reasoning": "xhigh"}
+    assert suggest_effort_knobs("grok-4.6", "xhigh") == {"effort": "xhigh"}
     assert suggest_effort_knobs("grok-4.6", "max") == {}
     assert suggest_effort_knobs("composer-2.5", "low") == {}

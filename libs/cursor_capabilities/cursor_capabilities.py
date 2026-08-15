@@ -27,7 +27,7 @@ __all__ = [
     "to_model_card_dict",
 ]
 
-DESCRIPTOR_VERSION: Final[str] = "2026-07-21"
+DESCRIPTOR_VERSION: Final[str] = "2026-08-15"
 
 # Emergency denylist for cursor-sdk substrate admission. Entries are bare wire ids
 # (no cursor/ prefix); membership is checked after prefix strip + lowercase.
@@ -139,6 +139,7 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         },
         fixed_params={"cyber": "false"},
         default_variant={
+            "cyber": "false",
             "thinking": "true",
             "context": "1m",
             "effort": "high",
@@ -155,6 +156,7 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         },
         fixed_params={"cyber": "false"},
         default_variant={
+            "cyber": "false",
             "thinking": "true",
             "context": "1m",
             "effort": "high",
@@ -225,7 +227,7 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         knobs={
             "context": KnobSpec(accepted=("272k", "1m")),
             "reasoning": KnobSpec(
-                accepted=("none", "low", "medium", "high", "extra-high")
+                accepted=("none", "low", "medium", "high", "xhigh", "max")
             ),
             "fast": KnobSpec(accepted=("false", "true")),
         },
@@ -236,7 +238,7 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         knobs={
             "context": KnobSpec(accepted=("272k", "1m")),
             "reasoning": KnobSpec(
-                accepted=("none", "low", "medium", "high", "extra-high")
+                accepted=("none", "low", "medium", "high", "xhigh", "max")
             ),
             "fast": KnobSpec(accepted=("false", "true")),
         },
@@ -247,7 +249,7 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         knobs={
             "context": KnobSpec(accepted=("272k", "1m")),
             "reasoning": KnobSpec(
-                accepted=("none", "low", "medium", "high", "extra-high")
+                accepted=("none", "low", "medium", "high", "xhigh", "max")
             ),
             "fast": KnobSpec(accepted=("false", "true")),
         },
@@ -258,7 +260,9 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
     # Catalog default is fast=true; override via model_knobs when non-fast is wanted.
     "grok-4.6": ModelCapability(
         knobs={
-            "effort": KnobSpec(accepted=("low", "medium", "high"), default="high"),
+            "effort": KnobSpec(
+                accepted=("low", "medium", "high", "xhigh"), default="high"
+            ),
             "fast": KnobSpec(accepted=("false", "true"), default="true"),
         },
         default_variant={
@@ -272,10 +276,41 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         default_variant={},
         instruction_profile="mechanical",
     ),
-    # GA 2026-07-21 — successor to gemini-3.5-flash; same cursor-sdk knob surface.
+    # GA 2026-07-21 — successor to gemini-3.5-flash; effort knob includes minimal
+    # (capability subset — not WIRE_LADDER vocabulary).
     "gemini-3.6-flash": ModelCapability(
+        knobs={
+            "effort": KnobSpec(
+                accepted=("minimal", "low", "medium", "high"), default="high"
+            ),
+        },
+        default_variant={"effort": "high"},
+        instruction_profile="mechanical",
+    ),
+    "gemini-3.7-flash": ModelCapability(
+        knobs={
+            "effort": KnobSpec(accepted=("low", "medium", "high"), default="high"),
+        },
+        default_variant={"effort": "high"},
+        instruction_profile="mechanical",
+    ),
+    "glm-5.2": ModelCapability(
+        knobs={
+            "reasoning": KnobSpec(accepted=("high", "max"), default="high"),
+        },
+        default_variant={"reasoning": "high"},
+        instruction_profile="reasoner",
+    ),
+    "kimi-k2.7-code": ModelCapability(
         knobs={},
         default_variant={},
+        instruction_profile="mechanical",
+    ),
+    "claude-haiku-4-5": ModelCapability(
+        knobs={
+            "thinking": KnobSpec(accepted=("false", "true"), default="true"),
+        },
+        default_variant={"thinking": "true"},
         instruction_profile="mechanical",
     ),
 }
