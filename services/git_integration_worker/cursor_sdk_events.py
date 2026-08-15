@@ -40,14 +40,29 @@ try:
     from mcp_events import record
 except ImportError:
 
-    def record(signal: str, **payload: Any) -> None:  # type: ignore[misc]
+    def record(  # type: ignore[misc]
+        signal: str,
+        *,
+        extra_payload: dict[str, Any] | None = None,
+        **payload: Any,
+    ) -> None:
         if _uds_publisher is None:
             return
-        _uds_publisher(signal, dict(payload))
+        _uds_publisher(signal, {**payload, **(extra_payload or {})})
 
 
 def _emit(event: Event) -> None:
-    record(event.signal, **event.payload)
+    """Publish ``event`` without kwargs-colliding ``record(signal, **payload)``.
+
+    ``giw.cursor_auto.hop_cadence_refuse`` carries a payload field named
+    ``signal`` (liveness evidence). Splatting that into ``record`` raises
+    ``TypeError: record() got multiple values for argument 'signal'``.
+    """
+    payload = dict(event.payload)
+    extra = {}
+    if "signal" in payload:
+        extra["signal"] = payload.pop("signal")
+    record(event.signal, extra_payload=extra or None, **payload)
 
 
 def emit_frontier_event(event: Event) -> None:

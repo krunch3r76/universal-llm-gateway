@@ -129,13 +129,23 @@ class _UDSPublisher:
 _publisher: _UDSPublisher | None = _UDSPublisher(_EVENTS_SOCK) if _ENABLED else None
 
 
-def record(signal: str, *, role: str = "observation", **payload: Any) -> None:
+def record(
+    signal: str,
+    *,
+    role: str = "observation",
+    extra_payload: dict[str, Any] | None = None,
+    **payload: Any,
+) -> None:
     """Publish a structured event to the event service.
 
     ``role`` selects the retention tier (default ``observation`` = session cap).
     Pass ``role="coordination"`` for forensic events that must survive the
     7-day age cap (request lifecycle, security audit). See libs/event_store
     four-tier retention model.
+
+    ``extra_payload`` merges after ``**payload`` so reserved kwargs such as
+    a payload field named ``signal`` can persist without colliding with this
+    function's first parameter.
 
     Signals follow dotted convention: mcp.{domain}.{action}
 
@@ -150,7 +160,11 @@ def record(signal: str, *, role: str = "observation", **payload: Any) -> None:
     if _publisher is None:
         return
 
-    merged_payload = {**current_request_metadata(), **payload}
+    merged_payload = {
+        **current_request_metadata(),
+        **payload,
+        **(extra_payload or {}),
+    }
     event: dict[str, Any] = {
         "signal": signal,
         "source": "mcp-server",
