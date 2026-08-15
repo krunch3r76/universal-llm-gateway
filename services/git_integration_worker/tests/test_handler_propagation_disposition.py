@@ -274,9 +274,15 @@ def test_execution_for_manage_deferred_with_intent_is_queued() -> None:
         action="sync_restart",
         proof_class="process_live",
     )
-    with patch(
-        "services.git_integration_worker.cursor_auto.handler_propagation.set_defer_reason",
-    ) as mock_set:
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.handler_propagation.set_defer_reason",
+        ) as mock_set,
+        patch(
+            "charter_runner_store.propagation_validation.bind_validation_to_row",
+            return_value=1,
+        ),
+    ):
         result = execution_for_manage_deferred(
             row,
             row_id="git_integration_worker:deadbeef:sync_restart",
@@ -284,11 +290,12 @@ def test_execution_for_manage_deferred_with_intent_is_queued() -> None:
                 "status": "deferred",
                 "state": "draining",
                 "restart_intent_id": "intent-abc",
+                "activation_validation_id": "val-abc",
                 "reason": "draining; completion delivered via git_worker.drain events",
             },
         )
     assert result["status"] == "queued"
-    assert "will fire" in result["next"].lower()
+    assert "supervisor-owned" in result["next"].lower()
     mock_set.assert_called_once_with(
         "git_integration_worker:deadbeef:sync_restart", "manage_queued_drain"
     )

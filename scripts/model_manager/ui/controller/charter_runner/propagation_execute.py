@@ -547,9 +547,13 @@ async def execute_propagation_plan(
     )
 
     def _pending_activation_row(row) -> bool:
-        if pending_validation_for_row(row.row_id) is not None:
+        bound = pending_validation_for_row(row.row_id)
+        if bound is not None:
             return True
-        return pending_unbound_validation_for_ref(row.service, row.code_ref) is not None
+        try:
+            return pending_unbound_validation_for_ref(row.service, row.code_ref) is not None
+        except Exception:
+            return False
 
     # D2: retire ancestor-satisfied rows (incl. harvest_wanted) before the fire
     # set. Equal-ref still enters harvest — post-restart close needs a
