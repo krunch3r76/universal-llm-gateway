@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from deploy_identity.code_version import process_age_s, resolve_code_version
 
+from .controller.fleet_liveness import build_snapshot
 from .controller.restart_drain import (
     BackgroundCompleteHook,
     BackgroundFailedHook,
@@ -25,14 +26,13 @@ from .controller.restart_drain import (
     run_gated_drain_supervised,
     run_gated_drain_supervised_blocking,
 )
+from .controller.restart_intent_consumer import project_restart_intent_consumer
 from .controller.restart_intent_store import (
     STATUS_CANCELLED,
     STATUS_PENDING_DRAIN,
     RestartIntentCancelError,
     RestartIntentStore,
-    intent_status_view,
 )
-from .controller.restart_intent_consumer import project_restart_intent_consumer
 from .controller.restart_window_ctl import lifecycle_with_restart_window
 from .lifecycle_envelope import start_envelope
 
@@ -96,6 +96,15 @@ async def execute(
     svc = ctl.service_state
 
     match method:
+        case "fleet_liveness":
+            unexpected = sorted(params)
+            if unexpected:
+                raise ValueError(
+                    "fleet_liveness accepts no parameters: "
+                    + ", ".join(unexpected)
+                )
+            return await asyncio.to_thread(build_snapshot, ctl.root, svc)
+
         case "status":
             infos = await asyncio.to_thread(svc.check_all)
             return {

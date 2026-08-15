@@ -58,9 +58,9 @@ def test_code_primary_tools_match_surface_binding(main_server_state: dict) -> No
 
 
 def test_code_primary_tools_count(main_server_state: dict) -> None:
-    """D-T2: code surface exposes 14 primary tools; cap ≤ 24 (D3/P10)."""
+    """D-T2: code surface exposes 17 primary tools; cap ≤ 24 (D3/P10)."""
     primary = main_server_state["primary_tools"]
-    assert len(primary) == 14
+    assert len(primary) == 17
     assert len(primary) <= 24
     assert "skill_suggest" not in primary
 

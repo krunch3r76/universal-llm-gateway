@@ -25,6 +25,7 @@ domains:
 - panel_dispatch
 - cortex_brief
 - project_ask
+- fleet_liveness
 tools:
 - canonical_name: cortex_entities
   domain: cortex
@@ -3785,6 +3786,30 @@ tools:
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-22
+- canonical_name: fleet_liveness_snapshot
+  domain: fleet_liveness
+  operation: snapshot
+  dispatcher_call_shape:
+    tool: fleet_liveness
+    dispatch_key: op
+    dispatch_value: snapshot
+  flat_call_shape:
+    tool: fleet_liveness
+    substrate_qualified: user-vortex__fleet_liveness
+  fol_descriptor: "Fresh manage-authoritative evidence joins dirty master paths to
+    service-specific load surfaces. Container-copy paths are content-hashed at the
+    running load location; host-process time order and bind-mounted bytes remain
+    explicitly indeterminate. See agent_skill:manage."
+  json_schema:
+    type: object
+    properties: {}
+  skill_uri: agent_skill:manage
+  seat_visibility:
+  - mcp
+  - mcp_claude
+  mandate_safety: read_only
+  cache_priority: on_demand
+  introduced: '2026-08-15'
 - canonical_name: manage_health
   domain: manage
   operation: health
@@ -4913,6 +4938,9 @@ domain_endpoints:
     cursor_request:
     - life
     - code
+    fleet_liveness:
+    - life
+    - code
     imprint:
     - life
     delegate:
@@ -4934,6 +4962,7 @@ surface_primary_domains:
   - imprint
   - delegate
   - notify
+  - fleet_liveness
   code:
   - cortex
   - cortex_brief
@@ -4951,6 +4980,7 @@ surface_primary_domains:
   - team_dispatch
   - panel_dispatch
   - project_ask
+  - fleet_liveness
 cortex_families:
   defaults:
     read:

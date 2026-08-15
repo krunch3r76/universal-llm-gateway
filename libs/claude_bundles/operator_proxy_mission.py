@@ -51,6 +51,7 @@ LIFE_SURFACE_LEGAL_TOOLS: frozenset[str] = frozenset(
         "retrieve",
         "tool_search",
         "dispatch",
+        "fleet_liveness",
         "imprint",
         "delegate",
         "notify",

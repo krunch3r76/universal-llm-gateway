@@ -29,6 +29,7 @@ LIFE_PRIMARY = frozenset(
         "retrieve",
         "tool_search",
         "dispatch",
+        "fleet_liveness",
         "imprint",
         "delegate",
         "notify",
