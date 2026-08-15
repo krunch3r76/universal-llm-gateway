@@ -68,6 +68,7 @@ def test_web_orientation_retains_full_doctrine_coverage() -> None:
         "## MCP server primary",
         "## Dispatch & Consult",
         "## Consult routing",
+        "## Cursor model economics",
         "## RAG corpus retrieval",
         "## Git posture & liveness",
         "## Entity granularity",

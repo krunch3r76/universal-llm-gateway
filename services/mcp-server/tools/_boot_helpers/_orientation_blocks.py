@@ -131,6 +131,15 @@ _LIVENESS_BLOCK = """\
 A change is LIVE only when LOADED into the running process at its last deploy/restart — git commit/master is neither necessary nor sufficient. Before claiming a surface changed, ask: (1) WHICH substrate? (2) did its LOAD EVENT fire? (3) what does the LIVE PROBE say? — service behavior→`sync_restart`+observability · MCP surface→mcp restart+boot manifest · routing→`/v1/models` · agent-context→`cortex_brief`. ¬ infer existence/canonicality/done-ness from git; commit is NOT a completion gate.
 Detail: skill `git-posture` (`agent_skill:git-posture`). Tag: `[universal:git-posture]`."""
 
+# inject-channel block key: cursor-model-economics-block
+_CURSOR_MODEL_ECONOMICS_BLOCK = """\
+## Cursor model economics — load-bearing facts
+Detail: Use the `cursor-model-economics` skill (shared_sync — CDP + Cursor).
+- **T1 conductor:** `cursor/claude-sonnet-5` @ `effort=max` (`thinking=true`, `context=1m`) — ¬ Grok default.
+- **Costs:** `config/model_rates.yaml` ($/M) — ¬ on model cards.
+- **Auto/Router:** Teams/Enterprise only; ¬ prompt-nudge; ULG dense work pins Composer (¬ `desired_model=auto`).
+- **GPT knobs:** `reasoning` — ¬ `extra-high`; Grok accepts `xhigh` live but Auto/conductor policy caps at `high`."""
+
 # Compact index — full playbook is skill `consult-routing` (current superset).
 # Web-dedup (friction 25727 follow-on): the transport-preflight mandate is GATES
 # §2 (on every seat) and the long-form routing lives in the opctx sidecar's
@@ -304,6 +313,7 @@ _CORE_BLOCK_ORDER: dict[str, tuple[str, ...]] = {
         "mcp-binding-block",
         "mcp-server-primary-block",
         "dispatch-consult-block",
+        "cursor-model-economics-block",
         "rag-scope-awareness-block",
         "liveness-block",
         "entity-hierarchy-block",
@@ -314,6 +324,7 @@ _CORE_BLOCK_ORDER: dict[str, tuple[str, ...]] = {
         "mcp-server-primary-block",
         "dispatch-consult-block",
         "consult-routing-gate-block",
+        "cursor-model-economics-block",
         "rag-scope-awareness-block",
         "liveness-block",
         "entity-hierarchy-block",
@@ -346,6 +357,7 @@ def _orientation_block_bodies(surface: Literal["life", "code"]) -> dict[str, str
         "consult-routing-gate-block": _CONSULT_ROUTING_GATE,
         "rag-scope-awareness-block": _RAG_SCOPE_AWARENESS_BLOCK,
         "liveness-block": _LIVENESS_BLOCK,
+        "cursor-model-economics-block": _CURSOR_MODEL_ECONOMICS_BLOCK,
         "entity-hierarchy-block": _ENTITY_HIERARCHY_BLOCK,
         "capability-verify-block": _SEAT_CAPABILITY_VERIFY_BLOCK,
         "session-close-web-block": _session_close_web_body(),

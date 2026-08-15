@@ -11,6 +11,7 @@ ORIENTATION_BLOCK_SKILL_MAP: dict[str, tuple[str, ...]] = {
     "dispatch-consult-block": ("consult-routing", "dispatch-shape"),
     "consult-routing-gate-block": ("consult-routing",),
     "liveness-block": ("git-posture",),
+    "cursor-model-economics-block": ("cursor-model-economics",),
     "entity-hierarchy-block": ("entity-lifecycle-discipline",),
     "session-close-web-block": (
         "session-close",
@@ -34,6 +35,7 @@ _ORIENTATION_CORE_BLOCKS: frozenset[str] = frozenset(
         "dispatch-consult-block",
         "consult-routing-gate-block",
         "rag-scope-awareness-block",
+        "cursor-model-economics-block",
         "liveness-block",
         "entity-hierarchy-block",
     }

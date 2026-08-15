@@ -54,11 +54,11 @@ the non-primary gate below). Full gate + verification: `subagent-strategy`.
 | Need | Path | Autonomy |
 |---|---|---|
 | Mechanical implement | `team_dispatch(op=generate, seat=cursor-sdk)` → `cursor/composer-2.5` | Autonomous (default) |
-| Investigate / judgment | `cursor/grok-4.6` effort ∈ {low, medium, **high**} (+ fast) — ¬ xhigh/max | In-seat or gated seat switch |
+| Investigate / judgment | `cursor/grok-4.6` effort ∈ {low, medium, **high**} (+ fast) — live capability accepts **`xhigh`**, but **standing policy** for Auto / conductor still caps Grok at **`high`** (reliability); ¬ widen the Auto effort clamp | In-seat or gated seat switch |
 | Greater reasoning | **CDP** via `team_dispatch(model=cdp/opus-5)` or `team_dispatch(model=cdp/fable)` when outside check / Opus-unsure binder (`project_ask` = **escape only** — IF6 / satellite-direct; missions use `purpose=operator-proxy` on `team_dispatch`); cursor usually prompts Fable | **AUTONOMOUS** under trigger below |
 | Premium metered | `cursor/claude-opus-5` effort ∈ {low, medium, high, **xhigh**, **max**} | **INFORM-THEN-PROCEED** when escalation warrants (live checkout / premium judgment) — one announce line; ¬ wait for approval by default. **Wait** if the operator paused premium spend, or for `xhigh`/`max` without a standing trigger |
 
-Asymmetric effort: Grok tops at `high`; only Opus has `xhigh`/`max`. Fable = CDP/web product only (¬ `cursor/*` Fable, ¬ `anthropic/*` API).
+Asymmetric effort: Grok **card/API** tops at `xhigh`; **policy** caps Auto/conductor/nested investigate at `high`. Only Opus has `xhigh`/`max` on the premium ladder. Fable = CDP/web product only (¬ `cursor/*` Fable, ¬ `anthropic/*` API).
 `anthropic/*` API **PROHIBITED** — see `anthropic-dispatch-authorization`.
 Doctrine: `decision:operator-proxy-seat-posture` (Fable encourage + opus inform).
 

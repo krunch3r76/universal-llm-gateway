@@ -14,6 +14,7 @@ Binds web-anthropic (Cowork / life MCP) during operator-proxy episodes.
 | Work posting + tick admit | `cortex://notes/system/specs/cursor-auto-tick-work-posting.md` |
 | Cursor mechanism — admit, lease/nest, budget, supersede revert, chips | `operator-proxy-substrate` |
 | CDP/Jupiter transport, harvest, converse, skills | `claude-ai-cdp-navigation` |
+| Cursor model economics ($/M, T0–T3, Auto/Router, context billing) | `cursor-model-economics` |
 | Cursor co-developer register · standing-root CHECKPOINT | `operator-posture` Rule 7 · `agent-bus-discipline` |
 
 **`cursor_only` slugs are not attachable on this seat** — `claude-ai-cdp-navigation`,

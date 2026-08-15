@@ -67,9 +67,17 @@ skills:
   cdp-operator-proxy:
     surface_class: shared_sync
     mcp_surface_required: life
+  cursor-model-economics:
+    surface_class: shared_sync
+    mcp_surface_required: none
   mission-operator:
     surface_class: shared_sync
     mcp_surface_required: life
+  conductor:
+    # cursor-sdk mission operator of a continuity root (off-tick G-row drive).
+    # cursor_only: IDE/plugin census; needs team_dispatch on code MCP.
+    surface_class: cursor_only
+    mcp_surface_required: code
   orchestration-lanes:
     surface_class: shared_sync
     mcp_surface_required: life
