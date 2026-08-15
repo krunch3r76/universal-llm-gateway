@@ -487,6 +487,7 @@ def FrontierSdkWorkerDispatched(  # noqa: N802
     dispatch_id: str,
     thread_id: str,
     execution_id: str,
+    request_id: str | None = None,
     seat: str = "cursor-sdk",
     admitted_via: str | None = None,
     asked_by: str | None = None,
@@ -509,6 +510,8 @@ def FrontierSdkWorkerDispatched(  # noqa: N802
     }
     if admitted_via is not None:
         payload["admitted_via"] = admitted_via
+    if request_id is not None:
+        payload["request_id"] = request_id
     if asked_by is not None:
         payload["asked_by"] = asked_by
     if purpose is not None:
@@ -527,6 +530,7 @@ def emit_sdk_worker_dispatched(
     dispatch_id: str,
     thread_id: str,
     execution_id: str,
+    request_id: str | None = None,
     admitted_via: str | None = None,
     asked_by: str | None = None,
     purpose: str | None = None,
@@ -546,6 +550,7 @@ def emit_sdk_worker_dispatched(
             dispatch_id=dispatch_id,
             thread_id=thread_id,
             execution_id=execution_id,
+            request_id=request_id,
             seat=seat,
             admitted_via=admitted_via,
             asked_by=asked_by,

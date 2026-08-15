@@ -487,6 +487,7 @@ def _maybe_emit_giw_dispatched(
         dispatch_id=req.dispatch_id,
         thread_id=req.thread_id,
         execution_id=req.execution_id,
+        request_id=req.request_id,
         admitted_via=req.admitted_via,
         asked_by=association["asked_by"],
         purpose=association["purpose"],
