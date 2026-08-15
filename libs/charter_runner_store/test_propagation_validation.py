@@ -7,6 +7,7 @@ from charter_runner_store.propagation_liveness import CodeRefLiveness
 
 
 def test_validation_record_and_current_projection(monkeypatch, tmp_path):
+    """Recorded validation projects to current running_committed_code when live probe matches."""
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
     validation_id = propagation_validation.record_validation(
         service="agent_bus",
@@ -39,6 +40,7 @@ def test_validation_record_and_current_projection(monkeypatch, tmp_path):
 
 
 def test_unknown_probe_never_promotes_stale_record(monkeypatch, tmp_path):
+    """Unknown live probe keeps current_validation at unknown instead of promoting stale validated record."""
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
     propagation_validation.record_validation(
         service="agent_bus",

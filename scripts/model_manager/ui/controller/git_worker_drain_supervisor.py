@@ -205,7 +205,7 @@ class GitWorkerDrainSupervisor:
         intent.worker_id = worker_id
         intent.worker_started_at = worker_started_at
         started_mono = snapshot.get("drain_started_monotonic")
-        if isinstance(started_mono, (int, float)):
+        if isinstance(started_mono, int | float):
             self._settle_boundary_monotonic = float(started_mono)
         elif self._settle_boundary_monotonic is None:
             self._settle_boundary_monotonic = time.monotonic()

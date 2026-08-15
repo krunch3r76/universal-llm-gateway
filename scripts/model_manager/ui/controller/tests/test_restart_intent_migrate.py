@@ -13,6 +13,7 @@ from scripts.model_manager.ui.controller.restart_intent_states import (
 
 
 def test_migration_allows_verifying_activation(tmp_path) -> None:
+    """Schema migration preserves verifying_activation status rows across re-apply."""
     db = tmp_path / "restart-intents.db"
     conn = sqlite3.connect(db)
     conn.executescript(
