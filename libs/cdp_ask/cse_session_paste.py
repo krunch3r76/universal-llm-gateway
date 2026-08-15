@@ -15,7 +15,7 @@ from cdp_ask.cse_session_events import (
     mcp_cse_session_pasted,
 )
 from cdp_ask.cse_session_models import PasteRequest, PasteResponse
-from cdp_ask.cse_session_provenance import _self_supersession
+from cdp_ask.cse_session_provenance import self_supersession
 from cdp_ask.execution_store import ExecutionStore
 from cdp_ask.followup import execute_followup
 from cdp_ask.followup_receipts import receipt_meets
@@ -98,7 +98,7 @@ async def execute_paste(
     if not target_reg:
         return _protocol_error("not_attached")
 
-    if _self_supersession(req.caller_registration_id, target_reg):
+    if self_supersession(req.caller_registration_id, target_reg):
         emit(
             mcp_cse_session_conflict(
                 reason="self_supersession",

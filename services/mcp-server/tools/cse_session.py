@@ -25,6 +25,7 @@ def _relay(
     path: str,
     *,
     json_body: dict[str, Any] | None = None,
+    params: dict[str, Any] | None = None,
     timeout_s: float = 60.0,
 ) -> dict[str, Any]:
     base = _project_ask_url()
@@ -39,7 +40,7 @@ def _relay(
     url = f"{base.rstrip('/')}{path}"
     try:
         with httpx.Client(timeout=timeout_s) as client:
-            resp = client.request(method, url, json=json_body)
+            resp = client.request(method, url, json=json_body, params=params)
             if resp.status_code in {403, 404, 409, 424}:
                 if resp.content:
                     body = resp.json()
@@ -119,26 +120,7 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
                 }.items()
                 if v
             }
-            base = _project_ask_url()
-            if not base:
-                return {
-                    "error": (
-                        "PROJECT_ASK_URL not configured. Start the cdp-ask satellite."
-                    )
-                }
-            url = f"{base.rstrip('/')}/v1/cse-session/provenance"
-            try:
-                with httpx.Client(timeout=60.0) as client:
-                    resp = client.get(url, params=params)
-                    resp.raise_for_status()
-                    result = resp.json()
-            except httpx.RequestError as exc:
-                return {"error": f"cse-session unreachable: {exc}"}
-            except httpx.HTTPStatusError as exc:
-                return {
-                    "error": f"cse-session HTTP {exc.response.status_code}",
-                    "detail": exc.response.text[:400],
-                }
+            result = _relay("GET", "/v1/cse-session/provenance", params=params)
             record(
                 "mcp.cse_session.provenance",
                 state=result.get("state"),

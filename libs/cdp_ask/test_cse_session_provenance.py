@@ -5,10 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from claude_bundles import cse_provenance
 
 from cdp_ask.cse_session_models import ProvenanceQuery
 from cdp_ask.cse_session_provenance import resolve_public_provenance
-from claude_bundles import cse_provenance
 
 
 @pytest.fixture(autouse=True)

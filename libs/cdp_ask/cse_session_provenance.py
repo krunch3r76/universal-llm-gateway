@@ -40,7 +40,7 @@ async def _execution_registration(
     return record.registration_id
 
 
-def _self_supersession(
+def self_supersession(
     predecessor_registration_id: str | None,
     successor_registration_id: str | None,
     *,
@@ -116,7 +116,7 @@ async def resolve_public_provenance(
     store: ExecutionStore | None = None,
 ) -> ProvenanceResponse | dict[str, Any]:
     """Resolve provenance or return typed conflict / candidate list."""
-    if _self_supersession(
+    if self_supersession(
         query.predecessor_registration_id,
         query.successor_registration_id,
         execution_id=query.execution_id,
