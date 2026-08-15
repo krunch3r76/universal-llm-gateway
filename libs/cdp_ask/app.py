@@ -214,12 +214,12 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         return result.model_dump(exclude_none=True)
 
     @app.post("/v1/cse-session/paste")
-    async def cse_session_paste(req: PasteRequest) -> JSONResponse | dict[str, object]:
+    async def cse_session_paste(req: PasteRequest) -> JSONResponse:
         """Authorized paste with idempotent replay — receipt never implies ACK."""
         verify_harvest_root()
         result = await execute_paste(req, execution_store)
         if isinstance(result, dict):
-            return result
+            return JSONResponse(status_code=200, content=result)
         if not result.ok and result.code == "paste_unauthorized":
             return JSONResponse(
                 status_code=403,
@@ -231,7 +231,9 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
                     "data": {},
                 },
             )
-        return result.model_dump(exclude_none=True)
+        return JSONResponse(
+            status_code=200, content=result.model_dump(exclude_none=True)
+        )
 
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
