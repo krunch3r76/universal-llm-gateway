@@ -74,6 +74,7 @@ def build_briefing_block(
                 "",
                 "Seed: work-item-seed-path S1→S6; Mode B ⇒ same-turn consult admit",
                 "or named halt. CLOSEOUT: slug + consult URI + entry gate.",
+                "Standing mission: attended-charter-birth-with-cursor.md (7281).",
             ]
         )
     elif raw == "confer":
@@ -81,6 +82,7 @@ def build_briefing_block(
             [
                 "",
                 "Confer: codebase-grounded recommendation; ¬ front-door routing poll.",
+                "Standing mission: attended-charter-birth-with-cursor.md (7281).",
             ]
         )
     block = "\n".join(lines)

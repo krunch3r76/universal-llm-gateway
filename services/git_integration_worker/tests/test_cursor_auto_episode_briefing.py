@@ -67,6 +67,8 @@ def test_build_briefing_block_seed_stanza():
     assert "work-item-seed-path" in block
     assert "S1→S6" in block
     assert "entry gate" in block
+    assert "attended-charter-birth-with-cursor.md" in block
+    assert "7281" in block
     assert len(block.splitlines()) <= MAX_BRIEFING_LINES
 
 
