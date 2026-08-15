@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from services.git_integration_worker.cursor_sdk_events import FrontierSdkWorkerCompleted
+from services.git_integration_worker.cursor_sdk_events import (
+    FrontierSdkWorkerCompleted,
+    FrontierSdkWorkerDispatched,
+    FrontierSdkWorkerResumed,
+)
 
 
 def test_completed_event_carries_usage_and_knobs() -> None:
@@ -44,9 +48,21 @@ def test_completed_event_null_usage_is_explicit() -> None:
     assert "model_knobs_requested" not in event.payload
 
 
-def test_resumed_event_factory() -> None:
-    from services.git_integration_worker.cursor_sdk_events import FrontierSdkWorkerResumed
+def test_dispatched_event_carries_request_id() -> None:
+    event = FrontierSdkWorkerDispatched(
+        dispatch_id="req1-abc12345",
+        thread_id="5867",
+        execution_id="exec-1",
+        request_id="ledger-req-abc123",
+        admitted_via="cursor-auto",
+        seat="cursor-sdk",
+    )
+    assert event.signal == "frontier.sdk.worker.dispatched"
+    assert event.payload["request_id"] == "ledger-req-abc123"
+    assert event.payload["admitted_via"] == "cursor-auto"
 
+
+def test_resumed_event_factory() -> None:
     event = FrontierSdkWorkerResumed(
         dispatch_id="child",
         resume_of="parent",

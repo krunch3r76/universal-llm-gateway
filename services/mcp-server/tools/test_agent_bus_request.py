@@ -277,6 +277,59 @@ def test_request_transient_probe_then_arms():
     )
 
 
+def test_request_posted_emit_carries_ledger_request_id():
+    """Posted signal must carry the resolved ledger request_id for cursor-auto trace."""
+    send_payload = {
+        "send_path": "new_thread",
+        "thread": {"id": "55", "slug": "req-index"},
+        "turn": {"id": 1, "thread": "55", "turn_number": 1},
+    }
+    with (
+        patch("tools.agent_bus.request._send_dispatch", return_value=send_payload),
+        patch(
+            "tools.agent_bus.request.probe_auto_liveness",
+            return_value={"live": True, "reason": "ok", "attempts": 1, "elapsed_s": 0.0},
+        ),
+        patch(
+            "tools.agent_bus.request.enqueue_auto_job",
+            return_value={
+                "ok": True,
+                "handler_status": "auto-admit-armed",
+                "enqueue": {"ok": True},
+            },
+        ),
+        patch("tools.agent_bus.request.record") as record_mock,
+    ):
+        result = _request_impl(
+            new_slug="req-index",
+            thread=None,
+            to="cursor",
+            subject="DIRECTIVE",
+            body="TYPE: DIRECTIVE",
+            from_agent="web-anthropic",
+            tags=None,
+            sidecar_content=None,
+            sidecar_slug=None,
+            desired_model="auto",
+            desired_effort="medium",
+            contract="answer",
+            require_attended=False,
+            request_id="ledger-req-abc123",
+            after_turn=0,
+            summary=None,
+        )
+    assert result["request_id"] == "ledger-req-abc123"
+    record_mock.assert_called_once_with(
+        "mcp.agentbus.request.posted",
+        thread="55",
+        turn_number=1,
+        handler_status="auto-admit-armed",
+        desired_model="auto",
+        contract="answer",
+        request_id="ledger-req-abc123",
+    )
+
+
 def test_request_promotes_same_thread_lane_counts():
     """Lane discriminant is reachable without digging past enqueue.enqueue."""
     send_payload = {

@@ -269,6 +269,8 @@ def _request_impl(
     }
     if lane:
         posted_kw["lane"] = lane
+    if request_id:
+        posted_kw["request_id"] = request_id
     record("mcp.agentbus.request.posted", **posted_kw)
     if capture_identity and (cse_chat_url or cse_registration_id):
         from claude_bundles.cse_session_obligations import stamp_session_ids

@@ -328,6 +328,7 @@ def test_maybe_emit_giw_dispatched_emits_for_cursor_auto() -> None:
         model="cursor/composer-2.5",
         dispatch_id="disp-nested",
         execution_id="exec-disp-nested",
+        request_id="ledger-req-abc123",
         message="hello",
         admitted_via="cursor-auto",
     )
@@ -335,4 +336,13 @@ def test_maybe_emit_giw_dispatched_emits_for_cursor_auto() -> None:
         "services.git_integration_worker.routes.cursor_sdk.emit_sdk_worker_dispatched",
     ) as emit_mock:
         _maybe_emit_giw_dispatched(req=req, packet_text="")
-    emit_mock.assert_called_once()
+    emit_mock.assert_called_once_with(
+        dispatch_id="disp-nested",
+        thread_id="5867",
+        execution_id="exec-disp-nested",
+        request_id="ledger-req-abc123",
+        admitted_via="cursor-auto",
+        asked_by=emit_mock.call_args.kwargs["asked_by"],
+        purpose=emit_mock.call_args.kwargs["purpose"],
+        story_id=emit_mock.call_args.kwargs["story_id"],
+    )
