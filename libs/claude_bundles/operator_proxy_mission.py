@@ -56,6 +56,7 @@ LIFE_SURFACE_LEGAL_TOOLS: frozenset[str] = frozenset(
         "imprint",
         "delegate",
         "notify",
+        "cse_session",
     }
 )
 

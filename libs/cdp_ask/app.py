@@ -26,6 +26,10 @@ from cdp_ask.attended_operator import (
     resolve_attended_operator,
     success_to_http_body,
 )
+from cdp_ask.cse_session_harvest import execute_harvest
+from cdp_ask.cse_session_models import HarvestRequest, PasteRequest, ProvenanceQuery
+from cdp_ask.cse_session_paste import execute_paste
+from cdp_ask.cse_session_provenance import resolve_public_provenance
 from cdp_ask.execution_store import ExecutionStore
 from cdp_ask.followup import execute_followup
 from cdp_ask.followup_events import (
@@ -179,6 +183,55 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         """
         verify_harvest_root()
         return await execute_followup(req, execution_store)
+
+    @app.get("/v1/cse-session/provenance")
+    async def cse_session_provenance(
+        chat_url: str | None = None,
+        registration_id: str | None = None,
+        execution_id: str | None = None,
+        predecessor_registration_id: str | None = None,
+        successor_registration_id: str | None = None,
+    ) -> dict[str, object]:
+        """Public provenance read — claim vs proven without collapsing registry parent."""
+        verify_harvest_root()
+        query = ProvenanceQuery(
+            chat_url=chat_url,
+            registration_id=registration_id,
+            execution_id=execution_id,
+            predecessor_registration_id=predecessor_registration_id,
+            successor_registration_id=successor_registration_id,
+        )
+        result = await resolve_public_provenance(query, store=execution_store)
+        if isinstance(result, dict) and "candidates" in result:
+            return result
+        return result.model_dump(exclude_none=True)
+
+    @app.post("/v1/cse-session/harvest")
+    async def cse_session_harvest(req: HarvestRequest) -> dict[str, object]:
+        """Bounded read-only harvest — no submit, followup, abort, or Chrome relaunch."""
+        verify_harvest_root()
+        result = await execute_harvest(req, execution_store)
+        return result.model_dump(exclude_none=True)
+
+    @app.post("/v1/cse-session/paste")
+    async def cse_session_paste(req: PasteRequest) -> JSONResponse | dict[str, object]:
+        """Authorized paste with idempotent replay — receipt never implies ACK."""
+        verify_harvest_root()
+        result = await execute_paste(req, execution_store)
+        if isinstance(result, dict):
+            return result
+        if not result.ok and result.code == "paste_unauthorized":
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "code": result.code,
+                    "message": result.detail or result.code,
+                    "source": "gateway",
+                    "retryable": False,
+                    "data": {},
+                },
+            )
+        return result.model_dump(exclude_none=True)
 
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
