@@ -8,7 +8,9 @@ abstraction-layering
 advisor-timing
 cheap-recon-before-escalation
 cdp-operator-proxy
+cursor-model-economics
 claude-ai-cdp-navigation
+conductor
 completion-provenance-discipline
 consult-posture
 consult-routing
