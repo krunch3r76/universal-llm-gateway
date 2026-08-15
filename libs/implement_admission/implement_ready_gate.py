@@ -15,6 +15,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from implement_admission.consult_provenance_record import load_todo_consult_provenance
 from implement_admission.dense_spec_schema import dense_spec_hash_uri
 from implement_admission.density_triage_gate import check_requested_bool
 from implement_admission.doc_validate_attestation import (
@@ -129,10 +130,7 @@ def require_implement_ready(
     raw_acs = attrs.get("acceptance_criteria")
     acceptance_criteria = raw_acs if isinstance(raw_acs, list) else []
 
-    consult_thread = str(attrs.get("consult_thread") or "").strip() or None
-    consult_verdict = str(attrs.get("verdict") or attrs.get("consult_verdict") or "").strip() or None
-    consultant_family = str(attrs.get("consultant_family") or "").strip() or None
-    consultant_substrate = str(attrs.get("consultant_substrate") or "").strip() or None
+    consult_record = load_todo_consult_provenance(ref.canonical_ref)
 
     spec_hash_uri = dense_spec_hash_uri(dense_spec_text) if dense_spec_text else None
 
@@ -186,10 +184,7 @@ def require_implement_ready(
         skeptic_evidence_unresolved=skeptic_outcome.evidence_unresolved,
         skeptic_evidence_mode=skeptic_outcome.evidence_mode,
         skeptic_unratified_reason=skeptic_outcome.reason,
-        consult_thread=consult_thread,
-        verdict=consult_verdict,
-        consultant_family=consultant_family,
-        consultant_substrate=consultant_substrate,
+        consult_provenance_record=consult_record,
     )
     if not verdict.admitted:
         raise ImplementReadyGateError(
@@ -223,10 +218,7 @@ def require_implement_ready(
                 # Must match evaluate_implement_ready consult axis — omit ⇒
                 # judgment_required fails live doc_validate side-effect guard
                 # with implement_consult_provenance_missing → doc_validate_not_passing.
-                "consult_thread": consult_thread,
-                "verdict": consult_verdict,
-                "consultant_family": consultant_family,
-                "consultant_substrate": consultant_substrate,
+                "consult_provenance_record": consult_record,
             },
             skip_side_effect_guard=skip_doc_validate_guard,
         )

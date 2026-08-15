@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
+
 import pytest
 
 from implement_admission.dense_spec_schema import dense_spec_hash_uri
@@ -97,10 +100,6 @@ def _judgment_ready_kwargs(**overrides: object) -> dict:
         "acceptance_criteria": ["Validator passes dense specs."],
         "entity_name": "densification-implement-admission-gate",
         "skeptic_ratified": True,
-        "consult_thread": "agent-bus:8801",
-        "verdict": "proceed_with_amendments",
-        "consultant_family": "anthropic",
-        "consultant_substrate": "web-anthropic",
     }
     base.update(overrides)
     return base
@@ -157,28 +156,55 @@ def test_judgment_required_without_assertion_id_rejects() -> None:
 @pytest.mark.offline
 def test_judgment_required_missing_consult_fields_rejects() -> None:
     verdict = evaluate_implement_ready(
-        **_judgment_ready_kwargs(
-            consult_thread=None,
-            verdict=None,
-            consultant_family=None,
-            consultant_substrate=None,
-        ),
+        **_judgment_ready_kwargs(consult_provenance_record=None),
     )
     assert verdict.admitted is False
     assert verdict.code == "implement_consult_provenance_missing"
-    assert "consult_thread" in (verdict.reason or "")
+    assert "todo-keyed" in (verdict.reason or "")
+
+
+def _valid_record(tmp_path: Path) -> dict:
+    rel = Path("notes/system/threads/archives/ready.md")
+    path = tmp_path / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = b"ready archive\n"
+    path.write_bytes(body)
+    return {
+        "todo": _TODO,
+        "consult_thread": "agent-bus:8801#12",
+        "verdict": "ADMIT",
+        "adjudication_assertion_id": 1,
+        "consultant_family": "anthropic",
+        "consultant_substrate": "cdp",
+        "archive_uri": f"cortex://{rel.as_posix()}",
+        "archive_sha256": hashlib.sha256(body).hexdigest(),
+        "satellite_execution_id": "sat-1",
+        "stargate_execution_id": "sg-1",
+        "written_by": "test",
+        "written_at": _NOW,
+    }
 
 
 @pytest.mark.offline
-def test_judgment_required_with_consult_fields_admits() -> None:
-    verdict = evaluate_implement_ready(**_judgment_ready_kwargs())
+def test_judgment_required_with_consult_fields_admits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    verdict = evaluate_implement_ready(
+        **_judgment_ready_kwargs(consult_provenance_record=_valid_record(tmp_path)),
+    )
     assert verdict.admitted is True
     assert verdict.assertion_id == 17295
 
 
 @pytest.mark.offline
-def test_judgment_required_valid_assertion_admits() -> None:
-    verdict = evaluate_implement_ready(**_judgment_ready_kwargs())
+def test_judgment_required_valid_assertion_admits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    verdict = evaluate_implement_ready(
+        **_judgment_ready_kwargs(consult_provenance_record=_valid_record(tmp_path)),
+    )
     assert verdict.admitted is True
     assert verdict.assertion_id == 17295
 

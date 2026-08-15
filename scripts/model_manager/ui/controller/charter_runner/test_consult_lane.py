@@ -438,11 +438,13 @@ def test_parse_cdp_harvest_primary_path() -> None:
     assert result is not None
     assert not result.escape_path
     assert result.model_id == "cdp/opus-5"
-    prov = provenance_from_cdp_harvest(result)
+    prov = provenance_from_cdp_harvest(
+        result, consultant_family="anthropic", consultant_substrate="cdp"
+    )
     assert prov is not None
     assert prov.verdict == "ADMIT"
     assert prov.consultant_family == "anthropic"
-    assert prov.consultant_substrate == "web-anthropic"
+    assert prov.consultant_substrate == "cdp"
 
 
 @pytest.mark.offline
@@ -489,11 +491,13 @@ def test_parse_cdp_harvest_reads_root_delivery_turns() -> None:
     assert not result.escape_path
     assert result.consult_thread == "agent-bus:5975"
     assert result.model_id == "cdp/opus-5"
-    prov = provenance_from_cdp_harvest(result)
+    prov = provenance_from_cdp_harvest(
+        result, consultant_family="anthropic", consultant_substrate="cdp"
+    )
     assert prov is not None
     assert prov.verdict == "ADMIT_WITH_AMENDMENTS"
     assert prov.consultant_family == "anthropic"
-    assert prov.consultant_substrate == "web-anthropic"
+    assert prov.consultant_substrate == "cdp"
 
 
 @pytest.mark.offline
@@ -528,7 +532,9 @@ def test_parse_cdp_harvest_ignores_machine_closeout_summary() -> None:
     )
     assert result is not None
     assert "ADMIT_WITH_AMENDMENTS" in result.harvest_text
-    prov = provenance_from_cdp_harvest(result)
+    prov = provenance_from_cdp_harvest(
+        result, consultant_family="anthropic", consultant_substrate="cdp"
+    )
     assert prov is not None
     assert prov.verdict == "ADMIT_WITH_AMENDMENTS"
 

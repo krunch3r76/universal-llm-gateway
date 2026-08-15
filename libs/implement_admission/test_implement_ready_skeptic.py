@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
+
 import pytest
 
 from implement_admission.dense_spec_schema import dense_spec_hash_uri
@@ -73,13 +76,35 @@ def _ready_kwargs(**over: object) -> dict[str, object]:
         "files_expected": ["a.py"],
         "acceptance_criteria": ["criterion one"],
         "entity_name": "Sample",
-        "consult_thread": "agent-bus:8801",
-        "verdict": "proceed",
-        "consultant_family": "anthropic",
-        "consultant_substrate": "web-anthropic",
     }
     base.update(over)
     return base
+
+
+def _valid_record(tmp_path: Path, todo_id: str = "todo:sample") -> dict[str, object]:
+    rel = Path("notes/system/threads/archives/skeptic.md")
+    path = tmp_path / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = b"skeptic archive\n"
+    path.write_bytes(body)
+    return {
+        "todo": todo_id,
+        "consult_thread": "agent-bus:8801#12",
+        "verdict": "ADMIT",
+        "adjudication_assertion_id": 1,
+        "consultant_family": "anthropic",
+        "consultant_substrate": "cdp",
+        "archive_uri": f"cortex://{rel.as_posix()}",
+        "archive_sha256": hashlib.sha256(body).hexdigest(),
+        "satellite_execution_id": "sat-1",
+        "stargate_execution_id": "sg-1",
+        "written_by": "test",
+        "written_at": _NOW,
+    }
+
+
+def _admit_kwargs(tmp_path: Path, **over: object) -> dict[str, object]:
+    return _ready_kwargs(consult_provenance_record=_valid_record(tmp_path), **over)
 
 
 @pytest.mark.offline
@@ -101,16 +126,24 @@ def test_material_without_skeptic_is_refused() -> None:
 
 
 @pytest.mark.offline
-def test_material_default_admits_without_skeptic() -> None:
+def test_material_default_admits_without_skeptic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Default (check_requested absent/false): dense implement_ready alone admits.
-    verdict = evaluate_implement_ready(**_ready_kwargs(skeptic_ratified=False))
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    verdict = evaluate_implement_ready(
+        **_admit_kwargs(tmp_path, skeptic_ratified=False)
+    )
     assert verdict.admitted
 
 
 @pytest.mark.offline
-def test_material_with_skeptic_is_admitted() -> None:
+def test_material_with_skeptic_is_admitted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     verdict = evaluate_implement_ready(
-        **_ready_kwargs(skeptic_ratified=True, check_requested=True)
+        **_admit_kwargs(tmp_path, skeptic_ratified=True, check_requested=True)
     )
     assert verdict.admitted
 
@@ -125,10 +158,16 @@ def test_recon_pending_is_blocked() -> None:
 
 
 @pytest.mark.offline
-def test_recon_waived_admits_without_skeptic() -> None:
+def test_recon_waived_admits_without_skeptic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     verdict = evaluate_implement_ready(
-        **_ready_kwargs(
-            skeptic_ratified=False, recon_waived=True, check_requested=True
+        **_admit_kwargs(
+            tmp_path,
+            skeptic_ratified=False,
+            recon_waived=True,
+            check_requested=True,
         )
     )
     assert verdict.admitted
@@ -176,9 +215,13 @@ def test_recon_waived_does_not_bypass_recon_pending() -> None:
 
 
 @pytest.mark.offline
-def test_grounded_skeptic_evidence_admits() -> None:
+def test_grounded_skeptic_evidence_admits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     verdict = evaluate_implement_ready(
-        **_ready_kwargs(
+        **_admit_kwargs(
+            tmp_path,
             skeptic_ratified=True,
             check_requested=True,
             skeptic_evidence_grounded=True,
@@ -560,7 +603,9 @@ def test_gate6_designated_uri_only_not_first_implement_ready_bus() -> None:
 
 
 @pytest.mark.offline
-def test_gate6_evaluate_implement_ready_admits() -> None:
+def test_gate6_evaluate_implement_ready_admits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from implement_admission.implement_ready_gate6_resolve import (
         resolve_gate6_ratification,
     )
@@ -578,8 +623,10 @@ def test_gate6_evaluate_implement_ready_admits() -> None:
             }
         ),
     )
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     verdict = evaluate_implement_ready(
-        **_ready_kwargs(
+        **_admit_kwargs(
+            tmp_path,
             skeptic_ratified=gate6.ratified,
             skeptic_evidence_grounded=gate6.evidence_grounded,
             skeptic_evidence_unresolved=gate6.evidence_unresolved,
@@ -646,7 +693,9 @@ def test_gate6_does_not_fallback_when_skeptic_stamp_fails_grounding() -> None:
 
 
 @pytest.mark.offline
-def test_preflight_gate6_parity_with_evaluate() -> None:
+def test_preflight_gate6_parity_with_evaluate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from implement_admission.implement_ready_gate6_resolve import (
         resolve_gate6_ratification,
     )
@@ -665,7 +714,9 @@ def test_preflight_gate6_parity_with_evaluate() -> None:
             }
         ),
     )
-    kwargs = _ready_kwargs(
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    kwargs = _admit_kwargs(
+        tmp_path,
         skeptic_ratified=gate6.ratified,
         check_requested=True,
         skeptic_evidence_grounded=gate6.evidence_grounded,

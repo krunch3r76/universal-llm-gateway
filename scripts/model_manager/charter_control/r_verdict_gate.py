@@ -162,14 +162,14 @@ def consult_provenance_from_r_admit(
     *,
     consult_thread: str,
     harvest_text: str,
-    consultant_family: str = "anthropic",
-    consultant_substrate: str = "web-anthropic",
+    consultant_family: str,
+    consultant_substrate: str,
 ) -> ConsultProvenance | None:
     """Map an R-admit harvest into the shared consult provenance schema.
 
-    Holder-fired G3 and consult-seat judgment gaps write the same four fields
-    so ``implement_ready`` has one gate (Fable G7 E2). Returns ``None`` when the
-    harvest has no parseable path-sim verdict token.
+    Family and substrate come verbatim from the admit payload (a:29377).
+    Returns ``None`` when the harvest has no parseable verdict token or when
+    either admit field is empty — no ``web-anthropic`` / ``anthropic`` default.
     """
     thread = (consult_thread or "").strip()
     if not thread:
@@ -177,8 +177,10 @@ def consult_provenance_from_r_admit(
     parsed = parse_r_verdict(harvest_text)
     if not parsed.verdict:
         return None
-    family = (consultant_family or "").strip() or "anthropic"
-    substrate = (consultant_substrate or "").strip() or "web-anthropic"
+    family = (consultant_family or "").strip()
+    substrate = (consultant_substrate or "").strip()
+    if not family or not substrate:
+        return None
     return ConsultProvenance(
         consult_thread=thread,
         verdict=parsed.verdict,

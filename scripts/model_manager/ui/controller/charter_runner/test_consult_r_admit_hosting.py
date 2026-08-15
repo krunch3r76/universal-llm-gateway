@@ -361,11 +361,26 @@ def test_consult_provenance_reviewer_family() -> None:
     prov = consult_provenance_from_r_admit(
         consult_thread="agent-bus:5610",
         harvest_text="Merits verdict: ADMIT",
+        consultant_family="anthropic",
+        consultant_substrate="cdp",
     )
     assert prov is not None
     assert prov.consultant_family == "anthropic"
-    assert prov.consultant_substrate == "web-anthropic"
+    assert prov.consultant_substrate == "cdp"
     assert prov.verdict == "ADMIT"
+
+
+@pytest.mark.offline
+def test_consult_provenance_missing_admit_fields_returns_none() -> None:
+    assert (
+        consult_provenance_from_r_admit(
+            consult_thread="agent-bus:5610",
+            harvest_text="Merits verdict: ADMIT",
+            consultant_family="",
+            consultant_substrate="cdp",
+        )
+        is None
+    )
 
 
 @pytest.mark.offline

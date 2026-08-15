@@ -174,10 +174,7 @@ def preflight_implement_ready(
     skeptic_evidence_unresolved: list[str] | None = None,
     skeptic_evidence_mode: str | None = None,
     skeptic_unratified_reason: str | None = None,
-    consult_thread: str | None = None,
-    verdict: str | None = None,
-    consultant_family: str | None = None,
-    consultant_substrate: str | None = None,
+    consult_provenance_record: dict | None = None,
 ) -> PreflightReport:
     """Non-writing preflight over the declared-state gates (0-13).
 
@@ -540,10 +537,7 @@ def preflight_implement_ready(
     else:
         consult_reject = _consult_provenance_reject(
             todo_id=todo_id,
-            consult_thread=consult_thread,
-            verdict=verdict,
-            consultant_family=consultant_family,
-            consultant_substrate=consultant_substrate,
+            record=consult_provenance_record,
         )
         if consult_reject is not None:
             _fail(

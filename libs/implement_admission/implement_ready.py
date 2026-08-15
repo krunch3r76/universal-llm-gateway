@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from implement_admission.consult_provenance_record import structural_gaps
 from implement_admission.dense_spec_schema import (
     DENSE_SPEC_RE,
     dense_spec_hash_uri,
@@ -52,6 +53,7 @@ def _assertion_inactive(assertion: dict, *, now_iso: str) -> bool:
 
 
 def assertion_active(assertion: dict, *, now_iso: str) -> bool:
+    """True when the implement-ready assertion is neither superseded nor expired."""
     return not _assertion_inactive(assertion, now_iso=now_iso)
 
 
@@ -62,28 +64,24 @@ def _reject(code: str, reason: str) -> ImplementReadyVerdict:
 def _consult_provenance_reject(
     *,
     todo_id: str,
-    consult_thread: str | None,
-    verdict: str | None,
-    consultant_family: str | None,
-    consultant_substrate: str | None,
+    record: dict | None,
 ) -> ImplementReadyVerdict | None:
-    missing: list[str] = []
-    if not (consult_thread or "").strip():
-        missing.append("consult_thread")
-    if not (verdict or "").strip():
-        missing.append("verdict")
-    if not (consultant_family or "").strip():
-        missing.append("consultant_family")
-    if not (consultant_substrate or "").strip():
-        missing.append("consultant_substrate")
-    if not missing:
+    """Reject on missing or unverifiable todo-keyed provenance. Attrs unused."""
+    if record is None:
+        return _reject(
+            "implement_consult_provenance_missing",
+            f"{todo_id}: judgment_required requires a todo-keyed consult "
+            "provenance record — commit via "
+            "commit_todo_consult_provenance before implement dispatch",
+        )
+    gaps = structural_gaps(record, expected_todo=todo_id)
+    if not gaps:
         return None
-    joined = ", ".join(missing)
+    joined = ", ".join(gaps)
     return _reject(
-        "implement_consult_provenance_missing",
-        f"{todo_id}: judgment_required requires consult provenance "
-        f"({joined}) — traverse CONSULT_PENDING → consult seat → resume "
-        "with verdict attrs before implement dispatch",
+        "implement_consult_provenance_unverifiable",
+        f"{todo_id}: consult provenance record is structurally incomplete "
+        f"or archive sha mismatches ({joined})",
     )
 
 
@@ -156,10 +154,7 @@ def evaluate_implement_ready(
     skeptic_evidence_unresolved: list[str] | None = None,
     skeptic_evidence_mode: str | None = None,
     skeptic_unratified_reason: str | None = None,
-    consult_thread: str | None = None,
-    verdict: str | None = None,
-    consultant_family: str | None = None,
-    consultant_substrate: str | None = None,
+    consult_provenance_record: dict | None = None,
 ) -> ImplementReadyVerdict:
     """Deterministic implement-readiness verdict over declared todo state."""
     triage = (density_triage or "").strip() or None
@@ -296,10 +291,7 @@ def evaluate_implement_ready(
 
     consult_reject = _consult_provenance_reject(
         todo_id=todo_id,
-        consult_thread=consult_thread,
-        verdict=verdict,
-        consultant_family=consultant_family,
-        consultant_substrate=consultant_substrate,
+        record=consult_provenance_record,
     )
     if consult_reject is not None:
         return consult_reject

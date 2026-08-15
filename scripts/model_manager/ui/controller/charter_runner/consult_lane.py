@@ -257,7 +257,12 @@ def _provenance_path(root_id: str) -> Path:
     return charter_runner_data_dir() / "consult-provenance" / f"{root_id}.json"
 
 
-def write_consult_provenance(record: ConsultProvenanceRecord, *, root_id: str) -> str:
+def write_consult_provenance(
+    record: ConsultProvenanceRecord,
+    *,
+    root_id: str,
+    source_ref: str | None = None,
+) -> str:
     """Persist provenance locally and mirror to cortex (P2-AC2)."""
     payload = {
         "root_id": root_id,
@@ -269,6 +274,8 @@ def write_consult_provenance(record: ConsultProvenanceRecord, *, root_id: str) -
         "evidence_uri": record.evidence_uri,
         "written_at": time.time(),
     }
+    if source_ref:
+        payload["source_ref"] = source_ref
     content = json.dumps(payload, indent=2, sort_keys=True)
     path = _provenance_path(root_id)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -407,6 +414,9 @@ def _harvest_text_from_turns(
 
 def provenance_from_cdp_harvest(
     result: CdpHarvestResult,
+    *,
+    consultant_family: str,
+    consultant_substrate: str,
 ) -> ConsultProvenanceRecord | None:
     from scripts.model_manager.charter_control.r_verdict_gate import (
         consult_provenance_from_r_admit,
@@ -417,6 +427,8 @@ def provenance_from_cdp_harvest(
     prov = consult_provenance_from_r_admit(
         consult_thread=result.consult_thread,
         harvest_text=result.harvest_text,
+        consultant_family=consultant_family,
+        consultant_substrate=consultant_substrate,
     )
     if prov is None:
         return None

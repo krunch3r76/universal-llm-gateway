@@ -27,6 +27,8 @@ def test_parse_r_verdict_prefers_bold_merits_over_scope_ratify() -> None:
     prov = consult_provenance_from_r_admit(
         consult_thread="agent-bus:5975",
         harvest_text=body,
+        consultant_family="anthropic",
+        consultant_substrate="cdp",
     )
     assert prov is not None
     assert prov.verdict == "ADMIT_WITH_AMENDMENTS"

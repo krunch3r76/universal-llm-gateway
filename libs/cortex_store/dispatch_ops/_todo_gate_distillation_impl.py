@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import HTTPException
+from implement_admission.consult_provenance_record import load_todo_consult_provenance
 from implement_admission.dense_spec_schema import dense_spec_hash_uri
 from implement_admission.density_triage_gate import (
     JUDGMENT_REQUIRED,
@@ -269,13 +270,8 @@ def _evaluate_from_persisted(
             **recon_waiver.event_payload(),
         )
 
-    # Mirror implement_ready_gate.py — post-check must honor stamped consult attrs.
-    consult_thread = str(attrs.get("consult_thread") or "").strip() or None
-    consult_verdict = (
-        str(attrs.get("verdict") or attrs.get("consult_verdict") or "").strip() or None
-    )
-    consultant_family = str(attrs.get("consultant_family") or "").strip() or None
-    consultant_substrate = str(attrs.get("consultant_substrate") or "").strip() or None
+    # Mirror implement_ready_gate.py — record is SoT; attrs are display cache.
+    consult_record = load_todo_consult_provenance(entity_id)
 
     return evaluate_implement_ready(
         todo_id=entity_id,
@@ -295,10 +291,7 @@ def _evaluate_from_persisted(
         skeptic_evidence_grounded=skeptic_outcome.evidence_grounded,
         skeptic_evidence_unresolved=skeptic_outcome.evidence_unresolved,
         skeptic_evidence_mode=skeptic_outcome.evidence_mode,
-        consult_thread=consult_thread,
-        verdict=consult_verdict,
-        consultant_family=consultant_family,
-        consultant_substrate=consultant_substrate,
+        consult_provenance_record=consult_record,
     )
 
 

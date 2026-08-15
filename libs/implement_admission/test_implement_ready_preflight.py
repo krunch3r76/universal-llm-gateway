@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -83,15 +85,38 @@ BASE = dict(
     files_expected=["libs/implement_admission/implement_ready.py"],
     acceptance_criteria=["Gate 1 passes"],
     entity_name="Test todo",
-    consult_thread="agent-bus:8801",
-    verdict="proceed",
-    consultant_family="anthropic",
-    consultant_substrate="web-anthropic",
+    consult_provenance_record=None,
 )
 
 
 def make(**overrides: object) -> dict:
     return {**BASE, **overrides}
+
+
+def _valid_record(tmp_path: Path) -> dict[str, object]:
+    rel = Path("notes/system/threads/archives/preflight.md")
+    path = tmp_path / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = b"preflight archive\n"
+    path.write_bytes(body)
+    return {
+        "todo": "todo:test-slug",
+        "consult_thread": "agent-bus:8801#12",
+        "verdict": "ADMIT",
+        "adjudication_assertion_id": 1,
+        "consultant_family": "anthropic",
+        "consultant_substrate": "cdp",
+        "archive_uri": f"cortex://{rel.as_posix()}",
+        "archive_sha256": hashlib.sha256(body).hexdigest(),
+        "satellite_execution_id": "sat-1",
+        "stargate_execution_id": "sg-1",
+        "written_by": "test",
+        "written_at": NOW,
+    }
+
+
+def make_ready(tmp_path: Path, **overrides: object) -> dict:
+    return make(consult_provenance_record=_valid_record(tmp_path), **overrides)
 
 
 def parity(*, verdict, preflight_report) -> None:
@@ -367,9 +392,12 @@ def test_gate12_acs_empty() -> None:
 
 
 @pytest.mark.offline
-def test_happy_path_all_pass() -> None:
+def test_happy_path_all_pass(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     assertion = {**BASE["assertion"], "evidence_uris": _ready_evidence()}
-    args = make(assertion=assertion, skeptic_ratified=True, check_requested=True)
+    args = make_ready(
+        tmp_path, assertion=assertion, skeptic_ratified=True, check_requested=True
+    )
     verdict = evaluate_implement_ready(**args)
     report = preflight_implement_ready(**args)
     assert verdict.admitted is True
@@ -398,9 +426,14 @@ def test_gate13_skeptic_pass_missing() -> None:
 
 
 @pytest.mark.offline
-def test_gate13_default_skips_when_check_not_requested() -> None:
+def test_gate13_default_skips_when_check_not_requested(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     assertion = {**BASE["assertion"], "evidence_uris": _ready_evidence()}
-    args = make(assertion=assertion, skeptic_ratified=False, recon_waived=False)
+    args = make_ready(
+        tmp_path, assertion=assertion, skeptic_ratified=False, recon_waived=False
+    )
     verdict = evaluate_implement_ready(**args)
     report = preflight_implement_ready(**args)
     assert verdict.admitted is True
@@ -417,9 +450,14 @@ _GATE_13_DEFERRED_SUBCHECKS = [
 
 
 @pytest.mark.offline
-def test_gate13_pass_deferred_subchecks_annotation() -> None:
+def test_gate13_pass_deferred_subchecks_annotation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     assertion = {**BASE["assertion"], "evidence_uris": _ready_evidence()}
-    args = make(assertion=assertion, skeptic_ratified=True, check_requested=True)
+    args = make_ready(
+        tmp_path, assertion=assertion, skeptic_ratified=True, check_requested=True
+    )
     report = preflight_implement_ready(**args)
     gate13 = report.gates[13]
     assert gate13.status == GateStatus.PASSED
@@ -428,9 +466,13 @@ def test_gate13_pass_deferred_subchecks_annotation() -> None:
 
 
 @pytest.mark.offline
-def test_gate13_recon_waived_bypasses_skeptic() -> None:
+def test_gate13_recon_waived_bypasses_skeptic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     assertion = {**BASE["assertion"], "evidence_uris": _ready_evidence()}
-    args = make(
+    args = make_ready(
+        tmp_path,
         assertion=assertion,
         skeptic_ratified=False,
         recon_waived=True,
@@ -444,13 +486,17 @@ def test_gate13_recon_waived_bypasses_skeptic() -> None:
 
 
 @pytest.mark.offline
-def test_gate14_deferred_grounding_admits_with_explicit_warning() -> None:
+def test_gate14_deferred_grounding_admits_with_explicit_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # When grounding inputs are absent, preflight still admits on the
     # declared-state gates, but MUST carry an explicit warning naming the
     # FILE_EVIDENCE_PATHS requirement and the skeptic_evidence_missing code
     # the dispatch would emit (friction 22906 — no silent divergence).
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     assertion = {**BASE["assertion"], "evidence_uris": _ready_evidence()}
-    args = make(
+    args = make_ready(
+        tmp_path,
         assertion=assertion,
         skeptic_ratified=True,
         recon_waived=False,
@@ -499,9 +545,13 @@ def test_gate13_evidence_supplied_matches_dispatch_reject() -> None:
 
 
 @pytest.mark.offline
-def test_gate13_evidence_grounded_passes_without_warning() -> None:
+def test_gate13_evidence_grounded_passes_without_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     assertion = {**BASE["assertion"], "evidence_uris": _ready_evidence()}
-    args = make(
+    args = make_ready(
+        tmp_path,
         assertion=assertion,
         skeptic_ratified=True,
         recon_waived=False,

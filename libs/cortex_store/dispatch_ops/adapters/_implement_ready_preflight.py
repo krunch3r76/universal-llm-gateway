@@ -6,6 +6,7 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
+from implement_admission.consult_provenance_record import load_todo_consult_provenance
 from implement_admission.dense_spec_schema import (
     DENSE_SPEC_RE,
     dense_spec_hash_uri,
@@ -279,10 +280,7 @@ def _op_implement_ready_preflight(
     raw_acs = attrs.get("acceptance_criteria")
     acceptance_criteria = raw_acs if isinstance(raw_acs, list) else []
 
-    consult_thread = str(attrs.get("consult_thread") or "").strip() or None
-    consult_verdict = str(attrs.get("verdict") or attrs.get("consult_verdict") or "").strip() or None
-    consultant_family = str(attrs.get("consultant_family") or "").strip() or None
-    consultant_substrate = str(attrs.get("consultant_substrate") or "").strip() or None
+    consult_record = load_todo_consult_provenance(todo_id)
 
     spec_hash_uri = dense_spec_hash_uri(spec_text) if spec_text else None
 
@@ -384,10 +382,7 @@ def _op_implement_ready_preflight(
         skeptic_evidence_unresolved=evidence_unresolved,
         skeptic_evidence_mode=evidence_mode,
         skeptic_unratified_reason=skeptic_outcome.reason,
-        consult_thread=consult_thread,
-        verdict=consult_verdict,
-        consultant_family=consultant_family,
-        consultant_substrate=consultant_substrate,
+        consult_provenance_record=consult_record,
     )
     result = report.to_dict()
     gate9 = next((g for g in report.gates if g.gate == 9), None)

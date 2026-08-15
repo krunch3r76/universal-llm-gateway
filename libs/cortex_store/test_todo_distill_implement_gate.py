@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from unittest.mock import patch
@@ -86,6 +87,33 @@ def gate_env(
     copy_template_db(migrated_db_template, db_path)
     monkeypatch.setattr(db, "_CORTEX_DB", db_path)
     monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
+    files_root = tmp_path / "cortex-files"
+    files_root.mkdir()
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(files_root))
+    archive_rel = Path("notes/system/threads/archives/wire-gate.md")
+    archive_path = files_root / archive_rel
+    archive_path.parent.mkdir(parents=True)
+    archive_body = b"wire-gate consult archive\n"
+    archive_path.write_bytes(archive_body)
+    record = {
+        "todo": "todo:wire-gate",
+        "consult_thread": "agent-bus:8801#12",
+        "verdict": "ADMIT",
+        "adjudication_assertion_id": 1,
+        "consultant_family": "anthropic",
+        "consultant_substrate": "cdp",
+        "archive_uri": f"cortex://{archive_rel.as_posix()}",
+        "archive_sha256": hashlib.sha256(archive_body).hexdigest(),
+        "satellite_execution_id": "sat-1",
+        "stargate_execution_id": "sg-1",
+        "written_by": "test",
+        "written_at": "2026-06-15T00:00:00Z",
+    }
+    rec_dir = files_root / "notes/system/threads/todo-consult-provenance"
+    rec_dir.mkdir(parents=True)
+    (rec_dir / "wire-gate.json").write_text(
+        json.dumps(record, indent=2, sort_keys=True), encoding="utf-8"
+    )
 
     conn_ctx = db.cortex_conn()
     conn = conn_ctx.__enter__()

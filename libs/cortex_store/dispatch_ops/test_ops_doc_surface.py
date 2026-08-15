@@ -10,7 +10,10 @@ from implement_admission.dense_spec_schema import (
     validate_dense_spec,
 )
 from implement_admission.gate_distillation import GateDistillationInputs
-from implement_admission.implement_ready import evaluate_implement_ready
+from implement_admission.implement_ready import (
+    ImplementReadyVerdict,
+    evaluate_implement_ready,
+)
 from implement_admission.implement_ready_preflight import preflight_implement_ready
 from implement_admission.recon_waiver import build_structured_waiver
 
@@ -529,6 +532,27 @@ def test_evaluate_from_persisted_honors_matching_recon_waiver(
         "cortex_store.dispatch_ops._todo_gate_distillation_impl.resolve_skeptic_ratification",
         lambda **_: SkepticRatificationOutcome(ratified=False),
     )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops._todo_gate_distillation_impl.load_todo_consult_provenance",
+        lambda todo_id, **_: {
+            "todo": todo_id,
+            "consult_thread": "agent-bus:8801#12",
+            "verdict": "ADMIT",
+            "adjudication_assertion_id": 1,
+            "consultant_family": "anthropic",
+            "consultant_substrate": "cdp",
+            "archive_uri": "cortex://notes/system/threads/archives/x.md",
+            "archive_sha256": "deadbeef",
+            "satellite_execution_id": "sat-1",
+            "stargate_execution_id": "sg-1",
+            "written_by": "test",
+            "written_at": "2026-08-14T00:00:00Z",
+        },
+    )
+    monkeypatch.setattr(
+        "implement_admission.implement_ready.structural_gaps",
+        lambda *a, **k: [],
+    )
 
     verdict = _evaluate_from_persisted(
         entity_id="todo:waiver-test",
@@ -547,17 +571,10 @@ def test_evaluate_from_persisted_forwards_consult_provenance(
     )
 
     captured: dict[str, object] = {}
-    original_evaluate = evaluate_implement_ready
 
     def _capture_evaluate(**kwargs: object) -> object:
-        for key in (
-            "consult_thread",
-            "verdict",
-            "consultant_family",
-            "consultant_substrate",
-        ):
-            captured[key] = kwargs.get(key)
-        return original_evaluate(**kwargs)
+        captured["consult_provenance_record"] = kwargs.get("consult_provenance_record")
+        return ImplementReadyVerdict(admitted=True, assertion_id=1)
 
     monkeypatch.setattr(
         "cortex_store.dispatch_ops._todo_gate_distillation_impl._op_entity_get",
@@ -579,18 +596,18 @@ def test_evaluate_from_persisted_forwards_consult_provenance(
         "cortex_store.dispatch_ops._todo_gate_distillation_impl.evaluate_implement_ready",
         _capture_evaluate,
     )
+    record = {"todo": "todo:waiver-test", "verdict": "ADMIT"}
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops._todo_gate_distillation_impl.load_todo_consult_provenance",
+        lambda todo_id, **_: record if todo_id == "todo:waiver-test" else None,
+    )
 
     verdict = _evaluate_from_persisted(
         entity_id="todo:waiver-test",
         prepared=_gate_distill_prepared(),
     )
     assert verdict.admitted is True
-    assert captured == {
-        "consult_thread": "agent-bus:8801",
-        "verdict": "proceed_with_amendments",
-        "consultant_family": "anthropic",
-        "consultant_substrate": "web-anthropic",
-    }
+    assert captured == {"consult_provenance_record": record}
 
 
 @pytest.mark.offline
