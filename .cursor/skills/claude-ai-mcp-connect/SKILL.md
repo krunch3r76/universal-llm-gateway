@@ -1,9 +1,9 @@
 ---
 name: claude-ai-mcp-connect
-description: "Connect or rewire claude.ai Customize→Connectors to vortex MCP (/mcp/life) via Jupiter CDP — OAuth DCR, restore-connector, dual-endpoint cutover."
+description: "Connect or rewire claude.ai Customize→Connectors to the toys MCP (/mcp/life) via Jupiter CDP — OAuth DCR, permission repair, dual-endpoint cutover."
 ---
 
-# Claude.ai → vortex MCP connect
+# Claude.ai → toys MCP connect
 
 `connect|rewire|restore(claude.ai MCP) ⇒ Jupiter CDP ∧ life URL ∧ OAuth Approve ∧ verify Connected`.
 
@@ -27,7 +27,7 @@ Cross-ref: `agent-skills/jupiter-browser-via-mcp` · `claude-ai-bundle-sync` (Sk
 
 ## When to load
 
-- Operator: "connect claude.ai to MCP", "rewire vortex connector", "MCP connection expired"
+- Operator: "connect claude.ai to MCP", "rewire toys connector", "MCP connection expired"
 - Dual-endpoint cutover / anyone proposing bare `/mcp` as the live URL
 - Toast: `Couldn't register with vortex's sign-in service`
 
@@ -37,7 +37,7 @@ Cross-ref: `agent-skills/jupiter-browser-via-mcp` · `claude-ai-bundle-sync` (Sk
 Cursor agent
   → scripts/cortex/claude-ai-sync-jupiter ensure-chrome | restore-connector
   → Jupiter Chrome CDP :9222 (logged-in claude.ai profile)
-  → claude.ai Settings → Customize → Connectors → vortex
+  → claude.ai Settings → Customize → Connectors → toys
   → <mcp-host> OAuth (/oauth/register DCR ∨ pre-registered client_id=claude-ai)
   → Approve → tools/list on /mcp/life
 ```
@@ -51,12 +51,23 @@ scripts/cortex/claude-ai-sync-jupiter restore-connector \
   --mcp-url 'https://<mcp-host>/mcp/life' --connector-name toys
 # After MCP schema/deploy changes (tools/list refresh): add --force-reconnect
 # (Disconnect → Connect+OAuth). Bare restore returns already_connected when live.
+scripts/cortex/claude-ai-sync-jupiter set-tool-permissions \
+  --mcp-url 'https://<mcp-host>/mcp/life' --connector-name toys
+# Explicit surface-refresh path: reconnect, then repair Other tools permission.
+scripts/cortex/claude-ai-sync-jupiter refresh-connector \
+  --mcp-url 'https://<mcp-host>/mcp/life' --connector-name toys
 # Mid-rename (UI still labeled vortex): same command — script removes vortex
 # and re-adds as toys (claude.ai has no in-UI rename). Or pass
 # --connector-name vortex only to reconnect without renaming.
 ```
 
 `restore-connector` opens Connectors; if life URL exists under a legacy name (`vortex`) and `--connector-name toys`, **Remove → Add custom** then OAuth. Otherwise Connect/Reconnect + Approve. Returns `restored` | `already_connected` | `renamed_readded`. `--force-reconnect` forces Disconnect then Connect even when Connected.
+
+`set-tool-permissions` targets only the `toys` life connector's `Other tools`
+group. It returns `changed` or `already_set`, and reload-verifies `Always allow`
+plus a non-empty tools surface. `refresh-connector` composes forced reconnect
+with that permission repair; ordinary `restore-connector` does not broaden
+permissions.
 
 ∀ automation: `BROWSER_CDP_URL=http://127.0.0.1:9222` on Jupiter; SSH wrapper sets it.
 
@@ -89,7 +100,7 @@ AS metadata advertising both auth methods **⇏** register path is live — cont
 |---|---|
 | `¬Escape` while Settings modal open | Backdrop closes; hash alone often fails to reopen |
 | Open Settings via `[data-testid=user-menu-button]` → **Settings** | Sidebar **Customize** ≠ Connectors settings |
-| Scope **Connect** to vortex detail (`not connected to vortex`) | List page has many popular **Connect** buttons |
+| Scope **Connect** to toys detail (`not connected to toys`) | List page has many popular **Connect** buttons |
 | Prefer Playwright `force` click / `expect_page` for OAuth | Same-tab vs popup varies |
 | Stale yellow toast ≠ live failure | Confirm with `observability(signal-events, signal=mcp.oauth*)` |
 
@@ -122,7 +133,7 @@ observability(operation="signal-events",
 
 ## Verify success
 
-Connector detail shows URL `…/mcp/life`, **¬** "not connected to vortex", **¬** connection-issue toast.  
+Connector detail shows URL `…/mcp/life`, **¬** "not connected to toys", **¬** connection-issue toast.  
 UI **Connected** ⇏ tools work — confirm life `tools/call` (or admit) events for `/mcp/life` after a real tool use; stale Anthropic sessions can show Connected while calls fail opaque.  
 Life chat: life primaries (`cortex`, `close`, …); coding tools (`manage`, `team_dispatch`) stay on `/mcp/code`.
 
@@ -134,8 +145,9 @@ Life chat: life primaries (`cortex`, `close`, …); coding tools (`manage`, `tea
 
 | Script | Role |
 |---|---|
-| `scripts/cortex/claude-ai-sync-jupiter` | `ensure-chrome` · `restore-connector` |
+| `scripts/cortex/claude-ai-sync-jupiter` | `ensure-chrome` · `restore-connector` · `set-tool-permissions` · `refresh-connector` |
 | `scripts/cortex/restore_claude_mcp_connector.py` | Playwright Connect + Approve |
+| `scripts/cortex/set_claude_tool_permissions.py` | Playwright permission repair + reload verification |
 | `scripts/mcp-fastmcp-remote-bridge.py` | Cursor stdio→HTTP bridge |
 
 ¬ commit `oauth.clients[].client_secret` into skills/docs — read live from `~/.gateway/mcp.yaml`.

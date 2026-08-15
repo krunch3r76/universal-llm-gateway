@@ -66,7 +66,7 @@ remote shell. Calling `upload_claude_bundles_ui.py` locally without SSH fails wi
 Cross-ref: `agent-skills/jupiter-browser-via-mcp` (CDP bring-up patterns;
 `--remote-allow-origins=*` is required for Playwright WebSocket access).
 
-**MCP connector (not Skills):** connect/rewire claude.ai → vortex `/mcp/life` —
+**MCP connector (not Skills):** connect/rewire claude.ai → toys `/mcp/life` —
 Use the `claude-ai-mcp-connect` skill (`restore-connector`, OAuth DCR, dual-endpoint).
 
 ## Prerequisites
@@ -184,9 +184,9 @@ scripts/cortex/claude-ai-sync-jupiter loaded-skills \
 
 Helper: `libs/claude_bundles/chat_context_skills.py` (`scrape_loaded_skills`).
 
-## MCP connector restore (vortex / <mcp-host>)
+## MCP connector restore (toys / <mcp-host>)
 
-When claude.ai shows **Connection expired** for the vortex connector, re-auth via
+When claude.ai shows **Connection expired** for the toys connector, re-auth via
 Jupiter Playwright (home-network Chrome — not your VPN laptop):
 
 ```bash
@@ -194,6 +194,22 @@ scripts/cortex/claude-ai-sync-jupiter restore-connector
 ```
 
 Exit `restored` = OAuth re-approved; `already_connected` = token still valid server-side.
+
+After an MCP surface change, repair the Claude tool policy without reconnecting:
+
+```bash
+scripts/cortex/claude-ai-sync-jupiter set-tool-permissions
+```
+
+When both OAuth and permission state need refresh, use the explicit combined path:
+
+```bash
+scripts/cortex/claude-ai-sync-jupiter refresh-connector
+```
+
+The permission command targets only `toys` → `/mcp/life` → `Other tools`, returns
+`changed` or `already_set`, and reload-verifies `Always allow` plus tool
+availability.
 
 **Remote VPN (UI still shows dead):** Jupiter OAuth can succeed while your laptop
 browser cannot reach `<mcp-host>`. On the remote machine while on VPN:
@@ -206,8 +222,9 @@ echo '<mcp-host-ip> <mcp-host>' | sudo tee -a /etc/hosts
 Then hard-refresh claude.ai → Settings → Connectors. Sophos split-DNS / hairpin NAT
 is the durable fix; hosts entry is the quick repeat.
 
-Script: `scripts/cortex/restore_claude_mcp_connector.py` (connector name default:
-`vortex`, URL default: `https://<mcp-host>/mcp`).
+Scripts: `scripts/cortex/restore_claude_mcp_connector.py` (connector name
+default: `toys`, URL default: `https://<mcp-host>/mcp/life`) and
+`scripts/cortex/set_claude_tool_permissions.py` for the permission repair.
 
 ## Bring up Chrome on Jupiter
 

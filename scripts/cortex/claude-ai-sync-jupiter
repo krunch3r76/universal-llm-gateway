@@ -18,6 +18,8 @@
 #   # --all --replace is refused unless --force-replace-all (never the default)
 #   scripts/cortex/claude-ai-sync-jupiter uninstall --slugs retired-skill
 #   scripts/cortex/claude-ai-sync-jupiter restore-connector
+#   scripts/cortex/claude-ai-sync-jupiter set-tool-permissions
+#   scripts/cortex/claude-ai-sync-jupiter refresh-connector
 #   scripts/cortex/claude-ai-sync-jupiter project-chrome ensure|destroy|get|render-prompt …
 #   scripts/cortex/claude-ai-sync-jupiter project-ask --uuid UUID --prompt-file …
 #   scripts/cortex/claude-ai-sync-jupiter project-ask --cdp-port 9223 --profile-suffix ask --uuid … --prompt-file …
@@ -79,7 +81,8 @@ usage() {
   sed -n '2,24p' "$0" | sed 's/^# \?//'
   echo ""
   echo "Commands: ensure-chrome | status | loaded-skills | upload | uninstall |"
-  echo "          restore-connector | project-chrome | project-ask |"
+  echo "          restore-connector | set-tool-permissions | refresh-connector |"
+  echo "          project-chrome | project-ask |"
   echo "          register-lane | deregister-lane | list-lanes"
   echo ""
   echo "project-ask --prompt-file: MUST be Jupiter-readable (shared checkout or"
@@ -383,6 +386,16 @@ case "$cmd" in
   restore-connector)
     ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
     remote_py scripts/cortex/restore_claude_mcp_connector.py "$@"
+    ;;
+  set-tool-permissions)
+    ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
+    remote_py scripts/cortex/set_claude_tool_permissions.py "$@"
+    ;;
+  refresh-connector)
+    ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
+    remote_py scripts/cortex/restore_claude_mcp_connector.py \
+      --force-reconnect "$@"
+    remote_py scripts/cortex/set_claude_tool_permissions.py "$@"
     ;;
   project-chrome)
     ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
