@@ -277,7 +277,8 @@ class ServiceState:
                 port=None,
                 detail=pid_note or "",
             )
-        healthy = self._cloud_proxy_probe_uds(socket_path)
+        healthy, probe_note = self._cloud_proxy_probe_uds(socket_path)
+        fail = self._probe_fail_suffix(healthy, probe_note)
         listener_pid = self._find_unix_listener_pid(socket_path) if healthy else None
         if listener_pid is not None and listener_pid != pid:
             self._write_pid_file(self.CLOUD_PROXY_PID_FILE, listener_pid)
@@ -295,7 +296,7 @@ class ServiceState:
                 pid=pid,
                 health_url=f"unix://{socket_path}/health",
                 detail=self._with_note(
-                    f"PID {pid}{uptime_str}" + ("" if healthy else ", probe failed"),
+                    f"PID {pid}{uptime_str}{fail}",
                     pid_note,
                 ),
             )
@@ -311,15 +312,21 @@ class ServiceState:
             status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
             port=None,
             detail=self._with_note(
-                "Socket ready (PID file missing)"
+                f"Socket ready (PID file missing){fail}"
                 if healthy
-                else "Socket ready, probe failed",
+                else f"Socket ready{fail}",
                 pid_note,
             ),
         )
 
-    def _cloud_proxy_probe_uds(self, socket_path: Path) -> bool:
-        """Probe /health via UDS. Short timeout, fail closed."""
+    def _cloud_proxy_probe_uds(self, socket_path: Path) -> tuple[bool, str | None]:
+        """UDS GET /health readiness; fail closed. Note names the fail class.
+
+        Same instrument as ``_rag_probe_uds``: a later seat must be able to
+        tell timeout from connect-fail from a non-200. The previous
+        ``except: return False`` swallowed that class into an empty
+        fleet-wide ``detail`` discriminator.
+        """
         from transport_utils import make_sync_client
 
         try:
@@ -327,9 +334,11 @@ class ServiceState:
                 f"unix://{socket_path}", timeout=_SERVICE_HEALTH_TIMEOUT
             ) as client:
                 resp = client.get("/health")
-                return resp.status_code == 200
-        except Exception:
-            return False
+                if resp.status_code == 200:
+                    return True, None
+                return False, f"/health returned {resp.status_code}"
+        except Exception as exc:
+            return False, type(exc).__name__
 
     def _check_cloud_proxy_tcp(self, *, host: str, port: int) -> ServiceInfo:
         """TCP mode: port-based + HTTP health."""
@@ -629,7 +638,9 @@ class ServiceState:
         import json as _json
 
         try:
-            conn = http.client.HTTPConnection(host, port, timeout=_SERVICE_HEALTH_TIMEOUT)
+            conn = http.client.HTTPConnection(
+                host, port, timeout=_SERVICE_HEALTH_TIMEOUT
+            )
             try:
                 conn.request("GET", "/health")
                 resp = conn.getresponse()
@@ -732,12 +743,19 @@ class ServiceState:
             ),
         )
 
-    def _event_service_probe_uds(self, socket_path: Path) -> bool:
+    def _event_service_probe_uds(self, socket_path: Path) -> tuple[bool, str | None]:
         """Probe /health via UDS on the event-service query socket."""
         return self._probe_uds_health(socket_path, "/health")
 
-    def _probe_uds_health(self, socket_path: Path, endpoint: str = "/health") -> bool:
-        """Probe an endpoint via UDS. Short timeout, fail closed."""
+    def _probe_uds_health(
+        self, socket_path: Path, endpoint: str = "/health"
+    ) -> tuple[bool, str | None]:
+        """UDS GET ``endpoint`` readiness; fail closed. Note names the fail class.
+
+        Shared by event-service and other generic UDS rows. Same instrument
+        as ``_rag_probe_uds``: anonymous ``except: return False`` is the
+        defect this surface is closing.
+        """
         from transport_utils import make_sync_client
 
         try:
@@ -745,9 +763,11 @@ class ServiceState:
                 f"unix://{socket_path}", timeout=_SERVICE_HEALTH_TIMEOUT
             ) as client:
                 resp = client.get(endpoint)
-                return resp.status_code == 200
-        except Exception:
-            return False
+                if resp.status_code == 200:
+                    return True, None
+                return False, f"{endpoint} returned {resp.status_code}"
+        except Exception as exc:
+            return False, type(exc).__name__
 
     def _check_uds_service(
         self,
@@ -783,7 +803,8 @@ class ServiceState:
                 status=ServiceStatus.STOPPED,
                 detail=pid_note or "",
             )
-        healthy = self._probe_uds_health(socket_path, health_endpoint)
+        healthy, probe_note = self._probe_uds_health(socket_path, health_endpoint)
+        fail = self._probe_fail_suffix(healthy, probe_note)
         listener_pid = self._find_unix_listener_pid(socket_path) if healthy else None
         listener_is_managed = self._pid_is_managed(listener_pid, managed_pid_predicate)
         if (
@@ -805,8 +826,7 @@ class ServiceState:
                 pid=managed_pid,
                 health_url=f"unix://{socket_path}{health_endpoint}",
                 detail=self._with_note(
-                    f"PID {managed_pid}{uptime_str}"
-                    + ("" if healthy else ", probe failed"),
+                    f"PID {managed_pid}{uptime_str}{fail}",
                     pid_note,
                 ),
                 ownership=ServiceOwnership.MANAGED,
@@ -826,8 +846,7 @@ class ServiceState:
                 pid=listener_pid,
                 health_url=f"unix://{socket_path}{health_endpoint}",
                 detail=self._with_note(
-                    f"PID {listener_pid}{uptime_str}, externally managed"
-                    + ("" if healthy else ", probe failed"),
+                    f"PID {listener_pid}{uptime_str}, externally managed{fail}",
                     pid_note,
                 ),
                 ownership=ServiceOwnership.EXTERNAL,
@@ -836,9 +855,9 @@ class ServiceState:
             name=name,
             status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
             detail=self._with_note(
-                "Socket ready (PID file missing)"
+                f"Socket ready (PID file missing){fail}"
                 if healthy
-                else "Socket ready, probe failed",
+                else f"Socket ready{fail}",
                 pid_note,
             ),
         )

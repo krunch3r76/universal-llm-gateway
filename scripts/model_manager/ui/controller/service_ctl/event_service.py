@@ -156,7 +156,8 @@ async def start_event_service(
         def _ready() -> bool:
             if not query_sock.exists():
                 return False
-            return service_state._probe_uds_health(query_sock, "/health")
+            healthy, _note = service_state._probe_uds_health(query_sock, "/health")
+            return healthy
 
         outcome, exit_code = await await_popen_started(process, ready=_ready)
         if outcome is StartupOutcome.CRASHED:
