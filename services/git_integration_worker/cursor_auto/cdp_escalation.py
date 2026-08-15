@@ -1,7 +1,14 @@
-"""CDP escalation commission — lane probe + Stargate team-dispatch HTTP."""
+"""CDP escalation commission — lane probe + Stargate team-dispatch HTTP.
+
+Hop-cadence and Auto handler call ``read_cdp_lane_snapshot`` for admission
+gating; the GET return is the fire-time snap that predecessor capture later
+reads. ``observed_at`` is stamped here so LOOKUP_FAILED observe can recover
+the read clock after commission.
+"""
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -16,11 +23,30 @@ logger = get_logger(__name__)
 _RELAY_TIMEOUT = 20.0
 
 
+def _stamp_snap_read(snap: dict[str, Any]) -> dict[str, Any]:
+    """Copy ``snap`` and stamp ``observed_at`` at GET-return time if absent.
+
+    Capture runs after commission; the stamp must be the read clock, not the
+    capture clock, or LOOKUP_FAILED cannot recover the fire-time membership gap.
+    """
+    out = dict(snap)
+    if not out.get("observed_at"):
+        out["observed_at"] = datetime.now(timezone.utc).isoformat()
+    return out
+
+
 def read_cdp_lane_snapshot(*, client: CdpAskClient | None = None) -> dict[str, Any]:
-    """Fetch ``cdp-ask`` active-work snapshot for lane-admission gating."""
+    """Return the live ``GET /v1/project-ask/active-work`` dict, stamped at read.
+
+    Non-dict responses stay ``{}`` (falsy) so existing callers that treat an
+    empty mapping as a failed probe do not flip. A successful dict always
+    carries ``observed_at`` — server value if present, else this call's clock.
+    """
     http = client or CdpAskClient()
     snap = http._request("GET", "/v1/project-ask/active-work")
-    return snap if isinstance(snap, dict) else {}
+    if not isinstance(snap, dict):
+        return {}
+    return _stamp_snap_read(snap)
 
 
 def escalation_lane_refusal(

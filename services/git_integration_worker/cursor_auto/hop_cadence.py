@@ -239,7 +239,7 @@ async def fire_hop_for_decision(
             snap = reader()
         except Exception as exc:  # noqa: BLE001 — cadence must not crash the worker
             logger.warning("hop_cadence liveness probe failed: %s", exc)
-            snap = {}
+            snap = {"fail_open": True}
             liveness_probe = {"fail_open": True, "error": str(exc)}
             emit_liveness_probe_failed(
                 thread_id=decision.thread_id,

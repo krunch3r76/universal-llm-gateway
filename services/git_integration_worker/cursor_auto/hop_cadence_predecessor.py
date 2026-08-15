@@ -13,6 +13,10 @@ from typing import Any
 
 from universal_logging import get_logger
 
+from services.git_integration_worker.cursor_auto.hop_cadence_lookup_failed_observe import (
+    observe_lookup_failed_nonthrowing,
+)
+
 logger = get_logger(__name__)
 
 # Explicit sentinels — empty string must never mean "unknown which case".
@@ -139,7 +143,12 @@ def capture_predecessor_at_hop(
     row: dict[str, Any],
     snap: dict[str, Any] | None,
 ) -> PredecessorHandle | PredecessorConfirmError:
-    """Resolve predecessor handle at hop fire; observe the world before claiming absence."""
+    """Resolve predecessor handle at hop fire; observe the world before claiming absence.
+
+    On ``LOOKUP_FAILED`` (watch registration miss and empty ``incumbents_on_lane``)
+    emits ``giw.cursor_auto.hop_cadence_lookup_failed_observe`` then returns the
+    same ``PredecessorConfirmError`` as before. Emit failures are swallowed.
+    """
     predecessor_reg = str(row.get("registration_id") or "").strip()
     thread_id = str(row.get("thread_id") or "")
     snap_dict = snap if isinstance(snap, dict) else {}
@@ -177,6 +186,12 @@ def capture_predecessor_at_hop(
         "hop_cadence predecessor lookup failed thread=%s reg=%s",
         thread_id,
         predecessor_reg,
+    )
+    observe_lookup_failed_nonthrowing(
+        thread_id=thread_id,
+        registration_id=predecessor_reg,
+        snap=snap_dict,
+        watch_reg_hit=False,
     )
     return PredecessorConfirmError(
         thread_id=thread_id,
