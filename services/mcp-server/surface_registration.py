@@ -6,6 +6,8 @@ import os
 from typing import TYPE_CHECKING
 
 from endpoint_surface import Surface
+from universal_logging import get_logger
+
 from tools._agent_bus_read import register_agent_bus_read_tool
 from tools.advisor import register_advisor_tools
 from tools.agent_bus import register_agent_bus_tools
@@ -51,7 +53,6 @@ from tools.trigger import register_trigger_tool
 from tools.vision_digest import register_vision_digest_tools
 from tools.web import register_web_tools
 from tools.x_dm import register_x_dm_tools
-from universal_logging import get_logger
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP

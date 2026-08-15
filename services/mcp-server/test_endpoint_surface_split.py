@@ -151,6 +151,7 @@ def test_delegate_present_on_life_absent_on_code(
 def test_life_cortex_entity_merge_rejected() -> None:
     from fastmcp import FastMCP
     from request_profile import bind_request
+
     from tools.cortex import register_cortex_tools
 
     mcp = FastMCP("test-life-cortex-gate")
