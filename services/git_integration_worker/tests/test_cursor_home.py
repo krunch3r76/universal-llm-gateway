@@ -244,12 +244,13 @@ def test_resolve_repo_venv_default_from_real_home(
     assert resolve_repo_venv(real_home=fake_home) == fake_home / ".venvs" / "universal"
 
 
-def test_resolve_repo_venv_override(
+def test_resolve_repo_venv_rejects_non_universal_override(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     override = tmp_path / "custom-venv"
     monkeypatch.setenv("CURSOR_SDK_VENV_PATH", str(override))
-    assert resolve_repo_venv() == override
+    with pytest.raises(CursorVenvConfigError, match="universal venv"):
+        resolve_repo_venv()
 
 
 def test_validate_repo_venv_ok(tmp_path: Path) -> None:

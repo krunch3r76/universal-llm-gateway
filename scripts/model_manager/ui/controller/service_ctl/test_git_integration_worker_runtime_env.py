@@ -56,3 +56,5 @@ def test_runtime_env_always_sets_path_with_venv_first(
     assert parts[0] == str(venv_bin)
     assert parts.count(str(venv_bin)) == 1
     assert parts.index(str(venv_bin)) < parts.index("/home/io/.local/bin")
+    assert env["VIRTUAL_ENV"] == str(home / ".venvs" / "universal")
+    assert "CURSOR_SDK_VENV_PATH" not in env

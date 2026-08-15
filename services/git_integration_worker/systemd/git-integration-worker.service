@@ -8,6 +8,7 @@ User=io
 ExecStart=/home/io/.venvs/universal/bin/python -m services.git_integration_worker.main
 WorkingDirectory=/mnt/torus/projects/universal-llm-gateway
 Environment=PYTHONPATH=/mnt/torus/projects/universal-llm-gateway/libs
+Environment=VIRTUAL_ENV=/home/io/.venvs/universal
 Environment=GIT_INTEGRATION_WORKER_HOST=127.0.0.1
 Environment=GIT_INTEGRATION_WORKER_PORT=8091
 Environment=GIT_INTEGRATION_SOURCE_REPO=/mnt/torus/projects/universal-llm-gateway

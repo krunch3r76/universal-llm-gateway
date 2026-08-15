@@ -120,7 +120,12 @@ async def _start_uvicorn_service(
             return pre_result
 
         venv_python = Path.home() / ".venvs" / "universal" / "bin" / "python"
-        python = str(venv_python) if venv_python.exists() else "python3"
+        if not venv_python.is_file():
+            raise RuntimeError(
+                "universal venv is required for host services: "
+                f"missing {venv_python}"
+            )
+        python = str(venv_python)
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / log_filename
         env = build_service_env(root)

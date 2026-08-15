@@ -283,19 +283,24 @@ def setup_cursor_dispatch_home(
     return home
 
 
-def resolve_repo_venv(
-    *, real_home: Path | str | None = None, override: str | None = None
-) -> Path:
-    """Repo venv root: CURSOR_SDK_VENV_PATH override, else <real_home>/.venvs/universal.
+def resolve_repo_venv(*, real_home: Path | str | None = None) -> Path:
+    """Return the mandatory universal venv used by every SDK dispatch.
 
-    Uses :func:`operator_real_home` so a contaminated process ``HOME`` (dispatch
-    overlay leak) cannot redirect the venv under a per-dispatch home.
+    The worker may create a private HOME for Cursor credentials, but that HOME
+    must never become the interpreter/configuration root.  An alternate
+    ``CURSOR_SDK_VENV_PATH`` is rejected instead of allowing a dispatch to run
+    under an unapproved interpreter.
     """
-    if override is None:
-        override = os.environ.get("CURSOR_SDK_VENV_PATH", "").strip() or None
-    if override:
-        return Path(override).expanduser()
-    return operator_real_home(explicit=real_home) / DEFAULT_REPO_VENV_RELPATH
+    required = operator_real_home(explicit=real_home) / DEFAULT_REPO_VENV_RELPATH
+    configured = os.environ.get("CURSOR_SDK_VENV_PATH", "").strip()
+    if configured:
+        configured_path = Path(configured).expanduser().resolve()
+        if configured_path != required.resolve():
+            raise CursorVenvConfigError(
+                "cursor-sdk dispatch requires the universal venv at "
+                f"{required}; CURSOR_SDK_VENV_PATH={configured_path} is not allowed"
+            )
+    return required
 
 
 def validate_repo_venv(venv: Path) -> None:

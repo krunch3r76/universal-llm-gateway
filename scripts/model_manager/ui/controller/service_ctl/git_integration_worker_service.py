@@ -67,9 +67,14 @@ def _runtime_env() -> dict[str, str]:
         env["GIT_INTEGRATION_GREEN_GATE_CMD"] = green_gate
     # Always prepend venv bin so it wins over ~/.local/bin, not only when
     # absent. Every GIW-spawned tool (ruff, pytest, fastmcp-remote) inherits.
-    venv_bin = str(Path.home() / ".venvs" / "universal" / "bin")
+    universal_venv = Path.home() / ".venvs" / "universal"
+    venv_bin = str(universal_venv / "bin")
     path = os.environ.get("PATH", "/usr/bin:/bin")
     env["PATH"] = _path_with_venv_first(path, venv_bin)
+    env["VIRTUAL_ENV"] = str(universal_venv)
+    # This setting is no longer an override surface; remove a stale parent
+    # value so the worker cannot inherit a non-universal dispatch venv.
+    env.pop("CURSOR_SDK_VENV_PATH", None)
     return env
 
 

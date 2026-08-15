@@ -1029,7 +1029,9 @@ def test_run_sdk_sync_injects_venv_env(
     repo_venv = _fake_repo_venv(tmp_path)
     dispatch_home = tmp_path / "dispatch-home"
     dispatch_home.mkdir()
-    monkeypatch.setenv("CURSOR_SDK_VENV_PATH", str(repo_venv))
+    monkeypatch.setattr(
+        route_mod, "resolve_repo_venv", lambda **_: repo_venv
+    )
 
     prev_home = os.environ.get("HOME")
     prev_venv = os.environ.get("VIRTUAL_ENV")
@@ -1135,7 +1137,9 @@ def test_dispatch_path_prepend_pins_cursor_agent_before_grok(
     repo_venv = _fake_repo_venv(tmp_path)
     dispatch_home = tmp_path / "dispatch-home"
     dispatch_home.mkdir()
-    monkeypatch.setenv("CURSOR_SDK_VENV_PATH", str(repo_venv))
+    monkeypatch.setattr(
+        route_mod, "resolve_repo_venv", lambda **_: repo_venv
+    )
     monkeypatch.setenv("HOME", str(operator_home))
     monkeypatch.setenv(
         "PATH",
@@ -2337,7 +2341,9 @@ def test_run_sdk_sync_folds_stream_paths_and_artifacts(
     repo_venv = _fake_repo_venv(tmp_path)
     dispatch_home = tmp_path / "dispatch-home"
     dispatch_home.mkdir()
-    monkeypatch.setenv("CURSOR_SDK_VENV_PATH", str(repo_venv))
+    monkeypatch.setattr(
+        route_mod, "resolve_repo_venv", lambda **_: repo_venv
+    )
 
     stream_capture = StreamCapture(
         tool_calls=(
@@ -2491,7 +2497,9 @@ def test_run_sdk_sync_local_bridge_post_wait_request_id(
     repo_venv = _fake_repo_venv(tmp_path)
     dispatch_home = tmp_path / "dispatch-home"
     dispatch_home.mkdir()
-    monkeypatch.setenv("CURSOR_SDK_VENV_PATH", str(repo_venv))
+    monkeypatch.setattr(
+        route_mod, "resolve_repo_venv", lambda **_: repo_venv
+    )
 
     stream_capture = StreamCapture(tool_calls=())
 
