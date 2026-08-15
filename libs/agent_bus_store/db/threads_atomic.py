@@ -220,11 +220,14 @@ def close_thread(
     if detail is not None:
         from ..events.thread_closed import (
             emit_charter_root_closed_on_unenroll,
+            emit_persistent_thread_closed,
             emit_thread_closed,
         )
 
         via = None if lifecycle_trigger == "close" else lifecycle_trigger
         emit_thread_closed(thread_id, via=via)
+        if "bus_lifecycle:persistent" in (detail.get("tags") or []):
+            emit_persistent_thread_closed(thread_id, via=via)
         if stripped_enrollment:
             emit_charter_root_closed_on_unenroll(
                 root=thread_id,

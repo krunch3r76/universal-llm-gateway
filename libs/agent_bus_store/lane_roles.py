@@ -3,7 +3,15 @@
 from __future__ import annotations
 
 LANE_ROLES: frozenset[str] = frozenset(
-    {"sub_mission", "hop", "spillover", "dispatch", "side", "parallel"}
+    {
+        "sub_mission",
+        "operator_proxy",
+        "hop",
+        "spillover",
+        "dispatch",
+        "side",
+        "parallel",
+    }
 )
 
 

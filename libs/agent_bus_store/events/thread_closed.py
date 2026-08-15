@@ -47,6 +47,22 @@ def emit_thread_closed(thread: str, *, via: str | None = None) -> None:
     _publish(event.signal, event.payload, role=event.role or "observation")
 
 
+def emit_persistent_thread_closed(
+    thread: str,
+    *,
+    via: str | None = None,
+) -> None:
+    """Publish the advisory close signal for a persistent bus thread."""
+    payload: dict[str, Any] = {"thread": thread}
+    if via:
+        payload["via"] = via
+    _publish(
+        "mcp.agentbus.persistent_thread.closed",
+        payload,
+        role="observation",
+    )
+
+
 def emit_charter_root_closed_on_unenroll(
     *,
     root: str,

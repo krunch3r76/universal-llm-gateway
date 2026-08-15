@@ -46,6 +46,7 @@ LIFE_SURFACE_LEGAL_TOOLS: frozenset[str] = frozenset(
         "agent_bus",
         "agent_bus_read",
         "cursor_request",
+        "operator_request",
         "fs",
         "rag",
         "retrieve",

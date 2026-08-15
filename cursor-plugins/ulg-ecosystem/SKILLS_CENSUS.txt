@@ -23,9 +23,11 @@ git-posture
 handoff-packet-authoring
 implement-todo
 multi-model-review
+mission-operator
 operator-posture
 operator-proxy-substrate
 orchestrator-workflow
+orchestration-lanes
 over-refusal-prompt-framing
 pager-notify
 path-sim

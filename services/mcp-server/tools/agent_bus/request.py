@@ -16,6 +16,7 @@ from agent_bus_store.disposition import append_bus_lifecycle_tags
 from mcp_events import record
 
 from .._agent_bus_author import resolve_dispatch_from_agent
+from .lane_provenance import observe_unparented_birth
 from .park_hint import build_poll_hint as _build_poll_hint
 from .park_hint import is_chat_delivery_capable
 from .request_failure import (
@@ -422,6 +423,12 @@ def _request_dispatch(
     checkout_lane, lane_err = resolve_checkout_lane(lane, from_agent=from_agent)
     if lane_err is not None:
         return lane_err
+    observe_unparented_birth(
+        new_slug=new_slug,
+        parent_thread=parent_thread,
+        lane_role=lane_role,
+        request_id=rid_intake.request_id,
+    )
 
     result = _request_impl(
         new_slug=new_slug,

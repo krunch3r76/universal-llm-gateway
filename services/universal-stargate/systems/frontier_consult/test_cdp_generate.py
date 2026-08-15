@@ -601,6 +601,71 @@ def test_default_operator_seat_binding_skips_ask() -> None:
     assert kind is None
 
 
+def _capture_mission_provenance(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    from systems.frontier_consult import cdp_mission_provenance as prov
+
+    published: list[Any] = []
+    monkeypatch.setattr(prov, "publish_frontier_event", published.append)
+    return published
+
+
+def test_mission_provenance_records_synthesized_lane(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from systems.frontier_consult.cdp_mission_provenance import observe_mission_binding
+
+    published = _capture_mission_provenance(monkeypatch)
+    observe_mission_binding(
+        purpose="operator-proxy",
+        dispatch_thread_id="6655",
+        parent_thread="6655",
+        mission_kind="root",
+        synthesized=True,
+    )
+
+    assert len(published) == 1
+    payload = published[0].payload
+    assert payload["synthesized"] is True
+    assert payload["parent_thread"] == "6655"
+    assert payload["mission_kind"] == "root"
+    assert published[0].signal == "frontier.cdp.mission.provenance"
+
+
+def test_mission_provenance_silent_on_declared_lane(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A caller that named its own parent is the healthy path — no signal."""
+    from systems.frontier_consult.cdp_mission_provenance import observe_mission_binding
+
+    published = _capture_mission_provenance(monkeypatch)
+    observe_mission_binding(
+        purpose="mission",
+        dispatch_thread_id="6655",
+        parent_thread="7186",
+        mission_kind="root",
+        synthesized=False,
+    )
+
+    assert published == []
+
+
+def test_mission_provenance_ignores_ask_purpose(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from systems.frontier_consult.cdp_mission_provenance import observe_mission_binding
+
+    published = _capture_mission_provenance(monkeypatch)
+    observe_mission_binding(
+        purpose="ask",
+        dispatch_thread_id="6655",
+        parent_thread=None,
+        mission_kind=None,
+        synthesized=True,
+    )
+
+    assert published == []
+
+
 @pytest.mark.asyncio
 async def test_dispatch_cdp_generate_forwards_generation_options(
     monkeypatch: pytest.MonkeyPatch, tmp_path

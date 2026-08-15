@@ -50,6 +50,9 @@ CALLER_FIELDS: frozenset[str] = frozenset(
         "require_attended",
         "after_turn",
         "lane",
+        "parent_thread",
+        "lane_role",
+        "request_id",
     }
 )
 
@@ -113,6 +116,9 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         require_attended: bool = False,
         after_turn: int = 0,
         lane: str | None = None,
+        parent_thread: str | None = None,
+        lane_role: str | None = None,
+        request_id: str | None = None,
     ) -> Any:
         """Sanctioned unattended cursor-auto request lane (agent_bus request only).
 
@@ -233,6 +239,12 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
             }
             if lane is not None:
                 parsed["lane"] = lane
+            if parent_thread is not None:
+                parsed["parent_thread"] = parent_thread
+            if lane_role is not None:
+                parsed["lane_role"] = lane_role
+            if request_id is not None:
+                parsed["request_id"] = request_id
             if new_slug is not None:
                 parsed["new_slug"] = new_slug
             if thread is not None:
@@ -258,3 +270,52 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         title="Cursor Auto Request",
         description=cursor_request.__doc__ or "",
     )(cursor_request)
+
+    def operator_request(
+        subject: str,
+        body: str,
+        new_slug: str | None = None,
+        thread: str | None = None,
+        from_agent: str = "",
+        summary: str | None = None,
+        tags: list[str] | None = None,
+        sidecar_content: str | None = None,
+        sidecar_slug: str | None = None,
+        desired_model: str = "auto",
+        desired_effort: str = "medium",
+        escalation: str | None = None,
+        contract: str = "answer",
+        require_attended: bool = False,
+        after_turn: int = 0,
+        lane: str | None = None,
+        parent_thread: str | None = None,
+        lane_role: str | None = None,
+        request_id: str | None = None,
+    ) -> Any:
+        """Recipient-neutral approval-gated operator request lane."""
+        return cursor_request(
+            subject=subject,
+            body=body,
+            new_slug=new_slug,
+            thread=thread,
+            from_agent=from_agent,
+            summary=summary,
+            tags=tags,
+            sidecar_content=sidecar_content,
+            sidecar_slug=sidecar_slug,
+            desired_model=desired_model,
+            desired_effort=desired_effort,
+            escalation=escalation,
+            contract=contract,
+            require_attended=require_attended,
+            after_turn=after_turn,
+            lane=lane,
+            parent_thread=parent_thread,
+            lane_role=lane_role,
+            request_id=request_id,
+        )
+
+    mcp.tool(
+        title="Operator Request",
+        description=operator_request.__doc__ or "",
+    )(operator_request)

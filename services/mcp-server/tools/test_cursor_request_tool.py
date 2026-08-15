@@ -43,7 +43,7 @@ class _ToolNameRecorder:
 def test_cursor_request_registers_without_error() -> None:
     recorder = _ToolNameRecorder()
     register_cursor_request_tool(recorder)  # type: ignore[arg-type]
-    assert recorder.registered == ["cursor_request"]
+    assert recorder.registered == ["cursor_request", "operator_request"]
     description = recorder.kwargs["cursor_request"].get("description") or ""
     assert description
     for record in RECORDS:
@@ -56,6 +56,32 @@ def test_cursor_request_registers_without_error() -> None:
     )
     assert "live@<sha>" in source
     assert "code_ref_satisfied" in source
+
+
+def test_operator_request_forwards_lane_binding_fields() -> None:
+    recorder = _ToolNameRecorder()
+    register_cursor_request_tool(recorder)
+    operator_request_fn = recorder.functions["operator_request"]
+    captured: list[dict[str, Any]] = []
+
+    def _fake_dispatch(**kwargs: Any) -> dict[str, Any]:
+        captured.append(kwargs)
+        return {"thread": {"id": "901"}, "turn": {"turn_number": 1}}
+
+    with patch("tools.cursor_request._request_dispatch", side_effect=_fake_dispatch):
+        with bind_request("default", surface="life"):
+            operator_request_fn(
+                new_slug="mission",
+                subject="Run mission",
+                body="TYPE: DIRECTIVE\n",
+                parent_thread="700",
+                lane_role="operator_proxy",
+                request_id="req-1",
+            )
+
+    assert captured[0]["parent_thread"] == "700"
+    assert captured[0]["lane_role"] == "operator_proxy"
+    assert captured[0]["request_id"] == "req-1"
 
 
 def test_valid_call_delegates_to_request_dispatch_with_to_cursor() -> None:

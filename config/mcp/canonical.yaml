@@ -26,6 +26,7 @@ domains:
 - cortex_brief
 - project_ask
 - fleet_liveness
+- operator_request
 tools:
 - canonical_name: cortex_entities
   domain: cortex
@@ -2099,6 +2100,16 @@ tools:
       summary:
         type: string
         description: Standing ULG so-what title.
+      parent_thread:
+        type: string
+        description: Parent thread this lane is born under. Both-or-neither with lane_role.
+      lane_role:
+        type: string
+        description: Role of this lane under its parent — operator_proxy for a mission.
+          Both-or-neither with parent_thread.
+      request_id:
+        type: string
+        description: Caller idempotency key; correlates admit and closeout.
     required:
     - subject
     - body
@@ -2114,6 +2125,102 @@ tools:
   mandate_safety: write
   cache_priority: always_loaded
   introduced: 2026-07-29
+- canonical_name: operator_request
+  domain: operator_request
+  operation: request
+  dispatcher_call_shape:
+    tool: operator_request
+    dispatch_key: op
+    dispatch_value: request
+  flat_call_shape:
+    tool: operator_request
+    substrate_qualified: user-vortex__operator_request
+  fol_descriptor: "∀ args: (new_slug ∈ args XOR thread ∈ args) ∧ subject ∧ body\n  ⟹
+    TurnSendCreated-shaped + handler_status ∈ {auto-admit-armed, no-auto-handler} +
+    poll_hint.\nRecipient-neutral approval-gated operator request lane — the operator
+    is a role, not a model.\nparent_thread + lane_role=operator_proxy (both-or-neither)
+    births a parented mission lane.\nInjects lane:cursor-auto (dedupe). Arm predicate
+    = live Auto handler heartbeat.\ncontract ∈ answer|confer|investigate|implement|verify|execute|propagate|seed|recon.
+    Mutating. Life+code callable.\nimplement|investigate DIRECTIVE body requires vision:
+    else admit blocks vision_field_missing (pre-model). See agent_skill:mission-operator.\n"
+  json_schema:
+    type: object
+    properties:
+      new_slug:
+        type: string
+        description: Human label for NEW thread. Mutually exclusive with thread.
+      thread:
+        type: string
+        description: ID of EXISTING thread to continue. Mutually exclusive with new_slug.
+      subject:
+        type: string
+      body:
+        type: string
+      from:
+        type: string
+        description: Preferred author seat. Autofilled web-anthropic on /mcp/life.
+      from_agent:
+        type: string
+        description: Permanent alias for from=.
+      tags:
+        type: array
+        items:
+          type: string
+      sidecar_content:
+        type: string
+      sidecar_slug:
+        type: string
+      desired_model:
+        type: string
+        description: auto | composer-2.5 | grok-4.6 | opus-5 (default auto).
+      desired_effort:
+        type: string
+        description: low | medium | high | max (default medium).
+      escalation:
+        type: string
+        description: Optional CDP escalation leg — cdp/opus-5 | cdp/fable only; absent/empty
+          ⇒ no CDP leg; orthogonal to desired_model.
+      contract:
+        type: string
+        description: answer | confer | investigate | implement | verify | execute |
+          propagate | seed | recon (default answer).
+      require_attended:
+        type: boolean
+        description: When true, refuse unattended nested dispatch and in-seat Auto
+          substitute; terminal status:needs-attended with reason=operator_require_attended.
+        default: false
+      after_turn:
+        type: integer
+        description: Continue-thread ordering pointer (default 0).
+        default: 0
+      summary:
+        type: string
+        description: Standing ULG so-what title.
+      parent_thread:
+        type: string
+        description: Parent thread this lane is born under. Both-or-neither with lane_role.
+      lane_role:
+        type: string
+        description: Role of this lane under its parent — operator_proxy for a mission.
+          Both-or-neither with parent_thread.
+      request_id:
+        type: string
+        description: Caller idempotency key; correlates admit and closeout.
+    required:
+    - subject
+    - body
+    oneOf:
+    - required:
+      - new_slug
+    - required:
+      - thread
+  skill_uri: agent_skill:mission-operator
+  seat_visibility:
+  - mcp
+  - mcp_claude
+  mandate_safety: write
+  cache_priority: always_loaded
+  introduced: '2026-08-15'
 - canonical_name: agent_bus_lane_bind
   domain: agent_bus
   operation: lane_bind
@@ -4941,6 +5048,9 @@ domain_endpoints:
     fleet_liveness:
     - life
     - code
+    operator_request:
+    - life
+    - code
     imprint:
     - life
     delegate:
@@ -4963,6 +5073,7 @@ surface_primary_domains:
   - delegate
   - notify
   - fleet_liveness
+  - operator_request
   code:
   - cortex
   - cortex_brief
@@ -4981,6 +5092,7 @@ surface_primary_domains:
   - panel_dispatch
   - project_ask
   - fleet_liveness
+  - operator_request
 cortex_families:
   defaults:
     read:

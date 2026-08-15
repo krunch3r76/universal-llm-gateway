@@ -31,6 +31,7 @@ from model_id import ModelId
 from .admission import FrontierEndpointError
 from .cdp_generate_reconcile import upsert_inflight_leg
 from .cdp_generate_worker import run_cdp_worker
+from .cdp_mission_provenance import observe_mission_binding
 from .handoff import create_handoff_thread, post_pointer_turn
 from .handoff_response import build_handoff_result, resolve_poll_wait_seconds
 from .poll_hint_events import emit_poll_hint_from_handoff
@@ -344,11 +345,19 @@ async def dispatch_cdp_generate(
         else None
     )
     if is_operator_proxy_mission_purpose(purpose):
+        declared_parent = parent_thread
         parent_thread, mission_kind = default_operator_seat_binding(
             purpose=purpose,
             parent_thread=parent_thread,
             mission_kind=mission_kind,
             thread_id=str(thread_id),
+        )
+        observe_mission_binding(
+            purpose=purpose,
+            dispatch_thread_id=str(thread_id),
+            parent_thread=parent_thread,
+            mission_kind=mission_kind,
+            synthesized=declared_parent is None,
         )
     opts = getattr(body, "generation_options", None) or {}
     worker_kwargs: dict[str, Any] = {
