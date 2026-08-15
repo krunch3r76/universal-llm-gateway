@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from claude_bundles.hop_cadence_seat_snap import identity_rows
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_auto.hop_cadence_lookup_failed_observe import (
@@ -72,10 +73,7 @@ def execution_id_for_registration(
     reg = registration_id.strip()
     if not reg:
         return None
-    rows = snap.get("rows") if isinstance(snap.get("rows"), list) else []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
+    for row in identity_rows(snap):
         status = str(row.get("status") or "")
         row_reg = str(row.get("registration_id") or "").strip()
         exec_id = str(row.get("execution_id") or "").strip()
@@ -90,17 +88,16 @@ def incumbents_on_lane(
 ) -> list[tuple[str, str]]:
     """Return ``(registration_id, execution_id)`` for running OP rows on ``parent_thread``.
 
-    Unbound rows (missing ``parent_thread``) do not join — they cannot prove
-    incumbency. Empty result is observation, not a first-seat claim.
+    Reads the identity union (execution-store ``rows`` plus registry
+    ``seated_rows``). Unbound rows (missing ``parent_thread``) do not join —
+    they cannot prove incumbency. Empty result is observation, not a
+    first-seat claim.
     """
     lane = (thread_id or "").strip()
     if not lane:
         return []
     found: list[tuple[str, str]] = []
-    rows = snap.get("rows") if isinstance(snap.get("rows"), list) else []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
+    for row in identity_rows(snap):
         status = str(row.get("status") or "")
         if status not in {"pending", "running"}:
             continue
