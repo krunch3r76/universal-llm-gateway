@@ -177,8 +177,8 @@ def test_fetch_thread_turns_sync_omits_last_param() -> None:
 
 @pytest.mark.asyncio
 async def test_scan_and_fire_skips_open_standdown_ack(tmp_path: Path) -> None:
-    from services.git_integration_worker.cursor_auto.hop_cadence import scan_and_fire
     from services.git_integration_worker.cursor_auto import queue as queue_mod
+    from services.git_integration_worker.cursor_auto.hop_cadence import scan_and_fire
 
     isolated = tmp_path / "watches.json"
     save_watches({_THREAD: _due_row()}, isolated)
@@ -210,8 +210,8 @@ async def test_scan_and_fire_skips_open_standdown_ack(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_scan_and_fire_fires_when_successor_consumes(tmp_path: Path) -> None:
-    from services.git_integration_worker.cursor_auto.hop_cadence import scan_and_fire
     from services.git_integration_worker.cursor_auto import queue as queue_mod
+    from services.git_integration_worker.cursor_auto.hop_cadence import scan_and_fire
 
     isolated = tmp_path / "watches.json"
     save_watches({_THREAD: _due_row()}, isolated)
