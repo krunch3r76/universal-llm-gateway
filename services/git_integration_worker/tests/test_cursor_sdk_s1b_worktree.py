@@ -193,6 +193,86 @@ def test_s1b_route_wires_resolve_admit_binding() -> None:
     assert "resolve_admit_binding" in source
 
 
+def test_s1b_mint_reattaches_existing_lane_branch(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    """Branch exists and worktree dir is gone → attach without ``-b`` (7240 class)."""
+    worktree_root = tmp_path / "worktrees"
+    thread_id = "7240-sim"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id="reattach-1",
+        thread_id=thread_id,
+    )
+    (wt / "lane_work.py").write_text("kept\n", encoding="utf-8")
+    _git("add", "lane_work.py", cwd=wt)
+    _git("commit", "-m", "lane work", cwd=wt)
+    tip = _git("rev-parse", "HEAD", cwd=wt).stdout.strip()
+    branch = f"cursor-sdk/lane-{thread_id}"
+    _git("worktree", "remove", "--force", str(wt), cwd=source_repo)
+    assert not wt.exists()
+    assert branch in _git("branch", "--list", branch, cwd=source_repo).stdout
+
+    wt2 = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id="reattach-2",
+        thread_id=thread_id,
+    )
+    assert wt2.is_dir()
+    assert (wt2 / "lane_work.py").read_text(encoding="utf-8") == "kept\n"
+    assert _git("rev-parse", "HEAD", cwd=wt2).stdout.strip() == tip
+    assert _git("branch", "--show-current", cwd=wt2).stdout.strip() == branch
+
+
+def test_s1b_admit_reattaches_when_registry_dir_gone(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    """Registry row pointing at a missing dir still remints by attaching the branch."""
+    worktree_root = tmp_path / "worktrees"
+    first, _key = resolve_admit_binding(
+        req=_req(dispatch_id="gone-dir-1", thread_id="t-gone", worktree_isolated=True),
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_workspace_default=source_repo.parent,
+        lane="B",
+    )
+    (first / "kept.txt").write_text("visible\n", encoding="utf-8")
+    _git("add", "kept.txt", cwd=first)
+    _git("commit", "-m", "keep", cwd=first)
+    _git("worktree", "remove", "--force", str(first), cwd=source_repo)
+    assert not first.exists()
+
+    second, key2 = resolve_admit_binding(
+        req=_req(dispatch_id="gone-dir-2", thread_id="t-gone", worktree_isolated=True),
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_workspace_default=source_repo.parent,
+        lane="B",
+    )
+    assert second.is_dir()
+    assert (second / "kept.txt").read_text(encoding="utf-8") == "visible\n"
+    assert str(second.resolve()) == key2
+
+
+def test_worktree_mint_error_defaults_not_retryable() -> None:
+    """Permanent mint collisions are not retryable; lock exhaustion is."""
+    permanent = WorktreeMintError("fatal: a branch named 'x' already exists")
+    assert permanent.retryable is False
+    transient = WorktreeMintError("index.lock: File exists", retryable=True)
+    assert transient.retryable is True
+
+
+def test_s1b_route_mint_failure_uses_exc_retryable() -> None:
+    """Route must not hardcode retryable=True on every WorktreeMintError."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    source = Path(route_mod.__file__).read_text(encoding="utf-8")
+    assert "retryable=getattr(exc, \"retryable\", False)" in source
+    assert "except WorktreeMintError as exc:" in source
+
+
 def test_s1b_lane_a_binding_unchanged(source_repo: Path, tmp_path: Path) -> None:
     """Lane-A default path still uses shared dispatch_workspace + source_repo lease."""
     shared = tmp_path / "shared"

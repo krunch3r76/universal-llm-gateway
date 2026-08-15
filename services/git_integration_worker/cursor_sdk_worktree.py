@@ -2,8 +2,10 @@
 
 Lane-B dispatches bind a stable tree under ``worktree_root`` keyed by
 ``thread_id`` (dir ``lane-{thread}``, branch ``cursor-sdk/lane-{thread}``).
-Mint is once per lane; later admits reuse the tree. The reaper removes a
-lane tree only when it has no live writer and the branch has merged.
+Mint is once per lane; later admits reuse the tree. If the branch still
+exists after the directory is gone, remint attaches the existing branch
+instead of ``worktree add -b``. The reaper removes a lane tree only when
+it has no live writer and the branch has merged.
 """
 
 from __future__ import annotations
@@ -40,7 +42,16 @@ _BRANCH_SAFE = re.compile(r"[^A-Za-z0-9._/-]+")
 
 
 class WorktreeMintError(RuntimeError):
-    """Raised when ``git worktree add`` fails after mutex acquisition."""
+    """Raised when ``git worktree add`` fails after mutex acquisition.
+
+    ``retryable`` is True only for transient lock contention that exhausted
+    in-process backoff. Branch-exists, path-exists, and attach failures are
+    permanent — an identical retry will fail identically.
+    """
+
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 def is_managed_worktree(path: Path, worktree_root: Path) -> bool:
@@ -91,29 +102,62 @@ def resolve_master_branch_point(source_repo: Path, *, ref: str = "refs/heads/mas
     return sha
 
 
-def _git_worktree_add_with_retry(
+def _is_transient_lock_error(err: str) -> bool:
+    return "lock" in err.lower()
+
+
+def _is_branch_exists_error(err: str) -> bool:
+    lower = err.lower()
+    return "already exists" in lower or "a branch named" in lower
+
+
+def _branch_exists(source_repo: Path, branch_name: str) -> bool:
+    """True when ``refs/heads/{branch_name}`` exists on ``source_repo``."""
+    proc = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source_repo.resolve()),
+            "show-ref",
+            "--verify",
+            "--quiet",
+            f"refs/heads/{branch_name}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT_S,
+        check=False,
+    )
+    return proc.returncode == 0
+
+
+def _rev_parse(source_repo: Path, ref: str) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(source_repo.resolve()), "rev-parse", ref],
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT_S,
+        check=False,
+    )
+    if proc.returncode != 0 or not proc.stdout.strip():
+        raise WorktreeMintError(
+            f"rev-parse {ref!r} failed for {source_repo}: {proc.stderr.strip()}"
+        )
+    return proc.stdout.strip()
+
+
+def _git_worktree_add(
     *,
     source_repo: Path,
+    args: list[str],
     worktree_path: Path,
-    branch_name: str,
-    branch_point: str,
     attempts: int = 5,
 ) -> None:
     """Run ``git worktree add`` with short backoff on transient lock errors."""
     last_err = ""
     for attempt in range(attempts):
         proc = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(source_repo.resolve()),
-                "worktree",
-                "add",
-                "-b",
-                branch_name,
-                str(worktree_path),
-                branch_point,
-            ],
+            ["git", "-C", str(source_repo.resolve()), "worktree", "add", *args],
             capture_output=True,
             text=True,
             timeout=_GIT_TIMEOUT_S,
@@ -122,12 +166,40 @@ def _git_worktree_add_with_retry(
         if proc.returncode == 0:
             return
         last_err = proc.stderr.strip() or proc.stdout.strip()
-        if "lock" not in last_err.lower() and attempt == attempts - 1:
+        if not _is_transient_lock_error(last_err):
             break
         time.sleep(_MINT_LOCK_POLL_S * (attempt + 1))
     raise WorktreeMintError(
-        f"git worktree add failed for {worktree_path}: {last_err}"
+        f"git worktree add failed for {worktree_path}: {last_err}",
+        retryable=_is_transient_lock_error(last_err),
     )
+
+
+def _git_worktree_add_with_retry(
+    *,
+    source_repo: Path,
+    worktree_path: Path,
+    branch_name: str,
+    branch_point: str,
+    attempts: int = 5,
+) -> None:
+    """Create ``branch_name`` at ``branch_point``, or attach it if it already exists."""
+    try:
+        _git_worktree_add(
+            source_repo=source_repo,
+            args=["-b", branch_name, str(worktree_path), branch_point],
+            worktree_path=worktree_path,
+            attempts=attempts,
+        )
+    except WorktreeMintError as exc:
+        if not _is_branch_exists_error(str(exc)):
+            raise
+        _git_worktree_add(
+            source_repo=source_repo,
+            args=[str(worktree_path), branch_name],
+            worktree_path=worktree_path,
+            attempts=attempts,
+        )
 
 
 def mint_dispatch_worktree(
@@ -148,12 +220,20 @@ def mint_dispatch_worktree(
     commit = branch_point or resolve_master_branch_point(source_repo)
     mutex_key = acquire_mint_mutex_blocking(source_repo=source_repo, holder_id=dispatch_id)
     try:
-        _git_worktree_add_with_retry(
-            source_repo=source_repo,
-            worktree_path=wt_path,
-            branch_name=branch,
-            branch_point=commit,
-        )
+        if _branch_exists(source_repo, branch):
+            _git_worktree_add(
+                source_repo=source_repo,
+                args=[str(wt_path), branch],
+                worktree_path=wt_path,
+            )
+            commit = _rev_parse(source_repo, f"refs/heads/{branch}")
+        else:
+            _git_worktree_add_with_retry(
+                source_repo=source_repo,
+                worktree_path=wt_path,
+                branch_name=branch,
+                branch_point=commit,
+            )
         register_lane_worktree(
             thread_id=lane_id,
             worktree_path=wt_path,

@@ -2470,7 +2470,7 @@ async def cursor_dispatch(
             failure_layer="admission",
             http_status=503,
             detail_summary=str(exc),
-            retryable=True,
+            retryable=getattr(exc, "retryable", False),
             validation_stage="worktree_mint",
         )
     binding = binding_for_dispatch(cfg=cfg, lease_key=lease_key)
