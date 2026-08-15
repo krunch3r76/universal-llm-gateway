@@ -51,6 +51,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
     "git_integration_worker": ServiceOwnership(
         path_prefix="services/git_integration_worker/",
         owned_libs=frozenset({"agent_bus_store", "agent_seat", "cdp_ask", "charter_runner_store", "claude_bundles", "contract_vocab", "cortex_store", "cursor_capabilities", "deploy_identity", "email_routing", "foo", "gen_rules", "git_integrate", "implement_admission", "llm_adapters", "markdown_fence", "markdown_sections", "markdown_xml_blocks", "model_capabilities", "model_id", "ocr_core", "pager_notify", "predicate_form", "process_ipc", "role_lint", "sse", "stargate_chat", "transport_utils", "universal_concurrency", "universal_event_bus", "universal_logging", "universal_protocol", "universal_transport", "universal_workspace"}),
+        serves_libs=frozenset({"charter_runner_store", "git_integrate", "implement_admission"}),
     ),
     "mcp": ServiceOwnership(
         path_prefix="services/mcp-server/",
@@ -110,10 +111,11 @@ def declared_services_for_lib(lib_name: str) -> tuple[str, ...]:
     return tuple(sorted(owners))
 
 
-UNSERVED_LIBS: frozenset[str] = frozenset()
+UNSERVED_LIBS: frozenset[str] = frozenset({"foo"})
 """Top-level ``libs/`` names explicitly classified as needing no manage restart.
 
-Empty is not a classification. Absence from every ``serves_libs`` row is
+``foo`` is the dogfood / mechanical fixture package — test-only, not a
+production behaviour. Absence from every ``serves_libs`` row is still
 ``unmapped`` until a name is listed here or nominated by CONSUMERS/INJECTORS.
 See ``serving_coverage.path_serving_coverage``.
 """

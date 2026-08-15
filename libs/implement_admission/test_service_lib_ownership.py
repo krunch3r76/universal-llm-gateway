@@ -104,6 +104,17 @@ def test_declared_cortex_store_path() -> None:
     assert "cortex_api" in owners
 
 
+def test_giw_serves_worker_hosted_libs_not_owned_libs() -> None:
+    """G1 §7 census: GIW job set is not a drop-in of owned_libs."""
+    own = service_ownership()["git_integration_worker"]
+    assert own.serves_libs == frozenset(
+        {"charter_runner_store", "git_integrate", "implement_admission"}
+    )
+    assert own.serves_libs < own.owned_libs
+    assert "agent_bus_store" not in own.serves_libs
+    assert "foo" not in own.serves_libs
+
+
 def test_wait_status_serving_slug_is_agent_bus_not_owned_libs_blast() -> None:
     """Replay 33083d61: serving-process set is {agent_bus}, not the seven owners."""
     serving = serving_services_for_lib_path("libs/agent_bus_store/wait_status.py")

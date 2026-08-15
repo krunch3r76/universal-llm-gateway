@@ -490,7 +490,7 @@ def _projection_to_row(row: OpenPropagationProjection) -> PropagationRow:
         safe_window=row.safe_window,
         proof=proof,
         proof_class=row.proof_class,  # type: ignore[arg-type]
-        proof_class_requested=row.proof_class,  # type: ignore[arg-type]
+        proof_class_requested=(row.proof_class_requested or row.proof_class),  # type: ignore[arg-type]
         allow_self_preempt=row.allow_self_preempt,
         force=row.force,
         close_surfaces=tuple(sorted(close_surfaces)),

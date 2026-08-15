@@ -53,6 +53,7 @@ class OpenPropagationProjection:
     consumption_claimed_at: float | None = None
     allow_self_preempt: bool = True
     force: bool = False
+    proof_class_requested: str | None = None
 
 
 def _row_key(row: PropagationRow) -> str:
@@ -119,14 +120,16 @@ def upsert_open_rows(
                 """
                 INSERT INTO propagation_ledger (
                   row_id, service, action, code_ref, safe_window, hazard, reason,
-                  proof, proof_class, mint_thread, mint_turn, status, age_in_harvests,
-                  created_at, updated_at, allow_self_preempt, force, proof_payload
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', 0, ?, ?, ?, ?, ?)
+                  proof, proof_class, proof_class_requested, mint_thread, mint_turn,
+                  status, age_in_harvests, created_at, updated_at, allow_self_preempt,
+                  force, proof_payload
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', 0, ?, ?, ?, ?, ?)
                 ON CONFLICT(row_id) DO UPDATE SET
                   hazard=excluded.hazard,
                   reason=excluded.reason,
                   proof=excluded.proof,
                   proof_class=excluded.proof_class,
+                  proof_class_requested=excluded.proof_class_requested,
                   mint_thread=COALESCE(excluded.mint_thread, propagation_ledger.mint_thread),
                   mint_turn=COALESCE(excluded.mint_turn, propagation_ledger.mint_turn),
                   allow_self_preempt=excluded.allow_self_preempt,
@@ -145,6 +148,7 @@ def upsert_open_rows(
                     row.reason,
                     row.proof,
                     row.proof_class,
+                    row.proof_class_requested or row.proof_class,
                     row.mint_thread,
                     row.mint_turn,
                     now,
@@ -160,7 +164,9 @@ def upsert_open_rows(
     return row_ids
 
 
-def list_open_rows(*, conn: sqlite3.Connection | None = None) -> list[OpenPropagationProjection]:
+def list_open_rows(
+    *, conn: sqlite3.Connection | None = None
+) -> list[OpenPropagationProjection]:
     """Return all open rows ordered by age then service."""
     own_conn = conn is None
     db = conn or open_ledger_db()
@@ -168,7 +174,8 @@ def list_open_rows(*, conn: sqlite3.Connection | None = None) -> list[OpenPropag
         cur = db.execute(
             """
             SELECT row_id, service, code_ref, safe_window, age_in_harvests,
-                   mint_thread, mint_turn, defer_reason, proof_class, hazard, reason,
+                   mint_thread, mint_turn, defer_reason, proof_class,
+                   proof_class_requested, hazard, reason,
                    settle_boundary_monotonic, proof, consumption_token,
                    consumption_claimed_at, allow_self_preempt, force
             FROM propagation_ledger
@@ -199,8 +206,11 @@ def list_open_rows(*, conn: sqlite3.Connection | None = None) -> list[OpenPropag
                     if row["allow_self_preempt"] is None
                     else bool(row["allow_self_preempt"])
                 ),
-                force=(
-                    False if row["force"] is None else bool(row["force"])
+                force=(False if row["force"] is None else bool(row["force"])),
+                proof_class_requested=(
+                    str(row["proof_class_requested"])
+                    if row["proof_class_requested"]
+                    else None
                 ),
             )
             for row in cur.fetchall()
@@ -479,7 +489,9 @@ def close_row(
             db.close()
 
 
-def scoreboard_projection(*, conn: sqlite3.Connection | None = None) -> list[dict[str, Any]]:
+def scoreboard_projection(
+    *, conn: sqlite3.Connection | None = None
+) -> list[dict[str, Any]]:
     """Addressable open-row list for operator scoreboard surfaces."""
     return [
         {
@@ -491,6 +503,7 @@ def scoreboard_projection(*, conn: sqlite3.Connection | None = None) -> list[dic
             "mint_turn": row.mint_turn,
             "defer_reason": row.defer_reason,
             "proof_class": row.proof_class,
+            "proof_class_requested": row.proof_class_requested,
             "hazard": row.hazard,
             "proof": row.proof,
             "proof_kind": row.proof_kind,

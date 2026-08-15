@@ -82,7 +82,7 @@ def test_legacy_residue_preserves_line_tags_without_inventing():
 def test_prose_only_runtime_land_sets_advisory():
     payload = {
         "propagation_residue": ["libs_touched: libs/foo.py — lead decides"],
-        "files_modified": ["libs/implement_admission/spec.py"],
+        "files_modified": ["libs/admission_common/__init__.py"],
         "evidence_uris": {"git_refs": ["sha-prose"]},
     }
     rows, _skipped, prose = rows_from_closeout_payload(payload)
@@ -197,7 +197,9 @@ def test_rows_from_lib_consumers_oracle_omits_contradicted_mcp():
     assert "import_path:verified" in (rows[0].reason or "")
     assert "mcp" not in {row.service for row in rows}
     # mcp contradicted with measured blinds → escalate prose, never a PropagationRow
-    assert any("mcp" in line and "import_grammar_blind:" in line for line in escalations)
+    assert any(
+        "mcp" in line and "import_grammar_blind:" in line for line in escalations
+    )
 
 
 def test_default_proof_strings_are_obligation_not_observation():

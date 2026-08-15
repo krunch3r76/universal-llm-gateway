@@ -86,6 +86,7 @@ def _process_live_proof_body() -> str:
         f"AND VERIFY process identity changed ({fields}) since the pre-restart probe"
     )
 
+
 # Optional service specialization for client_visible (class base alone is insufficient).
 _CLIENT_VISIBLE_PROOF_BY_SERVICE: dict[str, str] = {
     "mcp": (
@@ -177,8 +178,12 @@ class PropagationRow(BaseModel):
     )
     code_ref: str = Field(json_schema_extra={"parity": "bound"})
     safe_window: SafeWindow = Field(json_schema_extra={"parity": "effect"})
-    hazard: str | None = Field(default=None, json_schema_extra={"parity": "descriptive"})
-    reason: str | None = Field(default=None, json_schema_extra={"parity": "descriptive"})
+    hazard: str | None = Field(
+        default=None, json_schema_extra={"parity": "descriptive"}
+    )
+    reason: str | None = Field(
+        default=None, json_schema_extra={"parity": "descriptive"}
+    )
     proof: str = Field(json_schema_extra={"parity": "effect"})
     proof_class: ProofClass = Field(json_schema_extra={"parity": "effect"})
     proof_class_requested: ProofClass | None = Field(
@@ -187,12 +192,16 @@ class PropagationRow(BaseModel):
     expected_x_mcp_count: int | None = Field(
         default=None, json_schema_extra={"parity": "effect"}
     )
-    mint_thread: str | None = Field(default=None, json_schema_extra={"parity": "stamped"})
+    mint_thread: str | None = Field(
+        default=None, json_schema_extra={"parity": "stamped"}
+    )
     mint_turn: int | None = Field(default=None, json_schema_extra={"parity": "stamped"})
     # mcp-only: operator-proxy self-preempt of own cdp_ask_live CSE (restart-drain carve-out)
     force: bool = Field(default=False, json_schema_extra={"parity": "narrowing"})
     # When False, suppress auto-escalation to force on self-preemptable busy deferrals.
-    allow_self_preempt: bool = Field(default=True, json_schema_extra={"parity": "effect"})
+    allow_self_preempt: bool = Field(
+        default=True, json_schema_extra={"parity": "effect"}
+    )
     close_surfaces: tuple[str, ...] | None = Field(
         default=None, json_schema_extra={"parity": "effect"}
     )
@@ -298,6 +307,7 @@ def row_from_mapping(raw: dict[str, Any]) -> PropagationRow:
         reason=raw.get("reason"),
         proof=str(proof),
         proof_class=proof_class,
+        proof_class_requested=raw.get("proof_class_requested"),
         expected_x_mcp_count=expected_x_mcp_count,
         mint_thread=raw.get("mint_thread"),
         mint_turn=raw.get("mint_turn"),
@@ -350,7 +360,7 @@ def row_from_mapping_strict(
             reason=raw.get("reason"),
             proof=str(proof),
             proof_class=pc,  # type: ignore[arg-type]
-            proof_class_requested=pc,  # type: ignore[arg-type]
+            proof_class_requested=raw.get("proof_class_requested") or pc,  # type: ignore[arg-type]
             expected_x_mcp_count=expected_x_mcp_count,
             mint_thread=raw.get("mint_thread"),
             mint_turn=raw.get("mint_turn"),
@@ -657,9 +667,7 @@ def rows_from_service_paths(
             continue
         seen.add(slug)
         pc = default_proof_class(slug)
-        tags = format_verification_tags(
-            derived="path_prefix", import_path="not_probed"
-        )
+        tags = format_verification_tags(derived="path_prefix", import_path="not_probed")
         rows.append(
             _row_with_close_surfaces(
                 service=slug,

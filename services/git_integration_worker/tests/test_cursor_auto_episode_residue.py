@@ -305,45 +305,34 @@ def test_structured_oracle_code_ref_relation_omits_mcp():
     assert all("import_path:verified" in (row.reason or "") for row in rows)
 
 
-def test_charter_runner_store_negative_control_is_unmapped_not_restart():
-    """No nomination sources → unmapped_serving; must not mint sync_restart."""
+def test_charter_runner_store_land_nominates_giw():
+    """AC-2: GIW serves the live ledger/settle loop — not scripts-only."""
     payload = _closeout_payload(
         files_modified=["libs/charter_runner_store/propagation_terminal.py"],
     )
     block = residue_for_closeout(payload)
     assert block is not None
-    assert (
-        "unmapped_serving: libs/charter_runner_store/propagation_terminal.py"
-        in block
-    )
-    assert "sync_restart:" not in block
-    assert "lead must decide which consumers restart" not in block
+    assert "sync_restart: git_integration_worker" in block
+    assert "derived:serves" in block
+    assert "unmapped_serving:" not in block
 
 
-def test_implement_admission_land_emits_unmapped_serving():
-    """Worked instance: empty-union land is loud and not a restart."""
+def test_implement_admission_land_nominates_giw():
+    """Spent negative control: implement_admission land restarts GIW."""
     payload = _closeout_payload(
         files_modified=["libs/implement_admission/service_lib_ownership.py"],
     )
     block = residue_for_closeout(payload)
     assert block is not None
-    assert (
-        "unmapped_serving: libs/implement_admission/service_lib_ownership.py"
-        in block
-    )
-    assert "sync_restart:" not in block
-    assert "declared unserved" not in block
+    assert "sync_restart: git_integration_worker" in block
+    assert "derived:serves" in block
+    assert "unmapped_serving:" not in block
 
 
-def test_declared_unserved_land_is_not_unmapped(monkeypatch):
+def test_declared_unserved_land_is_not_unmapped():
     """Correctly-nothing harvest line must not share the unmapped prefix."""
-    import implement_admission.service_lib_ownership as ownership
-
-    monkeypatch.setattr(
-        ownership, "UNSERVED_LIBS", frozenset({"implement_admission"})
-    )
     payload = _closeout_payload(
-        files_modified=["libs/implement_admission/service_lib_ownership.py"],
+        files_modified=["libs/foo/__init__.py"],
     )
     block = residue_for_closeout(payload)
     assert block is not None
@@ -352,12 +341,13 @@ def test_declared_unserved_land_is_not_unmapped(monkeypatch):
     assert "sync_restart:" not in block
 
 
-def test_structured_charter_runner_store_mints_no_consumer_rows():
+def test_structured_charter_runner_store_mints_giw_row():
     payload = _closeout_payload(
         files_modified=["libs/charter_runner_store/propagation_terminal.py"],
         evidence_uris={"git_refs": ["crs-sha"]},
     )
-    assert structured_propagation_rows(payload) == ()
+    rows = structured_propagation_rows(payload)
+    assert {row.service for row in rows} == {"git_integration_worker"}
 
 
 def test_obligation_deployment_state_counts_only_sync_restart():

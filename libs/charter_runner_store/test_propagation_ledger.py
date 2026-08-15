@@ -60,7 +60,9 @@ def test_open_projection_marks_proof_obligation(tmp_path, monkeypatch) -> None:
     assert "ancestry satisfied" not in board[0]["proof"].lower()
 
 
-def test_stale_observation_fails_without_rewriting_intent(tmp_path, monkeypatch) -> None:
+def test_stale_observation_fails_without_rewriting_intent(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
     intent = "abc1230000000000000000000000000000000000"
     observed = "861a623700000000000000000000000000000000"
@@ -148,6 +150,58 @@ def test_upsert_omitted_flags_use_model_defaults(tmp_path, monkeypatch) -> None:
     assert len(open_rows) == 1
     assert open_rows[0].allow_self_preempt is True
     assert open_rows[0].force is False
+
+
+def test_upsert_persists_proof_class_requested(tmp_path, monkeypatch) -> None:
+    """Requested class survives on the row after the envelope is gone."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    upsert_open_rows(
+        [
+            _row(
+                service="git_integration_worker",
+                proof_class="process_live",
+                proof_class_requested="process_live",
+            )
+        ]
+    )
+    open_rows = list_open_rows()
+    assert len(open_rows) == 1
+    assert open_rows[0].proof_class == "process_live"
+    assert open_rows[0].proof_class_requested == "process_live"
+    board = scoreboard_projection()
+    assert board[0]["proof_class_requested"] == "process_live"
+
+    db = open_ledger_db()
+    try:
+        stored = db.execute(
+            "SELECT proof_class, proof_class_requested FROM propagation_ledger"
+        ).fetchone()
+    finally:
+        db.close()
+    assert stored["proof_class"] == "process_live"
+    assert stored["proof_class_requested"] == "process_live"
+
+
+def test_projection_to_row_round_trips_proof_class_requested(
+    tmp_path, monkeypatch
+) -> None:
+    from scripts.model_manager.ui.controller.charter_runner.propagation_execute import (
+        _projection_to_row,
+    )
+
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    upsert_open_rows(
+        [
+            _row(
+                service="git_integration_worker",
+                proof_class="served_artifact",
+                proof_class_requested="process_live",
+            )
+        ]
+    )
+    rebuilt = _projection_to_row(list_open_rows()[0])
+    assert rebuilt.proof_class == "served_artifact"
+    assert rebuilt.proof_class_requested == "process_live"
 
 
 def test_projection_to_row_round_trips_force_flags(tmp_path, monkeypatch) -> None:

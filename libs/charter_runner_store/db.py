@@ -12,39 +12,63 @@ from universal_logging import get_logger
 
 from .migrations.migration_001_root_ledger import (
     MIGRATION_ID as MIGRATION_001_ID,
+)
+from .migrations.migration_001_root_ledger import (
     migrate as migrate_001,
 )
 from .migrations.migration_002_conveyor_phase import (
     MIGRATION_ID as MIGRATION_002_ID,
+)
+from .migrations.migration_002_conveyor_phase import (
     migrate as migrate_002,
 )
 from .migrations.migration_003_ledger_age import (
     MIGRATION_ID as MIGRATION_003_ID,
+)
+from .migrations.migration_003_ledger_age import (
     migrate as migrate_003,
 )
 from .migrations.migration_004_propagation_ledger import (
     MIGRATION_ID as MIGRATION_004_ID,
+)
+from .migrations.migration_004_propagation_ledger import (
     migrate as migrate_004,
 )
 from .migrations.migration_005_work_key_registry import (
     MIGRATION_ID as MIGRATION_005_ID,
+)
+from .migrations.migration_005_work_key_registry import (
     migrate as migrate_005,
 )
 from .migrations.migration_006_consult_orphan_drain import (
     MIGRATION_ID as MIGRATION_006_ID,
+)
+from .migrations.migration_006_consult_orphan_drain import (
     migrate as migrate_006,
 )
 from .migrations.migration_007_settle_boundary import (
     MIGRATION_ID as MIGRATION_007_ID,
+)
+from .migrations.migration_007_settle_boundary import (
     migrate as migrate_007,
 )
 from .migrations.migration_008_harvest_wanted import (
     MIGRATION_ID as MIGRATION_008_ID,
+)
+from .migrations.migration_008_harvest_wanted import (
     migrate as migrate_008,
 )
 from .migrations.migration_009_propagation_force_flags import (
     MIGRATION_ID as MIGRATION_009_ID,
+)
+from .migrations.migration_009_propagation_force_flags import (
     migrate as migrate_009,
+)
+from .migrations.migration_010_propagation_proof_class_requested import (
+    MIGRATION_ID as MIGRATION_010_ID,
+)
+from .migrations.migration_010_propagation_proof_class_requested import (
+    migrate as migrate_010,
 )
 
 logger = get_logger(__name__)
@@ -98,8 +122,7 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
         """
     )
     applied = {
-        row[0]
-        for row in conn.execute("SELECT id FROM schema_migrations").fetchall()
+        row[0] for row in conn.execute("SELECT id FROM schema_migrations").fetchall()
     }
     pending = [
         (MIGRATION_001_ID, migrate_001),
@@ -111,6 +134,7 @@ def apply_migrations(conn: sqlite3.Connection) -> None:
         (MIGRATION_007_ID, migrate_007),
         (MIGRATION_008_ID, migrate_008),
         (MIGRATION_009_ID, migrate_009),
+        (MIGRATION_010_ID, migrate_010),
     ]
     for mig_id, migrate_fn in pending:
         if mig_id in applied:
