@@ -67,11 +67,6 @@ def _holder_clause(work: dict[str, Any]) -> str:
 def _lane_b_orphan_clause(work: dict[str, Any]) -> str:
     lane_b = work.get("lane_b")
     if not isinstance(lane_b, dict):
-        stats = work.get("concurrency_stats")
-        if isinstance(stats, dict):
-            aged = stats.get("lane_b_aged_orphans")
-            if isinstance(aged, list) and aged:
-                return _format_aged_orphan_line(aged[0])
         return ""
     aged = lane_b.get("aged_orphans")
     if not isinstance(aged, list) or not aged:
@@ -81,14 +76,10 @@ def _lane_b_orphan_clause(work: dict[str, Any]) -> str:
 
 def _lane_hygiene_clause(work: dict[str, Any]) -> str:
     """Open branch debt, named beside the lane that owes it."""
-    hygiene = None
     lane_b = work.get("lane_b")
-    if isinstance(lane_b, dict):
-        hygiene = lane_b.get("lane_hygiene")
-    if not isinstance(hygiene, dict):
-        stats = work.get("concurrency_stats")
-        if isinstance(stats, dict):
-            hygiene = stats.get("lane_b_hygiene")
+    if not isinstance(lane_b, dict):
+        return ""
+    hygiene = lane_b.get("lane_hygiene")
     if not isinstance(hygiene, dict):
         return ""
     open_debts = hygiene.get("open_debts")

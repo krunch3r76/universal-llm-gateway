@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -17,16 +17,16 @@ from services.git_integration_worker.cursor_sdk_capacity_invariant import (
     Lane,
     resolve_admit_lane,
 )
+from services.git_integration_worker.cursor_sdk_deliverables import (
+    STRUCTURED_CLOSEOUT_FULL_HEADING,
+    sidecar_has_structured_closeout_full,
+)
 
 HISTORICAL_INCLUSION_RULE = (
     "corrected peaks: contract in {implement, light-bounded} only; "
     "exclude contract_unknown (NULL contract); exclude lane_unknown "
     "(NULL lease_key and source_repo); exclude reaper-inflated terminals "
     "(terminal_at >> last_heartbeat_at); overlap pairs lane-scoped"
-)
-from services.git_integration_worker.cursor_sdk_deliverables import (
-    STRUCTURED_CLOSEOUT_FULL_HEADING,
-    sidecar_has_structured_closeout_full,
 )
 
 # Commit 10811941 — own-commit path attribution floor (fold-2 census).
@@ -63,6 +63,39 @@ def _parse_iso(ts: str) -> datetime:
     return datetime.fromisoformat(normalized)
 
 
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _concurrency_stats_retention_days() -> int:
+    return int(os.environ.get("CURSOR_SDK_CONCURRENCY_STATS_RETENTION_DAYS", "14"))
+
+
+def resolve_concurrency_stats_window(
+    *,
+    window_start: str | None = None,
+    window_end: str | None = None,
+) -> tuple[str, str]:
+    """Resolve effective inclusive bounds for concurrency telemetry queries.
+
+    When ``window_start`` is omitted, derive a rolling start from
+    ``CURSOR_SDK_CONCURRENCY_STATS_RETENTION_DAYS`` (default 14) before the
+    effective end. Explicit ``window_start`` / ``window_end`` values are
+    preserved; a omitted end defaults to current UTC.
+    """
+    effective_end = window_end
+    if effective_end is None:
+        effective_end = _utc_now().replace(microsecond=0).isoformat()
+    effective_start = window_start
+    if effective_start is None:
+        end_dt = _parse_iso(effective_end)
+        if end_dt.tzinfo is None:
+            end_dt = end_dt.replace(tzinfo=UTC)
+        start_dt = end_dt - timedelta(days=_concurrency_stats_retention_days())
+        effective_start = start_dt.replace(microsecond=0).isoformat()
+    return effective_start, effective_end
+
+
 def is_contract_unknown(*, contract: str | None, read_only: bool) -> bool:
     """True when contract is NULL on a non-read-only row (D1 contract_unknown bucket)."""
     return not read_only and contract is None
@@ -97,6 +130,7 @@ def is_reaper_inflated_terminal(
 
 
 def is_write_implement(interval: DispatchInterval, *, corrected: bool = False) -> bool:
+    """Classify an interval as an implement write under legacy or corrected rules."""
     if corrected:
         if is_reaper_inflated_terminal(
             terminal_at=interval.terminal_at,
@@ -146,7 +180,9 @@ def peak_concurrent_for_lane(
     return peak
 
 
-def _legacy_peak_concurrent(intervals: list[DispatchInterval], *, write_only: bool) -> int:
+def _legacy_peak_concurrent(
+    intervals: list[DispatchInterval], *, write_only: bool
+) -> int:
     """Original peak counter — kept for AC3 byte-identical regression guard."""
     events: list[tuple[datetime, int]] = []
     for row in intervals:
@@ -269,7 +305,9 @@ def ambient_cause_filtered_stats(
         dispatch_id = str(row["dispatch_id"])
         terminal_at = row.get("terminal_at")
         sidecar_path = closeout_root / f"{dispatch_id}.md"
-        sidecar_text = sidecar_path.read_text(encoding="utf-8") if sidecar_path.is_file() else ""
+        sidecar_text = (
+            sidecar_path.read_text(encoding="utf-8") if sidecar_path.is_file() else ""
+        )
         bucket = classify_closeout_receipt(
             sidecar_text=sidecar_text,
             dispatch_id=dispatch_id,
@@ -309,6 +347,7 @@ def ambient_cause_filtered_stats(
 
 
 def intervals_from_ledger_rows(rows: list[dict[str, Any]]) -> list[DispatchInterval]:
+    """Convert complete ledger interval rows into typed concurrency inputs."""
     out: list[DispatchInterval] = []
     for row in rows:
         started_at = row.get("started_at")
@@ -346,6 +385,9 @@ def reset_orphan_aged_emitted_registry() -> None:
 def lane_b_inventory_snapshot(*, source_repo: Path) -> dict[str, Any]:
     """Live Lane-B git inventory: unlanded salvage branches and aged orphans."""
     from services.git_integration_worker.cursor_dispatch_ledger import _connect
+    from services.git_integration_worker.cursor_sdk_events import (
+        emit_sdk_lane_b_orphan_aged,
+    )
     from services.git_integration_worker.cursor_sdk_lane_b_commit import (
         branch_tip_age_s,
         list_cursor_sdk_branches,
@@ -354,9 +396,6 @@ def lane_b_inventory_snapshot(*, source_repo: Path) -> dict[str, Any]:
     )
     from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
         get_disposition,
-    )
-    from services.git_integration_worker.cursor_sdk_events import (
-        emit_sdk_lane_b_orphan_aged,
     )
 
     repo = source_repo.resolve()
@@ -431,7 +470,9 @@ def lane_b_inventory_snapshot(*, source_repo: Path) -> dict[str, Any]:
 
 def active_work_lane_fields(*, source_repo: Path) -> dict[str, Any]:
     """``lane_b_regime`` + inventory block for ``/active-work`` and concurrency-stats."""
-    from services.git_integration_worker.cursor_sdk_lane_regime import lane_b_regime_active
+    from services.git_integration_worker.cursor_sdk_lane_regime import (
+        lane_b_regime_active,
+    )
 
     return {
         "lane_b_regime": lane_b_regime_active(),
@@ -450,9 +491,13 @@ def concurrency_stats(
 ) -> dict[str, Any]:
     """Rolling-window peak write-implement overlap + post-floor ambient:* census."""
     ledger = ledger or CursorDispatchLedger.instance()
-    interval_rows = ledger.interval_rows_in_window(
+    effective_start, effective_end = resolve_concurrency_stats_window(
         window_start=window_start,
         window_end=window_end,
+    )
+    interval_rows = ledger.interval_rows_in_window(
+        window_start=effective_start,
+        window_end=effective_end,
     )
     intervals = intervals_from_ledger_rows(interval_rows)
     ambient = ambient_cause_filtered_stats(
@@ -482,8 +527,8 @@ def concurrency_stats(
         for lane in ("A", "B")
     }
     return {
-        "window_start": window_start,
-        "window_end": window_end,
+        "window_start": effective_start,
+        "window_end": effective_end,
         "historical_inclusion_rule": HISTORICAL_INCLUSION_RULE,
         "peak_concurrent_write_implement": _legacy_peak_concurrent(
             intervals, write_only=True
@@ -496,8 +541,7 @@ def concurrency_stats(
         ),
         "ambient_cause_filtered": ambient,
         "ambient_rate_by_lane": {
-            lane: ambient_by_lane[lane]["post_floor_rate"]
-            for lane in ("A", "B")
+            lane: ambient_by_lane[lane]["post_floor_rate"] for lane in ("A", "B")
         },
         "lane_b_worktrees_live": lane_b_inventory["worktrees_live"],
         "lane_b_branches_unlanded": lane_b_inventory["branches_unlanded"],

@@ -2829,12 +2829,26 @@ async def cancel_cursor_dispatch(
 
 @router.get(
     "/concurrency-stats",
-    summary="Rolling-window write-implement overlap + post-floor ambient:* census.",
+    summary=(
+        "Rolling-window write-implement overlap + post-floor ambient:* census. "
+        "Omitted windows default to CURSOR_SDK_CONCURRENCY_STATS_RETENTION_DAYS "
+        "(14) ending at current UTC."
+    ),
 )
 async def cursor_concurrency_stats(
     request: Request,
-    window_start: str | None = Query(None, description="ISO window start (inclusive)."),
-    window_end: str | None = Query(None, description="ISO window end (inclusive)."),
+    window_start: str | None = Query(
+        None,
+        description=(
+            "ISO window start (inclusive). When omitted, defaults to "
+            "CURSOR_SDK_CONCURRENCY_STATS_RETENTION_DAYS before window_end "
+            "(or current UTC when window_end is also omitted)."
+        ),
+    ),
+    window_end: str | None = Query(
+        None,
+        description="ISO window end (inclusive). Defaults to current UTC when omitted.",
+    ),
 ) -> dict:
     from services.git_integration_worker.cursor_sdk_concurrency_meter import (
         active_work_lane_fields,

@@ -344,9 +344,7 @@ def _diff_sync(
     summary="Atomically merge a reviewed arc worktree into master (ref-level CAS).",
     openapi_extra=x_mcp("integrate", tool="git_integrate"),
 )
-async def integrate(
-    req: IntegrateRequest, request: Request
-) -> IntegrateResponse:
+async def integrate(req: IntegrateRequest, request: Request) -> IntegrateResponse:
     """Serialize integrates via ``FifoCapacityGate(limit=1)`` in this single owner.
 
     Admission-gated: returns ``503 GIT_WORKER_DRAINING`` if the worker is already
@@ -427,9 +425,7 @@ async def land(req: LandRequest, request: Request) -> IntegrateResponse:
     summary="Commit explicit named paths on the current branch (non-arc, gated).",
     openapi_extra=x_mcp("commit", tool="git_commit"),
 )
-async def commit(
-    req: CommitRequest, request: Request
-) -> IntegrateResponse:
+async def commit(req: CommitRequest, request: Request) -> IntegrateResponse:
     """Path-explicit gated commit; serialized via the shared integrate gate.
 
     ``dry_run=true`` returns the path-scoped fingerprint + numstat for approval
@@ -473,7 +469,6 @@ async def get_active_work(request: Request):
     )
     from services.git_integration_worker.cursor_sdk_concurrency_meter import (
         active_work_lane_fields,
-        concurrency_stats,
     )
     from services.git_integration_worker.cursor_sdk_gate import (
         sdk_dispatch_gate_holder_detail,
@@ -487,18 +482,14 @@ async def get_active_work(request: Request):
     sdk_gate = sdk_dispatch_gate_stats()
     sdk_gate["holders"] = sdk_dispatch_gate_holder_detail()
     lease = CursorDispatchLedger.instance().lease_snapshot(
-        source_repo=str(getattr(request.app.state, "worker_config", _CONFIG).source_repo.resolve())
+        source_repo=str(
+            getattr(request.app.state, "worker_config", _CONFIG).source_repo.resolve()
+        )
         if getattr(request.app.state, "worker_config", None) is not None
         else None
     )
     active_count = controller.active_count()
     cfg = getattr(request.app.state, "worker_config", _CONFIG)
-    closeout_root = cfg.source_repo / "tmp" / "reviews" / "closeouts"
-    meter = await asyncio.to_thread(
-        concurrency_stats,
-        closeout_root=closeout_root,
-        source_repo=cfg.source_repo,
-    )
     lane_fields = await asyncio.to_thread(
         active_work_lane_fields, source_repo=cfg.source_repo
     )
@@ -513,7 +504,6 @@ async def get_active_work(request: Request):
             "active_count": active_count,
             "active_ops": controller.active_ops(),
             "busy": active_count > 0,
-            "concurrency_stats": meter,
             **lane_fields,
         },
     )
