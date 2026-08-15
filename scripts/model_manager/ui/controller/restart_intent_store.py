@@ -92,6 +92,8 @@ class Intent:
 
 
 class IntentStatusView(TypedDict):
+    """Operator-facing restart-intent snapshot for manage status queries."""
+
     restart_intent_id: str
     status: str
     drain_epoch: int | None
@@ -100,6 +102,7 @@ class IntentStatusView(TypedDict):
 
 
 def intent_status_view(intent: Intent, *, now: datetime) -> IntentStatusView:
+    """Project a durable restart intent into a stable status dict for callers."""
     created = datetime.fromisoformat(intent.created_at)
     if created.tzinfo is None:
         created = created.replace(tzinfo=UTC)

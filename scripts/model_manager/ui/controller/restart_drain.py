@@ -35,8 +35,15 @@ from transport_utils import make_async_client
 from universal_concurrency import FifoCapacityGate
 from universal_logging import get_logger
 
+from .git_worker_activation_verify import (
+    blocking_drain_result,
+    drain_deferred_result,
+    mint_activation_validation,
+)
 from .restart_window_ctl import open_service_window
 from .service_config import cdp_ask_url_config
+
+_drain_deferred_result = drain_deferred_result
 
 logger = get_logger(__name__)
 
@@ -396,102 +403,12 @@ async def run_gated_deferred(
     return {"status": "ok", "message": scheduled_message}
 
 
-# ---------------------------------------------------------------------------
-# git-integration-worker event-driven deferred restart (Phase 2)
-# ---------------------------------------------------------------------------
-# A git-worker-specific branch: instead of the busy-probe deferral, manage holds
-# the restart-mutex slot, persists a durable restart intent, kicks off the worker
-# drain, and hands the rest to an async drain supervisor. The slot is released by
-# the supervise task's finally (mirrors run_gated_deferred). The generic
-# run_gated/run_gated_deferred contract above is untouched for every other service.
-
-# Strong refs to in-flight supervise tasks — a dropped task leaks the held
-# restart-mutex slot (the supervise finally is the sole release of that slot).
 _SUPERVISE_TASKS: set[asyncio.Task[None]] = set()
-
-
-def _drain_deferred_result(
-    intent: Any,
-    *,
-    reason: str | None = None,
-    activation_validation_id: str | None = None,
-) -> dict[str, Any]:
-    """The 202 envelope for a deferred, drain-supervised git-worker restart.
-
-    ``caller_must_exit_to_release_lease`` is binding for cursor-sdk holders:
-    waiting in-window for healthy while holding ``cursor_sdk_gate`` never
-    converges (friction 25989). Arm the intent, then exit so active_count→0.
-    Activation proof is supervisor-owned after exit.
-    """
-    from scripts.model_manager.ui.controller.restart_intent_consumer import (
-        project_restart_intent_consumer,
-    )
-
-    projected = project_restart_intent_consumer(intent)
-    result = {
-        "status": "deferred",
-        "state": "draining",
-        "service": intent.service,
-        "restart_intent_id": projected["restart_intent_id"],
-        "deadline_ceiling_at": projected["deadline_ceiling_at"],
-        "deadline_semantics": projected["deadline_semantics"],
-        "deadline_at": projected["deadline_at"],
-        "reason": reason or "draining; completion delivered via git_worker.drain events",
-        "caller_must_exit_to_release_lease": True,
-        "guidance": (
-            "If you hold the git_integration_worker write lease (cursor-sdk), "
-            "exit this dispatch now — do not wait_healthy in-window. "
-            "Activation proof is supervisor-owned; query via activation_validation_id "
-            "or fleet_liveness(code_ref=…)."
-        ),
-    }
-    if activation_validation_id is not None:
-        result["activation_validation_id"] = activation_validation_id
-    return result
-
-
-def _blocking_drain_result(
-    *, service: str, action: str, intent_id: str, final: Any
-) -> dict[str, Any]:
-    """Terminal envelope for the fleet blocking path (ok vs error)."""
-    drained_ok = final is not None and final.status in {
-        "completed",
-        "verifying_activation",
-        "activation_unverified",
-    }
-    return {
-        "status": "ok" if drained_ok else "error",
-        "drain_status": (final.status if final is not None else "missing"),
-        "service": service,
-        "action": action,
-        "restart_intent_id": intent_id,
-    }
-
-
-def _mint_activation_validation(store: Any, intent: Any) -> str:
-    from charter_runner_store.propagation_validation import (
-        latest_validation_for_intent,
-        mint_pending_validation_for_intent,
-    )
-
-    existing = latest_validation_for_intent(intent.intent_id)
-    if existing is not None and existing.outcome == "pending":
-        return existing.validation_id
-    return mint_pending_validation_for_intent(
-        intent,
-        advance_intent_fn=store.advance_if_status,
-    )
 
 
 async def _await_intent_terminal(
     store: Any, intent: Any, *, deadline_s: float
 ) -> Any:
-    """Poll until ``intent`` leaves non-terminal statuses or ``deadline_s`` elapses.
-
-    Used when the blocking path coalesces onto a live intent owned by another
-    supervise task — we must not return a deferred envelope (fleet would score
-    that as stop failure) and must not start a second begin-drain.
-    """
     loop = asyncio.get_running_loop()
     deadline = loop.time() + deadline_s
     intent_id = intent.intent_id
@@ -509,8 +426,6 @@ async def _await_intent_terminal(
 def _spawn_supervised(
     gate: RestartDrainGate, service: str, supervisor: Any, intent: Any
 ) -> None:
-    """Schedule supervise(intent) as a tracked task; release the slot in finally."""
-
     async def _background() -> None:
         try:
             await supervisor.supervise(intent)
@@ -531,24 +446,13 @@ async def run_gated_drain_supervised(
     supervisor: Any,
     reason: str,
 ) -> dict[str, Any]:
-    """git-worker non-force stop/restart/sync_restart → durable drain supervision.
-
-    Busy-skip (``evaluate(force=True)``): in-flight cursor-sdk/integrate work must
-    **not** soft-defer without an intent. The supervisor begins drain and waits
-    for ``active_count→0`` (same posture as the fleet blocking path). Soft
-    ``state=busy`` with no durable intent is the self-held lease deadlock
-    (friction 25989 / todo:manage-busy-drain-restart).
-
-    Coalescing (AC-6): if the restart-mutex slot is already held by an in-flight
-    supervision, the existing live intent's id is returned — no second intent, no
-    second begin-drain.
-    """
+    """Arm a durable git-worker drain intent and return the deferred 202 envelope."""
     outcome = await gate.evaluate(service, force=True)
     if outcome is not None:
         existing = store.active_for_service(service)
         if existing is not None:
-            validation_id = _mint_activation_validation(store, existing)
-            return _drain_deferred_result(
+            validation_id = mint_activation_validation(store, existing)
+            return drain_deferred_result(
                 existing,
                 reason="drain already in progress for this service",
                 activation_validation_id=validation_id,
@@ -562,18 +466,13 @@ async def run_gated_drain_supervised(
         intent = store.create_intent(
             service=service, action=action, deadline_at=deadline_at, reason=reason
         )
-        validation_id = _mint_activation_validation(store, intent)
+        validation_id = mint_activation_validation(store, intent)
     except Exception:
-        # Never leak the held slot if the durable write fails.
         await gate.release(service)
         raise
-    await open_service_window(
-        store,
-        service,
-        reason=f"git-worker drain {action}",
-    )
+    await open_service_window(store, service, reason=f"git-worker drain {action}")
     _spawn_supervised(gate, service, supervisor, intent)
-    return _drain_deferred_result(intent, activation_validation_id=validation_id)
+    return drain_deferred_result(intent, activation_validation_id=validation_id)
 
 
 async def run_gated_drain_supervised_blocking(
@@ -585,23 +484,7 @@ async def run_gated_drain_supervised_blocking(
     supervisor: Any,
     reason: str,
 ) -> dict[str, Any]:
-    """Like ``run_gated_drain_supervised`` but AWAIT the drain to terminal state.
-
-    Fleet stop/restart cycles must not return until the worker has drained and
-    been killed, so a later fleet START phase does not race the supervisor
-    (Phase-3 fleet re-enable — decision on todo:git-worker-drain-p3-fleet,
-    gpt-5.5 review thread 2018).
-
-    Busy-skip: ``evaluate(..., force=True)`` skips the active-work probe so
-    in-flight integrate/cursor-sdk work does not defer the fleet stop. The
-    supervisor still begins drain and waits for ``active_count→0`` before
-    SIGTERM. ``force`` here means busy-probe skip only — not the API/MCP
-    ``force=true`` immediate-kill path.
-
-    Coalescing: if the restart-mutex slot is already held, await the live
-    intent to a terminal status (do not return a deferred envelope — fleet
-    scores that as stop failure).
-    """
+    """Await supervised drain to a terminal intent status before returning to fleet."""
     outcome = await gate.evaluate(service, force=True)
     if outcome is not None:
         existing = store.active_for_service(service)
@@ -610,7 +493,7 @@ async def run_gated_drain_supervised_blocking(
         final = await _await_intent_terminal(
             store, existing, deadline_s=float(supervisor.deadline_s)
         )
-        return _blocking_drain_result(
+        return blocking_drain_result(
             service=service,
             action=action,
             intent_id=existing.intent_id,
@@ -627,13 +510,7 @@ async def run_gated_drain_supervised_blocking(
     except Exception:
         await gate.release(service)
         raise
-
-    await open_service_window(
-        store,
-        service,
-        reason=f"git-worker fleet drain {action}",
-    )
-
+    await open_service_window(store, service, reason=f"git-worker fleet drain {action}")
     try:
         await supervisor.supervise(intent)
     finally:
@@ -643,8 +520,7 @@ async def run_gated_drain_supervised_blocking(
         await clear_service_windows(
             store, service, reason="git-worker supervised drain completed"
         )
-
-    return _blocking_drain_result(
+    return blocking_drain_result(
         service=service,
         action=action,
         intent_id=intent.intent_id,
@@ -655,14 +531,30 @@ async def run_gated_drain_supervised_blocking(
 async def resume_drain_supervision(
     gate: RestartDrainGate, service: str, *, supervisor: Any, intent: Any
 ) -> None:
-    """Startup reconcile: resume a persisted pending intent on a fresh supervisor.
-
-    Acquires the slot without a busy-probe (force=True → evaluate returns None,
-    slot held) and schedules the supervisor; begin-drain is idempotent and the
-    subscription resumes from the stored last_seen_event_seq, so this never
-    duplicates a kill. A slot already held (concurrent resume) is a no-op.
-    """
+    """Resume a persisted pending intent after manage process restart."""
     outcome = await gate.evaluate(service, force=True)
     if outcome is not None:
         return
     _spawn_supervised(gate, service, supervisor, intent)
+
+
+__all__ = [
+    "ActiveWork",
+    "BackgroundCompleteHook",
+    "BackgroundFailedHook",
+    "BusyProbe",
+    "DrainOutcome",
+    "GATED_ACTIONS",
+    "GIT_INTEGRATION_WORKER_URL",
+    "HttpActiveWorkProbe",
+    "NullBusyProbe",
+    "RETRY_AFTER_S",
+    "RestartDrainGate",
+    "STARGATE_PROBE_URL",
+    "resume_drain_supervision",
+    "run_gated",
+    "run_gated_deferred",
+    "run_gated_drain_supervised",
+    "run_gated_drain_supervised_blocking",
+]
+

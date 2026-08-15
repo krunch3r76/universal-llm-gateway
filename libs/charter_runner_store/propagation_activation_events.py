@@ -132,6 +132,8 @@ def ManagePropagationSettleFailed(  # noqa: N802
 
 def publish_activation_event(event: Event) -> None:
     """Write one NDJSON ingest line for a factory Event. Silent on failure."""
+    import socket
+
     now = datetime.now(UTC)
     envelope: dict[str, Any] = {
         "signal": event.signal,
@@ -142,10 +144,12 @@ def publish_activation_event(event: Event) -> None:
         "ts_unix_ms": int(now.timestamp() * 1000),
         "payload": event.payload,
     }
-    line = json.dumps(envelope, default=str) + "\n"
+    line = (json.dumps(envelope, default=str) + "\n").encode()
     try:
-        with open(_EVENTS_SOCK, "wb") as sock:
-            sock.write(line.encode())
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(2.0)
+            sock.connect(_EVENTS_SOCK)
+            sock.sendall(line)
     except Exception:
         logger.debug(
             "publish_activation_event failed for %s", event.signal, exc_info=True
