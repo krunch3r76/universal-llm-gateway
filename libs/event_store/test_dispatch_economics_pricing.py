@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import ast
-from pathlib import Path
-
+import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
+from event_store import model_rate_table as mrt
 from event_store.dispatch_economics_pricing import (
     _build_pricing_audit,
     _index_wire_members,
@@ -16,7 +17,6 @@ from event_store.dispatch_economics_pricing import (
     wire_usd_present,
 )
 from event_store.dispatch_economics_rollup import build_dispatch_economics_rollup
-from event_store import model_rate_table as mrt
 from event_store.model_rate_table import (
     catalog_yaml_path,
     clear_catalog_rows_for_tests,
@@ -81,6 +81,34 @@ def test_seed_yaml_non_empty() -> None:
     rows, aliases = load_manual_rows()
     assert rows
     assert "cursor/composer-2.5" in rows
+
+
+def test_rate_cache_invalidates_when_yaml_changes(tmp_path: Path) -> None:
+    """A changed rates file is observed without restarting the process."""
+    rates_path = tmp_path / "rates.yaml"
+    rates_path.write_text(
+        "models:\n"
+        "  - model_id: cache-test\n"
+        "    input_rate_per_m: 1\n"
+        "    output_rate_per_m: 2\n",
+        encoding="utf-8",
+    )
+    first = resolve_rate("cache-test", path=rates_path)
+    assert first is not None
+    assert first.input_rate_per_m == 1
+
+    time.sleep(0.001)
+    rates_path.write_text(
+        "models:\n"
+        "  - model_id: cache-test\n"
+        "    input_rate_per_m: 3\n"
+        "    output_rate_per_m: 4\n",
+        encoding="utf-8",
+    )
+    second = resolve_rate("cache-test", path=rates_path)
+    assert second is not None
+    assert second.input_rate_per_m == 3
+    assert second.output_rate_per_m == 4
 
 
 def test_resolve_rate_alias_and_resolved_model() -> None:

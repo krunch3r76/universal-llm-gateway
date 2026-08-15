@@ -7,10 +7,13 @@ import math
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from .model_rate_cache import clear_rate_caches, load_yaml_payload
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +24,7 @@ _DEFAULT_RATES_PATH = _REPO_ROOT / "config" / "model_rates.yaml"
 _CATALOG_PATH = Path.home() / ".gateway" / "model_rates_catalog.yaml"
 
 _CATALOG_ROWS: dict[str, dict[str, Any]] = {}
+_CATALOG_GENERATION = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,11 +117,10 @@ def _load_rates_payload(path: Path | None = None) -> dict[str, Any]:
     if not yaml_path.is_file():
         return {}
     try:
-        payload = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+        return load_yaml_payload(yaml_path)
     except (OSError, yaml.YAMLError) as exc:
         logger.warning("Failed to load model rates YAML %s: %s", yaml_path, exc)
         return {}
-    return payload if isinstance(payload, dict) else {}
 
 
 def _normalize_knob_value(value: Any) -> str:
@@ -225,7 +228,7 @@ def _load_catalog_raw_from_disk(path: Path | None = None) -> dict[str, dict[str,
     if not yaml_path.is_file():
         return {}
     try:
-        payload = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+        payload = load_yaml_payload(yaml_path)
     except (OSError, yaml.YAMLError) as exc:
         logger.warning("Failed to load catalog rates YAML %s: %s", yaml_path, exc)
         return {}
@@ -269,6 +272,7 @@ def save_catalog_rows_to_disk(
         yaml.safe_dump(payload, sort_keys=False, allow_unicode=True),
         encoding="utf-8",
     )
+    _invalidate_rate_cache()
 
 
 def upsert_catalog_models(
@@ -341,6 +345,7 @@ def upsert_catalog_models(
 
     if pricing_changed:
         save_catalog_rows_to_disk(_CATALOG_ROWS)
+        _invalidate_rate_cache()
 
     counts = {
         "upserted": upserted,
@@ -355,7 +360,45 @@ def upsert_catalog_models(
 
 def clear_catalog_rows_for_tests() -> None:
     """Reset in-memory catalog projection (tests only)."""
+    global _CATALOG_GENERATION
     _CATALOG_ROWS.clear()
+    _CATALOG_GENERATION += 1
+    _invalidate_rate_cache()
+
+
+def _invalidate_rate_cache() -> None:
+    """Invalidate merged rate projections after a catalog state change."""
+    clear_rate_caches()
+    _merged_rate_table.cache_clear()
+
+
+def _path_cache_key(path: Path) -> tuple[str, int, int] | None:
+    """Return a cache key that changes when a YAML source changes."""
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (str(path.resolve()), stat.st_mtime_ns, stat.st_size)
+
+
+@lru_cache(maxsize=32)
+def _merged_rate_table(
+    rates_key: tuple[str, int, int] | None,
+    catalog_key: tuple[str, int, int] | None,
+    generation: int,
+) -> tuple[dict[str, ModelRateRow], dict[str, str]]:
+    """Build the merged rate and alias maps once per source-file version."""
+    manual_rows, aliases = load_manual_rows(Path(rates_key[0]) if rates_key else None)
+    merged = load_catalog_rows_from_disk(Path(catalog_key[0]) if catalog_key else None)
+    for catalog_id, raw in _CATALOG_ROWS.items():
+        row = _row_from_mapping(catalog_id, raw, default_source="catalog_refresh")
+        if row is not None:
+            merged[catalog_id] = row
+    for manual_id, manual_row in manual_rows.items():
+        existing = merged.get(manual_id)
+        if existing is None or manual_row.pinned:
+            merged[manual_id] = manual_row
+    return merged, aliases
 
 
 def resolve_rate(
@@ -366,7 +409,14 @@ def resolve_rate(
     path: Path | None = None,
 ) -> ModelRateRow | None:
     """Lookup rate by (model_id, knobs) variant, then model_id / alias / resolved_model."""
-    manual_rows, aliases = load_manual_rows(path)
+    global _CATALOG_GENERATION
+    rates_path = path or rates_yaml_path()
+    catalog_path = catalog_yaml_path()
+    merged, aliases = _merged_rate_table(
+        _path_cache_key(rates_path),
+        _path_cache_key(catalog_path),
+        _CATALOG_GENERATION,
+    )
     keys: list[str] = []
     for candidate in (model_id, resolved_model):
         if candidate and candidate not in keys:
@@ -385,19 +435,6 @@ def resolve_rate(
         ]
         if matches:
             return max(matches, key=lambda variant: len(variant.knobs)).row
-
-    merged: dict[str, ModelRateRow] = {}
-    for catalog_id, row in load_catalog_rows_from_disk().items():
-        merged[catalog_id] = row
-    for catalog_id, raw in _CATALOG_ROWS.items():
-        row = _row_from_mapping(catalog_id, raw, default_source="catalog_refresh")
-        if row is not None:
-            merged[catalog_id] = row
-    # Only pinned manual rows override catalog; non-pinned seeds fill gaps only.
-    for manual_id, manual_row in manual_rows.items():
-        existing = merged.get(manual_id)
-        if existing is None or manual_row.pinned:
-            merged[manual_id] = manual_row
 
     for key in keys:
         row = merged.get(key)

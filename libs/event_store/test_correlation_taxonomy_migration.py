@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
-from event_store.store import EventStore, _migrate_correlation_taxonomy_columns
+from event_store.schema import migrate_correlation_taxonomy_columns
+from event_store.store import EventStore
 
 
 def test_correlation_taxonomy_migration_is_idempotent() -> None:
@@ -40,8 +41,8 @@ def test_correlation_taxonomy_migration_is_idempotent() -> None:
             assert rows[0]["failure_layer"] == "validation"
             assert rows[0]["http_status"] == 422
             assert store._db is not None
-            _migrate_correlation_taxonomy_columns(store._db)
-            _migrate_correlation_taxonomy_columns(store._db)
+            migrate_correlation_taxonomy_columns(store._db)
+            migrate_correlation_taxonomy_columns(store._db)
         finally:
             await store.close()
 

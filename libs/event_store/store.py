@@ -4,19 +4,20 @@ WAL mode with PRAGMA synchronous=NORMAL for high-throughput writes.
 Generated virtual columns promote correlation fields from JSON payload
 for indexed O(log N) lookups without schema churn.
 
-Uses stdlib sqlite3 directly (synchronous). All methods are async to
-preserve the caller API, but DB calls are sub-millisecond (especially
-in-memory) and do not yield. Zero third-party dependencies.
+Uses stdlib sqlite3 directly. Reads run on dedicated connections in worker
+threads so a slow analytical query cannot block ingest or health probes.
 
 Invariant: SQLite is the sole authoritative store for all queries.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import sqlite3
+import threading
 import time
 from collections import deque
 from datetime import datetime
@@ -24,60 +25,13 @@ from pathlib import Path
 from typing import Any
 
 from .retention import HEARTBEAT_SIGNALS
+from .schema import _SCHEMA_SQL, migrate_correlation_taxonomy_columns
 
 logger = logging.getLogger(__name__)
 
 _REALTIME_BUFFER_SIZE = int(os.environ.get("REALTIME_BUFFER_SIZE", "10000"))
-
-_SCHEMA_SQL = """\
-CREATE TABLE IF NOT EXISTS events (
-    seq INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_id INTEGER,
-    signal TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'observation',
-    scope TEXT NOT NULL DEFAULT 'global',
-    ts_unix_ms INTEGER NOT NULL,
-    timestamp TEXT NOT NULL,
-    source TEXT NOT NULL,
-    request_id TEXT GENERATED ALWAYS AS (json_extract(payload, '$.request_id')) VIRTUAL,
-    execution_id TEXT GENERATED ALWAYS AS (json_extract(payload, '$.execution_id')) VIRTUAL,
-    model_id TEXT GENERATED ALWAYS AS (json_extract(payload, '$.model_id')) VIRTUAL,
-    gateway_id TEXT GENERATED ALWAYS AS (json_extract(payload, '$.gateway_id')) VIRTUAL,
-    payload TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_signal_ts ON events(signal, ts_unix_ms);
-CREATE INDEX IF NOT EXISTS idx_request_id ON events(request_id) WHERE request_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_execution_id ON events(execution_id) WHERE execution_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_role_scope_ts ON events(role, scope, ts_unix_ms);
-CREATE INDEX IF NOT EXISTS idx_source_ts ON events(source, ts_unix_ms);
-CREATE INDEX IF NOT EXISTS idx_model_id ON events(model_id) WHERE model_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_seq ON events(seq DESC);
-CREATE INDEX IF NOT EXISTS idx_ts_unix_ms ON events(ts_unix_ms DESC);
-
-CREATE TABLE IF NOT EXISTS request_snapshots (
-    seq INTEGER PRIMARY KEY AUTOINCREMENT,
-    request_id TEXT NOT NULL,
-    phase TEXT NOT NULL,
-    ts_unix_ms INTEGER NOT NULL,
-    model_id TEXT,
-    gateway_id TEXT,
-    payload TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_snap_request ON request_snapshots(request_id, phase);
-CREATE INDEX IF NOT EXISTS idx_snap_ts ON request_snapshots(ts_unix_ms);
-CREATE INDEX IF NOT EXISTS idx_snap_model ON request_snapshots(model_id) WHERE model_id IS NOT NULL;
-
-CREATE TABLE IF NOT EXISTS evaluations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    execution_id TEXT NOT NULL,
-    baseline_id TEXT,
-    metrics TEXT,
-    verdict TEXT,
-    ts_unix_ms INTEGER NOT NULL
-);
-"""
+_SQLITE_CACHE_KIB = int(os.environ.get("EVENTS_SQLITE_CACHE_KIB", "1048576"))
+_SQLITE_MMAP_BYTES = int(os.environ.get("EVENTS_SQLITE_MMAP_BYTES", str(8 * 1024**3)))
 
 _INSERT_EVENT = (
     "INSERT INTO events (event_id, signal, role, scope, ts_unix_ms, timestamp, source, payload) "
@@ -90,64 +44,6 @@ _INSERT_SNAPSHOT = (
 )
 
 _MAX_PAYLOAD_BYTES = 64 * 1024
-
-_CORRELATION_TAXONOMY_COLUMNS: tuple[tuple[str, str], ...] = (
-    ("thread_id", "TEXT GENERATED ALWAYS AS (json_extract(payload, '$.thread_id')) VIRTUAL"),
-    (
-        "dispatch_id",
-        "TEXT GENERATED ALWAYS AS (json_extract(payload, '$.dispatch_id')) VIRTUAL",
-    ),
-    (
-        "failure_layer",
-        "TEXT GENERATED ALWAYS AS (json_extract(payload, '$.failure_layer')) VIRTUAL",
-    ),
-    (
-        "transport_error_kind",
-        "TEXT GENERATED ALWAYS AS (json_extract(payload, '$.transport_error_kind')) VIRTUAL",
-    ),
-    (
-        "http_status",
-        "INTEGER GENERATED ALWAYS AS (json_extract(payload, '$.http_status')) VIRTUAL",
-    ),
-    (
-        "worker_error_code",
-        "TEXT GENERATED ALWAYS AS (json_extract(payload, '$.worker_error_code')) VIRTUAL",
-    ),
-)
-
-_CORRELATION_TAXONOMY_INDEXES: tuple[str, ...] = (
-    "CREATE INDEX IF NOT EXISTS idx_thread_id ON events(thread_id) WHERE thread_id IS NOT NULL",
-    "CREATE INDEX IF NOT EXISTS idx_dispatch_id ON events(dispatch_id) WHERE dispatch_id IS NOT NULL",
-    "CREATE INDEX IF NOT EXISTS idx_failure_layer_ts ON events(failure_layer, ts_unix_ms)",
-    "CREATE INDEX IF NOT EXISTS idx_transport_error_kind_ts ON events(transport_error_kind, ts_unix_ms)",
-    "CREATE INDEX IF NOT EXISTS idx_http_status_ts ON events(http_status, ts_unix_ms)",
-    "CREATE INDEX IF NOT EXISTS idx_worker_error_code_ts ON events(worker_error_code, ts_unix_ms)",
-)
-
-
-def _events_column_names(db: sqlite3.Connection) -> set[str]:
-    for pragma in ("table_xinfo", "table_info"):
-        try:
-            rows = db.execute(f"PRAGMA {pragma}(events)").fetchall()
-        except sqlite3.OperationalError:
-            continue
-        if rows:
-            return {str(row[1]) for row in rows}
-    return set()
-
-
-def _migrate_correlation_taxonomy_columns(db: sqlite3.Connection) -> None:
-    existing = _events_column_names(db)
-    for name, definition in _CORRELATION_TAXONOMY_COLUMNS:
-        if name in existing:
-            continue
-        try:
-            db.execute(f"ALTER TABLE events ADD COLUMN {name} {definition}")
-        except sqlite3.OperationalError as exc:
-            if "duplicate column name" not in str(exc).lower():
-                raise
-    for ddl in _CORRELATION_TAXONOMY_INDEXES:
-        db.execute(ddl)
 
 
 def _ts_ms_from_iso(iso: str) -> int:
@@ -169,6 +65,7 @@ class EventStore:
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = str(db_path)
         self._db: sqlite3.Connection | None = None
+        self._reader_local = threading.local()
         self._realtime_buffer: deque[dict[str, Any]] = deque(
             maxlen=_REALTIME_BUFFER_SIZE
         )
@@ -177,15 +74,16 @@ class EventStore:
         """Open SQLite, apply performance pragmas, and ensure schema exists."""
         if self._db_path != ":memory:":
             Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(self._db_path)
+        self._db = sqlite3.connect(self._db_path, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         try:
             self._db.execute("PRAGMA journal_mode=WAL")
             self._db.execute("PRAGMA synchronous=NORMAL")
             self._db.execute("PRAGMA auto_vacuum=INCREMENTAL")
+            self._configure_connection(self._db)
             self._db.execute("PRAGMA busy_timeout=5000")
             self._db.executescript(_SCHEMA_SQL)
-            _migrate_correlation_taxonomy_columns(self._db)
+            migrate_correlation_taxonomy_columns(self._db)
             self._db.commit()
         except Exception:
             self._db.rollback()
@@ -197,6 +95,33 @@ class EventStore:
         if self._db:
             self._db.close()
             self._db = None
+        reader = getattr(self._reader_local, "connection", None)
+        if reader is not None:
+            reader.close()
+            self._reader_local.connection = None
+
+    @staticmethod
+    def _configure_connection(db: sqlite3.Connection) -> None:
+        """Apply RAM-oriented read settings without changing write durability."""
+        db.execute(f"PRAGMA cache_size={-_SQLITE_CACHE_KIB}")
+        db.execute(f"PRAGMA mmap_size={_SQLITE_MMAP_BYTES}")
+        db.execute("PRAGMA temp_store=MEMORY")
+
+    def _reader_connection(self) -> sqlite3.Connection:
+        """Return one read-only connection per worker thread."""
+        connection = getattr(self._reader_local, "connection", None)
+        if connection is not None:
+            return connection
+        if self._db_path == ":memory:":
+            connection = self._db
+        else:
+            uri = f"file:{Path(self._db_path).resolve()}?mode=ro"
+            connection = sqlite3.connect(uri, uri=True, check_same_thread=False)
+            connection.row_factory = sqlite3.Row
+            self._configure_connection(connection)
+            connection.execute("PRAGMA busy_timeout=5000")
+        self._reader_local.connection = connection
+        return connection
 
     def push_realtime(self, event: dict[str, Any]) -> None:
         """Push an event into the in-memory realtime ring buffer (no SQLite)."""
@@ -342,10 +267,13 @@ class EventStore:
             if raise_on_error:
                 raise sqlite3.OperationalError("EventStore not open")
             return []
+
+        def read() -> list[dict[str, Any]]:
+            cursor = self._reader_connection().execute(sql, params)
+            return [dict(row) for row in cursor.fetchmany(limit)]
+
         try:
-            cursor = self._db.execute(sql, params)
-            raw_rows = cursor.fetchmany(limit)
-            return [dict(r) for r in raw_rows]
+            return await asyncio.to_thread(read)
         except sqlite3.Error as e:
             logger.error("Query failed: %s params=%s - %s", sql[:120], params, e)
             if raise_on_error:
