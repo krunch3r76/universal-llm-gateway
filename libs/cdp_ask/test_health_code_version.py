@@ -23,6 +23,7 @@ def test_health_carries_code_version(tmp_path, monkeypatch) -> None:
     assert payload["code_version"] == "a" * 40
     assert payload["status"] in {"ok", "fail_closed"}
     assert payload["pid"] == os.getpid()
+    assert payload["tree_state"] in {"dirty", "clean", "unknown"}
 
 
 @pytest.mark.offline

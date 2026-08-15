@@ -7,6 +7,7 @@ import pytest
 from implement_admission.consumer_import_verify import (
     clear_verify_caches,
     parse_verification_tags,
+    repo_root,
     verify_consumer_import,
 )
 from implement_admission.injector_map import (
@@ -15,6 +16,7 @@ from implement_admission.injector_map import (
     injectors_declared_in_source,
     iter_injectors_declarations,
     nominations_for_lib_path,
+    tuple_declared_in_source,
 )
 
 _OPERATOR_PROXY_BRIEFINGS = (
@@ -92,3 +94,14 @@ def test_wait_status_nominations_are_serving_agent_bus():
     clear_verify_caches()
     path = "libs/agent_bus_store/wait_status.py"
     assert nominations_for_lib_path(path) == (("agent_bus", "serves"),)
+
+
+@pytest.mark.offline
+def test_boot_lane_readoption_nominations_match_disk_ast():
+    """Residue reads on-disk CONSUMERS/INJECTORS, not a cached importlib view."""
+    clear_verify_caches()
+    path = "libs/claude_bundles/boot_lane_readoption.py"
+    text = (repo_root() / path).read_text(encoding="utf-8")
+    assert tuple_declared_in_source(text, "CONSUMERS") == ("cdp_ask",)
+    assert tuple_declared_in_source(text, "INJECTORS") == ("cdp_ask",)
+    assert nominations_for_lib_path(path) == (("cdp_ask", "injectors"),)

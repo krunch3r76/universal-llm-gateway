@@ -540,7 +540,7 @@ def changed_paths(
             else:
                 modified.append(path)
         else:
-            deviations.append(polarity_deviation_token(claimed, path))
+            deviations.append(polarity_deviation_token(path))
     return (
         ChangeSet(
             created=tuple(created),

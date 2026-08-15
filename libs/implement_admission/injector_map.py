@@ -14,7 +14,6 @@ Callers: ``rows_from_lib_consumers`` / ``episode_residue._actions_for_path``.
 from __future__ import annotations
 
 import ast
-import importlib
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -75,25 +74,40 @@ def injectors_declared_in_source(text: str) -> tuple[str, ...] | None:
     return tuple_declared_in_source(text, _INJECTORS_ATTR)
 
 
+def _source_candidates_for_module(root: Path, module_parts: list[str]) -> tuple[Path, ...]:
+    """Return file then package ``__init__`` paths for a libs module walk step."""
+    if not module_parts:
+        return ()
+    base = root / _LIBS_DIR
+    as_file = base.joinpath(*module_parts).with_suffix(".py")
+    as_pkg = base.joinpath(*module_parts) / "__init__.py"
+    return (as_file, as_pkg)
+
+
 def _attr_tuple_for_lib_path(path: str, attr: str) -> tuple[str, ...] | None:
-    """Import a string-tuple module attr from a libs path, walking up packages."""
+    """Read a string-tuple module attr from on-disk source, walking up packages.
+
+    Residue asks what the file declares, not what a long-lived interpreter
+    still has cached. ``importlib`` + ``getattr`` is the wrong instrument.
+    """
     if is_lib_test_module_path(path):
         return None
     if not path.startswith("libs/") or not path.endswith(".py"):
         return None
+    root = repo_root()
     rel = path[len("libs/") : -3]
     parts = rel.replace("/", ".").split(".")
     for end in range(len(parts), 0, -1):
-        module_path = ".".join(parts[:end])
-        try:
-            module = importlib.import_module(module_path)
-        except ImportError:
-            continue
-        value = getattr(module, attr, None)
-        if value is None:
-            continue
-        if isinstance(value, (list, tuple)):
-            return tuple(str(item) for item in value)
+        for candidate in _source_candidates_for_module(root, parts[:end]):
+            if not candidate.is_file():
+                continue
+            try:
+                text = candidate.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            declared = tuple_declared_in_source(text, attr)
+            if declared is not None:
+                return declared
     return None
 
 

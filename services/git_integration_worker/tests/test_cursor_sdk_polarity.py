@@ -61,7 +61,8 @@ def test_clean_exit_untracked_not_reported_deleted(tmp_path: Path) -> None:
     change_set, deviations = changed_paths(tmp_path, baseline)
     assert change_set.deleted == ()
     assert "f.py" not in change_set.deleted
-    assert any("f.py" in deviation for deviation in deviations)
+    assert "capture:polarity_unproved:f.py" in deviations
+    assert not any(":deleted:" in deviation for deviation in deviations)
 
 
 def test_proved_deletion_when_file_removed(tmp_path: Path) -> None:
@@ -189,7 +190,8 @@ def test_clean_at_admit_deletion_not_proved_without_admit_head(tmp_path: Path) -
     (tmp_path / "clean.py").unlink()
     change_set, deviations = changed_paths(tmp_path, baseline)
     assert change_set.deleted == ()
-    assert any("clean.py" in deviation for deviation in deviations)
+    assert "capture:polarity_unproved:clean.py" in deviations
+    assert not any(":deleted:" in deviation for deviation in deviations)
 
 
 def test_git_diff_paths_between_mid_window_commit(tmp_path: Path) -> None:

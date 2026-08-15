@@ -12,6 +12,7 @@ import os
 import time
 
 from deploy_identity.code_version import resolve_code_version
+from deploy_identity.tree_state import resolve_tree_state
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -66,6 +67,9 @@ class HealthResponse(BaseModel):
     ``pid`` is ``os.getpid()`` of the uvicorn process serving ``/health`` —
     same field GIW liveness / MCP ``health_json`` use for
     ``strong_process_identity``.
+
+    ``tree_state`` is checkout porcelain (dirty|clean|unknown). It does not
+    upgrade ``code_version`` into proof-of-live on a dirty tree.
     """
 
     status: str
@@ -74,6 +78,7 @@ class HealthResponse(BaseModel):
     registry_hygiene: str
     code_version: str
     pid: int
+    tree_state: str
 
 
 def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
@@ -187,6 +192,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
                 registry_hygiene="stopped",
                 code_version=resolve_code_version(),
                 pid=os.getpid(),
+                tree_state=resolve_tree_state(),
             )
         hygiene_status = "running" if registry_hygiene.running else "stopped"
         return HealthResponse(
@@ -196,6 +202,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             registry_hygiene=hygiene_status,
             code_version=resolve_code_version(),
             pid=os.getpid(),
+            tree_state=resolve_tree_state(),
         )
 
     @app.post(

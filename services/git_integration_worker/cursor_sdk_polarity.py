@@ -1,4 +1,8 @@
-"""Polarity proof gates for wt_baseline → closeout path attribution (6341 L1)."""
+"""Polarity proof gates for wt_baseline → closeout path attribution (6341 L1).
+
+Callers: ``changed_paths`` admits a files_* bucket only after ``prove_polarity``.
+Unproved claims become ``capture:polarity_unproved:{path}`` — no failed-claim suffix.
+"""
 
 from __future__ import annotations
 
@@ -62,6 +66,7 @@ def git_concurs_deleted(
     current_porcelain: dict[str, str],
     git_deleted_paths: frozenset[str],
 ) -> bool:
+    """True when porcelain or ``git ls-files --deleted`` lists *path* as gone."""
     code = current_porcelain.get(path)
     if code is not None and code in _DELETION_PORCELAIN_CODES:
         return True
@@ -112,5 +117,10 @@ def prove_polarity(
     return cur is not None and not cur.startswith("?")
 
 
-def polarity_deviation_token(claimed: ClaimedOp, path: str) -> str:
-    return f"capture:polarity_unproved:{claimed}:{path}"
+def polarity_deviation_token(path: str) -> str:
+    """Name the unproved path only — do not suffix a failed polarity claim.
+
+    ``prove_polarity`` already returned False. Repeating ``:{claimed}``
+    answers confidently about a polarity this surface could not prove.
+    """
+    return f"capture:polarity_unproved:{path}"
