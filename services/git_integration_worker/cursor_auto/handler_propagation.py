@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from charter_runner_store.propagation_ledger import (
@@ -14,24 +14,24 @@ from charter_runner_store.propagation_ledger import (
     set_open_proof_payload,
     upsert_open_rows,
 )
+from charter_runner_store.propagation_terminal_persisted_before import (
+    proof_before_payload_for_submit,
+)
 from implement_admission.propagation_row import PropagationRow
 
 from services.git_integration_worker.cursor_auto.handler_terminal import (
     post_terminal_status,
-)
-from services.git_integration_worker.cursor_auto.propagation_terminal_payload import (
-    compact_propagate_terminal_payload,
 )
 from services.git_integration_worker.cursor_auto.manage_sock import sync_restart_service
 from services.git_integration_worker.cursor_auto.propagate_admission import (
     PROPAGATE_CONTRACT,
     admit_propagate_body,
 )
-from charter_runner_store.propagation_terminal_persisted_before import (
-    proof_before_payload_for_submit,
-)
 from services.git_integration_worker.cursor_auto.propagation_probe import (
     proof_observed,
+)
+from services.git_integration_worker.cursor_auto.propagation_terminal_payload import (
+    compact_propagate_terminal_payload,
 )
 from services.git_integration_worker.cursor_auto.queue import AutoJob
 from services.git_integration_worker.cursor_bus import CursorBusClient
@@ -70,7 +70,7 @@ def execution_terminal_proof_fields(
         fields["proof"] = after
     elif status == "submitted" and after is not None:
         fields["proof_at_submit"] = after
-        fields["proof_at_submit_captured_at"] = datetime.now(timezone.utc).isoformat()
+        fields["proof_at_submit_captured_at"] = datetime.now(UTC).isoformat()
     return fields
 
 
@@ -86,6 +86,12 @@ def _preempted_work_label(manage_result: dict[str, Any]) -> str:
         if marker in reason.lower():
             return marker
     return reason or "in-flight work"
+
+
+_HARVEST_NEXT = {
+    "manage_deferred_missing_activation_validation_id": "deferred restart lacked activation_validation_id — harvest_wanted",
+    "activation_validation_bind_failed": "validation bind failed — harvest_wanted",
+}
 
 
 def restart_intent_persisted(manage_result: dict[str, Any]) -> bool:
@@ -121,28 +127,22 @@ def execution_for_manage_deferred(
         or "manage_deferred"
     )
     if restart_intent_persisted(manage_result):
-        activation_validation_id = manage_result.get("activation_validation_id")
-        if not activation_validation_id:
-            mark_harvest_wanted(row_id)
-            return {
-                "service": row.service,
-                "row_id": row_id,
-                "status": "harvest_wanted",
-                "reason": "manage_deferred_missing_activation_validation_id",
-                "manage": manage_result,
-                "next": "deferred restart lacked activation_validation_id — harvest_wanted",
-            }
-        from charter_runner_store.propagation_validation import bind_validation_to_row
+        from charter_runner_store.propagation_validation import (
+            deferred_activation_bind_failure,
+        )
 
-        if bind_validation_to_row(str(activation_validation_id), row_id) < 1:
+        fail_reason = deferred_activation_bind_failure(
+            manage_result.get("activation_validation_id"), row_id
+        )
+        if fail_reason is not None:
             mark_harvest_wanted(row_id)
             return {
                 "service": row.service,
                 "row_id": row_id,
                 "status": "harvest_wanted",
-                "reason": "activation_validation_bind_failed",
+                "reason": fail_reason,
                 "manage": manage_result,
-                "next": "validation bind failed — harvest_wanted",
+                "next": _HARVEST_NEXT[fail_reason],
             }
         set_defer_reason(row_id, DEFER_MANAGE_QUEUED_DRAIN)
         return {

@@ -50,66 +50,13 @@ def mint_activation_validation(store: RestartIntentStore, intent: Intent) -> str
     )
 
 
-def drain_deferred_result(
-    intent: Intent,
-    *,
-    reason: str | None = None,
-    activation_validation_id: str | None = None,
-) -> dict[str, Any]:
-    """The 202 envelope for a deferred, drain-supervised git-worker restart."""
-    from scripts.model_manager.ui.controller.restart_intent_consumer import (
-        project_restart_intent_consumer,
-    )
-
-    projected = project_restart_intent_consumer(intent)
-    result = {
-        "status": "deferred",
-        "state": "draining",
-        "service": intent.service,
-        "restart_intent_id": projected["restart_intent_id"],
-        "deadline_ceiling_at": projected["deadline_ceiling_at"],
-        "deadline_semantics": projected["deadline_semantics"],
-        "deadline_at": projected["deadline_at"],
-        "reason": reason or "draining; completion delivered via git_worker.drain events",
-        "caller_must_exit_to_release_lease": True,
-        "guidance": (
-            "If you hold the git_integration_worker write lease (cursor-sdk), "
-            "exit this dispatch now — do not wait_healthy in-window. "
-            "Activation proof is supervisor-owned; query via activation_validation_id "
-            "or fleet_liveness(code_ref=…)."
-        ),
-    }
-    if activation_validation_id is not None:
-        result["activation_validation_id"] = activation_validation_id
-    return result
-
-
-def blocking_drain_result(
-    *, service: str, action: str, intent_id: str, final: Intent | None
-) -> dict[str, Any]:
-    """Terminal envelope for the fleet blocking path (ok vs error)."""
-    drained_ok = final is not None and final.status in {
-        "completed",
-        "verifying_activation",
-        "activation_unverified",
-    }
-    return {
-        "status": "ok" if drained_ok else "error",
-        "drain_status": (final.status if final is not None else "missing"),
-        "service": service,
-        "action": action,
-        "restart_intent_id": intent_id,
-    }
-
-
-async def record_kill_boundary_and_arm_verify(
+def _persist_kill_boundary(
     store: RestartIntentStore,
     intent: Intent,
     *,
     boundary_source: str,
-    from_status: str = STATUS_DRAINED_RESTARTING,
-) -> None:
-    """Persist kill boundary, emit verifying event, and schedule activation verify."""
+) -> tuple[str, Any | None]:
+    """Record kill boundary on intent and bound validation row when present."""
     kill_boundary_at = datetime.now(UTC).isoformat()
     kill_mono = time.monotonic()
     store.set_kill_boundary(intent.intent_id, kill_boundary_at=kill_boundary_at)
@@ -121,6 +68,20 @@ async def record_kill_boundary_and_arm_verify(
             boundary_source=boundary_source,
             restart_boundary_monotonic=kill_mono,
         )
+    return kill_boundary_at, validation
+
+
+async def record_kill_boundary_and_arm_verify(
+    store: RestartIntentStore,
+    intent: Intent,
+    *,
+    boundary_source: str,
+    from_status: str = STATUS_DRAINED_RESTARTING,
+) -> None:
+    """Persist kill boundary, emit verifying event, and schedule activation verify."""
+    kill_boundary_at, validation = _persist_kill_boundary(
+        store, intent, boundary_source=boundary_source
+    )
     if not arms_activation_verify(intent.action):
         store.advance(intent.intent_id, status=STATUS_COMPLETED)
         return
@@ -148,17 +109,9 @@ async def arm_verify_after_generation_gone(
     intent: Intent,
 ) -> bool:
     """Generation-gone path: record boundary and arm verify without SIGTERM."""
-    kill_boundary_at = datetime.now(UTC).isoformat()
-    kill_mono = time.monotonic()
-    store.set_kill_boundary(intent.intent_id, kill_boundary_at=kill_boundary_at)
-    validation = latest_validation_for_intent(intent.intent_id)
-    if validation is not None:
-        set_kill_boundary(
-            validation.validation_id,
-            kill_boundary_at=kill_boundary_at,
-            boundary_source="generation_gone",
-            restart_boundary_monotonic=kill_mono,
-        )
+    _, validation = _persist_kill_boundary(
+        store, intent, boundary_source="generation_gone"
+    )
     if not arms_activation_verify(intent.action):
         return False
     if (
@@ -188,9 +141,7 @@ def _monotonic_from_kill_boundary(kill_boundary_at: str | None) -> float | None:
 
 
 def _observation_class(payload: dict[str, Any] | None) -> str:
-    if payload is None:
-        return "unreachable"
-    if payload.get("probe_reachable") is False:
+    if payload is None or payload.get("probe_reachable") is False:
         return "unreachable"
     return "reachable"
 
@@ -354,12 +305,9 @@ def _terminal_unverified(
 
 
 def schedule_activation_verify(
-    store: RestartIntentStore,
-    intent_id: str,
-    validation_id: str,
+    store: RestartIntentStore, intent_id: str, validation_id: str
 ) -> None:
     """Schedule verify on a tracked task that does not hold the restart gate."""
-
     async def _task() -> None:
         try:
             await run_activation_verify(store, intent_id, validation_id)
@@ -392,14 +340,7 @@ def arms_activation_verify(action: str) -> bool:
 
 
 __all__ = [
-    "ACTIVATION_IDLE_TIMEOUT_S",
-    "arms_activation_verify",
-    "blocking_drain_result",
-    "drain_deferred_result",
-    "mint_activation_validation",
-    "record_kill_boundary_and_arm_verify",
-    "arm_verify_after_generation_gone",
-    "resume_activation_verify",
-    "run_activation_verify",
-    "schedule_activation_verify",
+    "ACTIVATION_IDLE_TIMEOUT_S", "arms_activation_verify", "mint_activation_validation",
+    "record_kill_boundary_and_arm_verify", "arm_verify_after_generation_gone",
+    "resume_activation_verify", "run_activation_verify", "schedule_activation_verify",
 ]

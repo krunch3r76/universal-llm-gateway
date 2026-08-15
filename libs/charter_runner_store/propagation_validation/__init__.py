@@ -5,12 +5,14 @@ from __future__ import annotations
 from .close import apply_close_validation, current_validation
 from .lifecycle import (
     mint_pending_validation_for_intent,
+    reconcile_pending_validations_at_boot,
     repair_supersession_pairs,
     sweep_stale_pending_validations,
 )
 from .model import PropagationValidation
 from .queries import (
     bind_validation_to_row,
+    deferred_activation_bind_failure,
     get_validation,
     latest_validation,
     latest_validation_for_intent,
@@ -26,6 +28,7 @@ __all__ = [
     "apply_close_validation",
     "bind_validation_to_row",
     "current_validation",
+    "deferred_activation_bind_failure",
     "get_validation",
     "latest_validation",
     "latest_validation_for_intent",
@@ -33,6 +36,7 @@ __all__ = [
     "pending_unbound_validation_for_ref",
     "pending_validation_for_row",
     "pending_validations",
+    "reconcile_pending_validations_at_boot",
     "record_validation",
     "repair_supersession_pairs",
     "set_kill_boundary",

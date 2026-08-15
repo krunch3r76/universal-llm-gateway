@@ -108,6 +108,7 @@ def charter_runner_data_dir() -> Path:
 
 
 def default_ledger_path() -> Path:
+    """Return the default sqlite path for the charter-runner root ledger."""
     return charter_runner_data_dir() / "root-ledger.sqlite"
 
 

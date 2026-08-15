@@ -279,7 +279,7 @@ def test_execution_for_manage_deferred_with_intent_is_queued() -> None:
             "services.git_integration_worker.cursor_auto.handler_propagation.set_defer_reason",
         ) as mock_set,
         patch(
-            "charter_runner_store.propagation_validation.bind_validation_to_row",
+            "charter_runner_store.propagation_validation.queries.bind_validation_to_row",
             return_value=1,
         ),
     ):

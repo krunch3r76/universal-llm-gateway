@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import json
-import sqlite3
-import time
+from implement_admission.propagation_row import PropagationRow
 
 from charter_runner_store.propagation_ledger import close_row, upsert_open_rows
-from implement_admission.propagation_row import PropagationRow
 
 
 def _open_row(tmp_path, monkeypatch) -> str:

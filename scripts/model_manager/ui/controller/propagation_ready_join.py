@@ -63,6 +63,7 @@ def ready_join_for_settle(
         return ReadyJoinResult(outcome="skipped", payload=None, defer_reason=None)
 
     from charter_runner_store.propagation_ledger import list_open_rows, set_defer_reason
+
     from services.git_integration_worker.cursor_auto.propagation_probe import (
         probe_process_live,
     )

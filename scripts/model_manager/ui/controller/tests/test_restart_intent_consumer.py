@@ -23,6 +23,7 @@ def _intent(**overrides: object) -> Intent:
         "deadline_at": "2026-08-12T15:40:39.447241+00:00",
         "last_seen_event_seq": 0,
         "reason": "manage sync_restart (deferred drain)",
+        "kill_boundary_at": None,
         "created_at": "2026-08-12T15:30:39.447708+00:00",
         "updated_at": "2026-08-12T15:30:56.379576+00:00",
     }

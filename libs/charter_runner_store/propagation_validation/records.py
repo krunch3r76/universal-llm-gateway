@@ -132,6 +132,7 @@ def set_kill_boundary(
     restart_boundary_monotonic: float | None = None,
     conn=None,
 ) -> int:
+    """Persist kill-boundary metadata on a pending validation row."""
     now = time.time()
     own_conn = conn is None
     db = conn or open_ledger_db()

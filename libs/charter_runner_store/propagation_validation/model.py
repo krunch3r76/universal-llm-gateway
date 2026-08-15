@@ -38,10 +38,12 @@ class PropagationValidation:
 
 
 def store_code_ref(code_ref: str, *, service: str) -> str:
+    """Resolve and normalize a code_ref for durable validation storage."""
     return require_resolvable_code_ref(code_ref, service=service)
 
 
 def from_row(row) -> PropagationValidation:
+    """Hydrate a PropagationValidation dataclass from one sqlite row."""
     def parse(value):
         return json.loads(value) if value else None
 
@@ -68,6 +70,7 @@ def from_row(row) -> PropagationValidation:
 
 
 def as_dict(record: PropagationValidation | None) -> dict[str, Any] | None:
+    """Serialize a validation record for API projection without sqlite types."""
     if record is None:
         return None
     return {

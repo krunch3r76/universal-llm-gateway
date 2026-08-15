@@ -24,6 +24,7 @@ def apply_close_validation(
     code_ref_relation: str | None = None,
     identity_measurement: str | None = None,
 ) -> None:
+    """Advance or record validated close-path attribution for one ledger row."""
     stored = store_code_ref(code_ref, service=service)
     pending = conn.execute(
         """
@@ -62,6 +63,7 @@ def apply_close_validation(
 
 
 def current_validation(service: str, code_ref: str) -> dict[str, Any]:
+    """Project liveness plus latest validation into one attribution verdict."""
     live = observe_code_ref_live(service, code_ref)
     stored = store_code_ref(code_ref, service=service)
     record = latest_validation(service, stored)

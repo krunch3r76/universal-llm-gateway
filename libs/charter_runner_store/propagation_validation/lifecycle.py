@@ -18,6 +18,7 @@ def mint_pending_validation_for_intent(
     code_ref: str = "HEAD",
     advance_intent_fn=None,
 ) -> str:
+    """Mint or reuse the pending validation row bound to one restart intent."""
     from services.git_integration_worker.cursor_auto.propagation_probe import (
         probe_process_live,
     )
@@ -87,6 +88,7 @@ def mint_pending_validation_for_intent(
 def sweep_stale_pending_validations(
     *, now: float | None = None, max_age_s: float = 3600, conn=None
 ) -> list[str]:
+    """Expire pending validations older than max_age_s and return swept ids."""
     ts = now if now is not None else time.time()
     own_conn = conn is None
     db = conn or open_ledger_db()
@@ -108,6 +110,7 @@ def sweep_stale_pending_validations(
 
 
 def repair_supersession_pairs(*, store=None, conn=None) -> None:
+    """Align superseded validation rows with their replacement restart intents."""
     own_conn = conn is None
     db = conn or open_ledger_db()
     try:
@@ -152,8 +155,19 @@ def repair_supersession_pairs(*, store=None, conn=None) -> None:
             db.close()
 
 
+def reconcile_pending_validations_at_boot(*, store, logger=None) -> None:
+    """Repair supersession pairs and sweep stale pending rows after intent resume."""
+    try:
+        repair_supersession_pairs(store=store)
+        sweep_stale_pending_validations()
+    except Exception:
+        if logger is not None:
+            logger.exception("restart-intent reconcile: validation sweep failed")
+
+
 __all__ = [
     "mint_pending_validation_for_intent",
+    "reconcile_pending_validations_at_boot",
     "repair_supersession_pairs",
     "sweep_stale_pending_validations",
 ]

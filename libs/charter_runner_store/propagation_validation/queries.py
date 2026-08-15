@@ -9,6 +9,7 @@ from .model import PropagationValidation, from_row, store_code_ref
 
 
 def get_validation(validation_id: str, *, conn=None) -> PropagationValidation | None:
+    """Load one validation row by primary key, or None when absent."""
     own_conn = conn is None
     db = conn or open_ledger_db()
     try:
@@ -25,6 +26,7 @@ def get_validation(validation_id: str, *, conn=None) -> PropagationValidation | 
 def latest_validation(
     service: str, code_ref: str, *, conn=None
 ) -> PropagationValidation | None:
+    """Return the latest validation row for one service and stored code_ref."""
     stored = store_code_ref(code_ref, service=service)
     own_conn = conn is None
     db = conn or open_ledger_db()
@@ -46,6 +48,7 @@ def latest_validation(
 def latest_validation_for_intent(
     restart_intent: str, *, conn=None
 ) -> PropagationValidation | None:
+    """Return the newest validation row bound to one restart intent id."""
     own_conn = conn is None
     db = conn or open_ledger_db()
     try:
@@ -64,6 +67,7 @@ def latest_validation_for_intent(
 
 
 def pending_validations(*, conn=None) -> list[PropagationValidation]:
+    """List all pending validation rows ordered by creation time."""
     own_conn = conn is None
     db = conn or open_ledger_db()
     try:
@@ -77,6 +81,7 @@ def pending_validations(*, conn=None) -> list[PropagationValidation]:
 
 
 def pending_validation_for_row(row_id: str, *, conn=None) -> PropagationValidation | None:
+    """Return the pending validation bound to one propagation ledger row."""
     own_conn = conn is None
     db = conn or open_ledger_db()
     try:
@@ -96,6 +101,7 @@ def pending_validation_for_row(row_id: str, *, conn=None) -> PropagationValidati
 def pending_unbound_validation_for_ref(
     service: str, code_ref: str, *, conn=None
 ) -> PropagationValidation | None:
+    """Return the newest pending validation with no ledger row binding yet."""
     stored = store_code_ref(code_ref, service=service)
     own_conn = conn is None
     db = conn or open_ledger_db()
@@ -115,6 +121,7 @@ def pending_unbound_validation_for_ref(
 
 
 def bind_validation_to_row(validation_id: str, row_id: str, *, conn=None) -> int:
+    """Attach a pending validation to a propagation row; return rows updated."""
     now = time.time()
     own_conn = conn is None
     db = conn or open_ledger_db()
@@ -136,8 +143,20 @@ def bind_validation_to_row(validation_id: str, row_id: str, *, conn=None) -> int
             db.close()
 
 
+def deferred_activation_bind_failure(
+    activation_validation_id: object, row_id: str, *, conn=None
+) -> str | None:
+    """Return harvest_wanted reason when deferred activation bind cannot succeed."""
+    if not activation_validation_id:
+        return "manage_deferred_missing_activation_validation_id"
+    if bind_validation_to_row(str(activation_validation_id), row_id, conn=conn) >= 1:
+        return None
+    return "activation_validation_bind_failed"
+
+
 __all__ = [
     "bind_validation_to_row",
+    "deferred_activation_bind_failure",
     "get_validation",
     "latest_validation",
     "latest_validation_for_intent",

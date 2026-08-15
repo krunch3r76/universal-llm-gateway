@@ -35,11 +35,8 @@ from transport_utils import make_async_client
 from universal_concurrency import FifoCapacityGate
 from universal_logging import get_logger
 
-from .git_worker_activation_verify import (
-    blocking_drain_result,
-    drain_deferred_result,
-    mint_activation_validation,
-)
+from .git_worker_activation_verify import mint_activation_validation
+from .restart_intent_consumer import blocking_drain_result, drain_deferred_result
 from .restart_window_ctl import open_service_window
 from .service_config import cdp_ask_url_config
 
@@ -557,4 +554,3 @@ __all__ = [
     "run_gated_drain_supervised",
     "run_gated_drain_supervised_blocking",
 ]
-

@@ -11,12 +11,12 @@ import asyncio
 import logging
 import os
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, TypedDict
 
-from ..service_config import GATEWAY_DIR
 from ...model.service_state import ServiceState
+from ..service_config import GATEWAY_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -199,9 +199,9 @@ def _canonicalize_iso_timestamp(text: str) -> str:
         candidate = candidate[:-1] + "+00:00"
     parsed = datetime.fromisoformat(candidate)
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
     else:
-        parsed = parsed.astimezone(timezone.utc)
+        parsed = parsed.astimezone(UTC)
     micros = parsed.microsecond
     return (
         parsed.strftime("%Y-%m-%dT%H:%M:%S")
