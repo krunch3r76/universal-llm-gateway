@@ -42,8 +42,8 @@ from implement_admission.propagation_row import (
 )
 from implement_admission.service_lib_ownership import (
     audit_sync_restart_slug,
-    declared_services_for_lib_path,
     path_prefixes,
+    serving_services_for_lib_path,
     slug_for_service_path,
 )
 
@@ -298,14 +298,16 @@ def _slug_for_path(path: str) -> str | None:
 def _resolve_libs_path(path: str) -> tuple[tuple[str, ...], list[str]]:
     """Resolve a ``libs/`` edit to ``(services_to_restart, deferral_lines)``.
 
-    Declared manifest ownership is the actor. Import-graph inference applies only when
-    declaration is absent, and auto-restarts only at cardinality 1 (invariant 4).
+    ``serves_libs`` is the actor (job set). ``owned_libs`` is not consulted —
+    that set is may-import completeness and seven-way-blasts ``agent_bus_store``.
+    Import-graph inference applies only when no serving slug is declared, and
+    auto-restarts only at cardinality 1 (invariant 4).
     """
     if lib_name_for_path(path) is None:
         return (), []
-    declared = declared_services_for_lib_path(path)
-    if declared:
-        return declared, []
+    serving = serving_services_for_lib_path(path)
+    if serving:
+        return serving, []
     inferred = services_for_lib_path(path, prefixes=path_prefixes())
     if not inferred:
         return (), [f"libs_touched: {path} (no importing service resolved)"]

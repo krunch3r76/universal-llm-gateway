@@ -39,6 +39,14 @@ def test_parse_verification_tags_accepts_injectors_derived():
     }
 
 
+def test_parse_verification_tags_accepts_serves_derived():
+    tagged = "derived:serves; import_path:verified"
+    assert parse_verification_tags(tagged) == {
+        "derived": "serves",
+        "import_path": "verified",
+    }
+
+
 @pytest.mark.offline
 def test_operator_proxy_briefings_declare_cdp_ask_injectors():
     """Briefing paste path is cdp_ask, not the GIW importer."""
@@ -76,3 +84,11 @@ def test_check_injectors_declarations_tree_is_clean():
     failures = check_nomination_declarations()
     assert failures == [], "\n".join(failures)
     assert check_injectors_declarations() == []
+
+
+@pytest.mark.offline
+def test_wait_status_nominations_are_serving_agent_bus():
+    """Replay 33083d61: harvest nominates the wait server, not owned_libs extras."""
+    clear_verify_caches()
+    path = "libs/agent_bus_store/wait_status.py"
+    assert nominations_for_lib_path(path) == (("agent_bus", "serves"),)

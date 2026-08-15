@@ -41,7 +41,12 @@ ImportPathStatus = Literal[
     "indeterminate",
 ]
 DerivedSource = Literal[
-    "consumers", "injectors", "path_prefix", "ownership", "import_graph"
+    "consumers",
+    "injectors",
+    "path_prefix",
+    "ownership",
+    "import_graph",
+    "serves",
 ]
 
 _LIBS_DIR = "libs"
@@ -228,7 +233,7 @@ def format_verification_tags(
 
 
 _VERIFICATION_TAGS_RE = re.compile(
-    r"derived:(?P<derived>consumers|injectors|path_prefix|ownership|import_graph);\s*"
+    r"derived:(?P<derived>consumers|injectors|path_prefix|ownership|import_graph|serves);\s*"
     r"import_path:(?P<import_path>verified|unverified|contradicted|not_probed|indeterminate)"
     r"(?:;\s*import_grammar_blind:(?P<blinds>[\w|]+))?"
 )

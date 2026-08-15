@@ -1,10 +1,12 @@
 """Seat-facing injector nomination, distinct from CONSUMERS import-nomination.
 
+``serves_libs`` answers which manage process makes a libs module live.
 ``CONSUMERS`` answers who imports a libs module (harvest ledger / process
 load). ``INJECTORS`` answers who serves that module's content to a seat
 (paste, briefing assembly). Harvest mints verified restart rows from the
 union so a briefing land cannot recycle only the importer and leave the
-injector stale.
+injector stale, and so a serving process is not omitted when CONSUMERS is
+empty (7233 / ``wait_status.py``).
 
 Callers: ``rows_from_lib_consumers`` / ``episode_residue._actions_for_path``.
 """
@@ -24,6 +26,7 @@ from implement_admission.consumer_import_verify import (
     residue_actions_for_lib_consumers,
     verify_consumer_import,
 )
+from implement_admission.service_lib_ownership import serving_services_for_lib_path
 
 _LIBS_DIR = "libs"
 _INJECTORS_ATTR = "INJECTORS"
@@ -105,15 +108,22 @@ def injectors_for_lib_path(path: str) -> tuple[str, ...] | None:
 def nominations_for_lib_path(
     path: str,
 ) -> tuple[tuple[str, DerivedSource], ...]:
-    """Return ``(slug, derived)`` pairs: injectors first, then CONSUMERS.
+    """Return ``(slug, derived)`` pairs: serves, then injectors, then CONSUMERS.
 
-    Duplicate slugs keep the injector tag — seat-facing recycle is the
-    question harvest got wrong when it minted only the importer.
+    ``serves_libs`` is the serving-process job set (distinct from may-import).
+    Duplicate slugs keep the earliest tag — serving beats injector beats
+    consumer so a relay CONSUMERS row cannot hide a missing server.
     """
+    serving = serving_services_for_lib_path(path)
     injectors = injectors_for_lib_path(path) or ()
     consumers = _attr_tuple_for_lib_path(path, _CONSUMERS_ATTR) or ()
     seen: set[str] = set()
     out: list[tuple[str, DerivedSource]] = []
+    for slug in serving:
+        if slug in seen:
+            continue
+        seen.add(slug)
+        out.append((slug, "serves"))
     for slug in injectors:
         if slug in seen:
             continue
@@ -186,12 +196,12 @@ def residue_actions_for_nominations(
     *,
     root: Path | None = None,
 ) -> tuple[str, ...]:
-    """Build RESIDUE lines for injector then consumer nominations on *path*."""
+    """Build RESIDUE lines for serves, then injector, then consumer nominations."""
     grouped: dict[DerivedSource, list[str]] = {}
     for slug, derived in nominations:
         grouped.setdefault(derived, []).append(slug)
     lines: list[str] = []
-    order: tuple[DerivedSource, ...] = ("injectors", "consumers")
+    order: tuple[DerivedSource, ...] = ("serves", "injectors", "consumers")
     for derived in order:
         slugs = grouped.get(derived)
         if not slugs:

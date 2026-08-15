@@ -1,8 +1,10 @@
 """Declared per-service lib ownership for propagation resolution.
 
-The manifest is the **actor** for closeout propagation: ``libs/`` edits resolve
-through declared ownership, not import-graph inference at runtime. The closure in
-``propagation_libs_closure`` audits that declared sets stay complete (CI).
+``owned_libs`` is the may-import / CI-completeness set — harvest and charter
+mint must not treat it as the restart set (seven-way blast on
+``agent_bus_store``). ``serves_libs`` is the job set: slugs whose process
+makes a change to that lib live. The closure in ``propagation_libs_closure``
+audits that declared ``owned_libs`` stay complete (CI).
 """
 
 from __future__ import annotations
@@ -15,20 +17,32 @@ _LIBS_DIR = "libs"
 
 @dataclass(frozen=True, slots=True)
 class ServiceOwnership:
-    """One manage service slug and the repo paths it owns."""
+    """One manage slug: tree prefix, may-import set, and serving-job set.
+
+    ``owned_libs`` answers "may import" for the completeness audit.
+    ``serves_libs`` answers "restart this process to make the lib live".
+    ``runtime_entrypoint`` names where the process loads its app when that
+    is not the ``path_prefix`` tree (agent_bus wrapper vs lib server).
+    """
 
     path_prefix: str
     owned_libs: frozenset[str]
+    serves_libs: frozenset[str] = frozenset()
+    runtime_entrypoint: str | None = None
 
 
 _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
     "agent_bus": ServiceOwnership(
         path_prefix="services/agent-bus/",
         owned_libs=frozenset({"agent_bus_store", "agent_seat", "cdp_ask", "claude_bundles", "cortex_store", "cursor_capabilities", "gen_rules", "implement_admission", "llm_adapters", "markdown_fence", "markdown_sections", "markdown_xml_blocks", "model_capabilities", "model_id", "ocr_core", "predicate_form", "role_lint", "sse", "stargate_chat", "transport_utils", "universal_event_bus", "universal_logging"}),
+        serves_libs=frozenset({"agent_bus_store"}),
+        runtime_entrypoint="libs/agent_bus_store/server.py",
     ),
     "cortex_api": ServiceOwnership(
         path_prefix="libs/cortex_store/",
         owned_libs=frozenset({"agent_bus_store", "agent_seat", "cdp_ask", "claude_bundles", "cortex_store", "cursor_capabilities", "gen_rules", "implement_admission", "llm_adapters", "markdown_fence", "markdown_sections", "markdown_xml_blocks", "model_capabilities", "model_id", "ocr_core", "predicate_form", "role_lint", "sse", "stargate_chat", "transport_utils", "universal_event_bus", "universal_logging"}),
+        serves_libs=frozenset({"cortex_store"}),
+        runtime_entrypoint="libs/cortex_store/main.py",
     ),
     "event_service": ServiceOwnership(
         path_prefix="services/event-service/",
@@ -49,6 +63,8 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
     "cdp_ask": ServiceOwnership(
         path_prefix="libs/cdp_ask/",
         owned_libs=frozenset({"admission_common", "cdp_ask", "claude_bundles", "cortex_store", "deploy_identity", "pager_notify", "transport_utils", "universal_event_bus", "universal_logging", "universal_workspace"}),
+        serves_libs=frozenset({"cdp_ask"}),
+        runtime_entrypoint="libs/cdp_ask/",
     ),
     "cloud_proxy": ServiceOwnership(
         path_prefix="services/universal_cloud_proxy/",
@@ -86,9 +102,24 @@ def slug_for_service_path(path: str) -> str | None:
 
 
 def declared_services_for_lib(lib_name: str) -> tuple[str, ...]:
-    """Service slugs that declare ownership of a top-level ``libs/`` name."""
+    """Service slugs that declare may-import ownership of a top-level ``libs/`` name.
+
+    Completeness audit only — not a harvest/charter mint source.
+    """
     owners = [slug for slug, own in _SERVICE_OWNERSHIP.items() if lib_name in own.owned_libs]
     return tuple(sorted(owners))
+
+
+def serving_services_for_lib(lib_name: str) -> tuple[str, ...]:
+    """Manage slugs whose job is to serve *lib_name* (``serves_libs``).
+
+    Distinct from ``declared_services_for_lib`` (may-import). Empty means no
+    serving-process nomination from the manifest; CONSUMERS/INJECTORS still apply.
+    """
+    servers = [
+        slug for slug, own in _SERVICE_OWNERSHIP.items() if lib_name in own.serves_libs
+    ]
+    return tuple(sorted(servers))
 
 
 def lib_name_for_path(path: str) -> str | None:
@@ -101,11 +132,23 @@ def lib_name_for_path(path: str) -> str | None:
 
 
 def declared_services_for_lib_path(path: str) -> tuple[str, ...]:
-    """Declared service slugs for a ``libs/`` edit path."""
+    """Declared may-import slugs for a ``libs/`` edit path (not a mint source)."""
     name = lib_name_for_path(path)
     if name is None:
         return ()
     return declared_services_for_lib(name)
+
+
+def serving_services_for_lib_path(path: str) -> tuple[str, ...]:
+    """Serving-process slugs for a ``libs/`` edit path.
+
+    Callers: harvest ``nominations_for_lib_path`` and charter
+    ``_resolve_libs_path``. Returns empty when the lib has no ``serves_libs`` row.
+    """
+    name = lib_name_for_path(path)
+    if name is None:
+        return ()
+    return serving_services_for_lib(name)
 
 
 def audit_sync_restart_slug(slug: str, lib_paths: list[str]) -> list[str]:
@@ -129,6 +172,8 @@ __all__ = [
     "declared_services_for_lib_path",
     "path_prefixes",
     "service_ownership",
+    "serving_services_for_lib",
+    "serving_services_for_lib_path",
     "slug_for_service_path",
 ]
 
