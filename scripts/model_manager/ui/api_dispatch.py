@@ -97,13 +97,18 @@ async def execute(
 
     match method:
         case "fleet_liveness":
-            unexpected = sorted(params)
+            unexpected = sorted(set(params) - {"code_ref"})
             if unexpected:
                 raise ValueError(
-                    "fleet_liveness accepts no parameters: "
+                    "fleet_liveness accepts only code_ref: "
                     + ", ".join(unexpected)
                 )
-            return await asyncio.to_thread(build_snapshot, ctl.root, svc)
+            code_ref = params.get("code_ref")
+            if code_ref is not None and not isinstance(code_ref, str):
+                raise ValueError("fleet_liveness code_ref must be a string")
+            return await asyncio.to_thread(
+                build_snapshot, ctl.root, svc, code_ref=code_ref
+            )
 
         case "status":
             infos = await asyncio.to_thread(svc.check_all)

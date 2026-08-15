@@ -356,7 +356,11 @@ At ARRIVAL and after idle on the same CSE: if `workspaces_read_at_head` ≠ last
 watermark, run `fs(op="recent_commits", sandbox="workspaces",
 path="universal-llm-gateway", since=<watermark>)` **in-seat**. ¬ `cursor_request`
 for `git log`. Land-claim harvest still uses file read + path-scoped SHA
-(commission Auto only for `git show` when fs content is not enough).
+(commission Auto only for `git show` when fs content is not enough). This is
+primarily catch-up evidence; during migration HEAD, commit times, and watermark
+order remain a deprecated lower-confidence fallback for diagnosis, never proof
+of runtime activation. Ask `fleet_liveness(code_ref=<sha>)` for the authoritative
+answer.
 
 ### Closeout harvest — land claim read-back (BINDING)
 

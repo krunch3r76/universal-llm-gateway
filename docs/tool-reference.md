@@ -10,6 +10,17 @@ individual tools with `fs(op="md_read", sandbox="workspaces", path="universal-ll
 tools: an outer selector (`tool` or `op`) plus an inner **`arguments` JSON-encoded
 object string** — e.g. `cortex(tool="entity_get", arguments='{"entity_id": "decision:foo"}')`.
 
+## fleet_liveness
+
+`fleet_liveness(code_ref="<sha>")` is the authority for whether services are
+currently running a requested commit. It returns fresh probe evidence, the
+observed code version and ancestry relation, plus the latest activation record.
+`fs(op="recent_commits")`, `HEAD`, and commit timestamps remain catch-up/history
+context. During migration they remain available as a **deprecated,
+lower-confidence fallback** for human diagnosis, but must never produce a
+validated-live claim or replace the fresh probe. Omit `code_ref` for the
+existing load-surface snapshot.
+
 The inner `arguments` is declared `type: string` **on purpose** and does not accept
 a bare object. Claude.ai's MCP client silently drops optional params with
 `anyOf`/`object` JSON Schema (`mcp-tool-param-types` invariant), so a union/object

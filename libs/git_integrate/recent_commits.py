@@ -51,6 +51,9 @@ def log_oneline(
         "commits": [],
         "since": resolved_since,
         "truncated": False,
+        "liveness_authority": 'fleet_liveness(code_ref="<sha>")',
+        "timestamps_are_liveness_evidence": False,
+        "deprecated_timestamp_fallback": True,
     }
     if not head:
         return empty
@@ -86,6 +89,9 @@ def log_oneline(
         "commits": [c for c in commits if c is not None],
         "since": resolved_since,
         "truncated": truncated,
+        "liveness_authority": 'fleet_liveness(code_ref="<sha>")',
+        "timestamps_are_liveness_evidence": False,
+        "deprecated_timestamp_fallback": True,
     }
 
 

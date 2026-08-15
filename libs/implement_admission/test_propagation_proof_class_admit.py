@@ -68,10 +68,11 @@ def test_legal_proof_classes_cortex_api_includes_served_artifact():
 def test_legal_proof_classes_unprobeable_excludes_process_live():
     """M2: process_live not legal when probe has no fetcher for the slug."""
     from services.git_integration_worker.cursor_auto.propagation_probe import (
+        PROCESS_LIVE_EXCLUDED_SERVICES,
         process_live_probeable_services,
     )
 
-    # email_bridge is permanently out of process_live (no fetcher / refuse).
+    assert "email_bridge" in PROCESS_LIVE_EXCLUDED_SERVICES
     assert "email_bridge" not in process_live_probeable_services()
     legal = legal_proof_classes("email_bridge")
     assert "process_live" not in legal

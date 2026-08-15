@@ -7,6 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from charter_runner_store.propagation_validation import current_validation
+
 from ..model.service_state import ServiceInfo, ServiceState
 from .fleet_liveness_probe import (
     BIND_MOUNT_SERVICES,
@@ -127,7 +129,9 @@ def _service_info(service_state: ServiceState, service: str) -> ServiceInfo:
     return checker()
 
 
-def build_snapshot(root: Path, service_state: ServiceState) -> dict[str, Any]:
+def build_snapshot(
+    root: Path, service_state: ServiceState, *, code_ref: str | None = None
+) -> dict[str, Any]:
     """Build a fresh evidence snapshot without mutating checkout or services.
 
     ``status`` is copied from the manage ``ServiceInfo`` checker for that slug.
@@ -235,6 +239,10 @@ def build_snapshot(root: Path, service_state: ServiceState) -> dict[str, Any]:
                 else "indeterminate"
             )
         )
+        if code_ref:
+            row["code_ref_validation"] = current_validation(
+                row["service"], code_ref
+            )
 
     finished = time.time()
     return {
@@ -246,6 +254,7 @@ def build_snapshot(root: Path, service_state: ServiceState) -> dict[str, Any]:
         },
         "tree_moved_during_probe": tree_moved,
         "depth": "content_hash_for_containers_timestamps_for_hosts",
+        "code_ref": code_ref,
         "clock": {
             "domain": before.get("clock", {}).get("domain", "host_wall_clock"),
             "boot_utc": before.get("clock", {}).get("boot_utc"),

@@ -209,10 +209,16 @@ PROCESS_LIVE_FETCHERS: dict[str, ProcessLiveFetcher] = {
     "cdp_ask": _fetch_cdp_ask_health,
     "agent_bus": _fetch_agent_bus_health,
 }
+PROCESS_LIVE_EXCLUDED_SERVICES = frozenset(
+    {"email_bridge"}
+)  # Satellite health has no deploy identity yet.
+
+if PROCESS_LIVE_FETCHERS.keys() & PROCESS_LIVE_EXCLUDED_SERVICES:
+    raise RuntimeError("excluded process-live services must not have fetchers")
 
 
 def process_live_probeable_services() -> frozenset[str]:
-    """Return slugs whose process_live probe can produce a payload (fetcher map keys)."""
+    """Return slugs whose process_live probe can produce an identity payload."""
     return frozenset(PROCESS_LIVE_FETCHERS)
 
 
@@ -648,7 +654,9 @@ def proof_observed(
         )
         return attestation == "changed"
     if row.proof_class == "client_visible" and row.service == "mcp":
-        from implement_admission.propagation_close_surfaces import resolve_close_surfaces
+        from implement_admission.propagation_close_surfaces import (
+            resolve_close_surfaces,
+        )
 
         owed = resolve_close_surfaces(
             service=row.service,
@@ -704,6 +712,7 @@ __all__ = [
     "IdentityAttestation",
     "IdentityMeasurement",
     "IdentityMeasurementError",
+    "PROCESS_LIVE_EXCLUDED_SERVICES",
     "PROCESS_LIVE_FETCHERS",
     "resolve_cdp_ask_probe_base_url",
     "attest_authority_identity",

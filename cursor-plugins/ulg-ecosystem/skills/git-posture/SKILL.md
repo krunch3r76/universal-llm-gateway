@@ -189,7 +189,7 @@ fs(sandbox="workspaces", op="md_read", path="universal-llm-gateway/…", section
 
 `git_diff` MCP is for operator approval fingerprints on gated `git_*` flows (`include_full_diff=false` when only hashes are needed) — not for model context or master change-scope reconstruction.
 
-Life/CDP catch-up is `fs(op="recent_commits")` (oneline subjects, no diffs) — not `git_log`, not a project index. `git_*` remains life-banned.
+Life/CDP catch-up is `fs(op="recent_commits")` (oneline subjects, no diffs) — not `git_log`, not a project index. Its HEAD and `authored_at` fields are a deprecated, lower-confidence timestamp fallback during migration; they never produce a validated-live claim. For “is the service running this commit?” use the dual-surface `fleet_liveness(code_ref=...)` query. `git_*` remains life-banned.
 
 ## Git CLI allowed only when
 

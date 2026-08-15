@@ -470,6 +470,20 @@ def close_row(
         "identity_measurement": identity_measurement,
         "status_claim_kind": _STATUS_CLAIM_KIND,
     }
+    from .propagation_validation import record_validation
+
+    record_validation(
+        service=context.service,
+        code_ref=context.code_ref,
+        row_id=row_id,
+        restart_boundary_monotonic=payload.get("landed_at_monotonic"),
+        pre_observation=payload.get("proof_before"),
+        post_observation=payload,
+        observed_code_version=payload.get("code_version"),
+        code_ref_relation=payload.get("code_ref_relation"),
+        identity_measurement=identity_measurement,
+        outcome="validated",
+    )
     try:
         execute_with_retry(
             db,

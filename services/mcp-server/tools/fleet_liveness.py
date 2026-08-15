@@ -19,18 +19,19 @@ def register_fleet_liveness_tools(mcp: FastMCP) -> None:
     """Register the direct fleet liveness verb on the current MCP surface."""
 
     @mcp.tool(title="Fleet Liveness")
-    def fleet_liveness() -> dict[str, Any]:
+    def fleet_liveness(code_ref: str | None = None) -> dict[str, Any]:
         """Return fresh service markers, dirty paths, and honest load evidence.
 
         Container-copy services use hashes from their running load location.
         Host-process and bind-mounted services expose temporal or indeterminate
         evidence without promoting start time into proof of execution.
         """
+        params = {} if code_ref is None else {"code_ref": code_ref}
         raw = _call_manage(
             {
                 "jsonrpc": "2.0",
                 "method": "fleet_liveness",
-                "params": {},
+                "params": params,
                 "id": 1,
             },
             timeout=30.0,
