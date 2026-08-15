@@ -122,6 +122,42 @@ def test_mcp_json_copy_present(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     assert (home / ".cursor" / "mcp.json").exists()
 
 
+def test_mcp_json_strips_oauth_colliding_servers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CURSOR_API_KEY", "test-key")
+    real = tmp_path / "real-home"
+    cursor = real / ".cursor"
+    cursor.mkdir(parents=True)
+    (cursor / "mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "vortex-code": {"command": "x"},
+                    "vortex-life": {"command": "y"},
+                    "other": {"command": "z"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    plugin_skill = (
+        real
+        / ".cursor"
+        / "plugins"
+        / "local"
+        / "ulg-ecosystem"
+        / "skills"
+        / "residual-imprint"
+    )
+    plugin_skill.mkdir(parents=True)
+    (plugin_skill / "SKILL.md").write_text("# residual-imprint", encoding="utf-8")
+    root = tmp_path / "homes"
+    home = setup_cursor_dispatch_home("d1", real_home=real, root=root)
+    copied = json.loads((home / ".cursor" / "mcp.json").read_text(encoding="utf-8"))
+    assert copied["mcpServers"] == {"other": {"command": "z"}}
+
+
 def test_mcp_yaml_copy_present(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CURSOR_API_KEY", "test-key")
     real = tmp_path / "real-home"

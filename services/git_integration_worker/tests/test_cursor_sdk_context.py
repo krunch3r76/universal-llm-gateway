@@ -83,8 +83,12 @@ def test_mcp_servers_use_stdio_bridge(tmp_path: Path) -> None:
 
     servers = build_mcp_servers(repo, real_home=tmp_path / "home")
     assert "user-vortex" in servers
+    assert "vortex-code" in servers
+    assert "vortex-life" not in servers
     cfg = servers["user-vortex"]
     assert cfg.args == [str(bridge.resolve())]
+    assert servers["vortex-code"].args == cfg.args
+    assert servers["vortex-code"].env == cfg.env
 
 
 def test_mcp_servers_missing_bridge_raises(tmp_path: Path) -> None:

@@ -31,6 +31,9 @@ from services.git_integration_worker.cursor_sdk_substrate_tools import (
 )
 
 _VORTEX_MCP_SERVER = "user-vortex"
+# IDE/docs name for the same code mount. Copied mcp.json registers this
+# without a bearer and Cursor then offers mcp_auth (unsupported in SDK).
+_VORTEX_MCP_ALIAS_SERVERS: tuple[str, ...] = ("vortex-code",)
 _MCP_BRIDGE_RELPATH = Path("scripts/mcp-fastmcp-remote-bridge.py")
 _FASTMCP_REMOTE_CMD = "fastmcp-remote"
 _SETTING_SOURCES: tuple[str, ...] = ("all",)
@@ -94,6 +97,7 @@ def resolve_mcp_token(*, real_home: Path | str | None = None) -> tuple[str, str]
 
 
 def resolve_cursor_auth_source(*, real_home: Path | str | None = None) -> str:
+    """Return how this dispatch will authenticate to Cursor (env key or auth.json)."""
     if os.environ.get("CURSOR_API_KEY", "").strip():
         return "env:CURSOR_API_KEY"
     auth_path = _operator_home(real_home) / _CURSOR_XDG_AUTH
@@ -221,19 +225,27 @@ def build_mcp_servers(
     real_home: Path | str | None = None,
     handoff_contract: str | None = None,
 ) -> dict[str, StdioMcpServerConfig]:
-    """Stdio vortex MCP via ``fastmcp-remote`` bridge (see module docstring)."""
+    """Stdio vortex MCP via ``fastmcp-remote`` bridge (see module docstring).
+
+    Registers ``user-vortex`` and the IDE alias ``vortex-code`` on the same
+    bearer-injected stdio transport so seats that call either name reach
+    the code mount. ``vortex-life`` is not aliased (life mount is out of
+    the SDK contract).
+    """
     bridge = resolve_mcp_bridge(source_repo)
     env = dict(_resolve_mcp_token_env(real_home=real_home))
     contract = (handoff_contract or "").strip().lower()
     if contract in _CONTRACT_MCP_FILTER:
         env[ULG_MCP_CONTRACT_ENV] = contract
+    names = (_VORTEX_MCP_SERVER, *_VORTEX_MCP_ALIAS_SERVERS)
     return {
-        _VORTEX_MCP_SERVER: StdioMcpServerConfig(
+        name: StdioMcpServerConfig(
             command=sys.executable,
             args=[str(bridge)],
-            env=env or None,
+            env=dict(env) or None,
             cwd=str(source_repo.resolve()),
         )
+        for name in names
     }
 
 

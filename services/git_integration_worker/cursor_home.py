@@ -10,6 +10,7 @@ Branch B — ``launch_bridge`` snapshots ``os.environ`` at ``Popen``).
 
 from __future__ import annotations
 
+import json
 import os
 import pwd
 import shutil
@@ -34,6 +35,10 @@ CURSOR_XDG_CONFIG_RELPATH = Path(".config") / "cursor"
 CURSOR_CREDENTIAL_FILENAME = "auth.json"
 GITCONFIG_FILENAME = ".gitconfig"
 DISPATCH_GIT_EMAIL_DOMAIN = "dispatch.git-integration-worker"
+# Copied operator mcp.json registers these as HTTP/OAuth names. Local SDK runs
+# reject mcp_auth, so the copies stay discovery-red. SDK injects the same
+# code-mount via build_mcp_servers (user-vortex + vortex-code).
+_COPIED_OAUTH_MCP_SERVERS = frozenset({"vortex-code", "vortex-life"})
 
 def _passwd_home() -> Path:
     """Login-directory home from the passwd DB — immune to process ``HOME`` leaks."""
@@ -239,13 +244,45 @@ def _copy_path_if_present(src: Path, dst: Path) -> None:
     shutil.copy2(src, dst)
 
 
+def _strip_copied_oauth_mcp_servers(mcp_json: Path) -> None:
+    """Remove vortex-code/vortex-life from a copied HOME mcp.json.
+
+    Operator mcp.json is IDE-parity (stdio bridge entries whose MCP_URL
+    still trips Cursor's OAuth/mcp_auth path). Leaving those names in a
+    dispatch HOME makes GetMcpTools report serverStatus=error + mcp_auth
+    only, which local SDK runs then reject. Callers: setup_cursor_dispatch_home
+    after the mcp.json copy. Mutates the file in place; no-op if absent,
+    unreadable, or already empty of those keys.
+    """
+    if not mcp_json.is_file():
+        return
+    try:
+        payload = json.loads(mcp_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        logger.warning("dispatch_home: skip mcp.json strip; unreadable %s", mcp_json)
+        return
+    servers = payload.get("mcpServers")
+    if not isinstance(servers, dict):
+        return
+    stripped = {k: v for k, v in servers.items() if k not in _COPIED_OAUTH_MCP_SERVERS}
+    if stripped == servers:
+        return
+    payload["mcpServers"] = stripped
+    mcp_json.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
 def setup_cursor_dispatch_home(
     dispatch_id: str,
     *,
     real_home: Path | str | None = None,
     root: Path | None = None,
 ) -> Path:
-    """Create dispatch HOME and seed cursor credentials by copy (never symlink)."""
+    """Create dispatch HOME and seed cursor credentials by copy (never symlink).
+
+    Copies identity, credential, user rules, plugins, mcp.yaml, and mcp.json
+    from the operator home, then strips copied ``vortex-code``/``vortex-life``
+    entries so Cursor does not classify those names as OAuth on this seat.
+    """
     home = dispatch_home_path(dispatch_id, root=root)
     real = operator_real_home(explicit=real_home)
 
@@ -283,6 +320,7 @@ def setup_cursor_dispatch_home(
         real_cursor / CURSOR_MCP_FILENAME,
         cursor_dir / CURSOR_MCP_FILENAME,
     )
+    _strip_copied_oauth_mcp_servers(cursor_dir / CURSOR_MCP_FILENAME)
     _copy_path_if_present(
         real_cursor / CURSOR_PLUGINS_DIRNAME,
         cursor_dir / CURSOR_PLUGINS_DIRNAME,
