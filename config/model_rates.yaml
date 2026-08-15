@@ -91,6 +91,54 @@ models:
     output_rate_per_m: 5.0
     source: manual_seed
     pinned: true
+  # Carded cursor slugs that had no dollar join until now (pool table 2026-08-15).
+  # Sonnet 5 is strictly cheaper than Sonnet 4-6 on every tier.
+  - model_id: cursor/claude-sonnet-5
+    input_rate_per_m: 2.0
+    cache_write_rate_per_m: 2.5
+    cache_read_rate_per_m: 0.2
+    output_rate_per_m: 10.0
+    source: manual_seed
+    pinned: true
+  - model_id: cursor/gpt-5.6-terra
+    input_rate_per_m: 2.0
+    cache_write_rate_per_m: 2.5
+    cache_read_rate_per_m: 0.2
+    output_rate_per_m: 12.0
+    source: manual_seed
+    pinned: true
+  - model_id: cursor/gpt-5.6-sol
+    input_rate_per_m: 5.0
+    cache_write_rate_per_m: 6.25
+    cache_read_rate_per_m: 0.5
+    output_rate_per_m: 30.0
+    source: manual_seed
+    pinned: true
+  - model_id: cursor/gpt-5.6-luna
+    input_rate_per_m: 0.2
+    cache_write_rate_per_m: 0.25
+    cache_read_rate_per_m: 0.02
+    output_rate_per_m: 1.2
+    source: manual_seed
+    pinned: true
+  - model_id: cursor/gpt-5.5
+    input_rate_per_m: 5.0
+    cache_read_rate_per_m: 0.5
+    output_rate_per_m: 30.0
+    source: manual_seed
+    pinned: true
+  - model_id: cursor/gemini-3.6-flash
+    input_rate_per_m: 1.5
+    cache_read_rate_per_m: 0.15
+    output_rate_per_m: 7.5
+    source: manual_seed
+    pinned: true
+  - model_id: cursor/gemini-3.5-flash
+    input_rate_per_m: 1.5
+    cache_read_rate_per_m: 0.15
+    output_rate_per_m: 9.0
+    source: manual_seed
+    pinned: true
   - model_id: openai/gpt-5.4-mini
     input_rate_per_m: 0.75
     output_rate_per_m: 4.5
