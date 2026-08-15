@@ -14,10 +14,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from claude_bundles import cdp_registry
+from claude_bundles.cse_url import normalize_cse_url
 from claude_bundles.skills_ui_panel import connect_cdp
 
 from cdp_ask.execution_store import LANE_HARD_LIMIT
-from cdp_ask.followup_resolve import normalize_cse_url
 
 _CSE_PATH_MARKER = "/cowork/cse_"
 

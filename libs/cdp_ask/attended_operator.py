@@ -10,23 +10,15 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from typing import Any, Literal
-from urllib.parse import urlparse, urlsplit, urlunsplit
+from urllib.parse import urlparse
 
 from claude_bundles import cdp_orphans, cdp_registry
+from claude_bundles.cse_provenance import resolve as resolve_provenance
+from claude_bundles.cse_url import normalize_cse_url
 from claude_bundles.operator_proxy_mission import OPERATOR_PROXY_MISSION_PURPOSES
 
 _SOURCE = "cse-session-registry"
 _CSE_MARKER = "/cowork/cse_"
-
-
-def normalize_cse_url(url: str) -> str:
-    """Normalize CSE URLs for exact comparison (strip fragment, trailing slash)."""
-    raw = (url or "").strip()
-    if not raw:
-        return ""
-    parts = urlsplit(raw)
-    path = parts.path.rstrip("/") or parts.path
-    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, ""))
 
 
 @dataclass(frozen=True)
@@ -37,6 +29,7 @@ class AttendedCandidate:
     cdp_url: str
     chat_url: str
     purpose: str
+    provenance: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -55,6 +48,7 @@ class AttendedResolveSuccess:
     probe: LivenessProbe
     source: str
     shadow_urls: list[dict[str, Any]]
+    provenance: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -126,6 +120,9 @@ def _mission_candidates() -> tuple[list[AttendedCandidate], int]:
                 cdp_url=lane.cdp_url,
                 chat_url=chat_url,
                 purpose=purpose,
+                provenance=resolve_provenance(
+                    registration_id=lane.registration_id
+                ),
             )
         )
     return candidates, len(purpose_filtered)
@@ -189,6 +186,7 @@ def _candidate_dict(c: AttendedCandidate) -> dict[str, Any]:
         "cdp_url": c.cdp_url,
         "chat_url": c.chat_url,
         "purpose": c.purpose,
+        "provenance": c.provenance,
     }
 
 
@@ -200,7 +198,11 @@ def _probe_dict(probe: LivenessProbe) -> dict[str, Any]:
 
 
 def resolve_attended_operator() -> AttendedResolveOutcome:
-    """Resolve the unique live attended mission-operator CSE or refuse."""
+    """Resolve the unique live attended mission-operator CSE or refuse.
+
+    The result preserves registry provenance, liveness evidence, and shadow
+    observations so callers cannot turn an ambiguous page scan into a bind.
+    """
     candidates, purpose_filtered_count = _mission_candidates()
     live_ports = cdp_orphans.probe_live_ports()
     shadows = build_shadow_urls(candidates, live_ports=live_ports)
@@ -237,11 +239,12 @@ def resolve_attended_operator() -> AttendedResolveOutcome:
         probe=probe,
         source=_SOURCE,
         shadow_urls=shadows,
+        provenance=sole.provenance,
     )
 
 
 def success_to_http_body(outcome: AttendedResolveSuccess) -> dict[str, Any]:
-    """Serialize a 200 attended-operator response body."""
+    """Serialize a success with liveness and complete registry provenance evidence."""
     return {
         "registration_id": outcome.registration_id,
         "cdp_url": outcome.cdp_url,
@@ -250,11 +253,12 @@ def success_to_http_body(outcome: AttendedResolveSuccess) -> dict[str, Any]:
         "probe": _probe_dict(outcome.probe),
         "source": outcome.source,
         "shadow_urls": outcome.shadow_urls,
+        "provenance": outcome.provenance,
     }
 
 
 def refused_to_http_body(outcome: AttendedResolveRefused) -> dict[str, Any]:
-    """Serialize a 404/409/424 attended-operator error body."""
+    """Serialize a refusal with typed state, candidate, and shadow evidence."""
     body: dict[str, Any] = {"code": outcome.code, "shadow_urls": outcome.shadow_urls or []}
     if outcome.candidates_considered:
         body["candidates_considered"] = outcome.candidates_considered
@@ -268,7 +272,7 @@ def refused_to_http_body(outcome: AttendedResolveRefused) -> dict[str, Any]:
 
 
 def refused_http_status(code: str) -> int:
-    """Map refusal code to HTTP status."""
+    """Map a typed refusal code to its stable HTTP status."""
     return {
         "no_attended_cse": 404,
         "ambiguous_attended": 409,

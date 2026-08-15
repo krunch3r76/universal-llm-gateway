@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from claude_bundles import cdp_registry
+from claude_bundles.cse_provenance import resolve as resolve_provenance
+from claude_bundles.cse_url import normalize_cse_url
 from playwright.async_api import async_playwright
 
 from cdp_ask.attended_operator import (
@@ -37,18 +39,6 @@ from cdp_ask.models import (
 _CLI_ESCAPE = "scripts/cortex/cowork_chat_followup.py"
 _HORIZON = "v1 requires an attached lane; post-deregister reattach is horizon"
 _REGISTRY_SOURCE = "cse-session-registry"
-
-
-def normalize_cse_url(url: str) -> str:
-    """Normalize CSE URLs for exact comparison (strip fragment, trailing slash)."""
-    raw = (url or "").strip()
-    if not raw:
-        return ""
-    from urllib.parse import urlsplit, urlunsplit
-
-    parts = urlsplit(raw)
-    path = parts.path.rstrip("/") or parts.path
-    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, ""))
 
 
 def lane_not_attached_detail() -> str:
@@ -81,7 +71,7 @@ def fail_followup(
 def identity_keys(
     req: FollowupProjectAskRequest,
 ) -> tuple[str | None, str | None, str | None, str | None]:
-    """Return normalized ``(chat_url, registration_id, execution_id, cdp_url)``."""
+    """Return normalized identity keys used by the shared provenance resolver."""
     chat = (req.chat_url or "").strip() or None
     reg = (req.registration_id or "").strip() or None
     exe = (req.execution_id or "").strip() or None
@@ -103,6 +93,7 @@ class FollowupCandidate:
     purpose: str | None
     cdp_url: str
     target_binding: TargetBinding = "explicit"
+    provenance: dict[str, Any] | None = None
 
     def as_info(self) -> FollowupCandidateInfo:
         return FollowupCandidateInfo(
@@ -112,6 +103,7 @@ class FollowupCandidate:
             purpose=self.purpose,
             cdp_url=self.cdp_url,
             source=_REGISTRY_SOURCE,
+            provenance=self.provenance,
         )
 
 
@@ -137,7 +129,7 @@ async def resolve_execution_registration(
     execution_id: str,
     store: ExecutionStore,
 ) -> str | None:
-    """Map a satellite ``execution_id`` to its ``registration_id`` when present."""
+    """Map a satellite execution to its registry host when the record carries one."""
     rec = await store.get(execution_id)
     if rec is None or not rec.registration_id:
         return None
@@ -166,6 +158,9 @@ def _registry_pairs_for_chat_url(
                 purpose=lane.purpose,
                 cdp_url=lane.cdp_url,
                 target_binding="explicit",
+                provenance=resolve_provenance(
+                    chat_url=bound, registration_id=lane.registration_id
+                ),
             )
         )
     return out
@@ -185,6 +180,7 @@ def _refused_to_followup(
                 purpose=c.get("purpose"),
                 cdp_url=c.get("cdp_url"),
                 source=_REGISTRY_SOURCE,
+                provenance=c.get("provenance"),
             )
             for c in refused.candidates
         ]
@@ -243,7 +239,7 @@ async def discover_candidates(
     req: FollowupProjectAskRequest,
     store: ExecutionStore,
 ) -> tuple[list[FollowupCandidate], str | None, str | None]:
-    """Discover attached CSE targets matching the request identity keys."""
+    """Discover attached targets and retain their evidence-bearing provenance for followup."""
     chat_url, registration_id, execution_id, cdp_url = identity_keys(req)
     if not any((chat_url, registration_id, execution_id)):
         return [], None, None

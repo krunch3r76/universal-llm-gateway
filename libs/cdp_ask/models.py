@@ -330,6 +330,7 @@ class FollowupCandidateInfo(BaseModel):
     purpose: str | None = None
     cdp_url: str | None = None
     source: str | None = None
+    provenance: dict[str, Any] | None = None
 
 
 FollowupReceipt = Literal["dom_paste", "dom_committed"]

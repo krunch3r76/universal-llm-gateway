@@ -382,13 +382,7 @@ def test_run_cdp_generate_stall_wall_clock(
     client = _FakeClient(
         [
             {"execution_id": "sat-2", "status": "running"},
-            {
-                "execution_id": "sat-2",
-                "status": "running",
-                "completion_phase": "running",
-                "body_len": 0,
-                "liveness_observed_at": "t1",
-            },
+            {"execution_id": "sat-2", "status": "running"},
         ]
     )
     clock = {"t": 0.0}

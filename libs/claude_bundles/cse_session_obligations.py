@@ -60,38 +60,19 @@ def stamp_session_ids(
     ``cse_id`` is the session address (from ``chat_url``), never the registry
     ``registration_id`` (Chrome host bind — arc 6885).
     """
-    from claude_bundles.cdp_reclaim_refuse import cse_id_from_url
-    from claude_bundles.cdp_registry_store import write_sessions
-    from claude_bundles.cse_session_common import session_key
-
-    with ports_lock():
-        sessions = load_sessions()
-        found = find_session_by_thread(sessions, lane_thread)
-        if found is None and registration_id:
-            found = find_session_by_registration(sessions, registration_id)
-        key, row = found if found else (None, None)
-        if row is None:
-            cse_id = cse_id_from_url(chat_url or "") or f"pending-{lane_thread}"
-            key = session_key(registration_id=registration_id, thread=lane_thread)
-            row = {"cse_id": cse_id, "ids": {}, "obligations": []}
-            sessions[key] = row
-        else:
-            # Upgrade conflated registration-as-cse_id when URL arrives later.
-            derived = cse_id_from_url(chat_url or "")
-            if derived and (
-                not row.get("cse_id")
-                or row.get("cse_id") == registration_id
-                or str(row.get("cse_id") or "").startswith("pending-")
-            ):
-                row["cse_id"] = derived
-        ids = dict(row.get("ids") or {})
-        ids["lane_thread"] = lane_thread
-        if chat_url:
-            ids["chat_url"] = chat_url
-        if registration_id:
-            ids["registration_id"] = registration_id
-        row["ids"] = ids
-        write_sessions(sessions)
+    event_id = f"session.ids_stamped:{lane_thread}:{registration_id or ''}:{chat_url or ''}"
+    append_session_transition_locked(
+        {
+            "event_id": event_id,
+            "event": "cse.session.ids_stamped",
+            "ts": time.time(),
+            "payload": {
+                "lane_thread": lane_thread,
+                "chat_url": chat_url,
+                "registration_id": registration_id,
+            },
+        }
+    )
 
 
 def get_open_wake_owed(

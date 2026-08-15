@@ -83,7 +83,7 @@ def test_submit_control_names_cowork_before_chat() -> None:
     assert "Send message" in names
 
 
-def test_archive_harvest_same_execution_rewrite_ok(tmp_path: Path) -> None:
+def test_archive_harvest_same_execution_growth_rewrites(tmp_path: Path) -> None:
     archive = tmp_path / "harvest.md"
     execution_id = "exec" + "a" * 28
     uri = archive_harvest(
@@ -98,7 +98,7 @@ def test_archive_harvest_same_execution_rewrite_ok(tmp_path: Path) -> None:
     assert uri.startswith("file://")
     assert read_archive_execution_id(str(archive)) == execution_id
     archive_harvest(
-        body="second",
+        body="second body",
         url="https://claude.ai/new",
         project_uuid="",
         model={"ok": True},
@@ -106,7 +106,7 @@ def test_archive_harvest_same_execution_rewrite_ok(tmp_path: Path) -> None:
         archive_path=str(archive),
         execution_id=execution_id,
     )
-    assert "second" in archive.read_text(encoding="utf-8")
+    assert "second body" in archive.read_text(encoding="utf-8")
 
 
 def test_archive_harvest_foreign_execution_refused(tmp_path: Path) -> None:
@@ -191,7 +191,12 @@ def test_abort_cleanup_owner_still_kills(
         is_listening=lambda _p: False,
     )
     killed: list[str] = []
-    monkeypatch.setattr(abort, "bounded_stop_via_cdp", lambda _url: killed.append("stop"))
+    monkeypatch.setattr(
+        abort,
+        "bounded_stop_via_cdp",
+        lambda _url: killed.append("stop")
+        or abort.AttestResult(has_stop=False, probe_ok=True),
+    )
     monkeypatch.setattr(abort, "deregister_on_exit", lambda *_a, **_k: killed.append("kill"))
     abort._ABORT_DONE = False
     abort.abort_cleanup(r, purpose="ask")

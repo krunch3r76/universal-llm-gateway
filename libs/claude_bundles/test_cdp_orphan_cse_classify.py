@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from claude_bundles import cdp_orphan_cse_classify as classify
+from claude_bundles.cse_url import normalize_cse_url
 
 pytestmark = pytest.mark.offline
 
@@ -25,7 +26,7 @@ def test_attach_resolved_via_chat_url_is_protected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     page = {"url": _CSE_URL, "id": "p1", "webSocketDebuggerUrl": _WS}
-    index = {classify.normalize_cse_url(_CSE_URL): "reg-chat"}
+    index = {normalize_cse_url(_CSE_URL): "reg-chat"}
     target = classify.classify_cse_target(
         page,
         port=9229,
@@ -85,7 +86,7 @@ def test_idle_past_dwell_is_closable(
         lambda _port, _ws: ({"streaming": False, "stop": False, "tool_pause": False}, True),
     )
     page = {"url": _CSE_URL, "id": "p1", "webSocketDebuggerUrl": _WS}
-    key = (9229, classify.normalize_cse_url(_CSE_URL))
+    key = (9229, normalize_cse_url(_CSE_URL))
     classify._idle_since[key] = 900.0
     target = classify.classify_cse_target(
         page,
@@ -114,7 +115,7 @@ def test_by_id_refuse_protects_operator_seat_cse(
         lambda _port, _ws: ({"streaming": False, "stop": False, "tool_pause": False}, True),
     )
     page = {"url": protected_url, "id": "p1", "webSocketDebuggerUrl": _WS}
-    key = (9247, classify.normalize_cse_url(protected_url))
+    key = (9247, normalize_cse_url(protected_url))
     classify._idle_since[key] = 900.0
     target = classify.classify_cse_target(
         page,

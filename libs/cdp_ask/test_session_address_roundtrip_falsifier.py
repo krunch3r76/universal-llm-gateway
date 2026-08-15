@@ -77,12 +77,10 @@ async def test_throwaway_session_url_close_reopen_continuity(
     )
     assert reg.chat_url_for_registration(birth.registration_id) == THROW_URL
 
-    # Close attachment: release host (kill=False keeps chrome metaphorically;
-    # for the falsifier we drop the registration from list_active by releasing
-    # then removing — the bookmark is the durable chat_url on the row / CSR).
+    # Close attachment: release the host while preserving the durable bookmark.
     recorded_url = reg.chat_url_for_registration(birth.registration_id)
     assert recorded_url == THROW_URL
-    reg.deregister_lane(birth.registration_id, kill=False)
+    reg.deregister_lane(birth.registration_id, kill=True)
     active_after_close = reg._store.load_active()
     released = active_after_close.get(birth.registration_id)
     assert released is not None

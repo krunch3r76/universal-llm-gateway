@@ -73,6 +73,7 @@ def _fold_one(
     payload = record.get("payload") or {}
     eid = str(record.get("event_id") or "")
     handlers: dict[str, Callable[..., tuple[dict[str, dict[str, Any]], bool]]] = {
+        "cse.session.ids_stamped": _fold_session_ids_stamped,
         "cdp.protocol.parked": _fold_protocol_parked,
         "cdp.wake.delivered": _fold_wake_delivered,
         "cdp.wake.alarm_fired": _fold_wake_alarm,
@@ -107,6 +108,47 @@ def _fold_one(
             elif key in sessions:
                 sessions[key]["_applied_event_ids"] = applied
     return sessions, changed
+
+
+def _fold_session_ids_stamped(
+    record: dict[str, Any],
+    sessions: dict[str, dict[str, Any]],
+    payload: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], bool]:
+    """Project captured CSE identifiers through the sole session writer."""
+    from claude_bundles.cdp_reclaim_refuse import cse_id_from_url
+
+    thread = str(payload.get("lane_thread") or "")
+    registration_id = payload.get("registration_id")
+    chat_url = payload.get("chat_url")
+    found = find_session_by_thread(sessions, thread)
+    if found is None and registration_id:
+        found = find_session_by_registration(sessions, str(registration_id))
+    key, row = found if found else (None, None)
+    if row is None:
+        key = session_key(registration_id=registration_id, thread=thread)
+        row = {
+            "cse_id": cse_id_from_url(chat_url or "") or f"pending-{thread}",
+            "ids": {},
+            "obligations": [],
+        }
+    else:
+        derived = cse_id_from_url(chat_url or "")
+        if derived and (
+            not row.get("cse_id")
+            or row.get("cse_id") == registration_id
+            or str(row.get("cse_id") or "").startswith("pending-")
+        ):
+            row["cse_id"] = derived
+    ids = dict(row.get("ids") or {})
+    ids["lane_thread"] = thread
+    if chat_url:
+        ids["chat_url"] = chat_url
+    if registration_id:
+        ids["registration_id"] = registration_id
+    row["ids"] = ids
+    sessions[key] = row
+    return sessions, True
 
 
 def _fold_protocol_parked(

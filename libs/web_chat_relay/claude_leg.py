@@ -8,9 +8,9 @@ from typing import Any
 
 import httpx
 from cdp_ask.client import CdpAskClient
-from cdp_ask.followup_resolve import normalize_cse_url
 from claude_bundles import cdp_registry
 from claude_bundles.chat_reply_wait import harvest_assistant, wait_assistant_reply
+from claude_bundles.cse_url import normalize_cse_url
 from claude_bundles.skills_ui_panel import connect_cdp
 
 DEFAULT_PROJECT_ASK_URL = "http://127.0.0.1:8770"

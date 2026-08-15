@@ -82,6 +82,11 @@ HARVEST_JS = """
       el.setAttribute('data-cdp-artifact-card', String(artifactCards.length));
       artifactCards.push({ title, kind });
     };
+    const inlineCardTitle = (norm) => {
+      const match = norm.match(CARD_KIND_RE);
+      if (!match || typeof match.index !== 'number') return '';
+      return norm.slice(0, match.index).trim();
+    };
     for (const el of lastTurnEl.querySelectorAll(
       'button, a, [role="button"], [class*="artifact" i], [class*="Artifact" i], '
       + '[data-testid*="artifact" i], [data-testid*="document" i]'
@@ -102,6 +107,7 @@ HARVEST_JS = """
         if (/^document\\b/i.test(line)) continue;
         if (!title && line.length > 1) title = line;
       }
+      if (!title) title = inlineCardTitle(norm);
       if (!title) {
         title = (el.getAttribute('aria-label') || '').trim();
       }
@@ -127,6 +133,7 @@ HARVEST_JS = """
         if (/^document\\b/i.test(line)) continue;
         if (!title && line.length > 1) title = line;
       }
+      if (!title) title = inlineCardTitle(raw.replace(/\\s+/g, ' ').trim());
       pushCard(el, title, kind);
     }
   }

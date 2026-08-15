@@ -14,8 +14,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 from claude_bundles import cdp_lane, cdp_orphans, cdp_registry
-from claude_bundles.cdp_orphan_cse_classify import normalize_cse_url
 from claude_bundles.cdp_orphans import LivePort, is_primary_profile
+from claude_bundles.cse_url import normalize_cse_url
 
 CseAffinity = Literal["bound_present", "bound_missing", "unbound_present", "none"]
 BootVerdict = Literal["adopt", "orphan", "refuse"]

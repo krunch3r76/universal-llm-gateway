@@ -11,6 +11,7 @@ import contextlib
 from typing import Any
 
 from claude_bundles import cdp_registry
+from claude_bundles.cse_url import normalize_cse_url
 from claude_bundles.project_ask_conversation import send_followup_paste_half
 from claude_bundles.skills_ui_panel import connect_cdp
 
@@ -35,7 +36,6 @@ from cdp_ask.followup_reattach import (
 from cdp_ask.followup_resolve import (
     fail_followup,
     lane_not_attached_detail,
-    normalize_cse_url,
     resolve_followup_target,
 )
 from cdp_ask.models import (

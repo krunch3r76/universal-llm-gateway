@@ -172,8 +172,9 @@ def archive_harvest(
 
     Raises:
         HarvestArchiveError: When *archive_path* already exists and its on-disk
-            sha256 differs from the bytes about to be written (defense-in-depth
-            against clobber). Callers map this to ``ok=false`` terminal.
+            sha256 differs from the bytes about to be written without a
+            same-execution body upgrade (defense-in-depth against clobber).
+            Callers map this to ``ok=false`` terminal.
         RuntimeError: When *archive_path* is occupied by a foreign execution.
     """
     from datetime import UTC, datetime
