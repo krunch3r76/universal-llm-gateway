@@ -23,12 +23,15 @@ from scripts.model_manager.ui.controller.charter_runner.propagation_execute impo
     set_probe_client_for_tests,
 )
 
-_SHA = "abcd000000000000000000000000000000000000"
-_SHA_OTHER = "other0000000000000000000000000000000000"
+_SHA = "c89a1871c5b77ceb64f7b11708d65cca7200359b"
+_SHA_OTHER = "9df394ca55c9f05d3385c9bdc10e613a2cbe1e82"
 
 
 def _closeout_turn(*, residue: list[str] | None = None, files_modified: list[str] | None = None, propagation: list[dict] | None = None) -> dict:
-    body: dict = {"status": "complete", "evidence_uris": {"git_refs": ["land-sha"]}}
+    body: dict = {
+        "status": "complete",
+        "evidence_uris": {"git_refs": [_SHA]},
+    }
     if residue is not None:
         body["propagation_residue"] = residue
     if files_modified is not None:
@@ -289,15 +292,20 @@ def test_proof_matches_code_version() -> None:
         reason=None,
         settle_boundary_monotonic=None,
     )
-    both_match = {
-        "mcp_health": {"code_version": _SHA},
-        "cortex_api": {"code_version": _SHA},
+    before = {
+        "mcp_health": {"code_version": _SHA, "pid": 100},
+        "cortex_api": {"code_version": _SHA, "pid": 200},
     }
-    assert proof_matches(row, both_match)
-    assert not proof_matches(
-        row,
-        {"mcp_health": {"code_version": _SHA}, "cortex_api": {"code_version": _SHA_OTHER}},
-    )
+    after_match = {
+        "mcp_health": {"code_version": _SHA, "pid": 101},
+        "cortex_api": {"code_version": _SHA, "pid": 200},
+    }
+    after_code_mismatch = {
+        "mcp_health": {"code_version": _SHA, "pid": 101},
+        "cortex_api": {"code_version": _SHA_OTHER, "pid": 201},
+    }
+    assert proof_matches(row, after_match, before=before)
+    assert not proof_matches(row, after_code_mismatch, before=before)
 
 
 def test_proof_matches_process_live_requires_identity_delta() -> None:
@@ -495,7 +503,7 @@ async def test_age_two_escalates(tmp_path, monkeypatch):
         upsert_open_rows,
     )
 
-    upsert_open_rows([PropagationRow(service="mcp", code_ref="land-sha")])
+    upsert_open_rows([PropagationRow(service="mcp", code_ref=_SHA)])
     bump_age_for_open_rows()
     bump_age_for_open_rows()
 

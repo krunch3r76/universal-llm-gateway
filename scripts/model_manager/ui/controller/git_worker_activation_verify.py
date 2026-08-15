@@ -71,7 +71,7 @@ async def run_activation_verify(
         _terminal_unverified(store, intent_id, validation_id, "missing_kill_boundary")
         return
     settle_mono = _monotonic_from_kill_boundary(intent.kill_boundary_at) or time.monotonic()
-    idle_deadline = time.monotonic() + idle_timeout_s
+    idle_deadline = settle_mono + idle_timeout_s
     last_class = _observation_class(validation.pre_observation)
     from services.git_integration_worker.cursor_auto.propagation_probe import (
         IdentityMeasurementError,

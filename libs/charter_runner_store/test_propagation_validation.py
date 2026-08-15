@@ -22,8 +22,7 @@ def test_validation_record_and_current_projection(monkeypatch, tmp_path):
 
     assert validation_id
     monkeypatch.setattr(
-        propagation_validation,
-        "observe_code_ref_live",
+        "charter_runner_store.propagation_validation.close.observe_code_ref_live",
         lambda service, code_ref: CodeRefLiveness(
             answer="yes",
             service=service,
@@ -48,8 +47,7 @@ def test_unknown_probe_never_promotes_stale_record(monkeypatch, tmp_path):
         identity_measurement="changed",
     )
     monkeypatch.setattr(
-        propagation_validation,
-        "observe_code_ref_live",
+        "charter_runner_store.propagation_validation.close.observe_code_ref_live",
         lambda service, code_ref: CodeRefLiveness(
             answer="unknown",
             service=service,
