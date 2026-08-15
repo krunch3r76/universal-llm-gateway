@@ -11,6 +11,7 @@ from implement_admission.injector_map import (
     nominations_for_lib_path,
     residue_actions_for_nominations,
 )
+from implement_admission.serving_coverage import residue_for_empty_nominations
 from implement_admission.propagation_block_parser import (
     propagation_rows_from_markdown_sources,
 )
@@ -150,13 +151,6 @@ def _unresolved_line(path: str) -> str:
     return f"unresolved: {path} — service dir has no manage slug; lead must resolve"
 
 
-def _libs_touched_line(path: str, *, tags: str | None = None) -> str:
-    base = (
-        f"libs_touched: {path} — shared lib; lead must decide which consumers restart"
-    )
-    return f"{base}; {tags}" if tags else base
-
-
 def _actions_for_path(path: str) -> tuple[str, ...]:
     if is_lib_test_module(path):
         return ()
@@ -179,7 +173,7 @@ def _actions_for_path(path: str) -> tuple[str, ...]:
         nominations = nominations_for_lib_path(path)
         if nominations:
             return residue_actions_for_nominations(path, nominations)
-        return (_libs_touched_line(path),)
+        return residue_for_empty_nominations(path)
 
     return ()
 
@@ -189,6 +183,7 @@ def residue_actions(paths: Sequence[str]) -> tuple[str, ...]:
     sync_restart: set[str] = set()
     install_plugin: set[str] = set()
     unresolved: set[str] = set()
+    unmapped_serving: set[str] = set()
     libs_touched: set[str] = set()
 
     for path in paths:
@@ -199,6 +194,8 @@ def residue_actions(paths: Sequence[str]) -> tuple[str, ...]:
                 install_plugin.add(action)
             elif action.startswith("unresolved:"):
                 unresolved.add(action)
+            elif action.startswith("unmapped_serving:"):
+                unmapped_serving.add(action)
             elif action.startswith("libs_touched:"):
                 libs_touched.add(action)
 
@@ -206,6 +203,7 @@ def residue_actions(paths: Sequence[str]) -> tuple[str, ...]:
     ordered.extend(sorted(sync_restart))
     ordered.extend(sorted(install_plugin))
     ordered.extend(sorted(unresolved))
+    ordered.extend(sorted(unmapped_serving))
     ordered.extend(sorted(libs_touched))
     return tuple(ordered)
 

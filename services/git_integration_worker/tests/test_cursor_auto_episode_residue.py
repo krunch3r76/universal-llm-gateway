@@ -305,14 +305,50 @@ def test_structured_oracle_code_ref_relation_omits_mcp():
     assert all("import_path:verified" in (row.reason or "") for row in rows)
 
 
-def test_charter_runner_store_negative_control_stays_libs_touched():
-    """No CONSUMERS → libs_touched; must not grow a spurious sync_restart nomination."""
+def test_charter_runner_store_negative_control_is_unmapped_not_restart():
+    """No nomination sources → unmapped_serving; must not mint sync_restart."""
     payload = _closeout_payload(
         files_modified=["libs/charter_runner_store/propagation_terminal.py"],
     )
     block = residue_for_closeout(payload)
     assert block is not None
-    assert "libs_touched: libs/charter_runner_store/propagation_terminal.py" in block
+    assert (
+        "unmapped_serving: libs/charter_runner_store/propagation_terminal.py"
+        in block
+    )
+    assert "sync_restart:" not in block
+    assert "lead must decide which consumers restart" not in block
+
+
+def test_implement_admission_land_emits_unmapped_serving():
+    """Worked instance: empty-union land is loud and not a restart."""
+    payload = _closeout_payload(
+        files_modified=["libs/implement_admission/service_lib_ownership.py"],
+    )
+    block = residue_for_closeout(payload)
+    assert block is not None
+    assert (
+        "unmapped_serving: libs/implement_admission/service_lib_ownership.py"
+        in block
+    )
+    assert "sync_restart:" not in block
+    assert "declared unserved" not in block
+
+
+def test_declared_unserved_land_is_not_unmapped(monkeypatch):
+    """Correctly-nothing harvest line must not share the unmapped prefix."""
+    import implement_admission.service_lib_ownership as ownership
+
+    monkeypatch.setattr(
+        ownership, "UNSERVED_LIBS", frozenset({"implement_admission"})
+    )
+    payload = _closeout_payload(
+        files_modified=["libs/implement_admission/service_lib_ownership.py"],
+    )
+    block = residue_for_closeout(payload)
+    assert block is not None
+    assert "declared unserved" in block
+    assert "unmapped_serving:" not in block
     assert "sync_restart:" not in block
 
 

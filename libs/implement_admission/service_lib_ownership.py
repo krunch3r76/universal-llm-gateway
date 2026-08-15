@@ -110,11 +110,31 @@ def declared_services_for_lib(lib_name: str) -> tuple[str, ...]:
     return tuple(sorted(owners))
 
 
+UNSERVED_LIBS: frozenset[str] = frozenset()
+"""Top-level ``libs/`` names explicitly classified as needing no manage restart.
+
+Empty is not a classification. Absence from every ``serves_libs`` row is
+``unmapped`` until a name is listed here or nominated by CONSUMERS/INJECTORS.
+See ``serving_coverage.path_serving_coverage``.
+"""
+
+
+def unserved_libs() -> frozenset[str]:
+    """Return the declared-unserved lib names (read-only view of ``UNSERVED_LIBS``).
+
+    Membership is the only positive "no manage restart" classification.
+    """
+    return UNSERVED_LIBS
+
+
 def serving_services_for_lib(lib_name: str) -> tuple[str, ...]:
     """Manage slugs whose job is to serve *lib_name* (``serves_libs``).
 
     Distinct from ``declared_services_for_lib`` (may-import). Empty means no
-    serving-process nomination from the manifest; CONSUMERS/INJECTORS still apply.
+    serving-process nomination from this field; CONSUMERS/INJECTORS still
+    apply. Empty is not "correctly nothing to restart" — that declaration is
+    ``UNSERVED_LIBS``. The union-empty case is ``unmapped``
+    (``serving_coverage``).
     """
     servers = [
         slug for slug, own in _SERVICE_OWNERSHIP.items() if lib_name in own.serves_libs
@@ -143,7 +163,8 @@ def serving_services_for_lib_path(path: str) -> tuple[str, ...]:
     """Serving-process slugs for a ``libs/`` edit path.
 
     Callers: harvest ``nominations_for_lib_path`` and charter
-    ``_resolve_libs_path``. Returns empty when the lib has no ``serves_libs`` row.
+    ``_resolve_libs_path``. Returns empty when the lib has no ``serves_libs``
+    row — that empty is field-local, not a correctly-nothing classification.
     """
     name = lib_name_for_path(path)
     if name is None:
@@ -172,8 +193,11 @@ __all__ = [
     "declared_services_for_lib_path",
     "path_prefixes",
     "service_ownership",
+    "UNSERVED_LIBS",
+    "lib_name_for_path",
     "serving_services_for_lib",
     "serving_services_for_lib_path",
     "slug_for_service_path",
+    "unserved_libs",
 ]
 

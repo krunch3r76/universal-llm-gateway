@@ -575,6 +575,13 @@ def rows_from_lib_consumers(
             continue
         nominations = nominations_for_lib_path(path)
         if not nominations:
+            from implement_admission.serving_coverage import (
+                path_serving_coverage,
+                unmapped_serving_line,
+            )
+
+            if path_serving_coverage(path) == "unmapped":
+                escalations.append(unmapped_serving_line(path))
             continue
         for slug, derived in nominations:
             status = verify_consumer_import(slug, path)
