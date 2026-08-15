@@ -245,7 +245,15 @@ def observed_lane_git_refs(
     admit_head: str | None,
     closeout_head: str | None,
 ) -> list[str]:
-    """SHAs of lane commits authored by *dispatch_id* between admit and closeout."""
+    """SHAs this dispatch authored or committed in ``admit_head..closeout_head``.
+
+    Cherry-pick preserves the source author and stamps the lander as committer,
+    so ``--author=`` alone misses lands this dispatch produced. ``git log``
+    treats simultaneous ``--author`` and ``--committer`` as AND; this enumerates
+    the window once and matches either identity. The tip-window authored meter
+    (``partition_tip_window_meters``) stays author-only so ``plane:`` landed
+    stays keyed to capture-tip ancestry, not this checkpoint predicate.
+    """
     if not admit_head or not closeout_head or admit_head == closeout_head:
         return []
     from services.git_integration_worker.cursor_home import dispatch_git_identity
@@ -259,8 +267,7 @@ def observed_lane_git_refs(
                 str(source_repo),
                 "log",
                 f"{admit_head}..{closeout_head}",
-                f"--author={email}",
-                "--format=%H",
+                "--format=%H%x00%ae%x00%ce",
             ],
             capture_output=True,
             check=True,
@@ -268,8 +275,16 @@ def observed_lane_git_refs(
         )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
         return []
-    return [
-        line.decode("utf-8", errors="replace").strip()
-        for line in proc.stdout.splitlines()
-        if line.strip()
-    ]
+    refs: list[str] = []
+    for line in proc.stdout.splitlines():
+        if not line:
+            continue
+        parts = line.split(b"\x00", 2)
+        if len(parts) != 3:
+            continue
+        sha = parts[0].decode("utf-8", errors="replace").strip()
+        author = parts[1].decode("utf-8", errors="replace").strip()
+        committer = parts[2].decode("utf-8", errors="replace").strip()
+        if sha and (author == email or committer == email):
+            refs.append(sha)
+    return refs
