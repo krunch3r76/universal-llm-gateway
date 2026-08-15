@@ -261,10 +261,10 @@ def test_drain_keeps_streaming_cse_open_for_monitoring(
     assert _row(seat.registration_id)["status"] == "retained"
 
 
-def test_drain_releases_monitoring_lease_when_stream_stops(
+def test_drain_protects_idle_operator_proxy_with_reachable_page(
     isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An idle liveness probe permits immediate parking on the next sweep."""
+    """Harvest-triple idle is not a drain warrant for an operator-proxy seat."""
     url = "https://claude.ai/cowork/cse_stream_stopped"
     seat = _seat(chat_url=url)
     reg.deregister_lane(seat.registration_id, kill=False, reason="retained")
@@ -289,8 +289,79 @@ def test_drain_releases_monitoring_lease_when_stream_stops(
     result = drain_live_hosts_to_dormant(
         is_listening=lambda _p: True,
     )
+    assert result.dormant == []
+    assert result.protected[seat.registration_id] == "reachable_operator_seat"
+    assert _row(seat.registration_id)["status"] == "retained"
+
+
+def test_drain_parks_idle_ask_host_when_stream_stops(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One-shot ask hosts still park when the harvest triple is idle."""
+    url = "https://claude.ai/cowork/cse_ask_idle"
+    seat = _seat(purpose="ask", chat_url=url)
+    reg.deregister_lane(seat.registration_id, kill=False, reason="retained")
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.dormant_drain.cdp_orphans._fetch_json",
+        lambda _url: [
+            {
+                "type": "page",
+                "url": url,
+                "webSocketDebuggerUrl": "ws://ask-idle",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.dormant_drain.probe_page_liveness_sync",
+        lambda _port, _websocket: (
+            {"streaming": False, "stop": False, "tool_pause": False},
+            True,
+        ),
+    )
+
+    result = drain_live_hosts_to_dormant(
+        is_listening=lambda _p: True,
+    )
     assert result.dormant == [seat.registration_id]
     assert _row(seat.registration_id)["status"] == "dormant"
+
+
+def test_drain_protects_idle_when_purpose_signal_absent(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Blank purpose fail-closes to protect — absence of the signal is not death."""
+    url = "https://claude.ai/cowork/cse_blank_purpose"
+    seat = _seat(chat_url=url)
+    reg.deregister_lane(seat.registration_id, kill=False, reason="retained")
+    active = reg._load_active()
+    row = dict(active[seat.registration_id])
+    row["purpose"] = ""
+    active[seat.registration_id] = row
+    reg._store.write_active(active)
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.dormant_drain.cdp_orphans._fetch_json",
+        lambda _url: [
+            {
+                "type": "page",
+                "url": url,
+                "webSocketDebuggerUrl": "ws://blank-purpose",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.dormant_drain.probe_page_liveness_sync",
+        lambda _port, _websocket: (
+            {"streaming": False, "stop": False, "tool_pause": False},
+            True,
+        ),
+    )
+
+    result = drain_live_hosts_to_dormant(
+        is_listening=lambda _p: True,
+    )
+    assert result.dormant == []
+    assert result.protected[seat.registration_id] == "reachable_operator_seat"
+    assert _row(seat.registration_id)["status"] == "retained"
 
 
 def test_drain_fails_closed_when_stream_probe_is_unavailable(

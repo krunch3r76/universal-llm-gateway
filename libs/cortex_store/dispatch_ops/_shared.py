@@ -110,6 +110,7 @@ _FRICTION_CATEGORIES = frozenset(
         "stale_context",
         "doc_drift",
         "protocol",
+        "regression",
     }
 )
 

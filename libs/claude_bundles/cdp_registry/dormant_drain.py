@@ -20,6 +20,7 @@ from claude_bundles.cse_idle_probe import (
     in_flight_from_state,
     probe_page_liveness_sync,
 )
+from claude_bundles.operator_proxy_mission import is_operator_proxy_mission_purpose
 
 from .dormant import host_protection_reason, make_dormant
 from .models import _ListenFn
@@ -77,16 +78,55 @@ def _ensure_chat_url(registration_id: str, row: dict[str, Any]) -> bool:
     return bind_session_address(registration_id, chat_url=url)
 
 
+def _idle_reachable_protects(row: dict[str, Any]) -> bool:
+    """True when an idle reachable CSE page must keep its Chrome.
+
+    Operator-proxy / mission seats live between tool calls; harvest-triple
+    idle is not a death warrant. Purpose missing or blank fail-closes to
+    protect — absence of that signal is the class that produced this arc.
+    One-shot ``ask`` hosts stay drainable when idle so leaked Chromes still
+    park.
+    """
+    purpose = row.get("purpose")
+    if purpose is None or not str(purpose).strip():
+        return True
+    return is_operator_proxy_mission_purpose(str(purpose))
+
+
+def row_drain_protection(
+    row: dict[str, Any],
+    *,
+    registration_id: str,
+    is_listening: _ListenFn | None = None,
+    is_busy: Callable[[str], bool] | None = None,
+) -> str | None:
+    """Return why hygiene must skip this row, or None when it may park/release.
+
+    Public probe surface — does not mutate the registry. Same predicate
+    ``drain_live_hosts_to_dormant`` applies before ``make_dormant``.
+    """
+    listen = is_listening or cdp_lane.is_listening
+    if is_busy is not None and is_busy(registration_id):
+        return "paste_in_flight"
+    protection = host_protection_reason(row, registration_id=registration_id)
+    if protection is not None:
+        return protection
+    return _streaming_protection_reason(row, is_listening=listen)
+
+
 def _streaming_protection_reason(
     row: dict[str, Any], *, is_listening: _ListenFn
 ) -> str | None:
-    """Protect a live CSE page until its streaming lease has ended.
+    """Protect a reachable CSE page that is still a seat, not a leak.
 
     Retained rows can outlive the execution-store process that created them.
     Registry status alone therefore cannot prove that killing the host is safe;
     probe every attached CSE page and fail closed when liveness is unavailable.
-    An idle probe returns ``None`` so the same host can be parked or reused
-    immediately on the next lifecycle operation.
+
+    A successful idle probe is not a drain warrant for operator-proxy /
+    mission (or blank-purpose) seats — those hosts sit idle between tool
+    calls. One-shot ``ask`` hosts still return ``None`` when idle so hygiene
+    can park them.
     """
     port = row.get("port")
     if not isinstance(port, int) or not is_listening(port):
@@ -103,6 +143,8 @@ def _streaming_protection_reason(
             return "stream_probe_unavailable"
         if in_flight_from_state(state):
             return "streaming_monitoring"
+        if _idle_reachable_protects(row):
+            return "reachable_operator_seat"
     return None
 
 
@@ -123,19 +165,19 @@ def drain_live_hosts_to_dormant(
     for registration_id, row in list(_store.load_active().items()):
         if row.get("status") not in _DRAINABLE_STATUSES:
             continue
-        if is_busy is not None and is_busy(registration_id):
-            result.protected[registration_id] = "paste_in_flight"
-            continue
-        protection = host_protection_reason(row, registration_id=registration_id)
-        if protection is not None:
-            result.protected[registration_id] = protection
-            continue
-        protection = _streaming_protection_reason(row, is_listening=listen)
+        protection = row_drain_protection(
+            row,
+            registration_id=registration_id,
+            is_listening=listen,
+            is_busy=is_busy,
+        )
         if protection is not None:
             result.protected[registration_id] = protection
             continue
         if _ensure_chat_url(registration_id, row):
-            if make_dormant(registration_id, reason="hygiene_drain", is_listening=listen):
+            if make_dormant(
+                registration_id, reason="hygiene_drain", is_listening=listen
+            ):
                 result.dormant.append(registration_id)
             else:
                 result.protected[registration_id] = "dormant_refused"

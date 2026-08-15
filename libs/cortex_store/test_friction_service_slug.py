@@ -8,6 +8,7 @@ import pytest
 
 from cortex_store.dispatch_ops import execute_op
 from cortex_store.dispatch_ops._shared import (
+    _FRICTION_CATEGORIES,
     normalize_service_slug,
     owner_entity_id,
     owner_type_of,
@@ -15,6 +16,10 @@ from cortex_store.dispatch_ops._shared import (
 )
 from cortex_store.dispatch_ops.ops_assertions import _op_frictions
 from cortex_store.dispatch_ops.ops_assertions_write import _op_friction
+
+
+def test_friction_categories_include_regression() -> None:
+    assert "regression" in _FRICTION_CATEGORIES
 
 
 def test_normalize_service_slug_bare() -> None:
@@ -72,7 +77,7 @@ def test_op_friction_accepts_qualified_service(monkeypatch) -> None:
     assert captured["entity_id"] == "service:agent-bus"
 
 
-@pytest.mark.parametrize("category", ["doc_drift", "protocol"])
+@pytest.mark.parametrize("category", ["doc_drift", "protocol", "regression"])
 def test_op_friction_accepts_expanded_categories(monkeypatch, category: str) -> None:
     captured: dict[str, object] = {}
 
@@ -185,7 +190,9 @@ def test_execute_op_friction_invalid_category_is_nonwriting(monkeypatch) -> None
 def test_owner_entity_id_helpers() -> None:
     assert owner_entity_id("mcp-server") == "service:mcp-server"
     assert owner_entity_id("service:mcp-server") == "service:mcp-server"
-    assert owner_entity_id("agent_skill:friction-review") == "agent_skill:friction-review"
+    assert (
+        owner_entity_id("agent_skill:friction-review") == "agent_skill:friction-review"
+    )
     assert owner_type_of("service:mcp-server") == "service"
     assert owner_type_of("agent_skill:x") == "agent_skill"
     assert owner_type_of("decision:foo") is None

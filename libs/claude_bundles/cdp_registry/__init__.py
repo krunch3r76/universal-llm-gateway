@@ -28,7 +28,7 @@ from .dormant import (
     dormant_candidate_reason, dormant_for_chat_url, host_protection_reason,
     list_dormant, make_dormant, reclaim_dormant_rows, relaunch_dormant,
 )
-from .dormant_drain import DrainResult, drain_live_hosts_to_dormant
+from .dormant_drain import DrainResult, drain_live_hosts_to_dormant, row_drain_protection
 from .ports import PORT_RANGE, select_free_registry_port, used_ports_snapshot
 from .session_address import (
     _load_active, backfill_orphaned_retry_chat_urls,
