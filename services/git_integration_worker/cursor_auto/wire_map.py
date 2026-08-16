@@ -448,10 +448,12 @@ def resolve_contract_disposition(contract: str | None) -> dict[str, Any]:
     }
 
 
-def _clamp_effort_to_accepted(requested: str, accepted: tuple[str, ...]) -> str | None:
+def clamp_effort_to_accepted(
+    requested: str, accepted: tuple[str, ...]
+) -> str | None:
     """Pick the highest accepted rung at or below *requested* on the effort ladder.
 
-    Descriptors disagree on ceiling (grok tops at ``high``, opus at ``max``), so a
+    Descriptors disagree on ceiling (grok tops at ``xhigh``, opus at ``max``), so a
     verbatim mismatch must degrade rather than drop the knob — dropping silently
     hands the bridge a model default that can be far above what was asked for.
     """
@@ -476,15 +478,29 @@ def compose_model_knobs(
     ``resolve_desired_model`` only carries model-intrinsic knobs (opus thinking);
     without this merge the resolved effort is reported on the admit turn but never
     reaches the bridge, so every Auto-bound reasoner ran at its catalog default.
+
+    Grok's ListModels catalog default is ``fast=true`` (speed over quality). Auto
+    spend observed that path as a cost center — every Auto contract that resolves
+    to ``grok-4.6`` therefore pins ``fast=false`` here so the bridge never inherits
+    the catalog speed default. Catalog ``default_variant`` stays ListModels-true
+    for freshness parity; this pin is the Auto-lane override.
     """
     knobs: dict[str, str] = dict(model.get("model_knobs") or {})
     model_id = str(model.get("resolved_model_id") or "").strip()
+    bare: str | None = None
+    if model_id:
+        try:
+            bare = canonical_cursor_bare_id(model_id)
+        except ValueError:
+            bare = None
+        else:
+            # Spend control: disable Grok fast on every Auto contract by default.
+            if bare == "grok-4.6" and "fast" in supported_knobs(bare):
+                knobs["fast"] = "false"
     requested = str(effort.get("resolved_effort") or "").strip().lower()
     if not model_id or not requested:
         return knobs
-    try:
-        bare = canonical_cursor_bare_id(model_id)
-    except ValueError:
+    if bare is None:
         return knobs
     name = effort_knob_name(bare)
     if name is None:
@@ -492,7 +508,7 @@ def compose_model_knobs(
     spec = supported_knobs(bare).get(name)
     if spec is None:
         return knobs
-    value = _clamp_effort_to_accepted(requested, tuple(spec.accepted))
+    value = clamp_effort_to_accepted(requested, tuple(spec.accepted))
     if value is not None:
         knobs[name] = value
     return knobs

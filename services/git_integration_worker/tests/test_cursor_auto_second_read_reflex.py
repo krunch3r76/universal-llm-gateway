@@ -67,7 +67,7 @@ def test_default_reflex_model_is_luna_not_opus(
 
 def test_default_reflex_effort_is_max(monkeypatch: pytest.MonkeyPatch) -> None:
     # Unlike a primary DIRECTIVE, this default is not subject to
-    # dispatch_bounds.clamp_effort_to_autonomous_ceiling (handler.py-only) —
+    # dispatch_bounds.clamp_effort_to_model_card (handler.py-only) —
     # max is expected to reach the model unclamped, bounded by the poll
     # timeout rather than the effort knob (agent-bus:7372, 2026-08-16).
     monkeypatch.delenv("CURSOR_AUTO_REFLEX_EFFORT", raising=False)
@@ -96,10 +96,11 @@ def test_effort_merges_onto_opus_and_preserves_base_knobs() -> None:
 def test_effort_within_accepted_range_passes_through() -> None:
     # grok's own accepted range includes xhigh (cursor_capabilities.py) — no
     # degradation needed for a value the model already accepts verbatim.
+    # Auto also pins fast=false (catalog default is true; spend control).
     knobs = compose_model_knobs(
         {"resolved_model_id": "cursor/grok-4.6"}, {"resolved_effort": "xhigh"}
     )
-    assert knobs == {"effort": "xhigh"}
+    assert knobs == {"effort": "xhigh", "fast": "false"}
 
 
 def test_effort_clamps_down_to_model_ceiling() -> None:
@@ -110,7 +111,14 @@ def test_effort_clamps_down_to_model_ceiling() -> None:
     knobs = compose_model_knobs(
         {"resolved_model_id": "cursor/grok-4.6"}, {"resolved_effort": "max"}
     )
-    assert knobs == {"effort": "xhigh"}
+    assert knobs == {"effort": "xhigh", "fast": "false"}
+
+
+def test_grok_auto_defaults_fast_false_even_without_effort() -> None:
+    knobs = compose_model_knobs(
+        {"resolved_model_id": "cursor/grok-4.6"}, {"resolved_effort": ""}
+    )
+    assert knobs == {"fast": "false"}
 
 
 def test_model_without_effort_knob_gets_none() -> None:

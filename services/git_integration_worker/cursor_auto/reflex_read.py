@@ -55,7 +55,7 @@ _DEFAULT_MODEL = "cursor/gpt-5.6-luna"
 # confidently-wrong self-report, per the Composer false-closeout incident this
 # same night) scales with how much the second read actually checks. The
 # _DEFAULT_TIMEOUT_S below is the real governor now, not the effort knob: this
-# does not go through dispatch_bounds.clamp_effort_to_autonomous_ceiling (that
+# does not go through dispatch_bounds.clamp_effort_to_model_card (that
 # only gates handler.py's primary-DIRECTIVE admission path), so max reaches the
 # model unclamped, bounded only by the poll timeout. If Luna at max effort
 # habitually times out here, that shows up as outcome=dispatch_poll_timeout on

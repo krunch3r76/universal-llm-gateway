@@ -126,7 +126,7 @@ costs less than `high` on Opus. Rates: `config/model_rates.yaml`
 | **T1 — default judgment** | **`cursor/claude-sonnet-5`** | **`max`** (`thinking=true`, `context=1m`) | **Standing default.** Multi-G orchestrate, rank, adjudicate |
 | **T2 — cross-family** | `cursor/gpt-5.6-terra` | `reasoning=max` (¬ `extra-high` — not an accepted value) | Independent check, or T1 unsure. `gpt-5.6-sol` only when scope is narrow (it prices at Opus level) |
 | | ↳ set `context=272k` unless 1m is needed — GPT long context bills **2x input**, and the live Terra/Sol default is `1m`. Sonnet 5 has no long-context surcharge, so T1 `1m` is free. | | |
-| **T3 — premium** | `cursor/claude-opus-5` | `low`→`high`; `xhigh`/`max` need standing trigger | Invariant-touching, architecture-suitability, ≥2 unranked co-primaries, recurrence — **inform-then-proceed** + one-line why |
+| **T3 — premium** | `cursor/claude-opus-5` | full card (`low`→`max`) | Invariant-touching, architecture-suitability, ≥2 unranked co-primaries, recurrence — **inform-then-proceed** + one-line why (trigger is *whether to pick T3*, not the effort rung) |
 
 **Not conductor seats:** `cursor/grok-4.6` (reliability — cheap breadth/recon only,
 and its `$2/$6` was a launch discount) · `cursor/claude-sonnet-4-6` (strictly

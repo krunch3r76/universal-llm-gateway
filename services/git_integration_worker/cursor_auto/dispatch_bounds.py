@@ -1,16 +1,11 @@
 """What an unattended cursor-auto dispatch is allowed to spend.
 
-Distinct from ``wire_map``'s capability clamp, which asks what a model *accepts*.
-This module asks what the **autonomous lane** may commission when no operator is
-in the loop to approve the bill.
+Auto POSTs the cursor-sdk worker directly, so Stargate's ``sdk_cost_risk``
+guard never sees these binds (see the comment at the commissioning site in
+``handler``). ``premium_bind`` announces them, but an announcement is not a
+gate.
 
-The distinction matters because Auto POSTs the cursor-sdk worker directly, so
-Stargate's ``sdk_cost_risk`` guard never sees these binds (see the comment at the
-commissioning site in ``handler``). ``premium_bind`` announces them, but an
-announcement is not a gate — until this module the orchestrator could bind a
-premium reasoner at unbounded depth against a directive carrying no scope at all.
-
-Three bounds, all encoding standing policy rather than new policy:
+Two **policy** bounds (executor + scope) plus one **card** bound (effort):
 
 * **Executor** — ``bind-then-compose`` already says premium models bind and
   Composer implements. Mechanical work is therefore redirected onto the compose
@@ -20,23 +15,30 @@ Three bounds, all encoding standing policy rather than new policy:
   actionable scope, but a ``contract:`` override waives that refusal outright.
   The waiver stays for the roaming tier and is withdrawn for everything else, so
   a premium bind must arrive with scope the orchestrator actually bounded.
-* **Effort** — ``lean-context-dispatch-first`` reserves ``xhigh``/``max`` for a
-  standing trigger. The autonomous lane has none, so it stops one rung below.
+* **Effort** — the model card (``cursor_capabilities``) is the gate. Every
+  accepted rung passes; values above the card degrade to the highest accepted
+  rung (same rule as ``compose_model_knobs``). Policy does not invent a
+  stricter ladder than the card.
 
 Observed 2026-08-09 (24h): four autonomous ``xhigh`` Opus runs consumed 13.26M of
 23.2M total Opus input tokens and two of the four failed to deliver, while
 eighteen directives were admitted on a waived empty scope — eight of them
-``implement``.
+``implement``. That incident still justifies the executor + scope bounds; it
+does not justify a second effort ladder below the card.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from cursor_capabilities import canonical_cursor_bare_id
+from cursor_capabilities import (
+    canonical_cursor_bare_id,
+    effort_knob_name,
+    supported_knobs,
+)
 
 from services.git_integration_worker.cursor_auto.wire_map import (
-    BINDABLE_EFFORT_VALUES,
+    clamp_effort_to_accepted,
     resolve_desired_model,
 )
 
@@ -45,19 +47,6 @@ from services.git_integration_worker.cursor_auto.wire_map import (
 ROAMING_TIER_BARE_MODELS: frozenset[str] = frozenset(
     {"composer-2.5", "composer-2.5-fast", "grok-4.6"}
 )
-
-AUTONOMOUS_EFFORT_CEILING = "high"
-
-# Per-model exception to the default ceiling, keyed by the *normalized* bare
-# id (see ``_normalize_ceiling_key`` — folds ``claude-sonnet-5`` and the
-# ``sonnet-5`` wire alias to one key). Sonnet-5 is the T1 conductor model
-# (``agent_skill:conductor``); a conductor packet passed through
-# ``COMMISSION_CONDUCTOR`` is itself the standing trigger `xhigh`/`max`
-# otherwise require — clamping it to ``high`` would silently underpower every
-# autonomously-commissioned mission below what its own skill recommends.
-AUTONOMOUS_EFFORT_CEILING_OVERRIDES: dict[str, str] = {
-    "sonnet-5": "max",
-}
 
 # ``resolve_handoff_contract`` maps contract ``implement`` here and nothing else;
 # this is the codebase's own name for work that carries no open judgment.
@@ -87,60 +76,45 @@ def scope_waiver_allowed(model_id: str | None) -> bool:
     return is_roaming_tier(model_id)
 
 
-def _normalize_ceiling_key(bare_id: str) -> str:
-    """Fold ``claude-``-expanded and short wire-alias forms to one key.
-
-    ``canonical_cursor_bare_id`` expands a ``cursor/claude-sonnet-5`` input to
-    bare ``claude-sonnet-5`` but leaves the ``sonnet-5`` wire alias untouched —
-    the same logical model canonicalizes two different ways depending on
-    which form the caller passed in. ``handler`` always passes the
-    already-resolved ``cursor/claude-*`` form; tests and future callers may
-    pass the bare alias directly, so both must key the override the same way.
-    """
-    return bare_id[len("claude-") :] if bare_id.startswith("claude-") else bare_id
-
-
-def _effort_ceiling_for(model_id: str | None) -> str:
-    """Return the autonomous-lane effort ceiling that applies to *model_id*."""
-    try:
-        bare = canonical_cursor_bare_id(str(model_id or ""))
-    except ValueError:
-        return AUTONOMOUS_EFFORT_CEILING
-    return AUTONOMOUS_EFFORT_CEILING_OVERRIDES.get(
-        _normalize_ceiling_key(bare), AUTONOMOUS_EFFORT_CEILING
-    )
-
-
-def clamp_effort_to_autonomous_ceiling(
+def clamp_effort_to_model_card(
     model_id: str | None,
     effort: dict[str, Any],
 ) -> dict[str, Any]:
-    """Hold non-roaming models at their autonomous-lane effort ceiling.
+    """Hold resolved effort to the model's capability-card accepted values.
 
-    The ceiling is :data:`AUTONOMOUS_EFFORT_CEILING` by default, or a
-    per-model override from :data:`AUTONOMOUS_EFFORT_CEILING_OVERRIDES` (see
-    that mapping's docstring for the sonnet-5/conductor rationale). Returns
-    *effort* unchanged when it is already at or below the applicable ceiling,
-    so the common path stays identity. Mirrors ``resolve_desired_effort``'s
-    dict shape (``requested`` / ``resolved_effort`` / ``clamped`` / ``notes``)
-    so the admit turn reports the clamp in the field the operator already
-    reads.
+    The card is the gate. Policy does not invent a stricter ladder than
+    ``CURSOR_MODEL_CAPABILITIES``. Values the card already accepts pass
+    through (identity). Values above the card degrade to the highest accepted
+    rung at or below the request — same rule as ``compose_model_knobs``.
+    Models with no effort-like knob, or an unparseable id, return *effort*
+    unchanged. Mirrors ``resolve_desired_effort``'s dict shape so the admit
+    turn reports a card clamp in ``resolved_effort``.
     """
     resolved = str(effort.get("resolved_effort") or "").strip().lower()
-    ladder = BINDABLE_EFFORT_VALUES
-    if is_roaming_tier(model_id) or resolved not in ladder:
+    if not resolved:
         return effort
-    ceiling = _effort_ceiling_for(model_id)
-    if ladder.index(resolved) <= ladder.index(ceiling):
+    try:
+        bare = canonical_cursor_bare_id(str(model_id or ""))
+    except ValueError:
+        return effort
+    name = effort_knob_name(bare)
+    if name is None:
+        return effort
+    spec = supported_knobs(bare).get(name)
+    if spec is None:
+        return effort
+    accepted = tuple(spec.accepted)
+    value = clamp_effort_to_accepted(resolved, accepted)
+    if value is None or value == resolved:
         return effort
     prior = str(effort.get("notes") or "").strip()
     note = (
-        f"{resolved}→{ceiling} (autonomous lane ceiling; "
-        "xhigh/max needs a standing trigger)"
+        f"{resolved}→{value} (not on {bare} card; "
+        f"accepted {name}={','.join(accepted)})"
     )
     return {
         **effort,
-        "resolved_effort": ceiling,
+        "resolved_effort": value,
         "clamped": True,
         "notes": f"{prior}; {note}" if prior else note,
     }
@@ -184,12 +158,10 @@ def redirect_mechanical_executor(
 
 
 __all__ = [
-    "AUTONOMOUS_EFFORT_CEILING",
-    "AUTONOMOUS_EFFORT_CEILING_OVERRIDES",
     "MECHANICAL_EXECUTOR_MODEL_ID",
     "MECHANICAL_HANDOFF_CONTRACT",
     "ROAMING_TIER_BARE_MODELS",
-    "clamp_effort_to_autonomous_ceiling",
+    "clamp_effort_to_model_card",
     "is_roaming_tier",
     "redirect_mechanical_executor",
     "scope_waiver_allowed",

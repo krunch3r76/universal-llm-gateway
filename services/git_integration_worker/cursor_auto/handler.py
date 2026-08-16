@@ -31,7 +31,7 @@ from services.git_integration_worker.cursor_auto.directive import (
     parse_request_body,
 )
 from services.git_integration_worker.cursor_auto.dispatch_bounds import (
-    clamp_effort_to_autonomous_ceiling,
+    clamp_effort_to_model_card,
     redirect_mechanical_executor,
 )
 from services.git_integration_worker.cursor_auto.dispatch_progress import (
@@ -236,11 +236,11 @@ async def process_job(
             contract=contract,
             handoff_contract=handoff_contract,
         )
-    # Unclamped effort is the operator wire pin. Autonomous ceiling applies to
+    # Unclamped effort is the operator wire pin. Card clamp applies to
     # nested cursor-sdk only — CDP picker depth must not be decided by the
     # resolved cursor-sdk model (is_roaming_tier predicate on the wrong subject).
     wire_effort = resolve_desired_effort(job.desired_effort)
-    effort = clamp_effort_to_autonomous_ceiling(
+    effort = clamp_effort_to_model_card(
         model["resolved_model_id"], wire_effort
     )
     escalation = resolve_escalation(job.escalation)

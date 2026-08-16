@@ -1,12 +1,12 @@
 """Falsifier: the autonomous lane must not commission unbounded premium work.
 
 Auto POSTs the cursor-sdk worker directly, so Stargate's ``sdk_cost_risk`` guard
-never sees these binds. Three bounds stand in for it — an executor bound (a
-reasoning model never runs the mechanical leg), a scope bound (a ``contract:``
-override stops waiving the empty-scope refusal outside the roaming tier), and an
-effort ceiling (``xhigh``/``max`` need a standing trigger the unattended lane does
-not have). These tests pin all three, and pin that the roaming tier is untouched
-so the default mechanical path keeps its latitude.
+never sees these binds. Two policy bounds stand in for it — an executor bound (a
+reasoning model never runs the mechanical leg) and a scope bound (a ``contract:``
+override stops waiving the empty-scope refusal outside the roaming tier) — plus
+a card bound (effort rungs the model card does not accept degrade). These tests
+pin all three, and pin that the roaming tier is untouched so the default
+mechanical path keeps its latitude.
 """
 
 from __future__ import annotations
@@ -17,9 +17,8 @@ import pytest
 
 from services.git_integration_worker.cursor_auto.admit_gates import blocking_admit_gate
 from services.git_integration_worker.cursor_auto.dispatch_bounds import (
-    AUTONOMOUS_EFFORT_CEILING,
     MECHANICAL_EXECUTOR_MODEL_ID,
-    clamp_effort_to_autonomous_ceiling,
+    clamp_effort_to_model_card,
     is_roaming_tier,
     redirect_mechanical_executor,
     scope_waiver_allowed,
@@ -94,62 +93,47 @@ def test_non_roaming_models_lose_the_scope_waiver(model_id: str | None) -> None:
     assert not scope_waiver_allowed(model_id)
 
 
-@pytest.mark.parametrize("requested", ["xhigh", "max"])
-def test_premium_effort_clamps_to_ceiling(requested: str) -> None:
-    out = clamp_effort_to_autonomous_ceiling(
-        "cursor/claude-opus-5", _effort(requested)
-    )
-    assert out["resolved_effort"] == AUTONOMOUS_EFFORT_CEILING
+@pytest.mark.parametrize("requested", ["low", "medium", "high", "xhigh", "max"])
+def test_opus_card_accepts_full_effort_ladder(requested: str) -> None:
+    payload = _effort(requested)
+    assert clamp_effort_to_model_card("cursor/claude-opus-5", payload) is payload
+
+
+@pytest.mark.parametrize("requested", ["low", "medium", "high", "xhigh"])
+def test_grok_card_accepts_through_xhigh(requested: str) -> None:
+    payload = _effort(requested)
+    assert clamp_effort_to_model_card("cursor/grok-4.6", payload) is payload
+
+
+def test_grok_max_degrades_to_card_ceiling() -> None:
+    out = clamp_effort_to_model_card("cursor/grok-4.6", _effort("max"))
+    assert out["resolved_effort"] == "xhigh"
     assert out["clamped"] is True
-    assert requested in str(out["notes"])
-
-
-@pytest.mark.parametrize("requested", ["low", "medium", "high"])
-def test_effort_at_or_below_ceiling_is_identity(requested: str) -> None:
-    payload = _effort(requested)
-    assert clamp_effort_to_autonomous_ceiling("cursor/claude-opus-5", payload) is payload
-
-
-@pytest.mark.parametrize("requested", ["xhigh", "max"])
-def test_roaming_tier_keeps_full_effort_range(requested: str) -> None:
-    payload = _effort(requested)
-    assert clamp_effort_to_autonomous_ceiling("cursor/grok-4.6", payload) is payload
+    assert "not on grok-4.6 card" in str(out["notes"])
 
 
 @pytest.mark.parametrize(
-    "model_id", ["cursor/claude-sonnet-5", "sonnet-5", "claude-sonnet-5"]
+    "model_id", ["cursor/claude-sonnet-5", "claude-sonnet-5"]
 )
 @pytest.mark.parametrize("requested", ["high", "xhigh", "max"])
-def test_sonnet_5_conductor_override_permits_max(
-    model_id: str, requested: str
-) -> None:
-    """T1 conductor model (agent_skill:conductor) is exempt from the default
-    ceiling regardless of which id form the caller passes — the resolved
-    ``cursor/claude-*`` form (real handler call site) and both bare forms."""
+def test_sonnet_5_card_accepts_max(model_id: str, requested: str) -> None:
     payload = _effort(requested)
-    assert clamp_effort_to_autonomous_ceiling(model_id, payload) is payload
+    assert clamp_effort_to_model_card(model_id, payload) is payload
 
 
-def test_sonnet_5_override_does_not_relax_other_models() -> None:
-    """The override is scoped to sonnet-5 — opus-5 still clamps to the default."""
-    out = clamp_effort_to_autonomous_ceiling("cursor/claude-opus-5", _effort("max"))
-    assert out["resolved_effort"] == AUTONOMOUS_EFFORT_CEILING
-    assert out["clamped"] is True
-
-
-def test_sdk_clamp_does_not_define_cdp_wire_effort() -> None:
-    """Document the split: sdk ceiling clamps; CDP commission uses unclamped wire."""
+def test_sdk_card_clamp_does_not_define_cdp_wire_effort() -> None:
+    """Document the split: sdk knobs follow the card; CDP commission uses wire."""
     from services.git_integration_worker.cursor_auto.wire_map import (
         resolve_desired_effort,
     )
 
-    wire = resolve_desired_effort("xhigh")
-    clamped = clamp_effort_to_autonomous_ceiling("cursor/claude-opus-5", wire)
-    assert wire["resolved_effort"] == "xhigh"
-    assert clamped["resolved_effort"] == AUTONOMOUS_EFFORT_CEILING
-    # Handler must pass wire["resolved_effort"] to CDP, not clamped.
+    wire = resolve_desired_effort("max")
+    clamped = clamp_effort_to_model_card("cursor/grok-4.6", wire)
+    assert wire["resolved_effort"] == "max"
+    assert clamped["resolved_effort"] == "xhigh"
+    # Handler must pass wire["resolved_effort"] to CDP, not the sdk card clamp.
     cdp_wire = str(wire.get("resolved_effort") or "") or None
-    assert cdp_wire == "xhigh"
+    assert cdp_wire == "max"
 
 
 def test_reasoning_model_never_runs_the_mechanical_leg() -> None:

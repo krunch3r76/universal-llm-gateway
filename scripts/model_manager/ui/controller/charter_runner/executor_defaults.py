@@ -3,10 +3,11 @@
 Operator bind 2026-07-20: default agent = **Grok 4.6** on the coding
 substrate. Wire: ``seat=cursor-sdk``, ``model=cursor/grok-4.6``.
 
-Operator bind 2026-07-26 (iteration speed): both judgment and implement
-windows pin ``fast=true``. Grok keeps ``effort=high`` with fast on (not the
-prior High = effort=high + fast=false mapping). Composer pins ``fast=true``
-explicitly so window_log / admit notes record the bind.
+Operator bind 2026-08-16 (Grok spend): judgment windows pin ``fast=false``
+on ``cursor/grok-4.6`` (``effort=high``). Catalog ListModels still defaults
+fast=true; charter-runner must not inherit that speed path. Composer still
+pins ``fast=true`` explicitly so window_log / admit notes record the bind.
+(Supersedes 2026-07-26 iteration-speed ``fast=true`` on Grok.)
 
 Grok exposes ``effort`` + ``fast`` only (no ``thinking`` knob — live
 ListModels / ``cursor_capabilities``).
@@ -28,8 +29,8 @@ from typing import Any
 DEFAULT_SEAT = "cursor-sdk"
 DEFAULT_MODEL = "cursor/grok-4.6"
 DEFAULT_CONTRACT = "light-bounded"
-# Iteration-speed bind (operator 2026-07-26): high effort + fast.
-DEFAULT_MODEL_KNOBS: dict[str, str] = {"effort": "high", "fast": "true"}
+# Spend bind (operator 2026-08-16): high effort, fast off.
+DEFAULT_MODEL_KNOBS: dict[str, str] = {"effort": "high", "fast": "false"}
 
 IMPLEMENT_MODEL = "cursor/composer-2.5"
 IMPLEMENT_CONTRACT = "implement"

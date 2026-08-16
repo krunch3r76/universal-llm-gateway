@@ -330,7 +330,7 @@ def test_commission_spy_rejects_omitted_reasoning_effort():
 
 
 def test_process_job_cdp_effort_unclamped_when_sdk_model_non_roaming(monkeypatch):
-    """CDP leg gets wire xhigh even when nested sdk model would clamp to high."""
+    """CDP leg gets wire xhigh; sdk knobs follow the model card separately."""
     from services.git_integration_worker.cursor_auto.handler import process_job
     from services.git_integration_worker.tests.commission_spy import commission_spy
 

@@ -235,7 +235,7 @@ line-start `model_knobs` effort literals are refused at admit (`effort_pin_refus
 model on the wire as `desired_model`. For nested cursor-sdk dispatches the code-side seat
 fires, `model_knobs` including `effort` and `fast` belong on the **dispatch wire** (SOT:
 `libs/cursor_capabilities/cursor_capabilities.py`). The `fast` knob has **no wire param** on
-`agent_bus.request`; when omitted, catalog defaults apply (**`fast=true`** for grok). Catalog
+`agent_bus.request`; when omitted, Auto ``compose_model_knobs`` pins **`fast=false`** for grok (catalog ListModels default remains ``fast=true``; Auto overrides). Catalog
 
 **CDP Fable / Opus pin (BINDING):** `desired_model` is cursor-sdk only (`composer-2.5` /
 `grok-4.6` / `opus-5`). Pin CDP advisors with wire **`escalation=cdp/fable`** or

@@ -138,7 +138,7 @@ Detail: Use the `cursor-model-economics` skill (shared_sync — CDP + Cursor).
 - **T1 conductor:** `cursor/claude-sonnet-5` @ `effort=max` (`thinking=true`, `context=1m`) — ¬ Grok default.
 - **Costs:** `config/model_rates.yaml` ($/M) — ¬ on model cards.
 - **Auto/Router:** Teams/Enterprise only; ¬ prompt-nudge; ULG dense work pins Composer (¬ `desired_model=auto`).
-- **GPT knobs:** `reasoning` — ¬ `extra-high`; Grok accepts `xhigh` live but Auto/conductor policy caps at `high`."""
+- **GPT knobs:** `reasoning` — ¬ `extra-high`; Grok / Opus effort rungs follow the model card (Grok through `xhigh`, Opus through `max`)."""
 
 # Compact index — full playbook is skill `consult-routing` (current superset).
 # Web-dedup (friction 25727 follow-on): the transport-preflight mandate is GATES

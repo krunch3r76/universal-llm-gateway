@@ -36,7 +36,7 @@ these binds; `premium_bind` announced premium spend and nothing gated it.
 |---|---|---|
 | **Executor** | `contract=implement` (→ `pure-mechanical`) redirects to `cursor/composer-2.5` — a reasoning model **never** runs the mechanical leg | `frontier.sdk.auto.mechanical_executor_redirected` |
 | **Scope** | a `contract:` override no longer waives the empty-scope refusal outside the roaming tier | `frontier.sdk.auto.empty_directive_scope_blocked` |
-| **Effort** | `xhigh`/`max` clamp to `high` (those rungs need a standing trigger the lane lacks) | admit turn `resolved_effort` |
+| **Effort** | values the model card accepts pass; above-card rungs degrade to the highest accepted (`clamp_effort_to_model_card` / `compose_model_knobs`) | admit turn `resolved_effort` |
 
 **Roaming tier** = `composer-2.5`, `composer-2.5-fast`, `grok-4.6`. Everything else —
 opus, sonnet, fable, `gpt-5.6-*` — is bounded. `desired_model: auto` resolves *into*

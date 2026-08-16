@@ -163,11 +163,11 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         six-block conductor packet (root thread/charter/scoreboard URIs, the
         mandatory literal line ``Use the conductor skill — nest specialists; ¬
         hand-code mechanical G-rows; cost tier from this skill.``) — see
-        agent_skill:conductor for packet shape + tier table. Autonomous-lane effort
-        ceiling exempts ``sonnet-5`` specifically (permits ``max`` — the conductor
-        packet itself is the standing trigger); every other model still clamps
-        ``xhigh``/``max``→``high`` (``resolved_effort`` in the admit reply reports
-        any clamp). Hop-cadence's in-flight probe checks claimed jobs by home
+        agent_skill:conductor for packet shape + tier table. Effort knobs are
+        gated by the model card (``cursor_capabilities``): accepted rungs pass
+        (Sonnet 5 / Opus through ``max``, Grok through ``xhigh``); above-card
+        values degrade and ``resolved_effort`` on the admit reply reports the
+        clamp. Hop-cadence's in-flight probe checks claimed jobs by home
         lane as well as literal thread-id, so committing onto a thread other than
         this DIRECTIVE's own (``dispatch_thread_id`` = a mission root, the usual
         conductor shape) correctly inhibits an automatic hop while it runs
