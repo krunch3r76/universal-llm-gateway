@@ -187,6 +187,28 @@ not uniform ``plane-discrepancy:``. Honesty ``partial×complete`` stays
 | AC-pass | measure (`status@infra`) | claim |
 | next-step | deviations-qualified measure | bare claim; bare measure token |
 
+### Verification array semantics — worst-of, not last-wins (a:29677)
+
+`verification[]` is **append-only**: reruns add rows; they do not replace earlier
+rows. Machine grading (`resolve_work_outcome`, `verification_all_pass`,
+`verification_has_failure` in `cursor_sdk_capture_status.py`) evaluates the
+**entire** array — **worst-of / all-rows**, not first-row and not last-row.
+
+| Semantics | Meaning |
+|---|---|
+| Any `row_is_failed_check` row | Can mint `work_outcome=checks_failed` when positive deliverable evidence exists |
+| `verification_all_pass` | Requires every row to clear — one blocking row blocks `shipped` |
+| Later passing rerun | Does **not** erase an earlier failing row's effect on `status` / `work_outcome` |
+
+This is deliberate fail-closed design (`todo:closeout-grade-trust-join`, arc 7190):
+a rerun-until-green pattern is indistinguishable at the row level from a genuine
+fix, so the closeout refuses to claim `shipped` when the full evidence includes
+a failed check — even if a later row passed.
+
+**Reader rule:** trust top-level `status` / `work_outcome` as authoritative machine
+grade. Do not substitute "did the last verification row pass?" for the graded
+outcome. When the full array matters, read every row — not only the final one.
+
 ## Composes with
 
 - `completion-provenance-discipline` — tool-response binding + status/rank register (§7)
