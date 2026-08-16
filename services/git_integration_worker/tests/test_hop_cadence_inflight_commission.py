@@ -82,6 +82,77 @@ def test_lane_in_flight_commission_false_after_closeout_while_claimed() -> None:
     )
 
 
+def test_lane_in_flight_commission_true_for_aliased_home_lane() -> None:
+    """A conductor commissioned onto a different work thread than the
+    operator's own standing thread must still inhibit when probed by the
+    home lane the aliased watch row is keyed by (friction: hop-cadence
+    keying mismatch surfaced by cursor/claude-opus-5 steelman, 7372)."""
+    from services.git_integration_worker.cursor_auto import queue as queue_mod
+
+    q = queue_mod.reset_queue_for_tests(durable=False)
+    job = q.enqueue(
+        thread_id="8001",  # mission-root thread, not the operator's own
+        turn_number=1,
+        subject="TYPE: DIRECTIVE",
+        body="TYPE: DIRECTIVE\n",
+        from_agent="cdp-operator-6655-day5i",
+        to_agent="cursor-auto",
+        desired_model="cursor/claude-sonnet-5",
+        desired_effort="max",
+        contract="investigate",
+    )
+    claimed = q.claim_next()
+    assert claimed is not None and claimed.job_id == job.job_id
+    assert lane_in_flight_commission("6655", queue=q, live_run_fn=lambda _t: None)
+
+
+def test_lane_in_flight_commission_false_for_unrelated_home_lane() -> None:
+    """A claimed job under a different operator lane must not false-positive."""
+    from services.git_integration_worker.cursor_auto import queue as queue_mod
+
+    q = queue_mod.reset_queue_for_tests(durable=False)
+    q.enqueue(
+        thread_id="8001",
+        turn_number=1,
+        subject="TYPE: DIRECTIVE",
+        body="TYPE: DIRECTIVE\n",
+        from_agent="cdp-operator-6655-day5i",
+        to_agent="cursor-auto",
+        desired_model="cursor/claude-sonnet-5",
+        desired_effort="max",
+        contract="investigate",
+    )
+    q.claim_next()
+    assert (
+        lane_in_flight_commission("9999", queue=q, live_run_fn=lambda _t: None)
+        is False
+    )
+
+
+def test_lane_in_flight_commission_false_for_aliased_closeout_residual() -> None:
+    """Aliased path respects nested_sdk_finished parity with claimed_for_thread."""
+    from services.git_integration_worker.cursor_auto import queue as queue_mod
+
+    q = queue_mod.reset_queue_for_tests(durable=False)
+    job = q.enqueue(
+        thread_id="8001",
+        turn_number=1,
+        subject="TYPE: DIRECTIVE",
+        body="TYPE: DIRECTIVE\n",
+        from_agent="cdp-operator-6655-day5i",
+        to_agent="cursor-auto",
+        desired_model="cursor/claude-sonnet-5",
+        desired_effort="max",
+        contract="investigate",
+    )
+    q.claim_next()
+    q.mark_nested_sdk_finished(job.job_id)
+    assert (
+        lane_in_flight_commission("6655", queue=q, live_run_fn=lambda _t: None)
+        is False
+    )
+
+
 def test_evaluate_watch_inhibits_when_lane_probe_true() -> None:
     decision = evaluate_watch(
         _due_row(),
@@ -110,8 +181,8 @@ def test_evaluate_watch_fires_when_closeout_claimed_residual() -> None:
 @pytest.mark.asyncio
 async def test_scan_and_fire_skips_running_commission(tmp_path: Path) -> None:
     """Production wire: scan_and_fire injects the lane probe."""
-    from services.git_integration_worker.cursor_auto.hop_cadence import scan_and_fire
     from services.git_integration_worker.cursor_auto import queue as queue_mod
+    from services.git_integration_worker.cursor_auto.hop_cadence import scan_and_fire
 
     isolated = tmp_path / "watches.json"
     save_watches({_THREAD: _due_row()}, isolated)

@@ -164,15 +164,19 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         mandatory literal line ``Use the conductor skill — nest specialists; ¬
         hand-code mechanical G-rows; cost tier from this skill.``) — see
         agent_skill:conductor for packet shape + tier table. Autonomous-lane effort
-        ceiling still clamps ``max``/``xhigh``→``high`` for non-roaming models
-        (``resolved_effort`` in the admit reply reports the clamp) — pass ``max``
-        anyway so the ceiling binds, not a lower ask. CAUTION: if you commission
-        onto a thread other than this DIRECTIVE's own (e.g. ``dispatch_thread_id``
-        = a mission root, the usual conductor shape), hop-cadence's in-flight
-        probe is keyed by *your* home lane and does not see liveness on that other
-        thread — do not assume the automatic hop inhibit covers it; poll the
-        target thread yourself while waiting (known gap, unfixed as of this
-        writing).
+        ceiling exempts ``sonnet-5`` specifically (permits ``max`` — the conductor
+        packet itself is the standing trigger); every other model still clamps
+        ``xhigh``/``max``→``high`` (``resolved_effort`` in the admit reply reports
+        any clamp). Hop-cadence's in-flight probe checks claimed jobs by home
+        lane as well as literal thread-id, so committing onto a thread other than
+        this DIRECTIVE's own (``dispatch_thread_id`` = a mission root, the usual
+        conductor shape) correctly inhibits an automatic hop while it runs
+        (fixed + unit-tested 2026-08-15; not yet confirmed against a live
+        commission — poll the target thread yourself until that confirmation
+        lands). Separately, a nested dispatch's own poll loop times out at 3600s
+        server-side — a conductor mission genuinely running past an hour gets
+        marked failed there even while the bus-visible work continues; unfixed,
+        watch missions approaching that age.
 
         Sync: plugin_install ∧ per-slug Customize sync ∈ Auto capabilities — offer/fire,
         ¬ defer to IDE lead. Bulk census = slow ⇒ named slugs only. IDE restart ⇒ operator.

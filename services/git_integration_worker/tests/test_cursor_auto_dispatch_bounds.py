@@ -116,6 +116,27 @@ def test_roaming_tier_keeps_full_effort_range(requested: str) -> None:
     assert clamp_effort_to_autonomous_ceiling("cursor/grok-4.6", payload) is payload
 
 
+@pytest.mark.parametrize(
+    "model_id", ["cursor/claude-sonnet-5", "sonnet-5", "claude-sonnet-5"]
+)
+@pytest.mark.parametrize("requested", ["high", "xhigh", "max"])
+def test_sonnet_5_conductor_override_permits_max(
+    model_id: str, requested: str
+) -> None:
+    """T1 conductor model (agent_skill:conductor) is exempt from the default
+    ceiling regardless of which id form the caller passes — the resolved
+    ``cursor/claude-*`` form (real handler call site) and both bare forms."""
+    payload = _effort(requested)
+    assert clamp_effort_to_autonomous_ceiling(model_id, payload) is payload
+
+
+def test_sonnet_5_override_does_not_relax_other_models() -> None:
+    """The override is scoped to sonnet-5 — opus-5 still clamps to the default."""
+    out = clamp_effort_to_autonomous_ceiling("cursor/claude-opus-5", _effort("max"))
+    assert out["resolved_effort"] == AUTONOMOUS_EFFORT_CEILING
+    assert out["clamped"] is True
+
+
 def test_sdk_clamp_does_not_define_cdp_wire_effort() -> None:
     """Document the split: sdk ceiling clamps; CDP commission uses unclamped wire."""
     from services.git_integration_worker.cursor_auto.wire_map import (

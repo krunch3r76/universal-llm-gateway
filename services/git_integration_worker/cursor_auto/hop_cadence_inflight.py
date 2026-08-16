@@ -30,6 +30,14 @@ def lane_in_flight_commission(
     row still reads claimed does not inhibit), or a live SDK run on that
     thread. Watch-ledger ``pending_succession`` / raw ``status=claimed``
     are not consulted.
+
+    *thread_id* is the aliased watch row's key, which for an operator
+    mailbox (``cdp-operator-{lane}-*``) is the home lane, not necessarily
+    the literal thread a commissioned job runs on (see
+    ``hop_cadence_home_lane.watch_thread_for_job``). A conductor
+    commissioned onto a different work thread than the operator's own
+    standing thread is checked via :meth:`AutoJobQueue.claimed_for_home_lane`
+    once the literal thread-id checks miss, so the probe still inhibits.
     """
     tid = (thread_id or "").strip()
     if not tid:
@@ -44,4 +52,6 @@ def lane_in_flight_commission(
     if probe(tid) is not None:
         return True
     q = queue if queue is not None else get_queue()
-    return q.claimed_for_thread(tid) is not None
+    if q.claimed_for_thread(tid) is not None:
+        return True
+    return q.claimed_for_home_lane(tid) is not None

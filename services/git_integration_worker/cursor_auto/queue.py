@@ -198,6 +198,31 @@ class AutoJobQueue:
                     return job
         return None
 
+    def claimed_for_home_lane(self, lane: str) -> AutoJob | None:
+        """Return the claimed job whose operator mailbox aliases to *lane*.
+
+        Mirrors :meth:`claimed_for_thread` but keys on the home lane a
+        ``cdp-operator-{lane}-*`` mailbox resolves to (see
+        ``hop_cadence_home_lane.home_lane_from_mailbox``), not the literal
+        ``job.thread_id``. A conductor commissioned onto a mission-root
+        thread other than the operator's own standing thread is otherwise
+        invisible to a probe keyed by the aliased watch row's home lane.
+        """
+        from services.git_integration_worker.cursor_auto.hop_cadence_home_lane import (
+            home_lane_from_mailbox,
+        )
+
+        with self._lock:
+            for jid in self._order:
+                job = self._jobs[jid]
+                if (
+                    job.status == "claimed"
+                    and not job.nested_sdk_finished
+                    and home_lane_from_mailbox(job.from_agent) == lane
+                ):
+                    return job
+        return None
+
     def _incumbent_unlocked(
         self,
         thread_id: str,

@@ -48,6 +48,17 @@ ROAMING_TIER_BARE_MODELS: frozenset[str] = frozenset(
 
 AUTONOMOUS_EFFORT_CEILING = "high"
 
+# Per-model exception to the default ceiling, keyed by the *normalized* bare
+# id (see ``_normalize_ceiling_key`` — folds ``claude-sonnet-5`` and the
+# ``sonnet-5`` wire alias to one key). Sonnet-5 is the T1 conductor model
+# (``agent_skill:conductor``); a conductor packet passed through
+# ``COMMISSION_CONDUCTOR`` is itself the standing trigger `xhigh`/`max`
+# otherwise require — clamping it to ``high`` would silently underpower every
+# autonomously-commissioned mission below what its own skill recommends.
+AUTONOMOUS_EFFORT_CEILING_OVERRIDES: dict[str, str] = {
+    "sonnet-5": "max",
+}
+
 # ``resolve_handoff_contract`` maps contract ``implement`` here and nothing else;
 # this is the codebase's own name for work that carries no open judgment.
 MECHANICAL_HANDOFF_CONTRACT = "pure-mechanical"
@@ -76,31 +87,60 @@ def scope_waiver_allowed(model_id: str | None) -> bool:
     return is_roaming_tier(model_id)
 
 
+def _normalize_ceiling_key(bare_id: str) -> str:
+    """Fold ``claude-``-expanded and short wire-alias forms to one key.
+
+    ``canonical_cursor_bare_id`` expands a ``cursor/claude-sonnet-5`` input to
+    bare ``claude-sonnet-5`` but leaves the ``sonnet-5`` wire alias untouched —
+    the same logical model canonicalizes two different ways depending on
+    which form the caller passed in. ``handler`` always passes the
+    already-resolved ``cursor/claude-*`` form; tests and future callers may
+    pass the bare alias directly, so both must key the override the same way.
+    """
+    return bare_id[len("claude-") :] if bare_id.startswith("claude-") else bare_id
+
+
+def _effort_ceiling_for(model_id: str | None) -> str:
+    """Return the autonomous-lane effort ceiling that applies to *model_id*."""
+    try:
+        bare = canonical_cursor_bare_id(str(model_id or ""))
+    except ValueError:
+        return AUTONOMOUS_EFFORT_CEILING
+    return AUTONOMOUS_EFFORT_CEILING_OVERRIDES.get(
+        _normalize_ceiling_key(bare), AUTONOMOUS_EFFORT_CEILING
+    )
+
+
 def clamp_effort_to_autonomous_ceiling(
     model_id: str | None,
     effort: dict[str, Any],
 ) -> dict[str, Any]:
-    """Hold non-roaming models at :data:`AUTONOMOUS_EFFORT_CEILING`.
+    """Hold non-roaming models at their autonomous-lane effort ceiling.
 
-    Returns *effort* unchanged when it is already at or below the ceiling, so the
-    common path stays identity. Mirrors ``resolve_desired_effort``'s dict shape
-    (``requested`` / ``resolved_effort`` / ``clamped`` / ``notes``) so the admit
-    turn reports the clamp in the field the operator already reads.
+    The ceiling is :data:`AUTONOMOUS_EFFORT_CEILING` by default, or a
+    per-model override from :data:`AUTONOMOUS_EFFORT_CEILING_OVERRIDES` (see
+    that mapping's docstring for the sonnet-5/conductor rationale). Returns
+    *effort* unchanged when it is already at or below the applicable ceiling,
+    so the common path stays identity. Mirrors ``resolve_desired_effort``'s
+    dict shape (``requested`` / ``resolved_effort`` / ``clamped`` / ``notes``)
+    so the admit turn reports the clamp in the field the operator already
+    reads.
     """
     resolved = str(effort.get("resolved_effort") or "").strip().lower()
     ladder = BINDABLE_EFFORT_VALUES
     if is_roaming_tier(model_id) or resolved not in ladder:
         return effort
-    if ladder.index(resolved) <= ladder.index(AUTONOMOUS_EFFORT_CEILING):
+    ceiling = _effort_ceiling_for(model_id)
+    if ladder.index(resolved) <= ladder.index(ceiling):
         return effort
     prior = str(effort.get("notes") or "").strip()
     note = (
-        f"{resolved}→{AUTONOMOUS_EFFORT_CEILING} (autonomous lane ceiling; "
+        f"{resolved}→{ceiling} (autonomous lane ceiling; "
         "xhigh/max needs a standing trigger)"
     )
     return {
         **effort,
-        "resolved_effort": AUTONOMOUS_EFFORT_CEILING,
+        "resolved_effort": ceiling,
         "clamped": True,
         "notes": f"{prior}; {note}" if prior else note,
     }
@@ -145,6 +185,7 @@ def redirect_mechanical_executor(
 
 __all__ = [
     "AUTONOMOUS_EFFORT_CEILING",
+    "AUTONOMOUS_EFFORT_CEILING_OVERRIDES",
     "MECHANICAL_EXECUTOR_MODEL_ID",
     "MECHANICAL_HANDOFF_CONTRACT",
     "ROAMING_TIER_BARE_MODELS",
