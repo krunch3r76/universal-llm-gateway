@@ -17,6 +17,7 @@ from ...checkpoint_auto_stamp_wiring import (
     load_thread_tags,
     maybe_auto_stamp_root_on_checkpoint,
 )
+from ...checkpoint_projection_wiring import maybe_project_checkpoint_body
 from ...db import (
     SlugExists,
     create_thread_with_turn,
@@ -196,10 +197,15 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
         turn_id_alias=body.supersedes_turn_id,
     )
     try:
-        prepared = prepare_body_for_insert(
+        turn_body = maybe_project_checkpoint_body(
             thread=thread_id,
             subject=body.subject,
             body=body.body,
+        )
+        prepared = prepare_body_for_insert(
+            thread=thread_id,
+            subject=body.subject,
+            body=turn_body,
             from_agent=body.from_agent,
             allow_long_body=body.allow_long_body,
             thread_tags=thread_tags,

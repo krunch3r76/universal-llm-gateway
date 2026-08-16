@@ -20,6 +20,7 @@ from cortex_store.dispatch_ops._thread_sidecar import (
 
 from .body_briefing_advisory import BriefingAdvisory, briefing_advisory
 from .checkpoint_charter_lint import orchestration_charter_advisory
+from .checkpoint_projection import CheckpointBodyTooLargeError
 from .turns_models import (
     MAX_LONG_TURN_BODY_CHARS,
     MAX_SIDECAR_CONTENT_CHARS,
@@ -135,6 +136,8 @@ def spill_error_http(
     can re-raise unrelated failures unchanged.
     """
     if isinstance(exc, BodyTooLargeError):
+        return 413, exc.envelope
+    if isinstance(exc, CheckpointBodyTooLargeError):
         return 413, exc.envelope
     if isinstance(exc, SidecarContentTooLargeError):
         return 413, sidecar_content_too_large_envelope(body_chars=exc.body_chars)

@@ -10,6 +10,8 @@ from ...checkpoint_auto_stamp_wiring import (
     load_thread_tags,
     maybe_auto_stamp_root_on_checkpoint,
 )
+from ...checkpoint_projection import CheckpointBodyTooLargeError
+from ...checkpoint_projection_wiring import maybe_project_checkpoint_body
 from ...db import close_thread, create_thread, get_thread, normalize_thread_id
 from ...enrollment_guard import EnrollmentTagError
 from ...thread_classification import ThreadClassificationError
@@ -145,7 +147,16 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
             ),
         ) from exc
 
-    final_body = append_sidecar_pointer_line(body.body, sidecar_uri=sidecar.uri)
+    try:
+        turn_body = maybe_project_checkpoint_body(
+            thread=thread_id,
+            subject=body.subject,
+            body=body.body,
+        )
+    except CheckpointBodyTooLargeError as exc:
+        raise HTTPException(status_code=413, detail=exc.envelope) from exc
+
+    final_body = append_sidecar_pointer_line(turn_body, sidecar_uri=sidecar.uri)
     if error_detail := turn_body_limit_error(
         final_body,
         allow_long_body=body.allow_long_body,

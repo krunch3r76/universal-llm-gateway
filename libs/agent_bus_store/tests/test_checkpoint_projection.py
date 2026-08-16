@@ -498,3 +498,206 @@ def test_child_registry_survives_dispatch_link_io_failure(
     assert f"agent-bus:{child_id} · sub_mission · active · turn 1" in body
     assert "_none substantiated_" not in body
 
+
+def _route_test_app(tmp_path, monkeypatch):
+    from agent_bus_store import create_app
+    from agent_bus_store.auth import require_token
+    from fastapi.testclient import TestClient
+
+    cortex_root = tmp_path / "cortex-files"
+    cortex_root.mkdir()
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(cortex_root))
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    app = create_app(db_path=str(tmp_path / "bus.db"))
+    app.dependency_overrides[require_token] = lambda: None
+    return TestClient(app)
+
+
+def test_send_continue_checkpoint_projection_route(tmp_path, monkeypatch) -> None:
+    from unittest.mock import patch
+
+    residue = "Settled: send continue projector wired."
+    projected = (
+        "## Derived (projected at post — do not hand-edit)\n"
+        "derived\n\n"
+        f"## Residue (authored — cap ~800 chars)\n{residue}\n\n"
+        "— RESUME (any seat, no command): load checkpoint-discipline"
+    )
+
+    with patch(
+        "agent_bus_store.routes.threads.send.maybe_project_checkpoint_body",
+        side_effect=lambda *, thread, subject, body: (
+            projected if subject.upper().startswith("CHECKPOINT") else body
+        ),
+    ) as projector:
+        with _route_test_app(tmp_path, monkeypatch) as client:
+            seed = client.post(
+                "/threads/with-turn",
+                json={
+                    "slug": "send-cp-seed",
+                    "from": "cursor",
+                    "to": "web",
+                    "subject": "seed",
+                    "body": "hello",
+                },
+            )
+            assert seed.status_code == 201, seed.text
+            thread_id = seed.json()["thread"]["id"]
+            resp = client.post(
+                "/threads/send",
+                json={
+                    "thread": thread_id,
+                    "from": "cursor",
+                    "to": "web",
+                    "subject": "CHECKPOINT — send continue test",
+                    "body": residue,
+                    "after_turn": 1,
+                },
+            )
+            assert resp.status_code == 201, resp.text
+            projector.assert_called_once()
+            turn = client.get(
+                f"/turns/by-number?thread={thread_id}&turn_number=2"
+            ).json()
+            assert turn["body"] == projected
+
+
+def test_send_new_slug_checkpoint_projection_route(tmp_path, monkeypatch) -> None:
+    with _route_test_app(tmp_path, monkeypatch) as client:
+        resp = client.post(
+            "/threads/send",
+            json={
+                "new_slug": "send-cp-birth",
+                "from": "cursor",
+                "to": "web",
+                "subject": "CHECKPOINT — send birth test",
+                "body": "Settled: birth path projects.",
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        thread_id = resp.json()["thread"]["id"]
+        turn = client.get(
+            f"/turns/by-number?thread={thread_id}&turn_number=1"
+        ).json()
+        body = turn["body"]
+    assert "### Child lanes" in body
+    assert "_none substantiated_" in body
+    assert "**UNPROJECTED**" not in body
+
+
+def test_send_continue_checkpoint_body_too_large_413(tmp_path, monkeypatch) -> None:
+    from unittest.mock import patch
+
+    with patch(
+        "agent_bus_store.routes.threads.send.maybe_project_checkpoint_body",
+        side_effect=lambda **kwargs: (_ for _ in ()).throw(
+            CheckpointBodyTooLargeError(body_chars=9000, limit_chars=8000)
+        ),
+    ):
+        with _route_test_app(tmp_path, monkeypatch) as client:
+            seed = client.post(
+                "/threads/with-turn",
+                json={
+                    "slug": "send-413-seed",
+                    "from": "cursor",
+                    "to": "web",
+                    "subject": "seed",
+                    "body": "hello",
+                },
+            )
+            assert seed.status_code == 201, seed.text
+            thread_id = seed.json()["thread"]["id"]
+            resp = client.post(
+                "/threads/send",
+                json={
+                    "thread": thread_id,
+                    "from": "cursor",
+                    "to": "web",
+                    "subject": "CHECKPOINT — too large",
+                    "body": "x" * 9000,
+                    "after_turn": 1,
+                },
+            )
+            assert resp.status_code == 413, resp.text
+            assert resp.json()["detail"]["code"] == "checkpoint_body_too_large"
+
+
+def test_send_new_slug_checkpoint_body_too_large_413(tmp_path, monkeypatch) -> None:
+    from unittest.mock import patch
+
+    with patch(
+        "agent_bus_store.routes.threads.send_prep.maybe_project_checkpoint_body",
+        side_effect=lambda **kwargs: (_ for _ in ()).throw(
+            CheckpointBodyTooLargeError(body_chars=9000, limit_chars=8000)
+        ),
+    ):
+        with _route_test_app(tmp_path, monkeypatch) as client:
+            resp = client.post(
+                "/threads/send",
+                json={
+                    "new_slug": "send-413-birth",
+                    "from": "cursor",
+                    "to": "web",
+                    "subject": "CHECKPOINT — birth too large",
+                    "body": "x" * 9000,
+                },
+            )
+            assert resp.status_code == 413, resp.text
+            assert resp.json()["detail"]["code"] == "checkpoint_body_too_large"
+
+
+def test_send_non_checkpoint_unchanged(tmp_path, monkeypatch) -> None:
+    plain = "no projection on send continue"
+    with _route_test_app(tmp_path, monkeypatch) as client:
+        seed = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "send-plain-seed",
+                "from": "cursor",
+                "to": "web",
+                "subject": "seed",
+                "body": "hello",
+            },
+        )
+        assert seed.status_code == 201, seed.text
+        thread_id = seed.json()["thread"]["id"]
+        resp = client.post(
+            "/threads/send",
+            json={
+                "thread": thread_id,
+                "from": "cursor",
+                "to": "web",
+                "subject": "plain status",
+                "body": plain,
+                "after_turn": 1,
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        turn = client.get(
+            f"/turns/by-number?thread={thread_id}&turn_number=2"
+        ).json()
+        assert turn["body"] == plain
+
+
+def test_with_turn_checkpoint_projection_route(tmp_path, monkeypatch) -> None:
+    with _route_test_app(tmp_path, monkeypatch) as client:
+        resp = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "with-turn-cp",
+                "from": "cursor",
+                "to": "web",
+                "subject": "CHECKPOINT — with-turn birth",
+                "body": "Settled: with-turn path projects.",
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        thread_id = resp.json()["thread"]["id"]
+        turn = client.get(
+            f"/turns/by-number?thread={thread_id}&turn_number=1"
+        ).json()
+        body = turn["body"]
+    assert "### Child lanes" in body
+    assert "_none substantiated_" in body
+    assert "**UNPROJECTED**" not in body
+
