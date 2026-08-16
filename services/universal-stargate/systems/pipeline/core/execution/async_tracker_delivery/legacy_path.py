@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 
 from universal_logging import get_logger
 
-from .agent_bus_http import _close_thread, _post_turn
+from .agent_bus_http import _close_thread, _fetch_thread_close_context, _post_turn
 from .delivery_events import (
     _build_close_failed_event,
     _build_failed_event,
@@ -104,12 +104,19 @@ async def _deliver_legacy_envelope(
         )
         lifecycle = cfg.get("bus_lifecycle") or record.bus_lifecycle or "ephemeral"
         if lifecycle == "ephemeral":
-            summary = _build_close_summary(record)
+            prior_summary, thread_tags = await _fetch_thread_close_context(
+                thread, url=url, auth_token=auth_token
+            )
+            summary = _build_close_summary(
+                record,
+                prior_summary=prior_summary,
+                tags=thread_tags,
+            )
             close_code, close_text = await _close_thread(
                 url=url,
                 auth_token=auth_token,
                 thread=thread,
-                summary=summary,
+                summary=summary or "",
             )
             if 200 <= close_code < 300:
                 _emit(

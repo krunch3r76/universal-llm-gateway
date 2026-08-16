@@ -172,6 +172,11 @@ refused, names the paths that disagree, and opens the debt anyway. A reasoned
 via `POST /cursor-sdk/branch-discharge`; nothing is deleted unarchived, so
 neither exit loses work.
 
+**Harvest briefing one-liner:** when relaying a Lane-B closeout, name
+``branch=<lane-branch> head=<head_sha>`` and whether land is still owed
+(``land owed`` when `landed=false` ∧ `commits_ahead≥1`, else ``landed`` or
+``discarded`` after discharge).
+
 ### Status claim×measure polarity (arc 6655 / P1)
 
 Polysemous ``partial`` splits into ``partial:work`` vs ``partial:capture`` on

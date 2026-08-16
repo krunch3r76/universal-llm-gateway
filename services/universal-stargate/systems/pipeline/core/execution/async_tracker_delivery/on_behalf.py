@@ -44,7 +44,12 @@ from typing import TYPE_CHECKING
 
 from universal_logging import get_logger
 
-from .agent_bus_http import _close_thread, _fetch_thread_last_turn_from, _post_turn
+from .agent_bus_http import (
+    _close_thread,
+    _fetch_thread_close_context,
+    _fetch_thread_last_turn_from,
+    _post_turn,
+)
 from .constants import _BUS_BRIEFING_RULE_CHARS, _BUS_MAX_BODY_CHARS
 from .delivery_events import (
     _build_close_failed_event,
@@ -242,12 +247,19 @@ async def _post_content_on_behalf(
             ),
         )
         if record.bus_lifecycle == "ephemeral":
-            summary = _build_close_summary(record)
+            prior_summary, thread_tags = await _fetch_thread_close_context(
+                thread, url=url, auth_token=auth_token
+            )
+            summary = _build_close_summary(
+                record,
+                prior_summary=prior_summary,
+                tags=thread_tags,
+            )
             close_code, close_text = await _close_thread(
                 url=url,
                 auth_token=auth_token,
                 thread=thread,
-                summary=summary,
+                summary=summary or "",
             )
             if 200 <= close_code < 300:
                 _emit(event_bus, _build_thread_closed_event(thread=thread))

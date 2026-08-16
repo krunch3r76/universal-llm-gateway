@@ -97,6 +97,27 @@ async def _post_turn(
         return 599, f"transport_error: {exc}"
 
 
+async def _fetch_thread_close_context(
+    thread: str, *, url: str, auth_token: str
+) -> tuple[str | None, list[str]]:
+    """Return ``(summary, tags)`` for ephemeral close composition."""
+    headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
+    try:
+        async with make_async_client(url, timeout=5.0) as client:
+            resp = await client.get(f"/threads/{thread}", headers=headers)
+        if resp.status_code >= 400:
+            return None, []
+        data = resp.json()
+        summary = data.get("summary")
+        tags = list(data.get("tags") or [])
+        return (str(summary) if summary else None), tags
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning(
+            "Thread close-context fetch failed: thread=%s error=%s", thread, exc
+        )
+        return None, []
+
+
 async def _fetch_thread_last_turn_from(
     thread: str, *, url: str, auth_token: str
 ) -> str | None:

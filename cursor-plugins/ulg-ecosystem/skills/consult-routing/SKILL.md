@@ -150,6 +150,23 @@ team_dispatch(op="generate", seat="cursor-sdk", contract="implement", source_ref
 Materializer reads attrs only; spec prose = hash input. Preflight: `entity_get`; `workflow_state ∈ {open,in_progress}`.
 `wrap` = materialize-only. Contract↔source matrix: L3 annex.
 
+## cursor-sdk checkout lane (`lane=` omit matrix)
+
+Optional on `team_dispatch(op=generate|to_thread, seat=cursor-sdk, …)`. Distinct
+from `dispatch_lane` (path-sim routing).
+
+| Caller supplies | GIW selects |
+|---|---|
+| omit `lane`, regime on, in-repo scope | **Lane B** (isolated worktree) |
+| omit `lane`, empty `files_expected`, no existing worktree | **Lane A** (shared checkout) |
+| `nest_under` or `resume_of` parent | inherit parent's lane/worktree |
+| `lane="A"` | **Lane A** (named opt-out of Lane-B default) |
+| `lane="B"` | **Lane B** (requires materialized worktree) |
+
+Stay on one designated tree per arc: reuse when `nest_under`, `resume_of`, or
+`lookup_lane_worktree(thread_id)` already holds a worktree — see `git-posture`
+§ Stay on one designated tree.
+
 ## Abstraction layering (codework lane)
 
 SOT: `abstraction-layering` skill · `/layer`. Route by highest open layer; mechanical-only skips to

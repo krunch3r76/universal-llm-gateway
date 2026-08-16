@@ -13,7 +13,12 @@ Read on:
 - before cursor-sdk implement dispatch or git-integration-worker diagnostics;
 - when handoffs, consults, reviews, or packets touch repo state.
 
-Default substrate: attended Cursor IDE editing and cursor-sdk implement both land on the live shared checkout (default `universal-llm-gateway`). These rules bind unless the operator directs otherwise.
+Default substrate: **attended Cursor IDE** edits on the live shared checkout
+(`GIT_INTEGRATION_SOURCE_REPO`, default `universal-llm-gateway`). **cursor-sdk
+generate** defaults to **Lane B** (isolated worktree on
+`cursor-sdk/lane-{thread}`) when the Lane-B regime is on and scope is in-repo;
+explicit `lane="A"` or out-of-repo scope stays on the shared checkout. These
+rules bind unless the operator directs otherwise.
 
 **Sole-checkout corollary:** this seat assumes one live shared `master`
 working tree and **¬intersecting parallel writers**. Do **not** `git stash`
@@ -63,7 +68,9 @@ when the process has been restarted — the load event reads filesystem source, 
 
 | Stage | What actually runs |
 |---|---|
-| **cursor-sdk dispatch** | Live shared checkout on disk |
+| **cursor-sdk dispatch (Lane B default)** | Isolated Lane-B worktree on disk (`cursor-sdk/lane-{thread}`) |
+| **cursor-sdk dispatch (`lane="A"` or out-of-repo)** | Live shared checkout on disk |
+| **Attended Cursor IDE** | Live shared checkout on disk |
 | **Host services** (`git_integration_worker`, `cortex_api`, `stargate`, `rag`, …) | `sync_restart` respawns a subprocess with `PYTHONPATH` pointed at the checkout |
 | **Gateway** | Bind-mounted source in the container |
 | **MCP** | `docker cp` from workspace into `/app`, then restart — still filesystem source, not `git checkout` |
@@ -96,7 +103,24 @@ Doctrine: `decision:checkout-disk-is-executable`.
 
 | Surface | Where work lands | Git protocol |
 |---|---|---|
-| cursor-sdk + attended Cursor IDE | Live shared checkout (`GIT_INTEGRATION_SOURCE_REPO`, default `universal-llm-gateway`) | No standing workflow. On-disk tree = truth. Commits sporadic; `git diff` unreliable. |
+| cursor-sdk generate (regime on, in-repo) | Lane-B worktree (`cursor-sdk/lane-{thread}`) | Commit on the lane branch; declare `land_disposition` on closeout |
+| cursor-sdk generate (`lane="A"` or out-of-repo) | Live shared checkout | Path-explicit commit on `master` when checkpointing |
+| Attended Cursor IDE | Live shared checkout | No standing workflow. On-disk tree = truth. Commits sporadic; `git diff` unreliable. |
+
+## Stay on one designated tree (Lane B)
+
+Reuse the **same** Lane-B worktree when **any** predicate holds:
+
+| Predicate | Meaning |
+|---|---|
+| `nest_under` | Nested dispatch inherits the parent's worktree |
+| `resume_of` | Resume dispatch inherits the parent's worktree |
+| same `thread_id` + `lookup_lane_worktree` | Prior dispatch on this lane already minted a tree |
+
+**One arc, one tree** — sibling dispatches on the same arc share a branch/worktree
+unless the packet explicitly starts fresh. **One todo, one tree** is the default
+for unrelated todos. Same-file parallel work on one arc defaults to
+`nest_under`/reuse, not two trees plus land-time merge.
 
 ## `git_*` MCP (headless only)
 

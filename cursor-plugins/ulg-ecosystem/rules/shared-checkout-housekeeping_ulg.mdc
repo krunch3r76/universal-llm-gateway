@@ -19,6 +19,8 @@ trigger_match_terms:
 
 **Invariant:** `¬attribute(path, this_session ∨ this_dispatch) ⇒ ¬delete(path) ∧ ¬revert(path)`.
 On Lane-A sole shared `master`, untracked / dirty / “noise” is often **parallel WIP** — not disposable.
+Lane-B cursor-sdk worktrees carry their own dirty state on `cursor-sdk/lane-{thread}` —
+do not `git clean` or delete paths there without session attribution either.
 
 Doctrine: Use the `git-posture` skill (sole-checkout corollary). Friction class: a:25030.
 

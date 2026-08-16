@@ -27,6 +27,9 @@ from services.git_integration_worker.cursor_sdk_branch_debt import (
     discharge_branch_debt,
     get_branch_debt,
 )
+from services.git_integration_worker.cursor_sdk_branch_debt_tags import (
+    remove_land_required_tag,
+)
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_lane_b_discharged,
 )
@@ -221,6 +224,7 @@ def _finish(
 
     debt = get_branch_debt(branch_name=branch_name)
     discharge_branch_debt(branch_name=branch_name, verb=verb, note=note)
+    remove_land_required_tag(thread_id=debt.thread_id if debt is not None else None)
     _clear_disposition(branch_name)
     emit_sdk_lane_b_discharged(
         branch=branch_name,

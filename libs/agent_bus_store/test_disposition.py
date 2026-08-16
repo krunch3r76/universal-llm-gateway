@@ -17,6 +17,7 @@ from agent_bus_store.db.connection import connect
 from agent_bus_store.db.threads import set_thread_tags
 from agent_bus_store.disposition import (
     append_bus_lifecycle_tags,
+    land_owed_for_summary,
     maybe_auto_close_after_dispatch_terminate,
     resolve_bus_lifecycle,
     summary_for_auto_close,
@@ -43,6 +44,108 @@ def test_summary_for_auto_close_preserves_so_what() -> None:
     assert summary_for_auto_close("DONE — ULG: already composed") == (
         "DONE — ULG: already composed"
     )
+
+
+def test_summary_for_auto_close_land_owed_from_tag() -> None:
+    so_what = "ULG: branch still on lane-B"
+    assert (
+        summary_for_auto_close(so_what, tags=["land_required"])
+        == f"LAND OWED — {so_what}"
+    )
+    assert (
+        summary_for_auto_close(f"DONE — {so_what}", tags=["land_required"])
+        == f"LAND OWED — {so_what}"
+    )
+
+
+def test_summary_for_auto_close_land_owed_from_closeout_meter() -> None:
+    so_what = "ULG: unlanded lane-B capture"
+    assert (
+        summary_for_auto_close(so_what, landed=False, commits_ahead=2)
+        == f"LAND OWED — {so_what}"
+    )
+
+
+def test_summary_for_auto_close_stays_done_without_debt() -> None:
+    so_what = "ULG: landed cleanly"
+    assert (
+        summary_for_auto_close(so_what, landed=True, commits_ahead=1)
+        == f"DONE — {so_what}"
+    )
+    assert (
+        summary_for_auto_close(so_what, landed=False, commits_ahead=0)
+        == f"DONE — {so_what}"
+    )
+
+
+def test_land_owed_for_summary() -> None:
+    assert land_owed_for_summary(tags=["land_required"]) is True
+    assert land_owed_for_summary(landed=False, commits_ahead=1) is True
+    assert land_owed_for_summary(landed=True, commits_ahead=1) is False
+    assert land_owed_for_summary(landed=False, commits_ahead=0) is False
+
+
+def test_add_land_required_tag_on_closed_thread(bus_db) -> None:
+    """F2: additive tags must succeed after the thread is closed."""
+    thread_row, *_ = create_thread_with_turn(
+        slug="closed-tag",
+        from_agent="dispatch",
+        to_agent="cursor-sdk",
+        subject="implement",
+        body="pointer",
+    )
+    thread_id = thread_row["id"]
+    bus_db.patch(f"/threads/{thread_id}", json={"status": "closed"})
+    resp = bus_db.patch(
+        f"/threads/{thread_id}",
+        json={"add_tags": ["land_required"]},
+    )
+    assert resp.status_code == 200
+    assert "land_required" in (resp.json().get("tags") or [])
+
+
+def test_dispatch_terminate_land_owed_summary(bus_db) -> None:
+    so_what = "ULG: lane-B residue visible in pager"
+    thread_row, *_ = create_thread_with_turn(
+        slug="sdk-land-owed",
+        from_agent="dispatch",
+        to_agent="cursor-sdk",
+        subject="implement",
+        body="packet pointer",
+        summary=so_what,
+        lifecycle_state="pending",
+    )
+    thread_id = thread_row["id"]
+    with connect() as conn:
+        set_thread_tags(
+            conn,
+            thread_id,
+            append_bus_lifecycle_tags(["land_required"]),
+        )
+    admit_dispatch(
+        thread_id=thread_id,
+        execution_id="exec-land-owed",
+        pipeline_id="cursor-sdk-generate",
+    )
+    bus_db.post(
+        "/turns",
+        json={
+            "thread": thread_id,
+            "from": "cursor-sdk",
+            "to": "dispatch",
+            "subject": "cursor-sdk dispatch closeout",
+            "body": '{"landed": false, "commits_ahead": 1, "status": "partial"}',
+            "after_turn": 1,
+        },
+    )
+    resp = bus_db.post(
+        f"/threads/{thread_id}/dispatch-terminate",
+        json={"terminal_status": "completed", "execution_id": "exec-land-owed"},
+    )
+    assert resp.status_code == 200
+    detail = resp.json()
+    assert detail["status"] == ThreadStatus.CLOSED
+    assert detail["summary"] == f"LAND OWED — {so_what}"
 
 
 def test_summary_for_auto_close_rejects_machine_junk() -> None:
