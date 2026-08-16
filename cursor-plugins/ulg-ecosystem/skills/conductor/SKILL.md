@@ -24,8 +24,14 @@ related_skills:
 # Conductor — cursor-sdk as mission operator
 
 **Conductor** = the cursor-sdk seat that **operates** a continuity root (or its
-work child): owns the scoreboard, nests specialist legs, and pages the human
-only for true operator-only gates.
+work child) **to completion**: owns the scoreboard, nests specialist legs,
+lands its own verified work, and pages the human only for true operator-only
+gates.
+
+**Default is run, don't ask.** Once admitted, the conductor drives every open
+G-row through to the scoreboard's own completion criterion in one continuous
+commission, and lands its own verified Lane-B branch without a second merge
+ask — the admit is standing authorization for both (§ Run to completion).
 
 Not a model name. Not `mission-operator` (that skill is the formal
 `operator_proxy` DIRECTIVE/CLOSEOUT grammar, often CDP/life). Conductor is the
@@ -59,9 +65,35 @@ auto-prepended by GIW for `light-bounded`; that does **not** substitute for
 conductor(root) ⇒
   packet(six_block) ∧ seat=cursor-sdk ∧ cost_aware_model_tier
   ∧ nest(specialists) ∧ ¬page_human(ranking)
+  ∧ drive(all_open_G_rows → completion) ∧ ¬pause_for_interim_continue_ack
+  ∧ land(own_verified_lane_B_branch) ⇐ admit_is_standing_merge_ack
   ∧ needs_attended ⇔ operator_only_gate
+  ∧ checkout(lane_B) unless named(lane_A_reason)
   ∧ premium_conductor ⇒ announce(why)  # inform-then-proceed; ¬ default
 ```
+
+## Run to completion (binding default)
+
+The packet admit is a **standing** authorization for the whole mission, not a
+per-G-row one. Default posture once running:
+
+- **¬ pause between G-rows for a "continue?" ack.** Drive from the first OPEN
+  G-row to the last in one continuous commission. CHECKPOINT is a progress
+  report, not a waypoint that blocks on a reply before the next G-row starts.
+- **¬ a second gate on the mission's own merge.** `git-posture` gates
+  `git_land` / `git_integrate` on "operator directs a merge" — for a conductor
+  mission, admitting the packet **is** that direction, standing for the
+  mission's own Lane-B branch. Land on green (tests pass, AC met) as part of
+  *completion*; do not round-trip for a separate "ok to merge?"
+- **Stop only for a true operator-only gate** — credentials, an irreversible
+  non-revertible act, or a genuine unranked fork. Forks go to the judgment
+  ladder (independent binder — Fable / Opus / terra) first; `needs-attended`
+  is for the human-only remainder, not for "should I proceed" or "should I
+  merge."
+- **Named exception overrides the default.** If a mission genuinely needs the
+  merge held for review (destructive scope, force-push, cross-repo blast
+  radius), name that in the packet `<invariants>` — silence means rubber-
+  stamped, not the other way around.
 
 ## When
 
@@ -125,7 +157,7 @@ dominated by Sonnet 5 on every price tier, effort caps below `xhigh`).
 | Nested **investigate** | Forensic / AC bind — pick tier by judgment density |
 | Nested **Composer** `contract=implement` | Mechanical G-row after densify; `nest_under` when lease held |
 | Independent binder | Ladder step-2 when conductor unsure (weight/family) — ¬ self-ratify |
-| Human | Credentials, kill tabs, irreversible acts — `needs-attended` + one recommended answer |
+| Human | Credentials, kill tabs, irreversible acts — `needs-attended` + one recommended answer. **¬** interim "continue?" or "ok to merge?" — both rubber-stamped by the admit (§ Run to completion) |
 
 ## Packet
 
@@ -135,7 +167,10 @@ set `packet_kind: conductor` and `role_name: conductor`.
 Required in `<scope>` / `<invariants>`:
 - **`Use the conductor skill — …`** (continuity-lead required-skill gate — see Audience)
 - Root thread id + charter + scoreboard URIs
-- Checkout regime (**Lane A** vs **Lane B**) — operator-bound, not inferred
+- Checkout regime: **Lane B is the standing default** — state it explicitly
+  (`lane="B"`; an *omitted* `lane=` still resolves to Lane A at GIW, so
+  default ≠ "leave the param off"). Lane A only on a named reason (trivial
+  single-locus mechanical, or scope genuinely incompatible with a worktree)
 - Incident/sibling lanes (cite ≠ convert)
 - Forbidden verbs (e.g. no `request` on a stood-down lane)
 - Judgment vs human rule (above)
@@ -162,7 +197,10 @@ team_dispatch(
   packet_path=tmp/reviews/{slug}-conductor-packet.md,
   dispatch_thread_id={root},      # work child when G-rows live there (e.g. 7286)
   model_knobs={effort: max, thinking: "true", context: "1m"},
-  lane="B",                       # when regime is Lane B — REQUIRED, not optional
+  lane="B",                       # DEFAULT — always pass explicitly; an omitted
+                                   # lane= resolves to Lane A at GIW, not "no
+                                   # preference". lane="A" only on a named reason
+                                   # (see Packet § Checkout regime).
   # skills=["conductor"]  # optional document; ¬ mounted on cursor-sdk — Use-line wins
 )
 ```
@@ -171,16 +209,26 @@ Preflight: packet Use-line present ∧ `manage(busy_status)` — if the chosen l
 write lease is held by another dispatch, expect **queued**; record holder on the
 root CHECKPOINT. ¬ nest_under an unrelated mission's lease.
 
-**Post-admit check (binding when Lane B):** quote `active_by_lane` / `holder_source_repo`
-from `busy_status`. Expected Lane B: `B≥1`, worktree under
+**Post-admit check (binding — default regime is Lane B):** quote `active_by_lane` /
+`holder_source_repo` from `busy_status`. Expected: `B≥1`, worktree under
 `ulg-arc-worktrees/lane-*`, branch `cursor-sdk/lane-*`. If you see `A=1` and
-`holder_source_repo=…/universal-llm-gateway` (shared master), the admit landed
-on the wrong regime — stop nesting mechanical work and correct before edits.
+`holder_source_repo=…/universal-llm-gateway` (shared master) without a named
+Lane-A reason on the packet, the admit landed on the wrong regime — stop
+nesting mechanical work and correct before edits.
 
 When admitting **T3 Opus**: one announce line (`Conductor T3: <trigger> — <why>`),
 then proceed (`lean-context-dispatch-first` inform-then-proceed).
 
 ## Gotchas
+
+### When Lane A is still the right call
+
+Lane B is the default, not the only option. Name Lane A explicitly, one line
+in packet `<invariants>`, when **either**: the mission is T0-mechanical — a
+single locus, self-contained, nothing else plausibly touching that file mid-
+mission — **or** the scope is structurally incompatible with a worktree (an
+absolute mount path or non-repo URI that `CURSOR_LANE_B_SCOPE_REFUSED` cannot
+be resolved for, below). Absent a named reason, admit Lane B.
 
 ### `CURSOR_LANE_B_SCOPE_REFUSED` ≠ license to omit `lane=`
 
@@ -195,7 +243,7 @@ implementation on **two checkouts** — master vs working branch split.
 |---|---|
 | Omit `lane=` to "get past" the refusal | Fix the packet / derived `files_expected` so every path is repo-relative under `source_repo`, then re-admit with `lane="B"` |
 | Proceed after admit without reading `active_by_lane` | Confirm Lane B worktree before nesting Composer or editing |
-| Land by `git checkout <branch> -- <paths>` onto master | Merge the lane branch via operator-gated `git_land` (see `git-posture`) |
+| Land by `git checkout <branch> -- <paths>` onto master | Merge the lane branch via `git_land` (see `git-posture`) — the mission's own admit is the standing merge ack; land on green, don't re-ask |
 
 Scope refuse usually means an absolute mount path, `cortex://` / non-repo URI, or
 a path outside the gateway checkout leaked into machine-derived file scope.
@@ -209,8 +257,9 @@ branch or fall onto master.
 ## Interactive entry
 
 Command `/conductor` (plugin): orient → ask establishing questions (incl. **model
-tier**) → draft charter/scoreboard/packet → confirm → admit. Skill body does not
-re-ask when the operator already bound the answers in chat.
+tier**; checkout regime pre-filled **Lane B**, confirm or override to Lane A) →
+draft charter/scoreboard/packet → confirm → admit. Skill body does not re-ask
+when the operator already bound the answers in chat.
 
 ## Composes with
 
@@ -222,7 +271,7 @@ re-ask when the operator already bound the answers in chat.
 | `handoff-packet-authoring` | Six-block authoring |
 | `bind-then-compose-dispatch` | G5 mechanical nest |
 | `judgment-escalation-ladder` | Unsure → binder, not human |
-| `git-posture` | Lane-B branch land = merge/`git_land`; ¬ path-copy onto master |
+| `git-posture` | Lane-B branch land = merge/`git_land`; ¬ path-copy onto master. Conductor admit = standing "operator directs a merge" for its own branch (§ Run to completion) — ¬ a second gate |
 | `lean-context-dispatch-first` | Tier ladder + Opus inform-then-proceed |
 | `consult-routing` | Model split / non-primary gate |
 
@@ -241,3 +290,7 @@ re-ask when the operator already bound the answers in chat.
 | Drop `lane="B"` after `CURSOR_LANE_B_SCOPE_REFUSED` | Fix scope paths; re-admit with `lane="B"` |
 | Conductor on Lane A while G-row code is on `cursor-sdk/lane-*` | One regime: conductor + nests share the Lane-B worktree/branch |
 | Opus-by-default for every conductor | Tier table; T1 Sonnet 5 @ `max` default; Opus only with trigger |
+| Omit `lane=` assuming that means "no preference" | Lane B is the default — pass `lane="B"` explicitly; name Lane A only with a reason |
+| Conductor pauses after a G-row to ask "continue?" | Drive to completion in one commission; report via CHECKPOINT, don't wait for a reply |
+| Treat the mission's own `git_land` as a second approval gate | Admit is the standing merge ack; land on green + AC met (§ Run to completion) |
+| Escalate "ok to merge?" to the human mid-mission | Land it; escalate only genuinely operator-only acts |

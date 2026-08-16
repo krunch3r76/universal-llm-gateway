@@ -3,6 +3,13 @@ Conductor — cursor-sdk as **mission operator** of a continuity root.
 Interactive setup: bring this chat up to speed, ask establishing questions, then
 author the six-block conductor packet and (on confirm) admit it.
 
+**Default posture (binding): run to completion, merge rubber-stamped.** Once
+admitted, the conductor drives every open G-row to completion in one
+commission and lands its own verified Lane-B branch without a second merge
+ask — the admit itself is the standing authorization for both (skill § Run to
+completion). Q6 below is where an operator names an exception, not where they
+grant the default.
+
 **Skill SOT:** Use the `conductor` skill. This command is the attended wrapper —
 ¬ re-derive nesting / Lane A·B / judgment ladder / cost tiers here.
 
@@ -37,17 +44,23 @@ Ask in one batch; skip any already bound in chat:
 2. **Root** — existing `agent-bus:N` or birth new `orchestrator_continuity` root?
 3. **Incident / sibling lanes** — cite-only ids (e.g. stood-down proxy lane); any
    `¬ request` / pause markers?
-4. **Checkout regime** — Lane A (shared master) or Lane B (`cursor-sdk/lane-*`)?
+4. **Checkout regime** — standing default is **Lane B** (`cursor-sdk/lane-*`);
+   confirm, or override to Lane A (shared master) with a named reason.
 5. **G-rows** — paste scoreboard or list OPEN rows + Next-pickup.
-6. **Human gates** — anything that must stay operator-only (tabs, creds)?
+6. **Human gates** — anything that must stay operator-only (tabs, creds,
+   genuinely irreversible acts)? Default is **none beyond that** — the
+   conductor drives every G-row and lands its own verified merge without a
+   separate ask (skill § Run to completion). Name an exception here if this
+   mission needs its merge held for review.
 7. **Conductor model tier** — accept the standing default, or pin
    `composer` / `gpt-5.6-terra` / `claude-opus-5` (+ effort). Standing default:
    **T1 `cursor/claude-sonnet-5` @ `effort=max`** (`thinking=true`, `context=1m`).
    Opus is expensive — require a named T3 trigger. ¬ Grok, ¬ Sonnet 4.6 on this seat.
 8. **Admit now?** — draft packet only vs admit after confirm.
 
-Do **not** invent Lane B for an arc that historically ran Lane A (or vice versa)
-without an explicit answer to Q4.
+Default to Lane B on Q4 absent an operator override; do **not** silently carry
+Lane A forward just because a prior ring in this arc happened to run Lane A —
+that still needs a named reason, not historical inertia.
 
 ### 3 — Establish surfaces
 
@@ -89,7 +102,8 @@ team_dispatch(
   packet_path=tmp/reviews/{slug}-conductor-packet.md,
   dispatch_thread_id={root},
   model_knobs={effort: max, thinking: "true", context: "1m"},
-  lane="B",                    # when Q4 = Lane B — REQUIRED; see skill Gotchas
+  lane="B",                    # DEFAULT (Q4) — pass explicitly even when
+                                # unopposed; omitting resolves to Lane A at GIW
 )
 ```
 
@@ -103,7 +117,10 @@ If T3 Opus: announce inform-then-proceed trigger line. Post root CHECKPOINT with
 ### 6 — Hand back
 
 Poll hint for the worker. Lead does not steal G-rows while conductor is active
-(`dispatch-in-flight-supremacy`). Codify residuals on the root entity.
+(`dispatch-in-flight-supremacy`). **Do not expect an interim check-in** — the
+conductor runs every G-row to completion and lands its own verified merge by
+default (skill § Run to completion); poll for the terminal CHECKPOINT /
+closeout, not a mid-mission pause. Codify residuals on the root entity.
 
 ## Worked example
 
