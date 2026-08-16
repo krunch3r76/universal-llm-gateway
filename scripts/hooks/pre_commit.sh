@@ -27,4 +27,5 @@ git add docs/event-contracts.md 2>/dev/null || true
 "$PYTHON" scripts/check-rag-events-imports.py --staged || exit 1
 "$PYTHON" scripts/lint-fastapi-annotations.py --staged || exit 1
 bash scripts/agent-surface-check --openapi-only || exit 1
+"$PYTHON" scripts/check-agent-bus-standing.py || exit 1
 "$PYTHON" scripts/cortex/run_skill_git_guard.py || exit 1

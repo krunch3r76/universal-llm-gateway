@@ -105,7 +105,7 @@ needs operator auth (`session-abort-authorization`). Spec:
 | Event Service | `services/event-service/README.md` | `docs/event-service.md`, `cortex://notes/system/specs/event-service.md` |
 | MCP Server | `services/mcp-server/README.md` | `docs/mcp-integration.md` |
 | Cortex API | — | `cortex-essentials.mdc` (parent), `cortex-deep-ref.mdc` (parent, on-demand) |
-| Agent Bus | `services/agent-bus/README.md` | — |
+| Agent Bus | `services/agent-bus/README.md` | `docs/architecture/appendices/libraries.md`, `agent_skill:agent-bus-discipline` |
 
 ## Scripts (CRITICAL)
 

@@ -163,6 +163,7 @@ README_REVISED.md
 !services/rag/README.md
 !services/universal_cloud_proxy/README.md
 !services/mcp-server/README.md
+!services/agent-bus/README.md
 !services/universal-stargate/systems/pipeline/README.md
 !services/universal-stargate/systems/federation/README.md
 !agent-surface/
