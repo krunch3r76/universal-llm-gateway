@@ -25,14 +25,9 @@ from services.git_integration_worker.cursor_sdk_branch_archive import (
     archive_branch,
     archive_tag_name,
 )
-from services.git_integration_worker.cursor_sdk_branch_debt_tags import (
-    LAND_REQUIRED_TAG,
-    add_land_required_tag,
-    remove_land_required_tag,
-)
 from services.git_integration_worker.cursor_sdk_branch_debt import (
-    ensure_debt_schema,
     discharge_branch_debt,
+    ensure_debt_schema,
     get_branch_debt,
     lane_hygiene_snapshot,
     list_open_debts,
@@ -41,6 +36,11 @@ from services.git_integration_worker.cursor_sdk_branch_debt import (
 from services.git_integration_worker.cursor_sdk_branch_debt_escalation import (
     debt_admit_refusal,
     escalate_aged_debts,
+)
+from services.git_integration_worker.cursor_sdk_branch_debt_tags import (
+    LAND_REQUIRED_TAG,
+    add_land_required_tag,
+    remove_land_required_tag,
 )
 from services.git_integration_worker.cursor_sdk_branch_discharge import (
     discharge_discard,
@@ -52,12 +52,12 @@ from services.git_integration_worker.cursor_sdk_branch_terminal import (
     settle_lane_branch,
 )
 from services.git_integration_worker.cursor_sdk_packet import resolve_prompt_preamble
+from services.git_integration_worker.cursor_sdk_worktree_prune import (
+    _delete_orphan_branch,
+)
 from services.git_integration_worker.cursor_sdk_worktree_reconcile import (
     list_git_worktrees,
     reconcile_unregistered_worktrees,
-)
-from services.git_integration_worker.cursor_sdk_worktree_prune import (
-    _delete_orphan_branch,
 )
 
 
