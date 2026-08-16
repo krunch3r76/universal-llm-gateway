@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Literal
 
@@ -43,6 +44,8 @@ def body_has_disposition_type(body: str) -> bool:
 _LIFECYCLE_EPHEMERAL = "bus_lifecycle:ephemeral"
 _LIFECYCLE_PERSISTENT = "bus_lifecycle:persistent"
 _DONE_PREFIX = "DONE — "
+_LAND_OWE_PREFIX = "LAND OWED — "
+_LAND_REQUIRED_TAG = "land_required"
 # Machine close one-liners that must never become standing so-what titles
 # (pager_notify / bus_scan prefix SMS with ThreadDetail.summary).
 _MACHINE_CLOSE_MARKERS = (
@@ -50,6 +53,7 @@ _MACHINE_CLOSE_MARKERS = (
     "auto-closed (close-on-read)",
 )
 _DONE_STRIP_RE = re.compile(r"(?i)^DONE\s*[—\-:]?\s*")
+_LAND_OWE_STRIP_RE = re.compile(r"(?i)^LAND\s+OWED\s*[—\-:]?\s*")
 
 
 def is_machine_close_summary(summary: str | None) -> bool:
@@ -60,22 +64,103 @@ def is_machine_close_summary(summary: str | None) -> bool:
     return any(marker in text for marker in _MACHINE_CLOSE_MARKERS)
 
 
-def summary_for_auto_close(prior: str | None) -> str | None:
+def land_owed_for_summary(
+    *,
+    tags: list[str] | None = None,
+    landed: bool | None = None,
+    commits_ahead: int | None = None,
+) -> bool:
+    """True when auto-close must prefix ``LAND OWED —`` instead of ``DONE —``."""
+    if tags and _LAND_REQUIRED_TAG in tags:
+        return True
+    return landed is False and (commits_ahead or 0) >= 1
+
+
+def _compose_auto_close_prefix(*, land_owed: bool) -> str:
+    return _LAND_OWE_PREFIX if land_owed else _DONE_PREFIX
+
+
+def _strip_auto_close_prefix(text: str) -> str:
+    cleaned = _LAND_OWE_STRIP_RE.sub("", text).strip()
+    return _DONE_STRIP_RE.sub("", cleaned).strip()
+
+
+def _closeout_land_meter_from_turn(body: str | None) -> tuple[bool | None, int | None]:
+    """Best-effort parse of structured closeout ``landed`` / ``commits_ahead``."""
+    raw = (body or "").strip()
+    if not raw:
+        return None, None
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError):
+        return None, None
+    if not isinstance(payload, dict):
+        return None, None
+    landed = payload.get("landed")
+    commits_raw = payload.get("commits_ahead")
+    commits_ahead: int | None
+    if commits_raw is None:
+        commits_ahead = None
+    else:
+        try:
+            commits_ahead = int(commits_raw)
+        except (TypeError, ValueError):
+            commits_ahead = None
+    landed_bool = landed if isinstance(landed, bool) else None
+    return landed_bool, commits_ahead
+
+
+def _closeout_land_meter_from_turns(
+    turns: list[dict[str, Any]],
+) -> tuple[bool | None, int | None]:
+    """Read land meter from the latest cursor-sdk closeout turn, if any."""
+    for turn in reversed(turns):
+        from_agent = str(turn.get("from_agent") or "")
+        if normalize_bus_address(_dispatch_base_seat(from_agent)) != "cursor-sdk":
+            continue
+        if int(turn.get("turn_number") or 0) < 2:
+            continue
+        landed, commits_ahead = _closeout_land_meter_from_turn(
+            str(turn.get("body") or "")
+        )
+        if landed is not None or commits_ahead is not None:
+            return landed, commits_ahead
+    return None, None
+
+
+def summary_for_auto_close(
+    prior: str | None,
+    *,
+    tags: list[str] | None = None,
+    landed: bool | None = None,
+    commits_ahead: int | None = None,
+) -> str | None:
     """Preserve standing so-what on auto-close; never write machine junk alone.
 
     Returns ``None`` so ``close_thread`` leaves the DB ``summary`` column
     unchanged (it only writes when the arg is not None). Real so-what titles
-    become ``DONE — {so_what}``.
+    become ``DONE — {so_what}``, or ``LAND OWED — {so_what}`` when branch debt
+    is open or the closeout reports ``landed=false`` with ``commits_ahead>=1``.
     """
     prior = (prior or "").strip()
     if not prior or is_machine_close_summary(prior):
         return None
-    if prior.startswith(_DONE_PREFIX):
+    land_owed = land_owed_for_summary(
+        tags=tags,
+        landed=landed,
+        commits_ahead=commits_ahead,
+    )
+    prefix = _compose_auto_close_prefix(land_owed=land_owed)
+    if prior.startswith(prefix):
         return prior
-    cleaned = _DONE_STRIP_RE.sub("", prior).strip()
+    if not land_owed and prior.startswith(_DONE_PREFIX):
+        return prior
+    if land_owed and prior.startswith(_LAND_OWE_PREFIX):
+        return prior
+    cleaned = _strip_auto_close_prefix(prior)
     if not cleaned or is_machine_close_summary(cleaned):
         return None
-    return f"{_DONE_PREFIX}{cleaned}"
+    return f"{prefix}{cleaned}"
 
 
 def _dispatch_base_seat(agent: str) -> str:
@@ -174,7 +259,13 @@ def maybe_auto_close_after_dispatch_terminate(
     if not _has_delivered_result_turn(turns):
         return None
     # Preserve standing so-what; ¬ wipe with machine one-liner (pager reads summary).
-    summary = summary_for_auto_close(thread.get("summary"))
+    landed, commits_ahead = _closeout_land_meter_from_turns(turns)
+    summary = summary_for_auto_close(
+        thread.get("summary"),
+        tags=tags,
+        landed=landed,
+        commits_ahead=commits_ahead,
+    )
     # Leave the closeout turn unread so wait()->fetch_unread consumers still
     # surface it; status=closed already halts further work on the thread.
     return close_thread(thread_id, summary=summary, mark_all_read=False)
@@ -204,5 +295,11 @@ def maybe_auto_close_after_implement_handoff_reply(
         return None
     if normalize_bus_address(from_agent) != normalize_bus_address(implement_seat):
         return None
-    summary = summary_for_auto_close(thread.get("summary"))
+    landed, commits_ahead = _closeout_land_meter_from_turns(turns)
+    summary = summary_for_auto_close(
+        thread.get("summary"),
+        tags=tags,
+        landed=landed,
+        commits_ahead=commits_ahead,
+    )
     return close_thread(thread_id, summary=summary, mark_all_read=False)

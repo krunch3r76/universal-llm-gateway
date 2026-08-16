@@ -67,12 +67,35 @@ def _build_subject(record: PipelineExecutionRecord, override: str | None) -> str
     return f"async-dispatch {record.pipeline} {record.status}"
 
 
-def _build_close_summary(record: PipelineExecutionRecord) -> str:
+def _build_close_summary(
+    record: PipelineExecutionRecord,
+    *,
+    prior_summary: str | None = None,
+    tags: list[str] | None = None,
+) -> str | None:
     """Auto-generate a close summary from terminal record state.
 
-    Branches on status so cancelled/failed threads are not misread as
-    clean completions in the thread audit trail.
+    When *prior_summary* carries a standing so-what, preserve it via
+    ``summary_for_auto_close`` (including ``LAND OWED —`` when branch debt
+    or unlanded Lane-B meters apply). Otherwise fall back to a machine
+    status one-liner from the execution record.
     """
+    from agent_bus_store.disposition import (
+        _closeout_land_meter_from_turn,
+        summary_for_auto_close,
+    )
+
+    content = record.result.content if record.result is not None else ""
+    landed, commits_ahead = _closeout_land_meter_from_turn(content)
+    composed = summary_for_auto_close(
+        prior_summary,
+        tags=tags,
+        landed=landed,
+        commits_ahead=commits_ahead,
+    )
+    if composed is not None:
+        return composed
+
     result = record.result
     error = record.error
     duration = result.duration_s if result is not None else None

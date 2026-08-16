@@ -324,7 +324,10 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                     "Distinct from dispatch_lane (path-sim routing). "
                     "cursor-sdk-seat-only: valid only for seat='cursor-sdk' "
                     "generate/to_thread; other seats → 422 lane_sdk_only. "
-                    "Omit for default regime/scope selection."
+                    "Omit matrix: regime on + in-repo scope → B; empty "
+                    "files_expected with no existing worktree → A; "
+                    "nest_under/resume_of inherit parent lane/worktree; "
+                    "lane='A' is the named opt-out from Lane-B default."
                 ),
             ),
         ] = None,
@@ -594,7 +597,10 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         ``lane_sdk_only``. ``lane="B"`` requires a materialized worktree
         (minted or inherited from ``nest_under`` / resume parent); otherwise
         GIW returns 422 ``CURSOR_LANE_B_WORKTREE_MISSING`` — it does not
-        relabel the admit as Lane A. Omit for default ``select_lane`` behavior.
+        relabel the admit as Lane A. **Omit matrix:** regime on + in-repo
+        scope → Lane B; empty ``files_expected`` with no existing worktree →
+        Lane A; ``nest_under`` / ``resume_of`` inherit parent lane/worktree;
+        ``lane="A"`` is the named opt-out from the Lane-B default.
         """
         prompt_input_err = validate_inline_prompt_inputs(
             op, contract, packet_path, source_ref, prompt, sidecar_ref

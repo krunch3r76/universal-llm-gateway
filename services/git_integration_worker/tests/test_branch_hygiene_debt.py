@@ -26,8 +26,8 @@ from services.git_integration_worker.cursor_sdk_branch_archive import (
     archive_tag_name,
 )
 from services.git_integration_worker.cursor_sdk_branch_debt import (
-    ensure_debt_schema,
     discharge_branch_debt,
+    ensure_debt_schema,
     get_branch_debt,
     lane_hygiene_snapshot,
     list_open_debts,
@@ -36,6 +36,11 @@ from services.git_integration_worker.cursor_sdk_branch_debt import (
 from services.git_integration_worker.cursor_sdk_branch_debt_escalation import (
     debt_admit_refusal,
     escalate_aged_debts,
+)
+from services.git_integration_worker.cursor_sdk_branch_debt_tags import (
+    LAND_REQUIRED_TAG,
+    add_land_required_tag,
+    remove_land_required_tag,
 )
 from services.git_integration_worker.cursor_sdk_branch_discharge import (
     discharge_discard,
@@ -47,12 +52,12 @@ from services.git_integration_worker.cursor_sdk_branch_terminal import (
     settle_lane_branch,
 )
 from services.git_integration_worker.cursor_sdk_packet import resolve_prompt_preamble
+from services.git_integration_worker.cursor_sdk_worktree_prune import (
+    _delete_orphan_branch,
+)
 from services.git_integration_worker.cursor_sdk_worktree_reconcile import (
     list_git_worktrees,
     reconcile_unregistered_worktrees,
-)
-from services.git_integration_worker.cursor_sdk_worktree_prune import (
-    _delete_orphan_branch,
 )
 
 
@@ -555,6 +560,74 @@ def test_active_worktree_is_left_alone(repo: Path, tmp_path: Path) -> None:
     )
     assert (reconciled, surfaced) == (0, 0)
     assert tree.exists()
+
+
+def test_settle_open_debt_adds_land_required_tag(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def _fake_add(*, thread_id: str | None) -> bool:
+        calls.append({"thread_id": thread_id})
+        return True
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_branch_terminal.add_land_required_tag",
+        _fake_add,
+    )
+    tip = _branch_with_change(
+        repo, branch="cursor-sdk/lane-7421", path="x.py", content="x\n"
+    )
+    settlement = settle_lane_branch(
+        source_repo=repo,
+        branch_name="cursor-sdk/lane-7421",
+        thread_id="7421",
+        dispatch_id="d-7421",
+        closeout_text="status: partial",
+        commits_ahead=1,
+        landed=False,
+        head_sha=tip,
+        files=["x.py"],
+    )
+    assert settlement.outcome == "debt_opened"
+    assert calls == [{"thread_id": "7421"}]
+
+
+def test_discharge_removes_land_required_tag(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def _fake_remove(*, thread_id: str | None) -> bool:
+        calls.append({"thread_id": thread_id})
+        return True
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_branch_discharge.remove_land_required_tag",
+        _fake_remove,
+    )
+    tip = _branch_with_change(
+        repo, branch="cursor-sdk/lane-7422", path="y.py", content="y\n"
+    )
+    open_branch_debt(
+        branch_name="cursor-sdk/lane-7422",
+        thread_id="7422",
+        dispatch_id="d-7422",
+        tip_sha=tip,
+        files=["y.py"],
+    )
+    (repo / "y.py").write_text("y\n", encoding="utf-8")
+    _git("add", "y.py", cwd=repo)
+    _git("commit", "-m", "land y", cwd=repo)
+    result = discharge_landed(repo=repo, branch_name="cursor-sdk/lane-7422")
+    assert result.discharged is True
+    assert calls == [{"thread_id": "7422"}]
+
+
+def test_land_required_tag_helpers_no_thread() -> None:
+    assert add_land_required_tag(thread_id=None) is False
+    assert remove_land_required_tag(thread_id="") is False
+    assert LAND_REQUIRED_TAG == "land_required"
 
 
 # --- test isolation guard ----------------------------------------------------

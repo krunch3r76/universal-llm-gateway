@@ -1,5 +1,5 @@
 ---
-description: Git posture for cursor-sdk / git-integration-worker implement substrate and shared-checkout dispatch reasoning. Default path is live shared checkout — load the skill for doctrine.
+description: Git posture for cursor-sdk / git-integration-worker implement substrate and shared-checkout dispatch reasoning. cursor-sdk generate defaults to Lane B when regime is on; attended IDE stays on shared checkout — load the skill for doctrine.
 alwaysApply: true
 rule_category: engineering
 apply_tier: required_gate
@@ -30,8 +30,9 @@ liveness.
 
 **Scope:** Binds on **cursor-sdk / git-integration-worker implement substrate** and
 cross-seat reasoning about shared-checkout state (uncommitted ≠ broken, no standing
-git workflow). Attended **Cursor IDE** and cursor-sdk both use the **live shared
-checkout**.
+git workflow). **Attended Cursor IDE** uses the live shared checkout. **cursor-sdk
+generate** defaults to **Lane B** (isolated worktree) when the regime is on and scope
+is in-repo; explicit `lane="A"` opts back to shared checkout.
 
 **Lane A resident:** sole shared `master` · ¬intersecting parallel writers ·
 ¬`git stash` to isolate or A/B vs clean HEAD — read the tree (doctrine:

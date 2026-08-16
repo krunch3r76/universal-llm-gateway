@@ -18,6 +18,10 @@ from pathlib import Path
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_sdk_branch_debt import open_branch_debt
+from services.git_integration_worker.cursor_sdk_branch_debt_tags import (
+    add_land_required_tag,
+    remove_land_required_tag,
+)
 from services.git_integration_worker.cursor_sdk_branch_discharge import (
     DISCHARGE_DISCARD,
     DISCHARGE_LANDED,
@@ -95,6 +99,7 @@ def _open_debt(
         tip_sha=tip_sha,
         files=files,
     )
+    add_land_required_tag(thread_id=thread_id)
     emit_sdk_lane_b_debt_opened(
         branch=branch_name,
         thread_id=thread_id,
@@ -183,6 +188,7 @@ def _settle(
             reason=reason,
         )
         if result.discharged:
+            remove_land_required_tag(thread_id=thread_id)
             return LaneBranchSettlement(
                 outcome="discharged",
                 branch=branch_name,

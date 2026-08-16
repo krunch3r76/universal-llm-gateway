@@ -24,6 +24,10 @@ When a `team_dispatch(op=generate, seat=cursor-sdk, …)` (or nested cursor-sdk 
 slice in the shared checkout — poll, harvest, adjudicate, and orchestrate only —
 unless the operator **explicitly authorizes** override.
 
+**Lane note:** default cursor-sdk generate runs on an isolated Lane-B worktree, not
+the shared checkout. In-flight supremacy still blocks overlapping in-seat edits on
+the **same paths** whether the worker holds Lane B or Lane A.
+
 Sole shared `master` + parallel writers on the same paths is the failure class this
 blocks (friction from agent-bus:6486 / 6488, 2026-07-30).
 

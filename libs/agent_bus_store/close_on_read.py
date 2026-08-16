@@ -6,7 +6,12 @@ from typing import Any, Literal
 
 from .db.threads import get_thread, get_thread_turns_asc
 from .db.threads_atomic import close_thread
-from .disposition import agents_match, resolve_bus_lifecycle, summary_for_auto_close
+from .disposition import (
+    _closeout_land_meter_from_turns,
+    agents_match,
+    resolve_bus_lifecycle,
+    summary_for_auto_close,
+)
 from .turns_models import ThreadStatus
 
 CLOSE_ON_READ_TAG = "dispatch:close_on_read"
@@ -107,7 +112,14 @@ def maybe_close_generate_thread_on_read(thread_id: str) -> dict[str, Any] | None
     ):
         return None
 
-    summary = summary_for_auto_close(thread.get("summary"))
+    tags = thread.get("tags") or []
+    landed, commits_ahead = _closeout_land_meter_from_turns(turns)
+    summary = summary_for_auto_close(
+        thread.get("summary"),
+        tags=tags,
+        landed=landed,
+        commits_ahead=commits_ahead,
+    )
     return close_thread(
         thread_id,
         summary=summary,
