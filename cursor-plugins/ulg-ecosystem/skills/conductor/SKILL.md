@@ -104,7 +104,10 @@ Fire when **any**:
 - `/conductor` interactive setup completes and operator says admit
 
 Anti-trigger: single dense `source_ref` implement (use `/todo` / wrap); formal
-CDP `operator_proxy` mission lane (use `mission-operator` + `cdp-operator-proxy`).
+CDP `operator_proxy` mission lane (use `mission-operator` + `cdp-operator-proxy`);
+attended lead staying through the whole arc (use `orchestrator-workflow` P1–P5 —
+P1 decompose, P2 fan-out, P3 fork protocol, P4 adjudicate, P5 close-back — instead
+of a conductor dispatch).
 
 ## Model / effort tier (cost-aware — binding)
 
