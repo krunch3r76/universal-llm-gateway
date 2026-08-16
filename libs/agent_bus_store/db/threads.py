@@ -90,7 +90,7 @@ def _thread_detail_sql() -> str:
     """
 
 
-def _load_dispatch_links(
+def load_dispatch_links(
     conn: sqlite3.Connection, thread_id: str
 ) -> list[dict[str, Any]]:
     """Return dispatch link summaries for a single thread."""
@@ -353,7 +353,6 @@ def get_thread(thread_id: str) -> dict[str, Any] | None:
             return None
         detail = dict(row)
         detail["tags"] = _load_thread_tags(conn, [thread_id]).get(thread_id, [])
-        detail.setdefault("dispatch_links", [])
         from .lane_associations import merge_lane_fields
 
         merge_lane_fields([detail])
@@ -369,7 +368,7 @@ def get_thread_with_links(thread_id: str) -> dict[str, Any] | None:
             return None
         detail = dict(row)
         detail["tags"] = _load_thread_tags(conn, [thread_id]).get(thread_id, [])
-        detail["dispatch_links"] = _load_dispatch_links(conn, thread_id)
+        detail["dispatch_links"] = load_dispatch_links(conn, thread_id)
         from .lane_associations import merge_lane_fields
 
         merge_lane_fields([detail])

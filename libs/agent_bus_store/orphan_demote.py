@@ -20,7 +20,7 @@ import re
 from typing import Any
 
 from .db.connection import connect
-from .db.threads import _load_dispatch_links
+from .db.threads import load_dispatch_links
 from .db.turns import get_turns, update_turn, update_turn_status
 from .events.lifecycle import emit_dispatch_orphan_demoted
 
@@ -65,7 +65,7 @@ def _orphan_matches_thread(orphan: dict[str, Any], thread_id: str) -> bool:
     if not orphan_exec:
         return True
     with connect() as conn:
-        links = _load_dispatch_links(conn, thread_id)
+        links = load_dispatch_links(conn, thread_id)
     if not links:
         return True
     return any(link["execution_id"] == orphan_exec for link in links)

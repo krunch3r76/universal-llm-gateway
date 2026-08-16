@@ -268,8 +268,12 @@ def test_dispatch_terminate_route(bus_db) -> None:
             f"/threads/{thread_id}/dispatch-terminate",
             json={"terminal_status": "completed", "execution_id": "e1"},
         )
-    assert term.status_code == 200
-    link = term.json()["dispatch_links"][0]
+        assert term.status_code == 200
+        # dispatch_links lives on the dedicated lineage read (G2), not on the
+        # plain ThreadDetail response (G3 dropped the always-inconsistent field).
+        lineage = client.get(f"/threads/{thread_id}/lineage")
+    assert lineage.status_code == 200
+    link = lineage.json()["dispatch_links"][0]
     assert link["terminal_status"] == "completed"
 
 

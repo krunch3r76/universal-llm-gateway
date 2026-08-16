@@ -12,6 +12,12 @@ from .lane_associations import (
     get_current_lane,
     merge_lane_fields,
 )
+from .lineage import (
+    LineageChild,
+    LineageDispatchLink,
+    ThreadLineage,
+    get_thread_lineage,
+)
 from .messages import get_messages, insert_message, list_threads, mark_read
 from .threads import (
     ThreadHasReadTurns,
@@ -64,8 +70,11 @@ from .turns import (
 
 __all__ = [
     "ClientOrderingTokenError",
+    "LineageChild",
+    "LineageDispatchLink",
     "SlugExists",
     "ThreadHasReadTurns",
+    "ThreadLineage",
     "TurnAlreadyAcknowledged",
     "UnreadTurnsExist",
     "PendingShellContention",
@@ -93,6 +102,7 @@ __all__ = [
     "get_thread_summary",
     "get_thread_turns_asc",
     "get_thread_with_links",
+    "get_thread_lineage",
     "get_latest_turn",
     "get_latest_turn_number",
     "get_thread_turn_count",

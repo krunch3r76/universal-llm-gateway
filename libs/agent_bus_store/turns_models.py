@@ -368,16 +368,6 @@ class TurnStatusUpdate(BaseModel):
 # --- Thread schemas ---
 
 
-class DispatchLinkSummary(BaseModel):
-    """Single dispatch link attached to a lifecycle-managed thread."""
-
-    execution_id: str
-    pipeline_id: str
-    linked_at: datetime
-    terminal_status: str | None = None
-    delivery_at: datetime | None = None
-
-
 class DispatchLinkByExecution(BaseModel):
     """Dispatch link resolved by execution_id (cross-thread lookup)."""
 
@@ -400,6 +390,17 @@ class ThreadCreate(BaseModel):
 
 
 class ThreadDetail(BaseModel):
+    """Thread aggregate view.
+
+    Dispatch links + lane children are NOT carried here — see
+    ``GET /threads/{thread_id}/lineage`` (``ThreadLineageResponse``) for the
+    live, side-effect-free view of both. This model dropped a
+    ``dispatch_links`` field that was silently always-empty on most callers
+    (only the three dispatch-lifecycle routes populated it; everything else
+    used the plain ``get_thread()`` path) — a field that only sometimes
+    matches its own schema is a worse contract than no field.
+    """
+
     id: str
     slug: str
     status: ThreadStatus
@@ -413,7 +414,6 @@ class ThreadDetail(BaseModel):
     created_at: datetime
     updated_at: datetime
     bus_lifecycle_state: str | None = None
-    dispatch_links: list[DispatchLinkSummary] = Field(default_factory=list)
     parent_thread: str | None = None
     lane_role: str | None = None
 

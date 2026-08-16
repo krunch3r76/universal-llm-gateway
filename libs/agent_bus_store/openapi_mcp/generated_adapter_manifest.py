@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "a3b7863bbb1164d5b8baab18ed53837d03c4e6e9e3ed7d77b691d8f0a72fd96f"
+OPENAPI_SHA256 = "7b69463facb7f0223da25e7e93c0a562e013e72ae000192013be68ced7a225d6"
 FACADE_TOOL = "agent-bus"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "branch_associate": {
@@ -65,6 +65,11 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "path": "/threads/{thread_id}/lane-current",
         "operation_id": "lane_current_route_threads__thread_id__lane_current_get",
     },
+    "lineage": {
+        "method": "GET",
+        "path": "/threads/{thread_id}/lineage",
+        "operation_id": "thread_lineage_route_threads__thread_id__lineage_get",
+    },
     "mark_read": {
         "method": "PATCH",
         "path": "/threads/{thread_id}/turns/read-state",
@@ -117,7 +122,7 @@ SERVED_OPS: dict[str, dict[str, str]] = {
     },
 }
 NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
-    "@components": "9908ece173e55952b50a78444504f459fda84099b566dffe0330b9b1cbc95bdc",
+    "@components": "f0be12a5f3330605e56a647ae4cf8a7eccc1f261d3894560e6f65a02b36dec8f",
     "@info": "a8986fa23eba4ccbefb9d1d606b05ebcfa8474d790ceb9a8d83b4b3be5c8e983",
     "GET /dispatch-links/{execution_id}": "bec5bf28fc7e55d2aaae6fdd2f4af55a177f74f7030987e27c7bd9d73ebe86a3",
     "GET /health": "f788a7842ed18c68945e8d9e81f2dffc59910ef597bb4f3841b6c97f8d3296b9",

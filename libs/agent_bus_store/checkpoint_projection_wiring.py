@@ -15,11 +15,8 @@ from .checkpoint_projection import (
 
 def build_post_resolvers(*, root_thread: str) -> ProjectionResolvers:
     """Default resolver bundle for the store HTTP post path."""
-    from .db import get_thread, get_thread_turn_count
-    from .db.lane_associations import (
-        get_current_lane,
-        list_substantiated_child_thread_ids,
-    )
+    from .db import get_thread, get_thread_lineage, get_thread_turn_count
+    from .db.lane_associations import get_current_lane
 
     del root_thread
 
@@ -39,16 +36,23 @@ def build_post_resolvers(*, root_thread: str) -> ProjectionResolvers:
     def _child_registry(
         *, root_thread: str, cited_thread_ids: tuple[str, ...]
     ) -> tuple[tuple[ChildThreadRow, ...], tuple[ChildThreadRow, ...]]:
-        substantiated_ids = list_substantiated_child_thread_ids(
-            parent_thread_id=root_thread
+        # Substantiated bucket: one shared live-lineage primitive (G2) instead
+        # of re-deriving "what are my children" independently here.
+        lineage = get_thread_lineage(root_thread)
+        substantiated = tuple(
+            ChildThreadRow(
+                thread_id=child.thread_id,
+                status=child.status,
+                last_turn=child.turn_count,
+                lane_role=child.lane_role,
+                parent_thread_id=child.parent_thread_id,
+            )
+            for child in (lineage.children if lineage is not None else ())
         )
-        substantiated_set = set(substantiated_ids)
-        substantiated: list[ChildThreadRow] = []
-        for thread_id in substantiated_ids:
-            child = _child_row(thread_id)
-            if child is not None:
-                substantiated.append(child)
+        substantiated_set = {child.thread_id for child in substantiated}
 
+        # Cited bucket: citation-token markdown scrape — a different,
+        # prose-level concern, left untouched.
         cited: list[ChildThreadRow] = []
         for thread_id in cited_thread_ids:
             if thread_id == root_thread or thread_id in substantiated_set:
@@ -56,7 +60,7 @@ def build_post_resolvers(*, root_thread: str) -> ProjectionResolvers:
             child = _child_row(thread_id)
             if child is not None:
                 cited.append(child)
-        return tuple(substantiated), tuple(cited)
+        return substantiated, tuple(cited)
 
     def _artifact_sha(uri: str) -> ArtifactAnchor | None:
         """Resolve cortex:// or workspaces:// to sha256 at post time.
