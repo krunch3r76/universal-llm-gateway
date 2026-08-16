@@ -38,7 +38,7 @@ def build_post_resolvers(*, root_thread: str) -> ProjectionResolvers:
     ) -> tuple[tuple[ChildThreadRow, ...], tuple[ChildThreadRow, ...]]:
         # Substantiated bucket: one shared live-lineage primitive (G2) instead
         # of re-deriving "what are my children" independently here.
-        lineage = get_thread_lineage(root_thread)
+        lineage = get_thread_lineage(root_thread, include_dispatch_links=False)
         substantiated = tuple(
             ChildThreadRow(
                 thread_id=child.thread_id,

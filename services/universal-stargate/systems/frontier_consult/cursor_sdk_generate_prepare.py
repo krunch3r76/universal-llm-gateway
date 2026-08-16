@@ -211,6 +211,7 @@ async def prepare_cursor_sdk_generate(
                     caller_agent=caller_agent,
                     execution_id=execution_id,
                     pipeline_id="cursor-sdk-generate",
+                    parent_thread_id=parent_dispatch_thread_id,
                 )
                 claimed_via_atomic = True
                 emit_sdk_thread_created(
@@ -324,6 +325,7 @@ async def prepare_cursor_sdk_generate(
             execution_id=execution_id,
             pipeline_id="cursor-sdk-generate",
             caller_agent=caller_agent,
+            parent_thread_id=parent_dispatch_thread_id,
         )
 
     prompt_preamble: str | None = None

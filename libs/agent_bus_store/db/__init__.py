@@ -44,6 +44,7 @@ from .threads import (
 from .threads_atomic import (
     PendingShellContention,
     admit_dispatch,
+    backfill_parent_facing_dispatch_enumeration,
     claim_and_post_turn,
     close_thread,
     create_thread_with_turn,
@@ -79,6 +80,7 @@ __all__ = [
     "UnreadTurnsExist",
     "PendingShellContention",
     "admit_dispatch",
+    "backfill_parent_facing_dispatch_enumeration",
     "add_tags",
     "associate_branch",
     "associate_lane",

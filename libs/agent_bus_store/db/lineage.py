@@ -61,11 +61,19 @@ def _lineage_child(thread_id: str) -> LineageChild | None:
     )
 
 
-def get_thread_lineage(thread_id: str) -> ThreadLineage | None:
+def get_thread_lineage(
+    thread_id: str,
+    *,
+    include_dispatch_links: bool = True,
+) -> ThreadLineage | None:
     """Return substantiated lane children + dispatch links for one thread.
 
     Zero side effects; safe to call on every checkpoint post and on-demand
     via the API. Returns None when the thread does not exist.
+
+    When ``include_dispatch_links`` is False, only lane children are loaded —
+    used by CHECKPOINT projection so substantiated-child rendering does not
+    fail-open when dispatch-link I/O is unavailable (G9).
     """
     thread_id = normalize_thread_id(thread_id)
     if get_thread(thread_id) is None:
@@ -76,18 +84,20 @@ def get_thread_lineage(thread_id: str) -> ThreadLineage | None:
         child for child in (_lineage_child(cid) for cid in child_ids) if child is not None
     )
 
-    with connect() as conn:
-        raw_links = load_dispatch_links(conn, thread_id)
-    dispatch_links = tuple(
-        LineageDispatchLink(
-            execution_id=link["execution_id"],
-            pipeline_id=link["pipeline_id"],
-            linked_at=link["linked_at"],
-            terminal_status=link.get("terminal_status"),
-            delivery_at=link.get("delivery_at"),
+    dispatch_links: tuple[LineageDispatchLink, ...] = ()
+    if include_dispatch_links:
+        with connect() as conn:
+            raw_links = load_dispatch_links(conn, thread_id)
+        dispatch_links = tuple(
+            LineageDispatchLink(
+                execution_id=link["execution_id"],
+                pipeline_id=link["pipeline_id"],
+                linked_at=link["linked_at"],
+                terminal_status=link.get("terminal_status"),
+                delivery_at=link.get("delivery_at"),
+            )
+            for link in raw_links
         )
-        for link in raw_links
-    )
 
     return ThreadLineage(
         thread_id=thread_id,

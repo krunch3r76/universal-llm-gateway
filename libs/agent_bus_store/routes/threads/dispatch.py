@@ -68,6 +68,7 @@ async def dispatch_admit_route(thread_id: str, body: DispatchAdmit) -> ThreadDet
             execution_id=body.execution_id,
             pipeline_id=body.pipeline_id,
             caller_agent=body.caller_agent,
+            parent_thread_id=body.parent_thread_id,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
@@ -100,6 +101,7 @@ async def dispatch_claim_and_post_route(
             execution_id=body.execution_id,
             pipeline_id=body.pipeline_id,
             caller_agent=body.caller_agent,
+            parent_thread_id=body.parent_thread_id,
             from_agent=body.from_agent,
             to_agent=body.to_agent,
             subject=body.subject,

@@ -425,3 +425,76 @@ def test_child_registry_uses_live_lineage_primitive(tmp_path, monkeypatch) -> No
     assert f"agent-bus:{child_id} · sub_mission · active · turn 1" in body
     assert "_none substantiated_" not in body
 
+
+def test_child_registry_survives_dispatch_link_io_failure(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """G9: substantiated child lanes render when dispatch-link load raises."""
+    from agent_bus_store import create_app
+    from agent_bus_store.auth import require_token
+    from agent_bus_store.db import lineage as lineage_db
+    from fastapi.testclient import TestClient
+
+    def _boom(conn, thread_id: str):
+        raise RuntimeError("dispatch-link I/O unavailable")
+
+    monkeypatch.setattr(lineage_db, "load_dispatch_links", _boom)
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    app = create_app(db_path=str(tmp_path / "bus.db"))
+    app.dependency_overrides[require_token] = lambda: None
+
+    with TestClient(app) as client:
+        parent = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "g9-parent",
+                "from": "cursor",
+                "to": "web",
+                "subject": "seed",
+                "body": "hello",
+            },
+        )
+        assert parent.status_code == 201, parent.text
+        parent_id = parent.json()["thread"]["id"]
+
+        child = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "g9-child",
+                "from": "cursor",
+                "to": "web",
+                "subject": "seed",
+                "body": "hello",
+            },
+        )
+        assert child.status_code == 201, child.text
+        child_id = child.json()["thread"]["id"]
+
+        bind = client.post(
+            f"/threads/{child_id}/lane-bind",
+            json={"parent_thread_id": parent_id, "lane_role": "sub_mission"},
+        )
+        assert bind.status_code == 200, bind.text
+
+        checkpoint = client.post(
+            "/turns",
+            json={
+                "thread": parent_id,
+                "from": "cursor",
+                "to": "web",
+                "subject": "CHECKPOINT — G9 dispatch-link failure isolation",
+                "body": "Settled: G9 lands.",
+                "after_turn": 1,
+            },
+        )
+        assert checkpoint.status_code == 201, checkpoint.text
+
+        posted = client.get(
+            f"/turns/by-number?thread={parent_id}&turn_number=2"
+        ).json()
+        body = posted["body"]
+
+    assert "### Child lanes" in body
+    assert f"agent-bus:{child_id} · sub_mission · active · turn 1" in body
+    assert "_none substantiated_" not in body
+

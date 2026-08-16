@@ -624,6 +624,7 @@ async def admit_handoff_dispatch(
     execution_id: str,
     pipeline_id: str,
     caller_agent: str | None,
+    parent_thread_id: str | None = None,
 ) -> bool:
     """POST dispatch-admit; return True when a dispatch-link row was persisted."""
     token = os.getenv("AGENT_BUS_TOKEN", "").strip()
@@ -640,6 +641,8 @@ async def admit_handoff_dispatch(
         "pipeline_id": pipeline_id,
         "caller_agent": caller_agent,
     }
+    if parent_thread_id is not None:
+        payload["parent_thread_id"] = parent_thread_id
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
         async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=10.0) as client:
@@ -786,6 +789,7 @@ async def claim_and_post_pointer_turn(
     caller_agent: str | None,
     execution_id: str,
     pipeline_id: str,
+    parent_thread_id: str | None = None,
 ) -> None:
     """POST /threads/{id}/dispatch-claim-and-post — atomic claim + pointer turn.
 
@@ -818,6 +822,8 @@ async def claim_and_post_pointer_turn(
         "subject": subject,
         "body": pointer_body,
     }
+    if parent_thread_id is not None:
+        payload["parent_thread_id"] = parent_thread_id
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
         async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=10.0) as client:

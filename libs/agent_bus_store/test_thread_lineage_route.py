@@ -98,3 +98,68 @@ def test_plain_thread_detail_has_no_dispatch_links_field(bus_db) -> None:
         resp = client.get(f"/threads/{thread_id}")
         assert resp.status_code == 200, resp.text
         assert "dispatch_links" not in resp.json()
+
+
+def test_admit_on_worker_mirrors_dispatch_link_and_lane_bind_to_parent(bus_db) -> None:
+    """G8: parent_thread_id on worker admit dual-writes link + lane_bind."""
+    with TestClient(_app(bus_db)) as client:
+        parent = create_thread(thread_id=None, slug="g8-parent")
+        parent_id = parent["id"]
+        worker = create_thread(thread_id=None, slug="g8-worker")
+        worker_id = worker["id"]
+
+        admit_dispatch(
+            thread_id=worker_id,
+            execution_id="exec-g8-parent-mirror",
+            pipeline_id="cursor-sdk-generate",
+            caller_agent="cursor-sdk",
+            parent_thread_id=parent_id,
+        )
+
+        worker_lineage = client.get(f"/threads/{worker_id}/lineage").json()
+        assert len(worker_lineage["dispatch_links"]) == 1
+        assert worker_lineage["dispatch_links"][0]["execution_id"] == "exec-g8-parent-mirror"
+
+        parent_lineage = client.get(f"/threads/{parent_id}/lineage").json()
+        assert len(parent_lineage["dispatch_links"]) == 1
+        assert parent_lineage["dispatch_links"][0]["execution_id"] == "exec-g8-parent-mirror"
+        assert len(parent_lineage["children"]) == 1
+        child = parent_lineage["children"][0]
+        assert child["thread_id"] == worker_id
+        assert child["lane_role"] == "sub_mission"
+        assert child["parent_thread_id"] == parent_id
+
+
+def test_backfill_parent_facing_dispatch_enumeration(bus_db) -> None:
+    """G8 backfill: worker-only admit then backfill populates parent lineage."""
+    from agent_bus_store.db import backfill_parent_facing_dispatch_enumeration
+
+    with TestClient(_app(bus_db)) as client:
+        parent = create_thread(thread_id=None, slug="g8-backfill-parent")
+        parent_id = parent["id"]
+        worker = create_thread(thread_id=None, slug="g8-backfill-worker")
+        worker_id = worker["id"]
+
+        admit_dispatch(
+            thread_id=worker_id,
+            execution_id="exec-g8-backfill",
+            pipeline_id="cursor-sdk-generate",
+        )
+
+        parent_before = client.get(f"/threads/{parent_id}/lineage").json()
+        assert parent_before["children"] == []
+        assert parent_before["dispatch_links"] == []
+
+        result = backfill_parent_facing_dispatch_enumeration(
+            worker_thread_id=worker_id,
+            parent_thread_id=parent_id,
+            execution_id="exec-g8-backfill",
+        )
+        assert result["parent_child_count"] == 1
+        assert result["parent_dispatch_link_count"] == 1
+
+        parent_after = client.get(f"/threads/{parent_id}/lineage").json()
+        assert len(parent_after["children"]) == 1
+        assert parent_after["children"][0]["thread_id"] == worker_id
+        assert len(parent_after["dispatch_links"]) == 1
+        assert parent_after["dispatch_links"][0]["execution_id"] == "exec-g8-backfill"

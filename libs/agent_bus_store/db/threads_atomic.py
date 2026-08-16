@@ -5,8 +5,16 @@ from __future__ import annotations
 from typing import Any
 
 from .connection import connect, now
+from .lane_associations import associate_lane, get_current_lane
 from .lifecycle import TERMINAL_STATES, _transition_lifecycle_state
-from .threads import _next_auto_id, get_thread_with_links, set_thread_tags
+from .lineage import get_thread_lineage
+from .threads import (
+    _next_auto_id,
+    get_thread,
+    get_thread_with_links,
+    normalize_thread_id,
+    set_thread_tags,
+)
 
 
 class PendingShellContention(Exception):  # noqa: N818
@@ -236,14 +244,173 @@ def close_thread(
     return detail
 
 
+def _insert_dispatch_link_row(
+    conn,
+    *,
+    thread_id: str,
+    execution_id: str,
+    pipeline_id: str,
+    caller_agent: str | None,
+    linked_at: str,
+) -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO thread_dispatch_links "
+        "(thread_id, execution_id, pipeline_id, caller_agent, linked_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (thread_id, execution_id, pipeline_id, caller_agent, linked_at),
+    )
+
+
+def _maybe_mirror_dispatch_to_parent(
+    *,
+    worker_thread_id: str,
+    parent_thread_id: str | None,
+    execution_id: str,
+    pipeline_id: str,
+    caller_agent: str | None,
+    linked_at: str,
+    conn,
+) -> None:
+    """Dual-write dispatch link to parent and lane-bind worker when distinct (G8)."""
+    if parent_thread_id is None:
+        return
+    worker_thread_id = normalize_thread_id(worker_thread_id)
+    parent_thread_id = normalize_thread_id(parent_thread_id)
+    if parent_thread_id == worker_thread_id:
+        return
+    if get_thread(parent_thread_id) is None:
+        raise ValueError(
+            f"parent_thread_id {parent_thread_id!r} not found; "
+            "dispatch-admit parent mirror rejected"
+        )
+    _insert_dispatch_link_row(
+        conn,
+        thread_id=parent_thread_id,
+        execution_id=execution_id,
+        pipeline_id=pipeline_id,
+        caller_agent=caller_agent,
+        linked_at=linked_at,
+    )
+
+
+def _maybe_lane_bind_worker_to_parent(
+    *,
+    worker_thread_id: str,
+    parent_thread_id: str | None,
+    execution_id: str,
+    caller_agent: str | None,
+) -> None:
+    """Bind worker→parent with sub_mission when worker has no lane yet (G8)."""
+    if parent_thread_id is None:
+        return
+    worker_thread_id = normalize_thread_id(worker_thread_id)
+    parent_thread_id = normalize_thread_id(parent_thread_id)
+    if parent_thread_id == worker_thread_id:
+        return
+    current = get_current_lane(thread_id=worker_thread_id)
+    if current.get("state") != "none":
+        return
+    associate_lane(
+        thread_id=worker_thread_id,
+        parent_thread_id=parent_thread_id,
+        lane_role="sub_mission",
+        bound_by=caller_agent,
+        evidence=f"dispatch-admit:{execution_id}",
+    )
+
+
+def backfill_parent_facing_dispatch_enumeration(
+    *,
+    worker_thread_id: str,
+    parent_thread_id: str,
+    execution_id: str | None = None,
+    pipeline_id: str | None = None,
+    caller_agent: str | None = None,
+) -> dict[str, Any]:
+    """Idempotent G8 backfill: mirror worker dispatch link onto parent + lane_bind."""
+    worker_thread_id = normalize_thread_id(worker_thread_id)
+    parent_thread_id = normalize_thread_id(parent_thread_id)
+    if get_thread(worker_thread_id) is None:
+        raise ValueError(f"worker thread {worker_thread_id!r} not found")
+    if get_thread(parent_thread_id) is None:
+        raise ValueError(f"parent thread {parent_thread_id!r} not found")
+
+    ts = now()
+    with connect() as conn:
+        if execution_id is None:
+            row = conn.execute(
+                "SELECT execution_id, pipeline_id, caller_agent "
+                "FROM thread_dispatch_links WHERE thread_id = ? "
+                "ORDER BY linked_at ASC LIMIT 1",
+                (worker_thread_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(
+                    f"worker thread {worker_thread_id!r} has no dispatch links"
+                )
+            execution_id = row["execution_id"]
+            pipeline_id = pipeline_id or row["pipeline_id"]
+            caller_agent = caller_agent if caller_agent is not None else row["caller_agent"]
+        else:
+            if pipeline_id is None:
+                row = conn.execute(
+                    "SELECT pipeline_id, caller_agent FROM thread_dispatch_links "
+                    "WHERE thread_id = ? AND execution_id = ?",
+                    (worker_thread_id, execution_id),
+                ).fetchone()
+                if row is not None:
+                    pipeline_id = pipeline_id or row["pipeline_id"]
+                    if caller_agent is None:
+                        caller_agent = row["caller_agent"]
+            if pipeline_id is None:
+                pipeline_id = "cursor-sdk-generate"
+
+        _insert_dispatch_link_row(
+            conn,
+            thread_id=worker_thread_id,
+            execution_id=execution_id,
+            pipeline_id=pipeline_id,
+            caller_agent=caller_agent,
+            linked_at=ts,
+        )
+        _maybe_mirror_dispatch_to_parent(
+            worker_thread_id=worker_thread_id,
+            parent_thread_id=parent_thread_id,
+            execution_id=execution_id,
+            pipeline_id=pipeline_id,
+            caller_agent=caller_agent,
+            linked_at=ts,
+            conn=conn,
+        )
+
+    _maybe_lane_bind_worker_to_parent(
+        worker_thread_id=worker_thread_id,
+        parent_thread_id=parent_thread_id,
+        execution_id=execution_id,
+        caller_agent=caller_agent,
+    )
+    lineage = get_thread_lineage(parent_thread_id)
+    return {
+        "worker_thread_id": worker_thread_id,
+        "parent_thread_id": parent_thread_id,
+        "execution_id": execution_id,
+        "parent_child_count": len(lineage.children) if lineage else 0,
+        "parent_dispatch_link_count": len(lineage.dispatch_links) if lineage else 0,
+    }
+
+
 def admit_dispatch(
     *,
     thread_id: str,
     execution_id: str,
     pipeline_id: str,
     caller_agent: str | None = None,
+    parent_thread_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Register a dispatch link and (if pending) admit the thread.
+
+    When ``parent_thread_id`` is set and distinct from ``thread_id``, also
+    mirrors the dispatch link onto the parent and lane-binds the worker (G8).
 
     Returns updated thread detail with dispatch_links populated, or None
     if the thread is not found. Raises ValueError on terminal-state conflicts.
@@ -267,16 +434,33 @@ def admit_dispatch(
                 "dispatch-admit rejected"
             )
 
-        conn.execute(
-            "INSERT OR IGNORE INTO thread_dispatch_links "
-            "(thread_id, execution_id, pipeline_id, caller_agent, linked_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (thread_id, execution_id, pipeline_id, caller_agent, ts),
+        _insert_dispatch_link_row(
+            conn,
+            thread_id=thread_id,
+            execution_id=execution_id,
+            pipeline_id=pipeline_id,
+            caller_agent=caller_agent,
+            linked_at=ts,
+        )
+        _maybe_mirror_dispatch_to_parent(
+            worker_thread_id=thread_id,
+            parent_thread_id=parent_thread_id,
+            execution_id=execution_id,
+            pipeline_id=pipeline_id,
+            caller_agent=caller_agent,
+            linked_at=ts,
+            conn=conn,
         )
 
         if lifecycle == "pending":
             _transition_lifecycle_state(conn, thread_id, "admitted", "admit")
 
+    _maybe_lane_bind_worker_to_parent(
+        worker_thread_id=thread_id,
+        parent_thread_id=parent_thread_id,
+        execution_id=execution_id,
+        caller_agent=caller_agent,
+    )
     return get_thread_with_links(thread_id)
 
 
@@ -329,6 +513,7 @@ def claim_and_post_turn(
     execution_id: str,
     pipeline_id: str,
     caller_agent: str | None = None,
+    parent_thread_id: str | None = None,
     from_agent: str,
     to_agent: str,
     subject: str,
@@ -383,13 +568,31 @@ def claim_and_post_turn(
         # Transition admitted -> active (first delivery/pointer turn posted).
         _transition_lifecycle_state(conn, thread_id, "active", "claim_and_post")
 
-        # Register the dispatch link.
-        conn.execute(
-            "INSERT OR IGNORE INTO thread_dispatch_links "
-            "(thread_id, execution_id, pipeline_id, caller_agent, linked_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (thread_id, execution_id, pipeline_id, caller_agent, ts),
+        # Register the dispatch link (worker + optional parent mirror — G8).
+        _insert_dispatch_link_row(
+            conn,
+            thread_id=thread_id,
+            execution_id=execution_id,
+            pipeline_id=pipeline_id,
+            caller_agent=caller_agent,
+            linked_at=ts,
         )
+        _maybe_mirror_dispatch_to_parent(
+            worker_thread_id=thread_id,
+            parent_thread_id=parent_thread_id,
+            execution_id=execution_id,
+            pipeline_id=pipeline_id,
+            caller_agent=caller_agent,
+            linked_at=ts,
+            conn=conn,
+        )
+
+    _maybe_lane_bind_worker_to_parent(
+        worker_thread_id=thread_id,
+        parent_thread_id=parent_thread_id,
+        execution_id=execution_id,
+        caller_agent=caller_agent,
+    )
 
     from ..events.turn_created import emit_turn_created
 

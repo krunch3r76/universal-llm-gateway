@@ -553,6 +553,7 @@ class DispatchAdmit(BaseModel):
     execution_id: str
     pipeline_id: str
     caller_agent: str | None = None
+    parent_thread_id: str | None = None
 
 
 class DispatchTerminate(BaseModel):
@@ -569,6 +570,7 @@ class DispatchClaimAndPost(BaseModel):
     execution_id: str
     pipeline_id: str
     caller_agent: str | None = None
+    parent_thread_id: str | None = None
     from_agent: str
     to_agent: str
     subject: str
