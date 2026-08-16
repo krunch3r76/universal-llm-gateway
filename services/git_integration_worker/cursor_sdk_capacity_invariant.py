@@ -61,9 +61,9 @@ def resolve_isolation_materialized(
 
     When ``record_json`` carries ``isolation_materialized``, that stamped value
     wins. Lane-A rows are typically ``True`` (vacuous non-B pass from
-    ``b_worktree_materialized``) or ``False`` (nest on shared master); neither
-    means an on-disk worktree ran. Lane-B: ``True`` = distinct worktree path;
-    ``False`` = nominal B without materialization (reclassified to lane A).
+    ``b_worktree_materialized``). Lane-B: ``True`` = distinct worktree path.
+    ``False`` is historical only (nominal B without materialization, reclassified
+    to lane A); new write admits refuse that case instead of stamping it.
 
     Unstamped fallback: ``False`` on shared master or missing keys; ``True`` only
     when ``lease_key`` is a distinct existing directory.

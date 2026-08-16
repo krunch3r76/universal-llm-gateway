@@ -122,7 +122,9 @@ def resolve_checkout_lane(
 
     Distinct from ``lane_role`` (bus-thread parentage) and from tag
     ``lane:cursor-auto``. Empty/None means omit — ``select_lane`` defaults
-    stay unchanged. Invalid values reject before the turn is written.
+    stay unchanged. ``B`` requires a materialized worktree at GIW admit
+    (else ``CURSOR_LANE_B_WORKTREE_MISSING``). Invalid values reject before
+    the turn is written.
     """
     raw = (lane or "").strip()
     if not raw:

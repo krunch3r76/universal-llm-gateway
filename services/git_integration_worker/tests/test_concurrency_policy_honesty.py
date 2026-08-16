@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
+from services.git_integration_worker.cursor_sdk_capacity_invariant import (
+    resolve_admit_lane,
+)
 from services.git_integration_worker.cursor_sdk_concurrency_meter import (
     DispatchInterval,
     count_overlap_pairs,
@@ -18,13 +22,12 @@ from services.git_integration_worker.cursor_sdk_concurrency_meter import (
 )
 from services.git_integration_worker.cursor_sdk_concurrency_posture import (
     derive_concurrency_posture,
+    lease_is_isolated_worktree,
     operator_multi_a_enabled,
-    refuse_b_without_worktree_enabled,
     write_lease_slot_limit,
 )
-from services.git_integration_worker.cursor_sdk_capacity_invariant import resolve_admit_lane
-from services.git_integration_worker.cursor_sdk_lane_regime import set_lane_b_regime
 from services.git_integration_worker.cursor_sdk_gate import sdk_dispatch_gate_stats
+from services.git_integration_worker.cursor_sdk_lane_regime import set_lane_b_regime
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
     CursorDispatchResponse,
@@ -35,7 +38,6 @@ from services.git_integration_worker.models.cursor_api import (
 def _isolated_ledger(tmp_path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.delenv("CURSOR_SDK_OPERATOR_MULTI_A_ENABLED", raising=False)
-    monkeypatch.delenv("CURSOR_SDK_REFUSE_B_WITHOUT_WORKTREE", raising=False)
     CursorDispatchLedger._instance = None
     set_lane_b_regime(active=False)
     yield tmp_path
@@ -47,8 +49,41 @@ def test_operator_multi_a_disabled_by_default() -> None:
     assert operator_multi_a_enabled() is False
 
 
-def test_refuse_b_without_worktree_disabled_by_default() -> None:
-    assert refuse_b_without_worktree_enabled() is False
+def test_lane_b_without_isolated_worktree_is_not_multi_b(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    assert (
+        derive_concurrency_posture(
+            admit_lane="B",
+            gate_lane="standard",
+            read_only=False,
+            nest_under=None,
+            worktree_path=repo,
+            source_repo=str(repo),
+        )
+        is None
+    )
+    assert (
+        lease_is_isolated_worktree(lease_key=str(repo), source_repo=str(repo)) is False
+    )
+
+
+def test_derive_posture_multi_b_when_worktree_isolated(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    wt = tmp_path / "worktrees" / "d1"
+    repo.mkdir()
+    wt.mkdir(parents=True)
+    assert (
+        derive_concurrency_posture(
+            admit_lane="B",
+            gate_lane="standard",
+            read_only=False,
+            nest_under=None,
+            worktree_path=wt,
+            source_repo=str(repo),
+        )
+        == "multi_b"
+    )
 
 
 def test_lane_a_slot_limit_inert_without_switch() -> None:
@@ -122,7 +157,10 @@ def test_derive_posture_multi_a_when_switch_on(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_resolve_admit_lane_unknown_when_both_null() -> None:
-    assert resolve_admit_lane(record_json="{}", lease_key=None, source_repo=None) == "unknown"
+    assert (
+        resolve_admit_lane(record_json="{}", lease_key=None, source_repo=None)
+        == "unknown"
+    )
 
 
 def test_d1_null_contract_not_declared_implement() -> None:
@@ -164,8 +202,14 @@ def test_f_historical_corrected_peak_excludes_null_contract() -> None:
             lane="A",
         ),
     ]
-    assert peak_concurrent_for_lane(intervals, write_only=True, lane="A", corrected=True) == 2
-    assert peak_concurrent_for_lane(intervals, write_only=True, lane="A", corrected=False) == 3
+    assert (
+        peak_concurrent_for_lane(intervals, write_only=True, lane="A", corrected=True)
+        == 2
+    )
+    assert (
+        peak_concurrent_for_lane(intervals, write_only=True, lane="A", corrected=False)
+        == 3
+    )
 
 
 def test_f_overlap_lane_scoped() -> None:
@@ -187,12 +231,18 @@ def test_f_overlap_lane_scoped() -> None:
             lane="B",
         ),
     ]
-    assert count_overlap_pairs(intervals, write_only=True, lane="A", corrected=True) == 0
-    assert count_overlap_pairs(intervals, write_only=True, lane=None, corrected=True) == 1
+    assert (
+        count_overlap_pairs(intervals, write_only=True, lane="A", corrected=True) == 0
+    )
+    assert (
+        count_overlap_pairs(intervals, write_only=True, lane=None, corrected=True) == 1
+    )
 
 
 def test_frontier_write_lease_acquired_emitted_on_admit() -> None:
-    from services.git_integration_worker.cursor_sdk_events import emit_write_lease_acquired
+    from services.git_integration_worker.cursor_sdk_events import (
+        emit_write_lease_acquired,
+    )
 
     emitted: list[dict] = []
 
@@ -298,7 +348,9 @@ def test_f_capacity_split_live_writers_separate_from_headroom(
 
 def test_plan_nested_dispatch_uses_ledger_aligned_occupancy() -> None:
     """F-gate-admit / I-gate-ledger: nest plan honors ledger live_writers over gate.active."""
-    from services.git_integration_worker.cursor_auto.gate_serialize import plan_nested_dispatch
+    from services.git_integration_worker.cursor_auto.gate_serialize import (
+        plan_nested_dispatch,
+    )
 
     call_idx = {"n": 0}
 

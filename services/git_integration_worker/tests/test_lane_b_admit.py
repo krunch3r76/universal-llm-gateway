@@ -294,11 +294,15 @@ def test_ac_s2_4_regime_off_contention_stays_lane_a(
     assert lane_b_regime_active() is False
     first = client.post(
         "/api/v1/cursor/dispatch",
-        json=_body(dispatch_id="a-one", execution_id="exec-a-one", source_ref="todo:a-one"),
+        json=_body(
+            dispatch_id="a-one", execution_id="exec-a-one", source_ref="todo:a-one"
+        ),
     )
     second = client.post(
         "/api/v1/cursor/dispatch",
-        json=_body(dispatch_id="a-two", execution_id="exec-a-two", source_ref="todo:a-two"),
+        json=_body(
+            dispatch_id="a-two", execution_id="exec-a-two", source_ref="todo:a-two"
+        ),
     )
     assert first.status_code == 200
     assert second.status_code == 202
@@ -350,7 +354,9 @@ def test_ac_s2_5_scope_veto(git_repo: Path) -> None:
     "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
     return_value=MagicMock(done=lambda: False),
 )
-def test_ac_s2_6_read_only_lane_b_422(_mock_task: MagicMock, client: TestClient) -> None:
+def test_ac_s2_6_read_only_lane_b_422(
+    _mock_task: MagicMock, client: TestClient
+) -> None:
     """AC-S2.6: read_only + lane='B' ⇒ 422 CURSOR_LANE_B_READ_ONLY."""
     resp = client.post(
         "/api/v1/cursor/dispatch",
@@ -358,6 +364,132 @@ def test_ac_s2_6_read_only_lane_b_422(_mock_task: MagicMock, client: TestClient)
     )
     assert resp.status_code == 422
     assert resp.json()["code"] == "CURSOR_LANE_B_READ_ONLY"
+
+
+@patch(
+    "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
+    return_value=MagicMock(done=lambda: False),
+)
+def test_lane_b_shared_master_lease_is_422(
+    _mock_task: MagicMock,
+    client: TestClient,
+    git_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Selected Lane-B with a shared-master lease refuses; it does not relabel to A."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    repo = git_repo.resolve()
+
+    def _shared_master_binding(**_kwargs: object) -> tuple[Path, str]:
+        return repo, str(repo)
+
+    monkeypatch.setattr(route_mod, "resolve_admit_binding", _shared_master_binding)
+    resp = client.post(
+        "/api/v1/cursor/dispatch",
+        json=_body(lane="B", dispatch_id="b-missing", execution_id="exec-b-missing"),
+    )
+    assert resp.status_code == 422
+    body = resp.json()
+    assert body["code"] == "CURSOR_LANE_B_WORKTREE_MISSING"
+    assert "materialized worktree" in body["message"]
+    with CursorDispatchLedger.instance()._connect() as conn:
+        row = conn.execute(
+            "SELECT dispatch_id FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            ("b-missing",),
+        ).fetchone()
+    assert row is None
+
+
+@patch(
+    "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
+    return_value=MagicMock(done=lambda: False),
+)
+def test_explicit_lane_b_nest_under_lane_a_parent_is_422(
+    _mock_task: MagicMock,
+    client: TestClient,
+) -> None:
+    """Explicit lane=B under a Lane-A parent inherits shared master → 422."""
+    parent = client.post(
+        "/api/v1/cursor/dispatch",
+        json=_body(
+            lane="A",
+            dispatch_id="parent-a",
+            execution_id="exec-parent-a",
+            thread_id="6701",
+            source_ref="todo:parent-a",
+        ),
+    )
+    assert parent.status_code == 200
+    child = client.post(
+        "/api/v1/cursor/dispatch",
+        json=_body(
+            lane="B",
+            nest_under="parent-a",
+            dispatch_id="child-b-on-a",
+            execution_id="exec-child-b-on-a",
+            thread_id="6701",
+            source_ref="todo:child-b-on-a",
+        ),
+    )
+    assert child.status_code == 422
+    assert child.json()["code"] == "CURSOR_LANE_B_WORKTREE_MISSING"
+
+
+def test_nest_omitted_lane_inherits_parent_isolation_not_regime(git_repo: Path) -> None:
+    """Regime ON must not label a shared-master nest as Lane-B."""
+    parent = CursorDispatchRequest(
+        thread_id="t",
+        model="cursor/composer-2.5",
+        dispatch_id="child",
+        execution_id="e",
+        message="x",
+        nest_under="parent-a",
+    )
+    set_lane_b_regime(active=True)
+    lane, _, reason = select_lane(
+        req=parent,
+        regime_active=True,
+        source_repo=git_repo,
+        files_expected=["services/a.py"],
+        contract="implement",
+        parent_isolated=False,
+    )
+    assert lane == "A"
+    assert reason == "nest_inherit"
+
+    lane_b, _, reason_b = select_lane(
+        req=parent,
+        regime_active=False,
+        source_repo=git_repo,
+        files_expected=["services/a.py"],
+        contract="implement",
+        parent_isolated=True,
+    )
+    assert lane_b == "B"
+    assert reason_b == "nest_inherit"
+    set_lane_b_regime(active=False)
+
+
+def test_resume_omitted_lane_inherits_parent_isolation(git_repo: Path) -> None:
+    req = CursorDispatchRequest(
+        thread_id="t",
+        model="cursor/composer-2.5",
+        dispatch_id="child",
+        execution_id="e",
+        message="x",
+        resume_of="parent-a",
+    )
+    lane, _, reason = select_lane(
+        req=req,
+        regime_active=True,
+        source_repo=git_repo,
+        files_expected=["services/a.py"],
+        contract="implement",
+        parent_isolated=False,
+    )
+    assert lane == "A"
+    assert reason == "nest_inherit"
 
 
 @patch(

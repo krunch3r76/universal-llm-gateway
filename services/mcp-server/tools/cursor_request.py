@@ -156,7 +156,10 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         (**wire parameter, not packet prose** — an omitted ``lane=`` resolves to
         Lane A/shared-master regardless of what the body says; only name Lane A
         when the mission itself is T0-mechanical single-locus), and
-        ``desired_effort="max"``. ``investigate`` resolves to
+        ``desired_effort="max"``. ``lane="B"`` is a worktree requirement, not a
+        label: GIW mints or inherits an isolated tree, or returns 422
+        ``CURSOR_LANE_B_WORKTREE_MISSING`` — it does not silently admit on
+        shared master. ``investigate`` resolves to
         ``handoff_contract=light-bounded``, so the mechanical-executor redirect
         (Composer-only) never fires — that redirect is scoped to ``implement``.
         Body MUST include a ``vision:`` line (admit body gate above) and the full

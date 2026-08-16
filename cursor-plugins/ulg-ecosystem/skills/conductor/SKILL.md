@@ -211,10 +211,12 @@ root CHECKPOINT. ¬ nest_under an unrelated mission's lease.
 
 **Post-admit check (binding — default regime is Lane B):** quote `active_by_lane` /
 `holder_source_repo` from `busy_status`. Expected: `B≥1`, worktree under
-`ulg-arc-worktrees/lane-*`, branch `cursor-sdk/lane-*`. If you see `A=1` and
-`holder_source_repo=…/universal-llm-gateway` (shared master) without a named
-Lane-A reason on the packet, the admit landed on the wrong regime — stop
-nesting mechanical work and correct before edits.
+`ulg-arc-worktrees/lane-*`, branch `cursor-sdk/lane-*`. Substrate **refuses**
+`lane="B"` without a materialized worktree (`422 CURSOR_LANE_B_WORKTREE_MISSING`)
+instead of silently admitting on shared master. If you see `A=1` and
+`holder_source_repo=…/universal-llm-gateway` without a named Lane-A reason, the
+admit selected Lane A (omitted/`lane="A"`) — stop nesting mechanical work onto
+a B branch that isn't this checkout.
 
 When admitting **T3 Opus**: one announce line (`Conductor T3: <trigger> — <why>`),
 then proceed (`lean-context-dispatch-first` inform-then-proceed).
@@ -229,6 +231,14 @@ single locus, self-contained, nothing else plausibly touching that file mid-
 mission — **or** the scope is structurally incompatible with a worktree (an
 absolute mount path or non-repo URI that `CURSOR_LANE_B_SCOPE_REFUSED` cannot
 be resolved for, below). Absent a named reason, admit Lane B.
+
+### `CURSOR_LANE_B_WORKTREE_MISSING` — B without a tree is not A
+
+`lane="B"` always requires a minted or inherited worktree. Nesting
+`lane="B"` under a Lane-A parent (shared-master lease) is **422**, not a
+relabel. Omit `lane=` on a nest to inherit the parent's isolation; pass
+`lane="A"` only with a named reason. Do not set `CURSOR_SDK_REFUSE_B_WITHOUT_WORKTREE` —
+refusal is unconditional.
 
 ### `CURSOR_LANE_B_SCOPE_REFUSED` ≠ license to omit `lane=`
 
@@ -288,6 +298,7 @@ when the operator already bound the answers in chat.
 | Convert incident lane into root mid-flight | Cite incident; root stays continuity |
 | Wait forever on sibling merge without bind | Scoreboard cite-only vs explicit wait criterion |
 | Drop `lane="B"` after `CURSOR_LANE_B_SCOPE_REFUSED` | Fix scope paths; re-admit with `lane="B"` |
+| Treat missing Lane-B worktree as a shared-master admit | Expect `422 CURSOR_LANE_B_WORKTREE_MISSING`; mint/inherit a tree or name Lane A |
 | Conductor on Lane A while G-row code is on `cursor-sdk/lane-*` | One regime: conductor + nests share the Lane-B worktree/branch |
 | Opus-by-default for every conductor | Tier table; T1 Sonnet 5 @ `max` default; Opus only with trigger |
 | Omit `lane=` assuming that means "no preference" | Lane B is the default — pass `lane="B"` explicitly; name Lane A only with a reason |

@@ -22,10 +22,11 @@ def operator_multi_a_enabled() -> bool:
     return raw in ("1", "true", "yes", "on")
 
 
-def refuse_b_without_worktree_enabled() -> bool:
-    """Leg-2 refusal for Lane-B admits lacking materialized worktree (default OFF)."""
-    raw = os.environ.get("CURSOR_SDK_REFUSE_B_WITHOUT_WORKTREE", "0").strip().lower()
-    return raw in ("1", "true", "yes", "on")
+def lease_is_isolated_worktree(*, lease_key: str | None, source_repo: str) -> bool:
+    """True when ``lease_key`` is an on-disk path distinct from ``source_repo``."""
+    if not lease_key or lease_key == source_repo:
+        return False
+    return Path(lease_key).is_dir()
 
 
 def derive_concurrency_posture(
@@ -35,6 +36,7 @@ def derive_concurrency_posture(
     read_only: bool,
     nest_under: str | None,
     worktree_path: Path | None,
+    source_repo: str | None = None,
 ) -> Posture | None:
     """Derive stamped posture; None when lease-exempt (read_only)."""
     if read_only:
@@ -42,7 +44,14 @@ def derive_concurrency_posture(
     if nest_under:
         return "nest_child"
     if admit_lane == "B":
-        if worktree_path is None or not worktree_path.is_dir():
+        lease_key = str(worktree_path) if worktree_path is not None else None
+        if source_repo is not None:
+            if not lease_is_isolated_worktree(
+                lease_key=lease_key,
+                source_repo=source_repo,
+            ):
+                return None
+        elif worktree_path is None or not worktree_path.is_dir():
             return None
         return "multi_b"
     if gate_lane == "operator" and operator_multi_a_enabled():
@@ -102,13 +111,26 @@ def b_worktree_materialized(
 
     Non-B (Lane-A): always ``True`` — vacuous pass ("B worktree gate not
     applicable"), **not** a claim that an isolated worktree was materialized.
-    Pair with ``lane`` / ``reported_admit_lane`` to interpret stamped rows.
+    Pair with ``lane`` / ``reported_admit_lane`` to interpret historical rows.
+    New write admits refuse Lane-B when this is ``False`` rather than relabeling.
     """
     if admit_lane != "B":
         return True
-    if not lease_key or lease_key == source_repo:
-        return False
-    return Path(lease_key).is_dir()
+    return lease_is_isolated_worktree(lease_key=lease_key, source_repo=source_repo)
+
+
+def lane_b_worktree_missing(
+    *,
+    selected_lane: Lane,
+    lease_key: str | None,
+    source_repo: str,
+) -> bool:
+    """True when selected Lane-B has no materialized isolated worktree."""
+    return selected_lane == "B" and not b_worktree_materialized(
+        admit_lane="B",
+        lease_key=lease_key,
+        source_repo=source_repo,
+    )
 
 
 def reported_admit_lane(
@@ -117,7 +139,11 @@ def reported_admit_lane(
     lease_key: str | None,
     source_repo: str,
 ) -> Lane:
-    """Ledger/closeout lane label — B only when isolation is materialized on disk."""
+    """Historical/stats lane label — B only when isolation is materialized on disk.
+
+    Write-admit no longer mutates ``req.lane`` through this helper; missing
+    materialization is ``CURSOR_LANE_B_WORKTREE_MISSING`` instead of a silent A.
+    """
     if selected_lane == "B" and b_worktree_materialized(
         admit_lane="B",
         lease_key=lease_key,
@@ -162,9 +188,10 @@ __all__ = [
     "b_worktree_materialized",
     "derive_concurrency_posture",
     "isolation_materialized_from_record_json",
+    "lane_b_worktree_missing",
+    "lease_is_isolated_worktree",
     "operator_multi_a_enabled",
     "posture_from_record_json",
-    "refuse_b_without_worktree_enabled",
     "reported_admit_lane",
     "stamp_isolation_on_record_json",
     "stamp_posture_on_record_json",

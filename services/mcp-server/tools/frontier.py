@@ -591,7 +591,10 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         ``lane`` — optional checkout-isolation lane (``"A"`` | ``"B"``) for GIW
         worktree selection. **Distinct from** ``dispatch_lane`` (path-sim /
         todo routing). **cursor-sdk-seat-only**; other seats → 422
-        ``lane_sdk_only``. Omit for default ``select_lane`` behavior.
+        ``lane_sdk_only``. ``lane="B"`` requires a materialized worktree
+        (minted or inherited from ``nest_under`` / resume parent); otherwise
+        GIW returns 422 ``CURSOR_LANE_B_WORKTREE_MISSING`` — it does not
+        relabel the admit as Lane A. Omit for default ``select_lane`` behavior.
         """
         prompt_input_err = validate_inline_prompt_inputs(
             op, contract, packet_path, source_ref, prompt, sidecar_ref

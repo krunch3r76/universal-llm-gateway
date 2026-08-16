@@ -99,8 +99,8 @@ from services.git_integration_worker.cursor_sdk_closeout_trigger import (
 from services.git_integration_worker.cursor_sdk_concurrency_posture import (
     b_worktree_materialized,
     derive_concurrency_posture,
-    refuse_b_without_worktree_enabled,
-    reported_admit_lane,
+    lane_b_worktree_missing,
+    lease_is_isolated_worktree,
     write_lease_slot_limit,
 )
 from services.git_integration_worker.cursor_sdk_context import (
@@ -239,6 +239,7 @@ from services.git_integration_worker.cursor_sdk_workspace import (
 )
 from services.git_integration_worker.cursor_sdk_worktree import (
     WorktreeMintError,
+    lookup_parent_lease_key,
     maybe_prune_worktree_on_terminal,
     reap_orphan_worktrees,
     resolve_admit_binding,
@@ -2385,6 +2386,16 @@ async def cursor_dispatch(
         if prior_lane is not None and prior_lane.worktree_path.is_dir()
         else None
     )
+    source_repo_str = str(cfg.source_repo.resolve())
+    parent_isolated: bool | None = None
+    inherit_parent = req.nest_under or req.resume_of
+    if inherit_parent:
+        parent_key = lookup_parent_lease_key(inherit_parent)
+        if parent_key is not None:
+            parent_isolated = lease_is_isolated_worktree(
+                lease_key=parent_key,
+                source_repo=source_repo_str,
+            )
     try:
         selected_lane, lane_advisories, lane_reason = select_lane(
             req=req,
@@ -2393,6 +2404,7 @@ async def cursor_dispatch(
             files_expected=files_expected,
             contract=contract,
             lane_worktree=prior_lane_tree,
+            parent_isolated=parent_isolated,
         )
     except LaneScopeRefused as exc:
         return _reject_pre_admission(
@@ -2415,7 +2427,6 @@ async def cursor_dispatch(
     resume_reject = reject_resume_if_ineligible(req)
     if resume_reject is not None:
         return resume_reject
-    source_repo_str = str(cfg.source_repo.resolve())
     minted_lane_b = False
     mint_wait_ms = 0.0
     try:
@@ -2438,11 +2449,6 @@ async def cursor_dispatch(
         )
         isolation_materialized = b_worktree_materialized(
             admit_lane=selected_lane,
-            lease_key=lease_key,
-            source_repo=source_repo_str,
-        )
-        req.lane = reported_admit_lane(
-            selected_lane=selected_lane,
             lease_key=lease_key,
             source_repo=source_repo_str,
         )
@@ -2486,9 +2492,10 @@ async def cursor_dispatch(
         read_only=effective_read_only,
         nest_under=req.nest_under,
         worktree_path=Path(lease_key) if selected_lane == "B" else None,
+        source_repo=source_repo_str,
     )
-    if selected_lane == "B" and not b_worktree_materialized(
-        admit_lane=selected_lane,
+    if lane_b_worktree_missing(
+        selected_lane=selected_lane,
         lease_key=lease_key,
         source_repo=source_repo_str,
     ):
@@ -2498,26 +2505,30 @@ async def cursor_dispatch(
             lease_key=lease_key,
             source_repo=source_repo_str,
         )
-        if refuse_b_without_worktree_enabled():
-            await _rollback_lane_b_mint_if_needed(
-                dispatch_id=req.dispatch_id,
-                thread_id=req.thread_id,
-                source_repo=cfg.source_repo,
-                minted_lane_b=minted_lane_b,
-                reason="b_worktree_missing",
-            )
-            return _reject_pre_admission(
-                req,
-                worker_error_code="CURSOR_LANE_B_WORKTREE_MISSING",
-                failure_layer="admission",
-                http_status=422,
-                detail_summary=(
-                    "Lane-B write requires materialized worktree; "
-                    "refusal enabled via CURSOR_SDK_REFUSE_B_WITHOUT_WORKTREE"
-                ),
-                retryable=False,
-                validation_stage="lane_b_materialization",
-            )
+        await _rollback_lane_b_mint_if_needed(
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            source_repo=cfg.source_repo,
+            minted_lane_b=minted_lane_b,
+            reason="b_worktree_missing",
+        )
+        return _reject_pre_admission(
+            req,
+            worker_error_code="CURSOR_LANE_B_WORKTREE_MISSING",
+            failure_layer="admission",
+            http_status=422,
+            detail_summary=(
+                "Lane-B write requires a materialized worktree "
+                "(minted or inherited); shared-master lease is Lane A"
+            ),
+            retryable=False,
+            validation_stage="lane_b_materialization",
+            invalid_fields=["lane"],
+            extra_data={
+                "lease_key": lease_key,
+                "source_repo": source_repo_str,
+            },
+        )
     slot_limit = (
         write_lease_slot_limit(admit_lane=selected_lane, posture=concurrency_posture)
         if concurrency_posture is not None

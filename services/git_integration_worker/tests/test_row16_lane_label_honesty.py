@@ -81,6 +81,7 @@ def test_b_worktree_materialized_lane_a_is_vacuous_true(tmp_path: Path) -> None:
 
 
 def test_reported_admit_lane_nest_on_shared_master_is_a(tmp_path: Path) -> None:
+    """Historical stats helper still relabels false-B; write-admit refuses instead."""
     repo = str(tmp_path / "repo")
     Path(repo).mkdir()
     wt = tmp_path / "worktrees" / "d1"

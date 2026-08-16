@@ -289,7 +289,7 @@ def accept_dispatch_worktree(
     return resolved
 
 
-def _lookup_parent_lease_key(parent_id: str) -> str | None:
+def lookup_parent_lease_key(parent_id: str) -> str | None:
     with _connect() as conn:
         row = conn.execute(
             "SELECT lease_key, source_repo FROM cursor_sdk_dispatches WHERE dispatch_id=?",
@@ -310,7 +310,7 @@ def resolve_admit_binding(
 ) -> tuple[Path, str]:
     """Return ``(dispatch_workspace, lease_key)`` for ledger admit."""
     if req.resume_of:
-        parent_key = _lookup_parent_lease_key(req.resume_of)
+        parent_key = lookup_parent_lease_key(req.resume_of)
         if parent_key is None:
             raise WorktreeMintError(f"resume parent not found: {req.resume_of!r}")
         workspace = Path(parent_key).resolve()
@@ -322,7 +322,7 @@ def resolve_admit_binding(
         return workspace, str(workspace)
 
     if req.nest_under:
-        parent_key = _lookup_parent_lease_key(req.nest_under)
+        parent_key = lookup_parent_lease_key(req.nest_under)
         if parent_key is None:
             raise WorktreeMintError(f"nest parent not found: {req.nest_under!r}")
         workspace = Path(parent_key).resolve()
@@ -397,6 +397,7 @@ __all__ = [
     "lane_worktree_dir",
     "lookup_dispatch_worktree",
     "lookup_lane_worktree",
+    "lookup_parent_lease_key",
     "master_mint_mutex_key",
     "maybe_prune_worktree_on_terminal",
     "mint_dispatch_worktree",

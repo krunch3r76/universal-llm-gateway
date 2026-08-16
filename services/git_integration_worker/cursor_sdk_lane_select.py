@@ -1,6 +1,6 @@
 """Lane selection at cursor-sdk admit (S2 + row-10 default-routing).
 
-# row10-probe-B: branch-isolation window — no behavior change
+Nested omitted-lane inherits parent isolation, not the regime switch.
 """
 
 from __future__ import annotations
@@ -83,16 +83,24 @@ def select_lane(
     files_expected: list[str],
     contract: str | None = None,
     lane_worktree: Path | None = None,
+    parent_isolated: bool | None = None,
 ) -> tuple[Lane, list[str], LaneSelectionReason]:
-    """Choose admit lane; row-10 routes implement-class contracts to Lane-B when regime is on."""
+    """Choose admit lane; row-10 routes implement-class contracts to Lane-B when regime is on.
+
+    Nested admits with omitted ``lane`` inherit the parent's isolation
+    (``parent_isolated``), not the regime switch — regime must not label a
+    shared-master nest as Lane-B. The same inherit applies to ``resume_of``.
+    Explicit ``lane='B'`` still selects B; admit then refuses if the worktree
+    is missing.
+    """
     advisories: list[str] = []
-    if req.nest_under:
+    if req.nest_under or req.resume_of:
         explicit = wire_lane_explicit(req)
         if explicit == "B":
             return "B", advisories, "nest_inherit"
         if explicit == "A":
             return "A", advisories, "nest_inherit"
-        if regime_active:
+        if parent_isolated is True:
             return "B", advisories, "nest_inherit"
         return "A", advisories, "nest_inherit"
 

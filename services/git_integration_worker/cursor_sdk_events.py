@@ -1306,7 +1306,11 @@ def emit_sdk_lane_b_worktree_missing_observed(
     lease_key: str | None,
     source_repo: str,
 ) -> None:
-    """Observe Lane-B admit lacking materialized worktree (Leg-1 honesty signal)."""
+    """Observe a Lane-B admit that lacked a materialized worktree, then refuse.
+
+    Coupled to ``CURSOR_LANE_B_WORKTREE_MISSING`` (422). Historical rows may
+    still carry a false-B label; new write admits do not relabel to A.
+    """
     _emit(
         SdkLaneBWorktreeMissingObserved(
             dispatch_id=dispatch_id,
