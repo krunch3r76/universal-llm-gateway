@@ -8,11 +8,6 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from contract_vocab import CANONICAL_CONTRACTS
-from cursor_capabilities import (
-    canonical_cursor_bare_id,
-    effort_knob_name,
-    supported_knobs,
-)
 from effort_vocabulary import WIRE_LADDER, normalize_effort
 
 Contract = Literal[
@@ -446,72 +441,6 @@ def resolve_contract_disposition(contract: str | None) -> dict[str, Any]:
         "disposition_hint": hints[raw],
         "notes": "ok",
     }
-
-
-def clamp_effort_to_accepted(
-    requested: str, accepted: tuple[str, ...]
-) -> str | None:
-    """Pick the highest accepted rung at or below *requested* on the effort ladder.
-
-    Descriptors disagree on ceiling (grok tops at ``xhigh``, opus at ``max``), so a
-    verbatim mismatch must degrade rather than drop the knob — dropping silently
-    hands the bridge a model default that can be far above what was asked for.
-    """
-    if requested in accepted:
-        return requested
-    ladder = _EFFORT_LADDER
-    if requested not in ladder:
-        return None
-    in_ladder = [value for value in ladder if value in accepted]
-    if not in_ladder:
-        return None
-    below = [value for value in in_ladder if ladder.index(value) <= ladder.index(requested)]
-    return below[-1] if below else in_ladder[0]
-
-
-def compose_model_knobs(
-    model: dict[str, Any],
-    effort: dict[str, Any],
-) -> dict[str, str]:
-    """Merge the resolved effort onto a model's knobs, capability-clamped.
-
-    ``resolve_desired_model`` only carries model-intrinsic knobs (opus thinking);
-    without this merge the resolved effort is reported on the admit turn but never
-    reaches the bridge, so every Auto-bound reasoner ran at its catalog default.
-
-    Grok's ListModels catalog default is ``fast=true`` (speed over quality). Auto
-    spend observed that path as a cost center — every Auto contract that resolves
-    to ``grok-4.6`` therefore pins ``fast=false`` here so the bridge never inherits
-    the catalog speed default. Catalog ``default_variant`` stays ListModels-true
-    for freshness parity; this pin is the Auto-lane override.
-    """
-    knobs: dict[str, str] = dict(model.get("model_knobs") or {})
-    model_id = str(model.get("resolved_model_id") or "").strip()
-    bare: str | None = None
-    if model_id:
-        try:
-            bare = canonical_cursor_bare_id(model_id)
-        except ValueError:
-            bare = None
-        else:
-            # Spend control: disable Grok fast on every Auto contract by default.
-            if bare == "grok-4.6" and "fast" in supported_knobs(bare):
-                knobs["fast"] = "false"
-    requested = str(effort.get("resolved_effort") or "").strip().lower()
-    if not model_id or not requested:
-        return knobs
-    if bare is None:
-        return knobs
-    name = effort_knob_name(bare)
-    if name is None:
-        return knobs
-    spec = supported_knobs(bare).get(name)
-    if spec is None:
-        return knobs
-    value = clamp_effort_to_accepted(requested, tuple(spec.accepted))
-    if value is not None:
-        knobs[name] = value
-    return knobs
 
 
 def resolve_handoff_contract(contract: str | None) -> str:

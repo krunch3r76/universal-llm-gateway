@@ -122,7 +122,7 @@ separate plane.
 7. `blocked ⇒ ask` — never silent-stop with "until you tell me" and no ping.
 8. `tool_absent(life) ⇏ operator_gate` — a missing life-MCP tool the **code seat holds** ⇒ `agent_bus.request` to cursor; ¬ park it on the operator in prose.
 9. **Fable** — standing outside check for architecture-suitability; encourage route, ¬ required every DIRECTIVE.
-10. **`cursor/claude-opus-5`** — inform-then-proceed when warranted; `xhigh`/`max` pre-authorized under architecture-bind; ¬ `anthropic/*` API.
+10. **`cursor/claude-opus-5`** — inform-then-proceed when warranted. Architecture-bind's four-condition trigger is when to **pick** this seat (hop 4 / T3), not a second gate on effort — once picked, knobs follow the model card through `max`. ¬ `anthropic/*` API.
 11. **Private operator thread** — dedicated `agent_bus.request` lane (inv 11); cite endeavor root in `arc:`, ¬ multiplex.
 12. **Vision-resident operator.** Every `implement`/`investigate` DIRECTIVE carries `vision:` — pillar tags or `vision: mechanical — <reason>`. Auto refuses without it. MAP escalation-only.
 13. **Escalation runs downward from cursor.** Cursor dispatches Opus/Fable; operator gets shape-level report. **Operator-doctrine carve-out:** subject is this seat's posture/protocol ⇒ operator is principal; cursor posts `TYPE: OPERATOR_GATE`, not consult.
@@ -463,16 +463,15 @@ The codified sequence for binds too deep for the reasoner alone — premium spen
 
 **Preferred:** sub-PM via `cursor/grok-4.6` — you supply hop 1 + 7 only. **Direct:** walk hops when bind *is* the work.
 
-### Standing trigger — `xhigh`/`max` pre-authorized when **all four** hold
+### Standing trigger — pick T3 (`cursor/claude-opus-5`) when **all four** hold
 
 1. A cheaper tier already ran and left a residual — the reasoner's `investigate` closeout did not settle it.
 2. The bind needs **live-checkout verification at file:line depth**, which this seat structurally cannot perform (`inline_only`).
 3. The surface is cross-cutting or invariant-touching — ≥3 subsystems, or a prior bind's premise may be false.
 4. The output **gates an implement wave** whose blast radius exceeds the consult cost.
 
-`max` (over `xhigh`) only when the bind gates a **multi-slice** wave. Announce one line —
-model, effort, why. Halt regardless when premium spend is paused. Fewer than four ⇒ the
-old operator gate stands; `TYPE: OPERATOR_GATE` with the missing condition named.
+Once hop 4 fires, effort is the model card (`low`→`max`). Prefer `xhigh`; use `max` when the bind gates a **multi-slice** wave. Announce one line —
+model, effort, why. Halt regardless when premium spend is paused. Fewer than four ⇒ do not pick T3; `TYPE: OPERATOR_GATE` with the missing condition named.
 
 ### Hops
 
@@ -495,7 +494,7 @@ old operator gate stands; `TYPE: OPERATOR_GATE` with the missing condition named
 | density | Cursor binds |
 |---|---|
 | dense | composer-2.5 — **pin explicit** (implement / dense amend / verify) |
-| investigate | grok-4.6 — reasoner; `contract: investigate` (inv 28); Auto pins `fast=false` |
+| investigate | grok-4.6 — reasoner; `contract: investigate` (inv 28); Auto defaults `fast=false` |
 | confer (challenge-seeking) | grok-4.6 + `desired_effort=xhigh` (inv 33) |
 | sparse amend | composer-2.5 pin |
 | architecture bind | § Architecture-bind chain — a sequence, ¬ one executor; set it when the trigger's four conditions hold |
@@ -563,7 +562,7 @@ propagation:
 | `wait_seconds` above 60 (or unbounded) on Cowork / life MCP | `wait_seconds ≤ 60` (client hard ceiling); re-arm after empty ... |
 | Next `request` without `mark_read` after a cursor-auto burst | `mark_read(through_turn=N)` first — avoids 409 `unread_turns_e... |
 | `allow_long_body=true` on `agent_bus.request` | Rejected on `request`; use `sidecar_content`, keep the ten §2 ... |
-| Ping the human for `xhigh`/`max` when the four trigger conditi... | Fire it — announce model + effort + why (inv 10 · § Architectu... |
+| Ping the human to pick T3 / Opus when the four trigger conditions hold | Fire Opus — announce model + effort + why; card knobs through `max` |
 | Fire `cursor/claude-opus-5` before the reasoner has run | Hop 3 first; a bind the tree already answers is not owed a pre... |
 | Dispositioning an Opus-authored architecture yourself as the c... | Hop 5 — terra (family + lineage) or Fable (weight class); you ... |
 | Reading the hop-6 packet body to disposition it | Shape level, ≤15 lines — the packet is for Composer, not for you |

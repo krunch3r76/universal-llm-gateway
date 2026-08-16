@@ -131,10 +131,12 @@ operator-proxy CSE when attached; else `team_dispatch(model=cdp/fable|cdp/opus-5
 CDP G1 lead preflight); judgment chips alone ≠ floor. Harvest to cortex.
 
 **Premium rung:** fork needs live-checkout verification at file:line depth a CDP seat
-structurally cannot perform ⇒ escalate to `cursor/claude-opus-5` `{xhigh|max}`,
-**pre-authorized — ¬ operator ping** — under the four-condition trigger in
-`decision:architecture-bind-escalation-chain` (`cdp-operator-proxy` § Architecture-bind
-chain). Announce model + effort + why. That SOT also binds the **mandatory** independent
+structurally cannot perform ⇒ escalate to `cursor/claude-opus-5` (hop 4) when the
+four-condition trigger in `decision:architecture-bind-escalation-chain` holds
+(`cdp-operator-proxy` § Architecture-bind chain) — **pre-authorized, ¬ operator ping**.
+That trigger picks the **seat**, not a second effort gate; once picked, knobs follow
+the model card. Hop 4 may recommend `{xhigh|max}` for that hop's duty. Announce
+model + effort + why. That SOT also binds the **mandatory** independent
 check (`cursor/gpt-5.6-terra` default, `cdp/fable` alternate — an Opus-authored
 architecture is not self-ratifiable) and verbatim densify. ¬ fork those rules here.
 
@@ -196,7 +198,7 @@ Name: `todo:{slug}` · entry gate · consult URI · recon URI.
 | Mode B under live operator-proxy CSE via fresh `team_dispatch(cdp/…)` | `project_ask(op=followup)` into attached CSE (inv 23); fresh CDP only if no live CSE |
 | Existing todo + Mode B ask → divert to bare `/layer` | Mode B on existing slug · attach · `/layer` G2 |
 | S2 breadth via Composer or in-seat Grep spray | Explore subagent first (cheap-recon Tier-1) |
-| S3 fork needs checkout depth → park on the operator for premium approval | Pre-authorized under the four-condition trigger — fire and announce |
+| S3 fork needs checkout depth → park on the operator for premium approval | Four-condition trigger holds ⇒ fire hop 4 and announce; effort is the card |
 | Premium S3 bind ratified by the seat that commissioned it | Independent check is mandatory (terra/Fable) — see the chain SOT |
 
 ## Commissioning register (operator bind 2026-08-02)

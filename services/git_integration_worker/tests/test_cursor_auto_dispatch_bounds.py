@@ -113,12 +113,30 @@ def test_grok_max_degrades_to_card_ceiling() -> None:
 
 
 @pytest.mark.parametrize(
-    "model_id", ["cursor/claude-sonnet-5", "claude-sonnet-5"]
+    "model_id", ["cursor/claude-sonnet-5", "claude-sonnet-5", "sonnet-5"]
 )
 @pytest.mark.parametrize("requested", ["high", "xhigh", "max"])
 def test_sonnet_5_card_accepts_max(model_id: str, requested: str) -> None:
     payload = _effort(requested)
     assert clamp_effort_to_model_card(model_id, payload) is payload
+
+
+def test_off_ladder_effort_falls_to_card_default() -> None:
+    """Off-ladder tokens must not fail open (leave resolved) or drop the knob."""
+    from services.git_integration_worker.cursor_auto.knob_compose import (
+        compose_model_knobs,
+    )
+
+    payload = _effort("none")
+    clamped = clamp_effort_to_model_card("cursor/grok-4.6", payload)
+    knobs = compose_model_knobs(
+        {"resolved_model_id": "cursor/grok-4.6"}, payload
+    )
+    assert clamped["resolved_effort"] == "high"
+    assert clamped["clamped"] is True
+    assert "off-ladder" in str(clamped["notes"])
+    assert knobs["effort"] == "high"
+    assert knobs["fast"] == "false"
 
 
 def test_sdk_card_clamp_does_not_define_cdp_wire_effort() -> None:

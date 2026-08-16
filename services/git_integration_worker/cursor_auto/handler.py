@@ -74,6 +74,7 @@ from services.git_integration_worker.cursor_auto.job_ledger import (
     RELAY_PHASE_SDK_TERMINAL,
     get_ledger,
 )
+from services.git_integration_worker.cursor_auto.knob_compose import compose_model_knobs
 from services.git_integration_worker.cursor_auto.nested_outcome import (
     relay_closeout_outcome,
     relay_confer_outcome,
@@ -109,7 +110,6 @@ from services.git_integration_worker.cursor_auto.wire_map import (
     admit_model_override_rule_line,
     admit_model_pin_flags,
     coalesce_cdp_desired_model_into_escalation,
-    compose_model_knobs,
     resolve_contract_disposition,
     resolve_desired_effort,
     resolve_desired_model,

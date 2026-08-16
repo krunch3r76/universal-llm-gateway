@@ -25,6 +25,7 @@ from typing import Any
 from cursor_capabilities import canonical_cursor_bare_id, supported_knobs
 from universal_logging import get_logger
 
+from services.git_integration_worker.cursor_auto.knob_compose import compose_model_knobs
 from services.git_integration_worker.cursor_auto.queue import AutoJob
 from services.git_integration_worker.cursor_auto.reflex_events import (
     emit_second_read,
@@ -38,7 +39,6 @@ from services.git_integration_worker.cursor_auto.reflex_policy import (
     counters,
     evaluate_reflex,
 )
-from services.git_integration_worker.cursor_auto.wire_map import compose_model_knobs
 from services.git_integration_worker.cursor_bus import CursorBusClient
 
 logger = get_logger(__name__)

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+from services.git_integration_worker.cursor_auto.knob_compose import compose_model_knobs
 from services.git_integration_worker.cursor_auto.reflex_packet import (
     MAX_SECOND_READ_CHARS,
     SECOND_READ_BEGIN,
@@ -29,7 +30,6 @@ from services.git_integration_worker.cursor_auto.reflex_read import (
     reflex_effort,
     reflex_model,
 )
-from services.git_integration_worker.cursor_auto.wire_map import compose_model_knobs
 
 THREAD = "t-reflex"
 
@@ -96,7 +96,7 @@ def test_effort_merges_onto_opus_and_preserves_base_knobs() -> None:
 def test_effort_within_accepted_range_passes_through() -> None:
     # grok's own accepted range includes xhigh (cursor_capabilities.py) — no
     # degradation needed for a value the model already accepts verbatim.
-    # Auto also pins fast=false (catalog default is true; spend control).
+    # Auto defaults fast=false when the knob is absent (catalog default is true).
     knobs = compose_model_knobs(
         {"resolved_model_id": "cursor/grok-4.6"}, {"resolved_effort": "xhigh"}
     )
@@ -119,6 +119,18 @@ def test_grok_auto_defaults_fast_false_even_without_effort() -> None:
         {"resolved_model_id": "cursor/grok-4.6"}, {"resolved_effort": ""}
     )
     assert knobs == {"fast": "false"}
+
+
+def test_grok_explicit_fast_true_is_preserved() -> None:
+    """Default is fill-if-absent, not a pin — an explicit fast rides through."""
+    knobs = compose_model_knobs(
+        {
+            "resolved_model_id": "cursor/grok-4.6",
+            "model_knobs": {"fast": "true"},
+        },
+        {"resolved_effort": "high"},
+    )
+    assert knobs == {"effort": "high", "fast": "true"}
 
 
 def test_model_without_effort_knob_gets_none() -> None:

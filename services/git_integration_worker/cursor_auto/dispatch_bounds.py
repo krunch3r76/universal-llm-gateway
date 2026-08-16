@@ -1,11 +1,11 @@
-"""What an unattended cursor-auto dispatch is allowed to spend.
+"""What an unattended cursor-auto dispatch may commission.
 
 Auto POSTs the cursor-sdk worker directly, so Stargate's ``sdk_cost_risk``
 guard never sees these binds (see the comment at the commissioning site in
 ``handler``). ``premium_bind`` announces them, but an announcement is not a
 gate.
 
-Two **policy** bounds (executor + scope) plus one **card** bound (effort):
+Two **policy** bounds (executor + scope) plus one **capability** bound (effort):
 
 * **Executor** — ``bind-then-compose`` already says premium models bind and
   Composer implements. Mechanical work is therefore redirected onto the compose
@@ -31,14 +31,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from cursor_capabilities import (
-    canonical_cursor_bare_id,
-    effort_knob_name,
-    supported_knobs,
-)
+from cursor_capabilities import canonical_cursor_bare_id
 
+from services.git_integration_worker.cursor_auto.knob_compose import (
+    resolve_card_effort,
+)
 from services.git_integration_worker.cursor_auto.wire_map import (
-    clamp_effort_to_accepted,
     resolve_desired_model,
 )
 
@@ -85,38 +83,25 @@ def clamp_effort_to_model_card(
     The card is the gate. Policy does not invent a stricter ladder than
     ``CURSOR_MODEL_CAPABILITIES``. Values the card already accepts pass
     through (identity). Values above the card degrade to the highest accepted
-    rung at or below the request — same rule as ``compose_model_knobs``.
-    Models with no effort-like knob, or an unparseable id, return *effort*
-    unchanged. Mirrors ``resolve_desired_effort``'s dict shape so the admit
-    turn reports a card clamp in ``resolved_effort``.
+    rung at or below the request. Off-ladder tokens (``none``, ``minimal``)
+    fall to the card ``KnobSpec.default`` — same rule as
+    ``compose_model_knobs``. Models with no effort-like knob, or an
+    unparseable id, return *effort* unchanged. Mirrors
+    ``resolve_desired_effort``'s dict shape so the admit turn reports a card
+    clamp in ``resolved_effort``.
     """
     resolved = str(effort.get("resolved_effort") or "").strip().lower()
     if not resolved:
         return effort
-    try:
-        bare = canonical_cursor_bare_id(str(model_id or ""))
-    except ValueError:
-        return effort
-    name = effort_knob_name(bare)
-    if name is None:
-        return effort
-    spec = supported_knobs(bare).get(name)
-    if spec is None:
-        return effort
-    accepted = tuple(spec.accepted)
-    value = clamp_effort_to_accepted(resolved, accepted)
+    value, note = resolve_card_effort(str(model_id or ""), resolved)
     if value is None or value == resolved:
         return effort
     prior = str(effort.get("notes") or "").strip()
-    note = (
-        f"{resolved}→{value} (not on {bare} card; "
-        f"accepted {name}={','.join(accepted)})"
-    )
     return {
         **effort,
         "resolved_effort": value,
         "clamped": True,
-        "notes": f"{prior}; {note}" if prior else note,
+        "notes": f"{prior}; {note}" if prior and note else (note or prior),
     }
 
 
