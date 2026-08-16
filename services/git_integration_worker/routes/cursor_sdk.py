@@ -612,6 +612,8 @@ def _resolve_prompt(req: CursorDispatchRequest, source_repo: Path) -> str:
         lane=lane,
         existing_text=packet_text,
         lane_branch=lane_branch,
+        dispatch_id=req.dispatch_id,
+        has_packet_path=req.packet_path is not None,
     )
     return f"{preamble}{packet_text}"
 

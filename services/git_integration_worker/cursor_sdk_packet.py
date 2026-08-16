@@ -65,6 +65,22 @@ _LANE_B_REPO_EDIT_PREAMBLE = (
     "(sidecars, specs, reviews)."
 )
 
+_CONDUCTOR_SEAT_IDENTITY_TEMPLATE = (
+    "CONDUCTOR SEAT IDENTITY (mandatory): Your GIW dispatch_id is {dispatch_id}. "
+    "When nesting cursor-sdk legs from this Lane-B conductor seat:\n"
+    "  (a) **Independent dispatch** — for judgment/spec-only work that will NOT land "
+    "on this mission's branch (investigate, confer, dense spec bind). Fire a separate "
+    "`team_dispatch` without `nest_under`. Never substitute this for mechanical landing "
+    "work that must merge on the mission branch.\n"
+    "  (b) **Mechanical landing** — for G-rows whose code must land on this mission "
+    "branch (`contract=implement` / `pure-mechanical`): "
+    "`team_dispatch(..., nest_under={dispatch_id})` so the child inherits Lane B and "
+    "parks under this conductor dispatch — not a fresh top-level implement that can "
+    "mint another branch or fall onto master.\n"
+    "Nested implement packets: omit `todo:` front-matter when the parent already holds "
+    "that work-identity — repeating it 409s `CURSOR_SOURCE_REF_IN_FLIGHT`."
+)
+
 _LANE_B_BRANCH_CONTRACT_TEMPLATE = (
     "LANE-B BRANCH CONTRACT (mandatory): Your commits land on {branch}. That branch "
     "is yours to retire — a lane that walks away from it leaves an attributed debt "
@@ -162,6 +178,8 @@ def resolve_prompt_preamble(
     lane: str | None = None,
     existing_text: str | None = None,
     lane_branch: str | None = None,
+    dispatch_id: str | None = None,
+    has_packet_path: bool = False,
 ) -> str:
     """Assemble the worker prompt prefix for one cursor-sdk dispatch.
 
@@ -171,6 +189,10 @@ def resolve_prompt_preamble(
     Lane-B dispatches additionally carry the branch contract: the obligation to
     declare a land disposition arrives with the work rather than after residue
     already exists.
+
+    Lane-B ``light-bounded`` packet dispatches (conductor missions) additionally
+    carry seat identity: the conductor's own ``dispatch_id`` and both nesting
+    paths (independent judgment dispatch vs ``nest_under`` for mechanical landing).
     """
     contract = (handoff_contract or inferred_contract or "consult").lower()
     if prompt_preamble:
@@ -187,6 +209,15 @@ def resolve_prompt_preamble(
             _LANE_B_BRANCH_CONTRACT_TEMPLATE.format(
                 branch=lane_branch or "your lane branch"
             )
+        )
+    if (
+        lane == "B"
+        and contract == "light-bounded"
+        and has_packet_path
+        and dispatch_id
+    ):
+        parts.append(
+            _CONDUCTOR_SEAT_IDENTITY_TEMPLATE.format(dispatch_id=dispatch_id)
         )
     if (
         contract not in _REASONING_POSTURE_SKIP_CONTRACTS
