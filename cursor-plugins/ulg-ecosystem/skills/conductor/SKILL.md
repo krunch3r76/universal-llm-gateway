@@ -266,6 +266,26 @@ Nested Composer under a Lane-B conductor must `nest_under=<conductor dispatch_id
 **and** inherit Lane B — ¬ fire a fresh top-level implement that can mint another
 branch or fall onto master.
 
+### Self-nest routing — seat-identity preamble exposes your `dispatch_id`
+
+Lane-B `light-bounded` conductor dispatches with a packet receive a **seat-identity
+preamble** from GIW `resolve_prompt_preamble` (shipped
+`todo:conductor-seat-identity-preamble`). It names your own GIW **`dispatch_id`**
+(short ledger id — **not** the Stargate execution UUID on bus `to:`) and the two
+nesting paths:
+
+| Path | When | Shape |
+|---|---|---|
+| **(a) Independent dispatch** | Judgment/spec-only work that will **not** land on this mission's branch (investigate, confer, dense spec bind) | Separate `team_dispatch` **without** `nest_under` |
+| **(b) Mechanical landing** | G-rows whose code must merge on this mission branch | `team_dispatch(..., nest_under=<your dispatch_id>)` so the child inherits Lane B |
+
+**Never** substitute independent dispatch for `nest_under` on mechanical landing work —
+that mints another branch or falls onto master. Historical class: conductor absorbs
+~1k+ SLOC in-seat (7407) when it cannot discover its own id.
+
+Nested implement packets: omit `todo:` front-matter when the parent already holds that
+work-identity — repeating it 409s `CURSOR_SOURCE_REF_IN_FLIGHT`.
+
 ## Interactive entry
 
 Command `/conductor` (plugin): orient → ask establishing questions (incl. **model
@@ -307,3 +327,4 @@ when the operator already bound the answers in chat.
 | Conductor pauses after a G-row to ask "continue?" | Drive to completion in one commission; report via CHECKPOINT, don't wait for a reply |
 | Treat the mission's own `git_land` as a second approval gate | Admit is the standing merge ack; land on green + AC met (§ Run to completion) |
 | Escalate "ok to merge?" to the human mid-mission | Land it; escalate only genuinely operator-only acts |
+| Independent `team_dispatch` (no `nest_under`) for mechanical G-row landing work | `nest_under=<conductor dispatch_id>` + Composer `contract=implement` — independent dispatch is judgment/spec-only |
