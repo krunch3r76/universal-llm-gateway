@@ -55,6 +55,10 @@ implement-ready.
 param) → distill attrs → implement-ready + `spec_sha256`. Detail: L3 annex § Gate 2 — expanded sequence. **`required_skills`:**
 catalog-registered slugs only (`config/skills.yaml`). Rule `*_ulg.mdc` stems (e.g. `skill-surface`) are not valid — write-time 422 `required_skills_uncatalogued`.
 
+**Self-referential `spec_sha256` (friction, agent-bus:7323):** a document cannot correctly embed the hash of its
+own final bytes — a trailer inside the spec body is necessarily stale/self-referential. Quote `spec_sha256` in the
+dispatch/CLOSEOUT turn or the todo attribute, never as a trailer inside the document it hashes.
+
 ## Gate 3 — direct implement dispatch
 
 ```python
@@ -63,6 +67,13 @@ team_dispatch(op="generate", seat=cursor-sdk, contract=implement, source_ref="to
 
 **Compliance:** todo resolves; implement-ready + `spec_sha256`; attrs populated; zero forks; `validate_dense_spec` passes.
 Reject/wrap table: L3 annex. `wrap` non-remedial — fix todo, not hand-wrap.
+
+**Nested-packet `todo:` front-matter collision (friction, agent-bus:7323):** when a
+parent conductor dispatch already holds a non-terminal dispatch against
+`todo:{slug}`, a nested child packet repeating that same `todo:` front-matter value
+409s `CURSOR_SOURCE_REF_IN_FLIGHT` — the work-identity is a single-holder lock. Fix:
+omit `todo:` from the nested packet's front-matter (prose mentions of the todo name
+in the packet body are unaffected).
 
 ## Mandatory preflight before writing packet
 

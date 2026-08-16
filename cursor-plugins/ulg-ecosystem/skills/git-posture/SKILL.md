@@ -110,6 +110,15 @@ When the operator directs headless `git_*` tools (relay → `git-integration-wor
 | `git_status` / `git_diff` | Fingerprints / dirty check when needed for a gated call |
 | `git_integrate` / `git_land` | Operator-gated merge primitives only when the operator has an arc to land — not the default implement path |
 
+**`git_integrate`/`git_land` first-call footguns (friction, agent-bus:7323 F1/F8):** both require
+the worktree to be checked out on a branch literally named `arc/{arc}`
+(`libs/git_integrate/validate.py` — `expected_branch = f"arc/{arc}"`) plus positional
+`approval` + `expected_diff_sha256` args; neither call creates that branch or worktree.
+Mint it explicitly before the first call: `git worktree add -b arc/<slug>
+<worktree-path> <source-branch>`. If the worktree was torn down or never materialized
+between gate-prep and the land call, the first call 404s `worktree_missing` — remint
+from the branch and retry.
+
 **`git_commit` recipe (live checkout):**
 1. `git_commit(worktree_path=<live master checkout>, expected_branch="master", paths=[…], dry_run=True)` → `expected_paths_sha256` + numstat
 2. Operator reviews → `git_commit(…, approval, expected_paths_sha256, commit_message=…)`
