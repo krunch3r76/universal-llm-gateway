@@ -14,6 +14,7 @@ from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
     annotate_checkpoint_claim_discrepancy,
     annotate_plane_discrepancy,
     apply_landed_admit_gate,
+    checkpoint_claims_baseline_unavailable,
     checkpoint_dispositions_equivalent,
     inject_plane_line,
     merge_plane_discrepancy_markers,
@@ -772,3 +773,37 @@ def test_gitignored_only_commits_ahead_zero_plane_unknown_not_not_landed(
 def test_strip_plane_line_roundtrip() -> None:
     body = "status: complete\nplane: landed@local-master · as-of t0\n"
     assert "plane:" not in strip_plane_line(body)
+
+
+def test_qualify_checkpoint_value_baseline_unavailable() -> None:
+    raw = "baseline_unavailable: no admit baseline recorded for this dispatch"
+    assert qualify_checkpoint_value(raw) == (
+        "baseline_unavailable@local-master: no admit baseline recorded for this dispatch"
+    )
+
+
+def test_checkpoint_claims_baseline_unavailable() -> None:
+    assert checkpoint_claims_baseline_unavailable(
+        "baseline_unavailable: no admit baseline recorded for this dispatch"
+    )
+    assert checkpoint_claims_baseline_unavailable(
+        "baseline_unavailable@local-master: no admit baseline recorded for this dispatch"
+    )
+    assert not checkpoint_claims_baseline_unavailable("nothing_authored@local-master")
+    assert not checkpoint_claims_baseline_unavailable(
+        "deferred@local-master: waiting on land"
+    )
+
+
+def test_annotate_checkpoint_claim_discrepancy_suppressed_for_baseline_unavailable() -> None:
+    measurement = (
+        "baseline_unavailable@local-master: "
+        "no admit baseline recorded for this dispatch"
+    )
+    assert (
+        annotate_checkpoint_claim_discrepancy(
+            claim="nothing_authored",
+            measurement=measurement,
+        )
+        is None
+    )

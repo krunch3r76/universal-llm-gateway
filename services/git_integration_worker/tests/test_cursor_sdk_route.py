@@ -2122,7 +2122,7 @@ async def test_gated_pure_mechanical_captures_wt_baseline(
     monkeypatch.setattr(
         route_mod,
         "capture_wt_baseline_with_hashes",
-        lambda _repo: fake_baseline,
+        lambda *_a, **_k: fake_baseline,
     )
     monkeypatch.setattr(ledger, "set_wt_baseline", _track_set)
     monkeypatch.setattr(route_mod, "_run_sdk_sync", lambda **_kw: minimal_outcome)
@@ -2145,6 +2145,179 @@ async def test_gated_pure_mechanical_captures_wt_baseline(
 
     assert len(set_calls) == 1
     assert json.loads(set_calls[0])["admit_head"] == fake_baseline["admit_head"]
+
+
+@pytest.mark.asyncio
+async def test_gated_light_bounded_captures_wt_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """light-bounded (non-read-only) must capture wt_baseline after slot acquire."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    ledger = CursorDispatchLedger.instance()
+    req = CursorDispatchRequest(
+        thread_id="gate-lb-1",
+        model="cursor/composer-2.5",
+        dispatch_id="gate-lb-disp",
+        execution_id="exec-gate-lb",
+        handoff_contract="light-bounded",
+        message="---\ncontract: light-bounded\n---\np",
+    )
+    fake_baseline = {
+        "codes": {},
+        "hashes": {},
+        "outside_repo": [],
+        "admit_head": "cafebabecafebabecafebabecafebabecafebabe",
+    }
+    set_calls: list[str] = []
+
+    def _track_set(*, dispatch_id: str, wt_baseline: str) -> None:
+        set_calls.append(wt_baseline)
+
+    minimal_outcome = _sdk_outcome(body="done", tool_call_count=0)
+
+    monkeypatch.setattr(
+        route_mod,
+        "acquire_sdk_dispatch_slot",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        route_mod,
+        "capture_wt_baseline_with_hashes",
+        lambda *_a, **_k: fake_baseline,
+    )
+    monkeypatch.setattr(ledger, "set_wt_baseline", _track_set)
+    monkeypatch.setattr(route_mod, "_run_sdk_sync", lambda **_kw: minimal_outcome)
+    monkeypatch.setattr(route_mod, "_deliver_sdk_closeout", AsyncMock())
+    monkeypatch.setattr(route_mod, "_terminate_link", AsyncMock())
+    monkeypatch.setattr(route_mod, "_mark_terminal_and_promote", AsyncMock())
+
+    await route_mod._run_sdk_dispatch_gated(
+        req=req,
+        source_repo=tmp_path,
+        dispatch_workspace=tmp_path,
+        bus=AsyncMock(),
+        controller=_make_controller(),
+        contract="light-bounded",
+    )
+
+    assert len(set_calls) == 1
+    assert json.loads(set_calls[0])["admit_head"] == fake_baseline["admit_head"]
+
+
+@pytest.mark.asyncio
+async def test_gated_pure_mechanical_read_only_still_captures_wt_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Monotonic union: pure-mechanical + explicit read_only=True still captures."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    ledger = CursorDispatchLedger.instance()
+    req = CursorDispatchRequest(
+        thread_id="gate-pm-ro-1",
+        model="cursor/composer-2.5",
+        dispatch_id="gate-pm-ro-disp",
+        execution_id="exec-gate-pm-ro",
+        handoff_contract="pure-mechanical",
+        read_only=True,
+        message="---\ncontract: implement\n---\np",
+    )
+    fake_baseline = {
+        "codes": {},
+        "hashes": {},
+        "outside_repo": [],
+        "admit_head": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    }
+    set_calls: list[str] = []
+
+    def _track_set(*, dispatch_id: str, wt_baseline: str) -> None:
+        set_calls.append(wt_baseline)
+
+    minimal_outcome = _sdk_outcome(body="done", tool_call_count=0)
+
+    monkeypatch.setattr(
+        route_mod,
+        "acquire_sdk_dispatch_slot",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        route_mod,
+        "capture_wt_baseline_with_hashes",
+        lambda *_a, **_k: fake_baseline,
+    )
+    monkeypatch.setattr(ledger, "set_wt_baseline", _track_set)
+    monkeypatch.setattr(route_mod, "_run_sdk_sync", lambda **_kw: minimal_outcome)
+    monkeypatch.setattr(route_mod, "_deliver_sdk_closeout", AsyncMock())
+    monkeypatch.setattr(route_mod, "_terminate_link", AsyncMock())
+    monkeypatch.setattr(route_mod, "_mark_terminal_and_promote", AsyncMock())
+
+    await route_mod._run_sdk_dispatch_gated(
+        req=req,
+        source_repo=tmp_path,
+        dispatch_workspace=tmp_path,
+        bus=AsyncMock(),
+        controller=_make_controller(),
+        contract="pure-mechanical",
+    )
+
+    assert len(set_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_gated_consult_read_only_skips_wt_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Consult default read-only must not capture wt_baseline."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    ledger = CursorDispatchLedger.instance()
+    req = CursorDispatchRequest(
+        thread_id="gate-consult-1",
+        model="cursor/composer-2.5",
+        dispatch_id="gate-consult-disp",
+        execution_id="exec-gate-consult",
+        handoff_contract="consult",
+        message="---\ncontract: consult\n---\np",
+    )
+    set_calls: list[str] = []
+
+    def _track_set(*, dispatch_id: str, wt_baseline: str) -> None:
+        set_calls.append(wt_baseline)
+
+    capture_calls: list[tuple] = []
+
+    def _track_capture(*_a, **_k):
+        capture_calls.append((_a, _k))
+        return {"admit_head": "abc1234"}
+
+    minimal_outcome = _sdk_outcome(body="done", tool_call_count=0)
+
+    monkeypatch.setattr(
+        route_mod,
+        "acquire_sdk_dispatch_slot",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(route_mod, "capture_wt_baseline_with_hashes", _track_capture)
+    monkeypatch.setattr(ledger, "set_wt_baseline", _track_set)
+    monkeypatch.setattr(route_mod, "_run_sdk_sync", lambda **_kw: minimal_outcome)
+    monkeypatch.setattr(route_mod, "_deliver_sdk_closeout", AsyncMock())
+    monkeypatch.setattr(route_mod, "_terminate_link", AsyncMock())
+    monkeypatch.setattr(route_mod, "_mark_terminal_and_promote", AsyncMock())
+
+    await route_mod._run_sdk_dispatch_gated(
+        req=req,
+        source_repo=tmp_path,
+        dispatch_workspace=tmp_path,
+        bus=AsyncMock(),
+        controller=_make_controller(),
+        contract="consult",
+    )
+
+    assert capture_calls == []
+    assert set_calls == []
 
 
 @pytest.mark.asyncio

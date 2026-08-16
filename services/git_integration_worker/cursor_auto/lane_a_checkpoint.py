@@ -36,6 +36,9 @@ _CORTEX_URI_PREFIX = "cortex://"
 _UNHASHABLE_CORTEX_DEFERRED = (
     "deferred: cortex durable write could not be rehashed"
 )
+_BASELINE_UNAVAILABLE = (
+    "baseline_unavailable: no admit baseline recorded for this dispatch"
+)
 _DEGRADED_SUMMARY_RE = re.compile(r"\(degraded:\s*([^)]+)\)")
 _TOOL_CALLS_SUMMARY_RE = re.compile(r":\s*(\d+)\s+tool calls\b")
 
@@ -430,6 +433,8 @@ def compute_lane_a_checkpoint_value(
     )
     if cortex_value is not None:
         return cortex_value
+    if admit_head is None:
+        return _BASELINE_UNAVAILABLE
     return "nothing_authored"
 
 

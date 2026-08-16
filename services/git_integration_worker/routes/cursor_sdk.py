@@ -1862,7 +1862,9 @@ async def _run_sdk_dispatch_gated(
     # 599 on slow dirty-checkout baselines).
     # cursor-auto maps operator implement → handoff_contract pure-mechanical
     # (wire_map.resolve_handoff_contract); both need admit_head for lane git_refs.
-    if contract in ("implement", "pure-mechanical"):
+    if contract in ("implement", "pure-mechanical") or not _effective_read_only(
+        req, contract
+    ):
         write_tree = binding.write_tree if binding else source_repo
         baseline_map = await asyncio.to_thread(
             capture_wt_baseline_with_hashes,

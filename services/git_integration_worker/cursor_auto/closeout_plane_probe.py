@@ -366,6 +366,10 @@ def qualify_checkpoint_value(checkpoint: str) -> str:
         return "nothing_authored@local-master"
     if text.startswith("authored_cortex:"):
         return "authored_cortex@local-master:" + text[len("authored_cortex:") :]
+    if text.startswith("baseline_unavailable:"):
+        return "baseline_unavailable@local-master:" + text[
+            len("baseline_unavailable:") :
+        ]
     return text
 
 
@@ -399,6 +403,12 @@ def checkpoint_claims_committed(checkpoint: str) -> bool:
     """True when checkpoint discloses a path-explicit commit; ``@plane`` infix OK."""
     lead = checkpoint.strip().split()[0] if checkpoint.strip() else ""
     return lead == "committed" or lead.startswith("committed@")
+
+
+def checkpoint_claims_baseline_unavailable(checkpoint: str) -> bool:
+    """True when checkpoint discloses indeterminate baseline absence."""
+    lead = checkpoint.strip().split(":", 1)[0] if checkpoint.strip() else ""
+    return lead == "baseline_unavailable" or lead.startswith("baseline_unavailable@")
 
 
 def _strip_cosmetic_checkpoint_tail(text: str) -> str:
@@ -485,6 +495,8 @@ def annotate_checkpoint_claim_discrepancy(
 ) -> str | None:
     """Emit annotate-only marker when §2 claim diverges from infra ``checkpoint:``."""
     if claim is None or not claim.strip():
+        return None
+    if checkpoint_claims_baseline_unavailable(measurement):
         return None
     if checkpoint_dispositions_equivalent(claim, measurement):
         return None
@@ -630,6 +642,7 @@ __all__ = [
     "annotate_status_claim_discrepancy",
     "annotate_checkpoint_claim_discrepancy",
     "annotate_plane_discrepancy",
+    "checkpoint_claims_baseline_unavailable",
     "checkpoint_claims_committed",
     "checkpoint_dispositions_equivalent",
     "status_dispositions_equivalent",

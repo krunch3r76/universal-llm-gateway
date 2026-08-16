@@ -18,6 +18,7 @@ from services.git_integration_worker.cursor_auto.closeout_tree_state import (
     compute_closeout_tree_state,
 )
 from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
+    _BASELINE_UNAVAILABLE,
     compute_lane_a_checkpoint_value,
     degraded_reason_from_closeout_wrapper,
     derive_tree_residue,
@@ -285,10 +286,17 @@ def test_relay_table_projection_preserves_checkpoint_claim_for_gate() -> None:
         dispatch_id=dispatch_id,
     )
     relay_body = inject_tree_residue_line(payload.body, count=residue.count)
-    checkpoint_value = compute_lane_a_checkpoint_value(
-        source_repo=Path("/mnt/torus/projects/universal-llm-gateway"),
-        dispatch_id=dispatch_id,
-    )
+    source_repo = Path("/mnt/torus/projects/universal-llm-gateway")
+    with patch(
+        "services.git_integration_worker.cursor_auto.lane_a_checkpoint."
+        "authored_paths_for_dispatch",
+        return_value=(),
+    ):
+        checkpoint_value = compute_lane_a_checkpoint_value(
+            source_repo=source_repo,
+            dispatch_id=dispatch_id,
+            baseline={"admit_head": "0" * 40},
+        )
     relay_body = inject_checkpoint_line(relay_body, value=checkpoint_value)
     assert "| checkpoint_claim |" in relay_body
     verdict = validate_lane_a_closeout_checkpoint(
@@ -888,3 +896,58 @@ def test_checkpoint_dispositions_equivalent_committed_short_sha_and_pending() ->
         f"committed {full_sha} paths=2 (+4 pending)",
         f"committed@local-master {full_sha} paths=2",
     )
+
+
+def test_compute_checkpoint_baseline_unavailable_when_admit_head_absent(
+    tmp_path: Path,
+) -> None:
+    """No admit_head and no authorship signals → baseline_unavailable, not nothing_authored."""
+    dispatch_id = "auto-no-admit-head"
+    _init_git_repo(tmp_path)
+    with patch(
+        "services.git_integration_worker.cursor_auto.lane_a_checkpoint."
+        "CursorDispatchLedger.instance"
+    ) as ledger_cls:
+        ledger_cls.return_value.read_wt_baseline.return_value = None
+        with patch(
+            "services.git_integration_worker.cursor_auto.lane_a_checkpoint."
+            "authored_paths_for_dispatch",
+            return_value=(),
+        ):
+            value = compute_lane_a_checkpoint_value(
+                source_repo=tmp_path,
+                dispatch_id=dispatch_id,
+            )
+    assert value == _BASELINE_UNAVAILABLE
+    assert value != "nothing_authored"
+
+
+def test_compute_checkpoint_authored_cortex_wins_over_baseline_unavailable(
+    tmp_path: Path,
+) -> None:
+    """Cortex authorship wins when baseline/admit_head are absent — ordering regression."""
+    dispatch_id = "auto-cortex-over-no-baseline"
+    _init_git_repo(tmp_path)
+    cortex_root = tmp_path / "cortex-files"
+    uri = "cortex://notes/system/threads/baseline-ordering-fixture.md"
+    digest = _write_cortex_fixture(cortex_root, uri, "durable sidecar\n")
+    wrapper = _cortex_wrapper(uri)
+    with patch(
+        "services.git_integration_worker.cursor_auto.lane_a_checkpoint."
+        "CursorDispatchLedger.instance"
+    ) as ledger_cls:
+        ledger_cls.return_value.read_wt_baseline.return_value = None
+        with patch(
+            "services.git_integration_worker.cursor_auto.lane_a_checkpoint."
+            "authored_paths_for_dispatch",
+            return_value=(),
+        ):
+            value = compute_lane_a_checkpoint_value(
+                source_repo=tmp_path,
+                dispatch_id=dispatch_id,
+                wrapper_text=wrapper,
+                cortex_root=cortex_root,
+            )
+    assert value.startswith("authored_cortex:")
+    assert value == f"authored_cortex: {uri} {digest}"
+    assert value != _BASELINE_UNAVAILABLE

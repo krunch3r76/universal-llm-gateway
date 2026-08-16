@@ -31,6 +31,10 @@ _CHECKPOINT_AUTHORED_CORTEX_RE = re.compile(
     rf"^authored_cortex{_PLANE_INFIX}:\s*(.+)$",
     re.I,
 )
+_CHECKPOINT_BASELINE_UNAVAILABLE_RE = re.compile(
+    rf"^baseline_unavailable{_PLANE_INFIX}:\s*(.+)$",
+    re.I | re.S,
+)
 _AUTHORED_CORTEX_PAIR_RE = re.compile(
     r"^(cortex://\S+)\s+([0-9a-f]{64})$"
 )
@@ -42,8 +46,8 @@ LANE_A_CHECKPOINT_FIX_HINT = (
     "e.g. `committed@local-master`), "
     "`checkpoint: authored_cortex: <cortex-uri> <sha256>` "
     "(semicolon-separated pairs for multi-write; optional `@plane`), "
-    "`checkpoint: nothing_authored`, or `checkpoint: deferred: <reason>` "
-    "(optional `@plane` on each). "
+    "`checkpoint: nothing_authored`, `checkpoint: baseline_unavailable: <reason>`, "
+    "or `checkpoint: deferred: <reason>` (optional `@plane` on each). "
     "Commit clears lane authorship — never `--all`, never foreign WIP. "
     "Commit is not a live/done gate; `deferred:` is always acceptable."
 )
@@ -112,6 +116,8 @@ def _checkpoint_value_legal(value: str) -> bool:
         return True
     authored = _CHECKPOINT_AUTHORED_CORTEX_RE.match(value)
     if authored is not None and _authored_cortex_pairs_legal(authored.group(1)):
+        return True
+    if _CHECKPOINT_BASELINE_UNAVAILABLE_RE.match(value):
         return True
     return False
 

@@ -160,3 +160,24 @@ def test_plane_qualified_checkpoint_tokens_legal() -> None:
     for body in bodies:
         verdict = validate_lane_a_closeout_checkpoint(body=body)
         assert verdict.ok, (body, verdict.reason)
+
+
+def test_baseline_unavailable_passes() -> None:
+    body = (
+        "TYPE: CLOSEOUT\n"
+        "checkpoint: baseline_unavailable: no admit baseline recorded for this dispatch\n"
+    )
+    verdict = validate_lane_a_closeout_checkpoint(body=body)
+    assert verdict.ok is True
+    assert verdict.checkpoint_value == (
+        "baseline_unavailable: no admit baseline recorded for this dispatch"
+    )
+
+
+def test_baseline_unavailable_plane_qualified_passes() -> None:
+    body = (
+        "TYPE: CLOSEOUT\n"
+        "checkpoint: baseline_unavailable@local-master: "
+        "no admit baseline recorded for this dispatch\n"
+    )
+    assert validate_lane_a_closeout_checkpoint(body=body).ok is True
