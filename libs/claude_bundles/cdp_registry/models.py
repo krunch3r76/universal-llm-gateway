@@ -8,8 +8,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from claude_bundles import cdp_lane
-
 # A dormant row owns no Chrome process and no port: the CSE URL and the seeded
 # profile are the durable identity, so relaunch picks whatever port is free.
 STATUS_DORMANT = "dormant"
@@ -117,6 +115,8 @@ def _positive_env_float(name: str, default: float) -> float:
 
 
 def _row_to_dormant_seat(row: dict[str, Any]) -> DormantSeat:
+    from claude_bundles import cdp_lane
+
     suffix = str(row["profile_suffix"])
     port = row.get("port")
     return DormantSeat(
@@ -134,6 +134,8 @@ def _row_to_dormant_seat(row: dict[str, Any]) -> DormantSeat:
 
 
 def _row_to_registration(row: dict[str, Any]) -> Registration:
+    from claude_bundles import cdp_lane
+
     suffix = str(row["profile_suffix"])
     port = int(row["port"])
     return Registration(
