@@ -174,6 +174,15 @@ async def process_job(
             incumbent=incumbent,
             client=client,
         )
+    from services.git_integration_worker.cursor_auto.directive import (
+        is_mission_negotiation_directive,
+    )
+    from services.git_integration_worker.cursor_auto.mission_negotiation_handler import (
+        process_mission_negotiation,
+    )
+
+    if is_mission_negotiation_directive(job.body):
+        return await process_mission_negotiation(job, bus=client, queue=queue)
     directive = parse_request_body(job.body)
     contract = effective_contract(job.contract, job.body)
     # Downstream closeout/journal/meta read job.contract — stamp effective.

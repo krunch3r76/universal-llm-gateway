@@ -80,6 +80,7 @@ class AutoJobLedger:
             conn.executescript(_DDL)
             self._ensure_relay_columns(conn)
             self._ensure_report_undelivered_status(conn)
+            self._ensure_negotiation_substrate(conn)
 
     @staticmethod
     def _ensure_report_undelivered_status(conn: sqlite3.Connection) -> None:
@@ -158,6 +159,33 @@ class AutoJobLedger:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_auto_jobs_dispatch "
             "ON cursor_auto_jobs (dispatch_id)"
+        )
+
+    @staticmethod
+    def _ensure_negotiation_substrate(conn: sqlite3.Connection) -> None:
+        """Ensure mission negotiation tables exist on the shared ledger DB."""
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS mission_negotiations (
+                thread_id           TEXT NOT NULL,
+                negotiation_id      TEXT NOT NULL,
+                state               TEXT NOT NULL,
+                revision            INTEGER NOT NULL,
+                proposal_hash       TEXT NOT NULL,
+                payload_json        TEXT NOT NULL,
+                counter_count       INTEGER NOT NULL DEFAULT 0,
+                operator_agent      TEXT NOT NULL,
+                idle_deadline       TEXT NOT NULL,
+                latest_turn         INTEGER,
+                last_duplicate_key  TEXT,
+                PRIMARY KEY (thread_id, negotiation_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_mission_negotiations_thread
+                ON mission_negotiations (thread_id);
+            CREATE TABLE IF NOT EXISTS mission_negotiation_duplicates (
+                duplicate_key       TEXT PRIMARY KEY
+            );
+            """
         )
 
     def _connect(self) -> sqlite3.Connection:

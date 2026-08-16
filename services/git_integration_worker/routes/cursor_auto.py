@@ -15,6 +15,7 @@ from services.git_integration_worker.cursor_auto.continuity_hop import (
 )
 from services.git_integration_worker.cursor_auto.directive import (
     is_continuity_hop_request,
+    is_mission_negotiation_directive,
     split_continuity_hop_legs,
 )
 from services.git_integration_worker.cursor_auto.handler_terminal import (
@@ -28,6 +29,9 @@ from services.git_integration_worker.cursor_auto.job_lifecycle import (
     job_state_response,
 )
 from services.git_integration_worker.cursor_auto.liveness import get_registry
+from services.git_integration_worker.cursor_auto.mission_negotiation_wire import (
+    negotiation_hop_conflict,
+)
 from services.git_integration_worker.cursor_auto.queue import AutoJob, get_queue
 from services.git_integration_worker.cursor_auto.static_pin_refusal import (
     assess_static_pin_refusal,
@@ -146,6 +150,12 @@ async def enqueue(body: EnqueueBody, request: Request):
     is_hop, matched_token = is_continuity_hop_request(
         body.body, wire_flag=bool(body.continuity_hop)
     )
+    if negotiation_hop_conflict(body.body, continuity_hop=bool(body.continuity_hop)):
+        logger.info(
+            "cursor-auto negotiation hop conflict thread=%s turn=%s",
+            body.thread_id,
+            body.turn_number,
+        )
     desired_model, escalation, coalesce_meta = coalesce_cdp_desired_model_into_escalation(
         body.desired_model,
         body.escalation,
@@ -314,10 +324,12 @@ async def enqueue(body: EnqueueBody, request: Request):
             op_id=f"cursor-auto-continuity-hop:{job.job_id}",
         )
     else:
-        # A second request on a private thread is a backtrack, not a queue append:
-        # interrupt the live episode or withdraw a queued predecessor so the new
-        # DIRECTIVE does not wait it out. Continuity hops skip (Gate A).
-        interrupt = await supersede_same_thread_inflight(job, queue=queue)
+        # Negotiation turns skip same-thread supersede — they are pre-birth only.
+        if not is_mission_negotiation_directive(body.body):
+            # A second request on a private thread is a backtrack, not a queue append:
+            # interrupt the live episode or withdraw a queued predecessor so the new
+            # DIRECTIVE does not wait it out. Continuity hops skip (Gate A).
+            interrupt = await supersede_same_thread_inflight(job, queue=queue)
     # Peers only (exclude self): alone → 0; queued predecessors → N. Same lock
     # as snapshot(); do not disturb supersede vocabulary beside this field.
     lane = queue.thread_lane_counts(

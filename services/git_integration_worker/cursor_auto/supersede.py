@@ -113,9 +113,24 @@ async def supersede_same_thread_inflight(
     may be never-submitted **or** already past ``bind_dispatch``/POST without
     ``register_live_run``. That probe cannot license ``queued_only`` +
     ``terminal_status=cancelled``.
+
+    Mission negotiation turns and open negotiation ledger rows skip supersede.
     """
+    from services.git_integration_worker.cursor_auto.directive import (
+        is_mission_negotiation_directive,
+    )
+    from services.git_integration_worker.cursor_auto.mission_negotiation_ledger import (
+        get_negotiation_ledger,
+    )
+
+    if is_mission_negotiation_directive(new_job.body):
+        return None
+    if get_negotiation_ledger().open_on_thread(new_job.thread_id) is not None:
+        return None
     old_job = queue.supersede_candidate_for_thread(new_job.thread_id)
     if old_job is None or old_job.job_id == new_job.job_id:
+        return None
+    if is_mission_negotiation_directive(old_job.body):
         return None
     reason = f"same_thread_request_turn_{new_job.turn_number}"
     superseded_dispatch_id: str | None = None

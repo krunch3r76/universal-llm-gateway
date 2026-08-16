@@ -400,6 +400,15 @@ def parse_request_body(body: str) -> ParsedDirective | None:
     )
 
 
+def is_mission_negotiation_directive(body: str) -> bool:
+    """True when *body* is a ``TYPE: DIRECTIVE`` carrying ``negotiation_phase``."""
+    from services.git_integration_worker.cursor_auto.mission_negotiation_wire import (
+        is_mission_negotiation_request,
+    )
+
+    return is_mission_negotiation_request(body)
+
+
 def build_sdk_message(job_body: str, *, contract: str) -> str:
     """Prompt text handed to nested cursor-sdk dispatch."""
     from services.git_integration_worker.cursor_auto.reporting_contract import (

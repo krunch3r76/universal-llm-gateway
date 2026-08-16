@@ -194,6 +194,16 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         ``contract`` ∈ answer | confer | investigate | implement | verify | execute |
         propagate | seed | recon. Unknown ⇒ 422 before turn write. ``consult`` aliases confer.
 
+        **Mission negotiation (body-level, ``contract=confer`` only)**
+
+        Pre-birth async negotiation uses the existing ``TYPE: DIRECTIVE`` envelope with
+        a closed ``negotiation_phase: proposal|counter|agree|ratify`` field plus
+        ``negotiation_id``, ``revision``, ``in_reply_to_turn``, ``proposal_hash``, mission
+        payload fields, and ``idle_deadline``. Auto replies with ``TYPE: DISPOSITION``
+        and a closed ``negotiation.*`` vocabulary. No new MCP wire token is introduced;
+        negotiation fields ride in ``body`` only. Ordinary DIRECTIVEs without
+        ``negotiation_phase`` are unchanged.
+
         ``lane``: optional GIW checkout-isolation ``A`` | ``B``. Omit for
         current ``select_lane`` defaults. Distinct from ``lane_role``.
 
