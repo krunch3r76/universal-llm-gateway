@@ -94,3 +94,60 @@ def test_resolve_prompt_preamble_reasoning_posture_idempotent_custom_preamble() 
         inferred_contract=None,
     )
     assert text.count("Use the `reasoning-posture` skill") == 1
+
+
+def test_conductor_seat_identity_block_only_under_three_condition_gate() -> None:
+    dispatch_id = "conductor-dispatch-abc123"
+    gated = resolve_prompt_preamble(
+        handoff_contract="light-bounded",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        lane_branch="cursor-sdk/lane-7414",
+        dispatch_id=dispatch_id,
+        has_packet_path=True,
+    )
+    assert "CONDUCTOR SEAT IDENTITY" in gated
+    assert dispatch_id in gated
+    assert "nest_under=" + dispatch_id in gated
+    assert "Independent dispatch" in gated
+    assert "CURSOR_SOURCE_REF_IN_FLIGHT" in gated
+
+    assert "CONDUCTOR SEAT IDENTITY" not in resolve_prompt_preamble(
+        handoff_contract="light-bounded",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        dispatch_id=dispatch_id,
+        has_packet_path=False,
+    )
+    assert "CONDUCTOR SEAT IDENTITY" not in resolve_prompt_preamble(
+        handoff_contract="light-bounded",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane=None,
+        dispatch_id=dispatch_id,
+        has_packet_path=True,
+    )
+    assert "CONDUCTOR SEAT IDENTITY" not in resolve_prompt_preamble(
+        handoff_contract="implement",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        dispatch_id=dispatch_id,
+        has_packet_path=True,
+    )
+
+
+def test_conductor_seat_identity_uses_req_dispatch_id() -> None:
+    dispatch_id = "98836b38"
+    text = resolve_prompt_preamble(
+        handoff_contract="light-bounded",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        dispatch_id=dispatch_id,
+        has_packet_path=True,
+    )
+    assert f"dispatch_id is {dispatch_id}" in text
+    assert f"nest_under={dispatch_id}" in text
