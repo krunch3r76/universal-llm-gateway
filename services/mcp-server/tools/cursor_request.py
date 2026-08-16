@@ -147,6 +147,26 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         CLOSEOUT must quote ``execution_id`` + ``poll_hint`` (or honest transport halt).
         Predecessor stream may end only after successor launch is confirmed (inv 30).
 
+        COMMISSION_CONDUCTOR(web-anthropic): to hand a multi-step mission to an
+        autonomous cursor-sdk conductor instead of driving every step yourself via
+        the DIRECTIVE loop, this is an ordinary request — **no dedicated contract
+        token exists or is needed**. Fire with ``contract="investigate"``,
+        ``desired_model="cursor/claude-sonnet-5"`` (T1 default; ``opus-5`` for T3
+        triggers only — never ``grok-4.6``, not a conductor seat), and
+        ``desired_effort="max"``. ``investigate`` resolves to
+        ``handoff_contract=light-bounded``, so the mechanical-executor redirect
+        (Composer-only) never fires — that redirect is scoped to ``implement``.
+        Body MUST include a ``vision:`` line (admit body gate above) and the full
+        six-block conductor packet (root thread/charter/scoreboard URIs, Lane B,
+        the mandatory ``Use the conductor skill — …`` line) — see
+        agent_skill:conductor for packet shape + tier table. Autonomous-lane effort
+        ceiling still clamps ``max``/``xhigh``→``high`` for non-roaming models
+        (``resolved_effort`` in the admit reply reports the clamp) — pass ``max``
+        anyway so the ceiling binds, not a lower ask. Waiting on your own
+        commissioned conductor is idle time cursor-auto's hop-cadence already
+        recognizes (``in_flight_commission`` inhibits an automatic hop while a
+        nested dispatch is live on this thread) — no separate keep-alive needed.
+
         Sync: plugin_install ∧ per-slug Customize sync ∈ Auto capabilities — offer/fire,
         ¬ defer to IDE lead. Bulk census = slow ⇒ named slugs only. IDE restart ⇒ operator.
 

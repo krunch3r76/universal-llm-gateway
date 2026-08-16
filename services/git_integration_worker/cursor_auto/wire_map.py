@@ -40,6 +40,7 @@ _MODEL_TABLE: dict[str, str] = {
     "composer-2.5": "cursor/composer-2.5",
     "grok-4.6": "cursor/grok-4.6",
     "opus-5": "cursor/claude-opus-5",
+    "sonnet-5": "cursor/claude-sonnet-5",
 }
 BINDABLE_WIRE_IDS: tuple[str, ...] = tuple(sorted(_MODEL_TABLE))
 _BINDABLE_MODEL_IDS: frozenset[str] = frozenset(_MODEL_TABLE.values())
