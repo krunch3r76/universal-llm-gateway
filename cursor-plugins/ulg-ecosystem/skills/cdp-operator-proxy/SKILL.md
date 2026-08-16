@@ -15,6 +15,7 @@ Binds web-anthropic (Cowork / life MCP) during operator-proxy episodes.
 | Cursor mechanism — admit, lease/nest, budget, supersede revert, chips | `operator-proxy-substrate` |
 | CDP/Jupiter transport, harvest, converse, skills | `claude-ai-cdp-navigation` |
 | Cursor model economics ($/M, T0–T3, Auto/Router, context billing) | `cursor-model-economics` |
+| DIRECTIVE authoring — fields, wire enum, mint-then-quote, conductor, negotiation | `directive-authoring-standard` |
 | Cursor co-developer register · standing-root CHECKPOINT | `operator-posture` Rule 7 · `agent-bus-discipline` |
 
 **`cursor_only` slugs are not attachable on this seat** — `claude-ai-cdp-navigation`,
@@ -26,6 +27,8 @@ duty, or use the life-seat substitute this body gives.
 
 Driving cursor via `agent_bus.request` from Cowork · authoring `TYPE: DIRECTIVE` ·
 dispositioning after `TYPE: CLOSEOUT`.
+
+Authoring the DIRECTIVE body: Use the `directive-authoring-standard` skill.
 
 **Not:** IDE cursor lead · charter-runner tick windows (Opus at path-sim R-admit/R-after
 only) · steady-state orchestration without the operator-proxy bus shape.
@@ -117,22 +120,22 @@ separate plane.
 2. `cursor = co_developer` — contradict, propose better shape, execute it. No human-in-the-middle except true operator-only forks. Episode close residual ≠ operator-only fork.
 3. `write_boundary(operator)` — no diff-producing tools; writes behind lease (cursor-auto). Reads ratified.
 4. `assumed_state` = a claim inviting contradiction; it outranks `deltas_to_spec` when the two pictures diverge.
-5. `pin(desired_model)` on dense / amend work — `auto` is forbidden when the ladder matters.
+5. `pin(desired_model)` — SOT: skill `directive-authoring-standard` D1.
 6. `human_push = degraded_wake` — the product path is `request` + `wait(completion=status:done)`.
 7. `blocked ⇒ ask` — never silent-stop with "until you tell me" and no ping.
 8. `tool_absent(life) ⇏ operator_gate` — a missing life-MCP tool the **code seat holds** ⇒ `agent_bus.request` to cursor; ¬ park it on the operator in prose.
 9. **Fable** — standing outside check for architecture-suitability; encourage route, ¬ required every DIRECTIVE.
 10. **`cursor/claude-opus-5`** — inform-then-proceed when warranted. Architecture-bind's four-condition trigger is when to **pick** this seat (hop 4 / T3), not a second gate on effort — once picked, knobs follow the model card through `max`. ¬ `anthropic/*` API.
 11. **Private operator thread** — dedicated `agent_bus.request` lane (inv 11); cite endeavor root in `arc:`, ¬ multiplex.
-12. **Vision-resident operator.** Every `implement`/`investigate` DIRECTIVE carries `vision:` — pillar tags or `vision: mechanical — <reason>`. Auto refuses without it. MAP escalation-only.
+12. **Vision-resident operator.** Field SOT: skill `directive-authoring-standard` D1. Auto refuses `implement`/`investigate` without `vision:`. MAP escalation-only.
 13. **Escalation runs downward from cursor.** Cursor dispatches Opus/Fable; operator gets shape-level report. **Operator-doctrine carve-out:** subject is this seat's posture/protocol ⇒ operator is principal; cursor posts `TYPE: OPERATOR_GATE`, not consult.
 14. **Reasoning posture when framing.** Before DIRECTIVE/path-sim: pin Question, OOS, detent; steelman/calibrate/courage. Stamp `operator_framed=true` + `pinned_question` + `frame_uri`. This seat stamps; does not run path-sim (`cursor_only`).
 15. **Codework → layer.** Code change ⇒ `abstraction-layering` G1–G6; no todo ⇒ `work-item-seed-path` first. Non-codework ⇒ commission cursor for `path-sim` (`cursor_only`).
 16. One live request per private thread — § Interrupt / supersede (SOT). Exceptions: continuity hop skips supersede; `nested_sdk_finished` not a candidate.
 17. **Accelerate vision** — ship obvious better shape; waives neither inv 3 nor inv 13 carve-out.
-18. **So-what title** — wire `summary` ≤120 chars ULG gain; CLOSEOUT refreshes; `DONE — {so_what}`.
+18. **So-what title** — SOT: skill `directive-authoring-standard` D1 (`summary` ≤120). CLOSEOUT refreshes; `DONE — {so_what}`.
 19. **Escalation chain + nesting.** Ladder: cursor-auto → `cdp/opus-5` → optionally `cdp/fable`. **CDP stuck:** cursor-auto → terra or `cursor/claude-opus-5` — ¬ human. Architecture-bind trigger ⇒ six-hop (§ Architecture-bind). Every hop nested `cursor-sdk`.
-20. **Mission seat map.** Opus=operator · Fable=advisor · grok=reasoner · cursor-auto=executor. Default: bind→implement at will. Independent verify. cursor-auto modifiable. ¬ park executable ACs.
+20. **Mission seat map.** Opus=operator · Fable=advisor · grok=reasoner · cursor-auto=executor. Framed multi-step: conductor — skill `directive-authoring-standard` D4. Default: bind→implement at will. Independent verify. cursor-auto modifiable. ¬ park executable ACs.
 21. **Authorize-triggers** — operator always approves; wait for click (inv 21). SOT: claude-ai-cowork-trigger-auth-gate.md.
 22. **Inform the operator — three planes.** **record** · **attention** (pager) · **story** (projector only). (a) `¬ author(operator, story_journal)`. (b) `awareness_msg(fact) ⇒ ∃ record(fact)`. (c) Suppress page only when human declared operator in *this* CSE. (d) Pager classes: **(1) Progress** — fleet-trust moves only; subject ¬ `COME TO IDE`. **(2) Mission debrief** — full debrief + stream-end sentence. **(3) Interrupt** — `COME TO IDE` only for IDE hand / operator-only gate. (e) life `notify`; absent ⇒ cursor request (inv 8). (f) Architecture-first register. (g) Audience = human principal. **Phone test:** readable without bus open.
 23. **In-chat delivery.** Retained CSE = live correspondent via `project_ask(followup)`. Identity: `chat_url ≻ registration_id ≻ execution_id`; one CSE per lane. **Park-on-WAKE** for long nests. **Delivery (b)** primary; bus WAKE fallback. Commission cursor for followup (inv 8). Inbound chat = continuation.
@@ -149,8 +152,8 @@ separate plane.
 34. **Outside break-in — advisory.** Reviewer may post `TYPE: BREAK_IN` without asking — advisory only. Requires live CSE. May return `NO_BREAK_IN`. Complements inv 33 confer.
 35. **Observed vs derived.** Status/rank/liveness claims need substrate quote. Positional implication is derived, not observed.
 36. **Peer disclosure (BINDING).** `∀ ≥2 advisors on same fork: each packet names peers` at commission. Standing claim until fork closes.
-37. **Conductor commission for framed multi-step missions.** A mission whose Question is already framed (§14 posture closed — the Question, OOS, and detent are pinned, not still contested) and whose remaining work is ≥3 G-row-equivalent steps, or judgment-closed-then-mechanical (bind-then-compose shape), is **not** driven G-row-by-G-row over this DIRECTIVE loop by default. Commission a `cursor-sdk` **conductor** (`agent_skill:conductor`) instead: the DIRECTIVE names the conductor role in the body, a root thread (mint via `new_slug` or continue an existing `role:root`), and the charter/scope. **Transport:** this seat has no `team_dispatch` — the commission rides `cursor_request` to cursor-auto, which fires the nested `team_dispatch(seat=cursor-sdk)` on this seat's behalf (same indirection as NEW_CDP_WINDOW). **Reachability caveat (verified 2026-08-15, agent-bus:7359):** no `conductor` contract token exists and no handler branch parses one — zero matches for `conductor` under `services/git_integration_worker/` and `libs/` — so body prose is the whole instruction and cursor-auto's compliance carries it; separately, `contract=implement` redirects the executor to `cursor/composer-2.5` regardless of `desired_model`. **Effort knobs (updated 2026-08-16):** the gate is the model card (`libs/cursor_capabilities`) — every accepted rung (Grok through `xhigh`, Sonnet 5 / Opus through `max`) passes; values above the card degrade to the highest accepted rung. ¬ a separate Auto policy ladder. Name T1 as `cursor/claude-sonnet-5 @ effort=max`. Full recipe including wire params (mandatory `lane="B"`, the literal conductor Use-line) lives in the `cursor_request` tool docstring's `COMMISSION_CONDUCTOR` clause — read it live, this skill does not duplicate it. This seat's role narrows to: frame the Question, ratify the conductor's Leg-boundary DISPOSITIONs, and hold true operator-only gates (inv 21) — not personally drive each nested dispatch's admit/poll/harvest cycle. Mission-seat map (inv 20) gains a branch: `cursor-auto=executor` for single-DIRECTIVE work; `cursor-sdk conductor=executor-of-executors` once framing closes on multi-step work. **Exception:** an UNFRAMED mission — the Question itself still contested, or the shape is a live architecture fork — stays on this seat until framing closes; a conductor cannot resolve what this seat has not yet decided to ask (§ Counter-example caveat 2, agent-bus:7359). Evidence: agent-bus:7244 (cdp/opus-driven DIRECTIVE loop, turn 1→312, 08:39:09Z→17:23:35Z = 8h44m, then a 2h56m dead gap to turn 313, ended by the IDE-attended cursor seat manually standing the thread down — not by this seat) vs. agent-bus:7310 (cursor-sdk conductor born turn 1 20:24:05Z, resolved the same open question at turn 13 21:43:34Z = 1h19m, disposed back onto 7244 turn 316 21:29:12Z); full investigation agent-bus:7359 / cortex://notes/system/threads/7359-cdp-conductor-doctrine.md.
-38. **Mission negotiation precedes conductor commission (landed 2026-08-16, agent-bus:7372, commit `64ce01cb`).** Before a mission is framed enough for inv 37's conductor commission, this seat and cursor-auto MAY negotiate mission shape headlessly over the bus — no live chat, no human mediation required. Same `TYPE: DIRECTIVE` / `contract: confer` envelope; add `negotiation_phase: proposal|counter|agree|ratify` plus `negotiation_id`/`revision`/`in_reply_to_turn`/`proposal_hash`/`idle_deadline` in body. Auto replies `TYPE: DISPOSITION` with a closed `negotiation.*` vocabulary. Ordinary DIRECTIVEs without `negotiation_phase` are unaffected — additive, not a replacement for attended charter-birth (`cortex://notes/system/playbooks/attended-charter-birth-with-cursor.md`) when a human is present in chat. Full field contract lives in the `cursor_request` tool docstring's **Mission negotiation** clause and `cortex://notes/system/specs/directive-loop-mission-negotiation.md` — read live, this skill does not duplicate it. Once `agree`/`ratify` closes the negotiation, inv 37's conductor-commission path takes over.
+37. **Conductor commission** — SOT: skill `directive-authoring-standard` D4. Recipe of record: `cursor_request` `COMMISSION_CONDUCTOR` docstring. This skill does not duplicate it.
+38. **Mission negotiation** — SOT: skill `directive-authoring-standard` D5. Field contract: `cursor_request` **Mission negotiation** clause + `cortex://notes/system/specs/directive-loop-mission-negotiation.md`.
 
 ## Blocked → ask ladder (BINDING)
 
@@ -331,21 +334,21 @@ cadence) and enqueues `continuity_hop=true`. Cursor-auto then fires
 | 3 | Confirm the **private** request thread (inv 11) |
 | 4 | `agent_bus` **`tool=request`** (life MCP) — ¬ `send` |
 | 4b | Pass wire `summary` = ULG so-what on mint / first DIRECTIVE (inv 18) |
-| 5 | Body opens `TYPE: DIRECTIVE` + §2 fields inline (`arc:` cites the root; `vision:` on every `implement`/`investigate`) |
+| 5 | Body opens `TYPE: DIRECTIVE` — fields per skill `directive-authoring-standard` D1 (`arc:` cites the root; `vision:` on implement/investigate) |
 | 6 | Set `contract` + `density`; cursor binds the executor |
-| 6b | **Attended executor bind:** wire `require_attended=true` **or** body `require_attended: true` / `executor_bind: attended` (OR — either suffices); unattended nest/in-seat is then refused with `status:needs-attended` + `reason=operator_require_attended` |
+| 6b | **Attended executor bind:** per skill `directive-authoring-standard` D1 (`require_attended` wire or body) |
 | 7 | Fetch the `status:admitted` turn; read the inline `TYPE: BRIEFING` before holding `wait` |
 | 7b | **Before every next `request` after an inbound burst:** `mark_read(through_turn=N)` — unread addressed turns ⇒ HTTP 409 `unread_turns_exist` |
 | 8 | `wait` until CLOSEOUT — **`wait_seconds ≤ 60`**; Park-on-WAKE with `TYPE: PARKED`; delivery (b) primary; bus WAKE fallback; **`allow_long_body` rejected** |
 | 8b | On `status:blocked` + `pending_synthesized_closeout`: read in full → ack → re-deliver |
-| 8c | Long corpus ⇒ `sidecar_content` (+ optional `sidecar_slug`); keep the ten §2 fields in `body`. **`allow_long_body` is rejected on `request`** — do not invent it |
+| 8c | Long corpus ⇒ `sidecar_content` (+ optional `sidecar_slug`); keep ten §2 fields in `body` (skill `directive-authoring-standard` D1). **`allow_long_body` is rejected on `request`** |
 | 9 | `TYPE: DISPOSITION` — `verdict:` on line 2; ¬ `wait(first_reply_from)` after it |
 
 ## Operator turn duties
 
 | Verb | Duty |
 |---|---|
-| DIRECTIVE | Inline: `arc`, `assumed_state`, intent, scope (+ out-of-scope), authority, AC verbatim, `evidence_required`, `density`, `budget`, **`vision`**; wire `summary` = ULG so-what |
+| DIRECTIVE | Fields + wire contract: skill `directive-authoring-standard` D1–D2 |
 | DISPOSITION | After CLOSEOUT: `verdict: ratify \| one_correction \| transport_blocked` · **residual-commission gate** before treating the episode as closed · on mission close fire the inv 22(d)(2) debrief `notify` |
 | CHECKPOINT | Cursor-owned at seams — ¬ operator-authored on tick roots |
 
@@ -396,16 +399,7 @@ still unobserved — worse than a bare error because it reads calibrated.
 
 ### Turn authoring order — mint then quote (BINDING)
 
-**Ordering constraint on composition** — not a confidence instruction:
-
-```
-∀ outbound turn body (DIRECTIVE, CLOSEOUT, DISPOSITION, PARKED, debrief, ack line):
-  mint(artifact) ≺ compose(sentence containing artifact.id)
-```
-
-- Mint the artifact first; compose the turn body **after** the mint response is in hand.
-- **Never** write a sentence containing an id you have not read from a response payload.
-- Self-attestation ("minted before this sentence") **≠ compliance** — same defect one level up.
+SOT: skill `directive-authoring-standard` D3. `mint(artifact) ≺ compose(sentence containing artifact.id)`.
 
 **Mission friction reflection:** after DISPOSITION/episode close, file real frictions via cortex/agent_bus — narration in cache does not evolve ULG.
 
@@ -491,49 +485,11 @@ model, effort, why. Halt regardless when premium spend is paused. Fewer than fou
 
 ## Executor ladder (operator sets `density` only)
 
-| density | Cursor binds |
-|---|---|
-| dense | composer-2.5 — **pin explicit** (implement / dense amend / verify) |
-| investigate | grok-4.6 — reasoner; `contract: investigate` (inv 28); Auto defaults `fast=false` |
-| confer (challenge-seeking) | grok-4.6 + `desired_effort=xhigh` (inv 33) |
-| sparse amend | composer-2.5 pin |
-| architecture bind | § Architecture-bind chain — a sequence, ¬ one executor; set it when the trigger's four conditions hold |
-
-Escalate on the class of unknown. **2 failed dispatches on the same AC ⇒ stop** the tier or
-return blocked.
+SOT: skill `directive-authoring-standard` D1. Architecture-bind remains § Architecture-bind in this skill.
 
 ## Wire contracts + tier-M tool ask (BINDING)
 
-Wire contracts: `answer`, `confer`, `investigate`, `implement`, `verify`, `execute`, `propagate`.
-`consult` is **not** one — it aliases to `confer` with a deprecation note; any other value is
-rejected 422 (`request_contract_unknown`) before the turn is written.
-
-| Contract | In-seat behavior |
-|---|---|
-| `execute` | One tier-M allowlisted tool op (`tool_op:` + `effects_expected:` + optional `tool_args:`); `manage.*` **denied** |
-| `propagate` | Operator restart request — propagation ledger rows + drain-gated `sync_restart` via manage.sock; **not** `execute` + `manage.*` |
-
-```
-TYPE: DIRECTIVE
-contract: propagate
-scope: propagation sync_restart mcp
-code_ref: <land SHA or omit for HEAD>
-effects_expected: propagation row persisted; restart executed or deferred with reason
-density: sparse
-
-## propagation
-propagation:
-  - service: mcp
-    code_ref: <sha>
-    safe_window: drain_required
-    proof_class: client_visible
-    # allow_self_preempt: true  — default; auto-escalates to force on own CSE/MCP busy deferral
-    # allow_self_preempt: false — machine-read veto; suppresses auto force (use instead of authority: prose)
-    # force: true  — optional explicit force; cursor-auto also auto-applies when allow_self_preempt is true
-    # and advises "MCP will disconnect momentarily" in the closeout.
-```
-
-**Machine-read vs advisory:** `allow_self_preempt` / `force` on propagation rows; `authority:` prose is advisory. **Derivation tags:** `derived:`/`import_path:` iff generator-derived. **`out-of-scope:`** own line (a:27541). **Classifier (a:27543):** fix tokens and re-issue. **Self-preempt** visible in `self_preempt_escalations[]`. **Tier-M:** `tool_op` + `effects_expected`; `vision:` still required on implement/investigate.
+Authoring enum + propagate template: skill `directive-authoring-standard` D2. Live enum: `cursor_request` **Contract vocabulary**.
 
 **Blocked replies** carry `missed_tokens` + `fix_hint`. Re-issue supersedes per § Interrupt. Wire-neutral authoring (pending): wire answer may ship body implement.
 
@@ -550,7 +506,6 @@ propagation:
 | Closeout prose without structured fields | `deltas_to_spec` / `decisions_taken`; explicit `deltas_to_spec... |
 | Ref-only closeouts | Verdicts inline; evidence by ref |
 | Facts only in Cowork | Write them into DIRECTIVE / CLOSEOUT / CHECKPOINT |
-| `desired_model=auto` on a dense job | Pin composer-2.5 |
 | `wait(first_reply_from)` after DISPOSITION | Re-`request` a sparse amend DIRECTIVE |
 | `workspaces://` forbidden because the operator is codeblind | Read sight ratified — `workspaces://` **is** readable via life... |
 | `verdict: ratify` after a synthesized closeout | `synthesized_closeout_ack:` line **before** the next DIRECTIVE... |
@@ -561,7 +516,6 @@ propagation:
 | `contract: execute` + `tool_op: manage.sync_restart` | Denied at the tier-M manifest — use `contract: propagate` |
 | `wait_seconds` above 60 (or unbounded) on Cowork / life MCP | `wait_seconds ≤ 60` (client hard ceiling); re-arm after empty ... |
 | Next `request` without `mark_read` after a cursor-auto burst | `mark_read(through_turn=N)` first — avoids 409 `unread_turns_e... |
-| `allow_long_body=true` on `agent_bus.request` | Rejected on `request`; use `sidecar_content`, keep the ten §2 ... |
 | Ping the human to pick T3 / Opus when the four trigger conditions hold | Fire Opus — announce model + effort + why; card knobs through `max` |
 | Fire `cursor/claude-opus-5` before the reasoner has run | Hop 3 first; a bind the tree already answers is not owed a pre... |
 | Dispositioning an Opus-authored architecture yourself as the c... | Hop 5 — terra (family + lineage) or Fable (weight class); you ... |
@@ -598,7 +552,6 @@ propagation:
 | Reading "next operator window" as a human IDE gate | Next CDP operator-proxy CSE on the lane — hop it |
 | CDP Opus/Fable stuck → Cowork Ask the human | `cursor-auto` → `cursor/gpt-5.6-terra` or `cursor/claude-opus-... |
 | Parking prose "need human judgment" on a bind fork | 2b nested consult; human only for true operator-only gates |
-| cdp/opus drives a framed 5-G-row mission turn-by-turn over the DIRECTIVE loop | Commission a conductor (inv 37) once the Question is framed; adjudicate Legs, don't drive them |
 | Renumbering roadmap headings to express a new priority | IDs are permanent; re-rank the `## Rank order` line with a `wh... |
 | Closing a mission with "followup: run the tests" | Verification of your own claims is an in-mission row — insert ... |
 | Waiting for a monitor or the operator to notice what the execu... | `contract: confer` — the seat inside the mission already holds... |

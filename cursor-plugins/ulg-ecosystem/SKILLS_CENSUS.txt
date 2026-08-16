@@ -8,6 +8,7 @@ abstraction-layering
 advisor-timing
 cheap-recon-before-escalation
 cdp-operator-proxy
+directive-authoring-standard
 cursor-model-economics
 claude-ai-cdp-navigation
 conductor

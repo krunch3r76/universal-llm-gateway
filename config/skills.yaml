@@ -67,6 +67,11 @@ skills:
   cdp-operator-proxy:
     surface_class: shared_sync
     mcp_surface_required: life
+  directive-authoring-standard:
+    # DIRECTIVE-authoring sibling of cdp-operator-proxy. shared_sync: CDP/web-anthropic
+    # authors TYPE: DIRECTIVE on the operator-proxy lane (same audience as the proxy).
+    surface_class: shared_sync
+    mcp_surface_required: life
   cursor-model-economics:
     surface_class: shared_sync
     mcp_surface_required: none
