@@ -380,7 +380,17 @@ def _delete_orphan_branch(
     )
     from services.git_integration_worker.cursor_sdk_branch_debt import (
         discharge_branch_debt,
+        get_branch_debt,
     )
+
+    debt = get_branch_debt(branch_name=branch_name)
+    if debt is not None and debt.open:
+        logger.info(
+            "orphan branch delete skipped — open debt branch=%s dispatch_id=%s",
+            branch_name,
+            debt.dispatch_id,
+        )
+        return False
 
     if archive_branch(repo=repo, branch_name=branch_name) is None:
         logger.warning(

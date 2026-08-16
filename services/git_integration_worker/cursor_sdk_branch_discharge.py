@@ -21,6 +21,7 @@ from universal_logging import get_logger
 from services.git_integration_worker.cursor_sdk_branch_archive import (
     archive_branch,
     branch_checked_out_at,
+    lookup_archive_tag,
 )
 from services.git_integration_worker.cursor_sdk_branch_debt import (
     discharge_branch_debt,
@@ -90,6 +91,35 @@ def _content_lines(repo: Path, ref: str, path: str) -> set[str] | None:
     return {line.strip() for line in proc.stdout.splitlines() if line.strip()}
 
 
+def _branch_ref_exists(repo: Path, branch_name: str) -> bool:
+    proc = _git(repo, "rev-parse", "--verify", f"refs/heads/{branch_name}")
+    return proc.returncode == 0
+
+
+def _already_retired(*, repo: Path, branch_name: str) -> DischargeResult | None:
+    """Idempotent landed when the ref is gone but a prior retire left evidence."""
+    root = repo.resolve()
+    if _branch_ref_exists(root, branch_name):
+        return None
+    archived = lookup_archive_tag(repo=root, branch_name=branch_name)
+    debt = get_branch_debt(branch_name=branch_name)
+    if archived is None and (debt is None or debt.open):
+        return None
+    tag_name, tip_sha = archived or (None, None)
+    if tip_sha is None and debt is not None:
+        tip_sha = debt.tip_sha
+    if tag_name is None and tip_sha is not None:
+        tag_name = f"archive/{branch_name}-{tip_sha[:8]}"
+    return DischargeResult(
+        discharged=True,
+        branch=branch_name,
+        verb=DISCHARGE_LANDED,
+        tip_sha=tip_sha,
+        archive_tag=tag_name,
+        probe=LandProbe(landed=True),
+    )
+
+
 def probe_landed(*, repo: Path, branch_name: str) -> LandProbe:
     """Check every path the branch touched against master.
 
@@ -99,6 +129,10 @@ def probe_landed(*, repo: Path, branch_name: str) -> LandProbe:
     because an unverifiable land claim is exactly what this gate exists to catch.
     """
     root = repo.resolve()
+    if not _branch_ref_exists(root, branch_name):
+        return LandProbe(
+            landed=False, differing_paths=[f"{branch_name} (ref missing)"]
+        )
     base = _git(root, "merge-base", "master", branch_name)
     if base.returncode != 0:
         return LandProbe(
@@ -221,6 +255,9 @@ def _clear_disposition(branch_name: str) -> None:
 
 def discharge_landed(*, repo: Path, branch_name: str) -> DischargeResult:
     """Retire a branch whose work is verifiably on master."""
+    retired = _already_retired(repo=repo, branch_name=branch_name)
+    if retired is not None:
+        return retired
     probe = probe_landed(repo=repo, branch_name=branch_name)
     if not probe.landed:
         logger.warning(

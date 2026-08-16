@@ -21,9 +21,13 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
     _connect,
 )
-from services.git_integration_worker.cursor_sdk_branch_archive import archive_tag_name
+from services.git_integration_worker.cursor_sdk_branch_archive import (
+    archive_branch,
+    archive_tag_name,
+)
 from services.git_integration_worker.cursor_sdk_branch_debt import (
     ensure_debt_schema,
+    discharge_branch_debt,
     get_branch_debt,
     lane_hygiene_snapshot,
     list_open_debts,
@@ -46,6 +50,9 @@ from services.git_integration_worker.cursor_sdk_packet import resolve_prompt_pre
 from services.git_integration_worker.cursor_sdk_worktree_reconcile import (
     list_git_worktrees,
     reconcile_unregistered_worktrees,
+)
+from services.git_integration_worker.cursor_sdk_worktree_prune import (
+    _delete_orphan_branch,
 )
 
 
@@ -283,6 +290,64 @@ def test_probe_accepts_a_superset_on_master(repo: Path) -> None:
     probe = probe_landed(repo=repo, branch_name="cursor-sdk/lane-7170")
     assert probe.landed
     assert probe.describe() == "landed"
+
+
+def test_probe_reports_ref_missing_not_no_merge_base(repo: Path) -> None:
+    probe = probe_landed(repo=repo, branch_name="cursor-sdk/lane-missing")
+    assert not probe.landed
+    assert probe.differing_paths == ["cursor-sdk/lane-missing (ref missing)"]
+    assert "(no merge-base)" not in probe.describe()
+
+
+def test_open_debt_blocks_orphan_branch_delete(repo: Path) -> None:
+    tip = _branch_with_change(
+        repo, branch="cursor-sdk/lane-7413", path="race.py", content="landed = 1\n"
+    )
+    _land_on_master(repo, path="race.py", content="landed = 1\n")
+    open_branch_debt(
+        branch_name="cursor-sdk/lane-7413",
+        thread_id="7413",
+        dispatch_id="d-race",
+        tip_sha=tip,
+    )
+
+    deleted = _delete_orphan_branch(
+        repo=repo,
+        branch_name="cursor-sdk/lane-7413",
+        reason="prune_terminal",
+        dispatch_id="d-race",
+        tip_sha=tip,
+    )
+    assert not deleted
+    assert "cursor-sdk/lane-7413" in _branches(repo)
+    debt = get_branch_debt(branch_name="cursor-sdk/lane-7413")
+    assert debt is not None and debt.open
+
+
+def test_discharge_landed_idempotent_when_ref_already_retired(repo: Path) -> None:
+    tip = _branch_with_change(
+        repo, branch="cursor-sdk/lane-7413", path="idem.py", content="done = 1\n"
+    )
+    _land_on_master(repo, path="idem.py", content="done = 1\n")
+    tag = archive_branch(repo=repo, branch_name="cursor-sdk/lane-7413")
+    assert tag is not None
+    open_branch_debt(
+        branch_name="cursor-sdk/lane-7413",
+        thread_id="7413",
+        tip_sha=tip,
+    )
+    _git("branch", "-D", "cursor-sdk/lane-7413", cwd=repo)
+    discharge_branch_debt(
+        branch_name="cursor-sdk/lane-7413",
+        verb="landed",
+        note="prune_terminal",
+    )
+
+    result = discharge_landed(repo=repo, branch_name="cursor-sdk/lane-7413")
+    assert result.discharged
+    assert result.archive_tag == tag
+    assert result.tip_sha == tip
+    assert "cursor-sdk/lane-7413" not in _branches(repo)
 
 
 # --- discard: archived, reasoned, deleted ------------------------------------

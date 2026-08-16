@@ -36,6 +36,23 @@ def archive_tag_name(branch_name: str, tip_sha: str) -> str:
     return f"{ARCHIVE_TAG_PREFIX}{branch_name}-{tip_sha[:8]}"
 
 
+def lookup_archive_tag(*, repo: Path, branch_name: str) -> tuple[str, str] | None:
+    """Return ``(tag_name, tip_sha)`` for an existing archive tag, if any."""
+    root = repo.resolve()
+    prefix = f"{ARCHIVE_TAG_PREFIX}{branch_name}-"
+    listed = _git(root, "tag", "-l", f"{prefix}*")
+    if listed.returncode != 0:
+        return None
+    tags = [line.strip() for line in listed.stdout.splitlines() if line.strip()]
+    if not tags:
+        return None
+    tag = tags[-1]
+    tip = _git(root, "rev-parse", "--verify", f"refs/tags/{tag}^{{commit}}")
+    if tip.returncode != 0:
+        return None
+    return tag, tip.stdout.strip()
+
+
 def archive_branch(*, repo: Path, branch_name: str) -> str | None:
     """Tag *branch_name*'s tip and return the tag, or ``None`` on failure.
 
