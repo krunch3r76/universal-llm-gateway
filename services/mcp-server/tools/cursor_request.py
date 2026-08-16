@@ -152,20 +152,27 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         the DIRECTIVE loop, this is an ordinary request — **no dedicated contract
         token exists or is needed**. Fire with ``contract="investigate"``,
         ``desired_model="cursor/claude-sonnet-5"`` (T1 default; ``opus-5`` for T3
-        triggers only — never ``grok-4.6``, not a conductor seat), and
+        triggers only — never ``grok-4.6``, not a conductor seat), ``lane="B"``
+        (**wire parameter, not packet prose** — an omitted ``lane=`` resolves to
+        Lane A/shared-master regardless of what the body says; only name Lane A
+        when the mission itself is T0-mechanical single-locus), and
         ``desired_effort="max"``. ``investigate`` resolves to
         ``handoff_contract=light-bounded``, so the mechanical-executor redirect
         (Composer-only) never fires — that redirect is scoped to ``implement``.
         Body MUST include a ``vision:`` line (admit body gate above) and the full
-        six-block conductor packet (root thread/charter/scoreboard URIs, Lane B,
-        the mandatory ``Use the conductor skill — …`` line) — see
+        six-block conductor packet (root thread/charter/scoreboard URIs, the
+        mandatory literal line ``Use the conductor skill — nest specialists; ¬
+        hand-code mechanical G-rows; cost tier from this skill.``) — see
         agent_skill:conductor for packet shape + tier table. Autonomous-lane effort
         ceiling still clamps ``max``/``xhigh``→``high`` for non-roaming models
         (``resolved_effort`` in the admit reply reports the clamp) — pass ``max``
-        anyway so the ceiling binds, not a lower ask. Waiting on your own
-        commissioned conductor is idle time cursor-auto's hop-cadence already
-        recognizes (``in_flight_commission`` inhibits an automatic hop while a
-        nested dispatch is live on this thread) — no separate keep-alive needed.
+        anyway so the ceiling binds, not a lower ask. CAUTION: if you commission
+        onto a thread other than this DIRECTIVE's own (e.g. ``dispatch_thread_id``
+        = a mission root, the usual conductor shape), hop-cadence's in-flight
+        probe is keyed by *your* home lane and does not see liveness on that other
+        thread — do not assume the automatic hop inhibit covers it; poll the
+        target thread yourself while waiting (known gap, unfixed as of this
+        writing).
 
         Sync: plugin_install ∧ per-slug Customize sync ∈ Auto capabilities — offer/fire,
         ¬ defer to IDE lead. Bulk census = slow ⇒ named slugs only. IDE restart ⇒ operator.
