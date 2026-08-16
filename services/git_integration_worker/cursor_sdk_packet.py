@@ -124,6 +124,10 @@ _REASONING_POSTURE_INVOKE_RE = re.compile(
     r"Use the `?reasoning-posture`? skill",
     re.IGNORECASE,
 )
+_CONDUCTOR_PACKET_MARKER_RE = re.compile(
+    r"Use the `?conductor`? skill",
+    re.IGNORECASE,
+)
 
 _CONTRACT_FRONTMATTER_RE = re.compile(
     r"^contract:\s*(\S+)\s*$",
@@ -190,9 +194,11 @@ def resolve_prompt_preamble(
     declare a land disposition arrives with the work rather than after residue
     already exists.
 
-    Lane-B ``light-bounded`` packet dispatches (conductor missions) additionally
-    carry seat identity: the conductor's own ``dispatch_id`` and both nesting
-    paths (independent judgment dispatch vs ``nest_under`` for mechanical landing).
+    Lane-B ``light-bounded`` conductor missions additionally carry seat identity:
+    the conductor's own ``dispatch_id`` and both nesting paths (independent
+    judgment dispatch vs ``nest_under`` for mechanical landing). Identified by
+    ``packet_path`` or the mandatory ``Use the conductor skill`` packet line
+    (message-body ``COMMISSION_CONDUCTOR`` dispatches from cursor-auto).
     """
     contract = (handoff_contract or inferred_contract or "consult").lower()
     if prompt_preamble:
@@ -210,10 +216,14 @@ def resolve_prompt_preamble(
                 branch=lane_branch or "your lane branch"
             )
         )
+    is_conductor_packet = has_packet_path or (
+        bool(existing_text)
+        and _CONDUCTOR_PACKET_MARKER_RE.search(existing_text) is not None
+    )
     if (
         lane == "B"
         and contract == "light-bounded"
-        and has_packet_path
+        and is_conductor_packet
         and dispatch_id
     ):
         parts.append(

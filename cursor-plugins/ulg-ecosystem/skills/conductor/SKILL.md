@@ -268,11 +268,13 @@ branch or fall onto master.
 
 ### Self-nest routing — seat-identity preamble exposes your `dispatch_id`
 
-Lane-B `light-bounded` conductor dispatches with a packet receive a **seat-identity
-preamble** from GIW `resolve_prompt_preamble` (shipped
-`todo:conductor-seat-identity-preamble`). It names your own GIW **`dispatch_id`**
-(short ledger id — **not** the Stargate execution UUID on bus `to:`) and the two
-nesting paths:
+Lane-B `light-bounded` conductor missions receive a **seat-identity preamble** from
+GIW `resolve_prompt_preamble` when the dispatch is a genuine conductor packet:
+either **`packet_path`** is set (IDE `team_dispatch`) **or** the body carries the
+mandatory literal line ``Use the conductor skill — …`` (message-body
+``COMMISSION_CONDUCTOR`` via `cursor_request` → cursor-auto — no `packet_path`).
+The preamble names your own GIW **`dispatch_id`** (short ledger id — **not** the
+Stargate execution UUID on bus `to:`) and the two nesting paths:
 
 | Path | When | Shape |
 |---|---|---|

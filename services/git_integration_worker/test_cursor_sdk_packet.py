@@ -120,6 +120,7 @@ def test_conductor_seat_identity_block_only_under_three_condition_gate() -> None
         lane="B",
         dispatch_id=dispatch_id,
         has_packet_path=False,
+        existing_text="TYPE: DIRECTIVE\nscope: investigate only\n",
     )
     assert "CONDUCTOR SEAT IDENTITY" not in resolve_prompt_preamble(
         handoff_contract="light-bounded",
@@ -151,3 +152,40 @@ def test_conductor_seat_identity_uses_req_dispatch_id() -> None:
     )
     assert f"dispatch_id is {dispatch_id}" in text
     assert f"nest_under={dispatch_id}" in text
+
+
+_CONDUCTOR_USE_LINE = (
+    "Use the conductor skill — nest specialists; ¬ hand-code mechanical G-rows; "
+    "cost tier from this skill."
+)
+
+
+def test_conductor_seat_identity_fires_on_message_body_with_conductor_marker() -> None:
+    dispatch_id = "auto-abc123def456"
+    text = resolve_prompt_preamble(
+        handoff_contract="light-bounded",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        lane_branch="cursor-sdk/lane-7420",
+        dispatch_id=dispatch_id,
+        has_packet_path=False,
+        existing_text=f"TYPE: DIRECTIVE\n{_CONDUCTOR_USE_LINE}\n",
+    )
+    assert "CONDUCTOR SEAT IDENTITY" in text
+    assert dispatch_id in text
+    assert f"nest_under={dispatch_id}" in text
+
+
+def test_conductor_seat_identity_absent_on_message_body_without_conductor_marker() -> None:
+    dispatch_id = "auto-abc123def456"
+    text = resolve_prompt_preamble(
+        handoff_contract="light-bounded",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        dispatch_id=dispatch_id,
+        has_packet_path=False,
+        existing_text="TYPE: DIRECTIVE\ncontract: investigate\nscope: repo\n",
+    )
+    assert "CONDUCTOR SEAT IDENTITY" not in text
