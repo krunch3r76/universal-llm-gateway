@@ -187,7 +187,7 @@ Skeptic packets: `<output_format>` MUST demand `FILE_EVIDENCE_PATHS:` in bus rep
 
 ```markdown
 ---
-contract: consult   # or implement
+contract: consult   # required on consult/light-bounded; implement uses implement
 ---
 <scope>
 Goal: <one-line>. Selection mode: <targeted|branch|path>.

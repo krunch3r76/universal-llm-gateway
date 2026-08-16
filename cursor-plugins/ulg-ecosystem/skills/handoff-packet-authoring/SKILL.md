@@ -104,7 +104,9 @@ Web-anthropic: `inline_authoritative` (full body + sha256) **or** verified serve
 | 5 | `<mcp_capabilities>` | life-on/code-off or code plan |
 | 6 | `<output_format>` | closeout shape |
 
-Implement needs `acceptance` in `<task_guidance>`. Frontmatter `contract: implement`. Executor override in frontmatter;
+Implement needs `acceptance` in `<task_guidance>`. Frontmatter `contract:` is **required**
+on consult/light-bounded packets (checked AC — missing ⇒ dispatch reject at enrich).
+Executor override in frontmatter;
 silence ⇒ composer (`consult-routing` R1/R2). Primers + skeleton: L3 annex.
 
 **G1 architecture consult (envelope R1) — inverted load.** Blocks 1–5 are priming; `<output_format>`

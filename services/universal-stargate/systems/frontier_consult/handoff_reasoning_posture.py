@@ -7,13 +7,12 @@ handoffs get a ``reasoning-posture`` Use-line; mechanical/quick skip.
 from __future__ import annotations
 
 from implement_admission.admission_read import frontmatter_value
+from reasoning_posture_contracts import REASONING_POSTURE_SKIP_CONTRACTS
 
 REASONING_POSTURE_SLUG = "reasoning-posture"
 
-# Keep in lockstep with GIW ``_REASONING_POSTURE_SKIP_CONTRACTS``.
-REASONING_POSTURE_SKIP_CONTRACTS = frozenset(
-    {"implement", "pure-mechanical", "propagate", "execute", "answer"}
-)
+# Shared with GIW ``cursor_sdk_packet._REASONING_POSTURE_SKIP_CONTRACTS``.
+REASONING_POSTURE_SKIP_CONTRACTS = REASONING_POSTURE_SKIP_CONTRACTS
 
 
 def handoff_wants_reasoning_posture(text: str, handoff_contract: str | None) -> bool:

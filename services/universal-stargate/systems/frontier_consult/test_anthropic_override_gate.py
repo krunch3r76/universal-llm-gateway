@@ -74,7 +74,7 @@ def test_openai_explicit_model_noops() -> None:
 
 def test_cursor_explicit_model_noops() -> None:
     verdict = evaluate_anthropic_override(
-        model="cursor/claude-sonnet-4-6",
+        model="cursor/claude-sonnet-5",
         profile_provider="cursor",
         profile_allowed_models=(),
     )

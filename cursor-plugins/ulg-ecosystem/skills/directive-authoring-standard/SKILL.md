@@ -41,8 +41,8 @@ Attended bind: wire `require_attended=true` **or** body `require_attended: true`
 | density | Cursor binds |
 |---|---|
 | dense | composer-2.5 — **pin explicit** (implement / dense amend / verify) |
-| investigate | grok-4.6; `contract: investigate`; Auto defaults `fast=false` |
-| confer (challenge-seeking) | grok-4.6 + `desired_effort=xhigh` |
+| investigate | claude-sonnet-5; `contract: investigate`; Auto defaults `effort=xhigh`, `thinking=true`, `context=1m` |
+| confer (challenge-seeking) | grok-4.6 + `desired_effort=xhigh` + `fast=false` |
 | sparse amend | composer-2.5 pin |
 | architecture bind | `cdp-operator-proxy` § Architecture-bind — a sequence, ¬ one executor |
 

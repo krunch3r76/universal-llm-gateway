@@ -56,7 +56,7 @@ def _write_generate_ctx(
     execution_id: str,
     *,
     auto_review_child: bool = True,
-    resolved_model: str = "cursor/claude-sonnet-4-6",
+    resolved_model: str = "cursor/claude-sonnet-5",
     suppress_review_spawn: bool = False,
     review_surface: str | None = None,
     dispatch_lane: str | None = None,
@@ -92,7 +92,7 @@ def test_d3_cross_family_openai_executor_gets_cursor_opus() -> None:
 
 
 def test_d3_cross_family_cursor_executor_gets_openai() -> None:
-    sel = select_cross_family_reviewer("cursor/claude-sonnet-4-6")
+    sel = select_cross_family_reviewer("cursor/claude-sonnet-5")
     assert sel is not None
     # Anthropic-family executor → check/review default (terra = openai-family).
     assert sel.model == "cursor/gpt-5.6-terra"
@@ -257,7 +257,7 @@ async def test_ac3_race_resolves_after_context_write() -> None:
             auto_review_child=True,
             op="generate",
             role="cursor-sdk",
-            resolved_model="cursor/claude-sonnet-4-6",
+            resolved_model="cursor/claude-sonnet-5",
             parent_dispatch_thread_id="thread:parent",
             dispatch_thread_id="thread:parent",
         )
@@ -690,7 +690,7 @@ async def test_a6655_spawn_fail_closed_on_frozen_read_failure() -> None:
         auto_review_child=True,
         op="generate",
         role="cursor-sdk",
-        resolved_model="cursor/claude-sonnet-4-6",
+        resolved_model="cursor/claude-sonnet-5",
         parent_dispatch_thread_id="thread:coord",
         dispatch_thread_id="thread:coord",
         prompt_turn_number=2198,
@@ -739,7 +739,7 @@ async def test_a6655_spawn_uses_frozen_turn_not_latest() -> None:
         auto_review_child=True,
         op="generate",
         role="cursor-sdk",
-        resolved_model="cursor/claude-sonnet-4-6",
+        resolved_model="cursor/claude-sonnet-5",
         parent_dispatch_thread_id="6655",
         dispatch_thread_id="6655",
         prompt_turn_number=frozen_turn,
@@ -781,7 +781,7 @@ async def test_a6655_prompt_bind_instrumentation_emitted() -> None:
         auto_review_child=True,
         op="generate",
         role="cursor-sdk",
-        resolved_model="cursor/claude-sonnet-4-6",
+        resolved_model="cursor/claude-sonnet-5",
         parent_dispatch_thread_id="6655",
         dispatch_thread_id="6655",
         prompt_turn_number=100,

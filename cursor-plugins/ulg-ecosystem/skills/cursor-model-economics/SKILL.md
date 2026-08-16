@@ -30,10 +30,9 @@ Opus's effort ladder through `max` at ~**40%** of Opus $/M.
 | **T2** | `cursor/gpt-5.6-terra` | `reasoning=max` (¬ `extra-high`) | Independent check; T1 unsure. Prefer `context=272k` unless 1m needed |
 | **T3** | `cursor/claude-opus-5` | full card (`low`→`max`) | Invariant-touching bind — inform-then-proceed (trigger is *whether to pick T3*, not the effort rung) |
 
-**Not conductor seats:** `cursor/grok-4.6` (recon/breadth only) ·
-`cursor/claude-sonnet-4-6` (dominated by Sonnet 5).
+**Not conductor seats:** `cursor/grok-4.6` (recon/breadth only).
 
-Nested legs: mechanical → Composer · investigate densify → usually Grok @ `high`
+Nested legs: mechanical → Composer · investigate densify → Sonnet 5 @ `xhigh`
 · binder when unsure → `judgment-escalation-ladder`.
 
 Detail + admit shapes: Use the `conductor` skill.

@@ -20,8 +20,8 @@ _GOVERNED_INSTRUCTION_PROFILES: dict[str, str] = {
     "claude-haiku-4-5": "mechanical",
     "claude-opus-5": "reasoner",
     "claude-opus-4-8": "reasoner",
-    "claude-sonnet-4-6": "reasoner",
     "claude-sonnet-5": "reasoner",
+    "claude-fable-5": "reasoner",
     "gpt-5.5": "reasoner",
     "glm-5.2": "reasoner",
     "grok-4.6": "reasoner",
@@ -34,7 +34,7 @@ def test_model_capability_default_instruction_profile_is_mechanical() -> None:
 
 
 def test_governed_rows_carry_instruction_profile_classifications() -> None:
-    assert len(CURSOR_MODEL_CAPABILITIES) == 17
+    assert len(CURSOR_MODEL_CAPABILITIES) == 16
     for model_id, expected in _GOVERNED_INSTRUCTION_PROFILES.items():
         assert CURSOR_MODEL_CAPABILITIES[model_id].instruction_profile == expected
 

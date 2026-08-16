@@ -3,11 +3,12 @@
 Operator bind 2026-07-20: default agent = **Grok 4.6** on the coding
 substrate. Wire: ``seat=cursor-sdk``, ``model=cursor/grok-4.6``.
 
-Operator bind 2026-08-16 (Grok spend): judgment windows pin ``fast=false``
-on ``cursor/grok-4.6`` (``effort=high``). Catalog ListModels still defaults
-fast=true; charter-runner must not inherit that speed path. Composer still
-pins ``fast=true`` explicitly so window_log / admit notes record the bind.
-(Supersedes 2026-07-26 iteration-speed ``fast=true`` on Grok.)
+Operator bind 2026-08-16 (agent-bus:7405): judgment windows pin
+``cursor/claude-sonnet-5`` @ ``effort=xhigh``, ``thinking=true``, ``context=1m``.
+Consult/CDP host shells stay on Composer (I/O-only — no effort knob).
+
+Composer still pins ``fast=true`` explicitly so window_log / admit notes record
+the bind.
 
 Grok exposes ``effort`` + ``fast`` only (no ``thinking`` knob — live
 ListModels / ``cursor_capabilities``).
@@ -27,10 +28,16 @@ from __future__ import annotations
 from typing import Any
 
 DEFAULT_SEAT = "cursor-sdk"
-DEFAULT_MODEL = "cursor/grok-4.6"
+JUDGMENT_MODEL = "cursor/claude-sonnet-5"
+JUDGMENT_MODEL_KNOBS: dict[str, str] = {
+    "effort": "xhigh",
+    "thinking": "true",
+    "context": "1m",
+}
+# Compatibility aliases — materializers + tests still import these names.
+DEFAULT_MODEL = JUDGMENT_MODEL
+DEFAULT_MODEL_KNOBS = JUDGMENT_MODEL_KNOBS
 DEFAULT_CONTRACT = "light-bounded"
-# Spend bind (operator 2026-08-16): high effort, fast off.
-DEFAULT_MODEL_KNOBS: dict[str, str] = {"effort": "high", "fast": "false"}
 
 IMPLEMENT_MODEL = "cursor/composer-2.5"
 IMPLEMENT_CONTRACT = "implement"
@@ -51,7 +58,7 @@ def default_judgment_body(
     subject: str,
     caller_agent: str,
 ) -> dict[str, Any]:
-    """Wire body for ``POST /api/v1/team/dispatch`` (default Grok window).
+    """Wire body for ``POST /api/v1/team/dispatch`` (default Sonnet-5 window).
 
     ``subject`` is accepted for call-site symmetry with handoff but is **not**
     on the generate schema (handoff-only). WIP subject is posted on the root bus
@@ -61,8 +68,8 @@ def default_judgment_body(
     return {
         "op": "generate",
         "seat": DEFAULT_SEAT,
-        "model": DEFAULT_MODEL,
-        "model_knobs": dict(DEFAULT_MODEL_KNOBS),
+        "model": JUDGMENT_MODEL,
+        "model_knobs": dict(JUDGMENT_MODEL_KNOBS),
         "contract": DEFAULT_CONTRACT,
         "packet_path": packet_path,
         "dispatch_thread_id": root_id,
@@ -112,7 +119,7 @@ def autonomous_generate_body(
 ) -> dict[str, Any]:
     """Wire body for the autonomous background-lead window.
 
-    Same generate wire as ``default_judgment_body`` (cursor-sdk Grok 4.6 fast).
+    Same generate wire as ``default_judgment_body`` (Sonnet 5 @ xhigh).
     The autonomous mandate lives in the materialized packet + root WIP pointer
     — generate schema rejects ``subject`` / ``tags`` (handoff-only fields).
     """
@@ -159,24 +166,25 @@ def consult_host_generate_body(
 ) -> dict[str, Any]:
     """Unattended host wire for consult seats that fire CDP (judgment_gap + r_admit).
 
-    Same cursor-sdk Grok generate schema as worker windows; the consult mandate
-    (path-sim judgment OR R-admit) lives in the materialized packet. The host
-    owns ``team_dispatch(model=cdp/opus-5)`` submit→poll — auto-wake, no human
+    Composer I/O host shell — consult mandate lives in the materialized packet.
+    The host owns ``team_dispatch(model=cdp/opus-5)`` submit→poll — auto-wake, no human
     ``push_reminder`` (a:26476 / web-consult on-tick).
 
     ``read_only=True`` releases the cursor dispatch write lease — the host polls
     CDP and writes cortex provenance only, never checkout edits.
     """
-    body = default_judgment_body(
-        root_id=root_id,
-        window_index=window_index,
-        packet_path=packet_path,
-        subject=subject,
-        caller_agent=caller_agent,
-    )
-    body["read_only"] = True
-    body.pop("refuse_if_lease_held", None)
-    return body
+    del subject, window_index
+    return {
+        "op": "generate",
+        "seat": DEFAULT_SEAT,
+        "model": IMPLEMENT_MODEL,
+        "model_knobs": dict(IMPLEMENT_MODEL_KNOBS),
+        "contract": DEFAULT_CONTRACT,
+        "packet_path": packet_path,
+        "dispatch_thread_id": root_id,
+        "caller_agent": caller_agent,
+        "read_only": True,
+    }
 
 
 def operator_proxy_host_generate_body(
@@ -189,21 +197,23 @@ def operator_proxy_host_generate_body(
 ) -> dict[str, Any]:
     """Unattended host wire for the CDP operator-proxy lane (agent-bus:6006).
 
-    Same cursor-sdk generate schema as consult hosts. The host polls the private
-    ``request`` thread and CDP executions and re-admits to keep the operator seat
-    live; ``read_only=True`` releases the write lease so Opus's own cursor-auto
-    implement dispatches nest under this holder rather than contending.
+    Composer I/O host shell. The host polls the private ``request`` thread and CDP
+    executions and re-admits to keep the operator seat live; ``read_only=True``
+    releases the write lease so Opus's own cursor-auto implement dispatches nest
+    under this holder rather than contending.
     """
-    body = default_judgment_body(
-        root_id=root_id,
-        window_index=window_index,
-        packet_path=packet_path,
-        subject=subject,
-        caller_agent=caller_agent,
-    )
-    body["read_only"] = True
-    body.pop("refuse_if_lease_held", None)
-    return body
+    del subject, window_index
+    return {
+        "op": "generate",
+        "seat": DEFAULT_SEAT,
+        "model": IMPLEMENT_MODEL,
+        "model_knobs": dict(IMPLEMENT_MODEL_KNOBS),
+        "contract": DEFAULT_CONTRACT,
+        "packet_path": packet_path,
+        "dispatch_thread_id": root_id,
+        "caller_agent": caller_agent,
+        "read_only": True,
+    }
 
 
 def r_admit_consult_generate_body(

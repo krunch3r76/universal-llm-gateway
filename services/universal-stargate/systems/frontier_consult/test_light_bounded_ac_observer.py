@@ -155,7 +155,7 @@ async def test_advisory_lifecycle_forced_flag_spawn_and_footer() -> None:
         auto_review_child=effective,
         op="generate",
         role="cursor-sdk",
-        resolved_model="cursor/claude-sonnet-4-6",
+        resolved_model="cursor/claude-sonnet-5",
         parent_dispatch_thread_id="thread:parent",
         dispatch_thread_id="thread:parent",
     )
@@ -352,7 +352,7 @@ def test_admission_context_round_trip_review_spawn_fields() -> None:
         auto_review_child=True,
         op="generate",
         role="cursor-sdk",
-        resolved_model="cursor/claude-sonnet-4-6",
+        resolved_model="cursor/claude-sonnet-5",
         parent_dispatch_thread_id="thread:parent",
         dispatch_thread_id="path-sim-my-slug",
         review_surface="sidecar",

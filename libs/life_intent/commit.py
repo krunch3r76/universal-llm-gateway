@@ -26,7 +26,12 @@ from .proposal_store import (
 )
 
 _CORTEX_TIMEOUT = 15.0
-_RECON_MODEL = "cursor/grok-4.6"
+_RECON_MODEL = "cursor/claude-sonnet-5"
+_RECON_MODEL_KNOBS: dict[str, str] = {
+    "effort": "xhigh",
+    "thinking": "true",
+    "context": "1m",
+}
 
 
 class WorkerAdmissionIndeterminateError(Exception):
@@ -49,6 +54,7 @@ class CommitResult:
 
 
 def commit_live_enabled() -> bool:
+    """Return True when ``LIFE_INTENT_COMMIT_LIVE=1`` enables live commit apply."""
     return os.environ.get("LIFE_INTENT_COMMIT_LIVE", "").strip() == "1"
 
 
@@ -147,6 +153,7 @@ async def _prepare_recon_handle(
         request_id=request_id,
         role="cursor-sdk",
         model=_RECON_MODEL,
+        model_knobs=dict(_RECON_MODEL_KNOBS),
         subject=subject,
         caller_agent="web-anthropic",
         contract="light-bounded",
@@ -190,6 +197,7 @@ async def _submit_prepared_handle(handle: Any) -> str:
 
 
 def validate_commit(proposal_id: str) -> CommitReject | StoredProposal:
+    """Load and gate-check a stored proposal before scout dispatch or entity seed."""
     if not commit_live_enabled():
         return CommitReject(
             "commit_gated",

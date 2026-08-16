@@ -46,7 +46,7 @@ def test_opus_effort_low_accepted(captured_events: dict[str, list[Any]]) -> None
 
 def test_sonnet_fast_dropped_unsupported(captured_events: dict[str, list[Any]]) -> None:
     result = align_cursor_knobs(
-        resolved_model="claude-sonnet-4-6",
+        resolved_model="claude-sonnet-5",
         contract="light-bounded",
         model_knobs={"fast": "true"},
     )
@@ -117,7 +117,7 @@ def test_cost_intent_suppresses_caller_warning(
 
 def test_suppress_cost_warning_flag(captured_events: dict[str, list[Any]]) -> None:
     result = align_cursor_knobs(
-        resolved_model="claude-sonnet-4-6",
+        resolved_model="claude-fable-5",
         contract="pure-mechanical",
         suppress_cost_warning=True,
     )

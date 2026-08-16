@@ -132,8 +132,8 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
     ),
     "claude-opus-5": ModelCapability(
         knobs={
-            "thinking": KnobSpec(accepted=("false", "true")),
-            "context": KnobSpec(accepted=("300k", "1m")),
+            "thinking": KnobSpec(accepted=("false", "true"), default="true"),
+            "context": KnobSpec(accepted=("300k", "1m"), default="1m"),
             "effort": KnobSpec(accepted=_FULL_EFFORT),
             "fast": KnobSpec(accepted=("false", "true")),
         },
@@ -149,8 +149,8 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
     ),
     "claude-opus-4-8": ModelCapability(
         knobs={
-            "thinking": KnobSpec(accepted=("false", "true")),
-            "context": KnobSpec(accepted=("300k", "1m")),
+            "thinking": KnobSpec(accepted=("false", "true"), default="true"),
+            "context": KnobSpec(accepted=("300k", "1m"), default="1m"),
             "effort": KnobSpec(accepted=_FULL_EFFORT),
             "fast": KnobSpec(accepted=("false", "true")),
         },
@@ -164,24 +164,10 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         },
         instruction_profile="reasoner",
     ),
-    "claude-sonnet-4-6": ModelCapability(
-        knobs={
-            "thinking": KnobSpec(accepted=("false", "true")),
-            "context": KnobSpec(accepted=("200k", "1m")),
-            # Capability subset — no xhigh on this model (not vocabulary).
-            "effort": KnobSpec(accepted=("low", "medium", "high", "max")),
-        },
-        default_variant={
-            "thinking": "true",
-            "context": "1m",
-            "effort": "medium",
-        },
-        instruction_profile="reasoner",
-    ),
     "claude-sonnet-5": ModelCapability(
         knobs={
-            "thinking": KnobSpec(accepted=("false", "true")),
-            "context": KnobSpec(accepted=("300k", "1m")),
+            "thinking": KnobSpec(accepted=("false", "true"), default="true"),
+            "context": KnobSpec(accepted=("300k", "1m"), default="1m"),
             "effort": KnobSpec(accepted=_FULL_EFFORT),
         },
         default_variant={
@@ -195,8 +181,8 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
     # (thinking/context/effort; no fast; no cyber fixed_param).
     "claude-fable-5": ModelCapability(
         knobs={
-            "thinking": KnobSpec(accepted=("false", "true")),
-            "context": KnobSpec(accepted=("300k", "1m")),
+            "thinking": KnobSpec(accepted=("false", "true"), default="true"),
+            "context": KnobSpec(accepted=("300k", "1m"), default="1m"),
             "effort": KnobSpec(accepted=_FULL_EFFORT),
         },
         default_variant={
@@ -212,62 +198,63 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
     # (thread 3765 Task B; decision:cursor-sdk-018-feature-uptake).
     "gpt-5.5": ModelCapability(
         knobs={
-            "context": KnobSpec(accepted=("272k", "1m")),
+            "context": KnobSpec(accepted=("272k", "1m"), default="272k"),
             "reasoning": KnobSpec(
                 accepted=("none", "low", "medium", "high", "extra-high")
             ),
             "fast": KnobSpec(accepted=("false", "true")),
         },
-        default_variant={"context": "1m", "reasoning": "medium", "fast": "false"},
+        default_variant={"context": "272k", "reasoning": "medium", "fast": "false"},
         instruction_profile="reasoner",
     ),
     # GPT-5.6 family (GA 2026-07-09) — knobs mirrored from gpt-5.5 until live
     # ListModels widens accepted sets. Prefer explicit tier ids; bare gpt-5.6 → Sol.
     "gpt-5.6-sol": ModelCapability(
         knobs={
-            "context": KnobSpec(accepted=("272k", "1m")),
+            "context": KnobSpec(accepted=("272k", "1m"), default="272k"),
             "reasoning": KnobSpec(
                 accepted=("none", "low", "medium", "high", "xhigh", "max")
             ),
             "fast": KnobSpec(accepted=("false", "true")),
         },
-        default_variant={"context": "1m", "reasoning": "medium", "fast": "false"},
+        default_variant={"context": "272k", "reasoning": "medium", "fast": "false"},
         instruction_profile="reasoner",
     ),
     "gpt-5.6-terra": ModelCapability(
         knobs={
-            "context": KnobSpec(accepted=("272k", "1m")),
+            "context": KnobSpec(accepted=("272k", "1m"), default="272k"),
             "reasoning": KnobSpec(
                 accepted=("none", "low", "medium", "high", "xhigh", "max")
             ),
             "fast": KnobSpec(accepted=("false", "true")),
         },
-        default_variant={"context": "1m", "reasoning": "medium", "fast": "false"},
+        default_variant={"context": "272k", "reasoning": "medium", "fast": "false"},
         instruction_profile="reasoner",
     ),
     "gpt-5.6-luna": ModelCapability(
         knobs={
-            "context": KnobSpec(accepted=("272k", "1m")),
+            "context": KnobSpec(accepted=("272k", "1m"), default="272k"),
             "reasoning": KnobSpec(
                 accepted=("none", "low", "medium", "high", "xhigh", "max")
             ),
             "fast": KnobSpec(accepted=("false", "true")),
         },
-        default_variant={"context": "1m", "reasoning": "medium", "fast": "false"},
+        default_variant={"context": "272k", "reasoning": "medium", "fast": "false"},
         instruction_profile="reasoner",
     ),
     # Cursor Grok 4.6 — effort + fast only (no thinking/context knobs).
-    # Catalog default is fast=true; override via model_knobs when non-fast is wanted.
+    # KnobSpec.default drives omit-path emit; default_variant may still mirror
+    # live ListModels (fast=true there) — descriptor default wins on omit-path.
     "grok-4.6": ModelCapability(
         knobs={
             "effort": KnobSpec(
                 accepted=("low", "medium", "high", "xhigh"), default="high"
             ),
-            "fast": KnobSpec(accepted=("false", "true"), default="true"),
+            "fast": KnobSpec(accepted=("false", "true"), default="false"),
         },
         default_variant={
             "effort": "high",
-            "fast": "true",
+            "fast": "false",
         },
         instruction_profile="reasoner",
     ),

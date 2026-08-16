@@ -43,7 +43,7 @@ Hold exact bytes/text/metadata in context before inference. Do not paraphrase. F
 
 ### 2. Call skeptic API
 
-Input raw evidence (image bytes, full headers+body, full quoted text). Use `gpt-5.4-mini`; fallback `claude-sonnet-4-6` with same prompt. If unavailable/errors, fail-closed.
+Input raw evidence (image bytes, full headers+body, full quoted text). Use `gpt-5.4-mini`; fallback `cursor/claude-sonnet-5` with same prompt. If unavailable/errors, fail-closed.
 
 Canonical prompt:
 
@@ -80,7 +80,7 @@ Cortex chain:
 ## Model / surface decisions
 
 - `gpt-5.4-mini`: cheap, fast, multimodal, aligned with close-time enrichment skeptic pattern.
-- Fallback: `claude-sonnet-4-6`; never silently skip.
+- Fallback: `cursor/claude-sonnet-5`; never silently skip.
 - Confirmation is silent; divergence is surfaced. Surfacing every confirmation trains users to ignore the channel.
 - Bias toward firing on marginal inference: cheap confirmed pass beats expensive substrate poisoning.
 - Skeptic agreement ratifies only the specific assertion shown, not the broader narrative; re-pass for new claims.

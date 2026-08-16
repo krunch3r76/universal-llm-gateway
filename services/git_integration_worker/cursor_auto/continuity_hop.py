@@ -80,7 +80,7 @@ def _hop_reasoning_effort(job: AutoJob) -> dict[str, Any]:
     Schema-default ``medium`` is treated as unpinned so sealed-ask High remains
     the picker default. Explicit pins (incl. ``xhigh`` / ``extra`` aliases) forward.
     """
-    effort = resolve_desired_effort(job.desired_effort)
+    effort = resolve_desired_effort(job.desired_effort, contract=job.contract or "answer")
     resolved = str(effort.get("resolved_effort") or "").strip().lower()
     if resolved == _UNPINNED_EFFORT:
         return {**effort, "wire_effort": None}

@@ -129,8 +129,7 @@ costs less than `high` on Opus. Rates: `config/model_rates.yaml`
 | **T3 — premium** | `cursor/claude-opus-5` | full card (`low`→`max`) | Invariant-touching, architecture-suitability, ≥2 unranked co-primaries, recurrence — **inform-then-proceed** + one-line why (trigger is *whether to pick T3*, not the effort rung) |
 
 **Not conductor seats:** `cursor/grok-4.6` (reliability — cheap breadth/recon only,
-and its `$2/$6` was a launch discount) · `cursor/claude-sonnet-4-6` (strictly
-dominated by Sonnet 5 on every price tier, effort caps below `xhigh`).
+and its `$2/$6` was a launch discount).
 
 **Nested legs (always split by cost class):**
 - Mechanical implement → Composer (`omit model=`, `contract=implement`)

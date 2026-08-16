@@ -141,6 +141,13 @@ _EFFORT_LADDER: tuple[str, ...] = WIRE_LADDER
 _EFFORT_VALUES = frozenset(_EFFORT_LADDER)
 BINDABLE_EFFORT_VALUES: tuple[str, ...] = _EFFORT_LADDER
 BINDABLE_CDP_ESCALATIONS: tuple[str, ...] = ("cdp/opus-5", "cdp/fable")
+_CONTRACT_EFFORT_DEFAULTS: dict[str, str] = {
+    "investigate": "xhigh",
+    "recon": "xhigh",
+    "seed": "xhigh",
+    "confer": "xhigh",
+    "answer": "medium",
+}
 # Life seats often put CDP models on desired_model by mistake; map → escalation.
 _CDP_DESIRED_MODEL_ALIASES: dict[str, str] = {
     "cdp/opus-5": "cdp/opus-5",
@@ -169,11 +176,11 @@ def resolve_desired_model(
         by_contract = {
             "answer": "cursor/grok-4.6",
             "confer": "cursor/grok-4.6",
-            "investigate": "cursor/grok-4.6",
+            "investigate": "cursor/claude-sonnet-5",
             "implement": "cursor/composer-2.5",
             "verify": "cursor/composer-2.5",
-            "seed": "cursor/grok-4.6",
-            "recon": "cursor/grok-4.6",
+            "seed": "cursor/claude-sonnet-5",
+            "recon": "cursor/claude-sonnet-5",
         }
         model_id = by_contract.get(contract, "cursor/composer-2.5")
         return {
@@ -388,13 +395,25 @@ def admit_model_pin_flags(
     return tuple(flags)
 
 
-def resolve_desired_effort(desired_effort: str | None) -> dict[str, Any]:
+def resolve_desired_effort(
+    desired_effort: str | None,
+    *,
+    contract: str = "answer",
+) -> dict[str, Any]:
     """Normalize + clamp ``desired_effort`` to canonical wire values.
 
     Canonical set: low|medium|high|xhigh|max. Surface aliases (``extra``,
     ``extra-high``, ``Extra High``) normalize to ``xhigh`` via effort_vocabulary.
+
+    When ``desired_effort`` is omitted, per-contract defaults apply (investigate/
+    recon/seed/confer → ``xhigh``; answer → ``medium``) so omit-path does not
+    hedge to medium on confer.
     """
-    requested = (desired_effort or "medium").strip().lower() or "medium"
+    contract_key = (contract or "answer").strip().lower()
+    if desired_effort is None or not str(desired_effort).strip():
+        requested = _CONTRACT_EFFORT_DEFAULTS.get(contract_key, "medium")
+    else:
+        requested = desired_effort.strip().lower()
     normalized = normalize_effort(requested)
     if normalized is not None and normalized in _EFFORT_VALUES:
         notes = "honored"

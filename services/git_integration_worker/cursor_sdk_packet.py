@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import re
 
+from reasoning_posture_contracts import REASONING_POSTURE_SKIP_CONTRACTS
+
 _LARGE_CONTENT_CHUNK_CHARS = 40_000
 
 _DELIVERABLE_ROUTING_PREAMBLE = (
@@ -99,10 +101,9 @@ _REASONING_POSTURE_PREAMBLE = (
     "Use the `reasoning-posture` skill — pin Question/OOS/detent before merits; "
     "steelman / calibrate / courage; thinking_off does not waive."
 )
-# Keep in lockstep with Stargate ``handoff_reasoning_posture.REASONING_POSTURE_SKIP_CONTRACTS``.
-_REASONING_POSTURE_SKIP_CONTRACTS = frozenset(
-    {"implement", "pure-mechanical", "propagate", "execute", "answer"}
-)
+
+# Shared with Stargate ``handoff_reasoning_posture.REASONING_POSTURE_SKIP_CONTRACTS``.
+_REASONING_POSTURE_SKIP_CONTRACTS = REASONING_POSTURE_SKIP_CONTRACTS
 _REASONING_POSTURE_INVOKE_RE = re.compile(
     r"Use the `?reasoning-posture`? skill",
     re.IGNORECASE,

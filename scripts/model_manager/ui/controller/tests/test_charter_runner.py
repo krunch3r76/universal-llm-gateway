@@ -13,15 +13,16 @@ from scripts.model_manager.ui.controller.charter_runner import (
     dispatch_client as _dc_mod,
 )
 from scripts.model_manager.ui.controller.charter_runner import kernel as tl
-from scripts.model_manager.ui.controller.charter_runner.admission import CapStore, WindowCaps
+from scripts.model_manager.ui.controller.charter_runner.admission import (
+    CapStore,
+    WindowCaps,
+    evaluate_root,
+    next_pickup_is_restart_from_holder,
+)
 from scripts.model_manager.ui.controller.charter_runner.checkpoint_schema import (
     first_actionable_step,
     item_is_gated,
     parse_checkpoint,
-)
-from scripts.model_manager.ui.controller.charter_runner.admission import (
-    evaluate_root,
-    next_pickup_is_restart_from_holder,
 )
 from scripts.model_manager.ui.controller.charter_runner.env_predicates import (
     GIW_DRAIN_BLOCKS_RESTART_REASON,
@@ -550,12 +551,12 @@ def test_materializer_contains_stop_contract() -> None:
     assert "## Acceptance criteria" in packet
     assert "window 3" in packet
     assert "5555-charter-scoreboard.md" in packet
-    assert "cursor/grok-4.6" in packet
+    assert "cursor/claude-sonnet-5" in packet
     assert "from=cursor-sdk" in packet
 
 
 @pytest.mark.offline
-def test_default_judgment_body_is_grok_high() -> None:
+def test_default_judgment_body_is_sonnet_xhigh() -> None:
     from scripts.model_manager.ui.controller.charter_runner.executor_defaults import (
         DEFAULT_MODEL,
         DEFAULT_MODEL_KNOBS,
@@ -571,11 +572,11 @@ def test_default_judgment_body_is_grok_high() -> None:
     )
     assert body["op"] == "generate"
     assert body["seat"] == "cursor-sdk"
-    assert body["model"] == DEFAULT_MODEL == "cursor/grok-4.6"
+    assert body["model"] == DEFAULT_MODEL == "cursor/claude-sonnet-5"
     assert body["model_knobs"] == DEFAULT_MODEL_KNOBS
-    assert body["model_knobs"]["effort"] == "high"
-    assert body["model_knobs"]["fast"] == "false"
-    assert "thinking" not in body["model_knobs"]  # Grok has no thinking knob
+    assert body["model_knobs"]["effort"] == "xhigh"
+    assert body["model_knobs"]["thinking"] == "true"
+    assert body["model_knobs"]["context"] == "1m"
     assert body["contract"] == "light-bounded"
     assert body["dispatch_thread_id"] == "5361"
     assert body["caller_agent"] == "charter-runner"
@@ -716,7 +717,7 @@ def test_autonomous_generate_body_matches_default_wire() -> None:
     )
     assert body["op"] == "generate"
     assert body["seat"] == "cursor-sdk"
-    assert body["model"] == DEFAULT_MODEL == "cursor/grok-4.6"
+    assert body["model"] == DEFAULT_MODEL == "cursor/claude-sonnet-5"
     assert body["model_knobs"] == DEFAULT_MODEL_KNOBS
     assert "subject" not in body
     assert "tags" not in body
@@ -791,7 +792,7 @@ def test_fire_window_autonomous_posts_dispatch(
     assert body["op"] == "generate"
     assert "subject" not in body
     assert "tags" not in body
-    assert result["executor"]["model"] == "cursor/grok-4.6"
+    assert result["executor"]["model"] == "cursor/claude-sonnet-5"
 
 
 @pytest.mark.offline
@@ -3439,8 +3440,8 @@ def test_evaluate_root_materialize_normalizes_sidecars_before_gates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Admit path sees canonical URI after materialize (no backtick residue)."""
-    from scripts.model_manager.ui.controller.charter_runner.admission import CapStore
     from scripts.model_manager.ui.controller.charter_runner.admission import (
+        CapStore,
         evaluate_root,
     )
     from scripts.model_manager.ui.controller.charter_runner.r_corpus_sha import (
@@ -3494,8 +3495,6 @@ def test_r_corpus_sha_hex_equals_read_sha256(tmp_path: Path) -> None:
 def test_materializer_emits_stale_r_corpus_sha_marker() -> None:
     from scripts.model_manager.ui.controller.charter_runner.window_exec import (
         materialize_autonomous_packet,
-    )
-    from scripts.model_manager.ui.controller.charter_runner.window_exec import (
         materialize_consult_packet,
     )
 

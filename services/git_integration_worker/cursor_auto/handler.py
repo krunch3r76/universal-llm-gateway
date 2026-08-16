@@ -239,7 +239,7 @@ async def process_job(
     # Unclamped effort is the operator wire pin. Card clamp applies to
     # nested cursor-sdk only — CDP picker depth must not be decided by the
     # resolved cursor-sdk model (is_roaming_tier predicate on the wrong subject).
-    wire_effort = resolve_desired_effort(job.desired_effort)
+    wire_effort = resolve_desired_effort(job.desired_effort, contract=contract)
     effort = clamp_effort_to_model_card(
         model["resolved_model_id"], wire_effort
     )
@@ -476,7 +476,7 @@ async def process_job(
             job, client=client, queue=queue, dispatch_id=None
         )
 
-    knobs = compose_model_knobs(model, effort)
+    knobs = compose_model_knobs(model, effort, contract=contract)
     relay_ctx = CloseoutRelayContext(
         worker_id=worker_id,
         worker_started_at=worker_started_at,

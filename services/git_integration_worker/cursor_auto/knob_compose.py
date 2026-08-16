@@ -21,6 +21,9 @@ from effort_vocabulary import WIRE_LADDER
 
 from services.git_integration_worker.cursor_auto.wire_map import _MODEL_TABLE
 
+_JUDGMENT_CONTRACTS = frozenset({"investigate", "recon", "seed"})
+_ANTHROPIC_JUDGMENT_KNOBS = {"thinking": "true", "context": "1m"}
+
 
 def clamp_effort_to_accepted(
     requested: str, accepted: tuple[str, ...]
@@ -111,6 +114,8 @@ def resolve_card_effort(
 def compose_model_knobs(
     model: dict[str, Any],
     effort: dict[str, Any],
+    *,
+    contract: str = "answer",
 ) -> dict[str, str]:
     """Merge the resolved effort onto a model's knobs, capability-clamped.
 
@@ -150,4 +155,10 @@ def compose_model_knobs(
     if name is None:
         return knobs
     knobs[name] = value
+    contract_key = (contract or "answer").strip().lower()
+    if contract_key in _JUDGMENT_CONTRACTS and bare is not None:
+        card_knobs = supported_knobs(bare)
+        for knob_name, knob_value in _ANTHROPIC_JUDGMENT_KNOBS.items():
+            if knob_name in card_knobs and knob_name not in knobs:
+                knobs[knob_name] = knob_value
     return knobs

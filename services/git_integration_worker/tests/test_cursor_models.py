@@ -35,8 +35,9 @@ def test_resolve_cursor_prefixed_hit() -> None:
 
 
 def test_resolve_cursor_miss() -> None:
-    with pytest.raises(ValueError, match="not in trusted allowlist"):
-        resolve_cursor("cursor/unknown-model")
+    cfg = resolve_cursor("cursor/unknown-model")
+    assert cfg.model_id == "unknown-model"
+    assert cfg.params == ()
 
 
 def test_resolve_cursor_wrong_provider_reject() -> None:
@@ -56,17 +57,17 @@ def test_build_model_selection_default_omit() -> None:
     selection = build_model_selection(cfg)
     assert selection.id == "claude-opus-5"
     emitted = {p.id: p.value for p in selection.params}
-    assert emitted == {}
+    assert emitted == {"thinking": "true", "context": "1m"}
 
 
 def test_build_model_selection_reasoning_models_no_fast_default() -> None:
     """Reasoning cursor models must NOT default fast=true (quality degradation)."""
-    for model in ("claude-opus-5", "claude-opus-4-8", "claude-sonnet-4-6"):
+    for model in ("claude-opus-5", "claude-opus-4-8", "claude-sonnet-5"):
         selection = build_model_selection(resolve_cursor(model))
         emitted = {p.id: p.value for p in selection.params}
         assert "fast" not in emitted, f"{model} should not default fast"
     with pytest.raises(ValueError, match="unknown knob 'fast'"):
-        build_model_selection(resolve_cursor("claude-sonnet-4-6"), {"fast": "true"})
+        build_model_selection(resolve_cursor("claude-sonnet-5"), {"fast": "true"})
 
 
 def test_build_model_selection_composer_default_fast() -> None:
@@ -86,7 +87,11 @@ def test_build_model_selection_opus_effort_low() -> None:
     selection = build_model_selection(
         resolve_cursor("claude-opus-5"), {"effort": "low"}
     )
-    assert {p.id: p.value for p in selection.params} == {"effort": "low"}
+    assert {p.id: p.value for p in selection.params} == {
+        "effort": "low",
+        "thinking": "true",
+        "context": "1m",
+    }
 
 
 def test_validate_knobs_collect_all() -> None:

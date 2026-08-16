@@ -14,7 +14,7 @@ from ..checkpoint_schema import (
     footer_kwargs_for_window,
     output_format_footer_requirement,
 )
-from ..executor_defaults import DEFAULT_MODEL, DEFAULT_MODEL_KNOBS
+from ..executor_defaults import JUDGMENT_MODEL, JUDGMENT_MODEL_KNOBS
 from .materializer import _work_summary
 
 logger = get_logger(__name__)
@@ -23,6 +23,7 @@ REVISE_CAP_DEFAULT = 3
 
 # Layer G3/G4 seat bind — single locus for family-diversity enforcement (6524 R4).
 LAYER_G3_SEAT = "cursor/grok-4.6"
+LAYER_G3_MODEL_KNOBS: dict[str, str] = {"effort": "xhigh", "fast": "false"}
 LAYER_G4_SEAT = "cursor/gpt-5.6-terra"
 
 
@@ -65,18 +66,20 @@ def _front_matter(source_ref: str | None) -> str:
 
 
 def _scope(window_index: int, root_id: str, *, thin: bool) -> str:
-    knobs = ", ".join(f"{k}={v}" for k, v in sorted(DEFAULT_MODEL_KNOBS.items()))
+    knobs = ", ".join(f"{k}={v}" for k, v in sorted(JUDGMENT_MODEL_KNOBS.items()))
     mode = (
         "CLOSED-DETENT mechanical leg (G5 Implement + G6 Verify)"
         if thin
         else "layer G1–G6 cascade"
     )
+    g3_knobs = ", ".join(f"{k}={v}" for k, v in sorted(LAYER_G3_MODEL_KNOBS.items()))
     return f"""\
 <scope>
 Goal: Charter-runner LAYER AUTONOMOUS window {window_index} — {mode} on
 agent-bus:{root_id}. Attendance axis = autonomous; arc_lane = layer
 (abstraction-layering codework — no downstream ratification windows).
-Default executor: {DEFAULT_MODEL} ({knobs}).
+Default executor: {JUDGMENT_MODEL} ({knobs}).
+G3 densify seat: {LAYER_G3_SEAT} ({g3_knobs}).
 </scope>"""
 
 
@@ -127,7 +130,7 @@ Steps template (machine lane annotations):
 G1  Architecture     consult seat · cdp/fable — architecture verdict sidecar
                      (lane-architecture-consult-brief-template-v2 envelope).
 G2  Frame            consult seat · cdp/opus-5 — densifier instructions ≤120L.
-G3  Densify          {LAYER_G3_SEAT} — dense spec + Gate-2 + implement_ready.
+G3  Densify          {LAYER_G3_SEAT} ({", ".join(f"{k}={v}" for k, v in sorted(LAYER_G3_MODEL_KNOBS.items()))}) — dense spec + Gate-2 + implement_ready.
 G4  Check            {LAYER_G4_SEAT} — merged check; refresh spec_sha256.
 G5  Implement        cursor/composer-2.5 — contract=implement + source_ref.
 G6  Verify + close   inline — quality_gate · files_expected · ACs · docstrings.
@@ -268,6 +271,7 @@ def layer_subject(root_id: str, window_index: int, *, thin: bool = False) -> str
 __all__ = [
     "_LAYER_ARC_FLOOR",
     "LAYER_G3_SEAT",
+    "LAYER_G3_MODEL_KNOBS",
     "LAYER_G4_SEAT",
     "layer_g4_check_family_diverse",
     "layer_subject",

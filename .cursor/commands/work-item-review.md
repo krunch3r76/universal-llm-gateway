@@ -154,6 +154,7 @@ team_dispatch(
   op=generate,
   seat=cursor-sdk,
   model=cursor/grok-4.6,
+  model_knobs={"effort":"xhigh","fast":"false"},
   contract=light-bounded,
   dispatch_thread_id=<bus thread id or path-sim-{slug}>,
   packet_path=tmp/prompts/work-item-review-{slug}-grok-packet.md,

@@ -283,11 +283,12 @@ profiles:
     auto_dispatchable: true
     # F-2: intentional empty — cursor/sdk admission checks CURSOR_DENIED_MODELS only
     # (deny-list, admit-rest); knob trust lives on CURSOR_MODEL_CAPABILITIES, not here.
-    # Trusted cursor-sdk models include cursor/grok-4.6 — see
-    # libs/cursor_capabilities/cursor_capabilities.py (replaces all Grok 4.x).
-    # Live catalog default is fast=true; pass model_knobs={"fast":"false"} for non-fast.
-    # WHEN to override model=: recon+investigate (judgment / root-cause / suggest /
-    # densify inputs) → model=cursor/grok-4.6, typically contract=light-bounded.
+    # Trusted cursor-sdk models include cursor/grok-4.6 and cursor/claude-sonnet-5 —
+    # see libs/cursor_capabilities/cursor_capabilities.py.
+    # Grok omit-path defaults fast=false; confer/investigate contract defaults
+    # set effort=xhigh in wire_map/knob_compose.
+    # WHEN to override model=: recon+investigate (judgment) → auto resolves
+    # cursor/claude-sonnet-5 @ xhigh; confer/answer stay on grok-4.6.
     # Keep default Composer for contract=implement and pure mechanical inventory
     # (grep/list only). Do not flip default_model; do not conflate with API xai/grok-4.6.
     allowed_models: []
@@ -319,9 +320,9 @@ profiles:
 #     pickup; poll poll_hint (agent-bus wait). PRECONDITION — DENSE INSTRUCTIONS: the packet
 #     must be dense/complete (Composer executes mechanically, no design judgment). cursor-sdk
 #     is platform=sdk on the Cursor subscription, NOT an Anthropic-API generate lane.
-#   Recon+investigate (judgment/root-cause/suggest): same seat=cursor-sdk but override
-#     model=cursor/grok-4.6 with contract=light-bounded (keep default_model=Composer for
-#     implement volume). Pure mechanical inventory may stay on Composer.
+#   Recon+investigate (judgment/root-cause/suggest): same seat=cursor-sdk with
+#     contract=investigate|recon|seed — auto resolves cursor/claude-sonnet-5 @ xhigh.
+#     Pure mechanical inventory may stay on Composer.
 #   Bound implement (operator-attended FALLBACK): team_dispatch(op="handoff", seat="cursor", contract="implement") →
 #     cursor from any dispatching seat; packet + acceptance criteria required. Use only
 #     when SDK worker unavailable or attended IDE execution is explicitly wanted.
@@ -386,6 +387,8 @@ roles:
       - cursor/gpt-5.6-sol
       - cursor/gpt-5.6-luna
       - cursor/grok-4.6
+      - cursor/claude-sonnet-5
+      - anthropic/claude-sonnet-5
       - anthropic/claude-sonnet-4-6
       - anthropic/claude-opus-5
       - anthropic/claude-opus-4-8
