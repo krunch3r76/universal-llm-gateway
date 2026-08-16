@@ -24,7 +24,9 @@ from services.git_integration_worker.cursor_auto.reflex_policy import (
     evaluate_reflex,
 )
 from services.git_integration_worker.cursor_auto.reflex_read import (
+    _DEFAULT_EFFORT,
     _DEFAULT_MODEL,
+    reflex_effort,
     reflex_model,
 )
 from services.git_integration_worker.cursor_auto.wire_map import compose_model_knobs
@@ -55,12 +57,22 @@ def _clean_body(status: str = "complete") -> str:
 # --- default model ----------------------------------------------------------
 
 
-def test_default_reflex_model_is_grok_not_opus(
+def test_default_reflex_model_is_luna_not_opus(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("CURSOR_AUTO_REFLEX_MODEL", raising=False)
-    assert _DEFAULT_MODEL == "cursor/grok-4.6"
-    assert reflex_model() == "cursor/grok-4.6"
+    assert _DEFAULT_MODEL == "cursor/gpt-5.6-luna"
+    assert reflex_model() == "cursor/gpt-5.6-luna"
+
+
+def test_default_reflex_effort_is_max(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Unlike a primary DIRECTIVE, this default is not subject to
+    # dispatch_bounds.clamp_effort_to_autonomous_ceiling (handler.py-only) —
+    # max is expected to reach the model unclamped, bounded by the poll
+    # timeout rather than the effort knob (agent-bus:7372, 2026-08-16).
+    monkeypatch.delenv("CURSOR_AUTO_REFLEX_EFFORT", raising=False)
+    assert _DEFAULT_EFFORT == "max"
+    assert reflex_effort() == "max"
 
 
 def test_reflex_model_env_override_still_honors_opus(
@@ -81,13 +93,24 @@ def test_effort_merges_onto_opus_and_preserves_base_knobs() -> None:
     assert knobs == {"thinking": "true", "effort": "low"}
 
 
-def test_effort_clamps_down_to_model_ceiling() -> None:
-    # grok tops out at high; xhigh must degrade rather than drop the knob entirely,
-    # which would silently hand the bridge the catalog default.
+def test_effort_within_accepted_range_passes_through() -> None:
+    # grok's own accepted range includes xhigh (cursor_capabilities.py) — no
+    # degradation needed for a value the model already accepts verbatim.
     knobs = compose_model_knobs(
         {"resolved_model_id": "cursor/grok-4.6"}, {"resolved_effort": "xhigh"}
     )
-    assert knobs == {"effort": "high"}
+    assert knobs == {"effort": "xhigh"}
+
+
+def test_effort_clamps_down_to_model_ceiling() -> None:
+    # grok tops out at xhigh (only opus's ladder reaches max); an
+    # out-of-range value must degrade to the nearest accepted rung below it
+    # rather than drop the knob entirely, which would silently hand the
+    # bridge a model default that could be far above what was asked for.
+    knobs = compose_model_knobs(
+        {"resolved_model_id": "cursor/grok-4.6"}, {"resolved_effort": "max"}
+    )
+    assert knobs == {"effort": "xhigh"}
 
 
 def test_model_without_effort_knob_gets_none() -> None:

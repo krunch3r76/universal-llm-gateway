@@ -43,14 +43,30 @@ from services.git_integration_worker.cursor_bus import CursorBusClient
 
 logger = get_logger(__name__)
 
-# Roaming-tier default: the reflex is a short read-only closeout check, not a
-# bind-leg judgment seat. Opus remains available via CURSOR_AUTO_REFLEX_MODEL.
-_DEFAULT_MODEL = "cursor/grok-4.6"
-_DEFAULT_EFFORT = "low"
+# Nano-tier default (agent-bus:7372, 2026-08-16): a short read-only closeout
+# check is exactly Luna's documented niche (cheap, high-volume, narrow task) —
+# not a bind-leg judgment seat, and one of the two structural Grok-4.6 cost
+# centers found that session (the other, wire_map's per-contract auto-default,
+# was deliberately left alone — investigate/recon/seed still need real
+# reasoning depth). Grok-4.6 and Opus remain available via CURSOR_AUTO_REFLEX_MODEL.
+_DEFAULT_MODEL = "cursor/gpt-5.6-luna"
+# effort=max, not the prior low: a nano-tier model's max reasoning is still
+# cheap in absolute terms, and the independent-read's value (catching a
+# confidently-wrong self-report, per the Composer false-closeout incident this
+# same night) scales with how much the second read actually checks. The
+# _DEFAULT_TIMEOUT_S below is the real governor now, not the effort knob: this
+# does not go through dispatch_bounds.clamp_effort_to_autonomous_ceiling (that
+# only gates handler.py's primary-DIRECTIVE admission path), so max reaches the
+# model unclamped, bounded only by the poll timeout. If Luna at max effort
+# habitually times out here, that shows up as outcome=dispatch_poll_timeout on
+# the emit_second_read telemetry — the signal to dial effort back down, not the
+# model choice.
+_DEFAULT_EFFORT = "max"
 # The reflex sits between the executor finishing and the manager being told
-# anything, so every second here is latency the manager pays. A bounded read of
-# one closeout at effort=low lands well inside this; the cap exists to bound the
-# pathological case, not to accommodate a slow one.
+# anything, so every second here is latency the manager pays. This cap bounds
+# the pathological case (including a max-effort nano model that runs long);
+# a normal read finishing under it is not guaranteed the way it was at
+# effort=low, which is the trade this change makes explicit.
 _DEFAULT_TIMEOUT_S = 180.0
 # A reflex that reads a closeout and a handful of cited files does not need the
 # wide context window, and the narrow one is materially cheaper per call.
