@@ -29,6 +29,12 @@ def test_looks_like_file_path_rejects_non_path_shapes() -> None:
     assert not _looks_like_file_path("x/" + "a" * 300)  # overlength
 
 
+def test_looks_like_file_path_rejects_uri_schemes() -> None:
+    assert not _looks_like_file_path("cortex://notes/system/threads/x.md")
+    assert not _looks_like_file_path("workspaces://universal-llm-gateway/foo.py")
+    assert not _looks_like_file_path("https://example.com/a/b")
+
+
 def test_files_from_packet_ignores_fenced_code_blocks() -> None:
     packet = """
 <scope>
@@ -70,3 +76,36 @@ Mind the `worker/coord split distinction` and the `Q/R consolidation rule`.
 </task_guidance>
 """
     assert _files_from_packet(packet) == ["pkg/mod.py"]
+
+
+def test_files_from_packet_ignores_cortex_uri_in_corpus() -> None:
+    packet = """
+<scope>
+Primary artifacts: `libs/implement_admission/normalize.py`.
+</scope>
+<corpus>
+Sidecar: `cortex://notes/system/threads/x.md`
+</corpus>
+<task_guidance>
+acceptance criteria
+1. Do the thing
+</task_guidance>
+"""
+    assert _files_from_packet(packet) == ["libs/implement_admission/normalize.py"]
+
+
+def test_files_from_packet_ignores_durable_share_uris_in_scope() -> None:
+    packet = """
+<scope>
+Repo paths: `libs/implement_admission/normalize.py`, `libs/implement_admission/test_normalize.py`.
+Durable refs: `cortex://notes/system/threads/x.md`, `workspaces://universal-llm-gateway/foo.py`.
+</scope>
+<task_guidance>
+acceptance criteria
+1. Do the thing
+</task_guidance>
+"""
+    assert _files_from_packet(packet) == [
+        "libs/implement_admission/normalize.py",
+        "libs/implement_admission/test_normalize.py",
+    ]

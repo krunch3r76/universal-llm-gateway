@@ -460,6 +460,10 @@ def _packet_has_acceptance(text: str) -> bool:
 
 def _looks_like_file_path(path: str) -> bool:
     candidate = path.strip()
+    # URI-scheme tokens (cortex://, workspaces://, https://, …) are durable-share
+    # references, not repo-relative paths — reject before slash/suffix heuristics.
+    if "://" in candidate:
+        return False
     # Whitespace/overlength reject non-path captures (e.g. multi-line code-fence
     # bodies the inline-backtick scan over-captures). Without this, slash-bearing
     # prose like "worker/coord" inside a docstring becomes a bogus files_expected
