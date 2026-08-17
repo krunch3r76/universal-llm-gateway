@@ -7,21 +7,21 @@ from .body_serialization import (
     serialize_effects_manifest_for_body,
 )
 from .change_set_reconcile import (
+    _path_is_tracked,
     git_manifest_label_divergence,
     resolve_repo_change_set,
     verification_change_set,
-    _path_is_tracked,
 )
 from .cortex_surface import (
+    _cortex_entry_from_stream_observation,
     cortex_surface_has_write_op,
     harvest_cortex_assertion_ids,
     merge_stream_cortex_entries,
-    _cortex_entry_from_stream_observation,
 )
 from .effect_entries import (
+    _entry_from_tool_call,
     classify_mcp_capture_branch,
     no_capture_degraded_reason,
-    _entry_from_tool_call,
 )
 from .fs_targets import (
     manifest_fs_targets,
@@ -43,22 +43,22 @@ from .mount_resolution import (
     resolve_mount_root,
 )
 from .offgit_deliverables import (
+    _normalize_offgit_uri,
     collect_expected_cortex_deliverable_uris,
     manifest_offgit_deliverable_uris,
     normalize_expected_cortex_deliverable_uri,
     oob_cortex_write_findings,
-    _normalize_offgit_uri,
 )
 from .repo_projection import (
+    _normalize_repo_path,
     manifest_repo_paths,
     manifest_repo_write_paths,
     repo_change_set_from_manifest,
-    _normalize_repo_path,
 )
 from .surface_taxonomy import (
-    CaptureBranch,
     _REPO_FILE_OPS,
     _REPO_WRITE_OPS,
+    CaptureBranch,
 )
 
 # cursor_sdk_outside_census lazily imports registered_repo_roots back from this

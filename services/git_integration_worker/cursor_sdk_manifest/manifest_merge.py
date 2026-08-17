@@ -26,10 +26,8 @@ from services.git_integration_worker.cursor_sdk_stream_capture import (
     ToolCallObservation,
 )
 
-from . import cortex_surface
-from . import manifest_build
-from . import repo_projection
-from . import surface_taxonomy
+from . import cortex_surface, manifest_build, repo_projection, surface_taxonomy
+
 
 def _git_change_set_empty(change_set: ChangeSet) -> bool:
     return not (change_set.created or change_set.modified or change_set.deleted)

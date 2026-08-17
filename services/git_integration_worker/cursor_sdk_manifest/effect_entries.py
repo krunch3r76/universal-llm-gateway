@@ -22,9 +22,8 @@ from services.git_integration_worker.cursor_sdk_subagent_capture import (
     is_subagent_tool_call,
 )
 
-from . import cortex_surface
-from . import mcp_arguments
-from . import surface_taxonomy
+from . import cortex_surface, mcp_arguments, surface_taxonomy
+
 
 def classify_mcp_capture_branch(turns: Iterable) -> surface_taxonomy.CaptureBranch:
     """Step 1: Branch A when conversation surfaces MCP toolCall steps."""

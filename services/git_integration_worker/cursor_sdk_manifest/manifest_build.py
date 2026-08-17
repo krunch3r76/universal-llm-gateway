@@ -25,8 +25,8 @@ from services.git_integration_worker.cursor_sdk_subagent_capture import (
     ensure_subagents_surface,
 )
 
-from . import effect_entries
-from . import surface_taxonomy
+from . import effect_entries, surface_taxonomy
+
 
 def build_effects_manifest(
     *,

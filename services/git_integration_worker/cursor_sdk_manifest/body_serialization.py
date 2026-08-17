@@ -18,6 +18,7 @@ from implement_admission.closeout_models import EffectsManifest
 
 from . import surface_taxonomy
 
+
 def manifest_digest(manifest: EffectsManifest) -> str:
     payload = manifest.model_dump(mode="json")
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))

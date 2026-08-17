@@ -17,6 +17,7 @@ from typing import Any
 
 from . import surface_taxonomy
 
+
 def _fs_compact_detail(effective: Mapping[str, Any]) -> dict[str, Any] | None:
     detail: dict[str, Any] = {}
     op = _string_arg(effective, "op")

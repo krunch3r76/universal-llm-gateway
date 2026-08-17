@@ -17,6 +17,7 @@ from implement_admission.closeout_models import EffectEntry, EffectsManifest
 
 from . import surface_taxonomy
 
+
 def parse_fs_manifest_target(target: str | None) -> tuple[str, str] | None:
     if not target:
         return None

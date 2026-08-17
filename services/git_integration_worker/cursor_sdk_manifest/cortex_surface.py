@@ -30,8 +30,8 @@ from services.git_integration_worker.cursor_sdk_toolcall_retention import (
     harvest_result_from_observation,
 )
 
-from . import mcp_arguments
-from . import surface_taxonomy
+from . import mcp_arguments, surface_taxonomy
+
 
 def merge_stream_cortex_entries(
     manifest: EffectsManifest | None,

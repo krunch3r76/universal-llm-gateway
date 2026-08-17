@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
+
 def workspaces_mount_root() -> Path:
     """WORKSPACES_ROOT mount — mirrors MCP ``project_root()`` for repo enumeration."""
     return Path(os.environ.get("WORKSPACES_ROOT", "/mnt/torus/projects")).resolve()

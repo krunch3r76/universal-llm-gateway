@@ -17,6 +17,7 @@ from implement_admission.closeout_models import EffectsManifest
 
 from . import fs_targets
 
+
 def _normalize_offgit_uri(sandbox: str | None, path: str) -> str:
     raw = path.strip()
     lower = raw.lower()

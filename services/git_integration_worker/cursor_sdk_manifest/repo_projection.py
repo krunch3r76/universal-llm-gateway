@@ -22,8 +22,8 @@ from services.git_integration_worker.cursor_sdk_capture_status import (
     canonicalize_capture_path,
 )
 
-from . import mount_resolution
-from . import surface_taxonomy
+from . import mount_resolution, surface_taxonomy
+
 
 def manifest_repo_write_paths(
     manifest: EffectsManifest | None,

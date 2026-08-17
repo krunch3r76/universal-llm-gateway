@@ -19,6 +19,7 @@ from implement_admission.closeout_models import EffectsManifest
 
 from services.git_integration_worker.cursor_sdk_capture_status import ChangeSet
 
+
 def resolve_repo_change_set(
     *,
     manifest: EffectsManifest | None,

@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 
 from contract_vocab import vision_required_contracts
+
 from unearned_self_assertion_auditor.extract import (
     disclosure_candidates,
     extract_frozenset_assign,
