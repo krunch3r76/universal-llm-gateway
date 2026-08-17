@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from claude_bundles.hop_cadence_id_map import ids_match_exclude, normalize_exclude_ids
 from claude_bundles.hop_cadence_seat_snap import identity_rows
 from universal_logging import get_logger
 
@@ -86,7 +87,8 @@ def incumbents_on_lane(
     snap: dict[str, Any],
     thread_id: str,
     *,
-    exclude_execution_id: str | None = None,
+    exclude_execution_id: str | frozenset[str] | set[str] | None = None,
+    exclude_execution_ids: frozenset[str] | set[str] | None = None,
 ) -> list[tuple[str, str]]:
     """Return ``(registration_id, execution_id)`` for running OP rows on ``parent_thread``.
 
@@ -95,14 +97,17 @@ def incumbents_on_lane(
     they cannot prove incumbency. Empty result is observation, not a
     first-seat claim.
 
-    ``exclude_execution_id`` removes the just-commissioned successor from
-    candidacy: capture runs after commission, so without exclusion the
-    successor is resolved as its own predecessor and handed to release.
+    ``exclude_execution_id`` / ``exclude_execution_ids`` remove the
+    just-commissioned successor from candidacy. Pass both Stargate and
+    satellite ids when known — snap rows carry satellite hex while hop
+    fire often holds only the Stargate UUID.
     """
     lane = (thread_id or "").strip()
     if not lane:
         return []
-    exclude = (exclude_execution_id or "").strip()
+    exclude = normalize_exclude_ids(
+        exclude_execution_id, exclude_ids=exclude_execution_ids
+    )
     found: list[tuple[str, str]] = []
     for row in identity_rows(snap):
         status = str(row.get("status") or "")
@@ -117,7 +122,7 @@ def incumbents_on_lane(
         exec_id = str(row.get("execution_id") or "").strip()
         reg = str(row.get("registration_id") or "").strip()
         if exec_id:
-            if exclude and exec_id == exclude:
+            if ids_match_exclude(exec_id, exclude):
                 continue
             found.append((reg, exec_id))
     return found
@@ -149,6 +154,53 @@ def op_row_for_execution_on_lane(
     return None
 
 
+def satellite_for_stargate_on_lane(
+    snap: dict[str, Any],
+    thread_id: str,
+    *,
+    stargate_execution_id: str | None,
+    holder_registration_id: str | None = None,
+) -> str | None:
+    """Resolve satellite hex for a just-commissioned hop on ``thread_id``.
+
+    Snap rows use satellite ``execution_id``. When only the Stargate id is
+    known, prefer the OP row whose registration differs from the pre-hop
+    holder (the successor). Falls back to the sole non-holder OP row.
+    """
+    lane = (thread_id or "").strip()
+    stargate = (stargate_execution_id or "").strip()
+    holder = (holder_registration_id or "").strip()
+    if not lane:
+        return None
+    # Exact Stargate match (rare — snap usually holds satellite).
+    if stargate:
+        direct = op_row_for_execution_on_lane(snap, lane, stargate)
+        if direct is not None:
+            return str(direct.get("execution_id") or "").strip() or None
+    candidates: list[str] = []
+    for row in identity_rows(snap):
+        status = str(row.get("status") or "")
+        if status not in {"pending", "running"}:
+            continue
+        purpose = str(row.get("purpose") or "").strip().lower()
+        if purpose not in {"operator-proxy", "mission", "operator_proxy"}:
+            continue
+        if str(row.get("parent_thread") or "").strip() != lane:
+            continue
+        exec_id = str(row.get("execution_id") or "").strip()
+        reg = str(row.get("registration_id") or "").strip()
+        if not exec_id:
+            continue
+        if stargate and exec_id == stargate:
+            return exec_id
+        if holder and reg == holder:
+            continue
+        candidates.append(exec_id)
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
 def non_holder_handles(
     snap: dict[str, Any],
     *,
@@ -175,7 +227,8 @@ def capture_predecessor_at_hop(
     row: dict[str, Any],
     snap: dict[str, Any] | None,
     *,
-    exclude_execution_id: str | None = None,
+    exclude_execution_id: str | frozenset[str] | set[str] | None = None,
+    exclude_execution_ids: frozenset[str] | set[str] | None = None,
 ) -> PredecessorHandle | PredecessorConfirmError:
     """Resolve predecessor handle at hop fire; observe the world before claiming absence.
 
@@ -183,16 +236,22 @@ def capture_predecessor_at_hop(
     emits ``giw.cursor_auto.hop_cadence_lookup_failed_observe`` then returns the
     same ``PredecessorConfirmError`` as before. Emit failures are swallowed.
 
-    ``exclude_execution_id`` must be this commission's id when capture runs after
-    commission — otherwise the successor is recorded as its own predecessor.
+    ``exclude_execution_id`` / ``exclude_execution_ids`` must include this
+    commission's Stargate id and satellite hex when known — otherwise the
+    successor is recorded as its own predecessor (self-supersede).
     """
     predecessor_reg = str(row.get("registration_id") or "").strip()
     thread_id = str(row.get("thread_id") or "")
     snap_dict = snap if isinstance(snap, dict) else {}
-    exclude = (exclude_execution_id or "").strip()
+    exclude = normalize_exclude_ids(
+        exclude_execution_id, exclude_ids=exclude_execution_ids
+    )
+
     if not predecessor_reg:
         incumbents = incumbents_on_lane(
-            snap_dict, thread_id, exclude_execution_id=exclude_execution_id
+            snap_dict,
+            thread_id,
+            exclude_execution_ids=exclude,
         )
         if incumbents:
             reg, exec_id = incumbents[0]
@@ -207,8 +266,10 @@ def capture_predecessor_at_hop(
             verdict=PredecessorVerdict.INDETERMINATE,
             absence_reason="empty_watch_no_lane_incumbent",
         )
+
     exec_id = execution_id_for_registration(snap_dict, predecessor_reg)
-    if exec_id and exclude and exec_id == exclude:
+    if exec_id and ids_match_exclude(exec_id, exclude):
+        # Watch holder already remapped onto the successor generate — not a pred.
         exec_id = None
     if exec_id:
         return PredecessorHandle(
@@ -216,8 +277,11 @@ def capture_predecessor_at_hop(
             execution_id=exec_id,
             verdict=PredecessorVerdict.INCUMBENT_RECORDED,
         )
+
     incumbents = incumbents_on_lane(
-        snap_dict, thread_id, exclude_execution_id=exclude_execution_id
+        snap_dict,
+        thread_id,
+        exclude_execution_ids=exclude,
     )
     if incumbents:
         reg, found_exec = incumbents[0]
@@ -226,6 +290,7 @@ def capture_predecessor_at_hop(
             execution_id=found_exec,
             verdict=PredecessorVerdict.INCUMBENT_RECORDED,
         )
+
     logger.error(
         "hop_cadence predecessor lookup failed thread=%s reg=%s",
         thread_id,
@@ -384,4 +449,5 @@ __all__ = [
     "predecessor_for_confirm",
     "predecessor_from_watch",
     "prior_registration_for_confirm",
+    "satellite_for_stargate_on_lane",
 ]

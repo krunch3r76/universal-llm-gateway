@@ -17,6 +17,43 @@ def normalize_id(value: Any) -> str | None:
     return text or None
 
 
+def normalize_exclude_ids(
+    *values: Any,
+    exclude_ids: frozenset[str] | set[str] | None = None,
+) -> frozenset[str]:
+    """Build a set of non-empty exclude ids from scalar args and/or an iterable."""
+    keys: set[str] = set()
+    if exclude_ids:
+        for item in exclude_ids:
+            ident = normalize_id(item)
+            if ident:
+                keys.add(ident)
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, (set, frozenset, list, tuple)):
+            for item in value:
+                ident = normalize_id(item)
+                if ident:
+                    keys.add(ident)
+            continue
+        ident = normalize_id(value)
+        if ident:
+            keys.add(ident)
+    return frozenset(keys)
+
+
+def ids_match_exclude(
+    exec_id: Any,
+    exclude_ids: frozenset[str] | set[str] | None,
+) -> bool:
+    """True when ``exec_id`` is a non-empty member of the exclude join-key set."""
+    ident = normalize_id(exec_id)
+    if not ident or not exclude_ids:
+        return False
+    return ident in exclude_ids
+
+
 def claim_join_keys(row: dict[str, Any]) -> frozenset[str]:
     """Execution ids held on a watch row's pending/active succession claim."""
     keys: set[str] = set()
@@ -97,6 +134,8 @@ def submitted_updates_claim(
 __all__ = [
     "claim_join_keys",
     "event_join_keys",
+    "ids_match_exclude",
+    "normalize_exclude_ids",
     "normalize_id",
     "proof_observes_harvest",
     "stall_matches_claim",

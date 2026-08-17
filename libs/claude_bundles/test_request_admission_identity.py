@@ -225,6 +225,53 @@ def test_gate_refuses_predecessor_bound_via_single_seat_active_work():
     assert data["identity_source"] == "single_seat_active_work"
 
 
+def test_gate_admits_self_supersede_poison_row_via_single_seat_bind():
+    """Live 9031/9345 shape: registration_id == superseded_registration_id ⇒ admit."""
+    same = "6d272f276c674ffb94ef1489335ab482"
+    sat = "45aff9ccfece4024be6650fa0a15e75b"
+    row = {
+        "registration_id": same,
+        "superseded_registration_id": same,
+        "superseded_execution_id": sat,
+        "successor_execution_id": "03908796-2e45-4a42-bce8-22b997117655",
+        "pending_satellite_execution_id": sat,
+        "pending_succession": {
+            "execution_id": "03908796-2e45-4a42-bce8-22b997117655",
+            "satellite_execution_id": sat,
+            "claimed_at": 1_786_972_553.0,
+            "join_max_age_s": 600.0,
+        },
+    }
+    snap = {
+        "rows": [
+            {
+                "execution_id": sat,
+                "registration_id": same,
+                "parent_thread": "9031",
+                "purpose": "operator-proxy",
+                "status": "running",
+            }
+        ]
+    }
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={"9031": row},
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value=None,
+        ),
+    ):
+        refusal = gate_request_admission(
+            thread_id="9031",
+            caller_registration_id=None,
+            active_work_snap=snap,
+        )
+    assert refusal is None
+
+
+
 def test_watch_row_is_not_admission_bind():
     with (
         patch(

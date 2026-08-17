@@ -368,19 +368,31 @@ def mark_hop_fired(
         PredecessorConfirmError,
         capture_predecessor_at_hop,
         op_row_for_execution_on_lane,
+        satellite_for_stargate_on_lane,
     )
     from services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile import (
         record_succession_claim,
     )
+    from claude_bundles.hop_cadence_id_map import normalize_exclude_ids
 
     ts = time.time() if now is None else now
     watches = load_watches(path)
     row = dict(watches.get(thread_id) or {"thread_id": thread_id})
     row["thread_id"] = thread_id
+    holder_reg = str(row.get("registration_id") or "").strip()
+    sat_id = (satellite_execution_id or "").strip() or None
+    if not sat_id and isinstance(active_work_snap, dict) and execution_id:
+        sat_id = satellite_for_stargate_on_lane(
+            active_work_snap,
+            thread_id,
+            stargate_execution_id=execution_id,
+            holder_registration_id=holder_reg or None,
+        )
+    exclude_ids = normalize_exclude_ids(execution_id, sat_id)
     capture = capture_predecessor_at_hop(
         row,
         active_work_snap,
-        exclude_execution_id=execution_id,
+        exclude_execution_ids=exclude_ids,
     )
     if isinstance(capture, PredecessorConfirmError):
         if (
@@ -449,11 +461,26 @@ def mark_hop_fired(
             thread_id=thread_id,
             reason=capture.absence_reason or "indeterminate",
         )
-    row.update(capture.as_watch_fields())
+    pred_fields = capture.as_watch_fields()
+    superseded = str(pred_fields.get("superseded_registration_id") or "").strip()
+    # Never persist self-supersede (registration_id == superseded_registration_id).
+    if holder_reg and superseded and holder_reg == superseded:
+        pred_fields = {
+            k: v
+            for k, v in pred_fields.items()
+            if k
+            not in {
+                "superseded_registration_id",
+                "superseded_execution_id",
+                "predecessor_verdict",
+                "predecessor_absence_reason",
+            }
+        }
+    row.update(pred_fields)
     row = record_succession_claim(
         row,
         execution_id=execution_id,
-        satellite_execution_id=satellite_execution_id,
+        satellite_execution_id=sat_id,
         now=ts,
     )
     row["last_hop_at"] = ts
@@ -478,7 +505,7 @@ def mark_hop_fired(
             thread_id=thread_id,
             superseded_registration_id=superseded,
             execution_id=execution_id,
-            satellite_execution_id=satellite_execution_id
+            satellite_execution_id=sat_id
             or pending_dict.get("satellite_execution_id"),
         )
     return True
@@ -523,6 +550,11 @@ def advance_registration_on_confirm(
         return row, None
     updated = dict(row)
     updated["registration_id"] = new_reg
+    # Heal self-supersede if prior capture poisoned the ledger.
+    if str(updated.get("superseded_registration_id") or "").strip() == new_reg:
+        from claude_bundles.hop_seat_cutover import clear_lease_fence_fields
+
+        updated = clear_lease_fence_fields(updated)
     updated["succession_confirm_record"] = {
         "prior_registration_id": prior_reg,
         "superseded_execution_id": str(row.get("superseded_execution_id") or ""),

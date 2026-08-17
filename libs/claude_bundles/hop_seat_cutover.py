@@ -194,8 +194,17 @@ def resolve_request_refusal(
     row = load_watches(path).get(tid)
     if not row:
         return None
+    # Current lane holder always admits — including self-supersede poison rows
+    # (registration_id == superseded_registration_id from Stargate/satellite miss).
+    holder = str(row.get("registration_id") or "").strip()
+    if holder and reg_id == holder:
+        return None
     superseded = str(row.get("superseded_registration_id") or "").strip()
     if not superseded or reg_id != superseded:
+        return None
+    # Poisoned ledger: never refuse on self-supersede even if identity bind
+    # somehow diverges from watch.registration_id.
+    if holder and superseded == holder:
         return None
     if not lease_fence_active(row, snap):
         return None

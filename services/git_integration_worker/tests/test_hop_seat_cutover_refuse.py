@@ -149,6 +149,48 @@ def test_resolve_request_refusal_after_successor_confirm():
     assert data["signal"] == "cdp_ask_active_work_membership"
 
 
+def test_resolve_request_refusal_admits_holder_and_self_supersede():
+    """Current holder always admits; self-supersede poison rows do not refuse."""
+    snap = _snap(registration_id="reg-live", execution_id="satellite-live")
+    holder_row = {
+        "registration_id": "reg-live",
+        "superseded_registration_id": "reg-old",
+        "successor_execution_id": "stargate-uuid",
+        "pending_satellite_execution_id": "satellite-live",
+    }
+    poison_row = {
+        "registration_id": "reg-live",
+        "superseded_registration_id": "reg-live",
+        "successor_execution_id": "stargate-uuid",
+        "pending_satellite_execution_id": "satellite-live",
+    }
+    with patch(
+        "claude_bundles.hop_seat_cutover.load_watches",
+        return_value={"6885": holder_row},
+    ):
+        assert (
+            resolve_request_refusal(
+                thread_id="6885",
+                cse_registration_id="reg-live",
+                snap=snap,
+            )
+            is None
+        )
+    with patch(
+        "claude_bundles.hop_seat_cutover.load_watches",
+        return_value={"6885": poison_row},
+    ):
+        assert (
+            resolve_request_refusal(
+                thread_id="6885",
+                cse_registration_id="reg-live",
+                snap=snap,
+            )
+            is None
+        )
+
+
+
 def test_i4_predecessor_refused_15s_after_confirm_holder_readmits():
     """I4 verbatim AC: bound predecessor refused; holder re-issue admits empty wire."""
     row = {

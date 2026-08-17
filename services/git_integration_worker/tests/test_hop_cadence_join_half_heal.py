@@ -369,3 +369,61 @@ def test_capture_excludes_successor_from_predecessor_resolution() -> None:
     )
     assert isinstance(result, PredecessorConfirmError)
     assert result.reason == "predecessor_execution_lookup_failed"
+
+
+def test_capture_excludes_successor_across_stargate_satellite_id_spaces() -> None:
+    """Stargate exclude must not miss satellite snap rows (self-supersede class).
+
+    Production hop fire holds a Stargate dashed UUID; active-work rows carry
+    satellite hex. Same-string exclude cannot see the successor — this fixture
+    is the gap the old regression missed.
+    """
+    stargate = "03908796-2e45-4a42-bce8-22b997117655"
+    satellite = "45aff9ccfece4024be6650fa0a15e75b"
+    row = {"thread_id": _THREAD, "registration_id": _DEAD_REG}
+    snap = {"rows": [_op_row(execution_id=satellite, registration_id=_NEW_REG)]}
+
+    # Dual-key exclude (production mark_hop_fired shape) ⇒ LOOKUP_FAILED.
+    result = capture_predecessor_at_hop(
+        row,
+        snap,
+        exclude_execution_ids={stargate, satellite},
+    )
+    assert isinstance(result, PredecessorConfirmError)
+    assert result.reason == "predecessor_execution_lookup_failed"
+
+    # Stargate-only exclude still misses the satellite row (pre-fix poison).
+    poisoned = capture_predecessor_at_hop(
+        row,
+        snap,
+        exclude_execution_id=stargate,
+    )
+    assert not isinstance(poisoned, PredecessorConfirmError)
+    assert poisoned.registration_id == _NEW_REG
+    assert poisoned.execution_id == satellite
+
+
+def test_mark_hop_fired_resolves_satellite_and_avoids_self_supersede(
+    tmp_path: Path,
+) -> None:
+    """mark_hop_fired must join Stargate→satellite and never persist self-supersede."""
+    path = _watches_file(tmp_path)
+    stargate = "03908796-2e45-4a42-bce8-22b997117655"
+    satellite = "45aff9ccfece4024be6650fa0a15e75b"
+    _seed_watch(path, registration_id=_DEAD_REG)
+    snap = {"rows": [_op_row(execution_id=satellite, registration_id=_NEW_REG)]}
+
+    mark_hop_fired(
+        _THREAD,
+        now=_NOW,
+        path=path,
+        execution_id=stargate,
+        active_work_snap=snap,
+        snapshot_reader=lambda: snap,
+    )
+    watches = load_watches(path)
+    row = watches[_THREAD]
+    holder = str(row.get("registration_id") or "").strip()
+    superseded = str(row.get("superseded_registration_id") or "").strip()
+    assert not (holder and superseded and holder == superseded)
+
