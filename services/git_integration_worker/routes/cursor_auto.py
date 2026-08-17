@@ -77,6 +77,10 @@ class EnqueueBody(BaseModel):
     # GIW checkout isolation — same lever as POST /api/v1/cursor/dispatch.
     # Distinct from lane_role (bus parentage) and tag lane:cursor-auto.
     lane: Literal["A", "B"] | None = None
+    # Declared execution mode (S-3, mission 9440) -- structural predicate input
+    # for concurrent admission opt-in. Default preserves today's exclusive-
+    # serial-slot behavior. Never inferred from `contract`.
+    execution_mode: str = "serial"
     wire_dropped_fields: tuple[str, ...] = ()
 
     @model_validator(mode="before")
@@ -247,6 +251,7 @@ async def enqueue(body: EnqueueBody, request: Request):
         continuity_matched_token=matched_token,
         wire_dropped_fields=tuple(body.wire_dropped_fields),
         lane=body.lane,
+        execution_mode=body.execution_mode,
     )
     deferred_job_id: str | None = None
     if deferred_body is not None:
@@ -270,6 +275,7 @@ async def enqueue(body: EnqueueBody, request: Request):
             continuity_hop=False,
             continuity_matched_token=None,
             lane=body.lane,
+            execution_mode="serial",
         )
         deferred_job_id = deferred.job_id
         logger.info(

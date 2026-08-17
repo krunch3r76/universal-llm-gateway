@@ -18,6 +18,7 @@ logger = get_logger(__name__)
 
 _HANDLER_ID = "cursor-auto-primary"
 _WORKER_INTERVAL_S = 0.5
+_CONCURRENT_POLL_INTERVAL_S = 0.5
 _ORPHAN_INTERVAL_S = 15.0
 
 
@@ -100,6 +101,52 @@ async def auto_worker_loop(app: Any) -> None:
     finally:
         registry.unregister(_HANDLER_ID)
         logger.info("cursor-auto worker loop stopped")
+
+
+async def auto_concurrent_worker_loop(app: Any) -> None:
+    """Poll for concurrent-opted-in jobs; spawn each as an untracked-wait
+    background task so N can run alongside each other and alongside the
+    serial occupant. Production allowlist is empty (3.3) -- this loop is a
+    real, tested no-op today; it only does work once a class is opted in.
+    """
+    queue = get_queue()
+    while True:
+        try:
+            job = queue.claim_next_concurrent()
+            if job is not None:
+                controller = getattr(app.state, "admission_controller", None)
+                worker_id = str(getattr(app.state, "worker_id", "") or "")
+                worker_started_at = str(getattr(app.state, "worker_boot_ts", "") or "")
+
+                async def _run(job=job) -> None:
+                    try:
+                        await process_job(
+                            job,
+                            admission_controller=controller,
+                            worker_id=worker_id,
+                            worker_started_at=worker_started_at,
+                        )
+                    except Exception as exc:
+                        queue.mark_done(
+                            job.job_id,
+                            failed=True,
+                            terminal_reason=format_exception_reason(exc),
+                        )
+                        logger.exception(
+                            "cursor-auto concurrent job=%s failed: %s",
+                            job.job_id,
+                            exc,
+                        )
+
+                if controller is not None:
+                    controller.create_tracked_task(
+                        _run(), op_id=f"cursor-auto-concurrent:{job.job_id}"
+                    )
+                else:
+                    asyncio.create_task(_run())
+        except Exception:
+            logger.exception("cursor-auto concurrent worker loop iteration failed")
+        await asyncio.sleep(_CONCURRENT_POLL_INTERVAL_S)
 
 
 async def orphan_scanner_loop(app: Any) -> None:
