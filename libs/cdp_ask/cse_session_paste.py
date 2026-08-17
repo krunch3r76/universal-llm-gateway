@@ -1,4 +1,10 @@
-"""Authorization-gated CSE paste with idempotent replay."""
+"""Authorization-gated CSE paste with idempotent replay.
+
+Callers: MCP ``cse_session`` paste relay and the cdp-ask ``/v1/cse-session/paste``
+route. Hop-pair request fields, hop-watch predecessor stand_down, or an explicit
+grant token must pass before DOM followup; unauthorized cross-lane paste fails
+closed.
+"""
 
 from __future__ import annotations
 
@@ -44,14 +50,59 @@ def _protocol_error(code: str, *, detail: str | None = None) -> PasteResponse:
     )
 
 
+def _parent_thread_of(prov: dict[str, Any]) -> str:
+    """Prefer proven parent thread; fall back to the CSE's own claim."""
+    return str(
+        prov.get("parent_thread_proven") or prov.get("parent_thread_claim") or ""
+    ).strip()
+
+
+def _watch_authorizes_predecessor_stand_down(
+    req: PasteRequest,
+    *,
+    target_reg: str,
+    target_prov: dict[str, Any],
+) -> bool:
+    """True when hop already recorded *target_reg* as the superseded predecessor.
+
+    Continuity hop writes ``superseded_registration_id`` onto the watch ledger at
+    fire time — before the successor CSE exists — so paste cannot demand a
+    request-time hop-pair triple the successor does not yet hold. ``stand_down``
+    into that recorded predecessor is the designed retire path; free/page paste
+    still requires the explicit hop-pair fields or a grant token.
+    """
+    if (req.envelope or "").strip().lower() != "stand_down":
+        return False
+    if not target_reg:
+        return False
+    from claude_bundles.hop_seat_cutover import load_watches
+
+    watches = load_watches()
+    parent = _parent_thread_of(target_prov) or (req.parent_thread or "").strip()
+    rows: list[dict[str, Any]] = []
+    if parent and parent in watches:
+        rows.append(watches[parent])
+    else:
+        rows.extend(watches.values())
+    for row in rows:
+        superseded = str(row.get("superseded_registration_id") or "").strip()
+        if superseded and superseded == target_reg:
+            return True
+    return False
+
+
 def _authorized(req: PasteRequest, *, target_prov: dict[str, Any]) -> bool:
     grant = (req.grant or "").strip().lower()
     if grant in {"explicit", "operator", "hop-pair-grant"}:
         return True
+    target_reg = str(target_prov.get("registration_id") or "").strip()
+    if _watch_authorizes_predecessor_stand_down(
+        req, target_reg=target_reg, target_prov=target_prov
+    ):
+        return True
     caller_reg = (req.caller_registration_id or "").strip()
     superseded = (req.superseded_registration_id or "").strip()
     parent = (req.parent_thread or "").strip()
-    target_reg = str(target_prov.get("registration_id") or "").strip()
     if not caller_reg or not superseded or not parent:
         return False
     if superseded != target_reg:
@@ -60,12 +111,8 @@ def _authorized(req: PasteRequest, *, target_prov: dict[str, Any]) -> bool:
         registration_id=caller_reg,
         host_listable=is_host_listable,
     )
-    caller_parent = caller_prov.get("parent_thread_proven") or caller_prov.get(
-        "parent_thread_claim"
-    )
-    target_parent = target_prov.get("parent_thread_proven") or target_prov.get(
-        "parent_thread_claim"
-    )
+    caller_parent = _parent_thread_of(caller_prov)
+    target_parent = _parent_thread_of(target_prov)
     return bool(caller_parent and target_parent and caller_parent == target_parent == parent)
 
 

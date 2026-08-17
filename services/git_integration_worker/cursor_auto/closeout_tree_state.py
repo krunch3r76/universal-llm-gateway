@@ -23,6 +23,9 @@ from services.git_integration_worker.cursor_auto.authorship_outcome_events impor
     OUTCOME_VACANCY,
     emit_authorship_outcome,
 )
+from services.git_integration_worker.cursor_auto.closeout_capture_head_recover import (
+    recover_capture_head,
+)
 from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
     annotate_plane_discrepancy,
     apply_landed_admit_gate,
@@ -183,10 +186,19 @@ def compute_closeout_tree_state(
             outcome=OUTCOME_NOTHING_AUTHORED,
         )
     keys = parse_capture_plane_keys(wrapper_text)
+    head_sha = keys.head_sha
+    branch = keys.branch
+    if not head_sha:
+        recovered_sha, recovered_branch = recover_capture_head(
+            source_repo, dispatch_id=dispatch_id
+        )
+        if recovered_sha:
+            head_sha = recovered_sha
+            branch = branch or recovered_branch
     plane = probe_three_planes(
         source_repo,
-        head_sha=keys.head_sha,
-        branch=keys.branch,
+        head_sha=head_sha,
+        branch=branch,
     )
     plane = apply_landed_admit_gate(
         plane,

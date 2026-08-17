@@ -28,6 +28,7 @@ from services.git_integration_worker.cursor_auto.reflex_read import (
     _DEFAULT_EFFORT,
     _DEFAULT_MODEL,
     reflex_effort,
+    reflex_knobs,
     reflex_model,
 )
 
@@ -145,6 +146,24 @@ def test_unknown_model_does_not_raise() -> None:
         {"resolved_model_id": "cursor/not-a-model"}, {"resolved_effort": "low"}
     ) == {}
     assert compose_model_knobs({}, {"resolved_effort": "low"}) == {}
+
+
+def test_reflex_knobs_luna_uses_gpt_context_not_anthropic_300k(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default reflex model is Luna; 300k is Anthropic-only and must not ship."""
+    monkeypatch.delenv("CURSOR_AUTO_REFLEX_EFFORT", raising=False)
+    knobs = reflex_knobs("cursor/gpt-5.6-luna")
+    assert knobs.get("context") == "272k"
+    assert "300k" not in knobs.values()
+
+
+def test_reflex_knobs_opus_keeps_lean_300k(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CURSOR_AUTO_REFLEX_EFFORT", raising=False)
+    knobs = reflex_knobs("cursor/claude-opus-5")
+    assert knobs.get("context") == "300k"
 
 
 # --- firing predicate -------------------------------------------------------

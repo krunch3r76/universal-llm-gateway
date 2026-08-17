@@ -22,7 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from cursor_capabilities import canonical_cursor_bare_id, supported_knobs
+from cursor_capabilities import canonical_cursor_bare_id, default_variant, supported_knobs
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_auto.knob_compose import compose_model_knobs
@@ -86,10 +86,12 @@ class ReflexOutcome:
 
 
 def reflex_model() -> str:
+    """Return the reflex model id, env override then Luna default."""
     return os.environ.get("CURSOR_AUTO_REFLEX_MODEL", "").strip() or _DEFAULT_MODEL
 
 
 def reflex_effort() -> str:
+    """Return the reflex effort rung, env override then max default."""
     return (
         os.environ.get("CURSOR_AUTO_REFLEX_EFFORT", "").strip().lower()
         or _DEFAULT_EFFORT
@@ -97,6 +99,7 @@ def reflex_effort() -> str:
 
 
 def reflex_timeout_s() -> float:
+    """Return the reflex poll timeout in seconds, never below 30s."""
     raw = os.environ.get("CURSOR_AUTO_REFLEX_TIMEOUT_S", "").strip()
     if not raw:
         return _DEFAULT_TIMEOUT_S
@@ -107,13 +110,30 @@ def reflex_timeout_s() -> float:
 
 
 def reflex_knobs(model_id: str) -> dict[str, str]:
-    """Lean knobs the target model actually accepts, with reflex effort merged."""
+    """Lean knobs the target model actually accepts, with reflex effort merged.
+
+    Name-filter alone is not enough: Anthropic lean ``context=300k`` is not on
+    the GPT allowlist (``272k``/``1m``). Value-clamp to the card so Luna (the
+    default reflex model) does not fail admission.
+    """
     try:
         bare = canonical_cursor_bare_id(model_id)
     except ValueError:
         return {}
     accepted = supported_knobs(bare)
-    base = {name: value for name, value in _LEAN_BASE_KNOBS.items() if name in accepted}
+    defaults = dict(default_variant(bare))
+    base: dict[str, str] = {}
+    for name, preferred in _LEAN_BASE_KNOBS.items():
+        spec = accepted.get(name)
+        if spec is None or not spec.accepted:
+            continue
+        if preferred in spec.accepted:
+            base[name] = preferred
+            continue
+        catalog = defaults.get(name) or spec.default
+        base[name] = (
+            catalog if catalog and catalog in spec.accepted else spec.accepted[0]
+        )
     return compose_model_knobs(
         {"resolved_model_id": model_id, "model_knobs": base},
         {"resolved_effort": reflex_effort()},

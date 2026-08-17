@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -435,6 +436,59 @@ def test_compute_tree_state_missing_head_unknown(tmp_path: Path) -> None:
         )
     assert state.plane_line == "plane: unknown@lane-B (capture head absent)"
     assert state.checkpoint == "nothing_authored@local-master"
+
+
+def test_transport_death_recovers_capture_head_from_committer_ref(
+    tmp_path: Path,
+) -> None:
+    """Turn-29 shape: transport-error wrapper + existing ref by dispatch committer.
+
+    Capture JSON is absent, so the old path published ``capture head absent``.
+    The branch tip committed as ``cursor-sdk/<dispatch_id>`` must render instead.
+    """
+    repo = _init_repo(tmp_path)
+    dispatch_id = "auto-turn29dead"
+    branch = f"cursor-sdk/{dispatch_id}"
+    _git(repo, "checkout", "-b", branch)
+    (repo / "kept.txt").write_text("preserved\n", encoding="utf-8")
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": f"cursor-sdk/{dispatch_id}",
+        "GIT_AUTHOR_EMAIL": f"{dispatch_id}@dispatch.git-integration-worker",
+        "GIT_COMMITTER_NAME": f"cursor-sdk/{dispatch_id}",
+        "GIT_COMMITTER_EMAIL": f"{dispatch_id}@dispatch.git-integration-worker",
+    }
+    subprocess.run(
+        ["git", "-C", str(repo), "add", "kept.txt"],
+        check=True,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-m", "lane work"],
+        check=True,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    head = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "master")
+    wrapper = '```json\n{\n  "code": "transport_error",\n  "message": "bridge died"\n}\n```'
+    with patch(
+        "services.git_integration_worker.cursor_auto.closeout_tree_state."
+        "compute_lane_a_checkpoint_value",
+        return_value="nothing_authored",
+    ):
+        state = compute_closeout_tree_state(
+            source_repo=repo,
+            dispatch_id=dispatch_id,
+            wrapper_text=wrapper,
+        )
+    assert "capture head absent" not in state.plane_line
+    assert head[:7] in state.plane_line
+    assert "tip@lane-B" in state.plane_line
+    assert branch in state.plane_line
 
 
 def test_compute_tree_state_lane_a_capture_head_resolves_plane(tmp_path: Path) -> None:
