@@ -313,7 +313,7 @@ def test_ruff_unavailable_still_delivers_with_deviation(tmp_path: Path) -> None:
     baseline = capture_wt_baseline_with_hashes(tmp_path)
     _write(tmp_path, "bad.py", "import os\nimport sys\n")
     with patch(
-        "services.git_integration_worker.cursor_sdk_closeout.run_touched_files_lint",
+        "services.git_integration_worker.cursor_sdk_closeout.lint_verification.run_touched_files_lint",
         return_value=(
             Verification(command="ruff check 1 touched files", exit_code=0),
             "verification:lint_unavailable",

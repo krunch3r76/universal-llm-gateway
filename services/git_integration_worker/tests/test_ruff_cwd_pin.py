@@ -20,9 +20,11 @@ import pytest
 
 from services.git_integration_worker.cursor_sdk_capture_status import ChangeSet
 from services.git_integration_worker.cursor_sdk_closeout import (
-    _ruff_toolchain_identity,
     run_giw_subtree_f821_lint,
     run_touched_files_lint,
+)
+from services.git_integration_worker.cursor_sdk_closeout.lint_verification import (
+    _ruff_toolchain_identity,
 )
 
 _REPO = Path(__file__).resolve().parents[3]
@@ -74,11 +76,11 @@ def test_run_touched_files_lint_pins_cwd_to_source_repo(
         return proc
 
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout.subprocess.run",
+        "services.git_integration_worker.cursor_sdk_closeout.lint_verification.subprocess.run",
         fake_run,
     )
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout._ruff_toolchain_identity",
+        "services.git_integration_worker.cursor_sdk_closeout.lint_verification._ruff_toolchain_identity",
         lambda: ("/venv/bin/ruff", "0.15.6"),
     )
     verification, note = run_touched_files_lint(
@@ -108,11 +110,11 @@ def test_run_touched_files_lint_retains_streams_on_nonzero(
         return proc
 
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout.subprocess.run",
+        "services.git_integration_worker.cursor_sdk_closeout.lint_verification.subprocess.run",
         fake_run,
     )
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout._ruff_toolchain_identity",
+        "services.git_integration_worker.cursor_sdk_closeout.lint_verification._ruff_toolchain_identity",
         lambda: ("/venv/bin/ruff", "0.15.6"),
     )
     verification, note = run_touched_files_lint(
@@ -132,7 +134,7 @@ def test_run_touched_files_lint_truncates_oversized_streams(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Streams longer than the retain budget are cut and flagged."""
-    from services.git_integration_worker.cursor_sdk_closeout import (
+    from services.git_integration_worker.cursor_sdk_closeout.lint_verification import (
         _LINT_OUTPUT_RETAIN_CHARS,
     )
 
@@ -147,11 +149,11 @@ def test_run_touched_files_lint_truncates_oversized_streams(
         return proc
 
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout.subprocess.run",
+        "services.git_integration_worker.cursor_sdk_closeout.lint_verification.subprocess.run",
         fake_run,
     )
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout._ruff_toolchain_identity",
+        "services.git_integration_worker.cursor_sdk_closeout.lint_verification._ruff_toolchain_identity",
         lambda: ("/venv/bin/ruff", "0.15.6"),
     )
     verification, note = run_touched_files_lint(
@@ -204,7 +206,7 @@ def test_run_giw_subtree_f821_lint_pins_cwd_to_source_repo(
         return proc
 
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout.subprocess.run",
+        "services.git_integration_worker.giw_f821_gate.subprocess.run",
         fake_run,
     )
     verification, note = run_giw_subtree_f821_lint(_REPO)

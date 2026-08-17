@@ -538,17 +538,24 @@ def test_prepare_closeout_delivery_demotes_compound_pytest_and_wires_annotator(
     import inspect
 
     from services.git_integration_worker import cursor_sdk_closeout as closeout_mod
+    from services.git_integration_worker.cursor_sdk_closeout.delivery_assembly.orchestration import (
+        _assemble_closeout_delivery,
+        _assemble_closeout_delivery_async,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.delivery_assembly import (
+        verification_harvest,
+    )
     from services.git_integration_worker.cursor_sdk_stream_capture import (
         ToolCallObservation,
     )
 
-    sync_source = inspect.getsource(closeout_mod._assemble_closeout_delivery)
+    sync_source = inspect.getsource(_assemble_closeout_delivery)
+    harvest_source = inspect.getsource(verification_harvest.harvest_closeout_verification)
     async_source = inspect.getsource(closeout_mod.prepare_closeout_delivery_async)
-    assembly_async_source = inspect.getsource(
-        closeout_mod._assemble_closeout_delivery_async
-    )
-    assert "annotate_test_observation_discrepancy" in sync_source
-    assert "append_harvest_demotion_deviations" in sync_source
+    assembly_async_source = inspect.getsource(_assemble_closeout_delivery_async)
+    assert "annotate_test_observation_discrepancy" in harvest_source
+    assert "append_harvest_demotion_deviations" in harvest_source
+    assert "verification_harvest.harvest_closeout_verification" in sync_source
     assert "_assemble_closeout_delivery" in async_source
     assert "await asyncio.to_thread(" in assembly_async_source
 
@@ -765,7 +772,7 @@ def test_capture_wt_baseline_failure_returns_none(
         raise OSError("git unavailable")
 
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout.subprocess.run",
+        "services.git_integration_worker.cursor_sdk_closeout.worktree_baseline.subprocess.run",
         _boom,
     )
     assert capture_wt_baseline(tmp_path) is None
@@ -775,7 +782,7 @@ def test_changed_paths_tolerates_none_current_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout.capture_wt_baseline",
+        "services.git_integration_worker.cursor_sdk_closeout.worktree_baseline.capture_wt_baseline",
         lambda _repo: None,
     )
     delta, _polarity_deviations = changed_paths(tmp_path, {"a.py": "?? a.py"})
@@ -799,7 +806,7 @@ def test_changed_paths_same_code_dirty_tracked_content_change_modified(
         "hashes": {"a.py": _sha256_hex(before)},
     }
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout.capture_wt_baseline",
+        "services.git_integration_worker.cursor_sdk_closeout.worktree_baseline.capture_wt_baseline",
         lambda _repo: {"a.py": " M"},
     )
     delta, _polarity_deviations = changed_paths(tmp_path, baseline)
@@ -819,7 +826,7 @@ def test_changed_paths_same_code_untracked_content_change_created(
         "hashes": {"n.md": _sha256_hex(before)},
     }
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout.capture_wt_baseline",
+        "services.git_integration_worker.cursor_sdk_closeout.worktree_baseline.capture_wt_baseline",
         lambda _repo: {"n.md": "??"},
     )
     delta, _polarity_deviations = changed_paths(tmp_path, baseline)
@@ -836,7 +843,7 @@ def test_changed_paths_same_code_content_unchanged_not_attributed(
     digest = _sha256_hex(content)
     baseline = {"codes": {"a.py": " M"}, "hashes": {"a.py": digest}}
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout.capture_wt_baseline",
+        "services.git_integration_worker.cursor_sdk_closeout.worktree_baseline.capture_wt_baseline",
         lambda _repo: {"a.py": " M"},
     )
     delta, _polarity_deviations = changed_paths(tmp_path, baseline)
@@ -860,7 +867,7 @@ def test_n4_integration_baseline_normalization_both_shapes_both_readers(
     }
     files_expected = [path]
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout.capture_wt_baseline",
+        "services.git_integration_worker.cursor_sdk_closeout.worktree_baseline.capture_wt_baseline",
         lambda _repo: {path: " M"},
     )
 
@@ -897,7 +904,7 @@ def test_n5_mixed_clean_new_and_dirty_recovered_in_one_closeout(
         "hashes": {dirty_path: _sha256_hex(before)},
     }
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout.capture_wt_baseline",
+        "services.git_integration_worker.cursor_sdk_closeout.worktree_baseline.capture_wt_baseline",
         lambda _repo: {dirty_path: " M", new_path: "??"},
     )
     delta, _polarity_deviations = changed_paths(tmp_path, baseline)
@@ -912,7 +919,7 @@ def test_changed_paths_clean_baseline_new_untracked_created(
     (tmp_path / "new_file.py").write_text("x = 1\n", encoding="utf-8")
     baseline = {"codes": {}, "hashes": {}}
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout.capture_wt_baseline",
+        "services.git_integration_worker.cursor_sdk_closeout.worktree_baseline.capture_wt_baseline",
         lambda _repo: {"new_file.py": "??"},
     )
     delta, _polarity_deviations = changed_paths(tmp_path, baseline)
@@ -1504,7 +1511,8 @@ async def test_pin_reason_promoted_when_no_run_health_reason(
     )
 
     monkeypatch.setattr(
-        closeout_mod, "resolve_cortex_pinned_deliverables", _failing_pin_resolution
+        "services.git_integration_worker.cursor_sdk_closeout.delivery_prep.resolve_cortex_pinned_deliverables",
+        _failing_pin_resolution,
     )
     outcome = SdkRunOutcome(
         body="", status="finished", duration_ms=3400, tool_call_count=0
@@ -1540,7 +1548,8 @@ async def test_empty_assistant_turn_outranks_pin_reason(
     )
 
     monkeypatch.setattr(
-        closeout_mod, "resolve_cortex_pinned_deliverables", _failing_pin_resolution
+        "services.git_integration_worker.cursor_sdk_closeout.delivery_prep.resolve_cortex_pinned_deliverables",
+        _failing_pin_resolution,
     )
     outcome = SdkRunOutcome(
         body="", status="finished", duration_ms=3400, tool_call_count=0
@@ -3344,7 +3353,7 @@ def test_closeout_registers_attributed_paths_in_seat_ledger(
     )
 
     from services.git_integration_worker.config import WorkerConfig
-    from services.git_integration_worker.cursor_sdk_closeout import (
+    from services.git_integration_worker.cursor_sdk_closeout.delivery_assembly.orchestration import (
         _assemble_closeout_delivery,
     )
     from services.git_integration_worker.seat_write_ledger import SeatWriteLedger
@@ -3360,7 +3369,7 @@ def test_closeout_registers_attributed_paths_in_seat_ledger(
     SeatWriteLedger.reset_instance()
     ledger = SeatWriteLedger(db_path=tmp_path.parent / "seat-write-ledger.db")
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout.SeatWriteLedger.instance",
+        "services.git_integration_worker.cursor_sdk_closeout.delivery_assembly.change_set_resolution.SeatWriteLedger.instance",
         lambda: ledger,
     )
     cfg = WorkerConfig(
@@ -3372,7 +3381,7 @@ def test_closeout_registers_attributed_paths_in_seat_ledger(
         green_gate_cmd=["true"],
     )
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout.load_config",
+        "services.git_integration_worker.cursor_sdk_closeout.delivery_assembly.change_set_resolution.load_config",
         lambda: cfg,
     )
 
@@ -3421,7 +3430,7 @@ def test_closeout_does_not_register_ambient_only_git_delta(
 ) -> None:
     """Slice A — ambient dirty paths diverted by resolve are not ledger-seeded."""
     from services.git_integration_worker.config import WorkerConfig
-    from services.git_integration_worker.cursor_sdk_closeout import (
+    from services.git_integration_worker.cursor_sdk_closeout.delivery_assembly.orchestration import (
         _assemble_closeout_delivery,
     )
     from services.git_integration_worker.seat_write_ledger import SeatWriteLedger
@@ -3439,7 +3448,7 @@ def test_closeout_does_not_register_ambient_only_git_delta(
     SeatWriteLedger.reset_instance()
     ledger = SeatWriteLedger(db_path=tmp_path.parent / "seat-write-ledger.db")
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout.SeatWriteLedger.instance",
+        "services.git_integration_worker.cursor_sdk_closeout.delivery_assembly.change_set_resolution.SeatWriteLedger.instance",
         lambda: ledger,
     )
     cfg = WorkerConfig(
@@ -3451,7 +3460,7 @@ def test_closeout_does_not_register_ambient_only_git_delta(
         green_gate_cmd=["true"],
     )
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout.load_config",
+        "services.git_integration_worker.cursor_sdk_closeout.delivery_assembly.change_set_resolution.load_config",
         lambda: cfg,
     )
 
