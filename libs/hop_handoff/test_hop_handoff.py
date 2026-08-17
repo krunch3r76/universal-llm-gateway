@@ -8,14 +8,17 @@ collision resistance of successor_birth_id.
 
 from __future__ import annotations
 
+import os
 import re
 
 import pytest
 
 from hop_handoff import (
     StandingHandoffFreshness,
+    assess_standing_handoff,
     build_continuity_handoff_body,
     build_seat_registration_stamp,
+    consume_time_wake_protocol,
     is_successor_birth_id,
     mint_successor_birth_id,
     parse_successor_birth_id,
@@ -69,6 +72,9 @@ def test_shared_author_pattern_asserts_successor_birth_id() -> None:
     assert "Identity is chat_url" not in body
     assert "wake-guide" in body
     assert "unobservable" in body
+    assert "STAND_DOWN" in body
+    assert "Absence is not permission" in body
+    assert f"URI: {_URI}" in body
 
 
 def test_pinned_birth_id_is_byte_stable_for_adapter_parity() -> None:
@@ -97,12 +103,14 @@ def test_missing_vs_current_handoff_branch(status: str) -> None:
             "Read the standing handoff URI above before trusting any wake prose."
             not in body
         )
+        assert "missing (file absent): STAND_DOWN" in body
     else:
         assert (
             "Read the standing handoff URI above before trusting any wake prose."
             in body
         )
         assert "The S7 standing-handoff state file is absent." not in body
+        assert "STAND_DOWN" in body
 
 
 def test_verb_source_body_starts_with_type_token() -> None:
@@ -149,3 +157,33 @@ def test_stamp_echoes_hop_body_birth_id_for_equality_match() -> None:
     assert parse_successor_birth_id(stamp) == parse_successor_birth_id(hop_body)
     assert "registration_id: reg-new" in stamp
     assert "chat_url: https://claude.ai/chat/example" in stamp
+
+
+def test_assess_standing_handoff_distinguishes_missing_stale_current(
+    tmp_path, monkeypatch
+) -> None:
+    """mtime classifier is the only consume-time ABSENT vs STALE signal in-tree."""
+    path = tmp_path / f"{_THREAD}-standing-handoff.md"
+    monkeypatch.setattr(
+        "hop_handoff.standing_handoff.standing_handoff_path",
+        lambda _tid: path,
+    )
+    missing = assess_standing_handoff(_THREAD, now=1000.0, stale_after_s=100.0)
+    assert missing.status == "missing"
+    assert missing.mtime_epoch is None
+    path.write_text("holder\n", encoding="utf-8")
+    os.utime(path, (900.0, 900.0))
+    current = assess_standing_handoff(_THREAD, now=950.0, stale_after_s=100.0)
+    assert current.status == "current"
+    stale = assess_standing_handoff(_THREAD, now=1100.0, stale_after_s=100.0)
+    assert stale.status == "stale"
+
+
+def test_consume_time_protocol_missing_is_stand_down_not_permission() -> None:
+    """Re-rank vs S2: absence of the sidecar is STAND_DOWN, not a no-op."""
+    text = consume_time_wake_protocol(thread_id=_THREAD)
+    assert "STAND_DOWN" in text
+    assert "Absence is not permission" in text
+    assert "missing (file absent)" in text
+    assert "stale: same as missing" in text
+    assert _URI in text

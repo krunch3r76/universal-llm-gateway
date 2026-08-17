@@ -54,6 +54,9 @@ def test_ensure_injects_self_scheduled_wake_guide() -> None:
     assert "Do not arm Monitor" in out
     assert "does NOT make Monitor unbounded" in out
     assert "while true; do sleep 240" not in out
+    assert "Consume-time wake affinity" in out
+    assert "Absence is not permission" in out
+    assert "missing (file absent): STAND_DOWN" in out
 
 
 def test_ensure_idempotent_when_chips_present() -> None:
@@ -127,11 +130,14 @@ def test_propagate_contract_documents_allow_self_preempt() -> None:
 
     block = tier_m_authoring_block()
     assert "allow_self_preempt" in block
-    assert "defaults **True**" in block or "defaults **True**".replace("*", "") in block.replace(
+    assert "defaults **True**" in block or "defaults **True**".replace(
         "*", ""
-    )
+    ) in block.replace("*", "")
     assert "force: false" in block.lower() or "``force: false``" in block
-    assert "not** the auto-escalation veto" in block or "not the auto-escalation veto" in block
+    assert (
+        "not** the auto-escalation veto" in block
+        or "not the auto-escalation veto" in block
+    )
     # Shorthand + structured example surfaces both name the knob.
     assert block.count("allow_self_preempt") >= 2
 

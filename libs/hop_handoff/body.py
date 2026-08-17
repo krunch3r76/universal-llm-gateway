@@ -14,6 +14,7 @@ import re
 import uuid
 from datetime import UTC, datetime
 
+from hop_handoff.consume_protocol import consume_time_wake_protocol
 from hop_handoff.standing_handoff import StandingHandoffFreshness
 
 _DEFAULT_YOU_ARE = (
@@ -127,6 +128,7 @@ def build_continuity_handoff_body(
             "(predecessor_wake_status=unobservable). wake-guide §7: a one-shot",
             "armed before this hop may still fire into the retired seat; that",
             "seat must read the lane and stand down — do not act on remembered rank.",
+            *consume_time_wake_protocol(thread_id=thread_id).splitlines(),
         ]
     )
     return "\n".join(lines) + "\n"
@@ -147,9 +149,7 @@ def build_seat_registration_stamp(
     first-turn tokens can equality-match this stamp. ``chat_url`` is
     descriptive (fleet reconstruction), not the I6 key.
     """
-    observed = observed_at or datetime.now(UTC).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
+    observed = observed_at or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     url = (chat_url or "").strip()
     lines = [
         "TYPE: SEAT_REGISTRATION",

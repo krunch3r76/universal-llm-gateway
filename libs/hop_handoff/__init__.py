@@ -14,6 +14,7 @@ from hop_handoff.body import (
     mint_successor_birth_id,
     parse_successor_birth_id,
 )
+from hop_handoff.consume_protocol import consume_time_wake_protocol
 from hop_handoff.standing_handoff import (
     StandingHandoffFreshness,
     assess_standing_handoff,
@@ -27,6 +28,7 @@ __all__ = [
     "assess_standing_handoff",
     "build_continuity_handoff_body",
     "build_seat_registration_stamp",
+    "consume_time_wake_protocol",
     "cse_age_threshold_s",
     "is_successor_birth_id",
     "mint_successor_birth_id",

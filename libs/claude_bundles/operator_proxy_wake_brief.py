@@ -15,6 +15,8 @@ re-enabled, is the mission **primary** orchestrator only — not hop successors
 
 from __future__ import annotations
 
+from hop_handoff.consume_protocol import consume_time_wake_protocol
+
 # CONSUMERS = import-nomination (GIW). INJECTORS = seat paste (cdp_ask).
 CONSUMERS: tuple[str, ...] = ("git_integration_worker",)
 INJECTORS: tuple[str, ...] = ("cdp_ask",)
@@ -26,7 +28,11 @@ def wake_briefing_paragraph() -> str:
     """Return first-dispatch wake posture (keep-alive suspended by default).
 
     Intended to be embedded under the mission seat-map Streaming stop block.
+    Includes the consume-time affinity procedure so a later ``send_later``
+    into this CSE is not obeyed as current when the standing handoff is
+    missing or stale.
     """
+    protocol = consume_time_wake_protocol().rstrip()
     return f"""\
 **Streaming stop (BINDING — 2026-08-01 · inv 30):** ending this Cowork stream / turn is
 authorized **only** for (1) continuity handoff to a new CSE (after launch confirmed) or
@@ -77,4 +83,6 @@ Effective lifetime ~30 min. Docs claiming timeout is ignored when persistent are
 or narrower than "no timeout." When keep-alive is re-enabled: (a) arm-once silently loses
 coverage; (b) the timeout event is itself a wake — re-arm immediately; (c) ``send_later``
 is not optional during the gap. Do not assume an unbounded watch.
+
+{protocol}
 """
