@@ -16,6 +16,9 @@ from admission_common.qualified_scalar import (
 )
 from admission_common.tree_probe import probe_working_tree
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('git_integration_worker', 'stargate')
+
 __all__ = (
     "AbsenceSemantics",
     "AuthorityClass",

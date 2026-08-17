@@ -55,6 +55,9 @@ from ._vision_resize import (
     resize_to_budget,
 )
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('mcp',)
+
 # Public, non-underscored aliases for new callers.
 IMAGE_SUFFIXES = _IMAGE_SUFFIXES
 SCANNABLE_SUFFIXES = _SCANNABLE_SUFFIXES

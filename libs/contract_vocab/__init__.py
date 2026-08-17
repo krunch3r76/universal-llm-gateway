@@ -20,6 +20,9 @@ from contract_vocab.records import (
     vocab_line,
 )
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('git_integration_worker', 'mcp')
+
 __all__ = [
     "CANONICAL_CONTRACTS",
     "DEFAULT_CONTRACT",

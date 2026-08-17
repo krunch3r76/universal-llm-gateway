@@ -14,6 +14,9 @@ from .model_capabilities import (
     skills_mount_backend,
 )
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('stargate',)
+
 __all__ = [
     "CARD_VERSION",
     "MODEL_CAPABILITY_CARDS",

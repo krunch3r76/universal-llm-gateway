@@ -15,6 +15,9 @@ from substrate_entity_mint.mint import (
     resolve_create_slot,
 )
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('mcp',)
+
 __all__ = [
     "ENTITY_CREATE_FORWARD",
     "ENTITY_CREATE_OPTIONAL",

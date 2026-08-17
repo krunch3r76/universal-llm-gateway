@@ -11,6 +11,9 @@ from __future__ import annotations
 
 from typing import Final
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('mcp',)
+
 # p99 inference time (seconds) for a typical RAG-scale task: reranking ~14 candidate
 # chunks or generating ~1000 tokens under single-request, uncontested GPU load.
 _LOCAL_MODEL_INFERENCE_TIMEOUT_S: tuple[tuple[str, float], ...] = (
@@ -28,7 +31,6 @@ _UNKNOWN_LOCAL_INFERENCE_TIMEOUT_S: Final[float] = 90.0
 # ∀ pipeline timeout: if model is already resident, this budget is unused.
 _MODEL_LOAD_BUDGET_S: Final[float] = 180.0
 
-
 def local_model_inference_timeout(model: str) -> float:
     """Return the p99 inference timeout (seconds) for a typical RAG-scale task.
 
@@ -40,7 +42,6 @@ def local_model_inference_timeout(model: str) -> float:
         if marker in normalized:
             return limit
     return _UNKNOWN_LOCAL_INFERENCE_TIMEOUT_S
-
 
 def rag_pipeline_timeout(rerank_model: str) -> float:
     """Adaptive pipeline timeout: model load budget + per-model inference time.

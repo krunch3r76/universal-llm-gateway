@@ -27,6 +27,9 @@ from .schema import (
 )
 from .store import IntelligenceProfileStore
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('stargate',)
+
 __all__ = [
     "CostBudget",
     "CrossModal",

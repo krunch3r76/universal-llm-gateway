@@ -16,6 +16,9 @@ from openapi_mcp.binding import (
 from openapi_mcp.detector import served_ops, unbound_dispatch_ops
 from openapi_mcp.registry import ServiceDescriptor, default_registry
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('git_integration_worker', 'rag')
+
 __all__ = [
     "ServiceDescriptor",
     "TypedRoute",

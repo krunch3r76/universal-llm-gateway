@@ -23,6 +23,9 @@ from claim_register.wire import (
     normalize_claim_bearing_payload,
 )
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('git_integration_worker',)
+
 __all__ = (
     "CLAIM_BEARING_KEYS",
     "CLAIM_REGISTER_UNKNOWN",

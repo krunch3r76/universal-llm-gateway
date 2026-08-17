@@ -58,6 +58,16 @@ from . import handlers as handlers  # noqa: F401
 # "universal_logging.renderers.JSONFormatter"
 from . import renderers as renderers  # noqa: F401
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = (
+    'cloud_proxy',
+    'gateway',
+    'git_integration_worker',
+    'mcp',
+    'rag',
+    'stargate',
+)
+
 # Per-event-loop logger storage
 # Key: event loop id (int), Value: SmartLogger instance
 # Uses id(loop) because event loops aren't hashable
@@ -72,7 +82,6 @@ _loop_refs: dict[int, weakref.ref] = {}
 _current_logger: ContextVar["SmartLogger | None"] = ContextVar(
     "current_logger", default=None
 )
-
 
 def _get_or_create_logger() -> "SmartLogger":
     """Get or create SmartLogger for current execution context.
@@ -128,7 +137,6 @@ def _get_or_create_logger() -> "SmartLogger":
 
     return logger_instance
 
-
 def get_logger(name: str | None = None):
     """Get a configured logger with true lazy initialization.
 
@@ -143,16 +151,13 @@ def get_logger(name: str | None = None):
     """
     return _get_or_create_logger().get_logger(name)
 
-
 def get_convenience_logger():
     """Get convenience logger with lazy initialization."""
     return get_logger("universal")
 
-
 def get_health_status():
     """Get comprehensive health status and metrics from the logging system."""
     return _get_or_create_logger().get_health_status()
-
 
 def _inject_string_truncation_filter(config: dict[str, Any], max_length: int) -> None:
     """
@@ -170,7 +175,6 @@ def _inject_string_truncation_filter(config: dict[str, Any], max_length: int) ->
     """
     # No-op: filter removed, function kept for backward compatibility with old configs
     pass
-
 
 def setup(config: dict[str, Any] | None = None) -> None:
     """
@@ -292,7 +296,6 @@ def setup(config: dict[str, Any] | None = None) -> None:
 
     bootstrap_logger.debug("Setup complete")
 
-
 # Lazy imports for __all__ exports
 def __getattr__(name: str):
     """Lazy import for module attributes."""
@@ -365,7 +368,6 @@ def __getattr__(name: str):
 
         return build_canonical_record
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
-
 
 __all__ = [
     # Core API

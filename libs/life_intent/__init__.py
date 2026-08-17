@@ -38,6 +38,9 @@ from life_intent.proposal_store import (
 from life_intent.registry import LifeIntentRegistry, VerbSpec, load_registry
 from life_intent.work_order import lookup_lane, lookup_verb_spec, render_work_order
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('mcp', 'stargate')
+
 __all__ = [
     "CommitReject",
     "CommitResult",

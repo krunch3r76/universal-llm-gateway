@@ -18,6 +18,9 @@ from pager_notify.tick import (
     notify_tick_complete,
 )
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('git_integration_worker', 'mcp')
+
 __all__ = [
     "ClosedAttribution",
     "claim_tick_sos",

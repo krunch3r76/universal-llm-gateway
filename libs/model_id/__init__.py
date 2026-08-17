@@ -32,6 +32,16 @@ from .wire_resolve import (
     resolve_wire_model_id,
 )
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = (
+    'cloud_proxy',
+    'gateway',
+    'git_integration_worker',
+    'mcp',
+    'rag',
+    'stargate',
+)
+
 __all__ = [
     "ModelId",
     "parse_model_id",

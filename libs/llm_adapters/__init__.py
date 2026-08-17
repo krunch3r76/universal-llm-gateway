@@ -23,6 +23,9 @@ from llm_adapters.core import (
 )
 from llm_adapters.responses import ResponsesAPIAdapter
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('cloud_proxy', 'gateway', 'mcp', 'stargate')
+
 # Google adapter loaded lazily via resolve_llm_adapter to avoid pulling the
 # google-genai SDK into callers that don't need it.
 

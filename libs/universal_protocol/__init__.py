@@ -54,6 +54,14 @@ from universal_protocol.ws import (
     UnboundedStreamQueue,
 )
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = (
+    'cloud_proxy',
+    'gateway',
+    'git_integration_worker',
+    'stargate',
+)
+
 __all__ = [
     # Error codes
     "ErrorCode",

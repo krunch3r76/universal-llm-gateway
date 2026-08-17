@@ -9,6 +9,9 @@ from .path_filters import matches_watch_exclude
 from .timestamp_preserving_io import read_text_preserving_timestamps
 from .watcher import HotReloadWatcher
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('gateway', 'rag', 'stargate')
+
 __all__ = [
     "HotReloadWatcher",
     "matches_watch_exclude",

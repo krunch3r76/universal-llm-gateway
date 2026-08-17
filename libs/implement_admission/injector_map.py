@@ -74,7 +74,9 @@ def injectors_declared_in_source(text: str) -> tuple[str, ...] | None:
     return tuple_declared_in_source(text, _INJECTORS_ATTR)
 
 
-def _source_candidates_for_module(root: Path, module_parts: list[str]) -> tuple[Path, ...]:
+def _source_candidates_for_module(
+    root: Path, module_parts: list[str]
+) -> tuple[Path, ...]:
     """Return file then package ``__init__`` paths for a libs module walk step."""
     if not module_parts:
         return ()
@@ -84,7 +86,12 @@ def _source_candidates_for_module(root: Path, module_parts: list[str]) -> tuple[
     return (as_file, as_pkg)
 
 
-def _attr_tuple_for_lib_path(path: str, attr: str) -> tuple[str, ...] | None:
+def _attr_tuple_for_lib_path(
+    path: str,
+    attr: str,
+    *,
+    root: Path | None = None,
+) -> tuple[str, ...] | None:
     """Read a string-tuple module attr from on-disk source, walking up packages.
 
     Residue asks what the file declares, not what a long-lived interpreter
@@ -94,11 +101,11 @@ def _attr_tuple_for_lib_path(path: str, attr: str) -> tuple[str, ...] | None:
         return None
     if not path.startswith("libs/") or not path.endswith(".py"):
         return None
-    root = repo_root()
+    base = root if root is not None else repo_root()
     rel = path[len("libs/") : -3]
     parts = rel.replace("/", ".").split(".")
     for end in range(len(parts), 0, -1):
-        for candidate in _source_candidates_for_module(root, parts[:end]):
+        for candidate in _source_candidates_for_module(base, parts[:end]):
             if not candidate.is_file():
                 continue
             try:
@@ -111,16 +118,22 @@ def _attr_tuple_for_lib_path(path: str, attr: str) -> tuple[str, ...] | None:
     return None
 
 
-def injectors_for_lib_path(path: str) -> tuple[str, ...] | None:
+def injectors_for_lib_path(
+    path: str,
+    *,
+    root: Path | None = None,
+) -> tuple[str, ...] | None:
     """Return declared ``INJECTORS`` slugs for a libs module, else ``None``.
 
     Walks up package parents the same way CONSUMERS lookup does.
     """
-    return _attr_tuple_for_lib_path(path, _INJECTORS_ATTR)
+    return _attr_tuple_for_lib_path(path, _INJECTORS_ATTR, root=root)
 
 
 def nominations_for_lib_path(
     path: str,
+    *,
+    root: Path | None = None,
 ) -> tuple[tuple[str, DerivedSource], ...]:
     """Return ``(slug, derived)`` pairs: serves, then injectors, then CONSUMERS.
 
@@ -129,8 +142,8 @@ def nominations_for_lib_path(
     consumer so a relay CONSUMERS row cannot hide a missing server.
     """
     serving = serving_services_for_lib_path(path)
-    injectors = injectors_for_lib_path(path) or ()
-    consumers = _attr_tuple_for_lib_path(path, _CONSUMERS_ATTR) or ()
+    injectors = injectors_for_lib_path(path, root=root) or ()
+    consumers = _attr_tuple_for_lib_path(path, _CONSUMERS_ATTR, root=root) or ()
     seen: set[str] = set()
     out: list[tuple[str, DerivedSource]] = []
     for slug in serving:
@@ -197,10 +210,13 @@ def check_nomination_declarations(
     *,
     root: Path | None = None,
 ) -> list[str]:
-    """Return combined authorship-time failures for CONSUMERS and INJECTORS tuples together."""
+    """Return combined authorship-time failures for CONSUMERS, INJECTORS, and inverse unmapped imports."""
+    from implement_admission.unmapped_importer_verify import check_unmapped_importers
+
     return [
         *check_consumers_declarations(root=root),
         *check_injectors_declarations(root=root),
+        *check_unmapped_importers(root=root),
     ]
 
 

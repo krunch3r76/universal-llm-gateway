@@ -25,13 +25,14 @@ from transport_utils.client_factory import (
     parse_rag_url,
 )
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('git_integration_worker', 'mcp', 'rag', 'stargate')
 
 def resolve_rag_base_url() -> str:
     """Resolve the RAG base URL without importing YAML helpers eagerly."""
     from transport_utils.rag_client import resolve_rag_base_url as _resolve_rag_base_url
 
     return _resolve_rag_base_url()
-
 
 __all__ = [
     "AGENT_BUS_SOCK",

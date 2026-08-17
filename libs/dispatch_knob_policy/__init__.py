@@ -11,6 +11,9 @@ from .executor_recommendation import (
     build_executor_recommendation,
 )
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('stargate',)
+
 __all__ = [
     "KnobRecommendation",
     "MECHANICAL_CONTRACTS",

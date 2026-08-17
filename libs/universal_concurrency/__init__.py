@@ -28,6 +28,9 @@ from .fifo_wait_queue import FifoWaitQueue
 from .queue_utils import QUEUE_EMPTY_ERRORS, drain_queue_batch
 from .types import CounterStats, GateStats, WaitQueueStats
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('gateway', 'git_integration_worker', 'rag', 'stargate')
+
 __all__ = [
     "CapacityCounter",
     "CapacityLimitError",

@@ -7,6 +7,9 @@ contracts receive it.
 
 from __future__ import annotations
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('git_integration_worker', 'stargate')
+
 REASONING_POSTURE_SKIP_CONTRACTS = frozenset(
     {"implement", "pure-mechanical", "propagate", "execute", "answer"}
 )

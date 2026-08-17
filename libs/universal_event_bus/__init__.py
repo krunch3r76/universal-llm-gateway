@@ -42,6 +42,16 @@ from .events import (
 from .monitoring import MonitoringMessage
 from .transports import UDPTransport
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = (
+    'cloud_proxy',
+    'gateway',
+    'git_integration_worker',
+    'mcp',
+    'rag',
+    'stargate',
+)
+
 __all__ = [
     # Events
     "Event",

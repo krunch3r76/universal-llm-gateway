@@ -16,6 +16,9 @@ from .cursor_capabilities import (
     to_model_card_dict,
 )
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('git_integration_worker', 'stargate')
+
 __all__ = [
     "CURSOR_DENIED_MODELS",
     "CURSOR_MODEL_CAPABILITIES",

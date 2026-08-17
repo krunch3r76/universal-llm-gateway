@@ -23,4 +23,7 @@ __author__ = "Universal LLM Gateway"
 # Make submodules importable
 from . import engines, utils
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('gateway',)
+
 __all__ = ["engines", "utils", "__version__", "__author__"]

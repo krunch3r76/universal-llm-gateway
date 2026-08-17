@@ -23,6 +23,9 @@ from hop_handoff.standing_handoff import (
     standing_handoff_uri,
 )
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('git_integration_worker', 'mcp')
+
 __all__ = [
     "StandingHandoffFreshness",
     "assess_standing_handoff",

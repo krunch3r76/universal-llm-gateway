@@ -18,6 +18,9 @@ from effort_vocabulary.core import (
     to_wire,
 )
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('git_integration_worker', 'stargate')
+
 __all__ = [
     "EFFORT_TOKENS",
     "PICKER_LADDER",

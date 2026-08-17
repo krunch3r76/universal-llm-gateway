@@ -31,6 +31,9 @@ from sse.protocols import (
     SSETimeoutError,
 )
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('gateway', 'stargate')
+
 __all__ = [
     # core
     "SSEMessage",

@@ -83,6 +83,9 @@ from .specialized import (
     MonitoringEvent,
 )
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('stargate',)
+
 # === Public API ===
 
 __all__ = [

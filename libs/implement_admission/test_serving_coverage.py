@@ -14,19 +14,19 @@ from implement_admission.serving_coverage import (
     unserved_line,
 )
 
-_UNMAPPED_INSTANCE = "libs/admission_common/__init__.py"
+_UNMAPPED_INSTANCE = "libs/build_results/__init__.py"
 _IMPLEMENT_ADMISSION = "libs/implement_admission/service_lib_ownership.py"
 _FOO_FIXTURE = "libs/foo/__init__.py"
 _REPLAY_WAIT_STATUS = "libs/agent_bus_store/wait_status.py"
 
 
-def test_admission_common_is_unmapped_worked_instance() -> None:
-    """Remaining honest unmapped: no serves/CONSUMERS/INJECTORS, not unserved."""
+def test_build_results_is_unmapped_zero_importer_remainder() -> None:
+    """Honest remainder: no nontest services/ import, so inverse CI never fires."""
     assert nominations_for_lib_path(_UNMAPPED_INSTANCE) == ()
     assert path_serving_coverage(_UNMAPPED_INSTANCE) == "unmapped"
     line = unmapped_serving_line(_UNMAPPED_INSTANCE)
     assert line.startswith(UNMAPPED_PREFIX)
-    assert "admission_common" in line
+    assert "build_results" in line
     assert "declared unserved" not in line
 
 
@@ -48,7 +48,7 @@ def test_foo_is_declared_unserved() -> None:
 
 def test_declared_unserved_is_distinguishable_from_unmapped(monkeypatch) -> None:
     """Correctly-nothing must not share the unmapped prefix or escalation."""
-    monkeypatch.setattr(ownership, "UNSERVED_LIBS", frozenset({"admission_common"}))
+    monkeypatch.setattr(ownership, "UNSERVED_LIBS", frozenset({"build_results"}))
     assert path_serving_coverage(_UNMAPPED_INSTANCE) == "unserved"
     served = unserved_line(_UNMAPPED_INSTANCE)
     unmapped = unmapped_serving_line(_UNMAPPED_INSTANCE)
@@ -104,4 +104,5 @@ def test_census_spent_worker_hosted_and_keeps_honest_remainder() -> None:
     assert "agent_bus_store" not in census
     assert "cortex_store" not in census
     assert "cdp_ask" not in census
-    assert "admission_common" in census
+    assert "admission_common" not in census
+    assert "build_results" in census

@@ -71,6 +71,14 @@ from agent_seat.tools import (
     resolve_tools,
 )
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = (
+    'cloud_proxy',
+    'git_integration_worker',
+    'mcp',
+    'stargate',
+)
+
 __all__ = [
     "BRAVE_SEARCH_TOOL_DEFINITION",
     "CapabilityProfile",

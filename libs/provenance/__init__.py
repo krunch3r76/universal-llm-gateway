@@ -42,6 +42,9 @@ from .cross_model import (
 )
 from .types import Provenance, create_provenance
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('stargate',)
+
 __all__ = [
     # Types
     "Provenance",

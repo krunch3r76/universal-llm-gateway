@@ -118,6 +118,9 @@ from .process.supervisor import ProcessSupervisor
 from .process.worker import WorkerProcess
 from .utils.helpers import cleanup_socket_path, ensure_directory_exists
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('gateway',)
+
 # Package metadata
 __version__ = "4.0.0"
 __author__ = "Process IPC Contributors"

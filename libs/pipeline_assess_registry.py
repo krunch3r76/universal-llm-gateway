@@ -13,8 +13,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-PROGRAMMATIC_ASSESS_HANDLERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {}
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('stargate',)
 
+PROGRAMMATIC_ASSESS_HANDLERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {}
 
 def register_assess_handler(
     name: str, fn: Callable[[dict[str, Any]], dict[str, Any]]

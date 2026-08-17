@@ -60,9 +60,7 @@ def test_tags_are_machine_readable_kv():
 
 
 def test_parse_verification_tags_round_trip_and_absence():
-    tagged = format_verification_tags(
-        derived="path_prefix", import_path="not_probed"
-    )
+    tagged = format_verification_tags(derived="path_prefix", import_path="not_probed")
     reason = f"path-derived obligation; liveness: unknown; {tagged}"
     assert parse_verification_tags(reason) == {
         "derived": "path_prefix",
@@ -76,7 +74,9 @@ def test_parse_verification_tags_round_trip_and_absence():
         "import_path": "not_probed",
     }
     assert parse_verification_tags("operator restart request via cursor-auto") is None
-    assert verification_tags_fragment("operator restart request via cursor-auto") is None
+    assert (
+        verification_tags_fragment("operator restart request via cursor-auto") is None
+    )
 
 
 def test_measure_blinds_and_mixed_residue_oracle():
@@ -92,9 +92,7 @@ def test_measure_blinds_and_mixed_residue_oracle():
     assert mcp_blinds  # contact: service_relative/dynamic/from_import_name
     cortex_blinds = measure_import_grammar_blinds("cortex_api")
     assert cortex_blinds == frozenset()
-    actions = residue_actions_for_lib_consumers(
-        path, ("git_integration_worker", "mcp")
-    )
+    actions = residue_actions_for_lib_consumers(path, ("git_integration_worker", "mcp"))
     text = "\n".join(actions)
     assert "sync_restart: git_integration_worker" in text
     assert "sync_restart: mcp" not in text
@@ -128,6 +126,25 @@ def test_check_consumers_declarations_tree_is_clean():
 
 
 @pytest.mark.offline
+def test_model_id_package_consumers_six_services_accepted_cost():
+    """Fat-package over-nomination is accepted cost (AC4), not a regression to fix."""
+    from implement_admission.injector_map import nominations_for_lib_path
+
+    clear_verify_caches()
+    slugs = {
+        slug for slug, _src in nominations_for_lib_path("libs/model_id/__init__.py")
+    }
+    assert slugs == {
+        "cloud_proxy",
+        "gateway",
+        "git_integration_worker",
+        "mcp",
+        "rag",
+        "stargate",
+    }
+
+
+@pytest.mark.offline
 def test_deploy_identity_package_init_remains_verified_negative_control():
     """Package-grain CONSUMERS on deploy_identity/__init__ must stay verified."""
     clear_verify_caches()
@@ -138,6 +155,20 @@ def test_deploy_identity_package_init_remains_verified_negative_control():
     assert verify_consumer_import("mcp", path) == "verified"
     assert verify_consumer_import("git_integration_worker", path) == "verified"
     assert not any(f.startswith(path + ":") for f in check_consumers_declarations())
+
+
+@pytest.mark.offline
+def test_request_admission_identity_land_mints_mcp():
+    """14:10 replay: package CONSUMERS walk-up nominates mcp, import-verified."""
+    from implement_admission.injector_map import nominations_for_lib_path
+    from implement_admission.propagation_row import rows_from_lib_consumers
+
+    clear_verify_caches()
+    path = "libs/claude_bundles/request_admission_identity.py"
+    assert ("mcp", "consumers") in nominations_for_lib_path(path)
+    assert verify_consumer_import("mcp", path) == "verified"
+    rows, _escalations = rows_from_lib_consumers([path], code_ref="14-10-replay")
+    assert "mcp" in {row.service for row in rows}
 
 
 @pytest.mark.offline

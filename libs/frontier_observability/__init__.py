@@ -29,6 +29,9 @@ from .termination_shadow import (
     TerminationShadowPayload,
 )
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('stargate',)
+
 __all__ = [
     "OutputShortPayload",
     "TerminationEvidence",

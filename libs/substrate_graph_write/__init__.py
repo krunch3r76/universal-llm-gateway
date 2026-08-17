@@ -9,4 +9,7 @@ from __future__ import annotations
 
 from substrate_graph_write.write import write_claim
 
+# Harvest nominates these manage slugs when this lib lands (package-grain).
+CONSUMERS: tuple[str, ...] = ('git_integration_worker', 'mcp')
+
 __all__ = ["write_claim"]
