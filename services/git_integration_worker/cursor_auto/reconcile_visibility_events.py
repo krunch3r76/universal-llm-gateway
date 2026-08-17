@@ -1,0 +1,134 @@
+"""Observable marks for the restart-reconcile rehydrate path (mission 9440)."""
+
+from __future__ import annotations
+
+from universal_event_bus import Event, event_factory
+from universal_logging import get_logger
+
+from services.git_integration_worker.cursor_sdk_events import emit_frontier_event
+
+logger = get_logger(__name__)
+
+
+@event_factory
+def GiwCursorAutoReconcileRehydrated(  # noqa: N802
+    job_id: str,
+    thread_id: str,
+    generation: int,
+    restart_intent_id: str | None,
+) -> Event:
+    """A queued-never-claimed row survived a GIW restart and is live again."""
+    return Event(
+        signal="giw.cursor_auto.reconcile.rehydrated",
+        payload={
+            "job_id": job_id,
+            "thread_id": thread_id,
+            "generation": generation,
+            "restart_intent_id": restart_intent_id,
+        },
+        scope="node",
+        role="observation",
+    )
+
+
+@event_factory
+def GiwCursorAutoReconcileSuperseded(  # noqa: N802
+    job_id: str,
+    thread_id: str,
+    successor_job_id: str,
+    generation: int,
+) -> Event:
+    """A rehydrate-eligible row was terminalized because a same-thread
+    successor already exists (S-2 ii) — it never re-entered the live queue.
+    """
+    return Event(
+        signal="giw.cursor_auto.reconcile.superseded_by_successor",
+        payload={
+            "job_id": job_id,
+            "thread_id": thread_id,
+            "successor_job_id": successor_job_id,
+            "generation": generation,
+        },
+        scope="node",
+        role="observation",
+    )
+
+
+@event_factory
+def GiwCursorAutoReconcileRehydrateExhausted(  # noqa: N802
+    job_id: str,
+    thread_id: str,
+    generation: int,
+) -> Event:
+    """A row hit the rehydrate generation cap and was terminalized for real."""
+    return Event(
+        signal="giw.cursor_auto.reconcile.rehydrate_exhausted",
+        payload={
+            "job_id": job_id,
+            "thread_id": thread_id,
+            "generation": generation,
+        },
+        scope="node",
+        role="observation",
+    )
+
+
+def emit_reconcile_rehydrated(
+    *, job_id: str, thread_id: str, generation: int, restart_intent_id: str | None
+) -> None:
+    emit_frontier_event(
+        GiwCursorAutoReconcileRehydrated(
+            job_id=job_id,
+            thread_id=thread_id,
+            generation=generation,
+            restart_intent_id=restart_intent_id,
+        )
+    )
+    logger.info(
+        "cursor-auto reconcile rehydrated job=%s thread=%s generation=%s",
+        job_id,
+        thread_id,
+        generation,
+    )
+
+
+def emit_reconcile_superseded(
+    *, job_id: str, thread_id: str, successor_job_id: str, generation: int
+) -> None:
+    emit_frontier_event(
+        GiwCursorAutoReconcileSuperseded(
+            job_id=job_id,
+            thread_id=thread_id,
+            successor_job_id=successor_job_id,
+            generation=generation,
+        )
+    )
+    logger.info(
+        "cursor-auto reconcile superseded_by_successor job=%s thread=%s successor=%s",
+        job_id,
+        thread_id,
+        successor_job_id,
+    )
+
+
+def emit_reconcile_rehydrate_exhausted(
+    *, job_id: str, thread_id: str, generation: int
+) -> None:
+    emit_frontier_event(
+        GiwCursorAutoReconcileRehydrateExhausted(
+            job_id=job_id, thread_id=thread_id, generation=generation
+        )
+    )
+    logger.warning(
+        "cursor-auto reconcile rehydrate_exhausted job=%s thread=%s generation=%s",
+        job_id,
+        thread_id,
+        generation,
+    )
+
+
+__all__ = [
+    "emit_reconcile_rehydrate_exhausted",
+    "emit_reconcile_rehydrated",
+    "emit_reconcile_superseded",
+]

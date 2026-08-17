@@ -7,6 +7,7 @@ from typing import Any
 TERMINAL_REASON_MAX_LEN = 512
 
 TERMINAL_REASON_RECONCILE_INFLIGHT_LOST = "reconcile_inflight_lost"
+TERMINAL_REASON_RESTART_RECONCILE_SUPERSEDED = "restart_reconcile_superseded_by_later_turn"
 TERMINAL_REASON_CONFER_RELAY_FAILED = "confer_relay_failed"
 TERMINAL_REASON_CLOSEOUT_RELAY_FAILED = "closeout_relay_failed"
 TERMINAL_REASON_DELIBERATE_FALLBACK = "deliberate_failure"
@@ -64,6 +65,7 @@ __all__ = [
     "TERMINAL_REASON_DELIBERATE_FALLBACK",
     "TERMINAL_REASON_MAX_LEN",
     "TERMINAL_REASON_RECONCILE_INFLIGHT_LOST",
+    "TERMINAL_REASON_RESTART_RECONCILE_SUPERSEDED",
     "deliberate_failure_terminal_reason",
     "format_exception_reason",
     "relay_failure_terminal_reason",

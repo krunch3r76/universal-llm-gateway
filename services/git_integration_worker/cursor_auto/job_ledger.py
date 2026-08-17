@@ -303,6 +303,26 @@ class AutoJobLedger:
             ).fetchall()
         return [job_from_row(row) for row in rows]
 
+    def successor_job_for_thread_turn(
+        self, thread_id: str, turn_number: int
+    ) -> AutoJob | None:
+        """Earliest job on *thread_id* whose turn_number is strictly after
+        *turn_number*, in ANY status (open or terminal).
+
+        Existence alone means a newer same-thread request already exists by the
+        time reconcile runs — the older row's intent is stale even though the
+        in-memory supersede path never saw it (it was not in the live queue
+        during the window between restart and this reconcile pass). Used by
+        S-2(ii): a rehydrated row with a successor must never be requeued live.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM cursor_auto_jobs WHERE thread_id=? "
+                "AND turn_number > ? ORDER BY turn_number ASC LIMIT 1",
+                (thread_id, turn_number),
+            ).fetchone()
+        return job_from_row(row) if row is not None else None
+
     def bind_dispatch(
         self,
         job_id: str,

@@ -308,12 +308,29 @@ async def post_queue_owner_restart_terminal(
     *,
     client: CursorBusClient,
     queue: Any,
+    rehydrate_generation: int | None = None,
 ) -> dict[str, Any]:
-    """Notify waiters that the queue owner restarted before this job finished."""
-    summary = (
-        "Auto job lost when git_integration_worker restarted "
-        "(dead_on_giw_restart); re-issue the DIRECTIVE."
-    )
+    """Notify waiters that the queue owner restarted before this job finished.
+
+    *rehydrate_generation* set ⇒ this job survived one or more prior restarts
+    as a durably-requeued row (rehydrate-class) before exhausting its
+    generation cap — wording must say what already happened (recovered,
+    requeued N times, now abandoned) instead of implying nothing was ever
+    attempted. Default (``None``) is the ordinary claimed-but-never-dispatched
+    case, wording unchanged from today.
+    """
+    if rehydrate_generation is not None:
+        summary = (
+            "Auto job was durably requeued across git_integration_worker "
+            f"restarts (generation {rehydrate_generation}) and is now abandoned "
+            "after reaching its rehydrate cap; re-issue the DIRECTIVE if the "
+            "work is still needed."
+        )
+    else:
+        summary = (
+            "Auto job lost when git_integration_worker restarted "
+            "(dead_on_giw_restart); re-issue the DIRECTIVE."
+        )
     payload: dict[str, Any] = {
         "summary": summary,
         "reason": "queue_owner_restart",
@@ -321,6 +338,10 @@ async def post_queue_owner_restart_terminal(
         "job_id": job.job_id,
         "request_turn": job.turn_number,
     }
+    if rehydrate_generation is not None:
+        payload["rehydrated"] = True
+        payload["generation"] = rehydrate_generation
+        payload["rehydrate_exhausted"] = True
     if job.request_id:
         payload["request_id"] = job.request_id
     return await post_terminal_status(
@@ -334,6 +355,48 @@ async def post_queue_owner_restart_terminal(
         payload=payload,
         failed=True,
     )
+
+
+async def post_queue_owner_restart_recovered(
+    job: AutoJob,
+    *,
+    client: CursorBusClient,
+    generation: int,
+) -> dict[str, Any]:
+    """Best-effort notice that a queued request survived a GIW restart.
+
+    Non-blocking, non-terminal: the job is back in the live FIFO and will
+    still run. Never says "re-issue the DIRECTIVE" — doing so on a job that
+    is about to run for real would invite exactly the duplicate-submission
+    failure mode this mission exists to remove. Delivery failure here must
+    never be treated as fatal by the caller (queue.requeue_rehydrated already
+    ran before this is called).
+    """
+    summary = (
+        f"Auto job recovered/requeued after a git_integration_worker restart "
+        f"(generation {generation}); no action needed — it is back in queue "
+        "and will still run."
+    )
+    payload: dict[str, Any] = {
+        "summary": summary,
+        "reason": "queue_owner_restart_recovered",
+        "job_id": job.job_id,
+        "request_turn": job.turn_number,
+        "rehydrated": True,
+        "generation": generation,
+    }
+    if job.request_id:
+        payload["request_id"] = job.request_id
+    successor_mailbox = normalize_bus_address(job.from_agent)
+    resp = await client.reply(
+        thread_id=job.thread_id,
+        to_agent=successor_mailbox,
+        from_agent=_FROM_AUTO,
+        subject=f"queue_owner_restart_recovered — {job.subject[:60]}",
+        body=json.dumps(payload, indent=2),
+        allow_long_body=False,
+    )
+    return {"ok": resp.status_code < 400, "status_code": resp.status_code}
 
 
 async def terminal_failed(
