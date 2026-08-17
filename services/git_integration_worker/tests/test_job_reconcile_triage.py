@@ -22,6 +22,9 @@ from services.git_integration_worker.cursor_auto.queue import (
     get_queue,
     reset_queue_for_tests,
 )
+from services.git_integration_worker.cursor_auto.terminal_reason_codec import (
+    TERMINAL_REASON_RESTART_RECONCILE_SUPERSEDED,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -124,3 +127,169 @@ def test_pending_outbox_defers_terminalize() -> None:
     assert terminalized == []
     assert post_terminal.await_count == 0
     assert get_ledger().list_open()
+
+
+def test_rehydrated_row_withdrawn_by_later_same_thread_request() -> None:
+    """S-2(i): rehydrate a queued-never-claimed row, then a later same-thread
+    request must withdraw it (method=queue_withdraw) and exactly one job runs.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from services.git_integration_worker.cursor_auto.supersede import (
+        QUEUE_WITHDRAW,
+        supersede_same_thread_inflight,
+    )
+
+    old_queue = get_queue()
+    old = old_queue.enqueue(
+        thread_id="9440-s2i",
+        turn_number=1,
+        subject="first",
+        body="TYPE: DIRECTIVE\n",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="implement",
+    )
+
+    fresh_queue = reset_queue_for_tests(durable=True)
+    asyncio.run(reconcile_open_auto_jobs(post_bus=False, rehydrate=True))
+
+    rehydrated = fresh_queue.get(old.job_id)
+    assert rehydrated is not None
+    assert rehydrated.status == "queued"
+
+    new = fresh_queue.enqueue(
+        thread_id="9440-s2i",
+        turn_number=2,
+        subject="second",
+        body="TYPE: DIRECTIVE\n",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="implement",
+    )
+    bus = AsyncMock()
+    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    evidence = asyncio.run(
+        supersede_same_thread_inflight(new, queue=fresh_queue, client=bus)
+    )
+
+    assert evidence is not None
+    assert evidence["method"] == QUEUE_WITHDRAW
+    assert fresh_queue.is_superseded(old.job_id)
+    assert fresh_queue.get(old.job_id).status == "superseded"
+
+    ran = fresh_queue.claim_next()
+    assert ran is not None
+    assert ran.job_id == new.job_id
+    assert fresh_queue.claim_next() is None
+
+
+def test_rehydrate_skipped_when_later_turn_successor_exists() -> None:
+    """S-2(ii): a queued-never-claimed row whose thread already has a later
+    turn_number row (any status) is terminalized, never requeued live.
+    """
+    queue = get_queue()
+    old3 = queue.enqueue(
+        thread_id="9440-s2ii-c",
+        turn_number=1,
+        subject="first",
+        body="TYPE: DIRECTIVE\n",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="implement",
+    )
+    queue.enqueue(
+        thread_id="9440-s2ii-c",
+        turn_number=2,
+        subject="second",
+        body="TYPE: DIRECTIVE\n",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="implement",
+    )
+
+    fresh3 = reset_queue_for_tests(durable=True)
+    asyncio.run(reconcile_open_auto_jobs(post_bus=False, rehydrate=True))
+
+    assert fresh3.get(old3.job_id) is None
+    row = get_ledger().read_relay_state(old3.job_id)
+    assert row["status"] == "superseded"
+    view = get_ledger().observer_state(job_id=old3.job_id)
+    assert view is not None
+    assert view["terminal_reason"] == TERMINAL_REASON_RESTART_RECONCILE_SUPERSEDED
+    ledger_row = get_ledger().read_record_json(old3.job_id)
+    assert ledger_row.get("rehydrate_superseded_by") is not None
+
+
+def test_rehydrate_skipped_when_later_turn_successor_is_still_queued() -> None:
+    """S-2(ii) variant: successor still queued (live) triggers the same gate."""
+    queue = get_queue()
+    old = queue.enqueue(
+        thread_id="9440-s2ii-live",
+        turn_number=1,
+        subject="first",
+        body="TYPE: DIRECTIVE\n",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="implement",
+    )
+    successor = queue.enqueue(
+        thread_id="9440-s2ii-live",
+        turn_number=2,
+        subject="second",
+        body="TYPE: DIRECTIVE\n",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="implement",
+    )
+    assert old.status == "queued"
+    assert successor.status == "queued"
+
+    fresh = reset_queue_for_tests(durable=True)
+    asyncio.run(reconcile_open_auto_jobs(post_bus=False, rehydrate=True))
+
+    assert fresh.get(old.job_id) is None
+    assert fresh.get(successor.job_id) is not None
+    assert fresh.get(successor.job_id).status == "queued"
+    row = get_ledger().read_relay_state(old.job_id)
+    assert row["status"] == "superseded"
+
+
+def test_rehydrate_happy_path_requeues_queued_row() -> None:
+    """S-1: queued-never-claimed row survives restart and re-enters live FIFO."""
+    queue = get_queue()
+    job = queue.enqueue(
+        thread_id="9440-s1",
+        turn_number=1,
+        subject="solo",
+        body="TYPE: DIRECTIVE\n",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="implement",
+    )
+
+    fresh = reset_queue_for_tests(durable=True)
+    asyncio.run(reconcile_open_auto_jobs(post_bus=False, rehydrate=True))
+
+    rehydrated = fresh.get(job.job_id)
+    assert rehydrated is not None
+    assert rehydrated.status == "queued"
+    record = get_ledger().read_record_json(job.job_id)
+    assert record.get("rehydrated") is True
+    assert record.get("generation") == 1
+    assert fresh.claim_next().job_id == job.job_id
+

@@ -107,6 +107,23 @@ class AutoJobQueue:
             ledger.mark_claimed(claimed.job_id)
         return claimed
 
+    def requeue_rehydrated(self, job: AutoJob) -> None:
+        """Re-admit a durable queued-never-claimed row into the live FIFO after
+        restart. Caller (job_reconcile) already verified eligibility (S-2 ii
+        successor check, generation cap) and patched ledger provenance via
+        ``merge_record_json``. This method only makes the row visible again to
+        ``claim_next`` / ``supersede_candidate_for_thread`` — it must NOT call
+        ``ledger.insert`` (the row already exists there from the original
+        enqueue; a second insert would violate the ``job_id`` PRIMARY KEY).
+        Idempotent: a job_id already resident is a no-op (defends a reconcile
+        that somehow runs twice against the same durable row).
+        """
+        with self._lock:
+            if job.job_id in self._jobs:
+                return
+            self._jobs[job.job_id] = job
+            self._order.append(job.job_id)
+
     def bump_heartbeat(self, job_id: str) -> None:
         ledger = self._ledger_client()
         if ledger is not None:
