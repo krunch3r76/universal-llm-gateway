@@ -28,7 +28,10 @@ from services.git_integration_worker.cursor_auto.job_ledger import get_ledger
 from services.git_integration_worker.cursor_auto.job_lifecycle import (
     job_state_response,
 )
-from services.git_integration_worker.cursor_auto.liveness import get_registry
+from services.git_integration_worker.cursor_auto.liveness import (
+    get_registry,
+    queue_admission_health,
+)
 from services.git_integration_worker.cursor_auto.mission_negotiation_wire import (
     negotiation_hop_conflict,
 )
@@ -77,6 +80,10 @@ class EnqueueBody(BaseModel):
     # GIW checkout isolation — same lever as POST /api/v1/cursor/dispatch.
     # Distinct from lane_role (bus parentage) and tag lane:cursor-auto.
     lane: Literal["A", "B"] | None = None
+    # Declared execution mode (S-3, mission 9440) -- structural predicate input
+    # for concurrent admission opt-in. Default preserves today's exclusive-
+    # serial-slot behavior. Never inferred from `contract`.
+    execution_mode: str = "serial"
     wire_dropped_fields: tuple[str, ...] = ()
 
     @model_validator(mode="before")
@@ -99,8 +106,13 @@ class EnqueueBody(BaseModel):
 
 @router.get("/liveness")
 async def liveness() -> dict[str, Any]:
-    """Arm-predicate probe — live iff ≥1 Auto handler heartbeat is fresh."""
-    return get_registry().snapshot()
+    """Arm-predicate probe (handler heartbeat) + admit-eligible queue-health
+    projection (S-4). The ``queue_health`` key is report-only — see
+    ``queue_admission_health()``'s docstring; nothing here terminalizes.
+    """
+    snapshot = get_registry().snapshot()
+    snapshot["queue_health"] = queue_admission_health()
+    return snapshot
 
 
 @router.get("/queue")
@@ -247,6 +259,7 @@ async def enqueue(body: EnqueueBody, request: Request):
         continuity_matched_token=matched_token,
         wire_dropped_fields=tuple(body.wire_dropped_fields),
         lane=body.lane,
+        execution_mode=body.execution_mode,
     )
     deferred_job_id: str | None = None
     if deferred_body is not None:
@@ -270,6 +283,7 @@ async def enqueue(body: EnqueueBody, request: Request):
             continuity_hop=False,
             continuity_matched_token=None,
             lane=body.lane,
+            execution_mode="serial",
         )
         deferred_job_id = deferred.job_id
         logger.info(

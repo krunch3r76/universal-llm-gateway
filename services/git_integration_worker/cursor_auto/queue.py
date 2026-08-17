@@ -8,6 +8,10 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from services.git_integration_worker.cursor_auto.execution_mode import (
+    is_concurrent_execution_mode,
+)
+
 
 @dataclass
 class AutoJob:
@@ -37,6 +41,12 @@ class AutoJob:
     wire_dropped_fields: tuple[str, ...] = ()
     # GIW checkout-isolation lane (``A``|``B``); None ⇒ select_lane defaults.
     lane: str | None = None
+    # Declared execution mode (S-3). "serial" (default) uses the exclusive
+    # single-occupant loop unchanged since before this mission. Any other
+    # value is looked up against the default-deny allowlist in
+    # execution_mode.py -- never branch on this field directly outside that
+    # module.
+    execution_mode: str = "serial"
     enqueued_at: float = field(default_factory=time.monotonic)
     status: str = "queued"  # queued | claimed | done | failed | report_undelivered | superseded
     superseded_by: str | None = None
@@ -83,7 +93,32 @@ class AutoJobQueue:
         with self._lock:
             for jid in self._order:
                 job = self._jobs[jid]
-                if job.status == "queued":
+                if job.status == "queued" and not is_concurrent_execution_mode(
+                    job.execution_mode
+                ):
+                    job.status = "claimed"
+                    claimed = job
+                    break
+            else:
+                return None
+        ledger = self._ledger_client()
+        if ledger is not None:
+            ledger.mark_claimed(claimed.job_id)
+        return claimed
+
+    def claim_next_concurrent(self) -> AutoJob | None:
+        """Claim the oldest queued job whose execution_mode has been opted
+        into concurrent admission. Never claims a serial-class job -- the
+        exclusivity invariant of claim_next()/auto_worker_loop is untouched
+        by this method; it is a fully independent claim path (same shape as
+        the existing continuity-hop bypass, generalized past hops).
+        """
+        with self._lock:
+            for jid in self._order:
+                job = self._jobs[jid]
+                if job.status == "queued" and is_concurrent_execution_mode(
+                    job.execution_mode
+                ):
                     job.status = "claimed"
                     claimed = job
                     break

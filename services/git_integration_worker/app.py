@@ -22,6 +22,7 @@ from services.git_integration_worker.admission import WorkAdmissionController
 from services.git_integration_worker.background_supervisor import supervise
 from services.git_integration_worker.config import WorkerConfig, load_config
 from services.git_integration_worker.cursor_auto.auto_worker_loop import (
+    auto_concurrent_worker_loop,
     auto_worker_loop,
     orphan_scanner_loop,
 )
@@ -139,6 +140,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Respawn the lane loop: its absence deregisters the cursor-auto handler and
     # parks every agent_bus.request, including the propagate repair path.
     supervise(app, "cursor_auto_worker", lambda: auto_worker_loop(app), restart=True)
+    supervise(
+        app,
+        "cursor_auto_concurrent_worker",
+        lambda: auto_concurrent_worker_loop(app),
+        restart=True,
+    )
     supervise(app, "cursor_auto_orphan_scanner", lambda: orphan_scanner_loop(app))
     supervise(app, "cursor_auto_hop_cadence", lambda: hop_cadence_loop(app))
     supervise(app, "ulg_story_projector", lambda: ulg_story_projector_loop(app))
@@ -181,6 +188,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "startup_persistence_task",
             "stale_lease_sweeper",
             "cursor_auto_worker",
+            "cursor_auto_concurrent_worker",
             "cursor_auto_orphan_scanner",
             "cursor_auto_hop_cadence",
             "ulg_story_projector",

@@ -259,6 +259,26 @@ class AutoJobLedger:
                 (_now_iso(), job_id),
             )
 
+    def heartbeat_age_s(self, job_id: str) -> float | None:
+        """Seconds since *job_id*'s last heartbeat (falls back to
+        ``claimed_at`` if the occupant has not heartbeated even once yet).
+        ``None`` if the row is missing or was never claimed (S-4).
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT last_heartbeat_at, claimed_at FROM cursor_auto_jobs "
+                "WHERE job_id=?",
+                (job_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        stamp = row["last_heartbeat_at"] or row["claimed_at"]
+        if not stamp:
+            return None
+        then = datetime.fromisoformat(stamp)
+        now = datetime.now(then.tzinfo) if then.tzinfo else datetime.now(UTC)
+        return max(0.0, (now - then).total_seconds())
+
     def mark_terminal(
         self,
         job_id: str,
