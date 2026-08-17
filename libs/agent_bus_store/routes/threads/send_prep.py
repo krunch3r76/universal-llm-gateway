@@ -5,7 +5,6 @@ from __future__ import annotations
 from fastapi import HTTPException, status
 
 from ...body_auto_spill import PreparedBody, prepare_body_for_insert, spill_error_http
-from ...checkpoint_projection_wiring import maybe_project_checkpoint_body
 from ...db.lane_associations import (
     associate_lane,
     invalid_lane_role_envelope,
@@ -29,15 +28,10 @@ def _spill_transformer(
     """Build a create_thread_with_turn body_transformer that soft-spills."""
 
     def _transform(thread_id: str) -> str:
-        projected = maybe_project_checkpoint_body(
-            thread=thread_id,
-            subject=subject,
-            body=body,
-        )
         prepared = prepare_body_for_insert(
             thread=thread_id,
             subject=subject,
-            body=projected,
+            body=body,
             from_agent=from_agent,
             allow_long_body=allow_long_body,
         )

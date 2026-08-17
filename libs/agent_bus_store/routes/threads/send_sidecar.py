@@ -6,17 +6,14 @@ from datetime import datetime
 
 from fastapi import HTTPException, status
 
-from ...checkpoint_auto_stamp_wiring import (
-    load_thread_tags,
-    maybe_auto_stamp_root_on_checkpoint,
-)
+from ...body_auto_spill import PreparedBody, build_turn_created
+from ...checkpoint_auto_stamp_wiring import load_thread_tags
 from ...checkpoint_projection import CheckpointBodyTooLargeError
 from ...checkpoint_projection_wiring import maybe_project_checkpoint_body
 from ...db import close_thread, create_thread, get_thread, normalize_thread_id
 from ...enrollment_guard import EnrollmentTagError
 from ...thread_classification import ThreadClassificationError
 from ...turns_models import (
-    TurnCreated,
     TurnSendCreate,
     TurnSendCreated,
     sidecar_content_limit_error,
@@ -232,14 +229,24 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
         bytes_written=sidecar.body_chars,
     )
 
-    maybe_auto_stamp_root_on_checkpoint(
+    turn_created = build_turn_created(
+        PreparedBody(
+            body=final_body,
+            sidecar_uri=sidecar.uri,
+            sidecar_sha256=sidecar.sha256,
+        ),
+        turn_id=turn_id,
         thread=thread_id,
+        turn_number=turn_number,
+        created_at=datetime.fromisoformat(ts),
+        from_agent=body.from_agent,
+        to_agent=body.to,
         subject=body.subject,
+        superseded_turn_number=echo_turn_number,
+        superseded_turn_id=echo_turn_id,
         thread_tags=thread_tags,
         supersedes_turn=body.supersedes_turn or body.supersedes_turn_id,
-        turn_number=turn_number,
     )
-
     thread_row = get_thread(thread_id)
     if thread_row is None:
         raise HTTPException(
@@ -249,16 +256,7 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
     return TurnSendCreated(
         send_path=send_path,  # type: ignore[arg-type]
         thread=_thread_detail(thread_row),
-        turn=TurnCreated(
-            id=turn_id,
-            thread=thread_id,
-            turn_number=turn_number,
-            created_at=datetime.fromisoformat(ts),
-            sidecar_uri=sidecar.uri,
-            sidecar_sha256=sidecar.sha256,
-            superseded_turn_number=echo_turn_number,
-            superseded_turn_id=echo_turn_id,
-        ),
+        turn=turn_created,
         marked_read=marked_read,
         sidecar_uri=sidecar.uri,
         sidecar_sha256=sidecar.sha256,

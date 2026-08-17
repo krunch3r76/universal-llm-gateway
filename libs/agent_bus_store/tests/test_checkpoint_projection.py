@@ -298,7 +298,7 @@ def test_post_turn_checkpoint_projection_route(tmp_path, monkeypatch) -> None:
     )
 
     with patch(
-        "agent_bus_store.routes.turns.maybe_project_checkpoint_body",
+        "agent_bus_store.body_auto_spill.maybe_project_checkpoint_body",
         side_effect=lambda *, thread, subject, body: (
             projected if subject.upper().startswith("CHECKPOINT") else body
         ),
@@ -328,7 +328,7 @@ def test_post_turn_checkpoint_projection_route(tmp_path, monkeypatch) -> None:
                 },
             )
             assert resp.status_code == 201, resp.text
-            projector.assert_called_once()
+            assert projector.call_count == 2
             turn = client.get(
                 f"/turns/by-number?thread={thread_id}&turn_number=2"
             ).json()
@@ -350,7 +350,7 @@ def test_post_turn_checkpoint_projection_route(tmp_path, monkeypatch) -> None:
                 f"/turns/by-number?thread={thread_id}&turn_number=3"
             ).json()
             assert plain_turn["body"] == "no projection"
-            assert projector.call_count == 2
+            assert projector.call_count == 3
 
 
 def test_child_registry_uses_live_lineage_primitive(tmp_path, monkeypatch) -> None:
@@ -525,7 +525,7 @@ def test_send_continue_checkpoint_projection_route(tmp_path, monkeypatch) -> Non
     )
 
     with patch(
-        "agent_bus_store.routes.threads.send.maybe_project_checkpoint_body",
+        "agent_bus_store.body_auto_spill.maybe_project_checkpoint_body",
         side_effect=lambda *, thread, subject, body: (
             projected if subject.upper().startswith("CHECKPOINT") else body
         ),
@@ -555,7 +555,7 @@ def test_send_continue_checkpoint_projection_route(tmp_path, monkeypatch) -> Non
                 },
             )
             assert resp.status_code == 201, resp.text
-            projector.assert_called_once()
+            assert projector.call_count == 2
             turn = client.get(
                 f"/turns/by-number?thread={thread_id}&turn_number=2"
             ).json()
@@ -589,9 +589,13 @@ def test_send_continue_checkpoint_body_too_large_413(tmp_path, monkeypatch) -> N
     from unittest.mock import patch
 
     with patch(
-        "agent_bus_store.routes.threads.send.maybe_project_checkpoint_body",
-        side_effect=lambda **kwargs: (_ for _ in ()).throw(
-            CheckpointBodyTooLargeError(body_chars=9000, limit_chars=8000)
+        "agent_bus_store.body_auto_spill.maybe_project_checkpoint_body",
+        side_effect=lambda *, thread, subject, body, **kwargs: (
+            (_ for _ in ()).throw(
+                CheckpointBodyTooLargeError(body_chars=9000, limit_chars=8000)
+            )
+            if subject.upper().startswith("CHECKPOINT")
+            else body
         ),
     ):
         with _route_test_app(tmp_path, monkeypatch) as client:
@@ -626,9 +630,13 @@ def test_send_new_slug_checkpoint_body_too_large_413(tmp_path, monkeypatch) -> N
     from unittest.mock import patch
 
     with patch(
-        "agent_bus_store.routes.threads.send_prep.maybe_project_checkpoint_body",
-        side_effect=lambda **kwargs: (_ for _ in ()).throw(
-            CheckpointBodyTooLargeError(body_chars=9000, limit_chars=8000)
+        "agent_bus_store.body_auto_spill.maybe_project_checkpoint_body",
+        side_effect=lambda *, thread, subject, body, **kwargs: (
+            (_ for _ in ()).throw(
+                CheckpointBodyTooLargeError(body_chars=9000, limit_chars=8000)
+            )
+            if subject.upper().startswith("CHECKPOINT")
+            else body
         ),
     ):
         with _route_test_app(tmp_path, monkeypatch) as client:
@@ -700,4 +708,99 @@ def test_with_turn_checkpoint_projection_route(tmp_path, monkeypatch) -> None:
     assert "### Child lanes" in body
     assert "_none substantiated_" in body
     assert "**UNPROJECTED**" not in body
+
+
+def test_all_turn_routes_apply_checkpoint_projection(tmp_path, monkeypatch) -> None:
+    """Black-box conformance: every turn-persistence entry point projects CHECKPOINT bodies."""
+    checkpoint_subject = "CHECKPOINT test"
+    authored = "Settled: conformance routes project."
+    sidecar_content = "Full sidecar payload for conformance test."
+
+    with _route_test_app(tmp_path, monkeypatch) as client:
+        seed = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "conformance-seed",
+                "from": "cursor",
+                "to": "web",
+                "subject": "seed",
+                "body": "hello",
+            },
+        )
+        assert seed.status_code == 201, seed.text
+        thread_id = seed.json()["thread"]["id"]
+
+        post_turn = client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "cursor",
+                "to": "web",
+                "subject": checkpoint_subject,
+                "body": authored,
+                "after_turn": 1,
+            },
+        )
+        assert post_turn.status_code == 201, post_turn.text
+        post_turn_body = client.get(
+            f"/turns/by-number?thread={thread_id}&turn_number=2"
+        ).json()["body"]
+
+        send_continue = client.post(
+            "/threads/send",
+            json={
+                "thread": thread_id,
+                "from": "cursor",
+                "to": "web",
+                "subject": checkpoint_subject,
+                "body": authored,
+                "after_turn": 2,
+            },
+        )
+        assert send_continue.status_code == 201, send_continue.text
+        send_continue_body = client.get(
+            f"/turns/by-number?thread={thread_id}&turn_number=3"
+        ).json()["body"]
+
+        send_new_slug = client.post(
+            "/threads/send",
+            json={
+                "new_slug": "conformance-birth",
+                "from": "cursor",
+                "to": "web",
+                "subject": checkpoint_subject,
+                "body": authored,
+            },
+        )
+        assert send_new_slug.status_code == 201, send_new_slug.text
+        birth_thread_id = send_new_slug.json()["thread"]["id"]
+        send_new_slug_body = client.get(
+            f"/turns/by-number?thread={birth_thread_id}&turn_number=1"
+        ).json()["body"]
+
+        send_sidecar = client.post(
+            "/threads/send",
+            json={
+                "thread": thread_id,
+                "from": "cursor",
+                "to": "web",
+                "subject": checkpoint_subject,
+                "body": authored,
+                "sidecar_content": sidecar_content,
+                "after_turn": 3,
+            },
+        )
+        assert send_sidecar.status_code == 201, send_sidecar.text
+        send_sidecar_body = client.get(
+            f"/turns/by-number?thread={thread_id}&turn_number=4"
+        ).json()["body"]
+
+    for label, body in (
+        ("POST /turns", post_turn_body),
+        ("POST /threads/send continue", send_continue_body),
+        ("POST /threads/send new_slug", send_new_slug_body),
+        ("POST /threads/send sidecar", send_sidecar_body),
+    ):
+        assert "### Child lanes" in body, f"{label}: missing Child lanes marker"
+        assert "**UNPROJECTED**" not in body, f"{label}: fail-open banner present"
 

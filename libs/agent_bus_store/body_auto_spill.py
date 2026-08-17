@@ -21,6 +21,7 @@ from cortex_store.dispatch_ops._thread_sidecar import (
 from .body_briefing_advisory import BriefingAdvisory, briefing_advisory
 from .checkpoint_charter_lint import orchestration_charter_advisory
 from .checkpoint_projection import CheckpointBodyTooLargeError
+from .checkpoint_projection_wiring import maybe_project_checkpoint_body
 from .turns_models import (
     MAX_LONG_TURN_BODY_CHARS,
     MAX_SIDECAR_CONTENT_CHARS,
@@ -80,7 +81,13 @@ def prepare_body_for_insert(
     ``write_thread_sidecar_for_send`` and return a short briefing + ``Sidecar:``
     pointer. Propagates ``SidecarWriteError`` / ``SidecarContentTooLargeError``;
     raises ``BodyTooLargeError`` for the allow_long hard 64k cap.
+
+    Mandatory funnel for CHECKPOINT projection: new turn-persistence routes MUST
+    call this function (or ``build_turn_created`` for the post-insert auto-stamp
+    hook) rather than hand-rolling ``insert_turn``/``create_turn`` with a raw
+    body.
     """
+    body = maybe_project_checkpoint_body(thread=thread, subject=subject, body=body)
     limit = MAX_LONG_TURN_BODY_CHARS if allow_long_body else MAX_TURN_BODY_CHARS
     if len(body) <= limit:
         advisory = orchestration_charter_advisory(
@@ -161,8 +168,24 @@ def build_turn_created(
     subject: str,
     superseded_turn_number: int | None = None,
     superseded_turn_id: int | None = None,
+    thread_tags: list[str] | None = None,
+    supersedes_turn: int | None = None,
 ) -> TurnCreated:
-    """Build TurnCreated and emit briefing advisory observation when applicable."""
+    """Build TurnCreated and emit briefing advisory observation when applicable.
+
+    When ``thread_tags`` is provided, also runs the auto-stamp-root-on-checkpoint
+    hook after insert (requires ``turn_number`` from the persisted row).
+    """
+    if thread_tags is not None:
+        from .checkpoint_auto_stamp_wiring import maybe_auto_stamp_root_on_checkpoint
+
+        maybe_auto_stamp_root_on_checkpoint(
+            thread=thread,
+            subject=subject,
+            thread_tags=thread_tags,
+            supersedes_turn=supersedes_turn,
+            turn_number=turn_number,
+        )
     from .events.advisory_fired import emit_advisory_fired
     from .events.turn_body_advisory import emit_turn_body_over_briefing
     from .turns_models import TurnCreated

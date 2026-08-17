@@ -110,6 +110,8 @@ Session close for active root must include root thread id, roadmap path, latest 
 | **Endeavor root** | cursor + operator | CHECKPOINT, scoreboard pointers, **Child lanes** / **Cited lanes** (projected `parent_thread` + `lane_role`), closeout summaries. Completeness **projection** = scoreboard (graph canonical). ¬ web rewrite traffic. |
 | **One life side channel** | web-anthropic (+ cursor packets) | Everything web must **act** on for this endeavor: interrogate, rewrite, nit binds, lock claims; corpus admits/harvest when web is the actor. Samples/INDEX are **file context** (pseudo-RAG), not a second bus thread. |
 
+Any new `agent_bus_store` route that persists a turn body must route through `prepare_body_for_insert()` / `build_turn_created()` in `body_auto_spill.py` — those are the sole funnel points for CHECKPOINT projection and root auto-stamping. Do not call `insert_turn`/`create_turn` directly with an unprocessed body.
+
 **Push rule:** operator pushes the **side channel** when web’s next turn is expected. Do not push the endeavor root for INFO/orchestration notes.
 
 **Incorporation:** side-channel closeout → short pointer on root **and** scoreboard write-back. API generate/reply plumbing stays off the endeavor root (R11 / R12).

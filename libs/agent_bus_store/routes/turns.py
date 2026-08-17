@@ -14,12 +14,7 @@ from ..body_auto_spill import (
     prepare_body_for_insert,
     spill_error_http,
 )
-from ..checkpoint_auto_stamp_wiring import (
-    load_thread_tags,
-    maybe_auto_stamp_root_on_checkpoint,
-)
-from ..checkpoint_projection import CheckpointBodyTooLargeError
-from ..checkpoint_projection_wiring import maybe_project_checkpoint_body
+from ..checkpoint_auto_stamp_wiring import load_thread_tags
 from ..db import (
     TurnAlreadyAcknowledged,
     UnreadTurnsExist,
@@ -94,15 +89,6 @@ def _turn_from_row(r: dict[str, Any]) -> Turn:
 async def create_turn(turn: TurnCreate) -> TurnCreated:
     """Create one turn, enforcing unread and status invariants from storage logic."""
     turn.thread = normalize_thread_id(turn.thread)
-    body = turn.body
-    try:
-        body = maybe_project_checkpoint_body(
-            thread=turn.thread,
-            subject=turn.subject,
-            body=body,
-        )
-    except CheckpointBodyTooLargeError as exc:
-        raise HTTPException(status_code=413, detail=exc.envelope) from exc
     thread_tags = load_thread_tags(turn.thread)
     try:
         resolved = resolve_supersedes_turn(
@@ -122,7 +108,7 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
         prepared = prepare_body_for_insert(
             thread=turn.thread,
             subject=turn.subject,
-            body=body,
+            body=turn.body,
             from_agent=turn.from_agent,
             allow_long_body=turn.allow_long_body,
             thread_tags=thread_tags,
@@ -158,13 +144,6 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"error": str(e), "reason": "supersedes_turn_invalid"},
         ) from e
-    maybe_auto_stamp_root_on_checkpoint(
-        thread=turn.thread,
-        subject=turn.subject,
-        thread_tags=thread_tags,
-        supersedes_turn=turn.supersedes_turn or turn.supersedes_turn_id,
-        turn_number=turn_number,
-    )
     try:
         import asyncio
 
@@ -207,6 +186,8 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
         subject=turn.subject,
         superseded_turn_number=echo_turn_number,
         superseded_turn_id=echo_turn_id,
+        thread_tags=thread_tags,
+        supersedes_turn=turn.supersedes_turn or turn.supersedes_turn_id,
     )
 
 

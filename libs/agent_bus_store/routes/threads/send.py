@@ -13,11 +13,7 @@ from ...body_auto_spill import (
     prepare_body_for_insert,
     spill_error_http,
 )
-from ...checkpoint_auto_stamp_wiring import (
-    load_thread_tags,
-    maybe_auto_stamp_root_on_checkpoint,
-)
-from ...checkpoint_projection_wiring import maybe_project_checkpoint_body
+from ...checkpoint_auto_stamp_wiring import load_thread_tags
 from ...db import (
     SlugExists,
     create_thread_with_turn,
@@ -197,15 +193,10 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
         turn_id_alias=body.supersedes_turn_id,
     )
     try:
-        turn_body = maybe_project_checkpoint_body(
-            thread=thread_id,
-            subject=body.subject,
-            body=body.body,
-        )
         prepared = prepare_body_for_insert(
             thread=thread_id,
             subject=body.subject,
-            body=turn_body,
+            body=body.body,
             from_agent=body.from_agent,
             allow_long_body=body.allow_long_body,
             thread_tags=thread_tags,
@@ -243,29 +234,26 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Thread {thread_id} not found",
         )
-    maybe_auto_stamp_root_on_checkpoint(
+    thread_row = get_thread(thread_id) or thread_row
+    turn_created = build_turn_created(
+        prepared,
+        turn_id=turn_id,
         thread=thread_id,
+        turn_number=turn_number,
+        created_at=datetime.fromisoformat(ts),
+        from_agent=body.from_agent,
+        to_agent=body.to,
         subject=body.subject,
+        superseded_turn_number=echo_turn_number,
+        superseded_turn_id=echo_turn_id,
         thread_tags=thread_tags,
         supersedes_turn=body.supersedes_turn or body.supersedes_turn_id,
-        turn_number=turn_number,
     )
     thread_row = get_thread(thread_id) or thread_row
     return TurnSendCreated(
         send_path="continue",
         thread=_thread_detail(thread_row),
-        turn=build_turn_created(
-            prepared,
-            turn_id=turn_id,
-            thread=thread_id,
-            turn_number=turn_number,
-            created_at=datetime.fromisoformat(ts),
-            from_agent=body.from_agent,
-            to_agent=body.to,
-            subject=body.subject,
-            superseded_turn_number=echo_turn_number,
-            superseded_turn_id=echo_turn_id,
-        ),
+        turn=turn_created,
         marked_read=marked_read,
         sidecar_uri=prepared.sidecar_uri,
         sidecar_sha256=prepared.sidecar_sha256,
