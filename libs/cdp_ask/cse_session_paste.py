@@ -91,6 +91,35 @@ def _watch_authorizes_predecessor_stand_down(
     return False
 
 
+def _same_lane_authorizes_stand_down(
+    req: PasteRequest,
+    *,
+    target_prov: dict[str, Any],
+) -> bool:
+    """True when a same-lane claimant stands down another CSE on that lane.
+
+    Hop watch records the captured predecessor registration, which may not be
+    either live operator CSE (thread 7437 watch named ``d3402e55…`` while the
+    colliding seats were distinct ids). ``stand_down`` plus caller identity and
+    matching parent_thread provenance is the in-band retire path for that
+    collision; free/page paste still requires the hop-pair triple or a grant.
+    """
+    if (req.envelope or "").strip().lower() != "stand_down":
+        return False
+    caller_reg = (req.caller_registration_id or "").strip()
+    if not caller_reg:
+        return False
+    target_parent = _parent_thread_of(target_prov)
+    if not target_parent:
+        return False
+    caller_prov = resolve_provenance(
+        registration_id=caller_reg,
+        host_listable=is_host_listable,
+    )
+    caller_parent = _parent_thread_of(caller_prov)
+    return bool(caller_parent and caller_parent == target_parent)
+
+
 def _authorized(req: PasteRequest, *, target_prov: dict[str, Any]) -> bool:
     grant = (req.grant or "").strip().lower()
     if grant in {"explicit", "operator", "hop-pair-grant"}:
@@ -99,6 +128,8 @@ def _authorized(req: PasteRequest, *, target_prov: dict[str, Any]) -> bool:
     if _watch_authorizes_predecessor_stand_down(
         req, target_reg=target_reg, target_prov=target_prov
     ):
+        return True
+    if _same_lane_authorizes_stand_down(req, target_prov=target_prov):
         return True
     caller_reg = (req.caller_registration_id or "").strip()
     superseded = (req.superseded_registration_id or "").strip()

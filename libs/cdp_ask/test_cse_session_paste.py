@@ -230,3 +230,51 @@ async def test_free_envelope_does_not_use_hop_watch(
         )
     assert result.code == "paste_unauthorized"
     assert followup.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_stand_down_same_lane_claimant_without_watch_pair() -> None:
+    """Colliding CSEs on one parent_thread may not be the hop-watch predecessor."""
+    followup_ok = FollowupProjectAskResponse(
+        ok=True,
+        send_verified=True,
+        receipt="dom_paste",
+        registration_id="live-pred",
+    )
+
+    def _prov(**kwargs: object) -> dict[str, object]:
+        reg = str(kwargs.get("registration_id") or "")
+        if reg == "live-succ":
+            return {
+                "state": "current",
+                "registration_id": "live-succ",
+                "parent_thread_proven": "7437",
+            }
+        return {
+            "state": "current",
+            "registration_id": "live-pred",
+            "parent_thread_proven": "7437",
+        }
+
+    with (
+        patch("cdp_ask.cse_session_paste.resolve_provenance", side_effect=_prov),
+        patch(
+            "cdp_ask.cse_session_paste.execute_followup",
+            AsyncMock(return_value=followup_ok),
+        ) as followup,
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={"7437": {"superseded_registration_id": "other-hop-pred"}},
+        ),
+    ):
+        result = await execute_paste(
+            PasteRequest(
+                registration_id="live-pred",
+                caller_registration_id="live-succ",
+                envelope="stand_down",
+                prompt_text="TYPE: SEAT_STAND_DOWN",
+            ),
+            ExecutionStore(),
+        )
+    assert result.ok is True
+    assert followup.await_count == 1
