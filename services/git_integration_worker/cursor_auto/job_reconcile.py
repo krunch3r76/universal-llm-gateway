@@ -21,22 +21,22 @@ from services.git_integration_worker.cursor_auto.job_ledger import (
     AutoJobLedger,
     get_ledger,
 )
-from services.git_integration_worker.cursor_auto.reconcile_visibility_events import (
-    emit_reconcile_rehydrate_exhausted,
-    emit_reconcile_rehydrated,
-    emit_reconcile_superseded,
-)
-from services.git_integration_worker.cursor_auto.terminal_reason_codec import (
-    TERMINAL_REASON_RECONCILE_INFLIGHT_LOST,
-    TERMINAL_REASON_RESTART_RECONCILE_SUPERSEDED,
-)
 from services.git_integration_worker.cursor_auto.queue import (
     AutoJob,
     AutoJobQueue,
     get_queue,
 )
+from services.git_integration_worker.cursor_auto.reconcile_visibility_events import (
+    emit_reconcile_rehydrate_exhausted,
+    emit_reconcile_rehydrated,
+    emit_reconcile_superseded,
+)
 from services.git_integration_worker.cursor_auto.silence_visibility_events import (
     emit_queue_owner_restart_bus_unposted,
+)
+from services.git_integration_worker.cursor_auto.terminal_reason_codec import (
+    TERMINAL_REASON_RECONCILE_INFLIGHT_LOST,
+    TERMINAL_REASON_RESTART_RECONCILE_SUPERSEDED,
 )
 from services.git_integration_worker.cursor_bus import CursorBusClient
 
