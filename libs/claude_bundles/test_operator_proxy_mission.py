@@ -56,7 +56,7 @@ def test_ensure_injects_self_scheduled_wake_guide() -> None:
     assert "while true; do sleep 240" not in out
     assert "Consume-time wake affinity" in out
     assert "Absence is not permission" in out
-    assert "missing (file absent): STAND_DOWN" in out
+    assert "missing (file absent): default STAND_DOWN" in out
 
 
 def test_ensure_idempotent_when_chips_present() -> None:

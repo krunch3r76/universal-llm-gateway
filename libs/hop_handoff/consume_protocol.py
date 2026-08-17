@@ -17,8 +17,10 @@ def consume_time_wake_protocol(*, thread_id: str | None = None) -> str:
 
     When *thread_id* is known, name the exact standing-handoff URI; otherwise
     name the URI pattern so a first-dispatch inject without a lane still binds
-    the three-status table. Missing and stale are STAND_DOWN for wake
-    authority (soft-degrade, not ``agent_bus.request`` refuse).
+    the three-status table. Missing and stale default to STAND_DOWN for wake
+    authority (soft-degrade, not ``agent_bus.request`` refuse), but both may
+    be disambiguated by the live bus tip when no sidecar exists yet or the
+    file is stale.
     """
     uri = (
         standing_handoff_uri(thread_id)
@@ -31,8 +33,12 @@ def consume_time_wake_protocol(*, thread_id: str | None = None) -> str:
         "(do not trust remembered rank or the wake body).\n"
         f"URI: {uri}\n"
         "Classifier (host): assess_standing_handoff → missing | stale | current.\n"
-        "- missing (file absent): STAND_DOWN. Absence is not permission. Do not "
-        "author TYPE: DIRECTIVE or agent_bus.request from wake prose.\n"
+        "- missing (file absent): default STAND_DOWN. Absence is not permission "
+        "when the live bus tip names a later successor_birth_id. When no "
+        "sidecar exists yet and the live bus tip / SEAT_REGISTRATION confirms "
+        "your successor_birth_id, establish rank from the tip — same "
+        "disambiguator as stale. Do not author TYPE: DIRECTIVE or "
+        "agent_bus.request from wake prose alone.\n"
         "- stale: same as missing for wake authority until live bus tip / watch "
         "holder confirms you. Default STAND_DOWN.\n"
         "- current: read it for rank. Later successor_birth_id than yours → "

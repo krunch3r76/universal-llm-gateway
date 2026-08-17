@@ -103,7 +103,7 @@ def test_missing_vs_current_handoff_branch(status: str) -> None:
             "Read the standing handoff URI above before trusting any wake prose."
             not in body
         )
-        assert "missing (file absent): STAND_DOWN" in body
+        assert "missing (file absent): default STAND_DOWN" in body
     else:
         assert (
             "Read the standing handoff URI above before trusting any wake prose."
@@ -180,10 +180,25 @@ def test_assess_standing_handoff_distinguishes_missing_stale_current(
 
 
 def test_consume_time_protocol_missing_is_stand_down_not_permission() -> None:
-    """Re-rank vs S2: absence of the sidecar is STAND_DOWN, not a no-op."""
+    """Re-rank vs S2: absent sidecar defaults STAND_DOWN unless bus tip confirms."""
     text = consume_time_wake_protocol(thread_id=_THREAD)
     assert "STAND_DOWN" in text
     assert "Absence is not permission" in text
     assert "missing (file absent)" in text
     assert "stale: same as missing" in text
     assert _URI in text
+
+
+def test_consume_time_protocol_missing_confirms_rank_from_bus_tip() -> None:
+    """No sidecar yet + tip names this seat's successor_birth_id ⇒ not bare STAND_DOWN."""
+    text = consume_time_wake_protocol(thread_id=_THREAD)
+    assert "SEAT_REGISTRATION confirms your successor_birth_id" in text
+    assert "establish rank from the tip" in text
+    assert "same disambiguator as stale" in text
+
+
+def test_consume_time_protocol_missing_later_seat_still_stand_down() -> None:
+    """No sidecar + tip names a later seat ⇒ STAND_DOWN (cause 1 preserved)."""
+    text = consume_time_wake_protocol(thread_id=_THREAD)
+    assert "later successor_birth_id" in text
+    assert "Absence is not permission when the live bus tip names a later" in text
