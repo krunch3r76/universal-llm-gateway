@@ -288,3 +288,29 @@ def observed_lane_git_refs(
         if sha and (author == email or committer == email):
             refs.append(sha)
     return refs
+
+
+def with_head_sha_fallback(
+    refs: list[str],
+    *,
+    head_sha: str | None,
+    commits_ahead: int | None,
+) -> list[str]:
+    """Union *head_sha* into *refs* when the tip has measured commits ahead.
+
+    ``observed_lane_git_refs`` requires an author/committer identity match in
+    the admit->closeout window, so a peer/ambient commit that advances the tip
+    without touching this dispatch's identity leaves ``refs`` empty even
+    though ``head_sha``/``commits_ahead`` already prove the tip moved (7414
+    shape: ``git_refs=[]`` while ``head_sha`` was set). Additive only — never
+    drops an already-observed lane ref, and never adds anything when the
+    measured window is absent/zero.
+    """
+    if commits_ahead is None or commits_ahead < 1:
+        return refs
+    if not isinstance(head_sha, str) or not head_sha.strip():
+        return refs
+    sha = head_sha.strip()
+    if sha in refs:
+        return refs
+    return [*refs, sha]

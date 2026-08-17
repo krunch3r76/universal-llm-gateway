@@ -17,30 +17,24 @@ def init_repo(root: Path) -> Path:
     repo = root / "repo"
     repo.mkdir()
     subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
-    subprocess.run(
-        ["git", "-C", str(repo), "config", "user.email", "t@t"], check=True
-    )
-    subprocess.run(
-        ["git", "-C", str(repo), "config", "user.name", "t"], check=True
-    )
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "t"], check=True)
     (repo / "shared.py").write_text("base\n")
     (repo / "a_only.py").write_text("a0\n")
     (repo / "b_only.py").write_text("b0\n")
     (repo / "sig.py").write_text("def f():\n    return 1\n")
     (repo / "call.py").write_text("from sig import f\nprint(f())\n")
     subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
-    subprocess.run(
-        ["git", "-C", str(repo), "commit", "-qm", "base"], check=True
-    )
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "base"], check=True)
     return repo
 
 
 def provoke_f5() -> int:
     """F-5: B's post-admit edits must survive A's supersede revert."""
+    import services.git_integration_worker.cursor_sdk_revert as revert_mod
     from services.git_integration_worker.cursor_sdk_closeout import (
         capture_wt_baseline_with_hashes,
     )
-    import services.git_integration_worker.cursor_sdk_revert as revert_mod
     from services.git_integration_worker.cursor_sdk_revert import (
         revert_dispatch_writes,
     )
@@ -62,9 +56,7 @@ def provoke_f5() -> int:
                 return ledger
 
         revert_mod.CursorDispatchLedger = _Ledger  # type: ignore[misc]
-        report = revert_dispatch_writes(
-            dispatch_id="auto-writer-A", source_repo=repo
-        )
+        report = revert_dispatch_writes(dispatch_id="auto-writer-A", source_repo=repo)
         b_survived = (repo / "b_only.py").read_text() == "b_wrote\n"
         shared_survived = (repo / "shared.py").read_text() == "b_shared\n"
         print("report=", report.as_dict())
@@ -80,6 +72,7 @@ def provoke_f5() -> int:
 
 def provoke_f1() -> int:
     """F-1: silent last-writer-wins on shared path with no loss signal."""
+    import services.git_integration_worker.cursor_sdk_closeout.worktree_baseline as wt_mod
     from services.git_integration_worker.cursor_sdk_closeout import (
         capture_wt_baseline_with_hashes,
         changed_paths,
@@ -89,14 +82,40 @@ def provoke_f1() -> int:
         repo = init_repo(Path(tmp))
         base_a = capture_wt_baseline_with_hashes(repo)
         base_b = capture_wt_baseline_with_hashes(repo)
+        admit_at = "2026-08-16T18:00:00+00:00"
+        ledger = MagicMock()
+        ledger.overlapping_write_dispatches.return_value = [
+            {
+                "dispatch_id": "auto-writer-B",
+                "started_at": admit_at,
+                "terminal_at": None,
+            }
+        ]
+
+        class _Ledger:
+            @classmethod
+            def instance(cls):
+                return ledger
+
+        wt_mod.CursorDispatchLedger = _Ledger  # type: ignore[misc]
         (repo / "shared.py").write_text("A_MARKER\n")
         (repo / "shared.py").write_text("B_MARKER\n")
-        cs_a, dev_a = changed_paths(repo, base_a)
-        cs_b, dev_b = changed_paths(repo, base_b)
+        cs_a, dev_a = changed_paths(
+            repo, base_a, dispatch_id="auto-writer-A", admit_at=admit_at
+        )
+        cs_b, dev_b = changed_paths(
+            repo, base_b, dispatch_id="auto-writer-B", admit_at=admit_at
+        )
         final = (repo / "shared.py").read_text().strip()
         a_lost = final != "A_MARKER"
         reports_loss = any(
-            ("loss" in d or "collision" in d) for d in (*dev_a, *dev_b)
+            (
+                "loss" in d
+                or "collision" in d
+                or "overlap_suspected" in d
+                or "attribution_uncertain" in d
+            )
+            for d in (*dev_a, *dev_b)
         )
         a_claims = "shared.py" in (cs_a.modified + cs_a.created)
         b_claims = "shared.py" in (cs_b.modified + cs_b.created)
@@ -139,6 +158,7 @@ def provoke_f2() -> int:
 
 def provoke_f3() -> int:
     """F-3: A's closeout claims B-only paths via baseline-diff attribution."""
+    import services.git_integration_worker.cursor_sdk_closeout.worktree_baseline as wt_mod
     from services.git_integration_worker.cursor_sdk_closeout import (
         capture_wt_baseline_with_hashes,
         changed_paths,
@@ -147,9 +167,27 @@ def provoke_f3() -> int:
     with tempfile.TemporaryDirectory(prefix="g5-f3-") as tmp:
         repo = init_repo(Path(tmp))
         base_a = capture_wt_baseline_with_hashes(repo)
+        admit_at = "2026-08-16T18:00:00+00:00"
+        ledger = MagicMock()
+        ledger.overlapping_write_dispatches.return_value = [
+            {
+                "dispatch_id": "auto-writer-B",
+                "started_at": admit_at,
+                "terminal_at": None,
+            }
+        ]
+
+        class _Ledger:
+            @classmethod
+            def instance(cls):
+                return ledger
+
+        wt_mod.CursorDispatchLedger = _Ledger  # type: ignore[misc]
         (repo / "a_only.py").write_text("a_wrote\n")
         (repo / "b_only.py").write_text("b_wrote\n")
-        cs_a, dev_a = changed_paths(repo, base_a)
+        cs_a, dev_a = changed_paths(
+            repo, base_a, dispatch_id="auto-writer-A", admit_at=admit_at
+        )
         contaminated = "b_only.py" in cs_a.modified or "b_only.py" in cs_a.created
         print("F-3 cs_a=", cs_a, "dev_a=", dev_a, "contaminated=", contaminated)
         if contaminated:
@@ -188,9 +226,7 @@ def provoke_f4() -> int:
                 repo2 = init_repo(Path(tmp2))
                 (repo2 / "a_only.py").write_text("a_commit\n")
                 (repo2 / "b_only.py").write_text("b_dirty\n")
-                subprocess.run(
-                    ["git", "-C", str(repo2), "add", "-A"], check=True
-                )
+                subprocess.run(["git", "-C", str(repo2), "add", "-A"], check=True)
                 subprocess.run(
                     ["git", "-C", str(repo2), "commit", "-qm", "sweep"],
                     check=True,

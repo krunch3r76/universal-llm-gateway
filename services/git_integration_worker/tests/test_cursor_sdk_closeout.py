@@ -550,7 +550,9 @@ def test_prepare_closeout_delivery_demotes_compound_pytest_and_wires_annotator(
     )
 
     sync_source = inspect.getsource(_assemble_closeout_delivery)
-    harvest_source = inspect.getsource(verification_harvest.harvest_closeout_verification)
+    harvest_source = inspect.getsource(
+        verification_harvest.harvest_closeout_verification
+    )
     async_source = inspect.getsource(closeout_mod.prepare_closeout_delivery_async)
     assembly_async_source = inspect.getsource(_assemble_closeout_delivery_async)
     assert "annotate_test_observation_discrepancy" in harvest_source
@@ -926,6 +928,66 @@ def test_changed_paths_clean_baseline_new_untracked_created(
     assert delta.created == ("new_file.py",)
     assert delta.modified == ()
     assert delta.deleted == ()
+
+
+def test_changed_paths_overlap_diverts_all_attributed_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import services.git_integration_worker.cursor_sdk_closeout.worktree_baseline as wt_mod
+
+    expected_path = "expected.py"
+    outside_path = "outside.py"
+    (tmp_path / expected_path).write_text("x\n", encoding="utf-8")
+    (tmp_path / outside_path).write_text("y\n", encoding="utf-8")
+    baseline = {"codes": {}, "hashes": {}}
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.worktree_baseline.capture_wt_baseline",
+        lambda _repo: {expected_path: "??", outside_path: "??"},
+    )
+    ledger = MagicMock()
+    ledger.overlapping_write_dispatches.return_value = [
+        {
+            "dispatch_id": "peer-disp",
+            "started_at": "2026-08-16T10:00:00+00:00",
+            "terminal_at": None,
+        }
+    ]
+
+    class _Ledger:
+        @classmethod
+        def instance(cls):
+            return ledger
+
+    wt_mod.CursorDispatchLedger = _Ledger  # type: ignore[misc]
+    delta, deviations = changed_paths(
+        tmp_path,
+        baseline,
+        dispatch_id="self-disp",
+        admit_at="2026-08-16T10:00:00+00:00",
+    )
+    assert delta.created == ()
+    assert delta.modified == ()
+    assert delta.deleted == ()
+    assert deviations == (
+        f"attribution_uncertain_multi_writer:{expected_path}:peer=peer-disp",
+        f"attribution_uncertain_multi_writer:{outside_path}:peer=peer-disp",
+    )
+
+
+def test_changed_paths_without_overlap_kwargs_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "new_file.py").write_text("x = 1\n", encoding="utf-8")
+    baseline = {"codes": {}, "hashes": {}}
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.worktree_baseline.capture_wt_baseline",
+        lambda _repo: {"new_file.py": "??"},
+    )
+    delta, deviations = changed_paths(tmp_path, baseline)
+    assert delta.created == ("new_file.py",)
+    assert delta.modified == ()
+    assert delta.deleted == ()
+    assert deviations == ()
 
 
 def test_capture_wt_baseline_with_hashes_only_dirty_set(tmp_path: Path) -> None:

@@ -342,7 +342,10 @@ def _resolve_lease_key(
 
 
 def _fetch_active_holder_conn(
-    conn: sqlite3.Connection, *, lease_key: str | None = None, source_repo: str | None = None
+    conn: sqlite3.Connection,
+    *,
+    lease_key: str | None = None,
+    source_repo: str | None = None,
 ) -> sqlite3.Row | None:
     key = _resolve_lease_key(lease_key=lease_key, source_repo=source_repo)
     if key:
@@ -489,16 +492,13 @@ def _migrate_parked_waiting_status(conn: sqlite3.Connection) -> None:
     if row is None or row["sql"] is None:
         return
     needs_status = "'parked_waiting'" not in row["sql"]
-    cols = {
-        r["name"] for r in conn.execute("PRAGMA table_info(cursor_sdk_dispatches)")
-    }
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(cursor_sdk_dispatches)")}
     needs_col = "park_child_dispatch_id" not in cols
     if not needs_status and not needs_col:
         return
     if needs_col and not needs_status:
         conn.execute(
-            "ALTER TABLE cursor_sdk_dispatches "
-            "ADD COLUMN park_child_dispatch_id TEXT"
+            "ALTER TABLE cursor_sdk_dispatches ADD COLUMN park_child_dispatch_id TEXT"
         )
         return
     has_source_ref = "source_ref" in cols
@@ -566,9 +566,7 @@ def _migrate_parked_waiting_status(conn: sqlite3.Connection) -> None:
 
 def _migrate_lease_key_column(conn: sqlite3.Connection) -> None:
     """Add explicit ``lease_key`` column; backfill from ``source_repo``."""
-    cols = {
-        r["name"] for r in conn.execute("PRAGMA table_info(cursor_sdk_dispatches)")
-    }
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(cursor_sdk_dispatches)")}
     if "lease_key" not in cols:
         conn.execute("ALTER TABLE cursor_sdk_dispatches ADD COLUMN lease_key TEXT")
         conn.execute(
@@ -676,9 +674,7 @@ def _migrate_cancelled_status(conn: sqlite3.Connection) -> None:
     ).fetchone()
     if row is None or row["sql"] is None:
         return
-    cols = {
-        r["name"] for r in conn.execute("PRAGMA table_info(cursor_sdk_dispatches)")
-    }
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(cursor_sdk_dispatches)")}
     needs_cancelled = "'cancelled'" not in row["sql"]
     needs_fingerprint = "work_fingerprint" not in cols
     if not needs_cancelled and not needs_fingerprint:
@@ -1091,10 +1087,7 @@ class CursorDispatchLedger:
                 ).fetchone()
                 active_count = int(active_row["n"]) if active_row else 0
                 slot_limit = max(1, int(write_lease_slot_limit))
-                conflict = (
-                    active_count >= slot_limit
-                    and not nest_under
-                )
+                conflict = active_count >= slot_limit and not nest_under
                 conflict_holder = None
                 if conflict:
                     conflict_holder = conn.execute(
@@ -1123,10 +1116,7 @@ class CursorDispatchLedger:
                         "LIMIT 1",
                         (writer_key, req.dispatch_id),
                     ).fetchone()
-                    if (
-                        holder_row is None
-                        or nest_under != holder_row["dispatch_id"]
-                    ):
+                    if holder_row is None or nest_under != holder_row["dispatch_id"]:
                         raise NestParentNotLive(
                             f"nest_under {nest_under!r} is not the live "
                             f"write-lease holder for lease_key {writer_key!r}"
@@ -1153,11 +1143,11 @@ class CursorDispatchLedger:
                     nested_park_parent = nest_under
                     insert_status = _STATUS_ADMITTED
                     queued_at = None
-                elif (conflict and conflict_holder is not None) or prior_queued is not None:
+                elif (
+                    conflict and conflict_holder is not None
+                ) or prior_queued is not None:
                     if refuse_if_lease_held:
-                        holder = _fetch_active_holder_conn(
-                            conn, lease_key=writer_key
-                        )
+                        holder = _fetch_active_holder_conn(conn, lease_key=writer_key)
                         projection = _holder_projection(holder)
                         depth_row = conn.execute(
                             "SELECT COUNT(*) AS n FROM cursor_sdk_dispatches "
@@ -1312,9 +1302,7 @@ class CursorDispatchLedger:
             ).fetchone()
         return row is not None
 
-    def nest_child_depth(
-        self, *, nest_under: str, child_dispatch_id: str
-    ) -> int:
+    def nest_child_depth(self, *, nest_under: str, child_dispatch_id: str) -> int:
         """Return nested child depth for telemetry after a successful nest admit."""
         with self._connect() as conn:
             return park_stack_depth(
@@ -1745,6 +1733,41 @@ class CursorDispatchLedger:
         with self._connect() as conn:
             return len(_fetch_active_holders_conn(conn, lease_key=key))
 
+    def overlapping_write_dispatches(
+        self,
+        *,
+        lease_key: str | None = None,
+        source_repo: str | None = None,
+        admit_at: str,
+        closeout_at: str,
+        exclude_dispatch_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Peer write-capable dispatches whose interval overlapped [admit_at, closeout_at]."""
+        key = _resolve_lease_key(lease_key=lease_key, source_repo=source_repo)
+        if not key:
+            return []
+        sql = (
+            "SELECT dispatch_id, started_at, terminal_at "
+            "FROM cursor_sdk_dispatches "
+            "WHERE lease_key=? AND COALESCE(read_only,0)=0 "
+            "AND started_at IS NOT NULL "
+            "AND started_at <= ? AND (terminal_at IS NULL OR terminal_at >= ?)"
+        )
+        params: list[Any] = [key, closeout_at, admit_at]
+        if exclude_dispatch_id is not None:
+            sql += " AND dispatch_id != ?"
+            params.append(exclude_dispatch_id)
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [
+            {
+                "dispatch_id": row["dispatch_id"],
+                "started_at": row["started_at"],
+                "terminal_at": row["terminal_at"],
+            }
+            for row in rows
+        ]
+
     def lease_snapshot(
         self,
         *,
@@ -1805,9 +1828,7 @@ class CursorDispatchLedger:
             **projection,
             "active_holders": active_holders,
             "holder_source_repo": (
-                holder["source_repo"]
-                if holder is not None
-                else source_repo
+                holder["source_repo"] if holder is not None else source_repo
             ),
             "queue_depth": int(queued["n"]) if queued else 0,
             "queued": queued_list,

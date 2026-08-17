@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import hashlib
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from implement_admission.closeout_models import EffectsManifest
 from universal_logging import get_logger
 
+from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_capture_status import (
     ChangeSet,
     baseline_dirty_in_expected,
@@ -42,6 +44,7 @@ from services.git_integration_worker.cursor_sdk_polarity import (
 )
 
 logger = get_logger(__name__)
+
 
 def _parse_porcelain_z(raw: bytes) -> dict[str, str]:
     entries: dict[str, str] = {}
@@ -122,6 +125,7 @@ def capture_wt_baseline_with_hashes(
         "admit_head": resolve_git_head(source_repo),
     }
 
+
 def _split_baseline(
     baseline: dict[str, Any] | None,
 ) -> tuple[dict[str, str], dict[str, str]]:
@@ -129,12 +133,27 @@ def _split_baseline(
 
 
 def changed_paths(
-    source_repo: Path, baseline: dict[str, Any] | None
+    source_repo: Path,
+    baseline: dict[str, Any] | None,
+    *,
+    dispatch_id: str | None = None,
+    admit_at: str | None = None,
 ) -> tuple[ChangeSet, tuple[str, ...]]:
     """Derive created/modified/deleted paths vs an admit-time baseline."""
     current = capture_wt_baseline(source_repo)
     if current is None:
         return ChangeSet(created=(), modified=(), deleted=()), ()
+    overlap_peer_id: str | None = None
+    if dispatch_id is not None and admit_at is not None:
+        closeout_at = datetime.now(UTC).isoformat()
+        overlapping = CursorDispatchLedger.instance().overlapping_write_dispatches(
+            source_repo=str(source_repo),
+            admit_at=admit_at,
+            closeout_at=closeout_at,
+            exclude_dispatch_id=dispatch_id,
+        )
+        if overlapping:
+            overlap_peer_id = str(overlapping[0]["dispatch_id"])
     codes, hashes = _split_baseline(baseline)
     admit_head: str | None = None
     if isinstance(baseline, dict):
@@ -182,7 +201,11 @@ def changed_paths(
             git_deleted_paths=git_deleted,
             admit_head=admit_head,
         ):
-            if claimed == "deleted":
+            if overlap_peer_id is not None:
+                deviations.append(
+                    f"attribution_uncertain_multi_writer:{path}:peer={overlap_peer_id}"
+                )
+            elif claimed == "deleted":
                 deleted.append(path)
             elif claimed == "created":
                 created.append(path)

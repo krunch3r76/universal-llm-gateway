@@ -15,6 +15,7 @@ from services.git_integration_worker.cursor_sdk_git_head import (
     partition_tip_window_meters,
     paths_exclusive_to_lane,
     paths_in_commit,
+    with_head_sha_fallback,
 )
 
 pytestmark = pytest.mark.offline
@@ -262,3 +263,39 @@ def test_partition_meter_stays_author_only_on_cherrypick(tmp_path: Path) -> None
         admit_head=admit,
         closeout_head=land_sha,
     ) == [land_sha]
+
+
+def test_with_head_sha_fallback_unions_when_refs_empty_and_ahead() -> None:
+    """T4/7414 shape — peer advance leaves refs=[] while commits_ahead>=1."""
+    assert with_head_sha_fallback([], head_sha="deadbeef", commits_ahead=1) == [
+        "deadbeef"
+    ]
+
+
+def test_with_head_sha_fallback_noop_when_commits_ahead_zero() -> None:
+    """AC-P0 — measured zero must not manufacture a ref out of head_sha."""
+    assert with_head_sha_fallback([], head_sha="deadbeef", commits_ahead=0) == []
+
+
+def test_with_head_sha_fallback_noop_when_commits_ahead_absent() -> None:
+    """AC-A1 — key-omitted commits_ahead must not manufacture a ref."""
+    assert with_head_sha_fallback([], head_sha="deadbeef", commits_ahead=None) == []
+
+
+def test_with_head_sha_fallback_noop_when_head_sha_missing() -> None:
+    assert with_head_sha_fallback(["existing"], head_sha=None, commits_ahead=3) == [
+        "existing"
+    ]
+
+
+def test_with_head_sha_fallback_unions_not_replaces_authored_refs() -> None:
+    """AC — union, not replace: an already-observed lane ref is preserved."""
+    refs = with_head_sha_fallback(
+        ["authored-sha"], head_sha="peer-tip-sha", commits_ahead=2
+    )
+    assert refs == ["authored-sha", "peer-tip-sha"]
+
+
+def test_with_head_sha_fallback_dedupes_when_head_sha_already_present() -> None:
+    refs = with_head_sha_fallback(["deadbeef"], head_sha="deadbeef", commits_ahead=1)
+    assert refs == ["deadbeef"]

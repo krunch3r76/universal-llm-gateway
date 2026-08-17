@@ -33,6 +33,10 @@ from services.git_integration_worker.cursor_auto.closeout_relay_common import (
 from services.git_integration_worker.cursor_auto.closeout_tree_state import (
     compute_closeout_tree_state,
 )
+from services.git_integration_worker.cursor_sdk_closeout import (
+    SdkRunOutcome,
+    prepare_closeout_delivery,
+)
 
 pytestmark = pytest.mark.offline
 
@@ -792,6 +796,92 @@ def test_genuine_land_commits_ahead_one_reports_landed(tmp_path: Path) -> None:
         )
     assert "landed@local-master" in state.plane_line
     assert "NOT landed@local-master" not in state.plane_line
+
+
+def test_lane_b_missing_admit_head_git_refs_unions_head_sha(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T4/7414 shape, end-to-end: Lane-B ``commit_on_terminal``/``branch_state``
+    populate ``head_sha``/``commits_ahead`` from the branch's own history,
+    independent of ``baseline``. When ``baseline`` lacks ``admit_head`` (a
+    degraded baseline capture), ``observed_lane_git_refs``'s own admit_head
+    re-derivation inside ``implement_body`` comes up empty (its guard clause
+    returns ``[]`` when admit/closeout head is missing) — the real closeout
+    body must not ship an empty ``evidence_uris.git_refs`` while
+    ``head_sha``/``commits_ahead`` already prove the branch advanced, and the
+    plane probe reading that same body must still say landed.
+    """
+    from services.git_integration_worker.config import WorkerConfig
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+    from services.git_integration_worker.cursor_sdk_capture_binding import (
+        CaptureBinding,
+    )
+    from services.git_integration_worker.cursor_sdk_worktree import (
+        mint_dispatch_worktree,
+    )
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    CursorDispatchLedger._instance = None
+    try:
+        repo = _init_repo(tmp_path)
+        worktree_root = tmp_path / "worktrees"
+        dispatch_id = "t4-missing-admit-head"
+        wt = mint_dispatch_worktree(
+            source_repo=repo,
+            worktree_root=worktree_root,
+            dispatch_id=dispatch_id,
+        )
+        (wt / "lane_b_touch.py").write_text("payload\n", encoding="utf-8")
+        cfg = WorkerConfig(
+            host="127.0.0.1",
+            port=8094,
+            source_repo=repo,
+            worktree_root=worktree_root,
+            dispatch_workspace=repo.parent / "dispatch_ws",
+            green_gate_cmd=["true"],
+        )
+        binding = CaptureBinding.lane_b(cfg, wt)
+
+        outcome = SdkRunOutcome(
+            body="done", status="finished", duration_ms=10, tool_call_count=1
+        )
+        delivery = prepare_closeout_delivery(
+            source_repo=repo,
+            binding=binding,
+            dispatch_id=dispatch_id,
+            outcome=outcome,
+            degraded_reason=None,
+            thread_id="t-t4-lane-b",
+            work_item_ref=None,
+            baseline=None,
+            deliverables_expected=True,
+        )
+        payload = json.loads(delivery.body)
+        assert payload.get("commits_ahead", 0) >= 1
+        head_sha = payload.get("head_sha")
+        assert head_sha
+        git_refs = (payload.get("evidence_uris") or {}).get("git_refs") or []
+        assert git_refs == [head_sha]
+
+        # Branch not yet merged to master — plane must say NOT landed, not
+        # silently drop the evidence just because git_refs was empty pre-fix.
+        keys = parse_capture_plane_keys(delivery.body)
+        plane = probe_three_planes(
+            binding.receipt_tree, head_sha=keys.head_sha, branch=keys.branch
+        )
+        gated = apply_landed_admit_gate(
+            plane,
+            commits_ahead=keys.commits_ahead,
+            commits_ahead_presence=keys.commits_ahead_presence,
+        )
+        headline = render_plane_headline(gated)
+        assert gated.landed_local_master is False
+        assert "NOT landed@local-master" in headline
+        assert "tip@lane-B" in headline
+    finally:
+        CursorDispatchLedger._instance = None
 
 
 def test_gitignored_only_commits_ahead_zero_plane_unknown_not_not_landed(

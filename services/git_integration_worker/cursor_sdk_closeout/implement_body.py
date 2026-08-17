@@ -55,6 +55,7 @@ from services.git_integration_worker.cursor_sdk_deliverables import (
 )
 from services.git_integration_worker.cursor_sdk_git_head import (
     observed_lane_git_refs,
+    with_head_sha_fallback,
 )
 from services.git_integration_worker.cursor_sdk_manifest import (
     compact_manifest_for_body,
@@ -309,6 +310,16 @@ def build_implement_closeout_body(
             code_probe = {"evidence_uris": {"git_refs": [head.strip()]}}
     if closeout_head:
         code_probe = {**code_probe, "closeout_head": closeout_head}
+    evidence_git_refs = with_head_sha_fallback(
+        lane_git_refs
+        or (
+            code_probe.get("evidence_uris", {}).get("git_refs", [])
+            if isinstance(code_probe.get("evidence_uris"), dict)
+            else []
+        ),
+        head_sha=head_sha,
+        commits_ahead=commits_ahead,
+    )
     propagation_rows = resolve_propagation_for_finalize(
         residue_paths=land_paths,
         markdown_sources=markdown_sources,
@@ -339,12 +350,7 @@ def build_implement_closeout_body(
                 bus_threads=[thread_id],
                 dispatch_ids=[dispatch_id],
                 cortex_assertions=cortex_assertions,
-                git_refs=lane_git_refs
-                or (
-                    code_probe.get("evidence_uris", {}).get("git_refs", [])
-                    if isinstance(code_probe.get("evidence_uris"), dict)
-                    else []
-                ),
+                git_refs=evidence_git_refs,
             ),
             propagation_residue=propagation_residue,
             propagation=list(propagation_rows),
