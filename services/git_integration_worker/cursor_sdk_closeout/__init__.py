@@ -19,7 +19,7 @@ from .degraded_reasons import (
     empty_output_degraded_reason,
     merge_degraded_reasons,
 )
-from .deliverable_probe import verify_deliverables
+from .deliverable_probe import _files_expected_for_pinning, verify_deliverables
 from .delivery_prep import prepare_closeout_delivery, prepare_closeout_delivery_async
 from .implement_body import build_implement_closeout_body
 from .lint_verification import run_giw_subtree_f821_lint, run_touched_files_lint
@@ -48,6 +48,7 @@ __all__ = [
     "run_touched_files_lint",
     "run_giw_subtree_f821_lint",
     "verify_deliverables",
+    "_files_expected_for_pinning",
     "count_tool_calls",
     "read_post_wait_snapshot",
     "stream_only_effect_deviations",

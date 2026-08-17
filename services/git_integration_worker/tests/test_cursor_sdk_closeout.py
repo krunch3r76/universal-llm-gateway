@@ -538,12 +538,12 @@ def test_prepare_closeout_delivery_demotes_compound_pytest_and_wires_annotator(
     import inspect
 
     from services.git_integration_worker import cursor_sdk_closeout as closeout_mod
+    from services.git_integration_worker.cursor_sdk_closeout.delivery_assembly import (
+        verification_harvest,
+    )
     from services.git_integration_worker.cursor_sdk_closeout.delivery_assembly.orchestration import (
         _assemble_closeout_delivery,
         _assemble_closeout_delivery_async,
-    )
-    from services.git_integration_worker.cursor_sdk_closeout.delivery_assembly import (
-        verification_harvest,
     )
     from services.git_integration_worker.cursor_sdk_stream_capture import (
         ToolCallObservation,
@@ -1505,7 +1505,6 @@ async def test_pin_reason_promoted_when_no_run_health_reason(
 ) -> None:
     """Pre-fix promotion path: a failed cortex pin becomes the primary reason only
     when no run-health reason precedes it (documents the 24299 misdiagnosis)."""
-    from services.git_integration_worker import cursor_sdk_closeout as closeout_mod
     from services.git_integration_worker.cursor_sdk_closeout import (
         prepare_closeout_delivery_async,
     )
@@ -1542,7 +1541,6 @@ async def test_empty_assistant_turn_outranks_pin_reason(
     """Fix (friction 24299): the hollow-no-op reason computed upstream survives the
     ``degraded_reason or pin_reason`` promotion, so operators see the model no-op —
     not the secondary pin-write miss."""
-    from services.git_integration_worker import cursor_sdk_closeout as closeout_mod
     from services.git_integration_worker.cursor_sdk_closeout import (
         prepare_closeout_delivery_async,
     )
