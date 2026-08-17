@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Run skill-catalog parity check only when staged paths touch census/catalog/SOT."""
+"""Optional skill-catalog parity check when staged paths touch census/catalog/SOT.
+
+Not invoked from pre-commit (operator 2026-08-16). Lane-B worktrees lack
+gitignored life_local and untracked personal SOTs, so this gate failed
+unrelated skill commits and pushed workers onto the shared checkout.
+quality_gate still calls ``validate_skill_catalog.py`` directly.
+"""
 
 from __future__ import annotations
 

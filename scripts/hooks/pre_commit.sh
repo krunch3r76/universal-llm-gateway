@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Catalog + agent-surface pre-commit gate — installed via install-hooks.sh.
+# Agent-surface pre-commit gate — installed via install-hooks.sh.
 #
 # Automatic trigger (AC6): runs on every ``git commit`` attempt without
 # ``--no-verify``. OpenAPI fleet gate delegates to scripts/agent-surface-check.
@@ -20,7 +20,11 @@ if [[ -z "$PYTHON" || ! -x "$PYTHON" ]]; then
 fi
 
 "$PYTHON" scripts/hooks/validate_catalog.py --staged || exit 1
-"$PYTHON" scripts/hooks/validate_skill_catalog_staged.py || exit 1
+# Skill-catalog SOT parity is not a pre-commit gate (operator 2026-08-16).
+# validate_skill_catalog.py requires gitignored life_local .claude/skills and
+# untracked personal .cursor/skills that exist only on the main checkout;
+# Lane-B worktrees then fail any skill-touching commit (assertion 29661) and
+# workers copy onto the shared tree. quality_gate still runs the validator.
 "$PYTHON" -m scripts.gen_event_catalog sync --staged || exit 1
 git add docs/event-contracts.md 2>/dev/null || true
 "$PYTHON" -m scripts.gen_event_catalog check --staged || exit 1
