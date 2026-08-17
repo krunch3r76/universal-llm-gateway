@@ -7,10 +7,17 @@ from typing import get_args
 
 import pytest
 
-from implement_admission.closeout_models import ExitCodeRegister, ImplementCloseout
+from implement_admission.closeout_models import (
+    EffectsManifest,
+    ExitCodeRegister,
+    ImplementCloseout,
+)
 from implement_admission.deliverable_verification import (
     GATE_D_PREFIX,
+    build_gate_d_verification,
     evaluate_deliverable_verification,
+    gate_d_passed,
+    is_conductor_self_gate_suspect,
 )
 from implement_admission.spec import (
     Acceptance,
@@ -59,6 +66,34 @@ def _closeout() -> ImplementCloseout:
         status=CloseoutStatus.COMPLETE,
         summary="x",
         source_ref="todo:verify-me",
+    )
+
+
+def _conductor_shape_closeout(
+    *,
+    contract: str = "light-bounded",
+    gate_d_failed: bool = True,
+    propagation_residue: list[str] | None = None,
+) -> ImplementCloseout:
+    verification = [
+        build_gate_d_verification(
+            reason="no_expected_files_touched" if gate_d_failed else "passed",
+            passed=not gate_d_failed,
+        )
+    ]
+    return ImplementCloseout(
+        status=CloseoutStatus.PARTIAL,
+        summary="conductor closeout",
+        source_ref="todo:verify-me",
+        effects_manifest=EffectsManifest(
+            dispatch_id="d-7419",
+            thread_id="t-7419",
+            contract=contract,
+        ),
+        propagation=[],
+        propagation_residue=propagation_residue or [],
+        adapter_results=[],
+        verification=verification,
     )
 
 
@@ -279,3 +314,38 @@ def test_unobserved_register_packs_without_absorbing_unattributed() -> None:
     assert row.exit_code is None
     assert row.wrapper_exit_code is None
     assert row.basis == "shell_tool_result.exitCode:unobserved"
+
+
+@pytest.mark.offline
+def test_conductor_self_gate_suspect_true_for_7419_shape() -> None:
+    closeout = _conductor_shape_closeout(gate_d_failed=True)
+    assert gate_d_passed(closeout) is False
+    assert is_conductor_self_gate_suspect(closeout, g_rows_open=True) is True
+
+
+@pytest.mark.offline
+def test_conductor_self_gate_suspect_false_when_contract_not_light_bounded() -> None:
+    closeout = _conductor_shape_closeout(contract="implement", gate_d_failed=True)
+    assert is_conductor_self_gate_suspect(closeout, g_rows_open=True) is False
+
+
+@pytest.mark.offline
+def test_conductor_self_gate_suspect_false_when_no_open_g_rows() -> None:
+    closeout = _conductor_shape_closeout(gate_d_failed=True)
+    assert is_conductor_self_gate_suspect(closeout, g_rows_open=False) is False
+
+
+@pytest.mark.offline
+def test_conductor_self_gate_suspect_false_when_propagation_residue_present() -> None:
+    closeout = _conductor_shape_closeout(
+        gate_d_failed=True,
+        propagation_residue=["manage sync_restart mcp deferred"],
+    )
+    assert is_conductor_self_gate_suspect(closeout, g_rows_open=True) is False
+
+
+@pytest.mark.offline
+def test_conductor_self_gate_suspect_false_when_gate_d_passed() -> None:
+    closeout = _conductor_shape_closeout(gate_d_failed=False)
+    assert gate_d_passed(closeout) is True
+    assert is_conductor_self_gate_suspect(closeout, g_rows_open=True) is False

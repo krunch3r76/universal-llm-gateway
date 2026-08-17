@@ -102,6 +102,35 @@ def gate_d_passed(closeout: ImplementCloseout) -> bool:
     return all(v.exit_code == 0 for v in entries)
 
 
+CONDUCTOR_SELF_GATE_SUSPECT = "conductor_self_gate_suspect"
+
+
+# TODO(lead): wire into GIW closeout post-modularize-split — the caller site needs
+# g_rows_open from scoreboard state, which this leaf module intentionally does not
+# have access to. See tmp/reviews/conductor-authorization-gap-implement.md for the
+# wiring plan once cursor_sdk_closeout.py's package split lands.
+def is_conductor_self_gate_suspect(
+    closeout: ImplementCloseout, *, g_rows_open: bool
+) -> bool:
+    """Shape heuristic for the verified-legitimate-but-self-refused closeout
+    (incident 7419): a conductor-contract closeout failed Gate D with zero nests
+    while open G-rows remain. This is a redrive trigger, not a verdict — the same
+    shape is produced by a conductor legitimately blocked by a degraded
+    environment (e.g. sdk_git_probe_absent). Consumers must treat it as
+    escalate-and-redrive, never as a confirmed refusal finding.
+    """
+    contract = (
+        closeout.effects_manifest.contract if closeout.effects_manifest else None
+    )
+    if contract != "light-bounded":
+        return False
+    if not g_rows_open:
+        return False
+    if closeout.propagation or closeout.propagation_residue or closeout.adapter_results:
+        return False
+    return not gate_d_passed(closeout)
+
+
 def build_gate_d_verification(
     *, reason: str, passed: bool, note: str | None = None
 ) -> Verification:
@@ -325,3 +354,14 @@ def apply_closeout_gate_d(
             "deviations": [*closeout.deviations, deviation],
         }
     )
+
+
+__all__ = [
+    "CONDUCTOR_SELF_GATE_SUSPECT",
+    "apply_closeout_gate_d",
+    "build_gate_d_verification",
+    "check_deliverable_verification",
+    "evaluate_deliverable_verification",
+    "gate_d_passed",
+    "is_conductor_self_gate_suspect",
+]

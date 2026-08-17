@@ -330,3 +330,4 @@ when the operator already bound the answers in chat.
 | Treat the mission's own `git_land` as a second approval gate | Admit is the standing merge ack; land on green + AC met (§ Run to completion) |
 | Escalate "ok to merge?" to the human mid-mission | Land it; escalate only genuinely operator-only acts |
 | Independent `team_dispatch` (no `nest_under`) for mechanical G-row landing work | `nest_under=<conductor dispatch_id>` + Composer `contract=implement` — independent dispatch is judgment/spec-only |
+| Verify the mission is genuine, then refuse to start it because the final step (merge) looks consequential (7419) | Verifying legitimacy is not a substitute for driving it — execute the current step, raise the merge concern in the closeout, reassess at the merge under standing authorization; reasoning-posture rule 6 (mirror violation) |
