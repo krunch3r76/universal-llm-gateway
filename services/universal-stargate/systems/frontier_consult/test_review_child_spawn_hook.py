@@ -413,6 +413,8 @@ async def test_openai_executor_review_child_uses_cursor_sdk_generate() -> None:
         resolved_model="openai/gpt-5.5",
         parent_dispatch_thread_id="thread:coord",
         dispatch_thread_id="thread:coord",
+        prompt_turn_number=12,
+        prompt_bind_mode="frozen_turn",
     )
     ctx = read_admission_context("exec-openai-parent")
     assert ctx is not None
@@ -424,9 +426,9 @@ async def test_openai_executor_review_child_uses_cursor_sdk_generate() -> None:
         AsyncMock(
             return_value=_ReviewPromptBuild(
                 prompt="review prompt",
-                prompt_bind_mode="explicit_inline",
-                prompt_turn_number=None,
-                latest_read_outcome="skipped",
+                prompt_bind_mode="frozen_turn",
+                prompt_turn_number=12,
+                latest_read_outcome="ok",
                 bound_prompt_class="caller_prompt",
                 bound_prompt_digest="abc:review prompt",
             )
@@ -449,6 +451,8 @@ async def test_openai_executor_review_child_uses_cursor_sdk_generate() -> None:
     assert body.model == "cursor/claude-opus-5"
     assert body.prompt == "review prompt"
     assert body.auto_review_child is False
+    assert body.prompt_turn_number == 12
+    assert body.prompt_bind_mode == "frozen_turn"
     child_ctx = read_admission_context("child-cursor-opus")
     assert child_ctx is not None
     assert child_ctx.spawn_template_provenance == _SPAWN_PROVENANCE

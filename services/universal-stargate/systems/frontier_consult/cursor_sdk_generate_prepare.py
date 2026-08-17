@@ -187,6 +187,45 @@ async def prepare_cursor_sdk_generate(
     )
     coord_recipient = caller_agent or "dispatch"
 
+    has_explicit_prompt_source = packet_path is not None or (
+        prompt_bind_mode == "explicit_inline"
+    )
+    admit_target = (parent_dispatch_thread_id or "").strip()
+    prompt_source = (dispatch_thread_id or "").strip()
+    if admit_target and prompt_source:
+        from .cursor_sdk_admit_loop import (
+            classify_admit_pointer_loop,
+            loop_closure_refuse_error,
+        )
+        from .cursor_sdk_coord_notify import emit_loop_closure_admission
+
+        classification = classify_admit_pointer_loop(
+            admit_target_thread=admit_target,
+            prompt_source_thread=prompt_source,
+            prompt_bind_mode=prompt_bind_mode,
+            prompt_turn_number=prompt_turn_number,
+            has_explicit_prompt_source=has_explicit_prompt_source,
+        )
+        if classification.loop_closure:
+            emit_loop_closure_admission(
+                request_id=request_id,
+                execution_id=execution_id,
+                admit_target_thread=admit_target,
+                prompt_source_thread=prompt_source,
+                prompt_bind_mode=prompt_bind_mode,
+                prompt_turn_number=prompt_turn_number,
+                has_explicit_prompt_source=has_explicit_prompt_source,
+                refused=True,
+            )
+            raise loop_closure_refuse_error(
+                request_id=request_id,
+                classification=classification,
+                admit_target_thread=admit_target,
+                prompt_source_thread=prompt_source,
+                prompt_bind_mode=prompt_bind_mode,
+                prompt_turn_number=prompt_turn_number,
+            )
+
     emit_sdk_generate_requested(
         request_id=request_id,
         role=role,
@@ -282,9 +321,6 @@ async def prepare_cursor_sdk_generate(
             reused=False,
         )
 
-    has_explicit_prompt_source = packet_path is not None or (
-        prompt_bind_mode == "explicit_inline"
-    )
     await post_coord_admit_pointer(
         coord_thread_id=parent_dispatch_thread_id,
         worker_thread_id=thread_id,

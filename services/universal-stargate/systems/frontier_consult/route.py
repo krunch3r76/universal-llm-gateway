@@ -185,6 +185,8 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     lane: Literal["A", "B"] | None = None
     read_only: bool = False
     refuse_if_lease_held: bool = False
+    prompt_turn_number: int | None = None
+    prompt_bind_mode: str | None = None
     # CDP registry / mission tag (model=cdp/… only). Default ask when omitted;
     # operator-proxy|mission triggers skill-chip inject on the satellite.
     purpose: str | None = None

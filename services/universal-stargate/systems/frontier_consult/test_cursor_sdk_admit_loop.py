@@ -77,6 +77,47 @@ def test_row4_incident_seed_explicit_same_thread_loop() -> None:
     assert result.spawn_uses_latest_on_thread is True
 
 
+def test_dead_allowlist_branch_deleted_explicit_unpinned_not_legal() -> None:
+    """Former 4th is_allowlisted branch must not resurrect row-4 as silent."""
+    from .cursor_sdk_admit_loop import is_allowlisted_silent_legal
+
+    assert (
+        is_allowlisted_silent_legal(
+            admit_target_thread="7031",
+            prompt_source_thread="7031",
+            prompt_bind_mode="explicit_inline",
+            prompt_turn_number=None,
+            has_explicit_prompt_source=True,
+        )
+        is False
+    )
+
+
+def test_loop_closure_refuse_error_names_legal_rows() -> None:
+    from .cursor_sdk_admit_loop import LEGAL_ADMIT_SHAPES, loop_closure_refuse_error
+
+    classification = classify_admit_pointer_loop(
+        admit_target_thread="7031",
+        prompt_source_thread="7031",
+        prompt_bind_mode="latest",
+        prompt_turn_number=None,
+        has_explicit_prompt_source=False,
+    )
+    err = loop_closure_refuse_error(
+        request_id="req-b3",
+        classification=classification,
+        admit_target_thread="7031",
+        prompt_source_thread="7031",
+        prompt_bind_mode="latest",
+        prompt_turn_number=None,
+    )
+    assert err.status_code == 422
+    assert err.code == "admit_pointer.loop_closure"
+    assert err.details is not None
+    assert err.details["retryable"] is False
+    assert list(LEGAL_ADMIT_SHAPES) == err.details["data"]["legal_shapes"]
+
+
 def test_b3_would_refuse_counter_increments_via_module() -> None:
     assert admit_pointer_would_have_refused_total() == 0
     from .cursor_sdk_admit_loop import increment_admit_pointer_would_have_refused

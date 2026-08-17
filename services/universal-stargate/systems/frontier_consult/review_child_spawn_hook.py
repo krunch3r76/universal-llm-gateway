@@ -248,6 +248,8 @@ async def _dispatch_review_child(
     delivery_thread: str,
     prompt: str,
     reviewer: ReviewerSelection,
+    prompt_turn_number: int | None = None,
+    prompt_bind_mode: str | None = None,
 ) -> dict[str, Any]:
     """Admit one review child on the substrate matching ``reviewer.model``.
 
@@ -260,6 +262,14 @@ async def _dispatch_review_child(
 
     use_cursor_sdk = ModelId.parse(reviewer.model).backend_type == "cursor_sdk"
     if use_cursor_sdk:
+        if prompt_turn_number is None:
+            logger.warning(
+                "review_child spawn fail-closed: missing frozen_turn pin "
+                "thread=%s",
+                delivery_thread,
+            )
+            return {}
+        _ = prompt_bind_mode
         child_body: TeamDispatchGenerateBody | TeamDispatchToThreadBody = (
             TeamDispatchGenerateBody(
                 op=_GENERATE_OP,
@@ -271,6 +281,8 @@ async def _dispatch_review_child(
                 # Child must not cascade another review-child spawn.
                 auto_review_child=False,
                 spawn_review_provenance=_SPAWN_PROVENANCE,
+                prompt_turn_number=prompt_turn_number,
+                prompt_bind_mode="frozen_turn",
             )
         )
         result = await team_dispatch(child_body, Response())
@@ -354,6 +366,12 @@ async def spawn_generate_lane_review_child(
         delivery_thread=delivery_thread,
         prompt=build.prompt,
         reviewer=reviewer,
+        prompt_turn_number=build.prompt_turn_number,
+        prompt_bind_mode=(
+            "frozen_turn"
+            if build.prompt_turn_number is not None
+            else build.prompt_bind_mode
+        ),
     )
     child_execution_id = (
         str(result.get("execution_id"))

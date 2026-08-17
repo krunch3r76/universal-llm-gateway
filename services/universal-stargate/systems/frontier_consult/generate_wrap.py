@@ -329,10 +329,21 @@ async def dispatch_cursor_sdk_generate_route(
             reasoning_effort=getattr(body, "reasoning_effort", None),
             max_tool_turns=getattr(body, "max_tool_turns", None),
             prompt_turn_number=(
-                prompt_resolution.prompt_turn_number if prompt_resolution else None
+                getattr(body, "prompt_turn_number", None)
+                if getattr(body, "prompt_turn_number", None) is not None
+                else (
+                    prompt_resolution.prompt_turn_number
+                    if prompt_resolution
+                    else None
+                )
             ),
             prompt_bind_mode=(
-                prompt_resolution.prompt_bind_mode if prompt_resolution else None
+                getattr(body, "prompt_bind_mode", None)
+                or (
+                    prompt_resolution.prompt_bind_mode
+                    if prompt_resolution
+                    else None
+                )
             ),
             source_ref=getattr(body, "source_ref", None),
             dispatch_lane=getattr(body, "dispatch_lane", None),

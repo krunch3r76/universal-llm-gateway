@@ -833,8 +833,9 @@ def FrontierAdmitPointerLoopClosure(  # noqa: N802
     would_have_refused_total: int,
     reason: str,
     spawn_uses_latest_on_thread: bool,
+    refused: bool = False,
 ) -> Event:
-    """Transitional B.1 detector — joinable with review_child.prompt_bind (6655)."""
+    """B.3 admission refuse — joinable with review_child.prompt_bind (6655)."""
     return Event(
         signal="frontier.admit_pointer.loop_closure",
         payload={
@@ -851,6 +852,7 @@ def FrontierAdmitPointerLoopClosure(  # noqa: N802
             "would_have_refused_total": would_have_refused_total,
             "reason": reason,
             "spawn_uses_latest_on_thread": spawn_uses_latest_on_thread,
+            "refused": refused,
         },
         scope="node",
     )

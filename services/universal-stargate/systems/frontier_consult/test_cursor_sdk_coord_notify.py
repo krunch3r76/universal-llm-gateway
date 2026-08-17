@@ -85,10 +85,10 @@ async def test_coord_admit_non_implement_omits_todo_line(
 
 
 @pytest.mark.asyncio
-async def test_a6655_loop_closure_warns_but_still_posts(
+async def test_a6655_loop_closure_refuses_and_does_not_post(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """B.3 withheld — loop detector fires, admit still posts."""
+    """B.3 — loop detector fires, admit does not post."""
     post_turn = AsyncMock()
     published: list[str] = []
 
@@ -119,7 +119,7 @@ async def test_a6655_loop_closure_warns_but_still_posts(
         prompt_turn_number=None,
         has_explicit_prompt_source=False,
     )
-    post_turn.assert_awaited_once()
+    post_turn.assert_not_awaited()
     assert "frontier.admit_pointer.loop_closure" in published
     assert admit_pointer_would_have_refused_total() == 1
 

@@ -58,7 +58,9 @@ def _emit_loop_closure_signal(
     prompt_bind_mode: str | None,
     prompt_turn_number: int | None,
     has_explicit_prompt_source: bool,
-) -> None:
+    refused: bool = False,
+) -> bool:
+    """Emit loop_closure when classified. Returns True when loop_closure."""
     classification = classify_admit_pointer_loop(
         admit_target_thread=admit_target_thread,
         prompt_source_thread=prompt_source_thread,
@@ -67,14 +69,15 @@ def _emit_loop_closure_signal(
         has_explicit_prompt_source=has_explicit_prompt_source,
     )
     if not classification.loop_closure:
-        return
+        return False
     total = 0
     if classification.would_have_refused:
         total = increment_admit_pointer_would_have_refused()
     logger.warning(
-        "admit_pointer loop_closure (non-refusing, B.1): "
+        "admit_pointer loop_closure (B.3 refuse=%s): "
         "admit_target=%s prompt_source=%s mode=%s reason=%s "
         "would_have_refused=%s total=%s",
+        refused,
         admit_target_thread,
         prompt_source_thread,
         prompt_bind_mode,
@@ -97,7 +100,33 @@ def _emit_loop_closure_signal(
             would_have_refused_total=total,
             reason=classification.reason,
             spawn_uses_latest_on_thread=classification.spawn_uses_latest_on_thread,
+            refused=refused,
         )
+    )
+    return True
+
+
+def emit_loop_closure_admission(
+    *,
+    request_id: str | None,
+    execution_id: str | None,
+    admit_target_thread: str,
+    prompt_source_thread: str,
+    prompt_bind_mode: str | None,
+    prompt_turn_number: int | None,
+    has_explicit_prompt_source: bool,
+    refused: bool = False,
+) -> bool:
+    """Emit loop_closure from generate-prepare B.3 refuse, before handoff.created."""
+    return _emit_loop_closure_signal(
+        request_id=request_id,
+        execution_id=execution_id,
+        admit_target_thread=admit_target_thread,
+        prompt_source_thread=prompt_source_thread,
+        prompt_bind_mode=prompt_bind_mode,
+        prompt_turn_number=prompt_turn_number,
+        has_explicit_prompt_source=has_explicit_prompt_source,
+        refused=refused,
     )
 
 
@@ -148,7 +177,7 @@ async def post_coord_admit_pointer(
     if not coord_thread_id or coord_thread_id == worker_thread_id:
         return
     if prompt_source_thread:
-        _emit_loop_closure_signal(
+        loop = _emit_loop_closure_signal(
             request_id=request_id,
             execution_id=execution_id,
             admit_target_thread=coord_thread_id,
@@ -156,7 +185,10 @@ async def post_coord_admit_pointer(
             prompt_bind_mode=prompt_bind_mode,
             prompt_turn_number=prompt_turn_number,
             has_explicit_prompt_source=has_explicit_prompt_source,
+            refused=True,
         )
+        if loop:
+            return
     await _post_coord_turn(
         coord_thread_id=coord_thread_id,
         to_agent=to_agent,
