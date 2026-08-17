@@ -303,3 +303,19 @@ def test_mark_for_dispatch_skips_safe_to_delete(
     )
     assert result is None
     assert list_dispositions() == []
+
+
+def test_merged_arc_branch_survives_gc(source_repo: Path) -> None:
+    """Pass 1 must not vacuum arc/* heads that have merged to master."""
+    branch = "arc/hop-live"
+    _git("checkout", "-b", branch, cwd=source_repo)
+    (source_repo / "arc.txt").write_text("arc\n", encoding="utf-8")
+    _git("add", "arc.txt", cwd=source_repo)
+    _git("commit", "-m", "arc work", cwd=source_repo)
+    _git("checkout", "master", cwd=source_repo)
+    _git("merge", "--ff-only", branch, cwd=source_repo)
+
+    deleted = gc_merged_dispatch_branches(source_repo=source_repo)
+    listing = _git("branch", "--list", branch, cwd=source_repo).stdout
+    assert branch in listing
+    assert deleted == 0

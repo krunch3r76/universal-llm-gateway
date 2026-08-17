@@ -146,10 +146,14 @@ def test_s1b_prune_retains_branch_when_dirty(source_repo: Path, tmp_path: Path) 
     assert branch in _git("branch", "--list", branch, cwd=source_repo).stdout
 
 
-def test_s1b_reaper_clears_orphan_registry_row(
+def test_s1b_reaper_retains_standing_lane_after_terminal(
     source_repo: Path, tmp_path: Path
 ) -> None:
-    """Empty (merged-equivalent) lane trees are reaped; unmerged trees stay."""
+    """Registered empty lane is idle after terminal, not an orphan."""
+    from services.git_integration_worker.cursor_sdk_worktree_registry import (
+        lookup_lane_worktree,
+    )
+
     worktree_root = tmp_path / "worktrees"
     dispatch_id = "orphan-a"
     wt = mint_dispatch_worktree(
@@ -157,6 +161,7 @@ def test_s1b_reaper_clears_orphan_registry_row(
         worktree_root=worktree_root,
         dispatch_id=dispatch_id,
     )
+    branch = f"cursor-sdk/lane-{dispatch_id}"
     ledger = CursorDispatchLedger.instance()
     ledger.admit(
         req=_req(dispatch_id=dispatch_id),
@@ -181,8 +186,10 @@ def test_s1b_reaper_clears_orphan_registry_row(
         source_repo=source_repo,
         worktree_root=worktree_root,
     )
-    assert removed.reaped == 1
-    assert not wt.exists()
+    assert removed.reaped == 0
+    assert wt.is_dir()
+    assert branch in _git("branch", "--list", branch, cwd=source_repo).stdout
+    assert lookup_lane_worktree(thread_id=dispatch_id) is not None
 
 
 def test_s1b_route_wires_resolve_admit_binding() -> None:

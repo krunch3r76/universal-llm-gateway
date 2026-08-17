@@ -20,6 +20,10 @@ from services.git_integration_worker.cursor_sdk_lane_b_commit import (
     is_worktree_dirty,
     salvage_commit,
 )
+from services.git_integration_worker.cursor_sdk_worktree_gc import (
+    _delete_orphan_branch,
+    gc_merged_dispatch_branches,
+)
 from services.git_integration_worker.cursor_sdk_worktree_reconcile import (
     reconcile_unregistered_worktrees,
 )
@@ -32,12 +36,7 @@ from services.git_integration_worker.cursor_sdk_worktree_registry import (
 logger = get_logger(__name__)
 
 _GIT_TIMEOUT_S = 60.0
-_DISPATCH_BRANCH_PREFIX = "cursor-sdk/"
 _REAPABLE_STATUSES = frozenset({"completed", "failed", "cancelled"})
-# Merged-ancestry GC is a proof, not a prefix rule: any local branch whose
-# commits are already in master is residue regardless of who minted it. Only
-# the long-lived trunks are held back.
-_PROTECTED_BRANCHES = frozenset({"master", "main", "HEAD"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,8 +66,13 @@ class ReapSweepResult:
 
 
 def is_reapable_dispatch_status(status: str | None) -> bool:
-    """True when a dispatch row is terminal enough for orphan worktree reaping."""
-    return status is None or status in _REAPABLE_STATUSES
+    """True when a dispatch row is an explicit terminal token.
+
+    ``None`` means no live writer on a standing lane — idle, not orphan.
+    The registry status subquery only projects admitted/running, so a
+    registered row with NULL status must not enter the reap loop.
+    """
+    return status in _REAPABLE_STATUSES
 
 
 def prune_dispatch_worktree(
@@ -268,152 +272,6 @@ def _git_worktree_prune(*, source_repo: Path) -> bool:
             proc.stderr.strip(),
         )
         return False
-    return True
-
-
-def registered_branch_names() -> set[str]:
-    with _connect() as conn:
-        from services.git_integration_worker.cursor_sdk_worktree_registry import (
-            ensure_worktree_schema,
-        )
-
-        ensure_worktree_schema(conn)
-        rows = conn.execute(
-            "SELECT branch_name FROM cursor_sdk_lane_worktrees"
-        ).fetchall()
-    return {row["branch_name"] for row in rows}
-
-
-def gc_merged_dispatch_branches(*, source_repo: Path) -> int:
-    """Delete provably-landed orphan branches; every tip archived first (S6).
-
-    Two passes with different scopes. Merged-ancestry is a proof that holds for
-    any branch, so it runs against every unprotected local branch — that is what
-    finally retires non-``cursor-sdk/`` residue like ``wip/*`` and ``arc/*``. The
-    disposition and content-landed passes stay lane-scoped, since both read
-    metadata this service only writes for its own branches.
-    """
-    from services.git_integration_worker.cursor_sdk_lane_b_commit import (
-        list_cursor_sdk_branches,
-        orphan_branch_state,
-    )
-    from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
-        clear_disposition,
-        get_disposition,
-    )
-
-    repo = source_repo.resolve()
-    registered = registered_branch_names()
-    deleted = 0
-
-    merged_proc = subprocess.run(
-        ["git", "-C", str(repo), "branch", "--merged", "master"],
-        capture_output=True,
-        text=True,
-        timeout=_GIT_TIMEOUT_S,
-        check=False,
-    )
-    if merged_proc.returncode == 0:
-        from services.git_integration_worker.cursor_sdk_lane_b_commit import (
-            normalize_git_branch_list_name,
-        )
-
-        for line in merged_proc.stdout.splitlines():
-            name = normalize_git_branch_list_name(line)
-            if not name or name in _PROTECTED_BRANCHES:
-                continue
-            if name in registered:
-                continue
-            if _delete_orphan_branch(
-                repo=repo,
-                branch_name=name,
-                reason="ancestry_merged",
-                dispatch_id=None,
-            ):
-                clear_disposition(branch_name=name)
-                deleted += 1
-
-    for name in list_cursor_sdk_branches(repo):
-        if name in registered:
-            continue
-        disposition = get_disposition(branch_name=name)
-        if disposition is not None:
-            if _delete_orphan_branch(
-                repo=repo,
-                branch_name=name,
-                reason=disposition.reason,
-                dispatch_id=disposition.dispatch_id,
-                tip_sha=disposition.tip_sha,
-            ):
-                clear_disposition(branch_name=name)
-                deleted += 1
-            continue
-        state = orphan_branch_state(repo, branch_name=name)
-        if state.safe_to_delete:
-            reason = "content_landed" if state.content_landed else "mechanical_safe"
-            if _delete_orphan_branch(
-                repo=repo,
-                branch_name=name,
-                reason=reason,
-                dispatch_id=None,
-                tip_sha=state.head_sha,
-            ):
-                deleted += 1
-    return deleted
-
-
-def _delete_orphan_branch(
-    *,
-    repo: Path,
-    branch_name: str,
-    reason: str,
-    dispatch_id: str | None,
-    tip_sha: str | None = None,
-) -> bool:
-    """Archive then delete *branch_name*, emitting ``sdk.lane_b.reaped``.
-
-    Archiving is a precondition, not a courtesy: a tip we could not preserve is
-    a tip we do not delete, whatever the safety proof said.
-    """
-    from services.git_integration_worker.cursor_sdk_branch_archive import (
-        archive_branch,
-    )
-    from services.git_integration_worker.cursor_sdk_branch_debt import (
-        discharge_branch_debt,
-        get_branch_debt,
-    )
-
-    debt = get_branch_debt(branch_name=branch_name)
-    if debt is not None and debt.open:
-        logger.info(
-            "orphan branch delete skipped — open debt branch=%s dispatch_id=%s",
-            branch_name,
-            debt.dispatch_id,
-        )
-        return False
-
-    if archive_branch(repo=repo, branch_name=branch_name) is None:
-        logger.warning(
-            "orphan branch delete skipped — archive failed branch=%s", branch_name
-        )
-        return False
-    del_proc = subprocess.run(
-        ["git", "-C", str(repo), "branch", "-D", branch_name],
-        capture_output=True,
-        text=True,
-        timeout=_GIT_TIMEOUT_S,
-        check=False,
-    )
-    if del_proc.returncode != 0:
-        return False
-    discharge_branch_debt(branch_name=branch_name, verb="landed", note=reason)
-    emit_sdk_lane_b_reaped(
-        dispatch_id=dispatch_id or "",
-        branch_deleted=True,
-        branch=branch_name,
-        tip_sha=tip_sha,
-        reason=reason,
-    )
     return True
 
 

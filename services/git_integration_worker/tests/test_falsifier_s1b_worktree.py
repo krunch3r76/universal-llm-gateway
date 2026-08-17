@@ -132,18 +132,23 @@ def test_falsifier_f_a4_prune_on_terminal_and_reaper_path(
     ).pruned
     assert wt.is_dir()
 
+    from services.git_integration_worker.cursor_sdk_worktree_registry import (
+        unregister_lane_worktree,
+    )
+
     orphan_id = "fa4-orphan"
     orphan_wt = mint_dispatch_worktree(
         source_repo=source_repo,
         worktree_root=worktree_root,
         dispatch_id=orphan_id,
     )
+    unregister_lane_worktree(thread_id=orphan_id)
     assert orphan_wt.is_dir()
     sweep = reap_orphan_worktrees(
         source_repo=source_repo,
         worktree_root=worktree_root,
     )
-    assert sweep.reaped >= 1
+    assert sweep.worktrees_reconciled >= 1
     assert not orphan_wt.exists()
 
 
@@ -263,6 +268,7 @@ def test_falsifier_ac_s6_3_failed_and_cancelled_statuses_reapable() -> None:
     assert is_reapable_dispatch_status("cancelled")
     assert not is_reapable_dispatch_status("running")
     assert not is_reapable_dispatch_status("parked_waiting")
+    assert not is_reapable_dispatch_status(None)
 
 
 def test_falsifier_ac_s6_4_parked_waiting_parent_not_reaped(
@@ -397,7 +403,7 @@ def test_falsifier_ac_s6_5_hand_deleted_worktree_prunes_stale_metadata(
         source_repo=source_repo,
         worktree_root=worktree_root,
     )
-    assert sweep.reaped == 1
+    assert sweep.reaped == 0
     assert sweep.stale_metadata_pruned
     after = subprocess.run(
         ["git", "-C", str(source_repo), "worktree", "list", "--porcelain"],

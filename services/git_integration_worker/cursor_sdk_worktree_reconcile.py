@@ -7,9 +7,11 @@ see it. The registry is a record of what we minted; ``git worktree list`` is the
 ground truth of what exists, and reconciling to the latter is what closes the
 blind spot.
 
-Clean unregistered trees are archived and removed. Dirty ones are never touched:
-on a shared checkout an unattributable dirty tree is parallel WIP until proven
-otherwise, so it is surfaced as debt instead.
+Clean unregistered ``cursor-sdk/*`` (or detached ``lane-*``) trees are archived
+and removed. Dirty ones are never touched: on a shared checkout an
+unattributable dirty tree is parallel WIP until proven otherwise, so it is
+surfaced as debt instead. ``arc/*`` and other non-sdk trees under the shared
+worktree root are left alone.
 """
 
 from __future__ import annotations
@@ -115,7 +117,8 @@ def reconcile_unregistered_worktrees(
     from services.git_integration_worker.cursor_sdk_branch_archive import (
         archive_branch,
     )
-    from services.git_integration_worker.cursor_sdk_worktree_prune import (
+    from services.git_integration_worker.cursor_sdk_worktree_gc import (
+        is_lane_b_reconcile_target,
         registered_branch_names,
     )
 
@@ -129,6 +132,8 @@ def reconcile_unregistered_worktrees(
     surfaced = 0
     for entry in list_git_worktrees(source_repo=repo):
         if not entry.path.is_relative_to(root):
+            continue
+        if not is_lane_b_reconcile_target(branch=entry.branch, path=entry.path):
             continue
         resolved = str(entry.path)
         if resolved in active_paths or resolved in registered_paths:

@@ -304,6 +304,25 @@ def test_probe_reports_ref_missing_not_no_merge_base(repo: Path) -> None:
     assert "(no merge-base)" not in probe.describe()
 
 
+def test_checked_out_blocks_orphan_branch_delete(repo: Path, tmp_path: Path) -> None:
+    tip = _branch_with_change(
+        repo, branch="cursor-sdk/lane-7112", path="held.py", content="held = 1\n"
+    )
+    _land_on_master(repo, path="held.py", content="held = 1\n")
+    tree = tmp_path / "held-tree"
+    _git("worktree", "add", str(tree), "cursor-sdk/lane-7112", cwd=repo)
+
+    deleted = _delete_orphan_branch(
+        repo=repo,
+        branch_name="cursor-sdk/lane-7112",
+        reason="ancestry_merged",
+        dispatch_id="d-held",
+        tip_sha=tip,
+    )
+    assert not deleted
+    assert "cursor-sdk/lane-7112" in _branches(repo)
+
+
 def test_open_debt_blocks_orphan_branch_delete(repo: Path) -> None:
     tip = _branch_with_change(
         repo, branch="cursor-sdk/lane-7413", path="race.py", content="landed = 1\n"
@@ -560,6 +579,25 @@ def test_active_worktree_is_left_alone(repo: Path, tmp_path: Path) -> None:
     )
     assert (reconciled, surfaced) == (0, 0)
     assert tree.exists()
+
+
+def test_reconcile_leaves_arc_worktree_under_root(repo: Path, tmp_path: Path) -> None:
+    root = tmp_path / "worktrees"
+    root.mkdir()
+    _git("checkout", "-b", "arc/still-live", cwd=repo)
+    (repo / "arc.md").write_text("keep\n", encoding="utf-8")
+    _git("add", "arc.md", cwd=repo)
+    _git("commit", "-m", "arc", cwd=repo)
+    _git("checkout", "master", cwd=repo)
+    tree = root / "arc-still-live"
+    _git("worktree", "add", str(tree), "arc/still-live", cwd=repo)
+
+    reconciled, surfaced = reconcile_unregistered_worktrees(
+        source_repo=repo, worktree_root=root
+    )
+    assert (reconciled, surfaced) == (0, 0)
+    assert tree.exists()
+    assert "arc/still-live" in _branches(repo)
 
 
 def test_settle_open_debt_adds_land_required_tag(
