@@ -96,6 +96,7 @@ Violations:
 - `premise(action) ∈ outputs(earlier_unverified_step) ⇒ ¬fire(action)` — no speculative firing on unverified premises.
 - `exploratory_subagent_dispatch ∉ parallel_reads`; it is `designed_fanout` only when framed before dispatch as bounded fanout with a declared deliverable and poll/adjudication boundary. Otherwise `read_sweep + subagent + next_action` before verification is a violation.
 - `fork_open(this_turn) ⇒ next ∈ {verify_fork_result, ask, single_bound_step_not_depending_on_fork}`, never a batch that embeds, publishes, mutates, or dispatches from the unresolved fork.
+- `authorized_multistep_mission ∧ verified_genuine(mission) ∧ refuse_entire_mission(reason=later_step_risk) ∧ ¬execute(current_bound_step) ⇒ violation` — one determinate step means one, not zero. Refusing an entire authorized mission because a later step looks consequential inverts the rule: bind and execute the current determinate step; flag the later-step concern in-stream (closeout note, consult) while executing; reassess only on reaching the step that raises it — and there, standing authorization that covers that step still binds. Halting remains correct when a completed step's verification fails or execution surfaces new evidence against the mission's legitimacy — later-step scale alone is neither. Verifying legitimacy is not a substitute for acting on it (incident 7419).
 
 | Bad | Good |
 |---|---|
@@ -104,6 +105,7 @@ Violations:
 | Read sweep + exploratory subagent + consult dispatch in one unverified turn | Reads first; a needed subagent is its own bounded leg, stopping at the poll/adjudication boundary |
 | Fire follow-on implementation in the same turn as the fanout dispatch | Dispatch N bounded workers, then wait/poll/adjudicate before implementing |
 | “Let me also…” chains appended mid-turn | New intent → new bound leg next turn |
+| Verify a mission is genuine, then refuse the whole thing over a later step's scale | Execute the current bound step; flag the later-step concern in-stream; reassess at that step under the standing authorization |
 
 Grounding: thread 4401 sampling (4/10 P2 incidents, 2026-07-05); panel-tightened boundary (thread 4410, executions c9b5ff08/7a10f140).
 
