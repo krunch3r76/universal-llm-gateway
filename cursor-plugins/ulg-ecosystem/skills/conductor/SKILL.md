@@ -94,6 +94,13 @@ per-G-row one. Default posture once running:
   merge held for review (destructive scope, force-push, cross-repo blast
   radius), name that in the packet `<invariants>` — silence means rubber-
   stamped, not the other way around.
+- **Flagging is not a hold.** Judging a mission large, doctrine-touching, or
+  risky and wanting to "lay out the plan first" is not a named exception —
+  it is commentary. Nest Composer and drive every G-row to green; note the
+  concern on the CHECKPOINT while the work proceeds. Stopping before any
+  G-row starts — zero files touched, nothing nested — is the same violation
+  as skipping straight to a merge ask (refuse-and-close, incident 7419;
+  distinct from absorb, incident 7407, which hand-codes instead of nesting).
 
 ## When
 
@@ -176,6 +183,10 @@ Required in `<scope>` / `<invariants>`:
 - Incident/sibling lanes (cite ≠ convert)
 - Forbidden verbs (e.g. no `request` on a stood-down lane)
 - Judgment vs human rule (above)
+- **Run-to-completion restated** — state plainly that this admit already
+  authorizes landing the mission's own Lane-B branch on green; no
+  plan-review or merge-ack round trip is needed unless *this* packet names a
+  specific hold-merge exception in this same list
 - **Bound conductor model + effort** (or "lead picks at admit from tier table")
 
 Continuity sidecar during run: `cortex://notes/system/threads/{root}-conductor.md`
@@ -288,6 +299,25 @@ that mints another branch or falls onto master. Historical class: conductor abso
 Nested implement packets: omit `todo:` front-matter when the parent already holds that
 work-identity — repeating it 409s `CURSOR_SOURCE_REF_IN_FLIGHT`.
 
+### Refuse-and-close != caution — flag it, still execute
+
+**Failure class (7419, 2026-08-16 — friction 29694/29693):** a T1 conductor
+read the full mission (28 read-only tool calls, zero files touched) then
+closed `status: partial` / `work_outcome: checks_failed` because, in its own
+words, it wanted to "lay out the concrete plan and flag that merge step
+explicitly before doing anything, rather than just executing straight
+through." The packet named no hold-merge exception — § Run to completion
+already grants standing authorization for exactly that merge. The conductor
+invented an exception nobody named, and made zero progress while inventing
+it: it neither nested Composer nor touched the mechanical G-rows leading up
+to the flagged step.
+
+The seat-identity preamble now restates this at the exact point it exposes
+the conductor's own `dispatch_id` (`_CONDUCTOR_RUN_TO_COMPLETION_TEMPLATE` in
+`cursor_sdk_packet.py`) — the reminder is in-context at dispatch time, not
+only in this skill file. Further fixes fold under
+`task:conductor-self-nest-routing` — do not mint a parallel todo.
+
 ## Interactive entry
 
 Command `/conductor` (plugin): orient → ask establishing questions (incl. **model
@@ -329,4 +359,6 @@ when the operator already bound the answers in chat.
 | Conductor pauses after a G-row to ask "continue?" | Drive to completion in one commission; report via CHECKPOINT, don't wait for a reply |
 | Treat the mission's own `git_land` as a second approval gate | Admit is the standing merge ack; land on green + AC met (§ Run to completion) |
 | Escalate "ok to merge?" to the human mid-mission | Land it; escalate only genuinely operator-only acts |
+| Conductor judges the mission "too big" and stops before any G-row, unasked | Nest Composer, drive to green; only a **named** packet exception holds the merge — scale/blast-radius alone is never an implicit one |
+| Closes `status: partial`/`checks_failed` with zero files touched because it wanted to flag the plan first | Flag the concern on the CHECKPOINT while still driving — flagging is commentary, not a hold |
 | Independent `team_dispatch` (no `nest_under`) for mechanical G-row landing work | `nest_under=<conductor dispatch_id>` + Composer `contract=implement` — independent dispatch is judgment/spec-only |

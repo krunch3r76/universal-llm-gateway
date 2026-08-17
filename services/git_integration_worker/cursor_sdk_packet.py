@@ -81,6 +81,18 @@ _CONDUCTOR_SEAT_IDENTITY_TEMPLATE = (
     "that work-identity — repeating it 409s `CURSOR_SOURCE_REF_IN_FLIGHT`."
 )
 
+_CONDUCTOR_RUN_TO_COMPLETION_TEMPLATE = (
+    "CONDUCTOR RUN TO COMPLETION (mandatory): This admit (dispatch_id={dispatch_id}) "
+    "is standing authorization for the whole mission, including landing your own "
+    "verified Lane-B branch. Do NOT stop to lay out a plan, flag a merge step, or "
+    "wait for a continue/merge ack before executing -- judging the mission large, "
+    "doctrine-touching, or risky does not create an exception (agent_skill:conductor "
+    "Run to completion section). Nest Composer (`nest_under={dispatch_id}`) for every "
+    "mechanical G-row and drive to green now; only withhold the merge when this "
+    "packet's own <invariants> name a specific hold-merge exception -- silence means "
+    "land on green."
+)
+
 _LANE_B_BRANCH_CONTRACT_TEMPLATE = (
     "LANE-B BRANCH CONTRACT (mandatory): Your commits land on {branch}. That branch "
     "is yours to retire — a lane that walks away from it leaves an attributed debt "
@@ -198,7 +210,10 @@ def resolve_prompt_preamble(
     the conductor's own ``dispatch_id`` and both nesting paths (independent
     judgment dispatch vs ``nest_under`` for mechanical landing). Identified by
     ``packet_path`` or the mandatory ``Use the conductor skill`` packet line
-    (message-body ``COMMISSION_CONDUCTOR`` dispatches from cursor-auto).
+    (message-body ``COMMISSION_CONDUCTOR`` dispatches from cursor-auto). The same
+    gate also restates run-to-completion: the admit already authorizes driving
+    every G-row and landing on green without an interim plan/merge pause
+    (friction 29694/29693).
     """
     contract = (handoff_contract or inferred_contract or "consult").lower()
     if prompt_preamble:
@@ -228,6 +243,9 @@ def resolve_prompt_preamble(
     ):
         parts.append(
             _CONDUCTOR_SEAT_IDENTITY_TEMPLATE.format(dispatch_id=dispatch_id)
+        )
+        parts.append(
+            _CONDUCTOR_RUN_TO_COMPLETION_TEMPLATE.format(dispatch_id=dispatch_id)
         )
     if (
         contract not in _REASONING_POSTURE_SKIP_CONTRACTS

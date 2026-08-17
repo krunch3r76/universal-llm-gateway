@@ -189,3 +189,60 @@ def test_conductor_seat_identity_absent_on_message_body_without_conductor_marker
         existing_text="TYPE: DIRECTIVE\ncontract: investigate\nscope: repo\n",
     )
     assert "CONDUCTOR SEAT IDENTITY" not in text
+
+
+def test_conductor_run_to_completion_present_under_three_condition_gate() -> None:
+    dispatch_id = "conductor-dispatch-abc123"
+    gated = resolve_prompt_preamble(
+        handoff_contract="light-bounded",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        lane_branch="cursor-sdk/lane-7414",
+        dispatch_id=dispatch_id,
+        has_packet_path=True,
+    )
+    assert "CONDUCTOR RUN TO COMPLETION" in gated
+    assert "nest_under=" + dispatch_id in gated
+
+    assert "CONDUCTOR RUN TO COMPLETION" not in resolve_prompt_preamble(
+        handoff_contract="light-bounded",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        dispatch_id=dispatch_id,
+        has_packet_path=False,
+        existing_text="TYPE: DIRECTIVE\nscope: investigate only\n",
+    )
+    assert "CONDUCTOR RUN TO COMPLETION" not in resolve_prompt_preamble(
+        handoff_contract="light-bounded",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane=None,
+        dispatch_id=dispatch_id,
+        has_packet_path=True,
+    )
+    assert "CONDUCTOR RUN TO COMPLETION" not in resolve_prompt_preamble(
+        handoff_contract="implement",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        dispatch_id=dispatch_id,
+        has_packet_path=True,
+    )
+
+
+def test_conductor_run_to_completion_fires_on_message_body_marker() -> None:
+    dispatch_id = "auto-abc123def456"
+    text = resolve_prompt_preamble(
+        handoff_contract="light-bounded",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        lane_branch="cursor-sdk/lane-7420",
+        dispatch_id=dispatch_id,
+        has_packet_path=False,
+        existing_text=f"TYPE: DIRECTIVE\n{_CONDUCTOR_USE_LINE}\n",
+    )
+    assert "CONDUCTOR RUN TO COMPLETION" in text
+    assert "nest_under=" + dispatch_id in text
