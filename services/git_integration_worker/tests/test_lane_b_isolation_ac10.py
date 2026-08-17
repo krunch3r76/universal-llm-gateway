@@ -18,9 +18,11 @@ from services.git_integration_worker.config import WorkerConfig
 from services.git_integration_worker.cursor_sdk_capture_binding import CaptureBinding
 from services.git_integration_worker.cursor_sdk_closeout import (
     SdkRunOutcome,
-    _assemble_closeout_delivery,
     capture_wt_baseline_with_hashes,
     prepare_closeout_delivery,
+)
+from services.git_integration_worker.cursor_sdk_closeout.delivery_assembly.orchestration import (
+    _assemble_closeout_delivery,
 )
 from services.git_integration_worker.cursor_sdk_worktree import mint_dispatch_worktree
 

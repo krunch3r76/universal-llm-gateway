@@ -459,7 +459,7 @@ def test_oob_cortex_write_unobserved_partial_without_offgit_promotion(
     source_repo.mkdir()
     cortex_root.mkdir()
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_closeout.cortex_files_root",
+        "services.git_integration_worker.cursor_sdk_closeout.cortex_body_sources.cortex_files_root",
         lambda: cortex_root,
     )
     oob_rel = "notes/system/threads/source-capture.md"
