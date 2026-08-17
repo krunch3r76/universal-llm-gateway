@@ -179,7 +179,9 @@ libs/universal_transport/tmp/
 services/universal-stargate/systems/graphics/references/
 docker/docs/
 
-tasks/
+tasks/*
+!tasks/specs/
+!tasks/specs/**
 terminals/
 snapshots/
 

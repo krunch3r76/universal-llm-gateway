@@ -17,6 +17,7 @@ from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
 )
 from services.git_integration_worker.cursor_auto.hop_harvest_terminal import (
     build_harvest_failed_turn,
+    post_harvest_terminal_for_action,
 )
 from services.git_integration_worker.tests.commission_spy import commission_spy
 
@@ -130,6 +131,31 @@ async def test_commission_non_2xx_posts_failed_not_done(monkeypatch):
     assert posted["payload"]["reason"] == "continuity_hop_cdp_commission_failed"
 
 
+def test_harvest_failed_successor_seated_true_when_registration_present() -> None:
+    """AC1: revoked + watch registration_id ⇒ successor_seated is True."""
+    birth = "fce45372d33d49f6993959f18113f839"
+    reg = "4c82db64a1b2c3d4e5f6789012345678"
+    row = {
+        "successor_birth_id": birth,
+        "registration_id": reg,
+    }
+    result = post_harvest_terminal_for_action(
+        "revoked",
+        thread_id=_THREAD,
+        row=row,
+        payload={
+            "execution_id": _EXEC,
+            "error": "project-ask HTTP 429",
+            "stall_stage": "submit",
+        },
+        poster=lambda _t, _s, _b: None,
+    )
+    assert result is not None
+    payload = json.loads(result["body"])
+    assert payload["successor_birth_id"] == birth
+    assert payload["successor_seated"] is True
+
+
 def test_harvest_failed_turn_shape_quotes_status_failed() -> None:
     """AC3: failing-generate terminal subject/body are status:failed, not done."""
     subject, body = build_harvest_failed_turn(
@@ -146,6 +172,7 @@ def test_harvest_failed_turn_shape_quotes_status_failed() -> None:
     assert payload["reason"] == "continuity_hop_generate_harvest_failed"
     assert payload["execution_id"] == _EXEC
     assert payload["error"] == "project-ask HTTP 429"
+    # No registration_id on watch — successor_seated stays False (minted key only).
     assert payload["successor_seated"] is False
     assert payload["history_integrity"] == "append"
     assert "dispatched-and-relayed" not in body

@@ -48,6 +48,7 @@ def build_harvest_failed_turn(
     error: str | None,
     stall_stage: str | None = None,
     successor_birth_id: str | None = None,
+    successor_registration_id: str | None = None,
 ) -> tuple[str, str]:
     """Return ``(subject, body)`` for a generate-harvest failure terminal.
 
@@ -75,7 +76,8 @@ def build_harvest_failed_turn(
     birth = (successor_birth_id or "").strip()
     if birth:
         payload["successor_birth_id"] = birth
-        payload["successor_seated"] = False
+        reg = (successor_registration_id or "").strip()
+        payload["successor_seated"] = bool(reg)
     return subject, json.dumps(payload, indent=2)
 
 
@@ -131,6 +133,7 @@ def post_harvest_terminal_for_action(
         if isinstance(revoke, dict):
             exec_id = str(revoke.get("execution_id") or "").strip()
     birth = str(row.get("successor_birth_id") or "").strip() or None
+    registration = str(row.get("registration_id") or "").strip() or None
     if action == "revoked":
         subject, body = build_harvest_failed_turn(
             thread_id=thread_id,
@@ -138,6 +141,7 @@ def post_harvest_terminal_for_action(
             error=str(payload.get("error") or "") or None,
             stall_stage=str(payload.get("stall_stage") or "") or None,
             successor_birth_id=birth,
+            successor_registration_id=registration,
         )
     else:
         subject, body = build_harvest_ok_turn(
