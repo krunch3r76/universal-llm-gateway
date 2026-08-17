@@ -21,7 +21,7 @@ from unearned_self_assertion_auditor.report import CoatResult
 _WRITE_OP_FILES = (
     "services/git_integration_worker/cursor_sdk_observed_reconcile.py",
     "services/git_integration_worker/cursor_sdk_cortex_identity.py",
-    "services/git_integration_worker/cursor_sdk_manifest.py",
+    "services/git_integration_worker/cursor_sdk_manifest/surface_taxonomy.py",
 )
 _DISCLOSURE_HAND_LIST = (
     "services/mcp-server/tools/cursor_request.py",
