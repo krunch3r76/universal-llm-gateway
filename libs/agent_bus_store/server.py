@@ -96,8 +96,10 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     async def health() -> dict[str, Any]:
         """Liveness + code identity + publisher drop counters.
 
-        ``dropped_enqueue`` / ``dropped_send`` are always present. Zero means
-        no drop since this process started, not that losses cannot be seen.
+        ``dropped_enqueue`` / ``dropped_send`` / ``publisher_started_at`` are
+        always present. Zero means no drop since this process started, not
+        that losses cannot be seen. Pair counters with an ES query bounded to
+        ``publisher_started_at``; see event-debugging_ws.mdc discriminator.
         """
         from .events.publisher import snapshot_drop_counters
 

@@ -26,6 +26,8 @@ def test_health_exports_drop_counters(
     assert body["status"] == "ok"
     assert "pid" in body
     assert "code_version" in body
+    assert isinstance(body["publisher_started_at"], str)
+    assert "T" in body["publisher_started_at"]
 
 
 @pytest.mark.offline
@@ -33,4 +35,8 @@ def test_snapshot_drop_counters_always_present() -> None:
     publisher.dropped_enqueue = 0
     publisher.dropped_send = 0
     snap = publisher.snapshot_drop_counters()
-    assert snap == {"dropped_enqueue": 0, "dropped_send": 0}
+    assert snap["dropped_enqueue"] == 0
+    assert snap["dropped_send"] == 0
+    assert snap["publisher_started_at"] == publisher.publisher_started_at
+    assert isinstance(snap["publisher_started_at"], str)
+    assert "T" in snap["publisher_started_at"]

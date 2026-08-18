@@ -195,6 +195,11 @@ curl -sf --unix-socket "${AGENT_BUS_SOCK:-/tmp/universal-protocol/agent-bus.sock
 curl -sf --unix-socket "${EVENTS_INGEST_SOCK:-/tmp/universal-protocol/events.sock}" http://localhost/health 2>/dev/null || nc -U "${EVENTS_INGEST_SOCK:-/tmp/universal-protocol/events.sock}" < /dev/null && echo "ok"
 ```
 
+Agent-bus `/health` also carries `dropped_enqueue`, `dropped_send`, and
+`publisher_started_at` (process-local publisher-loss discriminator; reset on
+restart). Pairing procedure: `event-debugging_ws.mdc` § Agent-bus publisher
+drop discriminator.
+
 ## Pipeline Validation
 
 Before commit: `python scripts/validate-pipeline.py pipelines.local/`

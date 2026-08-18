@@ -10,7 +10,9 @@ Drop-oldest on a full queue and post-dequeue ``sendall`` loss each increment a
 process-local counter (``dropped_enqueue``, ``dropped_send``) and emit a
 warning that names the lost signal. Neither path requeues; ``emit()`` stays
 fire-and-forget. Counters reset with the process — they are a live discriminator,
-not an Event Service signal.
+not an Event Service signal. ``publisher_started_at`` is the epoch join key so
+an ES query can be bounded to the same process lifetime; zeros are silent on
+any window that predates that timestamp.
 """
 
 from __future__ import annotations
@@ -36,17 +38,22 @@ _SEND_TIMEOUT = 2.0
 
 dropped_enqueue = 0
 dropped_send = 0
+publisher_started_at = datetime.now(UTC).isoformat()
 
 
-def snapshot_drop_counters() -> dict[str, int]:
-    """Return process-local drop counters for ``GET /health``.
+def snapshot_drop_counters() -> dict[str, int | str]:
+    """Return process-local drop counters plus epoch for ``GET /health``.
 
-    Both keys are always present. Zero means no drop since this process
+    Counter keys are always present. Zero means no drop since this process
     started, not that losses are unobservable. Counters reset on restart.
+    ``publisher_started_at`` is this process epoch (ISO-8601 UTC at import).
+    Bound any paired Event Service query to ``timestamp >= publisher_started_at``;
+    a window that starts earlier is not covered by these counters.
     """
     return {
         "dropped_enqueue": dropped_enqueue,
         "dropped_send": dropped_send,
+        "publisher_started_at": publisher_started_at,
     }
 
 

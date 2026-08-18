@@ -151,6 +151,47 @@ See `docs/event-contracts.md` for:
 | Routing rejection | `observability(params={"sql": "SELECT * FROM events WHERE signal='federation.routing.rejected' ORDER BY seq DESC LIMIT 10"}, operation="raw_sql")` |
 | Recent failures | `observability(operation="recent-failures", params={"limit": 20})` |
 
+### Agent-bus publisher drop discriminator
+
+When `mcp.agentbus.dispatch.orphaned` (or any agent-bus lifecycle signal) is
+absent from Event Service while bus turns show the corresponding subject, do
+**not** treat ES-absent as "nothing was lost". Pair `/health` drop counters
+with an epoch-bounded ES query. Counters reset on restart; they are not ES
+rows. Do not add a publisher-drop ES signal.
+
+1. Read the live epoch (`pid`, `publisher_started_at`, `dropped_enqueue`,
+   `dropped_send`):
+
+```bash
+curl -sf --unix-socket "${AGENT_BUS_SOCK:-/tmp/universal-protocol/agent-bus.sock}" http://localhost/health
+```
+
+2. Bound the ES query to this process epoch. SQL is authority (`signal-events`
+   `since_ts` has dropped cutoffs):
+
+```sql
+SELECT COUNT(*) AS n, MIN(timestamp) AS min_ts, MAX(timestamp) AS max_ts
+FROM events
+WHERE signal = 'mcp.agentbus.dispatch.orphaned'
+  AND timestamp >= '<publisher_started_at>'
+```
+
+3. Read the pair:
+
+| Observation | Meaning |
+|---|---|
+| `dropped_* > 0` | Publisher lost events in this epoch. Independent of ES. |
+| `dropped_* = 0` AND query window ⊆ `[publisher_started_at, now]` | Not publisher-loss in this epoch. |
+| Investigation window starts before `publisher_started_at` | Counters do not cover the window. Zeros are silent, not "nothing lost". |
+| `pid` changed vs a prior reading | New epoch; previous counters are gone. |
+
+Specimen (2026-08-18, agent_bus pid 3503935, code_version `ff27ed04`):
+`dropped_send` was 0 at 14:45Z and 1 at 15:37:58Z. An ES-only posture at
+15:37 would not have seen that loss. Live `/health` at 15:44:07Z still
+showed `dropped_enqueue: 0, dropped_send: 1` on the same pid.
+
+Ruling: `cortex://notes/system/reviews/9470-publisher-drop-discriminator-ac1-ruling.md`.
+
 ## Pipeline Debugging
 
 ### CLI
