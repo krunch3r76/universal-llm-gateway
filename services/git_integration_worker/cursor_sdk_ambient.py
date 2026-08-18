@@ -49,8 +49,15 @@ def classify_ambient_cause(
     declared_unproved: bool = False,
     current_porcelain: dict[str, str] | None = None,
 ) -> AmbientRepoCause:
-    """Assign an ambient cause label for unattributed repo movement."""
-    if declared_unproved and path in declared_paths:
+    """Assign an ambient cause label for unattributed repo movement.
+
+    ``declared_unproved`` is caller-authoritative (G1): honor it even when the
+    path is absent from label-op ``declared_paths``, because no-label job
+    surface is files_expected ∪ observed rather than write/edit/delete.
+    ``declared_paths`` remains for callers that still pass the L5 census set.
+    """
+    _ = declared_paths
+    if declared_unproved:
         return "declared_unproved"
     repo_path = source_repo / path
     try:
@@ -95,6 +102,12 @@ def ambient_movement(
     declared_unproved: bool = False,
     current_porcelain: dict[str, str] | None = None,
 ) -> AmbientRepoMovement:
+    """Build an ambient movement row from L5 cause classification.
+
+    Callers pass ``declared_unproved`` when a residual could belong to this
+    dispatch but scoped-lift did not prove it; otherwise L5 labels concurrent
+    commit, edit, or vanished from admit baseline versus the closeout tree.
+    """
     return AmbientRepoMovement(
         path=path,
         cause=classify_ambient_cause(

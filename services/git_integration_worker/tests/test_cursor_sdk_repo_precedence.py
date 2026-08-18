@@ -19,8 +19,10 @@ from services.git_integration_worker.cursor_sdk_capture_policy import (
     DeviationDisposition,
     disposition_for_deviation,
 )
+from services.git_integration_worker.cursor_sdk_capture_status import ChangeSet
 from services.git_integration_worker.cursor_sdk_closeout import (
     SdkRunOutcome,
+    capture_wt_baseline,
     capture_wt_baseline_with_hashes,
     prepare_closeout_delivery,
 )
@@ -294,8 +296,6 @@ def test_l3_manifest_first_without_git_porcelain(tmp_path: Path) -> None:
     rel = "brand_new.py"
     _write(tmp_path, rel, "fresh\n")
     manifest = _manifest_with_write_ops(tmp_path, (rel,))
-    from services.git_integration_worker.cursor_sdk_capture_status import ChangeSet
-
     change_set, _extra, _div, ambient = resolve_repo_change_set(
         manifest=manifest,
         git_change_set=ChangeSet(created=(), modified=(), deleted=()),
@@ -342,3 +342,150 @@ def test_l5_ambient_token_is_census_only(tmp_path: Path) -> None:
         == DeviationDisposition.CENSUS_ONLY
     )
     assert payload.get("capture_status") != "partial" or payload["status"] != "partial"
+
+
+def _manifest_shell_observed_only(repo: Path, observed: str) -> EffectsManifest:
+    """Repo surface with shell + observed only — the no-label-ops fallthrough."""
+    return EffectsManifest(
+        dispatch_id="d-no-label",
+        thread_id="t-no-label",
+        capture_sources=["conversation"],
+        surfaces={
+            "repo": SurfaceSection(
+                surface="repo",
+                source="conversation",
+                entries=[
+                    EffectEntry(
+                        op="shell",
+                        target="rg pattern libs/",
+                        identity="rg pattern libs/",
+                    ),
+                    EffectEntry(
+                        op="observed",
+                        target=str(repo / observed),
+                        identity=observed,
+                    ),
+                ],
+            )
+        },
+        coverage={"repo": "partial"},
+    )
+
+
+def test_no_label_ops_dirty_concurrent_not_copied_from_git_changeset(
+    tmp_path: Path,
+) -> None:
+    """AC5: no-label + dirty-concurrent must not inherit git ChangeSet attribution."""
+    rel = "libs/web_chat_relay/claude_leg.py"
+    observed = "tmp/prompts/grep-target.md"
+    _init_git_repo(tmp_path)
+    _commit_all(tmp_path, (rel, observed))
+    _write(tmp_path, rel, "# admit dirty\n")
+    baseline = capture_wt_baseline_with_hashes(tmp_path)
+    assert baseline is not None
+    _write(tmp_path, rel, "# parallel WIP after admit\n")
+    porcelain = capture_wt_baseline(tmp_path) or {}
+    change_set, _extra, _div, ambient = resolve_repo_change_set(
+        manifest=_manifest_shell_observed_only(tmp_path, observed),
+        git_change_set=ChangeSet(created=(), modified=(rel,), deleted=()),
+        source_repo=tmp_path,
+        baseline=baseline,
+        files_expected=[observed],
+        current_porcelain=porcelain,
+        admit_head=baseline.get("admit_head")
+        if isinstance(baseline.get("admit_head"), str)
+        else None,
+        closeout_head=None,
+        dispatch_id="d-no-label-unit",
+    )
+    assert rel not in change_set.modified
+    assert rel not in change_set.created
+    assert rel not in change_set.deleted
+    assert any(
+        entry.path == rel and str(entry.cause).startswith("ambient:concurrent_")
+        for entry in ambient
+    )
+
+
+def test_no_label_ops_dirty_concurrent_absent_from_closeout_files_modified(
+    tmp_path: Path,
+) -> None:
+    """AC1: Lane-A shell/observed-only closeout does not claim admit-dirty WIP."""
+    rel = "libs/web_chat_relay/claude_leg.py"
+    observed = "tmp/prompts/grep-target.md"
+    _init_git_repo(tmp_path)
+    _commit_all(tmp_path, (rel, observed))
+    _write(tmp_path, rel, "# admit dirty\n")
+    baseline = capture_wt_baseline_with_hashes(tmp_path)
+    assert baseline is not None
+    _write(tmp_path, rel, "# parallel WIP after admit\n")
+    delivery = prepare_closeout_delivery(
+        source_repo=tmp_path,
+        dispatch_id="d-no-label-closeout",
+        outcome=_outcome(_manifest_shell_observed_only(tmp_path, observed)),
+        degraded_reason=None,
+        thread_id="t-no-label-closeout",
+        work_item_ref="todo:closeout-no-label-ops-attribution",
+        baseline=baseline,
+        packet_text=f"files_expected:\n- {observed}\n",
+    )
+    payload = json.loads(delivery.body)
+    assert rel not in payload.get("files_modified", [])
+    assert rel not in payload.get("files_created", [])
+    assert rel not in (payload.get("effects") or [])
+    ambient = payload.get("files_ambient_repo_movement") or []
+    assert any(
+        entry["path"] == rel and str(entry["cause"]).startswith("ambient:concurrent_")
+        for entry in ambient
+    )
+
+
+def test_no_label_ops_job_surface_shell_write_still_lifts(tmp_path: Path) -> None:
+    """AC2: shell write of a job-surface path still lands in files_modified."""
+    rel = "services/scoped_shell.py"
+    _init_git_repo(tmp_path)
+    _commit_all(tmp_path, (rel,))
+    baseline = capture_wt_baseline_with_hashes(tmp_path)
+    assert baseline is not None
+    _write(tmp_path, rel, "# shell wrote this\n")
+    delivery = prepare_closeout_delivery(
+        source_repo=tmp_path,
+        dispatch_id="d-no-label-lift",
+        outcome=_outcome(_manifest_with_shell(tmp_path)),
+        degraded_reason=None,
+        thread_id="t-no-label-lift",
+        work_item_ref="todo:closeout-no-label-ops-attribution",
+        baseline=baseline,
+        packet_text=(
+            "<scope>\nFiles expected:\n"
+            f"- `{rel}`\n"
+            "</scope>\n"
+        ),
+    )
+    payload = json.loads(delivery.body)
+    assert rel in payload["files_modified"] or rel in payload["files_created"]
+
+
+def test_no_label_ops_scoped_lift_via_files_expected(tmp_path: Path) -> None:
+    """AC2 resolver: job_surface from files_expected lifts a shell write."""
+    rel = "services/scoped_shell.py"
+    _init_git_repo(tmp_path)
+    _commit_all(tmp_path, (rel,))
+    baseline = capture_wt_baseline_with_hashes(tmp_path)
+    assert baseline is not None
+    _write(tmp_path, rel, "# shell wrote this\n")
+    porcelain = capture_wt_baseline(tmp_path) or {}
+    change_set, _extra, _div, ambient = resolve_repo_change_set(
+        manifest=_manifest_with_shell(tmp_path),
+        git_change_set=ChangeSet(created=(), modified=(rel,), deleted=()),
+        source_repo=tmp_path,
+        baseline=baseline,
+        files_expected=[rel],
+        current_porcelain=porcelain,
+        admit_head=baseline.get("admit_head")
+        if isinstance(baseline.get("admit_head"), str)
+        else None,
+        dispatch_id="d-no-label-lift-unit",
+    )
+    assert rel in change_set.modified
+    assert not any(entry.path == rel for entry in ambient)

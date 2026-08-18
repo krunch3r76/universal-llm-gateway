@@ -1,8 +1,14 @@
-"""L3 manifest-first precedence + L4 scoped-lift for closeout files_* (6341 arc)."""
+"""L3 manifest-first precedence + L4 scoped-lift for closeout files_* (6341 arc).
+
+No-label-ops (no write/edit/delete on the repo surface) use the same L4/L5
+loop as label-ops: scoped-lift, lane-exclusive, then ambient. The resolver
+does not copy the git ChangeSet wholesale into attributed buckets.
+"""
 
 from __future__ import annotations
 
 import hashlib
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +23,6 @@ from services.git_integration_worker.cursor_sdk_git_head import (
     git_diff_paths_between,
     paths_exclusive_to_lane,
 )
-from services.git_integration_worker.cursor_sdk_polarity import _tracked_at_commit
 from services.git_integration_worker.cursor_sdk_manifest import (
     _path_is_tracked,
     git_manifest_label_divergence,
@@ -26,11 +31,10 @@ from services.git_integration_worker.cursor_sdk_manifest import (
 )
 from services.git_integration_worker.cursor_sdk_polarity import (
     ClaimedOp,
+    _tracked_at_commit,
     list_git_deleted_paths,
     prove_polarity,
 )
-
-_REPO_LABEL_OPS = frozenset({"write", "edit", "delete"})
 
 
 def _hash_worktree_file(source_repo: Path, rel_path: str) -> str | None:
@@ -59,11 +63,34 @@ def _append_bucket(
         bucket.append(path)
 
 
-def _manifest_declares_repo_label_ops(manifest: EffectsManifest | None) -> bool:
-    section = manifest.surfaces.get("repo") if manifest else None
-    if section is None:
+def _path_on_job_surface(path: str, job_surface: set[str]) -> bool:
+    return path in job_surface or any(path.endswith(f"/{job}") for job in job_surface)
+
+
+def _residual_declared_unproved(
+    path: str,
+    *,
+    has_shell: bool,
+    job_surface: set[str],
+    baseline_codes: dict[str, str],
+    porcelain: dict[str, str],
+) -> bool:
+    """G1 classifier: unproved-us vs concurrent ambient.
+
+    ``declared_unproved`` when a shell dispatch could own a residual that
+    scoped-lift did not prove. Admit-dirty paths off the job surface stay
+    concurrent even with ``has_shell`` (specimen class). Porcelain-clean
+    residuals stay concurrent_commit — passing unproved would short-circuit
+    that L5 label.
+    """
+    if not has_shell:
         return False
-    return any(entry.op in _REPO_LABEL_OPS for entry in section.entries)
+    admit_dirty = path in baseline_codes
+    if admit_dirty and not _path_on_job_surface(path, job_surface):
+        return False
+    if porcelain.get(path) is None:
+        return False
+    return True
 
 
 def _repo_has_shell_op(manifest: EffectsManifest | None) -> bool:
@@ -84,20 +111,40 @@ def _job_surface_paths(
     return surface
 
 
+def _blob_sha256_at_commit(source_repo: Path, commit: str, path: str) -> str | None:
+    """Content hash of ``path`` at ``commit`` — admit snapshot for clean-at-admit files."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(source_repo), "show", f"{commit}:{path}"],
+            capture_output=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return hashlib.sha256(proc.stdout).hexdigest()
+
+
 def _hash_delta_proven(
     path: str,
     *,
     source_repo: Path,
     baseline_hashes: dict[str, str],
     claimed: ClaimedOp,
+    admit_head: str | None = None,
 ) -> bool:
     if claimed == "deleted":
         return not (source_repo / path).exists()
     current_hash = _hash_worktree_file(source_repo, path)
+    if current_hash is None:
+        return False
     admit_hash = baseline_hashes.get(path)
+    if admit_hash is None and admit_head is not None:
+        admit_hash = _blob_sha256_at_commit(source_repo, admit_head, path)
     if admit_hash is None:
         return claimed == "created"
-    return current_hash is not None and current_hash != admit_hash
+    return current_hash != admit_hash
 
 
 def _scoped_lift_eligible(
@@ -114,13 +161,14 @@ def _scoped_lift_eligible(
     git_deleted_paths: frozenset[str],
     admit_head: str | None,
 ) -> bool:
-    if path not in job_surface and not any(path.endswith(f"/{job}") for job in job_surface):
+    if not _path_on_job_surface(path, job_surface):
         return False
     if not _hash_delta_proven(
         path,
         source_repo=source_repo,
         baseline_hashes=baseline_hashes,
         claimed=claimed,
+        admit_head=admit_head,
     ):
         return False
     if not has_shell:
@@ -185,125 +233,6 @@ def _lane_exclusive_paths(
     )
 
 
-def _resolve_legacy_git_authoritative(
-    *,
-    manifest: EffectsManifest | None,
-    git_change_set: ChangeSet,
-    manifest_cs: ChangeSet,
-    source_repo: Path | None,
-    baseline: dict[str, Any] | None,
-    baseline_codes: dict[str, str],
-    porcelain: dict[str, str],
-    admit_head: str | None,
-    closeout_head: str | None,
-    dispatch_id: str | None = None,
-) -> tuple[ChangeSet, tuple[str, ...], bool, list[AmbientRepoMovement]]:
-    """Undeclared repo label ops: keep polarity-filtered git buckets + ambient census."""
-    divergence = git_manifest_label_divergence(git_change_set, manifest_cs)
-    declared_paths = frozenset(
-        set(manifest_cs.created)
-        | set(manifest_cs.modified)
-        | set(manifest_cs.deleted)
-    )
-    git_diff_paths = (
-        git_diff_paths_between(
-            source_repo,
-            admit_head=admit_head,
-            closeout_head=closeout_head,
-        )
-        if source_repo is not None
-        else frozenset()
-    )
-    lane_exclusive = _lane_exclusive_paths(
-        source_repo,
-        dispatch_id=dispatch_id,
-        admit_head=admit_head,
-        closeout_head=closeout_head,
-    )
-    attributed = set(
-        [*git_change_set.created, *git_change_set.modified, *git_change_set.deleted]
-    )
-    lane_created: list[str] = []
-    lane_modified: list[str] = []
-    lane_deleted: list[str] = []
-    ambient: list[AmbientRepoMovement] = []
-    if source_repo is not None:
-
-        def _route_unattributed(path: str) -> None:
-            if path in lane_exclusive:
-                op = _infer_lane_path_op(
-                    path,
-                    source_repo=source_repo,
-                    baseline_codes=baseline_codes,
-                    admit_head=admit_head,
-                )
-                if op == "created":
-                    lane_created.append(path)
-                elif op == "modified":
-                    lane_modified.append(path)
-                else:
-                    lane_deleted.append(path)
-                attributed.add(path)
-                return
-            ambient.append(
-                ambient_movement(
-                    path,
-                    source_repo=source_repo,
-                    baseline=baseline,
-                    git_diff_paths=git_diff_paths,
-                    declared_paths=declared_paths,
-                    current_porcelain=porcelain,
-                )
-            )
-
-        for path, code in baseline_codes.items():
-            if path in attributed:
-                continue
-            if not code.startswith("?"):
-                continue
-            if not _path_is_tracked(source_repo, path):
-                continue
-            if porcelain.get(path) is not None:
-                continue
-            _route_unattributed(path)
-        for path in sorted(set(git_diff_paths) - attributed):
-            if any(entry.path == path for entry in ambient):
-                continue
-            if path in attributed:
-                continue
-            _route_unattributed(path)
-    manifest_paths = (
-        set(manifest_cs.created) | set(manifest_cs.modified) | set(manifest_cs.deleted)
-    )
-    git_paths = (
-        set(git_change_set.created)
-        | set(git_change_set.modified)
-        | set(git_change_set.deleted)
-        | set(lane_created)
-        | set(lane_modified)
-        | set(lane_deleted)
-    )
-    extra_untracked: list[str] = []
-    for path in sorted(manifest_paths - git_paths):
-        if source_repo is None:
-            continue
-        candidate = source_repo / path
-        try:
-            if not candidate.is_file():
-                continue
-        except OSError:
-            continue
-        if not _path_is_tracked(source_repo, path):
-            extra_untracked.append(path)
-            divergence = True
-    merged = ChangeSet(
-        created=tuple(dict.fromkeys([*git_change_set.created, *lane_created])),
-        modified=tuple(dict.fromkeys([*git_change_set.modified, *lane_modified])),
-        deleted=tuple(dict.fromkeys([*git_change_set.deleted, *lane_deleted])),
-    )
-    return merged, tuple(extra_untracked), divergence, ambient
-
-
 def resolve_repo_change_set(
     *,
     manifest: EffectsManifest | None,
@@ -317,7 +246,12 @@ def resolve_repo_change_set(
     closeout_head: str | None = None,
     dispatch_id: str | None = None,
 ) -> tuple[ChangeSet, tuple[str, ...], bool, list[AmbientRepoMovement]]:
-    """Manifest-first change set with L4 scoped lift and L5 ambient routing."""
+    """Manifest-first change set with L4 scoped lift and L5 ambient routing.
+
+    Label-ops and no-label-ops share this loop. Empty ``manifest_cs`` (no
+    write/edit/delete) still lifts job-surface ∩ hash-delta ∩ shell ∩ polarity
+    or lane-exclusive paths; remaining git deltas go ambient.
+    """
     manifest_cs, _, _ = repo_change_set_from_manifest(
         manifest,
         source_repo=source_repo,
@@ -331,20 +265,6 @@ def resolve_repo_change_set(
         raw_head = baseline.get("admit_head")
         if isinstance(raw_head, str) and raw_head.strip():
             admit_head = raw_head.strip()
-
-    if not _manifest_declares_repo_label_ops(manifest):
-        return _resolve_legacy_git_authoritative(
-            manifest=manifest,
-            git_change_set=git_change_set,
-            manifest_cs=manifest_cs,
-            source_repo=source_repo,
-            baseline=baseline,
-            baseline_codes=baseline_codes,
-            porcelain=porcelain,
-            admit_head=admit_head,
-            closeout_head=closeout_head,
-            dispatch_id=dispatch_id,
-        )
 
     divergence = git_manifest_label_divergence(git_change_set, manifest_cs)
     git_deleted = (
@@ -399,6 +319,14 @@ def resolve_repo_change_set(
             _append_bucket(buckets, lane_op, path)
             attributed.add(path)
             return
+        if not declared_unproved:
+            declared_unproved = _residual_declared_unproved(
+                path,
+                has_shell=has_shell,
+                job_surface=job_surface,
+                baseline_codes=baseline_codes,
+                porcelain=porcelain,
+            )
         ambient.append(
             ambient_movement(
                 path,
@@ -477,6 +405,14 @@ def resolve_repo_change_set(
             _attribute_lane_or_ambient(path)
 
     observed_paths = git_paths | set(git_diff_paths) | set(manifest_paths)
+    if source_repo is not None:
+        observed_paths |= {
+            path
+            for path, code in baseline_codes.items()
+            if code.startswith("?")
+            and _path_is_tracked(source_repo, path)
+            and porcelain.get(path) is None
+        }
     for path in sorted(observed_paths - attributed):
         if any(entry.path == path for entry in ambient):
             continue

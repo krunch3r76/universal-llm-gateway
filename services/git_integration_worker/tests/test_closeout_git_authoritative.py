@@ -166,8 +166,8 @@ def test_cursor_and_gitignored_never_in_files_buckets(tmp_path: Path) -> None:
     cursor_skill.parent.mkdir(parents=True, exist_ok=True)
     cursor_skill.write_text("# skill\n", encoding="utf-8")
     manifest = merge_repo_paths_into_manifest(
-        None,
-        [".ignored/secret.txt", ".cursor/skills/x/SKILL.md", "tracked.py"],
+        _manifest_with_write_ops(tmp_path, ("tracked.py",)),
+        [".ignored/secret.txt", ".cursor/skills/x/SKILL.md"],
         source_repo=tmp_path,
     )
     delivery = prepare_closeout_delivery(
@@ -294,7 +294,7 @@ def test_touched_test_file_i001_degrades_to_partial(tmp_path: Path) -> None:
     delivery = prepare_closeout_delivery(
         source_repo=tmp_path,
         dispatch_id="d-lint",
-        outcome=_outcome(),
+        outcome=_outcome(_manifest_with_write_ops(tmp_path, (test_rel,))),
         degraded_reason=None,
         thread_id="t-lint",
         work_item_ref="todo:22940-lint",
@@ -333,7 +333,10 @@ def test_ruff_unavailable_still_delivers_with_deviation(tmp_path: Path) -> None:
     assert payload["status"] in {CloseoutStatus.COMPLETE.value, CloseoutStatus.PARTIAL.value}
 
 
-def test_mode_only_chmod_reports_in_files_modified(tmp_path: Path) -> None:
+def test_mode_only_chmod_without_label_ops_is_not_files_modified(
+    tmp_path: Path,
+) -> None:
+    """No-label mode-only dirt is not hash-delta authorship — ambient, not files_*."""
     _init_git_repo(tmp_path)
     rel = "mode_only.py"
     _commit_all(tmp_path, (rel,))
@@ -351,7 +354,9 @@ def test_mode_only_chmod_reports_in_files_modified(tmp_path: Path) -> None:
         baseline=baseline,
     )
     payload = json.loads(delivery.body)
-    assert rel in payload["files_modified"]
+    assert rel not in payload.get("files_modified", [])
+    ambient = payload.get("files_ambient_repo_movement") or []
+    assert any(entry["path"] == rel for entry in ambient)
 
 
 def test_manifest_only_on_disk_file_surfaces_with_divergence(tmp_path: Path) -> None:
