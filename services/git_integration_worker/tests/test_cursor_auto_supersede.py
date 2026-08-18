@@ -197,7 +197,7 @@ def test_process_job_superseded_mid_poll_skips_closeout_relay(monkeypatch):
         AsyncMock(return_value={"ok": True, "dispatch_id": "auto-mid"}),
     )
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_auto.handler.poll_dispatch_terminal",
+        "services.git_integration_worker.cursor_auto.handler.poll_dispatch_terminal_with_liveness",
         AsyncMock(
             return_value={"ok": False, "terminal": False, "superseded": True}
         ),

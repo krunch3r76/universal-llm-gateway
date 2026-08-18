@@ -165,3 +165,56 @@ def build_seat_registration_stamp(
         ),
     ]
     return "\n".join(lines) + "\n"
+
+
+def build_seat_stand_down_body(
+    *,
+    superseded_registration_id: str,
+    new_registration_id: str,
+    execution_id: str,
+    parent_thread: str,
+    observed_at: str | None = None,
+) -> str:
+    """Author the push-receipt ``TYPE: SEAT_STAND_DOWN`` body pasted into a predecessor CSE.
+
+    Content-contract bind (charter ``hop-push-receipt`` G1): reuse the bare
+    ``TYPE: SEAT_STAND_DOWN`` token rather than mint a new ``HOP_SUCCEEDED``
+    type. It is already authorized end-to-end from the hop-watch
+    ``superseded_registration_id`` field
+    (``cdp_ask.cse_session_paste._watch_authorizes_predecessor_stand_down``),
+    already ACK'd by the predecessor via ``TYPE: SEAT_STAND_DOWN_ACK``
+    (consumed by ``hop_cadence_standdown.lane_standdown_ack_open``), and
+    already the literal ``prompt_text`` fixture in
+    ``cdp_ask.test_cse_session_paste``. Rejected: a new ``HOP_SUCCEEDED``
+    token — it would require a second ACK grammar and a second consumer for
+    no behavioral gain over the already-wired stand-down round trip.
+
+    The context lines below the ``TYPE:`` line are additive observability
+    (mirrors :func:`build_seat_registration_stamp`'s shape) — they do not
+    change ACK detection: ``cdp_ask.cse_session_ack`` classifies only the
+    first ``TYPE:`` line by regex.
+    """
+    observed = observed_at or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    lines = [
+        "TYPE: SEAT_STAND_DOWN",
+        f"superseded_registration_id: {superseded_registration_id}",
+        f"registration_id: {new_registration_id}",
+        f"execution_id: {execution_id}",
+        f"parent_thread: {parent_thread}",
+        f"observed_at: {observed}",
+        "",
+        "Hop cutover is confirmed: your successor is seated and live on this",
+        "lane (registration_id above). This is your push receipt — you do",
+        "not need to poll successor_seated or generate harvest to learn this.",
+        "Stand down and end this session.",
+        "",
+        "Post a SEAT_STAND_DOWN_ACK turn on this lane before you stop, so the",
+        "lane-hygiene gate (hop_cadence_standdown) observes the ack and",
+        "inhibits a premature re-hop. (Deliberately not spelled TYPE: here —",
+        "that exact adjacency would self-classify this push as its own ack.)",
+        (
+            "source: cursor-auto — pasted by hop_cadence_stall_reconcile on "
+            "reconcile_succession_confirmations succession confirm."
+        ),
+    ]
+    return "\n".join(lines) + "\n"

@@ -419,6 +419,106 @@ def emit_cadence_refuse(
     )
 
 
+@event_factory
+def GiwCursorAutoHopCadencePredecessorPushed(  # noqa: N802
+    thread_id: str,
+    registration_id: str,
+    execution_id: str,
+    new_registration_id: str,
+    idempotency_key: str,
+    ok: bool,
+    error: str | None = None,
+) -> Event:
+    """Stand-down paste attempt into the predecessor CSE (outcome in payload)."""
+    return Event(
+        signal="giw.cursor_auto.hop_cadence_predecessor_pushed",
+        payload={
+            "thread_id": thread_id,
+            "registration_id": registration_id,
+            "execution_id": execution_id,
+            "new_registration_id": new_registration_id,
+            "idempotency_key": idempotency_key,
+            "ok": ok,
+            "error": error,
+        },
+        scope="node",
+        role="observation",
+    )
+
+
+@event_factory
+def GiwCursorAutoHopCadenceReleaseWithoutReceipt(  # noqa: N802
+    execution_id: str,
+    reason: str,
+    thread_id: str = "",
+) -> Event:
+    """Succession release proceeded or deferred without a successful push receipt."""
+    return Event(
+        signal="giw.cursor_auto.hop_cadence_release_without_receipt",
+        payload={
+            "thread_id": thread_id,
+            "execution_id": execution_id,
+            "reason": reason,
+        },
+        scope="node",
+        role="observation",
+    )
+
+
+def emit_predecessor_pushed(
+    *,
+    thread_id: str,
+    registration_id: str,
+    execution_id: str,
+    new_registration_id: str,
+    idempotency_key: str,
+    ok: bool,
+    error: str | None = None,
+) -> None:
+    """Emit ``giw.cursor_auto.hop_cadence_predecessor_pushed`` (success or failure)."""
+    emit_frontier_event(
+        GiwCursorAutoHopCadencePredecessorPushed(
+            thread_id=thread_id,
+            registration_id=registration_id,
+            execution_id=execution_id,
+            new_registration_id=new_registration_id,
+            idempotency_key=idempotency_key,
+            ok=ok,
+            error=error,
+        )
+    )
+    log_fn = logger.info if ok else logger.warning
+    log_fn(
+        "hop_cadence predecessor_pushed thread=%s reg=%s ok=%s error=%s",
+        thread_id,
+        registration_id,
+        ok,
+        error,
+    )
+
+
+def emit_release_without_receipt(
+    *,
+    execution_id: str,
+    reason: str,
+    thread_id: str = "",
+) -> None:
+    """Emit ``giw.cursor_auto.hop_cadence_release_without_receipt``."""
+    emit_frontier_event(
+        GiwCursorAutoHopCadenceReleaseWithoutReceipt(
+            execution_id=execution_id,
+            reason=reason,
+            thread_id=thread_id,
+        )
+    )
+    logger.warning(
+        "hop_cadence release_without_receipt exec=%s reason=%s thread=%s",
+        execution_id,
+        reason,
+        thread_id,
+    )
+
+
 __all__ = [
     "emit_binding_indeterminate",
     "emit_cadence_refuse",
@@ -427,8 +527,10 @@ __all__ = [
     "emit_lease_lost",
     "emit_lease_reclaimed",
     "emit_overlap",
+    "emit_predecessor_pushed",
     "emit_registration_advanced",
     "emit_release_deferred",
+    "emit_release_without_receipt",
     "emit_revoke_breaker",
     "emit_seat_rebound",
     "emit_succession_confirmed",

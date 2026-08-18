@@ -18,6 +18,7 @@ from hop_handoff import (
     assess_standing_handoff,
     build_continuity_handoff_body,
     build_seat_registration_stamp,
+    build_seat_stand_down_body,
     consume_time_wake_protocol,
     is_successor_birth_id,
     mint_successor_birth_id,
@@ -157,6 +158,37 @@ def test_stamp_echoes_hop_body_birth_id_for_equality_match() -> None:
     assert parse_successor_birth_id(stamp) == parse_successor_birth_id(hop_body)
     assert "registration_id: reg-new" in stamp
     assert "chat_url: https://claude.ai/chat/example" in stamp
+
+
+def test_seat_stand_down_body_reuses_bare_type_token_with_context() -> None:
+    """G1 content-contract bind: bare TYPE: SEAT_STAND_DOWN, not a new token."""
+    body = build_seat_stand_down_body(
+        superseded_registration_id="reg-old",
+        new_registration_id="reg-new",
+        execution_id="exec-1",
+        parent_thread=_THREAD,
+        observed_at="2026-08-17T21:00:00Z",
+    )
+    assert body.startswith("TYPE: SEAT_STAND_DOWN\n")
+    assert "superseded_registration_id: reg-old" in body
+    assert "registration_id: reg-new" in body
+    assert "execution_id: exec-1" in body
+    assert f"parent_thread: {_THREAD}" in body
+    assert "observed_at: 2026-08-17T21:00:00Z" in body
+    assert "SEAT_STAND_DOWN_ACK" in body
+
+
+def test_seat_stand_down_body_still_classifies_as_bare_non_ack() -> None:
+    """Extra context lines must not change cse_session_ack TYPE-line classification."""
+    from cdp_ask.cse_session_ack import marker_type
+
+    body = build_seat_stand_down_body(
+        superseded_registration_id="reg-old",
+        new_registration_id="reg-new",
+        execution_id="exec-1",
+        parent_thread=_THREAD,
+    )
+    assert marker_type(body) is None
 
 
 def test_assess_standing_handoff_distinguishes_missing_stale_current(

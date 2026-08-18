@@ -82,7 +82,7 @@ from services.git_integration_worker.cursor_auto.nested_outcome import (
 from services.git_integration_worker.cursor_auto.nested_sdk import (
     CloseoutRelayContext,
     fetch_sdk_closeout_body,
-    poll_dispatch_terminal,
+    poll_dispatch_terminal_with_liveness,
     submit_nested_dispatch,
 )
 from services.git_integration_worker.cursor_auto.propagate_admission import (
@@ -165,9 +165,7 @@ async def process_job(
     # Concurrent enqueue task normally claims first; this is the claim-race
     # and defense-in-depth path when the serial worker holds the hop.
     if job.continuity_hop:
-        incumbent = queue.incumbent_for_thread(
-            job.thread_id, exclude_job_id=job.job_id
-        )
+        incumbent = queue.incumbent_for_thread(job.thread_id, exclude_job_id=job.job_id)
         return await complete_continuity_hop(
             job,
             queue=queue,
@@ -240,9 +238,7 @@ async def process_job(
     # nested cursor-sdk only — CDP picker depth must not be decided by the
     # resolved cursor-sdk model (is_roaming_tier predicate on the wrong subject).
     wire_effort = resolve_desired_effort(job.desired_effort, contract=contract)
-    effort = clamp_effort_to_model_card(
-        model["resolved_model_id"], wire_effort
-    )
+    effort = clamp_effort_to_model_card(model["resolved_model_id"], wire_effort)
     escalation = resolve_escalation(job.escalation)
     contract_info = resolve_contract_disposition(contract)
     gate_result = AdmitGateResult()
@@ -558,7 +554,7 @@ async def process_job(
             patch={"escalation_harvest": "open"},
         )
     progress = ProgressEmitter(job, client=client)
-    polled = await poll_dispatch_terminal(
+    polled = await poll_dispatch_terminal_with_liveness(
         thread_id=job.thread_id,
         dispatch_id=dispatch_id,
         superseded=lambda: queue.is_superseded(job.job_id),

@@ -107,6 +107,20 @@ class CdpAskClient:
             client=client,
         )
 
+    def paste(
+        self,
+        body: dict[str, Any],
+        *,
+        client: httpx.Client | None = None,
+    ) -> dict[str, Any]:
+        """POST ``/v1/cse-session/paste``."""
+        return self._request(
+            "POST",
+            "/v1/cse-session/paste",
+            json_body=body,
+            client=client,
+        )
+
     def _request(
         self,
         method: str,

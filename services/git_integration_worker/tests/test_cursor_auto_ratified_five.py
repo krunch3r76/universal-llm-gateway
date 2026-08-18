@@ -230,7 +230,7 @@ def test_process_job_confer_nested(monkeypatch, tmp_path):
         submit,
     )
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_auto.handler.poll_dispatch_terminal",
+        "services.git_integration_worker.cursor_auto.handler.poll_dispatch_terminal_with_liveness",
         polled,
     )
     monkeypatch.setattr(

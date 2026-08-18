@@ -64,7 +64,7 @@ def test_process_job_directive_answer_upgrades_to_nested(monkeypatch: pytest.Mon
         submit,
     )
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_auto.handler.poll_dispatch_terminal",
+        "services.git_integration_worker.cursor_auto.handler.poll_dispatch_terminal_with_liveness",
         poll,
     )
     monkeypatch.setattr(

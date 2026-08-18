@@ -10,6 +10,7 @@ from __future__ import annotations
 from hop_handoff.body import (
     build_continuity_handoff_body,
     build_seat_registration_stamp,
+    build_seat_stand_down_body,
     is_successor_birth_id,
     mint_successor_birth_id,
     parse_successor_birth_id,
@@ -31,6 +32,7 @@ __all__ = [
     "assess_standing_handoff",
     "build_continuity_handoff_body",
     "build_seat_registration_stamp",
+    "build_seat_stand_down_body",
     "consume_time_wake_protocol",
     "cse_age_threshold_s",
     "is_successor_birth_id",

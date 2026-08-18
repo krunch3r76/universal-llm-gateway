@@ -144,7 +144,7 @@ def test_process_job_admit_includes_briefing_first_episode(monkeypatch):
         AsyncMock(return_value={"ok": True, "dispatch_id": "auto-brief"}),
     )
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_auto.handler.poll_dispatch_terminal",
+        "services.git_integration_worker.cursor_auto.handler.poll_dispatch_terminal_with_liveness",
         poll,
     )
     monkeypatch.setattr(
@@ -226,7 +226,7 @@ def test_process_job_admit_omits_briefing_follow_on(monkeypatch):
         AsyncMock(return_value={"ok": True, "dispatch_id": "auto-brief"}),
     )
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_auto.handler.poll_dispatch_terminal",
+        "services.git_integration_worker.cursor_auto.handler.poll_dispatch_terminal_with_liveness",
         poll,
     )
     monkeypatch.setattr(
