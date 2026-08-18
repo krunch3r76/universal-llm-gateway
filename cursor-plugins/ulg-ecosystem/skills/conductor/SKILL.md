@@ -42,7 +42,7 @@ Not a model name. Not `mission-operator` (that skill is the formal
 | Seat | Duty |
 |---|---|
 | **Continuity lead** (IDE / `/conductor`) | Read this skill to author/admit; **require** it on the conductor dispatch (below) |
-| **Conductor** (cursor-sdk) | Load this skill on pickup — nest, tier, scoreboard, ¬ hand-code G5 |
+| **Conductor** (cursor-sdk) | Load this skill on pickup — nest, tier, scoreboard, ¬ hand-code any G-row whose remainder is files+tests after a pick |
 
 **Continuity-lead required-skill gate (BINDING):** before
 `team_dispatch(op=generate, seat=cursor-sdk, …)` for a conductor packet, the
@@ -151,7 +151,7 @@ and its `$2/$6` was a launch discount).
 |---|---|
 | Default every conductor to Opus high | T1 Sonnet 5 @ `max`; escalate with named trigger |
 | Premium model at default effort | Cheaper model at `max` — same ladder, lower rate |
-| Opus conductor that also hand-codes G5 | Nest Composer |
+| T1/T3 conductor that also hand-codes a mechanical remainder after a pick | Nest Composer |
 | Re-spend Opus to amend a densified packet | Composer / T1 amend |
 | Ignore `sdk_cost_risk` warning | Downgrade model or split bind/compose |
 | Grok on a conductor seat | Recon/breadth only |
@@ -162,7 +162,7 @@ and its `$2/$6` was a launch discount).
 
 | Seat | Does |
 |---|---|
-| **Conductor** (tier from table, `light-bounded`) | Orient, rank, update scoreboard/CHECKPOINT, nest legs, adjudicate closeouts |
+| **Conductor** (tier from table, `light-bounded`) | Orient, rank, update scoreboard/CHECKPOINT, nest legs, adjudicate closeouts. Bind the token/locus; ¬ implement. `light-bounded` / `owner: cursor-sdk` ⇏ conductor writes files+tests |
 | Nested **investigate** | Forensic / AC bind — pick tier by judgment density |
 | Nested **Composer** `contract=implement` | Mechanical G-row after densify; `nest_under` when lease held |
 | Independent binder | Ladder step-2 when conductor unsure (weight/family) — ¬ self-ratify |
@@ -188,6 +188,7 @@ Required in `<scope>` / `<invariants>`:
   plan-review or merge-ack round trip is needed unless *this* packet names a
   specific hold-merge exception in this same list
 - **Bound conductor model + effort** (or "lead picks at admit from tier table")
+- **G-row contract honesty** — do not mark a G-row light-bounded-direct / `owner: cursor-sdk` when `files_expected` includes production code+tests. Conductor binds; Composer implements.
 
 Continuity sidecar during run: `cortex://notes/system/threads/{root}-conductor.md`
 (G-row table, nested `execution_id`s, `NEXT_ADMIT`, judgment calls) — same shape
@@ -333,7 +334,7 @@ when the operator already bound the answers in chat.
 | `mission-operator` | Formal operator_proxy turn schema — different lane kind |
 | `checkpoint-discipline` | Root CHECKPOINT tip hygiene |
 | `handoff-packet-authoring` | Six-block authoring |
-| `bind-then-compose-dispatch` | G5 mechanical nest |
+| `bind-then-compose-dispatch` | Mechanical nest after a pick (any G-row) |
 | `judgment-escalation-ladder` | Unsure → binder, not human |
 | `git-posture` | Lane-B branch land = merge/`git_land`; ¬ path-copy onto master. Conductor admit = standing "operator directs a merge" for its own branch (§ Run to completion) — ¬ a second gate |
 | `lean-context-dispatch-first` | Tier ladder + Opus inform-then-proceed |
@@ -347,7 +348,7 @@ when the operator already bound the answers in chat.
 | Rely on `team_dispatch(skills=["conductor"])` alone for cursor-sdk | Packet Use-line — `skills=` is not mounted on cursor-sdk |
 | One flat `implement` "does the whole mission" | Conductor + nested contracts per G-row |
 | Page human "which remedy?" | Nest binder; `needs-attended` only for operator-only |
-| Conductor hand-codes G5 | Nest Composer |
+| Conductor hand-codes any G-row whose remainder is files+tests after a pick | Nest Composer |
 | nest_under sibling mission lease | Queue or wait; record holder |
 | Convert incident lane into root mid-flight | Cite incident; root stays continuity |
 | Wait forever on sibling merge without bind | Scoreboard cite-only vs explicit wait criterion |
