@@ -217,6 +217,16 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         a model runs. ``vision: mechanical — <reason>`` suffices for tool ops.
         See agent_skill:cdp-operator-proxy.
 
+        **Judgment marker (implement admit)**
+
+        ``contract=implement`` admits ``handoff=pure-mechanical`` unless the body
+        carries an admit-visible marker: line-start ``RULING`` / ``RULING AC``
+        (optional ``AC<n> — `` prefix, optional bullet / heading / bold).
+        Mid-sentence ``RULING`` does not raise. A judgment AC written any other
+        way skips the reasoning-posture preamble AND redirects a pinned reasoning
+        model onto Composer. Coverage on agent-bus:9470: 1 of 13 implement
+        bodies raise today. Convention SOT: agent_skill:directive-authoring-standard.
+
         **Codework lanes — IDE command wraps skill (BINDING)**
 
         Slash commands are attended-IDE wrappers only. cursor-sdk / cursor-auto /

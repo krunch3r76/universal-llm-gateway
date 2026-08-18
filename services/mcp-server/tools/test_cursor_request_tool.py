@@ -56,6 +56,8 @@ def test_cursor_request_registers_without_error() -> None:
     )
     assert "live@<sha>" in source
     assert "code_ref_satisfied" in source
+    assert "RULING" in source
+    assert "Judgment marker (implement admit)" in source
 
 
 def test_operator_request_forwards_lane_binding_fields() -> None:

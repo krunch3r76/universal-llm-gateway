@@ -28,7 +28,7 @@ duty, or use the life-seat substitute this body gives.
 Driving cursor via `agent_bus.request` from Cowork · authoring `TYPE: DIRECTIVE` ·
 dispositioning after `TYPE: CLOSEOUT`.
 
-Authoring the DIRECTIVE body: Use the `directive-authoring-standard` skill.
+Authoring the DIRECTIVE body: Use the `directive-authoring-standard` skill. A judgment fork on `contract: implement` needs a line-start `RULING` / `AC<n> — RULING` marker that admit can see — SOT is that skill's **Judgment marker** section. Prose that merely *is* a fork does not raise.
 
 **Not:** IDE cursor lead · charter-runner tick windows (Opus at path-sim R-admit/R-after
 only) · steady-state orchestration without the operator-proxy bus shape.
@@ -351,7 +351,7 @@ cadence) and enqueues `continuity_hop=true`. Cursor-auto then fires
 
 | Verb | Duty |
 |---|---|
-| DIRECTIVE | Fields + wire contract: skill `directive-authoring-standard` D1–D2 |
+| DIRECTIVE | Fields + wire contract: skill `directive-authoring-standard` D1–D2. Judgment AC on `contract: implement` ⇒ that skill's **Judgment marker** (`RULING` / `AC<n> — RULING`); unmarked implement admits mechanical + Composer redirect |
 | DISPOSITION | After CLOSEOUT: `verdict: ratify \| one_correction \| transport_blocked` · **residual-commission gate** before treating the episode as closed · on mission close fire the inv 22(d)(2) debrief `notify` |
 | CHECKPOINT | Cursor-owned at seams — ¬ operator-authored on tick roots |
 
@@ -556,6 +556,7 @@ Authoring enum + propagate template: skill `directive-authoring-standard` D2. Li
 | CDP Opus/Fable stuck → Cowork Ask the human | `cursor-auto` → `cursor/gpt-5.6-terra` or `cursor/claude-opus-... |
 | Parking prose "need human judgment" on a bind fork | 2b nested consult; human only for true operator-only gates |
 | Q4 / DISPOSITION: `recovery_path=human` / no unit ⇒ `OPERATOR_GATE` / wake him | Inv 39 — implement autonomous reload. Human recovery is a deficiency, not a gate |
+| Bolded "rule on this fork" AC with no `RULING` token (`contract: implement`) | `AC<n> — RULING:` then the fork. Turn 343 AC2 was a genuine withheld-lean judgment AC and still admitted `handoff=pure-mechanical` — skips reasoning-posture AND redirects a pinned reasoning model onto Composer. Coverage on agent-bus:9470: 1 of 13 implement bodies raise today. SOT: `directive-authoring-standard` **Judgment marker** |
 | "tmux 0:0 is the recipe, so the last step is his" | tmux `0:0` is a seat recipe when a seat can drive it. If none can, close the gap — ¬ wake |
 | Renumbering roadmap headings to express a new priority | IDs are permanent; re-rank the `## Rank order` line with a `wh... |
 | Closing a mission with "followup: run the tests" | Verification of your own claims is an in-mission row — insert ... |
