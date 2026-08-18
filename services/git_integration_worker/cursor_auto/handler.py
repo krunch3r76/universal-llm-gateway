@@ -32,6 +32,7 @@ from services.git_integration_worker.cursor_auto.directive import (
 )
 from services.git_integration_worker.cursor_auto.dispatch_bounds import (
     clamp_effort_to_model_card,
+    clamp_other_models_unattended_effort,
     redirect_mechanical_executor,
 )
 from services.git_integration_worker.cursor_auto.dispatch_progress import (
@@ -239,6 +240,10 @@ async def process_job(
     # resolved cursor-sdk model (is_roaming_tier predicate on the wrong subject).
     wire_effort = resolve_desired_effort(job.desired_effort, contract=contract)
     effort = clamp_effort_to_model_card(model["resolved_model_id"], wire_effort)
+    if not effective_require_attended(job, directive):
+        effort = clamp_other_models_unattended_effort(
+            model["resolved_model_id"], effort
+        )
     escalation = resolve_escalation(job.escalation)
     contract_info = resolve_contract_disposition(contract)
     gate_result = AdmitGateResult()

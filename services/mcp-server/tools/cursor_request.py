@@ -151,12 +151,12 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         autonomous cursor-sdk conductor instead of driving every step yourself via
         the DIRECTIVE loop, this is an ordinary request — **no dedicated contract
         token exists or is needed**. Fire with ``contract="investigate"``,
-        ``desired_model="cursor/claude-sonnet-5"`` (T1 default; ``opus-5`` for T3
-        triggers only — never ``grok-4.6``, not a conductor seat), ``lane="B"``
+        ``desired_model="cursor/grok-4.6"`` (T1 default — Cursor Models pool;
+        ``sonnet-5`` / ``opus-5`` are Other Models pins, T2/T3 only), ``lane="B"``
         (**wire parameter, not packet prose** — an omitted ``lane=`` resolves to
         Lane A/shared-master regardless of what the body says; only name Lane A
         when the mission itself is T0-mechanical single-locus), and
-        ``desired_effort="max"``. ``lane="B"`` is a worktree requirement, not a
+        ``desired_effort="xhigh"``. ``lane="B"`` is a worktree requirement, not a
         label: GIW mints or inherits an isolated tree, or returns 422
         ``CURSOR_LANE_B_WORKTREE_MISSING`` — it does not silently admit on
         shared master. ``investigate`` resolves to

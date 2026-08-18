@@ -41,7 +41,7 @@ dispatch_lane:
 routes:
   # Advisory preferred_model (doc/comment only — resolver does not enforce):
   #   implement → cursor/composer-2.5 (seat default)
-  #   recon / investigate-emphasis light-bounded → cursor/claude-sonnet-5 via contract=investigate|recon|seed
+  #   recon / investigate-emphasis light-bounded → cursor/grok-4.6 via contract=investigate|recon|seed
   #   pure-mechanical inventory → Composer OK
   #   resident task-class→model table → consult-routing § Task-class model reference
   implement:

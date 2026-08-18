@@ -20,20 +20,20 @@ Pinned manual seeds win over OpenRouter catalog projection.
 
 ## Conductor tier ladder (T0–T3)
 
-Cheaper model at higher effort beats premium at default effort. Sonnet 5 carries
-Opus's effort ladder through `max` at ~**40%** of Opus $/M.
+Cheaper model at higher effort beats premium at default effort. **Pool first:**
+Grok/Composer draw Cursor Models; Sonnet/Opus/Terra draw the capped Other
+Models (second) pool. Rate-relative "Sonnet is 40% of Opus" does not matter
+once the second pool is empty.
 
 | Tier | Model | Effort / knobs | When |
 |---|---|---|---|
 | **T0** | omit → `cursor/composer-2.5` | — | Mechanical scoreboard drive; nest only |
-| **T1** | **`cursor/claude-sonnet-5`** | **`max`**, `thinking=true`, `context=1m` | **Standing default** — multi-G orchestrate, rank, adjudicate |
-| **T2** | `cursor/gpt-5.6-terra` | `reasoning=max` (¬ `extra-high`) | Independent check; T1 unsure. Prefer `context=272k` unless 1m needed |
-| **T3** | `cursor/claude-opus-5` | full card (`low`→`max`) | Invariant-touching bind — inform-then-proceed (trigger is *whether to pick T3*, not the effort rung) |
+| **T1** | **`cursor/grok-4.6`** | **`xhigh`**, `fast=false` | **Standing default** — multi-G orchestrate, rank, adjudicate (Cursor Models pool) |
+| **T2** | `cursor/claude-sonnet-5` | `high`, `thinking=true`, `context=300k` | Named trigger only — grok cannot hold the remit. Other Models |
+| **T3** | `cursor/claude-opus-5` | full card (`low`→`max`); inform-then-proceed | Invariant-touching bind (trigger is *whether to pick T3*, not the effort rung) |
 
-**Not conductor seats:** `cursor/grok-4.6` (recon/breadth only).
-
-Nested legs: mechanical → Composer · investigate densify → Sonnet 5 @ `xhigh`
-· binder when unsure → `judgment-escalation-ladder`.
+Nested legs: mechanical → Composer · investigate densify → Grok @ `xhigh`
+· Other Models only on a named trigger · binder when unsure → `judgment-escalation-ladder`.
 
 Detail + admit shapes: Use the `conductor` skill.
 
@@ -41,7 +41,7 @@ Detail + admit shapes: Use the `conductor` skill.
 
 | Model | Long context |
 |---|---|
-| **Sonnet 5** `1m` | **No long-context surcharge** — T1 default is free vs shorter windows |
+| **Sonnet 5** `1m` | No long-context surcharge vs 300k — still Other Models; do not default T1 to 1m |
 | **GPT-5.6** `1m` | **2× input** vs `272k` — prefer `272k` on Terra unless 1m required |
 | **Opus** | Standard pool table rates |
 

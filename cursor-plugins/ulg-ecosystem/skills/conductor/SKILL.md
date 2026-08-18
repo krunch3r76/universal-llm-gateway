@@ -124,37 +124,34 @@ move (`observability` dispatch-economics when spend matters). Compose with
 `lean-context-dispatch-first` + `consult-routing` — non-primary models stay
 operator-gated unless a standing rule names them.
 
-**Cheaper model at higher effort beats a premium model at default effort.** Sonnet 5
-carries Opus 5's whole knob surface (`thinking`, `context: 1m`, `effort` through
-`max`) at **$2/$10 vs $5/$25** per M tokens — so `max` effort on Sonnet 5 still
-costs less than `high` on Opus. Rates: `config/model_rates.yaml`
-(live probe 2026-08-15).
+**Pool first, then rate.** Grok and Composer draw Cursor Models (generous).
+Sonnet / Opus / Terra draw the capped Other Models (second) pool. Sonnet at
+`$2/$10` is still the scarce Ultra allowance; Grok at `$2/$6` is not.
+Rates: `config/model_rates.yaml`.
 
 | Tier | Default conductor model | Effort | Use when |
 |---|---|---|---|
 | **T0 — mechanical drive** | omit `model=` → `cursor/composer-2.5` | (n/a) | Scoreboard fully bound; only nest Composer/investigate; conductor is traffic cop |
-| **T1 — default judgment** | **`cursor/claude-sonnet-5`** | **`max`** (`thinking=true`, `context=1m`) | **Standing default.** Multi-G orchestrate, rank, adjudicate |
-| **T2 — cross-family** | `cursor/gpt-5.6-terra` | `reasoning=max` (¬ `extra-high` — not an accepted value) | Independent check, or T1 unsure. `gpt-5.6-sol` only when scope is narrow (it prices at Opus level) |
-| | ↳ set `context=272k` unless 1m is needed — GPT long context bills **2x input**, and the live Terra/Sol default is `1m`. Sonnet 5 has no long-context surcharge, so T1 `1m` is free. | | |
+| **T1 — default judgment** | **`cursor/grok-4.6`** | **`xhigh`**, `fast=false` | **Standing default.** Multi-G orchestrate, rank, adjudicate — Cursor Models pool |
+| **T2 — Other Models** | `cursor/claude-sonnet-5` | `high` (`thinking=true`, `context=300k`) | Named trigger only — grok cannot hold the remit. Unattended Auto caps Other Models at `high` |
 | **T3 — premium** | `cursor/claude-opus-5` | full card (`low`→`max`) | Invariant-touching, architecture-suitability, ≥2 unranked co-primaries, recurrence — **inform-then-proceed** + one-line why (trigger is *whether to pick T3*, not the effort rung) |
 
-**Not conductor seats:** `cursor/grok-4.6` (reliability — cheap breadth/recon only,
-and its `$2/$6` was a launch discount).
+Terra is **not** a standing conductor tier (Other Models + mid GPT rate). Cross-family binder stays on `judgment-escalation-ladder` 2c, not the default conductor seat.
 
 **Nested legs (always split by cost class):**
 - Mechanical implement → Composer (`omit model=`, `contract=implement`)
-- Investigate densify → usually T1 (Sonnet 5 @ `max`); escalate T2/T3 only on open judgment forks
+- Investigate densify → usually T1 (Grok @ `xhigh`); escalate T2/T3 only on open judgment forks
 - Independent binder when conductor unsure → ladder (`judgment-escalation-ladder`); ¬ burn Opus to rubber-stamp its own bind
 
 **Anti-patterns (cost):**
 | Bad | Good |
 |---|---|
-| Default every conductor to Opus high | T1 Sonnet 5 @ `max`; escalate with named trigger |
-| Premium model at default effort | Cheaper model at `max` — same ladder, lower rate |
+| Default every conductor to Opus or Sonnet `max`/`1m` | T1 Grok @ `xhigh`; Other Models only on a named trigger |
+| Premium model at default effort | Cheaper model at high effort **on the same pool** |
 | T1/T3 conductor that also hand-codes a mechanical remainder after a pick | Nest Composer |
 | Re-spend Opus to amend a densified packet | Composer / T1 amend |
 | Ignore `sdk_cost_risk` warning | Downgrade model or split bind/compose |
-| Grok on a conductor seat | Recon/breadth only |
+| Pin Terra/Sonnet because the skill used to | Cursor Models T1 unless the remit actually needs Other Models |
 
 `/conductor` asks model tier (Q8) when unbound; operator may pin a slug.
 

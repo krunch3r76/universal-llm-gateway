@@ -53,9 +53,9 @@ Ask in one batch; skip any already bound in chat:
    separate ask (skill § Run to completion). Name an exception here if this
    mission needs its merge held for review.
 7. **Conductor model tier** — accept the standing default, or pin
-   `composer` / `gpt-5.6-terra` / `claude-opus-5` (+ effort). Standing default:
-   **T1 `cursor/claude-sonnet-5` @ `effort=max`** (`thinking=true`, `context=1m`).
-   Opus is expensive — require a named T3 trigger. ¬ Grok, ¬ Sonnet 4.6 on this seat.
+   `composer` / `claude-sonnet-5` / `claude-opus-5` (+ effort). Standing default:
+   **T1 `cursor/grok-4.6` @ `effort=xhigh`** (`fast=false`). Sonnet/Opus draw the
+   capped Other Models pool — named T2/T3 trigger only.
 8. **Admit now?** — draft packet only vs admit after confirm.
 
 Default to Lane B on Q4 absent an operator override; do **not** silently carry
@@ -126,5 +126,5 @@ closeout, not a mid-mission pause. Codify residuals on the root entity.
 
 Ring **7310** (`7244-ide-resolution`): Lane A finish of 7186 residual; packet
 `tmp/reviews/7310-conductor-packet.md`; sibling 7281 cite-only. Early dogfood
-admitted Opus — standing default is **T1 `cursor/claude-sonnet-5` @ `effort=max`**
-unless a T3 trigger fires.
+admitted Opus — standing default is **T1 `cursor/grok-4.6` @ `effort=xhigh`**
+unless a T2/T3 Other Models trigger fires.

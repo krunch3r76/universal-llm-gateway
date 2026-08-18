@@ -36,7 +36,15 @@ def test_wire_map_auto_by_contract():
     )
     assert (
         resolve_desired_model("auto", contract="investigate")["resolved_model_id"]
-        == "cursor/claude-sonnet-5"
+        == "cursor/grok-4.6"
+    )
+    assert (
+        resolve_desired_model("auto", contract="recon")["resolved_model_id"]
+        == "cursor/grok-4.6"
+    )
+    assert (
+        resolve_desired_model("auto", contract="seed")["resolved_model_id"]
+        == "cursor/grok-4.6"
     )
     assert (
         resolve_desired_model("auto", contract="implement")["resolved_model_id"]
@@ -330,7 +338,7 @@ def test_admit_model_override_rule_line_auto_ladder():
     assert line is not None
     assert line.startswith("model_override_rule:")
     assert model["notes"] in line
-    assert "auto chose cursor/claude-sonnet-5 for contract=investigate" in line
+    assert "auto chose cursor/grok-4.6 for contract=investigate" in line
 
 
 def test_admit_model_override_rule_line_honored_explicit_bare_pin():

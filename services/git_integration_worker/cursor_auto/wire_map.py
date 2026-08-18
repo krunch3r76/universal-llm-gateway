@@ -171,18 +171,19 @@ def resolve_desired_model(
 
     ``auto`` (default) picks by contract: answer→grok, investigate→grok,
     implement→composer, verify→composer. Explicit hints are honored and reported.
-    Opus is never the auto default (lean-context implement ladder = composer).
+    Other Models (Sonnet/Opus/Terra) are never the auto default — they draw
+    Cursor's capped second pool; unattended judgment stays on Cursor Models.
     """
     raw = (desired_model or "auto").strip().lower() or "auto"
     if raw == "auto":
         by_contract = {
             "answer": "cursor/grok-4.6",
             "confer": "cursor/grok-4.6",
-            "investigate": "cursor/claude-sonnet-5",
+            "investigate": "cursor/grok-4.6",
             "implement": "cursor/composer-2.5",
             "verify": "cursor/composer-2.5",
-            "seed": "cursor/claude-sonnet-5",
-            "recon": "cursor/claude-sonnet-5",
+            "seed": "cursor/grok-4.6",
+            "recon": "cursor/grok-4.6",
         }
         model_id = by_contract.get(contract, "cursor/composer-2.5")
         return {

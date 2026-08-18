@@ -41,7 +41,7 @@ Attended bind: wire `require_attended=true` **or** body `require_attended: true`
 | density | Cursor binds |
 |---|---|
 | dense | composer-2.5 — **pin explicit** (implement / dense amend / verify). `contract: implement` stays `handoff=pure-mechanical` unless a Judgment marker (below) raises |
-| investigate | claude-sonnet-5; `contract: investigate`; Auto defaults `effort=xhigh`, `thinking=true`, `context=1m` |
+| investigate | grok-4.6; `contract: investigate`; Auto defaults `effort=xhigh`, `fast=false` (Cursor Models pool) |
 | confer (challenge-seeking) | grok-4.6 + `desired_effort=xhigh` + `fast=false` |
 | sparse amend | composer-2.5 pin |
 | architecture bind | `cdp-operator-proxy` § Architecture-bind — a sequence, ¬ one executor |
@@ -122,7 +122,7 @@ DIRECTIVE names: conductor role, a root thread (`new_slug` or existing `role:roo
 **Reachability:** no `conductor` contract token exists; body prose is the instruction. `contract=implement` redirects the executor to `cursor/composer-2.5` regardless of `desired_model` — use `contract=investigate` so the mechanical-executor redirect never fires.
 
 **T1 + effort + lane (BINDING):**
-- Name T1 as `cursor/claude-sonnet-5` @ `effort=max`.
+- Name T1 as `cursor/grok-4.6` @ `effort=xhigh` (`fast=false`).
 - Effort gate = model card (`libs/cursor_capabilities`) — Grok through `xhigh`, Sonnet 5 / Opus through `max`; above-card values degrade.
 - `lane="B"` is a **wire parameter**, not packet prose. Omitted `lane=` resolves to Lane A / shared-master regardless of body text. Name Lane A only for T0-mechanical single-locus.
 
@@ -164,4 +164,4 @@ Live field contract: `cursor_request` **Mission negotiation** clause + `cortex:/
 - [ ] Mint-then-quote: every id in the body was read from a tool payload this turn
 - [ ] Framed multi-step (≥3 G-row or bind-then-compose) ⇒ D4 conductor, not a G-row loop
 - [ ] Pre-frame shape talk ⇒ D5 `negotiation_phase` on `contract: confer`, then D4
-- [ ] Conductor: `contract=investigate` + `desired_model=cursor/claude-sonnet-5` + `desired_effort=max` + wire `lane="B"` + live `COMMISSION_CONDUCTOR` recipe
+- [ ] Conductor: `contract=investigate` + `desired_model=cursor/grok-4.6` + `desired_effort=xhigh` + wire `lane="B"` + live `COMMISSION_CONDUCTOR` recipe

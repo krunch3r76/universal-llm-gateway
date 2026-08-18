@@ -45,7 +45,7 @@ def test_compose_investigate_sonnet5_knobs() -> None:
     assert knobs == {
         "effort": "xhigh",
         "thinking": "true",
-        "context": "1m",
+        "context": "300k",
     }
 
 

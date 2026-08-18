@@ -3,9 +3,12 @@
 Operator bind 2026-07-20: default agent = **Grok 4.6** on the coding
 substrate. Wire: ``seat=cursor-sdk``, ``model=cursor/grok-4.6``.
 
-Operator bind 2026-08-16 (agent-bus:7405): judgment windows pin
-``cursor/claude-sonnet-5`` @ ``effort=xhigh``, ``thinking=true``, ``context=1m``.
-Consult/CDP host shells stay on Composer (I/O-only — no effort knob).
+Operator bind 2026-08-18: judgment windows stay on the Cursor Models pool
+(``cursor/grok-4.6`` @ ``effort=xhigh``, ``fast=false``). The 2026-08-16
+Sonnet 5 ``xhigh``/``1m`` pin (agent-bus:7405) drew Ultra Other Models
+and exhausted the second pool in ~48h; Sonnet/Opus/Terra are explicit
+pins only. Consult/CDP host shells stay on Composer (I/O-only — no effort
+knob).
 
 Composer still pins ``fast=true`` explicitly so window_log / admit notes record
 the bind.
@@ -28,11 +31,10 @@ from __future__ import annotations
 from typing import Any
 
 DEFAULT_SEAT = "cursor-sdk"
-JUDGMENT_MODEL = "cursor/claude-sonnet-5"
+JUDGMENT_MODEL = "cursor/grok-4.6"
 JUDGMENT_MODEL_KNOBS: dict[str, str] = {
     "effort": "xhigh",
-    "thinking": "true",
-    "context": "1m",
+    "fast": "false",
 }
 # Compatibility aliases — materializers + tests still import these names.
 DEFAULT_MODEL = JUDGMENT_MODEL
@@ -58,7 +60,7 @@ def default_judgment_body(
     subject: str,
     caller_agent: str,
 ) -> dict[str, Any]:
-    """Wire body for ``POST /api/v1/team/dispatch`` (default Sonnet-5 window).
+    """Wire body for ``POST /api/v1/team/dispatch`` (default Grok window).
 
     ``subject`` is accepted for call-site symmetry with handoff but is **not**
     on the generate schema (handoff-only). WIP subject is posted on the root bus
