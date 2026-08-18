@@ -154,6 +154,7 @@ separate plane.
 36. **Peer disclosure (BINDING).** `∀ ≥2 advisors on same fork: each packet names peers` at commission. Standing claim until fork closes.
 37. **Conductor commission** — SOT: skill `directive-authoring-standard` D4. Recipe of record: `cursor_request` `COMMISSION_CONDUCTOR` docstring. This skill does not duplicate it.
 38. **Mission negotiation** — SOT: skill `directive-authoring-standard` D5. Field contract: `cursor_request` **Mission negotiation** clause + `cortex://notes/system/specs/directive-loop-mission-negotiation.md`.
+39. **Autonomy default** — `recovery_path=human` ∨ ¬supervisor(process) ∨ manage ∉ `VALID_SERVICES` ⇒ substrate deficiency ⇒ implement autonomous recovery. ¬ `operator_only_gate` · ¬ `TYPE: OPERATOR_GATE` · ¬ wake(human). Naming who can recover today is observation; treating that answer as the arc terminal is the defect. Sibling of inv 8 (missing tool ≠ gate).
 
 ## Blocked → ask ladder (BINDING)
 
@@ -164,11 +165,13 @@ When blocked on a fact this seat cannot settle from tools alone:
 | 1 | Independent observation — `agent_bus` fetch / `busy_status` / latest turns |
 | 2 | Consult **cursor** via `agent_bus.request` (investigate / verify / **code-seat ops**) |
 | 2b | **Judgment stuck (this CDP seat unsure)** — DIRECTIVE `cursor-auto` to nest `cursor-sdk` consult: default **`cursor/gpt-5.6-terra`** when bindable (`contract=light-bounded`); on `model_pin_refused` fall through to **`cdp/fable`** (or **`cursor/claude-opus-5`** when live-checkout / premium metered judgment warrants — inform-then-proceed, inv 10). ¬ escalate to the human principal. Family-cross (terra) preferred when bindable and the stuck seat is `cdp/opus-5` or `cdp/fable` and the risk is Anthropic-lineage correlated error. |
-| 3 | **Cowork Ask / push the human principal** — one question + recommended answer — **true operator-only gates only** (credentials, irreversible human acts, IDE restart / Reload Window, Authorize-triggers click, genuine *what we want* ambiguity after 2b exhausted); ¬ routine routing because Cowork chat might be human; ¬ "I'm stuck" judgment forks |
+| 3 | **Cowork Ask / push the human principal** — one question + recommended answer — **true operator-only gates only** (credentials, irreversible human acts, IDE restart / Reload Window, Authorize-triggers click, genuine *what we want* ambiguity after 2b exhausted); ¬ routine routing because Cowork chat might be human; ¬ "I'm stuck" judgment forks; ¬ missing autonomous lifecycle (inv 39) |
 
 **Invariant:** `cdp_seat_stuck ⇒ cursor_auto → {cursor/gpt-5.6-terra | cursor/claude-opus-5}` · `human_principal ⇔ operator_only_gate`.
 
-**Code-seat ops = step 2:** via `contract: propagate`. mcp self-preempt on own CSE. GIW never forced. Tooling: healthy → hop. Operator gates: credentials, irreversible, Authorize-triggers (inv 21).
+**Autonomy default (BINDING — inv 39, operator 2026-08-18):** a tool or recon that reports `recovery_path=human`, no systemd/supervisord unit, or manage outside `VALID_SERVICES` is a **substrate deficiency**. Next act is implement a seat-fireable recycle (supervisor or retrying external reexec, wired into `propagate` or a seat-owned verb). It is **not** step 3. tmux `0:0` is a seat recipe when a seat can drive it — never a wake, never an `OPERATOR_GATE`.
+
+**Code-seat ops = step 2:** via `contract: propagate`. mcp self-preempt on own CSE. GIW never forced. Tooling: healthy → hop. Operator gates: credentials, irreversible, Authorize-triggers (inv 21). Manage recycle / unwired `guarded_manage_reexec` is inv 39, not an operator gate.
 
 **Forbidden:** a prose halt that waits for a human without firing Ask/push or a cursor DIRECTIVE.
 **Packet authors:** if the episode may need (2)/(3), do **not** seal `¬ clarifying questions` —
@@ -419,11 +422,11 @@ A DISPOSITION / `MISSION_CLOSEOUT` with open residuals is not mission-complete u
 
 **Collector label ≠ commission:** auto-runnable residuals **fired before closeout** with cited turn/id. Substrate refuses `mission_close_uncommissioned_auto_runnable`.
 
-**`operator_gate:` closed to auto-runnable work** — substrate refuses `mission_close_operator_gate_for_auto_runnable`. Reload Window keeps inv 24 exception.
+**`operator_gate:` closed to auto-runnable work** — substrate refuses `mission_close_operator_gate_for_auto_runnable`. Reload Window keeps inv 24 exception. Lifecycle-recovery gaps (`recovery_path=human`, manage ∉ `VALID_SERVICES`, no supervisor) are auto-runnable implement (inv 39), not `operator_gate`.
 
 **Close-time ≠ mid-mission:** at close, fire `propagate` + hop now — not as residual bullet.
 
-**Split:** Auto-runnable ⇒ commission + wake_path (inv 24). operator_gate for IDE restart/credentials (inv 21).
+**Split:** Auto-runnable ⇒ commission + wake_path (inv 24). operator_gate for IDE restart/credentials (inv 21). Manage recycle / unwired reexec is inv 39.
 
 **Reload Window gates picker, not dispatch:** dispatch seats pick up installs via `cursor_home.py` — run install, Reload advisory only.
 
@@ -552,6 +555,8 @@ Authoring enum + propagate template: skill `directive-authoring-standard` D2. Li
 | Reading "next operator window" as a human IDE gate | Next CDP operator-proxy CSE on the lane — hop it |
 | CDP Opus/Fable stuck → Cowork Ask the human | `cursor-auto` → `cursor/gpt-5.6-terra` or `cursor/claude-opus-... |
 | Parking prose "need human judgment" on a bind fork | 2b nested consult; human only for true operator-only gates |
+| Q4 / DISPOSITION: `recovery_path=human` / no unit ⇒ `OPERATOR_GATE` / wake him | Inv 39 — implement autonomous reload. Human recovery is a deficiency, not a gate |
+| "tmux 0:0 is the recipe, so the last step is his" | tmux `0:0` is a seat recipe when a seat can drive it. If none can, close the gap — ¬ wake |
 | Renumbering roadmap headings to express a new priority | IDs are permanent; re-rank the `## Rank order` line with a `wh... |
 | Closing a mission with "followup: run the tests" | Verification of your own claims is an in-mission row — insert ... |
 | Waiting for a monitor or the operator to notice what the execu... | `contract: confer` — the seat inside the mission already holds... |

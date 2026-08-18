@@ -26,7 +26,7 @@ First body line `TYPE: DIRECTIVE`. Inline all ten — sidecar = corpus only (`si
 | `intent` | one line: what changes in the world |
 | `scope` | in-scope paths **and** explicit `out-of-scope:` (own line) |
 | `authority` | what cursor decides alone vs what returns |
-| `AC` | acceptance criteria verbatim, testable |
+| `AC` | acceptance criteria verbatim, testable. ¬ license `TYPE: OPERATOR_GATE` for `recovery_path=human` / missing supervisor — that is inv 39 implement, not a gate |
 | `evidence_required` | what CLOSEOUT must carry to be dispositionable |
 | `density` | `dense` \| `sparse` \| `investigate` — operator sets; cursor binds executor |
 | `budget` | dispatch ceiling; escalate on exceed |

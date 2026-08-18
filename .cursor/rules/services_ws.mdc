@@ -77,6 +77,11 @@ docker kill for **fleet-service** lifecycle. **Permitted:** tmux drive of `0:0` 
 the manage process; MCP `manage` for everything else once the sock is up. Fleet
 roster + the auxiliary-unit carve-out: `core_ws.mdc` § Lifecycle authority.
 
+**Autonomy:** tmux `0:0` is a **seat** recipe, not a human gate. If no attached seat
+can drive it, that is a substrate deficiency (unwired `guarded_manage_reexec` / no
+supervisor) — implement autonomous recovery; ¬ `TYPE: OPERATOR_GATE`. Doctrine:
+`cdp-operator-proxy` inv 39.
+
 ### Charter control — global vs per-root
 
 | Need | Action | Effect |

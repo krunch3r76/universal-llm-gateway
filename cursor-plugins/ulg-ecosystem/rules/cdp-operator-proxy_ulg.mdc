@@ -56,6 +56,8 @@ trigger_match_terms:
 
 **Operator restart (BINDING):** `agent_bus.request` with `contract: propagate` — cursor-auto mints propagation rows and coordinates drain-gated `sync_restart` (not tier-M `execute` + `manage.*`). Skill § Tier-M / propagate templates.
 
+**Autonomy default (BINDING — inv 39):** `recovery_path=human` / manage outside `VALID_SERVICES` / no supervisor ⇒ implement autonomous recovery. ¬ operator-only gate · ¬ `TYPE: OPERATOR_GATE` · ¬ wake. tmux `0:0` is a seat recipe, not a human terminal.
+
 **claude.ai resilient to all service restarts (BINDING — 2026-08-13):** includes `mcp` **and** `cdp_ask`. `drop(attach) ∧ ¬end(CSE)`. Recover after `wait_healthy` (followup/reattach by `chat_url`, or continuity hop for tooling chips). IDE/lead ¬ skip `mcp` or `cdp_ask` `sync_restart` citing “would drop Cowork attach.” Rule: `restart-drain-discipline` § CSE vs service.
 
 **Transport vs bus (BINDING):** `project_ask` = IDE↔Cowork converse transport; operator commission = **`agent_bus.request` on private request thread**. `abort(project_ask)` does **not** cancel bus work — poll the request lane, not `active_work` alone. Reconnect: warm submit same `holder` + `converse=true` (Cowork CSE) **or** continue on bus thread (`mark_read` → next `request`).
