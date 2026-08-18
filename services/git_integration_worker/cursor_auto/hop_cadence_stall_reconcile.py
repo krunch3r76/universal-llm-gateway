@@ -44,6 +44,9 @@ from services.git_integration_worker.cursor_auto.hop_cadence_predecessor import 
     predecessor_for_confirm,
     prior_registration_for_confirm,
 )
+from services.git_integration_worker.cursor_auto.hop_cadence_predecessor_push import (
+    push_predecessor_receipt,
+)
 from services.git_integration_worker.cursor_auto.hop_cadence_succession_release import (
     RELEASE_IDLE_STREAK_REQUIRED,
     release_superseded_on_confirm,
@@ -140,7 +143,9 @@ def query_generate_events_since(
     return rows
 
 
-def _default_event_query(sql: str, params: list[Any], limit: int) -> list[dict[str, Any]]:
+def _default_event_query(
+    sql: str, params: list[Any], limit: int
+) -> list[dict[str, Any]]:
     sock = os.environ.get("EVENTS_QUERY_SOCK", EVENTS_QUERY_SOCK)
     if not os.path.exists(sock):
         return []
@@ -386,7 +391,9 @@ def _handle_from_release_obligation(
     obligation: dict[str, Any],
     row: dict[str, Any],
 ) -> PredecessorHandle | None:
-    exec_id = str(obligation.get("execution_id") or row.get("superseded_execution_id") or "").strip()
+    exec_id = str(
+        obligation.get("execution_id") or row.get("superseded_execution_id") or ""
+    ).strip()
     reg_id = str(
         obligation.get("registration_id") or row.get("superseded_registration_id") or ""
     ).strip()
@@ -425,7 +432,10 @@ def persist_release_obligation(
     if outcome.get("action") == "error":
         retry_count += 1
     streak = int(outcome.get("idle_streak") or prior_dict.get("idle_streak") or 0)
-    if outcome.get("action") == "deferred" and outcome.get("reason") != "predecessor_idle_streak_unsatisfied":
+    if (
+        outcome.get("action") == "deferred"
+        and outcome.get("reason") != "predecessor_idle_streak_unsatisfied"
+    ):
         streak = 0
     updated["release_obligation"] = {
         "execution_id": handle.execution_id,
@@ -450,7 +460,9 @@ def persist_release_obligation(
     return updated
 
 
-def clear_release_obligation(row: dict[str, Any], *, terminal_status: str) -> dict[str, Any]:
+def clear_release_obligation(
+    row: dict[str, Any], *, terminal_status: str
+) -> dict[str, Any]:
     """Clear or terminalize a release obligation after successful release."""
     updated = dict(row)
     prior = updated.get("release_obligation")
@@ -475,10 +487,14 @@ def apply_release_outcome_to_row(
     """Update watch row obligation fields from a release attempt outcome."""
     action = outcome.get("action")
     if action == "terminalized":
-        updated = clear_release_obligation(row, terminal_status=_RELEASE_OBLIGATION_RELEASED)
+        updated = clear_release_obligation(
+            row, terminal_status=_RELEASE_OBLIGATION_RELEASED
+        )
         return _clear_fence_after_reclaim(updated, handle, action="terminalized")
     if action == "already_terminal":
-        updated = clear_release_obligation(row, terminal_status=_RELEASE_OBLIGATION_RELEASED)
+        updated = clear_release_obligation(
+            row, terminal_status=_RELEASE_OBLIGATION_RELEASED
+        )
         return _clear_fence_after_reclaim(updated, handle, action="already_terminal")
     if action in {"deferred", "error"}:
         return persist_release_obligation(row, handle, outcome, now=now)
@@ -492,7 +508,9 @@ def _clear_fence_after_reclaim(
     action: str,
 ) -> dict[str, Any]:
     """Clear request-fence fields and emit lease_reclaimed on CSE-terminal release."""
-    superseded = str(row.get("superseded_registration_id") or handle.registration_id or "")
+    superseded = str(
+        row.get("superseded_registration_id") or handle.registration_id or ""
+    )
     updated = clear_lease_fence_fields(row)
     thread_id = str(row.get("thread_id") or "")
     exec_id = str(handle.execution_id or "")
@@ -511,11 +529,26 @@ def _call_release(
     handle: PredecessorHandle,
     *,
     idle_streak: int = 0,
+    paste_outcome: dict[str, Any] | None = None,
+    thread_id: str = "",
 ) -> dict[str, Any]:
     try:
-        return release_fn(handle, idle_streak=idle_streak)
+        return release_fn(
+            handle,
+            idle_streak=idle_streak,
+            paste_outcome=paste_outcome,
+            thread_id=thread_id,
+        )
     except TypeError:
-        return release_fn(handle)
+        try:
+            return release_fn(
+                handle, idle_streak=idle_streak, paste_outcome=paste_outcome
+            )
+        except TypeError:
+            try:
+                return release_fn(handle, idle_streak=idle_streak)
+            except TypeError:
+                return release_fn(handle)
 
 
 def reconcile_release_obligations(
@@ -536,7 +569,23 @@ def reconcile_release_obligations(
         if handle is None:
             continue
         streak = int(obligation.get("idle_streak") or 0)
-        outcome = _call_release(release_fn, handle, idle_streak=streak)
+        confirm_record = row.get("succession_confirm_record")
+        confirm_dict = confirm_record if isinstance(confirm_record, dict) else {}
+        new_reg = str(row.get("registration_id") or "")
+        matched_exec = str(confirm_dict.get("superseding_execution_id") or "")
+        paste_outcome = push_predecessor_receipt(
+            thread_id=thread_id,
+            handle=handle,
+            new_registration_id=new_reg,
+            matched_execution_id=matched_exec,
+        )
+        outcome = _call_release(
+            release_fn,
+            handle,
+            idle_streak=streak,
+            paste_outcome=paste_outcome,
+            thread_id=thread_id,
+        )
         updated = apply_release_outcome_to_row(row, handle, outcome, now=now)
         if updated != row:
             watches[thread_id] = updated
@@ -608,6 +657,7 @@ def reconcile_succession_confirmations(
             row.update(handle.as_watch_fields())
             watches[thread_id] = row
             changed = True
+            save_watches(watches, watches_path)
         prior_reg = prior_registration_for_confirm(handle)
         updated, transition = advance_registration_on_confirm(
             row,
@@ -630,7 +680,18 @@ def reconcile_succession_confirmations(
             prior_registration_id=prior_reg,
             superseded_execution_id=superseded_exec,
         )
-        release_outcome = _call_release(release, handle)
+        paste_outcome = push_predecessor_receipt(
+            thread_id=thread_id,
+            handle=handle,
+            new_registration_id=new_reg,
+            matched_execution_id=matched_key,
+        )
+        release_outcome = _call_release(
+            release,
+            handle,
+            paste_outcome=paste_outcome,
+            thread_id=thread_id,
+        )
         releases.append({"thread_id": thread_id, **release_outcome})
         updated = apply_release_outcome_to_row(updated, handle, release_outcome, now=ts)
         watches[thread_id] = updated

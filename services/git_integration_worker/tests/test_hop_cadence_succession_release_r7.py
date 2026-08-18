@@ -8,8 +8,8 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from claude_bundles.project_ask_abort import AbortCleanupOutcome
+
 from services.git_integration_worker.cursor_auto.hop_cadence_predecessor import (
     PRIOR_NONE_EXECUTION,
     PRIOR_NONE_REGISTRATION,
@@ -34,6 +34,7 @@ _INCUMBENT_EXEC = "exec-incumbent-r7"
 _SUCCESSOR_EXEC = "exec-successor-r7"
 _OTHER_A = "exec-other-a"
 _OTHER_B = "exec-other-b"
+_PASTE_OK = {"attempted": True, "ok": True}
 
 _ALL_ABORT_OUTCOMES: tuple[AbortCleanupOutcome, ...] = (
     "attested_stopped_and_deregistered",
@@ -49,7 +50,9 @@ _ALL_ABORT_OUTCOMES: tuple[AbortCleanupOutcome, ...] = (
 )
 
 
-def _handle(*, verdict: PredecessorVerdict = PredecessorVerdict.INCUMBENT_RECORDED) -> PredecessorHandle:
+def _handle(
+    *, verdict: PredecessorVerdict = PredecessorVerdict.INCUMBENT_RECORDED
+) -> PredecessorHandle:
     if verdict == PredecessorVerdict.FIRST_SEAT_ON_LANE:
         return PredecessorHandle(
             registration_id=PRIOR_NONE_REGISTRATION,
@@ -142,7 +145,9 @@ def test_predecessor_in_flight_streaming_with_stop_stays_protected() -> None:
 
 
 def test_release_skipped_for_first_seat_verdict() -> None:
-    result = release_superseded_on_confirm(_handle(verdict=PredecessorVerdict.FIRST_SEAT_ON_LANE))
+    result = release_superseded_on_confirm(
+        _handle(verdict=PredecessorVerdict.FIRST_SEAT_ON_LANE)
+    )
     assert result["action"] == "skipped"
     assert result["reason"] == "verdict_first_seat_on_lane"
 
@@ -161,7 +166,9 @@ def test_release_skipped_for_indeterminate_verdict() -> None:
 
 
 def test_release_skipped_for_lookup_failed_verdict() -> None:
-    result = release_superseded_on_confirm(_handle(verdict=PredecessorVerdict.LOOKUP_FAILED))
+    result = release_superseded_on_confirm(
+        _handle(verdict=PredecessorVerdict.LOOKUP_FAILED)
+    )
     assert result["action"] == "skipped"
     assert result["reason"] == "verdict_lookup_failed"
 
@@ -172,6 +179,7 @@ def test_release_terminalizes_only_when_aborted_true() -> None:
         _handle(),
         client=client,
         idle_streak=_idle_streak_for_abort(),
+        paste_outcome=_PASTE_OK,
     )
     assert result["action"] == "terminalized"
     assert result["execution_id"] == _INCUMBENT_EXEC
@@ -195,6 +203,7 @@ def test_release_non_true_abort_outcome_records_error(abort_outcome: str) -> Non
         _handle(),
         client=client,
         idle_streak=_idle_streak_for_abort(),
+        paste_outcome=_PASTE_OK,
     )
     if aborted:
         assert result["action"] == "terminalized"
@@ -217,6 +226,7 @@ def test_release_unrecognised_abort_outcome_fails_toward_error() -> None:
         _handle(),
         client=client,
         idle_streak=_idle_streak_for_abort(),
+        paste_outcome=_PASTE_OK,
     )
     assert result["action"] == "error"
     assert result["abort_outcome"] == "unknown_future_value"
@@ -235,6 +245,7 @@ def test_release_deferred_mid_turn_each_bit(bit: str, reason: str) -> None:
         _handle(),
         client=client,
         idle_streak=_idle_streak_for_abort(),
+        paste_outcome=_PASTE_OK,
     )
     assert result["action"] == "deferred"
     assert result["reason"] == reason
@@ -248,6 +259,7 @@ def test_release_stop_without_streaming_is_releasable_after_idle_streak() -> Non
         _handle(),
         client=client,
         idle_streak=_idle_streak_for_abort(),
+        paste_outcome=_PASTE_OK,
     )
     assert result["action"] == "terminalized"
     client.abort.assert_called_once_with(_INCUMBENT_EXEC)
@@ -261,6 +273,41 @@ def test_release_deferred_when_idle_streak_not_yet_satisfied() -> None:
     assert result["idle_streak"] == 1
     assert result["idle_streak_required"] == RELEASE_IDLE_STREAK_REQUIRED
     client.abort.assert_not_called()
+
+
+def test_release_deferred_when_paste_not_attempted() -> None:
+    client = _client()
+    with patch(
+        "services.git_integration_worker.cursor_auto.hop_cadence_succession_release.emit_release_without_receipt",
+    ) as emit_without:
+        result = release_superseded_on_confirm(
+            _handle(),
+            client=client,
+            idle_streak=_idle_streak_for_abort(),
+            paste_outcome=None,
+        )
+    assert result["action"] == "deferred"
+    assert result["reason"] == "predecessor_push_not_attempted"
+    client.abort.assert_not_called()
+    emit_without.assert_called_once()
+    assert emit_without.call_args.kwargs["reason"] == "predecessor_push_not_attempted"
+
+
+def test_release_proceeds_after_failed_paste() -> None:
+    client = _client()
+    with patch(
+        "services.git_integration_worker.cursor_auto.hop_cadence_succession_release.emit_release_without_receipt",
+    ) as emit_without:
+        result = release_superseded_on_confirm(
+            _handle(),
+            client=client,
+            idle_streak=_idle_streak_for_abort(),
+            paste_outcome={"attempted": True, "ok": False},
+        )
+    assert result["action"] == "terminalized"
+    client.abort.assert_called_once_with(_INCUMBENT_EXEC)
+    emit_without.assert_called_once()
+    assert emit_without.call_args.kwargs["reason"] == "predecessor_push_failed"
 
 
 def test_release_already_terminal_skips_abort() -> None:
@@ -326,6 +373,10 @@ def _reconcile_patches(watches: dict[str, Any]):
             side_effect=lambda data, path=None: watches.update(data) or None,
         ),
         patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.push_predecessor_receipt",
+            return_value=_PASTE_OK,
+        ),
+        patch(
             "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_succession_confirmed",
         ),
         patch(
@@ -360,7 +411,9 @@ def test_reconcile_releases_only_incumbent_recorded() -> None:
                 }
             terminalized.append(handle.execution_id)
             snap["admission_count"] -= 1
-            snap["rows"] = [r for r in snap["rows"] if r["execution_id"] != handle.execution_id]
+            snap["rows"] = [
+                r for r in snap["rows"] if r["execution_id"] != handle.execution_id
+            ]
             return {"action": "terminalized", "execution_id": handle.execution_id}
         return {"action": "skipped", "reason": f"verdict_{handle.verdict.value}"}
 
@@ -415,18 +468,26 @@ def test_reconcile_error_persists_obligation_and_retries_to_terminalized() -> No
         return {"action": "terminalized", "execution_id": handle.execution_id}
 
     with _enter_reconcile_patches(watches):
-        first = reconcile_succession_confirmations(snapshot_reader=lambda: snap, release_fn=_release)
+        first = reconcile_succession_confirmations(
+            snapshot_reader=lambda: snap, release_fn=_release
+        )
         assert first["releases"][0]["action"] == "error"
         assert watches["6885"]["release_obligation"]["status"] == "pending"
         assert len(first["confirmations"]) == 1
 
-        second = reconcile_succession_confirmations(snapshot_reader=lambda: snap, release_fn=_release)
+        second = reconcile_succession_confirmations(
+            snapshot_reader=lambda: snap, release_fn=_release
+        )
         assert second["obligation_retries"][0]["action"] == "deferred"
 
-        third = reconcile_succession_confirmations(snapshot_reader=lambda: snap, release_fn=_release)
+        third = reconcile_succession_confirmations(
+            snapshot_reader=lambda: snap, release_fn=_release
+        )
         assert third["obligation_retries"][0]["action"] == "deferred"
 
-        fourth = reconcile_succession_confirmations(snapshot_reader=lambda: snap, release_fn=_release)
+        fourth = reconcile_succession_confirmations(
+            snapshot_reader=lambda: snap, release_fn=_release
+        )
         assert fourth["obligation_retries"][0]["action"] == "terminalized"
         assert snap["admission_count"] == 2
 
@@ -456,11 +517,16 @@ def test_obligation_reaches_failed_after_max_retries() -> None:
         }
 
     with _enter_reconcile_patches(watches):
-        result = reconcile_succession_confirmations(snapshot_reader=lambda: _snap_three_operator_proxy(), release_fn=_release)
+        result = reconcile_succession_confirmations(
+            snapshot_reader=lambda: _snap_three_operator_proxy(), release_fn=_release
+        )
 
     assert result["obligation_retries"][0]["action"] == "error"
     assert watches["6885"]["release_obligation"]["status"] == "failed"
-    assert watches["6885"]["release_obligation"]["failure_reason"] == "max_retries_exhausted"
+    assert (
+        watches["6885"]["release_obligation"]["failure_reason"]
+        == "max_retries_exhausted"
+    )
 
 
 def test_streaming_defers_do_not_exhaust_release_retries() -> None:
@@ -522,13 +588,13 @@ def test_reconcile_legacy_first_seat_releases_non_holders() -> None:
     for row in snap["rows"]:
         row["parent_thread"] = "6885"
         watches = {
-        "6885": {
-            **_watch_incumbent(registration_id="reg-old"),
-            "superseded_registration_id": PRIOR_NONE_REGISTRATION,
-            "superseded_execution_id": PRIOR_NONE_EXECUTION,
-            "predecessor_verdict": PredecessorVerdict.FIRST_SEAT_ON_LANE.value,
+            "6885": {
+                **_watch_incumbent(registration_id="reg-old"),
+                "superseded_registration_id": PRIOR_NONE_REGISTRATION,
+                "superseded_execution_id": PRIOR_NONE_EXECUTION,
+                "predecessor_verdict": PredecessorVerdict.FIRST_SEAT_ON_LANE.value,
+            }
         }
-    }
     released: list[str] = []
 
     def _release(handle: PredecessorHandle, idle_streak: int = 0) -> dict[str, Any]:
@@ -606,9 +672,12 @@ def test_invariant8_three_rows_one_superseded_ends_at_two(tmp_path: Path) -> Non
             handle,
             client=client,
             idle_streak=_idle_streak_for_abort(),
+            paste_outcome=_PASTE_OK,
         )
         assert result["action"] == "terminalized"
-        await store.mark_terminal(ids["incumbent"], status="aborted", error="succession_superseded")
+        await store.mark_terminal(
+            ids["incumbent"], status="aborted", error="succession_superseded"
+        )
 
     asyncio.run(_terminalize())
     assert asyncio.run(_count()) == 2

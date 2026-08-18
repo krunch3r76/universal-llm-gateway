@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from claude_bundles.hop_cadence_id_map import proof_observes_harvest
 
 from services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile import (
@@ -265,3 +264,100 @@ def test_mark_hop_fired_records_pending_claim(tmp_path: Path) -> None:
     assert row["pre_hop_seated_at"] == _NOW - 2000.0
     assert row["superseded_registration_id"] == "reg-live"
     assert row["superseded_execution_id"] == "exec-incumbent"
+
+
+def test_confirm_calls_push_before_release() -> None:
+    """G2: primary incumbent gets a stand-down paste before release on confirm."""
+    from contextlib import ExitStack
+    from unittest.mock import patch
+
+    from services.git_integration_worker.cursor_auto.hop_cadence_predecessor import (
+        PredecessorVerdict,
+    )
+    from services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile import (
+        reconcile_succession_confirmations,
+    )
+
+    snap = {
+        "admission_count": 2,
+        "rows": [
+            {
+                "execution_id": "exec-successor",
+                "registration_id": "reg-new",
+                "status": "running",
+                "purpose": "operator-proxy",
+            },
+            {
+                "execution_id": "exec-incumbent",
+                "registration_id": "reg-old",
+                "status": "running",
+                "purpose": "operator-proxy",
+            },
+        ],
+    }
+    watches = {
+        "6928": {
+            "thread_id": "6928",
+            "registration_id": "reg-old",
+            "successor_execution_id": "stargate-uuid",
+            "pending_satellite_execution_id": "exec-successor",
+            "superseded_registration_id": "reg-old",
+            "superseded_execution_id": "exec-incumbent",
+            "predecessor_verdict": PredecessorVerdict.INCUMBENT_RECORDED.value,
+        }
+    }
+    call_order: list[str] = []
+
+    def _push(**kwargs: object) -> dict[str, bool]:
+        call_order.append("push")
+        return {"attempted": True, "ok": True}
+
+    def _release(
+        handle: object, idle_streak: int = 0, **kwargs: object
+    ) -> dict[str, str]:
+        call_order.append("release")
+        return {"action": "deferred", "reason": "predecessor_idle_streak_unsatisfied"}
+
+    stack = ExitStack()
+    stack.enter_context(
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.load_watches",
+            side_effect=lambda path=None: watches,
+        )
+    )
+    stack.enter_context(
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.save_watches",
+            side_effect=lambda data, path=None: watches.update(data) or None,
+        )
+    )
+    stack.enter_context(
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.push_predecessor_receipt",
+            side_effect=_push,
+        )
+    )
+    stack.enter_context(
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_succession_confirmed",
+        )
+    )
+    stack.enter_context(
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_registration_advanced",
+        )
+    )
+    stack.enter_context(
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_seat_rebound",
+        )
+    )
+
+    with stack:
+        result = reconcile_succession_confirmations(
+            snapshot_reader=lambda: snap,
+            release_fn=_release,
+        )
+
+    assert len(result["confirmations"]) == 1
+    assert call_order == ["push", "release"]

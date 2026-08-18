@@ -10,6 +10,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -61,6 +62,8 @@ _MAX_WAKE_SUBJECT_LEN = 80
 _DEFAULT_DISPATCH_URL = "http://127.0.0.1:8091"
 _POLL_INTERVAL_S = 2.0
 _DEFAULT_TIMEOUT_S = 3600.0
+_HEARTBEAT_FRESH_S = 60.0
+_DEFAULT_MAX_POLL_REENTRIES = 10
 _TREE_RESIDUE_RE = re.compile(r"(?im)^tree_residue:\s*(\d+)\b")
 
 
@@ -94,6 +97,48 @@ def _dispatch_timeout_s() -> float:
     if not raw:
         return _DEFAULT_TIMEOUT_S
     return max(30.0, float(raw))
+
+
+def _heartbeat_fresh_s() -> float:
+    raw = os.environ.get("CURSOR_AUTO_DISPATCH_HEARTBEAT_FRESH_S", "").strip()
+    if not raw:
+        return _HEARTBEAT_FRESH_S
+    return max(10.0, float(raw))
+
+
+def _max_poll_reentries() -> int:
+    raw = os.environ.get("CURSOR_AUTO_DISPATCH_POLL_REENTRIES", "").strip()
+    if not raw:
+        return _DEFAULT_MAX_POLL_REENTRIES
+    return max(1, int(raw))
+
+
+def dispatch_row_liveness_fresh(
+    row: dict[str, Any] | None,
+    *,
+    fresh_s: float | None = None,
+    now: datetime | None = None,
+) -> bool:
+    """Return True when the nested dispatch row shows recent liveness.
+
+    ``last_heartbeat_at`` is preferred; when absent (dispatch not heartbeating
+    yet) ``started_at`` is used so a newly admitted row is not treated as dead.
+    """
+    if row is None:
+        return False
+    threshold = fresh_s if fresh_s is not None else _heartbeat_fresh_s()
+    clock = now or datetime.now(UTC)
+    cutoff = clock.timestamp() - threshold
+    ts = row.get("last_heartbeat_at") or row.get("started_at")
+    if ts is None:
+        return False
+    try:
+        parsed = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.timestamp() >= cutoff
+    except ValueError:
+        return False
 
 
 def _release_failed_submission(
@@ -259,6 +304,60 @@ async def poll_dispatch_terminal(
         "last": last,
         "dispatch_id": dispatch_id,
     }
+
+
+async def poll_dispatch_terminal_with_liveness(
+    *,
+    thread_id: str,
+    dispatch_id: str,
+    timeout_s: float | None = None,
+    superseded: Callable[[], bool] | None = None,
+    on_tick: Callable[[dict[str, Any] | None], Awaitable[None]] | None = None,
+) -> dict[str, Any]:
+    """Poll until terminal, extending budget while nested dispatch liveness is fresh."""
+    budget = timeout_s if timeout_s is not None else _dispatch_timeout_s()
+    total_ceiling_s = budget * (_max_poll_reentries() + 1)
+    poll_started = time.monotonic()
+    reentries = 0
+    polled: dict[str, Any] = {}
+    while True:
+        polled = await poll_dispatch_terminal(
+            thread_id=thread_id,
+            dispatch_id=dispatch_id,
+            timeout_s=budget,
+            superseded=superseded,
+            on_tick=on_tick,
+        )
+        if polled.get("terminal") or polled.get("superseded"):
+            return polled
+        if not dispatch_row_liveness_fresh(polled.get("last")):
+            return polled
+        if reentries >= _max_poll_reentries():
+            logger.warning(
+                "cursor-auto nested poll re-entry count ceiling dispatch_id=%s "
+                "reentries=%s",
+                dispatch_id,
+                reentries,
+            )
+            return polled
+        if time.monotonic() - poll_started >= total_ceiling_s:
+            logger.warning(
+                "cursor-auto nested poll total wall-clock ceiling dispatch_id=%s "
+                "elapsed_s=%.1f ceiling_s=%.1f",
+                dispatch_id,
+                time.monotonic() - poll_started,
+                total_ceiling_s,
+            )
+            return polled
+        reentries += 1
+        last = polled.get("last") or {}
+        logger.info(
+            "cursor-auto nested poll budget exhausted with fresh heartbeat; "
+            "re-entering dispatch_id=%s reentry=%s last_heartbeat_at=%s",
+            dispatch_id,
+            reentries,
+            last.get("last_heartbeat_at"),
+        )
 
 
 async def fetch_sdk_closeout_body(

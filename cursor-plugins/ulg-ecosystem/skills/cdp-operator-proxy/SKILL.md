@@ -313,7 +313,7 @@ cadence) and enqueues `continuity_hop=true`. Cursor-auto then fires
 | **Customize skill / MCP refresh must bind this stream** | Stale chips or connector | `agent_bus(tool="hop")` — **¬** `project_ask(followup)` (follow-up does not reload skills) |
 | **IDE / code seat starts mission** | Not this seat | Cursor lead fires `team_dispatch` directly — you receive the booted mission here |
 
-**Continuity hop:** (1) handoff Leg-current; (2) `agent_bus(tool="hop", …)`; (3) receipt `continuity_hop=true`; (4) same lane; (5) poll successor; (6) page stream-end after confirm.
+**Continuity hop:** (1) handoff Leg-current; (2) `agent_bus(tool="hop", …)`; (3) receipt `continuity_hop=true`; (4) same lane; (5) wait for the push receipt — cursor-auto pastes `TYPE: SEAT_STAND_DOWN` into **this** CSE once successor `SEAT_REGISTRATION` confirms (`hop-push-receipt` charter G2/G4, a:29822); **¬** poll `successor_seated` / generate harvest to learn cutover (rejected pattern — 9440 turn-75 class: hours-long poll loop, false `status:failed` nine minutes before the real CLOSEOUT); (6) page stream-end after that receipt.
 
 **Substrate tools:** `substrate_graph_write`, `substrate_friction_file`, `substrate_entity_mint` — same request surface; ¬ mint on 404.
 

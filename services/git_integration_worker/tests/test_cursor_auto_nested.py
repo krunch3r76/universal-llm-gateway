@@ -256,7 +256,7 @@ def test_process_job_nested_implement_dispatches(monkeypatch):
         submit,
     )
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_auto.handler.poll_dispatch_terminal",
+        "services.git_integration_worker.cursor_auto.handler.poll_dispatch_terminal_with_liveness",
         polled,
     )
     monkeypatch.setattr(
@@ -338,7 +338,7 @@ def test_process_job_nested_skips_wake_when_closeout_fails(monkeypatch):
         submit,
     )
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_auto.handler.poll_dispatch_terminal",
+        "services.git_integration_worker.cursor_auto.handler.poll_dispatch_terminal_with_liveness",
         polled,
     )
     monkeypatch.setattr(

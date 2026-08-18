@@ -81,7 +81,7 @@ def test_process_job_seed_submits_nested_dispatch_with_dispatch_id(
         submit,
     )
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_auto.handler.poll_dispatch_terminal",
+        "services.git_integration_worker.cursor_auto.handler.poll_dispatch_terminal_with_liveness",
         polled,
     )
     monkeypatch.setattr(

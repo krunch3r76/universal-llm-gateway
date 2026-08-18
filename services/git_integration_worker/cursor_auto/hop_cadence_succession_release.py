@@ -20,6 +20,7 @@ from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_auto.hop_cadence_events import (
     emit_release_deferred,
+    emit_release_without_receipt,
 )
 from services.git_integration_worker.cursor_auto.hop_cadence_predecessor import (
     PredecessorHandle,
@@ -61,6 +62,8 @@ def release_superseded_on_confirm(
     *,
     client: CdpAskClient | None = None,
     idle_streak: int = 0,
+    paste_outcome: dict[str, Any] | None = None,
+    thread_id: str = "",
 ) -> dict[str, Any]:
     """Terminalize the recorded predecessor execution when confirm is incumbent-backed."""
     exec_id = handle.execution_id.strip()
@@ -71,7 +74,11 @@ def release_superseded_on_confirm(
             "reason": f"verdict_{handle.verdict.value}",
         }
     if not exec_id:
-        return {"action": "skipped", "execution_id": exec_id, "reason": "empty_execution_id"}
+        return {
+            "action": "skipped",
+            "execution_id": exec_id,
+            "reason": "empty_execution_id",
+        }
 
     http = client or CdpAskClient()
     try:
@@ -133,6 +140,32 @@ def release_superseded_on_confirm(
             "idle_streak_required": RELEASE_IDLE_STREAK_REQUIRED,
             "idle_sample_window_s": RELEASE_IDLE_SAMPLE_WINDOW_S,
         }
+
+    attempted = bool((paste_outcome or {}).get("attempted"))
+    if not attempted:
+        emit_release_without_receipt(
+            execution_id=exec_id,
+            reason="predecessor_push_not_attempted",
+            thread_id=thread_id,
+        )
+        logger.info(
+            "hop_cadence succession release deferred exec=%s reason=predecessor_push_not_attempted",
+            exec_id,
+        )
+        return {
+            "action": "deferred",
+            "execution_id": exec_id,
+            "reason": "predecessor_push_not_attempted",
+            "idle_streak": idle_streak,
+            "idle_streak_required": RELEASE_IDLE_STREAK_REQUIRED,
+        }
+
+    if not (paste_outcome or {}).get("ok"):
+        emit_release_without_receipt(
+            execution_id=exec_id,
+            reason="predecessor_push_failed",
+            thread_id=thread_id,
+        )
 
     try:
         abort_result = http.abort(exec_id)
