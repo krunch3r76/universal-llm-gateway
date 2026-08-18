@@ -38,6 +38,18 @@ dropped_enqueue = 0
 dropped_send = 0
 
 
+def snapshot_drop_counters() -> dict[str, int]:
+    """Return process-local drop counters for ``GET /health``.
+
+    Both keys are always present. Zero means no drop since this process
+    started, not that losses are unobservable. Counters reset on restart.
+    """
+    return {
+        "dropped_enqueue": dropped_enqueue,
+        "dropped_send": dropped_send,
+    }
+
+
 def _signal_from_line(line: str) -> str:
     """Return the event ``signal`` from an NDJSON line, or a fallback token."""
     try:

@@ -95,11 +95,18 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
-        """Liveness + code identity for propagate verification."""
+        """Liveness + code identity + publisher drop counters.
+
+        ``dropped_enqueue`` / ``dropped_send`` are always present. Zero means
+        no drop since this process started, not that losses cannot be seen.
+        """
+        from .events.publisher import snapshot_drop_counters
+
         return {
             "status": "ok",
             "code_version": resolve_code_version(),
             "pid": os.getpid(),
+            **snapshot_drop_counters(),
         }
 
     app.include_router(messages_router)

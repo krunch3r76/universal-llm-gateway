@@ -120,3 +120,90 @@ def test_process_job_directive_answer_upgrades_to_nested(monkeypatch: pytest.Mon
     assert result.get("ok") is True
     assert result.get("phase") == "nested_dispatch"
     assert job.contract == "implement"
+
+
+_TURN_302_RULING = (
+    "TYPE: DIRECTIVE\ncontract: implement\ndensity: dense\nscope: libs/foo\n"
+    "RULING AC1 — bind the detector; do not flip unmarked implement.\n"
+    "RULING AC2 — do not touch REASONING_POSTURE_SKIP_CONTRACTS.\n"
+)
+
+
+def test_process_job_ruling_acs_raise_handoff_off_mechanical(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Turn-302 shape: two RULING ACs must not admit as pure-mechanical."""
+    bus = AsyncMock()
+    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    submit = AsyncMock(
+        return_value={"ok": True, "dispatch_id": "d-turn-302-shape"}
+    )
+    poll = AsyncMock(
+        return_value={
+            "terminal": True,
+            "status": "done",
+            "superseded": False,
+        }
+    )
+    fetch_closeout = AsyncMock(return_value="done summary")
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.handler.submit_nested_dispatch",
+        submit,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.handler.poll_dispatch_terminal_with_liveness",
+        poll,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.handler.fetch_sdk_closeout_body",
+        fetch_closeout,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.handler.settle_supersede",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.handler.blocking_admit_gate",
+        AsyncMock(return_value=AdmitGateResult()),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.gate_serialize.sdk_dispatch_gate_stats",
+        lambda **_kw: {"active": 0, "queued": 0, "limit": 1},
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.handler.CursorDispatchLedger.instance",
+        lambda: MagicMock(lease_snapshot=MagicMock(return_value={})),
+    )
+    relay = AsyncMock(return_value={"ok": True, "status_code": 200})
+    wake = AsyncMock(return_value={"ok": True, "status_code": 200})
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.nested_outcome.post_operator_closeout",
+        relay,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.nested_outcome.post_operator_wake",
+        wake,
+    )
+
+    job = AutoJob(
+        job_id="j-turn-302-shape",
+        thread_id="9470",
+        turn_number=302,
+        subject="Implement judgment-bearing",
+        body=_TURN_302_RULING,
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="composer-2.5",
+        desired_effort="medium",
+        contract="implement",
+    )
+
+    result = asyncio.run(process_job(job, bus=bus))
+    submit.assert_awaited_once()
+    assert submit.await_args.kwargs["handoff_contract"] == "light-bounded"
+    admit_call = bus.reply.await_args_list[0]
+    assert "contract=implement" in admit_call.kwargs["body"]
+    assert "handoff=light-bounded" in admit_call.kwargs["body"]
+    assert result.get("ok") is True
+    assert result.get("phase") == "nested_dispatch"

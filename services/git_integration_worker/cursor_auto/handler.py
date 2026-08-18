@@ -222,7 +222,7 @@ async def process_job(
             failed=True,
         )
     model = resolve_desired_model(job.desired_model, contract=contract)
-    handoff_contract = resolve_handoff_contract(contract)
+    handoff_contract = resolve_handoff_contract(contract, body=job.body)
     model, displaced_model = redirect_mechanical_executor(
         model, contract=contract, handoff_contract=handoff_contract
     )

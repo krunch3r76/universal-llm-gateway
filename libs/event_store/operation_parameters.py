@@ -72,18 +72,36 @@ def _signal_match_sql(signal: str) -> tuple[str, str]:
     return "= ?", signal
 
 
+# Unix-seconds timestamps for dates through year 5138 are strictly below this;
+# millisecond timestamps for 1973+ are at or above it. Used to detect the
+# seconds-scale ``since_ts`` callers pass against ``ts_unix_ms`` columns.
+_SECONDS_TS_EXCLUSIVE_MAX = 10**11
+
+
 def _coerce_since_ts(value: Any) -> int | None:
     """Coerce an optional ``since_ts`` value to Unix milliseconds.
 
-    Invalid values return ``None`` so callers can fall back to the active
-    session boundary without surfacing parameter parsing errors to agents.
+    Seconds-scale integers (strictly below ``1e11``) are multiplied by 1000
+    so a filter against ``ts_unix_ms`` actually cuts. Values already in
+    milliseconds pass through. Invalid values return ``None`` so callers can
+    fall back to the active session boundary without surfacing parameter
+    parsing errors to agents.
     """
     if value is None:
         return None
     try:
-        return int(value)
+        ts = int(value)
     except (TypeError, ValueError):
         return None
+    if 0 < ts < _SECONDS_TS_EXCLUSIVE_MAX:
+        converted = ts * 1000
+        logger.info(
+            "since_ts seconds-scale %s converted to milliseconds %s",
+            ts,
+            converted,
+        )
+        return converted
+    return ts
 
 
 async def _get_session_start_ts(store: EventStore) -> int | None:

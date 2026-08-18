@@ -29,10 +29,24 @@ _FIRST_LINE_TYPE_RE = re.compile(r"^TYPE:\s*(\S+)", re.IGNORECASE)
 _CONTINUITY_HANDOFF = "CONTINUITY_HANDOFF"
 _DIRECTIVE_TYPES = frozenset({"DIRECTIVE", _CONTINUITY_HANDOFF})
 _DENSITY_RE = re.compile(r"^density:\s*(\S+)", re.MULTILINE | re.IGNORECASE)
-_CONTRACT_RE = re.compile(r"^contract:\s*(\S+)", re.MULTILINE | re.IGNORECASE)
-_DESIRED_MODEL_RE = re.compile(
-    r"^desired_model:\s*(\S+)", re.MULTILINE | re.IGNORECASE
+_DENSITY_TRIAGE_RE = re.compile(
+    r"^density_triage:\s*(\S+)", re.MULTILINE | re.IGNORECASE
 )
+_HANDOFF_LINE_RE = re.compile(r"^handoff:\s*(\S+)", re.MULTILINE | re.IGNORECASE)
+_RULING_LINE_RE = re.compile(
+    r"^[ \t]*(?:[-*][ \t]+)?(?:#{1,6}[ \t]+)?(?:\*\*)?RULING(?:\s+ACs?)?(?:\*\*)?\b",
+    re.MULTILINE,
+)
+_ARCH_FORK_LINE_RE = re.compile(
+    r"^[ \t]*(?:[-*][ \t]+)?(?:#{1,6}[ \t]+)?(?:\*\*)?"
+    r"(?:open\s+fork|named\s+architecture\s+fork|architecture\s+fork)\b",
+    re.MULTILINE | re.IGNORECASE,
+)
+_JUDGMENT_DENSITY = frozenset(
+    {"judgment_required", "investigate", "judgment", "recon_pending"}
+)
+_CONTRACT_RE = re.compile(r"^contract:\s*(\S+)", re.MULTILINE | re.IGNORECASE)
+_DESIRED_MODEL_RE = re.compile(r"^desired_model:\s*(\S+)", re.MULTILINE | re.IGNORECASE)
 _ESCALATION_RE = re.compile(r"^escalation:\s*(\S+)", re.MULTILINE | re.IGNORECASE)
 _EFFORT_RE = re.compile(r"^effort:\s*(\S+)", re.MULTILINE | re.IGNORECASE)
 _REASONING_EFFORT_RE = re.compile(
@@ -200,6 +214,36 @@ def has_actionable_scope(body: str) -> bool:
         or _PROPAGATION_SCOPE_RE.search(text)
         or _PROPAGATION_HEADING_RE.search(text)
     )
+
+
+def body_declares_judgment(body: str | None) -> bool:
+    """True when a DIRECTIVE body opts an ``implement`` admit off mechanical.
+
+    Opt-in markers only: line-start ``RULING`` / architecture-fork headings,
+    judgment density tokens, or an explicit ``handoff:`` that is not
+    ``pure-mechanical``. Unmarked bodies, ``density: mechanical``, and
+    mid-prose mentions of the words ``RULING ACs`` do not match — the fleet
+    default for ``contract=implement`` stays ``pure-mechanical``.
+    """
+    text = body or ""
+    if not text.strip():
+        return False
+    if _RULING_LINE_RE.search(text) or _ARCH_FORK_LINE_RE.search(text):
+        return True
+    for matcher in (_DENSITY_RE, _DENSITY_TRIAGE_RE):
+        match = matcher.search(text)
+        if match is None:
+            continue
+        token = match.group(1).strip().lower().replace("-", "_")
+        token = token.split(",", 1)[0].strip()
+        if token in _JUDGMENT_DENSITY:
+            return True
+    handoff = _HANDOFF_LINE_RE.search(text)
+    if handoff is not None:
+        token = handoff.group(1).strip().lower().strip("\"'`")
+        if token and token != "pure-mechanical":
+            return True
+    return False
 
 
 def body_has_contract_override(body: str) -> bool:

@@ -136,6 +136,8 @@ def _lookup_explicit_model(raw: str) -> str | None:
     if raw.startswith("cursor/") and raw in _BINDABLE_MODEL_IDS:
         return raw
     return None
+
+
 # Canonical wire vocabulary — owned by libs/effort_vocabulary (aliases too).
 _EFFORT_LADDER: tuple[str, ...] = WIRE_LADDER
 _EFFORT_VALUES = frozenset(_EFFORT_LADDER)
@@ -462,10 +464,26 @@ def resolve_contract_disposition(contract: str | None) -> dict[str, Any]:
     }
 
 
-def resolve_handoff_contract(contract: str | None) -> str:
-    """Map Auto ``request.contract`` → cursor-sdk ``handoff_contract``."""
+def resolve_handoff_contract(
+    contract: str | None,
+    body: str | None = None,
+) -> str:
+    """Map Auto ``request.contract`` → cursor-sdk ``handoff_contract``.
+
+    Unmarked ``implement`` (no body, or body without judgment markers) stays
+    ``pure-mechanical``. A body that declares judgment raises to
+    ``light-bounded`` — the existing non-mechanical token — without adding a
+    member to ``REASONING_POSTURE_SKIP_CONTRACTS``.
+    """
     raw = (contract or "answer").strip().lower() or "answer"
     if raw == "implement":
+        if body:
+            from services.git_integration_worker.cursor_auto.directive import (
+                body_declares_judgment,
+            )
+
+            if body_declares_judgment(body):
+                return "light-bounded"
         return "pure-mechanical"
     if raw == "execute":
         return "light-bounded"

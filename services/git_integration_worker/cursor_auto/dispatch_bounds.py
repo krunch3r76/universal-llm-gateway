@@ -46,8 +46,8 @@ ROAMING_TIER_BARE_MODELS: frozenset[str] = frozenset(
     {"composer-2.5", "composer-2.5-fast", "grok-4.6"}
 )
 
-# ``resolve_handoff_contract`` maps contract ``implement`` here and nothing else;
-# this is the codebase's own name for work that carries no open judgment.
+# ``resolve_handoff_contract`` maps unmarked ``implement`` here; judgment-bearing
+# implement bodies raise to ``light-bounded`` instead.
 MECHANICAL_HANDOFF_CONTRACT = "pure-mechanical"
 
 # The compose leg of bind-then-compose. Mechanical work lands here no matter who
