@@ -350,6 +350,14 @@ class AutoJobLedger:
         dispatch_id: str,
         relay_phase: str = RELAY_PHASE_DISPATCHED,
     ) -> None:
+        """Last-write-wins bind of *dispatch_id* onto the job row.
+
+        Reflex legs must not call this (``submit_nested_dispatch(bind_job=False)``).
+        Executor retries must: a failed submit leaves ``dispatch_id`` set, and
+        overwriting it is how a live retry replaces a dead id. Do not first-wins
+        ``COALESCE(dispatch_id, ?)`` — that pins the job to the failed id.
+        ``bound_at`` stays first-touch via COALESCE; identity itself does not.
+        """
         now = _now_iso()
         with self._connect() as conn:
             conn.execute(

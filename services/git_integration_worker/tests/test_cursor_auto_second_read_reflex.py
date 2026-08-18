@@ -8,6 +8,8 @@ async dispatch path.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from services.git_integration_worker.cursor_auto.knob_compose import compose_model_knobs
@@ -23,6 +25,7 @@ from services.git_integration_worker.cursor_auto.reflex_packet import (
 from services.git_integration_worker.cursor_auto.reflex_policy import (
     counters,
     evaluate_reflex,
+    reflex_sample_every,
 )
 from services.git_integration_worker.cursor_auto.reflex_read import (
     _DEFAULT_EFFORT,
@@ -88,7 +91,10 @@ def test_reflex_model_env_override_still_honors_opus(
 
 def test_effort_merges_onto_opus_and_preserves_base_knobs() -> None:
     knobs = compose_model_knobs(
-        {"resolved_model_id": "cursor/claude-opus-5", "model_knobs": {"thinking": "true"}},
+        {
+            "resolved_model_id": "cursor/claude-opus-5",
+            "model_knobs": {"thinking": "true"},
+        },
         {"resolved_effort": "low"},
     )
     assert knobs == {"thinking": "true", "effort": "low"}
@@ -142,9 +148,12 @@ def test_model_without_effort_knob_gets_none() -> None:
 
 
 def test_unknown_model_does_not_raise() -> None:
-    assert compose_model_knobs(
-        {"resolved_model_id": "cursor/not-a-model"}, {"resolved_effort": "low"}
-    ) == {}
+    assert (
+        compose_model_knobs(
+            {"resolved_model_id": "cursor/not-a-model"}, {"resolved_effort": "low"}
+        )
+        == {}
+    )
     assert compose_model_knobs({}, {"resolved_effort": "low"}) == {}
 
 
@@ -180,7 +189,9 @@ def test_clean_closeout_does_not_fire() -> None:
     assert verdict.reason == "no_trigger"
 
 
-@pytest.mark.parametrize("contract", ["answer", "confer", "execute", "propagate", "seed"])
+@pytest.mark.parametrize(
+    "contract", ["answer", "confer", "execute", "propagate", "seed"]
+)
 def test_exempt_contracts_never_fire(contract: str) -> None:
     verdict = evaluate_reflex(
         thread_id=THREAD,
@@ -282,7 +293,9 @@ def test_sparse_directive_fires() -> None:
     assert verdict.reason == "sparse_directive_scope"
 
 
-def test_periodic_sample_fires_on_nth_clean_job(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_periodic_sample_does_not_fire_even_when_env_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("CURSOR_AUTO_REFLEX_SAMPLE_EVERY", "3")
     reasons = [
         evaluate_reflex(
@@ -293,18 +306,22 @@ def test_periodic_sample_fires_on_nth_clean_job(monkeypatch: pytest.MonkeyPatch)
         ).reason
         for _ in range(3)
     ]
-    assert reasons == ["no_trigger", "no_trigger", "periodic_sample"]
+    assert reasons == ["no_trigger", "no_trigger", "no_trigger"]
+    assert reflex_sample_every() == 0
 
 
 def test_budget_exhaustion_stops_firing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CURSOR_AUTO_REFLEX_BUDGET", "2")
     for _ in range(2):
-        assert evaluate_reflex(
-            thread_id=THREAD,
-            contract="implement",
-            terminal_status="failed",
-            sdk_body=_clean_body(),
-        ).fire is True
+        assert (
+            evaluate_reflex(
+                thread_id=THREAD,
+                contract="implement",
+                terminal_status="failed",
+                sdk_body=_clean_body(),
+            ).fire
+            is True
+        )
         counters().note_spend(THREAD)
 
     blocked = evaluate_reflex(
@@ -406,13 +423,16 @@ def test_injection_appends_without_disturbing_the_closeout() -> None:
 
 def test_injection_of_empty_text_is_a_noop() -> None:
     relay = _clean_body()
-    assert inject_second_read_block(
-        relay,
-        text="   ",
-        model="cursor/claude-opus-5",
-        reflex_dispatch_id="auto-reflex1",
-        reason="periodic_sample",
-    ) == relay
+    assert (
+        inject_second_read_block(
+            relay,
+            text="   ",
+            model="cursor/claude-opus-5",
+            reflex_dispatch_id="auto-reflex1",
+            reason="periodic_sample",
+        )
+        == relay
+    )
 
 
 # --- review findings: real §2 shapes, contamination, failure isolation --------
@@ -431,7 +451,10 @@ _BOLD_CLEAN = (
     [
         ("**status:** partial\n**ac_verdict:** PASS\n", "weak_closeout_status"),
         ("| status | blocked |\n", "weak_closeout_status"),
-        ("## status\ncomplete\n\n### ac_verdict\nAC1 — FAIL on auth\n", "ac_verdict_miss"),
+        (
+            "## status\ncomplete\n\n### ac_verdict\nAC1 — FAIL on auth\n",
+            "ac_verdict_miss",
+        ),
         (
             "**status:** complete\n**ac_verdict:** AC2 not_tested\n",
             "ac_verdict_miss",
@@ -561,3 +584,346 @@ def test_second_read_swallows_exceptions_so_the_closeout_still_relays() -> None:
     finally:
         monkey.undo()
     assert outcome is None
+
+
+# --- identity: bind_job, sidecar parse, failed-submit rebind, read_only settle -
+
+
+@pytest.fixture
+def isolated_auto_ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from services.git_integration_worker.cursor_auto.job_ledger import AutoJobLedger
+    from services.git_integration_worker.cursor_auto.queue import reset_queue_for_tests
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    AutoJobLedger.reset_for_tests()
+    reset_queue_for_tests(durable=True)
+    yield
+    AutoJobLedger.reset_for_tests()
+
+
+def _enqueue_job(thread_id: str = THREAD, contract: str = "implement"):
+    from services.git_integration_worker.cursor_auto.queue import get_queue
+
+    return get_queue().enqueue(
+        thread_id=thread_id,
+        turn_number=1,
+        subject="reflex identity",
+        body="TYPE: DIRECTIVE\ncontract: implement\n",
+        from_agent="web-anthropic",
+        to_agent="cursor-auto",
+        desired_model="auto",
+        desired_effort="medium",
+        contract=contract,
+    )
+
+
+def _patch_nested_http(monkeypatch: pytest.MonkeyPatch, *, status: int) -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_client = AsyncMock()
+    if status >= 400:
+        mock_resp = MagicMock()
+        mock_resp.status_code = status
+        mock_resp.content = b'{"detail":"rejected"}'
+        mock_resp.json.return_value = {"detail": "rejected"}
+        mock_client.post = AsyncMock(return_value=mock_resp)
+    else:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.content = b'{"admitted": true}'
+        mock_resp.json.return_value = {"admitted": True}
+        mock_client.post = AsyncMock(return_value=mock_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    class _FakeCM:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        async def __aenter__(self) -> object:
+            return mock_client
+
+        async def __aexit__(self, *args: object) -> bool:
+            return False
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.nested_sdk.httpx.AsyncClient",
+        _FakeCM,
+    )
+
+
+def test_reflex_bind_does_not_clobber_executor_dispatch(
+    isolated_auto_ledger: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    from services.git_integration_worker.cursor_auto.job_ledger import get_ledger
+    from services.git_integration_worker.cursor_auto.nested_sdk import (
+        submit_nested_dispatch,
+    )
+
+    job = _enqueue_job()
+    _patch_nested_http(monkeypatch, status=200)
+    first = asyncio.run(
+        submit_nested_dispatch(
+            job,
+            model_id="cursor/composer-2.5",
+            handoff_contract="implement",
+            message="go",
+        )
+    )
+    executor_id = str(first["dispatch_id"])
+    assert first["ok"] is True
+    assert get_ledger().read_relay_state(job.job_id)["dispatch_id"] == executor_id
+
+    second = asyncio.run(
+        submit_nested_dispatch(
+            job,
+            model_id="cursor/gpt-5.6-luna",
+            handoff_contract="light-bounded",
+            message="read",
+            read_only=True,
+            bind_job=False,
+        )
+    )
+    assert second["ok"] is True
+    assert second["dispatch_id"] != executor_id
+    state = get_ledger().read_relay_state(job.job_id)
+    assert state["dispatch_id"] == executor_id
+
+
+def test_failed_submit_can_rebind_to_live_executor(
+    isolated_auto_ledger: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dead first-submit id must not pin the job; LWW rebind is the belt."""
+    import asyncio
+
+    from services.git_integration_worker.cursor_auto.job_ledger import (
+        RELAY_PHASE_DISPATCHED,
+        RELAY_PHASE_NONE,
+        get_ledger,
+    )
+    from services.git_integration_worker.cursor_auto.nested_sdk import (
+        submit_nested_dispatch,
+    )
+
+    job = _enqueue_job()
+    _patch_nested_http(monkeypatch, status=503)
+    failed = asyncio.run(
+        submit_nested_dispatch(
+            job,
+            model_id="cursor/composer-2.5",
+            handoff_contract="implement",
+            message="go",
+        )
+    )
+    assert failed["ok"] is False
+    dead_id = str(failed["dispatch_id"])
+    state = get_ledger().read_relay_state(job.job_id)
+    assert state["dispatch_id"] == dead_id
+    assert state["relay_phase"] == RELAY_PHASE_NONE
+
+    _patch_nested_http(monkeypatch, status=200)
+    live = asyncio.run(
+        submit_nested_dispatch(
+            job,
+            model_id="cursor/composer-2.5",
+            handoff_contract="implement",
+            message="retry",
+        )
+    )
+    assert live["ok"] is True
+    live_id = str(live["dispatch_id"])
+    assert live_id != dead_id
+    state = get_ledger().read_relay_state(job.job_id)
+    assert state["dispatch_id"] == live_id
+    assert state["relay_phase"] == RELAY_PHASE_DISPATCHED
+
+
+def test_failed_reflex_submit_does_not_reset_executor_phase(
+    isolated_auto_ledger: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    from services.git_integration_worker.cursor_auto.job_ledger import (
+        RELAY_PHASE_DISPATCHED,
+        get_ledger,
+    )
+    from services.git_integration_worker.cursor_auto.nested_sdk import (
+        submit_nested_dispatch,
+    )
+
+    job = _enqueue_job()
+    _patch_nested_http(monkeypatch, status=200)
+    first = asyncio.run(
+        submit_nested_dispatch(
+            job,
+            model_id="cursor/composer-2.5",
+            handoff_contract="implement",
+            message="go",
+        )
+    )
+    executor_id = str(first["dispatch_id"])
+    _patch_nested_http(monkeypatch, status=503)
+    failed = asyncio.run(
+        submit_nested_dispatch(
+            job,
+            model_id="cursor/gpt-5.6-luna",
+            handoff_contract="light-bounded",
+            message="read",
+            read_only=True,
+            bind_job=False,
+        )
+    )
+    assert failed["ok"] is False
+    state = get_ledger().read_relay_state(job.job_id)
+    assert state["dispatch_id"] == executor_id
+    assert state["relay_phase"] == RELAY_PHASE_DISPATCHED
+
+
+def test_reflex_parses_repo_sidecar_not_bus_envelope(
+    isolated_auto_ledger: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from services.git_integration_worker.cursor_auto.queue import AutoJob
+    from services.git_integration_worker.cursor_auto.reflex_packet import (
+        SECOND_READ_BEGIN,
+        SECOND_READ_END,
+    )
+    from services.git_integration_worker.cursor_auto.reflex_read import (
+        _run_reflex_dispatch,
+    )
+
+    sidecar = (
+        f"{SECOND_READ_BEGIN}\n"
+        "1. EVIDENCE — sidecar hit.\n"
+        "2. LIKELIEST ERROR — bus envelope parse.\n"
+        "3. MISSING — inject into Auto CLOSEOUT.\n"
+        f"{SECOND_READ_END}\n"
+    )
+    bus_json = '{"status":"complete","text":"no sentinels in the envelope"}'
+
+    async def _ok_submit(*_a: object, **kwargs: object) -> dict[str, object]:
+        assert kwargs.get("bind_job") is False
+        assert kwargs.get("read_only") is True
+        return {"ok": True, "dispatch_id": "auto-reflex-sidecar"}
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.nested_sdk.submit_nested_dispatch",
+        _ok_submit,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.nested_sdk.fetch_sdk_closeout_body",
+        AsyncMock(return_value=bus_json),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.closeout_relay.read_repo_closeout_sidecar",
+        lambda dispatch_id, **_k: (
+            sidecar if dispatch_id == "auto-reflex-sidecar" else None
+        ),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.reflex_read._poll_reflex_terminal",
+        AsyncMock(return_value={"terminal": True, "status": "completed", "row": {}}),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.reflex_read.maybe_emit_premium_bind",
+        lambda **_k: None,
+    )
+    emitted: list[str] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.reflex_read._emit_outcome",
+        lambda *_a, **_k: emitted.append(str(_a[-1] if _a else _k.get("outcome"))),
+    )
+
+    job = AutoJob(
+        job_id="j-sidecar",
+        thread_id=THREAD,
+        turn_number=1,
+        subject="s",
+        body="do the thing",
+        from_agent="a",
+        to_agent="cursor-auto",
+        desired_model="",
+        desired_effort="",
+        contract="implement",
+    )
+    outcome = asyncio.run(
+        _run_reflex_dispatch(
+            job,
+            contract="implement",
+            model_id="cursor/gpt-5.6-luna",
+            knobs={},
+            sdk_body=_clean_body(),
+            executor_model="cursor/composer-2.5",
+            executor_dispatch_id="d-exec",
+            bus=None,
+            superseded=None,
+            reason="sparse_directive_scope",
+        )
+    )
+    assert outcome is not None
+    assert "sidecar hit" in outcome.text
+    assert "no sentinels in the envelope" not in outcome.text
+    assert emitted[-1] == "delivered"
+
+
+def test_read_only_finalize_skips_lane_settle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    from services.git_integration_worker.cursor_sdk_capture_status import ChangeSet
+    from services.git_integration_worker.cursor_sdk_closeout.closeout_records import (
+        SdkRunOutcome,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.delivery_assembly import (
+        receipt_finalization as rf,
+    )
+
+    called: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        rf,
+        "settle_lane_branch",
+        lambda **kwargs: called.append(kwargs),
+    )
+    monkeypatch.setattr(
+        rf, "persist_structured_closeout_full_to_repo_sidecar", lambda **_k: None
+    )
+    monkeypatch.setattr(rf, "render_usage_sidecar_section", lambda **_k: "")
+    sidecar = tmp_path / "sidecar.md"
+    sidecar.write_text("closeout\n", encoding="utf-8")
+    body = json.dumps({"status": "complete"})
+    outcome = SdkRunOutcome(
+        body="", status="complete", duration_ms=1, tool_call_count=0
+    )
+    cs = ChangeSet(created=(), modified=("x.py",), deleted=())
+    kwargs = dict(
+        source_repo=tmp_path,
+        lane_b_branch="cursor-sdk/lane-9470",
+        thread_id="9470",
+        dispatch_id="auto-reflex1",
+        text="land_disposition: landed\n",
+        capture_commits_ahead=1,
+        capture_landed=False,
+        capture_head_sha="abc",
+        repo_change_set=cs,
+        outcome=outcome,
+        resolved_model="cursor/gpt-5.6-luna",
+        sidecar_appendix=[],
+        sidecar_path=sidecar,
+        result_bytes=1,
+        body=body,
+        sidecar_ref="ref",
+        execution_id="exec",
+        finalize_oversize=False,
+        post_closeout_sidecar_fn=None,
+    )
+    rf.finalize_closeout_receipt(**kwargs, read_only=True)
+    assert called == []
+    rf.finalize_closeout_receipt(**kwargs, read_only=False)
+    assert len(called) == 1
+    assert called[0]["branch_name"] == "cursor-sdk/lane-9470"
+    assert called[0]["dispatch_id"] == "auto-reflex1"

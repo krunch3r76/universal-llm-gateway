@@ -22,7 +22,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from cursor_capabilities import canonical_cursor_bare_id, default_variant, supported_knobs
+from cursor_capabilities import (
+    canonical_cursor_bare_id,
+    default_variant,
+    supported_knobs,
+)
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_auto.knob_compose import compose_model_knobs
@@ -294,8 +298,11 @@ async def _run_reflex_dispatch(
     reason: str,
 ) -> ReflexOutcome | None:
     """Submit, poll, and parse one reflex dispatch; ``None`` on any shortfall."""
+    _ = bus  # bus JSON envelope is not the closeout; the repo sidecar is.
+    from services.git_integration_worker.cursor_auto.closeout_relay import (
+        read_repo_closeout_sidecar,
+    )
     from services.git_integration_worker.cursor_auto.nested_sdk import (
-        fetch_sdk_closeout_body,
         submit_nested_dispatch,
     )
 
@@ -316,6 +323,7 @@ async def _run_reflex_dispatch(
         nest_under=None,
         model_knobs=knobs or None,
         read_only=True,
+        bind_job=False,
     )
     reflex_dispatch_id = str(submit.get("dispatch_id") or "")
     maybe_emit_premium_bind(
@@ -332,8 +340,15 @@ async def _run_reflex_dispatch(
             job.thread_id,
             submit.get("error"),
         )
-        _emit_outcome(job, executor_dispatch_id, reflex_dispatch_id, model_id,
-                      contract, reason, "submit_failed")
+        _emit_outcome(
+            job,
+            executor_dispatch_id,
+            reflex_dispatch_id,
+            model_id,
+            contract,
+            reason,
+            "submit_failed",
+        )
         return None
     # Charge the episode budget only once a leg actually exists — a refused admit
     # costs nothing and should not consume a thread's allowance of second reads.
@@ -345,23 +360,42 @@ async def _run_reflex_dispatch(
         superseded=superseded,
     )
     if not polled.get("terminal"):
-        _emit_outcome(job, executor_dispatch_id, reflex_dispatch_id, model_id,
-                      contract, reason, str(polled.get("reason") or "not_terminal"))
+        _emit_outcome(
+            job,
+            executor_dispatch_id,
+            reflex_dispatch_id,
+            model_id,
+            contract,
+            reason,
+            str(polled.get("reason") or "not_terminal"),
+        )
         return None
 
-    body = await fetch_sdk_closeout_body(
-        thread_id=job.thread_id,
-        dispatch_id=reflex_dispatch_id,
-        bus=bus,
-    )
+    # Repo sidecar carries the sentinel prose. The bus turn is a JSON envelope
+    # that parse_second_read never matches — 0 of 7 completed fires delivered.
+    body = read_repo_closeout_sidecar(reflex_dispatch_id)
     answer = parse_second_read(body)
     if not answer:
-        _emit_outcome(job, executor_dispatch_id, reflex_dispatch_id, model_id,
-                      contract, reason, "unparseable")
+        _emit_outcome(
+            job,
+            executor_dispatch_id,
+            reflex_dispatch_id,
+            model_id,
+            contract,
+            reason,
+            "unparseable",
+        )
         return None
 
-    _emit_outcome(job, executor_dispatch_id, reflex_dispatch_id, model_id,
-                  contract, reason, "delivered")
+    _emit_outcome(
+        job,
+        executor_dispatch_id,
+        reflex_dispatch_id,
+        model_id,
+        contract,
+        reason,
+        "delivered",
+    )
     return ReflexOutcome(
         text=answer,
         model=model_id,

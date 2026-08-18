@@ -59,11 +59,13 @@ def reflex_budget() -> int:
 
 
 def reflex_sample_every() -> int:
-    """Fire on every Nth otherwise-unremarkable job; ``0`` disables sampling."""
-    try:
-        return max(0, int(os.environ.get("CURSOR_AUTO_REFLEX_SAMPLE_EVERY", "5")))
-    except ValueError:
-        return 5
+    """Periodic sampling removed (arc 9470 AC5). Always 0.
+
+    ``CURSOR_AUTO_REFLEX_SAMPLE_EVERY`` is ignored. Sampling consumed the
+    per-thread budget on clean jobs (3 of 4 completed 9470 shadows) so a later
+    distress trigger could not fire. Signal-triggered reasons remain.
+    """
+    return 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,8 +162,8 @@ def evaluate_reflex(
 ) -> ReflexVerdict:
     """Decide whether this terminal episode earns a premium second read.
 
-    Call exactly once per job: the job tally that drives periodic sampling is
-    advanced here, so a second call would double-count the episode.
+    Call exactly once per job: the spend tally is read here, so a second call
+    on a firing episode would double-count against the budget.
     """
     if not reflex_enabled():
         return ReflexVerdict(False, "reflex_disabled")
@@ -171,7 +173,6 @@ def evaluate_reflex(
     if not body.strip():
         return ReflexVerdict(False, "no_closeout_body")
 
-    nth = _COUNTERS.note_job(thread_id)
     budget = reflex_budget()
     reason = _trigger_reason(
         contract=contract,
@@ -179,10 +180,6 @@ def evaluate_reflex(
         sdk_body=body,
         density=density,
     )
-    if reason is None:
-        every = reflex_sample_every()
-        if every and nth % every == 0:
-            reason = "periodic_sample"
     if reason is None:
         return ReflexVerdict(False, "no_trigger")
     if _COUNTERS.spent(thread_id) >= budget:

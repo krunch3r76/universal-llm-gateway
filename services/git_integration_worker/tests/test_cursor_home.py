@@ -412,3 +412,38 @@ def test_build_dispatch_path_prepend_skips_grok_overwritten_shim(
     venv = _fake_venv(tmp_path)
     prepend = build_dispatch_path_prepend(venv, real_home=home)
     assert prepend == str(venv / "bin")
+
+
+def _seed_ecosystem_plugin(real: Path) -> None:
+    plugin_skill = (
+        real
+        / ".cursor"
+        / "plugins"
+        / "local"
+        / "ulg-ecosystem"
+        / "skills"
+        / "residual-imprint"
+    )
+    plugin_skill.mkdir(parents=True)
+    (plugin_skill / "SKILL.md").write_text("# residual-imprint", encoding="utf-8")
+
+
+def test_dispatch_home_points_venvs_at_operator_not_as_interpreter_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """$HOME/.venvs must resolve under dispatch HOME without copying the venv."""
+    monkeypatch.setenv("CURSOR_API_KEY", "test-key")
+    real = _fake_real_home(tmp_path)
+    _seed_ecosystem_plugin(real)
+    operator_python = real / ".venvs" / "universal" / "bin" / "python"
+    operator_python.parent.mkdir(parents=True)
+    operator_python.write_text("#!/bin/sh\necho operator-python\n", encoding="utf-8")
+    root = tmp_path / "homes"
+    home = setup_cursor_dispatch_home("auto-787c6b89be1f", real_home=real, root=root)
+    pointer = home / ".venvs"
+    dispatched_python = pointer / "universal" / "bin" / "python"
+    assert pointer.is_symlink()
+    assert dispatched_python.is_file()
+    assert dispatched_python.resolve() == operator_python.resolve()
+    assert operator_python.resolve().is_relative_to(real.resolve())
+    assert not operator_python.resolve().is_relative_to(home.resolve())

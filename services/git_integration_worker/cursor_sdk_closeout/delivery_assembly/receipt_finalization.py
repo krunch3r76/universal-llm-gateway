@@ -56,18 +56,36 @@ def finalize_closeout_receipt(
     execution_id: str,
     finalize_oversize: bool,
     post_closeout_sidecar_fn: Callable[..., dict[str, Any] | None] | None,
+    read_only: bool | None = None,
 ) -> CloseoutDelivery:
-    settle_lane_branch(
-        source_repo=source_repo,
-        branch_name=lane_b_branch,
-        thread_id=thread_id,
-        dispatch_id=dispatch_id,
-        closeout_text=text,
-        commits_ahead=capture_commits_ahead,
-        landed=capture_landed,
-        head_sha=capture_head_sha,
-        files=[*repo_change_set.created, *repo_change_set.modified],
-    )
+    """Write sidecar suffix + structured receipt; settle the lane branch if owed.
+
+    *read_only* skips ``settle_lane_branch`` so an advisory leg cannot fake
+    Lane-B land state. ``None`` looks the flag up from the dispatch ledger.
+    """
+    if read_only is None:
+        from services.git_integration_worker.cursor_dispatch_ledger import (
+            CursorDispatchLedger,
+        )
+
+        read_only = CursorDispatchLedger.instance().read_read_only(
+            dispatch_id=dispatch_id
+        )
+    # Read-only legs never own a Lane-B branch. Settling them fakes land state
+    # (debt / unlanded grade) for an advisory dispatch. Skip even when a
+    # branch name leaked onto the closeout fields.
+    if not read_only:
+        settle_lane_branch(
+            source_repo=source_repo,
+            branch_name=lane_b_branch,
+            thread_id=thread_id,
+            dispatch_id=dispatch_id,
+            closeout_text=text,
+            commits_ahead=capture_commits_ahead,
+            landed=capture_landed,
+            head_sha=capture_head_sha,
+            files=[*repo_change_set.created, *repo_change_set.modified],
+        )
     usage_section = render_usage_sidecar_section(
         usage=outcome.usage,
         usage_capture_status=outcome.usage_capture_status,
@@ -139,6 +157,7 @@ async def relocate_oversize_delivery_async(
     execution_id: str,
     post_closeout_sidecar_fn: Callable[..., Any] | None,
 ) -> CloseoutDelivery:
+    """Move an oversize closeout body off the bus turn and return the relocated delivery."""
     full_body = delivery.body
     if len(full_body) <= MAX_TURN_BODY_CHARS:
         return delivery

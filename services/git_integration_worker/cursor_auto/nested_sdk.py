@@ -146,16 +146,24 @@ def _release_failed_submission(
     relay_ctx: CloseoutRelayContext | None,
     *,
     dispatch_id: str,
+    bind_job: bool = True,
 ) -> None:
-    """Undo both reservations taken before a nested submission that never ran.
+    """Undo reservations taken before a nested submission that never ran.
 
-    ``bind_dispatch`` and ``try_admit`` are both claimed ahead of the POST, so a
-    submission the worker never accepted has to retire them here — nothing
-    downstream will. Leaving the ticket wedges ``active_count`` against drain;
-    leaving the binding at ``dispatched`` makes closeout replay wait on a
-    dispatch that does not exist.
+    ``bind_dispatch`` and ``try_admit`` are claimed ahead of the POST when
+    *bind_job* is true, so a submission the worker never accepted has to retire
+    them here — nothing downstream will. Leaving the ticket wedges
+    ``active_count`` against drain; leaving the binding at ``dispatched`` makes
+    closeout replay wait on a dispatch that does not exist.
+
+    *bind_job* false (reflex / advisory legs) never wrote the job row, so
+    resetting ``relay_phase`` here would wipe the executor's binding. The
+    failed-submit ``dispatch_id`` is left on the row when we *did* bind:
+    last-write-wins ``bind_dispatch`` is what lets a later executor retry
+    replace it. A first-wins COALESCE would pin the job to this dead id.
     """
-    get_ledger().set_relay_phase(job_id, relay_phase=RELAY_PHASE_NONE)
+    if bind_job:
+        get_ledger().set_relay_phase(job_id, relay_phase=RELAY_PHASE_NONE)
     if relay_ctx is None or relay_ctx.admission_controller is None:
         return
     relay_ctx.admission_controller.close_ticket(dispatch_id, terminal_status="failed")
@@ -171,20 +179,27 @@ async def submit_nested_dispatch(
     model_knobs: dict[str, str] | None = None,
     read_only: bool | None = None,
     relay_ctx: CloseoutRelayContext | None = None,
+    bind_job: bool = True,
 ) -> dict[str, Any]:
     """POST ``/api/v1/cursor/dispatch`` for one nested SDK run.
 
     *read_only* must be passed explicitly for lease-exempt legs: the route infers
     ``read_only=False`` for ``light-bounded``, so an advisory reader that never
     writes would otherwise contend for the write lease like an implement run.
+
+    *bind_job* is the executor identity write. Reflex / second-read legs pass
+    false so they cannot last-write-win the job's ``dispatch_id``. Executor
+    retries keep the default true: a failed submit leaves ``dispatch_id`` on
+    the row and the next successful bind overwrites it (not first-wins).
     """
     dispatch_id = f"auto-{uuid.uuid4().hex[:12]}"
     execution_id = f"exec-{dispatch_id}"
-    get_ledger().bind_dispatch(
-        job.job_id,
-        dispatch_id=dispatch_id,
-        relay_phase=RELAY_PHASE_DISPATCHED,
-    )
+    if bind_job:
+        get_ledger().bind_dispatch(
+            job.job_id,
+            dispatch_id=dispatch_id,
+            relay_phase=RELAY_PHASE_DISPATCHED,
+        )
     if relay_ctx is not None and relay_ctx.admission_controller is not None:
         try:
             relay_ctx.admission_controller.try_admit(
@@ -193,7 +208,9 @@ async def submit_nested_dispatch(
                 route="cursor-auto/nested",
             )
         except Draining503 as exc:
-            _release_failed_submission(job.job_id, None, dispatch_id=dispatch_id)
+            _release_failed_submission(
+                job.job_id, None, dispatch_id=dispatch_id, bind_job=bind_job
+            )
             return {
                 "ok": False,
                 "dispatch_id": dispatch_id,
@@ -230,7 +247,9 @@ async def submit_nested_dispatch(
             resp = await client.post(url, json=payload)
         data = resp.json() if resp.content else {}
         if resp.status_code >= 400:
-            _release_failed_submission(job.job_id, relay_ctx, dispatch_id=dispatch_id)
+            _release_failed_submission(
+                job.job_id, relay_ctx, dispatch_id=dispatch_id, bind_job=bind_job
+            )
             return {
                 "ok": False,
                 "dispatch_id": dispatch_id,
@@ -246,7 +265,9 @@ async def submit_nested_dispatch(
             "response": data,
         }
     except (httpx.HTTPError, ValueError, OSError) as exc:
-        _release_failed_submission(job.job_id, relay_ctx, dispatch_id=dispatch_id)
+        _release_failed_submission(
+            job.job_id, relay_ctx, dispatch_id=dispatch_id, bind_job=bind_job
+        )
         logger.error("cursor-auto nested dispatch submit failed: %s", exc)
         return {
             "ok": False,

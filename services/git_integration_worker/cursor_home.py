@@ -40,6 +40,7 @@ DISPATCH_GIT_EMAIL_DOMAIN = "dispatch.git-integration-worker"
 # code-mount via build_mcp_servers (user-vortex + vortex-code).
 _COPIED_OAUTH_MCP_SERVERS = frozenset({"vortex-code", "vortex-life"})
 
+
 def _passwd_home() -> Path:
     """Login-directory home from the passwd DB — immune to process ``HOME`` leaks."""
     return Path(pwd.getpwuid(os.getuid()).pw_dir).expanduser()
@@ -196,9 +197,7 @@ def prune_stale_dispatch_homes(
     accumulate without bound. Prune at worker startup and via manual cleanup.
     """
     retention_days = (
-        _DEFAULT_DISPATCH_HOME_RETENTION_DAYS
-        if max_age_days is None
-        else max_age_days
+        _DEFAULT_DISPATCH_HOME_RETENTION_DAYS if max_age_days is None else max_age_days
     )
     if retention_days < 1:
         return 0
@@ -271,6 +270,39 @@ def _strip_copied_oauth_mcp_servers(mcp_json: Path) -> None:
     mcp_json.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def _link_operator_venv(home: Path, real: Path) -> None:
+    """Point dispatch ``$HOME/.venvs`` at the operator interpreter — never copy it.
+
+    Agents follow the python-universal-venv rule and invoke
+    ``$HOME/.venvs/universal/bin/python``. Under a swapped dispatch HOME that
+    path is missing (exit 127, ``auto-787c6b89be1f``). The interpreter stays at
+    the operator path; this is a pointer, not a second root.
+    """
+    src = real / DEFAULT_REPO_VENV_RELPATH.parent
+    dst = home / DEFAULT_REPO_VENV_RELPATH.parent
+    if not src.is_dir():
+        return
+    if dst.is_symlink():
+        try:
+            if dst.resolve() == src.resolve():
+                return
+        except OSError:
+            pass
+        logger.warning(
+            "dispatch_home: venv pointer %s exists and does not match %s", dst, src
+        )
+        return
+    if dst.exists():
+        logger.warning("dispatch_home: venv pointer skipped; %s already exists", dst)
+        return
+    try:
+        dst.symlink_to(src, target_is_directory=True)
+    except OSError as exc:
+        logger.warning(
+            "dispatch_home: venv pointer skipped %s -> %s: %s", dst, src, exc
+        )
+
+
 def setup_cursor_dispatch_home(
     dispatch_id: str,
     *,
@@ -282,6 +314,8 @@ def setup_cursor_dispatch_home(
     Copies identity, credential, user rules, plugins, mcp.yaml, and mcp.json
     from the operator home, then strips copied ``vortex-code``/``vortex-life``
     entries so Cursor does not classify those names as OAuth on this seat.
+    ``$HOME/.venvs`` is a pointer at the operator venv, not a copied
+    interpreter root.
     """
     home = dispatch_home_path(dispatch_id, root=root)
     real = operator_real_home(explicit=real_home)
@@ -335,6 +369,7 @@ def setup_cursor_dispatch_home(
     # a headless seat has no human reader. Swap it for the interagent counterpart.
     apply_cursor_sdk_seat_overlay(cursor_dir)
     seed_dispatch_git_identity(home, dispatch_id)
+    _link_operator_venv(home, real)
     return home
 
 
