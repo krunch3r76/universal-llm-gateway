@@ -63,6 +63,18 @@ def web_chat_relay_auth_missing(*, grok_url: str, page_url: str) -> Event:
 
 
 @event_factory
+def web_chat_relay_tick_retry(*, detail: str) -> Event:
+    """One poll tick hit a transient stall (still-generating turn, HTTP
+    hiccup) and is retrying next tick instead of ending the relay process."""
+    return Event(
+        signal="web_chat.relay.tick_retry",
+        role="observation",
+        scope="node",
+        payload={"detail": detail},
+    )
+
+
+@event_factory
 def web_chat_relay_stopped(*, reason: str, relays: int) -> Event:
     """Relay loop exited (SIGINT, max-relays, stop file, or error)."""
     return Event(

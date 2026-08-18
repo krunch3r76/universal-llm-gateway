@@ -1,7 +1,10 @@
-"""Poll both product tabs and relay completed assistant turns.
+"""Poll grok, relay each new turn through a fresh claude ask, relay the reply back.
 
-Baseline-then-delta: history is never dumped. Echo is broken by comparing
-sha256 of the last pasted body in each direction.
+Baseline-then-delta on the grok side: history is never dumped, and echo is
+broken by comparing sha256 of the last pasted body in each direction. The
+claude side carries no session state between turns — see ``claude_leg.py``
+module docstring for why a cached session handle does not survive the
+satellite's dormant/relaunch lifecycle.
 """
 
 from __future__ import annotations
@@ -13,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from web_chat_relay import claude_leg, events, grok_session
-from web_chat_relay.claude_leg import ClaudeSession
+from web_chat_relay.claude_leg import ClaudeLegError
 from web_chat_relay.grok_session import GrokAuthError
 
 
@@ -49,6 +52,7 @@ class RelayConfig:
     poll_s: float = 5.0
     max_relays: int | None = None
     seed_grok: str = ""
+    claude_opener: str = ""
     stop_file: Path = Path("/tmp/grok-claude-relay.stop")
     url_substr: str = grok_session.DEFAULT_GROK_CHAT_ID
 
@@ -56,12 +60,10 @@ class RelayConfig:
 @dataclass
 class RelayState:
     grok_baseline_sha: str = ""
-    claude_baseline_sha: str = ""
     last_to_claude: str | None = None
     last_to_grok: str | None = None
     relays: int = 0
     stop_reason: str | None = None
-    claude: ClaudeSession | None = None
 
 
 def _stop_requested(cfg: RelayConfig, state: RelayState) -> str | None:
@@ -75,7 +77,7 @@ def _stop_requested(cfg: RelayConfig, state: RelayState) -> str | None:
 
 
 async def run_relay(cfg: RelayConfig) -> RelayState:
-    """Attach grok, open retained Cowork, then poll/relay until stop."""
+    """Attach grok, seed it if configured, then poll/relay until stop."""
     state = RelayState()
 
     def _sigint(*_args: object) -> None:
@@ -97,19 +99,10 @@ async def run_relay(cfg: RelayConfig) -> RelayState:
             )
             raise
         state.grok_baseline_sha = body_sha(grok0.last_assistant)
-
-        state.claude = claude_leg.open_retained_session(
-            grok_url=cfg.grok_url, base_url=cfg.project_ask_url
-        )
-        state.claude_baseline_sha = body_sha(state.claude.baseline_body)
-        events.emit(
-            events.web_chat_relay_started(
-                grok_url=cfg.grok_url,
-                claude_chat_url=state.claude.chat_url,
-            )
-        )
+        events.emit(events.web_chat_relay_started(grok_url=cfg.grok_url, claude_chat_url=None))
         if cfg.seed_grok.strip():
             await grok_session.paste_and_send(grok_page, cfg.seed_grok.strip())
+            await grok_session.wait_idle(grok_page)
         await _poll_loop(cfg, state, grok_page)
         return state
     finally:
@@ -122,72 +115,67 @@ async def run_relay(cfg: RelayConfig) -> RelayState:
 
 
 async def _poll_loop(cfg: RelayConfig, state: RelayState, grok_page) -> None:
-    assert state.claude is not None
-    claude = state.claude
+    """Poll forever. A stall on either leg retries next tick instead of
+    ending the process — the documented ``wait_idle`` 180s failure class
+    (a live turn still generating) is not a reason to kill an unattended
+    relay; ``GrokAuthError`` (real sign-out) still propagates and stops it."""
     while True:
         reason = _stop_requested(cfg, state)
         if reason:
             state.stop_reason = reason
             return
-
-        grok = await grok_session.harvest(grok_page)
-        if grok.login_wall:
-            events.emit(
-                events.web_chat_relay_auth_missing(
-                    grok_url=cfg.grok_url, page_url=grok.url
-                )
-            )
-            state.stop_reason = "auth_missing"
-            return
-        if grok.streaming or grok.stop:
-            grok = await grok_session.wait_idle(grok_page)
-        grok_sha = body_sha(grok.last_assistant)
-        if should_relay(
-            new_sha=grok_sha,
-            baseline_sha=state.grok_baseline_sha,
-            last_sent_sha=state.last_to_grok,
-            last_received_sha=state.last_to_claude,
-        ):
-            if not claude.chat_url:
-                raise RuntimeError("Cowork chat_url missing after submit")
-            claude_leg.followup_paste(
-                prompt_text=grok.last_assistant,
-                chat_url=claude.chat_url,
-                base_url=cfg.project_ask_url,
-                registration_id=claude.registration_id,
-                execution_id=claude.execution_id,
-            )
-            state.last_to_claude = grok_sha
-            state.relays += 1
-            events.emit(
-                events.web_chat_relay_turn_relayed(
-                    direction="grok_to_claude",
-                    body_sha256=grok_sha,
-                    relay_index=state.relays,
-                )
-            )
-            if claude.cdp_url and claude.chat_url:
-                reply = await claude_leg.wait_next_assistant(
-                    cdp_url=claude.cdp_url, chat_url=claude.chat_url
-                )
-                claude_body = str(reply.get("body") or "")
-                claude_sha = body_sha(claude_body)
-                if should_relay(
-                    new_sha=claude_sha,
-                    baseline_sha=state.claude_baseline_sha,
-                    last_sent_sha=state.last_to_claude,
-                    last_received_sha=state.last_to_grok,
-                ):
-                    await grok_session.paste_and_send(grok_page, claude_body)
-                    await grok_session.wait_idle(grok_page)
-                    state.last_to_grok = claude_sha
-                    state.relays += 1
-                    events.emit(
-                        events.web_chat_relay_turn_relayed(
-                            direction="claude_to_grok",
-                            body_sha256=claude_sha,
-                            relay_index=state.relays,
-                        )
-                    )
-
+        try:
+            await _relay_tick(cfg, state, grok_page)
+        except (TimeoutError, ClaudeLegError) as exc:
+            events.emit(events.web_chat_relay_tick_retry(detail=repr(exc)[:200]))
         await asyncio.sleep(cfg.poll_s)
+
+
+async def _relay_tick(cfg: RelayConfig, state: RelayState, grok_page) -> None:
+    """Harvest grok; if it has a genuinely new turn, ask claude fresh and
+    relay the reply straight back. A raised error here (network hiccup,
+    still-generating turn) leaves state untouched, so the caller's retry
+    re-sends the same grok turn rather than dropping or duplicating one."""
+    grok = await grok_session.harvest(grok_page)
+    if grok.login_wall:
+        events.emit(
+            events.web_chat_relay_auth_missing(grok_url=cfg.grok_url, page_url=grok.url)
+        )
+        state.stop_reason = "auth_missing"
+        return
+    if grok.streaming or grok.stop:
+        grok = await grok_session.wait_idle(grok_page)
+    grok_sha = body_sha(grok.last_assistant)
+    if not should_relay(
+        new_sha=grok_sha,
+        baseline_sha=state.grok_baseline_sha,
+        last_sent_sha=state.last_to_grok,
+        last_received_sha=state.last_to_claude,
+    ):
+        return
+
+    prompt = f"{cfg.claude_opener}\n\n---\n{grok.last_assistant}\n---" if cfg.claude_opener else grok.last_assistant
+    result = await asyncio.to_thread(
+        claude_leg.ask_and_wait, prompt_text=prompt, base_url=cfg.project_ask_url
+    )
+    claude_body = str(result.get("body") or "")
+    state.last_to_claude = grok_sha
+    state.relays += 1
+    events.emit(
+        events.web_chat_relay_turn_relayed(
+            direction="grok_to_claude", body_sha256=grok_sha, relay_index=state.relays
+        )
+    )
+
+    claude_sha = body_sha(claude_body)
+    if not claude_body or claude_sha == state.last_to_grok:
+        return
+    await grok_session.paste_and_send(grok_page, claude_body)
+    await grok_session.wait_idle(grok_page)
+    state.last_to_grok = claude_sha
+    state.relays += 1
+    events.emit(
+        events.web_chat_relay_turn_relayed(
+            direction="claude_to_grok", body_sha256=claude_sha, relay_index=state.relays
+        )
+    )

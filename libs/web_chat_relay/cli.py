@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import json
 import sys
+from pathlib import Path
 
 from web_chat_relay import grok_session
 from web_chat_relay.grok_session import GrokAuthError
@@ -36,6 +37,17 @@ def _parser() -> argparse.ArgumentParser:
         default="",
         help="After Cowork opener, paste this into grok so the first assistant turn fires",
     )
+    p.add_argument(
+        "--seed-grok-file",
+        default="",
+        help="Read --seed-grok text from a file (overrides --seed-grok; avoids SSH quoting)",
+    )
+    p.add_argument(
+        "--claude-opener-file",
+        default="",
+        help="Read the Cowork opener text from a file, replacing the generic "
+        "wait-for-grok opener (task framing, entity ids, etc.)",
+    )
     p.add_argument("--stop-file", default="/tmp/grok-claude-relay.stop")
     return p
 
@@ -65,6 +77,13 @@ async def _probe(grok_url: str, cdp_url: str, wait_auth_s: float = 0.0) -> int:
         await asyncio.sleep(5.0)
 
 
+def _read_text_arg(inline: str, file_path: str) -> str:
+    """File content wins when both are given; empty when neither is set."""
+    if file_path:
+        return Path(file_path).read_text(encoding="utf-8")
+    return inline
+
+
 async def _run(args: argparse.Namespace) -> int:
     if args.wait_auth > 0:
         rc = await _probe(args.grok_url, args.cdp_url, args.wait_auth)
@@ -77,21 +96,13 @@ async def _run(args: argparse.Namespace) -> int:
         project_ask_url=args.project_ask_url,
         poll_s=args.poll_s,
         max_relays=args.max_relays,
-        seed_grok=args.seed_grok,
-        stop_file=__import__("pathlib").Path(args.stop_file),
+        seed_grok=_read_text_arg(args.seed_grok, args.seed_grok_file),
+        claude_opener=_read_text_arg("", args.claude_opener_file),
+        stop_file=Path(args.stop_file),
         url_substr=substr,
     )
     state = await run_relay(cfg)
-    print(
-        json.dumps(
-            {
-                "relays": state.relays,
-                "stop_reason": state.stop_reason,
-                "execution_id": state.claude.execution_id if state.claude else None,
-                "chat_url": state.claude.chat_url if state.claude else None,
-            }
-        )
-    )
+    print(json.dumps({"relays": state.relays, "stop_reason": state.stop_reason}))
     return 0 if state.stop_reason != "auth_missing" else 2
 
 
