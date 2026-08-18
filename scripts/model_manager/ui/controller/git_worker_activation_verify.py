@@ -102,48 +102,59 @@ async def record_kill_boundary_and_arm_verify(
     if not arms_activation_verify(intent.action):
         store.advance(intent.intent_id, status=STATUS_COMPLETED)
         return
-    if store.advance_if_status(
+    cas_ok = store.advance_if_status(
         intent.intent_id,
         from_status=from_status,
         to_status=STATUS_VERIFYING_ACTIVATION,
-    ) and validation is not None:
-        publish_activation_event(
-            ManageRestartVerifying(
-                intent_id=intent.intent_id,
-                validation_id=validation.validation_id,
-                service=intent.service,
-                kill_boundary_at=kill_boundary_at,
-                boundary_source=boundary_source,
-            )
+    )
+    if not cas_ok:
+        return
+    if validation is None:
+        _terminal_unverified_no_validation(
+            store, intent.intent_id, reason="missing_validation_at_arm"
         )
-        schedule_activation_verify(
-            store, intent.intent_id, validation.validation_id
+        return
+    publish_activation_event(
+        ManageRestartVerifying(
+            intent_id=intent.intent_id,
+            validation_id=validation.validation_id,
+            service=intent.service,
+            kill_boundary_at=kill_boundary_at,
+            boundary_source=boundary_source,
         )
+    )
+    schedule_activation_verify(store, intent.intent_id, validation.validation_id)
 
 
 async def arm_verify_after_generation_gone(
     store: RestartIntentStore,
     intent: Intent,
 ) -> bool:
-    """Generation-gone path: record boundary and arm verify without SIGTERM."""
+    """Generation-gone path: record boundary and arm verify without SIGTERM.
+
+    Returns True when the intent reached a state requiring no further caller
+    action (normal arm or self-terminalization). Returns False when verification
+    does not apply to this action and the caller may treat the intent as completed.
+    """
     _, validation = _persist_kill_boundary(
         store, intent, boundary_source="generation_gone"
     )
     if not arms_activation_verify(intent.action):
         return False
-    if (
-        store.advance_if_status(
-            intent.intent_id,
-            from_status=STATUS_PENDING_DRAIN,
-            to_status=STATUS_VERIFYING_ACTIVATION,
-        )
-        and validation is not None
-    ):
-        schedule_activation_verify(
-            store, intent.intent_id, validation.validation_id
+    cas_ok = store.advance_if_status(
+        intent.intent_id,
+        from_status=STATUS_PENDING_DRAIN,
+        to_status=STATUS_VERIFYING_ACTIVATION,
+    )
+    if not cas_ok:
+        return False
+    if validation is None:
+        _terminal_unverified_no_validation(
+            store, intent.intent_id, reason="missing_validation_at_arm"
         )
         return True
-    return False
+    schedule_activation_verify(store, intent.intent_id, validation.validation_id)
+    return True
 
 
 def _monotonic_from_kill_boundary(kill_boundary_at: str | None) -> float | None:
@@ -201,7 +212,7 @@ async def run_activation_verify(
     validation = get_validation(validation_id)
     if intent is None or validation is None:
         return
-    if intent.status != STATUS_VERIFYING_ACTIVATION or validation.outcome != "pending":
+    if _abort_if_not_verifying(store, intent, validation, validation_id):
         return
     if not intent.kill_boundary_at:
         _terminal_unverified(store, intent_id, validation_id, "missing_kill_boundary")
@@ -211,7 +222,7 @@ async def run_activation_verify(
     validation = get_validation(validation_id)
     if intent is None or validation is None:
         return
-    if intent.status != STATUS_VERIFYING_ACTIVATION or validation.outcome != "pending":
+    if _abort_if_not_verifying(store, intent, validation, validation_id):
         return
     settle_mono = (
         validation.restart_boundary_monotonic
@@ -230,7 +241,7 @@ async def run_activation_verify(
         validation = get_validation(validation_id)
         if intent is None or validation is None:
             return
-        if intent.status != STATUS_VERIFYING_ACTIVATION or validation.outcome != "pending":
+        if _abort_if_not_verifying(store, intent, validation, validation_id):
             return
         payload = probe_process_live(intent.service)
         obs_class = _observation_class(payload)
@@ -294,6 +305,53 @@ async def run_activation_verify(
         await asyncio.sleep(0.5)
 
 
+def _terminal_unverified_no_validation(
+    store: RestartIntentStore,
+    intent_id: str,
+    *,
+    reason: str,
+) -> None:
+    """Terminalize a verifying intent that has no validation row."""
+    if store.advance_if_status(
+        intent_id,
+        from_status=STATUS_VERIFYING_ACTIVATION,
+        to_status=STATUS_ACTIVATION_UNVERIFIED,
+        reason=reason,
+    ):
+        publish_activation_event(
+            ManageRestartActivationUnverified(
+                intent_id=intent_id,
+                validation_id=None,
+                outcome="unvalidated_timeout",
+                failure_reason=reason,
+            )
+        )
+
+
+def _abort_if_not_verifying(
+    store: RestartIntentStore,
+    intent: Intent,
+    validation: Any,
+    validation_id: str,
+) -> bool:
+    """True => caller should return now.
+
+    When the intent is still verifying_activation but its validation already
+    resolved elsewhere, terminalize the intent before returning.
+    """
+    if intent.status != STATUS_VERIFYING_ACTIVATION:
+        return True
+    if validation.outcome != "pending":
+        _terminal_unverified(
+            store,
+            intent.intent_id,
+            validation_id,
+            f"validation_resolved_{validation.outcome}",
+        )
+        return True
+    return False
+
+
 def _terminal_unverified(
     store: RestartIntentStore,
     intent_id: str,
@@ -347,6 +405,9 @@ async def resume_activation_verify(
     """Boot resume: re-enter verify without begin-drain or kill."""
     validation = latest_validation_for_intent(intent_id)
     if validation is None:
+        _terminal_unverified_no_validation(
+            store, intent_id, reason="missing_validation_at_boot_resume"
+        )
         return
     await run_activation_verify(store, intent_id, validation.validation_id)
 

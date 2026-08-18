@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 
 # Manage is outside the managed fleet; nothing auto-respawns it after quit.
-RECOVERY_PATH = "manual, human at the terminal"
+RECOVERY_PATH = "seat tmux 0:0 re-drive per services_ws safe quit/start recipe"
 DEFAULT_QUIT_TIMEOUT_S = 180.0
 DEFAULT_BOOT_TIMEOUT_S = 120.0
 

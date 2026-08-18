@@ -64,7 +64,7 @@ def ManageRestartActivationValidated(  # noqa: N802
 @event_factory
 def ManageRestartActivationUnverified(  # noqa: N802
     intent_id: str,
-    validation_id: str,
+    validation_id: str | None,
     outcome: str,
     failure_reason: str | None,
     affordances: list[str] | None = None,

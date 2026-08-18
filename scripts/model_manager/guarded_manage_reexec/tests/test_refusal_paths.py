@@ -263,7 +263,6 @@ def test_dry_run_stops_before_quit(tmp_path: Any) -> None:
     assert result.reason == "checks_passed_stopped_before_quit"
     assert result.executed is False
     assert result.recovery_path == RECOVERY_PATH
-    assert result.recovery_path == "manual, human at the terminal"
     assert "charter_pause" not in calls
 
 
@@ -333,6 +332,138 @@ def test_run_refuses_when_tmux_pane_mismatches(tmp_path: Any) -> None:
     assert sends == []
 
 
+def test_execute_reaches_charter_pause_then_post_pause_drain_refuse(
+    tmp_path: Any,
+) -> None:
+    """AC2.1: pre-pause drain duplicate removed — pause arms, post-pause gate refuses."""
+    store = _store(tmp_path)
+    calls: list[str] = []
+
+    def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
+        del params, kwargs
+        calls.append(method)
+        if method == "whoami":
+            return {
+                "pid": 9,
+                "code_version": "deadbeef",
+                "process_start_time": "2026-08-10T00:00:00+00:00",
+            }
+        if method == "busy_status":
+            return {
+                "process": {"manage_inflight": 1, "activities": []},
+                "charter_hold": {"held": False, "pause_drain_clear": False},
+            }
+        if method == "charter_hold_status":
+            return {
+                "held": False,
+                "pause_drain_clear": False,
+                "tick_in_flight": False,
+                "live_charter_shaped_dispatches": [],
+            }
+        if method == "charter_pause":
+            return {"status": "ok", "held": True}
+        raise AssertionError(f"unexpected manage call: {method}")
+
+    result = run_guarded_reexec(
+        target_ref="deadbeef",
+        dry_run=False,
+        manage_call=manage_call,
+        run_cmd=_ok_tmux(9),
+        intent_db=store._db_path,  # noqa: SLF001
+        tree_contains_fn=lambda pid, ancestor: pid == ancestor,
+    )
+    assert "charter_pause" in calls
+    assert result.reason == "drain_not_clear_after_pause"
+
+
+def test_dry_run_unarmed_hold_observes_drain_without_refuse(tmp_path: Any) -> None:
+    """AC2.3: dry-run surfaces pause_drain_clear=False without refusing on drain alone."""
+    store = _store(tmp_path)
+    calls: list[str] = []
+
+    def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
+        del params, kwargs
+        calls.append(method)
+        if method == "whoami":
+            return {
+                "pid": 9,
+                "code_version": "deadbeef",
+                "process_start_time": "2026-08-10T00:00:00+00:00",
+            }
+        if method == "busy_status":
+            return {
+                "process": {"manage_inflight": 1, "activities": []},
+                "charter_hold": {"held": False, "pause_drain_clear": False},
+            }
+        if method == "charter_hold_status":
+            return {
+                "held": False,
+                "pause_drain_clear": False,
+                "tick_in_flight": False,
+                "live_charter_shaped_dispatches": [],
+            }
+        raise AssertionError(f"unexpected manage call in dry-run: {method}")
+
+    result = run_guarded_reexec(
+        target_ref="deadbeef",
+        dry_run=True,
+        manage_call=manage_call,
+        intent_db=store._db_path,  # noqa: SLF001
+        run_cmd=_ok_tmux(9),
+        tree_contains_fn=lambda pid, ancestor: pid == ancestor,
+    )
+    assert result.status == "dry-run"
+    assert result.reason == "checks_passed_stopped_before_quit"
+    assert result.checks["pause_drain_clear"] is False
+    assert "charter_pause" not in calls
+
+
+def test_dry_run_unarmed_hold_still_refuses_nonterminal_intent(
+    tmp_path: Any,
+) -> None:
+    """AC2.3: genuine nonterminal intent still refuses even when drain is unarmed."""
+    store = _store(tmp_path)
+    store.create_intent(
+        service="git_integration_worker",
+        action="sync_restart",
+        deadline_at=(datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+        reason="fixture",
+    )
+
+    def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
+        del params, kwargs
+        if method == "whoami":
+            return {
+                "pid": 9,
+                "code_version": "deadbeef",
+                "process_start_time": "2026-08-10T00:00:00+00:00",
+            }
+        if method == "busy_status":
+            return {
+                "process": {"manage_inflight": 1, "activities": []},
+                "charter_hold": {"held": False, "pause_drain_clear": False},
+            }
+        if method == "charter_hold_status":
+            return {
+                "held": False,
+                "pause_drain_clear": False,
+                "tick_in_flight": False,
+                "live_charter_shaped_dispatches": [],
+            }
+        raise AssertionError(method)
+
+    result = run_guarded_reexec(
+        target_ref="deadbeef",
+        dry_run=True,
+        manage_call=manage_call,
+        intent_db=store._db_path,  # noqa: SLF001
+        run_cmd=_ok_tmux(9),
+        tree_contains_fn=lambda pid, ancestor: pid == ancestor,
+    )
+    assert result.status == "dry-run"
+    assert "nonterminal_restart_intent" in result.reason
+
+
 def test_start_never_healthy_reports_failure_not_hang(tmp_path: Any) -> None:
     """Quit-ok + sock never-up ⇒ status=start-failed within boot_timeout bound."""
     store = _store(tmp_path)
@@ -391,8 +522,138 @@ def test_start_never_healthy_reports_failure_not_hang(tmp_path: Any) -> None:
     assert result.whoami_before is not None
     assert result.whoami_before["pid"] == 9
     assert result.boot_timeout_s == 0.2
-    assert result.recovery_path == "manual, human at the terminal"
+    assert result.recovery_path == RECOVERY_PATH
+    assert result.checks["start_attempts"] == 3
     # Must terminate: wall clock well under an unbounded hang (≪ 30s).
     assert elapsed < 5.0
     # Opposite of precondition refuse: status is not "refused".
     assert result.status != "refused"
+
+
+def test_start_retry_then_succeed(tmp_path: Any) -> None:
+    """AC3.2a: first start attempt fails sock-up; second succeeds with proof."""
+    store = _store(tmp_path)
+    state = {"down": False, "starts_sent": 0}
+    later = (datetime.now(UTC) + timedelta(seconds=5)).isoformat()
+
+    def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
+        del params, kwargs
+        if method == "whoami":
+            if state["down"] and state["starts_sent"] < 2:
+                return {"status": "error", "reason": "manage_sock_missing"}
+            if state["down"] and state["starts_sent"] >= 2:
+                return {
+                    "pid": 10,
+                    "code_version": "deadbeef",
+                    "process_start_time": later,
+                }
+            return {
+                "pid": 9,
+                "code_version": "deadbeef",
+                "process_start_time": "2026-08-10T00:00:00+00:00",
+            }
+        if method == "busy_status":
+            return {
+                "process": {"manage_inflight": 1, "activities": []},
+                "charter_hold": {"held": True, "pause_drain_clear": True},
+            }
+        if method == "charter_hold_status":
+            return {
+                "held": True,
+                "pause_drain_clear": True,
+                "tick_in_flight": False,
+                "live_charter_shaped_dispatches": [],
+            }
+        if method == "charter_pause":
+            return {"status": "ok", "held": True}
+        if method == "charter_resume":
+            return {"status": "ok"}
+        raise AssertionError(method)
+
+    def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        if cmd[:2] == ["tmux", "display-message"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="9\n", stderr="")
+        if cmd[:2] == ["tmux", "send-keys"]:
+            keys = cmd[4]
+            if keys == "q":
+                state["down"] = True
+            elif "scripts.model_manager.ui" in keys:
+                state["starts_sent"] += 1
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        raise AssertionError(cmd)
+
+    result = run_guarded_reexec(
+        target_ref="deadbeef",
+        dry_run=False,
+        manage_call=manage_call,
+        intent_db=store._db_path,  # noqa: SLF001
+        run_cmd=run_cmd,
+        tree_contains_fn=lambda pid, ancestor: pid == ancestor,
+        quit_timeout_s=0.2,
+        boot_timeout_s=0.2,
+        max_start_attempts=3,
+    )
+    assert result.status == "proof-satisfied"
+    assert result.checks["start_attempts"] == 2
+
+
+def test_start_retry_exhausted_never_healthy(tmp_path: Any) -> None:
+    """AC3.2b: all start attempts fail sock-up ⇒ start-failed with attempt count."""
+    store = _store(tmp_path)
+    state = {"down": False, "starts_sent": 0}
+
+    def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
+        del params, kwargs
+        if method == "whoami":
+            if state["down"]:
+                return {"status": "error", "reason": "manage_sock_missing"}
+            return {
+                "pid": 9,
+                "code_version": "deadbeef",
+                "process_start_time": "2026-08-10T00:00:00+00:00",
+            }
+        if method == "busy_status":
+            return {
+                "process": {"manage_inflight": 1, "activities": []},
+                "charter_hold": {"held": True, "pause_drain_clear": True},
+            }
+        if method == "charter_hold_status":
+            return {
+                "held": True,
+                "pause_drain_clear": True,
+                "tick_in_flight": False,
+                "live_charter_shaped_dispatches": [],
+            }
+        if method == "charter_pause":
+            return {"status": "ok", "held": True}
+        raise AssertionError(method)
+
+    def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        if cmd[:2] == ["tmux", "display-message"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="9\n", stderr="")
+        if cmd[:2] == ["tmux", "send-keys"]:
+            keys = cmd[4]
+            if keys == "q":
+                state["down"] = True
+            elif "scripts.model_manager.ui" in keys:
+                state["starts_sent"] += 1
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        raise AssertionError(cmd)
+
+    t0 = time.monotonic()
+    result = run_guarded_reexec(
+        target_ref="deadbeef",
+        dry_run=False,
+        manage_call=manage_call,
+        intent_db=store._db_path,  # noqa: SLF001
+        run_cmd=run_cmd,
+        tree_contains_fn=lambda pid, ancestor: pid == ancestor,
+        quit_timeout_s=0.2,
+        boot_timeout_s=0.2,
+        max_start_attempts=2,
+    )
+    elapsed = time.monotonic() - t0
+    assert result.status == "start-failed"
+    assert result.reason == "reexec_sock_not_up"
+    assert result.checks["start_attempts"] == 2
+    assert elapsed < 5.0

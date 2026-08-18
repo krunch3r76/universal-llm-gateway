@@ -7,12 +7,18 @@ stored `code_ref` is the propagate row SHA; occupied pending reuse is refused.
 from __future__ import annotations
 
 import json
+import sqlite3
 import time
 import uuid
 from typing import Any
 
 from ..db import open_ledger_db
+from ..propagation_activation_events import (
+    ManageRestartActivationUnverified,
+    publish_activation_event,
+)
 from .model import _SUPERSEDED_PREFIX, store_code_ref
+from .queries import latest_validation_for_intent
 from .records import advance_validation
 
 
@@ -210,17 +216,63 @@ def repair_supersession_pairs(*, store=None, conn=None) -> None:
             db.close()
 
 
+def discharge_intents_without_validation(
+    *, store, conn: sqlite3.Connection | None = None
+) -> list[str]:
+    """Terminalize verifying_activation intents that never minted a validation row.
+
+    Complements resume_activation_verify (also boot-only reach, different call path):
+    this sweep is keyed by the intent store, not by propagation_validation rows, so
+    it also catches an intent that went orphaned while manage stayed up (e.g. via the
+    layer-1 hole, on any code predating this fix) rather than only at the moment of a
+    manage restart.
+    """
+    own_conn = conn is None
+    db = conn or open_ledger_db()
+    discharged: list[str] = []
+    try:
+        for intent in store.pending_intents():
+            if intent.status != "verifying_activation":
+                continue
+            if latest_validation_for_intent(intent.intent_id, conn=db) is not None:
+                continue
+            reason = "missing_validation_row"
+            if store.advance_if_status(
+                intent.intent_id,
+                from_status="verifying_activation",
+                to_status="activation_unverified",
+                reason=reason,
+            ):
+                discharged.append(intent.intent_id)
+                publish_activation_event(
+                    ManageRestartActivationUnverified(
+                        intent_id=intent.intent_id,
+                        validation_id=None,
+                        outcome="unvalidated_timeout",
+                        failure_reason=reason,
+                    )
+                )
+        if own_conn:
+            db.commit()
+    finally:
+        if own_conn:
+            db.close()
+    return discharged
+
+
 def reconcile_pending_validations_at_boot(*, store, logger=None) -> None:
     """Repair supersession pairs and sweep stale pending rows after intent resume."""
     try:
         repair_supersession_pairs(store=store)
         sweep_stale_pending_validations()
+        discharge_intents_without_validation(store=store)
     except Exception:
         if logger is not None:
             logger.exception("restart-intent reconcile: validation sweep failed")
 
 
 __all__ = [
+    "discharge_intents_without_validation",
     "mint_pending_validation_for_intent",
     "reconcile_pending_validations_at_boot",
     "repair_supersession_pairs",

@@ -316,16 +316,16 @@ def register_manage_tools(mcp: FastMCP) -> None:
                                              reloaded_modules=[]. Charter-runner code
                                              edits need a manage quit/start to go live
                                              (charter_pause -> charter_hold_status
-                                             safe_to_quit -> ./manage q -> ./manage ->
+                                             pause_drain_clear -> ./manage q -> ./manage ->
                                              charter_resume).
           charter_pause (reason?, timeout?)  — durable hold: arm immediately (no
                                              new admits), then **block** until
                                              in-flight charter cursor-sdk
                                              dispatches finish (default timeout
-                                             1800s). Returns drained/safe_to_quit.
+                                             1800s). Returns drained/pause_drain_clear.
                                              Survives manage quit/start.
           charter_resume                     — clear durable hold; next interval ticks.
-          charter_hold_status                — {held, safe_to_quit, tick_in_flight, …}.
+          charter_hold_status                — {held, pause_drain_clear, tick_in_flight, …}.
           charter_block_root (root_id, reason?, clear_wip?) — durable per-root hold:
                                              ledger BLOCKED + BLOCKED/NOTE receipt tip +
                                              enrollment strip. Stops NEW admits only;

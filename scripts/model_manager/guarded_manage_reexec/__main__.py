@@ -65,6 +65,12 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Override path to restart-intents.db",
     )
+    parser.add_argument(
+        "--max-start-attempts",
+        type=int,
+        default=3,
+        help="Bounded start-leg retries after quit (default: 3)",
+    )
     args = parser.parse_args(argv)
     dry_run = not args.execute
     repo_root = Path(__file__).resolve().parents[3]
@@ -75,6 +81,7 @@ def main(argv: list[str] | None = None) -> int:
         tmux_target=args.tmux_target,
         repo_root=repo_root,
         intent_db=Path(args.intent_db) if args.intent_db else None,
+        max_start_attempts=args.max_start_attempts,
     )
     print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
     if result.status == "proof-satisfied":

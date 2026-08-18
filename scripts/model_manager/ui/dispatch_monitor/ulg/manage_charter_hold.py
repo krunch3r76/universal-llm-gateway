@@ -57,5 +57,5 @@ def charter_resume(*, timeout: float = 30.0) -> dict[str, Any]:
 
 
 def charter_hold_status(*, timeout: float = 30.0) -> dict[str, Any]:
-    """Report durable hold + safe_to_quit via manage.sock."""
+    """Report durable hold + pause_drain_clear via manage.sock."""
     return _call("charter_hold_status", timeout=timeout)

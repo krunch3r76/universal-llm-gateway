@@ -5,9 +5,10 @@ drain-clear → quit → re-exec ``python -m scripts.model_manager.ui`` →
 charter_resume → dual whoami proof (code_version match AND process_start_time
 later than pre-quit). Dry-run stops before quit and before any pause mutation.
 
-Recovery after quit-ok / start-fail: **manual, human at the terminal** — manage
-is not in ``VALID_SERVICES``, has no systemd/supervisord unit, and this package
-does not retry. Re-drive ``tmux`` ``0:0`` (or the verified target) with
+Manage is not in ``VALID_SERVICES`` and has no systemd/supervisord unit. This
+package retries the start leg up to ``max_start_attempts`` times (each attempt
+gets its own ``boot_timeout_s`` window). After that budget is exhausted,
+recovery is a seat ``tmux`` ``0:0`` re-drive (or the verified target) with
 ``./manage`` per ``services_ws`` safe quit/start recipe.
 """
 
@@ -95,10 +96,6 @@ def _dry_run_attach_drain(report: Any, hold: dict[str, Any]) -> None:
         return
     report.held = bool(hold.get("held"))
     report.pause_drain_clear = bool(hold.get("pause_drain_clear"))
-    drain = observe_drain_clear(hold)
-    if drain is not None:
-        report.findings.append(drain)
-        report.refused = True
 
 
 def _attach_pane_finding(report: Any, finding: RefuseFinding | None) -> None:
@@ -122,6 +119,7 @@ def run_guarded_reexec(
     pause_reason: str = "guarded_manage_reexec",
     quit_timeout_s: float = DEFAULT_QUIT_TIMEOUT_S,
     boot_timeout_s: float = DEFAULT_BOOT_TIMEOUT_S,
+    max_start_attempts: int = 3,
     tree_contains_fn: TreeContainsFn | None = None,
 ) -> GuardedReexecResult:
     """Run refuse/require/proof path; dry_run never quits or pauses charter hold."""
@@ -184,7 +182,7 @@ def run_guarded_reexec(
         hold_status_fn=_hold,
         db_path=intent_db,
         manage_pid=manage_pid_i,
-        require_drain_clear=not dry_run,
+        require_drain_clear=False,
     )
     if dry_run:
         _dry_run_attach_drain(report, _hold())
@@ -280,10 +278,21 @@ def run_guarded_reexec(
         )
 
     start_cmd = f"cd {repo_root} && {python_bin} -m scripts.model_manager.ui"
-    _tmux_send(tmux_target, start_cmd, run_cmd=run_cmd)
-    if not _wait_sock(
-        sock_path, manage_call=manage_call, timeout_s=boot_timeout_s, want_up=True
-    ):
+    start_attempt = 0
+    sock_up = False
+    for attempt in range(1, max_start_attempts + 1):
+        _tmux_send(tmux_target, start_cmd, run_cmd=run_cmd)
+        if _wait_sock(
+            sock_path,
+            manage_call=manage_call,
+            timeout_s=boot_timeout_s,
+            want_up=True,
+        ):
+            start_attempt = attempt
+            sock_up = True
+            break
+
+    if not sock_up:
         # Quit succeeded; start/health did not. Distinct from status=refused
         # (precondition — manage still up, nothing destroyed).
         return GuardedReexecResult(
@@ -299,9 +308,11 @@ def run_guarded_reexec(
                 "pause": pause,
                 "hold_after": hold_after,
                 "recovery_path": RECOVERY_PATH,
+                "start_attempts": max_start_attempts,
                 "note": (
-                    "manage quit landed; sock never returned within "
-                    f"boot_timeout_s={boot_timeout_s}"
+                    "manage quit landed; sock never returned after "
+                    f"{max_start_attempts} start attempt(s) within "
+                    f"boot_timeout_s={boot_timeout_s} per attempt"
                 ),
             },
         )
@@ -324,5 +335,9 @@ def run_guarded_reexec(
         executed=True,
         boot_timeout_s=boot_timeout_s,
         quit_timeout_s=quit_timeout_s,
-        checks={"pause": pause, "hold_after": hold_after},
+        checks={
+            "pause": pause,
+            "hold_after": hold_after,
+            "start_attempts": start_attempt,
+        },
     )

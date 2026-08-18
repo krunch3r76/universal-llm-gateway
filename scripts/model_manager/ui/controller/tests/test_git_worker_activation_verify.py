@@ -7,18 +7,24 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 from charter_runner_store.propagation_validation import (
+    advance_validation,
     bind_validation_to_row,
+    discharge_intents_without_validation,
     get_validation,
     mint_pending_validation_for_intent,
 )
 
 from scripts.model_manager.ui.controller.git_worker_activation_verify import (
     ACTIVATION_IDLE_TIMEOUT_S,
+    arm_verify_after_generation_gone,
     arms_activation_verify,
     mint_activation_validation,
+    record_kill_boundary_and_arm_verify,
+    resume_activation_verify,
     run_activation_verify,
 )
 from scripts.model_manager.ui.controller.restart_intent_states import (
+    STATUS_DRAINED_RESTARTING,
     STATUS_VERIFYING_ACTIVATION,
 )
 from scripts.model_manager.ui.controller.restart_intent_store import RestartIntentStore
@@ -286,3 +292,127 @@ def test_mint_activation_validation_refuses_foreign_bound_pending(
     assert fresh is not None and fresh.row_id is None
     assert fresh.code_ref == _RESOLVABLE_CODE_REF
     assert bind_validation_to_row(second, "row-b") == 1
+
+
+def test_resume_activation_verify_discharges_missing_validation_row(
+    tmp_path, monkeypatch
+) -> None:
+    """Boot resume must terminalize verifying intents with no validation row."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    store = RestartIntentStore(db_path=tmp_path / "intents.db")
+    intent = store.create_intent(
+        service="git_integration_worker",
+        action="restart",
+        deadline_at="d",
+        reason="r",
+    )
+    store.advance_if_status(
+        intent.intent_id,
+        from_status="pending_drain",
+        to_status=STATUS_VERIFYING_ACTIVATION,
+    )
+    _run(resume_activation_verify(store, intent.intent_id))
+    got = store.get(intent.intent_id)
+    assert got is not None
+    assert got.status == "activation_unverified"
+    assert got.reason is not None
+    assert "missing_validation" in got.reason
+
+
+def test_discharge_intents_without_validation_sweep(tmp_path, monkeypatch) -> None:
+    """Layer-4 boot sweep must discharge the same orphan shape as resume."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    store = RestartIntentStore(db_path=tmp_path / "intents.db")
+    intent = store.create_intent(
+        service="git_integration_worker",
+        action="restart",
+        deadline_at="d",
+        reason="r",
+    )
+    store.advance_if_status(
+        intent.intent_id,
+        from_status="pending_drain",
+        to_status=STATUS_VERIFYING_ACTIVATION,
+    )
+    discharged = discharge_intents_without_validation(store=store)
+    assert intent.intent_id in discharged
+    got = store.get(intent.intent_id)
+    assert got is not None
+    assert got.status == "activation_unverified"
+    assert got.reason == "missing_validation_row"
+
+
+def test_record_kill_boundary_discharges_missing_validation_at_arm(
+    tmp_path, monkeypatch
+) -> None:
+    """Arm path must not leave verifying_activation when validation was never minted."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    store = RestartIntentStore(db_path=tmp_path / "intents.db")
+    intent = store.create_intent(
+        service="git_integration_worker",
+        action="restart",
+        deadline_at="d",
+        reason="r",
+    )
+    store.advance_if_status(
+        intent.intent_id,
+        from_status="pending_drain",
+        to_status=STATUS_DRAINED_RESTARTING,
+    )
+    _run(
+        record_kill_boundary_and_arm_verify(
+            store, intent, boundary_source="test", from_status=STATUS_DRAINED_RESTARTING
+        )
+    )
+    got = store.get(intent.intent_id)
+    assert got is not None
+    assert got.status == "activation_unverified"
+    assert got.reason == "missing_validation_at_arm"
+
+
+def test_arm_verify_after_generation_gone_discharges_missing_validation(
+    tmp_path, monkeypatch
+) -> None:
+    """Generation-gone arm must self-terminalize and return True, not False."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    store = RestartIntentStore(db_path=tmp_path / "intents.db")
+    intent = store.create_intent(
+        service="git_integration_worker",
+        action="sync_restart",
+        deadline_at="d",
+        reason="r",
+    )
+    armed = _run(arm_verify_after_generation_gone(store, intent))
+    assert armed is True
+    got = store.get(intent.intent_id)
+    assert got is not None
+    assert got.status == "activation_unverified"
+    assert got.reason == "missing_validation_at_arm"
+
+
+def test_run_activation_verify_discharges_when_validation_already_resolved(
+    tmp_path, monkeypatch
+) -> None:
+    """Verify loop must terminalize when validation resolved elsewhere."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    store = RestartIntentStore(db_path=tmp_path / "intents.db")
+    intent = store.create_intent(
+        service="git_integration_worker",
+        action="restart",
+        deadline_at="d",
+        reason="r",
+    )
+    store.advance_if_status(
+        intent.intent_id,
+        from_status="pending_drain",
+        to_status=STATUS_VERIFYING_ACTIVATION,
+    )
+    validation_id = mint_pending_validation_for_intent(
+        intent, code_ref=_RESOLVABLE_CODE_REF
+    )
+    advance_validation(validation_id, outcome="superseded", failure_reason="test")
+    _run(run_activation_verify(store, intent.intent_id, validation_id))
+    got = store.get(intent.intent_id)
+    assert got is not None
+    assert got.status == "activation_unverified"
+    assert got.reason == "validation_resolved_superseded"

@@ -13,7 +13,7 @@ trigger_match_terms:
   - charter_block_root
   - charter_unblock_root
   - charter_root_status
-  - safe_to_quit
+  - pause_drain_clear
   - charter_reload
   - charter_runner
   - quit/start
@@ -64,8 +64,10 @@ Confirm with `tmux capture-pane -t 0:0 -p` before sending keys.
 
 **Safe quit/start recipe** (fleet stays up across the quit when hold is used):
 
-1. `manage(action="charter_pause", …)` when a tick may be live
-2. Poll `manage(action="charter_hold_status")` until `safe_to_quit=true`
+1. `manage(action="charter_pause", …)` — **required precondition of step 2**;
+   `pause_drain_clear` reads false until the hold is armed, whether or not a tick
+   happens to be live right now.
+2. Poll `manage(action="charter_hold_status")` until `pause_drain_clear=true`
 3. `tmux send-keys -t 0:0 'q' Enter` (or type `q` in the TUI) — wait for shell prompt
 4. `tmux send-keys -t 0:0 'cd /mnt/torus/projects/universal-llm-gateway && ./manage' Enter`
 5. Wait until MCP `manage(action="status")` works again (`manage.sock` live)
