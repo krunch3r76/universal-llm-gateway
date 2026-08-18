@@ -47,6 +47,7 @@ def _seed_orphan_thread(
     )
     with patch("agent_bus_store.reconcile.emit_dispatch_orphaned"):
         reconcile_orphaned_dispatches()
+        reconcile_orphaned_dispatches()
     return thread_id
 
 
@@ -93,7 +94,9 @@ def test_late_cursor_sdk_dispatch_demotes_orphan(bus_db) -> None:
     thread_id = _seed_orphan_thread(bus_db, slug="dispatch-closeout")
     orphan_id = _orphan_turns(thread_id)[0]["id"]
 
-    with patch("agent_bus_store.orphan_demote.emit_dispatch_orphan_demoted") as mock_emit:
+    with patch(
+        "agent_bus_store.orphan_demote.emit_dispatch_orphan_demoted"
+    ) as mock_emit:
         closeout_id, _, _ = insert_turn(
             thread=thread_id,
             from_agent="cursor-sdk",
@@ -115,7 +118,9 @@ def test_late_cursor_sdk_dispatch_demotes_orphan(bus_db) -> None:
 def test_nonterminal_cursor_sdk_does_not_demote(bus_db) -> None:
     thread_id = _seed_orphan_thread(bus_db, slug="nonterminal")
 
-    with patch("agent_bus_store.orphan_demote.emit_dispatch_orphan_demoted") as mock_emit:
+    with patch(
+        "agent_bus_store.orphan_demote.emit_dispatch_orphan_demoted"
+    ) as mock_emit:
         insert_turn(
             thread=thread_id,
             from_agent="cursor-sdk",
@@ -139,7 +144,9 @@ def test_second_terminal_idempotent(bus_db) -> None:
     thread_id = _seed_orphan_thread(bus_db, slug="idem-demote")
     orphan_id = _orphan_turns(thread_id)[0]["id"]
 
-    with patch("agent_bus_store.orphan_demote.emit_dispatch_orphan_demoted") as mock_emit:
+    with patch(
+        "agent_bus_store.orphan_demote.emit_dispatch_orphan_demoted"
+    ) as mock_emit:
         first_id, _, _ = insert_turn(
             thread=thread_id,
             from_agent="cursor-sdk",
@@ -169,7 +176,9 @@ def test_second_terminal_idempotent(bus_db) -> None:
 def test_non_cursor_sdk_closeout_prose_does_not_demote(bus_db) -> None:
     thread_id = _seed_orphan_thread(bus_db, slug="prose-closeout")
 
-    with patch("agent_bus_store.orphan_demote.emit_dispatch_orphan_demoted") as mock_emit:
+    with patch(
+        "agent_bus_store.orphan_demote.emit_dispatch_orphan_demoted"
+    ) as mock_emit:
         insert_turn(
             thread=thread_id,
             from_agent="claude-web",
@@ -211,7 +220,9 @@ def test_execution_id_mismatch_skips_demotion(bus_db) -> None:
             ("exec-b", thread_id),
         )
 
-    with patch("agent_bus_store.orphan_demote.emit_dispatch_orphan_demoted") as mock_emit:
+    with patch(
+        "agent_bus_store.orphan_demote.emit_dispatch_orphan_demoted"
+    ) as mock_emit:
         insert_turn(
             thread=thread_id,
             from_agent="cursor-sdk",

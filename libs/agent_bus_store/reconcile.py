@@ -17,7 +17,7 @@ from .db.lifecycle import _transition_lifecycle_state
 from .db.threads_atomic import terminate_dispatch
 from .db.turns import get_turns, insert_turn
 from .events.lifecycle import emit_dispatch_orphaned
-from .sdk_liveness import LivenessVerdict, evaluate_link_liveness
+from .sdk_liveness import _HEARTBEAT_STALE_S, LivenessVerdict, evaluate_link_liveness
 
 logger = logging.getLogger("agent-bus.reconcile")
 
@@ -50,6 +50,34 @@ def _sdk_terminal_turn(thread_id: str) -> dict[str, Any] | None:
 
 def _infer_terminal_status(subject: str) -> str:
     return "failed" if "FAILED" in subject else "completed"
+
+
+def _pending_orphan_reason(reason: str) -> str:
+    return f"pending_orphan:{reason}"
+
+
+def _orphan_body_for_reason(reason: str, execution_id: str) -> str:
+    """Build the orphan-turn body from the probe reason; never guess restart."""
+    details = {
+        "probe_not_found": (
+            "no dispatch-status record found for this execution "
+            "(worker never registered it, or it was cleared)"
+        ),
+        "probe_status_null": "worker reports no status for this dispatch",
+        "execution_id_mismatch": (
+            "a different dispatch now occupies this thread's execution slot"
+        ),
+        "heartbeat_stale": (
+            f"worker heartbeat stale for over {_HEARTBEAT_STALE_S}s "
+            "(likely process death or restart)"
+        ),
+    }
+    detail = details.get(reason, f"worker liveness probe returned {reason!r}")
+    return (
+        "Dispatch orphaned — worker terminated before completion "
+        f"({detail}); no terminal turn was received. "
+        f"execution_id={execution_id}"
+    )
 
 
 def _orphan_recipient(thread_id: str, caller_agent: str | None) -> str:
@@ -175,12 +203,14 @@ def _reap_orphan_link(link: dict[str, Any]) -> bool:
         if row["bus_lifecycle_state"] not in ("admitted", "active"):
             return False
         link_row = conn.execute(
-            "SELECT terminal_status FROM thread_dispatch_links "
+            "SELECT terminal_status, liveness_probe_deferred_reason "
+            "FROM thread_dispatch_links "
             "WHERE thread_id = ? AND execution_id = ?",
             (thread_id, execution_id),
         ).fetchone()
         if link_row is None or link_row["terminal_status"] is not None:
             return False
+        prior_deferred_reason = link_row["liveness_probe_deferred_reason"]
 
     verdict, reason, terminal_status = evaluate_link_liveness(
         thread_id=thread_id,
@@ -202,20 +232,25 @@ def _reap_orphan_link(link: dict[str, Any]) -> bool:
             link,
             status=terminal_status,
         )
+
+    pending = _pending_orphan_reason(reason)
+    if prior_deferred_reason != pending:
+        _stamp_liveness_deferred(
+            thread_id=thread_id,
+            execution_id=execution_id,
+            reason=pending,
+        )
+        return False
+
     _clear_liveness_deferred(thread_id=thread_id, execution_id=execution_id)
 
     recipient = _orphan_recipient(thread_id, caller_agent)
-    body = (
-        "Dispatch orphaned — worker terminated before completion "
-        f"(likely service restart); no terminal turn was received. "
-        f"execution_id={execution_id}"
-    )
     insert_turn(
         thread=thread_id,
         from_agent="dispatch",
         to_agent=recipient,
         subject="Dispatch orphaned — worker terminated before completion",
-        body=body,
+        body=_orphan_body_for_reason(reason, execution_id),
         after_turn=None,
     )
 
@@ -225,6 +260,7 @@ def _reap_orphan_link(link: dict[str, Any]) -> bool:
         pipeline_id=pipeline_id,
         linked_at=linked_at,
         age_s=_age_seconds(linked_at),
+        reason=reason,
     )
 
     terminate_dispatch(

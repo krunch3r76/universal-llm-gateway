@@ -207,6 +207,7 @@ def AgentBusDispatchOrphaned(  # noqa: N802
     pipeline_id: str,
     linked_at: str,
     age_s: float,
+    reason: str,
 ) -> Event:
     """Signal: mcp.agentbus.dispatch.orphaned"""
     return Event(
@@ -217,6 +218,7 @@ def AgentBusDispatchOrphaned(  # noqa: N802
             "pipeline_id": pipeline_id,
             "linked_at": linked_at,
             "age_s": age_s,
+            "reason": reason,
         },
     )
 
@@ -228,6 +230,7 @@ def emit_dispatch_orphaned(
     pipeline_id: str,
     linked_at: str,
     age_s: float,
+    reason: str,
 ) -> None:
     """Build and publish a dispatch.orphaned event."""
     event = AgentBusDispatchOrphaned(
@@ -236,6 +239,7 @@ def emit_dispatch_orphaned(
         pipeline_id=pipeline_id,
         linked_at=linked_at,
         age_s=age_s,
+        reason=reason,
     )
     _publish(event.signal, event.payload)
 

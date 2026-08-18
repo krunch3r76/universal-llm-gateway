@@ -18,7 +18,11 @@ from agent_bus_store.db import (
 )
 from agent_bus_store.db.connection import connect
 from agent_bus_store.db.turns import get_turns, insert_turn
-from agent_bus_store.reconcile import reconcile_orphaned_dispatches
+from agent_bus_store.reconcile import (
+    RECONCILE_RESUME_GRACE_S,
+    _orphan_body_for_reason,
+    reconcile_orphaned_dispatches,
+)
 from agent_bus_store.sdk_liveness import LivenessVerdict
 
 
@@ -141,11 +145,13 @@ def test_ac4_orphan_reconciled_loud(bus_db) -> None:
         "agent_bus_store.reconcile.emit_dispatch_orphaned",
         side_effect=lambda **kwargs: emitted.append(kwargs),
     ):
+        assert reconcile_orphaned_dispatches() == 0
         count = reconcile_orphaned_dispatches()
 
     assert count == 1
     assert len(emitted) == 1
     assert emitted[0]["execution_id"] == "exec-orphan"
+    assert "reason" in emitted[0]
 
     turns = get_turns(thread=thread_id)
     orphan_turns = [
@@ -181,6 +187,7 @@ def test_ac5_reconcile_idempotent(bus_db) -> None:
     )
 
     with patch("agent_bus_store.reconcile.emit_dispatch_orphaned"):
+        assert reconcile_orphaned_dispatches() == 0
         reconcile_orphaned_dispatches()
         reconcile_orphaned_dispatches()
 
@@ -277,7 +284,9 @@ def test_dispatch_terminate_route(bus_db) -> None:
     assert link["terminal_status"] == "completed"
 
 
-def _admit_orphan_thread(bus_db, *, slug: str = "orphan-live", execution_id: str = "exec-live"):
+def _admit_orphan_thread(
+    bus_db, *, slug: str = "orphan-live", execution_id: str = "exec-live"
+):
     thread_row, *_ = create_thread_with_turn(
         slug=slug,
         from_agent="dispatch",
@@ -323,13 +332,18 @@ def test_live_running_probe_skips_orphan(bus_db) -> None:
 
 
 def test_probe_status_none_still_orphans(bus_db) -> None:
-    thread_id, _ = _admit_orphan_thread(bus_db, slug="orphan-null", execution_id="exec-null")
+    thread_id, _ = _admit_orphan_thread(
+        bus_db, slug="orphan-null", execution_id="exec-null"
+    )
 
     def _dead(**_kwargs: object):
         return LivenessVerdict.ALLOW_ORPHAN, "probe_status_null", None
 
     with patch("agent_bus_store.reconcile.emit_dispatch_orphaned"):
-        with patch("agent_bus_store.reconcile.evaluate_link_liveness", side_effect=_dead):
+        with patch(
+            "agent_bus_store.reconcile.evaluate_link_liveness", side_effect=_dead
+        ):
+            assert reconcile_orphaned_dispatches() == 0
             count = reconcile_orphaned_dispatches()
 
     assert count == 1
@@ -368,7 +382,10 @@ def test_stale_heartbeat_allows_orphan(bus_db) -> None:
         return LivenessVerdict.ALLOW_ORPHAN, "heartbeat_stale", None
 
     with patch("agent_bus_store.reconcile.emit_dispatch_orphaned"):
-        with patch("agent_bus_store.reconcile.evaluate_link_liveness", side_effect=_stale):
+        with patch(
+            "agent_bus_store.reconcile.evaluate_link_liveness", side_effect=_stale
+        ):
+            assert reconcile_orphaned_dispatches() == 0
             count = reconcile_orphaned_dispatches()
 
     assert count == 1
@@ -384,7 +401,10 @@ def test_execution_id_mismatch_allows_orphan(bus_db) -> None:
         return LivenessVerdict.ALLOW_ORPHAN, "execution_id_mismatch", None
 
     with patch("agent_bus_store.reconcile.emit_dispatch_orphaned"):
-        with patch("agent_bus_store.reconcile.evaluate_link_liveness", side_effect=_mismatch):
+        with patch(
+            "agent_bus_store.reconcile.evaluate_link_liveness", side_effect=_mismatch
+        ):
+            assert reconcile_orphaned_dispatches() == 0
             count = reconcile_orphaned_dispatches()
 
     assert count == 1
@@ -400,7 +420,9 @@ def test_probe_terminal_backfills_without_orphan_turn(bus_db) -> None:
         return LivenessVerdict.TERMINAL_BACKFILL, "probe_terminal", "completed"
 
     with patch("agent_bus_store.reconcile.emit_dispatch_orphaned") as mock_orphan:
-        with patch("agent_bus_store.reconcile.evaluate_link_liveness", side_effect=_terminal):
+        with patch(
+            "agent_bus_store.reconcile.evaluate_link_liveness", side_effect=_terminal
+        ):
             count = reconcile_orphaned_dispatches()
 
     assert count == 1
@@ -429,6 +451,7 @@ def test_deferred_retry_later_orphans(bus_db) -> None:
             side_effect=_defer_then_stale,
         ):
             assert reconcile_orphaned_dispatches() == 0
+            assert reconcile_orphaned_dispatches() == 0
             assert reconcile_orphaned_dispatches() == 1
 
     assert len(_orphan_turns(thread_id)) == 1
@@ -439,3 +462,107 @@ def test_deferred_retry_later_orphans(bus_db) -> None:
             (thread_id, execution_id),
         ).fetchone()
     assert row["liveness_probe_deferred_at"] is None
+
+
+def test_grace_default_remains_zero() -> None:
+    assert RECONCILE_RESUME_GRACE_S == 0
+
+
+def test_allow_orphan_first_strike_stamps_without_reap(bus_db) -> None:
+    thread_id, execution_id = _admit_orphan_thread(
+        bus_db, slug="orphan-strike1", execution_id="exec-strike1"
+    )
+
+    def _null(**_kwargs: object):
+        return LivenessVerdict.ALLOW_ORPHAN, "probe_status_null", None
+
+    with patch("agent_bus_store.reconcile.emit_dispatch_orphaned") as mock_orphan:
+        with patch(
+            "agent_bus_store.reconcile.evaluate_link_liveness", side_effect=_null
+        ):
+            assert reconcile_orphaned_dispatches() == 0
+
+    mock_orphan.assert_not_called()
+    assert _orphan_turns(thread_id) == []
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT terminal_status, liveness_probe_deferred_reason "
+            "FROM thread_dispatch_links WHERE thread_id=? AND execution_id=?",
+            (thread_id, execution_id),
+        ).fetchone()
+    assert row["terminal_status"] is None
+    assert row["liveness_probe_deferred_reason"] == "pending_orphan:probe_status_null"
+
+
+def test_allow_orphan_second_strike_reaps(bus_db) -> None:
+    thread_id, execution_id = _admit_orphan_thread(
+        bus_db, slug="orphan-strike2", execution_id="exec-strike2"
+    )
+
+    def _null(**_kwargs: object):
+        return LivenessVerdict.ALLOW_ORPHAN, "probe_status_null", None
+
+    emitted: list[dict] = []
+    with patch(
+        "agent_bus_store.reconcile.emit_dispatch_orphaned",
+        side_effect=lambda **kwargs: emitted.append(kwargs),
+    ):
+        with patch(
+            "agent_bus_store.reconcile.evaluate_link_liveness", side_effect=_null
+        ):
+            assert reconcile_orphaned_dispatches() == 0
+            assert reconcile_orphaned_dispatches() == 1
+
+    assert len(_orphan_turns(thread_id)) == 1
+    assert emitted[0]["reason"] == "probe_status_null"
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT terminal_status, liveness_probe_deferred_reason "
+            "FROM thread_dispatch_links WHERE thread_id=? AND execution_id=?",
+            (thread_id, execution_id),
+        ).fetchone()
+    assert row["terminal_status"] == "failed"
+    assert row["liveness_probe_deferred_reason"] is None
+
+
+def test_skip_live_resets_orphan_strike(bus_db) -> None:
+    thread_id, execution_id = _admit_orphan_thread(
+        bus_db, slug="orphan-reset", execution_id="exec-reset"
+    )
+    calls = {"n": 0}
+
+    def _null_then_live_then_null(**_kwargs: object):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            return LivenessVerdict.SKIP_LIVE, "worker_live", None
+        return LivenessVerdict.ALLOW_ORPHAN, "probe_status_null", None
+
+    with patch("agent_bus_store.reconcile.emit_dispatch_orphaned"):
+        with patch(
+            "agent_bus_store.reconcile.evaluate_link_liveness",
+            side_effect=_null_then_live_then_null,
+        ):
+            assert reconcile_orphaned_dispatches() == 0
+            assert reconcile_orphaned_dispatches() == 0
+            assert reconcile_orphaned_dispatches() == 0
+
+    assert _orphan_turns(thread_id) == []
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT liveness_probe_deferred_reason "
+            "FROM thread_dispatch_links WHERE thread_id=? AND execution_id=?",
+            (thread_id, execution_id),
+        ).fetchone()
+    assert row["liveness_probe_deferred_reason"] == "pending_orphan:probe_status_null"
+
+
+def test_orphan_body_differs_by_reason() -> None:
+    not_found = _orphan_body_for_reason("probe_not_found", "exec-x")
+    stale = _orphan_body_for_reason("heartbeat_stale", "exec-x")
+    assert not_found != stale
+    assert "likely service restart" not in not_found
+    assert "likely process death or restart" in stale
+    assert "exec-x" in not_found
+    fallback = _orphan_body_for_reason("future_reason", "exec-x")
+    assert "future_reason" in fallback
+    assert "likely service restart" not in fallback
