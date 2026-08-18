@@ -18,21 +18,30 @@ def _isolate_dispatch_ledger(tmp_path_factory: pytest.TempPathFactory):
     """Point ``DATA_DIR`` at a tmp dir for the whole GIW session.
 
     Without this, ``_ledger_path()`` falls back to ``~/.gateway`` and the suite
-    writes the live dispatch ledger: the production DB accumulated 21 fixture
-    disposition rows and a phantom lane worktree pointing into ``/tmp/pytest-of-io``
-    before anyone noticed. Session scope because ``CursorDispatchLedger`` caches
-    its resolved path in a singleton at first touch.
+    writes live ledgers. Session scope because ``CursorDispatchLedger`` and
+    ``SeatWriteLedger`` cache the resolved path on the singleton at first
+    touch. Reset both after setting ``DATA_DIR`` so a collection-time instance
+    cannot keep the live path and defeat the pytest refuse belt.
     """
     import os
+
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+    from services.git_integration_worker.seat_write_ledger import SeatWriteLedger
 
     data_dir = tmp_path_factory.mktemp("giw-data-dir")
     prior = os.environ.get("DATA_DIR")
     os.environ["DATA_DIR"] = str(data_dir)
+    SeatWriteLedger.reset_instance()
+    CursorDispatchLedger._instance = None
     yield data_dir
     if prior is None:
         os.environ.pop("DATA_DIR", None)
     else:
         os.environ["DATA_DIR"] = prior
+    SeatWriteLedger.reset_instance()
+    CursorDispatchLedger._instance = None
 
 
 @pytest.fixture(autouse=True)

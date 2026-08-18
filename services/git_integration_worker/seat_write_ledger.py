@@ -16,6 +16,10 @@ from pathlib import Path
 
 from universal_logging import get_logger
 
+from services.git_integration_worker.ledger_pytest_guard import (
+    refuse_live_ledger_under_pytest,
+)
+
 logger = get_logger(__name__)
 
 # Default TTL for open cursor-sdk rows — longer than supersede/replay, bounded growth.
@@ -57,6 +61,7 @@ def _now() -> str:
 
 def _ledger_path() -> Path:
     data_dir = Path(os.getenv("DATA_DIR", str(Path.home() / ".gateway"))).expanduser()
+    refuse_live_ledger_under_pytest(data_dir, ledger_label="seat-write ledger")
     data_dir.mkdir(parents=True, exist_ok=True)
     return data_dir / "seat-write-ledger.db"
 

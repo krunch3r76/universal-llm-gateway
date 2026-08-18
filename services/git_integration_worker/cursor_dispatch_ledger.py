@@ -26,6 +26,9 @@ from services.git_integration_worker.cursor_sdk_nest_depth import (
     NestParentNotLive,
     park_stack_depth,
 )
+from services.git_integration_worker.ledger_pytest_guard import (
+    refuse_live_ledger_under_pytest,
+)
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
     CursorDispatchResponse,
@@ -172,31 +175,9 @@ def _now() -> str:
 
 def _ledger_path() -> Path:
     data_dir = Path(os.getenv("DATA_DIR", str(Path.home() / ".gateway"))).expanduser()
-    _refuse_live_ledger_under_pytest(data_dir)
+    refuse_live_ledger_under_pytest(data_dir, ledger_label="dispatch ledger")
     data_dir.mkdir(parents=True, exist_ok=True)
     return data_dir / "cursor-sdk-dispatch.db"
-
-
-def _refuse_live_ledger_under_pytest(data_dir: Path) -> None:
-    """Fail loudly rather than let a test write the production ledger.
-
-    A suite that silently resolves ``~/.gateway`` leaves fixture rows behind that
-    read as real state forever after. Belt to the conftest fixture's braces:
-    whichever entry point forgot to set ``DATA_DIR``, this catches it.
-    """
-    if not os.environ.get("PYTEST_CURRENT_TEST"):
-        return
-    live = (Path.home() / ".gateway").resolve()
-    try:
-        resolved = data_dir.resolve()
-    except OSError:
-        return
-    if resolved == live or resolved.is_relative_to(live):
-        raise RuntimeError(
-            f"refusing to open the live dispatch ledger under pytest: {resolved}. "
-            "Set DATA_DIR to a tmp path (see services/git_integration_worker/"
-            "tests/conftest.py::_isolate_dispatch_ledger)."
-        )
 
 
 def _connect(path: Path | None = None) -> sqlite3.Connection:
