@@ -11,6 +11,7 @@ Served over UDS + optional TCP via FastAPI/uvicorn.
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 from typing import Any
 
@@ -87,6 +88,7 @@ def create_query_router(
 
     @router.get("/health")
     async def health_handler() -> JSONResponse:
+        """Liveness + code identity + process pid for process_live settlement."""
         metrics = ingest.get_metrics() if ingest else {}
         subs = len(subscriber_queues)
         return JSONResponse(
@@ -95,6 +97,7 @@ def create_query_router(
                 "subscribers": subs,
                 **metrics,
                 "code_version": resolve_code_version(),
+                "pid": os.getpid(),
             }
         )
 
