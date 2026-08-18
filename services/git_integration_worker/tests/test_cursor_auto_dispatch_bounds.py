@@ -128,9 +128,7 @@ def test_sonnet_5_card_accepts_max(model_id: str, requested: str) -> None:
     "model_id",
     ["cursor/claude-sonnet-5", "cursor/claude-opus-5", "cursor/gpt-5.6-terra"],
 )
-def test_other_models_unattended_caps_above_high(
-    model_id: str, requested: str
-) -> None:
+def test_other_models_unattended_caps_above_high(model_id: str, requested: str) -> None:
     assert is_other_models_pool(model_id)
     out = clamp_other_models_unattended_effort(model_id, _effort(requested))
     assert out["resolved_effort"] == "high"
@@ -140,10 +138,34 @@ def test_other_models_unattended_caps_above_high(
 
 def test_other_models_unattended_keeps_high_and_below() -> None:
     payload = _effort("high")
-    assert clamp_other_models_unattended_effort("cursor/claude-sonnet-5", payload) is payload
-    assert clamp_other_models_unattended_effort("cursor/grok-4.6", _effort("xhigh"))[
-        "resolved_effort"
-    ] == "xhigh"
+    assert (
+        clamp_other_models_unattended_effort("cursor/claude-sonnet-5", payload)
+        is payload
+    )
+    assert (
+        clamp_other_models_unattended_effort("cursor/grok-4.6", _effort("xhigh"))[
+            "resolved_effort"
+        ]
+        == "xhigh"
+    )
+
+
+@pytest.mark.parametrize("requested", ["xhigh", "max"])
+@pytest.mark.parametrize(
+    "model_id",
+    ["cursor/claude-sonnet-5", "cursor/claude-opus-5", "cursor/gpt-5.6-terra"],
+)
+def test_other_models_explicit_pin_skips_unattended_cap(
+    model_id: str, requested: str
+) -> None:
+    """agent-bus:7405 blew the pool via the *default* path, not a named pin —
+    a caller who explicitly named the model earns the card ceiling instead."""
+    payload = _effort(requested)
+    out = clamp_other_models_unattended_effort(
+        model_id, payload, explicit_model_pin=True
+    )
+    assert out is payload
+    assert out["resolved_effort"] == requested
 
 
 def test_off_ladder_effort_falls_to_card_default() -> None:
@@ -154,9 +176,7 @@ def test_off_ladder_effort_falls_to_card_default() -> None:
 
     payload = _effort("none")
     clamped = clamp_effort_to_model_card("cursor/grok-4.6", payload)
-    knobs = compose_model_knobs(
-        {"resolved_model_id": "cursor/grok-4.6"}, payload
-    )
+    knobs = compose_model_knobs({"resolved_model_id": "cursor/grok-4.6"}, payload)
     assert clamped["resolved_effort"] == "high"
     assert clamped["clamped"] is True
     assert "off-ladder" in str(clamped["notes"])

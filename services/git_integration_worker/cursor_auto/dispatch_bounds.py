@@ -19,14 +19,20 @@ Two **policy** bounds (executor + scope) plus one **capability** bound (effort):
   above its accepted ladder. Separately, unattended Other Models (Sonnet /
   Opus / Terra / Sol / Fable) cap at ``high``: that is a Cursor *pool*
   bound, not a second capability ladder. Cursor Models (Composer / Grok)
-  keep the card ceiling. ``require_attended`` skips the pool cap.
+  keep the card ceiling. ``require_attended`` skips the pool cap — so does
+  an explicit model pin (see ``clamp_other_models_unattended_effort``): the
+  incident below was the *default* path silently landing on Sonnet, never a
+  deliberate ask, so a caller who named the model pays only the card ceiling.
 
 Observed 2026-08-09 (24h): four autonomous ``xhigh`` Opus runs consumed 13.26M of
 23.2M total Opus input tokens and two of the four failed to deliver, while
 eighteen directives were admitted on a waived empty scope — eight of them
-``implement``. Observed 2026-08-16–18: Auto + charter judgment defaulted to
-Sonnet 5 ``max``/``1m`` and blew the Ultra Other Models (second) pool. The
-card still does not invent a quality ladder; the pool cap does.
+``implement``. Observed 2026-08-16–18: ``charter_runner``'s ``DEFAULT_MODEL``
+constant (agent-bus:7405) pinned unnamed judgment windows to Sonnet 5
+``max``/``1m`` and blew the Ultra Other Models (second) pool in ~48h — every
+omitted-model window inherited it, not just the ones that needed it. The card
+still does not invent a quality ladder; the pool cap does, and only against
+the silent-default path.
 """
 
 from __future__ import annotations
@@ -103,14 +109,25 @@ def is_other_models_pool(model_id: str | None) -> bool:
 def clamp_other_models_unattended_effort(
     model_id: str | None,
     effort: dict[str, Any],
+    *,
+    explicit_model_pin: bool = False,
 ) -> dict[str, Any]:
-    """Cap unattended Other Models effort at ``high``.
+    """Cap unattended Other Models effort at ``high`` — unless explicitly named.
 
     The capability card still accepts ``xhigh``/``max``. Ultra's Other Models
     allowance does not: those rungs are what exhausted the second pool in
-    48h of Auto/charter/CDP-commissioned sonnet+opus. Attended pins skip this
-    (handler omits the call when ``require_attended``).
+    48h of Auto/charter-commissioned sonnet+opus. But that incident was the
+    *default* resolution path (``resolve_desired_model``'s omit branch never
+    names an Other Models model for any contract) — so a caller reaching this
+    function with ``explicit_model_pin=True`` already made a deliberate model
+    choice, not an accidental one. A deliberate pin earns the card ceiling,
+    not the pool ceiling: the pool cap exists to stop a silent default from
+    re-spending Ultra's second pool, not to second-guess an intentional ask.
+    Attended pins skip this too (handler omits the call when
+    ``require_attended``).
     """
+    if explicit_model_pin:
+        return effort
     if not is_other_models_pool(model_id):
         return effort
     resolved = str(effort.get("resolved_effort") or "").strip().lower()

@@ -133,10 +133,12 @@ Rates: `config/model_rates.yaml`.
 |---|---|---|---|
 | **T0 — mechanical drive** | omit `model=` → `cursor/composer-2.5` | (n/a) | Scoreboard fully bound; only nest Composer/investigate; conductor is traffic cop |
 | **T1 — default judgment** | **`cursor/grok-4.6`** | **`xhigh`**, `fast=false` | **Standing default.** Multi-G orchestrate, rank, adjudicate — Cursor Models pool |
-| **T2 — Other Models** | `cursor/claude-sonnet-5` | `high` (`thinking=true`, `context=300k`) | Named trigger only — grok cannot hold the remit. Unattended Auto caps Other Models at `high` |
+| **T2 — Other Models** | `cursor/claude-sonnet-5` | `xhigh`/`max` (`thinking=true`, `context=1m`) | Named trigger only — grok cannot hold the remit or the context window. **Explicit pin holds its card ceiling even unattended** — the pool cap only ever bites the *silent default* path (`resolve_desired_model`'s omit branch never resolves to Other Models for any contract), never a deliberate T2/T3 pick |
 | **T3 — premium** | `cursor/claude-opus-5` | full card (`low`→`max`) | Invariant-touching, architecture-suitability, ≥2 unranked co-primaries, recurrence — **inform-then-proceed** + one-line why (trigger is *whether to pick T3*, not the effort rung) |
 
 Terra is **not** a standing conductor tier (Other Models + mid GPT rate). Cross-family binder stays on `judgment-escalation-ladder` 2c, not the default conductor seat.
+
+**1M context is the T1→T2 trigger, not effort alone (operator bind 2026-08-18):** Grok-4.6's card has no `context` knob and tops out at `xhigh` — there is no `max` rung on Grok. When a G-row genuinely needs the wider window, that is itself the named trigger to pick T2 Sonnet-5 at `xhigh`/`max`/`context=1m`, attended or not.
 
 **Nested legs (always split by cost class):**
 - Mechanical implement → Composer (`omit model=`, `contract=implement`)
