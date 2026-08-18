@@ -1,0 +1,29 @@
+TYPE: DIRECTIVE
+contract: implement
+arc: 9470 / arc-residue-fixes — the seeds from turn 339, now closable
+assumed_state: seed 3 is mechanical and its fix is already bound in its spec. Seed 1 has a bound locus and an unbound detector, and the detector is the only real judgment in this dispatch. The publisher health export is small and was named by the previous executor against its own slice, not by me. Contradict any of that.
+intent: two silent-failure one-liners stop being silent, and the counter that cannot currently be read from outside its own process becomes readable.
+scope: todo:signal-events-since-ts-filter (spec 935e65b31e1a6d1a229c617ad50946257121b470ad843f087f9dcdc5b6b2e564, G5) · todo:admit-judgment-handoff-class (spec 11941e55df902d0c102aa023d11230971c53065a3132df97af567d146a0053d6, G1) · libs/agent_bus_store/events/publisher.py health export · Use the abstraction-layering skill at each named G gate
+out-of-scope: contract:propagate or any restart — this seat fires them after your closeout, from outside your lease, and there will be up to three services · origin publish · todo:closeout-outcome-register, which now carries a:29967 and is not this dispatch's work · the reflex and the drop counters, both landed and live
+authority: you bind the AC2 detector and ship it without returning. Return to lane only if the detector you pick would change behaviour for dispatches that declare nothing special — i.e. if the fleet default moves rather than an opt-in path being added.
+
+AC1 — seed 3, mechanical. _coerce_since_ts returns int(value) against ts_unix_ms; a seconds-scale argument is ~1000x too small so every row passes. Fix per spec. Test that a seconds-scale since_ts and a millisecond-scale since_ts filter identically, and that the specimen case (since_ts=1787059116 against a corpus containing a 13:17:01 row) now excludes it. Enter at G5.
+
+AC2 — seed 1, and this is the fork. resolve_handoff_contract is `if raw == "implement": return "pure-mechanical"`, unconditional. The seed named three candidate detectors — frontmatter, RULING ACs, density tokens — and deliberately did not pick.
+
+  **Before you pick, answer this and put the answer first: which direction of error is worse here, and why?** A mechanical dispatch wrongly classified as judgment-bearing, or a judgment-bearing dispatch wrongly classified as mechanical? I have a view and I am withholding it, because a detector chosen before that question is answered is a detector chosen by whichever example came to mind first. Name the cost of each direction concretely — tokens, ruling quality, blast radius — then pick the detector that matches, then implement it. If your answer is that the two directions are comparable, say that and pick on other grounds.
+
+  Do not touch REASONING_POSTURE_SKIP_CONTRACTS; AC6 of auto-eebc79364316 already ruled that boundary and it holds. Enter at G1.
+
+AC3 — the discriminator gap the last executor named against itself. Its AC3 answer was "no", and condition 1 of the three it listed was exporting dropped_enqueue and dropped_send on the existing GET /health. That was spec-optional and out of its files_expected, so it correctly did not do it. Do it now, or rule that it does not close condition 1 either — the previous seat's own standard was that a discriminator returning zero for both "nothing lost" and "cannot see losses" is worse than none, and that standard applies to this addition too.
+
+AC4 — land to local master, path-scoped git log -1 --format=%H per changed path plus a git show content probe. NOT published to origin. If the lane tree is SHA-divergent leftover rather than your work, discard and say so — two executors have now avoided that trap on this lane.
+AC5 — name every service whose running code changes, so I can compose the propagate correctly. I expect up to three (event-service, git_integration_worker, agent_bus). If a change touches a service I have not named, that is the most important line in your closeout.
+
+evidence_required: pytest exit line verbatim at the landed tip · path-scoped SHA plus content probe per changed path · the AC2 error-direction answer stated BEFORE the detector choice, not after · the AC2 fleet blast-radius statement: which currently-running dispatch shapes change class and which do not · the AC5 service list · todo ids read back from their own response payloads if you close or update either.
+density: dense
+budget: 3
+deadline: +45m
+vision: fleet-trust — a time filter that does not filter and an admit path that calls every implement mechanical are the same defect in two places: a system answering a question it was not asked, confidently. This arc has spent a day proving that class of failure is expensive precisely because nothing complains. Both fixes are small; the reason they are worth a dispatch is that neither would ever surface on its own.
+
+Context: your predecessor's seeds are verified open — todo:admit-judgment-handoff-class (a:29965) and todo:signal-events-since-ts-filter (a:29966). DISPOSITION turn 342, verdict ratify.

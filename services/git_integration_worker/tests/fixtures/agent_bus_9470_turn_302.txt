@@ -1,0 +1,25 @@
+TYPE: DIRECTIVE
+contract: implement
+arc: 9470 / shadow-dispatch-reflex-identity — successor to investigate turn 286
+assumed_state: the second-read reflex is designed and worth keeping; its two defects are that it binds the job row (nested_sdk.py:183-187 into job_ledger.py:356-359 LWW) and that it parses the bus JSON envelope instead of the repo sidecar, so 0 of 7 completed fires ever delivered. Contradict this if the code says otherwise.
+intent: the reflex stops owning job identity, its advisory actually reaches an Auto CLOSEOUT, read_only legs stop faking Lane-B land state — landed on local master.
+scope: services/git_integration_worker/cursor_auto/{nested_sdk.py,job_ledger.py,reflex_read.py} · services/git_integration_worker/cursor_sdk_closeout/delivery_assembly/receipt_finalization.py · services/git_integration_worker/tests/test_cursor_auto_second_read_reflex.py · cursor_home.py (AC7)
+out-of-scope: contract:propagate or any sync_restart (this seat fires it after land from outside the GIW lease, per the closeout_relay nesting ban) · publishing to origin · todo:agent-bus-publisher-drop-observability
+authority: you decide AC1's belt question, the AC5 ruling, AC3's narrowing, and AC7 fix-vs-defer without returning. Return to lane only if the fix would change executor bind semantics, or if AC6 shows the true corpus is an order of magnitude larger and the remedy shape changes.
+
+AC1 — the reflex stops binding. submit_nested_dispatch(bind_job=False) on the reflex path; executor path unchanged. Do NOT ship blanket first-wins COALESCE(dispatch_id, ?): per DISPOSITION turn 300, _release_failed_submission (nested_sdk.py:158) leaves dispatch_id on a failed submit, so first-wins pins that job to a dead id permanently, and submit_failed is n=3 on 9435 in your own corpus. Any ledger-side belt must permit executor-class rebind. You may rule the belt unnecessary; say which and why.
+AC2 — the advisory arrives. Parse read_repo_closeout_sidecar(reflex_dispatch_id), not fetch_sdk_closeout_body, so the SECOND_READ sentinel prose reaches parse_second_read. Demonstrate ONE end-to-end delivery: an event with outcome=delivered and a SECOND READ block present in an Auto CLOSEOUT. The window is 0/7; a green test is not a delivery.
+AC3 — read_only legs do not settle Lane-B. Skip settle_lane_branch in receipt_finalization.py when read_only. FIRST retrieve the live cursor_sdk_branch_debts row from GIW DATA_DIR sqlite: your own ACCESS table says that row was not retrieved, so consumer 22's re-opens-after-discharge is code-read derived, not observed. If no reopen is visible, say so and narrow the fix.
+AC4 — tests: bind does not clobber · sidecar parse · read_only settle skip · and the failure path, where a job whose first submit failed can still rebind to a live executor.
+AC5 — RULING, argue against this seat if the evidence says so: does periodic_sample still earn its place after AC2 lands? It fired 3 of 4 completed 9470 shadows, on dispatches with no distress signal, at 572k-1.2M luna tokens each; every other trigger carries a signal. Options (a) keep (b) raise N (c) drop periodic_sample and keep signal-triggered. Pick one with reasons. It-works-today is not available: delivery is 0/7.
+AC6 — re-derive the corpus bound, per DISPOSITION turn 299. n=62 / n=7 / earliest 2026-08-17T19:26:50Z all come from the ES frontier.sdk.auto.second_read signal, on the transport this lane proved this morning drops oldest silently. git log reflex_events.py:128 — if the emit site postdates 2026-08-17T19:26Z, that earliest is the telemetry's birthday and not the behaviour's; re-derive from the SDK dispatch ledger (two dispatches on one request_id, later one read_only). Rides alongside; does not gate.
+AC7 — cursor_home.py $HOME/.venvs: dispatch HOME must never be the interpreter root (exit 127 specimen in auto-787c6b89be1f). Fix or defer with a stated reason.
+AC8 — land: cursor-sdk/lane-9470 commits landed to local master, path-scoped git log -1 --format=%H per path plus a git show content probe per changed path. NOT published to origin.
+
+evidence_required: path-scoped SHA plus content probe per changed path · pytest exit line verbatim at the landed tip · the AC2 delivery quoted verbatim (event payload or the SECOND READ block) · the live branch-debt query result, or an honest not-retrievable with the reason · AC5 and AC6 rulings inline in the closeout body, not by reference.
+density: dense — grok-4.6 pinned over the composer default because AC5 and AC6 are rulings, not edits.
+budget: 3
+deadline: +45m
+vision: fleet-trust — a seat asking what happened to my request gets the empty advisory instead of the work, and that reading is already sitting inside an entity on 9440. This closes the identity corruption and makes the second read actually second-read.
+
+Both DISPOSITIONs on your closeout bind; neither is retracted. Seam and rationale: cortex://notes/system/threads/9470-directive-reflex-identity-fix.md sha256 2a4727e1a2e999efc7e1ae57c90a6fd3dcf047e0ec8108e718a5c04f6525bdf9

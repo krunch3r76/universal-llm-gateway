@@ -34,7 +34,9 @@ _DENSITY_TRIAGE_RE = re.compile(
 )
 _HANDOFF_LINE_RE = re.compile(r"^handoff:\s*(\S+)", re.MULTILINE | re.IGNORECASE)
 _RULING_LINE_RE = re.compile(
-    r"^[ \t]*(?:[-*][ \t]+)?(?:#{1,6}[ \t]+)?(?:\*\*)?RULING(?:\s+ACs?)?(?:\*\*)?\b",
+    r"^[ \t]*(?:[-*][ \t]+)?(?:#{1,6}[ \t]+)?(?:\*\*)?"
+    r"(?:AC\d+[ \t]*[—–-][ \t]*)?"
+    r"RULING(?:\s+ACs?)?(?:\*\*)?\b",
     re.MULTILINE,
 )
 _ARCH_FORK_LINE_RE = re.compile(
@@ -219,11 +221,12 @@ def has_actionable_scope(body: str) -> bool:
 def body_declares_judgment(body: str | None) -> bool:
     """True when a DIRECTIVE body opts an ``implement`` admit off mechanical.
 
-    Opt-in markers only: line-start ``RULING`` / architecture-fork headings,
-    judgment density tokens, or an explicit ``handoff:`` that is not
-    ``pure-mechanical``. Unmarked bodies, ``density: mechanical``, and
-    mid-prose mentions of the words ``RULING ACs`` do not match — the fleet
-    default for ``contract=implement`` stays ``pure-mechanical``.
+    Opt-in markers only: line-start ``RULING`` (optional ``AC<n> —`` label
+    prefix), architecture-fork headings, judgment density tokens, or an
+    explicit ``handoff:`` that is not ``pure-mechanical``. Unmarked bodies,
+    ``density: mechanical``, and mid-prose mentions of the words ``RULING``
+    / ``ruling`` do not match — the fleet default for ``contract=implement``
+    stays ``pure-mechanical``.
     """
     text = body or ""
     if not text.strip():

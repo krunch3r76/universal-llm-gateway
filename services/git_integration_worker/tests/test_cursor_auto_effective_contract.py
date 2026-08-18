@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from services.git_integration_worker.cursor_auto.directive import effective_contract
 from services.git_integration_worker.cursor_auto.admit_gates import AdmitGateResult
+from services.git_integration_worker.cursor_auto.directive import effective_contract
 from services.git_integration_worker.cursor_auto.handler import process_job
 from services.git_integration_worker.cursor_auto.queue import AutoJob
 from services.git_integration_worker.cursor_auto.wire_map import (
@@ -123,16 +124,14 @@ def test_process_job_directive_answer_upgrades_to_nested(monkeypatch: pytest.Mon
 
 
 _TURN_302_RULING = (
-    "TYPE: DIRECTIVE\ncontract: implement\ndensity: dense\nscope: libs/foo\n"
-    "RULING AC1 — bind the detector; do not flip unmarked implement.\n"
-    "RULING AC2 — do not touch REASONING_POSTURE_SKIP_CONTRACTS.\n"
-)
+    Path(__file__).resolve().parent / "fixtures" / "agent_bus_9470_turn_302.txt"
+).read_text(encoding="utf-8")
 
 
 def test_process_job_ruling_acs_raise_handoff_off_mechanical(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Turn-302 shape: two RULING ACs must not admit as pure-mechanical."""
+    """Turn-302 specimen: AC-label RULING must not admit as pure-mechanical."""
     bus = AsyncMock()
     bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
     submit = AsyncMock(

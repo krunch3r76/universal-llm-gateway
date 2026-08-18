@@ -7,16 +7,15 @@ import contextlib
 import logging
 import os
 from collections.abc import AsyncIterator
-from typing import Any
 from contextlib import asynccontextmanager
+from typing import Any
 
 import uvicorn
+from deploy_identity.code_version import resolve_code_version
 from fastapi import FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-
-from deploy_identity.code_version import resolve_code_version
 
 from .db import init_db
 from .reconcile import reconcile_orphaned_dispatches
