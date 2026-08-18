@@ -49,6 +49,11 @@ def _parser() -> argparse.ArgumentParser:
         "wait-for-grok opener (task framing, entity ids, etc.)",
     )
     p.add_argument("--stop-file", default="/tmp/grok-claude-relay.stop")
+    p.add_argument(
+        "--state-file",
+        default="/tmp/grok-claude-relay.state.json",
+        help="Where to write the most recent claude.ai chat_url + relay count",
+    )
     return p
 
 
@@ -99,6 +104,7 @@ async def _run(args: argparse.Namespace) -> int:
         seed_grok=_read_text_arg(args.seed_grok, args.seed_grok_file),
         claude_opener=_read_text_arg("", args.claude_opener_file),
         stop_file=Path(args.stop_file),
+        state_file=Path(args.state_file),
         url_substr=substr,
     )
     state = await run_relay(cfg)

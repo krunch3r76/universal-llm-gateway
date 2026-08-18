@@ -63,6 +63,18 @@ def web_chat_relay_auth_missing(*, grok_url: str, page_url: str) -> Event:
 
 
 @event_factory
+def web_chat_relay_turn_filtered(*, direction: str) -> Event:
+    """A harvested turn was already attributed to the other side (started
+    with its ``Grok:``/``Claude:`` name prefix) and was not re-relayed."""
+    return Event(
+        signal="web_chat.relay.turn_filtered",
+        role="observation",
+        scope="node",
+        payload={"direction": direction},
+    )
+
+
+@event_factory
 def web_chat_relay_tick_retry(*, detail: str) -> Event:
     """One poll tick hit a transient stall (still-generating turn, HTTP
     hiccup) and is retrying next tick instead of ending the relay process."""

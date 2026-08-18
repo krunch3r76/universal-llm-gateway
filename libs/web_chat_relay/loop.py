@@ -10,8 +10,11 @@ satellite's dormant/relaunch lifecycle.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
+import json
 import signal
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,10 +22,18 @@ from web_chat_relay import claude_leg, events, grok_session
 from web_chat_relay.claude_leg import ClaudeLegError
 from web_chat_relay.grok_session import GrokAuthError
 
+GROK_PREFIX = "Grok:"
+CLAUDE_PREFIX = "Claude:"
+
 
 def body_sha(text: str) -> str:
     """Stable fingerprint of a harvested assistant body."""
     return hashlib.sha256((text or "").encode()).hexdigest()
+
+
+def has_prefix(text: str, prefix: str) -> bool:
+    """True when *text* is already attributed to *prefix* (case-insensitive)."""
+    return text.lstrip().lower().startswith(prefix.lower())
 
 
 def should_relay(
@@ -54,6 +65,7 @@ class RelayConfig:
     seed_grok: str = ""
     claude_opener: str = ""
     stop_file: Path = Path("/tmp/grok-claude-relay.stop")
+    state_file: Path = Path("/tmp/grok-claude-relay.state.json")
     url_substr: str = grok_session.DEFAULT_GROK_CHAT_ID
 
 
@@ -131,11 +143,27 @@ async def _poll_loop(cfg: RelayConfig, state: RelayState, grok_page) -> None:
         await asyncio.sleep(cfg.poll_s)
 
 
+def _write_state(cfg: RelayConfig, *, claude_chat_url: str, relays: int) -> None:
+    """Best-effort pointer file so a human can find the live claude.ai thread.
+
+    Fresh-per-turn asks (see ``claude_leg.py``) have no fixed URL to bookmark
+    -- this is the discoverability substitute: always the most recent one.
+    """
+    payload = {
+        "claude_chat_url": claude_chat_url,
+        "relays": relays,
+        "updated_at": time.time(),
+    }
+    with contextlib.suppress(OSError):
+        cfg.state_file.write_text(json.dumps(payload))
+
+
 async def _relay_tick(cfg: RelayConfig, state: RelayState, grok_page) -> None:
-    """Harvest grok; if it has a genuinely new turn, ask claude fresh and
-    relay the reply straight back. A raised error here (network hiccup,
-    still-generating turn) leaves state untouched, so the caller's retry
-    re-sends the same grok turn rather than dropping or duplicating one."""
+    """Harvest grok; if it has a genuinely new, not-already-attributed turn,
+    ask claude fresh and relay the reply straight back, each paste tagged
+    with its source. A raised error here (network hiccup, still-generating
+    turn) leaves state untouched, so the caller's retry re-sends the same
+    grok turn rather than dropping or duplicating one."""
     grok = await grok_session.harvest(grok_page)
     if grok.login_wall:
         events.emit(
@@ -145,7 +173,8 @@ async def _relay_tick(cfg: RelayConfig, state: RelayState, grok_page) -> None:
         return
     if grok.streaming or grok.stop:
         grok = await grok_session.wait_idle(grok_page)
-    grok_sha = body_sha(grok.last_assistant)
+    grok_text = grok.last_assistant
+    grok_sha = body_sha(grok_text)
     if not should_relay(
         new_sha=grok_sha,
         baseline_sha=state.grok_baseline_sha,
@@ -153,14 +182,24 @@ async def _relay_tick(cfg: RelayConfig, state: RelayState, grok_page) -> None:
         last_received_sha=state.last_to_claude,
     ):
         return
+    if has_prefix(grok_text, CLAUDE_PREFIX):
+        # Grok reciting/echoing Claude's own words back -- not new content.
+        state.last_to_claude = grok_sha
+        events.emit(events.web_chat_relay_turn_filtered(direction="grok_to_claude"))
+        return
 
-    prompt = f"{cfg.claude_opener}\n\n---\n{grok.last_assistant}\n---" if cfg.claude_opener else grok.last_assistant
+    body = (
+        f"{cfg.claude_opener}\n\n---\n{GROK_PREFIX} {grok_text}\n---"
+        if cfg.claude_opener
+        else f"{GROK_PREFIX} {grok_text}"
+    )
     result = await asyncio.to_thread(
-        claude_leg.ask_and_wait, prompt_text=prompt, base_url=cfg.project_ask_url
+        claude_leg.ask_and_wait, prompt_text=body, base_url=cfg.project_ask_url
     )
     claude_body = str(result.get("body") or "")
     state.last_to_claude = grok_sha
     state.relays += 1
+    _write_state(cfg, claude_chat_url=str(result.get("url") or ""), relays=state.relays)
     events.emit(
         events.web_chat_relay_turn_relayed(
             direction="grok_to_claude", body_sha256=grok_sha, relay_index=state.relays
@@ -170,7 +209,12 @@ async def _relay_tick(cfg: RelayConfig, state: RelayState, grok_page) -> None:
     claude_sha = body_sha(claude_body)
     if not claude_body or claude_sha == state.last_to_grok:
         return
-    await grok_session.paste_and_send(grok_page, claude_body)
+    if has_prefix(claude_body, GROK_PREFIX):
+        # Claude quoting Grok's own words back -- not new content for grok.
+        state.last_to_grok = claude_sha
+        events.emit(events.web_chat_relay_turn_filtered(direction="claude_to_grok"))
+        return
+    await grok_session.paste_and_send(grok_page, f"{CLAUDE_PREFIX} {claude_body}")
     await grok_session.wait_idle(grok_page)
     state.last_to_grok = claude_sha
     state.relays += 1
