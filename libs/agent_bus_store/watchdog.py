@@ -14,9 +14,11 @@ Each sweep pass is synchronous (SQLite I/O); called from the async loop directly
 (no executor needed — infrequent, fast).
 
 TTL accuracy: each state transition bumps `threads.updated_at` via
-`_transition_lifecycle_state`, so the TTL clock resets at every lifecycle
-change (pending → admitted resets the admitted TTL clock). Default sweep
+`_transition_lifecycle_state` using `now()` (ISO-8601 with ``T`` and ``Z``).
+Cutoff strings use the same form. Lexical compare still normalizes ISO vs
+sqlite ``datetime()`` so mixed on-disk rows remain ordered. Default sweep
 interval is 300s; worst-case reap lag = TTL + one sweep period (~5 min extra).
+Admitted reap additionally probes the GIW holder and fail-closes on DEFER.
 
 ∀ sweep failure: emit mcp.agentbus.watchdog.sweep.failed; never crash the task.
 ∀ reap attempt: re-check lifecycle state inside the transaction (TOCTOU guard).
@@ -26,11 +28,19 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from .db.connection import connect, now
 from .db.lifecycle import _transition_lifecycle_state
 from .events.lifecycle import emit_thread_abandoned, emit_watchdog_sweep_failed
+from .sdk_liveness import (
+    LivenessVerdict,
+    ProbeResult,
+    evaluate_link_liveness,
+    probe_dispatch_status,
+)
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -94,6 +104,19 @@ def _reap_single(
     return True
 
 
+def _ts_older_than(column: str) -> str:
+    """SQL predicate: ``column`` is older than bound cutoff.
+
+    ``now()`` stores ``YYYY-MM-DDTHH:MM:SSZ``; sqlite ``datetime('now')``
+    stores a space and no ``Z``. Lexicographic compare of those forms is
+    inverted (``T`` > space), so the TTL select must normalize both sides.
+    """
+    return (
+        f"replace(replace({column}, 'T', ' '), 'Z', '') < "
+        "replace(replace(?, 'T', ' '), 'Z', '')"
+    )
+
+
 def _reap_pending(cutoff: str) -> None:
     """Abandon pending threads older than PENDING_TTL.
 
@@ -102,28 +125,58 @@ def _reap_pending(cutoff: str) -> None:
     with connect() as conn:
         rows = conn.execute(
             "SELECT id FROM threads "
-            "WHERE bus_lifecycle_state = 'pending' AND created_at < ?",
+            f"WHERE bus_lifecycle_state = 'pending' AND {_ts_older_than('created_at')}",
             (cutoff,),
         ).fetchall()
     for row in rows:
         _reap_single(row["id"], expected_state="pending", reason="pending_ttl_exceeded")
 
 
-def _reap_admitted(cutoff: str) -> None:
+def _holder_blocks_admitted_reap(
+    thread_id: str,
+    *,
+    probe_fn: Callable[[str], ProbeResult],
+) -> bool:
+    """True when the GIW holder is live or the probe is uncertain (fail-closed)."""
+    with connect() as conn:
+        link = conn.execute(
+            "SELECT execution_id FROM thread_dispatch_links "
+            "WHERE thread_id = ? ORDER BY linked_at DESC LIMIT 1",
+            (thread_id,),
+        ).fetchone()
+    execution_id = None if link is None else link["execution_id"]
+    verdict, _reason, _terminal = evaluate_link_liveness(
+        thread_id=thread_id,
+        link_execution_id=execution_id,
+        probe_fn=probe_fn,
+    )
+    return verdict in (LivenessVerdict.SKIP_LIVE, LivenessVerdict.DEFER)
+
+
+def _reap_admitted(
+    cutoff: str,
+    *,
+    probe_fn: Callable[[str], ProbeResult] = probe_dispatch_status,
+) -> None:
     """Abandon admitted threads with no activity for ADMITTED_TTL.
 
-    `updated_at` is bumped by `_transition_lifecycle_state` on every state
-    change, so the clock resets at the admit event itself (not at creation).
-    If a turn was posted first, `insert_turn` already advanced lifecycle to
-    'active' — this path never sees those threads.
+    Quiet ``threads.updated_at`` is not death. Probe the GIW holder before
+    reap; ``SKIP_LIVE`` and ``DEFER`` skip. ``parked_waiting`` is live
+    (see sdk_liveness). Cursor-sdk generate often posts its pointer while
+    pending, then admit — those threads stay ``admitted`` with turn_count≥1.
+
+    ``bump_heartbeat`` does not bump bus ``updated_at``; the holder probe is
+    the liveness authority, not a second write into the TTL clock.
     """
     with connect() as conn:
         rows = conn.execute(
             "SELECT id FROM threads "
-            "WHERE bus_lifecycle_state = 'admitted' AND updated_at < ?",
+            f"WHERE bus_lifecycle_state = 'admitted' AND {_ts_older_than('updated_at')}",
             (cutoff,),
         ).fetchall()
     for row in rows:
+        if _holder_blocks_admitted_reap(row["id"], probe_fn=probe_fn):
+            continue
         _reap_single(
             row["id"], expected_state="admitted", reason="admitted_ttl_exceeded"
         )
@@ -140,7 +193,7 @@ def _reap_active(cutoff: str) -> None:
     with connect() as conn:
         rows = conn.execute(
             "SELECT t.id FROM threads t "
-            "WHERE t.bus_lifecycle_state = 'active' AND t.updated_at < ? "
+            f"WHERE t.bus_lifecycle_state = 'active' AND {_ts_older_than('t.updated_at')} "
             "  AND EXISTS ("
             "    SELECT 1 FROM thread_dispatch_links WHERE thread_id = t.id"
             "  )",
@@ -155,14 +208,11 @@ def _reap_active(cutoff: str) -> None:
 def _cutoff_for_ttl(ttl_seconds: int) -> str:
     """Return an ISO-8601 timestamp `ttl_seconds` in the past.
 
-    Uses SQLite's datetime() so the result is in the same format stored by now().
+    Matches ``now()`` (``YYYY-MM-DDTHH:MM:SSZ``). Sqlite ``datetime('now')``
+    is a different string form and must not be compared to ``now()`` lexically.
     """
-    with connect() as conn:
-        row = conn.execute(
-            "SELECT datetime('now', ? || ' seconds') AS cutoff",
-            (f"-{ttl_seconds}",),
-        ).fetchone()
-    return row["cutoff"]
+    cutoff = datetime.now(UTC) - timedelta(seconds=ttl_seconds)
+    return cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # ── Main sweep + async task ───────────────────────────────────────────────────

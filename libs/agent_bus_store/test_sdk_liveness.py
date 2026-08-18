@@ -93,7 +93,9 @@ def test_classify_404_allows_orphan() -> None:
 
 
 def test_classify_timeout_defers() -> None:
-    probe = ProbeResult(payload=None, http_status=None, error="probe_unreachable:timed out")
+    probe = ProbeResult(
+        payload=None, http_status=None, error="probe_unreachable:timed out"
+    )
     verdict, reason, _ = classify_probe(probe, link_execution_id="exec-1")
     assert verdict is LivenessVerdict.DEFER
     assert reason.startswith("probe_unreachable")
@@ -165,6 +167,38 @@ def test_classify_failed_backfills_without_orphan() -> None:
     verdict, _, terminal = classify_probe(probe, link_execution_id="exec-1")
     assert verdict is LivenessVerdict.TERMINAL_BACKFILL
     assert terminal == "failed"
+
+
+def test_classify_parked_waiting_fresh_skips_orphan() -> None:
+    probe = ProbeResult(
+        payload={
+            "status": "parked_waiting",
+            "execution_id": "exec-1",
+            "last_heartbeat_at": _fresh_ts(),
+        },
+        http_status=200,
+        error=None,
+    )
+    verdict, reason, terminal = classify_probe(probe, link_execution_id="exec-1")
+    assert verdict is LivenessVerdict.SKIP_LIVE
+    assert reason == "worker_live"
+    assert terminal is None
+
+
+def test_classify_parked_waiting_stale_heartbeat_still_skips() -> None:
+    """Nest park: GIW liveness is the child task, not parent heartbeat age."""
+    probe = ProbeResult(
+        payload={
+            "status": "parked_waiting",
+            "execution_id": "exec-1",
+            "last_heartbeat_at": _stale_ts(),
+        },
+        http_status=200,
+        error=None,
+    )
+    verdict, reason, _ = classify_probe(probe, link_execution_id="exec-1")
+    assert verdict is LivenessVerdict.SKIP_LIVE
+    assert reason == "worker_live"
 
 
 def test_evaluate_link_liveness_delegates_to_probe_fn() -> None:

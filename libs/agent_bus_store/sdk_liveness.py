@@ -1,4 +1,8 @@
-"""SDK dispatch liveness probe for orphan reconcile gating."""
+"""SDK dispatch liveness probe for orphan reconcile and admitted-TTL reap.
+
+Callers in ``reconcile`` and ``watchdog._reap_admitted`` ask GIW whether a
+thread still has a live holder before treating quiet bus clocks as death.
+"""
 
 from __future__ import annotations
 
@@ -15,15 +19,18 @@ from typing import Any
 
 logger = logging.getLogger("agent-bus.sdk_liveness")
 
-_LIVE_STATUSES = frozenset({"queued", "admitted", "running"})
+# parked_waiting is a live nest-park state (GIW live_holders keys off the child
+# task). Omitting it classifies as DEFER `probe_status_unknown_parked_waiting`
+# (thread 9476, 2026-08-18T08:40:37Z) and must not be treated as death.
+_LIVE_STATUSES = frozenset({"queued", "admitted", "running", "parked_waiting"})
 _TERMINAL_STATUSES = frozenset({"completed", "failed"})
-_HEARTBEAT_STALE_S: float = float(
-    os.getenv("AGENT_BUS_SDK_HEARTBEAT_STALE_S", "300")
-)
+_HEARTBEAT_STALE_S: float = float(os.getenv("AGENT_BUS_SDK_HEARTBEAT_STALE_S", "300"))
 _PROBE_TIMEOUT_S: float = float(os.getenv("AGENT_BUS_SDK_PROBE_TIMEOUT_S", "2"))
 
 
 class LivenessVerdict(StrEnum):
+    """Holder-probe outcome for GIW dispatch-status: skip live, allow orphan, defer fail-closed, or terminal backfill."""
+
     SKIP_LIVE = "skip_live"
     ALLOW_ORPHAN = "allow_orphan"
     DEFER = "defer"
@@ -44,6 +51,7 @@ def _worker_base_url() -> str:
 
 
 def parse_ts(ts: str) -> datetime:
+    """Parse an ISO-8601 timestamp, accepting a trailing Z as UTC."""
     return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
 
@@ -70,7 +78,7 @@ def classify_probe(
     *,
     link_execution_id: str | None,
 ) -> tuple[LivenessVerdict, str, str | None]:
-    """Classify a probe outcome. Returns (verdict, reason, terminal_status)."""
+    """Classify a GIW dispatch-status probe. Returns (verdict, reason, terminal)."""
     if probe.error is not None:
         return LivenessVerdict.DEFER, probe.error, None
 
@@ -109,6 +117,11 @@ def classify_probe(
     if status not in _LIVE_STATUSES:
         return LivenessVerdict.DEFER, f"probe_status_unknown_{status}", None
 
+    if status == "parked_waiting":
+        # Parent heartbeat can go stale while the nested child is the live
+        # holder. GIW live_holders does not require a fresh parent heartbeat.
+        return LivenessVerdict.SKIP_LIVE, "worker_live", None
+
     freshness = heartbeat_freshness(payload.get("last_heartbeat_at"))
     if freshness == "indeterminate":
         return LivenessVerdict.DEFER, "heartbeat_indeterminate", None
@@ -135,15 +148,21 @@ def probe_dispatch_status(thread_id: str) -> ProbeResult:
             error=f"http_error_{exc.code}",
         )
     except (TimeoutError, urllib.error.URLError, OSError) as exc:
-        return ProbeResult(payload=None, http_status=None, error=f"probe_unreachable:{exc}")
+        return ProbeResult(
+            payload=None, http_status=None, error=f"probe_unreachable:{exc}"
+        )
 
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
-        return ProbeResult(payload=None, http_status=http_status, error="malformed_json")
+        return ProbeResult(
+            payload=None, http_status=http_status, error="malformed_json"
+        )
 
     if not isinstance(payload, dict):
-        return ProbeResult(payload=None, http_status=http_status, error="malformed_json")
+        return ProbeResult(
+            payload=None, http_status=http_status, error="malformed_json"
+        )
     return ProbeResult(payload=payload, http_status=http_status, error=None)
 
 
@@ -153,7 +172,7 @@ def evaluate_link_liveness(
     link_execution_id: str | None,
     probe_fn=probe_dispatch_status,
 ) -> tuple[LivenessVerdict, str, str | None]:
-    """Probe worker and classify whether orphan reconcile may proceed."""
+    """Probe GIW and classify whether orphan-reconcile or admitted-TTL reap may proceed."""
     probe = probe_fn(thread_id)
     verdict, reason, terminal_status = classify_probe(
         probe, link_execution_id=link_execution_id
