@@ -13,8 +13,9 @@ from typing import Any
 def live_probe_generate_kwargs(**overrides: Any) -> dict[str, Any]:
     """Kwargs for ``team_dispatch(op=generate, seat=cursor-sdk, …)`` live board probes.
 
-    Always forces ``auto_review_child=False``. Callers may override other keys but
-    not that flag — ``False`` is applied last and cannot be overridden.
+    Always forces ``auto_review_child=False``. Defaults ``lane="A"`` (bind-only
+    probe). Callers may override other keys but not the auto-review flag —
+    ``False`` is applied last and cannot be overridden.
 
     Example::
 
@@ -24,9 +25,10 @@ def live_probe_generate_kwargs(**overrides: Any) -> dict[str, Any]:
             contract="light-bounded",
             dispatch_thread_id=thread_id,
             prompt=prompt,
-            **live_probe_generate_kwargs(),
+            **live_probe_generate_kwargs(),  # includes lane="A"
         )
     """
-    kwargs = dict(overrides)
+    kwargs = {"lane": "A"}
+    kwargs.update(overrides)
     kwargs["auto_review_child"] = False
     return kwargs

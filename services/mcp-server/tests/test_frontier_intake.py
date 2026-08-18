@@ -11,6 +11,7 @@ from tools._frontier_intake import (
     normalize_dispatch_model,
     reject_pointer_body_on_generate,
     reject_unsupported_packet_inputs,
+    require_cursor_sdk_checkout_lane,
     require_dispatch_thread_id,
     validate_inline_prompt_inputs,
     validate_wrap_inputs,
@@ -334,3 +335,71 @@ def test_wrap_valid_inputs_passthrough() -> None:
     assert (
         validate_wrap_inputs("generate", "wrap", True, None, "todo:slug") is None
     )
+
+
+def test_cursor_sdk_checkout_lane_required_on_top_level_omit() -> None:
+    err = require_cursor_sdk_checkout_lane(
+        op="generate",
+        seat="cursor-sdk",
+        role=None,
+        model=None,
+        lane=None,
+        nest_under=None,
+        contract="implement",
+    )
+    assert err is not None
+    assert err["error"]["code"] == "lane_required"
+    assert err["field"] == "lane"
+
+
+def test_cursor_sdk_checkout_lane_exempts_nest_wrap_and_named() -> None:
+    assert (
+        require_cursor_sdk_checkout_lane(
+            op="generate",
+            seat="cursor-sdk",
+            role=None,
+            model=None,
+            lane=None,
+            nest_under="parent-id",
+            contract="implement",
+        )
+        is None
+    )
+    assert (
+        require_cursor_sdk_checkout_lane(
+            op="generate",
+            seat="cursor-sdk",
+            role=None,
+            model=None,
+            lane=None,
+            nest_under=None,
+            contract="wrap",
+        )
+        is None
+    )
+    assert (
+        require_cursor_sdk_checkout_lane(
+            op="generate",
+            seat="cursor-sdk",
+            role=None,
+            model=None,
+            lane="A",
+            nest_under=None,
+            contract="light-bounded",
+        )
+        is None
+    )
+
+
+def test_cursor_sdk_checkout_lane_required_on_model_only() -> None:
+    err = require_cursor_sdk_checkout_lane(
+        op="generate",
+        seat=None,
+        role=None,
+        model="cursor/composer-2.5",
+        lane=None,
+        nest_under=None,
+        contract="light-bounded",
+    )
+    assert err is not None
+    assert err["error"]["code"] == "lane_required"

@@ -3045,6 +3045,7 @@ def test_t3b_cursor_sdk_generate_admits_and_dispatches_worker(
             "dispatch_thread_id": "dispatch-thread-sdk-gen",
             "contract": "implement",
             "packet_path": _GOOD_PACKET,
+            "lane": "B",
         },
     )
     assert resp.status_code == 202, resp.text
@@ -3097,6 +3098,7 @@ def test_t3c_cursor_sdk_generate_consult_uses_message(
             "seat": "cursor-sdk",
             "dispatch_thread_id": "dt-consult",
             "contract": "light-bounded",
+            "lane": "A",
         },
     )
     assert resp.status_code == 202, resp.text
@@ -3134,6 +3136,7 @@ def test_t6a_cursor_sdk_seat_capability(
             "dispatch_thread_id": "dt-t6a",
             "contract": "implement",
             "packet_path": _GOOD_PACKET,
+            "lane": "B",
         },
     )
     assert resp.status_code == 202, resp.text

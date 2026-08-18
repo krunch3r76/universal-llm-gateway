@@ -161,6 +161,17 @@ async def dispatch_cursor_sdk_generate_route(
 ) -> dict[str, Any] | JSONResponse:
     """Cursor-sdk generate branch: gate-then-materialize + SDK orchestrator."""
     from .admission import FrontierEndpointError
+    from .cursor_sdk_lane_gate import require_cursor_sdk_checkout_lane
+
+    try:
+        require_cursor_sdk_checkout_lane(
+            request_id=request_id,
+            lane=getattr(body, "lane", None),
+            nest_under=getattr(body, "nest_under", None),
+            contract=body.contract,
+        )
+    except FrontierEndpointError as exc:
+        return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
 
     role = seat
     try:

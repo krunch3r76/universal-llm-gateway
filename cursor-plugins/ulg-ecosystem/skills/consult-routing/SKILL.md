@@ -1,6 +1,6 @@
 ---
 name: consult-routing
-description: "On dispatch-routing — team_dispatch op/role/contract, code vs non-code lane, Gate-2 densify, autonomous work-item spine, authority_fork settlement, or implement_ready gates."
+description: "On dispatch-routing — team_dispatch op/role/contract, cursor-sdk lane=, code vs non-code lane, Gate-2 densify, autonomous work-item spine, or implement_ready gates."
 ---
 
 # Consult Routing
@@ -150,22 +150,33 @@ team_dispatch(op="generate", seat="cursor-sdk", contract="implement", source_ref
 Materializer reads attrs only; spec prose = hash input. Preflight: `entity_get`; `workflow_state ∈ {open,in_progress}`.
 `wrap` = materialize-only. Contract↔source matrix: L3 annex.
 
-## cursor-sdk checkout lane (`lane=` omit matrix)
+## cursor-sdk checkout lane (`lane=`)
 
-Optional on `team_dispatch(op=generate|to_thread, seat=cursor-sdk, …)`. Distinct
-from `dispatch_lane` (path-sim routing).
+`team_dispatch(op=generate|to_thread, seat=cursor-sdk)`: `lane=` is a **wire
+parameter**, not packet prose. Distinct from `dispatch_lane` (path-sim).
 
-| Caller supplies | GIW selects |
-|---|---|
-| omit `lane`, regime on, in-repo scope | **Lane B** (isolated worktree) |
-| omit `lane`, empty `files_expected`, no existing worktree | **Lane A** (shared checkout) |
-| `nest_under` or `resume_of` parent | inherit parent's lane/worktree |
-| `lane="A"` | **Lane A** (named opt-out of Lane-B default) |
-| `lane="B"` | **Lane B** (requires materialized worktree) |
+**Caller recipe** — top-level generate **passes** `lane ∈ {A,B}`. Omit is **not**
+a preference. MCP + Stargate return 422 `lane_required` on top-level omit.
+The only documented omit is inherit:
+
+| Situation | Pass | Why |
+|---|---|---|
+| implement / in-repo `files_expected` | `lane="B"` | regime default |
+| bind-only, empty `files_expected`, cortex-only writes | `lane="A"` | named; ¬ mint a tree |
+| out-of-repo / `CURSOR_LANE_B_SCOPE_REFUSED` | `lane="A"` + fix or name the scope | ¬ omit to “get past” (7286) |
+| `nest_under` / `resume_of` | omit | inherit parent isolation |
+
+**GIW `select_lane` priority** (inference, ¬ a license to omit): explicit A/B ≻
+empty `files_expected` → A (`opt_out`) ≻ `contract_regime` B. Empty scope + omit
+→ **A** even when regime is on. Do not read “regime on → B” as the omit outcome.
+
+**Preflight:** `manage(busy_status)` — read the **lease holder** /
+`active_by_lane` for the lane you will pass. Service-up ≠ slot-free. After
+admit, quote `sdk.lane.selected` or `active_by_lane` before naming the lane.
 
 Stay on one designated tree per arc: reuse when `nest_under`, `resume_of`, or
 `lookup_lane_worktree(thread_id)` already holds a worktree — see `git-posture`
-§ Stay on one designated tree.
+§ Stay on one designated tree. `conductor` defers this recipe here.
 
 ## Abstraction layering (codework lane)
 

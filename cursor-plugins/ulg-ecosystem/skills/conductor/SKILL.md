@@ -208,10 +208,10 @@ team_dispatch(
   packet_path=tmp/reviews/{slug}-conductor-packet.md,
   dispatch_thread_id={root},      # work child when G-rows live there (e.g. 7286)
   model_knobs={effort: max, thinking: "true", context: "1m"},
-  lane="B",                       # DEFAULT — always pass explicitly; an omitted
-                                   # lane= resolves to Lane A at GIW, not "no
-                                   # preference". lane="A" only on a named reason
-                                   # (see Packet § Checkout regime).
+  lane="B",                       # DEFAULT — always pass explicitly. SOT:
+                                   # consult-routing § cursor-sdk checkout lane.
+                                   # omit = inherit only (nest/resume), ¬ preference.
+                                   # lane="A" only on a named reason.
   # skills=["conductor"]  # optional document; ¬ mounted on cursor-sdk — Use-line wins
 )
 ```
@@ -335,7 +335,7 @@ when the operator already bound the answers in chat.
 | `judgment-escalation-ladder` | Unsure → binder, not human |
 | `git-posture` | Lane-B branch land = merge/`git_land`; ¬ path-copy onto master. Conductor admit = standing "operator directs a merge" for its own branch (§ Run to completion) — ¬ a second gate |
 | `lean-context-dispatch-first` | Tier ladder + Opus inform-then-proceed |
-| `consult-routing` | Model split / non-primary gate |
+| `consult-routing` | Model split / non-primary gate · **cursor-sdk `lane=` caller recipe** (this skill does not own omit semantics) |
 
 ## Anti-patterns
 

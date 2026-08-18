@@ -63,6 +63,7 @@ async def test_cursor_sdk_implement_admits_without_messages(
         seat="cursor-sdk",
         dispatch_thread_id="todo:some-arc",
         contract="implement",
+        lane="B",
         packet_path="tmp/reviews/packet.md",
     )
     result = await team_dispatch(body, Response())
@@ -101,6 +102,7 @@ async def test_cursor_sdk_light_bounded_packet_skips_dispatch_thread(
         seat="cursor-sdk",
         dispatch_thread_id="todo:some-arc",
         contract="light-bounded",
+        lane="A",
         packet_path="tmp/reviews/light-packet.md",
     )
     result = await team_dispatch(body, Response())
@@ -134,6 +136,7 @@ async def test_cursor_sdk_pure_mechanical_packet_skips_dispatch_thread(
         seat="cursor-sdk",
         dispatch_thread_id="todo:some-arc",
         contract="pure-mechanical",
+        lane="B",
         packet_path="tmp/reviews/mech-packet.md",
     )
     await team_dispatch(body, Response())
@@ -163,6 +166,7 @@ async def test_cursor_sdk_light_bounded_unresolved_packet_returns_422(
         seat="cursor-sdk",
         dispatch_thread_id="todo:some-arc",
         contract="light-bounded",
+        lane="A",
         packet_path="tmp/missing.md",
     )
     result = await team_dispatch(body, Response())
@@ -189,6 +193,7 @@ async def test_cursor_sdk_non_implement_reads_dispatch_thread(
         seat="cursor-sdk",
         dispatch_thread_id="todo:some-arc",
         contract="light-bounded",
+        lane="A",
     )
     await team_dispatch(body, Response())
 
@@ -248,6 +253,7 @@ async def test_cursor_sdk_implement_admits_bare_source_ref(
         seat="cursor-sdk",
         dispatch_thread_id="todo:some-arc",
         contract="implement",
+        lane="B",
         source_ref="todo:first-class-wrap-transport",
     )
     result = await team_dispatch(body, Response())
@@ -291,6 +297,7 @@ async def test_cursor_sdk_implement_gated_source_ref_returns_422(
         seat="cursor-sdk",
         dispatch_thread_id="todo:some-arc",
         contract="implement",
+        lane="B",
         source_ref="todo:gated-slug",
     )
     result = await team_dispatch(body, Response())
@@ -325,6 +332,7 @@ async def test_cursor_sdk_implement_decision_not_asserted_returns_422(
         seat="cursor-sdk",
         dispatch_thread_id="todo:some-arc",
         contract="implement",
+        lane="B",
         source_ref="todo:unratified",
     )
     result = await team_dispatch(body, Response())
@@ -362,6 +370,7 @@ async def test_cursor_sdk_implement_packet_path_no_materialization_mode(
         seat="cursor-sdk",
         dispatch_thread_id="todo:some-arc",
         contract="implement",
+        lane="B",
         packet_path="tmp/reviews/packet.md",
     )
     result = await team_dispatch(body, Response())

@@ -332,6 +332,7 @@ def test_team_dispatch_generate_forwards_source_ref() -> None:
                 contract="implement",
                 source_ref="todo:first-class-wrap-transport",
                 dispatch_thread_id="todo:first-class-wrap-transport",
+                lane="B",
             )
         )
 
@@ -861,6 +862,25 @@ def test_team_dispatch_lane_param_present() -> None:
     assert "lane" in sig.parameters
 
 
+def test_team_dispatch_lane_descriptor_requires_named_lane() -> None:
+    from typing import get_args, get_type_hints
+
+    from pydantic.fields import FieldInfo
+
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    fn = recorder.functions["team_dispatch"]
+    hint = get_type_hints(fn, include_extras=True)["lane"]
+    field_infos = [a for a in get_args(hint) if isinstance(a, FieldInfo)]
+    assert field_infos, "lane must carry Annotated[..., Field(description=...)]"
+    desc = field_infos[0].description or ""
+    assert "lane_required" in desc, desc
+    assert "nest_under" in desc, desc
+    doc = fn.__doc__ or ""
+    assert "lane_required" in doc
+    assert "nest_under" in doc
+
+
 def test_team_dispatch_generate_forwards_lane() -> None:
     recorder = _ToolNameRecorder()
     register_frontier_tools(recorder)
@@ -894,26 +914,13 @@ def test_team_dispatch_generate_forwards_lane() -> None:
     assert relay_calls[0]["body"]["lane"] == "B"
 
 
-def test_team_dispatch_generate_omits_lane_when_unset() -> None:
+def test_team_dispatch_generate_requires_lane_when_unset() -> None:
     recorder = _ToolNameRecorder()
     register_frontier_tools(recorder)
     team_dispatch_fn = recorder.functions["team_dispatch"]
-    relay_calls: list[dict[str, Any]] = []
 
-    async def _fake_relay(
-        *, endpoint: str, body: dict[str, Any], record_prefix: str
-    ) -> dict[str, Any]:
-        relay_calls.append({"endpoint": endpoint, "body": body})
-        return {"execution_id": "exec-test", "dispatch_id": "child-default"}
-
-    def _fake_record(event: str, **kwargs: Any) -> None:
-        return None
-
-    with (
-        patch("tools.frontier._relay", side_effect=_fake_relay),
-        patch("tools.frontier.record", side_effect=_fake_record),
-    ):
-        asyncio.run(
+    with patch("tools.frontier._relay") as relay:
+        result = asyncio.run(
             team_dispatch_fn(
                 op="generate",
                 seat="cursor-sdk",
@@ -922,8 +929,29 @@ def test_team_dispatch_generate_omits_lane_when_unset() -> None:
             )
         )
 
-    assert len(relay_calls) == 1
-    assert "lane" not in relay_calls[0]["body"]
+    relay.assert_not_called()
+    assert result["error"]["code"] == "lane_required"
+    assert result["field"] == "lane"
+
+
+def test_team_dispatch_generate_model_only_requires_lane() -> None:
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    team_dispatch_fn = recorder.functions["team_dispatch"]
+
+    with patch("tools.frontier._relay") as relay:
+        result = asyncio.run(
+            team_dispatch_fn(
+                op="generate",
+                model="cursor/composer-2.5",
+                contract="light-bounded",
+                dispatch_thread_id="5777",
+                prompt="bind this",
+            )
+        )
+
+    relay.assert_not_called()
+    assert result["error"]["code"] == "lane_required"
 
 
 def test_team_dispatch_lane_rejects_non_sdk_seat() -> None:

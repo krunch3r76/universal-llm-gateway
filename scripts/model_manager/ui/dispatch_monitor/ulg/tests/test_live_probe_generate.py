@@ -10,6 +10,7 @@ from scripts.model_manager.ui.dispatch_monitor.ulg.live_probe_generate import (
 def test_forces_auto_review_child_false_by_default() -> None:
     kwargs = live_probe_generate_kwargs()
     assert kwargs["auto_review_child"] is False
+    assert kwargs["lane"] == "A"
 
 
 def test_overrides_cannot_win_over_false() -> None:

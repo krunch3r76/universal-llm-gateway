@@ -46,6 +46,7 @@ from ._frontier_intake import (
     normalize_dispatch_model,
     reject_pointer_body_on_generate,
     reject_unsupported_packet_inputs,
+    require_cursor_sdk_checkout_lane,
     require_dispatch_thread_id,
     require_explicit_cursor_seat_for_handoff,
     validate_inline_prompt_inputs,
@@ -320,14 +321,12 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             Literal["A", "B"] | None,
             Field(
                 description=(
-                    "Optional GIW checkout-isolation lane ('A' | 'B'). "
-                    "Distinct from dispatch_lane (path-sim routing). "
-                    "cursor-sdk-seat-only: valid only for seat='cursor-sdk' "
-                    "generate/to_thread; other seats → 422 lane_sdk_only. "
-                    "Omit matrix: regime on + in-repo scope → B; empty "
-                    "files_expected with no existing worktree → A; "
-                    "nest_under/resume_of inherit parent lane/worktree; "
-                    "lane='A' is the named opt-out from Lane-B default."
+                    "Required GIW checkout-isolation lane ('A' | 'B') on "
+                    "top-level seat='cursor-sdk' generate/to_thread. Distinct "
+                    "from dispatch_lane (path-sim routing). Other seats → 422 "
+                    "lane_sdk_only. Omit only when nest_under inherits parent "
+                    "isolation; otherwise 422 lane_required. contract=wrap is "
+                    "exempt. See agent_skill:consult-routing."
                 ),
             ),
         ] = None,
@@ -591,16 +590,15 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         ``nest_under_sdk_only``. LIFO park stack hard-caps at **depth 10**
         (11th nest → 422 ``CURSOR_NEST_DEPTH_EXCEEDED``, ``retryable=false``).
 
-        ``lane`` — optional checkout-isolation lane (``"A"`` | ``"B"``) for GIW
-        worktree selection. **Distinct from** ``dispatch_lane`` (path-sim /
-        todo routing). **cursor-sdk-seat-only**; other seats → 422
-        ``lane_sdk_only``. ``lane="B"`` requires a materialized worktree
-        (minted or inherited from ``nest_under`` / resume parent); otherwise
-        GIW returns 422 ``CURSOR_LANE_B_WORKTREE_MISSING`` — it does not
-        relabel the admit as Lane A. **Omit matrix:** regime on + in-repo
-        scope → Lane B; empty ``files_expected`` with no existing worktree →
-        Lane A; ``nest_under`` / ``resume_of`` inherit parent lane/worktree;
-        ``lane="A"`` is the named opt-out from the Lane-B default.
+        ``lane`` — required checkout-isolation lane (``"A"`` | ``"B"``) for
+        top-level ``seat="cursor-sdk"`` generate/to_thread. **Distinct from**
+        ``dispatch_lane`` (path-sim / todo routing). **cursor-sdk-seat-only**;
+        other seats → 422 ``lane_sdk_only``. Omit only when ``nest_under``
+        inherits parent isolation; otherwise 422 ``lane_required``.
+        ``contract=wrap`` is exempt (no GIW checkout). ``lane="B"`` requires a
+        materialized worktree (minted or inherited); otherwise GIW returns 422
+        ``CURSOR_LANE_B_WORKTREE_MISSING`` — it does not relabel the admit as
+        Lane A. See ``agent_skill:consult-routing``.
         """
         prompt_input_err = validate_inline_prompt_inputs(
             op, contract, packet_path, source_ref, prompt, sidecar_ref
@@ -766,6 +764,17 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 },
                 "field": "lane",
             }
+        lane_required_err = require_cursor_sdk_checkout_lane(
+            op=op,
+            seat=seat,
+            role=role,
+            model=model,
+            lane=lane,
+            nest_under=nest_under,
+            contract=contract,
+        )
+        if lane_required_err is not None:
+            return lane_required_err
         if role == "cursor-sdk":
             return {
                 "error": {

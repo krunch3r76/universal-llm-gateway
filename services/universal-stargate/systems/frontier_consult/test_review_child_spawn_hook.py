@@ -448,6 +448,7 @@ async def test_openai_executor_review_child_uses_cursor_sdk_generate() -> None:
     assert isinstance(body, TeamDispatchGenerateBody)
     assert body.op == "generate"
     assert body.seat == "cursor-sdk"
+    assert body.lane == "A"
     assert body.model == "cursor/claude-opus-5"
     assert body.prompt == "review prompt"
     assert body.auto_review_child is False

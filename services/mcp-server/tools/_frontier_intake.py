@@ -333,3 +333,48 @@ def require_explicit_cursor_seat_for_handoff(
             "policy": "decision:handoff-default-seat-claude-web",
         },
     }
+
+
+_LANE_REQUIRED_MESSAGE = (
+    "lane is required for top-level seat=cursor-sdk generate/to_thread "
+    "(pass A or B). Omit only when nest_under inherits parent isolation. "
+    "See agent_skill:consult-routing § cursor-sdk checkout lane. "
+    "contract=wrap is exempt (no GIW checkout)."
+)
+
+
+def require_cursor_sdk_checkout_lane(
+    *,
+    op: str,
+    seat: str | None,
+    role: str | None,
+    model: str | None,
+    lane: str | None,
+    nest_under: str | None,
+    contract: str | None,
+) -> dict[str, Any] | None:
+    """422 ``lane_required`` when a top-level cursor-sdk generate omits lane.
+
+    ``model=cursor/…`` without seat is the implicit SDK path. ``nest_under``
+    inherit and ``contract=wrap`` are the documented exemptions.
+    """
+    if op not in ("generate", "to_thread"):
+        return None
+    if contract == "wrap":
+        return None
+    if lane is not None:
+        return None
+    if nest_under and str(nest_under).strip():
+        return None
+    seat_sdk = (seat or "").strip() == _CURSOR_SDK_ROLE
+    model_only = (
+        not (seat or "").strip()
+        and not (role or "").strip()
+        and isinstance(model, str)
+        and model.startswith("cursor/")
+    )
+    if not seat_sdk and not model_only:
+        return None
+    return _validation_error(
+        _LANE_REQUIRED_MESSAGE, field="lane", code="lane_required"
+    )

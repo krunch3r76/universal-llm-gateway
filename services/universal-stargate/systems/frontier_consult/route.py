@@ -182,6 +182,8 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     suppress_cost_warning: bool = False
     cost_intent_reason: str | None = None
     nest_under: str | None = None
+    # Required on top-level cursor-sdk generate. Omit only for nest_under inherit.
+    # Missing → 422 lane_required. wrap is exempt. Distinct from dispatch_lane.
     lane: Literal["A", "B"] | None = None
     read_only: bool = False
     refuse_if_lease_held: bool = False

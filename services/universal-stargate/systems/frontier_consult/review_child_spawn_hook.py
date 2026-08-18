@@ -283,6 +283,7 @@ async def _dispatch_review_child(
                 spawn_review_provenance=_SPAWN_PROVENANCE,
                 prompt_turn_number=prompt_turn_number,
                 prompt_bind_mode="frozen_turn",
+                lane="A",
             )
         )
         result = await team_dispatch(child_body, Response())

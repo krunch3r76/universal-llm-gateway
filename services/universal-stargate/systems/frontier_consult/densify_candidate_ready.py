@@ -199,6 +199,7 @@ async def spawn_densify_reviewer_child(
                 prompt=reviewer_prompt,
                 auto_review_child=False,
                 spawn_review_provenance="generate_review_child",
+                lane="A",
             )
         )
         result = await team_dispatch(child_body, response)

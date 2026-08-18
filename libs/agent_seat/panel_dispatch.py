@@ -232,6 +232,7 @@ def build_team_dispatch_body(
         # cursor/* cannot combine with role= (substrate_model_role_conflict).
         body["seat"] = "cursor-sdk"
         body["model"] = model
+        body["lane"] = "A"
     else:
         body["role"] = spec.role
         if model is not None:

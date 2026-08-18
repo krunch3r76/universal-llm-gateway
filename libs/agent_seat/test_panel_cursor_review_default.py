@@ -26,6 +26,7 @@ def test_build_body_uses_seat_for_cursor_reviewer() -> None:
     )
     assert body["seat"] == "cursor-sdk"
     assert body["model"] == "cursor/gpt-5.6-terra"
+    assert body["lane"] == "A"
     assert "role" not in body
 
 

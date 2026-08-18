@@ -15,10 +15,11 @@ Read on:
 
 Default substrate: **attended Cursor IDE** edits on the live shared checkout
 (`GIT_INTEGRATION_SOURCE_REPO`, default `universal-llm-gateway`). **cursor-sdk
-generate** defaults to **Lane B** (isolated worktree on
-`cursor-sdk/lane-{thread}`) when the Lane-B regime is on and scope is in-repo;
-explicit `lane="A"` or out-of-repo scope stays on the shared checkout. These
-rules bind unless the operator directs otherwise.
+generate** defaults to **Lane B** when the caller **passes** `lane="B"` (regime
+on, in-repo). Omit is not that default: empty `files_expected` + omit → Lane A.
+Explicit `lane="A"` or out-of-repo stays on the shared checkout. Caller recipe:
+`consult-routing` § cursor-sdk checkout lane. These rules bind unless the
+operator directs otherwise.
 
 **Sole-checkout corollary:** this seat assumes one live shared `master`
 working tree and **¬intersecting parallel writers**. Do **not** `git stash`
@@ -103,9 +104,14 @@ Doctrine: `decision:checkout-disk-is-executable`.
 
 | Surface | Where work lands | Git protocol |
 |---|---|---|
-| cursor-sdk generate (regime on, in-repo) | Lane-B worktree (`cursor-sdk/lane-{thread}`) | Commit on the lane branch; declare `land_disposition` on closeout |
+| cursor-sdk generate (regime on, in-repo, `lane="B"`) | Lane-B worktree (`cursor-sdk/lane-{thread}`) | Commit on the lane branch; declare `land_disposition` on closeout |
 | cursor-sdk generate (`lane="A"` or out-of-repo) | Live shared checkout | Path-explicit commit on `master` when checkpointing |
 | Attended Cursor IDE | Live shared checkout | No standing workflow. On-disk tree = truth. Commits sporadic; `git diff` unreliable. |
+
+`lane=` is required on top-level cursor-sdk generate except `nest_under` /
+`resume_of` inherit. Empty `files_expected` + **omit** selects Lane A
+(`select_lane` `opt_out`) — do not headline omit as Lane B. Caller recipe:
+`consult-routing` § cursor-sdk checkout lane.
 
 ## Stay on one designated tree (Lane B)
 

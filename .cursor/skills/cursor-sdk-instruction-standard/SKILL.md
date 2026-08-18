@@ -3,7 +3,7 @@ name: cursor-sdk-instruction-standard
 description: "Before authoring cursor-sdk dispatch turns — light-bounded, pure-mechanical, or implement contracts; ensures Composer executors get verifiable instructions."
 skill_category: dispatch-delegation
 trigger_short: cursor-sdk ∨ light-bounded ∨ pure-mechanical ∨ self-check ∨ acceptance_criteria
-trigger_match_terms: ["cursor-sdk", "cursor_sdk", "light-bounded", "pure-mechanical", "acceptance_criteria", "self-check", "instruction standard", "team_dispatch", "contract=implement"]
+trigger_match_terms: ["cursor-sdk", "cursor_sdk", "light-bounded", "pure-mechanical", "acceptance_criteria", "self-check", "instruction standard", "team_dispatch", "contract=implement", "lane"]
 canonical: workspaces://universal-llm-gateway/.cursor/skills/cursor-sdk-instruction-standard/SKILL.md
 ---
 
@@ -78,6 +78,25 @@ quick (`answer` / `execute` / `propagate`). Authors may omit the line; do not st
 it. `skills=` is not mounted on cursor-sdk. Consult handoff enrich inserts the same
 Use-line into `<invariants>`. SOT: skill `reasoning-posture` § Always-on injection.
 
+## D-lane — explicit checkout lane (top-level generate)
+
+`lane=` is a **wire parameter** on `team_dispatch(op=generate|to_thread, seat=cursor-sdk)`.
+Packet prose does not select a lane. SOT: `consult-routing` § cursor-sdk checkout lane.
+
+| Situation | Pass |
+|---|---|
+| implement / in-repo `files_expected` | `lane="B"` |
+| bind-only, empty `files_expected`, cortex-only writes | `lane="A"` + one-line reason |
+| `nest_under` / `resume_of` | omit (inherit) |
+
+Omit on a **top-level** generate is not “no preference”: MCP + Stargate 422
+`lane_required`. GIW empty-scope → Lane A (`opt_out`) even when the Lane-B
+regime is on — that is inference after a named or inherited lane, not a
+license to omit. After admit, quote `sdk.lane.selected` or
+`busy_status.active_by_lane` before naming the lane.
+Preflight: `manage(busy_status)` for the **lease holder** on the lane you will
+pass, not only service-up.
+
 ## Pre-dispatch checklist
 
 - [ ] Implement contract: `entity_get(todo:{slug})`; confirm `workflow_state ∈ {open,in_progress}`. Entity is canonical; boot-card/bus rows may be stale.
@@ -88,6 +107,7 @@ Use-line into `<invariants>`. SOT: skill `reasoning-posture` § Always-on inject
 - [ ] Every fork is bound in the dispatch.
 - [ ] Propagation named for every touched surface that needs one (service restart, plugin install), or `propagation: none` stated.
 - [ ] cursor-sdk `op=generate`: before `team_dispatch`, verify `dispatch_thread_id` has `lifecycle_state=pending ∧ turn_count=0`; otherwise halt and fix. Response `consolidation_split_warning` is too late.
+- [ ] Top-level cursor-sdk generate: `lane=` set (`A` or `B`) unless `nest_under` / `resume_of`. After admit, quote the lane event / `active_by_lane`.
 
 ## Gate-2 implement-ready checklist
 
