@@ -22,6 +22,15 @@ _CONCURRENT_POLL_INTERVAL_S = 0.5
 _ORPHAN_INTERVAL_S = 15.0
 
 
+def drain_blocks_new_auto_claims(controller: Any | None) -> bool:
+    """True when GIW drain is live, so the worker must not claim another job.
+
+    Claimed Auto occupancy holds drain idle. Claiming during drain restocks
+    that occupancy and can postpone SIGTERM until the queue empties.
+    """
+    return controller is not None and bool(controller.is_draining())
+
+
 async def auto_worker_loop(app: Any) -> None:
     """Background: heartbeat + claim/process queued Auto jobs.
 
@@ -52,11 +61,15 @@ async def auto_worker_loop(app: Any) -> None:
         while True:
             try:
                 registry.heartbeat(_HANDLER_ID)
+                controller = getattr(app.state, "admission_controller", None)
+                if drain_blocks_new_auto_claims(controller):
+                    controller.recheck_drain_idle()
+                    await asyncio.sleep(_WORKER_INTERVAL_S)
+                    continue
                 job = get_queue().claim_next()
                 if job is not None:
                     hb_task = asyncio.create_task(_heartbeat_while_busy(job.job_id))
                     try:
-                        controller = getattr(app.state, "admission_controller", None)
                         result = await process_job(
                             job,
                             admission_controller=controller,
@@ -93,6 +106,8 @@ async def auto_worker_loop(app: Any) -> None:
                             logger.exception(
                                 "cursor-auto heartbeat writer died job=%s", job.job_id
                             )
+                        if controller is not None:
+                            controller.recheck_drain_idle()
             except Exception:
                 # Never let one iteration end the lane (hop_cadence_loop pattern).
                 # CancelledError still propagates, so lifespan shutdown is intact.
@@ -112,9 +127,13 @@ async def auto_concurrent_worker_loop(app: Any) -> None:
     queue = get_queue()
     while True:
         try:
+            controller = getattr(app.state, "admission_controller", None)
+            if drain_blocks_new_auto_claims(controller):
+                controller.recheck_drain_idle()
+                await asyncio.sleep(_CONCURRENT_POLL_INTERVAL_S)
+                continue
             job = queue.claim_next_concurrent()
             if job is not None:
-                controller = getattr(app.state, "admission_controller", None)
                 worker_id = str(getattr(app.state, "worker_id", "") or "")
                 worker_started_at = str(getattr(app.state, "worker_boot_ts", "") or "")
 

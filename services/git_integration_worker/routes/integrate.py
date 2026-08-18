@@ -461,8 +461,9 @@ async def get_active_work(request: Request):
     """Return aggregate in-flight work so manage can defer restart.
 
     ``busy`` and ``active_count`` are the admission controller's authoritative
-    count (in-flight tickets ∪ live ledger dispatches, de-duplicated by op_id);
-    the legacy gate/ledger detail keys are retained for back-compat callers.
+    count (in-flight tickets ∪ live ledger dispatches ∪ claimed Auto jobs,
+    de-duplicated by op_id); the legacy gate/ledger detail keys are retained
+    for back-compat callers.
     """
     from services.git_integration_worker.cursor_dispatch_ledger import (
         CursorDispatchLedger,

@@ -211,11 +211,13 @@ class WorkAdmissionController:
 
     def active_ops(self) -> list[dict[str, Any]]:
         """Authoritative projection: counted tickets ∪ ledger live-running
-        dispatches (orphan-excluded), de-duplicated by ``op_id`` so a cursor-sdk
-        dispatch — which bridges a ticket and a ledger row — is counted once.
+        dispatches (orphan-excluded) ∪ claimed Auto jobs, de-duplicated by
+        ``op_id`` so a cursor-sdk dispatch — which bridges a ticket and a
+        ledger row — is counted once.
 
         Cursor-sdk rows carry ``resolved_model`` / ``subject_preview`` from the
         ledger so busy probes name the holder, not only an opaque dispatch id.
+        Claimed Auto jobs are a separate occupant (propagate has no SDK ticket).
 
         Leaked relay tickets are reaped here rather than in a background sweep so
         that every count authority — busy probes, ``drain_state``, and the idle
@@ -247,6 +249,14 @@ class WorkAdmissionController:
                 continue
             ops.append(proj)
             seen.add(dispatch_id)
+        from services.git_integration_worker.cursor_auto.queue import get_queue
+
+        for auto_op in get_queue().claimed_occupancy_ops():
+            op_id = str(auto_op["op_id"])
+            if op_id in seen:
+                continue
+            ops.append(auto_op)
+            seen.add(op_id)
         return ops
 
     def active_count(self) -> int:
@@ -328,6 +338,15 @@ class WorkAdmissionController:
                 drain_epoch,
             )
         return self.drain_state()
+
+    def recheck_drain_idle(self) -> None:
+        """Re-emit ``drain.completed`` after occupancy that is not a ticket.
+
+        Auto ``mark_done`` does not call ``close_ticket``. Worker loops invoke
+        this so an idle drain converges as soon as the last claimed Auto job
+        terminalizes rather than waiting on the supervisor reconcile poll.
+        """
+        self._maybe_emit_drain_completed()
 
     def close_ticket(self, op_id: str, *, terminal_status: str) -> None:
         """Remove a ticket and, if that drops active work to zero while

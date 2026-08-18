@@ -23,6 +23,7 @@ from services.git_integration_worker.admission import (
     WorkAdmissionController,
 )
 from services.git_integration_worker.app import create_app
+from services.git_integration_worker.cursor_auto.queue import reset_queue_for_tests
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
@@ -43,8 +44,10 @@ _INTEGRATE_BODY = {
 def _reset_ledger(tmp_path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     CursorDispatchLedger._instance = None
+    reset_queue_for_tests(durable=False)
     yield
     CursorDispatchLedger._instance = None
+    reset_queue_for_tests(durable=False)
 
 
 @pytest.fixture

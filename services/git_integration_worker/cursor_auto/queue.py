@@ -48,7 +48,9 @@ class AutoJob:
     # module.
     execution_mode: str = "serial"
     enqueued_at: float = field(default_factory=time.monotonic)
-    status: str = "queued"  # queued | claimed | done | failed | report_undelivered | superseded
+    status: str = (
+        "queued"  # queued | claimed | done | failed | report_undelivered | superseded
+    )
     superseded_by: str | None = None
     supersedes: str | None = None
     superseded_dispatch_id: str | None = None
@@ -309,9 +311,7 @@ class AutoJobQueue:
         name itself. Reporting only — hop still does not supersede.
         """
         with self._lock:
-            return self._incumbent_unlocked(
-                thread_id, exclude_job_id=exclude_job_id
-            )
+            return self._incumbent_unlocked(thread_id, exclude_job_id=exclude_job_id)
 
     def supersede_candidate_for_thread(self, thread_id: str) -> AutoJob | None:
         """Return the same-thread supersede target: claimed in-flight, else queued.
@@ -333,7 +333,9 @@ class AutoJobQueue:
             job.superseded_by = superseded_by
         ledger = self._ledger_client()
         if ledger is not None:
-            ledger.mark_terminal(job_id, status="superseded", terminal_reason="superseded")
+            ledger.mark_terminal(
+                job_id, status="superseded", terminal_reason="superseded"
+            )
             ledger.sync_record(job)
         return job
 
@@ -342,6 +344,29 @@ class AutoJobQueue:
         with self._lock:
             job = self._jobs.get(job_id)
             return job is not None and job.status == "superseded"
+
+    def claimed_occupancy_ops(self) -> list[dict[str, Any]]:
+        """Snapshot claimed in-process Auto jobs as drain occupancy rows.
+
+        Drain idle and ``/active-work`` busy union these with admission tickets
+        and live cursor-sdk dispatches. Queued (not yet claimed) jobs are
+        omitted — they are not executing in this process. ``nested_sdk_finished``
+        jobs stay listed while status remains ``claimed`` (CLOSEOUT still in
+        flight). Callers must not hold ``self._lock``.
+        """
+        with self._lock:
+            return [
+                {
+                    "kind": "cursor-auto",
+                    "op_id": job.job_id,
+                    "route": "cursor-auto/claimed",
+                    "state": "running",
+                    "thread_id": job.thread_id,
+                    "contract": job.contract,
+                }
+                for job in self._jobs.values()
+                if job.status == "claimed"
+            ]
 
     def pending_count(self) -> int:
         with self._lock:
@@ -397,9 +422,7 @@ class AutoJobQueue:
         """
         ledger = self._ledger_client()
         if ledger is not None:
-            return ledger.thread_lane_counts(
-                thread_id, exclude_job_id=exclude_job_id
-            )
+            return ledger.thread_lane_counts(thread_id, exclude_job_id=exclude_job_id)
         with self._lock:
             return self._thread_lane_counts_unlocked(
                 thread_id, exclude_job_id=exclude_job_id
@@ -408,20 +431,12 @@ class AutoJobQueue:
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             snap = {
-                "pending": sum(
-                    1 for j in self._jobs.values() if j.status == "queued"
-                ),
-                "claimed": sum(
-                    1 for j in self._jobs.values() if j.status == "claimed"
-                ),
+                "pending": sum(1 for j in self._jobs.values() if j.status == "queued"),
+                "claimed": sum(1 for j in self._jobs.values() if j.status == "claimed"),
                 "done": sum(1 for j in self._jobs.values() if j.status == "done"),
-                "failed": sum(
-                    1 for j in self._jobs.values() if j.status == "failed"
-                ),
+                "failed": sum(1 for j in self._jobs.values() if j.status == "failed"),
                 "report_undelivered": sum(
-                    1
-                    for j in self._jobs.values()
-                    if j.status == "report_undelivered"
+                    1 for j in self._jobs.values() if j.status == "report_undelivered"
                 ),
                 "superseded": sum(
                     1 for j in self._jobs.values() if j.status == "superseded"
