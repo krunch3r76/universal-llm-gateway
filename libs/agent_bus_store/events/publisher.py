@@ -5,6 +5,12 @@ agent-bus lifecycle signals alongside all other service signals.
 
 ∀ emit call: fire-and-forget; drops oldest if queue is full, never blocks the caller.
 Falls back silently if the event service socket is unavailable.
+
+Drop-oldest on a full queue and post-dequeue ``sendall`` loss each increment a
+process-local counter (``dropped_enqueue``, ``dropped_send``) and emit a
+warning that names the lost signal. Neither path requeues; ``emit()`` stays
+fire-and-forget. Counters reset with the process — they are a live discriminator,
+not an Event Service signal.
 """
 
 from __future__ import annotations
@@ -28,6 +34,44 @@ _QUEUE_MAX = 500
 _RECONNECT_DELAY = 5.0
 _SEND_TIMEOUT = 2.0
 
+dropped_enqueue = 0
+dropped_send = 0
+
+
+def _signal_from_line(line: str) -> str:
+    """Return the event ``signal`` from an NDJSON line, or a fallback token."""
+    try:
+        obj = json.loads(line)
+    except json.JSONDecodeError:
+        return "<unparseable>"
+    if isinstance(obj, dict):
+        sig = obj.get("signal")
+        if isinstance(sig, str) and sig:
+            return sig
+    return "<unknown>"
+
+
+def _note_enqueue_drop(line: str) -> None:
+    """Count + warn a drop-oldest (or failed re-put) enqueue loss."""
+    global dropped_enqueue
+    dropped_enqueue += 1
+    logger.warning(
+        "Agent-bus event publisher drop-oldest (enqueue): signal=%s dropped_enqueue=%d",
+        _signal_from_line(line),
+        dropped_enqueue,
+    )
+
+
+def _note_send_drop(line: str) -> None:
+    """Count + warn a post-dequeue sendall loss (line is not requeued)."""
+    global dropped_send
+    dropped_send += 1
+    logger.warning(
+        "Agent-bus event publisher send loss after dequeue: signal=%s dropped_send=%d",
+        _signal_from_line(line),
+        dropped_send,
+    )
+
 
 class _UDSPublisher:
     """Thread-based UDS publisher with bounded queue and auto-reconnect.
@@ -49,14 +93,20 @@ class _UDSPublisher:
         try:
             self._q.put_nowait(line)
         except queue.Full:
+            dropped: str | None = None
             try:
-                self._q.get_nowait()
+                dropped = self._q.get_nowait()
             except queue.Empty:
                 pass
             try:
                 self._q.put_nowait(line)
             except queue.Full:
-                pass
+                _note_enqueue_drop(line)
+                if dropped is not None:
+                    _note_enqueue_drop(dropped)
+                return
+            if dropped is not None:
+                _note_enqueue_drop(dropped)
 
     def _run(self) -> None:
         sock: socket.socket | None = None
@@ -77,10 +127,12 @@ class _UDSPublisher:
                     continue
             try:
                 line = self._q.get(timeout=1.0)
-                sock.sendall(line.encode())
             except queue.Empty:
                 continue
+            try:
+                sock.sendall(line.encode())
             except OSError:
+                _note_send_drop(line)
                 try:
                     sock.close()
                 except OSError:
