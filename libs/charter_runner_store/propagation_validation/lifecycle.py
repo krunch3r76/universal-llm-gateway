@@ -1,4 +1,8 @@
-"""Mint, sweep, and repair lifecycle for propagation validations."""
+"""Mint, sweep, and repair lifecycle for propagation validations.
+
+Callers are manage drain (`mint_activation_validation`) and tests. Invariant:
+stored `code_ref` is the propagate row SHA; occupied pending reuse is refused.
+"""
 
 from __future__ import annotations
 
@@ -12,13 +16,42 @@ from .model import _SUPERSEDED_PREFIX, store_code_ref
 from .records import advance_validation
 
 
+def _pending_reusable(
+    occupied_row_id: str | None, requested_row_id: str | None
+) -> bool:
+    """Return True when an existing pending may be reused for this mint.
+
+    A pending whose ``row_id`` is already set to a different ledger row is the
+    5139a3e6-shaped collision: reuse would return an id that
+    ``bind_validation_to_row`` cannot attach (0 rows updated). Same-key
+    occupied pendings are superseded so the partial unique index on
+    ``(service, code_ref) WHERE outcome='pending'`` can admit a fresh row.
+    Different-key occupied pendings are left pending (fork-4 discharge).
+    """
+    if occupied_row_id is None:
+        return True
+    if requested_row_id is not None and str(occupied_row_id) == str(requested_row_id):
+        return True
+    return False
+
+
 def mint_pending_validation_for_intent(
     intent: Any,
     *,
     code_ref: str = "HEAD",
+    row_id: str | None = None,
     advance_intent_fn=None,
 ) -> str:
-    """Mint or reuse the pending validation row bound to one restart intent."""
+    """Mint a pending validation keyed to ``code_ref``, or reuse a compatible one.
+
+    ``code_ref`` must be the propagate ledger row's commit SHA so stored
+    attribution names the bytes being restarted, not the minting process's
+    sealed ``HEAD``. Reuse of a pending already bound to a different ``row_id``
+    is refused. Same ``(service, code_ref)`` occupied pendings are superseded
+    then replaced (unique pending index); distinct keys insert alongside.
+    Returns the validation id. Side effect: ledger INSERT/supersede and a
+    pre-restart process-liveness probe.
+    """
     from services.git_integration_worker.cursor_auto.propagation_probe import (
         probe_process_live,
     )
@@ -32,23 +65,41 @@ def mint_pending_validation_for_intent(
     try:
         existing = conn.execute(
             """
-            SELECT validation_id FROM propagation_validation
+            SELECT validation_id, row_id FROM propagation_validation
             WHERE service=? AND code_ref=? AND outcome='pending'
+            ORDER BY CASE
+              WHEN row_id IS NULL THEN 0
+              WHEN row_id=? THEN 1
+              ELSE 2
+            END, created_at DESC
+            LIMIT 1
             """,
-            (service, resolved),
+            (service, resolved, row_id),
         ).fetchone()
-        if existing is not None:
+        if existing is not None and _pending_reusable(existing["row_id"], row_id):
             return str(existing["validation_id"])
+        if existing is not None:
+            advance_validation(
+                str(existing["validation_id"]),
+                outcome="superseded",
+                failure_reason=f"superseded_by:{intent.intent_id}",
+                conn=conn,
+            )
         if advance_intent_fn is not None:
             old = conn.execute(
                 """
                 SELECT validation_id, restart_intent FROM propagation_validation
                 WHERE service=? AND outcome='pending'
+                  AND (row_id IS NULL OR row_id=?)
                 ORDER BY created_at DESC LIMIT 1
                 """,
-                (service,),
+                (service, row_id),
             ).fetchone()
-            if old and old["restart_intent"] and old["restart_intent"] != intent.intent_id:
+            if (
+                old
+                and old["restart_intent"]
+                and old["restart_intent"] != intent.intent_id
+            ):
                 advance_intent_fn(
                     str(old["restart_intent"]),
                     from_status="verifying_activation",
@@ -99,7 +150,9 @@ def sweep_stale_pending_validations(
         ).fetchall()
         for row in rows:
             if ts - float(row["created_at"]) >= max_age_s:
-                if advance_validation(str(row["validation_id"]), outcome="unvalidated_timeout", conn=db):
+                if advance_validation(
+                    str(row["validation_id"]), outcome="unvalidated_timeout", conn=db
+                ):
                     swept.append(str(row["validation_id"]))
         if own_conn:
             db.commit()
@@ -126,7 +179,9 @@ def repair_supersession_pairs(*, store=None, conn=None) -> None:
             if intent is None:
                 continue
             reason = intent.reason or ""
-            if intent.status == "activation_unverified" and reason.startswith(_SUPERSEDED_PREFIX):
+            if intent.status == "activation_unverified" and reason.startswith(
+                _SUPERSEDED_PREFIX
+            ):
                 advance_validation(
                     str(vrow["validation_id"]),
                     outcome="superseded",

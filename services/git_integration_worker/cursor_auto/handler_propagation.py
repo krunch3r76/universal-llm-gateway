@@ -300,6 +300,8 @@ async def _execute_row(
             else "operator propagate via cursor-auto"
         ),
         force=force,
+        code_ref=row.code_ref,
+        row_id=row_id,
     )
     status = str(manage_result.get("status") or "unknown")
     # Operator bind: do not harvest_wanted-pushback a self-preemptable mcp/cdp_ask
@@ -326,6 +328,8 @@ async def _execute_row(
                 f"from_agent={from_agent or 'unknown'}; preempted={preempted_label})"
             ),
             force=True,
+            code_ref=row.code_ref,
+            row_id=row_id,
         )
         status = str(manage_result.get("status") or "unknown")
     if status == "deferred":

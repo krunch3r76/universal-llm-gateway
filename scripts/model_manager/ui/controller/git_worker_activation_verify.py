@@ -39,13 +39,30 @@ _VERIFY_TASKS: set[asyncio.Task[None]] = set()
 _VERIFY_ACTIONS = frozenset({"restart", "sync_restart"})
 
 
-def mint_activation_validation(store: RestartIntentStore, intent: Intent) -> str:
-    """Reuse or mint the pending validation row bound to a restart intent."""
+def mint_activation_validation(
+    store: RestartIntentStore,
+    intent: Intent,
+    *,
+    code_ref: str = "HEAD",
+    row_id: str | None = None,
+) -> str:
+    """Reuse a compatible pending validation, or mint one keyed to ``code_ref``.
+
+    ``code_ref`` is the propagate row's commit SHA when the caller has one.
+    Same-intent reuse is refused when the pending is already bound to a
+    different ledger ``row_id`` (the 5139a3e6-shaped collision). Same-key
+    occupied pendings are superseded then replaced; distinct keys insert
+    alongside. Returns the validation id used in the deferred 202 envelope.
+    """
     existing = latest_validation_for_intent(intent.intent_id)
     if existing is not None and existing.outcome == "pending":
-        return existing.validation_id
+        occupied = existing.row_id
+        if occupied is None or (row_id is not None and occupied == row_id):
+            return existing.validation_id
     return mint_pending_validation_for_intent(
         intent,
+        code_ref=code_ref,
+        row_id=row_id,
         advance_intent_fn=store.advance_if_status,
     )
 

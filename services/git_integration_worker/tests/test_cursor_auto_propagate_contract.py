@@ -197,21 +197,31 @@ def test_admit_operator_merge_sha_uses_paths_in_commit(tmp_path: Path) -> None:
         check=True,
         capture_output=True,
     )
-    merge_sha = subprocess.run(
-        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
-        check=True,
-        capture_output=True,
-    ).stdout.decode().strip()
+    merge_sha = (
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+        )
+        .stdout.decode()
+        .strip()
+    )
     body = _MCP_YAML_BODY.replace("deadbeef", merge_sha)
-    with patch(
-        "implement_admission.propagation_close_surfaces.verify_consumer_import",
-        side_effect=lambda slug, _path: "verified" if slug == "cortex_api" else "contradicted",
-    ), patch(
-        "services.git_integration_worker.cursor_auto.propagate_admission.require_resolvable_code_ref",
-        return_value=merge_sha,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.propagate_admission.load_config",
-    ) as load_config:
+    with (
+        patch(
+            "implement_admission.propagation_close_surfaces.verify_consumer_import",
+            side_effect=lambda slug, _path: (
+                "verified" if slug == "cortex_api" else "contradicted"
+            ),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.propagate_admission.require_resolvable_code_ref",
+            return_value=merge_sha,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.propagate_admission.load_config",
+        ) as load_config,
+    ):
         from services.git_integration_worker.config import WorkerConfig
 
         load_config.return_value = WorkerConfig(
@@ -277,8 +287,13 @@ async def test_run_propagation_queues_when_manage_defers() -> None:
                 "status": "deferred",
                 "state": "draining",
                 "restart_intent_id": "intent-giw-1",
+                "activation_validation_id": "val-giw-1",
                 "reason": "draining; completion delivered via git_worker.drain events",
             },
+        ),
+        patch(
+            "charter_runner_store.propagation_validation.queries.bind_validation_to_row",
+            return_value=1,
         ),
         patch(
             "services.git_integration_worker.cursor_auto.handler_propagation.set_defer_reason",
@@ -297,6 +312,89 @@ async def test_run_propagation_queues_when_manage_defers() -> None:
     assert "queued" in summary.lower()
     assert "manage drain" in summary.lower()
     assert calls == ["job-1"]
+
+
+@pytest.mark.asyncio
+async def test_run_propagation_forwards_row_sha_to_manage() -> None:
+    """GIW propagate must pass the ledger row SHA into manage sync_restart."""
+    from services.git_integration_worker.cursor_auto.handler_propagation import (
+        run_propagation_in_seat,
+    )
+    from services.git_integration_worker.cursor_auto.queue import AutoJob
+
+    job = AutoJob(
+        job_id="job-sha",
+        thread_id=9470,
+        turn_number=1,
+        from_agent="cursor",
+        to_agent="cursor",
+        subject="restart git_integration_worker",
+        body=_SHORTHAND_BODY.replace("mcp", "git_integration_worker"),
+        contract="propagate",
+        desired_model="auto",
+        desired_effort="medium",
+        require_attended=False,
+        request_id="req-sha",
+    )
+    captured: list[dict] = []
+
+    def _restart(service: str, **kwargs: object) -> dict:
+        captured.append({"service": service, **kwargs})
+        return {
+            "status": "deferred",
+            "state": "draining",
+            "restart_intent_id": "intent-giw-sha",
+            "activation_validation_id": "val-new",
+            "reason": "draining",
+        }
+
+    class _Queue:
+        def mark_done(
+            self,
+            job_id: str,
+            *,
+            failed: bool = False,
+            terminal_reason: str | None = None,
+        ) -> None:
+            return None
+
+    class _Client:
+        async def reply(self, **kwargs):  # type: ignore[no-untyped-def]
+            return type("R", (), {"status_code": 200, "body": ""})()
+
+    row_id = (
+        "git_integration_worker:cafebabe00000000000000000000000000000000:sync_restart"
+    )
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.handler_propagation.upsert_open_rows",
+            return_value=[row_id],
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.handler_propagation.sync_restart_service",
+            _restart,
+        ),
+        patch(
+            "charter_runner_store.propagation_validation.queries.bind_validation_to_row",
+            return_value=1,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.handler_propagation.set_defer_reason",
+        ),
+    ):
+        result = await run_propagation_in_seat(
+            job,
+            client=_Client(),
+            queue=_Queue(),
+            model={"requested": "auto", "resolved_model_id": "cursor/composer-2.5"},
+            effort={"requested": None, "resolved_effort": "medium"},
+            gate_plan={"action": "in_seat"},
+        )
+    assert captured
+    assert captured[0]["service"] == "git_integration_worker"
+    assert captured[0]["code_ref"] == "cafebabe00000000000000000000000000000000"
+    assert captured[0]["row_id"] == row_id
+    assert result["disposition"] == "queued"
 
 
 @pytest.mark.asyncio
@@ -341,7 +439,7 @@ async def test_run_propagation_self_preempts_mcp_busy_deferral() -> None:
 
     manage_calls: list[dict[str, object]] = []
 
-    def _manage(service: str, *, reason: str = "", force: bool = False):
+    def _manage(service: str, *, reason: str = "", force: bool = False, **_kw: object):
         manage_calls.append({"service": service, "force": force, "reason": reason})
         if not force:
             return {
@@ -424,7 +522,9 @@ async def test_run_propagation_self_preempts_mcp_busy_deferral() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_propagation_self_preempt_vetoed_by_allow_self_preempt_false() -> None:
+async def test_run_propagation_self_preempt_vetoed_by_allow_self_preempt_false() -> (
+    None
+):
     """allow_self_preempt: false suppresses auto force on self-preemptable deferral."""
     from services.git_integration_worker.cursor_auto.handler_propagation import (
         run_propagation_in_seat,
@@ -466,7 +566,7 @@ async def test_run_propagation_self_preempt_vetoed_by_allow_self_preempt_false()
 
     manage_calls: list[dict[str, object]] = []
 
-    def _manage(service: str, *, reason: str = "", force: bool = False):
+    def _manage(service: str, *, reason: str = "", force: bool = False, **_kw: object):
         manage_calls.append({"service": service, "force": force})
         return {
             "status": "deferred",

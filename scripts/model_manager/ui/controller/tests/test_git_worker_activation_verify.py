@@ -7,12 +7,15 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 from charter_runner_store.propagation_validation import (
+    bind_validation_to_row,
+    get_validation,
     mint_pending_validation_for_intent,
 )
 
 from scripts.model_manager.ui.controller.git_worker_activation_verify import (
     ACTIVATION_IDLE_TIMEOUT_S,
     arms_activation_verify,
+    mint_activation_validation,
     run_activation_verify,
 )
 from scripts.model_manager.ui.controller.restart_intent_states import (
@@ -66,7 +69,9 @@ def test_missing_kill_boundary_times_out(tmp_path, monkeypatch) -> None:
     assert got.status == "activation_unverified"
 
 
-def test_expired_kill_boundary_budget_terminalizes_without_reset(tmp_path, monkeypatch) -> None:
+def test_expired_kill_boundary_budget_terminalizes_without_reset(
+    tmp_path, monkeypatch
+) -> None:
     """An already-expired settle budget must fail closed on entry, not extend the clock."""
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
     store = RestartIntentStore(db_path=tmp_path / "intents.db")
@@ -81,7 +86,9 @@ def test_expired_kill_boundary_budget_terminalizes_without_reset(tmp_path, monke
         from_status="pending_drain",
         to_status=STATUS_VERIFYING_ACTIVATION,
     )
-    expired_boundary = (datetime.now(UTC) - timedelta(seconds=ACTIVATION_IDLE_TIMEOUT_S + 30)).isoformat()
+    expired_boundary = (
+        datetime.now(UTC) - timedelta(seconds=ACTIVATION_IDLE_TIMEOUT_S + 30)
+    ).isoformat()
     store.set_kill_boundary(intent.intent_id, kill_boundary_at=expired_boundary)
 
     unreachable_probe = {"probe_reachable": False}
@@ -149,12 +156,15 @@ def test_activation_verify_invokes_settle_with_validation_ids(
             }
         )
 
-    with patch(
-        "scripts.model_manager.ui.controller.propagation_settle_hook.invoke_propagation_settle_for_service",
-        _capture_settle,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.propagation_probe.probe_process_live",
-        return_value={"probe_reachable": False},
+    with (
+        patch(
+            "scripts.model_manager.ui.controller.propagation_settle_hook.invoke_propagation_settle_for_service",
+            _capture_settle,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.propagation_probe.probe_process_live",
+            return_value={"probe_reachable": False},
+        ),
     ):
         _run(
             run_activation_verify(
@@ -207,7 +217,9 @@ def test_activation_verify_settle_closes_open_row(tmp_path, monkeypatch) -> None
         from_status="pending_drain",
         to_status=STATUS_VERIFYING_ACTIVATION,
     )
-    store.set_kill_boundary(intent.intent_id, kill_boundary_at=datetime.now(UTC).isoformat())
+    store.set_kill_boundary(
+        intent.intent_id, kill_boundary_at=datetime.now(UTC).isoformat()
+    )
     validation_id = mint_pending_validation_for_intent(intent, code_ref=sha)
     from charter_runner_store.propagation_terminal import settle_open_row
 
@@ -241,3 +253,36 @@ def test_activation_verify_settle_closes_open_row(tmp_path, monkeypatch) -> None
     assert status is not None
     assert status["status"] == "closed"
     assert pending is not None
+
+
+def test_mint_activation_validation_refuses_foreign_bound_pending(
+    tmp_path, monkeypatch
+) -> None:
+    """Same-intent reuse must not return a pending already bound to another row."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.propagation_probe.probe_process_live",
+        lambda _service: {"probe_reachable": False},
+    )
+    store = RestartIntentStore(db_path=tmp_path / "intents.db")
+    intent = store.create_intent(
+        service="git_integration_worker",
+        action="sync_restart",
+        deadline_at="d",
+        reason="r",
+    )
+    first = mint_activation_validation(
+        store, intent, code_ref=_RESOLVABLE_CODE_REF, row_id="row-a"
+    )
+    assert bind_validation_to_row(first, "row-a") == 1
+    second = mint_activation_validation(
+        store, intent, code_ref=_RESOLVABLE_CODE_REF, row_id="row-b"
+    )
+    assert second != first
+    bound = get_validation(first)
+    fresh = get_validation(second)
+    assert bound is not None and bound.row_id == "row-a"
+    assert bound.outcome == "superseded"
+    assert fresh is not None and fresh.row_id is None
+    assert fresh.code_ref == _RESOLVABLE_CODE_REF
+    assert bind_validation_to_row(second, "row-b") == 1

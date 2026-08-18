@@ -1,4 +1,8 @@
-"""Close-path validation and current attribution projection."""
+"""Close-path validation and current attribution projection.
+
+`current_validation` is the fleet_liveness join: identity over guessed
+`(service, HEAD)` keys so a bound-to-other-row pending cannot false-positive.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +11,11 @@ from typing import Any
 
 from ..propagation_liveness import observe_code_ref_live
 from .model import as_dict, store_code_ref
-from .queries import latest_validation
+from .queries import (
+    get_validation,
+    latest_validation,
+    pending_unbound_validation_for_ref,
+)
 from .records import advance_validation, record_validation
 
 
@@ -62,11 +70,33 @@ def apply_close_validation(
     )
 
 
-def current_validation(service: str, code_ref: str) -> dict[str, Any]:
-    """Project liveness plus latest validation into one attribution verdict."""
+def _is_head_token(code_ref: str) -> bool:
+    """True when the caller passed symbolic HEAD, not a commit identity."""
+    return str(code_ref or "").strip().upper() == "HEAD"
+
+
+def current_validation(
+    service: str,
+    code_ref: str,
+    *,
+    activation_validation_id: str | None = None,
+) -> dict[str, Any]:
+    """Project liveness plus latest validation into one attribution verdict.
+
+    Primary join is ``(service, code_ref)``. A HEAD-keyed lookup that lands on
+    a validation already bound to a ledger row is a miss — that record is
+    another row's attribution, not current-HEAD identity. On miss, resolve via
+    ``activation_validation_id`` then unbound pending for the stored ref.
+    """
     live = observe_code_ref_live(service, code_ref)
     stored = store_code_ref(code_ref, service=service)
     record = latest_validation(service, stored)
+    if record is not None and record.row_id is not None and _is_head_token(code_ref):
+        record = None
+    if record is None and activation_validation_id:
+        record = get_validation(str(activation_validation_id))
+    if record is None:
+        record = pending_unbound_validation_for_ref(service, stored)
     if live.answer == "unknown":
         verdict = "unknown"
     elif live.answer == "no":
@@ -75,7 +105,10 @@ def current_validation(service: str, code_ref: str) -> dict[str, Any]:
         verdict = "activation_unattributed"
     elif record.outcome == "pending":
         verdict = "activation_pending"
-    elif record.outcome == "validated" and record.identity_measurement in {"changed", "measured"}:
+    elif record.outcome == "validated" and record.identity_measurement in {
+        "changed",
+        "measured",
+    }:
         verdict = "running_committed_code"
     elif record.outcome in {"unvalidated_timeout", "contradicted", "superseded"}:
         verdict = "activation_unverified"

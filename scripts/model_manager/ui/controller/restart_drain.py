@@ -442,13 +442,17 @@ async def run_gated_drain_supervised(
     store: Any,
     supervisor: Any,
     reason: str,
+    code_ref: str = "HEAD",
+    row_id: str | None = None,
 ) -> dict[str, Any]:
     """Arm a durable git-worker drain intent and return the deferred 202 envelope."""
     outcome = await gate.evaluate(service, force=True)
     if outcome is not None:
         existing = store.active_for_service(service)
         if existing is not None:
-            validation_id = mint_activation_validation(store, existing)
+            validation_id = mint_activation_validation(
+                store, existing, code_ref=code_ref, row_id=row_id
+            )
             return drain_deferred_result(
                 existing,
                 reason="drain already in progress for this service",
@@ -463,7 +467,9 @@ async def run_gated_drain_supervised(
         intent = store.create_intent(
             service=service, action=action, deadline_at=deadline_at, reason=reason
         )
-        validation_id = mint_activation_validation(store, intent)
+        validation_id = mint_activation_validation(
+            store, intent, code_ref=code_ref, row_id=row_id
+        )
     except Exception:
         await gate.release(service)
         raise

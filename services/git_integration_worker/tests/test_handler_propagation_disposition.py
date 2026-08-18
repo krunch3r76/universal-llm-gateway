@@ -12,6 +12,7 @@ from services.git_integration_worker.cursor_auto.handler_propagation import (
     execution_for_manage_deferred,
     restart_intent_persisted,
 )
+from services.git_integration_worker.cursor_auto.manage_sock import sync_restart_service
 
 
 def _exec(
@@ -97,9 +98,17 @@ def test_disposition_any_failed_row_never_propagated() -> None:
     """Failed-axis guard: no execution set containing failed may yield propagated."""
     failed_variants = [
         _exec("mcp", "failed", manage={"reason": "socket refused"}),
-        _exec("cortex-api", "failed", manage={"status": "error", "reason": "manage_rpc_error"}),
+        _exec(
+            "cortex-api",
+            "failed",
+            manage={"status": "error", "reason": "manage_rpc_error"},
+        ),
         _exec("gateway", "failed", reason="proof_class_unsupported"),
-        _exec("stargate", "submitted", manage={"status": "error", "reason": "manage_rpc_error"}),
+        _exec(
+            "stargate",
+            "submitted",
+            manage={"status": "error", "reason": "manage_rpc_error"},
+        ),
         _exec("rag", "executed", manage={"status": "error", "reason": "manage_error"}),
         _exec("mcp", "unknown_status_not_in_map"),
     ]
@@ -181,8 +190,13 @@ def test_disposition_mixed_executed_and_blocked_floors_to_blocked() -> None:
 
 def test_restart_intent_persisted_requires_intent_id() -> None:
     """Deferred manage results require restart_intent_id to count as persisted."""
-    assert restart_intent_persisted({"status": "deferred", "state": "draining"}) is False
-    assert restart_intent_persisted({"status": "deferred", "restart_intent_id": "x"}) is True
+    assert (
+        restart_intent_persisted({"status": "deferred", "state": "draining"}) is False
+    )
+    assert (
+        restart_intent_persisted({"status": "deferred", "restart_intent_id": "x"})
+        is True
+    )
 
 
 def test_execution_for_manage_deferred_without_intent_is_harvest_wanted() -> None:
@@ -320,7 +334,10 @@ def test_execution_for_manage_deferred_with_intent_is_queued() -> None:
 
 def test_disposition_all_harvest_wanted_returns_harvest_wanted() -> None:
     """Uniform harvest_wanted rows must map disposition to harvest_wanted."""
-    assert _disposition_for([_exec("mcp", "harvest_wanted", reason="cdp_ask_live")]) == "harvest_wanted"
+    assert (
+        _disposition_for([_exec("mcp", "harvest_wanted", reason="cdp_ask_live")])
+        == "harvest_wanted"
+    )
 
 
 def test_summary_harvest_wanted_claims_charter_tick() -> None:
@@ -393,3 +410,28 @@ def test_summary_propagated_claims_proof_observed() -> None:
     executions = [_exec("mcp", "executed")]
     summary = _summary_for("propagated", executions)
     assert "proof-of-live observed" in summary.lower()
+
+
+def test_sync_restart_service_forwards_propagate_row_identity() -> None:
+    """Manage mint receives the ledger row SHA and row_id, not a HEAD-only payload."""
+    captured: dict = {}
+
+    def _call(method: str, params: dict | None = None, *, timeout: float = 0.0) -> dict:
+        captured["method"] = method
+        captured["params"] = params or {}
+        return {"status": "ok"}
+
+    with patch(
+        "services.git_integration_worker.cursor_auto.manage_sock.call_manage",
+        _call,
+    ):
+        sync_restart_service(
+            "git_integration_worker",
+            code_ref="8fc646c7aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            row_id="git_integration_worker:8fc646c7:sync_restart",
+        )
+    assert captured["method"] == "sync_restart"
+    assert captured["params"]["code_ref"] == "8fc646c7aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    assert (
+        captured["params"]["row_id"] == "git_integration_worker:8fc646c7:sync_restart"
+    )

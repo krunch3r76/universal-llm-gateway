@@ -235,7 +235,12 @@ async def execute(
                 )
             force = bool(params.get("force", False))
             if service == "git_integration_worker" and not force:
-                return await _git_worker_drain_supervised(ctl, "sync_restart")
+                return await _git_worker_drain_supervised(
+                    ctl,
+                    "sync_restart",
+                    code_ref=_optional_attr_str(params, "code_ref") or "HEAD",
+                    row_id=_optional_attr_str(params, "row_id"),
+                )
             return await run_gated(
                 ctl.restart_gate,
                 "sync_restart",
@@ -520,8 +525,21 @@ async def sync_restart_charter_harvest(
     )
 
 
+def _optional_attr_str(params: dict[str, Any], key: str) -> str | None:
+    """Return a stripped string param, or None when missing/blank/non-string."""
+    value = params.get(key)
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None
+
+
 async def _git_worker_drain_supervised(
-    ctl: ServiceController, action: str
+    ctl: ServiceController,
+    action: str,
+    *,
+    code_ref: str = "HEAD",
+    row_id: str | None = None,
 ) -> dict[str, Any]:
     """Route a non-force git-worker lifecycle action to the drain supervisor.
 
@@ -530,6 +548,7 @@ async def _git_worker_drain_supervised(
     than the generic busy-probe deferral. Busy work busy-skips into durable drain
     (todo:manage-busy-drain-restart); force=true keeps the existing immediate
     kill path. The terminal lifecycle is action-appropriate: stop vs restart.
+    ``code_ref`` / ``row_id`` thread the propagate row identity into mint.
     """
     supervisor = ctl.build_git_worker_drain_supervisor(
         kill=ctl.git_worker_kill_for(action)
@@ -541,6 +560,8 @@ async def _git_worker_drain_supervised(
         store=ctl.restart_intent_store,
         supervisor=supervisor,
         reason=f"manage {action} (deferred drain)",
+        code_ref=code_ref,
+        row_id=row_id,
     )
 
 

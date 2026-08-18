@@ -45,7 +45,11 @@ def call_manage(
             "error": f"manage.sock not found at {MANAGE_SOCKET}",
         }
     except (TimeoutError, OSError, json.JSONDecodeError) as exc:
-        return {"status": "error", "reason": "manage_sock_call_failed", "error": str(exc)}
+        return {
+            "status": "error",
+            "reason": "manage_sock_call_failed",
+            "error": str(exc),
+        }
     if "error" in raw:
         err = raw["error"]
         message = err.get("message", str(err)) if isinstance(err, dict) else str(err)
@@ -55,19 +59,30 @@ def call_manage(
 
 
 def sync_restart_service(
-    service: str, *, reason: str = "", force: bool = False
+    service: str,
+    *,
+    reason: str = "",
+    force: bool = False,
+    code_ref: str | None = None,
+    row_id: str | None = None,
 ) -> dict[str, Any]:
     """Request drain-gated sync_restart for one service slug.
 
     ``force=True`` is the operator-proxy self-preempt path (own CSE). cursor-auto
     may auto-set this on mcp/cdp_ask when manage first returns a self-preemptable
     busy deferral — manage still owns the gate; this only forwards the flag.
+    ``code_ref`` / ``row_id`` are the propagate ledger identity so manage can mint
+    an activation validation keyed to the row SHA rather than process HEAD.
     """
     params: dict[str, Any] = {"service": service}
     if reason:
         params["reason"] = reason
     if force:
         params["force"] = True
+    if code_ref:
+        params["code_ref"] = code_ref
+    if row_id:
+        params["row_id"] = row_id
     return call_manage("sync_restart", params)
 
 
