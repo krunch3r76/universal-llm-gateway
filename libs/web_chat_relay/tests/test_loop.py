@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from web_chat_relay.loop import body_sha, should_relay
+from web_chat_relay.loop import body_sha, has_prefix, should_relay
 
 pytestmark = pytest.mark.offline
 
@@ -56,3 +56,12 @@ def test_should_relay_rejects_empty() -> None:
         last_sent_sha=None,
         last_received_sha=None,
     )
+
+
+def test_has_prefix_matches_case_insensitive_with_leading_space() -> None:
+    assert has_prefix("  Claude: already said this", "Claude:")
+    assert has_prefix("grok: already said this", "Grok:")
+
+
+def test_has_prefix_rejects_unrelated_text() -> None:
+    assert not has_prefix("Just an ordinary reply.", "Claude:")

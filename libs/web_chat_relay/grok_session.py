@@ -21,6 +21,27 @@ LOGIN_WALL_RE = re.compile(
     re.I,
 )
 
+# Grok's tool-call activity chip ("Working for Ns" while a search/tool runs,
+# "Worked for Ns" once it settles) renders inside the same assistant-message
+# container as the real answer. Mid-tool-call, that chip is briefly the
+# *entire* container content with the answer paragraph not yet appended --
+# streaming/stop flags can read false in that gap (confirmed live
+# 2026-08-17: a relay tick pasted just "Working for 4s" into claude.ai).
+_ACTIVITY_CHIP_RE = re.compile(r"(?:Working|Worked) for \d+s\.?", re.I)
+
+
+def strip_chrome(text: str) -> str:
+    """Return the substantive answer after the last activity-chip marker.
+
+    No chip present -> text is returned unchanged (plain reply, nothing to
+    strip). Chip present -> only the tail after the *last* occurrence is
+    kept, dropping the chip line(s) and any tool-call chatter before it.
+    """
+    matches = list(_ACTIVITY_CHIP_RE.finditer(text))
+    if not matches:
+        return text.strip()
+    return text[matches[-1].end() :].strip()
+
 PROBE_JS = """
 () => {
   const body = (document.body && document.body.innerText) || "";
@@ -184,8 +205,17 @@ async def require_signed_in(page, *, grok_url: str) -> GrokHarvest:
     return shot
 
 
-async def wait_idle(page, *, timeout_s: float = 180.0, poll_s: float = 1.0) -> GrokHarvest:
-    """Poll until streaming/stop clears, then return the idle harvest."""
+async def wait_idle(
+    page, *, timeout_s: float = 180.0, poll_s: float = 1.0, stable_reads: int = 3
+) -> GrokHarvest:
+    """Poll until streaming/stop clears AND the chip-stripped text is
+    non-empty, then return the idle harvest.
+
+    ``stable_reads`` defaults to 3 (not 2): a pause between successive tool
+    calls can read not-streaming/not-stop for a single tick, and the content
+    check alone is not enough when a message legitimately settles chip-only
+    for a moment before the next chip starts.
+    """
     import asyncio
 
     deadline = asyncio.get_event_loop().time() + timeout_s
@@ -195,9 +225,11 @@ async def wait_idle(page, *, timeout_s: float = 180.0, poll_s: float = 1.0) -> G
         last = await harvest(page)
         if last.login_wall:
             raise GrokAuthError(f"login wall during wait_idle url={last.url!r}")
-        if not last.streaming and not last.stop:
+        settled = not last.streaming and not last.stop
+        has_content = bool(strip_chrome(last.last_assistant))
+        if settled and has_content:
             stable += 1
-            if stable >= 2:
+            if stable >= stable_reads:
                 return last
         else:
             stable = 0

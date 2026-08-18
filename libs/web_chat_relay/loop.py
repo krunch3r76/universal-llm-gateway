@@ -110,7 +110,7 @@ async def run_relay(cfg: RelayConfig) -> RelayState:
                 )
             )
             raise
-        state.grok_baseline_sha = body_sha(grok0.last_assistant)
+        state.grok_baseline_sha = body_sha(grok_session.strip_chrome(grok0.last_assistant))
         events.emit(events.web_chat_relay_started(grok_url=cfg.grok_url, claude_chat_url=None))
         if cfg.seed_grok.strip():
             await grok_session.paste_and_send(grok_page, cfg.seed_grok.strip())
@@ -171,9 +171,11 @@ async def _relay_tick(cfg: RelayConfig, state: RelayState, grok_page) -> None:
         )
         state.stop_reason = "auth_missing"
         return
-    if grok.streaming or grok.stop:
+    if grok.streaming or grok.stop or not grok_session.strip_chrome(grok.last_assistant):
+        # Settled-but-chip-only also needs the wait: streaming/stop can read
+        # false in the gap between tool calls before the answer text lands.
         grok = await grok_session.wait_idle(grok_page)
-    grok_text = grok.last_assistant
+    grok_text = grok_session.strip_chrome(grok.last_assistant)
     grok_sha = body_sha(grok_text)
     if not should_relay(
         new_sha=grok_sha,
@@ -196,7 +198,7 @@ async def _relay_tick(cfg: RelayConfig, state: RelayState, grok_page) -> None:
     result = await asyncio.to_thread(
         claude_leg.ask_and_wait, prompt_text=body, base_url=cfg.project_ask_url
     )
-    claude_body = str(result.get("body") or "")
+    claude_body = claude_leg.strip_chrome(str(result.get("body") or ""))
     state.last_to_claude = grok_sha
     state.relays += 1
     _write_state(cfg, claude_chat_url=str(result.get("url") or ""), relays=state.relays)
