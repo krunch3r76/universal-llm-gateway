@@ -18,6 +18,20 @@ from services.git_integration_worker.cursor_home import (
 )
 
 
+def _seed_ecosystem_plugin(real: Path) -> None:
+    plugin_skill = (
+        real
+        / ".cursor"
+        / "plugins"
+        / "local"
+        / "ulg-ecosystem"
+        / "skills"
+        / "residual-imprint"
+    )
+    plugin_skill.mkdir(parents=True, exist_ok=True)
+    (plugin_skill / "SKILL.md").write_text("# residual-imprint", encoding="utf-8")
+
+
 def _fake_real_home(
     tmp_path: Path,
     *,
@@ -39,6 +53,7 @@ def _fake_real_home(
             json.dumps({"token": "real-credential"}),
             encoding="utf-8",
         )
+    _seed_ecosystem_plugin(real)
     return real
 
 
@@ -64,17 +79,6 @@ def test_setup_seeds_gitconfig_in_dispatch_home(
 ) -> None:
     monkeypatch.setenv("CURSOR_API_KEY", "test-key")
     real = _fake_real_home(tmp_path)
-    plugin_skill = (
-        real
-        / ".cursor"
-        / "plugins"
-        / "local"
-        / "ulg-ecosystem"
-        / "skills"
-        / "residual-imprint"
-    )
-    plugin_skill.mkdir(parents=True)
-    (plugin_skill / "SKILL.md").write_text("# residual-imprint", encoding="utf-8")
     root = tmp_path / "homes"
     home = setup_cursor_dispatch_home("auto-smoke", real_home=real, root=root)
     gitconfig = home / ".gitconfig"
@@ -93,6 +97,7 @@ def test_user_rules_copy_not_symlink(
     rules = real / ".cursor" / "rules"
     rules.mkdir(parents=True)
     (rules / "operator.mdc").write_text("rule", encoding="utf-8")
+    _seed_ecosystem_plugin(real)
     root = tmp_path / "homes"
     home = setup_cursor_dispatch_home("d1", real_home=real, root=root)
     copied = home / ".cursor" / "rules" / "operator.mdc"
@@ -414,27 +419,12 @@ def test_build_dispatch_path_prepend_skips_grok_overwritten_shim(
     assert prepend == str(venv / "bin")
 
 
-def _seed_ecosystem_plugin(real: Path) -> None:
-    plugin_skill = (
-        real
-        / ".cursor"
-        / "plugins"
-        / "local"
-        / "ulg-ecosystem"
-        / "skills"
-        / "residual-imprint"
-    )
-    plugin_skill.mkdir(parents=True)
-    (plugin_skill / "SKILL.md").write_text("# residual-imprint", encoding="utf-8")
-
-
 def test_dispatch_home_points_venvs_at_operator_not_as_interpreter_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """$HOME/.venvs must resolve under dispatch HOME without copying the venv."""
     monkeypatch.setenv("CURSOR_API_KEY", "test-key")
     real = _fake_real_home(tmp_path)
-    _seed_ecosystem_plugin(real)
     operator_python = real / ".venvs" / "universal" / "bin" / "python"
     operator_python.parent.mkdir(parents=True)
     operator_python.write_text("#!/bin/sh\necho operator-python\n", encoding="utf-8")
