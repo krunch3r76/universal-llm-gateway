@@ -1,9 +1,9 @@
 ---
 name: agent-bus-discipline
-description: "Mechanics discipline for agent_bus operations: new-thread vs reply decision, pre-flight turn probing, large-payload navigation, sidecar body pattern, thread lifecycle."
-trigger_short: "agent_bus thread ∨ reply ∨ sidecar"
+description: "Mechanics for agent_bus: new-thread vs reply, sidecars, lifecycle. When naming a thread, apply productive|custodial (decision:thread-genus). have cursor do X → remaining hops (life-operator-do-chain); do not quiz."
+trigger_short: "agent_bus thread ∨ reply ∨ sidecar ∨ thread genus ∨ have cursor do"
 skill_category: dispatch-delegation
-trigger_match_terms: ["agent-bus-discipline", "agent_bus_discipline", "agent_bus", "thread", "reply", "sidecar", "dispatch-delegation", "mechanics", "operations", "new-thread"]
+trigger_match_terms: ["agent-bus-discipline", "agent_bus_discipline", "agent_bus", "thread", "reply", "sidecar", "dispatch-delegation", "mechanics", "operations", "new-thread", "productive", "custodial", "thread-genus", "non-work", "have cursor do", "do-chain"]
 ---
 
 # Agent Bus Discipline
@@ -130,6 +130,31 @@ Two axes only. Spec: `docs/specs/agent-bus-thread-classification-thin.md`.
 Only reserved spine tag: `role:root`. Other `role:*` tags are rejected on write. Not classification: `bus_lifecycle:*`, DB `status` / `bus_lifecycle_state`, facet tags (`type:*`, `project:*`, …), thread `480`.
 
 CHECKPOINT profile still follows enrollment only (`tick_charter` iff enrolled; else `orchestrator_continuity`).
+
+### Genus (prose, not a classification axis)
+
+SOT: `decision:thread-genus`. When the operator points at a thread or you are about to name one, **apply the labels** — do not quiz. They do not owe you these words.
+
+Operator English → you translate (do not correct their wording):
+
+| They say | You treat it as |
+|---|---|
+| “watch that / don’t post / just look” | custodial · monitor |
+| “the main arc / standing root / keep this open” | orchestration thread (`role:root`) |
+| “do the work here / implement on this / this is the job” | productive (this thread) |
+| “have cursor do X / just do it / make it real” | remaining hops — Use the `life-operator-do-chain` skill; ¬ quiz Architect / Mission writer / Conductor |
+| “what is this thread?” | you label it (spine + genus + species if useful) |
+| “don’t mix the watch with the work” | keep 9471-class and 9482-class apart |
+
+Then stack:
+
+1. **Spine:** orchestration thread (`role:root`) vs work thread (default).
+2. **Genus:** **productive** (advances a deliverable, decision, or answer) vs **custodial** (watches, preserves, or reconstitutes). Never say “work thread” to mean genus-work.
+3. **Species** only if useful: productive → implement / consult / request / debrief; custodial → monitor / continuity sibling.
+
+Specimens: **9471** = orchestration + productive + implement; **9482** = work-spine + custodial + monitor.
+
+Do not mint `genus:` tags until that decision's promotion trigger fires.
 
 ## Session-close thread disposition
 
