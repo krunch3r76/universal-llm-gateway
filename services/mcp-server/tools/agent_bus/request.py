@@ -43,7 +43,11 @@ def _resolve_hop_seat_request_refusal(
     thread_id: str | None,
     cse_registration_id: str | None,
 ) -> dict[str, Any] | None:
-    """Bind identity and refuse superseded predecessor writes when fenced."""
+    """Bind identity and refuse superseded predecessor writes when fenced.
+
+    Also returns ``seat.identity_unresolvable`` when census N≠1 on the
+    default path (``ambiguous_matches`` / ``zero_matches`` / ``empty_snap``).
+    """
     from claude_bundles.request_admission_identity import gate_request_admission
 
     refusal = gate_request_admission(

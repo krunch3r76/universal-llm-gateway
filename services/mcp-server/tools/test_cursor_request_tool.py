@@ -51,8 +51,11 @@ def test_cursor_request_registers_without_error() -> None:
         assert record.closeout_shape in description
     for name in CANONICAL_CONTRACTS:
         assert name in description
-    source = Path(__file__).resolve().parent.joinpath("cursor_request.py").read_text(
-        encoding="utf-8"
+    source = (
+        Path(__file__)
+        .resolve()
+        .parent.joinpath("cursor_request.py")
+        .read_text(encoding="utf-8")
     )
     assert "live@<sha>" in source
     assert "code_ref_satisfied" in source
@@ -149,6 +152,30 @@ def test_cursor_request_forwards_checkout_lane() -> None:
             )
 
     assert captured[0]["lane"] == "A"
+
+
+def test_cursor_request_forwards_cse_registration_id():
+    recorder = _ToolNameRecorder()
+    register_cursor_request_tool(recorder)
+    cursor_request_fn = recorder.functions["cursor_request"]
+    captured: list[dict[str, Any]] = []
+
+    def _fake_dispatch(**kwargs: Any) -> dict[str, Any]:
+        captured.append(kwargs)
+        return {"thread": {"id": "900"}, "turn": {"turn_number": 1}}
+
+    with patch("tools.cursor_request._request_dispatch", side_effect=_fake_dispatch):
+        with bind_request("default", surface="life"):
+            cursor_request_fn(
+                thread="7188",
+                subject="Implement X",
+                body="TYPE: DIRECTIVE\n",
+                from_agent="web-anthropic",
+                cse_registration_id="fe05f81fe4f14f8baf75e71050a50650",
+            )
+
+    assert captured[0]["cse_registration_id"] == ("fe05f81fe4f14f8baf75e71050a50650")
+    assert "cse_registration_id" in CALLER_FIELDS
 
 
 def test_unknown_caller_argument_rejected_with_accepted_set_error() -> None:

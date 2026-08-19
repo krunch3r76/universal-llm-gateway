@@ -103,8 +103,8 @@ def attach_registry_seated_rows(snap: dict[str, Any]) -> dict[str, Any]:
 def identity_rows(snap: dict[str, Any]) -> list[dict[str, Any]]:
     """Union execution-store rows with seated rows; store rows win per registration.
 
-    Capacity and admission keep reading snap scalars / ``rows``. Identity
-    questions (who is seated) read this union.
+    Capacity keeps reading snap scalars / ``rows``. Identity questions
+    (who is seated) — including request-admission census — read this union.
     """
     store = [
         row

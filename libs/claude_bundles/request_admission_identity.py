@@ -1,8 +1,12 @@
 """Server-side caller identity resolution and lease gate at ``agent_bus.request``.
 
-Resolves ``registration_id`` in bind order: caller wire → origin CSR → exactly-one
-operator-purpose active-work row on the lane → unresolvable. Watch-row
+Census over ``identity_rows`` (execution-store ``rows`` ∪ registry
+``seated_rows``). Bind order: caller wire → N≥2 refuse → origin CSR when
+N≤1 → exactly-one operator-purpose match → unresolvable. Watch-row
 ``registration_id`` is lease SOT only — never promoted to admission identity.
+
+N≠1 (``ambiguous_matches`` / ``zero_matches`` / ``empty_snap``) refuses at
+enqueue. ``snap_load_failed`` and ``missing_thread_id`` still admit.
 """
 
 from __future__ import annotations
@@ -16,18 +20,18 @@ from universal_logging import get_logger
 
 from claude_bundles import hop_seat_cutover
 from claude_bundles.hop_cadence_lease_events import emit_identity_bound, emit_lease_lost
+from claude_bundles.hop_cadence_seat_snap import attach_registry_seated_rows
 from claude_bundles.hop_seat_cutover import resolve_request_refusal
-from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
+from claude_bundles.request_admission_census import (
+    REFUSE_CENSUS_REASONS,
+    UnresolvableReason,
+    census_match_ids,
+    census_refusal_envelope,
+    classify_unresolvable,
+)
 
 logger = get_logger(__name__)
 
-UnresolvableReason = Literal[
-    "missing_thread_id",
-    "snap_load_failed",
-    "empty_snap",
-    "zero_matches",
-    "ambiguous_matches",
-]
 GateOutcome = Literal["admit", "reject"]
 IdentitySource = Literal[
     "caller_supplied",
@@ -36,7 +40,6 @@ IdentitySource = Literal[
     "unresolvable",
 ]
 
-_ACTIVE_STATUSES = frozenset({"pending", "running"})
 _COUNTERS: dict[str, int] = defaultdict(int)
 
 
@@ -48,6 +51,8 @@ class AdmissionIdentity:
     source: IdentitySource
     watch_present: bool
     unresolvable_reason: UnresolvableReason | None = None
+    census_n: int = 0
+    match_registration_ids: tuple[str, ...] = ()
 
 
 def reset_identity_counters_for_tests() -> None:
@@ -107,56 +112,6 @@ def _resolve_origin_cse_registration(thread_id: str) -> str | None:
     return reg or None
 
 
-def _single_seat_matches(thread_id: str, snap: dict[str, Any]) -> list[str]:
-    """Operator-purpose active-work registration ids on ``thread_id``."""
-    matches: list[str] = []
-    for row in snap.get("rows") or []:
-        if not isinstance(row, dict):
-            continue
-        status = str(row.get("status") or "")
-        if status not in _ACTIVE_STATUSES:
-            continue
-        purpose = str(row.get("purpose") or "")
-        if purpose not in OPERATOR_PURPOSES:
-            continue
-        lane = str(row.get("parent_thread") or "").strip()
-        if lane != thread_id:
-            continue
-        reg = str(row.get("registration_id") or "").strip()
-        if reg:
-            matches.append(reg)
-    return matches
-
-
-def _single_seat_active_work_registration(
-    thread_id: str,
-    snap: dict[str, Any],
-) -> str | None:
-    """Bind from the lone operator-purpose stream on ``thread_id``, else None."""
-    matches = _single_seat_matches(thread_id, snap)
-    if len(matches) == 1:
-        return matches[0]
-    return None
-
-
-def _unresolvable_reason(
-    *,
-    tid: str,
-    snap: dict[str, Any],
-    snap_load_failed: bool,
-) -> UnresolvableReason:
-    if not tid:
-        return "missing_thread_id"
-    if snap_load_failed:
-        return "snap_load_failed"
-    if not (snap.get("rows") or []):
-        return "empty_snap"
-    matches = _single_seat_matches(tid, snap)
-    if not matches:
-        return "zero_matches"
-    return "ambiguous_matches"
-
-
 def _emit_identity_gated(
     *,
     identity: AdmissionIdentity,
@@ -179,6 +134,7 @@ def _emit_identity_gated(
         thread_id=thread_id or None,
         outcome=outcome,
         reject_reason=reject_reason,
+        census_n=identity.census_n,
     )
 
 
@@ -193,13 +149,19 @@ def resolve_request_admission_identity(
     """Resolve caller registration_id for admission bind (never from watch row)."""
     tid = (thread_id or "").strip()
     watch_present = bool(tid and hop_seat_cutover.load_watches(path).get(tid))
-
     caller = (caller_registration_id or "").strip()
+    snap = active_work_snap if active_work_snap is not None else {}
+    matches = census_match_ids(tid, snap) if tid else []
+    census_n = len(matches)
+    match_ids = tuple(matches)
+
     if caller:
         return AdmissionIdentity(
             registration_id=caller,
             source="caller_supplied",
             watch_present=watch_present,
+            census_n=census_n,
+            match_registration_ids=match_ids,
         )
 
     if not tid:
@@ -208,9 +170,18 @@ def resolve_request_admission_identity(
             source="unresolvable",
             watch_present=False,
             unresolvable_reason="missing_thread_id",
+            census_n=0,
         )
 
-    snap = active_work_snap if active_work_snap is not None else {}
+    if census_n >= 2:
+        return AdmissionIdentity(
+            registration_id=None,
+            source="unresolvable",
+            watch_present=watch_present,
+            unresolvable_reason="ambiguous_matches",
+            census_n=census_n,
+            match_registration_ids=match_ids,
+        )
 
     origin = _resolve_origin_cse_registration(tid)
     if origin:
@@ -218,25 +189,31 @@ def resolve_request_admission_identity(
             registration_id=origin,
             source="origin_cse",
             watch_present=watch_present,
+            census_n=census_n,
+            match_registration_ids=match_ids,
         )
 
-    single = _single_seat_active_work_registration(tid, snap)
-    if single:
+    if census_n == 1:
         return AdmissionIdentity(
-            registration_id=single,
+            registration_id=matches[0],
             source="single_seat_active_work",
             watch_present=watch_present,
+            census_n=census_n,
+            match_registration_ids=match_ids,
         )
 
     return AdmissionIdentity(
         registration_id=None,
         source="unresolvable",
         watch_present=watch_present,
-        unresolvable_reason=_unresolvable_reason(
+        unresolvable_reason=classify_unresolvable(
             tid=tid,
             snap=snap,
             snap_load_failed=snap_load_failed,
+            matches=matches,
         ),
+        census_n=census_n,
+        match_registration_ids=match_ids,
     )
 
 
@@ -247,12 +224,12 @@ def gate_request_admission(
     active_work_snap: dict[str, Any] | None = None,
     path: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Return ``None`` to admit, or a ``seat.lease_lost`` ProtocolError envelope.
+    """Return ``None`` to admit, or a ProtocolError envelope.
 
-    Unresolvable identity on a watched lane fail-opens: the branch counts
-    ``unresolvable_on_watch_lane`` and admits. Spec Step 2 default-deny stays
-    parked until a holder-admit-with-empty-wire is observed on a watch-bearing
-    lane.
+    Census N≠1 (``ambiguous_matches`` / ``zero_matches`` / ``empty_snap``)
+    refuses at enqueue. ``snap_load_failed`` and ``missing_thread_id`` still
+    admit. Live loads attach registry ``seated_rows``; injected test snaps
+    are left unchanged.
     """
     tid = (thread_id or "").strip()
     if active_work_snap is not None:
@@ -260,6 +237,7 @@ def gate_request_admission(
         snap_load_failed = False
     else:
         snap, snap_load_failed = load_active_work_snap_result()
+        snap = attach_registry_seated_rows(snap)
     identity = resolve_request_admission_identity(
         thread_id=tid or None,
         caller_registration_id=caller_registration_id,
@@ -276,6 +254,26 @@ def gate_request_admission(
             identity_source=identity.source,
             watch_present=True,
             registration_id=identity.registration_id,
+        )
+
+    if (
+        identity.source == "unresolvable"
+        and identity.unresolvable_reason in REFUSE_CENSUS_REASONS
+    ):
+        _increment("census_refuse")
+        _increment(f"census_refuse:{identity.unresolvable_reason}")
+        _emit_identity_gated(
+            identity=identity,
+            thread_id=tid,
+            outcome="reject",
+            reject_reason=str(identity.unresolvable_reason),
+        )
+        return census_refusal_envelope(
+            thread_id=tid,
+            reason=str(identity.unresolvable_reason),
+            census_n=identity.census_n,
+            identity_source=identity.source,
+            match_registration_ids=identity.match_registration_ids,
         )
 
     if identity.watch_present and identity.source == "unresolvable":

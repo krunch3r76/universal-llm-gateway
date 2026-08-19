@@ -110,7 +110,8 @@ def test_unresolvable_on_watch_lane_without_bind_sources():
     assert identity.watch_present is True
 
 
-def test_gate_refuses_unresolvable_on_watched_lane():
+def test_gate_refuses_empty_snap_on_watched_lane():
+    """AC3: empty_snap is N=0 — refuse at enqueue, do not fail-open."""
     with (
         patch(
             "claude_bundles.hop_seat_cutover.load_watches",
@@ -126,9 +127,13 @@ def test_gate_refuses_unresolvable_on_watched_lane():
             caller_registration_id=None,
             active_work_snap={"rows": []},
         )
-    assert refusal is None
+    assert refusal is not None
+    assert refusal["code"] == "seat.identity_unresolvable"
+    assert refusal["data"]["reason"] == "empty_snap"
+    assert refusal["data"]["census_n"] == 0
     counters = get_identity_counters()
-    assert counters["unresolvable_on_watch_lane"] == 1
+    assert counters["census_refuse:empty_snap"] == 1
+    assert "unresolvable_on_watch_lane" not in counters
 
 
 def test_load_active_work_snap_failed_get_is_distinguishable_from_empty():
@@ -271,7 +276,6 @@ def test_gate_admits_self_supersede_poison_row_via_single_seat_bind():
     assert refusal is None
 
 
-
 def test_watch_row_is_not_admission_bind():
     with (
         patch(
@@ -376,7 +380,8 @@ def test_identity_gated_emits_on_both_outcomes_and_unwatched():
                 "purpose": "operator-proxy",
                 "status": "running",
             }
-        ]
+        ],
+        "seated_rows": [],
     }
     admit_snap = {
         "rows": [
@@ -387,7 +392,8 @@ def test_identity_gated_emits_on_both_outcomes_and_unwatched():
                 "purpose": "operator-proxy",
                 "status": "running",
             }
-        ]
+        ],
+        "seated_rows": [],
     }
     with patch(
         "claude_bundles.request_admission_identity._emit_identity_gated"
@@ -403,7 +409,7 @@ def test_identity_gated_emits_on_both_outcomes_and_unwatched():
             ),
             patch(
                 "claude_bundles.request_admission_identity.load_active_work_snap_result",
-                return_value=({"rows": []}, False),
+                return_value=({"rows": [], "seated_rows": []}, False),
             ),
         ):
             gate_request_admission(thread_id="7188", caller_registration_id=None)
@@ -442,10 +448,8 @@ def test_identity_gated_emits_on_both_outcomes_and_unwatched():
 
     assert emit_mock.call_count == 3
     outcomes = [c.kwargs["outcome"] for c in emit_mock.call_args_list]
-    assert outcomes == ["admit", "admit", "reject"]
-    watch_flags = [
-        c.kwargs["identity"].watch_present for c in emit_mock.call_args_list
-    ]
+    assert outcomes == ["reject", "admit", "reject"]
+    watch_flags = [c.kwargs["identity"].watch_present for c in emit_mock.call_args_list]
     assert watch_flags == [True, False, True]
 
 
@@ -543,6 +547,207 @@ def test_unresolvable_reason_ambiguous_matches():
     assert identity.unresolvable_reason == "ambiguous_matches"
 
 
+def test_census_counts_store_row_and_seated_row_on_same_parent_thread():
+    """AC2: one execution-store CSE plus one registry-seated CSE on the same
+    parent_thread must both appear in the admission match set.
+
+    Fails on rows-only ``_single_seat_matches`` (today binds N=1
+    ``single_seat_active_work`` to the hop row). Passes once census reads
+    ``identity_rows``.
+    """
+    snap = {
+        "rows": [
+            {
+                "execution_id": "hop-exec",
+                "registration_id": "fe05-hop",
+                "parent_thread": "7188",
+                "purpose": "operator-proxy",
+                "status": "running",
+            }
+        ],
+        "seated_rows": [
+            {
+                "execution_id": "__none:seated_no_stream__",
+                "registration_id": "cowork-seated",
+                "parent_thread": "7188",
+                "purpose": "operator-proxy",
+                "status": "running",
+                "source": "cse-session-registry",
+            }
+        ],
+    }
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={"7188": {"thread_id": "7188"}},
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value=None,
+        ),
+    ):
+        identity = resolve_request_admission_identity(
+            thread_id="7188",
+            caller_registration_id=None,
+            active_work_snap=snap,
+        )
+    assert identity.source == "unresolvable"
+    assert identity.unresolvable_reason == "ambiguous_matches"
+    assert identity.census_n == 2
+    assert identity.match_registration_ids == ("fe05-hop", "cowork-seated")
+
+
+def test_gate_refuses_ambiguous_census_with_structured_reason():
+    """AC3: N=2 refuses at enqueue; caller can read reason + match ids."""
+    snap = {
+        "rows": [
+            {
+                "execution_id": "a",
+                "registration_id": "5420b367-a",
+                "parent_thread": "7188",
+                "purpose": "operator-proxy",
+                "status": "running",
+            },
+            {
+                "execution_id": "b",
+                "registration_id": "5420b367-b",
+                "parent_thread": "7188",
+                "purpose": "operator-proxy",
+                "status": "running",
+            },
+        ]
+    }
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={"7188": {"thread_id": "7188"}},
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value=None,
+        ),
+    ):
+        refusal = gate_request_admission(
+            thread_id="7188",
+            caller_registration_id=None,
+            active_work_snap=snap,
+        )
+    assert refusal is not None
+    assert refusal["code"] == "seat.identity_unresolvable"
+    assert refusal["retryable"] is False
+    assert refusal["source"] == "rpc"
+    assert "N=2" in refusal["message"]
+    assert "reason=ambiguous_matches" in refusal["message"]
+    assert "queueing behind" in refusal["message"]
+    data = refusal["data"]
+    assert data["reason"] == "ambiguous_matches"
+    assert data["census_n"] == 2
+    assert data["match_registration_ids"] == ["5420b367-a", "5420b367-b"]
+
+
+def test_origin_cse_does_not_pick_one_when_census_n_ge_2():
+    snap = {
+        "rows": [
+            {
+                "execution_id": "a",
+                "registration_id": "5420b367-a",
+                "parent_thread": "7188",
+                "purpose": "operator-proxy",
+                "status": "running",
+            },
+            {
+                "execution_id": "b",
+                "registration_id": "5420b367-b",
+                "parent_thread": "7188",
+                "purpose": "operator-proxy",
+                "status": "running",
+            },
+        ]
+    }
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={},
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value="5420b367-a",
+        ),
+    ):
+        identity = resolve_request_admission_identity(
+            thread_id="7188",
+            caller_registration_id=None,
+            active_work_snap=snap,
+        )
+    assert identity.source == "unresolvable"
+    assert identity.unresolvable_reason == "ambiguous_matches"
+    assert identity.registration_id is None
+
+
+def test_gate_refuses_zero_matches():
+    snap = {
+        "rows": [
+            {
+                "execution_id": "other-lane",
+                "registration_id": "5420b367-other",
+                "parent_thread": "9999",
+                "purpose": "operator-proxy",
+                "status": "running",
+            }
+        ]
+    }
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={},
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value=None,
+        ),
+    ):
+        refusal = gate_request_admission(
+            thread_id="7188",
+            caller_registration_id=None,
+            active_work_snap=snap,
+        )
+    assert refusal is not None
+    assert refusal["code"] == "seat.identity_unresolvable"
+    assert refusal["data"]["reason"] == "zero_matches"
+    assert refusal["data"]["census_n"] == 0
+
+
+def test_caller_supplied_admits_when_census_n_ge_2():
+    snap = {
+        "rows": [
+            {
+                "execution_id": "a",
+                "registration_id": "5420b367-a",
+                "parent_thread": "7188",
+                "purpose": "operator-proxy",
+                "status": "running",
+            },
+            {
+                "execution_id": "b",
+                "registration_id": "5420b367-b",
+                "parent_thread": "7188",
+                "purpose": "operator-proxy",
+                "status": "running",
+            },
+        ]
+    }
+    with patch(
+        "claude_bundles.hop_seat_cutover.load_watches",
+        return_value={"7188": {"thread_id": "7188"}},
+    ):
+        refusal = gate_request_admission(
+            thread_id="7188",
+            caller_registration_id="5420b367-a",
+            active_work_snap=snap,
+        )
+    assert refusal is None
+
+
 def test_gate_snap_load_failed_emits_reason_not_empty_snap():
     with (
         patch(
@@ -555,7 +760,7 @@ def test_gate_snap_load_failed_emits_reason_not_empty_snap():
         ),
         patch(
             "claude_bundles.request_admission_identity.load_active_work_snap_result",
-            return_value=({}, True),
+            return_value=({"seated_rows": []}, True),
         ),
         patch(
             "claude_bundles.request_admission_identity._emit_identity_gated"

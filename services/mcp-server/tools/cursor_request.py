@@ -53,6 +53,8 @@ CALLER_FIELDS: frozenset[str] = frozenset(
         "parent_thread",
         "lane_role",
         "request_id",
+        "cse_registration_id",
+        "cse_chat_url",
     }
 )
 
@@ -119,6 +121,8 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         parent_thread: str | None = None,
         lane_role: str | None = None,
         request_id: str | None = None,
+        cse_registration_id: str | None = None,
+        cse_chat_url: str | None = None,
     ) -> Any:
         """Sanctioned unattended cursor-auto request lane (agent_bus request only).
 
@@ -277,6 +281,9 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
 
         Author: prefer ``from_agent=``; surface autofill on ``/mcp/life`` or
         ``/mcp/code`` when omitted (``web-anthropic`` or ``cursor`` respectively).
+        ``cse_registration_id`` / ``cse_chat_url`` are optional CSE stamps
+        (same kwargs as ``agent_bus.request``). Omitted empty-wire still binds
+        when census N=1.
         """
         t_prog, prog_timer = toolprogress_begin("cursor_request")
         err: str | None = None
@@ -299,6 +306,10 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
                 parsed["lane_role"] = lane_role
             if request_id is not None:
                 parsed["request_id"] = request_id
+            if cse_registration_id is not None:
+                parsed["cse_registration_id"] = cse_registration_id
+            if cse_chat_url is not None:
+                parsed["cse_chat_url"] = cse_chat_url
             if new_slug is not None:
                 parsed["new_slug"] = new_slug
             if thread is not None:
@@ -345,6 +356,8 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         parent_thread: str | None = None,
         lane_role: str | None = None,
         request_id: str | None = None,
+        cse_registration_id: str | None = None,
+        cse_chat_url: str | None = None,
     ) -> Any:
         """Recipient-neutral approval-gated operator request lane."""
         return cursor_request(
@@ -367,6 +380,8 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
             parent_thread=parent_thread,
             lane_role=lane_role,
             request_id=request_id,
+            cse_registration_id=cse_registration_id,
+            cse_chat_url=cse_chat_url,
         )
 
     mcp.tool(
