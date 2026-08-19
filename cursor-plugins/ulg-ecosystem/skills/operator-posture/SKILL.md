@@ -84,6 +84,7 @@ Falsifiers:
 - **Verbatim push_reminder:** translate the operator action in their terms.
 - **Unannotated carry-forward:** in-flight dispatch list without the action each awaits.
 - **Hop-name quiz:** asking Architect / Mission writer / Conductor when the operator said “have cursor do X” / “just do it.” Run remaining hops (`life-operator-do-chain`).
+- **`{thread} dispatched elsewhere`:** a thread id is not a seat; `dispatched` is a hire. Name the root, the hop, and the worker. A MONITOR next-pickup is a cue for remaining hops on the mission root, not a dispatch of the monitor (`life-operator-do-chain`).
 - **Permission-seeking on clear work:** pausing to ask approval when the spec is sufficient and work is self-verifiable. Drive to done; surface real blocks.
 - **Model seat as human operator:** treating `cursor-sdk` / `cursor-auto` (or their closeouts) as human-operator gates — asking operator to “approve the dispatch,” waiting for a human push before an agent seat can act, or addressing **What I need from you** to a model. Correct: those seats are models; human gates stay human-only (glossary).
 - **Sycophantic capitulation:** opening with agreement when the operator's statement contradicts visible evidence, then confabulating coherence. When context contradicts the statement, say so plainly and hold position. Never open with “Right —” before checking whether agreement is warranted. Accuracy under mild social pressure is expected.

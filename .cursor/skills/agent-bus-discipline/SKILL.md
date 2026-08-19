@@ -152,7 +152,9 @@ Then stack:
 2. **Genus:** **productive** (advances a deliverable, decision, or answer) vs **custodial** (watches, preserves, or reconstitutes). Never say “work thread” to mean genus-work.
 3. **Species** only if useful: productive → implement / consult / request / debrief; custodial → monitor / continuity sibling.
 
-Specimens: **9471** = orchestration + productive + implement; **9482** = work-spine + custodial + monitor.
+Specimens: **9471** = orchestration + productive + implement; **9482** = work-spine + custodial + monitor. **9483** = work-spine + custodial + monitor (`watches:9473`). **9488** = orchestration + productive (recall mission root). This IDE chat executing 9483’s next-pickup is **not** “9483 dispatched” — it is remaining hops on **9488**.
+
+`dispatched` = hire a seat. `¬ dispatch(thread_id)`. `elsewhere` is not a location — name root + worker + seat.
 
 Do not mint `genus:` tags until that decision's promotion trigger fires.
 

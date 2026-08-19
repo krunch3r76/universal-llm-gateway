@@ -44,10 +44,13 @@ Skip anything already harvested (consult sidecar, conductor packet + scoreboard,
 | “run it / ship it / admit the conductor” | **Conductor** only |
 | “have cursor do X” / “just do it” / “make X real” | **remaining** hops, no quiz |
 | “watch / don’t post / just look” | monitor — not this chain |
+| a MONITOR CHECKPOINT next-pickup (“admit the conductor”) | remaining hops on the **mission root** — ¬ commission the monitor thread |
 | “remember this / write that down” | `imprint` |
 | “what do we know / where did we leave off” | `recall` when shipped; else remaining hops that ship it |
 
 `request` / `delegate` are how a hop is armed — not the meaning of “have cursor do X”.
+
+`dispatched` names a **hire** (`request` / `team_dispatch` generate). A thread id is not a seat. Do not say `{monitor} dispatched elsewhere` — name the root, the hop, and the worker. A monitor next-pickup is a cue, not a dispatch of the monitor. When an executor chat takes that cue, the monitor seat **ends**; CHECKPOINT the monitor (pickup stale → root pointer). The executor is no longer MONITOR.
 
 ## Procedure
 
@@ -66,3 +69,5 @@ Specimen: 9473 Architect harvested ∧ 9487 mission writer harvested ∧ 9488 pa
 | “have cursor do X” → only `request` / `delegate` | Compose the chain |
 | Re-run a harvested hop because they did not name the next | Skip harvested |
 | Quiz after they pinned one hop | That hop only |
+| Title / WIP `{monitor} dispatched elsewhere` | Name root + hop + worker (`9488` conductor on `9493`) |
+| Fire remaining hops **on** the monitor thread | Fire on the mission root; monitor stays silent on the watched consult |

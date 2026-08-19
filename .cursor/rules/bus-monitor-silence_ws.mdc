@@ -67,6 +67,7 @@ Fires when the operator (or prior turn) frames the seat as:
 | `--mark-read` / `fetch-unread … --mark-read` on **N** | Steals unread from executor / auto |
 | Using **N** as the fresh-context home because "that's the mission" | Mission *execution* is on **N**; *watch continuity* is the sibling |
 | Impersonating executor / re-dispatch / aborting live lanes "to help" | MONITOR observes; does not steer |
+| Titling / WIP `{monitor_id} dispatched elsewhere` when an executor chat took the next-pickup | Role change: this seat is no longer MONITOR. CHECKPOINT the monitor (pickup stale → mission root). Name root + hop + worker. The monitor thread was not hired. |
 | DIRECTIVE-shaped or commissioning content in a break-in paste | The standing paste license covers **advisory** only — break-in steers nothing |
 
 ## Permitted
@@ -98,6 +99,7 @@ Retroactive: if this seat already posted onto **N** while MONITOR, `append` that
 | CHECKPOINT on the operator bus "so Cowork sees it" | CHECKPOINT on MONITOR sibling; Cowork stays on **N** for protocol only |
 | MONITOR mark-read on **N** | Peek only |
 | Treating monitoring intake as handle-each-unread-and-reply on **N** | Watch predicates; no protocol replies on **N** |
+| “9483 dispatched elsewhere” (or any `{monitor} dispatched`) | Monitor ids are not dispatch targets. Remaining hops run on the mission root; update the MONITOR CHECKPOINT |
 | Watching `MISSION_CLOSEOUT` + named continuity residual, then waiting for the human to ask why it went quiet | Inform in chat **and** ensure a dispatch-capable seat fires the continuity hop promptly (`cdp-operator-proxy` inv 30) — human is not the wake path |
 
 ## Worked example
