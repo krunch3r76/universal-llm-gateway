@@ -8,21 +8,22 @@ LOOKUP_FAILED / hop-allowed as if the chair were empty.
 from __future__ import annotations
 
 import time
-
 from unittest.mock import MagicMock, patch
 
 from claude_bundles.hop_cadence_seat_snap import (
     SEATED_NO_STREAM_EXECUTION,
+    attach_registry_seated_rows,
     attach_seated_rows,
     identity_rows,
     seated_rows_from_registry_records,
 )
-from services.git_integration_worker.cursor_auto.cdp_escalation import (
-    read_cdp_lane_snapshot,
-)
 from claude_bundles.hop_seat_cutover import (
     refuse_cadence_hop_for_live_seat,
     running_registration_ids,
+)
+
+from services.git_integration_worker.cursor_auto.cdp_escalation import (
+    read_cdp_lane_snapshot,
 )
 from services.git_integration_worker.cursor_auto.hop_cadence import (
     evaluate_capacity_gate,
@@ -178,3 +179,15 @@ def test_read_cdp_lane_snapshot_attaches_registry_seats() -> None:
     assert snap["running_count"] == 0
     assert snap["seated_rows"][0]["registration_id"] == _REG
     assert "observed_at" in snap
+
+
+def test_attach_registry_seated_rows_consumes_jupiter_empty_list() -> None:
+    """Jupiter always-list seated_rows=[] must early-out; do not overlay hub load_active."""
+    snap = {"rows": [], "running_count": 0, "seated_rows": []}
+    with patch(
+        "claude_bundles.hop_cadence_seat_snap.read_registry_seated_rows",
+        side_effect=AssertionError("hub load_active must not run"),
+    ):
+        out = attach_registry_seated_rows(snap)
+    assert out["seated_rows"] == []
+    assert out["running_count"] == 0

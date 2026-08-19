@@ -60,6 +60,7 @@ def _capacity(
         "advisor_reserve": ADVISOR_RESERVE,
         "admission_regime": regime,
         "effective_abs_hard": abs_hard_effective,
+        "seated_rows": [],
     }
 
 
@@ -68,6 +69,10 @@ def _no_registry_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "claude_bundles.cdp_registry.count_capacity_lanes",
         lambda: 0,
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {},
     )
 
 

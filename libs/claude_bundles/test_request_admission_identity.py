@@ -110,6 +110,42 @@ def test_unresolvable_on_watch_lane_without_bind_sources():
     assert identity.watch_present is True
 
 
+def test_census_n1_from_seated_rows_only_operator_proxy():
+    """AC2: a single listable driving operator row (no execution-store row) is N=1."""
+    snap = {
+        "rows": [],
+        "seated_rows": [
+            {
+                "execution_id": "__none:seated_no_stream__",
+                "registration_id": "driving-root",
+                "parent_thread": "9497",
+                "purpose": "operator-proxy",
+                "status": "running",
+                "source": "cse-session-registry",
+            }
+        ],
+    }
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={"9497": {"thread_id": "9497"}},
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value=None,
+        ),
+    ):
+        identity = resolve_request_admission_identity(
+            thread_id="9497",
+            caller_registration_id=None,
+            active_work_snap=snap,
+        )
+    assert identity.source == "single_seat_active_work"
+    assert identity.census_n == 1
+    assert identity.registration_id == "driving-root"
+    assert identity.match_registration_ids == ("driving-root",)
+
+
 def test_gate_refuses_empty_snap_on_watched_lane():
     """AC3: empty_snap is N=0 — refuse at enqueue, do not fail-open."""
     with (

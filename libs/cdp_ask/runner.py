@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from claude_bundles import cdp_registry
+from claude_bundles.cdp_registry.driving_seat import ensure_driving_operator_seat
 from claude_bundles.cowork_output_download import should_attempt_output_download
 from claude_bundles.cse_wake_retain import registration_has_wake_debt
 from claude_bundles.project_ask import (
@@ -24,6 +25,7 @@ from claude_bundles.project_ask_prompt_files import (
     project_root_base,
     resolve_prompt_path,
 )
+from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
 from cortex_store.files_path_normalize import normalize_cortex_files_path
 
 from cdp_ask.models import SubmitProjectAskRequest, classify_stall_stage
@@ -35,6 +37,32 @@ from cdp_ask.page_liveness import (
 )
 
 _CSE_URL_MARKER = "claude.ai/cowork/cse_"
+
+
+def bind_execution_lane(req: SubmitProjectAskRequest, *, holder: str):
+    """Bind the Chrome host for one project-ask execution.
+
+    Operator-proxy (non-hop) executions on a named ``parent_thread`` reuse or
+    mint the driving operator seat so census can see the seated window after
+    hop Chromes go dormant. Hops and non-operator purposes still mint a fresh
+    ``register_lane`` row.
+    """
+    purpose = (req.purpose or "").strip()
+    kind = (req.mission_kind or "").strip()
+    parent = (req.parent_thread or "").strip()
+    if purpose in OPERATOR_PURPOSES and kind != "hop" and parent:
+        return ensure_driving_operator_seat(
+            holder=holder,
+            parent_thread=parent,
+            purpose=purpose,
+            mission_kind=kind or "root",
+        )
+    return cdp_registry.register_lane(
+        holder=holder,
+        purpose=req.purpose,
+        mission_kind=req.mission_kind,
+        parent_thread=req.parent_thread,
+    )
 
 
 def _persist_session_address(
@@ -348,12 +376,7 @@ async def run_execution(
     """Run one registry-backed project-ask and return a terminal-shaped result dict."""
     prompts = resolve_prompt(req)
     holder = req.holder.strip() or "cdp-ask-satellite"
-    reg = cdp_registry.register_lane(
-        holder=holder,
-        purpose=req.purpose,
-        mission_kind=req.mission_kind,
-        parent_thread=req.parent_thread,
-    )
+    reg = bind_execution_lane(req, holder=holder)
     if on_registered is not None:
         on_registered(reg.registration_id)
     on_harvest: Callable[[dict[str, Any]], Awaitable[None]] | None = None

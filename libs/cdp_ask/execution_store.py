@@ -23,6 +23,7 @@ __all__ = ["ExecutionRecord", "ExecutionStore", "LANE_HARD_LIMIT", "LANE_SOFT_LI
 
 DeregisterFn = Callable[[str], None]
 
+
 # Operator bind (friction a:25814) + ontology split (arc 6885):
 # soft/hard gate **concurrent streams** (running executions), not open tabs.
 # Open idle attachments are hygiene once chat_url is recorded.
@@ -123,7 +124,9 @@ class ExecutionStore:
             updated_at=now,
             holder=holder,
             purpose=purpose,
-            parent_thread=(str(parent_thread).strip() or None) if parent_thread else None,
+            parent_thread=(str(parent_thread).strip() or None)
+            if parent_thread
+            else None,
             mission_kind=(str(mission_kind).strip() or None) if mission_kind else None,
         )
         async with self._lock:
@@ -158,11 +161,29 @@ class ExecutionStore:
             return active_rows(self._records.values())
 
     async def active_work_snapshot(self) -> dict[str, Any]:
-        """Return only recorded executions and stream-admission capacity."""
+        """Return recorded executions, stream-admission capacity, and listable seats.
+
+        ``seated_rows`` is always a list (including ``[]``), projected from this
+        process's registry ``load_active()``. Admission scalars stay on the
+        execution store; identity consumers read ``seated_rows`` so MCP's
+        attach early-out consumes Jupiter seats instead of overlaying a hub
+        empty file.
+        """
+        from claude_bundles.cdp_registry_store import load_active
+        from claude_bundles.hop_cadence_seat_snap import (
+            attach_seated_rows,
+            seated_rows_from_registry_records,
+        )
+
         from cdp_ask.work_projection import admission_projection
 
         rows, execution_ids = await self._active_rows_snapshot()
         payload, decl = admission_projection(rows, execution_ids)
+        try:
+            seated = seated_rows_from_registry_records(load_active())
+        except Exception:  # noqa: BLE001 — identity attach must not break admission
+            seated = []
+        payload = attach_seated_rows(payload, seated)
         return seal(payload, decl)
 
     async def drain_state_snapshot(self) -> dict[str, Any]:
@@ -329,9 +350,7 @@ class ExecutionStore:
 
         async with self._lock:
             return [
-                rec
-                for rec in self._records.values()
-                if is_stop_ack_candidate(rec, now)
+                rec for rec in self._records.values() if is_stop_ack_candidate(rec, now)
             ]
 
     async def _stop_ack_checkin_loop(self) -> None:

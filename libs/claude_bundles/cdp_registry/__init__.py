@@ -43,6 +43,7 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "deregister_lane": (".lifecycle", "deregister_lane"),
     "reattach": (".lifecycle", "reattach"),
     "register_lane": (".lifecycle", "register_lane"),
+    "ensure_driving_operator_seat": (".driving_seat", "ensure_driving_operator_seat"),
     "reserve_allocating_row": (".lifecycle", "reserve_allocating_row"),
     # models
     "DormantSeat": (".models", "DormantSeat"),

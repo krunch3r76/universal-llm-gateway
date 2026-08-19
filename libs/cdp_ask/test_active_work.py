@@ -82,6 +82,7 @@ def _capacity(
         "advisor_reserve": ADVISOR_RESERVE,
         "admission_regime": regime,
         "effective_abs_hard": abs_hard_effective,
+        "seated_rows": [],
     }
 
 
@@ -90,6 +91,10 @@ def _no_registry_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "claude_bundles.cdp_registry.count_capacity_lanes",
         lambda: 0,
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {},
     )
 
 
@@ -425,3 +430,59 @@ async def test_active_work_snapshot_projects_parent_thread_from_registry(
     row = snap["rows"][0]
     assert row["parent_thread"] == "6655"
     assert row["mission_kind"] == "root"
+
+
+@pytest.mark.asyncio
+async def test_active_work_snapshot_always_includes_seated_rows_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC1: GET active-work carries seated_rows as a list on every response.
+
+    Fails on today's execution-store-only snapshot (no key). Passes once
+    Jupiter attach always writes a list, including [].
+    """
+    monkeypatch.setattr(
+        "claude_bundles.cdp_orphans.probe_live_ports",
+        lambda port_range=None: [],
+    )
+    store = ExecutionStore()
+    snap = await store.active_work_snapshot()
+    assert isinstance(snap["seated_rows"], list)
+    assert snap["seated_rows"] == []
+    assert snap["running_count"] == 0
+    assert snap["free_slots"] == LANE_HARD_LIMIT
+
+
+@pytest.mark.asyncio
+async def test_active_work_snapshot_projects_listable_registry_seats(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC1: seated_rows come from Jupiter load_active(); dormant is excluded."""
+    monkeypatch.setattr(
+        "claude_bundles.cdp_orphans.probe_live_ports",
+        lambda port_range=None: [],
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {
+            "reg-live": {
+                "registration_id": "reg-live",
+                "status": "active",
+                "purpose": "operator-proxy",
+                "parent_thread": "9497",
+            },
+            "reg-dormant": {
+                "registration_id": "reg-dormant",
+                "status": "dormant",
+                "purpose": "operator-proxy",
+                "parent_thread": "9497",
+            },
+        },
+    )
+    store = ExecutionStore()
+    snap = await store.active_work_snapshot()
+    ids = [row["registration_id"] for row in snap["seated_rows"]]
+    assert ids == ["reg-live"]
+    assert snap["running_count"] == 0
+    assert snap["free_slots"] == LANE_HARD_LIMIT
+    assert snap["rows"] == []

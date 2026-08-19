@@ -119,13 +119,14 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
 
     @app.get("/v1/project-ask/active-work")
     async def active_work() -> dict[str, object]:
-        """Return recorded executions and stream-admission capacity.
+        """Return recorded executions, stream-admission capacity, and listable seats.
 
         ``busy`` describes pending/running satellite executions only. Lane
         admission uses ``free_slots`` / ``at_hard_limit`` (soft=2, hard=3);
-        browser attachments are intentionally excluded from this contract.
-        ``rows`` lists per-flight ``registration_id`` / ``holder`` / ``purpose``
-        for warm followup discovery.
+        browser attachments do not change those scalars. ``rows`` lists
+        per-flight ``registration_id`` / ``holder`` / ``purpose``. ``seated_rows``
+        is always a list (including ``[]``) from this host's registry
+        ``load_active()`` so MCP attach consumes Jupiter seats, not a hub file.
         """
         return await execution_store.active_work_snapshot()
 
