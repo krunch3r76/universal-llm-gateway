@@ -54,6 +54,7 @@ LIFE_SURFACE_LEGAL_TOOLS: frozenset[str] = frozenset(
         "dispatch",
         "fleet_liveness",
         "imprint",
+        "recall",
         "delegate",
         "notify",
         "cse_session",

@@ -196,6 +196,17 @@ def test_imprint_in_canonical_life_mcp() -> None:
     )
 
 
+def test_recall_in_canonical_life_mcp() -> None:
+    """recall domain must be canonicalized for life-only MCP surface (G2)."""
+    names = derive_all_canonical_tool_names(_CANONICAL_YAML)
+    assert "recall" in names, (
+        "recall absent from canonical.yaml — add recall_matter entry."
+    )
+    assert "recall" not in INTENTIONAL_OVERFLOW, (
+        "recall must not be in INTENTIONAL_OVERFLOW once canonicalized."
+    )
+
+
 def test_delegate_in_canonical_life_mcp() -> None:
     """delegate domain must be canonicalized for life-only MCP surface (AC8)."""
     names = derive_all_canonical_tool_names(_CANONICAL_YAML)
@@ -291,6 +302,7 @@ def _collect_registered_tool_names() -> set[str]:
         ("tools.panel_dispatch", "register_panel_dispatch_tools"),
         ("tools.git_integrate", "register_git_integrate_tools"),
         ("tools.imprint", "register_imprint_tools"),
+        ("tools.recall", "register_recall_tools"),
         ("tools.delegate", "register_delegate_tools"),
         ("tools.notify", "register_notify_tools"),
         ("tools.quality", "register_quality_tools"),

@@ -32,7 +32,7 @@ IMPLEMENT_ALLOW = frozenset(
         "observability",
     }
 )
-LIFE_ONLY = frozenset({"imprint", "delegate", "notify"})
+LIFE_ONLY = frozenset({"imprint", "recall", "delegate", "notify"})
 HIDDEN_FROM_IMPLEMENT = frozenset(
     {
         "rag",

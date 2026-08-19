@@ -122,6 +122,25 @@ Depth: Use the `cortex-provenance-discipline` skill.
 
 **Not shipped.** Nothing checks a recommendation on your behalf. `pre_speak_contradiction_probe` is design-only (`todo:pre-speak-contradiction-probe`). Enrich-on-read is the entire live mechanism, and it fires only when you call `entity_get`.
 
+## `recall` — life memory front door
+
+**When.** Memory questions on the life seat — "what do we know about X", "remember Chase", "where did we leave off on the tax appeal" — use the sibling `recall` tool, not `cortex.search`.
+
+**How.**
+
+```python
+recall(op="matter", arguments='{"q": "chase escrow", "seeds": ["case:chase-escrow-flintridge-2026"]}')
+recall(op="continuity", arguments='{"q": "where did we leave the tax appeal"}')
+```
+
+Pass `q` and/or `seeds` (either suffices). Response is a read-only `RecallCard`: `resolved` vs `candidates`, typed `nulls`, `disclosure`, optional `continuity`, advisory `_next`. Zero writes through recall.
+
+**Search is not the life memory door.** If you already called `cortex(tool="search", …)` on a memory-shaped question, follow the `_next` steer to `recall`.
+
+**Burst/dispositions are leads.** Same caution as `terminal_facts`: cite backing `assertion_id`, check `epistemic_state` (`staged` / `flagged` are unverified).
+
+**Not G3.** `search` remains on the life cortex enum until measured demotion (Phase 3); this stanza teaches and steers only.
+
 ## Related / depth
 
 - `cortex` — op catalog, taxonomies, workflow chains.

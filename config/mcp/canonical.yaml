@@ -17,6 +17,7 @@ domains:
 - manage
 - dispatch
 - imprint
+- recall
 - delegate
 - notify
 - retrieve
@@ -5065,6 +5066,72 @@ tools:
   introduced: '2026-07-12'
   endpoint_visibility:
   - life
+- canonical_name: recall_matter
+  domain: recall
+  operation: matter
+  dispatcher_call_shape:
+    tool: recall
+    dispatch_key: op
+    dispatch_value: matter
+  flat_call_shape:
+    tool: recall_matter
+    substrate_qualified: user-vortex__recall_matter
+  fol_descriptor: "Life memory front door — matter mode (hub orientation).\n\
+    Relay POST /graph/recall/matter; read-only RecallCard. See cortex-orientation\
+    \ § recall.\n"
+  json_schema:
+    type: object
+    properties:
+      q:
+        type: string
+        description: Free-text or typed entity ref.
+      seeds:
+        type: array
+        items:
+          type: string
+        description: Pinned entity refs.
+  skill_uri: rule:cortex-orientation
+  seat_visibility:
+  - mcp
+  - mcp_claude
+  mandate_safety: read_only
+  cache_priority: on_demand
+  introduced: '2026-08-19'
+  endpoint_visibility:
+  - life
+- canonical_name: recall_continuity
+  domain: recall
+  operation: continuity
+  dispatcher_call_shape:
+    tool: recall
+    dispatch_key: op
+    dispatch_value: continuity
+  flat_call_shape:
+    tool: recall_continuity
+    substrate_qualified: user-vortex__recall_continuity
+  fol_descriptor: "Life memory front door — continuity mode (where we left off).\n\
+    Relay POST /graph/recall/continuity; read-only RecallCard. See cortex-orientation\
+    \ § recall.\n"
+  json_schema:
+    type: object
+    properties:
+      q:
+        type: string
+        description: Free-text or typed entity ref.
+      seeds:
+        type: array
+        items:
+          type: string
+        description: Pinned entity refs.
+  skill_uri: rule:cortex-orientation
+  seat_visibility:
+  - mcp
+  - mcp_claude
+  mandate_safety: read_only
+  cache_priority: on_demand
+  introduced: '2026-08-19'
+  endpoint_visibility:
+  - life
 - canonical_name: delegate_propose
   domain: delegate
   operation: propose
@@ -5330,6 +5397,8 @@ domain_endpoints:
     - code
     imprint:
     - life
+    recall:
+    - life
     delegate:
     - life
     notify:
@@ -5347,6 +5416,7 @@ surface_primary_domains:
   - tool_search
   - dispatch
   - imprint
+  - recall
   - delegate
   - notify
   - fleet_liveness

@@ -44,6 +44,7 @@ _LIFE_READ = {
     "rj_list",
     "rj_read",
     "search",
+    # G3 (not G2) removes search from this set; recall is a sibling MCP tool, not a cortex op.
     "stats",
     "surface_forms",
     "tag_list",

@@ -8,6 +8,7 @@ dispatch responses by the /dispatch router.
 from __future__ import annotations
 
 import json as _json
+import re
 from typing import Any
 
 from ._shared import record
@@ -93,8 +94,9 @@ _WORKFLOW_HINTS: dict[str, str] = {
         "to verify the handoff_prompt is retrievable on explicit reference"
     ),
     "search": (
-        "next: extract entity_ids from results → activate (for structurally "
-        "connected assertions the query wouldn't find directly); "
+        "memory questions (what do we know, remember, where did we leave off) → "
+        'recall(op="matter"|"continuity", arguments=\'{"q":"..."}\'); '
+        "non-memory lookup → extract entity_ids from results → activate; "
         "before writing a new assertion, call analyze_impact to check for contradictions"
     ),
     "rj_write": (
@@ -307,6 +309,25 @@ def _parse_cortex_arguments(arguments: object, tool: str) -> dict[str, Any] | No
             return None
         return result
     return None
+
+
+_MEMORY_SHAPED_Q = re.compile(
+    r"(?i)(what do we (know|remember)|remember\b|where did we leave|"
+    r"where are we on|what's the (status|state) of|recall\b)"
+)
+
+
+def steer_search_toward_recall(result: dict[str, Any], parsed: dict[str, Any]) -> None:
+    """Overwrite search _next when the query is memory-shaped (G2 Phase 1 steer)."""
+    q = parsed.get("q") or parsed.get("query") or ""
+    if not q or not str(q).strip():
+        return
+    if _MEMORY_SHAPED_Q.search(str(q)):
+        result["_next"] = (
+            'Memory-shaped question — use recall(op="matter"|"continuity", '
+            'arguments=\'{"q":"..."}\') instead of search; matter = hub '
+            "orientation, continuity = where we left off."
+        )
 
 
 def _enrich_entity_completeness(result: dict[str, Any]) -> None:

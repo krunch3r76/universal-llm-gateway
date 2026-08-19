@@ -32,6 +32,7 @@ LIFE_PRIMARY = frozenset(
         "dispatch",
         "fleet_liveness",
         "imprint",
+        "recall",
         "delegate",
         "notify",
         "cse_session",
@@ -47,10 +48,12 @@ CODE_EXTRA = frozenset(
         "project_ask",
     }
 )
-# imprint/delegate/notify are life-only (canonical domain_endpoints); trigger is
+# imprint/delegate/notify/recall are life-only (canonical domain_endpoints); trigger is
 # overflow/relay, never surface_primary (d946 test overclaim; a505 promoted
 # cursor_request into both primaries without updating this gate).
-CODE_PRIMARY = (LIFE_PRIMARY - frozenset({"imprint", "delegate", "notify"})) | CODE_EXTRA
+CODE_PRIMARY = (
+    LIFE_PRIMARY - frozenset({"imprint", "delegate", "notify", "recall"})
+) | CODE_EXTRA
 
 
 @pytest.fixture(scope="module")
@@ -137,6 +140,15 @@ def test_imprint_present_on_life_absent_on_code(
     assert "imprint" in life_server["primary"]
     assert "imprint" not in code_server["tool_names"]
     assert "imprint" not in code_server["primary"]
+
+
+def test_recall_present_on_life_absent_on_code(
+    life_server: dict, code_server: dict
+) -> None:
+    assert "recall" in life_server["tool_names"]
+    assert "recall" in life_server["primary"]
+    assert "recall" not in code_server["tool_names"]
+    assert "recall" not in code_server["primary"]
 
 
 def test_delegate_present_on_life_absent_on_code(

@@ -33,6 +33,7 @@ from .workflow_hints import (
     _enrich_entity_completeness,
     _parse_cortex_arguments,
     attach_session_close_protocol,
+    steer_search_toward_recall,
 )
 
 logger = get_logger("cortex-api.dispatch_ops")
@@ -261,6 +262,8 @@ def execute_op(
     hint = _WORKFLOW_HINTS.get(tool)
     if hint and "_next" not in result:
         result["_next"] = hint
+    if tool == "search":
+        steer_search_toward_recall(result, parsed)
     if tool == "entity_get" and not is_batch_entity_get:
         from ..terminal_facts import append_terminal_facts_next_hint
 

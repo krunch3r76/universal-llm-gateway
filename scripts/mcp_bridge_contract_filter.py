@@ -24,7 +24,7 @@ from endpoint_surface import derive_contract_primary_tools  # noqa: E402
 
 ULG_MCP_CONTRACT_ENV = "ULG_MCP_CONTRACT"
 FILTERED_CONTRACTS: frozenset[str] = frozenset({"implement", "pure-mechanical"})
-_LIFE_ONLY_TOOLS: frozenset[str] = frozenset({"imprint", "delegate", "notify"})
+_LIFE_ONLY_TOOLS: frozenset[str] = frozenset({"imprint", "recall", "delegate", "notify"})
 _HIDDEN_FROM_IMPLEMENT: frozenset[str] = frozenset(
     {
         "rag",
