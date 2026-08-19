@@ -40,12 +40,13 @@ from .routes import (
     gated,
     graph,
     graph_imprint,
+    graph_recall,
     reaper,
     reflective_journal,
-    seat_claims,
     relationships,
     resolve,
     salience,
+    seat_claims,
     session_handoff,
     session_journals,
     skills,
@@ -252,6 +253,7 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     app.include_router(tags.router)
     app.include_router(graph.router)
     app.include_router(graph_imprint.router)
+    app.include_router(graph_recall.router)
     app.include_router(close_draft.router)
     app.include_router(subgraph.router)
     app.include_router(reaper.router)
