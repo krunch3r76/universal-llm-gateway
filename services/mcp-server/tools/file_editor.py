@@ -3,13 +3,25 @@
 Sandbox-agnostic: callers resolve paths and validate suffixes before
 calling perform_edit(). This module handles file existence checks,
 operation dispatch, and the atomic read-modify-write cycle.
+
+S0 (todo:mcp-append-silent-loss): auto-CAS the digest of the bytes just
+read before replace so a concurrent O_APPEND / write_text peer is a typed
+mismatch instead of a silent lost-update. Caller-supplied expected_sha256
+stays optional at edit_file_impl — this pre-image check is internal.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from tools._durable_write import durable_write_text, verify_persisted
+from tools._durable_write import (
+    PreImageMismatchError,
+    durable_write_text,
+    verify_persisted,
+)
+from tools._hashing import sha256_hex_of_bytes, sha256_hex_of_file
+
+__all__ = ["PreImageMismatchError", "perform_edit"]
 
 
 def perform_edit(
@@ -39,16 +51,27 @@ def perform_edit(
         ``sha256:`` / ``spec_sha256:`` prefixes as needed.
         For "replace" operation, also includes "replacements_made".
 
+    Side effects:
+        Overwrites *path* via temp+fsync+replace. Auto-CASes the digest of
+        the bytes read at the start of this call immediately before that
+        replace; mismatch raises without writing. Does not take
+        ``path_write_lock`` — ``edit_file_impl`` holds that lock across the
+        whole RMW so this function stays re-entrant from a lock holder.
+
     Raises:
         FileNotFoundError: Path does not exist.
         ValueError: Invalid arguments or operation.
+        PreImageMismatchError: Dest bytes changed after the read (loud CAS).
+        WriteVerifyError: Persisted dest hash != intended write hash.
     """
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
     if not path.is_file():
         raise ValueError(f"Path is not a file: {path}")
 
-    original = path.read_text(encoding="utf-8", errors="replace")
+    raw = path.read_bytes()
+    pre_image_sha256 = sha256_hex_of_bytes(raw)
+    original = raw.decode("utf-8", errors="replace")
     modified: str
     replacements_made = 0
 
@@ -96,7 +119,16 @@ def perform_edit(
     from tools.filesystem._overwrite_retain import retain_before_overwrite
 
     replaced_sha256 = retain_before_overwrite(path)
-    written_sha256 = durable_write_text(path, modified)
+    actual_sha256 = sha256_hex_of_file(path)
+    if actual_sha256 != pre_image_sha256:
+        raise PreImageMismatchError(
+            path,
+            expected_sha256=pre_image_sha256,
+            actual_sha256=actual_sha256,
+        )
+    written_sha256 = durable_write_text(
+        path, modified, expected_pre_image=pre_image_sha256
+    )
     verify_persisted(path, written_sha256)
 
     result: dict[str, str | int] = {

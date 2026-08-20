@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from mcp_events import record
 
-from .._durable_write import WriteVerifyError, write_verify_error_dict
+from .._durable_write import (
+    PreImageMismatchError,
+    WriteVerifyError,
+    write_verify_error_dict,
+)
 from .._file_helpers import read_file_result, read_files_batch
 from .._hashing import format_sha256_uri, sha256_hex_equal
 from ..file_editor import perform_edit
@@ -16,6 +21,7 @@ from ._paths import (
     EDITABLE_SUFFIXES,
     SANDBOX_ROOT,
     SHARED_IMAGE_DIR,
+    path_write_lock,
     reject_template_tokens,
     safe_path,
     sha256_of_file,
@@ -113,7 +119,16 @@ def edit_file_impl(
     expected_sha256: str | None = None,
     artifact_class: str | None = None,
 ) -> dict[str, Any]:
-    """Atomically edit a text file in the sandboxed files directory."""
+    """Atomically edit a text file in the sandboxed files directory.
+
+    Holds ``path_write_lock`` from pre-image hash through ``perform_edit``
+    replace so in-process MCP append/replace/prepend/insert serialize against
+    each other and against ``write_file_impl`` (same lock). Does not re-enter
+    the lock inside ``perform_edit`` — ``threading.Lock`` is non-reentrant.
+
+    Caller ``expected_sha256`` stays optional and is strict when supplied.
+    ``perform_edit`` additionally auto-CASes the digest it just read.
+    """
     reject_template_tokens(path)
     dest = safe_path(path, for_write=True)
     if dest.suffix.lower() not in EDITABLE_SUFFIXES:
@@ -121,6 +136,33 @@ def edit_file_impl(
             f"Cannot edit binary format {dest.suffix!r} in place. "
             f"Use write_file() instead."
         )
+    with path_write_lock(dest):
+        return _edit_file_impl_locked(
+            path=path,
+            dest=dest,
+            operation=operation,
+            content=content,
+            line=line,
+            target=target,
+            all_occurrences=all_occurrences,
+            expected_sha256=expected_sha256,
+            artifact_class=artifact_class,
+        )
+
+
+def _edit_file_impl_locked(
+    *,
+    path: str,
+    dest: Path,
+    operation: str,
+    content: str,
+    line: int | None,
+    target: str | None,
+    all_occurrences: bool,
+    expected_sha256: str | None,
+    artifact_class: str | None,
+) -> dict[str, Any]:
+    """Run the RMW under ``path_write_lock`` already held by ``edit_file_impl``."""
     actual_sha256 = sha256_of_file(dest)
     class_decision = evaluate_write_authority(
         path=path,
@@ -201,6 +243,30 @@ def edit_file_impl(
         record("mcp.tool.file.edited", **event_payload)
         logger.info("edit_file: %s on %s", operation, path)
         return result
+    except PreImageMismatchError as exc:
+        record(
+            "mcp.tool.file.edit_failed",
+            sandbox="cortex",
+            path=path,
+            operation=operation,
+            reason=exc.reason,
+            expected_sha256=exc.expected_sha256,
+            actual_sha256=exc.actual_sha256,
+        )
+        expected_echo = format_sha256_uri(exc.expected_sha256)
+        actual_echo = format_sha256_uri(exc.actual_sha256)
+        return write_rejection(
+            path=path,
+            resolved=dest,
+            reason="file_sha256.mismatch",
+            message=(
+                f"Refusing {operation} on {path!r}: on-disk hash "
+                f"{actual_echo!r} does not match pre-image {expected_echo!r} "
+                "read at the start of this edit"
+            ),
+            expected_sha256=expected_echo,
+            actual_sha256=actual_echo,
+        )
     except WriteVerifyError as exc:
         record(
             "mcp.tool.file.edit_failed",
