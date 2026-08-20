@@ -125,8 +125,13 @@ move (`observability` dispatch-economics when spend matters). Compose with
 operator-gated unless a standing rule names them.
 
 **Pool first, then rate.** Grok and Composer draw Cursor Models (generous).
-Sonnet / Opus / Terra draw the capped Other Models (second) pool. Sonnet at
-`$2/$10` is still the scarce Ultra allowance; Grok at `$2/$6` is not.
+Sonnet / Opus / Terra draw the capped Other Models (second) pool. T1=Grok
+is a **quota/allowance-scarcity** call, not a verified per-token savings:
+Sonnet is the scarce Ultra allowance on a capped pool; Grok is not.
+Do not cite total-dollar-by-model spend as the justification when call
+volumes differ — reprice the **same token mix** at both rate cards first.
+Cache-read-heavy workloads can make Sonnet cheaper per token (`cache_read`
+`$0.2/M` vs Grok `$0.5/M`; input both `$2/M`; output `$10/M` vs `$6/M`).
 Rates: `config/model_rates.yaml`.
 
 | Tier | Default conductor model | Effort | Use when |
@@ -154,6 +159,7 @@ Terra is **not** a standing conductor tier (Other Models + mid GPT rate). Cross-
 | Re-spend Opus to amend a densified packet | Composer / T1 amend |
 | Ignore `sdk_cost_risk` warning | Downgrade model or split bind/compose |
 | Pin Terra/Sonnet because the skill used to | Cursor Models T1 unless the remit actually needs Other Models |
+| Cite total-dollar-by-model as T1 justification when call volumes differ by an order of magnitude | Reprice the same token mix at both rate cards; justify T1 by quota/allowance scarcity, not price |
 
 `/conductor` asks model tier (Q8) when unbound; operator may pin a slug.
 
@@ -354,7 +360,7 @@ when the operator already bound the answers in chat.
 | Drop `lane="B"` after `CURSOR_LANE_B_SCOPE_REFUSED` | Fix scope paths; re-admit with `lane="B"` |
 | Treat missing Lane-B worktree as a shared-master admit | Expect `422 CURSOR_LANE_B_WORKTREE_MISSING`; mint/inherit a tree or name Lane A |
 | Conductor on Lane A while G-row code is on `cursor-sdk/lane-*` | One regime: conductor + nests share the Lane-B worktree/branch |
-| Opus-by-default for every conductor | Tier table; T1 Sonnet 5 @ `max` default; Opus only with trigger |
+| Opus-by-default for every conductor | Tier table; T1 Grok @ `xhigh`; Opus only with trigger |
 | Omit `lane=` assuming that means "no preference" | Lane B is the default — pass `lane="B"` explicitly; name Lane A only with a reason |
 | Conductor pauses after a G-row to ask "continue?" | Drive to completion in one commission; report via CHECKPOINT, don't wait for a reply |
 | Treat the mission's own `git_land` as a second approval gate | Admit is the standing merge ack; land on green + AC met (§ Run to completion) |
