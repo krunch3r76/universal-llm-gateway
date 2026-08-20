@@ -175,8 +175,8 @@ When CDP posts on-behalf and bus returns **409 `unread_turns_exist`**, remake af
 | Job | Command |
 |---|---|
 | **Product — team_dispatch (DEFAULT)** | `team_dispatch(op=generate, model=cdp/opus-5\|cdp/fable, contract=light-bounded, prompt\|sidecar_ref=…, dispatch_thread_id=…)` → `agent_bus.wait` from `poll_hint` |
-| **Escape — MCP project_ask** | `project_ask(op=submit, prompt_uri=cortex://…, converse=true, no_project_uuid=true, model=opus-5\|fable-5)` → poll (when team_dispatch CDP unavailable / satellite-direct) |
-| **Operator-proxy mission** | `team_dispatch(model=cdp/opus-5, purpose=operator-proxy\|mission, …)` primary; `project_ask(…, purpose=…)` escape |
+| **Escape — CLI project-ask** | `scripts/cortex/claude-ai-sync-jupiter project-ask` (`--converse --no-uuid --model opus-5\|fable-5`) when team_dispatch CDP unavailable. MCP `project_ask` is removed. |
+| **Operator-proxy mission** | `team_dispatch(model=cdp/opus-5, purpose=operator-proxy\|mission, …)` primary |
 | Path-sim R-admit (CLI fallback) | `… project-ask --register --purpose ask --converse --no-uuid --model opus-5 --prompt-file tmp/reviews/…` |
 | Long task / multitask | Default Cowork (omit flags) |
 | Auto lane (Fable) | `… project-ask --register --purpose fable --converse --no-uuid --cowork-auto --model fable-5` |
@@ -202,7 +202,7 @@ CLI parity: `--keep-chat` ≡ `delete_after=false`.
 ∀ follow-up on retained /cowork/cse_* ∨ /chat/* URL:
 
   Primary (IDE MCP):
-    project_ask(op=followup,
+    cse_session(op=followup,
       chat_url=… | registration_id=… | execution_id=… | identity omitted,
       cdp_url=…,  # explicit (cdp_url, chat_url) override with chat_url
       prompt_text=… | prompt_uri=…,
@@ -215,7 +215,7 @@ CLI parity: `--keep-chat` ≡ `delete_after=false`.
     v1 = attached lane only
 
   Read-only attended triple:
-    project_ask(op=resolve_attended)
+    cse_session(op=resolve_attended)
 
   Escape (hub checkout / no attached lane):
     scripts/cortex/cowork_chat_followup.py
@@ -225,16 +225,16 @@ CLI parity: `--keep-chat` ≡ `delete_after=false`.
 
   Launch-path (reattach mints lane): paste proof is satellite-scope only
   ¬ relay ok=true / send_verified=true as human/CSE delivery (a:27855)
-  ¬ project_ask(op=submit, … /new) for turn on retained CSE
+  ¬ CLI /new submit for a turn on a retained CSE
 ```
 
-Gap closed 2026-07-31 — IDE warm paste via `project_ask(op=followup)`; CLI = escape/dogfood only.
+Gap closed 2026-07-31 — IDE warm paste via `cse_session(op=followup)`; CLI = escape/dogfood only.
 
 ### IDE → live operator-proxy CSE (BINDING)
 
 ```
 ∀ wake | correction | ladder-fix to retained operator-proxy CSE:
-  deliver IN CHAT via warm follow-up (project_ask op=followup)
+  deliver IN CHAT via warm follow-up (cse_session op=followup)
   ∧ bus turn may accompany as audit
   ¬ bus-only + operator push reminder
 ```

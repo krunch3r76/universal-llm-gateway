@@ -59,4 +59,4 @@ execution.
 | `rag(op="coverage")` | `mcp.rag.coverage` |
 | `pipeline` | `mcp.pipeline` |
 | Any dispatch tool | `mcp.tool.dispatch` |
-| `project_ask(op="poll")` | `mcp.project_ask.poll` |
+| `cse_session(op="followup")` | `mcp.cse_session.followup` |

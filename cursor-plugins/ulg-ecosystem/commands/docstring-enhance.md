@@ -82,10 +82,9 @@ team_dispatch(
 # → poll_hint; poll via agent_bus.wait (not curl :8765)
 ```
 
-**Escape only** (team_dispatch CDP unavailable): `project_ask(op=submit, …,
-model=sonnet-5, converse=true, no_project_uuid=true)` →
-`project_ask(op=poll, execution_id=…)` until `archive_uri`. Never curl :8765
-for project-ask.
+**Escape only** (team_dispatch CDP unavailable): CLI
+`scripts/cortex/claude-ai-sync-jupiter project-ask --converse --no-uuid
+--model sonnet-5 --prompt-file …`. Never curl :8765 for project-ask.
 
 ### 5. Materialize apply payload + apply
 

@@ -69,7 +69,7 @@ already covers.
 | Step | Seat | When | Transport |
 |---|---|---|---|
 | 1 | **Cursor** (IDE lead, cursor-sdk, subagents, **`cursor/*` including Opus**) | Default — execute, orchestrate, dispatch | In-seat + `team_dispatch` / `Task` per `lean-context-dispatch-first` |
-| 2 | **Independent binder** — pick a family ≠ producer (table below) | **Any** cursor step-1 seat is **unsure** — including when that seat is already `cursor/claude-opus-5` | Anthropic: **`team_dispatch(model=cdp/opus-5)`** · **encourage Fable** via **`team_dispatch(model=cdp/fable)`** (`project_ask` = escape only) · lane `agent_bus:6006`. OpenAI (code lane): **`team_dispatch(op=generate, seat=cursor-sdk, model=cursor/gpt-5.6-terra, contract=light-bounded)`**; **`cursor/gpt-5.6-sol`** for **targeted low-token** consults — per `consult-routing` + `claude-ai-cdp-navigation`. **`openai/gpt-5.6-*` API** only for **life / checkout-free** non-code (¬ code-lane default; `decision:code-review-panel-cursor-substrate`) |
+| 2 | **Independent binder** — pick a family ≠ producer (table below) | **Any** cursor step-1 seat is **unsure** — including when that seat is already `cursor/claude-opus-5` | Anthropic: **`team_dispatch(model=cdp/opus-5)`** · **encourage Fable** via **`team_dispatch(model=cdp/fable)`** (IF6 = CLI project-ask) · lane `agent_bus:6006`. OpenAI (code lane): **`team_dispatch(op=generate, seat=cursor-sdk, model=cursor/gpt-5.6-terra, contract=light-bounded)`**; **`cursor/gpt-5.6-sol`** for **targeted low-token** consults — per `consult-routing` + `claude-ai-cdp-navigation`. **`openai/gpt-5.6-*` API** only for **life / checkout-free** non-code (¬ code-lane default; `decision:code-review-panel-cursor-substrate`) |
 | 3 | **Human operator** | True operator-only gate (credentials, irreversible non-revertible act, spend pause, IDE restart) **or** binders exhausted after CDP-stuck path (`cursor-auto` → terra/cursor-opus) still cannot bind a genuine *what we want* ambiguity | Cowork Ask / direct — **rare**; one question + recommended answer |
 
 ### Step-2 binder order (operator bind 2026-07-28)
@@ -120,7 +120,7 @@ fire. Human is not the first escape from a stuck CDP operator seat.
 | Ask operator to approve `cursor/gpt-5.6-terra`/`sol` as a consult binder | Standing authorization (2026-07-28) — fire and announce; ¬ re-gate |
 | `team_dispatch(model=gpt-5.6-terra)` bare slug on code-lane bind | `seat=cursor-sdk` + `model=cursor/gpt-5.6-terra` — bare/`openai/*` hits API |
 | Spend `cursor/gpt-5.6-sol` on broad open-ended review | `sol` is **targeted, low-token** only; `terra` is the OpenAI-family default on cursor-sdk |
-| Default Opus/Fable binder consult to bare `project_ask` | `team_dispatch(model=cdp/…)` — `project_ask` = escape / IF6 only; missions pass `purpose=` on `team_dispatch` |
+| Default Opus/Fable binder consult to a leftover `project_ask` recipe | `team_dispatch(model=cdp/…)` — IF6 = CLI; missions pass `purpose=` on `team_dispatch` |
 
 ## Composes with
 

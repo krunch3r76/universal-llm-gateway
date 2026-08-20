@@ -41,7 +41,6 @@ HIDDEN_FROM_IMPLEMENT = frozenset(
         "pipeline",
         "team_dispatch",
         "panel_dispatch",
-        "project_ask",
     }
 )
 

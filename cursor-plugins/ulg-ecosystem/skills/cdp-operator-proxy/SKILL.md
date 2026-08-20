@@ -37,15 +37,15 @@ only) · steady-state orchestration without the operator-proxy bus shape.
 
 | Plane | Surface | Continuity |
 |---|---|---|
-| **Transport** | IDE `project_ask` / Cowork converse | Per `execution_id`; `abort` kills **only** this handle |
-| **Bus** | Private `agent_bus.request` thread (inv 11) | DIRECTIVE → admit → nested SDK → CLOSEOUT; **survives** `project_ask` abort |
+| **Transport** | `team_dispatch(model=cdp/…)` / Cowork converse | Per dispatch `poll_hint`; do not MCP-abort |
+| **Bus** | Private `agent_bus.request` thread (inv 11) | DIRECTIVE → admit → nested SDK → CLOSEOUT; **survives** transport-handle loss |
 
-`abort(project_ask) ≢ abort(operator-proxy arc)` — commissions live on the bus thread.
-IDE polls the **request lane**, not "is `project_ask` running?"; `active_work` empty ≠
+Killing a converse handle ≢ aborting the operator-proxy arc — commissions live on the bus thread.
+IDE polls the **request lane**, not "is a satellite execution running?"; `manage(busy_status)` empty ≠
 operator work stopped.
 
-**Reconnect:** a dead `execution_id` is not reopenable; a warm `project_ask` submit (same
-`holder`, `converse=true`) may reattach the CSE if the lane registry holds it. Authoritative
+**Reconnect:** a dead dispatch id is not reopenable; `cse_session(op=followup)` into the same
+`chat_url` may reattach the CSE if a seat or dormant row holds it. Authoritative
 continuity = private request thread + `mark_read` before the next `request`.
 
 ### Three git planes on CLOSEOUT (a:28271 — shared vocabulary)
@@ -72,7 +72,7 @@ audit — vocabulary only.
 
 | Need | Move | Fired by |
 |---|---|---|
-| A turn **delivered** into a live attached CSE — wake, correction, advisory | **warm follow-up** — `project_ask(op=followup)` | cursor / IDE (inv 23) |
+| A turn **delivered** into a live attached CSE — wake, correction, advisory | **warm follow-up** — `cse_session(op=followup)` | cursor / IDE (inv 23) |
 | Uploaded Customize skills / refreshed life MCP to go live, or stale context reset | **new CDP window** — `team_dispatch(model=cdp/opus-5, purpose=operator-proxy, dispatch_thread_id=<SAME private lane>)` + `handoff_prompt` | cursor-auto, at this seat's request |
 
 Warm follow-up does **not** reload chips or MCP; a new window inherits no chat context beyond
@@ -138,7 +138,7 @@ separate plane.
 20. **Mission seat map.** Opus=operator · Fable=advisor · grok=reasoner · cursor-auto=executor. Framed multi-step: conductor — skill `directive-authoring-standard` D4. Default: bind→implement at will. Independent verify. cursor-auto modifiable. ¬ park executable ACs.
 21. **Authorize-triggers** — operator always approves; wait for click (inv 21). SOT: claude-ai-cowork-trigger-auth-gate.md.
 22. **Inform the operator — three planes.** **record** · **attention** (pager) · **story** (projector only). (a) `¬ author(operator, story_journal)`. (b) `awareness_msg(fact) ⇒ ∃ record(fact)`. (c) Suppress page only when human declared operator in *this* CSE. (d) Pager classes: **(1) Progress** — fleet-trust moves only; subject ¬ `COME TO IDE`. **(2) Mission debrief** — full debrief + stream-end sentence. **(3) Interrupt** — `COME TO IDE` only for IDE hand / operator-only gate. (e) life `notify`; absent ⇒ cursor request (inv 8). (f) Architecture-first register. (g) Audience = human principal. **Phone test:** readable without bus open.
-23. **In-chat delivery.** Retained CSE = live correspondent via `project_ask(followup)`. Identity: `chat_url ≻ registration_id ≻ execution_id`; one CSE per lane. **Park-on-WAKE** for long nests. **Delivery (b)** primary; bus WAKE fallback. Commission cursor for followup (inv 8). Inbound chat = continuation.
+23. **In-chat delivery.** Retained CSE = live correspondent via `cse_session(followup)`. Identity: `chat_url ≻ registration_id ≻ execution_id`; one CSE per lane. **Park-on-WAKE** for long nests. **Delivery (b)** primary; bus WAKE fallback. Commission cursor for followup (inv 8). Inbound chat = continuation.
 24. **Authority ≡ IDE − restart** — commission cursor-auto for IDE work; Customize sync per-slug only (inv 24).
 25. **Bus recency ≠ liveness** — fleet gate attestation authoritative when `fleet_gate_applied: true`.
 26. **Pre-wake observation** — life `fs` fleet-idle JSON; ¬ `agent_bus.request`.
@@ -313,7 +313,7 @@ cadence) and enqueues `continuity_hop=true`. Cursor-auto then fires
 |---|---|---|
 | **Fresh Cowork — this CSE is the operator** | Already in CDP | Boot checklist below — mint/continue **private** `request` lane; **one operator CSE per lane** (extras here are predecessors, not peers); **no** second CDP launch unless continuity row applies |
 | **Pick up after episode close / MISSION_CLOSEOUT residual** | Predecessor ended; successor needed | `agent_bus(tool="hop")` **before** you stop — inv 30 autonomous |
-| **Customize skill / MCP refresh must bind this stream** | Stale chips or connector | `agent_bus(tool="hop")` — **¬** `project_ask(followup)` (follow-up does not reload skills) |
+| **Customize skill / MCP refresh must bind this stream** | Stale chips or connector | `agent_bus(tool="hop")` — **¬** `cse_session(followup)` (follow-up does not reload skills) |
 | **IDE / code seat starts mission** | Not this seat | Cursor lead fires `team_dispatch` directly — you receive the booted mission here |
 
 **Continuity hop:** (1) handoff Leg-current; (2) `agent_bus(tool="hop", …)`; (3) receipt `continuity_hop=true`; (4) same lane; (5) wait for the push receipt — cursor-auto pastes `TYPE: SEAT_STAND_DOWN` into **this** CSE once successor `SEAT_REGISTRATION` confirms (`hop-push-receipt` charter G2/G4, a:29822); **¬** poll `successor_seated` / generate harvest to learn cutover (rejected pattern — 9440 turn-75 class: hours-long poll loop, false `status:failed` nine minutes before the real CLOSEOUT); (6) page stream-end after that receipt.

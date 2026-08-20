@@ -146,7 +146,7 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         dispatch_thread_id=<SAME private request lane>)`` with your ``handoff_prompt``.
         Triggers: episode/mission continuity pickup · Customize skill body went live ·
         stale context reset · predecessor ``MISSION_CLOSEOUT`` named next operator window.
-        **¬** mint a second private ``request`` lane. **¬** warm ``project_ask(followup)``
+        **¬** mint a second private ``request`` lane. **¬** warm ``cse_session(followup)``
         when chips/MCP/context need refresh — follow-up does not reload Customize skills.
         CLOSEOUT must quote ``execution_id`` + ``poll_hint`` (or honest transport halt).
         Predecessor stream may end only after successor launch is confirmed (inv 30).

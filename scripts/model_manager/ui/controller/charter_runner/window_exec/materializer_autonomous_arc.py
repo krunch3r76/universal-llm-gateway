@@ -17,7 +17,7 @@ Steps template (machine lane annotations — BINDING on mint):
 5. [ ] G5 — R-after · [consult:judgment_gap]   # or [inline] when folded into G4
 
 G1  Q (L0)           lead CDP Fable — ranked question table + Question set
-                     (team_dispatch model=cdp/fable / project_ask fable-5;
+                     (team_dispatch model=cdp/fable / CLI fable-5;
                      ¬ default Grok on bundled arc; closed-detent carve-out stays Grok).
 G2  A + Gate-2       cursor-sdk Grok — L1/L2 tables + dense spec
                      (doc_validate gates 6/8/9) + implement_ready assertion.
@@ -28,7 +28,7 @@ G2  A + Gate-2       cursor-sdk Grok — L1/L2 tables + dense spec
 G3  R-admit          Consult seat only (admitted by the next tick from G2's
                      CONSULT_PENDING). It owns primary
                      team_dispatch(model=cdp/opus-5)→poll_hint (from_agent=web-anthropic);
-                     MCP project_ask = escape only. Consult seat writes shared
+                     IF6 = CLI (MCP project_ask removed). Consult seat writes shared
                      provenance via consult_provenance_from_r_admit
                      (consultant_family=anthropic / consultant_substrate=web-anthropic).
                      Parse with fail-closed gate before worker resumes to G4.

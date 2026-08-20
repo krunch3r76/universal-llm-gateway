@@ -7,7 +7,7 @@ seat — dual-role under the same ``window_kind=consult`` host wire
 - ``consult_role: judgment_gap`` → host fires ``team_dispatch(model=cdp/opus-5)``
   for the path-sim judgment consult (auto-wake; no ``push_reminder`` handoff).
 - ``consult_role: r_admit`` → host fires ``team_dispatch(model=cdp/opus-5)`` for
-  R-admit; MCP ``project_ask`` = escape only.
+  R-admit; IF6 = CLI ``claude-ai-sync-jupiter project-ask`` (MCP ``project_ask`` removed).
 
 Consult seats must not dispatch nested consults (depth-1 only).
 """
@@ -50,7 +50,7 @@ Goal: Charter-runner LAYER CONSULT window {window_index} — {role} on
 agent-bus:{root_id}. The holder posted CONSULT_PENDING with
 consult_role: judgment_gap; this window owns primary consult via
 team_dispatch(model={seat}) submit→poll_hint→provenance (depth-1 only).
-MCP project_ask = escape.
+IF6 = CLI project-ask (MCP project_ask removed).
 </scope>"""
 
 
@@ -140,7 +140,7 @@ agent-bus:{root_id}. The autonomous holder posted CONSULT_PENDING with
 consult_role: judgment_gap; this window owns primary consult via
 team_dispatch(model=cdp/opus-5) submit→poll_hint→provenance (depth-1 only —
 no nested consult dispatch). Default executor: cursor-sdk Grok (unattended
-generate wire; Opus reviewer via cdp/ model-endpoint). MCP project_ask = escape.
+generate wire; Opus reviewer via cdp/ model-endpoint). IF6 = CLI project-ask (MCP project_ask removed).
 </scope>"""
 
 
@@ -152,7 +152,7 @@ agent-bus:{root_id}. The autonomous holder posted CONSULT_PENDING with
 consult_role: r_admit; this window owns primary R-admit via
 team_dispatch(model=cdp/opus-5) submit→poll_hint→E2 provenance (depth-1 only —
 no nested consult dispatch). Default executor: cursor-sdk Grok (unattended
-generate wire; Opus reviewer via cdp/ model-endpoint). MCP project_ask = escape.
+generate wire; Opus reviewer via cdp/ model-endpoint). IF6 = CLI project-ask (MCP project_ask removed).
 </scope>"""
 
 
@@ -168,7 +168,7 @@ tick-local ask grammar.
 [consult-independence] fire the consult via team_dispatch(model=cdp/opus-5,
 contract=light-bounded) to web-anthropic Opus — a DIFFERENT substrate/family than
 the cursor-sdk seat running this window. Never self-answer the judgment gap.
-MCP project_ask is escape only (IF6 / satellite-direct).
+IF6 / satellite-direct is CLI project-ask (MCP project_ask removed).
 [sealed-unattended] CDP prompt MUST include the sealed unattended clause
 (a:26156 / claude-ai-cdp-navigation § Sealed / unattended): answer with best
 judgment; state assumptions; ¬ blocking wait for clarifying questions; ESCALATE
@@ -200,7 +200,7 @@ def _invariants_r_admit(root_id: str) -> str:
 pinned R prompt URI / dense spec corpus on the root CHECKPOINT; do not re-open scope.
 [R-independence] fire R-admit via team_dispatch(model=cdp/opus-5, contract=light-bounded)
 to web-anthropic Opus — a DIFFERENT substrate/family than the cursor-sdk seat running
-this window. Never self-assess R. MCP project_ask is escape only (IF6 / satellite-direct).
+this window. Never self-assess R. IF6 / satellite-direct is CLI project-ask (MCP project_ask removed).
 [sealed-unattended] R prompt MUST include the sealed unattended clause (a:26156 /
 claude-ai-cdp-navigation § Sealed / unattended): answer with best judgment; state
 assumptions; ¬ blocking wait for clarifying questions; ESCALATE flag allowed when
@@ -220,10 +220,10 @@ consultant_family=anthropic / consultant_substrate=web-anthropic (reviewer famil
 not this firing seat).
 [OF2-resume] if the window ends mid-poll, Next-pickup MUST keep CONSULT_PENDING +
 consult_role: r_admit + poll_hint / from=web-anthropic bus-turn reference (replaces
-execution_id-only resume used by project_ask escape) so the next tick re-admits.
+execution_id-only resume used by CLI IF6) so the next tick re-admits.
 [IF6-escape] if cdp/ cannot resume cross-window (lost poll_hint / bus turn), surface
-IF6 and use MCP project_ask escape — holder-fired dual-host remains live; do not
-delete emergency path.
+IF6 and use CLI ``claude-ai-sync-jupiter project-ask`` (MCP project_ask removed) —
+holder-fired dual-host remains live; do not delete emergency path.
 [window] end with exactly one CHECKPOINT on the root, then stop — no worker resume here.
 [stale-r-corpus-sha] Before firing cdp/, confirm CHECKPOINT Sidecars pins live
 dense-spec hash on the **same row** as the dense-spec URI
@@ -267,9 +267,9 @@ def _task_guidance_judgment(
 - On incomplete poll: Next-pickup = CONSULT_PENDING + consult_role: judgment_gap +
   poll_hint / from=web-anthropic bus-turn anchor (OF2).
 
-### Escape — MCP project_ask (IF6 / satellite-direct / holder emergency only)
-- project_ask(op=submit, prompt_uri or inline prompt, converse=true,
-  no_project_uuid=true, model=opus-5) → poll to content_proof/archive_uri.
+### Escape — CLI project-ask (IF6 / satellite-direct / holder emergency only)
+- scripts/cortex/claude-ai-sync-jupiter project-ask --converse --no-uuid
+  --model opus-5 (MCP project_ask removed).
 
 ## Acceptance criteria
 1. One consult reply harvested with resolvable evidence URI.
@@ -323,9 +323,9 @@ def _task_guidance_r_admit(
 - On incomplete poll: Next-pickup = CONSULT_PENDING + consult_role: r_admit +
   poll_hint / from=web-anthropic bus-turn anchor (OF2).
 
-### Escape — MCP project_ask (IF6 / satellite-direct / holder emergency only)
-- project_ask(op=submit, prompt_uri=cortex://…, converse=true, no_project_uuid=true,
-  model=opus-5) → poll to content_proof/archive_uri; resume via execution_id.
+### Escape — CLI project-ask (IF6 / satellite-direct / holder emergency only)
+- scripts/cortex/claude-ai-sync-jupiter project-ask --converse --no-uuid
+  --model opus-5 (MCP project_ask removed).
 
 ## Acceptance criteria
 1. R-admit harvested with content_proof/archive_uri (or cdp/ harvest URI) and
@@ -357,7 +357,7 @@ _MCP_CAPABILITIES_CONSULT_HOST = """\
 <mcp_capabilities>
 LIFE/CORTEX MCP: ON — cortex, agent_bus, fs (cortex sandbox).
 CODE/VORTEX MCP: ON — workspaces fs, team_dispatch (primary consult:
-model=cdp/opus-5), agent_bus wait/poll_hint, project_ask (escape only).
+model=cdp/opus-5), agent_bus wait/poll_hint, CLI project-ask (IF6; MCP project_ask removed).
 This seat owns cdp/ submit→poll_hint (depth-1 external boundary). Nested
 cursor-sdk consult fan-out is forbidden in this window.
 </mcp_capabilities>"""
@@ -371,7 +371,7 @@ def _output_format_judgment(root_id: str, window_index: int) -> str:
 Post the CHECKPOINT on agent-bus:{root_id} with consult provenance fields filled.
 Include consult_thread URI + verdict + consultant_family + consultant_substrate.
 On incomplete poll preserve CONSULT_PENDING + consult_role: judgment_gap +
-poll_hint / from=web-anthropic bus-turn (or execution_id when on project_ask escape).
+poll_hint / from=web-anthropic bus-turn (or CLI harvest id on IF6).
 When self-resolution fails, emit ESCALATE(reason=…, minimal_question=…,
 provisional_verdict=…) alongside best-judgment answer — do not block in-window.
 Then stop — the next tick admits the worker resume window.
@@ -387,7 +387,7 @@ def _output_format_r_admit(root_id: str, window_index: int) -> str:
 Post the CHECKPOINT on agent-bus:{root_id} with the four shared consult provenance
 fields (consult_thread, verdict, consultant_family, consultant_substrate).
 On incomplete poll preserve CONSULT_PENDING + consult_role: r_admit + poll_hint /
-from=web-anthropic bus-turn (or execution_id when on project_ask escape).
+from=web-anthropic bus-turn (or CLI harvest id on IF6).
 When self-resolution fails, emit ESCALATE(reason=…, minimal_question=…,
 provisional_verdict=…) alongside best-judgment answer — do not block in-window.
 Then stop — the next tick re-admits R-admit consult or worker resume after proof.

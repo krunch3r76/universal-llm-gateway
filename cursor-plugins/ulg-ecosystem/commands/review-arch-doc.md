@@ -306,7 +306,7 @@ transport.
    (skill delivery per § `<invariants>` — inline non-slugs; engage Claude slugs)
 2. **Answer-3 preflight:** stage corpus + prompt to `cortex://notes/system/threads/{arc-slug}/…` with source coverage for **every area the doc asserts**; list omitted paths explicitly; **reject dispatch** if preflight incomplete **or** required skill inlines missing (Use the `claude-ai-cdp-navigation` skill)
 3. **Required** ≤25-line bus pointer on arc coordination thread (URI table only — omittable only for one-shot non-arc asks)
-4. `team_dispatch(op=generate, model=cdp/opus-5, contract=light-bounded, sidecar_ref=cortex://…, dispatch_thread_id=…)` — wait via `poll_hint` / `agent_bus.wait` until `archive_uri`. **Escape only:** `project_ask(op=submit, …)` + MCP poll when `team_dispatch` CDP unavailable
+4. `team_dispatch(op=generate, model=cdp/opus-5, contract=light-bounded, sidecar_ref=cortex://…, dispatch_thread_id=…)` — wait via `poll_hint` / `agent_bus.wait` until `archive_uri`. **Escape only:** CLI `scripts/cortex/claude-ai-sync-jupiter project-ask` when `team_dispatch` CDP unavailable
 5. **Submit before turn close** — suppress push reminder when CDP prompts the same thread (a25444)
 6. Triage harvest per validation contract below
 

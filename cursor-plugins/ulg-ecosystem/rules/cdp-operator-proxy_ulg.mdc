@@ -42,7 +42,7 @@ trigger_match_terms:
 
 **Streaming stop (BINDING — inv 30):** `end(stream) ⇔ continuity_handoff ∨ TYPE:MISSION_CLOSEOUT`. A leg DISPOSITION does **not** authorize stopping. **Persistent-lane carve-out:** on `bus_lifecycle:persistent` + long-lived operator, `MISSION_CLOSEOUT` only for true mission/arc end or forced CSE refresh — a landed roadmap row / work-unit complete is a Leg (stream continues; standing handoff). **Going-quiet ≡ stop** on that lane (report while continuing; drive in-flight dispatches; silent quiet with work in flight is the defect — name wake if you must park). **Self-scheduled wake:** arm **both** Monitor + `send_later` at **first dispatch** with work in flight; re-arm `send_later` every turn; tear down at true close. Wake bounds silence — does **not** prevent stopping. Wake notification is **not** the user (gates stay open). Monitor timeout ambiguity UNRESOLVED (armed 3600000 / reported 1800000 / docs say ignored when persistent). Reliability unprobed-from-cursor-sdk — not a hard SLA. Guide: `cortex://notes/system/specs/cdp-seat-wake-heartbeat.md`. First-dispatch inject: mission briefing (`operator_proxy_wake_brief`). Skill § Self-scheduled wake. Episodic exit-as-default is **not** retired. Unexpected stop ⇒ awareness `notify` tag `cse-stream-stop` (cursor fires if operator seat already quiet).
 
-**Mission default (BINDING):** CDP Opus mission launch (`purpose=operator-proxy|mission` via `team_dispatch(model=cdp/…, purpose=…)` primary; `project_ask(purpose=…)` escape) ⇒ **Opus = operator · Fable = advisor · cursor/grok-4.6 = reasoner · cursor-auto = executor · tick = admitter**. Auto-inject on mission submit. Substrate hypotheses → reasoner (`contract: investigate`, inv 28). Fable escalate: prefer `team_dispatch(model=cdp/fable)`. Tick posting + B1/B2 nest stall: `cortex://notes/system/specs/cursor-auto-tick-work-posting.md`.
+**Mission default (BINDING):** CDP Opus mission launch (`purpose=operator-proxy|mission` via `team_dispatch(model=cdp/…, purpose=…)` primary; IF6 = CLI `scripts/cortex/claude-ai-sync-jupiter project-ask`) ⇒ **Opus = operator · Fable = advisor · cursor/grok-4.6 = reasoner · cursor-auto = executor · tick = admitter**. Auto-inject on mission submit. Substrate hypotheses → reasoner (`contract: investigate`, inv 28). Fable escalate: prefer `team_dispatch(model=cdp/fable)`. Tick posting + B1/B2 nest stall: `cortex://notes/system/specs/cursor-auto-tick-work-posting.md`.
 
 **Thread privacy:** operator-proxy DIRECTIVE/CLOSEOUT/DISPOSITION live on a **private `request` thread** — ¬ the IDE orchestrator’s endeavor root (cite root in `arc:` only).
 
@@ -52,7 +52,7 @@ trigger_match_terms:
 **Doctrine:** `decision:operator-proxy-seat-posture`.  
 **Transport sibling:** `claude-ai-cdp-navigation` for CDP/Jupiter mechanics (incl. warm same-CSE follow-up).
 
-**Session abort (BINDING):** IDE/cursor lead **¬** `project_ask(op="abort")`, cancel cursor-sdk dispatches, or kill in-flight executions without **explicit operator authorization** for that session — poll, read closeout, paste status into live CDP converse; operator supersedes on private lane. Rule: `session-abort-authorization_ulg.mdc`.
+**Session abort (BINDING):** IDE/cursor lead **¬** cancel cursor-sdk dispatches or kill in-flight executions without **explicit operator authorization** for that session — poll, read closeout, paste status into live CDP converse; operator supersedes on private lane. MCP `project_ask` abort is gone. Rule: `session-abort-authorization_ulg.mdc`.
 
 **Operator restart (BINDING):** `agent_bus.request` with `contract: propagate` — cursor-auto mints propagation rows and coordinates drain-gated `sync_restart` (not tier-M `execute` + `manage.*`). Skill § Tier-M / propagate templates.
 
@@ -60,7 +60,7 @@ trigger_match_terms:
 
 **claude.ai resilient to all service restarts (BINDING — 2026-08-13):** includes `mcp` **and** `cdp_ask`. `drop(attach) ∧ ¬end(CSE)`. Recover after `wait_healthy` (followup/reattach by `chat_url`, or continuity hop for tooling chips). IDE/lead ¬ skip `mcp` or `cdp_ask` `sync_restart` citing “would drop Cowork attach.” Rule: `restart-drain-discipline` § CSE vs service.
 
-**Transport vs bus (BINDING):** `project_ask` = IDE↔Cowork converse transport; operator commission = **`agent_bus.request` on private request thread**. `abort(project_ask)` does **not** cancel bus work — poll the request lane, not `active_work` alone. Reconnect: warm submit same `holder` + `converse=true` (Cowork CSE) **or** continue on bus thread (`mark_read` → next `request`).
+**Transport vs bus (BINDING):** `team_dispatch(model=cdp/…)` / `cse_session(followup)` = IDE↔Cowork converse transport; operator commission = **`agent_bus.request` on private request thread**. Killing a transport handle does **not** cancel bus work — poll the request lane, not `active_work` alone. Reconnect: `cse_session(op=followup)` same `holder` (Cowork CSE) **or** continue on bus thread (`mark_read` → next `request`).
 
 ## When
 

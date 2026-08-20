@@ -360,13 +360,13 @@ def compose_view(
         "findings": findings,
         "life_reachability": {
             "live_probe_verbs_on_life": (
-                "forbidden (manage/observability/project_ask = code)"
+                "forbidden (manage/observability = code)"
             ),
             "life_path": (
                 f"fs(op=read, path={SNAPSHOT_URI!r}) after script --publish "
                 "(memoized; not a live probe)"
             ),
-            "code_path": "script | manage busy_status | project_ask active_work",
+            "code_path": "script | manage busy_status",
         },
     }
 

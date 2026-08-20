@@ -67,6 +67,11 @@ def _configure_for_path(path: str) -> None:
         _purge_namespace("mcp_events", "services/mcp-server")
         _ensure_path(MCP_SERVER, position=0)
         return
+    if path.startswith(_path_str(REPO_ROOT / "tests" / "unit" / "mcp_server")):
+        _purge_namespace("tools", "services/mcp-server")
+        _purge_namespace("mcp_events", "services/mcp-server")
+        _ensure_path(MCP_SERVER, position=0)
+        return
     if path.startswith(_path_str(REPO_ROOT / "tests")):
         _purge_namespace("src", "services/_universal-llm-gateway")
         _ensure_path(GATEWAY, position=0)

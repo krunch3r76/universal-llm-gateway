@@ -1,4 +1,4 @@
-"""MCP relay tests for project_ask op=followup."""
+"""MCP relay tests for cse_session op=followup / resolve_attended."""
 
 from __future__ import annotations
 
@@ -14,12 +14,27 @@ if str(_MCP_SERVER) not in sys.path:
     sys.path.insert(0, str(_MCP_SERVER))
 
 
-@pytest.fixture
-def project_ask_module(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("PROJECT_ASK_URL", "http://satellite:8770")
-    import tools.project_ask as mod
+def _purge_foreign_tools() -> None:
+    tools_mod = sys.modules.get("tools")
+    tools_file = (getattr(tools_mod, "__file__", None) or "").replace("\\", "/")
+    if tools_mod is None or "mcp-server" in tools_file:
+        return
+    for key in list(sys.modules):
+        if key == "tools" or key.startswith("tools."):
+            del sys.modules[key]
 
-    return importlib.reload(mod)
+
+@pytest.fixture
+def cse_session_module(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("PROJECT_ASK_URL", "http://satellite:8770")
+    if str(_MCP_SERVER) not in sys.path:
+        sys.path.insert(0, str(_MCP_SERVER))
+    _purge_foreign_tools()
+    import tools.cse_session as session_mod
+    import tools.cse_session_warm as warm_mod
+
+    importlib.reload(warm_mod)
+    return importlib.reload(session_mod)
 
 
 def _tool_fn(mod):
@@ -33,14 +48,16 @@ def _tool_fn(mod):
 
             return _decorator
 
-    mod.register_project_ask_tool(_FakeMcp())
-    assert captured, "project_ask tool not registered"
+    mod.register_cse_session_tool(_FakeMcp())
+    assert captured, "cse_session tool not registered"
     return captured[0]
 
 
 def test_followup_relay_timeout_uses_caller_budget(
-    project_ask_module, monkeypatch: pytest.MonkeyPatch
+    cse_session_module, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import tools.cse_session_warm as warm
+
     relay = MagicMock(
         return_value={
             "ok": True,
@@ -48,14 +65,14 @@ def test_followup_relay_timeout_uses_caller_budget(
             "send_verified": True,
         }
     )
-    monkeypatch.setattr(project_ask_module, "_relay", relay)
+    monkeypatch.setattr(warm, "_relay", relay)
     recorded: list[dict] = []
     monkeypatch.setattr(
-        project_ask_module,
+        warm,
         "record",
         lambda signal, **kwargs: recorded.append({"signal": signal, **kwargs}),
     )
-    tool_fn = _tool_fn(project_ask_module)
+    tool_fn = _tool_fn(cse_session_module)
     result = tool_fn(
         op="followup",
         registration_id="reg-1",
@@ -66,40 +83,46 @@ def test_followup_relay_timeout_uses_caller_budget(
     relay.assert_called_once()
     assert relay.call_args.kwargs["timeout_s"] == 60.0
     assert relay.call_args.args[1] == "/v1/project-ask/followups"
-    assert recorded[0]["signal"] == "mcp.project_ask.followup"
+    assert recorded[0]["signal"] == "mcp.cse_session.followup"
 
 
-def test_followup_no_playwright_imports_in_module(project_ask_module) -> None:
-    source = project_ask_module.__file__
-    assert source is not None
-    text = Path(source).read_text(encoding="utf-8")
-    import_lines = [
-        line
-        for line in text.splitlines()
-        if line.startswith("import ") or line.startswith("from ")
-    ]
-    joined = "\n".join(import_lines)
-    assert "playwright" not in joined
-    assert "claude_bundles" not in joined
+def test_followup_no_playwright_imports_in_module(cse_session_module) -> None:
+    for path in (
+        cse_session_module.__file__,
+        (_MCP_SERVER / "tools" / "cse_session_warm.py"),
+    ):
+        text = Path(path).read_text(encoding="utf-8")
+        import_lines = [
+            line
+            for line in text.splitlines()
+            if line.startswith("import ") or line.startswith("from ")
+        ]
+        joined = "\n".join(import_lines)
+        assert "playwright" not in joined
+        assert "claude_bundles" not in joined
 
 
 def test_followup_identity_omitted_relays_to_satellite(
-    project_ask_module, monkeypatch: pytest.MonkeyPatch
+    cse_session_module, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import tools.cse_session_warm as warm
+
     relay = MagicMock(return_value={"ok": False, "error": "no_attended_cse"})
-    monkeypatch.setattr(project_ask_module, "_relay", relay)
-    tool_fn = _tool_fn(project_ask_module)
+    monkeypatch.setattr(warm, "_relay", relay)
+    tool_fn = _tool_fn(cse_session_module)
     result = tool_fn(op="followup", prompt_text="x")
     relay.assert_called_once()
     assert result["error"] == "no_attended_cse"
 
 
 def test_followup_forwards_cdp_url(
-    project_ask_module, monkeypatch: pytest.MonkeyPatch
+    cse_session_module, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import tools.cse_session_warm as warm
+
     relay = MagicMock(return_value={"ok": True, "send_verified": True})
-    monkeypatch.setattr(project_ask_module, "_relay", relay)
-    tool_fn = _tool_fn(project_ask_module)
+    monkeypatch.setattr(warm, "_relay", relay)
+    tool_fn = _tool_fn(cse_session_module)
     tool_fn(
         op="followup",
         chat_url="https://claude.ai/cowork/cse_x",
@@ -111,8 +134,10 @@ def test_followup_forwards_cdp_url(
 
 
 def test_resolve_attended_maps_404(
-    project_ask_module, monkeypatch: pytest.MonkeyPatch
+    cse_session_module, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import tools.cse_session_warm as warm
+
     relay = MagicMock(
         return_value={
             "code": "no_attended_cse",
@@ -122,8 +147,8 @@ def test_resolve_attended_maps_404(
             "data": {"candidates_considered": 0, "shadow_urls": []},
         }
     )
-    monkeypatch.setattr(project_ask_module, "_relay_attended", relay)
-    tool_fn = _tool_fn(project_ask_module)
+    monkeypatch.setattr(warm, "relay_attended", relay)
+    tool_fn = _tool_fn(cse_session_module)
     result = tool_fn(op="resolve_attended")
     assert result["code"] == "no_attended_cse"
     assert result["retryable"] is True
@@ -131,9 +156,11 @@ def test_resolve_attended_maps_404(
 
 
 def test_followup_no_prompt(
-    project_ask_module, monkeypatch: pytest.MonkeyPatch
+    cse_session_module, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(project_ask_module, "_relay", MagicMock())
-    tool_fn = _tool_fn(project_ask_module)
+    import tools.cse_session_warm as warm
+
+    monkeypatch.setattr(warm, "_relay", MagicMock())
+    tool_fn = _tool_fn(cse_session_module)
     result = tool_fn(op="followup", registration_id="reg-1")
     assert result == {"ok": False, "error": "no_prompt"}

@@ -34,7 +34,7 @@ on the default gradual posture below.
 
 The default `/overhaul` run is **autonomous supervised** and **CDP-native** (Jupiter
 `team_dispatch(model=cdp/…)` per Use the `claude-ai-cdp-navigation` skill;
-`project_ask` = escape only). Cursor orchestrates;
+IF6 = CLI project-ask). Cursor orchestrates;
 deep-tier reasoning goes to web-anthropic via CDP; Stargate pipelines run only when
 the user explicitly approves each call.
 
@@ -144,7 +144,7 @@ not after every green step. Include tier log (what ran autonomous vs what paused
 Invoke via `team_dispatch(model=cdp/…)` (`sidecar_ref` / `packet_path` after
 staging); stage per Use the
 `claude-ai-cdp-navigation` skill (`workspaces://` is readable — package hot paths
-anyway). **Escape only:** bare `project_ask` when `team_dispatch` CDP unavailable
+anyway). **Escape only:** CLI `scripts/cortex/claude-ai-sync-jupiter project-ask` when `team_dispatch` CDP unavailable
 or `purpose=` inject required. Legacy `agent_bus` pointer posts remain valid when MCP is unavailable.
 
 **Approval vs transport** (operator bind 2026-07-19; autonomy ratified 2026-07-19):
@@ -235,7 +235,7 @@ into a web-claude densification pass. Composer scaffolding is reserved for the
 
 When bulk is insufficient or skipped, build and submit a modularize packet via
 **`team_dispatch(model=cdp/opus-5)`** (Use the `claude-ai-cdp-navigation` skill;
-`project_ask` = escape only) instead of
+IF6 = CLI project-ask) instead of
 calling `/modularize` or waiting on manual operator push:
 
 1. Gather artifacts per `/modularize` §2.1–2.2 (source, consumers via grep, composed `<invariants>`, `<architecture>` replacement table for violations in this file).
@@ -264,8 +264,8 @@ calling `/modularize` or waiting on manual operator push:
    `/no-silent-inference` — additive only; ¬ substitutes for the three inlines.
 3. Stage corpus under `cortex://notes/system/threads/{arc-slug}/source/` (source file, consumer manifest). See Use the `claude-ai-cdp-navigation` skill § web-anthropic-cdp dispatch constraints.
 4. Write `tmp/modularize-plans/{sanitized-name}-packet.md` — six-block format from `architecture-handoff-protocol.mdc` (same block table as `/modularize` §2.3). Required skill **inlines** live inside `<invariants>` (fleet rule — Use the `claude-ai-cdp-navigation` skill).
-5. Submit via `team_dispatch(op=generate, model=cdp/opus-5, contract=light-bounded, packet_path=tmp/modularize-plans/…, dispatch_thread_id=<arc-thread>)` — wait via `poll_hint` / `agent_bus.wait` until `archive_uri` present. **Escape only:** `project_ask(op=submit, …)` then poll via `project_ask(op=poll, execution_id=<id>)`. **NEVER curl localhost :8765** (web-fetcher) for `/v1/project-ask/*` — MCP poll only on escape path (cdp-ask is :8770 via `PROJECT_ASK_URL`).
-6. **Wait for harvest (bounded).** After CDP submit, wait via `poll_hint` — or MCP `project_ask(op=poll, …)` on escape path only — not curl/REST — until `archive_uri` is present **or** the **lead wait budget** elapses, whichever comes first.
+5. Submit via `team_dispatch(op=generate, model=cdp/opus-5, contract=light-bounded, packet_path=tmp/modularize-plans/…, dispatch_thread_id=<arc-thread>)` — wait via `poll_hint` / `agent_bus.wait` until `archive_uri` present. **Escape only:** CLI `scripts/cortex/claude-ai-sync-jupiter project-ask`. **NEVER curl localhost :8765** (web-fetcher) for `/v1/project-ask/*` (cdp-ask is :8770 via `PROJECT_ASK_URL`).
+6. **Wait for harvest (bounded).** After CDP submit, wait via `poll_hint` / `agent_bus.wait` — not curl/REST — until `archive_uri` is present **or** the **lead wait budget** elapses, whichever comes first.
    - **Lead wait budget:** wall-clock **420 seconds** from submit (`N` — **provisional-v0**). This is **separate from** satellite `timeout_s` (idle semantics pause during active Opus — see Use the `claude-ai-cdp-navigation` skill § Idle vs in-flight).
    - **Dogfood calibration:** record wall-time-to-`archive_uri` on deep-tier dispatches; if median healthy harvest over **≥5** dispatches exceeds **N**, raise **N** (or promote deferred SLOC-tiering per Q11).
    - Today's poll surface does not expose tool progress — treat `status=running` as inconclusive until harvest or budget expiry.
@@ -279,7 +279,7 @@ calling `/modularize` or waiting on manual operator push:
       - **Runtime gate (green path):** run `scripts/check-imports` on affected packages (or unit tests touching the split module) — must pass before **green** apply; failure → **yellow CONCERN**, never silent green.
       - **Pass** static + runtime → **green** apply with CHECKPOINT note (below). **Any static fail, runtime fail, or ambiguous boundary** → **yellow CONCERN** block before apply.
    c. **Re-poll before abort:** Immediately before abort, **re-poll `archive_uri` once**. If present → cancel fallback; audit CDP plan per step 7; proceed on tier. If still absent → apply in-seat plan per tier rule from (b), **then** abort hygiene:
-      - `project_ask(op=abort, execution_id=…)` on the in-flight dispatch (**escape path only**).
+      - operator supersede on the private request lane (MCP abort is gone).
       - Poll until `status=aborted` confirmed.
       - **Do not re-submit** the same packet; **do not** new `--register` to "replace" the execution (Use the `claude-ai-cdp-navigation` skill § Anti-redispatch).
    d. **CHECKPOINT note (required on expiry path):**
@@ -387,7 +387,7 @@ evidence verification — do not fork grammar into this command. `/overhaul` doe
 
 | Tier | Trigger | Transport |
 |---|---|---|
-| **Deep / cross-subsystem** | Multiple changed packages, external callers, or yellow/red scope per three-tier model | CDP `team_dispatch(model=cdp/opus-5)` bus-nudge — **answer-3 preflight (reject-incomplete):** stage cortex corpus under `cortex://notes/system/threads/{arc-slug}/…` with **every external caller** of each changed public symbol + omission-disclosure for unstaged paths the verdict would need; build six-block packet to `tmp/reviews/overhaul-{subsystem}-cdp-review-packet.md`; **required** ≤25-line bus pointer on arc coordination thread (URI table only); `team_dispatch(op=generate, model=cdp/opus-5, sidecar_ref=cortex://…, dispatch_thread_id=…)`, wait via `poll_hint` until `archive_uri`; **escape:** `project_ask` submit+poll when CDP team_dispatch unavailable; **do not** use `team_dispatch` handoff + manual operator push (friction a25444) |
+| **Deep / cross-subsystem** | Multiple changed packages, external callers, or yellow/red scope per three-tier model | CDP `team_dispatch(model=cdp/opus-5)` bus-nudge — **answer-3 preflight (reject-incomplete):** stage cortex corpus under `cortex://notes/system/threads/{arc-slug}/…` with **every external caller** of each changed public symbol + omission-disclosure for unstaged paths the verdict would need; build six-block packet to `tmp/reviews/overhaul-{subsystem}-cdp-review-packet.md`; **required** ≤25-line bus pointer on arc coordination thread (URI table only); `team_dispatch(op=generate, model=cdp/opus-5, sidecar_ref=cortex://…, dispatch_thread_id=…)`, wait via `poll_hint` until `archive_uri`; **escape:** CLI `scripts/cortex/claude-ai-sync-jupiter project-ask` when CDP team_dispatch unavailable; **do not** use `team_dispatch` handoff + manual operator push (friction a25444) |
 | **Narrow / single-subsystem** | Single package, ≤2 consumers, green tier | In-seat Grok High or `team_dispatch(op=generate, seat=cursor-sdk, contract=light-bounded)` on staged diff — no open web thread, no push reminder |
 
 **Deep tier packet** — six-block; skill delivery per Use the `claude-ai-cdp-navigation`
@@ -712,8 +712,8 @@ summary) and ask the user before firing the CDP Sonnet draft. Skip this step
 entirely if the user defers architecture doc work.
 
 **Gradual transport (BINDING):** Jupiter CDP `team_dispatch(model=cdp/sonnet-5)`
-(Claude.ai subscription). Prefer `team_dispatch(model=cdp/…)`; `project_ask` =
-escape only (SOT: `consult-routing` § Surface gate). Use the
+(Claude.ai subscription). Prefer `team_dispatch(model=cdp/…)`; IF6 =
+CLI `scripts/cortex/claude-ai-sync-jupiter project-ask` (SOT: `consult-routing` § Surface gate). Use the
 `claude-ai-cdp-navigation` skill.
 
 **Forbidden on gradual:** Stargate `doc-generate` / `curl … model=doc-generate`
@@ -755,8 +755,7 @@ team_dispatch(
 # → poll_hint; wait until archive_uri is set
 ```
 
-**Escape only:** `project_ask(op=submit, …, model=sonnet-5)` →
-`project_ask(op="poll", execution_id="<id>")`.
+**Escape only:** CLI `scripts/cortex/claude-ai-sync-jupiter project-ask --converse --no-uuid --model sonnet-5`.
 
 4. **Materialize draft artifacts** from harvest / archive:
 
@@ -895,7 +894,7 @@ Do not split code and doc updates into separate commits.
   pipeline step is approved (`code-review` or frontier `doc-generate`)
 - CDP legs (steps 4 deep, 9 draft, 11): cortex stage + `team_dispatch(model=cdp/…)` (+ optional
   ≤25-line bus pointer) — ¬ inline packet content in thread posts; ¬ default to
-  `team_dispatch` handoff + manual push (a25444). **Escape:** `project_ask` when
+  `team_dispatch` handoff + manual push (a25444). **Escape:** CLI project-ask when
   team_dispatch CDP unavailable
 - ¬ modify `scripts/modularize` — it works as-is, this command calls it
 - ¬ apply suggestion-level findings without explicit user instruction
@@ -943,7 +942,7 @@ on the default gradual posture below.
 
 The default `/overhaul` run is **autonomous supervised** and **CDP-native** (Jupiter
 `team_dispatch(model=cdp/…)` per Use the `claude-ai-cdp-navigation` skill;
-`project_ask` = escape only). Cursor orchestrates;
+IF6 = CLI project-ask). Cursor orchestrates;
 deep-tier reasoning goes to web-anthropic via CDP; Stargate pipelines run only when
 the user explicitly approves each call.
 
@@ -1053,7 +1052,7 @@ not after every green step. Include tier log (what ran autonomous vs what paused
 Invoke via `team_dispatch(model=cdp/…)` (`sidecar_ref` / `packet_path` after
 staging); stage per Use the
 `claude-ai-cdp-navigation` skill (`workspaces://` is readable — package hot paths
-anyway). **Escape only:** bare `project_ask` when `team_dispatch` CDP unavailable
+anyway). **Escape only:** CLI `scripts/cortex/claude-ai-sync-jupiter project-ask` when `team_dispatch` CDP unavailable
 or `purpose=` inject required. Legacy `agent_bus` pointer posts remain valid when MCP is unavailable.
 
 **Approval vs transport** (operator bind 2026-07-19; autonomy ratified 2026-07-19):
@@ -1144,7 +1143,7 @@ into a web-claude densification pass. Composer scaffolding is reserved for the
 
 When bulk is insufficient or skipped, build and submit a modularize packet via
 **`team_dispatch(model=cdp/opus-5)`** (Use the `claude-ai-cdp-navigation` skill;
-`project_ask` = escape only) instead of
+IF6 = CLI project-ask) instead of
 calling `/modularize` or waiting on manual operator push:
 
 1. Gather artifacts per `/modularize` §2.1–2.2 (source, consumers via grep, composed `<invariants>`, `<architecture>` replacement table for violations in this file).
@@ -1173,8 +1172,8 @@ calling `/modularize` or waiting on manual operator push:
    `/no-silent-inference` — additive only; ¬ substitutes for the three inlines.
 3. Stage corpus under `cortex://notes/system/threads/{arc-slug}/source/` (source file, consumer manifest). See Use the `claude-ai-cdp-navigation` skill § web-anthropic-cdp dispatch constraints.
 4. Write `tmp/modularize-plans/{sanitized-name}-packet.md` — six-block format from `architecture-handoff-protocol.mdc` (same block table as `/modularize` §2.3). Required skill **inlines** live inside `<invariants>` (fleet rule — Use the `claude-ai-cdp-navigation` skill).
-5. Submit via `team_dispatch(op=generate, model=cdp/opus-5, contract=light-bounded, packet_path=tmp/modularize-plans/…, dispatch_thread_id=<arc-thread>)` — wait via `poll_hint` / `agent_bus.wait` until `archive_uri` present. **Escape only:** `project_ask(op=submit, …)` then poll via `project_ask(op=poll, execution_id=<id>)`. **NEVER curl localhost :8765** (web-fetcher) for `/v1/project-ask/*` — MCP poll only on escape path (cdp-ask is :8770 via `PROJECT_ASK_URL`).
-6. **Wait for harvest (bounded).** After CDP submit, wait via `poll_hint` — or MCP `project_ask(op=poll, …)` on escape path only — not curl/REST — until `archive_uri` is present **or** the **lead wait budget** elapses, whichever comes first.
+5. Submit via `team_dispatch(op=generate, model=cdp/opus-5, contract=light-bounded, packet_path=tmp/modularize-plans/…, dispatch_thread_id=<arc-thread>)` — wait via `poll_hint` / `agent_bus.wait` until `archive_uri` present. **Escape only:** CLI `scripts/cortex/claude-ai-sync-jupiter project-ask`. **NEVER curl localhost :8765** (web-fetcher) for `/v1/project-ask/*` (cdp-ask is :8770 via `PROJECT_ASK_URL`).
+6. **Wait for harvest (bounded).** After CDP submit, wait via `poll_hint` / `agent_bus.wait` — not curl/REST — until `archive_uri` is present **or** the **lead wait budget** elapses, whichever comes first.
    - **Lead wait budget:** wall-clock **420 seconds** from submit (`N` — **provisional-v0**). This is **separate from** satellite `timeout_s` (idle semantics pause during active Opus — see Use the `claude-ai-cdp-navigation` skill § Idle vs in-flight).
    - **Dogfood calibration:** record wall-time-to-`archive_uri` on deep-tier dispatches; if median healthy harvest over **≥5** dispatches exceeds **N**, raise **N** (or promote deferred SLOC-tiering per Q11).
    - Today's poll surface does not expose tool progress — treat `status=running` as inconclusive until harvest or budget expiry.
@@ -1188,7 +1187,7 @@ calling `/modularize` or waiting on manual operator push:
       - **Runtime gate (green path):** run `scripts/check-imports` on affected packages (or unit tests touching the split module) — must pass before **green** apply; failure → **yellow CONCERN**, never silent green.
       - **Pass** static + runtime → **green** apply with CHECKPOINT note (below). **Any static fail, runtime fail, or ambiguous boundary** → **yellow CONCERN** block before apply.
    c. **Re-poll before abort:** Immediately before abort, **re-poll `archive_uri` once**. If present → cancel fallback; audit CDP plan per step 7; proceed on tier. If still absent → apply in-seat plan per tier rule from (b), **then** abort hygiene:
-      - `project_ask(op=abort, execution_id=…)` on the in-flight dispatch (**escape path only**).
+      - operator supersede on the private request lane (MCP abort is gone).
       - Poll until `status=aborted` confirmed.
       - **Do not re-submit** the same packet; **do not** new `--register` to "replace" the execution (Use the `claude-ai-cdp-navigation` skill § Anti-redispatch).
    d. **CHECKPOINT note (required on expiry path):**
@@ -1296,7 +1295,7 @@ evidence verification — do not fork grammar into this command. `/overhaul` doe
 
 | Tier | Trigger | Transport |
 |---|---|---|
-| **Deep / cross-subsystem** | Multiple changed packages, external callers, or yellow/red scope per three-tier model | CDP `team_dispatch(model=cdp/opus-5)` bus-nudge — **answer-3 preflight (reject-incomplete):** stage cortex corpus under `cortex://notes/system/threads/{arc-slug}/…` with **every external caller** of each changed public symbol + omission-disclosure for unstaged paths the verdict would need; build six-block packet to `tmp/reviews/overhaul-{subsystem}-cdp-review-packet.md`; **required** ≤25-line bus pointer on arc coordination thread (URI table only); `team_dispatch(op=generate, model=cdp/opus-5, sidecar_ref=cortex://…, dispatch_thread_id=…)`, wait via `poll_hint` until `archive_uri`; **escape:** `project_ask` submit+poll when CDP team_dispatch unavailable; **do not** use `team_dispatch` handoff + manual operator push (friction a25444) |
+| **Deep / cross-subsystem** | Multiple changed packages, external callers, or yellow/red scope per three-tier model | CDP `team_dispatch(model=cdp/opus-5)` bus-nudge — **answer-3 preflight (reject-incomplete):** stage cortex corpus under `cortex://notes/system/threads/{arc-slug}/…` with **every external caller** of each changed public symbol + omission-disclosure for unstaged paths the verdict would need; build six-block packet to `tmp/reviews/overhaul-{subsystem}-cdp-review-packet.md`; **required** ≤25-line bus pointer on arc coordination thread (URI table only); `team_dispatch(op=generate, model=cdp/opus-5, sidecar_ref=cortex://…, dispatch_thread_id=…)`, wait via `poll_hint` until `archive_uri`; **escape:** CLI `scripts/cortex/claude-ai-sync-jupiter project-ask` when CDP team_dispatch unavailable; **do not** use `team_dispatch` handoff + manual operator push (friction a25444) |
 | **Narrow / single-subsystem** | Single package, ≤2 consumers, green tier | In-seat Grok High or `team_dispatch(op=generate, seat=cursor-sdk, contract=light-bounded)` on staged diff — no open web thread, no push reminder |
 
 **Deep tier packet** — six-block; skill delivery per Use the `claude-ai-cdp-navigation`
@@ -1621,8 +1620,8 @@ summary) and ask the user before firing the CDP Sonnet draft. Skip this step
 entirely if the user defers architecture doc work.
 
 **Gradual transport (BINDING):** Jupiter CDP `team_dispatch(model=cdp/sonnet-5)`
-(Claude.ai subscription). Prefer `team_dispatch(model=cdp/…)`; `project_ask` =
-escape only (SOT: `consult-routing` § Surface gate). Use the
+(Claude.ai subscription). Prefer `team_dispatch(model=cdp/…)`; IF6 =
+CLI `scripts/cortex/claude-ai-sync-jupiter project-ask` (SOT: `consult-routing` § Surface gate). Use the
 `claude-ai-cdp-navigation` skill.
 
 **Forbidden on gradual:** Stargate `doc-generate` / `curl … model=doc-generate`
@@ -1664,8 +1663,7 @@ team_dispatch(
 # → poll_hint; wait until archive_uri is set
 ```
 
-**Escape only:** `project_ask(op=submit, …, model=sonnet-5)` →
-`project_ask(op="poll", execution_id="<id>")`.
+**Escape only:** CLI `scripts/cortex/claude-ai-sync-jupiter project-ask --converse --no-uuid --model sonnet-5`.
 
 4. **Materialize draft artifacts** from harvest / archive:
 
@@ -1804,7 +1802,7 @@ Do not split code and doc updates into separate commits.
   pipeline step is approved (`code-review` or frontier `doc-generate`)
 - CDP legs (steps 4 deep, 9 draft, 11): cortex stage + `team_dispatch(model=cdp/…)` (+ optional
   ≤25-line bus pointer) — ¬ inline packet content in thread posts; ¬ default to
-  `team_dispatch` handoff + manual push (a25444). **Escape:** `project_ask` when
+  `team_dispatch` handoff + manual push (a25444). **Escape:** CLI project-ask when
   team_dispatch CDP unavailable
 - ¬ modify `scripts/modularize` — it works as-is, this command calls it
 - ¬ apply suggestion-level findings without explicit user instruction

@@ -150,8 +150,8 @@ def derive_code_extra_primary_tools(
 
     Single derivation for boot-card copy, surface-gate docs, and tests — ¬ a
     hand-maintained enum (drift put ``team_dispatch`` on life cards, thread 6310).
-    Includes ``project_ask`` while that domain stays code-primary; transport
-    posture for it is escape-only (``team_dispatch(model=cdp/…)`` preferred).
+    CDP consults use ``team_dispatch(model=cdp/…)``; warm CSE paste is
+    ``cse_session`` (dual-surface).
     """
     return derive_surface_primary_tools("code", canonical_yaml_path) - (
         derive_surface_primary_tools("life", canonical_yaml_path)

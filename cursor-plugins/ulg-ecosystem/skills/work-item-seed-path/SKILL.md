@@ -77,14 +77,14 @@ fire Mode B transport (below) first, harvest, then resume.
 **Mode B transport (BINDING — live CSE ≻ fresh generate; friction a:27616 / bus 6737):**
 when an **attached live operator-proxy CSE** exists (identity ladder
 `chat_url ≻ registration_id ≻ execution_id`), Mode B / CDP architecture consult MUST use
-`project_ask(op=followup, purpose=operator-proxy, …)` into that CSE —
+`cse_session(op=followup, purpose=operator-proxy, …)` into that CSE —
 **¬** fresh `team_dispatch(model=cdp/fable|cdp/opus-5)`. Fresh `team_dispatch(model=cdp/…)`
 only when no live attached CSE (continuity hop / new window / Customize refresh).
 Compose `cdp-operator-proxy` inv 23.
 
 **Mode B admit-proof (BINDING — friction announce-without-admit):** when Mode B is mandatory,
 the same turn that claims Mode B disposition MUST end with either (a) transport admit —
-`team_dispatch` `execution_id`+`poll_hint` **or** `project_ask(followup)` admit fields
+`team_dispatch` `execution_id`+`poll_hint` **or** `cse_session(followup)` admit fields
 quoted from the tool response — or (b) an honest halt naming the blocker.
 **Forbidden:** "staging then firing" / intent prose with no admit and no halt.
 Poll/harvest may continue on later turns; **admit itself is same-turn.**
@@ -195,7 +195,7 @@ Name: `todo:{slug}` · entry gate · consult URI · recon URI.
 | S3 fired ∧ no Fable harvest | Minting or `/layer` — harvest consult first |
 | Announce Mode B / "staging Fable" then end turn with no admit | Same-turn admit (`execution_id`+`poll_hint` or followup admit) or named halt |
 | Fable/Opus Mode B with only judgment skills (no `ulg-architecture`) | Seal arch pair per abstraction-layering G1 preflight before admit |
-| Mode B under live operator-proxy CSE via fresh `team_dispatch(cdp/…)` | `project_ask(op=followup)` into attached CSE (inv 23); fresh CDP only if no live CSE |
+| Mode B under live operator-proxy CSE via fresh `team_dispatch(cdp/…)` | `cse_session(op=followup)` into attached CSE (inv 23); fresh CDP only if no live CSE |
 | Existing todo + Mode B ask → divert to bare `/layer` | Mode B on existing slug · attach · `/layer` G2 |
 | S2 breadth via Composer or in-seat Grep spray | Explore subagent first (cheap-recon Tier-1) |
 | S3 fork needs checkout depth → park on the operator for premium approval | Four-condition trigger holds ⇒ fire hop 4 and announce; effort is the card |

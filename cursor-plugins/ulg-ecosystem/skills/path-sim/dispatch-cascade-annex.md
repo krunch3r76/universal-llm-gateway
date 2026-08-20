@@ -358,23 +358,12 @@ team_dispatch(
 )
 # poll: agent_bus.wait from poll_hint (from_agent=web-anthropic) — reply OR DELIVERY FAILED
 # OF2 resume: CHECKPOINT Next-pickup keeps poll_hint / from=web-anthropic bus-turn anchor
-# (not execution_id-only — that shape belongs to the project_ask escape)
+# (not execution_id-only — that shape belongs to the CLI IF6 escape)
 ```
 
-**Escape — MCP `project_ask` (IF6 / satellite-direct / holder emergency only):**
+**Escape — CLI project-ask (IF6 / satellite-direct / holder emergency only):**
 
-```
-project_ask(
-  op=submit,
-  prompt_uri=cortex://notes/system/threads/path-sim-{slug}-r-prompt.md,
-  converse=true,
-  no_project_uuid=true,
-  model=opus-5,
-  purpose=ask,
-)
-# client polls: project_ask(op=poll, execution_id=…)
-# completion proof: archive_uri OR content_proof (+ consumer sha re-verify)
-```
+MCP `project_ask` is removed. Submit via CLI; poll via `poll_hint` / `agent_bus.wait`.
 
 **CLI dogfood / fallback (lead on hub checkout — escape path):**
 
@@ -413,7 +402,7 @@ Evidence: charter-drift R ledger used `project_uuid=""` / `project_url=https://c
 
 | Signal | Meaning | Lead action |
 |---|---|---|
-| `completion_phase=running` ∧ `stall_stage=null` | **In flight** — Opus/Cowork often takes many minutes | **Keep polling** via `agent_bus.wait` / `project_ask(op=poll)` (escape); ¬ abort; ¬ invent `cdp_unavailable`; ¬ Stage-B / in-seat implement |
+| `completion_phase=running` ∧ `stall_stage=null` | **In flight** — Opus/Cowork often takes many minutes | **Keep polling** via `agent_bus.wait` / `poll_hint`; ¬ abort; ¬ invent `cdp_unavailable`; ¬ Stage-B / in-seat implement |
 | `turn_idle` alone | Idle page — not advance-eligible | Keep polling toward `content_proof` / `archive_uri` |
 | `content_proof` / non-null `archive_uri` | Proof available | Consumer sha re-verify → write R sidecar → auto-advance |
 | `failed` + non-null `stall_stage` | Stall lane (Overloaded / timeout / harvest error) | Diagnose per `claude-ai-cdp-navigation`; may re-fire or (only if lane/cookies proven down) `cdp_unavailable` |

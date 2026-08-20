@@ -14,7 +14,7 @@ not hand-enumerated). Wire-shape rules for `cortex`, `agent_bus`, `dispatch`, an
 `rag` run on every seat. CODE_EXTRA call sites = **code MCP only**. On life/claude.ai:
 (1) run in-seat cognitive legs; (2) `agent_bus` ask a code seat to fire transport;
 or (3) use `agent_bus(wait)` only — ¬ call CODE_EXTRA from life. Full gate +
-`project_ask` escape/deprecation posture: skill `consult-routing` § Surface gate.
+IF6 CLI / `cse_session(followup)` posture: skill `consult-routing` § Surface gate.
 
 ## Wire invariant
 

@@ -45,7 +45,6 @@ CODE_EXTRA = frozenset(
         "pipeline",
         "team_dispatch",
         "panel_dispatch",
-        "project_ask",
     }
 )
 # imprint/delegate/notify/recall are life-only (canonical domain_endpoints); trigger is

@@ -1,7 +1,8 @@
 """MCP cse_session tool — thin httpx relay to the Jupiter CDP-ask satellite.
 
-Three ops: provenance (read), harvest (read), paste (write). No claude_bundles
-or cdp_ask imports — relay only per [universal:mcp].
+Ops: provenance/harvest (read), paste (hop-pair grant), followup (warm CSE
+wake), resolve_attended (read). paste ≠ followup — different satellite routes.
+No claude_bundles or cdp_ask imports — relay only per [universal:mcp].
 """
 
 from __future__ import annotations
@@ -11,6 +12,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
 from mcp_events import record
+
+from tools import cse_session_warm
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -80,7 +83,9 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
 
     @mcp.tool(title="CSE Session")
     def cse_session(
-        op: Literal["provenance", "harvest", "paste"],
+        op: Literal[
+            "provenance", "harvest", "paste", "followup", "resolve_attended"
+        ],
         chat_url: str | None = None,
         registration_id: str | None = None,
         execution_id: str | None = None,
@@ -94,6 +99,12 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
         successor_birth_id: str | None = None,
         prompt_text: str | None = None,
         prompt_uri: str | None = None,
+        prompt_path: str | None = None,
+        cdp_url: str | None = None,
+        purpose: str = "ask",
+        timeout_s: int = 60,
+        reattach: bool = False,
+        retain_lane: bool = False,
         envelope: Literal["free", "stand_down", "page"] = "free",
         grant: str | None = None,
         caller_registration_id: str | None = None,
@@ -102,11 +113,13 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
         idempotency_key: str | None = None,
         min_receipt: Literal["dom_paste", "dom_committed", "human_visible"] = "dom_paste",
     ) -> dict[str, Any]:
-        """Cross-surface CSE provenance read, bounded harvest, and authorized paste.
+        """CSE provenance, harvest, hop-pair paste, warm followup, attended resolve.
 
-        Thin relay to ``PROJECT_ASK_URL`` satellite routes under ``/v1/cse-session/``.
-        Per-op ``mandate_safety``: provenance/harvest read_only; paste write.
-        Paste receipt never implies ACK or release. See agent_skill:claude-ai-cdp-navigation.
+        ``paste`` = hop-pair / grant authorized paste (``/v1/cse-session/paste``).
+        ``followup`` = warm wake into a retained or dormant Cowork CSE
+        (``/v1/project-ask/followups``). Identity omitted on followup ⇒ attended
+        resolve. New CDP consults use ``team_dispatch(model=cdp/…)``. IF6 submit
+        is CLI. See agent_skill:claude-ai-cdp-navigation.
         """
         if op == "provenance":
             params = {
@@ -151,6 +164,25 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
                 ack_class=result.get("ack_class"),
             )
             return result
+
+        if op == "resolve_attended":
+            return cse_session_warm.relay_attended()
+
+        if op == "followup":
+            return cse_session_warm.relay_followup(
+                chat_url=chat_url,
+                registration_id=registration_id,
+                execution_id=execution_id,
+                cdp_url=cdp_url,
+                prompt_text=prompt_text,
+                prompt_uri=prompt_uri,
+                prompt_path=prompt_path,
+                purpose=purpose,
+                timeout_s=float(timeout_s),
+                reattach=reattach,
+                retain_lane=retain_lane,
+                min_receipt=min_receipt,
+            )
 
         if not chat_url and not registration_id:
             return {

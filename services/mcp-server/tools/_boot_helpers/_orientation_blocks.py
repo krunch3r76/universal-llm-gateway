@@ -88,8 +88,7 @@ def _code_only_primary_names() -> str:
     Rendered, never hardcoded: a literal list drifts the moment
     ``surface_primary_domains`` moves, which is the drift that put
     ``team_dispatch`` on a life boot card in the first place (thread 6310).
-    Includes ``project_ask`` while code-primary; escape-only transport — see
-    ``consult-routing`` § Surface gate.
+    See ``consult-routing`` § Surface gate.
     """
     from endpoint_surface import derive_code_extra_primary_tools  # noqa: PLC0415
 

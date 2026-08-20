@@ -43,7 +43,7 @@ Wake mechanics: `claude-ai-cdp-navigation` · `cdp-operator-proxy` — this rule
 For any open web-anthropic leg that will use CDP on the **same** coordination thread:
 
 1. Stage cortex corpus + sealed prompt
-2. **`project_ask(op=submit, …)` / CDP `team_dispatch(model=cdp/…)` MUST complete before assistant turn close** (after answer-3 preflight + **required** bus pointer on arc coordination legs)
+2. **CDP `team_dispatch(model=cdp/…)` MUST complete before assistant turn close** (after answer-3 preflight + **required** bus pointer on arc coordination legs)
 3. Turn closes **without** human push reminder (status report only)
 
 **Falsifier (regression):** human push reminder emitted **and** CDP wake succeeded (or was available) on the same thread in the same leg → friction a25444 / steward-false-push class.

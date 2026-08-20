@@ -47,7 +47,7 @@ further ``request``. ``mark_read`` through the latest turn first — unread addr
 turns cause HTTP 409 ``unread_turns_exist`` (cdp-operator-proxy §7b).
 [poll-ladder] If a DIRECTIVE is open and cursor-auto is in flight, poll via
 ``agent_bus.wait`` from the pinned ``poll_hint``. Long-running is NOT stalled. If
-a CDP execution is in flight, poll ``project_ask(op="poll", ...)`` until
+a CDP execution is in flight, poll ``poll_hint`` / ``agent_bus.wait`` until
 ``archive_uri``, verified ``content_proof``, or ``failed`` + ``stall_stage``. Once
 ``turn_idle`` or ``stop``, re-poll every 5–10s — never multi-minute sleeps.
 [stall-park] If ``stall_stage`` is set, park rather than thrash — follow
@@ -94,7 +94,7 @@ def _task_guidance(
 ### Poll ladder
 - DIRECTIVE open + cursor-auto in flight → ``agent_bus.wait`` from pinned
   ``poll_hint``. Long running ≠ stalled.
-- CDP execution in flight → ``project_ask(op="poll", ...)`` until terminal
+- CDP execution in flight → ``poll_hint`` / ``agent_bus.wait`` until terminal
   (``archive_uri``, ``content_proof``, or ``failed`` + ``stall_stage``).
 - On ``turn_idle`` or ``stop``, re-poll every 5–10s — no multi-minute sleeps.
 
@@ -130,7 +130,7 @@ _MCP_CAPABILITIES = """\
 <mcp_capabilities>
 LIFE/CORTEX MCP: ON — cortex, agent_bus, fs (cortex sandbox).
 CODE/VORTEX MCP: ON — workspaces fs (read-only; checkout writes unavailable),
-team_dispatch, agent_bus wait/poll_hint, project_ask.
+team_dispatch, agent_bus wait/poll_hint, cse_session followup.
 This seat polls the operator-proxy lane and CDP executions; it does not edit the
 checkout (read_only host). Nested implement dispatches fire from CDP Opus via
 cursor-auto under ``nest_under`` = this holder's dispatch_id.

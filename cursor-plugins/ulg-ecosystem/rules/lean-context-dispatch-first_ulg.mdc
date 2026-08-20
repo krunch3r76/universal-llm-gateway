@@ -55,7 +55,7 @@ the non-primary gate below). Full gate + verification: `subagent-strategy`.
 |---|---|---|
 | Mechanical implement | `team_dispatch(op=generate, seat=cursor-sdk)` → `cursor/composer-2.5` | Autonomous (default) |
 | Investigate / judgment | `cursor/grok-4.6` effort ∈ {low, medium, high, **xhigh**} (+ fast) — gate is the model card (`libs/cursor_capabilities`); ¬ a separate policy ladder below it | In-seat or gated seat switch |
-| Greater reasoning | **CDP** via `team_dispatch(model=cdp/opus-5)` or `team_dispatch(model=cdp/fable)` when outside check / Opus-unsure binder (`project_ask` = **escape only** — IF6 / satellite-direct; missions use `purpose=operator-proxy` on `team_dispatch`); cursor usually prompts Fable | **AUTONOMOUS** under trigger below |
+| Greater reasoning | **CDP** via `team_dispatch(model=cdp/opus-5)` or `team_dispatch(model=cdp/fable)` when outside check / Opus-unsure binder (IF6 = CLI `scripts/cortex/claude-ai-sync-jupiter project-ask`; missions use `purpose=operator-proxy` on `team_dispatch`); cursor usually prompts Fable | **AUTONOMOUS** under trigger below |
 | Premium metered | `cursor/claude-opus-5` effort ∈ {low, medium, high, **xhigh**, **max**} (full card) | **INFORM-THEN-PROCEED** when escalation warrants (live checkout / premium judgment) — one announce line; ¬ wait for approval by default. **Wait** if the operator paused premium spend |
 
 Grok **card/API** tops at `xhigh`; Opus at `max`. **Gate = model card** — accepted knobs pass; above-card values degrade. Fable = CDP/web product only (¬ `cursor/*` Fable, ¬ `anthropic/*` API).

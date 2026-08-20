@@ -48,7 +48,7 @@ related_skills:
 
 Cross-ref: `jupiter-browser-via-mcp` · `claude-ai-mcp-connect` · `claude-ai-bundle-sync`. Cowork operator-proxy: load **`cdp-operator-proxy`** — this skill stays transport/CDP.
 
-**RAG (BINDING):** executing agent calls `rag(op=search)` when MCP-enabled; staged sidecar = priming only; **¬** lead merge (`decision:cdp-rag-via-mcp-not-lead-merge`). **Default product:** `team_dispatch(model=cdp/…)` → poll `poll_hint`. **`project_ask` MCP** = escape / satellite-direct surface (`op=submit` → poll; `op=followup` warm paste on attached lane).
+**RAG (BINDING):** executing agent calls `rag(op=search)` when MCP-enabled; staged sidecar = priming only; **¬** lead merge (`decision:cdp-rag-via-mcp-not-lead-merge`). **Default product:** `team_dispatch(model=cdp/…)` → poll `poll_hint`. **Warm paste / attended:** `cse_session(op=followup|resolve_attended)`. **IF6 submit:** CLI. MCP `project_ask` is removed.
 
 ## Dual-completion poll ladder (BINDING — a:25662)
 
@@ -76,7 +76,7 @@ claude.ai / Cowork is resilient to all fleet service restarts
 restart(mcp | cdp_ask | …) ⇒ drop(attach) ∧ ¬end(CSE)
 ```
 
-Satellite `execution_id` / Playwright / MCP socket are attach handles. Cowork is **not tightly coupled** to mcp, **cdp_ask**, or any other fleet process — the Chrome tab survives recycle. After **`cdp_ask`** recycle: `wait_healthy(cdp_ask)` → `project_ask(op=followup)` with `chat_url` (`reattach=true` if the page is not on a lane). Continuity hop (new window, same private lane) is for **MCP tooling/chip refresh**, not because a satellite row died — life seat fires `agent_bus(tool="hop")` after `wait_healthy(mcp)`; ¬ `request` + hand-authored `TYPE: CONTINUITY_HANDOFF`. `cdp_ask` `sync_restart` is never coupled to mcp. ¬ park the restart on `live_cse_count` / a running hop execution. **IDE / cursor lead:** ¬ skip `mcp` **or** `cdp_ask` `sync_restart` to “protect Cowork attach.” Recover after healthy.
+Satellite `execution_id` / Playwright / MCP socket are attach handles. Cowork is **not tightly coupled** to mcp, **cdp_ask**, or any other fleet process — the Chrome tab survives recycle. After **`cdp_ask`** recycle: `wait_healthy(cdp_ask)` → `cse_session(op=followup)` with `chat_url` (`reattach=true` if the page is not on a lane). Continuity hop (new window, same private lane) is for **MCP tooling/chip refresh**, not because a satellite row died — life seat fires `agent_bus(tool="hop")` after `wait_healthy(mcp)`; ¬ `request` + hand-authored `TYPE: CONTINUITY_HANDOFF`. `cdp_ask` `sync_restart` is never coupled to mcp. ¬ park the restart on `live_cse_count` / a running hop execution. **IDE / cursor lead:** ¬ skip `mcp` **or** `cdp_ask` `sync_restart` to “protect Cowork attach.” Recover after healthy.
 
 **Operator self-stop is a different plane (BINDING — 2026-08-01):** poller retain does **not** authorize the operator seat to end its Cowork turn. `end(stream) ⇔ continuity_handoff ∨ TYPE:MISSION_CLOSEOUT` — full discriminator + exception notify (`cse-stream-stop`) live in `cdp-operator-proxy` inv 30. IDE observing mid-mission idle with open residuals and no mission-close TYPE ⇒ load that skill and fire the awareness ping if Opus already went quiet.
 
@@ -247,13 +247,13 @@ orphan observability: L3 `reference-annex.md`.
 | Job | Path |
 |---|---|
 | **Product (DEFAULT)** — consult / binder / R-admit / judgment_gap / Fable outside-check | `team_dispatch(op=generate, model=cdp/opus-5\|cdp/fable, contract=light-bounded, prompt\|sidecar_ref=…, dispatch_thread_id=…)` → poll `poll_hint` (`agent_bus.wait`). Compose `lean-context-dispatch-first` · `consult-routing`. |
-| **Escape** — satellite-direct / MCP-only / IF6 | `project_ask(op=submit, prompt_uri=cortex://…, converse=true, no_project_uuid=true, model=opus-5\|fable-5)` → poll. Use when `team_dispatch` CDP path is unavailable or caller must bypass Stargate admit. |
-| **Warm follow-up (attached lane)** | `project_ask(op=followup, chat_url=… \| registration_id=… \| execution_id=… \| identity omitted ⇒ resolve-or-refuse, cdp_url=… explicit override, prompt_text=… \| prompt_uri=…, purpose=operator-proxy, timeout_s=60)` — wake/correction/advisory into retained operator-proxy CSE; `project_ask(op=resolve_attended)` for read-only triple. CLI `cowork_chat_followup.py` = escape (defaults to resolver when flags omitted). |
-| **Operator-proxy mission** | Prefer `team_dispatch(model=cdp/opus-5, purpose=operator-proxy\|mission, contract=light-bounded, …)` — runner auto-ensures `/cdp-operator-proxy` + `/reasoning-posture` chips + seat-map briefing (`operator_proxy_mission.py`). `project_ask(purpose=…)` remains escape. Prompt body still carries mission ACs. SOT: `cdp-operator-proxy` inv 20 · `cortex://notes/system/specs/cursor-auto-tick-work-posting.md` |
+| **Escape** — satellite-direct / IF6 | CLI `scripts/cortex/claude-ai-sync-jupiter project-ask` (`--converse --no-uuid --model opus-5\|fable-5`). Use when `team_dispatch` CDP path is unavailable. MCP `project_ask` is removed. |
+| **Warm follow-up (attached lane)** | `cse_session(op=followup, chat_url=… \| registration_id=… \| execution_id=… \| identity omitted ⇒ resolve-or-refuse, cdp_url=… explicit override, prompt_text=… \| prompt_uri=…, purpose=operator-proxy, timeout_s=60)` — wake/correction/advisory into retained operator-proxy CSE. Distinct from `cse_session(op=paste)` (hop-pair / grant). `cse_session(op=resolve_attended)` for read-only triple. CLI `cowork_chat_followup.py` = escape (defaults to resolver when flags omitted). |
+| **Operator-proxy mission** | Prefer `team_dispatch(model=cdp/opus-5, purpose=operator-proxy\|mission, contract=light-bounded, …)` — runner auto-ensures `/cdp-operator-proxy` + `/reasoning-posture` chips + seat-map briefing (`operator_proxy_mission.py`). Prompt body still carries mission ACs. SOT: `cdp-operator-proxy` inv 20 · `cortex://notes/system/specs/cursor-auto-tick-work-posting.md` |
 | Operator Chat on `/new` | `chat_compose=true` / `--chat` |
 | Register / list | `list-lanes` / `deregister-lane` |
 
-**Anti-pattern:** defaulting binder/consult CDP to bare `project_ask` when `team_dispatch(model=cdp/…)` is available (`lean-context`: project_ask = escape only).
+**Anti-pattern:** opening a new CDP consult via any leftover `project_ask` recipe. Product is `team_dispatch(model=cdp/…)`.
 
 ### Warm follow-up duty (BINDING — 2026-07-31)
 
@@ -261,8 +261,8 @@ A retained operator-proxy CSE is a **live correspondent**, not an archive. Reach
 
 | Situation | Move | Receipt |
 |---|---|---|
-| Wake / correction / ladder-fix / advisory to a **retained or dormant** CSE | `project_ask(op=followup, …)` — identity omitted ⇒ attended resolve on satellite (`target_binding=resolver`); explicit `cdp_url`+`chat_url` ⇒ `target_binding=explicit`. **An open tab is not required:** a dormant seat's Chrome is relaunched, pasted, and parked again automatically. Paste-verified (`send_verified` / `receipt`), no reply harvest | `dom_paste` default; `dom_committed` when marker survives settle in committed user-turn nodes (never reload an unsent draft) |
-| New turn with no retained CSE — or its context is stale / Customize skills refreshed | `team_dispatch(model=cdp/…)` (default) · `project_ask(op=submit, …)` (escape) — a **fresh window**, ¬ warm paste | n/a |
+| Wake / correction / ladder-fix / advisory to a **retained or dormant** CSE | `cse_session(op=followup, …)` — identity omitted ⇒ attended resolve on satellite (`target_binding=resolver`); explicit `cdp_url`+`chat_url` ⇒ `target_binding=explicit`. **An open tab is not required:** a dormant seat's Chrome is relaunched, pasted, and parked again automatically. Paste-verified (`send_verified` / `receipt`), no reply harvest | `dom_paste` default; `dom_committed` when marker survives settle in committed user-turn nodes (never reload an unsent draft) |
+| New turn with no retained CSE — or its context is stale / Customize skills refreshed | `team_dispatch(model=cdp/…)` (default) · CLI project-ask (IF6) — a **fresh window**, ¬ warm paste | n/a |
 | Audit trail for either | bus turn **accompanies** — ¬ substitutes | n/a |
 
 `in_chat_delivery ≻ bus_NOTE` · identity ladder `chat_url ≻ registration_id ≻ execution_id` · **v1 = attached lane only** (no post-deregister reattach). **Launch-path paste** (reattach mints satellite lane) proves **satellite-scope** DOM only — relaying `ok=true` / `send_verified=true` as human/CSE-seat delivery when `lane_created=true` is the **a:27855** failure class.
@@ -280,47 +280,42 @@ A retained operator-proxy CSE is a **live correspondent**, not an archive. Reach
 
 **A known URL is now enough (2026-08-15).** Idle mission hosts are parked as
 **dormant seats**: Chrome and its port are released while the `chat_url` and the
-seeded profile persist. `project_ask(op=followup, chat_url=…)` relaunches that
+seeded profile persist. `cse_session(op=followup, chat_url=…)` relaunches that
 seat, pastes, and parks it again; `resolve_attended` answers 200 with
 `dormant: true` / `reattachable: true` / null `cdp_url`. `¬` report a dormant seat
 as "the session is gone," and `¬` read a low live-host count as a dead CSE.
 Bounding live Chrome this way is what keeps the Xvfb client pool (default ceiling
 64) from exhausting — the failure that broke hopping when ~100 hosts accumulated.
 
-**Anti-patterns:** bus NOTE + operator push reminder standing in as the *delivery* of a wake the seat could have read in chat; reaching SSH-first for `cowork_chat_followup.py` from an IDE seat that holds the MCP (CLI is the escape, for hub checkout / no attached lane); `op=submit` onto `/new` for a turn that belongs on a retained CSE; describing shipped followup as an "MCP gap" or "feature candidate"; relaying `ok=true` / `send_verified=true` from a **launch-path** (`lane_created=true`) paste as human/CSE-seat delivery (a:27855).
+**Anti-patterns:** bus NOTE + operator push reminder standing in as the *delivery* of a wake the seat could have read in chat; reaching SSH-first for `cowork_chat_followup.py` from an IDE seat that holds `cse_session` (CLI is the escape, for hub checkout / no attached lane); CLI submit onto `/new` for a turn that belongs on a retained CSE; relaying `ok=true` / `send_verified=true` from a **launch-path** (`lane_created=true`) paste as human/CSE-seat delivery (a:27855).
 
 Full FOL + escape recipe: L3 `reference-annex.md` § Warm follow-up.
 
 Full matrix + `delete_after`: L3 `reference-annex.md` § Entry points.
 
-## Poll guardrail — project_ask ports
+## Poll guardrail — satellite ports
 
 **Preferred CDP path:** `team_dispatch(model=cdp/opus-5|cdp/fable|…)` → poll
 `poll_hint` with `agent_bus(tool="wait", …)` (`consult-routing` · this skill).
 Operator-proxy missions:
-`team_dispatch(…, purpose=operator-proxy|mission)`. Do **not** default new
-consults to bare `project_ask`.
+`team_dispatch(…, purpose=operator-proxy|mission)`. MCP `project_ask` is gone.
 
-When an in-flight **escape** `project_ask` execution must complete (satellite-direct /
-IF6 / legacy purpose= escape):
+IF6 / leftover CLI executions:
 
-**POLL GUARDRAIL — project-ask executions**
+**POLL GUARDRAIL**
 
 - NEVER curl, fetch, or HTTP GET/POST to localhost/127.0.0.1 — especially **:8765** — for `/v1/project-ask/*`.
-- Port **8765** is **web-fetcher**, NOT project-ask. The cdp-ask satellite listens on **:8770** (`PROJECT_ASK_URL`).
-- Poll ONLY via MCP: `project_ask(op="poll", execution_id="<id>")` — repeat until `archive_uri` is set.
-- Completion proof: poll response `archive_uri` (cortex:// harvest). Verify via `mcp.project_ask.poll` events.
+- Port **8765** is **web-fetcher**, NOT the satellite. The cdp-ask satellite listens on **:8770** (`PROJECT_ASK_URL`).
+- Completion proof: `poll_hint` `archive_uri` (cortex:// harvest) or CLI harvest out-dir.
 
 ```
-# Escape only — prefer team_dispatch(model=cdp/…[, purpose=operator-proxy]) for new consults/missions
-project_ask(op="submit", prompt_uri="cortex://…", converse=true, no_project_uuid=true, model="opus-5")
-# → execution_id
-
-project_ask(op="poll", execution_id="<id>")
-# repeat until status=completed and archive_uri is set
+# IF6 only — prefer team_dispatch(model=cdp/…[, purpose=operator-proxy])
+scripts/cortex/claude-ai-sync-jupiter project-ask \
+  --converse --no-uuid --model opus-5 \
+  --prompt-file <r-prompt.md>
 ```
 
-CLI/SSH dogfood (`claude-ai-sync-jupiter project-ask`) is hub-checkout fallback only — not the agent product path.
+CLI/SSH (`claude-ai-sync-jupiter project-ask`) is hub-checkout IF6 — not the agent product path.
 
 ## Related skills
 

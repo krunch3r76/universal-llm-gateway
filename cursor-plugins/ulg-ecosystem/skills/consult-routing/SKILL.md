@@ -21,24 +21,19 @@ Life MCP excludes **CODE_EXTRA** — every primary on `/mcp/code` absent from `/
 `derive_surface_primary_tools("code") − derive_surface_primary_tools("life")`
 
 Current registry wiring (illustrative — re-derive before citing): `manage`,
-`observability`, `panel_dispatch`, `pipeline`, `project_ask`, `team_dispatch`.
+`observability`, `panel_dispatch`, `pipeline`, `team_dispatch`.
 
 Cognitive routing on every seat; CODE_EXTRA = **code MCP only**. On life: in-seat
 cognitive legs, `agent_bus` code-seat transport, or honest deferral. Capability
 gap: `life-to-code-request-lane` (`lane:life-to-code`).
 
-### `project_ask` (escape-only · deprecation candidate)
+### CDP transport (MCP `project_ask` removed)
 
-Still a **code-primary** today — life seats treat it like other CODE_EXTRA (real
-absence on `/mcp/life`; delegate over bus). **Transport:** **escape only** —
-prefer `team_dispatch(model=cdp/opus-5|cdp/fable)` (`claude-ai-cdp-navigation`,
-`lean-context-dispatch-first`). Reserve bare `project_ask` for satellite-direct,
-IF6, and legacy paths. Operator-proxy missions: prefer
-`team_dispatch(model=cdp/…, purpose=operator-proxy|mission)`; `project_ask` with
-`purpose=` remains a valid escape. ¬ remove
-from CODE_EXTRA while it remains on code `tools/list`; ¬ default new workflows to
-`project_ask` when CDP `team_dispatch` is available. Full removal = registry +
-card derivation change later, not a prose edit alone.
+Product = `team_dispatch(model=cdp/opus-5|cdp/fable)` → poll `poll_hint`.
+Warm paste / attended resolve = `cse_session(op=followup|resolve_attended)`.
+Admission/busy = `manage(action=busy_status)`. IF6 / satellite-direct submit =
+CLI (`scripts/cortex/claude-ai-sync-jupiter project-ask`). MCP `project_ask`
+is gone from `tools/list` — do not call it.
 
 ## Dispatch targets (code surface only)
 
@@ -126,7 +121,7 @@ authored — compose leg only (`lean-context-dispatch-first` non-primary gate).
 | `anthropic/*` on `team_dispatch` | **PROHIBITED** |
 | `cursor/*` on `cursor-sdk` | OK except **Fable** |
 | Anthropic consult / binder / R-admit | **`team_dispatch(model=cdp/opus-5\|cdp/fable)`** + `cortex://` staging — poll `poll_hint` |
-| `project_ask` (MCP satellite-direct) | **Escape only** — when team_dispatch CDP unavailable, or IF6 / satellite-direct. Operator-proxy: prefer `team_dispatch(model=cdp/…, purpose=operator-proxy)`; `project_ask(purpose=…)` remains valid escape |
+| IF6 / satellite-direct submit | **CLI** — `scripts/cortex/claude-ai-sync-jupiter project-ask`. Operator-proxy: `team_dispatch(model=cdp/…, purpose=operator-proxy)`. Warm paste: `cse_session(op=followup)` |
 | Live checkout | `cursor/claude-opus-*` |
 
 Rule: `anthropic-dispatch-authorization_ws.mdc`. Fable = CDP only (`cdp/fable` / picker — ¬ `cursor/*` Fable).
@@ -136,7 +131,7 @@ Rule: `anthropic-dispatch-authorization_ws.mdc`. Fable = CDP only (`cdp/fable` /
 | Path | Default |
 |---|---|
 | Coding Grok (path-sim **A**, recon+investigate, closed-detent light consult) | `cursor-sdk` + `cursor/grok-4.6` + `light-bounded` |
-| Path-sim bundled **Q** (L0) | **CDP Fable** — `team_dispatch(model=cdp/fable)` (`project_ask` `fable-5` = escape; path-sim annex A); ¬ default Grok Q on full arc |
+| Path-sim bundled **Q** (L0) | **CDP Fable** — `team_dispatch(model=cdp/fable)` (CLI `fable-5` = IF6 only; path-sim annex A); ¬ default Grok Q on full arc |
 | API `xai/grok-4.6` on coding work | **PROHIBITED** |
 | Engineering skeptic | `role=skeptic` + `xai/grok-4.6` |
 | Writing / correspondence | Grok **PROHIBITED** — L3 annex |

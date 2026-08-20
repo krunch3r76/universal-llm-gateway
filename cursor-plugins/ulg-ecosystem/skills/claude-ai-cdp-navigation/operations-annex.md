@@ -21,7 +21,7 @@ Dual-completion unchanged: `archive_uri` and `content_proof_sha256` attest the *
 
 **Window liveness on poll (a:25681):** while `status=running` and `completion_phase=running`, poll exposes `streaming` / `stop` / `tool_pause` / `liveness_observed_at` from held-page harvest. Prefer those over wall-clock. Nulls while `running` mean harvest not yet succeeded — keep polling.
 
-MCP: `project_ask(op=submit, expected_size=…, harvest_source=…, download_output=…)`.
+MCP: harvest knobs on `team_dispatch(model=cdp/…)` `generation_options` (`expected_size`, `harvest_source`, `download_output`). IF6 CLI: `claude-ai-sync-jupiter project-ask`.
 
 ### File-card / artifact chrome ≠ deliverable location (BINDING — 2026-08-04)
 
@@ -42,10 +42,10 @@ request it.
 | Chat says "delivered above" + thin scrape ⇒ re-dispatch | Re-harvest the **existing** CSE Output/artifact first; ¬ treat chrome as absence |
 | `harvest_provenance=chat` alone on a large structured ask | Prefer Outputs-first knobs on admit; name explicit `harvest_uri` / `cortex://…` in the sealed prompt |
 
-**Lead admit duty (`team_dispatch(model=cdp/…)` / `project_ask`):** structured
+**Lead admit duty (`team_dispatch(model=cdp/…)`):** structured
 commission / packet / seed drafts ⇒ set Outputs-first knobs on admit
 (`expected_size=large` and/or `download_output=true` via `generation_options`
-on CDP generate, or the same fields on `project_ask`). Default `auto`+chat
+on CDP generate). Default `auto`+chat
 scrape collapses artifact cards to dropdown chrome ("Google Drive" trigger label)
 and loses the body.
 

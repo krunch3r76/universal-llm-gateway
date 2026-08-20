@@ -75,7 +75,7 @@ socket are **attach handles**. Recycling those processes is reconnect, not
 session-kill. Cowork is **not tightly coupled** to mcp, **cdp_ask**, or any other
 fleet service — the tab survives; recover after `wait_healthy`. `cdp_ask`
 `sync_restart` is **never coupled to mcp** (`api_dispatch._sync_restart`). After
-`cdp_ask` recycle: `wait_healthy` → `project_ask(op=followup)` / `reattach=true`
+`cdp_ask` recycle: `wait_healthy` → `cse_session(op=followup)` / `reattach=true`
 by `chat_url` (tab should still be open). Continuity hop (new window, same
 private lane) is for **MCP tooling/chip refresh**, not because a satellite row
 died.

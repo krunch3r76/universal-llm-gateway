@@ -28,22 +28,22 @@ in chat.
 
 Operator-proxy episodes use **two planes**; abort scope differs:
 
-| Plane | Mechanism | What dies on `project_ask(op="abort")` |
+| Plane | Mechanism | What a transport-handle kill does |
 |---|---|---|
-| **Transport** | IDE `project_ask` / Jupiter converse (`execution_id`) | **Only** that polling handle + attached harvest lane for that id |
+| **Transport** | `team_dispatch(model=cdp/…)` / Jupiter converse | **Only** that polling handle + attached harvest lane for that id |
 | **Bus** | CDP `agent_bus.request` on **private request thread** (`6329`-class) | **Nothing** — DIRECTIVEs, cursor-auto admits, nested cursor-sdk runs continue |
 
 ```
-abort(project_ask) ≢ abort(operator-proxy arc)
-commission(arc) lives on private request lane; project_ask is bootstrap + converse only
+abort(transport handle) ≢ abort(operator-proxy arc)
+commission(arc) lives on private request lane; MCP project_ask is removed
 ```
 
-**IDE seat:** after mission `submit`, poll **6329-class lane** (`agent_bus` fetch/wait),
-not “is `project_ask` still running?” — `active_work` empty does **not** mean operator
+**IDE seat:** after mission submit, poll **6329-class lane** (`agent_bus` fetch/wait),
+not “is the transport handle still running?” — `active_work` empty does **not** mean operator
 work stopped.
 
-**Reconnect:** dead `execution_id` is not reopenable; warm `project_ask` submit with
-same `holder` + `converse=true` may reattach Cowork CSE if lane registry still holds it;
+**Reconnect:** dead `execution_id` is not reopenable; `cse_session(op=followup)` with
+same `holder` may reattach Cowork CSE if lane registry still holds it;
 **authoritative continuity** is always the private request thread + `mark_read` before
 next `request`.
 
@@ -51,14 +51,14 @@ next `request`.
 
 | Session class | Examples | Forbidden without operator auth |
 |---|---|---|
-| **CDP / Cowork** | `project_ask(op="abort")`, converse lane teardown | **Yes** |
+| **CDP / Cowork** | converse lane teardown / killing a live CSE | **Yes** |
 | **cursor-sdk** | cancel queued/running dispatch, bridge abort | **Yes** |
 | **cursor-auto** | killing in-flight nested work from the wrong seat | **Yes** |
 | **Agent-bus threads** | `update-thread --status closed` | **No** — closing a thread ≠ aborting in-flight substrate work |
 
 ## When blocked, uncertain, or scope changed
 
-1. **Poll / read** — `project_ask(op="poll")`, `agent_bus` fetch/wait, dispatch thread closeout
+1. **Poll / read** — `agent_bus` fetch/wait from `poll_hint`, dispatch thread closeout
 2. **Report** — paste status into the live CDP converse session or bus; operator DISPOSITIONs or supersedes
 3. **Never infer** "superseded scope", "rogue dispatch", or "wrong path" as license to abort
 
@@ -73,7 +73,7 @@ These are **operator-seat** moves — IDE does not substitute judgment:
 
 | Bad | Good |
 |---|---|
-| IDE aborts `project_ask` because CHECKPOINT next-step changed | Poll **bus lane**; paste advisory into live converse |
+| IDE kills a CSE / dispatch because CHECKPOINT next-step changed | Poll **bus lane**; paste advisory into live converse |
 | IDE infers "no active CDP" from `active_work` empty while 6329 runs | Read private request thread — transport idle ≠ bus idle |
 | IDE cancels queued cursor-sdk as "cleanup" | Report status; wait for operator authorization |
 | "Session looked stale" → abort | Read terminal closeout / poll first |

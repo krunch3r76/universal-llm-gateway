@@ -132,7 +132,7 @@ via manage.sock; tier-M `execute` + `manage.*` stays denied at the manifest.
 
 Open the prompt with **`/<slug>` alone on its own line** (newline between slugs) before body
 prose. Prefer `team_dispatch(model=cdp/…, skills=[…])` (server prepend), or the same slash header
-in `project_ask` bodies. Prose `Use the … skill` alone is **not** chip delivery. SOT:
+in CLI project-ask / `cse_session(followup)` bodies. Prose `Use the … skill` alone is **not** chip delivery. SOT:
 `claude-ai-cdp-navigation` § Skill delivery.
 
 **Surface check before writing a chip line.** Only `shared_sync` / `life_local` slugs
@@ -165,7 +165,7 @@ the operator lane — **paste ≠ commission**. Operator-facing contract: `cdp-o
 | Default reviewer | `cursor/gpt-5.6-terra` — family independence **and** live checkout sight |
 | Escalation | local `cursor/claude-opus-5` only when grok already escalated for checkout depth; Fable only for frame/doctrine meta — ¬ local Fable for this lane |
 | Fire | `team_dispatch(op=generate, seat=cursor-sdk, model=cursor/gpt-5.6-terra, contract=light-bounded)` — queues behind the live holder, ¬ contend |
-| Deliver | `project_ask(op=followup)` into the attached CSE |
+| Deliver | `cse_session(op=followup)` into the attached CSE |
 | Log | NOTE on the **MONITOR sibling** — silence on the watched lane |
 
 **Judgment skill is MANDATORY on cursor-sdk break-in (BINDING).** Do **not** pass

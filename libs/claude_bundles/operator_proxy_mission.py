@@ -62,8 +62,7 @@ LIFE_SURFACE_LEGAL_TOOLS: frozenset[str] = frozenset(
 )
 
 # CODE_EXTRA on /mcp/code — forbidden as direct life-seat tool calls (A9).
-# Keep aligned with endpoint_surface.derive_code_extra_primary_tools() (includes
-# project_ask while code-primary; escape-only transport — consult-routing § Surface gate).
+# Keep aligned with endpoint_surface.derive_code_extra_primary_tools().
 LIFE_SURFACE_FORBIDDEN_TOOLS: frozenset[str] = frozenset(
     {
         "team_dispatch",
@@ -71,7 +70,6 @@ LIFE_SURFACE_FORBIDDEN_TOOLS: frozenset[str] = frozenset(
         "observability",
         "panel_dispatch",
         "pipeline",
-        "project_ask",
     }
 )
 

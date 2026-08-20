@@ -8,7 +8,7 @@ processes across windows on the next-gated-pickup the charter tick re-admits.
 Unlike the one-gated-step generate packet, the autonomous window is authorized to
 act as a background lead: decompose the arc into gated G-rows, dispatch sub-legs,
 fire R-admit via consult_role: r_admit CONSULT_PENDING (consult seat owns primary
-``team_dispatch(model=cdp/opus-5)``; MCP ``project_ask`` = escape), restart
+``team_dispatch(model=cdp/opus-5)``; IF6 = CLI; MCP ``project_ask`` removed), restart
 services for deploy-verify, and run a capped revise loop. The substrate separation
 for R-admit is the sole thing that keeps autonomous R honest (autonomous !=
 self-certify); see ``cortex://notes/system/specs/autonomous-path-sim-charter.md``.
@@ -91,8 +91,8 @@ revise — NOT the one-gated-step-then-stop generate default.
 [R-independence] R-admit MUST be hosted on a consult seat with consult_role: r_admit
 — the autonomous holder posts CONSULT_PENDING at the end of G2 and STOPs; it must NOT fire
 R-admit transport from this window. The consult seat owns primary submit→poll→E2
-via team_dispatch(model=cdp/opus-5) (web-anthropic Opus). MCP project_ask =
-escape only. Autonomous ≠ self-certify. Never collapse R-admit into your own
+via team_dispatch(model=cdp/opus-5) (web-anthropic Opus). IF6 = CLI
+project-ask (MCP project_ask removed). Autonomous ≠ self-certify. Never collapse R-admit into your own
 self-assessment. External review for this arc is the G3 cdp/opus-5 R-admit. Do NOT open
 implement-todo §3b Gate-6, and do NOT dispatch role=reviewer or role=skeptic —
 check_requested is not set on charter work items.
@@ -100,8 +100,8 @@ check_requested is not set on charter work items.
 include the sealed unattended clause (a:26156): answer with best judgment;
 state assumptions; ¬ clarifying questions; ¬ wait for a human. Cowork Qs
 false-complete sealed harvests — ¬ expect charter auto-reply.
-[IF6-escape] holder-fired R-admit (direct project_ask from worker) remains the
-dual-host emergency path; do not delete or disable that path in code.
+[IF6-escape] holder-fired R-admit (CLI ``claude-ai-sync-jupiter project-ask``)
+remains the dual-host emergency path; MCP project_ask is removed.
 [restart-auth] service restart for deploy-verify is EXPLICITLY authorized here,
 overriding implement-work-item §4B ask-before-restart: quality_gate →
 manage(sync_restart) → wait_healthy → live probe. Only the `manage` MCP —
@@ -230,8 +230,8 @@ def _corpus(root_id: str, scoreboard_uri: str | None) -> str:
 Charter root agent-bus:{root_id}. Scoreboard: {scoreboard_uri or "(see latest CHECKPOINT)"}.
 Latest CHECKPOINT on the root is the only state source.
 Design: cortex://notes/system/specs/autonomous-path-sim-charter.md.
-R-admit transport: primary team_dispatch(model=cdp/opus-5); MCP project_ask escape
-(docs/tool-reference.md § project_ask / cdp model-endpoint).
+R-admit transport: primary team_dispatch(model=cdp/opus-5); IF6 = CLI
+(docs/tool-reference.md § cse_session / cdp model-endpoint). MCP project_ask removed.
 </corpus>"""
 
 
@@ -241,7 +241,7 @@ LIFE/CORTEX MCP: ON — cortex, agent_bus, fs (cortex sandbox).
 CODE/VORTEX MCP: ON — workspaces fs, observability, quality_gate, team_dispatch
 (fan out Q/A/implement sub-legs), manage (sync_restart authorized for deploy-verify
 per [restart-auth]). R-admit is consult-hosted — holder does NOT fire cdp/ or
-project_ask at G3 (consult seat owns primary cdp/; project_ask = escape).
+project_ask at G3 (consult seat owns primary cdp/; IF6 = CLI).
 </mcp_capabilities>"""
 
 
@@ -287,7 +287,7 @@ def materialize_autonomous_packet(
 
     The packet authorizes the admitted cursor-sdk window to run one gated step of
     the full path-sim arc as a background lead — including firing R-admit on the
-    web-anthropic Opus substrate via ``project_ask`` and restarting services for
+    web-anthropic Opus substrate via ``team_dispatch(model=cdp/…)`` and restarting services for
     deploy-verify — while keeping the one-CHECKPOINT-per-window boundary.
 
     ``source_ref`` stamps front matter for an implement-lane window.

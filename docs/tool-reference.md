@@ -431,152 +431,29 @@ dispatch(tool="pipeline", arguments='{"op": "result", "execution_id": "...", "wa
 
 ## project_ask
 
-**Escape-only / deprecation candidate** for agent CDP consults — prefer
-`team_dispatch(model=cdp/opus-5|cdp/fable|…)` (`consult-routing` § Surface gate ·
-`claude-ai-cdp-navigation`). This tool remains on code `tools/list` for
-satellite-direct, IF6, and legacy callers. Operator-proxy missions: prefer
-`team_dispatch(…, purpose=operator-proxy|mission)` on CDP generate; `project_ask`
-with `purpose=` remains a valid escape.
+**Removed from MCP `tools/list`.** Product CDP consults use
+`team_dispatch(model=cdp/opus-5|cdp/fable|…)`. Warm paste / attended resolve use
+`cse_session(op=followup|resolve_attended)`. Admission/busy uses
+`manage(action=busy_status)`. IF6 / satellite-direct submit is CLI
+(`scripts/cortex/claude-ai-sync-jupiter project-ask`). Do not call `project_ask`.
 
-**Code-surface only** — Jupiter CDP sealed project-ask via the `cdp-ask` satellite
-(`libs/cdp_ask/`). Thin httpx relay from MCP; **split submit / poll / abort /
-active_work / followup** (no server-side poll loop in the handler).
+The `cdp-ask` satellite (`libs/cdp_ask/`) and CLI still exist. MCP no longer
+relays `submit` / `poll` / `abort` / `active_work`.
 
-**Prerequisites**
-
-| Component | Requirement |
-|---|---|
-| Satellite | `scripts/cdp-ask --port 8770` on Jupiter with `CORTEX_FILES_ROOT` set to the live cortex files mount (host example: `/mnt/torus/mcp-data/files`; doc shorthand `/mcp-data/files/` is rewritten on the satellite, not a Jupiter path) |
-| MCP env | `PROJECT_ASK_URL=http://jupiter:8770` in `~/.gateway/mcp.yaml` (exported by `sync-and-restart-mcp.sh`) |
-| Harvest | Jupiter host mounts cortex files tree (F-3); `/health` returns `harvest_root_ok: true` |
-
-**Production activation:** `scripts.local/start-jupiter-browser` (Chrome + web-fetcher +
-cdp-ask on Jupiter :8770), then set `PROJECT_ASK_URL: http://jupiter:8770` in
-`~/.gateway/mcp.yaml` and run `./scripts/sync-and-restart-mcp.sh` (**not**
-`--no-cache` unless you re-sync G3 paths afterward — see
-`.cursor/skills/jupiter-browser-via-mcp/SKILL.md` § cdp-ask activation).
-
-Dogfood fallback (hub checkout): `scripts/cortex/claude-ai-sync-jupiter project-ask …`
-
-### Args
-
-| Arg | Type | Description |
-|---|---|---|
-| `op` | `"submit" \| "poll" \| "abort" \| "active_work" \| "followup"` | **Required.** Client polls — MCP does not block until CDP completes |
-| `execution_id` | `str \| null` | Required for `poll` / `abort`; optional identity for `followup` |
-| `chat_url` | `str \| null` | CSE URL identity for `followup` (highest precedence) |
-| `registration_id` | `str \| null` | Attached-lane identity for `followup` |
-| `prompt_text` | `str \| null` | Inline prompt (submit or followup) |
-| `prompt_uri` | `str \| null` | `cortex://…` resolved under `CORTEX_FILES_ROOT` on Jupiter (submit or followup) |
-| `prompt_path` | `str \| null` | Path on Jupiter `PROJECT_ROOT` (submit or followup) |
-| `holder` | `str` | Registry holder id (default `mcp-project-ask`) |
-| `purpose` | `str` | Registry purpose tag (default `ask`) |
-| `model` | `str` | Live CDP picker model (default `opus-5`) |
-| `converse` | `bool` | Multi-turn `/new` consult |
-| `no_project_uuid` | `bool` | Use `https://claude.ai/new` instead of Cowork Project UUID |
-| `project_uuid` | `str` | Explicit Cowork Project UUID |
-| `ensure_cowork_auto` | `bool` | Cowork + auto-approve on `/new` (default `true`; friction 25051) |
-| `chat_compose` | `bool` | Operator opt-in Chat on `/new` (default `false`; sets `ensure_cowork_auto=false`) |
-| `archive_path` | `str \| null` | Optional harvest archive path on Jupiter — normalized on satellite; prefer relative or `cortex://` (doc shorthand `/mcp-data/files/…` is rewritten to live root) |
-| `timeout_s` | `int` | Idle completion budget for submit; paste relay budget for followup (recommend 60) |
-
-### Returns
-
-| `op` | Shape |
-|---|---|
-| `submit` | `{execution_id, status: "running", registration_id?}` |
-| `poll` | `{execution_id, status, archive_uri?, ok?, body?, error?, …}` — `archive_uri` present when completed |
-| `abort` | `{execution_id, status: "aborted", aborted: true}` |
-| `active_work` | `{busy, running_count, execution_ids, rows, soft_limit, hard_limit, free_slots, …}` — fast recorded execution/admission projection; `busy` excludes browser attachments. Each `rows[]` entry projects `parent_thread` (seat-binding lane) and `mission_kind` (`root` \| `hop`) when known |
-| `followup` | `{ok, send_verified, url?, registration_id?, execution_id?, pasted_at?, error?, …}` — paste proof; no reply harvest |
-
-The satellite's internal `/v1/project-ask/drain-state` surface is separate from
-the MCP `active_work` relay. It combines the recorded execution rows with the
-cached browser-attachment projection and reports observation freshness.
-Attachment observations are diagnostic only: a browser tab is a reconnectable
-attach handle, not a CSE lifecycle lease.
-
-Its occupancy scalars are intentionally distinct: `running_count` is the
-execution-store stream count; `open_attachment_count` is the count of
-CSE-bearing live CDP browser hosts used for drain safety; `live_cse_target_count`
-is the qualifying `type=page` target count, including duplicates; and
-`live_cse_count` is the count of unique normalized CSE session URLs.
-`live_port_count` includes every responding registry-pool CDP port, including
-unrelated browser targets. `registry_capacity_count` remains the recorded
-`active` registry-host count. `effective_count` is the drain-only recorded
-execution count; `busy` and `drain_busy_reason` do not derive from browser
-attachments or unique CSE sessions.
-
-Idle mission CSEs are parked as **dormant seats**: Chrome and its port are
-released while the `chat_url` and seeded profile persist, which is what bounds X
-clients and registry ports. Because dormant rows own no process, they are absent
-from every live-host count above; `what-is-running` reports them separately as
-`registry_dormant_seat_count`, alongside `registry_live_host_count` (all statuses
-that may still own a Chrome, not just `active`). `resolve_attended` answers 200
-with `dormant: true`, `reattachable: true`, and a null `cdp_url` for such a seat,
-and `followup` with a `chat_url` wakes it automatically and parks it again after
-the paste.
-
-### Examples
-
-**Preferred CDP path** (consult / R-admit / binder):
-
-```
-team_dispatch(op="generate", model=cdp/opus-5, contract=light-bounded,
-              sidecar_ref="cortex://notes/system/threads/my-r-prompt.md",
-              dispatch_thread_id="<thread>")
-# → poll_hint; wait until archive_uri is set
-```
-
-Operator-proxy mission (primary — purpose wire on CDP generate):
-
-```
-team_dispatch(op="generate", model=cdp/opus-5, contract=light-bounded,
-              purpose="operator-proxy",
-              prompt="<DIRECTIVE body>",
-              dispatch_thread_id="<thread>")
-```
-
-Escape / satellite-direct (prefer `team_dispatch(model=cdp/opus-5)` for R-admit):
-
-```
-project_ask(op="submit",
-            prompt_uri="cortex://notes/system/threads/my-r-prompt.md",
-            converse=true, no_project_uuid=true, model="opus-5")
-# → execution_id
-
-project_ask(op="poll", execution_id="<id>")
-# repeat until status=completed and archive_uri is set
-```
-
-Warm follow-up into a retained operator-proxy CSE (attached lane; primary IDE path):
-
-```
-project_ask(op="followup",
-            chat_url="https://claude.ai/cowork/cse_…",
-            prompt_uri="cortex://notes/system/threads/advisory.md",
-            purpose="operator-proxy",
-            timeout_s=60)
-# → {ok, send_verified, url, …} — paste proof only; no reply harvest
-```
-
-CLI escape when no attached lane holds the CSE: `scripts/cortex/cowork_chat_followup.py`.
-
-**Poll guardrail:** NEVER curl localhost `:8765` (web-fetcher) or any localhost URL for
-`/v1/project-ask/*` — that port is not project-ask. Poll only via MCP
-`project_ask(op="poll", …)`; the cdp-ask satellite is `:8770` behind `PROJECT_ASK_URL`.
-
-When `PROJECT_ASK_URL` is unset, returns `{error: "PROJECT_ASK_URL not configured…"}`.
+Satellite env remains `PROJECT_ASK_URL` (typically `:8770`). NEVER curl localhost
+`:8765` (web-fetcher) for `/v1/project-ask/*`.
 
 ## cse_session
 
-**Life + code primary** — cross-surface CSE provenance read, bounded harvest, and
-authorized paste via the `cdp-ask` satellite (`/v1/cse-session/*`). Thin httpx relay
-from MCP; per-op `mandate_safety`: `provenance`/`harvest` read-only, `paste` write.
+**Life + code primary** — CSE provenance, harvest, hop-pair paste, warm followup,
+and attended resolve via the `cdp-ask` satellite. Thin httpx relay from MCP.
 
-Ops: `provenance`, `harvest`, `paste` (typed `op` parameter; per-op catalog rows in
-`config/mcp/canonical.yaml`). Paste requires explicit target identity
-(`chat_url` or `registration_id`); hop-pair or explicit `grant` authorization;
+`paste` = hop-pair / grant (`/v1/cse-session/paste`). `followup` = warm wake into
+a retained or dormant Cowork CSE (`/v1/project-ask/followups`). Do not unify them.
+
+Ops: `provenance`, `harvest`, `paste`, `followup`, `resolve_attended` (typed `op`;
+per-op catalog rows in `config/mcp/canonical.yaml`). `paste` requires explicit
+target identity (`chat_url` or `registration_id`); hop-pair or explicit `grant` authorization;
 idempotent replay via `idempotency_key`. Receipt never implies ACK or release.
 
 See `agent_skill:claude-ai-cdp-navigation` for call-time doctrine.

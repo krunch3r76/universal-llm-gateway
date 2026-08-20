@@ -194,10 +194,9 @@ team_dispatch(op=generate, model=cdp/opus-5, contract=light-bounded,
               sidecar_ref=cortex://…, dispatch_thread_id=…)
 agent_bus.wait(… from_agent=web-anthropic)   # reply OR DELIVERY FAILED; long running ≠ stalled
 
-# Escape (IF6 / satellite-direct)
-project_ask(op=submit, prompt_uri=cortex://…, converse=true,
-            no_project_uuid=true, model=opus-5, purpose=ask)
-project_ask(op=poll, execution_id=…)
+# Escape (IF6 / satellite-direct) — CLI, not MCP
+scripts/cortex/claude-ai-sync-jupiter project-ask \
+  --converse --no-uuid --model opus-5 --prompt-file …
 ```
 
 Poll discipline is identical to § R-admit poll (dispatch-cascade-annex). If the window
