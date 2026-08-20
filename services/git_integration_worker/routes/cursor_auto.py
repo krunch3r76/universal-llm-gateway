@@ -87,6 +87,11 @@ class EnqueueBody(BaseModel):
     # enqueue maps ``contract:propagate`` via ``declared_execution_mode``.
     execution_mode: str = "serial"
     wire_dropped_fields: tuple[str, ...] = ()
+    # Sealed CDP advisor brief — cortex URI and/or inline text. Omitted ⇒
+    # commission falls back to job.body (executor DIRECTIVE). Extra=ignore
+    # previously dropped these keys, so advisors received job.body verbatim.
+    prompt_uri: str | None = None
+    advisor_brief: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -262,6 +267,8 @@ async def enqueue(body: EnqueueBody, request: Request):
         continuity_hop=is_hop,
         continuity_matched_token=matched_token,
         wire_dropped_fields=tuple(body.wire_dropped_fields),
+        prompt_uri=body.prompt_uri,
+        advisor_brief=body.advisor_brief,
         lane=body.lane,
         execution_mode=declared_execution_mode(
             contract=body.contract,
@@ -288,6 +295,9 @@ async def enqueue(body: EnqueueBody, request: Request):
             cse_registration_id=body.cse_registration_id,
             continuity_hop=False,
             continuity_matched_token=None,
+            # Deferred sibling is the executor DIRECTIVE, not the advisor brief.
+            prompt_uri=None,
+            advisor_brief=None,
             lane=body.lane,
             execution_mode=declared_execution_mode(
                 contract=body.contract,

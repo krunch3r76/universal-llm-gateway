@@ -9,8 +9,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from services.git_integration_worker.cursor_auto.cdp_escalation import (
+    PROMPT_SOURCE_BODY,
+    PROMPT_SOURCE_BRIEF,
+    PROMPT_SOURCE_OVERRIDE,
+    PROMPT_SOURCE_URI,
     commission_cdp_escalation,
     escalation_lane_refusal,
+    resolve_cdp_escalation_prompt,
 )
 from services.git_integration_worker.cursor_auto.directive import body_escalation
 from services.git_integration_worker.cursor_auto.job_ledger import AutoJobLedger
@@ -146,6 +151,7 @@ async def test_commission_cdp_escalation_posts_team_dispatch():
     body = call_args.kwargs["json"]
     assert body["op"] == "generate"
     assert body["model"] == "cdp/fable"
+    assert body["prompt"] == job.body
     assert body["reasoning_effort"] == "high"
     assert body["dispatch_thread_id"] == "6829"
 
@@ -370,3 +376,109 @@ def test_process_job_cdp_effort_unclamped_when_sdk_model_non_roaming(monkeypatch
     assert commission.await_args.kwargs["reasoning_effort"] == "xhigh"
     assert binds and binds[0]["resolved_effort"] == "xhigh"
     assert binds[0]["requested_effort"] == "xhigh"
+
+
+def _directive_job(**overrides: object) -> AutoJob:
+    payload: dict[str, object] = {
+        "job_id": "j-brief",
+        "thread_id": "9530",
+        "turn_number": 1,
+        "subject": "G1",
+        "body": "TYPE: DIRECTIVE\n## Scope\nexecutor packet\n",
+        "from_agent": "cursor-auto",
+        "to_agent": "cursor",
+        "desired_model": "auto",
+        "desired_effort": "high",
+        "escalation": "cdp/fable",
+        "contract": "answer",
+    }
+    payload.update(overrides)
+    return AutoJob(**payload)  # type: ignore[arg-type]
+
+
+def test_resolve_falls_back_to_job_body_when_no_brief() -> None:
+    job = _directive_job()
+    prompt, source = resolve_cdp_escalation_prompt(job)
+    assert source == PROMPT_SOURCE_BODY
+    assert prompt == job.body
+
+
+def test_resolve_uses_advisor_brief_not_job_body() -> None:
+    sealed = "TYPE: CONSULT\nsealed advisor brief\n"
+    job = _directive_job(advisor_brief=sealed)
+    prompt, source = resolve_cdp_escalation_prompt(job)
+    assert source == PROMPT_SOURCE_BRIEF
+    assert prompt == sealed
+    assert "TYPE: DIRECTIVE" not in prompt
+
+
+def test_resolve_prompt_override_beats_brief() -> None:
+    job = _directive_job(advisor_brief="sealed")
+    prompt, source = resolve_cdp_escalation_prompt(
+        job, prompt_override="hop successor body"
+    )
+    assert source == PROMPT_SOURCE_OVERRIDE
+    assert prompt == "hop successor body"
+
+
+def test_resolve_loads_prompt_uri(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    brief_path = tmp_path / "notes" / "system" / "threads" / "sealed.md"
+    brief_path.parent.mkdir(parents=True)
+    brief_path.write_text("TYPE: CONSULT\nuri-loaded brief\n", encoding="utf-8")
+    from implement_admission import closeout_helpers
+
+    monkeypatch.setattr(closeout_helpers, "cortex_files_root", lambda: tmp_path)
+    uri = "cortex://notes/system/threads/sealed.md"
+    job = _directive_job(prompt_uri=uri)
+    prompt, source = resolve_cdp_escalation_prompt(job)
+    assert source == PROMPT_SOURCE_URI
+    assert prompt == "TYPE: CONSULT\nuri-loaded brief\n"
+    assert job.body not in prompt
+
+
+def test_resolve_missing_prompt_uri_fails_closed(tmp_path, monkeypatch) -> None:
+    from implement_admission import closeout_helpers
+
+    monkeypatch.setattr(closeout_helpers, "cortex_files_root", lambda: tmp_path)
+    job = _directive_job(prompt_uri="cortex://notes/system/threads/missing.md")
+    with pytest.raises(ValueError, match="prompt_uri not found"):
+        resolve_cdp_escalation_prompt(job)
+
+
+@pytest.mark.asyncio
+async def test_commission_posts_advisor_brief_not_job_body() -> None:
+    sealed = "TYPE: CONSULT\nsealed advisor brief\n"
+    job = _directive_job(advisor_brief=sealed)
+    mock_resp = MagicMock()
+    mock_resp.status_code = 202
+    mock_resp.json.return_value = {"execution_id": "exec-brief", "status": "started"}
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    with patch(
+        "services.git_integration_worker.cursor_auto.cdp_escalation.make_async_client",
+        return_value=mock_client,
+    ):
+        result = await commission_cdp_escalation(job, model="cdp/fable")
+    assert result["ok"] is True
+    body = mock_client.post.await_args.kwargs["json"]
+    assert body["prompt"] == sealed
+    assert body["prompt"] != job.body
+
+
+@pytest.mark.asyncio
+async def test_commission_unreadable_brief_does_not_send_job_body() -> None:
+    job = _directive_job(prompt_uri="cortex://notes/system/threads/missing.md")
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    with patch(
+        "services.git_integration_worker.cursor_auto.cdp_escalation.make_async_client",
+        return_value=mock_client,
+    ):
+        result = await commission_cdp_escalation(job, model="cdp/fable")
+    assert result["ok"] is False
+    assert result["reason"] == "advisor_brief_unreadable"
+    mock_client.post.assert_not_awaited()

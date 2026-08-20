@@ -67,3 +67,22 @@ def test_job_record_round_trip_preserves_missing_cse() -> None:
     restored = job_from_row(row)  # type: ignore[arg-type]
     assert restored.cse_chat_url is None
     assert restored.cse_registration_id is None
+
+
+def test_job_record_round_trip_restores_advisor_brief() -> None:
+    uri = "cortex://notes/system/threads/9530-g1-refire-fable-brief.md"
+    job = _job(prompt_uri=uri, advisor_brief="TYPE: CONSULT\nsealed\n")
+    record = job_record(job)
+    assert record["prompt_uri"] == uri
+    assert record["advisor_brief"] == "TYPE: CONSULT\nsealed\n"
+    row = {
+        "job_id": job.job_id,
+        "thread_id": job.thread_id,
+        "turn_number": job.turn_number,
+        "request_id": None,
+        "status": "queued",
+        "record_json": json.dumps(record),
+    }
+    restored = job_from_row(row)  # type: ignore[arg-type]
+    assert restored.prompt_uri == uri
+    assert restored.advisor_brief == "TYPE: CONSULT\nsealed\n"

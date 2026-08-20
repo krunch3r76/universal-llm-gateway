@@ -39,6 +39,9 @@ class AutoJob:
     continuity_matched_token: str | None = None
     # Wire keys dropped at L1 enqueue (``extra=ignore`` observation).
     wire_dropped_fields: tuple[str, ...] = ()
+    # Sealed advisor brief for CDP escalation (explicit; not job.body).
+    prompt_uri: str | None = None
+    advisor_brief: str | None = None
     # GIW checkout-isolation lane (``A``|``B``); None ⇒ select_lane defaults.
     lane: str | None = None
     # Declared execution mode (S-3). "serial" (default) uses the exclusive
@@ -460,9 +463,7 @@ class AutoJobQueue:
             )
 
             with self._lock:
-                snap.update(
-                    waiter_starvation_from_memory(self._order, self._jobs)
-                )
+                snap.update(waiter_starvation_from_memory(self._order, self._jobs))
         return snap
 
     def waiter_receipt(self, job_id: str) -> dict[str, Any]:

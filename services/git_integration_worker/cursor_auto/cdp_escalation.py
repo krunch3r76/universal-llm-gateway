@@ -8,7 +8,7 @@ the read clock after commission.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -23,6 +23,69 @@ logger = get_logger(__name__)
 
 _RELAY_TIMEOUT = 20.0
 
+# Prompt source tags returned by resolve_cdp_escalation_prompt.
+PROMPT_SOURCE_OVERRIDE = "prompt_override"
+PROMPT_SOURCE_BRIEF = "advisor_brief"
+PROMPT_SOURCE_URI = "prompt_uri"
+PROMPT_SOURCE_BODY = "job.body"
+
+
+def load_advisor_brief(prompt_uri: str) -> str:
+    """Load a sealed advisor brief from a ``cortex://`` URI.
+
+    Fail-closed: missing, empty, or non-cortex URIs raise ``ValueError`` so
+    commission does not silently substitute ``job.body``.
+    """
+    if not prompt_uri.startswith("cortex://"):
+        raise ValueError("prompt_uri must use cortex:// scheme")
+    from implement_admission.closeout_helpers import cortex_files_root
+
+    rel = prompt_uri.removeprefix("cortex://").lstrip("/")
+    path = (cortex_files_root() / rel).resolve()
+    root = cortex_files_root().resolve()
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(
+            f"prompt_uri {prompt_uri!r} escapes CORTEX_FILES_ROOT"
+        ) from exc
+    if not path.is_file():
+        raise ValueError(f"prompt_uri not found: {prompt_uri!r} -> {path}")
+    text = path.read_text(encoding="utf-8")
+    if not text.strip():
+        raise ValueError(f"prompt_uri empty: {prompt_uri!r}")
+    return text
+
+
+def resolve_cdp_escalation_prompt(
+    job: AutoJob,
+    *,
+    prompt_override: str | None = None,
+    advisor_brief: str | None = None,
+    prompt_uri: str | None = None,
+) -> tuple[str, str]:
+    """Choose the CDP advisor prompt; ``job.body`` is last-resort only.
+
+    Precedence (first non-empty wins):
+    1. ``prompt_override`` — hop-composed successor body
+    2. ``advisor_brief`` kwarg, else ``job.advisor_brief``
+    3. ``prompt_uri`` kwarg, else ``job.prompt_uri`` (loaded from cortex)
+    4. ``job.body`` — executor DIRECTIVE fallback when no brief exists
+    """
+    if prompt_override is not None and prompt_override.strip():
+        return prompt_override, PROMPT_SOURCE_OVERRIDE
+    raw_brief = (
+        advisor_brief
+        if advisor_brief is not None
+        else getattr(job, "advisor_brief", None)
+    )
+    if raw_brief and str(raw_brief).strip():
+        return str(raw_brief), PROMPT_SOURCE_BRIEF
+    uri = (prompt_uri or getattr(job, "prompt_uri", None) or "").strip()
+    if uri:
+        return load_advisor_brief(uri), PROMPT_SOURCE_URI
+    return job.body, PROMPT_SOURCE_BODY
+
 
 def _stamp_snap_read(snap: dict[str, Any]) -> dict[str, Any]:
     """Copy ``snap`` and stamp ``observed_at`` at GET-return time if absent.
@@ -32,7 +95,7 @@ def _stamp_snap_read(snap: dict[str, Any]) -> dict[str, Any]:
     """
     out = dict(snap)
     if not out.get("observed_at"):
-        out["observed_at"] = datetime.now(timezone.utc).isoformat()
+        out["observed_at"] = datetime.now(UTC).isoformat()
     return out
 
 
@@ -79,18 +142,41 @@ async def commission_cdp_escalation(
     mission_kind: str | None = None,
     parent_thread: str | None = None,
     prompt_override: str | None = None,
+    advisor_brief: str | None = None,
+    prompt_uri: str | None = None,
 ) -> dict[str, Any]:
     """POST one CDP generate leg to Stargate ``/api/v1/team/dispatch``.
 
     Uses the same async HTTP client pattern as ``services/mcp-server/tools/frontier.py``.
 
     *prompt_override* carries a body the caller composed for the successor (hop
-    orientation) without mutating the queued job.
+    orientation) without mutating the queued job. A sealed advisor brief
+    (``advisor_brief`` / ``prompt_uri`` / matching ``AutoJob`` fields) beats
+    ``job.body``; ``job.body`` is used only when no brief exists.
     """
+    try:
+        prompt, prompt_source = resolve_cdp_escalation_prompt(
+            job,
+            prompt_override=prompt_override,
+            advisor_brief=advisor_brief,
+            prompt_uri=prompt_uri,
+        )
+    except ValueError as exc:
+        logger.error("cdp escalation brief unreadable: %s", exc)
+        return {
+            "ok": False,
+            "error": str(exc),
+            "reason": "advisor_brief_unreadable",
+        }
+    logger.info(
+        "cdp escalation prompt_source=%s job=%s",
+        prompt_source,
+        job.job_id,
+    )
     body: dict[str, Any] = {
         "op": "generate",
         "model": model,
-        "prompt": prompt_override or job.body,
+        "prompt": prompt,
         "dispatch_thread_id": job.thread_id,
         "contract": "light-bounded",
         "caller_agent": "cursor-auto",
