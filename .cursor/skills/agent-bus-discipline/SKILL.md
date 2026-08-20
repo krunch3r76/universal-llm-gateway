@@ -142,7 +142,7 @@ Operator English → you translate (do not correct their wording):
 | “watch that / don’t post / just look” | custodial · monitor |
 | “the main arc / standing root / keep this open” | orchestration thread (`role:root`) |
 | “do the work here / implement on this / this is the job” | productive (this thread) |
-| “have cursor do X / just do it / make it real” | remaining hops — Use the `life-operator-do-chain` skill; ¬ quiz Architect / Mission writer / Conductor |
+| “have cursor do X / just do it / make it real” | remaining hops — Use the `life-operator-do-chain` skill; ¬ quiz. Named Architect / Mission Architect / Conductor pin that hop |
 | “what is this thread?” | you label it (spine + genus + species if useful) |
 | “don’t mix the watch with the work” | keep 9471-class and 9482-class apart |
 
