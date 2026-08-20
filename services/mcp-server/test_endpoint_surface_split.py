@@ -36,6 +36,7 @@ LIFE_PRIMARY = frozenset(
         "delegate",
         "notify",
         "cse_session",
+        "recycle_giw",
     }
 )
 CODE_EXTRA = frozenset(
@@ -51,7 +52,7 @@ CODE_EXTRA = frozenset(
 # overflow/relay, never surface_primary (d946 test overclaim; a505 promoted
 # cursor_request into both primaries without updating this gate).
 CODE_PRIMARY = (
-    LIFE_PRIMARY - frozenset({"imprint", "delegate", "notify", "recall"})
+    LIFE_PRIMARY - frozenset({"imprint", "delegate", "notify", "recall", "recycle_giw"})
 ) | CODE_EXTRA
 
 
@@ -141,6 +142,16 @@ def test_imprint_present_on_life_absent_on_code(
     assert "imprint" not in code_server["primary"]
 
 
+def test_recycle_giw_present_on_life_absent_on_code(
+    life_server: dict, code_server: dict
+) -> None:
+    assert "recycle_giw" in life_server["tool_names"]
+    assert "recycle_giw" in life_server["primary"]
+    assert "recycle_giw" not in code_server["tool_names"]
+    assert "recycle_giw" not in code_server["primary"]
+    assert "manage" not in life_server["tool_names"]
+
+
 def test_recall_present_on_life_absent_on_code(
     life_server: dict, code_server: dict
 ) -> None:
@@ -162,7 +173,6 @@ def test_delegate_present_on_life_absent_on_code(
 def test_life_cortex_entity_merge_rejected() -> None:
     from fastmcp import FastMCP
     from request_profile import bind_request
-
     from tools.cortex import register_cortex_tools
 
     mcp = FastMCP("test-life-cortex-gate")

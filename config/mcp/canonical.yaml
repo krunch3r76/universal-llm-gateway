@@ -28,6 +28,7 @@ domains:
 - fleet_liveness
 - operator_request
 - cse_session
+- recycle_giw
 tools:
 - canonical_name: cortex_entities
   domain: cortex
@@ -4021,6 +4022,30 @@ tools:
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: '2026-08-15'
+- canonical_name: recycle_giw
+  domain: recycle_giw
+  operation: recycle
+  dispatcher_call_shape:
+    tool: recycle_giw
+    dispatch_key: op
+    dispatch_value: recycle
+  flat_call_shape:
+    tool: recycle_giw
+    substrate_qualified: user-vortex__recycle_giw
+  fol_descriptor: "Life-surface bounded recycle of git_integration_worker over manage.sock.
+    Drain-gated restart first; escalate to force only after occupant progress idles.
+    Hard-scoped: no service or action parameter. Full manage stays code-only.
+    See todo:giw-seat-recycle-sliver."
+  json_schema:
+    type: object
+    properties: {}
+  skill_uri: agent_skill:manage
+  seat_visibility:
+  - mcp
+  - mcp_claude
+  mandate_safety: write
+  cache_priority: on_demand
+  introduced: '2026-08-20'
 - canonical_name: manage_health
   domain: manage
   operation: health
@@ -5336,6 +5361,8 @@ domain_endpoints:
     - life
     notify:
     - life
+    recycle_giw:
+    - life
 surface_primary_domains:
   life:
   - cortex
@@ -5355,6 +5382,7 @@ surface_primary_domains:
   - fleet_liveness
   - operator_request
   - cse_session
+  - recycle_giw
   code:
   - cortex
   - cortex_brief

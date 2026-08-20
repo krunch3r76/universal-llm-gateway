@@ -63,6 +63,7 @@ LIFE_SURFACE_LEGAL_TOOLS: frozenset[str] = frozenset(
         "delegate",
         "notify",
         "cse_session",
+        "recycle_giw",
     }
 )
 

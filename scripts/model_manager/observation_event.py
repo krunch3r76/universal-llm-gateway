@@ -320,6 +320,53 @@ async def emit_manage_restart_cancelled(*, intent_id: str) -> None:
     )
 
 
+async def emit_manage_recycle_requested(*, intent_id: str | None = None) -> None:
+    """Seat asked manage to recycle git_integration_worker (pre-intent)."""
+    from charter_runner_store.recycle_giw_events import ManageRecycleRequested
+
+    event = ManageRecycleRequested(intent_id=intent_id)
+    await _emit(event.signal, dict(event.payload))
+
+
+async def emit_manage_recycle_drain_attempted(*, intent_id: str, idle_s: float) -> None:
+    """Drain-gated recycle is armed; force has not run."""
+    from charter_runner_store.recycle_giw_events import ManageRecycleDrainAttempted
+
+    event = ManageRecycleDrainAttempted(intent_id=intent_id, idle_s=idle_s)
+    await _emit(event.signal, dict(event.payload))
+
+
+async def emit_manage_recycle_escalated(
+    *,
+    intent_id: str,
+    idle_s: float,
+    active_count: int,
+    stuck_ops: list[dict[str, Any]] | None = None,
+) -> None:
+    """Idle-on-no-progress gate tripped; force kill follows."""
+    from charter_runner_store.recycle_giw_events import ManageRecycleEscalated
+
+    event = ManageRecycleEscalated(
+        intent_id=intent_id,
+        idle_s=idle_s,
+        active_count=active_count,
+        stuck_ops=stuck_ops,
+    )
+    await _emit(event.signal, dict(event.payload))
+
+
+async def emit_manage_recycle_completed(
+    *, intent_id: str, escalated: bool, duration_s: float
+) -> None:
+    """Recycle finished a process restart."""
+    from charter_runner_store.recycle_giw_events import ManageRecycleCompleted
+
+    event = ManageRecycleCompleted(
+        intent_id=intent_id, escalated=escalated, duration_s=duration_s
+    )
+    await _emit(event.signal, dict(event.payload))
+
+
 async def emit_manage_restart_timeout(
     *,
     intent_id: str,
@@ -438,8 +485,12 @@ async def emit_manage_digest_tick_completed(*, count: int, status: str) -> None:
 
 
 # Charter + conveyor emitters live in sibling modules; re-export for callers.
-from scripts.model_manager import observation_event_charter as _charter_events  # noqa: E402
-from scripts.model_manager import observation_event_conveyor as _conveyor_events  # noqa: E402
+from scripts.model_manager import (  # noqa: E402
+    observation_event_charter as _charter_events,
+)
+from scripts.model_manager import (  # noqa: E402
+    observation_event_conveyor as _conveyor_events,
+)
 
 __all__ = [
     name

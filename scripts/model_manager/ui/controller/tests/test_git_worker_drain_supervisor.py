@@ -140,6 +140,7 @@ def _supervisor(
     kill: _Kill,
     *,
     deadline_s: float = 5.0,
+    idle_escalate_s: float | None = None,
 ) -> GitWorkerDrainSupervisor:
     return GitWorkerDrainSupervisor(
         store=store,
@@ -150,6 +151,7 @@ def _supervisor(
         deadline_s=deadline_s,
         reconcile_interval_s=0.01,
         progress_interval_s=999.0,
+        idle_escalate_s=idle_escalate_s,
     )
 
 
@@ -618,5 +620,72 @@ def test_mcp_allowlist_accepts_cancel_restart_intent() -> None:
                     elts = call.args[0].elts  # type: ignore[attr-defined]
                     names = {e.value for e in elts if isinstance(e, ast.Constant)}
                     assert "cancel_restart_intent" in names
+                    assert "recycle_giw" in names
                     return
     raise AssertionError("_VALID_ACTIONS not found in manage.py")
+
+
+def test_idle_escalate_kills_without_drain_idle(
+    tmp_path: Any, events_log: list[tuple[str, dict[str, Any]]]
+) -> None:
+    """Recycle mode: stable occupants with no heartbeat → force kill."""
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE, action="recycle_giw", deadline_at="d", reason="r"
+    )
+    stuck = _snap(
+        draining=True,
+        epoch=1,
+        active=1,
+        ops=[{"op_id": "job-stuck", "kind": "cursor-auto"}],
+    )
+    worker = _Worker(
+        drain_states=[_snap(draining=False, epoch=0, active=1), stuck],
+        begin_snap=stuck,
+    )
+    kill = _Kill()
+    sup = _supervisor(
+        store, worker, _Feed([]), kill, deadline_s=5.0, idle_escalate_s=0.05
+    )
+    _run(sup.supervise(intent))
+    assert kill.calls == 1
+    signals = [s for s, _ in events_log]
+    assert "manage.recycle.escalated" in signals
+    assert "manage.recycle.completed" in signals
+    completed = [p for s, p in events_log if s == "manage.recycle.completed"]
+    assert completed and completed[-1]["escalated"] is True
+
+
+def test_idle_gate_does_not_fire_when_auto_heartbeat_fresh(
+    tmp_path: Any, events_log: list[tuple[str, dict[str, Any]]]
+) -> None:
+    """Heartbeating Auto occupant must not force; drain timeout stays alert-only."""
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE, action="recycle_giw", deadline_at="d", reason="r"
+    )
+    busy = _snap(
+        draining=True,
+        epoch=1,
+        active=1,
+        ops=[{"op_id": "job-live", "kind": "cursor-auto"}],
+    )
+
+    async def _liveness() -> dict[str, Any]:
+        return {"queue_health": {"occupant_idle_s": 1.0}}
+
+    worker = _Worker(
+        drain_states=[_snap(draining=False, epoch=0, active=1), busy],
+        begin_snap=busy,
+    )
+    kill = _Kill()
+    sup = _supervisor(
+        store, worker, _Feed([]), kill, deadline_s=0.05, idle_escalate_s=0.2
+    )
+    sup.liveness_state = _liveness
+    _run(sup.supervise(intent))
+    assert kill.calls == 0
+    signals = [s for s, _ in events_log]
+    assert "manage.recycle.escalated" not in signals
+    assert "manage.restart.timeout" in signals
+

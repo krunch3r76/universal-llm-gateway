@@ -1994,6 +1994,7 @@ class CursorDispatchLedger:
                     "subject_preview": holder.get("holder_subject_preview"),
                     "thread_id": holder.get("holder_thread_id"),
                     "started_at": holder.get("holder_started_at"),
+                    "last_heartbeat_at": row["last_heartbeat_at"],
                 }
             )
         return out

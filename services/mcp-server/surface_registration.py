@@ -6,8 +6,6 @@ import os
 from typing import TYPE_CHECKING
 
 from endpoint_surface import Surface
-from universal_logging import get_logger
-
 from tools._agent_bus_read import register_agent_bus_read_tool
 from tools.advisor import register_advisor_tools
 from tools.agent_bus import register_agent_bus_tools
@@ -29,7 +27,6 @@ from tools.frontier import register_frontier_tools
 from tools.frontier_imagine import register_imagine_tools
 from tools.git_integrate import register_git_integrate_tools
 from tools.imprint import register_imprint_tools
-from tools.recall import register_recall_tools
 from tools.manage import register_manage_tools
 from tools.markdown_tool import register_markdown_tools
 from tools.model_status import register_model_status_tools
@@ -44,6 +41,8 @@ from tools.promote_document_to_evidence import (
 from tools.quality import register_quality_tools
 from tools.rag import register_rag_tools
 from tools.rag_articles import register_rag_article_tools
+from tools.recall import register_recall_tools
+from tools.recycle_giw import register_recycle_giw_tools
 from tools.security import register_security_tools
 from tools.security_js import register_security_js_tools
 from tools.skill_suggest import register_skill_suggest_tools
@@ -53,6 +52,7 @@ from tools.trigger import register_trigger_tool
 from tools.vision_digest import register_vision_digest_tools
 from tools.web import register_web_tools
 from tools.x_dm import register_x_dm_tools
+from universal_logging import get_logger
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -109,6 +109,7 @@ def register_tools_for_surface(mcp: FastMCP, surface: Surface) -> None:
         register_delegate_schema_transform(mcp)
         register_notify_tools(mcp)
         register_trigger_tool(mcp)
+        register_recycle_giw_tools(mcp)
 
     if surface == "code":
         register_manage_tools(mcp)
