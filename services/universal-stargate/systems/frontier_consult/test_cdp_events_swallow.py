@@ -10,8 +10,10 @@ from systems.frontier_consult import cdp_events
 @pytest.fixture(autouse=True)
 def _clear_seen():
     cdp_events._SWALLOWED_SEEN.clear()
+    cdp_events.reset_horizon_unverifiable_emits_for_tests()
     yield
     cdp_events._SWALLOWED_SEEN.clear()
+    cdp_events.reset_horizon_unverifiable_emits_for_tests()
 
 
 def test_publish_failure_is_logged_once_per_cause(monkeypatch, caplog) -> None:
@@ -74,6 +76,35 @@ def test_stalled_payload_carries_since_last_progress_s() -> None:
     assert event.payload["since_last_progress_s"] == 42.5
     assert "active_wall_s" not in event.payload
     assert "wall_paused_s" not in event.payload
+
+
+def test_horizon_unverifiable_retries_until_publish_succeeds(monkeypatch) -> None:
+    """Swallowed publish must not consume the once-per-id slot (AC2)."""
+    attempts: list[str] = []
+
+    def _fail_twice_then_ok(event) -> bool:
+        attempts.append(event.signal)
+        if len(attempts) <= 2:
+            raise RuntimeError("bus down")
+        return True
+
+    monkeypatch.setattr(cdp_events, "publish_cdp_event", _fail_twice_then_ok)
+    kwargs = dict(
+        request_id="r",
+        execution_id="exec-retry",
+        satellite_execution_id="s",
+        thread_id="9501",
+        stall_stage="horizon_unverifiable_retained",
+        error="horizon crossed; liveness unverifiable: project-ask HTTP 404",
+    )
+    assert cdp_events.publish_horizon_unverifiable_once(**kwargs) is False
+    assert "exec-retry" not in cdp_events._HORIZON_UNVERIFIABLE_EMITTED
+    assert cdp_events.publish_horizon_unverifiable_once(**kwargs) is False
+    assert "exec-retry" not in cdp_events._HORIZON_UNVERIFIABLE_EMITTED
+    assert cdp_events.publish_horizon_unverifiable_once(**kwargs) is True
+    assert "exec-retry" in cdp_events._HORIZON_UNVERIFIABLE_EMITTED
+    assert cdp_events.publish_horizon_unverifiable_once(**kwargs) is False
+    assert attempts == ["cdp.generate.horizon.unverifiable"] * 3
 
 
 def test_horizon_unverifiable_payload_carries_thread_and_error() -> None:

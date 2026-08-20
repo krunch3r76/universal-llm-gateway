@@ -1,4 +1,6 @@
-"""CDP generate substrate lifecycle events covering admit, submit, proof, stall, horizon retain, and on-behalf delivery."""
+"""CDP generate substrate lifecycle events covering admit, submit, proof,
+stall, horizon retain, and on-behalf delivery.
+"""
 
 from __future__ import annotations
 
@@ -134,7 +136,9 @@ def CdpGenerateHorizonUnverifiable(  # noqa: N802
     Distinct from ``cdp.generate.stalled`` so hop cadence, the inflight ledger
     terminal set, and dispatch-monitor crit do not treat retain as FAILED.
     ``stall_stage`` is the sizing filter (``horizon_unverifiable_retained`` vs
-    ``horizon_seated_authorship``). First emit per ``execution_id`` per process.
+    ``horizon_seated_authorship``). First successful publish per
+    ``execution_id`` per process; a swallowed attempt does not consume the
+    slot.
     """
     return Event(
         signal="cdp.generate.horizon.unverifiable",
@@ -190,8 +194,13 @@ def CdpGenerateDeliveryFailed(  # noqa: N802
     )
 
 
-def publish_cdp_event(event: Event) -> None:
-    """Best-effort publish via Stargate proxy event bus (no-op if unavailable)."""
+def publish_cdp_event(event: Event) -> bool:
+    """Best-effort publish via Stargate proxy event bus.
+
+    Returns True when ``publish_from_sync`` ran. False when the proxy has no
+    bus or publish raised. Horizon sizing retries on False; other callers
+    ignore the return (observability must not fail the lane).
+    """
     try:
         from systems.proxy.dependencies import get_proxy
 
@@ -199,23 +208,31 @@ def publish_cdp_event(event: Event) -> None:
         event_bus = getattr(proxy, "event_bus", None)
         if event_bus is None:
             _warn_swallowed(event.signal, "proxy has no event_bus")
-            return
+            return False
         event_bus.publish_from_sync(event)
+        return True
     except Exception as exc:  # noqa: BLE001 — observability must not fail the lane
         _warn_swallowed(event.signal, f"{type(exc).__name__}: {exc}")
-        return
+        return False
 
 
-def publish_cdp_kwargs(factory: Any, **kwargs: Any) -> None:
-    """Build + publish a CDP event factory (swallow publish errors)."""
+def publish_cdp_kwargs(factory: Any, **kwargs: Any) -> bool:
+    """Build + publish a CDP event factory (swallow publish errors).
+
+    Returns False only on a failed delivery (bus missing, publish raised, or
+    factory raised). None-returning test stubs count as delivered.
+    """
     try:
-        publish_cdp_event(factory(**kwargs))
+        delivered = publish_cdp_event(factory(**kwargs))
+        if delivered is False:
+            return False
+        return True
     except Exception as exc:  # noqa: BLE001
         _warn_swallowed(
             getattr(factory, "__name__", "cdp.generate.?"),
             f"{type(exc).__name__}: {exc}",
         )
-        return
+        return False
 
 
 def publish_horizon_unverifiable_once(
@@ -227,17 +244,16 @@ def publish_horizon_unverifiable_once(
     stall_stage: str,
     error: str | None,
 ) -> bool:
-    """Publish first horizon-unverifiable observation for ``execution_id``.
+    """Publish first successful horizon-unverifiable event for ``execution_id``.
 
-    Returns True when this process had not yet emitted for the id. Subsequent
-    20s reconcile ticks are silent — burst under project-ask outage would
-    otherwise be N legs × 3/min. Lost: dwell / re-fire count. Kept: unique-leg
-    arrival rate with thread_id + probe error.
+    Returns True when this call delivered the event. A swallowed publish does
+    not consume the slot — the next 20s reconcile tick retries. After the
+    first successful publish, later ticks are silent (unique-leg arrival,
+    not dwell). Lost if we marked-before-publish: the outage burst itself.
     """
     if execution_id in _HORIZON_UNVERIFIABLE_EMITTED:
         return False
-    _HORIZON_UNVERIFIABLE_EMITTED.add(execution_id)
-    publish_cdp_kwargs(
+    delivered = publish_cdp_kwargs(
         CdpGenerateHorizonUnverifiable,
         request_id=request_id,
         execution_id=execution_id,
@@ -246,6 +262,9 @@ def publish_horizon_unverifiable_once(
         stall_stage=stall_stage,
         error=error,
     )
+    if delivered is False:
+        return False
+    _HORIZON_UNVERIFIABLE_EMITTED.add(execution_id)
     return True
 
 
