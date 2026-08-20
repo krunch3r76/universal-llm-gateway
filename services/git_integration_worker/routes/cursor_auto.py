@@ -18,6 +18,9 @@ from services.git_integration_worker.cursor_auto.directive import (
     is_mission_negotiation_directive,
     split_continuity_hop_legs,
 )
+from services.git_integration_worker.cursor_auto.execution_mode import (
+    declared_execution_mode,
+)
 from services.git_integration_worker.cursor_auto.handler_terminal import (
     post_terminal_status,
 )
@@ -80,9 +83,8 @@ class EnqueueBody(BaseModel):
     # GIW checkout isolation — same lever as POST /api/v1/cursor/dispatch.
     # Distinct from lane_role (bus parentage) and tag lane:cursor-auto.
     lane: Literal["A", "B"] | None = None
-    # Declared execution mode (S-3, mission 9440) -- structural predicate input
-    # for concurrent admission opt-in. Default preserves today's exclusive-
-    # serial-slot behavior. Never inferred from `contract`.
+    # Declared execution mode (S-3). Claim paths never infer from contract;
+    # enqueue maps ``contract:propagate`` via ``declared_execution_mode``.
     execution_mode: str = "serial"
     wire_dropped_fields: tuple[str, ...] = ()
 
@@ -168,9 +170,11 @@ async def enqueue(body: EnqueueBody, request: Request):
             body.thread_id,
             body.turn_number,
         )
-    desired_model, escalation, coalesce_meta = coalesce_cdp_desired_model_into_escalation(
-        body.desired_model,
-        body.escalation,
+    desired_model, escalation, coalesce_meta = (
+        coalesce_cdp_desired_model_into_escalation(
+            body.desired_model,
+            body.escalation,
+        )
     )
     if coalesce_meta.get("coalesced"):
         logger.info(
@@ -259,7 +263,11 @@ async def enqueue(body: EnqueueBody, request: Request):
         continuity_matched_token=matched_token,
         wire_dropped_fields=tuple(body.wire_dropped_fields),
         lane=body.lane,
-        execution_mode=body.execution_mode,
+        execution_mode=declared_execution_mode(
+            contract=body.contract,
+            requested=body.execution_mode,
+            continuity_hop=is_hop,
+        ),
     )
     deferred_job_id: str | None = None
     if deferred_body is not None:
@@ -275,15 +283,17 @@ async def enqueue(body: EnqueueBody, request: Request):
             escalation=escalation,
             contract=body.contract,
             require_attended=body.require_attended,
-            request_id=(
-                f"{body.request_id}:deferred" if body.request_id else None
-            ),
+            request_id=(f"{body.request_id}:deferred" if body.request_id else None),
             cse_chat_url=body.cse_chat_url,
             cse_registration_id=body.cse_registration_id,
             continuity_hop=False,
             continuity_matched_token=None,
             lane=body.lane,
-            execution_mode="serial",
+            execution_mode=declared_execution_mode(
+                contract=body.contract,
+                requested=body.execution_mode,
+                continuity_hop=False,
+            ),
         )
         deferred_job_id = deferred.job_id
         logger.info(
@@ -332,9 +342,7 @@ async def enqueue(body: EnqueueBody, request: Request):
                 },
             )
         controller.create_tracked_task(
-            run_continuity_hop_concurrent(
-                job, queue=queue, incumbent=incumbent
-            ),
+            run_continuity_hop_concurrent(job, queue=queue, incumbent=incumbent),
             op_id=f"cursor-auto-continuity-hop:{job.job_id}",
         )
     else:
@@ -346,9 +354,7 @@ async def enqueue(body: EnqueueBody, request: Request):
             interrupt = await supersede_same_thread_inflight(job, queue=queue)
     # Peers only (exclude self): alone → 0; queued predecessors → N. Same lock
     # as snapshot(); do not disturb supersede vocabulary beside this field.
-    lane = queue.thread_lane_counts(
-        body.thread_id, exclude_job_id=job.job_id
-    )
+    lane = queue.thread_lane_counts(body.thread_id, exclude_job_id=job.job_id)
     waiter = queue.waiter_receipt(job.job_id)
     return JSONResponse(
         status_code=200,

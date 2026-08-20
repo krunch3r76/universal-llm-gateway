@@ -14,6 +14,7 @@ from services.git_integration_worker.cursor_auto.liveness import (
     _OCCUPANT_IDLE_RED_THRESHOLD_S,
     get_registry,
     queue_admission_health,
+    reset_queue_health_red_edge_for_tests,
 )
 from services.git_integration_worker.cursor_auto.queue import (
     AutoJobQueue,
@@ -30,6 +31,7 @@ def _isolated_auto_ledger(tmp_path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     AutoJobLedger.reset_for_tests()
     reset_queue_for_tests(durable=True)
+    reset_queue_health_red_edge_for_tests()
     yield
     AutoJobLedger.reset_for_tests()
 
@@ -75,6 +77,7 @@ def test_queue_health_green_when_no_pending() -> None:
     health = queue_admission_health()
     assert health["admit_eligible_pending"] == 0
     assert health["red"] is False
+    assert health["red_reason"] is None
 
 
 def test_queue_health_green_when_occupant_heartbeating_despite_long_queue() -> None:
@@ -88,6 +91,7 @@ def test_queue_health_green_when_occupant_heartbeating_despite_long_queue() -> N
 
     health = queue_admission_health()
     assert health["red"] is False
+    assert health["red_reason"] is None
     assert health["occupant_idle_s"] is not None
     assert health["occupant_idle_s"] < 1.0
     assert health["amber"] is False
@@ -100,13 +104,12 @@ def test_queue_health_red_when_occupant_heartbeat_stale() -> None:
     occupant = _enqueue(queue, turn=1)
     claimed = queue.claim_next()
     assert claimed is not None
-    _backdate_heartbeat(
-        occupant.job_id, seconds_ago=_OCCUPANT_IDLE_RED_THRESHOLD_S + 5
-    )
+    _backdate_heartbeat(occupant.job_id, seconds_ago=_OCCUPANT_IDLE_RED_THRESHOLD_S + 5)
     _enqueue(queue, turn=2)
 
     health = queue_admission_health()
     assert health["red"] is True
+    assert health["red_reason"] == "occupant_idle"
     assert health["occupant_idle_s"] > _OCCUPANT_IDLE_RED_THRESHOLD_S
 
 
@@ -116,26 +119,44 @@ def test_queue_health_green_when_pending_but_no_occupant_claimed() -> None:
 
     health = queue_admission_health()
     assert health["red"] is False
+    assert health["red_reason"] is None
     assert health["serial_occupant_job_id"] is None
 
 
-def test_queue_health_excludes_concurrent_class_from_admit_eligible_pending(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # queue_admission_health() re-imports is_concurrent_execution_mode from
-    # execution_mode.py fresh on every call (local import, not a persistent
-    # module-level binding on liveness.py) -- patch the defining module, not
-    # queue.py's own already-bound top-level import of the same name.
-    monkeypatch.setattr(
-        "services.git_integration_worker.cursor_auto.execution_mode."
-        "is_concurrent_execution_mode",
-        lambda mode: mode == "lease_free_test",
+def test_queue_health_excludes_concurrent_class_from_admit_eligible_pending() -> None:
+    from services.git_integration_worker.cursor_auto.execution_mode import (
+        LEASE_FREE_PROPAGATE_MODE,
     )
+
     queue = get_queue()
-    _enqueue(queue, execution_mode="lease_free_test", turn=1)
+    _enqueue(queue, execution_mode=LEASE_FREE_PROPAGATE_MODE, turn=1)
 
     health = queue_admission_health()
     assert health["admit_eligible_pending"] == 0
+
+
+def test_queue_health_red_when_waiter_starved_even_if_occupant_heartbeating() -> None:
+    queue = get_queue()
+    occupant = _enqueue(queue, turn=1)
+    claimed = queue.claim_next()
+    assert claimed is not None
+    queue.bump_heartbeat(occupant.job_id)
+    waiter = _enqueue(queue, turn=2)
+    stale = (
+        datetime.now(UTC) - timedelta(seconds=WAITER_STARVATION_AMBER_THRESHOLD_S + 15)
+    ).isoformat()
+    with get_ledger()._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_auto_jobs SET enqueued_at=? WHERE job_id=?",
+            (stale, waiter.job_id),
+        )
+
+    health = queue_admission_health()
+    assert health["amber"] is True
+    assert health["red"] is True
+    assert health["red_reason"] == "waiter_starvation"
+    assert health["occupant_idle_s"] is not None
+    assert health["occupant_idle_s"] < 1.0
 
 
 def test_liveness_route_existing_keys_unchanged() -> None:
@@ -153,3 +174,40 @@ def test_liveness_route_existing_keys_unchanged() -> None:
         "wire_skew_aggregate",
     ):
         assert key in snapshot
+
+
+def test_queue_not_serving_emits_on_rising_edge_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict] = []
+
+    def _capture(**kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.queue_health_events."
+        "emit_queue_not_serving",
+        _capture,
+    )
+    queue = get_queue()
+    occupant = _enqueue(queue, turn=1)
+    claimed = queue.claim_next()
+    assert claimed is not None
+    queue.bump_heartbeat(occupant.job_id)
+    waiter = _enqueue(queue, turn=2)
+    stale = (
+        datetime.now(UTC) - timedelta(seconds=WAITER_STARVATION_AMBER_THRESHOLD_S + 15)
+    ).isoformat()
+    with get_ledger()._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_auto_jobs SET enqueued_at=? WHERE job_id=?",
+            (stale, waiter.job_id),
+        )
+
+    first = queue_admission_health()
+    assert first["red"] is True
+    assert len(calls) == 1
+    assert calls[0]["red_reason"] == "waiter_starvation"
+    second = queue_admission_health()
+    assert second["red"] is True
+    assert len(calls) == 1

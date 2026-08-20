@@ -17,6 +17,7 @@ from services.git_integration_worker.cursor_auto.liveness import (
     _OCCUPANT_IDLE_RED_THRESHOLD_S,
     get_registry,
     queue_admission_health,
+    reset_queue_health_red_edge_for_tests,
 )
 from services.git_integration_worker.cursor_auto.queue import (
     AutoJobQueue,
@@ -37,6 +38,7 @@ def _isolated_auto_ledger(tmp_path, monkeypatch: pytest.MonkeyPatch):
     )
     AutoJobLedger.reset_for_tests()
     reset_queue_for_tests(durable=True)
+    reset_queue_health_red_edge_for_tests()
     yield
     AutoJobLedger.reset_for_tests()
 
@@ -92,7 +94,7 @@ def test_claimed_job_has_null_queue_position() -> None:
     assert wait_view["queue_position"] == 1
 
 
-def test_amber_waiter_does_not_flip_occupant_idle_red() -> None:
+def test_amber_waiter_flips_queue_not_serving_red() -> None:
     occupant = _enqueue(turn=1)
     claimed = get_queue().claim_next()
     assert claimed is not None
@@ -102,7 +104,8 @@ def test_amber_waiter_does_not_flip_occupant_idle_red() -> None:
         waiter.job_id, seconds_ago=WAITER_STARVATION_AMBER_THRESHOLD_S + 15
     )
     health = queue_admission_health()
-    assert health["red"] is False
+    assert health["red"] is True
+    assert health["red_reason"] == "waiter_starvation"
     assert health["occupant_idle_s"] is not None
     assert health["occupant_idle_s"] < 1.0
     assert health["amber"] is True
@@ -158,6 +161,7 @@ def test_enqueue_receipt_and_job_state_share_position() -> None:
     assert live.status_code == 200
     qh = live.json()["queue_health"]
     assert qh["red"] is False
+    assert qh["red_reason"] is None
     assert "amber" in qh
     assert qh["projection_only"] is True
 

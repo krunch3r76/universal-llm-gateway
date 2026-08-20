@@ -26,6 +26,9 @@ from services.git_integration_worker.cursor_auto.directive import (
 from services.git_integration_worker.cursor_auto.envelope_fields import (
     envelope_values_from_job,
 )
+from services.git_integration_worker.cursor_auto.execution_mode import (
+    declared_execution_mode,
+)
 from services.git_integration_worker.cursor_auto.field_parity import (
     compute_field_parity_for_job,
 )
@@ -80,7 +83,9 @@ def _hop_reasoning_effort(job: AutoJob) -> dict[str, Any]:
     Schema-default ``medium`` is treated as unpinned so sealed-ask High remains
     the picker default. Explicit pins (incl. ``xhigh`` / ``extra`` aliases) forward.
     """
-    effort = resolve_desired_effort(job.desired_effort, contract=job.contract or "answer")
+    effort = resolve_desired_effort(
+        job.desired_effort, contract=job.contract or "answer"
+    )
     resolved = str(effort.get("resolved_effort") or "").strip().lower()
     if resolved == _UNPINNED_EFFORT:
         return {**effort, "wire_effort": None}
@@ -142,9 +147,7 @@ async def _post_hop_admit_report(
             body=body,
         )
     except Exception as exc:  # noqa: BLE001 — report must not block hop commission
-        logger.warning(
-            "continuity hop admit-report failed job=%s: %s", job.job_id, exc
-        )
+        logger.warning("continuity hop admit-report failed job=%s: %s", job.job_id, exc)
 
 
 async def post_harvest_residual(
@@ -197,13 +200,15 @@ def _enqueue_deferred_non_hop_leg(
         escalation=job.escalation,
         contract=job.contract,
         require_attended=job.require_attended,
-        request_id=(
-            f"{job.request_id}:deferred" if job.request_id else None
-        ),
+        request_id=(f"{job.request_id}:deferred" if job.request_id else None),
         cse_chat_url=job.cse_chat_url,
         cse_registration_id=job.cse_registration_id,
         continuity_hop=False,
         continuity_matched_token=None,
+        execution_mode=declared_execution_mode(
+            contract=job.contract,
+            continuity_hop=False,
+        ),
     )
     logger.info(
         "continuity hop deferred non-hop leg job=%s from hop=%s thread=%s",
@@ -279,8 +284,7 @@ async def complete_continuity_hop(
             client=bus,
             queue=queue,
             summary=(
-                "continuity hop CDP commission failed: "
-                f"{commissioned.get('error')}"
+                f"continuity hop CDP commission failed: {commissioned.get('error')}"
             ),
             disposition="failed",
             contract=job.contract,

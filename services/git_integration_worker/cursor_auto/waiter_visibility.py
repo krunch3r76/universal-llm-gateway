@@ -7,8 +7,9 @@ Derived ``queued_age_s`` uses the ledger wall-clock ``enqueued_at`` ISO stamp
 subtracting clocks. Concurrent-class jobs are excluded, matching
 ``queue_admission_health`` admit-eligible pending.
 
-Occupant-idle ``red`` is not computed here. The waiter-starvation term is
-``oldest_waiter_age_s`` / ``amber``.
+Occupant-idle is not computed here. The waiter-starvation term is
+``oldest_waiter_age_s`` / ``amber``. ``queue_admission_health`` folds
+``amber`` into queue-not-serving ``red``; this module still never sets ``red``.
 """
 
 from __future__ import annotations
@@ -24,8 +25,9 @@ from services.git_integration_worker.cursor_auto.execution_mode import (
     is_concurrent_execution_mode,
 )
 
-# Distinct from occupant-idle red (90s). Healthy ~0.5s handoffs stay green;
-# a 40-minute FIFO wait is unambiguously amber without overloading red.
+# Distinct from occupant-idle stall (90s). Healthy ~0.5s handoffs stay
+# green; a 40-minute FIFO wait is unambiguously amber (and therefore
+# queue-not-serving red at /liveness).
 WAITER_STARVATION_AMBER_THRESHOLD_S = 120.0
 
 _NULL_WAITER = {"queue_position": None, "queued_age_s": None}
@@ -101,14 +103,20 @@ def waiter_fields_from_conn(
 
 
 def waiter_starvation_from_conn(conn: sqlite3.Connection) -> dict[str, Any]:
-    """Fleet waiter-starvation term — never mutates jobs, never sets ``red``."""
+    """Fleet waiter-starvation term — never mutates jobs, never sets ``red``.
+
+    ``amber`` is the starvation bit. ``queue_admission_health`` may fold it
+    into queue-not-serving ``red``; this function stays amber-only.
+    """
     rows = conn.execute(
         "SELECT enqueued_at, record_json FROM cursor_auto_jobs "
         "WHERE status='queued' ORDER BY enqueued_at ASC, rowid ASC"
     ).fetchall()
     ages: list[float] = []
     for row in rows:
-        if is_concurrent_execution_mode(_execution_mode_from_record(row["record_json"])):
+        if is_concurrent_execution_mode(
+            _execution_mode_from_record(row["record_json"])
+        ):
             continue
         age = queued_age_s(row["enqueued_at"])
         if age is not None:
@@ -116,8 +124,7 @@ def waiter_starvation_from_conn(conn: sqlite3.Connection) -> dict[str, Any]:
     oldest = max(ages) if ages else None
     return {
         "oldest_waiter_age_s": _rounded_age(oldest),
-        "amber": oldest is not None
-        and oldest > WAITER_STARVATION_AMBER_THRESHOLD_S,
+        "amber": oldest is not None and oldest > WAITER_STARVATION_AMBER_THRESHOLD_S,
         "amber_threshold_s": WAITER_STARVATION_AMBER_THRESHOLD_S,
     }
 
@@ -171,7 +178,6 @@ def waiter_starvation_from_memory(
     oldest = max(ages) if ages else None
     return {
         "oldest_waiter_age_s": _rounded_age(oldest),
-        "amber": oldest is not None
-        and oldest > WAITER_STARVATION_AMBER_THRESHOLD_S,
+        "amber": oldest is not None and oldest > WAITER_STARVATION_AMBER_THRESHOLD_S,
         "amber_threshold_s": WAITER_STARVATION_AMBER_THRESHOLD_S,
     }

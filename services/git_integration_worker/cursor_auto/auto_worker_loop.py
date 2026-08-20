@@ -10,6 +10,9 @@ from universal_logging import get_logger
 from services.git_integration_worker.cursor_auto.handler import process_job
 from services.git_integration_worker.cursor_auto.liveness import get_registry
 from services.git_integration_worker.cursor_auto.queue import get_queue
+from services.git_integration_worker.cursor_auto.queue_health_events import (
+    emit_concurrent_claimed,
+)
 from services.git_integration_worker.cursor_auto.terminal_reason_codec import (
     format_exception_reason,
 )
@@ -121,8 +124,8 @@ async def auto_worker_loop(app: Any) -> None:
 async def auto_concurrent_worker_loop(app: Any) -> None:
     """Poll for concurrent-opted-in jobs; spawn each as an untracked-wait
     background task so N can run alongside each other and alongside the
-    serial occupant. Production allowlist is empty (3.3) -- this loop is a
-    real, tested no-op today; it only does work once a class is opted in.
+    serial occupant. Production allowlist is ``lease_free_propagate`` —
+    nested-scope / write-lease work stays on the serial loop.
     """
     queue = get_queue()
     while True:
@@ -134,6 +137,12 @@ async def auto_concurrent_worker_loop(app: Any) -> None:
                 continue
             job = queue.claim_next_concurrent()
             if job is not None:
+                emit_concurrent_claimed(
+                    job_id=job.job_id,
+                    thread_id=job.thread_id,
+                    contract=job.contract,
+                    execution_mode=job.execution_mode,
+                )
                 worker_id = str(getattr(app.state, "worker_id", "") or "")
                 worker_started_at = str(getattr(app.state, "worker_boot_ts", "") or "")
 

@@ -71,8 +71,7 @@ class AutoLivenessRegistry:
         with self._lock:
             self._prune_locked(now)
             handlers = {
-                hid: {"age_s": round(now - ts, 3)}
-                for hid, ts in self._handlers.items()
+                hid: {"age_s": round(now - ts, 3)} for hid, ts in self._handlers.items()
             }
         return {
             "live": bool(handlers),
@@ -100,9 +99,17 @@ _OCCUPANT_IDLE_RED_THRESHOLD_S = 90.0  # 45x the ~2s heartbeat cadence --
 # a genuinely stuck occupant well inside an operator's patience window.
 # Named constant -- retune here only, no call-site changes needed.
 
+_last_queue_red: bool = False
+
+
+def reset_queue_health_red_edge_for_tests() -> None:
+    """Clear the process-local rising-edge latch so a test can observe a fresh emit."""
+    global _last_queue_red
+    _last_queue_red = False
+
 
 def queue_admission_health() -> dict[str, Any]:
-    """Admit-eligible pending depth + idle-based red projection (S-4).
+    """Admit-eligible pending depth + queue-not-serving red projection (S-4).
 
     PROJECTION ONLY: this function must never call mark_done / mark_terminal
     / mark_superseded or otherwise mutate a job. It exists to be read by
@@ -111,17 +118,14 @@ def queue_admission_health() -> dict[str, Any]:
     act on this signal, that is a new, separate, explicitly-scoped change --
     not an extension of this function.
 
-    ``red := admit_eligible_pending > 0``
-    ``AND`` a serial-class job is currently claimed (the one occupant)
-    ``AND`` that occupant's heartbeat has gone idle past threshold.
+    ``red`` answers "is the queue serving?", not "is the occupant working?".
+    Occupant progress stays on ``occupant_idle_s``. Cause lives on
+    ``red_reason`` (``occupant_idle`` / ``waiter_starvation`` /
+    ``occupant_idle_and_waiter_starvation`` / None).
 
-    Deliberately idle-based, not wall-clock-since-enqueued: a serial
-    occupant that is heartbeating throughout a long legitimate job must
-    report green (2026-08-17 14:25-15:00Z false-positive evidence) -- only
-    an occupant whose OWN progress signal has gone stale is a genuine stall.
-
-    Waiter starvation is a separate term (``oldest_waiter_age_s`` / ``amber``)
-    and must not flip ``red``.
+    ``red :=`` occupant heartbeat stale past threshold with waiters
+    **OR** waiter starvation (``amber``). A heartbeating occupant with a
+    fresh waiter stays green — that is a legitimate long job, not a stall.
     """
     from services.git_integration_worker.cursor_auto.execution_mode import (
         is_concurrent_execution_mode,
@@ -149,18 +153,27 @@ def queue_admission_health() -> dict[str, Any]:
         None,
     )
     occupant_idle_s: float | None = None
-    red = False
+    occupant_stalled = False
     if serial_occupant is not None:
         occupant_idle_s = ledger.heartbeat_age_s(serial_occupant.job_id)
-        if (
+        occupant_stalled = bool(
             admit_eligible_pending
             and occupant_idle_s is not None
             and occupant_idle_s > _OCCUPANT_IDLE_RED_THRESHOLD_S
-        ):
-            red = True
+        )
     with ledger._connect() as conn:
         waiter = waiter_starvation_from_conn(conn)
-    return {
+    waiter_starved = bool(waiter.get("amber"))
+    red = occupant_stalled or waiter_starved
+    if occupant_stalled and waiter_starved:
+        red_reason: str | None = "occupant_idle_and_waiter_starvation"
+    elif occupant_stalled:
+        red_reason = "occupant_idle"
+    elif waiter_starved:
+        red_reason = "waiter_starvation"
+    else:
+        red_reason = None
+    snapshot = {
         "admit_eligible_pending": len(admit_eligible_pending),
         "serial_occupant_job_id": (
             serial_occupant.job_id if serial_occupant is not None else None
@@ -169,7 +182,31 @@ def queue_admission_health() -> dict[str, Any]:
             round(occupant_idle_s, 3) if occupant_idle_s is not None else None
         ),
         "red": red,
+        "red_reason": red_reason,
         "red_threshold_s": _OCCUPANT_IDLE_RED_THRESHOLD_S,
         "projection_only": True,
         **waiter,
     }
+    _emit_queue_not_serving_rising_edge(snapshot)
+    return snapshot
+
+
+def _emit_queue_not_serving_rising_edge(snapshot: dict[str, Any]) -> None:
+    """Emit once when ``red`` rises; never on the hot poll while already red."""
+    global _last_queue_red
+    red = bool(snapshot.get("red"))
+    rising = red and not _last_queue_red
+    _last_queue_red = red
+    if not rising:
+        return
+    from services.git_integration_worker.cursor_auto.queue_health_events import (
+        emit_queue_not_serving,
+    )
+
+    emit_queue_not_serving(
+        red_reason=str(snapshot.get("red_reason") or "unknown"),
+        admit_eligible_pending=int(snapshot.get("admit_eligible_pending") or 0),
+        oldest_waiter_age_s=snapshot.get("oldest_waiter_age_s"),
+        occupant_idle_s=snapshot.get("occupant_idle_s"),
+        serial_occupant_job_id=snapshot.get("serial_occupant_job_id"),
+    )
