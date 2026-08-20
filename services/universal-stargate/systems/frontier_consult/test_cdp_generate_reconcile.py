@@ -457,13 +457,19 @@ async def test_horizon_unreachable_probe_retains_unverifiable(
 ) -> None:
     published: list[str] = []
     stalled: list[str | None] = []
+    retained: list[dict[str, Any]] = []
 
     def _capture(factory: Any, **kwargs: Any) -> None:
         published.append(factory.__name__)
         if factory.__name__ == "CdpGenerateStalled":
             stalled.append(kwargs.get("stall_stage"))
+        if factory.__name__ == "CdpGenerateHorizonUnverifiable":
+            retained.append(kwargs)
 
-    monkeypatch.setattr(reconcile, "publish_cdp_kwargs", _capture)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_events.publish_cdp_kwargs",
+        _capture,
+    )
     monkeypatch.setattr(
         reconcile,
         "poll_satellite_snapshot",
@@ -490,11 +496,25 @@ async def test_horizon_unreachable_probe_retains_unverifiable(
     _age_leg_past_horizon("exec-unreachable")
 
     await reconcile.reconcile_cdp_inflight_legs()
-    assert published == []
+    assert published == ["CdpGenerateHorizonUnverifiable"]
+    assert stalled == []
     assert reconcile.STALL_RECONCILE_ABANDONED_UNVERIFIABLE not in stalled
+    assert retained == [
+        {
+            "request_id": "req-1",
+            "execution_id": "exec-unreachable",
+            "satellite_execution_id": "sat-unreachable",
+            "thread_id": "5583",
+            "stall_stage": reconcile.STALL_HORIZON_UNVERIFIABLE_RETAINED,
+            "error": "unreachable",
+        }
+    ]
     leg = reconcile.read_inflight_leg("exec-unreachable")
     assert leg is not None
     assert leg.abandoned is False
+
+    await reconcile.reconcile_cdp_inflight_legs()
+    assert published == ["CdpGenerateHorizonUnverifiable"]
 
 
 @pytest.mark.asyncio
@@ -503,10 +523,16 @@ async def test_horizon_404_plus_seated_authorship_not_failed(
 ) -> None:
     """9501-shaped: sat 404 + seated CSE turn on thread_id ⇒ not FAILED."""
     published: list[str] = []
+    retained: list[dict[str, Any]] = []
+
+    def _capture(factory: Any, **kwargs: Any) -> None:
+        published.append(factory.__name__)
+        if factory.__name__ == "CdpGenerateHorizonUnverifiable":
+            retained.append(kwargs)
+
     monkeypatch.setattr(
-        reconcile,
-        "publish_cdp_kwargs",
-        lambda factory, **kwargs: published.append(factory.__name__),
+        "systems.frontier_consult.cdp_events.publish_cdp_kwargs",
+        _capture,
     )
     monkeypatch.setattr(
         reconcile,
@@ -535,7 +561,18 @@ async def test_horizon_404_plus_seated_authorship_not_failed(
     _age_leg_past_horizon("a3ba868b-4aa9-4475-8944-1ac5981e48f6")
 
     await reconcile.reconcile_cdp_inflight_legs()
-    assert published == []
+    assert published == ["CdpGenerateHorizonUnverifiable"]
+    assert "CdpGenerateStalled" not in published
+    assert retained == [
+        {
+            "request_id": "req-9501",
+            "execution_id": "a3ba868b-4aa9-4475-8944-1ac5981e48f6",
+            "satellite_execution_id": "a8f51c9fc54e4d96bd591abebf053537",
+            "thread_id": "9501",
+            "stall_stage": reconcile.STALL_HORIZON_SEATED_AUTHORSHIP,
+            "error": "project-ask HTTP 404",
+        }
+    ]
     leg = reconcile.read_inflight_leg("a3ba868b-4aa9-4475-8944-1ac5981e48f6")
     assert leg is not None
     assert leg.abandoned is False

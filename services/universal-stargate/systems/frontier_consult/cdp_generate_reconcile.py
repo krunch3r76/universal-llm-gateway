@@ -20,6 +20,8 @@ from .cdp_events import (
     CdpGenerateReconciled,
     CdpGenerateStalled,
     publish_cdp_kwargs,
+    publish_horizon_unverifiable_once,
+    reset_horizon_unverifiable_emits_for_tests,
 )
 from .cdp_generate_inflight_ledger import (
     InflightLeg,
@@ -49,6 +51,8 @@ HARVEST_LAG_S = 600.0
 MIN_OPEN_LEG_S = 3600.0
 STALL_RECONCILE_ABANDONED_CONFIRMED = "reconcile_abandoned_confirmed_dead"
 STALL_RECONCILE_ABANDONED_UNVERIFIABLE = "reconcile_abandoned_unverifiable"
+STALL_HORIZON_UNVERIFIABLE_RETAINED = "horizon_unverifiable_retained"
+STALL_HORIZON_SEATED_AUTHORSHIP = "horizon_seated_authorship"
 
 _reconcile_task: asyncio.Task[None] | None = None
 _reconcile_in_flight = False
@@ -126,20 +130,26 @@ async def _emit_reconcile_abandon(
 
 async def _retain_unverifiable_horizon(leg: InflightLeg, *, detail: str) -> None:
     """Retain the open inflight row; unverifiable is not death (G1 AC1)."""
-    if await seated_authorship_on_thread(leg.thread_id):
-        logger.info(
-            "cdp reconcile horizon: seated authorship, extending "
-            "execution_id=%s sat=%s detail=%s",
-            leg.execution_id,
-            leg.satellite_execution_id,
-            detail,
-        )
-        return
+    seated = await seated_authorship_on_thread(leg.thread_id)
+    stall_stage = (
+        STALL_HORIZON_SEATED_AUTHORSHIP
+        if seated
+        else STALL_HORIZON_UNVERIFIABLE_RETAINED
+    )
     logger.info(
-        "cdp reconcile horizon: unverifiable retained execution_id=%s sat=%s detail=%s",
+        "cdp reconcile horizon: %s execution_id=%s sat=%s detail=%s",
+        "seated authorship, extending" if seated else "unverifiable retained",
         leg.execution_id,
         leg.satellite_execution_id,
         detail,
+    )
+    publish_horizon_unverifiable_once(
+        request_id=leg.request_id,
+        execution_id=leg.execution_id,
+        satellite_execution_id=leg.satellite_execution_id,
+        thread_id=leg.thread_id,
+        stall_stage=stall_stage,
+        error=detail,
     )
 
 
@@ -387,3 +397,4 @@ def reset_cdp_generate_reconcile_for_tests() -> None:
         _reconcile_task.cancel()
         _reconcile_task = None
     clear_inflight_ledger()
+    reset_horizon_unverifiable_emits_for_tests()

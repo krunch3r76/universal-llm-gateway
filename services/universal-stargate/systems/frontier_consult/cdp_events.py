@@ -1,4 +1,4 @@
-"""CDP substrate lifecycle events (submit / proof / stall / delivery)."""
+"""CDP generate substrate lifecycle events covering admit, submit, proof, stall, horizon retain, and on-behalf delivery."""
 
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ logger = get_logger(__name__)
 
 # (signal, reason) pairs already reported; keeps a dead publisher to one line.
 _SWALLOWED_SEEN: set[tuple[str, str]] = set()
+# Once-per-execution_id: reconcile ticks every 20s on retained-past-horizon legs.
+_HORIZON_UNVERIFIABLE_EMITTED: set[str] = set()
 
 
 @event_factory
@@ -119,6 +121,36 @@ def CdpGenerateStalled(  # noqa: N802
 
 
 @event_factory
+def CdpGenerateHorizonUnverifiable(  # noqa: N802
+    request_id: str,
+    execution_id: str,
+    satellite_execution_id: str | None,
+    thread_id: str,
+    stall_stage: str,
+    error: str | None = None,
+) -> Event:
+    """Non-terminal horizon retain: attach unverifiable, not generate death.
+
+    Distinct from ``cdp.generate.stalled`` so hop cadence, the inflight ledger
+    terminal set, and dispatch-monitor crit do not treat retain as FAILED.
+    ``stall_stage`` is the sizing filter (``horizon_unverifiable_retained`` vs
+    ``horizon_seated_authorship``). First emit per ``execution_id`` per process.
+    """
+    return Event(
+        signal="cdp.generate.horizon.unverifiable",
+        payload={
+            "request_id": request_id,
+            "execution_id": execution_id,
+            "satellite_execution_id": satellite_execution_id,
+            "thread_id": thread_id,
+            "stall_stage": stall_stage,
+            "error": error,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def CdpGenerateReconciled(  # noqa: N802
     request_id: str,
     execution_id: str,
@@ -184,6 +216,42 @@ def publish_cdp_kwargs(factory: Any, **kwargs: Any) -> None:
             f"{type(exc).__name__}: {exc}",
         )
         return
+
+
+def publish_horizon_unverifiable_once(
+    *,
+    request_id: str,
+    execution_id: str,
+    satellite_execution_id: str | None,
+    thread_id: str,
+    stall_stage: str,
+    error: str | None,
+) -> bool:
+    """Publish first horizon-unverifiable observation for ``execution_id``.
+
+    Returns True when this process had not yet emitted for the id. Subsequent
+    20s reconcile ticks are silent — burst under project-ask outage would
+    otherwise be N legs × 3/min. Lost: dwell / re-fire count. Kept: unique-leg
+    arrival rate with thread_id + probe error.
+    """
+    if execution_id in _HORIZON_UNVERIFIABLE_EMITTED:
+        return False
+    _HORIZON_UNVERIFIABLE_EMITTED.add(execution_id)
+    publish_cdp_kwargs(
+        CdpGenerateHorizonUnverifiable,
+        request_id=request_id,
+        execution_id=execution_id,
+        satellite_execution_id=satellite_execution_id,
+        thread_id=thread_id,
+        stall_stage=stall_stage,
+        error=error,
+    )
+    return True
+
+
+def reset_horizon_unverifiable_emits_for_tests() -> None:
+    """Clear the once-per-execution_id emit set so reconcile tests start blank."""
+    _HORIZON_UNVERIFIABLE_EMITTED.clear()
 
 
 def _warn_swallowed(signal: str, reason: str) -> None:

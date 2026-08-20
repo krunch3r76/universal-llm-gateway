@@ -76,6 +76,23 @@ def test_stalled_payload_carries_since_last_progress_s() -> None:
     assert "wall_paused_s" not in event.payload
 
 
+def test_horizon_unverifiable_payload_carries_thread_and_error() -> None:
+    event = cdp_events.CdpGenerateHorizonUnverifiable(
+        request_id="r",
+        execution_id="e",
+        satellite_execution_id="s",
+        thread_id="9501",
+        stall_stage="horizon_unverifiable_retained",
+        error="horizon crossed; liveness unverifiable: project-ask HTTP 404",
+    )
+    assert event.signal == "cdp.generate.horizon.unverifiable"
+    assert event.payload["thread_id"] == "9501"
+    assert event.payload["execution_id"] == "e"
+    assert event.payload["satellite_execution_id"] == "s"
+    assert event.payload["stall_stage"] == "horizon_unverifiable_retained"
+    assert "project-ask HTTP 404" in event.payload["error"]
+
+
 def test_stalled_payload_carries_deliverable_present() -> None:
     event = cdp_events.CdpGenerateStalled(
         request_id="r",
