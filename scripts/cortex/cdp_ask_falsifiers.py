@@ -28,6 +28,7 @@ from claude_bundles.chat_session_hygiene import (  # noqa: E402
 )
 from claude_bundles.project_ask import run_project_ask  # noqa: E402
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp  # noqa: E402
+from durable_io.atomic import durable_write_text  # noqa: E402
 
 OUT = Path(
     "/mnt/torus/mcp-data/files/notes/system/threads/4917-fable-cdp-review/falsifiers"
@@ -43,9 +44,12 @@ def _stamp() -> str:
 
 
 def _write(name: str, payload: dict) -> Path:
-    OUT.mkdir(parents=True, exist_ok=True)
     path = OUT / name
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    durable_write_text(
+        path,
+        json.dumps(payload, indent=2) + "\n",
+        retain_store_root=OUT.parents[4],
+    )
     return path
 
 

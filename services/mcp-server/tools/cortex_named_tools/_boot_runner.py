@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from agent_seat.profiles import get_profile, resolve_seat
 from agent_seat.registry import normalize_bus_address
 from agent_seat.session_id import SessionMintMode, mint_session_id
+from durable_io.atomic import durable_write_text
 from mcp_events import record
 from universal_logging import get_logger
 
@@ -186,7 +187,7 @@ def _materialize_skills_index(
                 ).hexdigest()
                 if existing_hash == new_hash:
                     return ref, md, False
-            target.write_text(md)
+            durable_write_text(target, md, retain_store_root=Path("/data/files"))
             written = True
         except OSError as exc:
             logger.warning("Could not write skills index to %s: %s", ref, exc)
@@ -447,8 +448,10 @@ def run_cortex_brief(
     if mode == BootMode.LIVE:
         try:
             _OPS_CONTEXT_DIR.mkdir(parents=True, exist_ok=True)
-            (_OPS_CONTEXT_DIR / f"operational-context-{seat_slug}.md").write_text(
-                ops_context
+            durable_write_text(
+                _OPS_CONTEXT_DIR / f"operational-context-{seat_slug}.md",
+                ops_context,
+                retain_store_root=Path("/data/files"),
             )
             op_ctx_written = True
         except OSError as exc:

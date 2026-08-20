@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from durable_io.atomic import durable_write_text
 from fastapi import HTTPException, status
 from universal_logging import get_logger
 
@@ -225,8 +226,9 @@ def persist_session_close(
         assert ctx.transcript_md is not None
         abs_path = _FILES_ROOT / ctx.transcript_path
         try:
-            abs_path.parent.mkdir(parents=True, exist_ok=True)
-            abs_path.write_text(ctx.transcript_md, encoding="utf-8")
+            durable_write_text(
+                abs_path, ctx.transcript_md, retain_store_root=_FILES_ROOT
+            )
         except OSError as exc:
             logger.error(
                 "session_close: failed to write transcript to %s: %s", abs_path, exc

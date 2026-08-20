@@ -9,6 +9,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
 
+from durable_io.atomic import durable_write_text
 from universal_logging import get_logger
 
 from libs.charter_runner_store.db import (
@@ -367,8 +368,7 @@ def _write_mirror_to_shared_root(uri: str, content: str) -> bool:
     rel = uri.removeprefix("cortex://")
     target = cortex_files_root() / rel
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        durable_write_text(target, content, retain_store_root=cortex_files_root())
     except OSError:
         return False
     return True
@@ -377,8 +377,9 @@ def _write_mirror_to_shared_root(uri: str, content: str) -> bool:
 def _write_mirror_via_fs(uri: str, payload: dict[str, Any]) -> None:
     path = uri.removeprefix("cortex://")
     target = Path.home() / ".local" / "share" / "cortex" / path
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    durable_write_text(
+        target, json.dumps(payload, indent=2, sort_keys=True)
+    )
 
 
 def _row_from_sqlite(row) -> RootLedgerRow:

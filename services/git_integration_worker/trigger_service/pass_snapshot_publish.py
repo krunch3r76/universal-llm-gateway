@@ -1,17 +1,20 @@
-"""Publish memoized fleet-idle gate observations to a life-readable cortex path."""
+"""Publish memoized fleet-idle gate observations onto the cortex notes tree.
+
+Callers are the trigger-service claim path. Writes funnel through
+``durable_io.atomic`` so a publish cannot silent-clobber a concurrent notes writer.
+"""
 
 from __future__ import annotations
 
 import json
 import logging
-import os
-import secrets
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from durable_io.atomic import durable_write_text
 from implement_admission.closeout_helpers import cortex_files_root
 
 from .config import fire_interval_s
@@ -78,24 +81,8 @@ def build_observation_payload(
 
 
 def snapshot_dest_path() -> Path:
+    """Return the cortex-files path for the fleet-idle observation snapshot."""
     return cortex_files_root() / _SNAPSHOT_REL
-
-
-def _atomic_write_text(dest: Path, content: str) -> None:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = dest.with_suffix(
-        dest.suffix + f".tmp-{os.getpid()}-{secrets.token_hex(4)}"
-    )
-    try:
-        with temp_path.open("w", encoding="utf-8") as handle:
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temp_path, dest)
-    except Exception:
-        if temp_path.exists():
-            temp_path.unlink(missing_ok=True)
-        raise
 
 
 def publish_pass_snapshot(
@@ -116,7 +103,9 @@ def publish_pass_snapshot(
             pass_at=pass_at or datetime.now(UTC),
         )
         body = json.dumps(payload, indent=2, sort_keys=True) + "\n"
-        _atomic_write_text(snapshot_dest_path(), body)
+        durable_write_text(
+            snapshot_dest_path(), body, retain_store_root=cortex_files_root()
+        )
     except Exception:
         logger.warning(
             "fleet idle pass snapshot publish failed trigger_row_id=%s",
@@ -126,6 +115,7 @@ def publish_pass_snapshot(
 
 
 def grace_s_from_predicate_args(raw: str | None) -> int:
+    """Parse a non-negative ``grace_s`` from JSON predicate args; else 0."""
     if not raw:
         return 0
     try:

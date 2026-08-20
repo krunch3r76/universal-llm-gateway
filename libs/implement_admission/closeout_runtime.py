@@ -1,4 +1,8 @@
-"""IO runtime for closeout adapters — cortex dispatch, pipelines, agent-bus."""
+"""IO runtime for closeout adapters — cortex dispatch, pipelines, and agent-bus.
+
+Filesystem writes go through ``durable_io.atomic`` so a closeout sidecar
+cannot silent-clobber a concurrent notes writer.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from durable_io.atomic import durable_write_text
 from transport_utils import (
     DEFAULT_AGENT_BUS_URL,
     DEFAULT_CORTEX_URL,
@@ -96,8 +101,22 @@ def _default_agent_bus(
 
 
 def _default_write_text(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    """Persist *path* through the flock-serialised durable leaf.
+
+    Thread-closeout dests sit on the notes tree and retain a content-store
+    copy. Workspace tmp dests still serialise through the same leaf so a
+    closeout cannot silent-clobber a concurrent writer.
+    """
+    retain = None
+    try:
+        from implement_admission.closeout_helpers import cortex_files_root
+
+        root = cortex_files_root()
+        path.expanduser().resolve().relative_to(root.resolve())
+        retain = root
+    except ValueError:
+        retain = None
+    durable_write_text(path, content, retain_store_root=retain)
 
 
 @dataclass
@@ -112,13 +131,16 @@ _RUNTIME = CloseoutRuntime()
 
 
 def get_runtime() -> CloseoutRuntime:
+    """Return the process-wide closeout IO runtime so adapters share one dispatch surface."""
     return _RUNTIME
 
 
 def set_runtime(runtime: CloseoutRuntime) -> None:
+    """Install *runtime* as the process-wide closeout IO runtime (tests inject fakes here)."""
     global _RUNTIME
     _RUNTIME = runtime
 
 
 def reset_runtime() -> None:
+    """Restore the default closeout IO runtime after a test has swapped in fakes."""
     set_runtime(CloseoutRuntime())

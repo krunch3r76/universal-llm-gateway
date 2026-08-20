@@ -30,6 +30,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from durable_io.atomic import durable_write_bytes, durable_write_text
 from implement_admission.closeout_helpers import cortex_files_root, workspaces_root
 
 _EPHEMERAL_PREFIX = "notes/system/ephemeral/cdp-endpoint"
@@ -309,9 +310,10 @@ def stage_prompt_uri(
     """
     if prompt_text is not None and prompt_text.strip():
         dest_dir = ephemeral_dir(execution_id)
-        dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / "prompt.md"
-        dest.write_text(prompt_text, encoding="utf-8")
+        durable_write_text(
+            dest, prompt_text, retain_store_root=cortex_files_root()
+        )
         rel = f"{_EPHEMERAL_PREFIX}/{execution_id}/prompt.md"
         return StagedPrompt(
             prompt_uri=_cortex_uri(rel),
@@ -336,9 +338,10 @@ def stage_prompt_uri(
                 "(not cortex:// and not a readable workspaces/checkout path)",
             )
         dest_dir = ephemeral_dir(execution_id)
-        dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / source.name
-        shutil.copy2(source, dest)
+        durable_write_bytes(
+            dest, source.read_bytes(), retain_store_root=cortex_files_root()
+        )
         rel = f"{_EPHEMERAL_PREFIX}/{execution_id}/{source.name}"
         return StagedPrompt(
             prompt_uri=_cortex_uri(rel),

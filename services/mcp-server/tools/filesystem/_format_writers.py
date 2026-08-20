@@ -1,13 +1,8 @@
-"""Format-specific file writers: plain text, DOCX, PDF."""
+"""Format-specific file writers: DOCX and PDF."""
 
 from __future__ import annotations
 
 from pathlib import Path
-
-
-def write_plain(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
 
 
 def write_docx(path: Path, content: str) -> None:

@@ -6,6 +6,8 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
+from durable_io.atomic import durable_write_text
+
 _REV_DIR = "notes/system/views/revisions"
 _STAMP_TIME_RE = re.compile(r'"time"\s*:\s*"([^"]+)"')
 
@@ -25,9 +27,8 @@ def archive_revision(
     slug = _doc_slug(document_id)
     rel = f"{_REV_DIR}/{slug}/rev-{view_rev}.md"
     path = files_root / rel
-    path.parent.mkdir(parents=True, exist_ok=True)
     header = f"<!-- archived_at: {archived_at or datetime.now(UTC).isoformat()} -->\n"
-    path.write_text(header + body, encoding="utf-8")
+    durable_write_text(path, header + body, retain_store_root=files_root)
     return rel
 
 

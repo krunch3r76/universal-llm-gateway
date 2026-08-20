@@ -6,6 +6,8 @@ import hashlib
 import json
 from typing import Any
 
+from durable_io.atomic import durable_write_text
+
 from ..db import WRITE_LOCK, cortex_conn, query
 from ..entity_crud import update_entity_impl
 from ..event_publisher import cortex_view_rendered
@@ -96,8 +98,7 @@ def _delta_sections(
 def _write_head_file(source_uri: str, body: str) -> str:
     rel = source_uri.removeprefix("cortex://")
     path = _FILES_ROOT / rel
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(body, encoding="utf-8")
+    durable_write_text(path, body, retain_store_root=_FILES_ROOT)
     digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
     return f"sha256:{digest}"
 

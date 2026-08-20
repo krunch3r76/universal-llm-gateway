@@ -34,13 +34,13 @@ class ServiceOwnership:
 _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
     "agent_bus": ServiceOwnership(
         path_prefix="services/agent-bus/",
-        owned_libs=frozenset({"agent_bus_store", "agent_seat", "cdp_ask", "claude_bundles", "cortex_store", "cursor_capabilities", "gen_rules", "implement_admission", "llm_adapters", "markdown_fence", "markdown_sections", "markdown_xml_blocks", "model_capabilities", "model_id", "ocr_core", "predicate_form", "role_lint", "sse", "stargate_chat", "transport_utils", "universal_event_bus", "universal_logging"}),
+        owned_libs=frozenset({"agent_bus_store", "agent_seat", "cdp_ask", "claude_bundles", "cortex_store", "cursor_capabilities", "durable_io", "gen_rules", "implement_admission", "llm_adapters", "markdown_fence", "markdown_sections", "markdown_xml_blocks", "model_capabilities", "model_id", "ocr_core", "predicate_form", "role_lint", "sse", "stargate_chat", "transport_utils", "universal_event_bus", "universal_logging"}),
         serves_libs=frozenset({"agent_bus_store"}),
         runtime_entrypoint="libs/agent_bus_store/server.py",
     ),
     "cortex_api": ServiceOwnership(
         path_prefix="libs/cortex_store/",
-        owned_libs=frozenset({"agent_bus_store", "agent_seat", "cdp_ask", "claude_bundles", "cortex_store", "cursor_capabilities", "gen_rules", "implement_admission", "llm_adapters", "markdown_fence", "markdown_sections", "markdown_xml_blocks", "model_capabilities", "model_id", "ocr_core", "predicate_form", "role_lint", "sse", "stargate_chat", "transport_utils", "universal_event_bus", "universal_logging"}),
+        owned_libs=frozenset({"agent_bus_store", "agent_seat", "cdp_ask", "claude_bundles", "cortex_store", "cursor_capabilities", "durable_io", "gen_rules", "implement_admission", "llm_adapters", "markdown_fence", "markdown_sections", "markdown_xml_blocks", "model_capabilities", "model_id", "ocr_core", "predicate_form", "role_lint", "sse", "stargate_chat", "transport_utils", "universal_event_bus", "universal_logging"}),
         serves_libs=frozenset({"cortex_store"}),
         runtime_entrypoint="libs/cortex_store/main.py",
     ),
@@ -50,26 +50,26 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
     ),
     "git_integration_worker": ServiceOwnership(
         path_prefix="services/git_integration_worker/",
-        owned_libs=frozenset({"agent_bus_store", "agent_seat", "cdp_ask", "charter_runner_store", "claude_bundles", "contract_vocab", "cortex_store", "cursor_capabilities", "deploy_identity", "email_routing", "foo", "gen_rules", "git_integrate", "implement_admission", "llm_adapters", "markdown_fence", "markdown_sections", "markdown_xml_blocks", "model_capabilities", "model_id", "ocr_core", "pager_notify", "predicate_form", "process_ipc", "role_lint", "sse", "stargate_chat", "transport_utils", "universal_concurrency", "universal_event_bus", "universal_logging", "universal_protocol", "universal_transport", "universal_workspace"}),
+        owned_libs=frozenset({"agent_bus_store", "agent_seat", "cdp_ask", "charter_runner_store", "claude_bundles", "contract_vocab", "cortex_store", "cursor_capabilities", "deploy_identity", "durable_io", "email_routing", "foo", "gen_rules", "git_integrate", "implement_admission", "llm_adapters", "markdown_fence", "markdown_sections", "markdown_xml_blocks", "model_capabilities", "model_id", "ocr_core", "pager_notify", "predicate_form", "process_ipc", "role_lint", "sse", "stargate_chat", "transport_utils", "universal_concurrency", "universal_event_bus", "universal_logging", "universal_protocol", "universal_transport", "universal_workspace"}),
         serves_libs=frozenset({"charter_runner_store", "git_integrate", "implement_admission"}),
     ),
     "mcp": ServiceOwnership(
         path_prefix="services/mcp-server/",
-        owned_libs=frozenset({"agent_bus_store", "agent_seat", "cdp_ask", "claude_bundles", "contract_vocab", "cortex_store", "cursor_capabilities", "deploy_identity", "document_text", "durable_sink", "email_routing", "gen_rules", "implement_admission", "life_intent", "llm_adapters", "markdown_fence", "markdown_sections", "markdown_xml_blocks", "mcp_dispatch", "model_capabilities", "model_id", "ocr_core", "pager_notify", "predicate_form", "provider_model_limits", "role_lint", "sse", "stargate_chat", "transport_utils", "universal_event_bus", "universal_logging", "universal_workspace"}),
+        owned_libs=frozenset({"agent_bus_store", "agent_seat", "cdp_ask", "claude_bundles", "contract_vocab", "cortex_store", "cursor_capabilities", "deploy_identity", "document_text", "durable_io", "durable_sink", "email_routing", "gen_rules", "implement_admission", "life_intent", "llm_adapters", "markdown_fence", "markdown_sections", "markdown_xml_blocks", "mcp_dispatch", "model_capabilities", "model_id", "ocr_core", "pager_notify", "predicate_form", "provider_model_limits", "role_lint", "sse", "stargate_chat", "transport_utils", "universal_event_bus", "universal_logging", "universal_workspace"}),
     ),
     "rag": ServiceOwnership(
         path_prefix="services/rag/",
-        owned_libs=frozenset({"agent_bus_store", "agent_seat", "cdp_ask", "claude_bundles", "cortex_store", "cursor_capabilities", "gen_rules", "implement_admission", "llm_adapters", "markdown_fence", "markdown_sections", "markdown_xml_blocks", "model_capabilities", "model_id", "ocr_core", "predicate_form", "role_lint", "sse", "stargate_chat", "transport_utils", "universal_concurrency", "universal_event_bus", "universal_hot_reload", "universal_logging"}),
+        owned_libs=frozenset({"agent_bus_store", "agent_seat", "cdp_ask", "claude_bundles", "cortex_store", "cursor_capabilities", "durable_io", "gen_rules", "implement_admission", "llm_adapters", "markdown_fence", "markdown_sections", "markdown_xml_blocks", "model_capabilities", "model_id", "ocr_core", "predicate_form", "role_lint", "sse", "stargate_chat", "transport_utils", "universal_concurrency", "universal_event_bus", "universal_hot_reload", "universal_logging"}),
     ),
     "cdp_ask": ServiceOwnership(
         path_prefix="libs/cdp_ask/",
-        owned_libs=frozenset({"admission_common", "cdp_ask", "claude_bundles", "cortex_store", "deploy_identity", "pager_notify", "transport_utils", "universal_event_bus", "universal_logging", "universal_workspace"}),
+        owned_libs=frozenset({"admission_common", "cdp_ask", "claude_bundles", "cortex_store", "deploy_identity", "durable_io", "pager_notify", "transport_utils", "universal_event_bus", "universal_logging", "universal_workspace"}),
         serves_libs=frozenset({"cdp_ask"}),
         runtime_entrypoint="libs/cdp_ask/",
     ),
     "cloud_proxy": ServiceOwnership(
         path_prefix="services/universal_cloud_proxy/",
-        owned_libs=frozenset({"agent_bus_store", "agent_seat", "cdp_ask", "claude_bundles", "cortex_store", "cursor_capabilities", "event_store", "gen_rules", "implement_admission", "llm_adapters", "markdown_fence", "markdown_sections", "markdown_xml_blocks", "model_capabilities", "model_id", "ocr_core", "predicate_form", "process_ipc", "role_lint", "sse", "stargate_chat", "transport_utils", "universal_concurrency", "universal_event_bus", "universal_logging", "universal_protocol", "universal_transport"}),
+        owned_libs=frozenset({"agent_bus_store", "agent_seat", "cdp_ask", "claude_bundles", "cortex_store", "cursor_capabilities", "durable_io", "event_store", "gen_rules", "implement_admission", "llm_adapters", "markdown_fence", "markdown_sections", "markdown_xml_blocks", "model_capabilities", "model_id", "ocr_core", "predicate_form", "process_ipc", "role_lint", "sse", "stargate_chat", "transport_utils", "universal_concurrency", "universal_event_bus", "universal_logging", "universal_protocol", "universal_transport"}),
     ),
     "gateway": ServiceOwnership(
         path_prefix="services/_universal-llm-gateway/",
@@ -77,7 +77,7 @@ _SERVICE_OWNERSHIP: dict[str, ServiceOwnership] = {
     ),
     "stargate": ServiceOwnership(
         path_prefix="services/universal-stargate/",
-        owned_libs=frozenset({"admission_common", "agent_bus_store", "agent_seat", "cdp_ask", "claude_bundles", "cortex_store", "cursor_capabilities", "dispatch_knob_policy", "event_store", "frontier_observability", "gen_rules", "implement_admission", "intelligence_profiles", "life_intent", "llm_adapters", "markdown_fence", "markdown_sections", "markdown_xml_blocks", "model_capabilities", "model_id", "ocr_core", "pipeline_assess_registry", "predicate_form", "process_ipc", "provenance", "role_lint", "skills_mount", "sse", "stargate_chat", "transport_utils", "universal_concurrency", "universal_event_bus", "universal_hot_reload", "universal_logging", "universal_protocol", "universal_transport"}),
+        owned_libs=frozenset({"admission_common", "agent_bus_store", "agent_seat", "cdp_ask", "claude_bundles", "cortex_store", "cursor_capabilities", "dispatch_knob_policy", "durable_io", "event_store", "frontier_observability", "gen_rules", "implement_admission", "intelligence_profiles", "life_intent", "llm_adapters", "markdown_fence", "markdown_sections", "markdown_xml_blocks", "model_capabilities", "model_id", "ocr_core", "pipeline_assess_registry", "predicate_form", "process_ipc", "provenance", "role_lint", "skills_mount", "sse", "stargate_chat", "transport_utils", "universal_concurrency", "universal_event_bus", "universal_hot_reload", "universal_logging", "universal_protocol", "universal_transport"}),
     ),
 }
 

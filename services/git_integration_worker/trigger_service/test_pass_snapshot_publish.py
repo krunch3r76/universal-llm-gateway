@@ -117,7 +117,7 @@ def test_publish_failure_does_not_wedge_gate(store: TriggerStore) -> None:
         "services.git_integration_worker.trigger_service.store_claim.read_fleet_idle_memoized",
         side_effect=lambda _reader=None: read_fleet_idle_memoized(reader),
     ), patch(
-        "services.git_integration_worker.trigger_service.pass_snapshot_publish._atomic_write_text",
+        "services.git_integration_worker.trigger_service.pass_snapshot_publish.durable_write_text",
         side_effect=RuntimeError("disk full"),
     ):
         begin_idle_pass()
@@ -147,7 +147,7 @@ def test_atomic_write_leaves_no_partial_file(tmp_path: Path, monkeypatch: pytest
         original_replace(src, dst)
 
     with patch(
-        "services.git_integration_worker.trigger_service.pass_snapshot_publish.os.replace",
+        "durable_io.atomic.os.replace",
         _spy_replace,
     ):
         publish_pass_snapshot(

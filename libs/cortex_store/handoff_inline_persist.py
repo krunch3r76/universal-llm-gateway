@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from durable_io.atomic import durable_write_text
+
 from .handoff_derivation import DERIVATION_AUTO_PERSISTED, DERIVATION_DETACHED_STRING
 from .handoff_paths import sha256_bytes, sha256_text
 from .handoff_provenance import build_handoff_provenance
@@ -21,8 +23,7 @@ def auto_persist_inline_handoff(
     """Write inline prompt to canonical handoff file; return rel path + hashes."""
     rel = f"{_AUTO_PERSIST_REL_DIR}/{session_id}.md"
     abs_path = files_root / rel
-    abs_path.parent.mkdir(parents=True, exist_ok=True)
-    abs_path.write_text(prompt, encoding="utf-8")
+    durable_write_text(abs_path, prompt, retain_store_root=files_root)
     prompt_hash = sha256_text(prompt)
     file_hash = sha256_bytes(prompt.encode("utf-8"))
     return rel, prompt_hash, file_hash

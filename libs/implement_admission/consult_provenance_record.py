@@ -15,6 +15,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from durable_io.atomic import durable_write_text
+
 from implement_admission.closeout_helpers import cortex_files_root, workspaces_root
 
 logger = logging.getLogger(__name__)
@@ -209,7 +211,11 @@ def _cross_link_charter_record(record: Mapping[str, Any]) -> None:
     if payload.get("source_ref") == todo:
         return
     payload["source_ref"] = todo
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    durable_write_text(
+        path,
+        json.dumps(payload, indent=2, sort_keys=True),
+        retain_store_root=cortex_files_root(),
+    )
 
 
 def commit_todo_consult_provenance(
@@ -235,8 +241,9 @@ def commit_todo_consult_provenance(
     payload.setdefault("written_at", datetime.now(UTC).isoformat())
     content = json.dumps(payload, indent=2, sort_keys=True)
     path = todo_consult_provenance_path(todo, root=files_root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    durable_write_text(
+        path, content, retain_store_root=files_root or cortex_files_root()
+    )
     uri = todo_consult_provenance_uri(todo)
     if stamp_cache:
         _stamp_display_cache(todo, payload)

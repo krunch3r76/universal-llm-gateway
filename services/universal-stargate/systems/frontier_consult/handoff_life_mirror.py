@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from agent_seat.registry import normalize_bus_address
+from durable_io.atomic import durable_write_text
 from implement_admission.closeout_helpers import cortex_files_root
 from implement_admission.skill_delivery_channels import (
     text_without_inline_payload_regions,
@@ -137,10 +138,10 @@ def mirror_packet_file_to_cortex(
     rel = cortex_uri_to_rel_path(uri)
     root = (cortex_root or cortex_files_root()).resolve()
     dest = root / rel
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(
+    durable_write_text(
+        dest,
         packet_file.read_text(encoding="utf-8", errors="replace"),
-        encoding="utf-8",
+        retain_store_root=root,
     )
     return uri
 

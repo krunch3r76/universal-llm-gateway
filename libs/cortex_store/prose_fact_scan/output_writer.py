@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from collections.abc import Callable
+
+from durable_io.atomic import durable_write_text
 
 from ..dispatch_ops._shared import _FILES_ROOT
 from .constants import REPORT_DIR, SERVICE_ENTITY_ID, SERVICE_OWNER
-from .models import Finding, FpCounters, ScanReport, SkippedEntry
+from .models import Finding, ScanReport
 from .schema import validate_report_json
 
 FrictionFn = Callable[..., dict[str, Any]]
@@ -95,7 +97,9 @@ def write_scan_report(
 
     out_dir.mkdir(parents=True, exist_ok=True)
     json_path = out_dir / "report.json"
-    json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    durable_write_text(
+        json_path, json.dumps(payload, indent=2), retain_store_root=root
+    )
     return {
         "report": payload,
         "report_dir": str(out_dir.relative_to(root)),

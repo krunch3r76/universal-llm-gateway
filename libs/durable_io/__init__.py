@@ -3,6 +3,10 @@
 Cross-process serialisation is ``fcntl.flock`` on a sibling lockfile.
 ``threading.Lock`` does not hold across OS processes — see
 ``test_cross_process_serialisation.py``.
+
+Harvest nominates these manage slugs when this lib lands (package-grain).
+Every process that imports the leaf is listed so restart derivation is
+closed rather than unmapped.
 """
 
 from .atomic import (
@@ -19,7 +23,16 @@ from .atomic import (
     write_verify_error_dict,
 )
 
+CONSUMERS: tuple[str, ...] = (
+    "cdp_ask",
+    "cortex_api",
+    "git_integration_worker",
+    "mcp",
+    "stargate",
+)
+
 __all__ = [
+    "CONSUMERS",
     "PreImageMismatchError",
     "WriteVerifyError",
     "durable_write_bytes",

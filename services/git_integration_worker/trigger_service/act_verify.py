@@ -9,6 +9,7 @@ from typing import Any, Protocol
 
 from claude_bundles.act_receipt import ActReceipt, parse_act_receipt
 from claude_bundles.operator_proxy_mission import OPERATOR_PROXY_MISSION_PURPOSES
+from durable_io.atomic import durable_write_text
 from implement_admission.closeout_helpers import cortex_files_root
 
 from services.git_integration_worker.trigger_service.models import (
@@ -199,8 +200,7 @@ def write_dedicated_receipt(trigger_id: str, text: str) -> Path:
     """Persist act receipt at deterministic cortex location (episode / probe helper)."""
     rel = f"{PROMPT_PREFIX}/{trigger_id}/{ACT_RECEIPT_REL}"
     dest = cortex_files_root() / rel
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(text, encoding="utf-8")
+    durable_write_text(dest, text, retain_store_root=cortex_files_root())
     return dest
 
 

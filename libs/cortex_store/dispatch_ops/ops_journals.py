@@ -11,6 +11,7 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
+from durable_io.atomic import durable_write_text
 from fastapi import HTTPException
 from universal_logging import get_logger
 
@@ -164,8 +165,9 @@ def _op_journal_write(
 
     if markdown_content is not None:
         journal_path = _FILES_ROOT / "notes" / "system" / "journal" / f"{derived_id}.md"
-        journal_path.parent.mkdir(parents=True, exist_ok=True)
-        journal_path.write_text(markdown_content, encoding="utf-8")
+        durable_write_text(
+            journal_path, markdown_content, retain_store_root=_FILES_ROOT
+        )
         logger.info("journal_write: wrote markdown to %s", journal_path)
 
     body: dict[str, Any] = {

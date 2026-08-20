@@ -8,13 +8,16 @@ mirroring the agent-bus thread-sidecar convention
 
 The markdown format is owned here — in cortex-api — so every closure produces
 an identically shaped sidecar regardless of which caller (pipeline:todo-close,
-operator, future tooling) drives it.
+operator, future tooling) drives it. Writes funnel through
+``durable_io.atomic`` (flock + temp+fsync+replace + retain).
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
+
+from durable_io.atomic import durable_write_text
 
 from ._shared import _FILES_ROOT
 
@@ -72,8 +75,11 @@ def render_closure_markdown(
 
 
 def write_closure_sidecar(slug: str, content: str) -> str:
-    """Write the sidecar under _FILES_ROOT, returning the absolute path."""
+    """Persist the closure sidecar through the flock-serialised durable leaf.
+
+    Returns the absolute path under ``_FILES_ROOT``. Overwrites retain a
+    content-store copy so concurrent notes writers cannot silent-clobber.
+    """
     path = _FILES_ROOT.joinpath(*_SIDECAR_SUBDIR) / f"{slug}-closure.md"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    durable_write_text(path, content, retain_store_root=_FILES_ROOT)
     return str(path)

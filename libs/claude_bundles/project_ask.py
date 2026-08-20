@@ -16,6 +16,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from durable_io.atomic import durable_write_text
+from implement_admission.closeout_helpers import cortex_files_root
 from playwright.async_api import Page
 
 from claude_bundles.chat_model_match import (
@@ -234,9 +236,7 @@ def archive_harvest(
                 raise HarvestArchiveError(
                     f"archive path sha256 mismatch — refusing overwrite: {archive_path}"
                 )
-    tmp = path.with_suffix(f"{path.suffix}.tmp")
-    tmp.write_text(text, encoding="utf-8")
-    tmp.replace(path)
+    durable_write_text(path, text, retain_store_root=cortex_files_root())
     resolved = str(path.resolve())
     if "/mcp-data/files/" in resolved:
         rel = resolved.split("/mcp-data/files/", 1)[1]

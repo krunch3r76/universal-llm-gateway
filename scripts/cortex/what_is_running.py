@@ -86,19 +86,12 @@ def load_hop_watches(host_home: str) -> dict[str, dict[str, Any]]:
 
 def publish_cortex(view: dict[str, Any]) -> Path:
     """Atomically write the occupancy JSON to the life-readable cortex path."""
+    from durable_io.atomic import durable_write_text
     from implement_admission.closeout_helpers import cortex_files_root
 
     dest = cortex_files_root() / _SNAPSHOT_REL
-    dest.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(view, indent=2, sort_keys=True) + "\n"
-    tmp = dest.with_suffix(dest.suffix + f".tmp-{os.getpid()}")
-    try:
-        tmp.write_text(payload, encoding="utf-8")
-        os.replace(tmp, dest)
-    except Exception:
-        if tmp.exists():
-            tmp.unlink(missing_ok=True)
-        raise
+    durable_write_text(dest, payload, retain_store_root=cortex_files_root())
     return dest
 
 

@@ -7,6 +7,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
+from durable_io.atomic import durable_write_text
 from implement_admission.closeout_helpers import cortex_files_root
 
 PROMPT_PREFIX = "notes/system/ephemeral/trigger-schedule"
@@ -189,6 +190,5 @@ def snapshot_prompt_text(*, trigger_id: str, prompt_text: str) -> str:
     """Persist inline prompt to cortex share; return canonical cortex:// URI."""
     rel = f"{PROMPT_PREFIX}/{trigger_id}/prompt.md"
     dest = cortex_files_root() / rel
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(prompt_text, encoding="utf-8")
+    durable_write_text(dest, prompt_text, retain_store_root=cortex_files_root())
     return f"cortex://{rel}"

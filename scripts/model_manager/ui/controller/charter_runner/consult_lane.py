@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from durable_io.atomic import durable_write_text
 from universal_logging import get_logger
 
 from libs.charter_runner_store.db import charter_runner_data_dir, execute_with_retry
@@ -278,15 +279,13 @@ def write_consult_provenance(
         payload["source_ref"] = source_ref
     content = json.dumps(payload, indent=2, sort_keys=True)
     path = _provenance_path(root_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    durable_write_text(path, content)
     uri = f"cortex://notes/system/threads/charter-consult-provenance/{root_id}.json"
     if _write_consult_provenance_to_shared_root(uri, content):
         return uri
     rel = uri.removeprefix("cortex://")
     mirror = Path.home() / ".local" / "share" / "cortex" / rel
-    mirror.parent.mkdir(parents=True, exist_ok=True)
-    mirror.write_text(content, encoding="utf-8")
+    durable_write_text(mirror, content)
     logger.warning(
         "consult provenance HOME-only mirror for root_id=%s; not emitting cortex://",
         root_id,
@@ -300,8 +299,7 @@ def _write_consult_provenance_to_shared_root(uri: str, content: str) -> bool:
     rel = uri.removeprefix("cortex://")
     target = cortex_files_root() / rel
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        durable_write_text(target, content, retain_store_root=cortex_files_root())
     except OSError:
         return False
     return True

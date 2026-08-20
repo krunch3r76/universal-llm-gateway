@@ -20,6 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from durable_io.atomic import durable_write_text
 from mcp_events import record
 from universal_logging import get_logger
 
@@ -64,7 +65,7 @@ def write_audit_dump(
         session_id, agent, card, ops_context, artifacts, transcript_continuation
     )
     try:
-        out_path.write_text(body)
+        durable_write_text(out_path, body, retain_store_root=Path("/data/files"))
     except OSError as exc:
         record(
             "mcp.cortex.boot.dump.failed",

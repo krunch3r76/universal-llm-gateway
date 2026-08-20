@@ -11,6 +11,8 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+from durable_io.atomic import durable_write_text
+
 PARAMS_REL = "notes/system/threads/5329-tier2-approve-params.md"
 SEALED_URI = "cortex://notes/system/threads/5329-tier2-opus-batch-approve-sealed-ask.md"
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,7 +32,6 @@ def _write_params(
     prior_sha256: str,
 ) -> Path:
     dest = _cortex_files_root() / PARAMS_REL
-    dest.parent.mkdir(parents=True, exist_ok=True)
     ids_json = json.dumps(staging_ids)
     body = f"""# Tier 2 approve params (generated)
 
@@ -46,7 +47,7 @@ def _write_params(
 
 Sealed ask: {SEALED_URI}
 """
-    dest.write_text(body, encoding="utf-8")
+    durable_write_text(dest, body, retain_store_root=_cortex_files_root())
     return dest
 
 
