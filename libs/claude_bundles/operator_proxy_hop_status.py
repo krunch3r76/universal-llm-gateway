@@ -2,8 +2,15 @@
 
 Cowork renders the first markdown heading after skill chips as the dispatch
 card. Operator-proxy submits used to open on the seat-map briefing, so the
-human saw doctrine instead of the job. This module hoists a four-line
-settled/live/next/lane block above that briefing.
+human saw doctrine instead of the job. This module hoists a five-line
+mission/settled/live/next/lane block above that briefing.
+
+``mission`` is the one field that does not change hop to hop — it names what
+the arc is *for*, so the block still orients a reader even when the other
+three fields degrade to ``(unspecified)`` (e.g. the standing-handoff sidecar
+is missing). It is filled from an explicit ``mission:`` line, else the
+DIRECTIVE ``vision:`` convention (``directive.py`` / admit-gate), else a
+``## Mission`` heading in the standing-handoff sidecar — never fabricated.
 
 Callers: ``ensure_operator_proxy_mission_prompt`` (pure string transform) and
 ``cdp_ask.runner.resolve_prompt`` (optional standing-handoff sidecar fill).
@@ -28,9 +35,10 @@ _MAX_FIELD = 120
 _SEAT_MAP_MARKER = "## Mission seat map (BINDING"
 
 _FIELD_RE = re.compile(
-    r"^(settled|live|next|lane):\s*(.+?)\s*$",
+    r"^(mission|settled|live|next|lane):\s*(.+?)\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
+_VISION_RE = re.compile(r"^vision:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
 _THREAD_RE = re.compile(
     r"^(?:thread_id|parent_thread):\s*(\d+)\s*$",
     re.MULTILINE,
@@ -53,6 +61,10 @@ _SETTLED_HEADING_RE = re.compile(
 )
 _NEXT_HEADING_RE = re.compile(
     r"^##\s+(?:First next act|The work)\b.*$",
+    re.MULTILINE | re.IGNORECASE,
+)
+_MISSION_HEADING_RE = re.compile(
+    r"^##\s+Mission\b.*$",
     re.MULTILINE | re.IGNORECASE,
 )
 
@@ -152,8 +164,11 @@ def _collect_fields(
     *,
     standing_handoff_text: str | None,
 ) -> dict[str, str]:
-    fields = {key: UNSPECIFIED for key in ("settled", "live", "next", "lane")}
+    fields = {
+        key: UNSPECIFIED for key in ("mission", "settled", "live", "next", "lane")
+    }
     _fill_from_labeled_lines(fields, text)
+    _fill_mission_from_vision(fields, text)
     _fill_from_continuity_headers(fields, text)
     _fill_next_from_caller_body(fields, text)
     if standing_handoff_text:
@@ -167,6 +182,23 @@ def _fill_from_labeled_lines(fields: dict[str, str], text: str) -> None:
         value = _clip(match.group(2))
         if value and fields[key] == UNSPECIFIED:
             fields[key] = value
+
+
+def _fill_mission_from_vision(fields: dict[str, str], text: str) -> None:
+    """Fall back to the DIRECTIVE ``vision:`` convention when unlabeled.
+
+    ``vision:`` is already the established "why this work matters" field on
+    implement/investigate DIRECTIVEs (admit-gate requires it). Reusing it
+    here means a mission line appears with zero new authoring convention on
+    any DIRECTIVE that already declares one.
+    """
+    if fields["mission"] != UNSPECIFIED:
+        return
+    match = _VISION_RE.search(text)
+    if match:
+        value = _clip(match.group(1))
+        if value:
+            fields["mission"] = value
 
 
 def _fill_from_continuity_headers(fields: dict[str, str], text: str) -> None:
@@ -219,6 +251,7 @@ def _fill_from_standing_handoff(fields: dict[str, str], sidecar: str) -> None:
             if labeled:
                 fields["lane"] = _clip(labeled.group(1).split(" · ", 1)[0])
     mapping = (
+        ("mission", _MISSION_HEADING_RE),
         ("settled", _SETTLED_HEADING_RE),
         ("live", _LIVE_HEADING_RE),
         ("next", _NEXT_HEADING_RE),
@@ -253,6 +286,7 @@ def _section_first_line(text: str, heading: re.Pattern[str]) -> str | None:
 def _format_hop_status(fields: dict[str, str]) -> str:
     return (
         f"{HOP_STATUS_MARKER}\n"
+        f"- mission: {fields['mission']}\n"
         f"- settled: {fields['settled']}\n"
         f"- live: {fields['live']}\n"
         f"- next: {fields['next']}\n"

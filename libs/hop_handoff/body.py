@@ -55,6 +55,7 @@ def build_continuity_handoff_body(
     threshold_s: float | None = None,
     superseded_registration_id: str | None = None,
     successor_birth_id: str | None = None,
+    mission: str | None = None,
 ) -> str:
     """Author a first-line ``TYPE: CONTINUITY_HANDOFF`` body for one hop fire.
 
@@ -67,6 +68,13 @@ def build_continuity_handoff_body(
     always emitted on this structural body (never the L2 orientation block),
     echoed onto the ``TYPE: SEAT_REGISTRATION`` stamp. Omit to mint; pass a
     32-char hex only in tests that must pin equality across two authors.
+
+    ``mission`` is the one-line "what this arc is for" statement — captured
+    once at watch enrollment (``hop_cadence_mission``) so it survives a hop
+    even when the standing-handoff sidecar is missing. Omitted (default
+    ``None``) when no candidate was ever captured — this function never
+    invents one. Picked up by ``operator_proxy_hop_status`` as the ``mission``
+    field on the successor's This-hop card.
     """
     resolved_you = (you_are or "").strip() or _DEFAULT_YOU_ARE
     birth_id = (successor_birth_id or "").strip() or mint_successor_birth_id()
@@ -76,17 +84,24 @@ def build_continuity_handoff_body(
         f"source: {source}",
         f"trigger: {trigger}",
         f"thread_id: {thread_id}",
-        f"you_are: {resolved_you}",
-        f"parent_thread: {thread_id}",
-        f"cse_age_s: {age_s:.1f}" if age_s is not None else "cse_age_s: unknown",
-        (
-            f"threshold_s: {threshold_s:.1f}"
-            if threshold_s is not None
-            else "threshold_s: unknown"
-        ),
-        f"standing_handoff: {handoff.uri}",
-        f"standing_handoff_freshness: {handoff.status}",
     ]
+    resolved_mission = (mission or "").strip()
+    if resolved_mission:
+        lines.append(f"mission: {resolved_mission}")
+    lines.extend(
+        [
+            f"you_are: {resolved_you}",
+            f"parent_thread: {thread_id}",
+            f"cse_age_s: {age_s:.1f}" if age_s is not None else "cse_age_s: unknown",
+            (
+                f"threshold_s: {threshold_s:.1f}"
+                if threshold_s is not None
+                else "threshold_s: unknown"
+            ),
+            f"standing_handoff: {handoff.uri}",
+            f"standing_handoff_freshness: {handoff.status}",
+        ]
+    )
     if handoff.age_s is not None:
         lines.append(f"standing_handoff_age_s: {handoff.age_s:.1f}")
     if superseded_registration_id:

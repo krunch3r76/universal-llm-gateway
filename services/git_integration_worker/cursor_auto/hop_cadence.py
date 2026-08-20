@@ -84,6 +84,7 @@ def build_cadence_hop_body(
     registration_id: str | None = None,
     chat_url: str | None = None,
     successor_birth_id: str | None = None,
+    mission: str | None = None,
 ) -> str:
     """Author the structural CONTINUITY_HANDOFF body Auto self-enqueues on fire.
 
@@ -94,6 +95,10 @@ def build_cadence_hop_body(
     seat (author the S7 state file), not a broken link. First-hop vs
     later-missing is not distinguishable from ``HopDecision`` at this call
     site — one missing branch.
+
+    ``mission`` is the watch row's captured one-liner (``hop_cadence_mission``,
+    filled once at enrollment) — pass-through only; this function never
+    derives or fabricates one.
     """
     handoff = decision.handoff or assess_standing_handoff(decision.thread_id)
     return build_continuity_handoff_body(
@@ -110,6 +115,7 @@ def build_cadence_hop_body(
         ),
         superseded_registration_id=registration_id,
         successor_birth_id=successor_birth_id,
+        mission=mission,
     )
 
 
@@ -280,6 +286,7 @@ async def fire_hop_for_decision(
         decision,
         registration_id=str(row.get("registration_id") or "") or None,
         chat_url=str(row.get("successor_chat_url") or "") or None,
+        mission=str(row.get("mission") or "") or None,
     )
     from_agent = str(row.get("from_agent") or "web-anthropic")
     job = queue.enqueue(

@@ -84,6 +84,44 @@ def test_observe_and_mark_hop_failed_do_not_touch_production_ledger(
     assert after_mtime == before_mtime
 
 
+def test_observe_captures_mission_once_from_vision_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    isolated = tmp_path / "hop_cadence_watches.json"
+    monkeypatch.setenv("CURSOR_AUTO_HOP_WATCHES_PATH", str(isolated))
+    job = _web_job(thread_id="7059-mission")
+    job.body = "TYPE: DIRECTIVE\nvision: Recover the operator-proxy continuity arc.\n"
+    with patch(
+        "services.git_integration_worker.cursor_auto.hop_cadence_watch.registry_started_at",
+        return_value=None,
+    ):
+        observe_lane_from_enqueue(job)
+    rows = load_watches(isolated)
+    assert (
+        rows["7059-mission"]["mission"] == "Recover the operator-proxy continuity arc."
+    )
+
+
+def test_observe_does_not_overwrite_a_captured_mission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """First captured mission is pinned — a later, less descriptive turn must not win."""
+    isolated = tmp_path / "hop_cadence_watches.json"
+    monkeypatch.setenv("CURSOR_AUTO_HOP_WATCHES_PATH", str(isolated))
+    first = _web_job(thread_id="7059-pin")
+    first.body = "vision: First mission statement.\n"
+    second = _web_job(thread_id="7059-pin")
+    second.body = "vision: Second mission statement must not win.\n"
+    with patch(
+        "services.git_integration_worker.cursor_auto.hop_cadence_watch.registry_started_at",
+        return_value=None,
+    ):
+        observe_lane_from_enqueue(first, now=1_000.0)
+        observe_lane_from_enqueue(second, now=1_500.0)
+    rows = load_watches(isolated)
+    assert rows["7059-pin"]["mission"] == "First mission statement."
+
+
 @pytest.mark.asyncio
 async def test_fire_hop_for_decision_forwards_path_to_mark_helpers(
     tmp_path: Path,

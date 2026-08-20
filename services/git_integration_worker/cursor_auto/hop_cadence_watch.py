@@ -225,6 +225,14 @@ def observe_lane_from_enqueue(
         if chat_url:
             row["chat_url"] = chat_url
     row["purpose"] = "operator-proxy"
+    if not row.get("mission"):
+        from services.git_integration_worker.cursor_auto.hop_cadence_mission import (
+            mission_candidate_from_job,
+        )
+
+        candidate = mission_candidate_from_job(job)
+        if candidate:
+            row["mission"] = candidate
     watches[thread_id] = row
     save_watches(watches, path)
     logger.info(

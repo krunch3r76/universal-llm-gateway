@@ -78,6 +78,21 @@ def test_shared_author_pattern_asserts_successor_birth_id() -> None:
     assert f"URI: {_URI}" in body
 
 
+def test_mission_line_omitted_when_absent() -> None:
+    """No captured mission ⇒ no line — never fabricated."""
+    body = _cadence_body()
+    assert not any(line.startswith("mission:") for line in body.splitlines())
+
+
+def test_mission_line_present_when_provided() -> None:
+    body = _cadence_body(mission="Recover the operator-proxy continuity arc.")
+    lines = body.splitlines()
+    assert "mission: Recover the operator-proxy continuity arc." in lines
+    # Mission sits in the structural header, before the prose / blank line.
+    header_end = lines.index("")
+    assert "mission: Recover the operator-proxy continuity arc." in lines[:header_end]
+
+
 def test_pinned_birth_id_is_byte_stable_for_adapter_parity() -> None:
     pin = "a" * 32
     body = _cadence_body(successor_birth_id=pin)

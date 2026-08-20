@@ -40,3 +40,27 @@ def test_cadence_hop_body_forbids_monitor_arm() -> None:
     assert "PRIMARY" in body or "primary" in body.lower()
     assert "wake-guide" in body
     assert "unobservable" in body
+
+
+def test_build_cadence_hop_body_threads_watch_row_mission() -> None:
+    """The watch row's captured mission survives onto the hop body."""
+    decision = HopDecision(
+        thread_id="6655",
+        action="fire",
+        reason="watch_seated_at",
+        age_s=2000.0,
+        threshold_s=1500.0,
+        signal="watch_seated_at",
+        handoff=StandingHandoffFreshness(
+            status="current",
+            uri="cortex://notes/system/threads/6655-standing-handoff.md",
+            mtime_epoch=1.0,
+            age_s=10.0,
+        ),
+    )
+    body = build_cadence_hop_body(
+        decision,
+        registration_id="abc123",
+        mission="Recover the operator-proxy continuity arc.",
+    )
+    assert "mission: Recover the operator-proxy continuity arc." in body.splitlines()

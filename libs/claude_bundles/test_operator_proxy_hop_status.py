@@ -49,7 +49,10 @@ def test_continuity_headers_fill_lane_live_next() -> None:
     out = ensure_hop_status_first(body)
     assert "- lane: agent-bus:9501" in out
     assert "- live: continuity hop — cse_age" in out
-    assert "- next: read cortex://notes/system/threads/9501-standing-handoff.md (current)" in out
+    assert (
+        "- next: read cortex://notes/system/threads/9501-standing-handoff.md (current)"
+        in out
+    )
 
 
 def test_standing_handoff_sidecar_fills_unspecified_only() -> None:
@@ -75,6 +78,45 @@ def test_standing_handoff_sidecar_fills_unspecified_only() -> None:
     assert "- lane: agent-bus:9501" in out
 
 
+def test_mission_bullet_renders_first_and_defaults_unspecified() -> None:
+    out = ensure_hop_status_first(f"{_SEAT}\nthread_id: 9501\n")
+    assert f"- mission: {UNSPECIFIED}" in out
+    assert out.index("- mission:") < out.index("- settled:")
+
+
+def test_mission_field_parsed_from_explicit_label() -> None:
+    out = ensure_hop_status_first(
+        f"{_SEAT}\nmission: Recover fleet mission continuity\n"
+    )
+    assert "- mission: Recover fleet mission continuity" in out
+
+
+def test_mission_falls_back_to_directive_vision_line() -> None:
+    body = (
+        f"{_SEAT}\n"
+        "TYPE: DIRECTIVE\n"
+        "contract: implement\n"
+        "vision: Close the agent-bus lane classification gap.\n"
+    )
+    out = ensure_hop_status_first(body)
+    assert "- mission: Close the agent-bus lane classification gap." in out
+
+
+def test_mission_explicit_label_wins_over_vision_line() -> None:
+    body = f"{_SEAT}\nmission: Explicit mission wins\nvision: Should not be used\n"
+    out = ensure_hop_status_first(body)
+    assert "- mission: Explicit mission wins" in out
+
+
+def test_mission_sidecar_heading_fills_when_prompt_silent() -> None:
+    sidecar = "## Mission\nRestore lane continuity for the propagation arc.\n"
+    out = ensure_hop_status_first(
+        f"{_SEAT}\nthread_id: 9501\n",
+        standing_handoff_text=sidecar,
+    )
+    assert "- mission: Restore lane continuity for the propagation arc." in out
+
+
 def test_existing_block_above_seat_map_is_byte_stable() -> None:
     body = (
         f"{HOP_STATUS_MARKER}\n"
@@ -86,7 +128,9 @@ def test_existing_block_above_seat_map_is_byte_stable() -> None:
         f"\n{_SEAT}"
     )
     assert ensure_hop_status_first(body) == body
-    assert ensure_hop_status_first(body, standing_handoff_text="## Settled\nNO\n") == body
+    assert (
+        ensure_hop_status_first(body, standing_handoff_text="## Settled\nNO\n") == body
+    )
 
 
 def test_existing_block_after_seat_map_is_hoisted() -> None:
