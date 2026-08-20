@@ -6,7 +6,8 @@ drain-state is counts-only (no ``parent_thread`` / ``purpose``). The CSE
 session registry is the identity-bearing seat source. This module unions
 registry seats onto the snap that both predecessor capture and
 ``refuse_cadence_hop_for_live_seat`` already share, without mutating admission
-scalars (``running_count``, ``free_slots``).
+scalars (``running_count``, ``free_slots``). X occupancy is a separate
+active-work attach (``x_*``), not this union.
 """
 
 from __future__ import annotations

@@ -310,6 +310,9 @@ def _allocate_port_for_profile(
         return existing, True
     if not launch:
         raise LaneError(f"no live Chrome for profile '{suffix}' and launch=False")
+    from claude_bundles.x_display_capacity import require_chrome_headroom
+
+    require_chrome_headroom()
     # Cross-exclude registry-reserved ports (F3 / thread 5262) so the legacy
     # intent allocator and cdp_registry cannot TOCTOU-collide on the same port.
     exclude = set(held_ports())
@@ -362,8 +365,18 @@ def _kill_lane_chrome(pid: int) -> None:
 
 def _launch_chrome(port: int, profile: Path) -> int:
     """Launch a detached Chrome (the warm resource) and wait until it listens."""
+    from claude_bundles.x_display_capacity import (
+        XDisplayCapacityError,
+        chrome_cdp_log_path,
+        listen_timeout_x_message,
+        log_bytes_show_x_exhaustion,
+        require_chrome_headroom,
+    )
+
+    require_chrome_headroom()
     _seed_profile(profile)
-    log = f"/tmp/chrome-cdp-claude-ai-{port}.log"
+    log = chrome_cdp_log_path(port)
+    pre_size = Path(log).stat().st_size if Path(log).is_file() else 0
     env = chrome_display_env()
     with open(log, "ab") as logf:
         proc = subprocess.Popen(
@@ -383,6 +396,8 @@ def _launch_chrome(port: int, profile: Path) -> int:
             return proc.pid
         time.sleep(_POLL_MS / 1000)
     _kill_lane_chrome(proc.pid)
+    if log_bytes_show_x_exhaustion(log, start_offset=pre_size):
+        raise XDisplayCapacityError(listen_timeout_x_message(port, log))
     raise LaneError(f"Chrome on :{port} did not reach CDP in {_LAUNCH_WAIT_S}s")
 
 

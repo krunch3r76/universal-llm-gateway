@@ -58,6 +58,9 @@ def ensure_driving_operator_seat(
 
     Hop satellites on the same ``parent_thread`` are not reused: they go
     dormant when Chrome releases, which is the hole this helper closes.
+    A listable hop is already visible to request-admission census (no
+    ``mission_kind`` filter). Reusing it here as the driving row would
+    collapse hop+driving overlap to N=1 and widen the 9499 turn-18 ruling.
     """
     from claude_bundles import cdp_registry
 

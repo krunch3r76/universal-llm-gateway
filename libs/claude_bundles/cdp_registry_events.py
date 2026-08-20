@@ -71,7 +71,11 @@ def cdp_provenance_unresolved(
         signal="cdp.provenance.unresolved",
         role="observation",
         scope="node",
-        payload={"chat_url": chat_url, "reason": reason, "correlation_id": correlation_id},
+        payload={
+            "chat_url": chat_url,
+            "reason": reason,
+            "correlation_id": correlation_id,
+        },
     )
 
 
@@ -93,9 +97,7 @@ def cdp_provenance_conflict(
 
 
 @event_factory
-def cdp_provenance_historical(
-    *, episode_id: str, chat_url: str, reason: str
-) -> Event:
+def cdp_provenance_historical(*, episode_id: str, chat_url: str, reason: str) -> Event:
     """Report a retained episode that is no longer the current CSE binding."""
     return Event(
         signal="cdp.provenance.historical",
@@ -103,6 +105,7 @@ def cdp_provenance_historical(
         scope="node",
         payload={"episode_id": episode_id, "chat_url": chat_url, "reason": reason},
     )
+
 
 _REGISTRY_TRANSITION_SIGNALS = frozenset(
     {
@@ -222,9 +225,7 @@ def cdp_port_relaunched(
 
 
 @event_factory
-def cdp_port_dormant_reclaimed(
-    *, registration_ids: list[str], trigger: str
-) -> Event:
+def cdp_port_dormant_reclaimed(*, registration_ids: list[str], trigger: str) -> Event:
     """Dormant rows dropped past TTL or over the row cap."""
     return Event(
         signal="cdp.port.dormant_reclaimed",
@@ -396,6 +397,30 @@ def cdp_occupancy_overlap(*, lane: str, execution_ids: list[str]) -> Event:
         role="observation",
         scope="node",
         payload={"lane": lane, "execution_ids": execution_ids},
+    )
+
+
+@event_factory
+def cdp_display_exhausted(
+    *,
+    display: str,
+    x_clients: int | None,
+    x_max_clients: int,
+    x_headroom: int | None,
+    x_chrome_client_budget: int,
+) -> Event:
+    """Mint refused because Xvfb/X11 MaxClients cannot host another Chrome."""
+    return Event(
+        signal="cdp.display.exhausted",
+        role="observation",
+        scope="node",
+        payload={
+            "display": display,
+            "x_clients": x_clients,
+            "x_max_clients": x_max_clients,
+            "x_headroom": x_headroom,
+            "x_chrome_client_budget": x_chrome_client_budget,
+        },
     )
 
 

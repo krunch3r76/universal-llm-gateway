@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from claude_bundles.x_display_capacity import probe_x_display, x_display_wire_fields
 from fastapi.testclient import TestClient
 
 from cdp_ask.app import create_app
@@ -83,6 +84,7 @@ def _capacity(
         "admission_regime": regime,
         "effective_abs_hard": abs_hard_effective,
         "seated_rows": [],
+        **x_display_wire_fields(probe_x_display()),
     }
 
 
@@ -486,3 +488,7 @@ async def test_active_work_snapshot_projects_listable_registry_seats(
     assert snap["running_count"] == 0
     assert snap["free_slots"] == LANE_HARD_LIMIT
     assert snap["rows"] == []
+    assert "x_exhausted" in snap
+    assert snap["x_exhausted"] is None
+    assert snap["x_clients"] is None
+    assert snap["x_max_clients"] == 64

@@ -167,13 +167,16 @@ class ExecutionStore:
         process's registry ``load_active()``. Admission scalars stay on the
         execution store; identity consumers read ``seated_rows`` so MCP's
         attach early-out consumes Jupiter seats instead of overlaying a hub
-        empty file.
+        empty file. ``free_slots`` remains stream admission; X occupancy is
+        attached as ``x_*`` on the same snapshot and does not rewrite that
+        formula.
         """
         from claude_bundles.cdp_registry_store import load_active
         from claude_bundles.hop_cadence_seat_snap import (
             attach_seated_rows,
             seated_rows_from_registry_records,
         )
+        from claude_bundles.x_display_capacity import attach_x_display_capacity
 
         from cdp_ask.work_projection import admission_projection
 
@@ -184,6 +187,7 @@ class ExecutionStore:
         except Exception:  # noqa: BLE001 — identity attach must not break admission
             seated = []
         payload = attach_seated_rows(payload, seated)
+        attach_x_display_capacity(payload, decl)
         return seal(payload, decl)
 
     async def drain_state_snapshot(self) -> dict[str, Any]:

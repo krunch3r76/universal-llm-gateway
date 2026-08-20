@@ -442,6 +442,32 @@ def test_launch_failure_rolls_back_allocating(isolated_registry: Path) -> None:
     assert again.port == 9223
 
 
+def test_register_refuses_x_exhaustion_before_selecting_port(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity.count_x11_unix_clients",
+        lambda display, proc_net_unix=None: 63,
+    )
+    launched: list[int] = []
+
+    def boom(port: int, profile: Path) -> int:
+        launched.append(port)
+        raise AssertionError("must not launch")
+
+    from claude_bundles.x_display_capacity import XDisplayCapacityError
+
+    with pytest.raises(XDisplayCapacityError, match="X display"):
+        reg.register_lane(
+            holder="a",
+            launch_chrome=boom,
+            is_listening=lambda _p: False,
+        )
+    assert launched == []
+    assert reg._load_active() == {}
+    assert reg.list_active() == []
+
+
 def test_reattach_emits_reattached(
     isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

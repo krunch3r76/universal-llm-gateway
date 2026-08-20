@@ -146,6 +146,51 @@ def test_census_n1_from_seated_rows_only_operator_proxy():
     assert identity.match_registration_ids == ("driving-root",)
 
 
+def test_census_counts_listable_hop_on_matching_parent() -> None:
+    """AC1: admission census has no mission_kind filter — live hop is N=1."""
+    from claude_bundles.hop_cadence_seat_snap import seated_row_from_registry_record
+    from claude_bundles.request_admission_census import census_match_ids
+
+    projected = seated_row_from_registry_record(
+        {
+            "registration_id": "6db8df9ce3e94b46851a544f558af247",
+            "status": "active",
+            "purpose": "operator-proxy",
+            "parent_thread": "9506",
+            "mission_kind": "hop",
+        }
+    )
+    assert projected is not None
+    snap = {"rows": [], "seated_rows": [projected]}
+    assert census_match_ids("9506", snap) == ["6db8df9ce3e94b46851a544f558af247"]
+    assert census_match_ids("9497", snap) == []
+
+
+def test_census_hop_plus_driving_is_n2() -> None:
+    """AC1 ruling: hop+driving overlap stays N=2 — no pick-one."""
+    from claude_bundles.request_admission_census import census_match_ids
+
+    snap = {
+        "rows": [],
+        "seated_rows": [
+            {
+                "registration_id": "hop-row",
+                "parent_thread": "9506",
+                "purpose": "operator-proxy",
+                "status": "running",
+            },
+            {
+                "registration_id": "root-row",
+                "parent_thread": "9506",
+                "purpose": "operator-proxy",
+                "status": "running",
+            },
+        ],
+    }
+    matches = census_match_ids("9506", snap)
+    assert sorted(matches) == ["hop-row", "root-row"]
+
+
 def test_gate_refuses_empty_snap_on_watched_lane():
     """AC3: empty_snap is N=0 — refuse at enqueue, do not fail-open."""
     with (

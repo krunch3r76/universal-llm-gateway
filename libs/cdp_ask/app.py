@@ -122,8 +122,9 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         """Return recorded executions, stream-admission capacity, and listable seats.
 
         ``busy`` describes pending/running satellite executions only. Lane
-        admission uses ``free_slots`` / ``at_hard_limit`` (soft=2, hard=3);
-        browser attachments do not change those scalars. ``rows`` lists
+        admission uses ``free_slots`` / ``at_hard_limit`` (soft=2, hard=3)
+        for recorded streams only — not Xvfb window-mint room. ``x_clients`` /
+        ``x_exhausted`` on the same snapshot are the display-capacity axis. ``rows`` lists
         per-flight ``registration_id`` / ``holder`` / ``purpose``. ``seated_rows``
         is always a list (including ``[]``) from this host's registry
         ``load_active()`` so MCP attach consumes Jupiter seats, not a hub file.

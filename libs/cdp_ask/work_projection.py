@@ -118,8 +118,7 @@ def active_rows(records: Iterable[Any]) -> tuple[list[dict[str, Any]], list[str]
                 "source": projection["source"],
                 "parent_thread": record.parent_thread
                 or projection.get("parent_thread"),
-                "mission_kind": record.mission_kind
-                or projection.get("mission_kind"),
+                "mission_kind": record.mission_kind or projection.get("mission_kind"),
             }
         )
     return rows, execution_ids
@@ -167,7 +166,10 @@ def admission_projection(
     decl.plain("busy", reason="derived boolean: running_count > 0")
     decl.plain("soft_limit", reason="configured stream admission constant")
     decl.plain("hard_limit", reason="configured stream admission constant")
-    decl.plain("free_slots", reason="derived: effective_abs_hard - admission_count")
+    decl.plain(
+        "free_slots",
+        reason="stream admission: effective_abs_hard - admission_count; not X/window mint room",
+    )
     decl.plain("at_soft_limit", reason="derived: admission_count >= soft_limit")
     decl.plain("at_hard_limit", reason="derived: admission_count >= effective_abs_hard")
     decl.plain("seat_count", reason="derived: pending/running seat-purpose rows")

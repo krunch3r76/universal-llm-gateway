@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 from admission_common.qualified_scalar import UnqualifiedScalarError, seal
+from claude_bundles.x_display_capacity import probe_x_display, x_display_wire_fields
 
 from cdp_ask.execution_store import (
     LANE_HARD_LIMIT,
@@ -61,6 +62,7 @@ def _capacity(
         "admission_regime": regime,
         "effective_abs_hard": abs_hard_effective,
         "seated_rows": [],
+        **x_display_wire_fields(probe_x_display()),
     }
 
 

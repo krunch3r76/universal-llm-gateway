@@ -167,6 +167,10 @@ def register_lane(
     reclaim_best_effort()
     listen = is_listening or cdp_lane.is_listening
     launch_fn = launch_chrome or cdp_lane._launch_chrome
+    if launch:
+        from claude_bundles.x_display_capacity import require_chrome_headroom
+
+        require_chrome_headroom()
 
     row = reserve_allocating_row(
         holder=holder,

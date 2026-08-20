@@ -185,7 +185,9 @@ def _record_dormant_episode(seat: DormantSeat, *, reason: str) -> None:
             registration_id=seat.registration_id,
             cdp_url="",
             lane_thread=None,
-            lineage={"parent_thread": seat.parent_thread} if seat.parent_thread else None,
+            lineage={"parent_thread": seat.parent_thread}
+            if seat.parent_thread
+            else None,
             state=STATUS_DORMANT,
             reason=reason,
         )
@@ -209,6 +211,9 @@ def relaunch_dormant(
     listen = is_listening or cdp_lane.is_listening
     launch_fn = launch_chrome or cdp_lane._launch_chrome
     chat_url = str(row.get("chat_url") or "")
+    from claude_bundles.x_display_capacity import require_chrome_headroom
+
+    require_chrome_headroom()
 
     reserved = reserve_allocating_row(
         holder=holder or str(row["holder"]),
@@ -218,7 +223,10 @@ def relaunch_dormant(
         listen=listen,
         registration_id=registration_id,
         profile_suffix=str(row["profile_suffix"]),
-        carry={"chat_url": chat_url, "relaunched_from_dormant_at": row.get("dormant_at")},
+        carry={
+            "chat_url": chat_url,
+            "relaunched_from_dormant_at": row.get("dormant_at"),
+        },
     )
     try:
         chrome_pid = launch_fn(int(reserved["port"]), Path(str(reserved["profile"])))
