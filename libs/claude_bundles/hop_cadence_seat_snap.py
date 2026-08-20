@@ -16,6 +16,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from claude_bundles.cdp_registry.models import _LISTABLE_STATUSES
+from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
 
 SEATED_NO_STREAM_EXECUTION = "__none:seated_no_stream__"
 SEATED_ROWS_KEY = "seated_rows"
@@ -135,3 +136,74 @@ def identity_rows(snap: dict[str, Any]) -> list[dict[str, Any]]:
         seen.add(registration_id)
         out.append(row)
     return out
+
+
+def _record_float(record: Mapping[str, Any], key: str) -> float:
+    try:
+        return float(record.get(key) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def dormant_operator_parent_records(
+    thread_id: str,
+    *,
+    load_active: Callable[[], Mapping[str, Mapping[str, Any]]] | None = None,
+) -> list[dict[str, Any]]:
+    """Fail-open dormant operator-purpose registry rows for ``thread_id``.
+
+    Empty on I/O or parse faults so a registry miss cannot turn an admit
+    into a refuse. Does **not** project into ``seated_rows`` — dormant stays
+    unlistable for hop-cadence live-seat refuse.
+    """
+    try:
+        if load_active is None:
+            from claude_bundles.cdp_registry_store import load_active as _load_active
+
+            raw = _load_active()
+        else:
+            raw = load_active()
+    except Exception:  # noqa: BLE001 — census fill must fail open
+        return []
+    if not isinstance(raw, Mapping):
+        return []
+    parent = str(thread_id or "").strip()
+    if not parent:
+        return []
+    out: list[dict[str, Any]] = []
+    for rec in raw.values():
+        if not isinstance(rec, Mapping):
+            continue
+        if str(rec.get("status") or "") != "dormant":
+            continue
+        if str(rec.get("purpose") or "") not in OPERATOR_PURPOSES:
+            continue
+        if str(rec.get("parent_thread") or "").strip() != parent:
+            continue
+        rid = str(rec.get("registration_id") or "").strip()
+        if not rid:
+            continue
+        out.append(dict(rec))
+    return out
+
+
+def newest_dormant_operator_registration_id(
+    records: list[Mapping[str, Any]],
+) -> str | None:
+    """Collapse N dormant operator rows to the newest registration id.
+
+    Recency is ``dormant_at``, then ``started_at``, then ``registration_id``.
+    Jupiter 9506 tonight is N=3 hop parks; a naive union would be
+    ``ambiguous_matches`` — recency is occupancy, not ambiguity.
+    """
+    candidates: list[tuple[float, float, str]] = []
+    for rec in records:
+        rid = str(rec.get("registration_id") or "").strip()
+        if not rid:
+            continue
+        candidates.append(
+            (_record_float(rec, "dormant_at"), _record_float(rec, "started_at"), rid)
+        )
+    if not candidates:
+        return None
+    return max(candidates)[2]
