@@ -1,15 +1,23 @@
-"""Park live retained / orphaned-alive CDP hosts as dormant seats.
+"""Park live retained / orphaned-alive / active CDP hosts as dormant seats.
 
 Retention used to end only when Chrome died on its own: hygiene re-kept every
 live ``retained`` row, and the orphan reaper deliberately skips operator-proxy
 rows. Hosts therefore accumulated until the X server ran out of clients. This
 pass ends retention explicitly — binding the CSE URL first when it is missing, so
 parking a host never costs the session.
+
+Operator-proxy/mission rows sitting plain ``active`` (the ordinary in-progress
+state, not merely ``retained``) previously had no path into this sweep at all —
+a seat that never cycled through dormancy could hold its Chrome open
+indefinitely. ``_idle_reachable_protects`` now bounds that protection with a
+grace window instead of granting it unconditionally.
 """
 
 from __future__ import annotations
 
 import contextlib
+import os
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -30,8 +38,41 @@ from .registry_module import registry_package
 CONSUMERS: tuple[str, ...] = ("cdp_ask",)
 INJECTORS: tuple[str, ...] = ("cdp_ask",)
 
-_DRAINABLE_STATUSES = frozenset({"retained", "orphaned_alive"})
+_DRAINABLE_STATUSES = frozenset({"retained", "orphaned_alive", "active"})
 _CSE_MARKER = "/cowork/cse_"
+
+# Long relative to one dispatch (observed 5-25 min the night this shipped):
+# the only signal available on a registry row is a lifecycle-transition
+# timestamp, not a per-turn heartbeat, so the window must tolerate a hot seat
+# that simply has not cycled through dormancy recently.
+_DEFAULT_OPERATOR_IDLE_GRACE_S = 1800.0
+
+
+def operator_idle_grace_s() -> float:
+    """Idle grace window (``CDP_OPERATOR_IDLE_GRACE_S``) before an
+    operator-proxy/mission seat becomes drainable."""
+    raw = os.environ.get("CDP_OPERATOR_IDLE_GRACE_S", "").strip()
+    if raw:
+        with contextlib.suppress(ValueError):
+            value = float(raw)
+            if value > 0:
+                return value
+    return _DEFAULT_OPERATOR_IDLE_GRACE_S
+
+
+def _last_activity_at(row: dict[str, Any]) -> float | None:
+    """Best-effort last-touched signal for a registry row.
+
+    No per-turn heartbeat exists on a registry row today. Fall back through
+    the newest lifecycle-transition timestamp present: a relaunch or a prior
+    dormancy episode is closer to real activity than mint time; a row that
+    has never gone dormant only carries ``started_at``.
+    """
+    for key in ("relaunched_from_dormant_at", "dormant_at", "started_at"):
+        value = row.get(key)
+        if isinstance(value, (int, float)):
+            return float(value)
+    return None
 
 
 @dataclass
@@ -82,19 +123,31 @@ def _ensure_chat_url(registration_id: str, row: dict[str, Any]) -> bool:
     return bind_session_address(registration_id, chat_url=url)
 
 
-def _idle_reachable_protects(row: dict[str, Any]) -> bool:
+def _idle_reachable_protects(row: dict[str, Any], *, now: float | None = None) -> bool:
     """True when an idle reachable CSE page must keep its Chrome.
 
-    Operator-proxy / mission seats live between tool calls; harvest-triple
-    idle is not a death warrant. Purpose missing or blank fail-closes to
-    protect — absence of that signal is the class that produced this arc.
-    One-shot ``ask`` hosts stay drainable when idle so leaked Chromes still
-    park.
+    Operator-proxy / mission seats live between tool calls, so idle alone is
+    not a death warrant — but the protection is bounded, not unconditional.
+    Past ``operator_idle_grace_s()`` since the row's own last-activity signal
+    (``_last_activity_at`` — a lifecycle-timestamp proxy, since no true
+    per-turn heartbeat exists, sized generously to avoid false-positiving a
+    seat mid-dispatch), the row is drainable like any other. Purpose missing
+    or blank still fail-closes to protect — absence of that signal is the
+    class that produced this arc. One-shot ``ask`` hosts stay drainable when
+    idle so leaked Chromes still park.
     """
     purpose = row.get("purpose")
     if purpose is None or not str(purpose).strip():
         return True
-    return is_operator_proxy_mission_purpose(str(purpose))
+    if not is_operator_proxy_mission_purpose(str(purpose)):
+        return False
+    last_activity = _last_activity_at(row)
+    if last_activity is None:
+        # No lifecycle timestamp at all on a live row is itself a surprise;
+        # fail closed (protect) rather than treat an unknown age as ancient.
+        return True
+    ts = time.time() if now is None else now
+    return (ts - last_activity) < operator_idle_grace_s()
 
 
 def row_drain_protection(
@@ -103,6 +156,7 @@ def row_drain_protection(
     registration_id: str,
     is_listening: _ListenFn | None = None,
     is_busy: Callable[[str], bool] | None = None,
+    now: float | None = None,
 ) -> str | None:
     """Return why hygiene must skip this row, or None when it may park/release.
 
@@ -115,22 +169,24 @@ def row_drain_protection(
     protection = host_protection_reason(row, registration_id=registration_id)
     if protection is not None:
         return protection
-    return _streaming_protection_reason(row, is_listening=listen)
+    return _streaming_protection_reason(row, is_listening=listen, now=now)
 
 
 def _streaming_protection_reason(
-    row: dict[str, Any], *, is_listening: _ListenFn
+    row: dict[str, Any], *, is_listening: _ListenFn, now: float | None = None
 ) -> str | None:
     """Protect a reachable CSE page that is still a seat, not a leak.
 
-    Retained rows can outlive the execution-store process that created them.
-    Registry status alone therefore cannot prove that killing the host is safe;
-    probe every attached CSE page and fail closed when liveness is unavailable.
+    Retained (and now plain-active) rows can outlive the execution-store
+    process that created them. Registry status alone therefore cannot prove
+    that killing the host is safe; probe every attached CSE page and fail
+    closed when liveness is unavailable.
 
-    A successful idle probe is not a drain warrant for operator-proxy /
-    mission (or blank-purpose) seats — those hosts sit idle between tool
-    calls. One-shot ``ask`` hosts still return ``None`` when idle so hygiene
-    can park them.
+    A successful idle probe is not an unconditional drain warrant for
+    operator-proxy / mission (or blank-purpose) seats — those hosts sit idle
+    between tool calls — but it is a *bounded* one past the idle grace
+    window; see ``_idle_reachable_protects``. One-shot ``ask`` hosts still
+    return ``None`` when idle so hygiene can park them.
 
     Probe-source failure is not an empty page list. A wedged, silent, or
     unparseable CDP port must protect — with a distinct reason so a leaked
@@ -153,7 +209,7 @@ def _streaming_protection_reason(
             return "stream_probe_unavailable"
         if in_flight_from_state(state):
             return "streaming_monitoring"
-        if _idle_reachable_protects(row):
+        if _idle_reachable_protects(row, now=now):
             return "reachable_operator_seat"
     return None
 
@@ -163,12 +219,15 @@ def drain_live_hosts_to_dormant(
     is_listening: _ListenFn | None = None,
     release_unbound: bool = True,
     is_busy: Callable[[str], bool] | None = None,
+    now: float | None = None,
 ) -> DrainResult:
     """Park every drainable host as dormant; release hosts holding no session.
 
     A host with no reachable CSE URL is a leaked Chrome rather than a seat, so
     with *release_unbound* it is killed instead of parked. *is_busy* lets the
-    caller protect a host whose turn is still running.
+    caller protect a host whose turn is still running. *now* overrides the
+    clock used for the operator-proxy idle-grace check (tests only; omit in
+    production so it reads the real clock).
     """
     listen = is_listening or cdp_lane.is_listening
     result = DrainResult()
@@ -180,6 +239,7 @@ def drain_live_hosts_to_dormant(
             registration_id=registration_id,
             is_listening=listen,
             is_busy=is_busy,
+            now=now,
         )
         if protection is not None:
             result.protected[registration_id] = protection

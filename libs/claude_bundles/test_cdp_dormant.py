@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from claude_bundles import cdp_registry as reg
+from claude_bundles.cdp_registry import dormant_drain
 from claude_bundles.cdp_registry.dormant_drain import drain_live_hosts_to_dormant
 
 pytestmark = pytest.mark.offline
@@ -500,7 +501,10 @@ def test_boot_adopt_preserves_active_for_reachable_operator(
 
     result = drain_live_hosts_to_dormant(is_listening=lambda _p: False)
     assert result.dormant == []
-    assert seat.registration_id not in result.protected
+    # "active" is now in-scope for the sweep (previously skipped by status
+    # alone); an unreachable port still fails closed to "protected", so the
+    # row is never wrongly dormanted either way.
+    assert result.protected[seat.registration_id] == "cdp_port_unreachable"
     assert _row(seat.registration_id)["status"] == "active"
     assert _row(seat.registration_id)["chat_url"] == url
 
@@ -542,6 +546,115 @@ def test_boot_adopted_host_without_cse_is_drainable(
     result = drain_live_hosts_to_dormant(is_listening=lambda _p: True)
     assert result.dormant == [seat.registration_id]
     assert _row(seat.registration_id)["chat_url"] == url
+
+
+def test_drain_parks_idle_active_operator_proxy_past_grace_window(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A plain-``active`` operator-proxy seat, idle past the grace window, drains.
+
+    Before this change, ``_DRAINABLE_STATUSES`` excluded ``active`` entirely —
+    a seat that never cycled through dormancy had no path into this sweep.
+    """
+    url = "https://claude.ai/cowork/cse_active_stale"
+    seat = _seat(chat_url=url)
+    # No deregister_lane call — the row stays plain "active", not "retained".
+    assert _row(seat.registration_id)["status"] == "active"
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.dormant_drain.cdp_orphans._fetch_json",
+        lambda _url: [
+            {
+                "type": "page",
+                "url": url,
+                "webSocketDebuggerUrl": "ws://active-stale",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.dormant_drain.probe_page_liveness_sync",
+        lambda _port, _websocket: (
+            {"streaming": False, "stop": False, "tool_pause": False},
+            True,
+        ),
+    )
+    started_at = _row(seat.registration_id)["started_at"]
+    past_grace = started_at + dormant_drain.operator_idle_grace_s() + 1.0
+
+    result = drain_live_hosts_to_dormant(is_listening=lambda _p: True, now=past_grace)
+    assert result.dormant == [seat.registration_id]
+    assert _row(seat.registration_id)["status"] == "dormant"
+
+
+def test_drain_protects_active_operator_proxy_within_grace_window(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same shape, checked before the grace window elapses, is untouched."""
+    url = "https://claude.ai/cowork/cse_active_hot"
+    seat = _seat(chat_url=url)
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.dormant_drain.cdp_orphans._fetch_json",
+        lambda _url: [
+            {
+                "type": "page",
+                "url": url,
+                "webSocketDebuggerUrl": "ws://active-hot",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.dormant_drain.probe_page_liveness_sync",
+        lambda _port, _websocket: (
+            {"streaming": False, "stop": False, "tool_pause": False},
+            True,
+        ),
+    )
+    started_at = _row(seat.registration_id)["started_at"]
+    within_grace = started_at + 5.0
+
+    result = drain_live_hosts_to_dormant(is_listening=lambda _p: True, now=within_grace)
+    assert result.dormant == []
+    assert result.protected[seat.registration_id] == "reachable_operator_seat"
+    assert _row(seat.registration_id)["status"] == "active"
+
+
+def test_drain_protects_streaming_active_operator_proxy_regardless_of_age(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A genuinely streaming seat is protected even with an ancient ``started_at``."""
+    url = "https://claude.ai/cowork/cse_active_streaming_old"
+    seat = _seat(chat_url=url)
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.dormant_drain.cdp_orphans._fetch_json",
+        lambda _url: [
+            {
+                "type": "page",
+                "url": url,
+                "webSocketDebuggerUrl": "ws://active-streaming-old",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.dormant_drain.probe_page_liveness_sync",
+        lambda _port, _websocket: (
+            {"streaming": True, "stop": False, "tool_pause": False},
+            True,
+        ),
+    )
+    started_at = _row(seat.registration_id)["started_at"]
+    far_future = started_at + dormant_drain.operator_idle_grace_s() * 10
+
+    result = drain_live_hosts_to_dormant(is_listening=lambda _p: True, now=far_future)
+    assert result.dormant == []
+    assert result.protected[seat.registration_id] == "streaming_monitoring"
+    assert _row(seat.registration_id)["status"] == "active"
+
+
+def test_idle_reachable_protects_fails_closed_with_no_timestamp(
+    isolated_registry: Path,
+) -> None:
+    """A live row with no lifecycle timestamp at all protects rather than guesses."""
+    row: dict[str, object] = {"purpose": "operator-proxy"}
+    assert dormant_drain._idle_reachable_protects(row, now=1_000_000.0) is True
 
 
 def test_drain_binds_a_probed_url_before_parking(
