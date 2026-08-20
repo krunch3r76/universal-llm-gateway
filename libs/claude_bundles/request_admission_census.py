@@ -7,16 +7,11 @@ empty after attach — posting must not couple to cdp-ask availability.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
 from typing import Any, Literal
 
 from universal_protocol.errors import ProtocolError
 
-from claude_bundles.hop_cadence_seat_snap import (
-    dormant_operator_parent_records,
-    identity_rows,
-    newest_dormant_operator_registration_id,
-)
+from claude_bundles.hop_cadence_seat_snap import identity_rows
 from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
 
 UnresolvableReason = Literal[
@@ -33,19 +28,8 @@ REFUSE_CENSUS_REASONS: frozenset[UnresolvableReason] = frozenset(
 )
 
 
-def census_match_ids(
-    thread_id: str,
-    snap: dict[str, Any],
-    *,
-    load_active: Callable[[], Mapping[str, Mapping[str, Any]]] | None = None,
-) -> list[str]:
-    """Unique operator-purpose registration ids on ``thread_id``.
-
-    Live ``identity_rows`` (pending/running) win. When that set is empty,
-    fail-open dormant operator-purpose registry rows with matching
-    ``parent_thread`` fill occupancy. Multiple dormant parks collapse to
-    the newest ``dormant_at`` — hop harvest history is not ambiguity.
-    """
+def census_match_ids(thread_id: str, snap: dict[str, Any]) -> list[str]:
+    """Unique operator-purpose registration ids on ``thread_id`` from the union."""
     matches: list[str] = []
     seen: set[str] = set()
     for row in identity_rows(snap):
@@ -59,12 +43,7 @@ def census_match_ids(
         if reg and reg not in seen:
             seen.add(reg)
             matches.append(reg)
-    if matches:
-        return matches
-    winner = newest_dormant_operator_registration_id(
-        dormant_operator_parent_records(thread_id, load_active=load_active)
-    )
-    return [winner] if winner else []
+    return matches
 
 
 def classify_unresolvable(
