@@ -54,7 +54,7 @@ CARD_INTENTS_DEFERRED = frozenset({"cluster", "impact"})
 _CARD_ASSERTION_COLS = (
     "id, claim, confidence, derivation_type, valid_from, "
     "observed_at, predicate_form, evidence_uris, entrenchment_score, "
-    "prospective_summary, created_at"
+    "prospective_summary, created_at, review_status"
 )
 
 _CARD_ORDER_BY = (

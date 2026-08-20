@@ -125,6 +125,11 @@ def aggregate_predicate_summary(
     tier1_used = False
 
     for row in top_k_assertions:
+        # Flagged rows already failed normalize/review (friction 30203). The
+        # current-status pin excludes them; this join must too, or the card
+        # renders status(todo, done) beside workflow_state=open.
+        if row.get("review_status") == "flagged":
+            continue
         pf = row.get("predicate_form")
         if pf:
             forms.append(str(pf))

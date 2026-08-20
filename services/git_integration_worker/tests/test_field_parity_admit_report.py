@@ -238,6 +238,21 @@ def test_envelope_parity_defers_standard_directive_vocab() -> None:
     assert "deferred=[arc, assumed_state, authority, budget, density, " in rendered
 
 
+def test_envelope_parity_defers_idea_commission_keys() -> None:
+    """idea/kind/peer_disclosure are commission prose; from_lane stays unknown."""
+    body = (
+        "TYPE: DIRECTIVE\n"
+        "idea: residual sweep\n"
+        "kind: investigate+fix\n"
+        "peer_disclosure: agent-bus:9530\n"
+        "from_lane: 9541\n"
+    )
+    report = compute_envelope_parity(body, {"desired_effort": "medium"})
+    assert report.status == "WARN"
+    assert report.unknown_tokens == ("from_lane",)
+    assert report.deferred_tokens == ("idea", "kind", "peer_disclosure")
+
+
 def test_envelope_parity_ok_when_prose_agrees_with_live_envelope() -> None:
     body = "TYPE: CONTINUITY_HANDOFF\ndesired_effort: medium\n"
     report = compute_envelope_parity(body, {"desired_effort": "medium"})

@@ -227,6 +227,10 @@ mandatory (its admit-proof rule binds — the turn claiming Mode B carries a rea
 `execution_id` + `poll_hint` or an honest halt) · expected S6 entry gate (G1/G2/G5) ·
 post-seed skill `abstraction-layering` when codework continues on the minted todo.
 
+`kind:` / `idea:` / `peer_disclosure:` reach admit as deferred packet prose (no effect
+on AutoJob). Do not author them as admit-consumed knobs. `from_lane:` is not a field —
+use wire `lane=`. Peer disclosure (inv 36) belongs in packet prose, not as an admit-consumed key.
+
 Cadence: fewer, fatter commissions amortize round-trip latency instead of paying it per
 micro-step. `¬` a hard rule — the operator named it an emergent shape and left the
 judgment of when to bind directly with this seat.

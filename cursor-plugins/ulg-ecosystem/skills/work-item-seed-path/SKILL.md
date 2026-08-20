@@ -214,7 +214,7 @@ commissioner keeps judgment on when to bind directly.
 | Field on the commission | Why |
 |---|---|
 | `Use the work-item-seed-path skill` | headless entry surface — ¬ the IDE command |
-| kind: `feature-add` \| `investigate+fix` | sets the S2 default (investigate+fix is recon-on) |
+| kind: `feature-add` \| `investigate+fix` | sets the S2 default (investigate+fix is recon-on). Commission prose — AutoJob admit **defers** `kind:`, it does not bind it. |
 | known anchors / loci | lets S2 be legitimately **skipped** ¬ re-derived |
 | S3 Mode B mandatory? | if yes, the admit-proof rule binds (same-turn admit or halt) |
 | expected S6 entry gate + harvest shape | makes the closeout adjudicable |

@@ -39,6 +39,12 @@ _OPERATOR_PROXY_PROSE_FIELDS = frozenset(
         "budget",
         "deadline",
         "ac",
+        # Idea-commissioning register (operator-proxy / work-item-seed-path).
+        # Commission prose, not AutoJob envelope binds — defer, do not WARN
+        # as unknown. ``from_lane`` is not a field (use wire ``lane=``).
+        "idea",
+        "kind",
+        "peer_disclosure",
     }
 )
 

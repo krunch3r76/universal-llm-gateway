@@ -45,3 +45,39 @@ def test_predicate_summary_never_none_with_relationships(
     card = get_entity_card(conn, entity_id="todo:linked")
     assert card["predicate_summary"] is not None
     assert "mentions" in card["predicate_summary"]
+
+
+def test_predicate_summary_drops_flagged_status_form(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    """Friction 30203: flagged predicate_form must not join into predicate_summary."""
+    conn = migrated_conn
+    entity_id = "todo:flagged-predicate-summary"
+    insert_entity(conn, entity_id=entity_id, entity_type="todo", name="Flagged")
+    conn.execute(
+        "INSERT INTO assertions (entity_id, claim, confidence, predicate_form, "
+        "review_status, review_notes, entrenchment_score, created_at, updated_at) "
+        "VALUES (?, ?, 'believed', ?, 'flagged', "
+        "'predicate normalize: requires_human_review', 0.9, datetime('now'), "
+        "datetime('now'))",
+        (
+            entity_id,
+            "Synthetic flagged false-status row.",
+            f"status({entity_id}, done)",
+        ),
+    )
+    conn.execute(
+        "INSERT INTO assertions (entity_id, claim, confidence, predicate_form, "
+        "entrenchment_score, created_at, updated_at) "
+        "VALUES (?, ?, 'believed', ?, 0.5, datetime('now'), datetime('now'))",
+        (
+            entity_id,
+            "Unflagged relational row.",
+            f"describes({entity_id}, recycle_sliver)",
+        ),
+    )
+    conn.commit()
+    card = get_entity_card(conn, entity_id=entity_id)
+    summary = card["predicate_summary"]
+    assert f"status({entity_id}, done)" not in summary
+    assert f"describes({entity_id}, recycle_sliver)" in summary

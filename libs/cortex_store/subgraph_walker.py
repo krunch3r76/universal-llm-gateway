@@ -361,7 +361,8 @@ def _truncate_summary(text: str | None) -> str | None:
 def _root_predicate_summary(conn: sqlite3.Connection, root: str) -> str:
     a_rows = query(
         conn,
-        "SELECT claim, predicate_form, entrenchment_score, observed_at "
+        "SELECT claim, predicate_form, entrenchment_score, observed_at, "
+        "review_status "
         "FROM assertions WHERE entity_id = ? AND superseded_by IS NULL "
         "ORDER BY COALESCE(entrenchment_score,0) DESC, "
         "COALESCE(observed_at,'') DESC, id DESC LIMIT 7",
