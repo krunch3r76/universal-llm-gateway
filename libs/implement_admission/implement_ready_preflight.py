@@ -359,8 +359,8 @@ def preflight_implement_ready(
     if not dense_uri:
         code = "implement_not_ready_no_dense_spec"
         reason = (
-            f"{todo_id}: source_uri must point at tasks/specs/{{slug}}.md or "
-            "notes/system/specs/{slug}.md before implement dispatch"
+            f"{todo_id}: source_uri must point at cortex://notes/system/specs/"
+            "{slug}.md before implement dispatch"
         )
         _fail(6, "dense_spec_path", code, reason)
         blocked.update({7, 8, 9, 10})

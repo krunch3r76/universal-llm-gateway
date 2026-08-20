@@ -32,8 +32,8 @@ derivation for the phase dir. For `<free text>`: synthesize a slug, then the
 same coherence invariant binds spec basename / phase_dir / plan id to it.
 
 **Worked example**: `/create-implementation-plan plan:manage-mvc-busy-channel`
-→ `entity_get` → `source_uri: tasks/specs/manage-mvc-busy-channel.md` → author
-phase docs into `tmp/prompts/manage-mvc-busy-channel/`.
+→ `entity_get` → `source_uri: cortex://notes/system/specs/manage-mvc-busy-channel.md`
+→ author phase docs into `tmp/prompts/manage-mvc-busy-channel/`.
 
 **Phased-spec lift**: if the resolved spec carries a `## Phases` section
 (authored via the phased `cortex://notes/system/specs/_plan-template.md` / `/draft-spec`), each phase

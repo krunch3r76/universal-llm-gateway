@@ -10,4 +10,4 @@ Repo-root `AGENTS.md` is the **cold-start router** for every agent surface. Pick
 | **web-claude** (vortex MCP) | `docs/agent-guides/README.md` → `rules/` (unified); `agent-guides/web-agent-orientation.md` | `docs/agent-guides/mvw-command-map.md` |
 | **No-cortex** (GitHub connector, read-only reviewer) | `docs/agent-guides/no-cortex.md` | `docs/agent-guides/mvw-command-map.md` (read/plan column only) |
 
-**Parity arc:** `tasks/specs/agent-workflow-parity.md` (`project:agent-workflow-parity`).
+**Parity arc:** `cortex://notes/system/specs/agent-workflow-parity.md` (`project:agent-workflow-parity`).

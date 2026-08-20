@@ -54,4 +54,4 @@ collision disambiguation: `entity-lifecycle-discipline` §Vocabulary — step vs
 - `/create-implementation-plan` — entity-arg resolution applies this invariant.
 - `/implement-plan` — phase-dir + `plan_phase:` seeding assume this invariant.
 - `todo_ws.mdc` — todo entities carry `source_uri: cortex://notes/system/specs/{slug}.md`.
-- `tasks/specs/agent-workflow-parity.md` — multi-todo arcs use `task:` (bounded arc, ≥2 leaf `todo:` via `child_of`) or a `project:` umbrella + spec; the `task-seed`/`task-close` *workflow* was retired 2026-06-04 but the `task:` entity type stays live (`decision:task-subsystem-retired`).
+- `cortex://notes/system/specs/agent-workflow-parity.md` — multi-todo arcs use `task:` (bounded arc, ≥2 leaf `todo:` via `child_of`) or a `project:` umbrella + spec; the `task-seed`/`task-close` *workflow* was retired 2026-06-04 but the `task:` entity type stays live (`decision:task-subsystem-retired`).

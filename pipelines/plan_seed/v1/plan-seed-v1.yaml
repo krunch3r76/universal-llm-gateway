@@ -8,8 +8,8 @@
 # guaranteed by construction (single slug option). Best-effort with structured
 # per-call results; partial failures are reported, not retried.
 #
-# The spec file (tasks/specs/{slug}.md) is written by the /plan-seed command
-# BEFORE invocation — it is a workspace filesystem op, not a cortex op.
+# The spec file (cortex://notes/system/specs/{slug}.md) is written by the
+# /plan-seed command BEFORE invocation — it is a Cortex fs op, not this handler.
 #
 # Invocation:
 #   pipeline(op="run", pipeline_id="plan-seed",

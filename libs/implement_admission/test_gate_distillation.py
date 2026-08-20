@@ -127,13 +127,14 @@ def test_normalize_dense_spec_path_emits_cortex_for_bare_notes_path() -> None:
 
 
 @pytest.mark.offline
-def test_normalize_dense_spec_path_honors_workspace_back_compat() -> None:
+def test_normalize_dense_spec_path_rewrites_workspace_citation_to_cortex() -> None:
+    """``tasks/specs`` is retired as an authoring locus — always rewrite to Cortex."""
     assert (
         normalize_dense_spec_path(
             "workspaces://universal-llm-gateway/tasks/specs/wire-gate.md",
             todo_id="todo:wire-gate",
         )
-        == "workspaces://universal-llm-gateway/tasks/specs/wire-gate.md"
+        == "cortex://notes/system/specs/wire-gate.md"
     )
 
 

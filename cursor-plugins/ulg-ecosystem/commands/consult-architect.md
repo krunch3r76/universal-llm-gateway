@@ -9,8 +9,8 @@ to surface gaps before creating implementation phases.
 /consult-architect {spec_path}
 ```
 
-Where `{spec_path}` is relative to the project root (e.g.,
-`tasks/specs/rag-metadata-consolidation.md`).
+Where `{spec_path}` is a Cortex Share URI (e.g.,
+`cortex://notes/system/specs/rag-metadata-consolidation.md`).
 
 ## When to Use
 

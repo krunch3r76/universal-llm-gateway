@@ -33,13 +33,15 @@ def _rejected_spec_source(source_uri: str) -> bool:
     return lower.startswith(_REJECTED_SPEC_PREFIXES)
 
 
-def _cortex_spec_cited(uri: str, cited: str) -> bool:
-    lower = uri.lower()
-    return lower.startswith("cortex://") or cited.lower().startswith("notes/system/specs/")
-
-
 def normalize_dense_spec_path(source_uri: str | None, *, todo_id: str) -> str:
-    """Resolve canonical Share URI for ``notes/system/specs/{slug}.md``."""
+    """Resolve canonical Share URI for ``notes/system/specs/{slug}.md`` — Cortex only.
+
+    ``tasks/specs`` (workspaces) was retired as a spec-authoring locus
+    (spec-home-consolidation, 2026-07-07). A historical ``workspaces://…/tasks/specs/{slug}.md``
+    citation is rewritten to the Cortex home rather than passed through — the
+    2026-08-09 "gitignored authoring locus" bind that motivated the old
+    back-compat branch is superseded (regression close, 2026-08-19).
+    """
     canonical = default_dense_spec_uri(todo_id)
     if not source_uri or not str(source_uri).strip():
         return to_share_uri("cortex", canonical)
@@ -53,14 +55,9 @@ def normalize_dense_spec_path(source_uri: str | None, *, todo_id: str) -> str:
     if PurePosixPath(cited).name != PurePosixPath(canonical).name:
         return to_share_uri("cortex", canonical)
 
-    if _cortex_spec_cited(uri, cited):
-        if "://" in uri and uri.lower().startswith("cortex"):
-            return uri if uri.lower().startswith("cortex://") else to_share_uri("cortex", cited)
-        return to_share_uri("cortex", cited)
-
-    if "://" in uri:
-        return uri if uri.lower().startswith("workspaces://") else to_share_uri("workspaces", cited)
-    return to_share_uri("workspaces", cited)
+    if uri.lower().startswith("cortex://"):
+        return uri
+    return to_share_uri("cortex", canonical)
 
 
 def _repo_candidates(root: Path) -> tuple[Path, ...]:

@@ -206,8 +206,8 @@ def evaluate_implement_ready(
     if not dense_uri:
         return _reject(
             "implement_not_ready_no_dense_spec",
-            f"{todo_id}: source_uri must point at tasks/specs/{{slug}}.md or "
-            "notes/system/specs/{slug}.md before implement dispatch",
+            f"{todo_id}: source_uri must point at cortex://notes/system/specs/"
+            "{slug}.md before implement dispatch",
         )
 
     evidence = assertion.get("evidence_uris")

@@ -181,7 +181,7 @@ docker/docs/
 
 tasks/*
 !tasks/specs/
-!tasks/specs/**
+!tasks/specs/README.md
 terminals/
 snapshots/
 

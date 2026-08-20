@@ -43,7 +43,7 @@ cortex(tool="entities", arguments='{"type":"task","workflow_state":"open"}')
 2. Create entity:
 
 ```python
-cortex(tool="entity_create", arguments='{"id":"task:{slug}","type":"task","name":"{Title}","description":"{1-2 line arc summary; cite child todo IDs inline}","source_uri":"tasks/specs/{slug}.md","attributes":{"priority":"medium","domain":"{domain}"}}')
+cortex(tool="entity_create", arguments='{"id":"task:{slug}","type":"task","name":"{Title}","description":"{1-2 line arc summary; cite child todo IDs inline}","source_uri":"cortex://notes/system/specs/{slug}.md","attributes":{"priority":"medium","domain":"{domain}"}}')
 ```
 
 `task:{slug} ≡ cortex://notes/system/specs/{slug}.md`; no plan/phase_dir binding.

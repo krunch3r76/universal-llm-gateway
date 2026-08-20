@@ -50,8 +50,8 @@ pipeline(op="run", pipeline_id="plan-seed",
 ```
 
 The pipeline creates `todo:{slug}` + `plan:{slug}` (both with `source_uri:
-tasks/specs/{slug}.md`) and the `plan:{slug} --derived_from--> todo:{slug}`
-edge in one call, returning structured per-call results.
+cortex://notes/system/specs/{slug}.md`) and the `plan:{slug} --derived_from-->
+todo:{slug}` edge in one call, returning structured per-call results.
 
 ### 3. Verify the writes (provenance discipline)
 
