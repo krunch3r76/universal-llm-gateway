@@ -214,9 +214,11 @@ def resolve_followup_prompt(req: object) -> str:
 def resolve_prompt(req: SubmitProjectAskRequest) -> list[str]:
     """Load prompt text from inline body, cortex URI, or checkout-relative path.
 
-    When ``purpose`` is an operator-proxy mission tag, ensure CDP skill chips
-    and the Opus-operator / Fable-advisor seat-map briefing
-    (``claude_bundles.operator_proxy_mission``).
+    When ``purpose`` is an operator-proxy mission tag, ensure CDP skill chips,
+    the this-hop status card, and the Opus-operator / Fable-advisor seat-map
+    briefing (``claude_bundles.operator_proxy_mission``). Loads the standing
+    handoff sidecar when the prompt names a thread id so hop-status fields
+    are filled from observed sidecar text rather than left unspecified.
     """
     if req.prompt_text and req.prompt_text.strip():
         text = req.prompt_text.strip()
@@ -229,13 +231,19 @@ def resolve_prompt(req: SubmitProjectAskRequest) -> list[str]:
         text = path.read_text(encoding="utf-8")
     else:
         raise ValueError("provide prompt_text, prompt_uri, or prompt_path")
+    from claude_bundles.operator_proxy_hop_status import (
+        standing_handoff_text_for_prompt,
+    )
     from claude_bundles.operator_proxy_mission import (
         ensure_operator_proxy_mission_prompt,
         purpose_implies_mission,
     )
 
     if purpose_implies_mission(req.purpose, text):
-        text = ensure_operator_proxy_mission_prompt(text)
+        text = ensure_operator_proxy_mission_prompt(
+            text,
+            standing_handoff_text=standing_handoff_text_for_prompt(text),
+        )
     return [text]
 
 

@@ -16,7 +16,8 @@ Binds web-anthropic (Cowork / life MCP) during operator-proxy episodes.
 | CDP/Jupiter transport, harvest, converse, skills | `claude-ai-cdp-navigation` |
 | Cursor model economics ($/M, T0–T3, Auto/Router, context billing) | `cursor-model-economics` |
 | DIRECTIVE authoring — fields, wire enum, mint-then-quote, conductor, negotiation | `directive-authoring-standard` |
-| Cursor co-developer register · standing-root CHECKPOINT | `operator-posture` Rule 7 · `agent-bus-discipline` |
+| Cursor co-developer register · standing-root CHECKPOINT | `operator-posture` Rule 7 |
+| New / pivoted `agent_bus` lane (`request`, hop successor, contract pivot) · CHECKPOINT R12 | `agent-bus-discipline` |
 
 **`cursor_only` slugs are not attachable on this seat** — `claude-ai-cdp-navigation`,
 `operator-proxy-substrate`, `path-sim`, `pager-notify`, `operator-posture`. Do not try to
@@ -637,6 +638,7 @@ On a persistent private lane while the stream is live, maintain one standing han
 |---|---|
 | **When to write/update** | At every **Leg** boundary (DISPOSITION, roadmap row land, ACT-RECEIPT) — while context is fresh — **¬** only at stream-end when the seat is depleted |
 | **Minimum fields** | settled vs live · first next act · open residuals (wake tokens) · last leg id/turn · lane id |
+| **First visible inject** | Mission submit opens with `## This hop (read first)` (those four lines) **above** the seat map — fill from this sidecar; `(unspecified)` ≠ idle |
 | **When a hop is required** | Stage `handoff_prompt` from this sidecar (already warm); ¬ author the handoff from a depleted close-moment alone |
 | **Episodic shape** | May still author a close-boundary handoff; standing sidecar is the persistent-lane default |
 

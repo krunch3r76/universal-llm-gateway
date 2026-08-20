@@ -1,10 +1,11 @@
-"""Operator-proxy mission prompt ensure — seat map + skill chips.
+"""Operator-proxy mission prompt ensure — this-hop + seat map + skill chips.
 
 When cursor launches a CDP Opus mission (``purpose`` in
 ``OPERATOR_PROXY_MISSION_PURPOSES``), the sealed prompt MUST open with
-Claude-slug skill chips and an explicit Opus-operator / Fable-advisor
-briefing. Idempotent: already-prefixed prompts are left intact aside from
-injecting a missing briefing block after the slash header.
+Claude-slug skill chips, a four-line this-hop status card, and the
+Opus-operator / Fable-advisor briefing. Idempotent: already-prefixed
+prompts are left intact aside from injecting a missing briefing or
+hoisting a missing this-hop block above the seat map.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from claude_bundles.cowork_skill_delivery import (
     format_cdp_slash_prefix,
     split_leading_slash_skills,
 )
+from claude_bundles.operator_proxy_hop_status import ensure_hop_status_first
 from claude_bundles.operator_proxy_skill_introspect import skill_introspection_block
 from claude_bundles.operator_proxy_tier_m import tier_m_authoring_block
 from claude_bundles.operator_proxy_wake_brief import wake_briefing_paragraph
@@ -35,6 +37,9 @@ MISSION_SKILL_SLUGS: tuple[str, ...] = (
     "reasoning-posture",
     # Member 6: status/rank/liveness register at mission-close authoring.
     "completion-provenance-discipline",
+    # Spine/genus/species on new/pivoted lanes — decision:thread-genus +
+    # Fable 9518 (cortex://notes/system/threads/agent-bus-type-genus-chip-gap-consult.md).
+    "agent-bus-discipline",
 )
 
 # Hand-maintained mirror of config/mcp/canonical.yaml surface_primary_domains.life
@@ -343,10 +348,16 @@ def is_operator_proxy_mission_purpose(purpose: str | None) -> bool:
     return (purpose or "").strip().lower() in OPERATOR_PROXY_MISSION_PURPOSES
 
 
-def ensure_operator_proxy_mission_prompt(text: str) -> str:
-    """Ensure slash skill chips + mission seat-map briefing on *text*.
+def ensure_operator_proxy_mission_prompt(
+    text: str,
+    *,
+    standing_handoff_text: str | None = None,
+) -> str:
+    """Ensure chips + this-hop status + seat-map briefing on *text*.
 
-    Idempotent. Non-mission callers should not invoke this.
+    Idempotent. *standing_handoff_text* fills unspecified hop-status
+    fields when the caller already loaded the sidecar — this function
+    does not read the filesystem. Non-mission callers should not invoke it.
     """
     body = (text or "").strip()
     tokens, rest = split_leading_slash_skills(body)
@@ -363,9 +374,23 @@ def ensure_operator_proxy_mission_prompt(text: str) -> str:
 
     prefix = format_cdp_slash_prefix(ordered)
     rest_body = rest.lstrip("\n")
+    field_source = _field_source_without_briefing(rest_body)
     if _BRIEFING_MARKER not in rest_body:
         rest_body = f"{_BRIEFING_BLOCK.strip()}\n\n{rest_body}".rstrip() + "\n"
+    rest_body = ensure_hop_status_first(
+        rest_body,
+        standing_handoff_text=standing_handoff_text,
+        field_source=field_source,
+    )
     return f"{prefix}\n{rest_body}"
+
+
+def _field_source_without_briefing(rest_body: str) -> str:
+    """Caller text only — drop an already-injected seat-map briefing."""
+    blob = _BRIEFING_BLOCK.strip()
+    if blob in rest_body:
+        return rest_body.replace(blob, "", 1).strip()
+    return rest_body
 
 
 _PURPOSE_DOC = re.compile(

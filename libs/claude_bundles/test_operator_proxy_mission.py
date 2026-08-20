@@ -31,7 +31,13 @@ def test_ensure_injects_chips_and_briefing() -> None:
     out = ensure_operator_proxy_mission_prompt("# Mission\nDo the thing.\n")
     assert out.startswith("/cdp-operator-proxy\n/reasoning-posture\n")
     assert "/completion-provenance-discipline\n" in out
+    assert "/agent-bus-discipline\n" in out
+    assert out.count("/agent-bus-discipline\n") == 1
     assert "Status / rank / liveness register (BINDING — member 6)" in out
+    assert "## This hop (read first)" in out
+    assert out.index("## This hop (read first)") < out.index(
+        "## Mission seat map (BINDING"
+    )
     assert "## Mission seat map (BINDING" in out
     assert "cursor-auto-tick-work-posting.md" in out
     assert "# Mission\nDo the thing." in out
@@ -64,10 +70,12 @@ def test_ensure_idempotent_when_chips_present() -> None:
     twice = ensure_operator_proxy_mission_prompt(once)
     assert twice.count("/cdp-operator-proxy") == 1
     assert twice.count("## Mission seat map (BINDING") == 1
+    assert twice.count("## This hop (read first)") == 1
     assert twice.count("/reasoning-posture") == 1
     # Counted in the leading chip block only — the slug also appears in the
     # seat-map prose below it.
     assert twice.split("\n\n", 1)[0].count("/completion-provenance-discipline") == 1
+    assert twice.split("\n\n", 1)[0].count("/agent-bus-discipline") == 1
     # strip() on re-entry may drop a trailing newline; slash block must stay single.
     assert twice.rstrip("\n") == once.rstrip("\n")
 
