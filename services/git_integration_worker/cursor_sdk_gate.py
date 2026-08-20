@@ -175,20 +175,17 @@ def _gate_holding_holder(holder_id: str) -> tuple[FifoCapacityGate, GateLane] | 
 
 
 def _misplaced_holders(*, gate_lane: GateLane) -> list[dict[str, str]]:
-    """Holders on ``gate_lane`` whose direct lane resolution differs (phantoms)."""
+    """Holders on ``gate_lane`` whose inherited lane resolution differs (phantoms)."""
     gate = _LANE_GATES[gate_lane]
     misplaced: list[dict[str, str]] = []
     for holder_id in gate.holders:
-        direct = _direct_sdk_dispatch_lane(
-            dispatch_id=holder_id,
-            caller_agent=_caller_agent_for_dispatch(holder_id),
-        )
-        if direct != gate_lane:
+        inherited = _holder_lane(holder_id)
+        if inherited != gate_lane:
             misplaced.append(
                 {
                     "holder_id": holder_id,
                     "gate_lane": gate_lane,
-                    "direct_lane": direct,
+                    "inherited_lane": inherited,
                 }
             )
     return misplaced
@@ -200,6 +197,14 @@ def _caller_agent_for_dispatch(dispatch_id: str) -> str | None:
     )
 
     return CursorDispatchLedger.instance().read_caller_agent(dispatch_id=dispatch_id)
+
+
+def _holder_lane(holder_id: str) -> GateLane:
+    """Resolve the lane a holder belongs on (nest inherit included)."""
+    return sdk_dispatch_lane(
+        dispatch_id=holder_id,
+        caller_agent=_caller_agent_for_dispatch(holder_id),
+    )
 
 
 def _gate_for_dispatch(
@@ -542,15 +547,11 @@ def sdk_dispatch_gate_holder_detail() -> dict[str, list[str]]:
 
 
 async def reclaim_cross_lane_phantom_holders() -> list[str]:
-    """Force-release holders installed on a gate belonging to a different lane."""
+    """Force-release holders on a gate that is not their inherited lane."""
     reclaimed: list[str] = []
     for gate_lane, gate in _LANE_GATES.items():
         for holder_id in list(gate.holders):
-            direct = _direct_sdk_dispatch_lane(
-                dispatch_id=holder_id,
-                caller_agent=_caller_agent_for_dispatch(holder_id),
-            )
-            if direct != gate_lane:
+            if _holder_lane(holder_id) != gate_lane:
                 if await gate.force_release(holder_id):
                     reclaimed.append(holder_id)
     return reclaimed

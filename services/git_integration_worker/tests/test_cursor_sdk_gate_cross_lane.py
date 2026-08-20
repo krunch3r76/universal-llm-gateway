@@ -6,8 +6,6 @@ Replays attempt-1 shape: operator parent ``auto-*`` nests standard child
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 from universal_concurrency import CrossLaneTransferError, TransferHolderError
 
@@ -17,6 +15,8 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
 from services.git_integration_worker.cursor_sdk_gate import (
     _OPERATOR_GATE,
     _STANDARD_GATE,
+    _holder_lane,
+    _misplaced_holders,
     acquire_sdk_dispatch_slot,
     reclaim_cross_lane_phantom_holders,
     release_sdk_dispatch_slot,
@@ -36,6 +36,8 @@ from services.git_integration_worker.models.cursor_api import (
 
 _PARENT = "auto-4ef000000001"
 _CHILD = "d40677a34a06-f3af9df4"
+_IDE_PARENT = "c894cf038972-c567a692"
+_IDE_CHILD = "1a2296640389-b1ac0dc3"
 
 
 @pytest.fixture(autouse=True)
@@ -54,21 +56,28 @@ def _isolated_ledger(tmp_path, monkeypatch: pytest.MonkeyPatch):
         gate._waiters.clear()
 
 
-def _admit(*, dispatch_id: str, nest_under: str | None = None) -> None:
+def _admit(
+    *,
+    dispatch_id: str,
+    nest_under: str | None = None,
+    caller_agent: str | None = None,
+) -> None:
     ledger = CursorDispatchLedger.instance()
+    if caller_agent is None:
+        caller_agent = "cursor-auto" if dispatch_id.startswith("auto-") else None
     req = CursorDispatchRequest(
         thread_id="6655",
         model="cursor/composer-2.5",
         dispatch_id=dispatch_id,
         execution_id=f"exec-{dispatch_id}",
-        message="nested",
+        message=f"nested-{dispatch_id}",
         nest_under=nest_under,
     )
     ledger.admit(
         req=req,
         fingerprint=ledger.fingerprint(req),
         execution_id=req.execution_id,
-        caller_agent="cursor-auto" if dispatch_id.startswith("auto-") else None,
+        caller_agent=caller_agent,
         resolved_model="composer-2.5",
         admission=CursorDispatchResponse(
             admitted=True,
@@ -134,6 +143,53 @@ async def test_ac12b_reclaim_cross_lane_phantom_holders() -> None:
     assert reclaimed == [_PARENT]
     assert sdk_dispatch_gate_holders(lane="standard") == frozenset()
     assert int(sdk_dispatch_gate_stats(lane="standard")["active"]) == 0
+
+
+@pytest.mark.asyncio
+async def test_specimen_replay_nest_inherited_child_on_operator_not_reclaimed() -> None:
+    """08:47:05 class: nest child on correct operator gate must not be force-released."""
+    _admit(dispatch_id=_IDE_PARENT, caller_agent="cursor")
+    _admit(dispatch_id=_IDE_CHILD, nest_under=_IDE_PARENT)
+
+    assert _holder_lane(_IDE_PARENT) == "operator"
+    assert sdk_dispatch_lane(dispatch_id=_IDE_CHILD) == "operator"
+
+    await acquire_sdk_dispatch_slot(dispatch_id=_IDE_PARENT, caller_agent="cursor")
+    await transfer_capacity_after_park(
+        parent_id=_IDE_PARENT, child_id=_IDE_CHILD, source_repo="/repo"
+    )
+    assert sdk_dispatch_gate_holders(lane="operator") == frozenset({_IDE_CHILD})
+    assert sdk_dispatch_gate_holders(lane="standard") == frozenset()
+
+    reclaimed = await reclaim_cross_lane_phantom_holders()
+    assert reclaimed == []
+    assert sdk_dispatch_gate_holders(lane="operator") == frozenset({_IDE_CHILD})
+
+
+@pytest.mark.asyncio
+async def test_a_not_b_nest_inherited_child_on_standard_is_reclaimed() -> None:
+    """Nest-inherited operator child planted on standard gate is still a phantom."""
+    _admit(dispatch_id=_IDE_PARENT, caller_agent="cursor")
+    _admit(dispatch_id=_IDE_CHILD, nest_under=_IDE_PARENT)
+
+    await acquire_sdk_dispatch_slot(dispatch_id=_IDE_CHILD)
+    _OPERATOR_GATE._holders.discard(_IDE_CHILD)
+    _STANDARD_GATE._holders.add(_IDE_CHILD)
+    _STANDARD_GATE._active_count = 1
+
+    reclaimed = await reclaim_cross_lane_phantom_holders()
+    assert reclaimed == [_IDE_CHILD]
+    assert sdk_dispatch_gate_holders(lane="standard") == frozenset()
+
+
+def test_misplaced_holders_ignores_correct_nest_inherited_child_on_operator() -> None:
+    """AC-4: correctly sitting nest-inherited child is not stall-misplaced."""
+    _admit(dispatch_id=_IDE_PARENT, caller_agent="cursor")
+    _admit(dispatch_id=_IDE_CHILD, nest_under=_IDE_PARENT)
+    _OPERATOR_GATE._holders.add(_IDE_CHILD)
+    _OPERATOR_GATE._active_count = 1
+
+    assert _misplaced_holders(gate_lane="operator") == []
 
 
 @pytest.mark.asyncio
