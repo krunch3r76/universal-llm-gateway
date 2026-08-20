@@ -128,6 +128,8 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         per-flight ``registration_id`` / ``holder`` / ``purpose``. ``seated_rows``
         is always a list (including ``[]``) from this host's registry
         ``load_active()`` so MCP attach consumes Jupiter seats, not a hub file.
+        ``seat_rows`` is always a list (including ``[]``) from the same registry
+        read, projecting seat-open rows without ``port`` or ``cdp_url``.
         """
         return await execution_store.active_work_snapshot()
 

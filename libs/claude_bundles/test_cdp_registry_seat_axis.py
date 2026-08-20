@@ -9,7 +9,10 @@ import pytest
 
 from claude_bundles import cdp_registry as reg
 from claude_bundles.cdp_registry.models import seat_open
-from claude_bundles.hop_cadence_seat_snap import seated_rows_from_registry_records
+from claude_bundles.hop_cadence_seat_snap import (
+    seat_row_from_registry_record,
+    seated_rows_from_registry_records,
+)
 from claude_bundles.request_admission_census import census_match_ids
 
 pytestmark = pytest.mark.offline
@@ -162,3 +165,14 @@ def test_write_read_gate_open_seat_census_still_zero(isolated_registry: Path) ->
     assert seated == []
     snap = {"rows": [], "seated_rows": seated}
     assert census_match_ids(_LANE, snap) == []
+
+
+def test_ra_seat_row_projector_omits_port_and_cdp_url(isolated_registry: Path) -> None:
+    minted = _mint_driving()
+    assert reg.bind_session_address(minted.registration_id, chat_url=_CSE)
+    active_row = reg._load_active()[minted.registration_id]
+    assert "port" in active_row
+    projected = seat_row_from_registry_record(active_row)
+    assert projected is not None
+    assert "port" not in projected
+    assert "cdp_url" not in projected

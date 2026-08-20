@@ -164,7 +164,8 @@ class ExecutionStore:
         """Return recorded executions, stream-admission capacity, and listable seats.
 
         ``seated_rows`` is always a list (including ``[]``), projected from this
-        process's registry ``load_active()``. Admission scalars stay on the
+        process's registry ``load_active()``. ``seat_rows`` is the same read,
+        seat-open-gated, address-free. Admission scalars stay on the
         execution store; identity consumers read ``seated_rows`` so MCP's
         attach early-out consumes Jupiter seats instead of overlaying a hub
         empty file. ``free_slots`` remains stream admission; X occupancy is
@@ -174,7 +175,9 @@ class ExecutionStore:
         from claude_bundles.cdp_registry_store import load_active
         from claude_bundles.hop_cadence_seat_snap import (
             attach_seated_rows,
+            attach_seat_rows,
             seated_rows_from_registry_records,
+            seat_rows_from_registry_records,
         )
         from claude_bundles.x_display_capacity import attach_x_display_capacity
 
@@ -183,10 +186,14 @@ class ExecutionStore:
         rows, execution_ids = await self._active_rows_snapshot()
         payload, decl = admission_projection(rows, execution_ids)
         try:
-            seated = seated_rows_from_registry_records(load_active())
+            raw = load_active()
+            seated = seated_rows_from_registry_records(raw)
+            seat = seat_rows_from_registry_records(raw)
         except Exception:  # noqa: BLE001 — identity attach must not break admission
             seated = []
+            seat = []
         payload = attach_seated_rows(payload, seated)
+        payload = attach_seat_rows(payload, seat)
         attach_x_display_capacity(payload, decl)
         return seal(payload, decl)
 

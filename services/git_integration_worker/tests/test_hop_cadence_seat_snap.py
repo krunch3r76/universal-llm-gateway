@@ -211,7 +211,7 @@ def test_read_cdp_lane_snapshot_attaches_registry_seats() -> None:
 
 def test_attach_registry_seated_rows_consumes_jupiter_empty_list() -> None:
     """Jupiter always-list seated_rows=[] must early-out; do not overlay hub load_active."""
-    snap = {"rows": [], "running_count": 0, "seated_rows": []}
+    snap = {"rows": [], "running_count": 0, "seated_rows": [], "seat_rows": []}
     with patch(
         "claude_bundles.hop_cadence_seat_snap.read_registry_seated_rows",
         side_effect=AssertionError("hub load_active must not run"),

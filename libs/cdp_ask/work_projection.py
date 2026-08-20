@@ -183,6 +183,10 @@ def admission_projection(
         "effective_abs_hard",
         reason="regime-aware absolute stream ceiling",
     )
+    decl.plain(
+        "seat",
+        reason="hygiene discriminator on seat_rows identity projection",
+    )
     return payload, decl
 
 

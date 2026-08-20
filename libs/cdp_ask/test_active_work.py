@@ -84,6 +84,7 @@ def _capacity(
         "admission_regime": regime,
         "effective_abs_hard": abs_hard_effective,
         "seated_rows": [],
+        "seat_rows": [],
         **x_display_wire_fields(probe_x_display()),
     }
 
@@ -492,3 +493,34 @@ async def test_active_work_snapshot_projects_listable_registry_seats(
     assert snap["x_exhausted"] is None
     assert snap["x_clients"] is None
     assert snap["x_max_clients"] == 64
+
+
+@pytest.mark.asyncio
+async def test_ra_active_work_seat_rows_omit_port_and_cdp_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R-a: seat_rows on active-work omit port and cdp_url."""
+    monkeypatch.setattr(
+        "claude_bundles.cdp_orphans.probe_live_ports",
+        lambda port_range=None: [],
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {
+            "reg-dormant": {
+                "registration_id": "reg-dormant",
+                "status": "dormant",
+                "purpose": "operator-proxy",
+                "parent_thread": "9498",
+                "seat_lane": "9498",
+                "port": 9223,
+                "cdp_url": "http://127.0.0.1:9223",
+            },
+        },
+    )
+    store = ExecutionStore()
+    snap = await store.active_work_snapshot()
+    assert snap["seat_rows"]
+    for row in snap["seat_rows"]:
+        assert "port" not in row
+        assert "cdp_url" not in row

@@ -62,6 +62,7 @@ def _capacity(
         "admission_regime": regime,
         "effective_abs_hard": abs_hard_effective,
         "seated_rows": [],
+        "seat_rows": [],
         **x_display_wire_fields(probe_x_display()),
     }
 
