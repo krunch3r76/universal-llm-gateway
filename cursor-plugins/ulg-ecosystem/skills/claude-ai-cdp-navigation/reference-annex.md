@@ -283,7 +283,7 @@ skill_tree ∈ {.cursor/skills/**, .claude/skills/**, .* gitignored}
 
 | Need | Lawful channel | Forbidden |
 |---|---|---|
-| `cursor_only` skill | Local inject into prompt/sidecar | GitHub path · Customize Skills |
+| `cursor_only` skill | Local inject into prompt/sidecar — sealed read cue (not on life Skill loader; read excerpt; `fs` SOT if truncated). Life Customize does not carry these slugs. | GitHub path · Customize Skills · `Use the {slug} skill` self-fetch |
 | `shared_sync` / `life_local` | **+ → Skills → pick** or local inject | Claiming GitHub loaded SKILL.md |
 
 Mechanics: `libs/claude_bundles/cowork_skill_delivery.py` + `composer_session_skills.py`. Handoff: `cortex://notes/system/threads/cdp-skill-attach-plus-skills.md`.

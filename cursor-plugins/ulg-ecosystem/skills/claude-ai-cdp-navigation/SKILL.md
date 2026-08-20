@@ -183,7 +183,7 @@ Sealed CDP / tick-charter R-admit have **no human in loop**. Cowork questions = 
 | Skill class | Delivery |
 |---|---|
 | **Claude slug** | Manifest `/<slug>` lines → **`+` → Skills → pick** (attach); hybrid `Use the …` escape |
-| **Not Claude slug** | **Inline** excerpt into sealed prompt; ¬ slash; cortex stage alone ≠ delivery |
+| **Not Claude slug** | **Inline** excerpt + read cue (not on life Skill loader; `fs` if truncated); ¬ slash; cortex stage alone ≠ delivery |
 
 **CDP flow:** stage → `attach_session_skills` (+ → Skills) → attest membership → paste body. Fail closed before submit. Packet-class sets + anti-patterns: L3 `reference-annex.md` § Skill delivery detail.
 

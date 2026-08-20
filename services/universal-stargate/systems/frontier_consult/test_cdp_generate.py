@@ -150,6 +150,8 @@ def test_stage_inputs_omitted_skills_gets_judgment_skill(tmp_path, monkeypatch) 
     )
     assert "## light" in text
     assert staged.staged is True
+    assert "<skills_inline>" not in text
+    assert 'fs(sandbox="workspaces"' not in text
 
 
 def test_stage_inputs_inlines_non_claude_skills(tmp_path, monkeypatch) -> None:
@@ -176,6 +178,9 @@ def test_stage_inputs_inlines_non_claude_skills(tmp_path, monkeypatch) -> None:
     assert "<skills_inline>" in text
     assert '<skill slug="investigation-economy"' in text
     assert "BODY" in text
+    assert "not on this seat's Skill loader" in text
+    assert 'fs(sandbox="workspaces", op="read", path="' in text
+    assert "investigation-economy/SKILL.md" in text
 
 
 def test_stage_inputs_rejects_path_sim_skills(tmp_path, monkeypatch) -> None:
@@ -223,6 +228,8 @@ def test_stage_inputs_inlines_code_mcp_skills_with_claude_slash(
     assert '<skill slug="investigation-economy"' in text
     assert "BODY" in text
     assert staged.staged is True
+    assert "not on this seat's Skill loader" in text
+    assert 'fs(sandbox="workspaces", op="read", path="' in text
 
 
 def test_assert_model_carded_skips_cdp() -> None:

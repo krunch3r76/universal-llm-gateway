@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+from claude_bundles.catalog import get_skill_catalog
+from claude_bundles.cdp_inline_read_cue import READ_BLOCK_HEADING
 from claude_bundles.cowork_skill_delivery import (
     SkillDeliveryError,
     attest_delivery_channels,
@@ -278,10 +282,7 @@ def test_partition_and_prepend_cdp_dispatch_skills() -> None:
     )
     assert slash == ["reasoning-posture", "consult-posture"]
     assert inline == ["claude-ai-cdp-navigation"]
-    assert format_cdp_slash_prefix(slash) == (
-        "/reasoning-posture\n"
-        "/consult-posture\n"
-    )
+    assert format_cdp_slash_prefix(slash) == ("/reasoning-posture\n/consult-posture\n")
     prompt, used_slash, bodies = prepend_cdp_dispatch_skills(
         "## Task\ndo the thing\n",
         ["reasoning-posture", "claude-ai-cdp-navigation"],
@@ -316,9 +317,7 @@ def test_multi_slash_prefix_two_shared_sync_slugs() -> None:
     )
 
     slugs = ["reasoning-posture", "consult-posture"]
-    assert format_cdp_slash_prefix(slugs) == (
-        "/reasoning-posture\n/consult-posture\n"
-    )
+    assert format_cdp_slash_prefix(slugs) == ("/reasoning-posture\n/consult-posture\n")
     prompt, used_slash, bodies = prepend_cdp_dispatch_skills("## Task\n", slugs)
     assert used_slash == slugs
     assert bodies == []
@@ -412,7 +411,9 @@ def test_chip_attest_passes_when_nonempty() -> None:
 
 def test_inject_attest_fails_on_missing() -> None:
     with pytest.raises(SkillDeliveryError, match="injected skills missing"):
-        attest_injected_slugs(["git-posture"], required=["operator-posture", "git-posture"])
+        attest_injected_slugs(
+            ["git-posture"], required=["operator-posture", "git-posture"]
+        )
 
 
 def test_inject_roundtrip_prepends_bodies() -> None:
@@ -461,6 +462,36 @@ def test_prepend_cdp_dispatch_skills_is_text_idempotent() -> None:
     assert tokens == ["/reasoning-posture", "/consult-posture"]
     assert "/reasoning-posture" not in rest
     assert "/consult-posture" not in rest
+
+
+def test_prepend_cdp_cursor_only_emits_read_cue_and_rewrites_use_the() -> None:
+    """cursor_only inject: read cue + fs SOT; Use-the/self-fetch stripped."""
+    repo = Path(__file__).resolve().parents[2]
+    sot, _ = get_skill_catalog().resolve_sot("architecture-invariants", repo)
+    body = (
+        "## Task\n"
+        "- Use the `architecture-invariants` skill "
+        "(canonical slug — seat self-fetches; ¬ fs-read skill body)\n"
+        "- Use the `reasoning-posture` skill "
+        "(canonical slug — seat self-fetches; ¬ fs-read skill body)\n"
+    )
+    prompt, slash, bodies = prepend_cdp_dispatch_skills(
+        body,
+        ["reasoning-posture", "architecture-invariants"],
+    )
+    assert slash == ["reasoning-posture"]
+    assert bodies[0].slug == "architecture-invariants"
+    assert READ_BLOCK_HEADING in prompt
+    assert "not on this seat's Skill loader" in prompt
+    assert 'fs(sandbox="workspaces", op="read", path="' in prompt
+    assert "architecture-invariants/SKILL.md" in prompt
+    assert str(sot.relative_to(repo)).replace("\\", "/") in prompt
+    assert "/architecture-invariants" not in prompt.split("<skills_inline>", 1)[0]
+    after_inline = prompt.split("</skills_inline>", 1)[-1]
+    assert "Use the `architecture-invariants` skill" not in after_inline
+    assert "Read the inlined `architecture-invariants` excerpt" in after_inline
+    assert "Use the `reasoning-posture` skill" in after_inline
+    assert "reasoning-posture/SKILL.md" not in prompt.split("<skills_inline>", 1)[1]
 
 
 def test_peel_sealed_cdp_skill_prefix_collapses_doubled_manifest() -> None:

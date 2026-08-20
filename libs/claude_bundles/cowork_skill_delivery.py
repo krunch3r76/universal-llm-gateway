@@ -10,8 +10,10 @@ operator bind 2026-07-26 — multi-skill via composer **+ → Skills → pick**)
   including light-bounded / omitted ``skills=``
 - ``shared_sync`` slugs → leading ``/<slug>\\n`` **manifest** lines (not typed);
   ``project_ask`` / ``send_prompt`` attaches each via + → Skills → list select
-- Non-Claude / ``cursor_only`` → ``<skills_inline>`` XML **excerpts**
-  (size-gated — full SKILL.md never sealed; friction a:27142)
+- Non-Claude / ``cursor_only`` → **read-instructed** ``<skills_inline>`` XML
+  **excerpts** (size-gated — full SKILL.md never sealed; friction a:27142).
+  Visible read cue: not on life Skill loader; read the excerpt; ``fs`` SOT
+  if truncated. Use-the/self-fetch lines for those slugs are rewritten.
 - Hybrid (``/<first>\\n`` + ``Use the … skill``) is **escape only** when live
   chip-glue is observed (friction 5588/5590) — not the default
 - Slash-type multi-chip is **retired** (a25806 — only first `/slug` binds)
@@ -35,6 +37,10 @@ from pathlib import Path
 from typing import Any, Literal
 
 from claude_bundles.catalog import get_skill_catalog
+from claude_bundles.cdp_inline_read_cue import (
+    render_cdp_inline_read_block,
+    rewrite_inline_use_the_lines,
+)
 from claude_bundles.events_skill_delivery import emit_skill_delivery_attested
 from claude_bundles.sealed_cdp_prefix import (
     extract_inline_slugs_from_sealed,
@@ -47,9 +53,7 @@ DeliveryChannel = Literal["inject", "customize_skills", "unavailable"]
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 # Required authority sealed at staging — NOT derived from attach/inline channels
 # (amended A4: required must survive XML drop/rename; R-after decisive_falsifier).
-_CDP_REQUIRED_AUTHORITY = re.compile(
-    r"<!--cdp-required-skills:([^\n]*?)-->\r?\n?"
-)
+_CDP_REQUIRED_AUTHORITY = re.compile(r"<!--cdp-required-skills:([^\n]*?)-->\r?\n?")
 
 # Operator 2026-07-26: multi-skill attach = composer + → Skills → pick-each.
 # Flag name is historical (pre-attach era); True means multi-shared_sync
@@ -198,23 +202,32 @@ def format_cdp_slash_prefix(
     return "".join(f"/{slug}\n" for slug in slugs)
 
 
-def render_cdp_inline_skills_xml(bodies: list[InjectedSkillBody]) -> str:
+def render_cdp_inline_skills_xml(
+    bodies: list[InjectedSkillBody],
+    *,
+    repo_root: Path | None = None,
+) -> str:
     """XML-delimited inline skills for roleless CDP (team_dispatch packet idiom).
 
     Claude slugs stay as leading ``/<slug>\\n`` lines — not XML. Only non-Claude
     bodies use this wrapper so the sealed prompt stays parseable and distinct
-    from Customize chip binds.
+    from Customize chip binds. A visible read cue precedes the skill tags
+    (not on Skill loader; read excerpt; ``fs`` if truncated).
     """
     if not bodies:
         return ""
+    root = repo_root or _REPO_ROOT
+    read_block = render_cdp_inline_read_block(
+        [(item.slug, item.surface_class, item.path) for item in bodies],
+        repo_root=root,
+    )
     parts = [
         "<skills_inline>",
+        read_block.rstrip(),
         "<!-- Local SOT bodies — NOT GitHub; ¬ slash these slugs -->",
     ]
     for item in bodies:
-        parts.append(
-            f'<skill slug="{item.slug}" surface_class="{item.surface_class}">'
-        )
+        parts.append(f'<skill slug="{item.slug}" surface_class="{item.surface_class}">')
         parts.append(item.body.rstrip())
         parts.append("</skill>")
     parts.append("</skills_inline>")
@@ -234,8 +247,9 @@ def prepend_cdp_dispatch_skills(
     ``shared_sync`` slugs default to consecutive ``/<slug>\\n`` chip lines
     (``format_cdp_slash_prefix``). Pass ``hybrid_escape=True`` only when live
     chip-glue forces the friction 5588/5590 escape. All other catalog skills
-    are inlined inside ``<skills_inline>`` XML with a blank line separator
-    when both blocks are present.
+    are inlined inside ``<skills_inline>`` XML (read-instructed) with a blank
+    line separator when both blocks are present. Use-the/self-fetch lines
+    for inlined slugs in the remaining body are rewritten to a read cue.
 
     Text-idempotent: peels any existing leading sealed skill prefix before
     rebuilding, so ``stage(stage(x))`` yields a single manifest block.
@@ -243,6 +257,7 @@ def prepend_cdp_dispatch_skills(
     if not slugs:
         return prompt, [], []
     requested = [str(s).strip() for s in slugs if str(s).strip()]
+    root = repo_root or _REPO_ROOT
     _peeled_attach, _peeled_inline, body = peel_sealed_cdp_skill_prefix(prompt)
     slash_slugs, inline_slugs = partition_cdp_skills(list(slugs))
     slash_block = (
@@ -253,10 +268,9 @@ def prepend_cdp_dispatch_skills(
     bodies: list[InjectedSkillBody] = []
     inline_block = ""
     if inline_slugs:
-        bodies = load_skill_bodies(
-            inline_slugs, repo_root=repo_root, excerpt=True
-        )
-        inline_block = render_cdp_inline_skills_xml(bodies)
+        bodies = load_skill_bodies(inline_slugs, repo_root=root, excerpt=True)
+        inline_block = render_cdp_inline_skills_xml(bodies, repo_root=root)
+        body = rewrite_inline_use_the_lines(body, set(inline_slugs))
     if slash_block and inline_block:
         prefix = f"{slash_block}\n{inline_block}"
     else:
@@ -300,11 +314,7 @@ def load_skill_bodies(
             missing.append(entry.slug)
             continue
         raw_body = path.read_text(encoding="utf-8")
-        body = (
-            excerpt_skill_body(raw_body, slug=entry.slug)
-            if excerpt
-            else raw_body
-        )
+        body = excerpt_skill_body(raw_body, slug=entry.slug) if excerpt else raw_body
         out.append(
             InjectedSkillBody(
                 slug=entry.slug,
@@ -523,7 +533,6 @@ def ledger_skills_channels(
     return rows
 
 
-
 def attest_skills_chip_enabled(
     enabled: list[str] | None,
     *,
@@ -556,7 +565,9 @@ def attest_injected_slugs(
     catalog = get_skill_catalog()
     got = {catalog.canonical_slug(s) for s in (injected or []) if s}
     missing = [
-        catalog.canonical_slug(s) for s in required if catalog.canonical_slug(s) not in got
+        catalog.canonical_slug(s)
+        for s in required
+        if catalog.canonical_slug(s) not in got
     ]
     if missing:
         raise SkillDeliveryError(
@@ -584,7 +595,9 @@ def ledger_skills_record(
     """Ledger shape for CDP runners — ok iff every required slug has a channel."""
     attached = list(enabled)
     inlined = list(injected)
-    req = list(required) if required is not None else sorted(set(attached) | set(inlined))
+    req = (
+        list(required) if required is not None else sorted(set(attached) | set(inlined))
+    )
     rows = ledger_skills_channels(req, attached=attached, inlined=inlined)
     delivered = [row["slug"] for row in rows if row["delivered_via"] != "undelivered"]
     return {
