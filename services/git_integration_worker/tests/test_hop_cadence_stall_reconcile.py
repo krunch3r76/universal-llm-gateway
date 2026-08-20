@@ -82,6 +82,17 @@ def test_stall_revokes_pending_succession_claim() -> None:
     assert "successor_execution_id" not in updated
 
 
+def test_unverifiable_stall_does_not_revoke_succession() -> None:
+    """Horizon unverifiable is attach-loss, not succession death (9501)."""
+    row = _pending_row()
+    event = _stall_event()
+    event["payload"]["stall_stage"] = "reconcile_abandoned_unverifiable"
+    updated, action = apply_event_to_watch(row, event, now=_NOW + 10.0)
+    assert action is None
+    assert updated["succession_status"] == "pending"
+    assert "last_revoke" not in updated
+
+
 def test_stall_joins_via_satellite_id_after_submit() -> None:
     """AC1: join works from satellite id attached by submitted event."""
     row = _pending_row()

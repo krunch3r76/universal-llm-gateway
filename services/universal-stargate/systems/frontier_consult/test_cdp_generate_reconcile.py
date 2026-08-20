@@ -28,6 +28,15 @@ def _reset_ledger() -> None:
     reset_cdp_generate_reconcile_for_tests()
 
 
+@pytest.fixture(autouse=True)
+def _no_live_authorship_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        reconcile,
+        "seated_authorship_on_thread",
+        AsyncMock(return_value=False),
+    )
+
+
 def _proof_snapshot() -> dict[str, Any]:
     return {
         "status": "completed",
@@ -96,6 +105,21 @@ def test_result_from_snapshot_completed_without_proof_carries_deliverable() -> N
     assert result.archive_uri == "cortex://notes/system/threads/cdp-ask-archive-new.md"
     assert result.extras.get("deliverable_present_unproven") is True
     assert "do not blind re-dispatch" in str(result.extras.get("recovery"))
+
+
+def _age_leg_past_horizon(execution_id: str, *, max_wall_s: float = 1800.0) -> None:
+    old = (
+        datetime.now(UTC) - timedelta(seconds=max_open_leg_s(max_wall_s) + 10)
+    ).isoformat()
+    conn = _connect()
+    try:
+        conn.execute(
+            "UPDATE cdp_inflight_leg SET admitted_at=? WHERE execution_id=?",
+            (old, execution_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def test_max_open_leg_s_floor() -> None:
@@ -371,18 +395,7 @@ async def test_horizon_live_leg_not_abandoned(monkeypatch: pytest.MonkeyPatch) -
         execution_id="exec-live-horizon",
         satellite_execution_id="sat-live",
     )
-    old = (
-        datetime.now(UTC) - timedelta(seconds=max_open_leg_s(1800.0) + 10)
-    ).isoformat()
-    conn = _connect()
-    try:
-        conn.execute(
-            "UPDATE cdp_inflight_leg SET admitted_at=? WHERE execution_id=?",
-            (old, "exec-live-horizon"),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    _age_leg_past_horizon("exec-live-horizon")
 
     await reconcile.reconcile_cdp_inflight_legs()
 
@@ -428,18 +441,7 @@ async def test_abandonment_emits_reconcile_abandoned_confirmed_dead(
         execution_id="exec-abandon",
         satellite_execution_id="sat-dead",
     )
-    old = (
-        datetime.now(UTC) - timedelta(seconds=max_open_leg_s(1800.0) + 10)
-    ).isoformat()
-    conn = _connect()
-    try:
-        conn.execute(
-            "UPDATE cdp_inflight_leg SET admitted_at=? WHERE execution_id=?",
-            (old, "exec-abandon"),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    _age_leg_past_horizon("exec-abandon")
 
     await reconcile.reconcile_cdp_inflight_legs()
     assert stalled == [reconcile.STALL_RECONCILE_ABANDONED_CONFIRMED]
@@ -450,16 +452,16 @@ async def test_abandonment_emits_reconcile_abandoned_confirmed_dead(
 
 
 @pytest.mark.asyncio
-async def test_horizon_unreachable_probe_abandons_unverifiable(
+async def test_horizon_unreachable_probe_retains_unverifiable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    published: list[str] = []
     stalled: list[str | None] = []
-    errors: list[str] = []
 
     def _capture(factory: Any, **kwargs: Any) -> None:
+        published.append(factory.__name__)
         if factory.__name__ == "CdpGenerateStalled":
             stalled.append(kwargs.get("stall_stage"))
-            errors.append(str(kwargs.get("error") or ""))
 
     monkeypatch.setattr(reconcile, "publish_cdp_kwargs", _capture)
     monkeypatch.setattr(
@@ -485,25 +487,59 @@ async def test_horizon_unreachable_probe_abandons_unverifiable(
         execution_id="exec-unreachable",
         satellite_execution_id="sat-unreachable",
     )
-    old = (
-        datetime.now(UTC) - timedelta(seconds=max_open_leg_s(1800.0) + 10)
-    ).isoformat()
-    conn = _connect()
-    try:
-        conn.execute(
-            "UPDATE cdp_inflight_leg SET admitted_at=? WHERE execution_id=?",
-            (old, "exec-unreachable"),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    _age_leg_past_horizon("exec-unreachable")
 
     await reconcile.reconcile_cdp_inflight_legs()
-    assert stalled == [reconcile.STALL_RECONCILE_ABANDONED_UNVERIFIABLE]
-    assert errors == ["horizon crossed; liveness unverifiable: unreachable"]
+    assert published == []
+    assert reconcile.STALL_RECONCILE_ABANDONED_UNVERIFIABLE not in stalled
     leg = reconcile.read_inflight_leg("exec-unreachable")
     assert leg is not None
-    assert leg.abandoned is True
+    assert leg.abandoned is False
+
+
+@pytest.mark.asyncio
+async def test_horizon_404_plus_seated_authorship_not_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """9501-shaped: sat 404 + seated CSE turn on thread_id ⇒ not FAILED."""
+    published: list[str] = []
+    monkeypatch.setattr(
+        reconcile,
+        "publish_cdp_kwargs",
+        lambda factory, **kwargs: published.append(factory.__name__),
+    )
+    monkeypatch.setattr(
+        reconcile,
+        "poll_satellite_snapshot",
+        AsyncMock(return_value={"error": "project-ask HTTP 404", "status_code": 404}),
+    )
+    monkeypatch.setattr(
+        reconcile,
+        "seated_authorship_on_thread",
+        AsyncMock(return_value=True),
+    )
+    upsert_inflight_leg(
+        execution_id="a3ba868b-4aa9-4475-8944-1ac5981e48f6",
+        request_id="req-9501",
+        thread_id="9501",
+        pointer_turn=10,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    reconcile.attach_satellite_execution_id(
+        execution_id="a3ba868b-4aa9-4475-8944-1ac5981e48f6",
+        satellite_execution_id="a8f51c9fc54e4d96bd591abebf053537",
+    )
+    _age_leg_past_horizon("a3ba868b-4aa9-4475-8944-1ac5981e48f6")
+
+    await reconcile.reconcile_cdp_inflight_legs()
+    assert published == []
+    leg = reconcile.read_inflight_leg("a3ba868b-4aa9-4475-8944-1ac5981e48f6")
+    assert leg is not None
+    assert leg.abandoned is False
+    assert leg.proof_emitted is False
 
 
 @pytest.mark.asyncio

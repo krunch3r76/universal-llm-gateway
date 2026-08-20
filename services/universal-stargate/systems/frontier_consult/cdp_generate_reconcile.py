@@ -12,7 +12,6 @@ from claude_bundles.cdp_model_endpoint import (
     CdpGenerateResult,
     picker_from_model_id,
     result_from_snapshot,
-    terminal_failure,
 )
 from universal_logging import get_logger
 
@@ -36,11 +35,15 @@ from .cdp_generate_inflight_ledger import (
     try_claim_proof_publish,
     upsert_inflight_leg,
 )
+from .cdp_horizon_probe import (
+    HorizonObservation,
+    classify_horizon_probe,
+    seated_authorship_on_thread,
+)
 
 logger = get_logger(__name__)
 
 FinalizeVia = Literal["worker", "reconcile"]
-HorizonObservation = Literal["alive", "confirmed_dead", "unverifiable"]
 RECONCILE_INTERVAL_S = 20.0
 HARVEST_LAG_S = 600.0
 MIN_OPEN_LEG_S = 3600.0
@@ -63,6 +66,8 @@ __all__ = [
     "reset_cdp_generate_reconcile_for_tests",
     "start_cdp_generate_reconcile",
     "upsert_inflight_leg",
+    "HorizonObservation",
+    "classify_horizon_probe",
 ]
 
 
@@ -89,20 +94,6 @@ def _poll_snapshot(satellite_execution_id: str) -> dict[str, Any] | None:
 async def poll_satellite_snapshot(satellite_execution_id: str) -> dict[str, Any] | None:
     """Poll-only satellite read for reconcile (no submit/abort)."""
     return await asyncio.to_thread(_poll_snapshot, satellite_execution_id)
-
-
-def classify_horizon_probe(snapshot: dict[str, Any] | None) -> HorizonObservation:
-    """Classify one horizon probe — alive legs extend; dead/unverifiable may abandon."""
-    if snapshot is None:
-        return "unverifiable"
-    if snapshot.get("error") and "status" not in snapshot:
-        return "unverifiable"
-    status = str(snapshot.get("status") or "")
-    if status in {"running", "pending"}:
-        return "alive"
-    if status in {"failed", "aborted"} or terminal_failure(snapshot):
-        return "confirmed_dead"
-    return "unverifiable"
 
 
 async def _emit_reconcile_abandon(
@@ -133,16 +124,32 @@ async def _emit_reconcile_abandon(
     mark_abandoned(leg.execution_id)
 
 
+async def _retain_unverifiable_horizon(leg: InflightLeg, *, detail: str) -> None:
+    """Retain the open inflight row; unverifiable is not death (G1 AC1)."""
+    if await seated_authorship_on_thread(leg.thread_id):
+        logger.info(
+            "cdp reconcile horizon: seated authorship, extending "
+            "execution_id=%s sat=%s detail=%s",
+            leg.execution_id,
+            leg.satellite_execution_id,
+            detail,
+        )
+        return
+    logger.info(
+        "cdp reconcile horizon: unverifiable retained execution_id=%s sat=%s detail=%s",
+        leg.execution_id,
+        leg.satellite_execution_id,
+        detail,
+    )
+
+
 async def _reconcile_horizon_leg(leg: InflightLeg, *, horizon: float) -> None:
-    """Horizon triggers a liveness probe — abandon only when dead or unverifiable."""
+    """Horizon triggers a liveness probe — abandon only when confirmed dead."""
     if not leg.satellite_execution_id:
-        await _emit_reconcile_abandon(
+        await _retain_unverifiable_horizon(
             leg,
-            horizon=horizon,
-            stall_stage=STALL_RECONCILE_ABANDONED_UNVERIFIABLE,
-            error=(
-                "horizon crossed without satellite_execution_id; "
-                "liveness unverifiable"
+            detail=(
+                "horizon crossed without satellite_execution_id; liveness unverifiable"
             ),
         )
         return
@@ -189,13 +196,8 @@ async def _reconcile_horizon_leg(leg: InflightLeg, *, horizon: float) -> None:
             return
 
     probe_err = (snapshot or {}).get("error") if snapshot else None
-    detail = probe_err or "poll returned None"
-    await _emit_reconcile_abandon(
-        leg,
-        horizon=horizon,
-        stall_stage=STALL_RECONCILE_ABANDONED_UNVERIFIABLE,
-        error=f"horizon crossed; liveness unverifiable: {detail}",
-    )
+    detail = str(probe_err or "poll returned None")
+    await _retain_unverifiable_horizon(leg, detail=detail)
 
 
 async def finalize_cdp_generate(

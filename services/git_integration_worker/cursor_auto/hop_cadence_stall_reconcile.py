@@ -310,6 +310,9 @@ def apply_event_to_watch(
             return row, None
         if not stall_matches_claim(payload, row):
             return row, None
+        # Attach-loss unverifiable is not CSE death — do not revoke succession.
+        if payload.get("stall_stage") == "reconcile_abandoned_unverifiable":
+            return row, None
         return revoke_succession_claim(row, stall_payload=payload, now=now), "revoked"
 
     return row, None
