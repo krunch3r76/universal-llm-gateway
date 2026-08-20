@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent.parent.parent
@@ -23,7 +23,6 @@ from claude_bundles.chat_reply_wait import (  # noqa: E402
 )
 from claude_bundles.chat_session_hygiene import (  # noqa: E402
     goto_fresh_compose,
-    in_active_chat,
     pick_chat_page,
 )
 from claude_bundles.project_ask import run_project_ask  # noqa: E402
@@ -40,7 +39,7 @@ CDP = DEFAULT_CDP_URL
 
 
 def _stamp() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _write(name: str, payload: dict) -> Path:
