@@ -7,6 +7,11 @@ from .branch_associations import (
     reject_client_ordering_tokens,
 )
 from .connection import init_db
+from .cse_associations import (
+    associate_cse,
+    get_current_cse,
+    merge_cse_fields,
+)
 from .lane_associations import (
     associate_lane,
     get_current_lane,
@@ -83,6 +88,7 @@ __all__ = [
     "backfill_parent_facing_dispatch_enumeration",
     "add_tags",
     "associate_branch",
+    "associate_cse",
     "associate_lane",
     "claim_and_post_turn",
     "close_thread",
@@ -99,6 +105,7 @@ __all__ = [
     "get_messages",
     "get_dispatch_link_by_execution_id",
     "get_current_branch",
+    "get_current_cse",
     "get_current_lane",
     "get_thread",
     "get_thread_summary",
@@ -119,6 +126,7 @@ __all__ = [
     "list_threads_v2",
     "list_triage_candidates",
     "mark_read",
+    "merge_cse_fields",
     "merge_lane_fields",
     "mark_turn_read",
     "normalize_thread_id",

@@ -42,6 +42,8 @@ def _thread_detail(row: dict[str, Any]) -> ThreadDetail:
         bus_lifecycle_state=row.get("bus_lifecycle_state"),
         parent_thread=row.get("parent_thread"),
         lane_role=row.get("lane_role"),
+        cse_chat_url=row.get("cse_chat_url"),
+        cse_registration_id=row.get("cse_registration_id"),
     )
 
 

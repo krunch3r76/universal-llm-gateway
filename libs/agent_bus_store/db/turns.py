@@ -454,9 +454,11 @@ def get_unread_thread_toc(
         if limit > 0:
             rows = rows[:limit]
 
+        from .cse_associations import merge_cse_fields
         from .lane_associations import merge_lane_fields
 
         merge_lane_fields(rows)
+        merge_cse_fields(rows)
 
         marked = 0
         if mark_read:

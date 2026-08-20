@@ -19,6 +19,7 @@ from .._agent_bus_author import resolve_dispatch_from_agent
 from .lane_provenance import observe_unparented_birth
 from .park_hint import build_poll_hint as _build_poll_hint
 from .park_hint import is_chat_delivery_capable
+from .request_cse_bind import maybe_bind_thread_cse
 from .request_failure import (
     annotate_poll_hint_no_producer,
     build_enqueue_failure,
@@ -162,6 +163,13 @@ def _request_impl(
         sidecar_uri = turn_obj.get("sidecar_uri")
     if sidecar_sha256 is None and isinstance(turn_obj, dict):
         sidecar_sha256 = turn_obj.get("sidecar_sha256")
+
+    maybe_bind_thread_cse(
+        thread_id=thread_id,
+        from_agent=from_agent,
+        cse_chat_url=cse_chat_url,
+        cse_registration_id=cse_registration_id,
+    )
 
     liveness = probe_auto_liveness()
     if not liveness.get("live"):

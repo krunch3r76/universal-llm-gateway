@@ -11,7 +11,11 @@ if TYPE_CHECKING:
 
 
 def job_record(job: AutoJob) -> dict[str, Any]:
-    """Flatten an in-memory AutoJob into the ledger ``record_json`` payload."""
+    """Flatten an in-memory AutoJob into the ledger ``record_json`` payload.
+
+    Includes CSE session address and last-known attach so a GIW restart can
+    restore wake/hop identity; those fields are not observer-view keys.
+    """
     return {
         "job_id": job.job_id,
         "thread_id": job.thread_id,
@@ -35,6 +39,8 @@ def job_record(job: AutoJob) -> dict[str, Any]:
         "wire_dropped_fields": list(job.wire_dropped_fields),
         "lane": job.lane,
         "execution_mode": job.execution_mode,
+        "cse_chat_url": job.cse_chat_url,
+        "cse_registration_id": job.cse_registration_id,
     }
 
 
@@ -69,4 +75,6 @@ def job_from_row(row: sqlite3.Row) -> AutoJob:
         wire_dropped_fields=tuple(data.get("wire_dropped_fields") or ()),
         lane=data.get("lane") or None,
         execution_mode=str(data.get("execution_mode") or "serial"),
+        cse_chat_url=data.get("cse_chat_url") or None,
+        cse_registration_id=data.get("cse_registration_id") or None,
     )

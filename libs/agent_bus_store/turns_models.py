@@ -416,6 +416,8 @@ class ThreadDetail(BaseModel):
     bus_lifecycle_state: str | None = None
     parent_thread: str | None = None
     lane_role: str | None = None
+    cse_chat_url: str | None = None
+    cse_registration_id: str | None = None
 
 
 class ThreadSummaryResponse(BaseModel):

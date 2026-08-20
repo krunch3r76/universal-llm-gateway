@@ -645,3 +645,136 @@ def test_enqueue_includes_lane_when_set() -> None:
         )
     payload = client.post.call_args.kwargs["json"]
     assert payload["lane"] == "A"
+
+
+_CSE_URL = "https://claude.ai/cowork/cse_01CodB7tom1281iY8BmZJcZM"
+
+
+def test_request_binds_cse_when_liveness_dead():
+    """Turn write + Cowork URL stamps thread CSE even when Auto is down."""
+    send_payload = {
+        "send_path": "new_thread",
+        "thread": {"id": "9501", "slug": "cse-bind"},
+        "turn": {"id": 1, "thread": "9501", "turn_number": 1},
+    }
+    liveness_exhausted = {
+        "live": False,
+        "reason": "liveness_unreachable",
+        "error": "down",
+        "attempts": 3,
+        "elapsed_s": 4.2,
+        "error_class": "connect_refused",
+    }
+    with (
+        patch("tools.agent_bus.request._send_dispatch", return_value=send_payload),
+        patch(
+            "tools.agent_bus.request.probe_auto_liveness",
+            return_value=liveness_exhausted,
+        ),
+        patch("agent_bus_store.db.cse_associations.associate_cse") as bind,
+        patch("claude_bundles.cse_session_obligations.stamp_session_ids") as stamp,
+        patch("tools.agent_bus.request.record"),
+    ):
+        result = _request_impl(
+            new_slug="cse-bind",
+            thread=None,
+            to="cursor",
+            subject="DIRECTIVE",
+            body="TYPE: DIRECTIVE",
+            from_agent="web-anthropic",
+            tags=None,
+            sidecar_content=None,
+            sidecar_slug=None,
+            desired_model="auto",
+            desired_effort="medium",
+            contract="answer",
+            require_attended=False,
+            request_id="req-cse",
+            after_turn=0,
+            summary=None,
+            cse_chat_url=_CSE_URL,
+            cse_registration_id="reg-a",
+        )
+    assert result["thread"]["id"] == "9501"
+    bind.assert_called_once()
+    assert bind.call_args.kwargs["thread_id"] == "9501"
+    assert bind.call_args.kwargs["cse_chat_url"] == _CSE_URL
+    assert bind.call_args.kwargs["cse_registration_id"] == "reg-a"
+    stamp.assert_not_called()
+
+
+def test_request_registration_only_does_not_bind_cse():
+    send_payload = {
+        "send_path": "new_thread",
+        "thread": {"id": "9501", "slug": "cse-reg-only"},
+        "turn": {"id": 1, "thread": "9501", "turn_number": 1},
+    }
+    with (
+        patch("tools.agent_bus.request._send_dispatch", return_value=send_payload),
+        patch(
+            "tools.agent_bus.request.probe_auto_liveness",
+            return_value={"live": False, "reason": "no_live_handler", "attempts": 1},
+        ),
+        patch("agent_bus_store.db.cse_associations.associate_cse") as bind,
+        patch("tools.agent_bus.request.record"),
+    ):
+        _request_impl(
+            new_slug="cse-reg-only",
+            thread=None,
+            to="cursor",
+            subject="DIRECTIVE",
+            body="TYPE: DIRECTIVE",
+            from_agent="web-anthropic",
+            tags=None,
+            sidecar_content=None,
+            sidecar_slug=None,
+            desired_model="auto",
+            desired_effort="medium",
+            contract="answer",
+            require_attended=False,
+            request_id="req-reg",
+            after_turn=0,
+            summary=None,
+            cse_chat_url=None,
+            cse_registration_id="reg-only",
+        )
+    bind.assert_not_called()
+
+
+def test_request_cursor_author_does_not_bind_cse():
+    send_payload = {
+        "send_path": "new_thread",
+        "thread": {"id": "77", "slug": "cursor-author"},
+        "turn": {"id": 1, "thread": "77", "turn_number": 1},
+    }
+    with (
+        patch("tools.agent_bus.request._send_dispatch", return_value=send_payload),
+        patch(
+            "tools.agent_bus.request.probe_auto_liveness",
+            return_value={"live": False, "reason": "no_live_handler", "attempts": 1},
+        ),
+        patch("agent_bus_store.db.cse_associations.associate_cse") as bind,
+        patch("tools.agent_bus.request.record"),
+    ):
+        _request_impl(
+            new_slug="cursor-author",
+            thread=None,
+            to="cursor",
+            subject="DIRECTIVE",
+            body="TYPE: DIRECTIVE",
+            from_agent="cursor",
+            tags=None,
+            sidecar_content=None,
+            sidecar_slug=None,
+            desired_model="auto",
+            desired_effort="medium",
+            contract="answer",
+            require_attended=False,
+            request_id="req-cursor",
+            after_turn=0,
+            summary=None,
+            cse_chat_url=_CSE_URL,
+            cse_registration_id="reg-a",
+        )
+    bind.assert_not_called()
+
