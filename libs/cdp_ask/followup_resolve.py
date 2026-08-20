@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from claude_bundles import cdp_registry
 from claude_bundles.cse_provenance import resolve as resolve_provenance
-from claude_bundles.cse_provenance_resolve import is_host_listable
+from claude_bundles.cse_provenance_resolve import is_row_present
 from claude_bundles.cse_url import normalize_cse_url
 from playwright.async_api import async_playwright
 
@@ -88,7 +88,7 @@ def _registry_pairs_for_chat_url(
                 provenance=resolve_provenance(
                     chat_url=bound,
                     registration_id=lane.registration_id,
-                    host_listable=is_host_listable,
+                    host_listable=is_row_present,
                 ),
             )
         )

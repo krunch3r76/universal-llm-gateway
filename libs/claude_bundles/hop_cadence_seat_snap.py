@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from claude_bundles.cdp_registry.models import _LISTABLE_STATUSES
+from claude_bundles.cdp_registry.models import _HOST_LISTABLE_STATUSES
 
 SEATED_NO_STREAM_EXECUTION = "__none:seated_no_stream__"
 SEATED_ROWS_KEY = "seated_rows"
@@ -31,7 +31,7 @@ def seated_row_from_registry_record(record: Mapping[str, Any]) -> dict[str, Any]
     are not derived from these rows.
     """
     status = str(record.get("status") or "")
-    if status not in _LISTABLE_STATUSES:
+    if status not in _HOST_LISTABLE_STATUSES:
         return None
     registration_id = str(record.get("registration_id") or "").strip()
     if not registration_id:

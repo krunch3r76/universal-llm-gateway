@@ -89,10 +89,32 @@ def test_refuse_and_capture_agree_who_is_seated() -> None:
     refuse, reason, evidence = refuse_cadence_hop_for_live_seat(row, snap)
     assert handle.verdict == PredecessorVerdict.INCUMBENT_RECORDED
     assert handle.registration_id == _REG
-    assert refuse is True
-    assert reason == "seat_live_refuse_at_request"
-    assert evidence["registration_id"] == _REG
-    assert _REG in running_registration_ids(snap)
+    # F6: idle seated identity is visible to capture, not to host-running refuse.
+    assert refuse is False
+    assert reason is None
+    assert evidence == {}
+    assert _REG not in running_registration_ids(snap)
+
+
+def test_dormant_seat_does_not_refuse_successor() -> None:
+    """Seat-open dormant projected as seated running must not refuse a successor hop."""
+    snap = {
+        "rows": [],
+        "running_count": 0,
+        "free_slots": 3,
+        "at_soft_limit": False,
+        "at_hard_limit": False,
+        "seated_rows": [
+            _seated_row(status="running"),
+        ],
+    }
+    row = {"thread_id": _THREAD, "registration_id": _REG, "last_hop_at": time.time() - 60.0}
+    handle = capture_predecessor_at_hop(row, snap)
+    refuse, reason, _evidence = refuse_cadence_hop_for_live_seat(row, snap)
+    assert handle.verdict == PredecessorVerdict.INCUMBENT_RECORDED
+    assert refuse is False
+    assert reason is None
+    assert _REG not in running_registration_ids(snap)
 
 
 def test_first_hop_still_allowed_against_seated_idle() -> None:
@@ -143,6 +165,12 @@ def test_seated_rows_from_registry_records_skips_non_listable() -> None:
             "dead": {
                 "registration_id": "reg-b",
                 "status": "released",
+                "purpose": "operator-proxy",
+                "parent_thread": _THREAD,
+            },
+            "parked": {
+                "registration_id": "reg-c",
+                "status": "dormant",
                 "purpose": "operator-proxy",
                 "parent_thread": _THREAD,
             },

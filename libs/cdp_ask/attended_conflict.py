@@ -6,7 +6,7 @@ from typing import Any
 
 from claude_bundles import cdp_registry
 from claude_bundles.cse_provenance import resolve as resolve_provenance
-from claude_bundles.cse_provenance_resolve import is_host_listable
+from claude_bundles.cse_provenance_resolve import is_row_present
 from claude_bundles.cse_url import normalize_cse_url
 from claude_bundles.operator_proxy_mission import OPERATOR_PROXY_MISSION_PURPOSES
 
@@ -31,7 +31,7 @@ def purpose_filtered_url_conflicts() -> list[dict[str, Any]]:
                 "provenance": resolve_provenance(
                     chat_url=chat_url,
                     registration_id=lane.registration_id,
-                    host_listable=is_host_listable,
+                    host_listable=is_row_present,
                 ),
             }
         )
@@ -41,7 +41,7 @@ def purpose_filtered_url_conflicts() -> list[dict[str, Any]]:
             continue
         resolved = resolve_provenance(
             chat_url=url,
-            host_listable=is_host_listable,
+            host_listable=is_row_present,
         )
         conflicts.append(
             {
@@ -74,7 +74,7 @@ def shared_url_candidates(chat_url: str) -> list[dict[str, Any]] | None:
                 "provenance": resolve_provenance(
                     chat_url=bound,
                     registration_id=lane.registration_id,
-                    host_listable=is_host_listable,
+                    host_listable=is_row_present,
                 ),
             }
         )

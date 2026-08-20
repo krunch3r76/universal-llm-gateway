@@ -218,7 +218,13 @@ def relaunch_dormant(
         listen=listen,
         registration_id=registration_id,
         profile_suffix=str(row["profile_suffix"]),
-        carry={"chat_url": chat_url, "relaunched_from_dormant_at": row.get("dormant_at")},
+        carry={
+            "chat_url": chat_url,
+            "relaunched_from_dormant_at": row.get("dormant_at"),
+            "seat_lane": row.get("seat_lane"),
+            "seat_closed_at": row.get("seat_closed_at"),
+            "seat_bound_at": row.get("seat_bound_at"),
+        },
     )
     try:
         chrome_pid = launch_fn(int(reserved["port"]), Path(str(reserved["profile"])))

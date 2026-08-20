@@ -13,7 +13,7 @@ import time
 from typing import Any
 
 from claude_bundles.cse_provenance import resolve as resolve_provenance
-from claude_bundles.cse_provenance_resolve import is_host_listable
+from claude_bundles.cse_provenance_resolve import is_row_present
 
 from cdp_ask.cse_session_events import (
     emit,
@@ -114,7 +114,7 @@ def _same_lane_authorizes_stand_down(
         return False
     caller_prov = resolve_provenance(
         registration_id=caller_reg,
-        host_listable=is_host_listable,
+        host_listable=is_row_present,
     )
     caller_parent = _parent_thread_of(caller_prov)
     return bool(caller_parent and caller_parent == target_parent)
@@ -140,7 +140,7 @@ def _authorized(req: PasteRequest, *, target_prov: dict[str, Any]) -> bool:
         return False
     caller_prov = resolve_provenance(
         registration_id=caller_reg,
-        host_listable=is_host_listable,
+        host_listable=is_row_present,
     )
     caller_parent = _parent_thread_of(caller_prov)
     target_parent = _parent_thread_of(target_prov)
@@ -160,7 +160,7 @@ async def execute_paste(
     target_prov = resolve_provenance(
         chat_url=chat_url,
         registration_id=registration_id,
-        host_listable=is_host_listable,
+        host_listable=is_row_present,
     )
     if target_prov.get("state") == "conflict":
         emit(

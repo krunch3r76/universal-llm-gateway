@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 
 from claude_bundles import cdp_orphans, cdp_registry
 from claude_bundles.cse_provenance import resolve as resolve_provenance
-from claude_bundles.cse_provenance_resolve import is_host_listable
+from claude_bundles.cse_provenance_resolve import is_row_present
 from claude_bundles.cse_url import normalize_cse_url
 from claude_bundles.operator_proxy_mission import OPERATOR_PROXY_MISSION_PURPOSES
 
@@ -148,7 +148,7 @@ def _mission_candidates() -> tuple[list[AttendedCandidate], int]:
                 purpose=purpose,
                 provenance=resolve_provenance(
                     registration_id=lane.registration_id,
-                    host_listable=is_host_listable,
+                    host_listable=is_row_present,
                 ),
             )
         )
@@ -207,7 +207,7 @@ def build_shadow_urls(
             "ports_seen": sorted(ports_seen),
             "provenance": resolve_provenance(
                 chat_url=url,
-                host_listable=is_host_listable,
+                host_listable=is_row_present,
             ),
         }
         for url, ports_seen in sorted(by_url.items())

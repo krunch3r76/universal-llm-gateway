@@ -391,7 +391,7 @@ def registered_lane_dicts() -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for rid, row in active.items():
         status = row.get("status")
-        if status not in cdp_registry._LISTABLE_STATUSES:
+        if status not in cdp_registry._HOST_LISTABLE_STATUSES:
             continue
         d = _registration_as_dict(cdp_registry._row_to_registration(row))
         d["status"] = status

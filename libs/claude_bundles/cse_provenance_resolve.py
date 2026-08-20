@@ -18,17 +18,23 @@ from claude_bundles.cse_provenance_projection import (
 )
 from claude_bundles.cse_url import normalize_cse_url
 
-_LISTABLE_STATUSES = frozenset({"active", "orphaned_alive", "retained", "dormant"})
+_ROW_PRESENT_STATUSES = frozenset(
+    {"active", "orphaned_alive", "retained", "dormant"}
+)
 _HISTORICAL_STATUSES = frozenset({"released", "orphaned_retry"})
 
 
-def is_host_listable(registration_id: str) -> bool:
-    """Return True when a registration is active for current host selection."""
+def is_row_present(registration_id: str) -> bool:
+    """Return True when a registry row still exists short of reclaim.
+
+    Includes dormant: a parked operator CSE remains current identity even
+    though no Chrome holds it. This is not a host-attachment predicate.
+    """
     row = store.load_active().get(registration_id)
     if not isinstance(row, dict):
         return False
     status = str(row.get("status") or "")
-    return status in _LISTABLE_STATUSES if status else False
+    return status in _ROW_PRESENT_STATUSES if status else False
 
 
 def _default_host_listable(_registration_id: str) -> bool:

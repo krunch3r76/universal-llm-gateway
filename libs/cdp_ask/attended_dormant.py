@@ -13,7 +13,7 @@ from typing import Any
 
 from claude_bundles import cdp_registry
 from claude_bundles.cse_provenance import resolve as resolve_provenance
-from claude_bundles.cse_provenance_resolve import is_host_listable
+from claude_bundles.cse_provenance_resolve import is_row_present
 from claude_bundles.cse_url import normalize_cse_url
 from claude_bundles.operator_proxy_mission import OPERATOR_PROXY_MISSION_PURPOSES
 
@@ -48,7 +48,7 @@ def dormant_candidates() -> list[DormantCandidate]:
             dormant_at=seat.dormant_at,
             provenance=resolve_provenance(
                 chat_url=seat.chat_url,
-                host_listable=is_host_listable,
+                host_listable=is_row_present,
             ),
         )
     return list(by_url.values())
