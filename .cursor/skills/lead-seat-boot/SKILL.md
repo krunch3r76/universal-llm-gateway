@@ -55,6 +55,8 @@ agent_bus(tool="threads", arguments='{"project_tag":"<active-project>","status":
 
 Threads >24h old with no topic intersection may be deferred.
 
+**Gate 2b — attended lifecycle commission (BINDING — `cdp-operator-proxy` inv 40).** On the **code/IDE cursor** seat only: unread `to=cursor` whose subject/body names `manage` / `sync_restart` / GIW recycle / code-seat lifecycle ⇒ fetch and **execute** in this session. `COME TO IDE` means this seat is now live. ¬ wait for the human to restate the restart. Life seats `send` that commission; they do not execute it.
+
 Gate 2 must precede: `manage(...)` (code surface only), `fs` writes to service config paths, and `observability` (code surface only) for live debugging.
 
 ## Gate 3 — active-todo assertion sweep (required before drafting on todo)

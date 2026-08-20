@@ -23,6 +23,10 @@ trigger_match_terms:
   - MISSION_CLOSEOUT
   - cse-stream-stop
   - Work beyond this close
+  - COME TO IDE
+  - Auto wedged
+  - send to cursor
+  - operator-gate
 ---
 # CDP Operator Proxy
 
@@ -54,7 +58,7 @@ trigger_match_terms:
 
 **Session abort (BINDING):** IDE/cursor lead **¬** cancel cursor-sdk dispatches or kill in-flight executions without **explicit operator authorization** for that session — poll, read closeout, paste status into live CDP converse; operator supersedes on private lane. MCP `project_ask` abort is gone. Rule: `session-abort-authorization_ulg.mdc`.
 
-**Operator restart (BINDING):** `agent_bus.request` with `contract: propagate` — cursor-auto mints propagation rows and coordinates drain-gated `sync_restart` (not tier-M `execute` + `manage.*`). Skill § Tier-M / propagate templates.
+**Operator restart (BINDING):** while Auto can claim, `agent_bus.request` with `contract: propagate` — cursor-auto mints propagation rows and coordinates drain-gated `sync_restart` (not tier-M `execute` + `manage.*`). **Auto wedged ⇒ `send(to=cursor)`** attended IDE (inv 40) — `propagate` enqueues on the broken slot. Skill § Blocked → ask ladder.
 
 **Autonomy default (BINDING — inv 39):** `recovery_path=human` / manage outside `VALID_SERVICES` / no supervisor ⇒ implement autonomous recovery. ¬ operator-only gate · ¬ `TYPE: OPERATOR_GATE` · ¬ wake. tmux `0:0` is a seat recipe, not a human terminal.
 
@@ -68,7 +72,7 @@ trigger_match_terms:
 - Authoring or reviewing `TYPE: DIRECTIVE` / `TYPE: DISPOSITION` turns
 - cursor-auto nested dispatch arcs (5867-class dogfood)
 - Blocked on a human/cursor fact — skill § Blocked → ask ladder (observe → cursor → Cowork Ask/push); ¬ silent stop
-- Life missing a code-seat tool (`manage`, reload, …) — request **cursor**, ¬ park on the operator
+- Life missing a code-seat tool (`manage`, reload, …) — commission **cursor** (`request` if Auto can claim; `send(to=cursor)` if Auto is wedged — inv 40); ¬ park on the human
 - **CSE stream stopped / mid-mission idle** — this rule (inv 30) **and** `claude-ai-cdp-navigation` (poller retain)
 
 ¬ load for IDE cursor lead orchestration (`lean-context-dispatch-first` + `operator-posture` instead).

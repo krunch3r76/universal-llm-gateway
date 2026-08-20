@@ -124,7 +124,7 @@ separate plane.
 5. `pin(desired_model)` — SOT: skill `directive-authoring-standard` D1.
 6. `human_push = degraded_wake` — the product path is `request` + `wait(completion=status:done)`.
 7. `blocked ⇒ ask` — never silent-stop with "until you tell me" and no ping.
-8. `tool_absent(life) ⇏ operator_gate` — a missing life-MCP tool the **code seat holds** ⇒ `agent_bus.request` to cursor; ¬ park it on the operator in prose.
+8. `tool_absent(life) ⇏ operator_gate` — a missing life-MCP tool the **code seat holds** ⇒ commission cursor. Verb: `request` when Auto can claim; `send(to=cursor)` when Auto is the blocker (inv 40). ¬ park it on the operator in prose.
 9. **Fable** — standing outside check for architecture-suitability; encourage route, ¬ required every DIRECTIVE.
 10. **`cursor/claude-opus-5`** — inform-then-proceed when warranted. Architecture-bind's four-condition trigger is when to **pick** this seat (hop 4 / T3), not a second gate on effort — once picked, knobs follow the model card through `max`. ¬ `anthropic/*` API.
 11. **Private operator thread** — dedicated `agent_bus.request` lane (inv 11); cite endeavor root in `arc:`, ¬ multiplex.
@@ -138,7 +138,7 @@ separate plane.
 19. **Escalation chain + nesting.** Ladder: cursor-auto → `cdp/opus-5` → optionally `cdp/fable`. **CDP stuck:** cursor-auto → terra or `cursor/claude-opus-5` — ¬ human. Architecture-bind trigger ⇒ six-hop (§ Architecture-bind). Every hop nested `cursor-sdk`.
 20. **Mission seat map.** Opus=operator · Fable=advisor · grok=reasoner · cursor-auto=executor. Framed multi-step: conductor — skill `directive-authoring-standard` D4. Default: bind→implement at will. Independent verify. cursor-auto modifiable. ¬ park executable ACs.
 21. **Authorize-triggers** — operator always approves; wait for click (inv 21). SOT: claude-ai-cowork-trigger-auth-gate.md.
-22. **Inform the operator — three planes.** **record** · **attention** (pager) · **story** (projector only). (a) `¬ author(operator, story_journal)`. (b) `awareness_msg(fact) ⇒ ∃ record(fact)`. (c) Suppress page only when human declared operator in *this* CSE. (d) Pager classes: **(1) Progress** — fleet-trust moves only; subject ¬ `COME TO IDE`. **(2) Mission debrief** — full debrief + stream-end sentence. **(3) Interrupt** — `COME TO IDE` only for IDE hand / operator-only gate. (e) life `notify`; absent ⇒ cursor request (inv 8). (f) Architecture-first register. (g) Audience = human principal. **Phone test:** readable without bus open.
+22. **Inform the operator — three planes.** **record** · **attention** (pager) · **story** (projector only). (a) `¬ author(operator, story_journal)`. (b) `awareness_msg(fact) ⇒ ∃ record(fact)`. (c) Suppress page only when human declared operator in *this* CSE. (d) Pager classes: **(1) Progress** — fleet-trust moves only; subject ¬ `COME TO IDE`. **(2) Mission debrief** — full debrief + stream-end sentence. **(3) Interrupt** — `COME TO IDE` only to **instantiate** a live IDE cursor session (or a true operator-only IDE gate: Reload Window / credentials). Human opens Cursor; **IDE seat executes**. `send` the commission first (inv 40). ¬ `only your hand` · ¬ ask the human to run `manage`. (e) life `notify`; absent ⇒ cursor `send`/`request` per inv 8/40. (f) Architecture-first register. (g) Audience = human principal. **Phone test:** readable without bus open.
 23. **In-chat delivery.** Retained CSE = live correspondent via `cse_session(followup)`. Identity: `chat_url ≻ registration_id ≻ execution_id`; one CSE per lane. **Park-on-WAKE** for long nests. **Delivery (b)** primary; bus WAKE fallback. Commission cursor for followup (inv 8). Inbound chat = continuation.
 24. **Authority ≡ IDE − restart** — commission cursor-auto for IDE work; Customize sync per-slug only (inv 24).
 25. **Bus recency ≠ liveness** — fleet gate attestation authoritative when `fleet_gate_applied: true`.
@@ -156,6 +156,7 @@ separate plane.
 37. **Conductor commission** — SOT: skill `directive-authoring-standard` D4. Recipe of record: `cursor_request` `COMMISSION_CONDUCTOR` docstring. This skill does not duplicate it.
 38. **Mission negotiation** — SOT: skill `directive-authoring-standard` D5. Field contract: `cursor_request` **Mission negotiation** clause + `cortex://notes/system/specs/directive-loop-mission-negotiation.md`.
 39. **Autonomy default** — `recovery_path=human` ∨ ¬supervisor(process) ∨ manage ∉ `VALID_SERVICES` ⇒ substrate deficiency ⇒ implement autonomous recovery. ¬ `operator_only_gate` · ¬ `TYPE: OPERATOR_GATE` · ¬ wake(human). Naming who can recover today is observation; treating that answer as the arc terminal is the defect. Sibling of inv 8 (missing tool ≠ gate).
+40. **Attended IDE cursor ≠ human hand (BINDING — operator 2026-08-20, agent-bus:9501).** `request` / `operator_request` / `cursor_request` / `propagate` enqueue AutoJobQueue. `send(to=cursor)` does **not**. `Auto_wedged` (serial_occupant=null ∧ waiters>0, or queued_age not advancing) ⇏ `operator_gate`. Code-seat ops the IDE cursor holds (`manage`, GIW restart, …) ⇒ `send` a commission that seat can execute; ¬ page the human to run them. Same-thread `request` on a wedged lane `queue_withdraw`s the queued predecessor — do not re-issue that way. `COME TO IDE` ⇔ ¬live(IDE cursor session) — instantiate the seat **after** the send; page body = open Cursor so that seat executes the already-posted commission. ¬ `only your hand` · ¬ `tag=operator-gate` · ¬ DISPOSITION `no commission fired`. Ground: 9501 turn 184.
 
 ## Blocked → ask ladder (BINDING)
 
@@ -164,17 +165,18 @@ When blocked on a fact this seat cannot settle from tools alone:
 | Priority | Action |
 |---|---|
 | 1 | Independent observation — `agent_bus` fetch / `busy_status` / latest turns |
-| 2 | Consult **cursor** via `agent_bus.request` (investigate / verify / **code-seat ops**) |
+| 2 | Consult **cursor** via `agent_bus.request` (investigate / verify / **code-seat ops**) — only while Auto can claim |
 | 2b | **Judgment stuck (this CDP seat unsure)** — DIRECTIVE `cursor-auto` to nest `cursor-sdk` consult: default **`cursor/gpt-5.6-terra`** (`contract=light-bounded`). Terra is bindable on default cursor-sdk (attested agent-bus:9500 execution `2dbd38ff-06e6-44f5-8bd9-1804f31f66aa`, `model_label=cursor/gpt-5.6-terra`). On an actual `model_pin_refused` response, fall through to **`cdp/fable`** (or **`cursor/claude-opus-5`** when live-checkout / premium metered judgment warrants — inform-then-proceed, inv 10). ¬ escalate to the human principal. Family-cross (terra) preferred when the stuck seat is `cdp/opus-5` or `cdp/fable` and the risk is Anthropic-lineage correlated error. |
-| 3 | **Cowork Ask / push the human principal** — one question + recommended answer — **true operator-only gates only** (credentials, irreversible human acts, IDE restart / Reload Window, Authorize-triggers click, genuine *what we want* ambiguity after 2b exhausted); ¬ routine routing because Cowork chat might be human; ¬ "I'm stuck" judgment forks; ¬ missing autonomous lifecycle (inv 39) |
+| 2c | **Auto queue is the blocker** (`serial_occupant=null` ∧ waiters, or queued_age not advancing) — `agent_bus.send(to=cursor)` attended IDE (never arms Auto). Then `COME TO IDE` only if no IDE session is live (inv 40). ¬ step 3. ¬ same-thread `request` (withdraws the queued predecessor). |
+| 3 | **Cowork Ask / push the human principal** — one question + recommended answer — **true operator-only gates only** (credentials, irreversible human acts, IDE Restart / Reload Window, Authorize-triggers click, genuine *what we want* ambiguity after 2b exhausted); ¬ routine routing because Cowork chat might be human; ¬ "I'm stuck" judgment forks; ¬ missing autonomous lifecycle (inv 39); ¬ Auto-wedge `manage` (inv 40) |
 
 **Invariant:** `cdp_seat_stuck ⇒ cursor_auto → {cursor/gpt-5.6-terra | cursor/claude-opus-5}` · `human_principal ⇔ operator_only_gate`.
 
 **Autonomy default (BINDING — inv 39, operator 2026-08-18):** a tool or recon that reports `recovery_path=human`, no systemd/supervisord unit, or manage outside `VALID_SERVICES` is a **substrate deficiency**. Next act is implement a seat-fireable recycle (supervisor or retrying external reexec, wired into `propagate` or a seat-owned verb). It is **not** step 3. tmux `0:0` is a seat recipe when a seat can drive it — never a wake, never an `OPERATOR_GATE`.
 
-**Code-seat ops = step 2:** via `contract: propagate`. mcp self-preempt on own CSE. GIW never forced. Tooling: healthy → hop. Operator gates: credentials, irreversible, Authorize-triggers (inv 21). Manage recycle / unwired `guarded_manage_reexec` is inv 39, not an operator gate.
+**Code-seat ops = step 2** while Auto can claim: via `contract: propagate`. mcp self-preempt on own CSE. GIW never forced. Tooling: healthy → hop. Operator gates: credentials, irreversible, Authorize-triggers (inv 21). Manage recycle / unwired `guarded_manage_reexec` is inv 39, not an operator gate. **Auto wedged ⇒ step 2c** (`send`, inv 40) — `propagate`/`request` enqueue on the broken slot.
 
-**Forbidden:** a prose halt that waits for a human without firing Ask/push or a cursor DIRECTIVE.
+**Forbidden:** a prose halt that waits for a human without firing Ask/push, a cursor DIRECTIVE, **or** an attended `send` (inv 40).
 **Packet authors:** if the episode may need (2)/(3), do **not** seal `¬ clarifying questions` —
 that clause cancels this ladder. Pure sealed R-admit / charter consumers keep it.
 
@@ -562,6 +564,8 @@ Authoring enum + propagate template: skill `directive-authoring-standard` D2. Li
 | Renumbering roadmap headings to express a new priority | IDs are permanent; re-rank the `## Rank order` line with a `wh... |
 | Closing a mission with "followup: run the tests" | Verification of your own claims is an in-mission row — insert ... |
 | Waiting for a monitor or the operator to notice what the execu... | `contract: confer` — the seat inside the mission already holds... |
+| Auto wedged ⇒ `COME TO IDE` / `only your hand` / `tag=operator-gate` / DISPOSITION `no commission fired` | inv 40 — `send(to=cursor)` the manage/restart commission; page only to open IDE |
+| `request`/`propagate`/`operator_request` again on a wedged AutoJobQueue | Those enqueue; `send` does not. Same-thread re-request `queue_withdraw`s the predecessor |
 | Trying to load a `cursor_only` slug on this seat | Name the cursor seat that owns the duty, or use the life-seat ... |
 
 ## Episode boundaries

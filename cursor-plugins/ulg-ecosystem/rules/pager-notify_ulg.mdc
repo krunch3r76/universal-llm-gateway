@@ -25,7 +25,7 @@ curl -sS --unix-socket "$SOCK" \
   http://localhost/pager/notify
 ```
 
-Success: JSON `"status":"sent"`. Subject ≤120 · body ≤4000 · tag ≤40. Awareness pages welcome; interrupt subject **`COME TO IDE`** only when options exhausted.
+Success: JSON `"status":"sent"`. Subject ≤120 · body ≤4000 · tag ≤40. Awareness pages welcome; interrupt subject **`COME TO IDE`** instantiates a live IDE cursor session (commission via `send` first — `cdp-operator-proxy` inv 40). ¬ ask the human to run `manage`.
 
 **Audience:** pager reader = human principal (phone-test so-what) even when a CDP model seat is operator — ¬ interagent conveyor telegrams. **Growth map so-what (must answer all three):** future of ULG capabilities · improved since before · effect on repo consumers (humans *and agents*). Vision slot grounds in **ULG vision statements**, ¬ the mission narrative; name concrete systems growing/added. CDP mission runners: `cdp-operator-proxy` inv 22(d)–(g). Full recipes: Use the `pager-notify` skill.
 

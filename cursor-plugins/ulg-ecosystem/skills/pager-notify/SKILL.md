@@ -113,14 +113,14 @@ Three classes — **do not conflate**:
 |---|---|---|
 | **Awareness — progress** | NL so-what **without** `COME TO IDE` | Optional read; **¬** open Cursor |
 | **Awareness — mission debrief** | One architecture-first paragraph (named ULG systems + vision) **without** `COME TO IDE` (full body on pager) **plus** required `Beyond this close: …` line (in-flight / scheduled / enrolled / awaiting harvest — who collects and how; or `none`) · tag `mission-debrief` | Optional read; **¬** open Cursor; durable sidecar for later fetch |
-| **Interrupt** | **`COME TO IDE`** / `NEED IDE` | Open Cursor — **problem only** (options exhausted / true operator-only IDE gate) |
+| **Interrupt** | **`COME TO IDE`** / `NEED IDE` | Open Cursor so the **IDE cursor seat** executes — instantiate session only (inv 40). ¬ human-hand `manage` |
 
 | Situation | Page? | Class |
 |---|---|---|
 | Progress / insight / interesting note seat judges he'd like | **Yes (welcome)** — NL body; record-first | Awareness — progress |
 | Operator said “ping me when X” / “wake me” | **Yes** — on X true | Usually awareness; interrupt only if X was “come to IDE when…” |
 | Mission/episode close — debrief | **Yes** — **full** one-paragraph body + `Beyond this close: …`; subject **¬** `COME TO IDE`; tag `mission-debrief` (life `notify` refuses without the beyond line) | Awareness — mission debrief |
-| All other options exhausted (fleet cannot clear) / problem needs IDE | **Yes** — subject **`COME TO IDE`** | Interrupt |
+| All other options exhausted (fleet cannot clear) / problem needs a live IDE **seat** | **Yes** — `send(to=cursor)` the commission first, then subject **`COME TO IDE`** (inv 40) | Interrupt |
 | Ordinary CLOSEOUT / admitted / blocked-resolving with a plain fleet so-what | Awareness OK; **¬** `COME TO IDE` | Awareness — progress |
 | Conveyor-only DISPOSITION (ordinal bump / wave admitted / ratify-without-reframe) | **No** — batch into the next human-facing page | — |
 | Multi-minute wait they left (queue, rebuild) | **Yes** on terminal — interrupt only if they must act in IDE | Per predicate |
