@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from durable_io.atomic import durable_write_text, path_flock
 from implement_admission.scheme_resolve import resolve_fs_ingress
 from implement_admission.share_uri_emit import to_share_uri
 
@@ -66,17 +67,22 @@ def write_pinned_deliverable_impl(
     rel, target = resolved
     if target.is_dir():
         return {"error": "rel_path resolves to a directory"}
-    if write_if_absent and target.is_file():
-        existing = target.read_text(encoding="utf-8")
-        return {
-            "uri": pinned_deliverable_uri(rel),
-            "path": rel,
-            "sha256": content_sha256(existing),
-            "body_chars": len(existing),
-            "skipped": True,
-        }
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
+    with path_flock(target):
+        if write_if_absent and target.is_file():
+            existing = target.read_text(encoding="utf-8")
+            return {
+                "uri": pinned_deliverable_uri(rel),
+                "path": rel,
+                "sha256": content_sha256(existing),
+                "body_chars": len(existing),
+                "skipped": True,
+            }
+        durable_write_text(
+            target,
+            content,
+            already_locked=True,
+            retain_store_root=_FILES_ROOT,
+        )
     return {
         "uri": pinned_deliverable_uri(rel),
         "path": rel,

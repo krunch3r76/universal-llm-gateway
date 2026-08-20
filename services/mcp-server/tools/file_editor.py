@@ -17,6 +17,7 @@ from pathlib import Path
 from tools._durable_write import (
     PreImageMismatchError,
     durable_write_text,
+    path_flock,
     verify_persisted,
 )
 from tools._hashing import sha256_hex_of_bytes, sha256_hex_of_file
@@ -52,11 +53,13 @@ def perform_edit(
         For "replace" operation, also includes "replacements_made".
 
     Side effects:
-        Overwrites *path* via temp+fsync+replace. Auto-CASes the digest of
-        the bytes read at the start of this call immediately before that
+        Overwrites *path* via temp+fsync+replace. Holds ``path_flock`` from
+        read through replace so cross-process peers (sidecar / stargate /
+        charter) serialise against this RMW. Auto-CASes the digest of the
+        bytes read at the start of this call immediately before that
         replace; mismatch raises without writing. Does not take
-        ``path_write_lock`` — ``edit_file_impl`` holds that lock across the
-        whole RMW so this function stays re-entrant from a lock holder.
+        ``path_write_lock`` — ``edit_file_impl`` holds that in-process lock
+        so this function stays re-entrant from a lock holder.
 
     Raises:
         FileNotFoundError: Path does not exist.
@@ -69,6 +72,27 @@ def perform_edit(
     if not path.is_file():
         raise ValueError(f"Path is not a file: {path}")
 
+    with path_flock(path):
+        return _perform_edit_locked(
+            path,
+            operation,
+            content,
+            line=line,
+            target_str=target_str,
+            all_occurrences=all_occurrences,
+        )
+
+
+def _perform_edit_locked(
+    path: Path,
+    operation: str,
+    content: str,
+    *,
+    line: int | None,
+    target_str: str | None,
+    all_occurrences: bool,
+) -> dict[str, str | int]:
+    """RMW body; caller holds ``path_flock``."""
     raw = path.read_bytes()
     pre_image_sha256 = sha256_hex_of_bytes(raw)
     original = raw.decode("utf-8", errors="replace")
@@ -127,7 +151,10 @@ def perform_edit(
             actual_sha256=actual_sha256,
         )
     written_sha256 = durable_write_text(
-        path, modified, expected_pre_image=pre_image_sha256
+        path,
+        modified,
+        expected_pre_image=pre_image_sha256,
+        already_locked=True,
     )
     verify_persisted(path, written_sha256)
 

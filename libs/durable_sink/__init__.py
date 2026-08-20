@@ -13,13 +13,14 @@ from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
 from universal_logging import get_logger
 
 # Harvest nominates these manage slugs when this lib lands (package-grain).
-CONSUMERS: tuple[str, ...] = ('mcp',)
+CONSUMERS: tuple[str, ...] = ("mcp",)
 
 logger = get_logger(__name__)
 
 _STARGATE_CONFIG_PATH = Path.home() / ".gateway" / "stargate.yaml"
 _CORTEX_PROBE_TIMEOUT = 2.0
 DispatchFn = Callable[[str, dict[str, Any]], dict[str, Any]]
+
 
 @dataclass(frozen=True)
 class SinkResult:
@@ -28,6 +29,7 @@ class SinkResult:
     location: str
     discards_advisory: str | None = None
 
+
 @dataclass(frozen=True)
 class SinkSelectionMetadata:
     selected_backend: str
@@ -35,10 +37,12 @@ class SinkSelectionMetadata:
     cortex_probe_status: str
     fallback_used: bool
 
+
 @dataclass(frozen=True)
 class ResolvedDurableSink:
     sink: DurableSink
     metadata: SinkSelectionMetadata
+
 
 @runtime_checkable
 class DurableSink(Protocol):
@@ -53,6 +57,7 @@ class DurableSink(Protocol):
         sink_backend: str | None = None,
     ) -> SinkResult | None: ...
 
+
 def _load_stargate_config() -> dict[str, Any]:
     if not _STARGATE_CONFIG_PATH.exists():
         return {}
@@ -61,6 +66,7 @@ def _load_stargate_config() -> dict[str, Any]:
     except (OSError, yaml.YAMLError):
         return {}
     return data if isinstance(data, dict) else {}
+
 
 def _configured_backend() -> str:
     env = os.environ.get("DURABLE_SINK", "").strip().lower()
@@ -77,6 +83,7 @@ def _configured_backend() -> str:
         return raw.strip().lower()
     return "auto"
 
+
 def _filesystem_root() -> Path | None:
     env = os.environ.get("DURABLE_SINK_FS_ROOT", "").strip()
     if env:
@@ -89,9 +96,12 @@ def _filesystem_root() -> Path | None:
             return Path(root).expanduser()
     return None
 
+
 def probe_cortex() -> str:
     try:
-        with make_sync_client(DEFAULT_CORTEX_URL, timeout=_CORTEX_PROBE_TIMEOUT) as client:
+        with make_sync_client(
+            DEFAULT_CORTEX_URL, timeout=_CORTEX_PROBE_TIMEOUT
+        ) as client:
             response = client.get("/health")
             if response.status_code == 200:
                 return "ok"
@@ -99,10 +109,12 @@ def probe_cortex() -> str:
         logger.debug("cortex probe failed: %s", exc)
     return "unreachable"
 
+
 def _default_dispatch(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
     from cortex_store.dispatch_ops import execute_op
 
     return execute_op(tool, arguments)
+
 
 class CortexSink:
     def __init__(self, dispatch_fn: DispatchFn | None = None) -> None:
@@ -139,6 +151,7 @@ class CortexSink:
             discards_advisory=str(advisory) if advisory else None,
         )
 
+
 class FilesystemSink:
     def __init__(self, root: Path) -> None:
         self._root = root.expanduser().resolve()
@@ -159,6 +172,7 @@ class FilesystemSink:
             render_recon_sidecar_markdown,
             resolve_recon_target,
         )
+        from durable_io.atomic import durable_write_text
 
         resolved = resolve_recon_target(label, theme)
         if resolved is None:
@@ -181,8 +195,7 @@ class FilesystemSink:
             target.relative_to(self._root)
         except ValueError as exc:
             raise ValueError("filesystem recon path escapes configured root") from exc
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(rendered, encoding="utf-8")
+        durable_write_text(target, rendered, retain_store_root=self._root)
         advisory = discards_advisory(body)
         return SinkResult(
             uri=f"file://{target}",
@@ -190,6 +203,7 @@ class FilesystemSink:
             location="filesystem",
             discards_advisory=advisory,
         )
+
 
 class NullSink:
     def write_recon_sidecar(
@@ -203,6 +217,7 @@ class NullSink:
         sink_backend: str | None = None,
     ) -> SinkResult | None:
         return None
+
 
 def resolve_durable_sink(
     *,
@@ -233,7 +248,9 @@ def resolve_durable_sink(
 
     if configured == "filesystem":
         if fs_root is None:
-            raise RuntimeError("durable_sink=filesystem but no filesystem root configured")
+            raise RuntimeError(
+                "durable_sink=filesystem but no filesystem root configured"
+            )
         return ResolvedDurableSink(
             sink=FilesystemSink(fs_root),
             metadata=SinkSelectionMetadata(
@@ -286,6 +303,7 @@ def resolve_durable_sink(
         ),
     )
 
+
 def write_session_rag_query_sidecar(
     session_id: str,
     label: str,
@@ -329,6 +347,7 @@ def write_session_rag_query_sidecar(
         payload["sha256"] = result.sha256
         payload["location"] = result.location
     return payload
+
 
 __all__ = [
     "CortexSink",

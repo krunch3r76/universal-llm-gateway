@@ -14,13 +14,9 @@ from tools._hashing import format_sha256_uri, normalize_sha256_hex, sha256_hex_o
 
 ArtifactClass = Literal["consult", "shared", "unclassified"]
 
-# Parallel writers that still bypass MCP write_file_impl CAS/retain. Named so
-# fleet-wide enforcement claims cannot quietly include them (terra check (b)).
-EXCLUDED_BYPASS_WRITERS = (
-    "libs/cortex_store/dispatch_ops/_thread_sidecar.py",
-    "libs/cortex_store/dispatch_ops/_pinned_deliverable.py",
-    "libs/cortex_store/dispatch_ops/_recon_sidecar.py",
-)
+# S1 funnelled the former Path.write_text bypass set onto durable_io.atomic.
+# Empty: leftover notes-tree write_text is a defect, not a silent carve-out.
+EXCLUDED_BYPASS_WRITERS: tuple[str, ...] = ()
 
 _SHARED_PREFIXES = (
     "notes/system/specs/",
@@ -167,9 +163,7 @@ def evaluate_write_authority(
         None if actual_sha256 is None else normalize_sha256_hex(actual_sha256)
     )
     return {
-        "error": (
-            f"Refusing to overwrite existing consult-class file: {path!r}"
-        ),
+        "error": (f"Refusing to overwrite existing consult-class file: {path!r}"),
         "reason": "file_exists",
         "path": _norm_rel(path),
         "artifact_class": "consult",

@@ -42,7 +42,7 @@ def test_durable_write_text_fsyncs_file_and_parent_dir(tmp_path: Path) -> None:
         fsync_calls.append(fd)
         real_fsync(fd)
 
-    with patch("tools._durable_write.os.fsync", side_effect=_track_fsync):
+    with patch("durable_io.atomic.os.fsync", side_effect=_track_fsync):
         written_sha256 = durable_write_text(dest, "hello durable")
 
     assert dest.read_text(encoding="utf-8") == "hello durable"
@@ -199,7 +199,9 @@ def test_write_succeeds_on_fully_rendered_path(
     monkeypatch.setattr(ops_write, "record", lambda *_args, **_kwargs: None)
     result = ops_text.write_file_impl(_CLEAN_RECON_PATH, "rendered body")
     assert result["status"] == "written"
-    assert (sandbox_root / _CLEAN_RECON_PATH).read_text(encoding="utf-8") == "rendered body"
+    assert (sandbox_root / _CLEAN_RECON_PATH).read_text(
+        encoding="utf-8"
+    ) == "rendered body"
 
 
 def test_read_list_search_unaffected_by_template_tokens(

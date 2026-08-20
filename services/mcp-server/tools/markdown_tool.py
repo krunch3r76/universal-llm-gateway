@@ -33,6 +33,7 @@ from markdown_sections import (
 )
 from mcp_events import record
 
+from ._durable_write import durable_write_text
 from ._file_helpers import extract_text_content, is_converted_format
 from ._pdf_sections import (
     PdfSectionError,
@@ -105,8 +106,7 @@ def _load_text(resolved: Path) -> tuple[str | None, str | None]:
 
 
 def _write_file(resolved: Path, text: str) -> None:
-    resolved.parent.mkdir(parents=True, exist_ok=True)
-    resolved.write_text(text, encoding="utf-8")
+    durable_write_text(resolved, text)
 
 
 def _mutate_document(
@@ -329,9 +329,7 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                     "delete_section",
                 }
             )
-            resolved = _resolve_sandbox(
-                sandbox, path, for_write=op in _md_write_ops
-            )
+            resolved = _resolve_sandbox(sandbox, path, for_write=op in _md_write_ops)
         except ValueError as e:
             return {"error": str(e)}
 

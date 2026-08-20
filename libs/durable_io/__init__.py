@@ -1,13 +1,11 @@
-"""Durable atomic writes with post-persist verification.
+"""Serialised durable leaf for cortex-notes writes.
 
-Implementation lives in ``durable_io.atomic`` — the serialised leaf every
-cortex-notes writer funnels through (flock + temp+fsync+replace + CAS).
-This module keeps the historical ``tools._durable_write`` import path.
+Cross-process serialisation is ``fcntl.flock`` on a sibling lockfile.
+``threading.Lock`` does not hold across OS processes — see
+``test_cross_process_serialisation.py``.
 """
 
-from __future__ import annotations
-
-from durable_io.atomic import (
+from .atomic import (
     PreImageMismatchError,
     WriteVerifyError,
     durable_write_bytes,

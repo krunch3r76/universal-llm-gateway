@@ -1,10 +1,8 @@
 """Render + persist thread sidecar markdown under cortex _FILES_ROOT.
 
-Bypass note (consult-artifact URI collision bind / terra check (b)): this writer
-still uses raw ``Path.write_text`` and is listed in
-``tools.filesystem._write_authority.EXCLUDED_BYPASS_WRITERS``. It is **not** on
-the MCP retain+CAS path; migrate or keep explicitly excluded before claiming
-fleet-wide shared-document enforcement.
+Writes funnel through ``durable_io.atomic`` (flock + temp+fsync+replace +
+retain). Callers — send_sidecar, body_auto_spill, stargate on_behalf,
+charter-runner state_close — must not grow a second ``Path.write_text``.
 """
 
 from __future__ import annotations
@@ -13,6 +11,8 @@ import hashlib
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
+
+from durable_io.atomic import durable_write_text
 
 from ._shared import _FILES_ROOT
 
@@ -95,8 +95,7 @@ def render_thread_sidecar_markdown(
 
 def write_thread_sidecar(thread: str, slug: str, file_content: str) -> str:
     path = _FILES_ROOT.joinpath(*_SIDECAR_SUBDIR) / f"{thread}-{slug}.md"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(file_content, encoding="utf-8")
+    durable_write_text(path, file_content, retain_store_root=_FILES_ROOT)
     return str(path)
 
 

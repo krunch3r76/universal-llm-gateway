@@ -8,6 +8,8 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
+from durable_io.atomic import durable_write_text
+
 from ._shared import _FILES_ROOT
 
 _RECON_SUBDIR = ("notes", "system", "recon")
@@ -106,6 +108,5 @@ def write_recon_sidecar_file(label: str, theme: str, file_content: str) -> str:
     if resolved is None:
         raise ValueError("unsafe recon sidecar path")
     _label_slug, _theme_slug, path = resolved
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(file_content, encoding="utf-8")
+    durable_write_text(path, file_content, retain_store_root=_FILES_ROOT)
     return str(path)
