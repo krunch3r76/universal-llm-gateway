@@ -341,9 +341,9 @@ def get_entity_card(
     if str(e["type"]) == "document":
         from .card_adapters.document import ocr_companion_next_hint
 
-        status = payload.get("status_summary")
+        doc_status_summary = payload.get("status_summary")
         hint = ocr_companion_next_hint(
-            status if isinstance(status, dict) else None
+            doc_status_summary if isinstance(doc_status_summary, dict) else None
         )
         if hint:
             # Handler-set _next wins over static entity_get workflow hint.
