@@ -448,7 +448,39 @@ class AutoJobQueue:
             durable = ledger.status_counts()
             snap["failed_on_restart"] = durable.get("failed_on_restart", 0)
             snap["durable_total"] = durable.get("total", 0)
+            with ledger._connect() as conn:
+                from services.git_integration_worker.cursor_auto.waiter_visibility import (
+                    waiter_starvation_from_conn,
+                )
+
+                snap.update(waiter_starvation_from_conn(conn))
+        else:
+            from services.git_integration_worker.cursor_auto.waiter_visibility import (
+                waiter_starvation_from_memory,
+            )
+
+            with self._lock:
+                snap.update(
+                    waiter_starvation_from_memory(self._order, self._jobs)
+                )
         return snap
+
+    def waiter_receipt(self, job_id: str) -> dict[str, Any]:
+        """FIFO position + queued age for an enqueue receipt (this job)."""
+        ledger = self._ledger_client()
+        if ledger is not None:
+            from services.git_integration_worker.cursor_auto.waiter_visibility import (
+                waiter_fields_from_conn,
+            )
+
+            with ledger._connect() as conn:
+                return waiter_fields_from_conn(conn, job_id)
+        from services.git_integration_worker.cursor_auto.waiter_visibility import (
+            waiter_fields_from_memory,
+        )
+
+        with self._lock:
+            return waiter_fields_from_memory(self._order, self._jobs, job_id)
 
 
 _QUEUE = AutoJobQueue(durable=True)

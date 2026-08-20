@@ -20,6 +20,9 @@ from services.git_integration_worker.cursor_auto.queue import (
     get_queue,
     reset_queue_for_tests,
 )
+from services.git_integration_worker.cursor_auto.waiter_visibility import (
+    WAITER_STARVATION_AMBER_THRESHOLD_S,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -87,6 +90,9 @@ def test_queue_health_green_when_occupant_heartbeating_despite_long_queue() -> N
     assert health["red"] is False
     assert health["occupant_idle_s"] is not None
     assert health["occupant_idle_s"] < 1.0
+    assert health["amber"] is False
+    assert health["oldest_waiter_age_s"] is not None
+    assert health["oldest_waiter_age_s"] < WAITER_STARVATION_AMBER_THRESHOLD_S
 
 
 def test_queue_health_red_when_occupant_heartbeat_stale() -> None:

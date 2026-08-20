@@ -160,7 +160,10 @@ def query_observer_state(
     thread_id: str | None = None,
     include_terminal: bool = False,
 ) -> dict[str, Any] | None:
-    """Load one observer view from an open ledger connection."""
+    """Load one observer view from an open ledger connection.
+
+    Attaches waiter ``queue_position`` / ``queued_age_s`` (null when not queued).
+    """
     if not job_id and not thread_id:
         return None
     if job_id:
@@ -183,7 +186,13 @@ def query_observer_state(
         ).fetchone()
     if row is None:
         return None
-    return observer_view_from_row(row)
+    from services.git_integration_worker.cursor_auto.waiter_visibility import (
+        waiter_fields_from_conn,
+    )
+
+    view = observer_view_from_row(row)
+    view.update(waiter_fields_from_conn(conn, row["job_id"]))
+    return view
 
 
 def query_thread_lane_counts(

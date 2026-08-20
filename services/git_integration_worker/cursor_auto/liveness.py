@@ -119,11 +119,17 @@ def queue_admission_health() -> dict[str, Any]:
     occupant that is heartbeating throughout a long legitimate job must
     report green (2026-08-17 14:25-15:00Z false-positive evidence) -- only
     an occupant whose OWN progress signal has gone stale is a genuine stall.
+
+    Waiter starvation is a separate term (``oldest_waiter_age_s`` / ``amber``)
+    and must not flip ``red``.
     """
     from services.git_integration_worker.cursor_auto.execution_mode import (
         is_concurrent_execution_mode,
     )
     from services.git_integration_worker.cursor_auto.job_ledger import get_ledger
+    from services.git_integration_worker.cursor_auto.waiter_visibility import (
+        waiter_starvation_from_conn,
+    )
 
     ledger = get_ledger()
     open_jobs = ledger.list_open()
@@ -152,6 +158,8 @@ def queue_admission_health() -> dict[str, Any]:
             and occupant_idle_s > _OCCUPANT_IDLE_RED_THRESHOLD_S
         ):
             red = True
+    with ledger._connect() as conn:
+        waiter = waiter_starvation_from_conn(conn)
     return {
         "admit_eligible_pending": len(admit_eligible_pending),
         "serial_occupant_job_id": (
@@ -163,4 +171,5 @@ def queue_admission_health() -> dict[str, Any]:
         "red": red,
         "red_threshold_s": _OCCUPANT_IDLE_RED_THRESHOLD_S,
         "projection_only": True,
+        **waiter,
     }

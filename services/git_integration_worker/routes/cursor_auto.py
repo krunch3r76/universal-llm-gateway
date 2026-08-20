@@ -349,6 +349,7 @@ async def enqueue(body: EnqueueBody, request: Request):
     lane = queue.thread_lane_counts(
         body.thread_id, exclude_job_id=job.job_id
     )
+    waiter = queue.waiter_receipt(job.job_id)
     return JSONResponse(
         status_code=200,
         content={
@@ -363,6 +364,8 @@ async def enqueue(body: EnqueueBody, request: Request):
             "matched_token": matched_token,
             "deferred_job_id": deferred_job_id,
             "deferred_leg_enqueued": deferred_job_id is not None,
+            "queue_position": waiter["queue_position"],
+            "queued_age_s": waiter["queued_age_s"],
             "queue": queue.snapshot(),
         },
     )
