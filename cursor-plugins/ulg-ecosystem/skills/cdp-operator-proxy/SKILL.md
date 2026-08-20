@@ -497,6 +497,8 @@ SOT: skill `directive-authoring-standard` D1. Architecture-bind remains § Archi
 
 Authoring enum + propagate template: skill `directive-authoring-standard` D2. Live enum: `cursor_request` **Contract vocabulary**.
 
+**`contract: propagate` — nesting ban (closeout_relay):** do **not** fire `contract:propagate` from inside a GIW write-lease-holding nested dispatch whose parent closeout must relay dispositions. Thread 6692 (`failed/dead_on_giw_restart`) is the observed failure for **claimed / in-flight** jobs: nesting propagate inside such a dispatch **loses the parent closeout when the restart lands** — AutoJobQueue is process-local and a GIW drain/restart kills claimed/in-flight jobs (dead, not expired). **Queued-not-yet-claimed** jobs survive restart with `enqueued_at` preserved (agent-bus:9530 turn 50). The nested seat cannot observe the restart it blocks. Fire propagate from a seat outside the GIW lease (parent cursor-auto after nested exit, or operator-proxy top-level).
+
 **Blocked replies** carry `missed_tokens` + `fix_hint`. Re-issue supersedes per § Interrupt. Wire-neutral authoring (pending): wire answer may ship body implement.
 
 **Degrade ladder:** `auto-admit-armed` → poll · `no-auto-handler` → re-request · `status:blocked` → fix_hint · `status:needs-attended` → surface · `disposition:declined` → routing_hint · propagated/executed/queued → read `executions[]`.

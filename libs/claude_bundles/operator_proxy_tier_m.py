@@ -180,12 +180,14 @@ in-flight / dead-end). Live only when ``code_version`` matches ``code_ref``.
 
 **Nesting ban (closeout_relay):** do **not** fire ``contract:propagate`` from inside a
 GIW write-lease-holding nested dispatch whose parent closeout must relay
-dispositions. Thread 6692 (``failed/dead_on_giw_restart``) is the observed failure:
-nesting propagate inside such a dispatch **loses the parent closeout when the
-restart lands** — AutoJobQueue is process-local and a GIW drain/restart wipes
-in-flight jobs (dead, not expired). The nested seat cannot observe the restart it
-blocks. Fire propagate from a seat outside the GIW lease (parent cursor-auto after
-nested exit, or operator-proxy top-level)."""
+dispositions. Thread 6692 (``failed/dead_on_giw_restart``) is the observed failure
+for **claimed / in-flight** jobs: nesting propagate inside such a dispatch **loses
+the parent closeout when the restart lands** — AutoJobQueue is process-local and a
+GIW drain/restart kills claimed/in-flight jobs (dead, not expired).
+**Queued-not-yet-claimed** jobs survive restart with ``enqueued_at`` preserved
+(agent-bus:9530 turn 50). The nested seat cannot observe the restart it blocks. Fire
+propagate from a seat outside the GIW lease (parent cursor-auto after nested exit,
+or operator-proxy top-level)."""
 
 _DEGRADE_LADDER = """\
 - `auto-admit-armed` — Auto is running it; poll the returned `poll_hint` in one
