@@ -23,6 +23,7 @@ from .models import (
     _LaunchFn,
     _ListenFn,
     _row_to_registration,
+    seat_open,
 )
 
 # Re-export _used_ports logic via ports module internals
@@ -254,6 +255,17 @@ def deregister_lane(
         status = row.get("status")
         if status == "released":
             if kill:
+                if seat_open(row):
+                    _store.append_log(
+                        "deregister_kill_refused_seat_open",
+                        {
+                            "registration_id": registration_id,
+                            "port": row.get("port"),
+                            "seat_lane": row.get("seat_lane"),
+                        },
+                    )
+                    _release_driver_lock(registration_id)
+                    return
                 port = int(row["port"])
                 if listen(port):
                     registry_package()._kill_listener(port)

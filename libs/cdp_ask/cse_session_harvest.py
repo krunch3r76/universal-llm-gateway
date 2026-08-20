@@ -7,7 +7,7 @@ from typing import Any
 from claude_bundles import cdp_registry
 from claude_bundles.cowork_output_download import resolve_harvest_body
 from claude_bundles.cse_provenance import resolve as resolve_provenance
-from claude_bundles.cse_provenance_resolve import is_host_listable
+from claude_bundles.cse_provenance_resolve import is_row_present
 from claude_bundles.cse_turns_harvest import harvest_turns
 from claude_bundles.skills_ui_panel import connect_cdp
 
@@ -54,7 +54,7 @@ async def _resolve_target(
                 prov = resolve_provenance(
                     chat_url=dormant.chat_url,
                     registration_id=dormant.registration_id,
-                    host_listable=is_host_listable,
+                    host_listable=is_row_present,
                 )
                 return (
                     dormant.registration_id,

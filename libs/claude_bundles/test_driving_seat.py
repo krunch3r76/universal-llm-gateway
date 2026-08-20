@@ -91,15 +91,19 @@ def test_ensure_does_not_reuse_listable_hop(isolated_registry: Path) -> None:
     assert driving.registration_id in reg._store.load_active()
 
 
-def test_ensure_does_not_reuse_dormant_row(isolated_registry: Path) -> None:
+def test_ensure_relaunches_dormant_unbound_row(isolated_registry: Path) -> None:
     first = _ensure()
     active = reg._store.load_active()
     active[first.registration_id]["status"] = "dormant"
+    active[first.registration_id]["seat_lane"] = None
+    active[first.registration_id]["seat_closed_at"] = None
+    active[first.registration_id]["seat_bound_at"] = None
     reg._store.write_active(active)
+    reg._release_driver_lock(first.registration_id)
     again = _ensure()
-    assert again.registration_id != first.registration_id
+    assert again.registration_id == first.registration_id
+    assert len(reg._store.load_active()) == 1
     assert reg._store.load_active()[again.registration_id]["status"] == "active"
-    assert reg._store.load_active()[first.registration_id]["status"] == "dormant"
 
 
 def test_ensure_raises_when_two_listable_driving_rows_exist(

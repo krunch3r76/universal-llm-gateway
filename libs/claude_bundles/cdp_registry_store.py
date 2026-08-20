@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from claude_bundles.cdp_registry.models import seat_open
+
 REGISTRY_DIR = Path.home() / ".gateway" / "cdp-registry"
 # Same directory name as cursor_home._default_dispatch_home_root. Libs must
 # not import GIW; keep this fingerprint aligned if that root is renamed.
@@ -82,11 +84,13 @@ def _scoped_read(path: Path, *, label: str) -> RegistryRead:
 
 
 def ensure_dirs() -> None:
+    """Create the registry home and per-registration lock directory if missing."""
     REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
     REGISTRATIONS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def open_lock(path: Path) -> int:
+    """Open (or create) a lock file and return its file descriptor."""
     ensure_dirs()
     return os.open(str(path), os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o644)
 
@@ -113,13 +117,24 @@ def load_active() -> dict[str, dict[str, Any]]:
 
 
 def write_active(active: dict[str, dict[str, Any]]) -> None:
+    """Atomically replace ``active.json``, keeping any omitted ``seat_open`` rows.
+
+    I6: a dropped key whose prior row is still seat-open is restored from disk.
+    Callers that intend to drop a seat must persist ``seat_closed_at`` first.
+    """
     ensure_dirs()
+    prior, _present = _load_json_object(ACTIVE_JSON, label="active.json")
+    merged = dict(active)
+    for rid, row in prior.items():
+        if rid not in merged and isinstance(row, dict) and seat_open(row):
+            merged[rid] = row
     tmp = ACTIVE_JSON.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(active, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.write_text(json.dumps(merged, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(tmp, ACTIVE_JSON)
 
 
 def append_log(event: str, record: dict[str, Any]) -> None:
+    """Append one fsync'd registry log line named by *event*."""
     ensure_dirs()
     line = json.dumps({"event": event, "ts": time.time(), **record}, sort_keys=True)
     with REGISTRY_LOG.open("a", encoding="utf-8") as fh:
@@ -171,4 +186,5 @@ def read_session_transitions() -> list[dict[str, Any]]:
 
 
 def registration_lock_path(registration_id: str) -> Path:
+    """Return the flock path that serializes drivers for *registration_id*."""
     return REGISTRATIONS_DIR / f"{registration_id}.lock"

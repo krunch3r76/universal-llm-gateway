@@ -12,9 +12,10 @@ from claude_bundles import cdp_registry_store as _store
 
 from .models import (
     _CAPACITY_STATUSES,
-    _LISTABLE_STATUSES,
+    _HOST_LISTABLE_STATUSES,
     Registration,
     _row_to_registration,
+    seat_open,
 )
 
 _CSE_URL_MARKER = "claude.ai/cowork/cse_"
@@ -82,6 +83,7 @@ def bind_session_address(
             updated["target_id"] = target_id
         updated["chat_url_bound_at"] = time.time()
         active[registration_id] = updated
+        bound_row, released_rows = apply_driving_seat_bind(active, registration_id)
         _store.write_active(active)
         _store.append_log(
             "session_address_bound",
@@ -95,10 +97,110 @@ def bind_session_address(
         _append_lane_less_episode(
             url=url,
             registration_id=registration_id,
-            updated=updated,
+            updated=active[registration_id],
             execution_id=execution_id,
         )
+    _emit_seat_axis_events(bound_row, released_rows)
     return True
+
+
+def apply_driving_seat_bind(
+    active: dict[str, dict[str, Any]],
+    registration_id: str,
+    *,
+    now: float | None = None,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    """Mutate *active* to bind a driving-operator seat and close predecessors.
+
+    No-op when the row is not a driving operator (purpose not in
+    ``OPERATOR_PURPOSES`` or ``mission_kind == hop``) or ``parent_thread``
+    is empty. Caller must hold ``ports_lock``.
+    """
+    from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
+
+    row = active.get(registration_id)
+    if not isinstance(row, dict):
+        return None, []
+    purpose = str(row.get("purpose") or "").strip()
+    kind = str(row.get("mission_kind") or "root").strip().lower() or "root"
+    lane = str(row.get("parent_thread") or "").strip()
+    if not lane or purpose not in OPERATOR_PURPOSES or kind == "hop":
+        return None, []
+    ts = time.time() if now is None else now
+    newly_bound = not seat_open(row, lane)
+    updated = dict(row)
+    updated["seat_lane"] = lane
+    updated["seat_closed_at"] = None
+    if newly_bound:
+        updated["seat_bound_at"] = ts
+    active[registration_id] = updated
+    released: list[dict[str, Any]] = []
+    for other_id, other in list(active.items()):
+        if other_id == registration_id or not isinstance(other, dict):
+            continue
+        if seat_open(other, lane):
+            closed = dict(other)
+            closed["seat_closed_at"] = ts
+            closed["seat_close_reason"] = "superseded"
+            closed["superseded_by"] = registration_id
+            active[other_id] = closed
+            released.append(closed)
+    if not newly_bound and not released:
+        return None, []
+    return updated, released
+
+
+def bind_driving_seat(registration_id: str) -> None:
+    """Bind the driving-operator seat for *registration_id* under ``ports_lock``.
+
+    No-op when the row is not a driving operator or ``parent_thread`` is empty.
+    """
+    bound_row: dict[str, Any] | None = None
+    released_rows: list[dict[str, Any]] = []
+    with _store.ports_lock():
+        active = _store.load_active()
+        bound_row, released_rows = apply_driving_seat_bind(active, registration_id)
+        if bound_row is not None or released_rows:
+            _store.write_active(active)
+            _store.append_log(
+                "seat_lane_bound",
+                {
+                    "registration_id": registration_id,
+                    "seat_lane": (bound_row or {}).get("seat_lane"),
+                    "superseded": [r.get("registration_id") for r in released_rows],
+                },
+            )
+    _emit_seat_axis_events(bound_row, released_rows)
+
+
+def _emit_seat_axis_events(
+    bound_row: dict[str, Any] | None,
+    released_rows: list[dict[str, Any]],
+) -> None:
+    if bound_row is None and not released_rows:
+        return
+    lane = str((bound_row or (released_rows[0] if released_rows else {})).get("seat_lane") or "")
+    if bound_row is not None:
+        superseded = (
+            str(released_rows[0].get("registration_id") or "") if released_rows else None
+        )
+        with contextlib.suppress(Exception):
+            _events.emit(
+                _events.cdp_seat_lane_bound(
+                    registration_id=str(bound_row.get("registration_id") or ""),
+                    seat_lane=lane,
+                    superseded_registration_id=superseded or None,
+                )
+            )
+    for closed in released_rows:
+        with contextlib.suppress(Exception):
+            _events.emit(
+                _events.cdp_seat_lane_released(
+                    registration_id=str(closed.get("registration_id") or ""),
+                    seat_lane=str(closed.get("seat_lane") or lane),
+                    reason=str(closed.get("seat_close_reason") or "superseded"),
+                )
+            )
 
 
 def chat_url_for_registration(registration_id: str | None) -> str | None:
@@ -120,7 +222,7 @@ def list_active() -> list[Registration]:
     out = [
         _row_to_registration(row)
         for row in active.values()
-        if row.get("status") in _LISTABLE_STATUSES
+        if row.get("status") in _HOST_LISTABLE_STATUSES
     ]
     return sorted(out, key=lambda r: r.port)
 

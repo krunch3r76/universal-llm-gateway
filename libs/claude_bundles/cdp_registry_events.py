@@ -390,6 +390,48 @@ def cdp_seat_superseded(
 
 
 @event_factory
+def cdp_seat_lane_bound(
+    *,
+    registration_id: str,
+    seat_lane: str,
+    superseded_registration_id: str | None = None,
+) -> Event:
+    """Seat axis bound: this registration is the open driving seat for *seat_lane*."""
+    payload: dict[str, Any] = {
+        "registration_id": registration_id,
+        "seat_lane": seat_lane,
+    }
+    if superseded_registration_id:
+        payload["superseded_registration_id"] = superseded_registration_id
+    return Event(
+        signal="cdp.seat.lane_bound",
+        role="coordination",
+        scope="node",
+        payload=payload,
+    )
+
+
+@event_factory
+def cdp_seat_lane_released(
+    *,
+    registration_id: str,
+    seat_lane: str,
+    reason: str,
+) -> Event:
+    """Seat axis released: the registration no longer holds an open driving seat."""
+    return Event(
+        signal="cdp.seat.lane_released",
+        role="coordination",
+        scope="node",
+        payload={
+            "registration_id": registration_id,
+            "seat_lane": seat_lane,
+            "reason": reason,
+        },
+    )
+
+
+@event_factory
 def cdp_occupancy_overlap(*, lane: str, execution_ids: list[str]) -> Event:
     """Census OVERLAP: ≥2 operator-purpose streams on one recorded lane."""
     return Event(

@@ -1,29 +1,18 @@
-"""Ensure a watched lane has exactly one listable driving-operator registry row.
+"""Seat-axis-first driving operator seat: relaunch a dormant open seat; mint only when none exists.
 
-Census identity for request admission is listable operator-purpose rows on
-``parent_thread``. Hop ``register_lane`` births go dormant when Chrome
-releases; bus ``TYPE: SEAT_REGISTRATION`` is a projection of an already
-observed row and never creates one. The driving operator CSE (the Cowork/life
-window that actually holds the lane) must therefore call ``register_lane``
-with ``purpose=operator-proxy``, ``mission_kind=root``, and the lane as
-``parent_thread``.
-
-This module is that birth+reuse: mint once, reuse while listable, never
-promote dormant hops into listable, never pick-one when two listable
-driving rows already exist.
-
-Listable still means a Chrome process may hold the CSE
-(``active`` / ``orphaned_alive`` / ``retained``). Dormant stays excluded.
+``list_active()`` uniqueness is a host-allocation guard, not the seat census.
+Hop satellites (``mission_kind == hop``) never take the driving seat.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
 
-from .models import Registration, RegistryError
+from .models import STATUS_DORMANT, Registration, RegistryError, seat_open
 
 _LaunchFn = Callable[[int, Path], int]
 _ListenFn = Callable[[int], bool]
@@ -33,9 +22,14 @@ _ROOT_KIND = "root"
 
 
 def _is_driving_kind(mission_kind: str | None) -> bool:
-    """True when the row is a driving operator host, not a hop satellite."""
     kind = str(mission_kind or _ROOT_KIND).strip().lower()
     return kind != _HOP_KIND
+
+
+def _row_registration(row: dict[str, Any]) -> Registration:
+    from .models import _row_to_registration
+
+    return _row_to_registration(row)
 
 
 def ensure_driving_operator_seat(
@@ -49,20 +43,16 @@ def ensure_driving_operator_seat(
     launch_chrome: _LaunchFn | None = None,
     is_listening: _ListenFn | None = None,
 ) -> Registration:
-    """Return the single listable driving-operator row for *parent_thread*.
+    """Return the open driving-operator seat for *parent_thread*.
 
-    Reuses an existing listable operator-purpose non-hop row bound to the
-    lane. Mints via ``register_lane`` (emits ``cdp.port.registered``) when
-    none exists. Raises ``RegistryError`` when two listable driving rows
-    already share the lane — census must see N=2, not a silent pick-one.
-
-    Hop satellites on the same ``parent_thread`` are not reused: they go
-    dormant when Chrome releases, which is the hole this helper closes.
-    A listable hop is already visible to request-admission census (no
-    ``mission_kind`` filter). Reusing it here as the driving row would
-    collapse hop+driving overlap to N=1 and widen the 9499 turn-18 ruling.
+    Host-allocation guard first: two listable driving Chromes on the lane
+    raise ``RegistryError`` even when one is already an open seat. Then
+    seat-axis: open seat (relaunch if dormant) → unbound dormant operator
+    row (bind + relaunch) → existing single listable host (bind only) →
+    mint via ``register_lane``.
     """
     from claude_bundles import cdp_registry
+    from claude_bundles import cdp_registry_store as store
 
     parent = str(parent_thread or "").strip()
     if not parent:
@@ -76,22 +66,70 @@ def ensure_driving_operator_seat(
     kind = str(mission_kind or _ROOT_KIND).strip().lower() or _ROOT_KIND
     if kind == _HOP_KIND:
         raise RegistryError("driving operator seat cannot be mission_kind=hop")
+    url = (chat_url or "").strip() or None
 
-    matches = [
+    live = [
         lane
         for lane in cdp_registry.list_active()
         if (lane.purpose or "").strip() in OPERATOR_PURPOSES
         and str(lane.parent_thread or "").strip() == parent
         and _is_driving_kind(lane.mission_kind)
     ]
-    if len(matches) > 1:
-        ids = ", ".join(sorted(lane.registration_id for lane in matches))
+    if len(live) > 1:
+        ids = ", ".join(sorted(lane.registration_id for lane in live))
         raise RegistryError(
-            f"ambiguous listable driving operator seats on parent_thread={parent}: {ids}"
+            f"ambiguous listable driving operator hosts on parent_thread={parent}: {ids}"
         )
-    if len(matches) == 1:
-        found = matches[0]
-        url = (chat_url or "").strip()
+
+    active = store.load_active()
+    open_seats = [
+        (rid, row)
+        for rid, row in active.items()
+        if isinstance(row, dict) and seat_open(row, parent)
+    ]
+    if len(open_seats) > 1:
+        ids = ", ".join(sorted(rid for rid, _row in open_seats))
+        raise RegistryError(
+            f"ambiguous open driving seats on parent_thread={parent}: {ids}"
+        )
+    if len(open_seats) == 1:
+        rid, row = open_seats[0]
+        if row.get("status") == STATUS_DORMANT:
+            return cdp_registry.relaunch_dormant(
+                rid,
+                holder=holder,
+                launch_chrome=launch_chrome,
+                is_listening=is_listening,
+            )
+        if url:
+            cdp_registry.bind_session_address(rid, chat_url=url)
+        else:
+            cdp_registry.bind_driving_seat(rid)
+        return _row_registration(store.load_active()[rid])
+
+    dormant_unbound = [
+        (rid, row)
+        for rid, row in active.items()
+        if isinstance(row, dict)
+        and row.get("status") == STATUS_DORMANT
+        and str(row.get("parent_thread") or "").strip() == parent
+        and str(row.get("purpose") or "").strip() in OPERATOR_PURPOSES
+        and _is_driving_kind(row.get("mission_kind"))
+        and not seat_open(row)
+    ]
+    if dormant_unbound:
+        rid, _row = dormant_unbound[0]
+        cdp_registry.bind_driving_seat(rid)
+        return cdp_registry.relaunch_dormant(
+            rid,
+            holder=holder,
+            launch_chrome=launch_chrome,
+            is_listening=is_listening,
+        )
+
+    if len(live) == 1:
+        found = live[0]
+        cdp_registry.bind_driving_seat(found.registration_id)
         if url:
             cdp_registry.bind_session_address(found.registration_id, chat_url=url)
         return found
@@ -105,7 +143,7 @@ def ensure_driving_operator_seat(
         launch_chrome=launch_chrome,
         is_listening=is_listening,
     )
-    url = (chat_url or "").strip()
+    cdp_registry.bind_driving_seat(reg.registration_id)
     if url:
         cdp_registry.bind_session_address(reg.registration_id, chat_url=url)
-    return reg
+    return _row_registration(store.load_active()[reg.registration_id])

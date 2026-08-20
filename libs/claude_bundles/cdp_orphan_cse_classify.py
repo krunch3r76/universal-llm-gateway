@@ -89,7 +89,7 @@ def registration_id_for_profile(profile: Path) -> str | None:
     """Resolve a listable registry registration by its Chrome profile path."""
     resolved = profile.resolve()
     for rid, row in cdp_registry._load_active().items():
-        if row.get("status") not in cdp_registry._LISTABLE_STATUSES:
+        if row.get("status") not in cdp_registry._HOST_LISTABLE_STATUSES:
             continue
         row_profile = cdp_registry._profile_path_from_row(row)
         if row_profile is not None and row_profile.resolve() == resolved:

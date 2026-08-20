@@ -18,7 +18,6 @@ from universal_logging import get_logger
 from universal_protocol.errors import ProtocolError
 
 from claude_bundles.hop_cadence_id_map import claim_join_keys
-from claude_bundles.hop_cadence_seat_snap import identity_rows
 
 logger = get_logger(__name__)
 
@@ -53,24 +52,39 @@ def load_watches(path: Path | None = None) -> dict[str, dict[str, Any]]:
     return {str(k): dict(v) for k, v in raw.items() if isinstance(v, dict)}
 
 
+_HOST_RUNNING_STATUSES = frozenset({"pending", "running"})
+
+
+def _host_store_rows(snap: dict[str, Any]) -> list[dict[str, Any]]:
+    """Execution-store rows only — never identity_rows / seated_rows / seat_rows."""
+    rows = snap.get("rows")
+    if not isinstance(rows, list):
+        return []
+    return [row for row in rows if isinstance(row, dict)]
+
+
 def running_registration_ids(snap: dict[str, Any]) -> set[str]:
-    """Return registration ids for pending/running streams or registry-seated CSEs on this snap."""
+    """Return registration ids for pending/running execution-store streams on this snap.
+
+    Host-only: ignores seated_rows / identity_rows so a dormant or idle seated
+    CSE cannot refuse a successor hop (F6). Capture still uses identity_rows.
+    """
     out: set[str] = set()
-    for row in identity_rows(snap):
+    for row in _host_store_rows(snap):
         status = str(row.get("status") or "")
         reg_id = str(row.get("registration_id") or "").strip()
-        if reg_id and status in {"pending", "running"}:
+        if reg_id and status in _HOST_RUNNING_STATUSES:
             out.add(reg_id)
     return out
 
 
 def running_execution_ids(snap: dict[str, Any]) -> set[str]:
-    """Return execution ids for pending/running streams or registry-seated CSEs on this snap."""
+    """Return execution ids for pending/running execution-store streams on this snap."""
     out: set[str] = set()
-    for row in identity_rows(snap):
+    for row in _host_store_rows(snap):
         status = str(row.get("status") or "")
         exec_id = str(row.get("execution_id") or "").strip()
-        if exec_id and status in {"pending", "running"}:
+        if exec_id and status in _HOST_RUNNING_STATUSES:
             out.add(exec_id)
     return out
 
@@ -153,12 +167,11 @@ def refuse_cadence_hop_for_live_seat(
     row: dict[str, Any],
     snap: dict[str, Any],
 ) -> tuple[bool, str | None, dict[str, Any]]:
-    """Refuse a repeat cadence hop while the watched registration is seated.
+    """Refuse a repeat cadence hop while the watched registration has a live host stream.
 
-    Seating is the identity union (execution-store rows plus CSE-registry
-    seated rows). First hop (``last_hop_at`` unset) may fire against a live
-    aged seat; repeats while the same registration remains pending/running
-    or registry-seated are refused.
+    Host-only: refuse keys off ``running_registration_ids`` (execution-store
+    ``rows`` pending/running). Idle or dormant seated identity rows do not
+    refuse. First hop (``last_hop_at`` unset) is never refused here.
     """
     reg_id = str(row.get("registration_id") or "").strip()
     if not reg_id:

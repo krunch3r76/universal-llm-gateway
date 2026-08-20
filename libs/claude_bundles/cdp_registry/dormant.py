@@ -226,6 +226,9 @@ def relaunch_dormant(
         carry={
             "chat_url": chat_url,
             "relaunched_from_dormant_at": row.get("dormant_at"),
+            "seat_lane": row.get("seat_lane"),
+            "seat_closed_at": row.get("seat_closed_at"),
+            "seat_bound_at": row.get("seat_bound_at"),
         },
     )
     try:

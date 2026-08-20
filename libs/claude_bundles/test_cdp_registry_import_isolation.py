@@ -15,11 +15,12 @@ _LIBS_ROOT = Path(__file__).resolve().parents[1]
 
 _ISOLATION_SCRIPT = """
 import sys
-from claude_bundles.cdp_registry.models import _LISTABLE_STATUSES
+from claude_bundles.cdp_registry.models import _HOST_LISTABLE_STATUSES
 
 assert "claude_bundles.cdp_registry.dormant_drain" not in sys.modules
 assert "claude_bundles.cse_idle_probe" not in sys.modules
-assert _LISTABLE_STATUSES == frozenset({"active", "orphaned_alive", "retained"})
+assert _HOST_LISTABLE_STATUSES == frozenset({"active", "orphaned_alive", "retained"})
+assert "dormant" not in _HOST_LISTABLE_STATUSES
 """
 
 

@@ -274,7 +274,7 @@ def test_historical_registration_hides_proven_fields(monkeypatch, tmp_path: Path
     monkeypatch.setattr(cse_provenance.store, "REGISTRY_LOG", log)
     monkeypatch.setattr(cse_provenance.store, "REGISTRY_DIR", tmp_path)
     monkeypatch.setattr(
-        "claude_bundles.cse_provenance_resolve.is_host_listable",
+        "claude_bundles.cse_provenance_resolve.is_row_present",
         lambda _rid: False,
     )
     cse_provenance.append_episode(

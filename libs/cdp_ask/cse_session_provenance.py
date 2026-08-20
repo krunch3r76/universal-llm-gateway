@@ -6,7 +6,7 @@ from typing import Any
 
 from claude_bundles import cdp_registry
 from claude_bundles.cse_provenance import resolve as resolve_provenance
-from claude_bundles.cse_provenance_resolve import is_host_listable
+from claude_bundles.cse_provenance_resolve import is_row_present
 from claude_bundles.cse_url import normalize_cse_url
 
 from cdp_ask.cse_session_events import (
@@ -68,7 +68,7 @@ def _list_candidates() -> list[dict[str, Any]]:
         prov = resolve_provenance(
             chat_url=bound,
             registration_id=lane.registration_id,
-            host_listable=is_host_listable,
+            host_listable=is_row_present,
         )
         rows.append(
             {
@@ -86,7 +86,7 @@ def _list_candidates() -> list[dict[str, Any]]:
         prov = resolve_provenance(
             chat_url=seat.chat_url,
             registration_id=seat.registration_id,
-            host_listable=is_host_listable,
+            host_listable=is_row_present,
         )
         rows.append(
             {
@@ -148,7 +148,7 @@ async def resolve_public_provenance(
     raw = resolve_provenance(
         chat_url=chat_url,
         registration_id=registration_id,
-        host_listable=is_host_listable,
+        host_listable=is_row_present,
     )
     resolved = _project(
         raw,

@@ -23,9 +23,11 @@ _RESERVED_STATUSES = frozenset(
     }
 )
 _RECLAIMABLE_STATUSES = frozenset({"released", "orphaned_retry"})
-# Listable == "a Chrome process may still hold this CSE". Dormant is excluded so
-# no live-attachment consumer mistakes a released host for an open tab.
-_LISTABLE_STATUSES = frozenset({"active", "orphaned_alive", "retained"})
+# Host-listable == "a Chrome process may still hold this CSE". Dormant is
+# excluded so no live-attachment consumer mistakes a released host for an open
+# tab. Seat identity is a separate axis (``seat_open``); do not put ``seat`` on
+# this status set.
+_HOST_LISTABLE_STATUSES = frozenset({"active", "orphaned_alive", "retained"})
 # Occupancy axis — distinct from lifecycle status. Seating consults this set,
 # not ``status == "active"``. ``retained`` still occupies a host after
 # kill=False / hygiene keep; ``dormant`` does not (no Chrome). ``orphaned_alive``
@@ -101,6 +103,22 @@ def dormant_ttl_s() -> float:
 def dormant_max_rows() -> int:
     """Dormant row cap before oldest profiles are reclaimed (``CDP_DORMANT_MAX_ROWS``)."""
     return int(_positive_env_float("CDP_DORMANT_MAX_ROWS", _DEFAULT_DORMANT_MAX_ROWS))
+
+
+def seat_open(row: dict[str, Any], lane: str | None = None) -> bool:
+    """Return True when *row* holds an unclosed seat, optionally for *lane*.
+
+    ``seat_open(row, L) ≡ row.seat_lane == L ∧ row.seat_closed_at is None``.
+    Status is irrelevant: a dormant row may still be the driving seat.
+    """
+    seat_lane = str(row.get("seat_lane") or "").strip()
+    if not seat_lane:
+        return False
+    if row.get("seat_closed_at") is not None:
+        return False
+    if lane is not None and seat_lane != str(lane).strip():
+        return False
+    return True
 
 
 def _positive_env_float(name: str, default: float) -> float:

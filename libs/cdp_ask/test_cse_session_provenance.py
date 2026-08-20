@@ -22,7 +22,7 @@ async def test_claim_proven_separation(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(cse_provenance.store, "REGISTRY_LOG", log)
     monkeypatch.setattr(cse_provenance.store, "REGISTRY_DIR", tmp_path)
     monkeypatch.setattr(
-        "cdp_ask.cse_session_provenance.is_host_listable",
+        "cdp_ask.cse_session_provenance.is_row_present",
         lambda _reg: True,
     )
     cse_provenance.append_episode(
