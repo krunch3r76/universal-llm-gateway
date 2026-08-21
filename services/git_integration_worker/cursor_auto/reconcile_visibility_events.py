@@ -127,7 +127,45 @@ def emit_reconcile_rehydrate_exhausted(
     )
 
 
+@event_factory
+def GiwCursorAutoReconcileInflightLost(  # noqa: N802
+    job_id: str,
+    thread_id: str,
+    dispatch_id: str,
+) -> Event:
+    """A claimed+dispatched row had no bus closeout at startup honor consult."""
+    return Event(
+        signal="giw.cursor_auto.reconcile.inflight_lost",
+        payload={
+            "job_id": job_id,
+            "thread_id": thread_id,
+            "dispatch_id": dispatch_id,
+        },
+        scope="node",
+        role="observation",
+    )
+
+
+def emit_reconcile_inflight_lost(
+    *, job_id: str, thread_id: str, dispatch_id: str
+) -> None:
+    emit_frontier_event(
+        GiwCursorAutoReconcileInflightLost(
+            job_id=job_id,
+            thread_id=thread_id,
+            dispatch_id=dispatch_id,
+        )
+    )
+    logger.warning(
+        "cursor-auto reconcile inflight_lost job=%s thread=%s dispatch=%s",
+        job_id,
+        thread_id,
+        dispatch_id,
+    )
+
+
 __all__ = [
+    "emit_reconcile_inflight_lost",
     "emit_reconcile_rehydrate_exhausted",
     "emit_reconcile_rehydrated",
     "emit_reconcile_superseded",

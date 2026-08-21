@@ -21,6 +21,9 @@ from services.git_integration_worker.cursor_auto.job_ledger import (
     AutoJobLedger,
     get_ledger,
 )
+from services.git_integration_worker.cursor_auto.job_reconcile_honor import (
+    honor_claimed_dispatched_job,
+)
 from services.git_integration_worker.cursor_auto.queue import (
     AutoJob,
     AutoJobQueue,
@@ -35,7 +38,6 @@ from services.git_integration_worker.cursor_auto.silence_visibility_events impor
     emit_queue_owner_restart_bus_unposted,
 )
 from services.git_integration_worker.cursor_auto.terminal_reason_codec import (
-    TERMINAL_REASON_RECONCILE_INFLIGHT_LOST,
     TERMINAL_REASON_RESTART_RECONCILE_SUPERSEDED,
 )
 from services.git_integration_worker.cursor_bus import CursorBusClient
@@ -248,19 +250,13 @@ async def _terminalize_job(
         queue.mark_done(job.job_id, failed=False)
         return terminal
     if not is_never_dispatched(job.job_id):
-        terminal = ledger.mark_terminal(
-            job.job_id,
-            status="failed",
-            terminal_reason=TERMINAL_REASON_RECONCILE_INFLIGHT_LOST,
-        )
-        if terminal is None:
+        if not rehydrate:
             return None
-        queue.mark_done(
-            job.job_id,
-            failed=True,
-            terminal_reason=TERMINAL_REASON_RECONCILE_INFLIGHT_LOST,
+        return await honor_claimed_dispatched_job(
+            job,
+            queue=queue,
+            ledger=ledger,
         )
-        return terminal
     terminal = ledger.mark_terminal(
         job.job_id,
         status="failed",
