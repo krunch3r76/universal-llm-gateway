@@ -128,7 +128,9 @@ def _row_to_intent(row: sqlite3.Row) -> Intent:
         deadline_at=row["deadline_at"],
         last_seen_event_seq=row["last_seen_event_seq"],
         reason=row["reason"],
-        kill_boundary_at=row["kill_boundary_at"] if "kill_boundary_at" in keys else None,
+        kill_boundary_at=row["kill_boundary_at"]
+        if "kill_boundary_at" in keys
+        else None,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -229,6 +231,53 @@ class RestartIntentStore:
             )
             return int(cursor.rowcount)
 
+    def claim_kill(
+        self,
+        intent_id: str,
+        *,
+        worker_id: str,
+        worker_started_at: str,
+        drain_epoch: int,
+    ) -> bool:
+        """Generation-scoped kill-commit CAS (R3′).
+
+        Exactly one winner per ``(worker_id, worker_started_at, drain_epoch)``.
+        An intent already in ``drained_restarting`` for this generation is a
+        successful idempotent re-drive. A loser must route to
+        ``_resolve_non_kill`` — never call ``kill()``.
+        """
+        now = _now()
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = conn.execute(
+                """
+                SELECT intent_id FROM restart_intents
+                WHERE worker_id=? AND worker_started_at=? AND drain_epoch=?
+                  AND status=?
+                """,
+                (worker_id, worker_started_at, drain_epoch, STATUS_DRAINED_RESTARTING),
+            ).fetchone()
+            if existing is not None:
+                return str(existing["intent_id"]) == intent_id
+            try:
+                cursor = conn.execute(
+                    """
+                    UPDATE restart_intents
+                    SET status=?, updated_at=?
+                    WHERE intent_id=? AND status IN (?, ?)
+                    """,
+                    (
+                        STATUS_DRAINED_RESTARTING,
+                        now,
+                        intent_id,
+                        STATUS_PENDING_DRAIN,
+                        STATUS_TIMEOUT,
+                    ),
+                )
+            except sqlite3.IntegrityError:
+                return False
+            return int(cursor.rowcount) == 1
+
     def set_kill_boundary(self, intent_id: str, *, kill_boundary_at: str) -> None:
         self._update(intent_id, kill_boundary_at=kill_boundary_at)
 
@@ -311,7 +360,9 @@ class RestartIntentStore:
     def clear_open_fleet_windows(self) -> list[RestartWindow]:
         return self._windows.clear_open_fleet_windows()
 
-    def sweep_expired_windows(self, *, now: datetime | None = None) -> list[RestartWindow]:
+    def sweep_expired_windows(
+        self, *, now: datetime | None = None
+    ) -> list[RestartWindow]:
         return self._windows.sweep_expired_windows(now=now)
 
     def active_windows(self) -> list[RestartWindow]:

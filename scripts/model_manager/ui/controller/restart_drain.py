@@ -154,9 +154,7 @@ def _default_probes() -> dict[str, BusyProbe]:
     cfg = cdp_ask_url_config()
     if cfg is not None:
         _host, _port, base = cfg
-        probes["cdp_ask"] = HttpActiveWorkProbe(
-            base, "/v1/project-ask/drain-state"
-        )
+        probes["cdp_ask"] = HttpActiveWorkProbe(base, "/v1/project-ask/drain-state")
     return probes
 
 
@@ -403,9 +401,7 @@ async def run_gated_deferred(
 _SUPERVISE_TASKS: set[asyncio.Task[None]] = set()
 
 
-async def _await_intent_terminal(
-    store: Any, intent: Any, *, deadline_s: float
-) -> Any:
+async def _await_intent_terminal(store: Any, intent: Any, *, deadline_s: float) -> Any:
     loop = asyncio.get_running_loop()
     deadline = loop.time() + deadline_s
     intent_id = intent.intent_id
@@ -424,10 +420,20 @@ def _spawn_supervised(
     gate: RestartDrainGate, service: str, supervisor: Any, intent: Any
 ) -> None:
     async def _background() -> None:
+        released = False
+
+        async def release_once() -> None:
+            nonlocal released
+            if released:
+                return
+            released = True
+            await gate.release(service)
+
+        supervisor.on_timeout_mutex_release = release_once
         try:
             await supervisor.supervise(intent)
         finally:
-            await gate.release(service)
+            await release_once()
 
     task = asyncio.create_task(_background())
     _SUPERVISE_TASKS.add(task)

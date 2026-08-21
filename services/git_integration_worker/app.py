@@ -24,6 +24,7 @@ from services.git_integration_worker.config import WorkerConfig, load_config
 from services.git_integration_worker.cursor_auto.auto_worker_loop import (
     auto_concurrent_worker_loop,
     auto_worker_loop,
+    drain_blocks_new_auto_claims,
     orphan_scanner_loop,
 )
 from services.git_integration_worker.cursor_auto.closeout_outbox import (
@@ -39,6 +40,7 @@ from services.git_integration_worker.cursor_auto.hop_cadence import hop_cadence_
 from services.git_integration_worker.cursor_auto.job_reconcile import (
     shutdown_auto_jobs,
 )
+from services.git_integration_worker.cursor_auto.queue import set_drain_claim_gate
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
 )
@@ -127,6 +129,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         worker_started_at=worker_boot_ts,
     )
     app.state.admission_controller = controller
+    set_drain_claim_gate(lambda: drain_blocks_new_auto_claims(controller))
     cfg: WorkerConfig = load_config()
     app.state.worker_config = cfg
     app.state.worker_version = _resolve_version()

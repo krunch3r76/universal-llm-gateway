@@ -136,6 +136,8 @@ class AutoJobQueue:
 
     def claim_job(self, job_id: str) -> AutoJob | None:
         """Claim a specific queued job (continuity-hop concurrent path)."""
+        if drain_claim_gate_blocks():
+            return None
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None or job.status != "queued":
@@ -357,19 +359,34 @@ class AutoJobQueue:
         jobs stay listed while status remains ``claimed`` (CLOSEOUT still in
         flight). Callers must not hold ``self._lock``.
         """
+        ledger = self._ledger_client()
         with self._lock:
-            return [
-                {
-                    "kind": "cursor-auto",
-                    "op_id": job.job_id,
-                    "route": "cursor-auto/claimed",
-                    "state": "running",
-                    "thread_id": job.thread_id,
-                    "contract": job.contract,
-                }
-                for job in self._jobs.values()
-                if job.status == "claimed"
-            ]
+            claimed = [job for job in self._jobs.values() if job.status == "claimed"]
+        rows: list[dict[str, Any]] = []
+        for job in claimed:
+            entry: dict[str, Any] = {
+                "kind": "cursor-auto",
+                "op_id": job.job_id,
+                "route": "cursor-auto/claimed",
+                "state": "running",
+                "thread_id": job.thread_id,
+                "contract": job.contract,
+            }
+            if ledger is not None:
+                age = ledger.heartbeat_age_s(job.job_id)
+                if age is not None:
+                    entry["heartbeat_age_s"] = age
+            rows.append(entry)
+        return rows
+
+    def waiter_starvation(self) -> dict[str, Any]:
+        """Oldest serial waiter age + amber bit (R2′ harm gate)."""
+        from services.git_integration_worker.cursor_auto.waiter_visibility import (
+            waiter_starvation_from_memory,
+        )
+
+        with self._lock:
+            return waiter_starvation_from_memory(self._order, self._jobs)
 
     def pending_count(self) -> int:
         with self._lock:
@@ -485,6 +502,19 @@ class AutoJobQueue:
 
 
 _QUEUE = AutoJobQueue(durable=True)
+_drain_claim_gate: Any = None
+
+
+def set_drain_claim_gate(probe: Any) -> None:
+    """Install the drain latch used by ``claim_job`` (not ``claim_next``)."""
+    global _drain_claim_gate
+    _drain_claim_gate = probe
+
+
+def drain_claim_gate_blocks() -> bool:
+    """True when GIW is draining and ``claim_job`` must refuse."""
+    probe = _drain_claim_gate
+    return bool(probe is not None and probe())
 
 
 def get_queue() -> AutoJobQueue:
@@ -494,6 +524,7 @@ def get_queue() -> AutoJobQueue:
 
 def reset_queue_for_tests(*, durable: bool = True) -> AutoJobQueue:
     """Replace the process-global queue (hermetic tests only)."""
-    global _QUEUE
+    global _QUEUE, _drain_claim_gate
+    _drain_claim_gate = None
     _QUEUE = AutoJobQueue(durable=durable)
     return _QUEUE

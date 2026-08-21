@@ -18,11 +18,13 @@ from services.git_integration_worker import git_worker_drain_events as drain_eve
 from services.git_integration_worker.admission import WorkAdmissionController
 from services.git_integration_worker.app import create_app
 from services.git_integration_worker.cursor_auto.auto_worker_loop import (
+    drain_belt_fires,
     drain_blocks_new_auto_claims,
 )
 from services.git_integration_worker.cursor_auto.queue import (
     get_queue,
     reset_queue_for_tests,
+    set_drain_claim_gate,
 )
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 
@@ -149,3 +151,48 @@ def test_drain_blocks_new_auto_claims() -> None:
         reason="r", intent_id="i-block", drain_epoch=controller.next_epoch()
     )
     assert drain_blocks_new_auto_claims(controller) is True
+
+
+def test_claim_job_refused_while_draining() -> None:
+    """Third claim path (continuity hop) must not restock occupancy during drain."""
+    controller = _controller()
+    job = get_queue().enqueue(
+        thread_id="9530",
+        turn_number=1,
+        subject="hop",
+        body="TYPE: CONTINUITY_HANDOFF\n",
+        from_agent="cursor-auto",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="light-bounded",
+    )
+    controller.begin_drain(
+        reason="r", intent_id="i-hop", drain_epoch=controller.next_epoch()
+    )
+    set_drain_claim_gate(lambda: drain_blocks_new_auto_claims(controller))
+    assert get_queue().claim_job(job.job_id) is None
+    assert job.status == "queued"
+
+
+def test_drain_belt_requires_amber_and_stalled() -> None:
+    claimed = _claim_propagate_job()
+    controller = _controller()
+    controller.begin_drain(
+        reason="r", intent_id="i-belt", drain_epoch=controller.next_epoch()
+    )
+    controller._progress.stall_window_s = 0.0
+    waiter = get_queue().enqueue(
+        thread_id="9530-waiter",
+        turn_number=1,
+        subject="waiting",
+        body="contract: answer\n",
+        from_agent="cursor-auto",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="answer",
+    )
+    waiter.enqueued_at = waiter.enqueued_at - 200.0
+    assert claimed.status == "claimed"
+    assert drain_belt_fires(controller) is True

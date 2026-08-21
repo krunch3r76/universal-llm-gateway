@@ -104,6 +104,8 @@ def _request_impl(
     lane: str | None = None,
     parent_thread: str | None = None,
     lane_role: str | None = None,
+    prompt_uri: str | None = None,
+    advisor_brief: str | None = None,
 ) -> dict[str, Any]:
     """Write turn via send path, then arm/enqueue Auto when live."""
     from pager_notify.so_what import resolve_so_what_summary
@@ -230,6 +232,8 @@ def _request_impl(
         escalation=escalation,
         continuity_hop=continuity_hop,
         lane=lane,
+        prompt_uri=prompt_uri,
+        advisor_brief=advisor_brief,
     )
     if not enq.get("ok"):
         reason = enqueue_failure_reason(enq)
@@ -361,6 +365,8 @@ def _request_dispatch(
     lane: str | None = None,
     parent_thread: str | None = None,
     lane_role: str | None = None,
+    prompt_uri: str | None = None,
+    advisor_brief: str | None = None,
 ) -> dict[str, Any]:
     """Validate + dispatch ``agent_bus.request``.
 
@@ -388,6 +394,10 @@ def _request_dispatch(
     bus-thread lane; both must be supplied together. Distinct from tag
     ``lane:cursor-auto``. Invalid values reject 422 ``request_lane_invalid``
     before the turn is written.
+
+    ``prompt_uri`` / ``advisor_brief``: sealed advisor brief for CDP escalation.
+    GIW ``AutoJob`` already stores these; omitting them on this surface ships
+    ``job.body`` instead (``prompt_source=job.body``).
     """
     if isinstance(thread, int):
         thread = str(thread)
@@ -472,5 +482,7 @@ def _request_dispatch(
         lane=checkout_lane,
         parent_thread=parent_thread,
         lane_role=lane_role,
+        prompt_uri=prompt_uri,
+        advisor_brief=advisor_brief,
     )
     return stamp_contract_deprecation(result, intake)

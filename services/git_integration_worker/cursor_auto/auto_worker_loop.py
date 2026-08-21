@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import signal
 from typing import Any
 
 from universal_logging import get_logger
@@ -32,6 +34,30 @@ def drain_blocks_new_auto_claims(controller: Any | None) -> bool:
     that occupancy and can postpone SIGTERM until the queue empties.
     """
     return controller is not None and bool(controller.is_draining())
+
+
+def drain_belt_fires(controller: Any | None) -> bool:
+    """R2′ belt: ``_draining ∧ amber ∧ stalled`` (never bare amber)."""
+    if not drain_blocks_new_auto_claims(controller):
+        return False
+    waiter = get_queue().waiter_starvation()
+    if not waiter.get("amber"):
+        return False
+    snap = controller.drain_state()
+    return bool(snap.get("stalled"))
+
+
+def request_giw_belt_exit(*, reason: str) -> None:
+    """Fail-closed GIW self-exit — join-invariant second disjunct.
+
+    SIGTERM this process so the drain latch dies with the generation. Tests
+    monkeypatch this callable; production must not ``release_drain``.
+    """
+    from services.git_integration_worker import git_worker_drain_events as drain_events
+
+    drain_events.emit_drain_belt_exit(reason=reason)
+    logger.critical("giw drain belt exit: %s", reason)
+    os.kill(os.getpid(), signal.SIGTERM)
 
 
 async def auto_worker_loop(app: Any) -> None:
@@ -66,6 +92,8 @@ async def auto_worker_loop(app: Any) -> None:
                 registry.heartbeat(_HANDLER_ID)
                 controller = getattr(app.state, "admission_controller", None)
                 if drain_blocks_new_auto_claims(controller):
+                    if drain_belt_fires(controller):
+                        request_giw_belt_exit(reason="draining_amber_stalled")
                     controller.recheck_drain_idle()
                     await asyncio.sleep(_WORKER_INTERVAL_S)
                     continue
@@ -132,6 +160,8 @@ async def auto_concurrent_worker_loop(app: Any) -> None:
         try:
             controller = getattr(app.state, "admission_controller", None)
             if drain_blocks_new_auto_claims(controller):
+                if drain_belt_fires(controller):
+                    request_giw_belt_exit(reason="draining_amber_stalled")
                 controller.recheck_drain_idle()
                 await asyncio.sleep(_CONCURRENT_POLL_INTERVAL_S)
                 continue

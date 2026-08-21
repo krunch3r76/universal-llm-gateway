@@ -46,7 +46,11 @@ from services.git_integration_worker.cursor_auto.propagate_admission import (
     PROPAGATE_CONTRACT,
     admit_propagate_body,
 )
-from services.git_integration_worker.cursor_auto.queue import AutoJob, AutoJobQueue
+from services.git_integration_worker.cursor_auto.queue import (
+    AutoJob,
+    AutoJobQueue,
+    drain_claim_gate_blocks,
+)
 from services.git_integration_worker.cursor_auto.reflex_events import (
     emit_cdp_effort_bind,
 )
@@ -373,6 +377,12 @@ async def run_continuity_hop_concurrent(
     incumbent: AutoJob | None = None,
 ) -> dict[str, Any]:
     """Claim hop (if still queued), then commission CDP — leave any incumbent."""
+    if drain_claim_gate_blocks():
+        logger.warning(
+            "continuity hop skipped — drain live job=%s",
+            job.job_id,
+        )
+        return {"ok": False, "reason": "drain_blocks_claim"}
     claimed = queue.claim_job(job.job_id)
     if claimed is None:
         logger.warning(

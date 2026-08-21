@@ -185,3 +185,20 @@ def emit_admission_rejected(
             drain_epoch=drain_epoch,
         )
     )
+
+
+@event_factory
+def GitWorkerDrainBeltExit(  # noqa: N802
+    reason: str,
+) -> Event:
+    return Event(
+        signal="git_worker.drain.belt.exit",
+        payload={"reason": reason},
+        scope="node",
+    )
+
+
+def emit_drain_belt_exit(*, reason: str) -> None:
+    """GIW self-exit under the R2′ belt (join-invariant second disjunct)."""
+    _emit(GitWorkerDrainBeltExit(reason=reason))
+    logger.critical("git-worker drain belt exit: reason=%s", reason)

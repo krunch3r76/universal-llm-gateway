@@ -215,6 +215,8 @@ def enqueue_auto_job(
     cse_registration_id: str | None = None,
     continuity_hop: bool = False,
     lane: str | None = None,
+    prompt_uri: str | None = None,
+    advisor_brief: str | None = None,
     base_url: str | None = None,
     timeout_s: float = 10.0,
 ) -> dict[str, Any]:
@@ -248,6 +250,10 @@ def enqueue_auto_job(
         payload["continuity_hop"] = True
     if lane:
         payload["lane"] = lane
+    if prompt_uri:
+        payload["prompt_uri"] = prompt_uri
+    if advisor_brief:
+        payload["advisor_brief"] = advisor_brief
     try:
         with httpx.Client(timeout=timeout_s) as client:
             resp = client.post(url, json=payload)

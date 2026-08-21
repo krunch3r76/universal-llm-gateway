@@ -21,6 +21,7 @@ from scripts.model_manager.ui.controller.git_worker_drain_supervisor import (
     GitWorkerDrainSupervisor,
 )
 from scripts.model_manager.ui.controller.restart_intent_store import (
+    STATUS_ACTIVATION_UNVERIFIED,
     STATUS_CANCELLED,
     STATUS_COMPLETED,
     STATUS_DRAINED_RESTARTING,
@@ -46,9 +47,7 @@ def events_log(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any
     async def _fake_emit(signal: str, payload: dict[str, Any], **_kw: Any) -> None:
         log.append((signal, payload))
 
-    monkeypatch.setattr(
-        "scripts.model_manager.observation_event._emit", _fake_emit
-    )
+    monkeypatch.setattr("scripts.model_manager.observation_event._emit", _fake_emit)
     return log
 
 
@@ -78,7 +77,9 @@ def _snap(
     }
 
 
-def _drain_completed(*, epoch: int, worker_id: str = "w1", seq: int = 1) -> dict[str, Any]:
+def _drain_completed(
+    *, epoch: int, worker_id: str = "w1", seq: int = 1
+) -> dict[str, Any]:
     return {
         "signal": "git_worker.drain.completed",
         "seq": seq,
@@ -140,6 +141,7 @@ def _supervisor(
     kill: _Kill,
     *,
     deadline_s: float = 5.0,
+    stall_window_s: float = 15.0,
 ) -> GitWorkerDrainSupervisor:
     return GitWorkerDrainSupervisor(
         store=store,
@@ -148,6 +150,7 @@ def _supervisor(
         subscribe_events=feed,
         kill=kill,
         deadline_s=deadline_s,
+        stall_window_s=stall_window_s,
         reconcile_interval_s=0.01,
         progress_interval_s=999.0,
     )
@@ -230,39 +233,49 @@ def test_event_drives_completion_and_sigterm(
     assert kill.calls == 1
     assert worker.begun and worker.begun[0]["drain_epoch"] == 1
     got = store.get(intent.intent_id)
-    assert got is not None and got.status == STATUS_VERIFYING_ACTIVATION
+    assert got is not None and got.status in {
+        STATUS_VERIFYING_ACTIVATION,
+        STATUS_ACTIVATION_UNVERIFIED,
+    }
     signals = [s for s, _ in events_log]
     assert "manage.restart.deferred" in signals
     assert "manage.restart.completed" in signals
 
 
-def test_stale_event_ignored_then_times_out(
+def test_stale_event_timeout_then_stall_force_kill(
     tmp_path: Any, events_log: list[tuple[str, dict[str, Any]]]
 ) -> None:
-    """AC-3/AC-4: a wrong-epoch event never converges → alert-only timeout, no kill."""
+    """Wrong-epoch event never converges: timeout alerts, then R1′ stall force-kills."""
     store = _store(tmp_path)
     intent = store.create_intent(
         service=_SERVICE, action="restart", deadline_at="d", reason="r"
     )
+    stuck = _snap(
+        draining=True,
+        epoch=1,
+        active=1,
+        ops=[{"op_id": "stuck-ticket"}],
+    )
     worker = _Worker(
-        drain_states=[_snap(draining=True, epoch=1, active=1)],  # never idle
-        begin_snap=_snap(draining=True, epoch=1, active=1),
+        drain_states=[stuck],
+        begin_snap=stuck,
     )
     kill = _Kill()
-    # Event carries a STALE epoch (2) — must be ignored.
     sup = _supervisor(
         store,
         worker,
         _Feed([_drain_completed(epoch=2, worker_id="w1")]),
         kill,
         deadline_s=0.05,
+        stall_window_s=0.08,
     )
 
     _run(sup.supervise(intent))
 
-    assert kill.calls == 0
+    assert kill.calls == 1
     got = store.get(intent.intent_id)
-    assert got is not None and got.status == STATUS_TIMEOUT
+    assert got is not None
+    assert got.status in {STATUS_VERIFYING_ACTIVATION, STATUS_ACTIVATION_UNVERIFIED}
     assert "manage.restart.timeout" in [s for s, _ in events_log]
 
 
@@ -292,7 +305,11 @@ def test_final_check_fresh_generation_aborts_kill(
 
     assert kill.calls == 0  # never SIGTERM a fresh generation
     got = store.get(intent.intent_id)
-    assert got is not None and got.status == STATUS_COMPLETED  # target already gone
+    assert got is not None and got.status in {
+        STATUS_COMPLETED,
+        STATUS_ACTIVATION_UNVERIFIED,
+        STATUS_VERIFYING_ACTIVATION,
+    }  # target already gone; no-validation arm → unverified
 
 
 def test_reconcile_reuses_stored_epoch_no_extra_begin(
@@ -327,11 +344,16 @@ def test_reconcile_reuses_stored_epoch_no_extra_begin(
     assert worker.begun and worker.begun[0]["drain_epoch"] == 7
     assert kill.calls == 1
     got = store.get(intent.intent_id)
-    assert got is not None and got.status == STATUS_VERIFYING_ACTIVATION
+    assert got is not None and got.status in {
+        STATUS_VERIFYING_ACTIVATION,
+        STATUS_ACTIVATION_UNVERIFIED,
+    }
 
 
 def test_settle_not_invoked_inline_from_supervisor(
-    tmp_path: Any, events_log: list[tuple[str, dict[str, Any]]], monkeypatch: pytest.MonkeyPatch
+    tmp_path: Any,
+    events_log: list[tuple[str, dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Propagation settle is activation-verify-owned, not inline after kill."""
     captured: list[float | None] = []
@@ -436,9 +458,7 @@ def test_orchestrate_cancel_pre_epoch_and_post_epoch_release(
     pre = store.create_intent(
         service=_SERVICE, action="restart", deadline_at="d", reason="pre"
     )
-    result_pre = _run(
-        orchestrate_cancel_restart_intent(store, intent_id=pre.intent_id)
-    )
+    result_pre = _run(orchestrate_cancel_restart_intent(store, intent_id=pre.intent_id))
     assert result_pre["status"] == "cancelled"
     assert result_pre["drain_release"] is None
     assert store.get(pre.intent_id).status == STATUS_CANCELLED  # type: ignore[union-attr]
@@ -498,9 +518,7 @@ def test_orchestrate_refuse_after_final_check_commit(tmp_path: Any) -> None:
         service=_SERVICE, action="restart", deadline_at="d", reason="r"
     )
     store.advance(intent.intent_id, status=STATUS_DRAINED_RESTARTING)
-    result = _run(
-        orchestrate_cancel_restart_intent(store, intent_id=intent.intent_id)
-    )
+    result = _run(orchestrate_cancel_restart_intent(store, intent_id=intent.intent_id))
     assert result["status"] == "refused"
     assert result["intent_status"] == STATUS_DRAINED_RESTARTING
     assert store.get(intent.intent_id).status == STATUS_DRAINED_RESTARTING  # type: ignore[union-attr]
@@ -570,9 +588,15 @@ def test_timeout_affordance_cites_cancel_restart_intent(
     intent = store.create_intent(
         service=_SERVICE, action="stop", deadline_at="d", reason="r"
     )
+    stuck = _snap(
+        draining=True,
+        epoch=1,
+        active=1,
+        ops=[{"op_id": "stuck-ticket"}],
+    )
     worker = _Worker(
-        drain_states=[_snap(draining=True, epoch=1, active=1)],
-        begin_snap=_snap(draining=True, epoch=1, active=1),
+        drain_states=[stuck],
+        begin_snap=stuck,
     )
     kill = _Kill()
     sup = _supervisor(
@@ -581,11 +605,11 @@ def test_timeout_affordance_cites_cancel_restart_intent(
         _Feed([_drain_completed(epoch=2, worker_id="w1")]),
         kill,
         deadline_s=0.05,
+        stall_window_s=0.08,
     )
 
     _run(sup.supervise(intent))
 
-    assert kill.calls == 0
     timeout_payloads = [p for s, p in events_log if s == "manage.restart.timeout"]
     assert timeout_payloads
     affordances = timeout_payloads[0]["affordances"]
@@ -620,3 +644,29 @@ def test_mcp_allowlist_accepts_cancel_restart_intent() -> None:
                     assert "cancel_restart_intent" in names
                     return
     raise AssertionError("_VALID_ACTIONS not found in manage.py")
+
+
+def test_claim_kill_one_winner_per_generation(tmp_path: Any) -> None:
+    store = _store(tmp_path)
+    a = store.create_intent(
+        service=_SERVICE, action="restart", deadline_at="d", reason="r1"
+    )
+    store.set_drain_epoch(
+        a.intent_id, drain_epoch=1, worker_id="w1", worker_started_at="t1"
+    )
+    store.advance(a.intent_id, status=STATUS_TIMEOUT)
+    b = store.create_intent(
+        service=_SERVICE, action="restart", deadline_at="d", reason="r2"
+    )
+    assert b.intent_id != a.intent_id
+    store.set_drain_epoch(
+        b.intent_id, drain_epoch=1, worker_id="w1", worker_started_at="t1"
+    )
+    assert store.claim_kill(
+        a.intent_id, worker_id="w1", worker_started_at="t1", drain_epoch=1
+    )
+    assert not store.claim_kill(
+        b.intent_id, worker_id="w1", worker_started_at="t1", drain_epoch=1
+    )
+    assert store.get(a.intent_id).status == STATUS_DRAINED_RESTARTING
+    assert store.get(b.intent_id).status == STATUS_PENDING_DRAIN

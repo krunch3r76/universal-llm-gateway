@@ -31,12 +31,16 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from universal_logging import get_logger
 
 from scripts.model_manager import observation_event as events
+from services.git_integration_worker.drain_progress import (
+    STALL_WINDOW_S,
+    OccupancyProgressTracker,
+)
 
 from .restart_intent_store import (
     STATUS_CANCELLED,
@@ -73,6 +77,7 @@ CancelDrainCaller = Callable[[str, int], Awaitable[dict[str, Any]]]
 _AWAIT_CONVERGED = "converged"
 _AWAIT_TIMEOUT = "timeout"
 _AWAIT_CANCELLED = "cancelled"
+_AWAIT_STALLED = "stalled"
 
 
 def _field(ev: dict[str, Any], key: str) -> Any:
@@ -113,7 +118,10 @@ class GitWorkerDrainSupervisor:
     deadline_s: float = _DEFAULT_DEADLINE_S
     reconcile_interval_s: float = _DEFAULT_RECONCILE_INTERVAL_S
     progress_interval_s: float = _DEFAULT_PROGRESS_INTERVAL_S
+    stall_window_s: float = STALL_WINDOW_S
+    on_timeout_mutex_release: Callable[[], Awaitable[None]] | None = None
     _settle_boundary_monotonic: float | None = None
+    _progress_tracker: OccupancyProgressTracker | None = field(default=None, repr=False)
 
     async def supervise(self, intent: Intent) -> None:
         """Drive one intent from begin-drain to SIGTERM (or alert-only timeout).
@@ -126,18 +134,31 @@ class GitWorkerDrainSupervisor:
         self._settle_boundary_monotonic = None
         t0 = time.monotonic()
         deadline = t0 + self.deadline_s
+        self._progress_tracker = OccupancyProgressTracker(
+            stall_window_s=self.stall_window_s
+        )
+        self._progress_tracker.reset(t0)
+        timeout_alerted = False
         try:
             intent = await self._begin_drain(intent)
             if self._intent_cancelled(intent):
                 await self._on_cancelled(intent)
                 return
-            outcome = await self._await_drain_completed(intent, deadline, t0)
-            if outcome == _AWAIT_CANCELLED:
-                await self._on_cancelled(intent)
-                return
-            if outcome == _AWAIT_TIMEOUT:
-                await self._on_timeout(intent)
-                return
+            while True:
+                outcome = await self._await_drain_completed(intent, deadline, t0)
+                if outcome == _AWAIT_CANCELLED:
+                    await self._on_cancelled(intent)
+                    return
+                if outcome == _AWAIT_TIMEOUT:
+                    if not timeout_alerted:
+                        await self._on_timeout(intent)
+                        timeout_alerted = True
+                    deadline = time.monotonic() + _DEFAULT_DEADLINE_S
+                    continue
+                if outcome == _AWAIT_STALLED:
+                    await self._force_kill_from_stall(intent, t0)
+                    return
+                break
             if self._intent_cancelled(intent):
                 await self._on_cancelled(intent)
                 return
@@ -148,9 +169,9 @@ class GitWorkerDrainSupervisor:
             if not ok:
                 await self._resolve_non_kill(intent, snapshot)
                 return
-            # Kill commit: advance BEFORE emit so cancel refuses for the entire
-            # post-final-ok window (survival condition 2).
-            self.store.advance(intent.intent_id, status=STATUS_DRAINED_RESTARTING)
+            if not self._claim_kill(intent):
+                await self._resolve_non_kill(intent, snapshot)
+                return
             await events.emit_manage_restart_drain_completed(
                 intent_id=intent.intent_id,
                 drain_epoch=intent.drain_epoch or 0,
@@ -160,9 +181,7 @@ class GitWorkerDrainSupervisor:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — supervisor must not crash the loop
-            logger.exception(
-                "drain supervisor failed: intent_id=%s", intent.intent_id
-            )
+            logger.exception("drain supervisor failed: intent_id=%s", intent.intent_id)
             current = self.store.get(intent.intent_id)
             if current is not None and current.status == STATUS_CANCELLED:
                 return
@@ -249,6 +268,8 @@ class GitWorkerDrainSupervisor:
                     await self._emit_progress(intent, now - start)
                     last_progress = now
                 snapshot = await self._safe_drain_state()
+                if snapshot is not None and self._snapshot_stalled(snapshot, now):
+                    return _AWAIT_STALLED
                 if snapshot is not None and self._drain_state_matches(snapshot, intent):
                     return _AWAIT_CONVERGED
                 if agen is None:
@@ -355,10 +376,12 @@ class GitWorkerDrainSupervisor:
             ],
         )
         logger.warning(
-            "deferred git-worker restart timed out (alert-only, no kill): "
+            "deferred git-worker restart timed out (alert-only; keep-await continues): "
             "intent_id=%s",
             intent.intent_id,
         )
+        if self.on_timeout_mutex_release is not None:
+            await self.on_timeout_mutex_release()
 
     async def _resolve_non_kill(
         self, intent: Intent, snapshot: dict[str, Any] | None
@@ -370,7 +393,9 @@ class GitWorkerDrainSupervisor:
             if await arm_verify_after_generation_gone(self.store, intent):
                 return
             self.store.advance(intent.intent_id, status=STATUS_COMPLETED)
-            await events.emit_manage_restart_completed(intent_id=intent.intent_id, duration_s=0.0)
+            await events.emit_manage_restart_completed(
+                intent_id=intent.intent_id, duration_s=0.0
+            )
             logger.info(
                 "drain target worker generation already gone; intent completed "
                 "without kill: intent_id=%s",
@@ -384,6 +409,46 @@ class GitWorkerDrainSupervisor:
         )
 
     # ----------------------------------------------------------- predicates
+    def _snapshot_stalled(self, snap: dict[str, Any], now_mono: float) -> bool:
+        """Prefer GIW ``stalled``; fall back to a local tracker for old snapshots."""
+        if "stalled" in snap:
+            return bool(snap["stalled"])
+        tracker = self._progress_tracker
+        if tracker is None:
+            return False
+        ops = snap.get("active_ops") or []
+        return tracker.stalled(ops, now_mono=now_mono)
+
+    def _claim_kill(self, intent: Intent) -> bool:
+        if (
+            not intent.worker_id
+            or not intent.worker_started_at
+            or intent.drain_epoch is None
+        ):
+            return False
+        return self.store.claim_kill(
+            intent.intent_id,
+            worker_id=intent.worker_id,
+            worker_started_at=intent.worker_started_at,
+            drain_epoch=intent.drain_epoch,
+        )
+
+    async def _force_kill_from_stall(self, intent: Intent, t0: float) -> None:
+        """R1′ occupied-stall or R2′ completed-unconsumed: force SIGTERM via CAS."""
+        snapshot = await self._safe_drain_state()
+        if snapshot is not None and self._generation_gone(snapshot, intent):
+            await self._resolve_non_kill(intent, snapshot)
+            return
+        if not self._claim_kill(intent):
+            await self._resolve_non_kill(intent, snapshot)
+            return
+        await events.emit_manage_restart_drain_completed(
+            intent_id=intent.intent_id,
+            drain_epoch=intent.drain_epoch or 0,
+            worker_id=intent.worker_id,
+        )
+        await self._sigterm(intent, t0)
+
     def _intent_cancelled(self, intent: Intent) -> bool:
         current = self.store.get(intent.intent_id)
         return current is not None and current.status == STATUS_CANCELLED
@@ -425,9 +490,7 @@ class GitWorkerDrainSupervisor:
                     "route": op.get("route"),
                     "admitted_at": admitted_at,
                     "admitted_during_drain": bool(
-                        drain_started
-                        and admitted_at
-                        and admitted_at > drain_started
+                        drain_started and admitted_at and admitted_at > drain_started
                     ),
                 }
             )

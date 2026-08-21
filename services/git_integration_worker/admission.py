@@ -30,6 +30,7 @@ from universal_logging import get_logger
 
 from services.git_integration_worker import git_worker_drain_events as drain_events
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
+from services.git_integration_worker.drain_progress import OccupancyProgressTracker
 
 logger = get_logger(__name__)
 
@@ -126,6 +127,9 @@ class WorkAdmissionController:
     _tickets: dict[str, Ticket] = field(default_factory=dict)
     _tracked_tasks: set[asyncio.Task[Any]] = field(default_factory=set)
     _completed_epochs: set[int] = field(default_factory=set)
+    _progress: OccupancyProgressTracker = field(
+        default_factory=OccupancyProgressTracker
+    )
 
     # ------------------------------------------------------------------ admit
     def try_admit(self, kind: str, *, op_id: str, route: str) -> Ticket:
@@ -239,6 +243,8 @@ class WorkAdmissionController:
                     "subject_preview",
                     "thread_id",
                     "started_at",
+                    "last_heartbeat_at",
+                    "heartbeat_age_s",
                 ):
                     if proj.get(key) is not None and entry.get(key) is None:
                         entry[key] = proj[key]
@@ -291,6 +297,7 @@ class WorkAdmissionController:
             and self._drain_epoch == drain_epoch
         ):
             return self.drain_state()  # idempotent re-drive, no re-emit
+        self._progress.reset(time.monotonic())
         self._draining = True
         self._drain_epoch = drain_epoch
         self._intent_id = intent_id
@@ -385,6 +392,12 @@ class WorkAdmissionController:
 
     def drain_state(self) -> dict[str, Any]:
         """One-shot snapshot for Phase-2's final epoch-check before SIGTERM."""
+        ops = self.active_ops()
+        stalled = (
+            self._progress.stalled(ops, now_mono=time.monotonic())
+            if self._draining
+            else False
+        )
         return {
             "draining": self._draining,
             "drain_epoch": self._drain_epoch,
@@ -392,8 +405,9 @@ class WorkAdmissionController:
             "worker_id": self.worker_id,
             "pid": self.pid,
             "worker_started_at": self.worker_started_at,
-            "active_count": self.active_count(),
-            "active_ops": self.active_ops(),
+            "active_count": len(ops),
+            "active_ops": ops,
+            "stalled": stalled,
             "deadline_at": self._deadline_at.isoformat() if self._deadline_at else None,
             "drain_started_at": (
                 self._drain_started_at.isoformat() if self._drain_started_at else None
@@ -423,6 +437,7 @@ class WorkAdmissionController:
         if self.active_count() != 0:
             return
         self._completed_epochs.add(self._drain_epoch)
+        self._progress.note_completed(time.monotonic())
         drain_events.emit_drain_completed(
             intent_id=self._intent_id,
             drain_epoch=self._drain_epoch,

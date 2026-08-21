@@ -312,6 +312,7 @@ def test_drain_state_shape(events: SimpleNamespace) -> None:
         "deadline_at",
         "drain_started_at",
         "drain_started_monotonic",
+        "stalled",
     }
     assert state["draining"] is False
     assert state["active_count"] == 0

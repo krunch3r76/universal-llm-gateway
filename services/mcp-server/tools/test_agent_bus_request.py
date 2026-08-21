@@ -288,7 +288,12 @@ def test_request_posted_emit_carries_ledger_request_id():
         patch("tools.agent_bus.request._send_dispatch", return_value=send_payload),
         patch(
             "tools.agent_bus.request.probe_auto_liveness",
-            return_value={"live": True, "reason": "ok", "attempts": 1, "elapsed_s": 0.0},
+            return_value={
+                "live": True,
+                "reason": "ok",
+                "attempts": 1,
+                "elapsed_s": 0.0,
+            },
         ),
         patch(
             "tools.agent_bus.request.enqueue_auto_job",
@@ -341,7 +346,12 @@ def test_request_promotes_same_thread_lane_counts():
         patch("tools.agent_bus.request._send_dispatch", return_value=send_payload),
         patch(
             "tools.agent_bus.request.probe_auto_liveness",
-            return_value={"live": True, "reason": "ok", "attempts": 1, "elapsed_s": 0.0},
+            return_value={
+                "live": True,
+                "reason": "ok",
+                "attempts": 1,
+                "elapsed_s": 0.0,
+            },
         ),
         patch(
             "tools.agent_bus.request.enqueue_auto_job",
@@ -647,6 +657,44 @@ def test_enqueue_includes_lane_when_set() -> None:
     assert payload["lane"] == "A"
 
 
+def test_enqueue_includes_prompt_uri_when_set() -> None:
+    from tools.agent_bus.request_worker_client import enqueue_auto_job
+
+    with patch("tools.agent_bus.request_worker_client.httpx.Client") as client_cls:
+        client = client_cls.return_value.__enter__.return_value
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.content = b'{"ok": true}'
+        resp.json.return_value = {"ok": True}
+        client.post.return_value = resp
+        enqueue_auto_job(
+            thread_id="9530",
+            turn_number=1,
+            subject="s",
+            body="b",
+            from_agent="web-anthropic",
+            to_agent="cursor",
+            desired_model="auto",
+            desired_effort="medium",
+            contract="confer",
+            prompt_uri="cortex://notes/system/threads/9530-brief.md",
+            advisor_brief="sealed",
+        )
+    payload = client.post.call_args.kwargs["json"]
+    assert payload["prompt_uri"] == "cortex://notes/system/threads/9530-brief.md"
+    assert payload["advisor_brief"] == "sealed"
+
+
+def test_request_dispatch_accepts_prompt_uri() -> None:
+    import inspect
+
+    from tools.agent_bus.request import _request_dispatch
+
+    params = inspect.signature(_request_dispatch).parameters
+    assert "prompt_uri" in params
+    assert "advisor_brief" in params
+
+
 _CSE_URL = "https://claude.ai/cowork/cse_01CodB7tom1281iY8BmZJcZM"
 
 
@@ -777,4 +825,3 @@ def test_request_cursor_author_does_not_bind_cse():
             cse_registration_id="reg-a",
         )
     bind.assert_not_called()
-
