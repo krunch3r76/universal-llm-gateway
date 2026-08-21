@@ -160,6 +160,8 @@ class GitWorkerDrainSupervisor:
                     if not timeout_alerted:
                         await self._on_timeout(intent)
                         timeout_alerted = True
+                    if self.idle_escalate_s is not None:
+                        return
                     deadline = time.monotonic() + _DEFAULT_DEADLINE_S
                     continue
                 if outcome == _AWAIT_STALLED:
