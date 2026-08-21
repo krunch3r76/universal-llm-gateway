@@ -438,7 +438,7 @@ def test_n0_mailbox_resume_when_thread_watch_misses():
             return_value=None,
         ),
         patch(
-            "claude_bundles.request_admission_resume._resolve_origin_cse_registration",
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
             return_value=None,
         ),
     ):
@@ -464,7 +464,7 @@ def test_n0_cse_resume_when_watch_and_mailbox_miss():
             return_value="5420b367-cse-bus",
         ),
         patch(
-            "claude_bundles.request_admission_resume._resolve_origin_cse_registration",
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
             return_value=None,
         ),
     ):

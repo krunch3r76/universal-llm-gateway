@@ -43,14 +43,6 @@ def _watch_holder_registration(
     return reg or None
 
 
-def _resolve_origin_cse_registration(thread_id: str) -> str | None:
-    """Delegate to identity module (lazy — avoids import cycle at load)."""
-    from claude_bundles.request_admission_identity import (
-        _resolve_origin_cse_registration as _identity_origin,
-    )
-
-    return _identity_origin(thread_id)
-
 
 def _resolve_bus_cse_registration(thread_id: str) -> str | None:
     """Last bus CSE association for *thread_id* (fail-soft)."""
@@ -95,6 +87,10 @@ def resolve_n0_resume_identity(
     reg = _resolve_bus_cse_registration(tid)
     if reg:
         return reg, "cse_resume"
+
+    from claude_bundles.request_admission_identity import (
+        _resolve_origin_cse_registration,
+    )
 
     origin = _resolve_origin_cse_registration(tid)
     if origin:
