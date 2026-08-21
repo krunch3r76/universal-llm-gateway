@@ -199,6 +199,15 @@ one or more `todo:` entities.
 
 Already `done`/`cancelled` → list in `entity_ids` only.
 
+### Step 0d: Unproved go-live (before `session_close`)
+
+When this session opened a go-live (`go live` / `everything live?` / an armed
+`restart_intent_id`) and proof has not closed: close is allowed; `open_items`
+MUST carry `restart_intent_id` (or `none`) plus claim class
+`drain_pending|live|not_live|live@sha`. Do not narrate activation.
+`commit` / this close do not open or complete go-live.
+SOT: `session-close.mdc` §0d · `restart-drain-discipline` § Go-live proof loop.
+
 ### Step 1: Synthesize (Summary Artifact)
 
 Review the current conversation. Identify:

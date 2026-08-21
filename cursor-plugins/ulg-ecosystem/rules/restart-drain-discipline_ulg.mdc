@@ -24,6 +24,11 @@ trigger_match_terms:
   - ghost live_cse
   - cdp_ask restart
   - CSE recover
+  - go live
+  - everything live
+  - not live yet
+  - live@sha
+  - go-live-proof
 ---
 # Restart drain discipline
 
@@ -178,8 +183,9 @@ Anti-patterns:
    - **cursor-auto:** report the armed `restart_intent_id` on the CLOSEOUT and
      finish. Do not block the dispatch on someone else's drain.
 4. **Verify live before claiming live.** Landed ≠ live. Confirm the restart
-   completed (process start time after the commit, or a live probe of the changed
-   surface) before any claim that a fix is in effect.
+   completed (process start after the served-file mtime, or a live probe of the
+   changed surface) before any claim that a fix is in effect. Operator go-live
+   uses the proof loop below — `deferred` is arm-success, not proof.
 
 ## Live claim classes
 
@@ -190,6 +196,39 @@ identity movement, and relevant dirty-path disclosure. This ordering binds the
 claim, not the restart: dirty-checkout restarts remain legal and are reported as
 `live` plus tree state, never exact `live@<sha>`. Never withhold a needed restart
 because the tree is dirty or a busy probe defers; downgrade the claim instead.
+
+A later commit does not upgrade dirty `live` to `live@<sha>` — that needs a
+**new** recycle after the commit. Never say `not live` when the process already
+loaded the files and you only lack `live@<sha>`.
+
+## Go-live proof loop
+
+Operator phrases that **open** a go-live: `go live`, `make live`, `activate`,
+`everything live?`, `not live yet?`. `commit` and `/session-end` do **not** open
+it. Doctrine: `decision:go-live-proof-loop`.
+
+```
+go_live_open ⇒
+  recycle(services that serve the changed paths)
+  ∧ hold(restart_intent_id) until terminal
+  ∧ edit(served_path) ⇒ stale(intent) ∧ re-arm
+  ∧ report exactly one class: live | live@sha | not_live | drain_pending
+```
+
+- Recycle only services whose load surface includes a changed path **newer than
+  the last sync**. Hop-cadence / wait-report → `git_integration_worker`. `mcp` /
+  `cdp_ask` only when those files postdate the last sync.
+- `restart_intent_id` is WIP until process start is after served-file mtime (or a
+  `fleet_liveness` path probe). `status=deferred` arms the drain; it is not live.
+- After arming GIW: do not admit new GIW-occupying work on that slice without
+  disclosing that it delays the drain.
+- Edit a served path after arm ⇒ the old intent does not cover the new bytes.
+  Re-arm, or report `live` = previous edit only.
+- Proof line (mandatory): services · claim class · `restart_intent_id` or process
+  start UTC · path probe.
+
+Session close with an unproved go-live: `session-close.mdc` §0d — imprint the
+intent and claim class; do not narrate activation.
 
 ## `force=true` — permitted, one exception
 
@@ -223,3 +262,5 @@ forbidden for lifecycle regardless of service — `services_ws.mdc` § Scripts.
 - `dispatch-in-flight-supremacy` — do not compete with a live dispatch; a restart that kills one is the same violation
 - `presence-discipline` P4 — background the wait, do not pin the turn
 - `services_ws.mdc` — manage surface, source-edit → deploy table, manage quit/start recipe
+- `git-posture` — `live` vs `live@sha`; commit is not activate
+- `session-close.mdc` §0d — unproved go-live on close

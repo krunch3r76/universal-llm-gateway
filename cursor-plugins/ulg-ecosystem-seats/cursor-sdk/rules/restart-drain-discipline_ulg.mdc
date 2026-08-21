@@ -62,9 +62,10 @@ and finish. The drain converges after you exit.
 ## Closeout duty
 
 Touched service source? Say so explicitly: which service, whether a restart was armed,
-the `restart_intent_id`, and that the change is **landed, not yet verified live**.
-Claiming live requires a post-restart probe you almost certainly cannot run — say
-`landed` and let the lead verify.
+the `restart_intent_id` (WIP until the lead proves it), and claim class
+`live` | `live@sha` | `not_live` | `drain_pending`. Edit a served path after arm
+⇒ stale intent — re-arm. Claiming live requires a post-restart probe you almost
+certainly cannot run — say `landed` / `drain_pending` and let the lead verify.
 
 ## Composes with
 
