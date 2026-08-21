@@ -1,12 +1,12 @@
 ---
 name: friction-review
-description: "On friction triage and investigate→execute — cortex friction needing a fix, operator review/address/dispatch friction {id}, type:bug bus pickup, or MCP tool failure."
+description: "On friction triage, feature-request vs todo classify, or investigate→execute — friction {id}, type:bug pickup, MCP failure, or file-as-feature."
 ---
 
 # Friction review
 
 Friction rows are **assertions** on an allowed friction-owner entity (`service:`/`agent_skill:`/`ai_agent:`) with claims like `[tool_error] …`.
-They record tool/schema/boot gaps (F5 funnel).
+They record tool/schema/boot/protocol gaps (F5 funnel) **and** feature asks (`category=feature`).
 
 **Critical split:** `friction()` = **observation log**. A fix cycle = **codified bug ticket**
 via the investigate→execute lifecycle; once the investigate close distills attributes, the
@@ -17,33 +17,43 @@ execute default is server materialization via
 
 Full transport matrix: Use the `consult-routing` skill § Codified bug reports.
 
-## Operator friction reports vs feature requests
+## Classify before park (feature vs todo vs residual)
 
-Triage **before** choosing a transport. This section owns the channel choice
-(`friction()` / `todo:` / both / neither); the dispatch lane is in § Codified bug ticket
-below and `consult-routing.md` § Codified bug reports — do not re-derive it here.
+Triage **before** choosing a transport or parking a leftover. This section owns
+the channel (`friction()` / `todo:` / residual-on-matter / neither). The
+dispatch lane is in § Codified bug ticket below and `consult-routing.md` §
+Codified bug reports — do not re-derive it here.
+
+| Class | Signals | Park | `todo:`? |
+|---|---|---|---|
+| **gap** | broke / wrong / tool-schema-boot-protocol miss | `friction(existing category)` | Only if a fix is asked or nameable — then seed path |
+| **feature** | "feature request" / "add X" / new capability / "file this" / design still open / "not now" on a *new* ask | `friction(category=feature)` on the owner service/skill; optional edge to a related decision | **No** — substrate defaults `actionable=false` + `defer_enqueue=true` |
+| **residual-on-matter** | deferral of an *already-bound* decision/todo/spec | residual-imprint `DEFERRED` on that entity | No |
+| **commissioned work** | "address / fix / seed / do this" on a gap or feature | seed path → `todo:` (cite `a:{id}` when a friction exists) | Yes |
+
+`¬` park a feature ask as `DEFERRED` on a decision as the only memory — that
+row never appears in `frictions`. `¬` seed a `todo:` because the ask is
+memorable; seed when work is commissioned.
 
 | Operator input | `friction()`? | `todo:`? | Then |
 |---|---|---|---|
 | "Report this as a friction" **and** it names a tool/schema/boot/protocol gap | Yes — log first | Yes if actionable — cite the friction assertion as context | Mint via `work-item-seed-path` (`/work-item-seed friction a:{id}`) when no todo yet → then investigate→execute / `/layer` |
 | "This broke / is wrong / fix this" (defect, clear fix) | Yes if not already logged and it fits a category | Yes — fix-cycle `todo:` unless one exists | Same mint path if no todo; else investigate→execute below |
-| "Feature request: add X" — clear scope, no defect/gap | No (by default) | Yes if actionable; else backlog `todo:` (`todo_ws` two-tier) | Mint via `work-item-seed-path`; architecture-open ⇒ prefer Fable-before-seed (skill S3 mode B) |
+| "Feature request: add X" / "file this as a feature" — no defect, design may be open | Yes — `category=feature` | **No** unless the operator commissions work | Reopen via `frictions(category=feature)`. Seed only on commission; architecture-open ⇒ Fable-before-seed (skill S3 mode B) |
 | "Maybe this is a friction" / ambiguous root cause | Yes only if symptom maps to a category | Yes only if there is an actionable change | Prefer investigate; ask only if it changes the next action; mint via seed path when actionable |
 | Pure observation of a real tool/protocol gap, no requested change | Yes — records the gap | No unless a fix is asked for or nameable | None |
-| Neither — not a tool/protocol gap and no actionable change | No | No | Acknowledge; offer a backlog `todo:` only if the operator wants it tracked |
+| Neither — not a gap, not a feature ask, no commissioned change | No | No | Acknowledge |
 
 **Mint pointer:** when the next act is creating a closable work item (not log-only), Use the
 `work-item-seed-path` skill — ¬ invent Stage 0 mint order inside this skill.
 
-> Operator friction reports and feature requests are triaged by channel before any
-> transport is chosen: `friction()` records an observed tool/schema/boot/protocol gap
-> (observation log only — never a fix ticket); `todo:` tracks actionable work; "report
-> this as a friction" means `friction()` **and** `todo:` when actionable; a clear-scope
-> feature request goes straight to `todo:` with **no** `friction()` unless it reports a
-> defect/gap; actionable friction fixes use the investigate→execute lane.
+> `friction()` is the observation log (gaps *and* feature asks) — never a fix
+> ticket by itself. `todo:` tracks commissioned work. A feature ask that is
+> not commissioned stays `[feature]` with `actionable=false`; do not substitute
+> a backlog `todo:` or a decision residual.
 
 Examples: "report this as a friction, the boot card is stale" → `friction(boot_drift)` +
-`todo:` fix cycle. "Feature request: add a dark-mode toggle" → `todo:` only, no `friction()`.
+`todo:` fix cycle. "Feature request: add a dark-mode toggle" → `friction(feature)` only.
 "This MCP call just errored out" with no fix asked → `friction(tool_error)` only.
 
 ## When to read
@@ -223,7 +233,8 @@ cortex(tool="friction", arguments='{"service": "mcp-server", "category": "tool_e
 ```
 
 Categories: `tool_error`, `tool_mismatch`, `tool_absent`, `schema_gap`, `boot_drift`,
-`lesson_gap`, `lesson_conflict`, `stale_context`, `doc_drift`, `protocol`.
+`lesson_gap`, `lesson_conflict`, `stale_context`, `doc_drift`, `protocol`,
+`regression`, `feature`.
 
 ## Protocol anchor variants (step-7)
 

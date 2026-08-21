@@ -164,6 +164,18 @@ def _op_friction(
         )
     if errors:
         return validation_error_response(errors)
+    # Feature asks stay on the observation log. Charter provenance must not
+    # default them to actionable=true (that auto-mints a todo).
+    if category == "feature":
+        if actionable is None:
+            actionable = False
+        if actionable is False and not (actionable_false_reason or "").strip():
+            actionable_false_reason = (
+                "feature request — observation only; seed a todo via "
+                "work-item-seed-path only when work is commissioned"
+            )
+        if actionable is False and defer_enqueue is None:
+            defer_enqueue = True
     conf_resolved = _resolve_friction_confidence(confidence, confidence_score)
     if isinstance(conf_resolved, dict):
         return conf_resolved

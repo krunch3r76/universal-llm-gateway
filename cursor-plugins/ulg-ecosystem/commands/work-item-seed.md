@@ -19,6 +19,7 @@ cursor-auto / CDP enter by skill slug with no command layer.
 | Todo already exists ∧ **no** Mode B / arch-consult ask | `/layer todo:{slug}` — not this command |
 | Todo already exists ∧ Mode B / Fable / architecture consult asked | **This path** · Mode B on existing slug · ¬ remint · S5 attach → `/layer` G2 |
 | Friction observation only | `friction()` via friction-review — stop |
+| Feature ask, not commissioned | `friction(category=feature)` via friction-review — stop; ¬ mint |
 | Non-codework Q→A | `/path-sim` |
 | Multi-phase plannable | `/plan-seed` |
 | Settled bind, ship only | `/address` |

@@ -22,6 +22,10 @@ def test_friction_categories_include_regression() -> None:
     assert "regression" in _FRICTION_CATEGORIES
 
 
+def test_friction_categories_include_feature() -> None:
+    assert "feature" in _FRICTION_CATEGORIES
+
+
 def test_normalize_service_slug_bare() -> None:
     assert normalize_service_slug("mcp-server") == "mcp-server"
 
@@ -43,7 +47,7 @@ def test_op_frictions_accepts_qualified_service(monkeypatch) -> None:
         return {"items": []}
 
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions._list_assertions_impl",
+        "cortex_store.dispatch_ops.ops_assertions_friction._list_assertions_impl",
         fake_list,
     )
     _op_frictions(service="service:mcp-server")
@@ -58,11 +62,11 @@ def test_op_friction_accepts_qualified_service(monkeypatch) -> None:
         return {"item": {"id": 1}}
 
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions_write._create_assertion_impl",
+        "cortex_store.dispatch_ops.ops_assertions_friction._create_assertion_impl",
         fake_create,
     )
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions_write.record",
+        "cortex_store.dispatch_ops.ops_assertions_friction.record",
         lambda *a, **k: None,
     )
 
@@ -77,7 +81,7 @@ def test_op_friction_accepts_qualified_service(monkeypatch) -> None:
     assert captured["entity_id"] == "service:agent-bus"
 
 
-@pytest.mark.parametrize("category", ["doc_drift", "protocol", "regression"])
+@pytest.mark.parametrize("category", ["doc_drift", "protocol", "regression", "feature"])
 def test_op_friction_accepts_expanded_categories(monkeypatch, category: str) -> None:
     captured: dict[str, object] = {}
 
@@ -86,19 +90,23 @@ def test_op_friction_accepts_expanded_categories(monkeypatch, category: str) -> 
         return {"item": {"id": 1}}
 
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions_write._create_assertion_impl",
+        "cortex_store.dispatch_ops.ops_assertions_friction._create_assertion_impl",
         fake_create,
     )
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions_write.record",
+        "cortex_store.dispatch_ops.ops_assertions_friction.record",
         lambda *a, **k: None,
     )
 
+    extra: dict[str, object] = {}
+    if category == "protocol":
+        extra = {"charter_root": "1", "window_index": 1, "actionable": True}
     result = _op_friction(
         service="mcp-server",
         category=category,
         note="session-close taxonomy",
         agent="pytest",
+        **extra,
     )
 
     assert "error" not in result
@@ -122,11 +130,11 @@ def test_execute_op_friction_json_string_routes_service(monkeypatch) -> None:
         return {"item": {"id": 1}}
 
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions_write._create_assertion_impl",
+        "cortex_store.dispatch_ops.ops_assertions_friction._create_assertion_impl",
         fake_create,
     )
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions_write.record",
+        "cortex_store.dispatch_ops.ops_assertions_friction.record",
         lambda *a, **k: None,
     )
     monkeypatch.setattr(
@@ -161,11 +169,11 @@ def test_execute_op_friction_invalid_category_is_nonwriting(monkeypatch) -> None
         return {"item": {"id": 1}}
 
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions_write._create_assertion_impl",
+        "cortex_store.dispatch_ops.ops_assertions_friction._create_assertion_impl",
         fake_create,
     )
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions_write.record",
+        "cortex_store.dispatch_ops.ops_assertions_friction.record",
         lambda *a, **k: None,
     )
     monkeypatch.setattr(
@@ -182,8 +190,10 @@ def test_execute_op_friction_invalid_category_is_nonwriting(monkeypatch) -> None
     result = execute_op("friction", json.dumps(payload))
 
     assert "error" in result
-    assert result["error"].startswith("Invalid category")
-    assert "owner is required" not in result["error"]
+    err = result["error"]
+    message = err.get("message", err) if isinstance(err, dict) else err
+    assert str(message).startswith("Invalid category")
+    assert "owner is required" not in str(err)
     assert create_calls == []
 
 
@@ -206,11 +216,11 @@ def test_op_friction_owner_bare_slug(monkeypatch) -> None:
         return {"item": {"id": 1}}
 
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions_write._create_assertion_impl",
+        "cortex_store.dispatch_ops.ops_assertions_friction._create_assertion_impl",
         fake_create,
     )
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions_write.record",
+        "cortex_store.dispatch_ops.ops_assertions_friction.record",
         lambda *a, **k: None,
     )
 
@@ -235,15 +245,15 @@ def test_op_friction_agent_skill_owner(monkeypatch) -> None:
         entity_id = "agent_skill:friction-review"
 
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions_write._create_assertion_impl",
+        "cortex_store.dispatch_ops.ops_assertions_friction._create_assertion_impl",
         fake_create,
     )
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions_write.record",
+        "cortex_store.dispatch_ops.ops_assertions_friction.record",
         lambda *a, **k: None,
     )
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions_write.resolve_entity_reference",
+        "cortex_store.dispatch_ops.ops_assertions_friction.resolve_entity_reference",
         lambda conn, eid, **kw: _Resolved(),
     )
 
@@ -270,11 +280,11 @@ def test_op_friction_missing_agent_skill_owner_no_write(monkeypatch) -> None:
         raise HTTPException(status_code=404, detail="entity not found")
 
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions_write._create_assertion_impl",
+        "cortex_store.dispatch_ops.ops_assertions_friction._create_assertion_impl",
         fake_create,
     )
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions_write.resolve_entity_reference",
+        "cortex_store.dispatch_ops.ops_assertions_friction.resolve_entity_reference",
         fake_resolve,
     )
 
@@ -309,11 +319,11 @@ def test_op_friction_both_owner_service_equal_ok(monkeypatch) -> None:
         return {"item": {"id": 1}}
 
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions_write._create_assertion_impl",
+        "cortex_store.dispatch_ops.ops_assertions_friction._create_assertion_impl",
         fake_create,
     )
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_assertions_write.record",
+        "cortex_store.dispatch_ops.ops_assertions_friction.record",
         lambda *a, **k: None,
     )
 
@@ -337,3 +347,56 @@ def test_op_friction_unsupported_namespace() -> None:
     )
     assert "error" in result
     assert "Unsupported owner namespace" in result["error"]
+
+
+def _patch_friction_create(monkeypatch, captured: dict[str, object]) -> None:
+    def fake_create(body: dict[str, object]) -> dict[str, object]:
+        captured.update(body)
+        return {"item": {"id": 1}}
+
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_friction._create_assertion_impl",
+        fake_create,
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_assertions_friction.record",
+        lambda *a, **k: None,
+    )
+
+
+def test_op_friction_feature_defaults_not_actionable(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    _patch_friction_create(monkeypatch, captured)
+
+    result = _op_friction(
+        service="git_integration_worker",
+        category="feature",
+        note="inherit-inhibit for new hop-cadence enrolls",
+        agent="pytest",
+        charter_root="480",
+        window_index=1,
+    )
+
+    assert "error" not in result
+    attrs = captured["attributes"]
+    assert attrs["actionable"] is False
+    assert attrs["defer_enqueue"] is True
+    assert "observation only" in attrs["actionable_false_reason"]
+
+
+def test_op_friction_feature_explicit_actionable_is_honoured(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    _patch_friction_create(monkeypatch, captured)
+
+    result = _op_friction(
+        service="git_integration_worker",
+        category="feature",
+        note="commissioned feature",
+        agent="pytest",
+        actionable=True,
+    )
+
+    assert "error" not in result
+    attrs = captured.get("attributes") or {}
+    assert attrs.get("actionable") is True
+    assert "defer_enqueue" not in attrs

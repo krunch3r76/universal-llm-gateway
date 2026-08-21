@@ -46,6 +46,7 @@ rich_seed_field_lists ∈ /todo ∨ decision:todo-creation-rich-seed-contract �
 | Todo already exists ∧ **no** Mode B / arch-consult ask | `/layer todo:{slug}` |
 | Todo already exists ∧ Mode B mandatory | **This path** · Mode B on existing slug · ¬ remint · S5 → `/layer` G2 |
 | Log-only gap, no change asked | `friction()` only · **exit** |
+| Feature ask, design open, work **not** commissioned | `friction(category=feature)` · **exit** — ¬ S4 |
 | Non-codework Q→A | `/path-sim` |
 | Multi-phase plannable | `/plan-seed` |
 | Settled ship-only | `/address` |
@@ -55,7 +56,7 @@ rich_seed_field_lists ∈ /todo ∨ decision:todo-creation-rich-seed-contract �
 
 | Kind | Intake | Default `density_triage` |
 |---|---|---|
-| **feature-add** | Idea / feature (usually ¬ friction) | `judgment_required` unless mechanical |
+| **feature-add** | Idea / feature (often `friction(feature)` first; mint only when commissioned) | `judgment_required` unless mechanical |
 | **investigate+fix** | Defect / "fix this" (often friction+todo) | `recon_pending`∨`judgment_required`; `mechanical` iff locus+fix known |
 
 Stamp kind on todo attrs/description until work_item registry lands.
