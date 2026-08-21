@@ -20,6 +20,10 @@ def test_is_chat_delivery_capable_ide_class_absent():
     assert is_chat_delivery_capable("") is False
 
 
+def test_is_chat_delivery_capable_cdp_operator():
+    assert is_chat_delivery_capable("cdp-operator-6655-day5i") is True
+
+
 def test_build_poll_hint_includes_park_hint_for_cowork():
     hint = build_poll_hint(
         thread_id="6655",

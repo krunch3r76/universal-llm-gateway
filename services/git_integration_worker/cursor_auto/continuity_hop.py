@@ -367,6 +367,15 @@ async def complete_continuity_hop(
     )
     if execution_id and not terminal.get("execution_id"):
         terminal = {**terminal, "execution_id": execution_id}
+    if execution_id:
+        from services.git_integration_worker.cursor_auto.cse_pager_resolve import (
+            refresh_pager_after_hop,
+        )
+        from services.git_integration_worker.cursor_auto.hop_cadence_home_lane import (
+            watch_thread_for_job,
+        )
+
+        refresh_pager_after_hop(watch_thread_for_job(job), str(execution_id))
     return terminal
 
 

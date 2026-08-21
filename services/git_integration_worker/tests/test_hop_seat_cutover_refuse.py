@@ -374,7 +374,12 @@ def test_advance_registration_on_confirm_unit():
         "registration_id": "reg-old",
         "superseded_execution_id": "exec-incumbent",
     }
-    aw_row = {"registration_id": "reg-new", "execution_id": "exec-1", "status": "running"}
+    aw_row = {
+        "registration_id": "reg-new",
+        "execution_id": "exec-1",
+        "status": "running",
+        "chat_url": "https://claude.ai/cowork/cse_successor",
+    }
     updated, transition = advance_registration_on_confirm(
         row,
         matched_key="exec-1",
@@ -384,6 +389,7 @@ def test_advance_registration_on_confirm_unit():
     )
     assert transition == ("reg-old", "reg-new")
     assert updated["registration_id"] == "reg-new"
+    assert updated["chat_url"] == "https://claude.ai/cowork/cse_successor"
     updated2, transition2 = advance_registration_on_confirm(
         updated,
         matched_key="exec-1",

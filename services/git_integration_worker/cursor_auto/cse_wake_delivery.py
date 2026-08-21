@@ -11,7 +11,7 @@ import os
 from typing import Any, Protocol
 
 import httpx
-from agent_seat.registry import normalize_bus_address
+from claude_bundles.operator_mailbox import is_operator_proxy_mailbox
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_auto.queue import AutoJob
@@ -26,6 +26,8 @@ _FOLLOWUPS_PATH = "/v1/project-ask/followups"
 
 
 class HttpPoster(Protocol):
+    """Test-injected callable that POSTs JSON to project-ask followups."""
+
     def __call__(
         self,
         method: str,
@@ -37,36 +39,12 @@ class HttpPoster(Protocol):
 
 
 def is_chat_delivery_capable(from_agent: str) -> bool:
-    """Cowork / web-anthropic-class callers; false for IDE ``cursor``."""
-    if not from_agent or not str(from_agent).strip():
-        return False
-    addr = normalize_bus_address(str(from_agent).strip())
-    if addr == "cursor":
-        return False
-    return addr.startswith("web-")
+    """Return True for Cowork operator-proxy mailboxes; IDE ``cursor`` is excluded."""
+    return is_operator_proxy_mailbox(from_agent)
 
 
 def _project_ask_url() -> str:
     return os.environ.get("PROJECT_ASK_URL", "").strip()
-
-
-def build_wake_prompt_text(
-    *,
-    dispatch_id: str,
-    thread_id: str,
-    request_turn: str,
-    closeout_status: str,
-) -> str:
-    """Token-free wake body for in-chat delivery (not a CLOSEOUT envelope copy)."""
-    return (
-        "Park-on-WAKE delivery (leg b).\n"
-        f"dispatch_id: {dispatch_id}\n"
-        f"thread: {thread_id}\n"
-        f"request_turn: {request_turn}\n"
-        f"closeout_status: {closeout_status}\n"
-        "\n"
-        "Harvest: mark_read → wait(wait_seconds=0) → validate dispatch_id vs lane tip."
-    )
 
 
 def deliver_cse_wake(
@@ -141,9 +119,7 @@ def deliver_cse_wake(
         return {
             "ok": False,
             "code": "cse_session_http_timeout",
-            "error": (
-                f"project-ask timed out after {http_timeout:.0f}s waiting for satellite"
-            ),
+            "error": f"project-ask timed out after {http_timeout:.0f}s waiting for satellite",
             "retryable": True,
             "indeterminate": True,
         }
@@ -163,39 +139,34 @@ async def maybe_deliver_cse_wake(
     registration_id: str | None = None,
 ) -> dict[str, Any]:
     """Leg (b): fire followup after bus WAKE; skip IDE-class or missing identity."""
+    from services.git_integration_worker.cursor_auto.cse_pager_resolve import (
+        build_wake_prompt_text,
+        live_identity_for_job,
+    )
+
     if not is_chat_delivery_capable(job.from_agent):
         return {"ok": False, "skipped": True, "reason": "not_chat_delivery_capable"}
 
-    chat_url = chat_url or getattr(job, "cse_chat_url", None)
-    registration_id = registration_id or getattr(job, "cse_registration_id", None)
+    live = live_identity_for_job(job, chat_url=chat_url, registration_id=registration_id)
+    chat_url = live.get("chat_url")
+    registration_id = live.get("registration_id")
+    source = live.get("source") or None
     prompt = build_wake_prompt_text(
         dispatch_id=dispatch_id,
         thread_id=str(job.thread_id),
         request_turn=request_turn,
         closeout_status=closeout_status,
     )
-    return await asyncio.to_thread(
+    result = await asyncio.to_thread(
         deliver_cse_wake,
         chat_url=chat_url,
         registration_id=registration_id,
         prompt_text=prompt,
         post=post,
     )
-
-
-def _map_followup_code(result: dict[str, Any]) -> str:
-    if result.get("skipped"):
-        reason = str(result.get("reason") or result.get("error") or "skipped")
-        if reason == "not_chat_delivery_capable":
-            return "csr.wake.followup_failed"
-        return "csr.wake.no_identity"
-    if result.get("error") == "no_identity":
-        return "csr.wake.no_identity"
-    if result.get("error") == "send_unverified" or result.get("send_verified") is False:
-        return "csr.wake.send_unverified"
-    if not result.get("ok"):
-        return "csr.wake.followup_failed"
-    return "csr.wake.unit_ok"
+    if source:
+        result = {**result, "source": source}
+    return result
 
 
 async def pay_wake_unit(
@@ -207,7 +178,7 @@ async def pay_wake_unit(
     bus: Any | None = None,
     post: HttpPoster | None = None,
 ) -> dict[str, Any]:
-    """Transactional pay unit — bus WAKE is mandatory; chat followup is debt-backed."""
+    """Transactional pay unit — live followup first; bus WAKE is mandatory fallback."""
     from claude_bundles.cdp_registry_store import load_sessions
     from claude_bundles.cse_session_obligations import (
         get_open_wake_owed,
@@ -219,6 +190,11 @@ async def pay_wake_unit(
         try_claim_wake_payment,
     )
 
+    from services.git_integration_worker.cursor_auto.cse_pager_resolve import (
+        attempt_live_wake_followup,
+        map_followup_code,
+        resolve_live_cse_address,
+    )
     from services.git_integration_worker.cursor_auto.nested_sdk import (
         post_operator_wake,
     )
@@ -227,6 +203,24 @@ async def pay_wake_unit(
     sessions = load_sessions()
     ob = get_open_wake_owed(sessions, thread=thread)
     if ob is None:
+        followup_ok, delivery, source = await attempt_live_wake_followup(
+            job,
+            dispatch_id=dispatch_id,
+            request_turn=request_turn,
+            closeout_status=closeout_status,
+            post=post,
+        )
+        if followup_ok:
+            return {
+                "ok": True,
+                "skipped": False,
+                "code": "csr.wake.unit_ok",
+                "followup_ok": True,
+                "wake_ok": False,
+                "delivery": delivery,
+                "wake": {"ok": False, "skipped": True},
+                "source": source,
+            }
         wake = await post_operator_wake(
             job,
             dispatch_id=dispatch_id,
@@ -242,10 +236,10 @@ async def pay_wake_unit(
             "followup_ok": False,
             "wake_ok": wake_ok,
             "wake": wake,
+            "delivery": delivery,
+            "source": source,
         }
 
-    obligation_id = str(ob.get("obligation_id") or "")
-    wake_channel = str(ob.get("wake_channel") or "chat_delivery")
     payment = ob.get("payment") or {}
     if payment.get("followup_ok") or ob.get("status") == "discharged":
         return {
@@ -256,17 +250,14 @@ async def pay_wake_unit(
             "wake_ok": False,
         }
 
+    obligation_id = str(ob.get("obligation_id") or "")
+    wake_channel = str(ob.get("wake_channel") or "chat_delivery")
     channel = resolve_payment_channel(sessions, thread=thread)
-    chat_url = channel.get("chat_url")
-    registration_id = channel.get("registration_id")
-    if not chat_url and not registration_id:
-        chat_url = getattr(job, "cse_chat_url", None)
-        registration_id = getattr(job, "cse_registration_id", None)
-
     followup_ok = False
     followup_code = "csr.wake.skipped"
     delivery: dict[str, Any] = {"ok": False, "skipped": True}
-
+    source: str | None = None
+    registration_id: str | None = None
     if wake_channel == "chat_delivery":
         if not try_claim_wake_payment(thread=thread, obligation_id=obligation_id):
             if payment.get("claimed"):
@@ -283,18 +274,17 @@ async def pay_wake_unit(
             request_turn=request_turn,
             closeout_status=closeout_status,
             post=post,
-            chat_url=chat_url,
-            registration_id=registration_id,
         )
         followup_ok = bool(delivery.get("ok"))
-        followup_code = _map_followup_code(delivery)
+        followup_code = map_followup_code(delivery)
+        source = delivery.get("source")
+        registration_id = channel.get("registration_id") or (
+            resolve_live_cse_address(job).get("registration_id") if followup_ok else None
+        )
         if followup_ok and registration_id:
-            release_lane_if_debt_cleared(
-                str(registration_id), purpose="operator-proxy"
-            )
+            release_lane_if_debt_cleared(str(registration_id), purpose="operator-proxy")
 
-    wake: dict[str, Any] = {"ok": False, "skipped": True}
-    wake_ok = False
+    wake, wake_ok = {"ok": False, "skipped": True}, False
     if not followup_ok and wake_channel == "chat_delivery":
         wake = await post_operator_wake(
             job,
@@ -304,11 +294,11 @@ async def pay_wake_unit(
             bus=bus,
         )
         wake_ok = bool(wake.get("ok"))
-        ob = get_open_wake_owed(load_sessions(), thread=thread)
-        if wake_ok and ob:
+        ob_live = get_open_wake_owed(load_sessions(), thread=thread)
+        if wake_ok and ob_live:
             record_wake_posted(
                 thread=thread,
-                obligation_id=str(ob.get("obligation_id") or obligation_id),
+                obligation_id=str(ob_live.get("obligation_id") or obligation_id),
             )
         try:
             from pager_notify.client import notify_pager
@@ -325,26 +315,28 @@ async def pay_wake_unit(
         code = "csr.wake.unit_ok"
     elif wake_channel != "chat_delivery":
         code = "csr.wake.channel_skipped"
-    elif not followup_ok and wake_ok:
+    elif wake_ok:
         code = "csr.wake.degraded_bus_wake"
     elif not followup_ok:
-        code = followup_code if followup_code != "csr.wake.unit_ok" else "csr.wake.followup_failed"
+        code = (
+            followup_code
+            if followup_code != "csr.wake.unit_ok"
+            else "csr.wake.followup_failed"
+        )
     else:
         code = "csr.wake.bus_wake_failed"
-
-    ok = followup_ok or (wake_channel != "chat_delivery")
     return {
-        "ok": ok,
+        "ok": followup_ok or wake_channel != "chat_delivery",
         "followup_ok": followup_ok,
         "wake_ok": wake_ok,
         "code": code,
         "delivery": delivery,
         "wake": wake,
+        "source": source,
     }
 
 
 __all__ = [
-    "build_wake_prompt_text",
     "deliver_cse_wake",
     "is_chat_delivery_capable",
     "maybe_deliver_cse_wake",

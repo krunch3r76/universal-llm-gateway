@@ -121,7 +121,20 @@ def test_should_emit_wait_report_skips_hops_and_ide():
     ide = _job(from_agent="cursor")
     assert should_emit_wait_report(ide, occupied=True, queue_position=2) is False
     no_cse = _job(cse_chat_url=None, cse_registration_id=None)
-    assert should_emit_wait_report(no_cse, occupied=True, queue_position=2) is False
+    assert should_emit_wait_report(no_cse, occupied=True, queue_position=2) is True
+
+
+def test_should_emit_wait_report_cdp_operator_without_stamp():
+    from services.git_integration_worker.cursor_auto.cse_wait_report import (
+        should_emit_wait_report,
+    )
+
+    job = _job(
+        from_agent="cdp-operator-6655-day5i",
+        cse_chat_url=None,
+        cse_registration_id=None,
+    )
+    assert should_emit_wait_report(job, occupied=True, queue_position=2) is True
 
 
 def test_serial_queue_occupant_skips_hops():

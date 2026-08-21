@@ -7,8 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 
-from services.git_integration_worker.cursor_auto.cse_wake_delivery import (
+from services.git_integration_worker.cursor_auto.cse_pager_resolve import (
     build_wake_prompt_text,
+)
+from services.git_integration_worker.cursor_auto.cse_wake_delivery import (
     deliver_cse_wake,
     is_chat_delivery_capable,
     maybe_deliver_cse_wake,
@@ -19,6 +21,7 @@ from services.git_integration_worker.cursor_auto.queue import AutoJob
 
 def test_is_chat_delivery_capable_web_only():
     assert is_chat_delivery_capable("web-anthropic") is True
+    assert is_chat_delivery_capable("cdp-operator-6655-day5i") is True
     assert is_chat_delivery_capable("cursor") is False
 
 
@@ -213,3 +216,41 @@ def test_pay_wake_unit_debt_followup_ok_skips_bus_wake():
     mock_wake.assert_not_called()
     assert result["followup_ok"] is True
     assert result["code"] == "csr.wake.unit_ok"
+
+
+def test_pay_wake_unit_no_debt_live_identity_skips_bus_wake():
+    job = AutoJob(
+        job_id="j1",
+        thread_id="6655",
+        turn_number=1,
+        subject="s",
+        body="b",
+        from_agent="web-anthropic",
+        to_agent="cursor-auto",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="implement",
+    )
+    with patch(
+        "claude_bundles.cse_session_obligations.get_open_wake_owed",
+        return_value=None,
+    ), patch(
+        "services.git_integration_worker.cursor_auto.cse_pager_resolve.attempt_live_wake_followup",
+        new_callable=AsyncMock,
+        return_value=(True, {"ok": True, "send_verified": True}, "hop_watch"),
+    ), patch(
+        "services.git_integration_worker.cursor_auto.nested_sdk.post_operator_wake",
+        new_callable=AsyncMock,
+    ) as mock_wake:
+        result = asyncio.run(
+            pay_wake_unit(
+                job,
+                dispatch_id="auto-x",
+                request_turn="8",
+                closeout_status="complete",
+            )
+        )
+    mock_wake.assert_not_called()
+    assert result["code"] == "csr.wake.unit_ok"
+    assert result["followup_ok"] is True
+    assert result["source"] == "hop_watch"

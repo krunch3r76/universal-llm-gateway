@@ -93,8 +93,17 @@ async def maybe_deliver_cse_wait_report(
     if not is_chat_delivery_capable(job.from_agent):
         return {"ok": False, "skipped": True, "reason": "not_chat_delivery_capable"}
 
-    chat_url = chat_url or getattr(job, "cse_chat_url", None)
-    registration_id = registration_id or getattr(job, "cse_registration_id", None)
+    if chat_url is None and registration_id is None:
+        from services.git_integration_worker.cursor_auto.cse_pager_resolve import (
+            resolve_live_cse_address,
+        )
+
+        live = resolve_live_cse_address(job)
+        chat_url = live.get("chat_url")
+        registration_id = live.get("registration_id")
+    else:
+        chat_url = chat_url or getattr(job, "cse_chat_url", None)
+        registration_id = registration_id or getattr(job, "cse_registration_id", None)
     prompt = build_wait_report_prompt_text(
         waiting_on=waiting_on,
         queue_position=queue_position,
@@ -140,8 +149,6 @@ def should_emit_wait_report(
     if job.continuity_hop:
         return False
     if not is_chat_delivery_capable(job.from_agent):
-        return False
-    if not ((job.cse_chat_url or "").strip() or (job.cse_registration_id or "").strip()):
         return False
     if occupied:
         return True

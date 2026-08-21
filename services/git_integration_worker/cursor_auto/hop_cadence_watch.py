@@ -18,6 +18,9 @@ from typing import Any
 
 from agent_seat.registry import normalize_bus_address
 from claude_bundles.cdp_registry_store import load_active
+from claude_bundles.operator_mailbox import (
+    is_operator_proxy_mailbox as _is_operator_proxy_mailbox,
+)
 from hop_handoff import (
     StandingHandoffFreshness,
     assess_standing_handoff,
@@ -39,6 +42,9 @@ from services.git_integration_worker.cursor_auto.hop_cadence_lane_gate import (
 from services.git_integration_worker.cursor_auto.queue import AutoJob
 
 logger = get_logger(__name__)
+
+# Compat alias — tests / callers that still import the old name.
+_is_web_mailbox = _is_operator_proxy_mailbox
 
 # Re-exports from hop_handoff so existing GIW imports keep resolving.
 __all__ = (
@@ -136,21 +142,6 @@ def save_watches(watches: dict[str, dict[str, Any]], path: Path | None = None) -
         json.dumps(watches, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     tmp.replace(target)
-
-
-def _is_operator_proxy_mailbox(from_agent: str) -> bool:
-    """True for mailboxes that own a private-lane operator CSE seat.
-
-    Historical enroll path keyed on ``web-*``. Live operator-proxy seats
-    post as ``cdp-operator-*`` (observed 6655 turn 2866). Both must enroll —
-    otherwise a cull of the watch ledger never re-heals on the standing lane.
-    """
-    addr = normalize_bus_address((from_agent or "").strip())
-    return addr.startswith("web-") or addr.startswith("cdp-operator-")
-
-
-# Compat alias — tests / callers that still import the old name.
-_is_web_mailbox = _is_operator_proxy_mailbox
 
 
 def should_observe_job(job: AutoJob) -> bool:
@@ -398,6 +389,8 @@ def mark_hop_fired(
     ``registration_id`` via ``advance_registration_on_confirm`` before recording
     the failure — the hop still reports failure and takes cooldown.
     """
+    from claude_bundles.hop_cadence_id_map import normalize_exclude_ids
+
     from services.git_integration_worker.cursor_auto.hop_cadence_predecessor import (
         PredecessorConfirmError,
         capture_predecessor_at_hop,
@@ -407,7 +400,6 @@ def mark_hop_fired(
     from services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile import (
         record_succession_claim,
     )
-    from claude_bundles.hop_cadence_id_map import normalize_exclude_ids
 
     ts = time.time() if now is None else now
     watches = load_watches(path)
@@ -584,6 +576,13 @@ def advance_registration_on_confirm(
         return row, None
     updated = dict(row)
     updated["registration_id"] = new_reg
+    from claude_bundles.cdp_registry.session_address import chat_url_for_registration
+
+    chat = str(
+        active_work_row.get("chat_url") or chat_url_for_registration(new_reg) or ""
+    ).strip()
+    if chat:
+        updated["chat_url"] = chat
     # Heal self-supersede if prior capture poisoned the ledger.
     if str(updated.get("superseded_registration_id") or "").strip() == new_reg:
         from claude_bundles.hop_seat_cutover import clear_lease_fence_fields

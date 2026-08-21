@@ -289,7 +289,7 @@ def _request_impl(
     if request_id:
         posted_kw["request_id"] = request_id
     record("mcp.agentbus.request.posted", **posted_kw)
-    if capture_identity and (cse_chat_url or cse_registration_id):
+    if capture_identity and (cse_chat_url or cse_registration_id) and not continuity_hop:
         from claude_bundles.cse_session_obligations import stamp_session_ids
 
         stamp_session_ids(

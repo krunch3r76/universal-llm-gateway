@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_seat.registry import normalize_bus_address
+from claude_bundles.operator_mailbox import is_operator_proxy_mailbox
 
 # Align with poll_hint.max_expected_latency_s and Cowork continuous hold (60s).
 PARK_AFTER_S = 60
@@ -25,13 +25,8 @@ _DEFAULT_PARK_HINT: dict[str, Any] = {
 
 
 def is_chat_delivery_capable(from_agent: str) -> bool:
-    """True for Cowork / web-anthropic-class callers; false for IDE ``cursor``."""
-    if not from_agent or not str(from_agent).strip():
-        return False
-    addr = normalize_bus_address(str(from_agent).strip())
-    if addr == "cursor":
-        return False
-    return addr.startswith("web-")
+    """True for Cowork / operator-proxy callers; false for IDE ``cursor``."""
+    return is_operator_proxy_mailbox(from_agent)
 
 
 def default_park_hint() -> dict[str, Any]:
