@@ -1,6 +1,6 @@
 Keep **claude.ai Customize → Skills** aligned with local `CLAUDE_BUNDLE_SLUGS`.
 
-**Runbook:** `docs/agent-guides/skills/claude-ai-bundle-sync.md`  
+**Skill:** `docs/agent-guides/skills/claude-ai-bundle-sync.md`  
 **Cortex:** `decision:claude-ai-skill-upload-automation`  
 **Authority:** `libs/claude_bundles/resolver.py` → `CLAUDE_BUNDLE_SLUGS`
 

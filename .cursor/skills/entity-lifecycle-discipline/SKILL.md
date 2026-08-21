@@ -1,11 +1,11 @@
 ---
-trigger_match_terms: ["entity-lifecycle-discipline", "entity_lifecycle_discipline", "new", "substrate", "todo-vs-plan", "scope", "cortex-planning", "high", "authority", "defaulting", "leaf", "todo"]
-description: 'On new substrate entities or todo-vs-plan scope decisions — entity granularity, task:/plan:/todo: vocabulary, child_of wiring, steps vs phases invariant.'
+trigger_match_terms: ["entity-lifecycle-discipline", "entity_lifecycle_discipline", "new", "substrate", "todo-vs-plan", "scope", "cortex-planning", "high", "authority", "defaulting", "leaf", "todo", "runbook"]
+description: 'On new substrate entities or todo-vs-plan/runbook scope — granularity, task:/plan:/todo:/runbook: vocabulary, child_of wiring, steps vs phases.'
 ---
 
 # Entity Lifecycle Discipline
 
-**Version:** 1.6-compressed  
+**Version:** 1.7-compressed  
 **Authority:** HIGH — scope taxonomy for Cortex work and durable execution/thread persistence. Read before defaulting to leaf `todo:` when work implies new substrate, pipeline primitives, multi-entity creation, promotion, or persistent API/pipeline run shape.
 
 Companions: `cortex-entity-restructure` owns assertion migration/supersession; this skill owns forward scope choice. `entity-creation-discipline` owns typed-claim verification on `entity_create`.
@@ -13,8 +13,8 @@ Companions: `cortex-entity-restructure` owns assertion migration/supersession; t
 ## Trigger
 
 Read before:
-- creating `project:` / `plan:` / `plan_phase:` / `task:` / `todo:`;
-- choosing todo vs task vs plan vs project vs execution-thread;
+- creating `project:` / `plan:` / `plan_phase:` / `task:` / `todo:` / `runbook:`;
+- choosing todo vs task vs plan vs project vs runbook vs execution-thread;
 - designing persistent Cortex layers for API/pipeline runs;
 - choosing step vs phase vocabulary;
 - promoting todo→task/plan, task→project, plan→project, or expanding scope;
@@ -75,6 +75,13 @@ Mandatory at creation:
 - `requires` edge `todo → agent_skill:<slug>` when the skill has a Cortex mirror. Attribute is the gate floor; edge is graph-queryable discipline.
 
 `todo` is **not** default for substrate/pipeline design. If work implies new entity types, assertion/compression contracts, session_close/folder-close semantics, or pipeline step kinds ⇒ use `plan:`/`project:` with child todos as implementation slices.
+
+### `runbook:X`
+Invoked Cortex command. Operator trigger → execute the body at `source_uri`. Not a skill (`agent_skill:` is metadata on a loaded method). Not a Cursor `/command` (no repo mirror). Not a standing matter (genus handle + journal).
+
+Shape: `description` = trigger + one-line pointer; `source_uri` = `cortex://notes/runbooks/{slug}.md` or an existing capability card; ≥1 assertion with `evidence_uris` to the body; edges to touch-points. One handle — ¬ also mint `document:{slug}-runbook`.
+
+Mint via `teach-once-routine-mint` when a taught path is invoked and fails the skill split-test. SOT: `decision:runbook-as-cortex-command`.
 
 ### Execution / dispatch thread pattern
 
