@@ -223,7 +223,11 @@ source_ref: {_PROVENANCE}
 
 def test_lane_a_checkpoint_teaches_bare_section2_field_lines() -> None:
     """Edit 1 — Lane-A examples are bare ``field: value``, not whole-line backticks."""
-    message = build_sdk_message("TYPE: DIRECTIVE\nscope: foo\nDo work.", contract="implement")
+    message = build_sdk_message(
+        "TYPE: DIRECTIVE\nscope: foo\nDo work.",
+        contract="implement",
+        lane="A",
+    )
     assert "status_claim: complete" in message
     assert "checkpoint_claim: nothing_authored" in message
     assert "`status_claim: complete`" not in message

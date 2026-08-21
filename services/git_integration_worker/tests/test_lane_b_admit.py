@@ -693,3 +693,82 @@ def test_row10_d4_non_implement_contract_keeps_regime_eligibility(
     assert lane == "B"
     assert reason == "regime"
     set_lane_b_regime(active=False)
+
+
+def test_auto_regime_empty_scope_pure_mechanical(git_repo: Path) -> None:
+    req = CursorDispatchRequest(
+        thread_id="t-auto",
+        model="cursor/composer-2.5",
+        dispatch_id="auto-belt",
+        execution_id="exec-auto-belt",
+        message="x",
+        admitted_via="cursor-auto",
+    )
+    lane, _, reason = select_lane(
+        req=req,
+        regime_active=True,
+        source_repo=git_repo,
+        files_expected=[],
+        contract="pure-mechanical",
+    )
+    assert lane == "B"
+    assert reason == "auto_regime"
+
+
+def test_auto_light_bounded_empty_scope_stays_a(git_repo: Path) -> None:
+    req = CursorDispatchRequest(
+        thread_id="t-auto",
+        model="cursor/composer-2.5",
+        dispatch_id="auto-a",
+        execution_id="exec-auto-a",
+        message="x",
+        admitted_via="cursor-auto",
+    )
+    lane, _, reason = select_lane(
+        req=req,
+        regime_active=True,
+        source_repo=git_repo,
+        files_expected=[],
+        contract="light-bounded",
+    )
+    assert lane == "A"
+    assert reason == "opt_out"
+
+
+def test_scope_refused_retries_named_a(git_repo: Path) -> None:
+    """CURSOR_LANE_B_SCOPE_REFUSED retry uses explicit lane=A, not omit."""
+    from services.git_integration_worker.cursor_sdk_lane_select import LaneScopeRefused
+
+    req = CursorDispatchRequest(
+        thread_id="t",
+        model="cursor/composer-2.5",
+        dispatch_id="scope-b",
+        execution_id="exec-scope-b",
+        message="x",
+        lane="B",
+    )
+    with pytest.raises(LaneScopeRefused):
+        select_lane(
+            req=req,
+            regime_active=True,
+            source_repo=git_repo,
+            files_expected=["workspaces://other-repo/foo.py"],
+            contract="implement",
+        )
+    retry = CursorDispatchRequest(
+        thread_id="t",
+        model="cursor/composer-2.5",
+        dispatch_id="scope-a",
+        execution_id="exec-scope-a",
+        message="x",
+        lane="A",
+    )
+    lane, _, reason = select_lane(
+        req=retry,
+        regime_active=True,
+        source_repo=git_repo,
+        files_expected=["workspaces://other-repo/foo.py"],
+        contract="implement",
+    )
+    assert lane == "A"
+    assert reason == "opt_out"

@@ -20,6 +20,9 @@ from services.git_integration_worker.cursor_auto.cdp_escalation import (
     escalation_lane_refusal,
     read_cdp_lane_snapshot,
 )
+from services.git_integration_worker.cursor_auto.checkout_lane import (
+    resolve_nested_checkout_lane,
+)
 from services.git_integration_worker.cursor_auto.continuity_hop import (
     complete_continuity_hop,
 )
@@ -76,6 +79,7 @@ from services.git_integration_worker.cursor_auto.job_ledger import (
     get_ledger,
 )
 from services.git_integration_worker.cursor_auto.knob_compose import compose_model_knobs
+from services.git_integration_worker.cursor_auto.nest_parent import resolve_nest_under
 from services.git_integration_worker.cursor_auto.nested_outcome import (
     relay_closeout_outcome,
     relay_confer_outcome,
@@ -462,17 +466,23 @@ async def process_job(
             gate_plan=gate_plan,
         )
 
-    nest_under = await _resolve_nest_under(
+    nest_under = await resolve_nest_under(
         job,
         client=client,
         queue=queue,
         gate_plan=gate_plan,
         work_bounded=work_bounded,
+        contract=contract,
     )
     if isinstance(nest_under, dict):
         return nest_under
 
-    message = build_sdk_message(job.body, contract=contract)
+    resolved_lane, _lane_reason = resolve_nested_checkout_lane(job, read_only=False)
+    message = build_sdk_message(
+        job.body,
+        contract=contract,
+        lane=resolved_lane,
+    )
     if settlement is not None:
         message = f"{compose_supersede_preamble(settlement)}\n\n{message}"
     if queue.is_superseded(job.job_id):
@@ -640,37 +650,6 @@ async def process_job(
         second_read=second_read,
         relay_ctx=relay_ctx,
         admission_controller=admission_controller,
-    )
-
-
-async def _resolve_nest_under(
-    job: AutoJob,
-    *,
-    client: CursorBusClient,
-    queue: Any,
-    gate_plan: dict[str, Any],
-    work_bounded: bool,
-) -> str | None | dict[str, Any]:
-    """Resolve the park parent for ``nest_park``; a dict means terminal refusal."""
-    if gate_plan["action"] != "nest_park":
-        return None
-    snap = CursorDispatchLedger.instance().lease_snapshot()
-    nest_under = snap.get("holder_dispatch_id")
-    if nest_under:
-        return str(nest_under)
-    replan = prefer_dispatch_over_park(
-        {**gate_plan, "action": "in_seat", "reason": "nest_park_without_holder"},
-        work_bounded=work_bounded,
-    )
-    gate_plan.update(replan)
-    if replan["action"] == "dispatch_now":
-        return None
-    return await terminal_needs_attended(
-        job,
-        client=client,
-        queue=queue,
-        reason="nest_park_without_holder",
-        gate_plan=gate_plan,
     )
 
 

@@ -21,6 +21,9 @@ from services.git_integration_worker.admission import (
     Draining503,
     WorkAdmissionController,
 )
+from services.git_integration_worker.cursor_auto.checkout_lane import (
+    resolve_nested_checkout_lane,
+)
 from services.git_integration_worker.cursor_auto.closeout_outbox import get_outbox_store
 from services.git_integration_worker.cursor_auto.closeout_outbox_events import (
     emit_closeout_persisted,
@@ -239,8 +242,19 @@ async def submit_nested_dispatch(
         payload["model_knobs"] = model_knobs
     if read_only is not None:
         payload["read_only"] = read_only
-    if job.lane:
-        payload["lane"] = job.lane
+    if read_only is not True:
+        lane, lane_reason = resolve_nested_checkout_lane(
+            job,
+            read_only=bool(read_only),
+        )
+        payload["lane"] = lane
+        logger.info(
+            "cursor-auto nested POST lane=%s reason=%s job=%s dispatch_id=%s",
+            lane,
+            lane_reason,
+            job.job_id,
+            dispatch_id,
+        )
     url = _dispatch_url()
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:

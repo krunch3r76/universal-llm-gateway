@@ -161,6 +161,13 @@ The only documented omit is inherit:
 | out-of-repo / `CURSOR_LANE_B_SCOPE_REFUSED` | `lane="A"` + fix or name the scope | ¬ omit to “get past” (7286) |
 | `nest_under` / `resume_of` | omit | inherit parent isolation |
 
+**cursor-auto nested implement-class:** Auto stamps `lane="B"` on nested
+cursor-sdk POST for `job.contract` in `{implement, verify}` when `job.lane` is
+unset and the leg is not `read_only`. Bind-only / confer / investigate and
+other non-implement contracts stay on Lane A (omit or explicit `lane="A"`).
+Opus `agent_bus.request(lane=)` remains an optional override — the default must
+not require the knob.
+
 **GIW `select_lane` priority** (inference, ¬ a license to omit): explicit A/B ≻
 empty `files_expected` → A (`opt_out`) ≻ `contract_regime` B. Empty scope + omit
 → **A** even when regime is on. Do not read “regime on → B” as the omit outcome.

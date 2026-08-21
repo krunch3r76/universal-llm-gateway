@@ -20,6 +20,7 @@ LaneSelectionReason = Literal[
     "read_only",
     "nest_inherit",
     "lane_bound",
+    "auto_regime",
 ]
 
 _IMPLEMENT_CLASS_CONTRACTS = frozenset({"implement", "light-bounded"})
@@ -125,6 +126,11 @@ def select_lane(
     if not files_expected:
         if lane_worktree is not None:
             return "B", advisories, "lane_bound"
+        if (
+            req.admitted_via == "cursor-auto"
+            and (contract or "").lower() == "pure-mechanical"
+        ):
+            return "B", advisories, "auto_regime"
         return "A", advisories, "opt_out"
 
     if not scope_is_single_repo(files_expected, source_repo):

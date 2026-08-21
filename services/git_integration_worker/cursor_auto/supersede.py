@@ -263,6 +263,8 @@ async def settle_supersede(job: AutoJob) -> dict[str, Any] | None:
             superseded_by=job.job_id,
             source_repo=context.source_repo,
         )
+    # Same-thread supersede inherits lookup_lane_worktree(thread_id) for the
+    # successor — never discharge the lane branch here.
     return {
         "mark": context.mark,
         "released": released,

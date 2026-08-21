@@ -456,7 +456,7 @@ def is_mission_negotiation_directive(body: str) -> bool:
     return is_mission_negotiation_request(body)
 
 
-def build_sdk_message(job_body: str, *, contract: str) -> str:
+def build_sdk_message(job_body: str, *, contract: str, lane: str | None = None) -> str:
     """Prompt text handed to nested cursor-sdk dispatch."""
     from services.git_integration_worker.cursor_auto.reporting_contract import (
         reporting_contract_lines,
@@ -468,9 +468,9 @@ def build_sdk_message(job_body: str, *, contract: str) -> str:
         f"contract={contract}",
         "",
         body,
-        *reporting_contract_lines(),
+        *reporting_contract_lines(lane=lane),
     ]
-    if contract in {"implement", "investigate", "verify"}:
+    if contract in {"implement", "investigate", "verify"} and lane == "A":
         lines.extend(
             [
                 "",

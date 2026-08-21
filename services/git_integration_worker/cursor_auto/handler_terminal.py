@@ -409,9 +409,25 @@ async def terminal_failed(
     dispatch_id: str | None = None,
 ) -> dict[str, Any]:
     """Close a job whose nested dispatch could not be submitted or polled."""
+    from services.git_integration_worker.cursor_auto.lane_b_episode_discharge import (
+        maybe_discharge_failed_episode,
+    )
+
+    discharge_result = maybe_discharge_failed_episode(
+        job,
+        dispatch_id=dispatch_id,
+        summary=summary,
+    )
     payload = {"summary": summary, **extra}
     if dispatch_id:
         payload["dispatch_id"] = dispatch_id
+    if discharge_result is not None:
+        payload["lane_b_discharge"] = {
+            "discharged": discharge_result.discharged,
+            "branch": discharge_result.branch,
+            "verb": discharge_result.verb,
+            "refused_reason": discharge_result.refused_reason,
+        }
     return await post_terminal_status(
         job,
         client=client,

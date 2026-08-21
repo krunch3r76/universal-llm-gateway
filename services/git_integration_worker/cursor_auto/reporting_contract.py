@@ -8,6 +8,12 @@ from services.git_integration_worker.cursor_auto.section2_fields import (
 
 DISPATCH_REPORT_DISCIPLINE_SKILL = "dispatch-report-discipline"
 
+_LANE_B_CHECKLIST = """\
+- **LAND DISPOSITION** (Lane B only) — emit `land_disposition: landed` or `land_disposition: discard` (+ `land_reason:` on discard); silence with commits opens attributed branch debt
+- **CHECKPOINT** (Lane B only) — path-explicit `checkpoint:` from this episode's authored-path set; never `--all`; never foreign WIP
+
+"""
+
 _REPORTING_CONTRACT_TEMPLATE = """\
 ## REPORTING CONTRACT (mandatory)
 
@@ -22,8 +28,7 @@ Checklist — name each explicitly in §2:
 - **COVERAGE** — for every retrieval: corpus, count, actual date/ID range
 - **MODEL ACTUAL** — resolved model when it differs from requested (in artifact body)
 - **RECON METHOD** — when breadth recon was owed or taken: `explore` | `in-seat` + anti-trigger reason | `waived` + cite; omit only when pure-mechanical/implement with loci known upfront
-
-Mechanical rules (1–4, 11):
+{lane_b_checklist}Mechanical rules (1–4, 11):
 1. SUFFICIENCY — do enough to answer what was asked; subset OK, subset-as-whole is not
 2. NEGATIVE ANSWERS ARE FIRST-CLASS — see above
 3. NO SILENT SUBSTITUTION — model/scope/tool/method changes belong in the returned artifact
@@ -46,18 +51,33 @@ or "next open after…" is `derived` and must not render as observed
 {section2_emit_line}\
 """
 
-REPORTING_CONTRACT_BLOCK = _REPORTING_CONTRACT_TEMPLATE.format(
-    section2_emit_line=section2_emit_line()
-)
+
+def _lane_b_checklist(lane: str | None) -> str:
+    if lane == "B":
+        return _LANE_B_CHECKLIST
+    return ""
 
 
-def reporting_contract_lines() -> list[str]:
+def reporting_contract_block(*, lane: str | None = None) -> str:
+    """Render the REPORTING CONTRACT block for one resolved checkout lane."""
+    return _REPORTING_CONTRACT_TEMPLATE.format(
+        lane_b_checklist=_lane_b_checklist(lane),
+        section2_emit_line=section2_emit_line(),
+    )
+
+
+REPORTING_CONTRACT_BLOCK = reporting_contract_block()
+
+
+def reporting_contract_lines(*, lane: str | None = None) -> list[str]:
     """Return the REPORTING CONTRACT block as prompt lines."""
-    return ["", *REPORTING_CONTRACT_BLOCK.splitlines()]
+    block = reporting_contract_block(lane=lane) if lane is not None else REPORTING_CONTRACT_BLOCK
+    return ["", *block.splitlines()]
 
 
 __all__ = [
     "DISPATCH_REPORT_DISCIPLINE_SKILL",
     "REPORTING_CONTRACT_BLOCK",
+    "reporting_contract_block",
     "reporting_contract_lines",
 ]
