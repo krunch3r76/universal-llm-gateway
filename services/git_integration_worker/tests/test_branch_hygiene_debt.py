@@ -668,6 +668,105 @@ def test_land_required_tag_helpers_no_thread() -> None:
     assert LAND_REQUIRED_TAG == "land_required"
 
 
+def test_discard_unpins_registered_worktree_then_deletes_branch(
+    repo: Path, tmp_path: Path
+) -> None:
+    from services.git_integration_worker.cursor_sdk_worktree_registry import (
+        lookup_lane_worktree,
+        register_lane_worktree,
+    )
+
+    _branch_with_change(
+        repo, branch="cursor-sdk/lane-9601", path="u.py", content="unpin = 1\n"
+    )
+    tree = tmp_path / "lane-9601"
+    _git("worktree", "add", str(tree), "cursor-sdk/lane-9601", cwd=repo)
+    register_lane_worktree(
+        thread_id="9601",
+        worktree_path=tree,
+        branch_name="cursor-sdk/lane-9601",
+        branch_point="master",
+    )
+    result = discharge_discard(
+        repo=repo,
+        branch_name="cursor-sdk/lane-9601",
+        reason="episode complete",
+    )
+    assert result.discharged
+    assert not result.inherited
+    assert "cursor-sdk/lane-9601" not in _branches(repo)
+    assert not tree.exists()
+    assert lookup_lane_worktree(thread_id="9601") is None
+
+
+def test_discard_inherits_when_second_auto_job_is_queued(
+    repo: Path, tmp_path: Path
+) -> None:
+    from services.git_integration_worker.cursor_auto.queue import reset_queue_for_tests
+    from services.git_integration_worker.cursor_sdk_worktree_registry import (
+        lookup_lane_worktree,
+        register_lane_worktree,
+    )
+
+    _branch_with_change(
+        repo, branch="cursor-sdk/lane-9602", path="v.py", content="keep = 1\n"
+    )
+    tree = tmp_path / "lane-9602"
+    _git("worktree", "add", str(tree), "cursor-sdk/lane-9602", cwd=repo)
+    register_lane_worktree(
+        thread_id="9602",
+        worktree_path=tree,
+        branch_name="cursor-sdk/lane-9602",
+        branch_point="master",
+    )
+    queue = reset_queue_for_tests(durable=False)
+    queue.enqueue(
+        thread_id="9602",
+        turn_number=1,
+        subject="old",
+        body="body",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="implement",
+    )
+    queue.claim_next()
+    queue.enqueue(
+        thread_id="9602",
+        turn_number=2,
+        subject="new",
+        body="body",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="implement",
+    )
+    result = discharge_discard(
+        repo=repo,
+        branch_name="cursor-sdk/lane-9602",
+        reason="should inherit",
+    )
+    assert not result.discharged
+    assert result.inherited
+    assert "inherited" in (result.refused_reason or "")
+    assert "cursor-sdk/lane-9602" in _branches(repo)
+    assert tree.exists()
+    assert lookup_lane_worktree(thread_id="9602") is not None
+    settlement = settle_lane_branch(
+        source_repo=repo,
+        branch_name="cursor-sdk/lane-9602",
+        thread_id="9602",
+        dispatch_id="d-9602",
+        closeout_text="land_disposition: discard\nland_reason: should inherit",
+        commits_ahead=1,
+        landed=False,
+    )
+    assert settlement.outcome == "inherited"
+    reset_queue_for_tests(durable=False)
+
+
 # --- test isolation guard ----------------------------------------------------
 
 

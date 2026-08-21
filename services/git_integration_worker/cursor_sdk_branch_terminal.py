@@ -186,7 +186,15 @@ def _settle(
             branch_name=branch_name,
             verb=verb,
             reason=reason,
+            completing_dispatch_id=dispatch_id,
         )
+        if result.inherited:
+            return LaneBranchSettlement(
+                outcome="inherited",
+                branch=branch_name,
+                verb=result.verb,
+                detail=result.refused_reason,
+            )
         if result.discharged:
             remove_land_required_tag(thread_id=thread_id)
             return LaneBranchSettlement(

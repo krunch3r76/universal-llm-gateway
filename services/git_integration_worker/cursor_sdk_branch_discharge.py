@@ -30,6 +30,9 @@ from services.git_integration_worker.cursor_sdk_branch_debt import (
 from services.git_integration_worker.cursor_sdk_branch_debt_tags import (
     remove_land_required_tag,
 )
+from services.git_integration_worker.cursor_sdk_branch_unpin import (
+    unpin_registered_lane_worktree,
+)
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_lane_b_discharged,
 )
@@ -70,6 +73,7 @@ class DischargeResult:
     archive_tag: str | None = None
     refused_reason: str | None = None
     probe: LandProbe | None = None
+    inherited: bool = False
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -195,11 +199,35 @@ def _finish(
     branch_name: str,
     verb: str,
     note: str | None,
+    completing_dispatch_id: str | None = None,
 ) -> DischargeResult:
     """Archive, delete, retire the debt, and announce — shared by both verbs."""
     root = repo.resolve()
     rev = _git(root, "rev-parse", "--verify", f"{branch_name}^{{commit}}")
     tip_sha = rev.stdout.strip() if rev.returncode == 0 else None
+
+    unpin = unpin_registered_lane_worktree(
+        repo=root,
+        branch_name=branch_name,
+        completing_dispatch_id=completing_dispatch_id,
+    )
+    if unpin.inherited:
+        return DischargeResult(
+            discharged=False,
+            branch=branch_name,
+            verb=verb,
+            tip_sha=tip_sha,
+            refused_reason=unpin.refused_reason,
+            inherited=True,
+        )
+    if not unpin.unpinned:
+        return DischargeResult(
+            discharged=False,
+            branch=branch_name,
+            verb=verb,
+            tip_sha=tip_sha,
+            refused_reason=unpin.refused_reason,
+        )
 
     archive_tag = archive_branch(repo=root, branch_name=branch_name)
     if archive_tag is None:
@@ -257,7 +285,12 @@ def _clear_disposition(branch_name: str) -> None:
     clear_disposition(branch_name=branch_name)
 
 
-def discharge_landed(*, repo: Path, branch_name: str) -> DischargeResult:
+def discharge_landed(
+    *,
+    repo: Path,
+    branch_name: str,
+    completing_dispatch_id: str | None = None,
+) -> DischargeResult:
     """Retire a branch whose work is verifiably on master."""
     retired = _already_retired(repo=repo, branch_name=branch_name)
     if retired is not None:
@@ -281,6 +314,7 @@ def discharge_landed(*, repo: Path, branch_name: str) -> DischargeResult:
         branch_name=branch_name,
         verb=DISCHARGE_LANDED,
         note=None,
+        completing_dispatch_id=completing_dispatch_id,
     )
     return DischargeResult(
         discharged=result.discharged,
@@ -290,10 +324,17 @@ def discharge_landed(*, repo: Path, branch_name: str) -> DischargeResult:
         archive_tag=result.archive_tag,
         refused_reason=result.refused_reason,
         probe=probe,
+        inherited=result.inherited,
     )
 
 
-def discharge_discard(*, repo: Path, branch_name: str, reason: str) -> DischargeResult:
+def discharge_discard(
+    *,
+    repo: Path,
+    branch_name: str,
+    reason: str,
+    completing_dispatch_id: str | None = None,
+) -> DischargeResult:
     """Retire a branch the lane deliberately abandons; reason is recorded."""
     if not reason.strip():
         return DischargeResult(
@@ -307,6 +348,7 @@ def discharge_discard(*, repo: Path, branch_name: str, reason: str) -> Discharge
         branch_name=branch_name,
         verb=DISCHARGE_DISCARD,
         note=reason.strip(),
+        completing_dispatch_id=completing_dispatch_id,
     )
 
 
@@ -316,16 +358,22 @@ def discharge(
     branch_name: str,
     verb: str,
     reason: str | None = None,
+    completing_dispatch_id: str | None = None,
 ) -> DischargeResult:
     """Dispatch on the declared verb — the single entry point a closeout names."""
     normalized = (verb or "").strip().lower()
     if normalized == DISCHARGE_LANDED:
-        return discharge_landed(repo=repo, branch_name=branch_name)
+        return discharge_landed(
+            repo=repo,
+            branch_name=branch_name,
+            completing_dispatch_id=completing_dispatch_id,
+        )
     if normalized == DISCHARGE_DISCARD:
         return discharge_discard(
             repo=repo,
             branch_name=branch_name,
             reason=reason or "",
+            completing_dispatch_id=completing_dispatch_id,
         )
     return DischargeResult(
         discharged=False,

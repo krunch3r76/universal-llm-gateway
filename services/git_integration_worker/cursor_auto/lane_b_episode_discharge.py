@@ -44,7 +44,6 @@ def maybe_discharge_failed_episode(
     summary: str,
 ) -> DischargeResult | None:
     """Discard a Lane-B tree when Auto fails after mint and no successor inherits."""
-    del dispatch_id  # mint is keyed by thread_id via registry
     record = lookup_lane_worktree(thread_id=job.thread_id)
     if record is None:
         return None
@@ -61,6 +60,7 @@ def maybe_discharge_failed_episode(
         branch_name=record.branch_name,
         verb="discard",
         reason=reason,
+        completing_dispatch_id=dispatch_id,
     )
     logger.info(
         "cursor-auto lane_b episode discard job=%s thread=%s branch=%s "
