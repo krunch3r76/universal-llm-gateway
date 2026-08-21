@@ -78,6 +78,7 @@ _AWAIT_CONVERGED = "converged"
 _AWAIT_TIMEOUT = "timeout"
 _AWAIT_CANCELLED = "cancelled"
 _AWAIT_STALLED = "stalled"
+_AWAIT_IDLE = "idle"
 
 
 def _field(ev: dict[str, Any], key: str) -> Any:
@@ -120,8 +121,12 @@ class GitWorkerDrainSupervisor:
     progress_interval_s: float = _DEFAULT_PROGRESS_INTERVAL_S
     stall_window_s: float = STALL_WINDOW_S
     on_timeout_mutex_release: Callable[[], Awaitable[None]] | None = None
+    idle_escalate_s: float | None = None
+    liveness_state: DrainStateCaller | None = None
     _settle_boundary_monotonic: float | None = None
     _progress_tracker: OccupancyProgressTracker | None = field(default=None, repr=False)
+    _idle_last_progress: float | None = None
+    _idle_token: tuple[frozenset[str], tuple[tuple[str, str], ...], bool] | None = None
 
     async def supervise(self, intent: Intent) -> None:
         """Drive one intent from begin-drain to SIGTERM (or alert-only timeout).
@@ -132,6 +137,8 @@ class GitWorkerDrainSupervisor:
         the refuse boundary is the final-check ok commit, not a vague "during drain".
         """
         self._settle_boundary_monotonic = None
+        self._idle_last_progress = None
+        self._idle_token = None
         t0 = time.monotonic()
         deadline = t0 + self.deadline_s
         self._progress_tracker = OccupancyProgressTracker(
@@ -158,6 +165,9 @@ class GitWorkerDrainSupervisor:
                 if outcome == _AWAIT_STALLED:
                     await self._force_kill_from_stall(intent, t0)
                     return
+                if outcome == _AWAIT_IDLE:
+                    await self._on_idle(intent, t0)
+                    return
                 break
             if self._intent_cancelled(intent):
                 await self._on_cancelled(intent)
@@ -178,6 +188,12 @@ class GitWorkerDrainSupervisor:
                 worker_id=intent.worker_id,
             )
             await self._sigterm(intent, t0)
+            if self.idle_escalate_s is not None:
+                await events.emit_manage_recycle_completed(
+                    intent_id=intent.intent_id,
+                    escalated=False,
+                    duration_s=time.monotonic() - t0,
+                )
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — supervisor must not crash the loop
@@ -240,14 +256,11 @@ class GitWorkerDrainSupervisor:
     async def _await_drain_completed(
         self, intent: Intent, deadline: float, start: float
     ) -> str:
-        """Await drain convergence, deadline timeout, or store cancel.
+        """Await drain convergence, idle escalate, deadline timeout, or cancel.
 
-        Returns ``converged`` | ``timeout`` | ``cancelled``. Unified loop: drains
-        the (optional) event subscription for a matching ``drain.completed`` AND
-        runs the ``drain-state`` reconcile check each window AND emits the
-        periodic progress heartbeat — all deadline-bounded. Degrades to pure
-        reconcile polling if the subscription is unavailable. Cancel is polled
-        each window so manage ``cancel_restart_intent`` aborts before SIGTERM.
+        Returns ``converged`` | ``idle`` | ``timeout`` | ``cancelled``. Unified
+        loop: matching ``drain.completed`` plus drain-state reconcile plus
+        optional idle-on-no-progress (recycle mode). Timeout stays alert-only.
         """
         last_progress = start
         try:
@@ -272,6 +285,8 @@ class GitWorkerDrainSupervisor:
                     return _AWAIT_STALLED
                 if snapshot is not None and self._drain_state_matches(snapshot, intent):
                     return _AWAIT_CONVERGED
+                if snapshot is not None and await self._idle_gate_tripped(snapshot, now, start):
+                    return _AWAIT_IDLE
                 if agen is None:
                     await asyncio.sleep(self.reconcile_interval_s)
                     continue
@@ -357,6 +372,59 @@ class GitWorkerDrainSupervisor:
             intent.intent_id,
         )
         await events.emit_manage_restart_cancelled(intent_id=intent.intent_id)
+
+    async def _on_idle(self, intent: Intent, t0: float) -> None:
+        """Occupant progress idled; force-kill without waiting for active_count==0."""
+        snapshot = await self._safe_drain_state() or {}
+        idle_s = float(self.idle_escalate_s or 0.0)
+        await events.emit_manage_recycle_escalated(
+            intent_id=intent.intent_id,
+            idle_s=idle_s,
+            active_count=int(snapshot.get("active_count", 0) or 0),
+            stuck_ops=self._stuck_ops(snapshot),
+        )
+        logger.warning(
+            "recycle_giw idle-escalate to force kill: intent_id=%s active_count=%s",
+            intent.intent_id,
+            snapshot.get("active_count"),
+        )
+        self.store.advance(intent.intent_id, status=STATUS_DRAINED_RESTARTING)
+        await self._sigterm(intent, t0)
+        await events.emit_manage_recycle_completed(
+            intent_id=intent.intent_id,
+            escalated=True,
+            duration_s=time.monotonic() - t0,
+        )
+
+    async def _idle_gate_tripped(
+        self, snapshot: dict[str, Any], now: float, start: float
+    ) -> bool:
+        """True when recycle mode sees no occupant progress for idle_escalate_s."""
+        if self.idle_escalate_s is None:
+            return False
+        if int(snapshot.get("active_count", 0) or 0) <= 0:
+            return False
+        liveness = None
+        if self.liveness_state is not None:
+            try:
+                liveness = await self.liveness_state()
+            except Exception:  # noqa: BLE001 — probe optional; drain-state still binds
+                logger.debug("recycle liveness probe failed", exc_info=True)
+        from .giw_recycle import occupant_progress_fresh
+
+        fresh, token = occupant_progress_fresh(
+            snapshot,
+            liveness,
+            idle_s=self.idle_escalate_s,
+            previous_token=self._idle_token,
+        )
+        self._idle_token = token
+        if self._idle_last_progress is None:
+            self._idle_last_progress = start
+        if fresh:
+            self._idle_last_progress = now
+            return False
+        return (now - self._idle_last_progress) >= self.idle_escalate_s
 
     async def _on_timeout(self, intent: Intent) -> None:
         snapshot = await self._safe_drain_state() or {}
@@ -522,6 +590,7 @@ def build_git_worker_drain_supervisor(
     events_query_socket: str,
     kill: KillCaller,
     deadline_s: float = _DEFAULT_DEADLINE_S,
+    idle_escalate_s: float | None = None,
 ) -> GitWorkerDrainSupervisor:
     """Construct a supervisor wired to the live worker + event service."""
     from transport_utils import make_async_client
@@ -535,6 +604,12 @@ def build_git_worker_drain_supervisor(
     async def _drain_state() -> dict[str, Any]:
         async with make_async_client(worker_url, timeout=10.0) as client:
             resp = await client.get("/api/v1/git/admin/drain-state")
+            resp.raise_for_status()
+            return resp.json()
+
+    async def _liveness_state() -> dict[str, Any]:
+        async with make_async_client(worker_url, timeout=10.0) as client:
+            resp = await client.get("/api/v1/git/cursor-auto/liveness")
             resp.raise_for_status()
             return resp.json()
 
@@ -581,6 +656,8 @@ def build_git_worker_drain_supervisor(
         kill=kill,
         cancel_drain=_cancel_drain,
         deadline_s=deadline_s,
+        idle_escalate_s=idle_escalate_s,
+        liveness_state=_liveness_state if idle_escalate_s is not None else None,
     )
 
 

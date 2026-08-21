@@ -305,6 +305,7 @@ def _collect_registered_tool_names() -> set[str]:
         ("tools.recall", "register_recall_tools"),
         ("tools.delegate", "register_delegate_tools"),
         ("tools.notify", "register_notify_tools"),
+        ("tools.recycle_giw", "register_recycle_giw_tools"),
         ("tools.quality", "register_quality_tools"),
         ("tools.agent_bus", "register_agent_bus_tools"),
         ("tools.cortex", "register_cortex_tools"),
