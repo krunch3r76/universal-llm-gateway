@@ -27,10 +27,11 @@ steps:
     model_ref: contextualize
     prompt_ref: rag_contextualize.contextualize_chunk
     # Stall timeout: resets whenever any map iteration completes.
-    # Sized for cold-model load (~5 min) + 32-chunk queue drain.
+    # Covers cold-model load; not a file-size cap. Stargate queues the rest.
     timeout_seconds: 900
-    # Safety-net handler ceiling: queue wait (32 chunks × 5s inference) + cold load + buffer.
-    handler_timeout_seconds: 600
+    # Whole-step ceiling — match options.timeout_seconds. Queue wait is
+    # Stargate's job; do not size this as N-chunks × inference.
+    handler_timeout_seconds: 3600
     # Per-iteration inference ceiling; queue wait does not consume this budget.
     # 360s = cold load ceiling (~300s) + max observed warm inference (~20s) + 40s margin.
     inference_timeout_seconds: 360

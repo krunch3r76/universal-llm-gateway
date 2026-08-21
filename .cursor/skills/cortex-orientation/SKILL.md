@@ -141,6 +141,24 @@ Pass `q` and/or `seeds` (either suffices). Response is a read-only `RecallCard`:
 
 **Not G3.** `search` remains on the life cortex enum until measured demotion (Phase 3); this stanza teaches and steers only.
 
+### Find a way (recall → repair → scout → ingest)
+
+Absence and “I don’t know the law” are routing signals, not closers.
+
+```
+memory ∨ full_picture ⇒ recall first
+thin(card) ∨ _next ⇒ repair ≺ scout
+rag_miss ⇒ [unverified] ∧ fire_ingest
+complexity ⇏ professional_referral
+```
+
+- **Recall first.** Memory-shaped or “full picture” → `recall` before any absence sentence. Do not answer “I don’t have X” from a skipped walk.
+- **Repair ≺ scout.** Thin card (`nulls`, `_next.reason` in `{vocab_not_covered, scope_truncated, thin_card, pin_seed}`) → if sibling hubs already exist and hold the fact, `relationship_create` now and re-recall. Do not hire `cursor_request(contract=recon)` as a substitute for a visible missing edge. Scout only when the neighborhood is unknown (`resolver_miss`, candidates-only with no pin, no sibling found).
+- **Ingest on rule miss.** `rag` miss → state the working rule as `[unverified]` and fire ingest (life `rag(upsert_article)` or `cursor_request` for scope/bytes). A queue that never fires is a slow “I can’t.”
+- **License, not complexity.** A licensed professional is only for acts that require a license (paid-preparer signature, IRS representation / POA, CPA attest). “This is complicated” / “I’m not a CPA” / “I don’t know tax law” is not a closer.
+
+Cursor repairs in-seat when both endpoints are known. Life that will not write edges may hire cursor **to repair**. Hiring cursor **only to recon** when the missing edges are already visible is the defect.
+
 ## Related / depth
 
 - `cortex` — op catalog, taxonomies, workflow chains.

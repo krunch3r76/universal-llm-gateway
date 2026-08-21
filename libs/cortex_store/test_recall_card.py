@@ -113,6 +113,39 @@ def test_resolver_miss_on_unknown_seed(migrated_conn: sqlite3.Connection) -> Non
         seeds=["case:does-not-exist-recall"],
     )
     assert RecallNull.resolver_miss in card.nulls
+    assert card.next_advisory is not None
+    assert card.next_advisory.reason == "resolver_miss"
+
+
+def test_next_advisory_reason_table() -> None:
+    from cortex_store.recall_card import _next_advisory
+
+    assert _next_advisory([], candidate_count=2).reason == "pin_seed"
+    assert _next_advisory([RecallNull.resolver_miss]).reason == "resolver_miss"
+    assert _next_advisory([RecallNull.vocab_not_covered]).reason == "vocab_not_covered"
+    assert _next_advisory([RecallNull.scope_truncated]).reason == "scope_truncated"
+    assert _next_advisory([RecallNull.nothing_on_record]).reason == "nothing_on_record"
+    assert (
+        _next_advisory([], resolved=True, association_count=2).reason == "thin_card"
+    )
+    assert _next_advisory([], resolved=True, association_count=3) is None
+    assert (
+        _next_advisory([], resolved=True, disposition_count=1, association_count=0)
+        is None
+    )
+
+
+def test_matter_non_hub_emits_vocab_next(migrated_conn: sqlite3.Connection) -> None:
+    _seed_entity(migrated_conn, "todo:recall-next-vocab", entity_type="todo")
+    card = build_recall_card(
+        migrated_conn,
+        mode="matter",
+        q=None,
+        seeds=["todo:recall-next-vocab"],
+    )
+    assert RecallNull.vocab_not_covered in card.nulls
+    assert card.next_advisory is not None
+    assert card.next_advisory.reason == "vocab_not_covered"
 
 
 def test_search_seeder_reads_pydantic_summary_items(monkeypatch: pytest.MonkeyPatch) -> None:

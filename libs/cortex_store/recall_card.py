@@ -87,11 +87,34 @@ def _association_rows(result: Any) -> list[AssociationRow]:
     ]
 
 
-def _next_advisory(nulls: list[RecallNull]) -> RecallNextAdvisory | None:
+_THIN_ASSOCIATION_FLOOR = 3
+
+
+def _next_advisory(
+    nulls: list[RecallNull],
+    *,
+    candidate_count: int = 0,
+    association_count: int = 0,
+    disposition_count: int = 0,
+    resolved: bool = False,
+) -> RecallNextAdvisory | None:
+    """Advisory escalate — reason only; seat maps to repair-or-recon."""
+    if candidate_count > 0:
+        return RecallNextAdvisory(reason="pin_seed")
     if RecallNull.resolver_miss in nulls:
         return RecallNextAdvisory(reason="resolver_miss")
+    if RecallNull.vocab_not_covered in nulls:
+        return RecallNextAdvisory(reason="vocab_not_covered")
+    if RecallNull.scope_truncated in nulls:
+        return RecallNextAdvisory(reason="scope_truncated")
     if RecallNull.nothing_on_record in nulls:
         return RecallNextAdvisory(reason="nothing_on_record")
+    if (
+        resolved
+        and disposition_count == 0
+        and association_count < _THIN_ASSOCIATION_FLOOR
+    ):
+        return RecallNextAdvisory(reason="thin_card")
     return None
 
 
@@ -210,7 +233,10 @@ def _build_matter_card(
             candidates=outcome.candidates,
             disclosure=disclosure,
             nulls=nulls,
-            next_advisory=None,
+            next_advisory=_next_advisory(
+                nulls,
+                candidate_count=len(outcome.candidates),
+            ),
         )
 
     if outcome.resolver_miss:
@@ -280,5 +306,10 @@ def _build_matter_card(
         continuity=None,
         disclosure=disclosure,
         nulls=nulls,
-        next_advisory=_next_advisory(nulls),
+        next_advisory=_next_advisory(
+            nulls,
+            association_count=len(associations),
+            disposition_count=len(dispositions),
+            resolved=bool(outcome.resolved),
+        ),
     )
