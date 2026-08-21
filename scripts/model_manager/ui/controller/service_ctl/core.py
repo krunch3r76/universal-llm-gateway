@@ -811,12 +811,17 @@ class ServiceController:
         return max(grace, 0.0) + _GIT_WORKER_SHUTDOWN_BUFFER_S
 
     def build_git_worker_drain_supervisor(
-        self, *, kill: Callable[[], Awaitable[str]]
+        self,
+        *,
+        kill: Callable[[], Awaitable[str]],
+        idle_escalate_s: float | None = None,
+        deadline_s: float | None = None,
     ) -> GitWorkerDrainSupervisor:
         """Construct a drain supervisor wired to the live worker + event service.
 
         ``kill`` is the action-appropriate terminal lifecycle: ``stop_*`` for a stop
-        intent, ``restart_*`` for restart/sync_restart (host process → sync=restart).
+        intent, ``restart_*`` for restart/sync_restart/recycle_giw.
+        ``idle_escalate_s`` enables recycle mode (force after occupant idle).
         """
         return build_git_worker_drain_supervisor(
             self._restart_intent_store,
@@ -825,12 +830,13 @@ class ServiceController:
                 "EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock"
             ),
             kill=kill,
-            deadline_s=_GIT_WORKER_DRAIN_DEADLINE_S,
+            deadline_s=_GIT_WORKER_DRAIN_DEADLINE_S if deadline_s is None else deadline_s,
+            idle_escalate_s=idle_escalate_s,
         )
 
     def git_worker_kill_for(self, action: str) -> Callable[[], Awaitable[str]]:
         """Map a gated action to the worker's terminal lifecycle callable."""
-        if action in ("restart", "sync_restart"):
+        if action in ("restart", "sync_restart", "recycle_giw"):
             return self.restart_git_integration_worker
         return self.stop_git_integration_worker
 

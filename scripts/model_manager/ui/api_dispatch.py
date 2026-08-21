@@ -110,6 +110,11 @@ async def execute(
                 build_snapshot, ctl.root, svc, code_ref=code_ref
             )
 
+        case "recycle_giw":
+            from .controller.giw_recycle import recycle_giw as _recycle_giw
+
+            return await _recycle_giw(ctl, params, service)
+
         case "status":
             infos = await asyncio.to_thread(svc.check_all)
             return {
@@ -330,7 +335,7 @@ async def execute(
                 "cancel_restart_intent, "
                 "whoami, charter_reload, charter_pause, charter_resume, "
                 "charter_hold_status, charter_block_root, charter_unblock_root, "
-                "charter_root_status, fleet_sync_restart, fleet_rebuild_deploy"
+                "charter_root_status, recycle_giw, fleet_sync_restart, fleet_rebuild_deploy"
             )
 
 

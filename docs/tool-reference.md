@@ -50,6 +50,20 @@ The canonical session-close trigger is a `handoff_prompt` that embeds a
 are present, pass `handoff_source_path` from the start rather than as failure recovery.
 See `agent-surface/sources/session-close-handoff.md`.
 
+## recycle_giw
+
+`recycle_giw()` is the life-surface sliver that recycles `git_integration_worker`
+over manage.sock without routing through the cursor-auto AutoJobQueue. It takes
+**no parameters** — the handler cannot express any other service or manage
+action. Full `manage` stays code-only.
+
+Manage drain-gates the restart first, then escalates to the existing GIW force
+path only after occupant progress goes idle (`GIW_RECYCLE_IDLE_S`, default 180s).
+The gate is idle-on-no-progress, not a wall-clock completion deadline. A 202
+deferred envelope with `restart_intent_id` is the success return while recycle
+runs. Stage events: `manage.recycle.requested`, `manage.recycle.drain_attempted`,
+`manage.recycle.escalated`, `manage.recycle.completed`.
+
 ## team_dispatch
 
 Sole agent-facing dispatch MCP tool. `frontier_generate`, `team_generate`,

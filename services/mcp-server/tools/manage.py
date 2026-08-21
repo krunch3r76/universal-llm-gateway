@@ -4,7 +4,9 @@ Connects to /tmp/universal-protocol/manage.sock (JSON-RPC 2.0 over UDS).
 Exposes status, health, start, stop, restart, sync_restart, rebuild,
 wait_healthy, busy_status, cancel_restart_intent, whoami, charter_reload,
 charter_pause, charter_resume, charter_hold_status, charter_block_root,
-charter_unblock_root, and charter_root_status for gateway-managed services.
+charter_unblock_root, charter_root_status, and recycle_giw for
+gateway-managed services. Life seats should prefer the dedicated
+``recycle_giw`` tool; this action exists for already-admitted code seats.
 Single entry point reduces agent context overhead.
 """
 
@@ -48,6 +50,7 @@ _VALID_ACTIONS = frozenset(
         "charter_block_root",
         "charter_unblock_root",
         "charter_root_status",
+        "recycle_giw",
     }
 )
 
@@ -336,6 +339,11 @@ def register_manage_tools(mcp: FastMCP) -> None:
                                              Does not re-enroll unless reenroll=true.
           charter_root_status (root_id)      — read-only {status, enrolled, wip_window_id,
                                              last_error, operator_hold}.
+          recycle_giw   (no service/action) — drain-gated GIW recycle; escalates to
+                                             force only after occupant progress idles.
+                                             Hard-scoped to git_integration_worker.
+                                             Prefer the life-surface ``recycle_giw``
+                                             tool; this action exists for code seats.
 
         Services: gateway, stargate, rag, cloud_proxy, mcp, event_service,
                   cortex_api, agent_bus, email_bridge, git_integration_worker
