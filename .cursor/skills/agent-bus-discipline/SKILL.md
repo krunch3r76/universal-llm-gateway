@@ -8,9 +8,10 @@ trigger_match_terms: ["agent-bus-discipline", "agent_bus_discipline", "agent_bus
 
 # Agent Bus Discipline
 
-**Authority:** universal — applies on any `agent_bus` operation in any Cursor IDE
-session whose checkout is the ULG hub **or** a ULG-ecosystem satellite
-(¬ hub-only / ¬ workspace-specific).
+**Authority:** any seat that calls `agent_bus` against the ULG hub or a
+ULG-ecosystem satellite — Cursor IDE, CDP operator-proxy, and life surfaces
+(¬ hub-only / ¬ workspace-specific). Spine / genus / species apply at **lane
+birth and pivot**, not only at standing-root CHECKPOINT.
 
 ## New thread vs reply
 
@@ -158,6 +159,15 @@ Specimens: **9471** = orchestration + productive + implement; **9482** = work-sp
 
 Do not mint `genus:` tags until that decision's promotion trigger fires.
 
+**Three registers (BINDING — Fable 9518 / `decision:thread-genus`):** do not
+read `slug` or `type:*` as the current contract. They are birth graffiti.
+
+| Register | What it is | When it changes |
+|---|---|---|
+| **Tags** (`type:*`, `lane:*`, `bus_lifecycle:*`) | Birth graffiti. Optional `type:` is a facet hint, not current work. Never mint `genus:` tags. | Birth (and rare operator retag). A pivot does **not** rewrite tags. |
+| **Summary** | Refreshed so-what. `resolve_so_what_summary` runs on every `request`. | Every `request` / hop. This is the current-contract surface. |
+| **Standing handoff** | Full state (WIP, next, blockers). | When a CHECKPOINT or hop needs reconstitution. |
+
 ## Session-close thread disposition
 
 **When:** substantive close ∧ session used `agent_bus`.
@@ -221,7 +231,14 @@ Workspace mirrors (`tmp/reviews/...`) are secondary. For bus communication, cite
 
 Capability-gap escalate from life → code: tag `lane:life-to-code` (+ `type:feature-request` when durable work suspected). Protocol + disposition: `life-to-code-request-lane` (¬ duplicate here).
 
-Code-seat boot/triage probe for open requests:
+**Sibling probe (cursor-auto farm):** find 9496-class siblings with
+`lane:cursor-auto`. `lane:life-to-code` is a narrower overlay, not the farm census.
+
+```python
+agent_bus(tool="threads", arguments='{"tags":["lane:cursor-auto"],"status":"active"}')
+```
+
+Code-seat boot/triage probe for life→code hops:
 
 ```python
 agent_bus(tool="threads", arguments='{"tags":["lane:life-to-code"],"status":"active"}')

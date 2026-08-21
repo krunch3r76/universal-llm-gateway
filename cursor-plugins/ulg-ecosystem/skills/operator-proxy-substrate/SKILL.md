@@ -195,7 +195,7 @@ confirms the target is **paste-eligible**, not merely "busy":
 
 | Signal | Proves | Enough to paste? |
 |---|---|---|
-| `busy_status` / `live_cse_count` / execution `running` | Observed CSE tab and/or recorded exec | **No** alone — observation ≠ registry attach |
+| `busy_status` / `live_cse_count` / execution `running` | Observed CSE tab and/or recorded exec | **No** alone — observation ≠ registry attach; `open(tab) ⇏ alive(session ∨ stream)` (`decision:cse-tab-decoupled-from-session`) |
 | `cdp_registry` active lane + open CSE page on that lane | Followup can resolve without `lane_not_attached` | Preferred |
 | Jupiter CDP port probe (`/json/list` has `/cowork/cse_…`) | Tab exists; use with `chat_url` + `reattach=true` | Escape when registry empty |
 

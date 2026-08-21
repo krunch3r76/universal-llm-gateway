@@ -17,12 +17,29 @@ DEFAULT_WAKE = "chat_delivery"
 DEFAULT_FALLBACK = "bus_wake+pager"
 
 PARKED_PREFIX = "TYPE: PARKED"
-FIELD_RE = re.compile(r"^(wake|fallback|cse_chat_url|cse_registration_id):\s*(.+)$")
+WAITING_PREFIX = "TYPE: WAITING"
+FIELD_RE = re.compile(
+    r"^(wake|fallback|cse_chat_url|cse_registration_id|waiting_on):\s*(.+)$"
+)
 
 
 def is_parked_body(body: str) -> bool:
     first = (body or "").strip().split("\n", 1)[0].strip()
     return first == PARKED_PREFIX
+
+
+def is_waiting_body(body: str) -> bool:
+    first = (body or "").strip().split("\n", 1)[0].strip()
+    return first == WAITING_PREFIX
+
+
+def is_parked_waiting_body(body: str) -> bool:
+    """True for WAITING, or PARKED that still names ``waiting_on``."""
+    if is_waiting_body(body):
+        return True
+    if not is_parked_body(body):
+        return False
+    return bool(parse_parked_fields(body).get("waiting_on"))
 
 
 def parse_parked_fields(body: str) -> dict[str, str]:

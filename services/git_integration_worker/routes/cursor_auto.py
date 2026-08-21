@@ -13,6 +13,9 @@ from universal_logging import get_logger
 from services.git_integration_worker.cursor_auto.continuity_hop import (
     run_continuity_hop_concurrent,
 )
+from services.git_integration_worker.cursor_auto.cse_wait_report import (
+    schedule_wait_report_if_waiting,
+)
 from services.git_integration_worker.cursor_auto.directive import (
     is_continuity_hop_request,
     is_mission_negotiation_directive,
@@ -366,6 +369,12 @@ async def enqueue(body: EnqueueBody, request: Request):
     # as snapshot(); do not disturb supersede vocabulary beside this field.
     lane = queue.thread_lane_counts(body.thread_id, exclude_job_id=job.job_id)
     waiter = queue.waiter_receipt(job.job_id)
+    schedule_wait_report_if_waiting(
+        job,
+        queue=queue,
+        waiter=waiter,
+        controller=getattr(request.app.state, "admission_controller", None),
+    )
     return JSONResponse(
         status_code=200,
         content={

@@ -54,12 +54,33 @@ def test_deliver_cse_wake_posts_followups_once(monkeypatch):
     assert result["send_verified"] is True
     assert len(calls) == 1
     assert calls[0]["url"] == "http://127.0.0.1:9191/v1/project-ask/followups"
+    assert calls[0]["timeout"] == 120.0
     body = calls[0]["json"]
+    assert body["timeout_s"] == 60
     assert body["purpose"] == "operator-proxy"
     assert body["chat_url"] == "https://claude.ai/chat/abc"
     assert body["registration_id"] == "reg-1"
     assert body["reattach"] is True
+    assert "retain_lane" not in body
     assert "status:done" not in body["prompt_text"]
+
+
+def test_deliver_cse_wake_timeout_is_not_unreachable(monkeypatch):
+    monkeypatch.setenv("PROJECT_ASK_URL", "http://127.0.0.1:9191")
+
+    def _post(method: str, url: str, *, json=None, timeout: float):
+        raise httpx.TimeoutException("timed out")
+
+    result = deliver_cse_wake(
+        chat_url="https://claude.ai/chat/abc",
+        registration_id="reg-1",
+        prompt_text="wake body",
+        post=_post,
+    )
+    assert result["ok"] is False
+    assert result["code"] == "cse_session_http_timeout"
+    assert result["indeterminate"] is True
+    assert "unreachable" not in result["error"]
 
 
 def test_build_wake_prompt_text_token_free():

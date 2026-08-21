@@ -156,22 +156,23 @@ async def _reattach_teardown(
     *,
     retain_lane: bool,
 ) -> None:
-    """Tear down reattach side-effects — park woken seats, drop minted lanes."""
+    """Tear down reattach side-effects — park woken seats, drop minted lanes.
+
+    ``retain_lane`` is the wait-report contract: disconnect Playwright only.
+    Never park, close the operator tab, or deregister the host.
+    """
     if outcome is None or not outcome.ok:
         return
+    if retain_lane:
+        await _disconnect_playwright(outcome.pw)
+        return
     if outcome.relaunched:
-        if retain_lane:
-            await _disconnect_playwright(outcome.pw)
-        else:
-            await park_relaunched_host(outcome)
+        await park_relaunched_host(outcome)
         return
     if outcome.lane_created:
-        if retain_lane:
-            await _disconnect_playwright(outcome.pw)
-        else:
-            await _teardown_attempt(outcome.page, outcome.pw, close_page=True)
-            with contextlib.suppress(Exception):
-                cdp_registry.deregister_lane(outcome.registration_id or "")
+        await _teardown_attempt(outcome.page, outcome.pw, close_page=True)
+        with contextlib.suppress(Exception):
+            cdp_registry.deregister_lane(outcome.registration_id or "")
         return
     await _teardown_attempt(outcome.page, outcome.pw)
 
@@ -335,6 +336,7 @@ async def execute_followup(
             resp.ok
             and receipt_meets(capped, "dom_committed")
             and not lane_created
+            and not req.retain_lane
         ):
             from claude_bundles.cse_session_obligations import (
                 emit_wake_delivered_transition,

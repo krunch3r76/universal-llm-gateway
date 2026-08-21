@@ -126,25 +126,24 @@ def test_observe_does_not_overwrite_a_captured_mission(
 async def test_fire_hop_for_decision_forwards_path_to_mark_helpers(
     tmp_path: Path,
 ) -> None:
-    """scan_and_fire path= reaches mark_hop_failed without touching production."""
-    from services.git_integration_worker.cursor_auto.hop_cadence import scan_and_fire
+    """fire_hop_for_decision path= reaches mark_hop_failed without touching production."""
+    from services.git_integration_worker.cursor_auto.hop_cadence import (
+        fire_hop_for_decision,
+    )
     from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
+        HopDecision,
         save_watches,
     )
     from services.git_integration_worker.cursor_auto.queue import AutoJobQueue
 
     isolated = tmp_path / "hop_cadence_watches.json"
     now = 2_000_000.0
-    save_watches(
-        {
-            "7059-fire": {
-                "thread_id": "7059-fire",
-                "seated_at": now - 2000.0,
-                "from_agent": "web-anthropic",
-            }
-        },
-        isolated,
-    )
+    row = {
+        "thread_id": "7059-fire",
+        "seated_at": now - 2000.0,
+        "from_agent": "web-anthropic",
+    }
+    save_watches({"7059-fire": row}, isolated)
     before_mtime = _production_mtime()
 
     queue = AutoJobQueue(durable=False)
@@ -172,7 +171,19 @@ async def test_fire_hop_for_decision_forwards_path_to_mark_helpers(
             ).StandingHandoffFreshness("current", f"cortex://x/{tid}.md", None, 1.0),
         ),
     ):
-        await scan_and_fire(queue=queue, path=isolated, now=now)
+        await fire_hop_for_decision(
+            HopDecision(
+                thread_id="7059-fire",
+                action="fire",
+                reason="age_threshold_met",
+                age_s=2000.0,
+                threshold_s=1500.0,
+                signal="watch_seated_at",
+            ),
+            queue=queue,
+            row=row,
+            path=isolated,
+        )
 
     rows = json.loads(isolated.read_text(encoding="utf-8"))
     assert rows["7059-fire"]["last_hop_failure_reason"] == "missing_execution_id"

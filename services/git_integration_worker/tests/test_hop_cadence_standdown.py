@@ -12,6 +12,9 @@ from services.git_integration_worker.cursor_auto.hop_cadence_standdown import (
     STANDDOWN_ACK_OPEN_REASON,
     lane_standdown_ack_open,
 )
+from services.git_integration_worker.cursor_auto.hop_cadence_waiting import (
+    IDLE_NO_KEEPALIVE_REASON,
+)
 from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
     evaluate_watch,
     save_watches,
@@ -209,7 +212,7 @@ async def test_scan_and_fire_skips_open_standdown_ack(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_scan_and_fire_fires_when_successor_consumes(tmp_path: Path) -> None:
+async def test_scan_and_fire_skips_idle_when_successor_consumes(tmp_path: Path) -> None:
     from services.git_integration_worker.cursor_auto import queue as queue_mod
     from services.git_integration_worker.cursor_auto.hop_cadence import scan_and_fire
 
@@ -236,10 +239,10 @@ async def test_scan_and_fire_fires_when_successor_consumes(tmp_path: Path) -> No
         ),
         patch(
             "services.git_integration_worker.cursor_auto.hop_cadence.fire_hop_for_decision",
-            return_value={"ok": True, "thread_id": _THREAD},
-        ),
+        ) as fire,
     ):
         outcomes = await scan_and_fire(queue=q, path=isolated, now=_NOW)
+    fire.assert_not_called()
     assert outcomes
-    assert outcomes[0].get("ok") is True
-    assert outcomes[0].get("reason") != STANDDOWN_ACK_OPEN_REASON
+    assert outcomes[0]["action"] == "skip"
+    assert outcomes[0]["reason"] == IDLE_NO_KEEPALIVE_REASON

@@ -19,6 +19,9 @@ from services.git_integration_worker.cursor_auto.queue import AutoJob
 logger = get_logger(__name__)
 
 _DEFAULT_TIMEOUT_S = 60.0
+# Same class as MCP cse_session_warm.HTTP_TIMEOUT_SLACK_S — equal httpx vs
+# satellite budgets report unreachable while paste_verified still fires.
+_HTTP_TIMEOUT_SLACK_S = 60.0
 _FOLLOWUPS_PATH = "/v1/project-ask/followups"
 
 
@@ -74,8 +77,14 @@ def deliver_cse_wake(
     purpose: str = "operator-proxy",
     timeout_s: float = _DEFAULT_TIMEOUT_S,
     post: HttpPoster | None = None,
+    reattach: bool = True,
+    retain_lane: bool = False,
 ) -> dict[str, Any]:
-    """POST followups once; non-ok is a single dead-CSE degrade signal (I7)."""
+    """POST followups once; non-ok is a single dead-CSE degrade signal (I7).
+
+    Park-on-WAKE defaults ``reattach=True`` (dormant seats). Wait-report uses
+    ``reattach=False`` and ``retain_lane=True`` so teardown does not park.
+    """
     chat = (chat_url or "").strip()
     registration = (registration_id or "").strip()
     if not chat and not registration:
@@ -99,16 +108,20 @@ def deliver_cse_wake(
     }
     if chat:
         body["chat_url"] = chat
-        body["reattach"] = True
+        if reattach:
+            body["reattach"] = True
+    if retain_lane:
+        body["retain_lane"] = True
     if registration:
         body["registration_id"] = registration
 
     url = f"{base.rstrip('/')}{_FOLLOWUPS_PATH}"
+    http_timeout = float(timeout_s) + _HTTP_TIMEOUT_SLACK_S
     try:
         if post is not None:
-            resp = post("POST", url, json=body, timeout=timeout_s)
+            resp = post("POST", url, json=body, timeout=http_timeout)
         else:
-            with httpx.Client(timeout=timeout_s) as client:
+            with httpx.Client(timeout=http_timeout) as client:
                 resp = client.post(url, json=body)
         if resp.status_code >= 400:
             return {
@@ -123,6 +136,17 @@ def deliver_cse_wake(
         if isinstance(data, dict):
             return {"ok": True, **data}
         return {"ok": True}
+    except httpx.TimeoutException as exc:
+        logger.warning("cse_wake_delivery timeout url=%s error=%s", url, exc)
+        return {
+            "ok": False,
+            "code": "cse_session_http_timeout",
+            "error": (
+                f"project-ask timed out after {http_timeout:.0f}s waiting for satellite"
+            ),
+            "retryable": True,
+            "indeterminate": True,
+        }
     except httpx.HTTPError as exc:
         logger.warning("cse_wake_delivery unreachable url=%s error=%s", url, exc)
         return {"ok": False, "error": f"project-ask unreachable: {exc}"}

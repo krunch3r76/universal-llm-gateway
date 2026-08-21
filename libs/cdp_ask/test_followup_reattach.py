@@ -920,6 +920,137 @@ async def test_woken_seat_discharges_wake_debt_and_is_parked_again(
 
 
 @pytest.mark.asyncio
+async def test_woken_seat_retain_lane_does_not_park(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Wait-report: a dormant wake may resume the seat; teardown must not re-park."""
+    store = ExecutionStore()
+    reg = _reg("reg-parked")
+    _patch_list_active(monkeypatch, reg=reg, reattach_empty=True)
+    _patch_dormant(
+        monkeypatch,
+        seat=_FakeSeat("reg-parked", CSE_A),
+        relaunch=MagicMock(return_value=reg),
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(side_effect=[[], [CSE_A]]),
+    )
+    monkeypatch.setattr("cdp_ask.followup_reattach.connect_cdp", _connect_factory())
+    parked = MagicMock()
+    monkeypatch.setattr("cdp_ask.followup_dormant.cdp_registry.make_dormant", parked)
+    deregister = MagicMock()
+    monkeypatch.setattr("cdp_ask.followup.cdp_registry.deregister_lane", deregister)
+    page = MagicMock()
+    page.url = CSE_A
+    pw = AsyncMock()
+    pw.stop = AsyncMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup._find_page_on_lane", AsyncMock(return_value=(page, pw))
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup.send_followup_paste_half",
+        AsyncMock(
+            return_value={
+                "send_verified": True,
+                "receipt": "dom_committed",
+                "streaming_at_paste": False,
+                "url": CSE_A,
+                "pasted_at": 1.0,
+            }
+        ),
+    )
+    monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
+    discharged: list[str] = []
+    monkeypatch.setattr(
+        "claude_bundles.cse_session_obligations.resolve_wake_obligation_for_receipt",
+        lambda rid: ("6885", "obl-1"),
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cse_session_obligations.emit_wake_delivered_transition",
+        lambda **kw: discharged.append(kw["registration_id"]),
+    )
+
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            chat_url=CSE_A,
+            prompt_text="x",
+            retain_lane=True,
+        ),
+        store,
+    )
+
+    assert resp.ok is True
+    assert resp.reattach_used is True
+    assert resp.lane_created is False
+    parked.assert_not_called()
+    deregister.assert_not_called()
+    assert discharged == []
+
+
+@pytest.mark.asyncio
+async def test_attached_followup_does_not_park(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Already-on-lane paste disconnects Playwright only — no dormant park."""
+    store = ExecutionStore()
+    reg = _reg("reg-live")
+    _patch_list_active(monkeypatch, reg=reg)
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.scan_lane_cse_urls",
+        AsyncMock(return_value=[CSE_A]),
+    )
+    parked = MagicMock()
+    monkeypatch.setattr("cdp_ask.followup_dormant.cdp_registry.make_dormant", parked)
+    ensure = AsyncMock()
+    monkeypatch.setattr("cdp_ask.followup.ensure_cse_attached", ensure)
+    page = MagicMock()
+    page.url = CSE_A
+    pw = AsyncMock()
+    pw.stop = AsyncMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup._find_page_on_lane", AsyncMock(return_value=(page, pw))
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup.send_followup_paste_half",
+        AsyncMock(
+            return_value={
+                "send_verified": True,
+                "receipt": "dom_committed",
+                "streaming_at_paste": False,
+                "url": CSE_A,
+                "pasted_at": 1.0,
+            }
+        ),
+    )
+    monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
+    monkeypatch.setattr(
+        "claude_bundles.cse_session_obligations.emit_wake_delivered_transition",
+        MagicMock(),
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cse_session_obligations.resolve_wake_obligation_for_receipt",
+        lambda rid: ("t", "o"),
+    )
+
+    resp = await execute_followup(
+        FollowupProjectAskRequest(
+            chat_url=CSE_A,
+            prompt_text="x",
+            reattach=False,
+            retain_lane=True,
+        ),
+        store,
+    )
+
+    assert resp.ok is True
+    assert resp.reattach_used is False
+    ensure.assert_not_called()
+    parked.assert_not_called()
+    pw.stop.assert_awaited()
+
+
+@pytest.mark.asyncio
 async def test_identity_omitted_dormant_attendance_wakes_the_seat(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

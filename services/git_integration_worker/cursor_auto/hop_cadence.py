@@ -10,7 +10,11 @@ and the background loop.
 
 Invariants:
 - Hop ≠ close: only the existing continuity-hop path; never ``MISSION_CLOSEOUT``.
-- Silent/degraded seats still hop once a watch is enrolled.
+- Hop ≠ tab-keepalive: an open Cowork tab does not keep a session alive
+  (``decision:cse-tab-decoupled-from-session``). Cadence must not fire to
+  warm an idle or finished tab (``idle_no_keepalive``).
+- MCP-refresh / tooling hops are an explicit continuity path, not the
+  thirty-minute age actuator.
 - Wake-count is rejected as primary signal (Cowork-internal, falsified at #6).
 """
 
@@ -45,6 +49,9 @@ from services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile imp
 )
 from services.git_integration_worker.cursor_auto.hop_cadence_standdown import (
     lane_standdown_ack_open,
+)
+from services.git_integration_worker.cursor_auto.hop_cadence_waiting import (
+    cadence_skip_reason,
 )
 from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
     HopDecision,
@@ -400,6 +407,23 @@ async def scan_and_fire(
                     "thread_id": thread_id,
                     "action": decision.action,
                     "reason": decision.reason,
+                    "age_s": decision.age_s,
+                }
+            )
+            continue
+        skip = cadence_skip_reason(thread_id, row=row, queue=queue)
+        if skip:
+            logger.info(
+                "hop_cadence skip thread=%s reason=%s age_s=%s",
+                thread_id,
+                skip,
+                decision.age_s,
+            )
+            results.append(
+                {
+                    "thread_id": thread_id,
+                    "action": "skip",
+                    "reason": skip,
                     "age_s": decision.age_s,
                 }
             )

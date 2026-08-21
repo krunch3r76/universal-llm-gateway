@@ -9,6 +9,7 @@ import pytest
 
 from services.git_integration_worker.cursor_auto.hop_cadence_home_lane import (
     home_lane_from_mailbox,
+    job_matches_watch_lane,
     watch_thread_for_job,
 )
 from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
@@ -65,6 +66,18 @@ def test_watch_thread_for_job_aliases_operator_mailbox() -> None:
 def test_watch_thread_for_job_web_keeps_thread_id() -> None:
     job = _job(thread_id="7059", from_agent="web-anthropic")
     assert watch_thread_for_job(job) == "7059"
+
+
+def test_job_matches_watch_lane_web_anthropic_child_thread() -> None:
+    job = _job(thread_id="9539", from_agent="web-anthropic")
+    row = {"thread_id": "9538", "from_agent": "web-anthropic"}
+    assert job_matches_watch_lane(job, "9538", row=row) is True
+
+
+def test_job_matches_watch_lane_unrelated_mailbox() -> None:
+    job = _job(thread_id="9999", from_agent="cdp-operator-1111-day5i")
+    row = {"thread_id": "9538", "from_agent": "web-anthropic"}
+    assert job_matches_watch_lane(job, "9538", row=row) is False
 
 
 def test_observe_work_thread_enrolls_home_lane_only(

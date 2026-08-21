@@ -74,7 +74,13 @@ running → turn_idle → content_proof → archiving → terminal | failed
 identity(CSE) = chat_url
 claude.ai / Cowork is resilient to all fleet service restarts
 restart(mcp | cdp_ask | …) ⇒ drop(attach) ∧ ¬end(CSE)
+tab ⟂ stream ⟂ attach ⟂ bus_lane
+open(tab) ⇏ alive(session ∨ stream)
+¬stream ⇏ dead(session ∨ lane)
+¬ hop ∨ re-stream to keep a tab warm
 ```
+
+**Tab ⟂ session (BINDING — operator 2026-08-20):** a Cowork Chrome tab does **not** keep an operator-proxy session or generate stream alive. The four lifetimes are independent (`decision:cse-tab-decoupled-from-session`). An idle open tab is attach telemetry, not a reason to hop-cadence or keep Opus streaming. PARK / stand-down ends the **stream**; the `chat_url` identity and private bus lane persist until continuity hop (successor confirmed) or `MISSION_CLOSEOUT`. Hop cadence is MCP-refresh / context successor — **never** tab-keepalive.
 
 Satellite `execution_id` / Playwright / MCP socket are attach handles. Cowork is **not tightly coupled** to mcp, **cdp_ask**, or any other fleet process — the Chrome tab survives recycle. After **`cdp_ask`** recycle: `wait_healthy(cdp_ask)` → `cse_session(op=followup)` with `chat_url` (`reattach=true` if the page is not on a lane). Continuity hop (new window, same private lane) is for **MCP tooling/chip refresh**, not because a satellite row died — life seat fires `agent_bus(tool="hop")` after `wait_healthy(mcp)`; ¬ `request` + hand-authored `TYPE: CONTINUITY_HANDOFF`. `cdp_ask` `sync_restart` is never coupled to mcp. ¬ park the restart on `live_cse_count` / a running hop execution. **IDE / cursor lead:** ¬ skip `mcp` **or** `cdp_ask` `sync_restart` to “protect Cowork attach.” Recover after healthy.
 

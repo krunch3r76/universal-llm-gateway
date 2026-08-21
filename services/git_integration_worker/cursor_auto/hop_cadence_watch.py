@@ -33,6 +33,9 @@ from services.git_integration_worker.cursor_auto.hop_cadence_home_lane import (
     home_lane_from_mailbox,
     watch_thread_for_job,
 )
+from services.git_integration_worker.cursor_auto.hop_cadence_lane_gate import (
+    hop_cadence_lane_skip_reason,
+)
 from services.git_integration_worker.cursor_auto.queue import AutoJob
 
 logger = get_logger(__name__)
@@ -196,6 +199,15 @@ def observe_lane_from_enqueue(
     watches = load_watches(path)
     job_thread = str(job.thread_id)
     thread_id = watch_thread_for_job(job)
+    lane_skip = hop_cadence_lane_skip_reason(thread_id)
+    if lane_skip:
+        logger.info(
+            "hop_cadence observe skip thread=%s reason=%s aliased_from=%s",
+            thread_id,
+            lane_skip,
+            job_thread if job_thread != thread_id else "",
+        )
+        return None
     aliased = job_thread != thread_id
     row = dict(watches.get(thread_id) or {})
     seated = row.get("seated_at")
@@ -275,6 +287,20 @@ def evaluate_watch(
     thread_id = str(row.get("thread_id") or "")
     if not thread_id:
         return HopDecision("", "skip", "missing_thread_id")
+    lane_skip = hop_cadence_lane_skip_reason(thread_id)
+    if lane_skip:
+        logger.info(
+            "hop_cadence evaluate skip thread=%s reason=%s",
+            thread_id,
+            lane_skip,
+        )
+        return HopDecision(
+            thread_id,
+            "skip",
+            lane_skip,
+            threshold_s=thr,
+            signal=lane_skip,
+        )
     home = home_lane_from_mailbox(str(row.get("from_agent") or ""))
     if home and home != thread_id:
         logger.info(

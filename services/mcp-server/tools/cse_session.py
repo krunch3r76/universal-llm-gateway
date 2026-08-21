@@ -14,6 +14,7 @@ import httpx
 from mcp_events import record
 
 from tools import cse_session_warm
+from tools.cse_session_warm import http_client_timeout_s, transport_failure_payload
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -41,8 +42,9 @@ def _relay(
             )
         }
     url = f"{base.rstrip('/')}{path}"
+    http_timeout = http_client_timeout_s(timeout_s)
     try:
-        with httpx.Client(timeout=timeout_s) as client:
+        with httpx.Client(timeout=http_timeout) as client:
             resp = client.request(method, url, json=json_body, params=params)
             if resp.status_code in {403, 404, 409, 424}:
                 if resp.content:
@@ -74,8 +76,7 @@ def _relay(
             "detail": detail,
         }
     except httpx.RequestError as exc:
-        record("mcp.cse_session.relay.failed", path=path, kind="unreachable")
-        return {"error": f"cse-session unreachable: {exc}"}
+        return transport_failure_payload(exc, path=path, timeout_s=http_timeout)
 
 
 def register_cse_session_tool(mcp: FastMCP) -> None:

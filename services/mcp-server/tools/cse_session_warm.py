@@ -12,6 +12,39 @@ from typing import Any, Literal
 import httpx
 from mcp_events import record
 
+# Satellite followup does not abort Playwright on body timeout_s. Equal MCP
+# httpx vs satellite budgets race: paste_verified can fire after the tool
+# returns "unreachable" (2026-08-20 wait-report followups).
+HTTP_TIMEOUT_SLACK_S = 60.0
+
+
+def http_client_timeout_s(satellite_timeout_s: float) -> float:
+    """HTTP wait the MCP relay uses — satellite budget plus slack."""
+    return float(satellite_timeout_s) + HTTP_TIMEOUT_SLACK_S
+
+
+def transport_failure_payload(
+    exc: BaseException, *, path: str, timeout_s: float
+) -> dict[str, Any]:
+    """Map httpx transport errors. Timeout ≠ unreachable; paste may still land."""
+    if isinstance(exc, httpx.TimeoutException):
+        record("mcp.cse_session.relay.failed", path=path, kind="timeout")
+        return {
+            "ok": False,
+            "code": "cse_session_http_timeout",
+            "error": (
+                f"cse-session timed out after {timeout_s:.0f}s waiting for satellite"
+            ),
+            "retryable": True,
+            "indeterminate": True,
+        }
+    record("mcp.cse_session.relay.failed", path=path, kind="unreachable")
+    return {
+        "ok": False,
+        "error": f"cse-session unreachable: {exc}",
+    }
+
+
 _ATTENDED_RETRYABLE: dict[str, bool] = {
     "no_attended_cse": True,
     "ambiguous_attended": False,
@@ -50,8 +83,9 @@ def _relay(
     if not base:
         return _unconfigured()
     url = f"{base.rstrip('/')}{path}"
+    http_timeout = http_client_timeout_s(timeout_s)
     try:
-        with httpx.Client(timeout=timeout_s) as client:
+        with httpx.Client(timeout=http_timeout) as client:
             resp = client.request(method, url, json=json_body)
             resp.raise_for_status()
             if resp.content:
@@ -70,8 +104,7 @@ def _relay(
             "detail": exc.response.text[:400],
         }
     except httpx.RequestError as exc:
-        record("mcp.cse_session.relay.failed", path=path, kind="unreachable")
-        return {"error": f"cse-session unreachable: {exc}"}
+        return transport_failure_payload(exc, path=path, timeout_s=http_timeout)
 
 
 def relay_attended(*, timeout_s: float = 30.0) -> dict[str, Any]:
@@ -81,8 +114,9 @@ def relay_attended(*, timeout_s: float = 30.0) -> dict[str, Any]:
         return _unconfigured()
     path = "/v1/project-ask/attended-operator"
     url = f"{base.rstrip('/')}{path}"
+    http_timeout = http_client_timeout_s(timeout_s)
     try:
-        with httpx.Client(timeout=timeout_s) as client:
+        with httpx.Client(timeout=http_timeout) as client:
             resp = client.get(url)
             if resp.status_code == 200:
                 return resp.json()
@@ -114,8 +148,7 @@ def relay_attended(*, timeout_s: float = 30.0) -> dict[str, Any]:
             "detail": exc.response.text[:400],
         }
     except httpx.RequestError as exc:
-        record("mcp.cse_session.relay.failed", path=path, kind="unreachable")
-        return {"error": f"cse-session unreachable: {exc}"}
+        return transport_failure_payload(exc, path=path, timeout_s=http_timeout)
 
 
 def relay_followup(

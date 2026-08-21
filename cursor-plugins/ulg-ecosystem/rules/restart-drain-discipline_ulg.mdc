@@ -68,6 +68,7 @@ required a same-window/streaming classifier before forcing `mcp`. That classifie
 identity(CSE) = chat_url
 claude.ai / Cowork is resilient to all fleet service restarts
 restart(mcp | cdp_ask | …) ⇒ drop(attach) ∧ ¬end(CSE)
+open(tab) ⇏ alive(session ∨ stream)   # tab ⟂ session; decision:cse-tab-decoupled-from-session
 ```
 
 A Cowork CSE is a Chrome tab. Satellite `execution_id`, Playwright, and the MCP
@@ -96,6 +97,7 @@ Cowork attach.” Attach-loss is expected and recoverable.
 | Asking the operator to authorize a force on a non-GIW service | Standing permission already covers it (2026-08-13); the ask is the latency | Force, announce, recover |
 | "MCP/`cdp_ask` restart would drop Cowork attach / kill the CSE" | Conflates attach handle with CSE identity (`chat_url`); claude.ai is resilient to all service restarts | Restart (force if it defers). Recover: followup/reattach or continuity hop after healthy |
 | Sit in-window polling `wait_healthy` while holding a lease | The lease you hold is what the drain waits on — never converges (friction 25989) | Arm, then **exit**; probe after |
+| Hop or keep streaming so an open Cowork tab “stays alive” | Tab ⟂ session (`decision:cse-tab-decoupled-from-session`); an idle tab is not a live stream | PARK / idle is legal; hop is MCP-refresh, never tab-keepalive |
 
 ## Mechanism already exists — use it, do not reinvent
 

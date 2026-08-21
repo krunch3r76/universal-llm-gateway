@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 
 _MCP_SERVER = Path(__file__).resolve().parents[3] / "services" / "mcp-server"
@@ -82,8 +83,77 @@ def test_followup_relay_timeout_uses_caller_budget(
     assert result["ok"] is True
     relay.assert_called_once()
     assert relay.call_args.kwargs["timeout_s"] == 60.0
+    assert relay.call_args.kwargs["json_body"]["timeout_s"] == 60
     assert relay.call_args.args[1] == "/v1/project-ask/followups"
     assert recorded[0]["signal"] == "mcp.cse_session.followup"
+
+
+class _CaptureClient:
+    timeout = None
+
+    def __init__(self, timeout=None):
+        type(self).timeout = timeout
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+    def request(self, *_args, **_kwargs):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.content = b'{"ok": true}'
+        resp.json.return_value = {"ok": True}
+        resp.raise_for_status = lambda: None
+        return resp
+
+
+class _TimeoutClient(_CaptureClient):
+    def request(self, *_args, **_kwargs):
+        raise httpx.TimeoutException("timed out")
+
+
+def test_relay_http_wait_exceeds_satellite_budget(
+    cse_session_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import tools.cse_session_warm as warm
+
+    monkeypatch.setattr(httpx, "Client", _CaptureClient)
+    monkeypatch.setattr(warm, "record", lambda *_a, **_k: None)
+    warm._relay(
+        "POST",
+        "/v1/project-ask/followups",
+        json_body={"prompt_text": "x"},
+        timeout_s=60,
+    )
+    assert _CaptureClient.timeout == 120.0
+
+
+def test_relay_timeout_is_not_unreachable(
+    cse_session_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import tools.cse_session_warm as warm
+
+    kinds: list[str] = []
+
+    def _record(signal, **kwargs):
+        kinds.append(str(kwargs.get("kind") or ""))
+
+    monkeypatch.setattr(httpx, "Client", _TimeoutClient)
+    monkeypatch.setattr(warm, "record", _record)
+    result = warm._relay(
+        "POST",
+        "/v1/project-ask/followups",
+        json_body={"prompt_text": "x"},
+        timeout_s=60,
+    )
+    assert result["ok"] is False
+    assert result["code"] == "cse_session_http_timeout"
+    assert result["indeterminate"] is True
+    assert result["retryable"] is True
+    assert "unreachable" not in result["error"]
+    assert "timeout" in kinds
 
 
 def test_followup_no_playwright_imports_in_module(cse_session_module) -> None:
