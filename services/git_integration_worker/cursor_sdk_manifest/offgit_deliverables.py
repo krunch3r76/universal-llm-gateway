@@ -16,6 +16,7 @@ from pathlib import Path
 from implement_admission.closeout_models import EffectsManifest
 
 from . import fs_targets
+from .cortex_uri_impersonation import is_cortex_host_path_impersonation
 
 
 def _normalize_offgit_uri(sandbox: str | None, path: str) -> str:
@@ -24,6 +25,8 @@ def _normalize_offgit_uri(sandbox: str | None, path: str) -> str:
     if lower.startswith("cortex://"):
         return raw
     if lower.startswith("workspaces://"):
+        return raw
+    if is_cortex_host_path_impersonation(raw):
         return raw
     if lower.startswith("cortex:"):
         return f"cortex://{raw.split(':', 1)[1].lstrip('/')}"
@@ -56,6 +59,8 @@ def normalize_expected_cortex_deliverable_uri(raw: str) -> str | None:
     """
     stripped = raw.strip()
     if not stripped:
+        return None
+    if is_cortex_host_path_impersonation(stripped):
         return None
     lower = stripped.lower()
     if lower.startswith("cortex://"):

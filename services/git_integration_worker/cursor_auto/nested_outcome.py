@@ -30,11 +30,6 @@ from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
     merge_plane_register_markers,
     status_claim_is_dual_register_honesty,
 )
-from services.git_integration_worker.cursor_auto.closeout_status_polarity import (
-    inject_plane_legend_line,
-    merge_plane_legend_markers,
-    status_claim_is_polysemous_partial_legend,
-)
 from services.git_integration_worker.cursor_auto.closeout_relay import (
     read_repo_closeout_sidecar,
     select_closeout_relay_payload,
@@ -44,6 +39,11 @@ from services.git_integration_worker.cursor_auto.closeout_relay_common import (
 )
 from services.git_integration_worker.cursor_auto.closeout_relay_cortex_spill import (
     promote_clamped_closeout_to_cortex,
+)
+from services.git_integration_worker.cursor_auto.closeout_status_polarity import (
+    inject_plane_legend_line,
+    merge_plane_legend_markers,
+    status_claim_is_polysemous_partial_legend,
 )
 from services.git_integration_worker.cursor_auto.closeout_tree_state import (
     compute_closeout_tree_state,

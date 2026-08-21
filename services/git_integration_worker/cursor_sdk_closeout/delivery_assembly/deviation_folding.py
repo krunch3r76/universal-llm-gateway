@@ -20,8 +20,13 @@ from services.git_integration_worker.cursor_sdk_capture_status import (
     resolve_closeout_capture_fields,
 )
 from services.git_integration_worker.cursor_sdk_manifest import (
+    collect_cortex_impersonation_scan_paths,
     collect_expected_cortex_deliverable_uris,
     oob_cortex_write_findings,
+)
+from services.git_integration_worker.cursor_sdk_manifest.cortex_uri_salvage import (
+    CORTEX_URI_SALVAGED_DEVIATION,
+    salvage_cortex_host_path_impersonations,
 )
 
 from .. import cortex_body_sources
@@ -121,6 +126,20 @@ def fold_closeout_deviations(
         offgit_uris=offgit_uris,
         cortex_root=cortex_body_sources.cortex_files_root(),
     )
+    impersonation_paths = collect_cortex_impersonation_scan_paths(
+        all_outside_repo,
+        files_expected,
+        dropped_non_file_entries,
+        offgit_uris,
+    )
+    salvaged_uris, _remaining = salvage_cortex_host_path_impersonations(
+        impersonation_paths,
+        cortex_root=cortex_body_sources.cortex_files_root(),
+        mount_root=mount,
+        write_tree=write_tree,
+    )
+    if salvaged_uris and CORTEX_URI_SALVAGED_DEVIATION not in deviations:
+        deviations = [*deviations, CORTEX_URI_SALVAGED_DEVIATION]
     if oob_deviations:
         deviations = [*deviations, *oob_deviations]
         if capture_status == "complete":

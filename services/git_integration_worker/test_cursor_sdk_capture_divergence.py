@@ -271,6 +271,12 @@ def test_normalize_expected_cortex_uri_rejects_repo_relative() -> None:
         normalize_expected_cortex_deliverable_uri("cortex:notes/system/foo.md")
         == "cortex://notes/system/foo.md"
     )
+    assert (
+        normalize_expected_cortex_deliverable_uri(
+            "cortex:/notes/personal/kaywan/walgreens-shift-dashboard.html"
+        )
+        is None
+    )
 
 
 def test_repo_change_set_skips_dot_target_drops(tmp_path: Path) -> None:

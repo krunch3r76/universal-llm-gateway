@@ -22,6 +22,11 @@ _DELIVERABLE_ROUTING_PREAMBLE = (
     '  - cortex share via fs(op="write", path="cortex://...") — cortex:// scheme.\n'
     '  - workspaces share via fs(op="write", path="workspaces://{repo}/...") — '
     "workspaces:// scheme.\n"
+    "NEVER mkdir / Write / StrReplace a host path whose directory name is "
+    "`cortex:` (e.g. `/mnt/torus/projects/cortex:/notes/…`) — that is not the "
+    "shared cortex namespace. If MCP fs is unreachable for a commissioned "
+    "cortex:// deliverable, reply `status: blocked` (or needs-attended) naming "
+    "the MCP failure; do not fall back to a local path.\n"
     "NEVER write deliverables to /tmp/summaries/, tmp/summaries/, or tmp/reviews/ "
     "(the worker auto-writes the closeout receipt at "
     "tmp/reviews/closeouts/<dispatch_id>.md — you do not author that). "

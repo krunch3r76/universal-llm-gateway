@@ -27,6 +27,9 @@ from services.git_integration_worker.cursor_auto.closeout_relay_project import (
 from services.git_integration_worker.cursor_sdk_deliverables import (
     sidecar_workspaces_ref,
 )
+from services.git_integration_worker.cursor_sdk_manifest.cortex_uri_impersonation import (
+    is_cortex_host_path_impersonation,
+)
 
 _FS_WRITE_OPS = frozenset(
     {
@@ -57,6 +60,8 @@ def _normalize_offgit_uri(sandbox: str | None, path: str) -> str:
     raw = path.strip()
     lower = raw.lower()
     if lower.startswith(("cortex://", "workspaces://")):
+        return raw
+    if is_cortex_host_path_impersonation(raw):
         return raw
     if lower.startswith("cortex:"):
         return f"cortex://{raw.split(':', 1)[1].lstrip('/')}"

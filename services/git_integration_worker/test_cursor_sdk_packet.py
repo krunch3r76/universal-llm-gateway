@@ -15,6 +15,7 @@ def test_resolve_prompt_preamble_always_includes_deliverable_routing() -> None:
     assert "/tmp/summaries/" in text
     assert 'path="cortex://' in text
     assert "workspaces://" in text
+    assert "directory name is `cortex:`" in text
     assert "CHUNK, NEVER INLINE ONE GIANT WRITE" in text
     assert 'op="append"' in text
 

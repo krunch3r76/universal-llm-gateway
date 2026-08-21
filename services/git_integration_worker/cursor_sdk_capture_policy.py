@@ -26,6 +26,10 @@ _DEVIATION_REGISTRY: dict[str, tuple[DeviationDisposition, DegradeTarget]] = {
         DeviationDisposition.ANNOTATE,
         DegradeTarget.CAPTURE,
     ),
+    "work:cortex_uri_salvaged": (
+        DeviationDisposition.ANNOTATE,
+        DegradeTarget.CAPTURE,
+    ),
     "capture:gitignored_present_unattributed": (
         DeviationDisposition.ANNOTATE,
         DegradeTarget.CAPTURE,

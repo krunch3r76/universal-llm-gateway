@@ -11,7 +11,11 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-from implement_admission.spec import NO_RUN_DEGRADED_REASONS, CloseoutStatus, WorkOutcome
+from implement_admission.spec import (
+    NO_RUN_DEGRADED_REASONS,
+    CloseoutStatus,
+    WorkOutcome,
+)
 
 StatusIncompleteClass = Literal["work", "capture"]
 StatusAuthorityWinner = Literal["measure", "claim"]

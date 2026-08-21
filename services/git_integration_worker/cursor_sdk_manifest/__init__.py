@@ -18,6 +18,16 @@ from .cortex_surface import (
     harvest_cortex_assertion_ids,
     merge_stream_cortex_entries,
 )
+from .cortex_uri_impersonation import (
+    any_cortex_host_path_impersonation,
+    collect_cortex_impersonation_scan_paths,
+    is_cortex_host_path_impersonation,
+)
+from .cortex_uri_salvage import (
+    CORTEX_URI_SALVAGED_DEVIATION,
+    cortex_impersonation_relpath,
+    salvage_cortex_host_path_impersonations,
+)
 from .effect_entries import (
     _entry_from_tool_call,
     classify_mcp_capture_branch,
@@ -71,15 +81,21 @@ from services.git_integration_worker.cursor_sdk_outside_census import (
 # isort: on
 
 __all__ = [
+    "CORTEX_URI_SALVAGED_DEVIATION",
     "CaptureBranch",
+    "any_cortex_host_path_impersonation",
     "build_effects_manifest",
     "classify_mcp_capture_branch",
     "classify_mount_path",
+    "collect_cortex_impersonation_scan_paths",
     "collect_expected_cortex_deliverable_uris",
+    "cortex_impersonation_relpath",
+    "salvage_cortex_host_path_impersonations",
     "compact_manifest_for_body",
     "cortex_surface_has_write_op",
     "git_manifest_label_divergence",
     "harvest_cortex_assertion_ids",
+    "is_cortex_host_path_impersonation",
     "is_genuinely_no_code_change",
     "manifest_fs_targets",
     "manifest_fs_write_targets",
