@@ -339,7 +339,7 @@ def gate_request_admission(
     return refusal
 
 
-from claude_bundles.request_admission_observe import observe_identity_on_gate  # noqa: E402
+from claude_bundles.request_admission_observe import observe_identity_on_gate  # noqa: E402, I001
 
 
 __all__ = [
