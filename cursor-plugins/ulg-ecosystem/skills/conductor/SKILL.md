@@ -9,6 +9,7 @@ trigger_match_terms:
   - off-tick conductor
   - cursor-sdk conductor
   - conductor packet
+  - conductor score
   - /conductor
 related_skills:
   - orchestration-lanes
@@ -19,6 +20,7 @@ related_skills:
   - bind-then-compose-dispatch
   - reasoning-posture
   - judgment-escalation-ladder
+  - life-operator-do-chain
 ---
 
 # Conductor — cursor-sdk as mission operator
@@ -27,6 +29,16 @@ related_skills:
 work child) **to completion**: owns the scoreboard, nests specialist legs,
 lands its own verified work, and pages the human only for true operator-only
 gates.
+
+**Do-chain vocabulary** (hop product SOT: `life-operator-do-chain`):
+
+| Term | Means |
+|---|---|
+| **conductor score** | packet + scoreboard — Mission Composer product; what this seat plays |
+| **conductor packet** | six-block admit file (`packet_path=`) |
+| **scoreboard** | G-row table the packet binds |
+
+¬ admit package. ¬ shorten conductor score to **score**. Mission Composer ≠ `cursor/composer-2.5`.
 
 **Default is run, don't ask.** Once admitted, the conductor drives every open
 G-row through to the scoreboard's own completion criterion in one continuous
@@ -344,6 +356,7 @@ when the operator already bound the answers in chat.
 | `git-posture` | Lane-B branch land = merge/`git_land`; ¬ path-copy onto master. Conductor admit = standing "operator directs a merge" for its own branch (§ Run to completion) — ¬ a second gate |
 | `lean-context-dispatch-first` | Tier ladder + Opus inform-then-proceed |
 | `consult-routing` | Model split / non-primary gate · **cursor-sdk `lane=` caller recipe** (this skill does not own omit semantics) |
+| `life-operator-do-chain` | Hop names + products (Sketch → shape bind · Mission Composer → conductor score · this seat plays it) |
 
 ## Anti-patterns
 

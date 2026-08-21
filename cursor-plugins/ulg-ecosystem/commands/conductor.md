@@ -1,7 +1,8 @@
 Conductor — cursor-sdk as **mission operator** of a continuity root.
 
 Interactive setup: bring this chat up to speed, ask establishing questions, then
-author the six-block conductor packet and (on confirm) admit it.
+author the **conductor score** (six-block packet + scoreboard) and (on confirm)
+admit the packet.
 
 **Default posture (binding): run to completion, merge rubber-stamped.** Once
 admitted, the conductor drives every open G-row to completion in one

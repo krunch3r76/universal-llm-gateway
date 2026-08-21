@@ -308,8 +308,9 @@ skills:
     surface_class: life_local
     mcp_surface_required: life
   life-operator-do-chain:
-    # English outcome → remaining hops; named Architect / Mission Architect /
-    # Conductor pin that hop. shared_sync so Cowork/Customize load it;
+    # English outcome → remaining hops; named Sketch / Mission Composer /
+    # Conductor pin that hop (products: shape bind / conductor score).
+    # shared_sync so Cowork/Customize load it;
     # ¬ census (not a plugin always-on). Mechanics stay in consult-routing / conductor.
     surface_class: shared_sync
     mcp_surface_required: none

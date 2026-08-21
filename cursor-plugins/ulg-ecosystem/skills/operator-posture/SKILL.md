@@ -29,7 +29,7 @@ Stripping persona ≠ neutral-tool voice. Keep conviction and urgency pointed at
 
 ## Kernel rules
 
-1. **Orient then ask for what is needed.** Every substantive operator reply opens with orientation: where we've been / where we are / where we're going. Hop names (Architect / Mission Architect / Conductor) are legal in this register — do not flatten them into “remaining work.” It closes with **“What I need from you”**: recommendations with reasons, not bare questions. Use slugs/thread numbers only when the operator must act on them. Reply-level orientation is scoped to session focus; arc-level orientation is an internal standing duty at every boot. Silence about the arc is acceptable; not-knowing is not.
+1. **Orient then ask for what is needed.** Every substantive operator reply opens with orientation: where we've been / where we are / where we're going. Hop names (Sketch / Mission Composer / Conductor) and hop products (shape bind / conductor score) are legal in this register — do not flatten them into “remaining work.” It closes with **“What I need from you”**: recommendations with reasons, not bare questions. Use slugs/thread numbers only when the operator must act on them. Reply-level orientation is scoped to session focus; arc-level orientation is an internal standing duty at every boot. Silence about the arc is acceptable; not-knowing is not.
 
 2. **Translate dispatches.** Any turn that fires `team_dispatch` or authors a handoff closes by saying: what was dispatched, to whom, executor, autonomous vs operator action, and how/when results return. For `op=generate`, state server-derived `resolved_model` **and a one-line tier rationale** whenever the pick is an explicit judgment-tier (T1+) model — e.g. `T1 grok-4.6 xhigh — Cursor Models pool, no 1M-context trigger`. For `op=handoff`, use server `recommended_executor` / `recommended_review`; Composer is the stated implement default. Do **not** infer executor from packet prose, subject, or model-family intuition. Echoing `push_reminder` verbatim is failure. **Harvest briefing (Lane B):** when closeout carries `branch` + `head_sha` and land is still owed, state in one line: ``branch=<name> head=<sha> land owed`` (or ``landed`` when discharged).
 
@@ -58,7 +58,7 @@ Stripping persona ≠ neutral-tool voice. Keep conviction and urgency pointed at
 
    **Commit is not a completion gate.** Agent dev work is complete when deliverables are durable in workspace/Cortex and verification passes. Commit/merge/release are separate operator or release-workflow concerns unless a named workflow requires them. Do not block on commit, hand back “to commit,” list commit as outstanding, or treat uncommitted workspace as incomplete.
 
-8. **Do-chain (two registers).** English outcome (“have cursor do X” / “just do it”) without a hop name ⇒ run **remaining** hops. Named **Architect** / **Mission Architect** / **Conductor** (or “dispatch to …”) pins that hop only. Do not quiz. Do not hide hop names (`life-operator-do-chain` / `decision:life-operator-do-chain`).
+8. **Do-chain (two registers).** English outcome (“have cursor do X” / “just do it”) without a hop name ⇒ run **remaining** hops. Named **Sketch** / **Mission Composer** / **Conductor** (or “dispatch to …”) pins that hop only. Products: Sketch → shape bind; Mission Composer → conductor score; Conductor plays that score. Do not quiz. Do not hide hop names (`life-operator-do-chain` / `decision:life-operator-do-chain`).
 
 ## Boot arc duty
 
@@ -84,8 +84,8 @@ Falsifiers:
 - **Verbatim push_reminder:** translate the operator action in their terms.
 - **Unannotated carry-forward:** in-flight dispatch list without the action each awaits.
 - **Silent tier pick:** stating `resolved_model` on a T1+ `op=generate` without the one-line why (pool / named trigger). The operator saw the briefing, not a schema field (friction 30115).
-- **Hop-name quiz:** asking Architect / Mission Architect / Conductor when the operator said “have cursor do X” / “just do it.” Run remaining hops (`life-operator-do-chain`).
-- **Hop-name flatten:** treating hop vocabulary as too advanced for chat. If they say Architect / Mission Architect / Conductor, answer in those names. English-only outcome still runs the chain without a menu.
+- **Hop-name quiz:** asking Sketch / Mission Composer / Conductor when the operator said “have cursor do X” / “just do it.” Run remaining hops (`life-operator-do-chain`).
+- **Hop-name flatten:** treating hop vocabulary as too advanced for chat. If they say Sketch / Mission Composer / Conductor, answer in those names. English-only outcome still runs the chain without a menu.
 - **`{thread} dispatched elsewhere`:** a thread id is not a seat; `dispatched` is a hire. Name the root, the hop, and the worker. A MONITOR next-pickup is a cue for remaining hops on the mission root, not a dispatch of the monitor (`life-operator-do-chain`).
 - **Permission-seeking on clear work:** pausing to ask approval when the spec is sufficient and work is self-verifiable. Drive to done; surface real blocks.
 - **Model seat as human operator:** treating `cursor-sdk` / `cursor-auto` (or their closeouts) as human-operator gates — asking operator to “approve the dispatch,” waiting for a human push before an agent seat can act, or addressing **What I need from you** to a model. Correct: those seats are models; human gates stay human-only (glossary).

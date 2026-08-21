@@ -1,7 +1,7 @@
 ---
 name: life-operator-do-chain
-description: "When the operator says have cursor do X without naming a hop — run remaining hops; do not quiz. Named Architect / Mission Architect / Conductor are first-class and pin that hop only."
-trigger_short: "have cursor do ∨ just do it ∨ Architect ∨ Mission Architect ∨ Conductor"
+description: "When the operator says have cursor do X without naming a hop — run remaining hops; do not quiz. Named Sketch / Mission Composer / Conductor pin that hop. Products: shape bind / conductor score."
+trigger_short: "have cursor do ∨ just do it ∨ Sketch ∨ Architect ∨ Mission Composer ∨ Conductor ∨ conductor score ∨ shape bind"
 skill_category: orchestration
 trigger_match_terms:
   - life-operator-do-chain
@@ -9,9 +9,13 @@ trigger_match_terms:
   - just do it
   - make it real
   - make this real
+  - mission composer
   - mission architect
   - mission writer
   - conductor-architect
+  - conductor score
+  - shape bind
+  - Sketch
   - Architect
   - Conductor
   - life operator verbs
@@ -32,28 +36,30 @@ Two registers, both legal. English outcome ⇒ seat composes the chain. Named ho
 ```
 have_cursor_do(X) ∧ ¬named_hop ⇒ run(remaining(X))
 named_hop ⇒ that hop only
-¬ quiz(Architect | Mission Architect | Conductor)
+¬ quiz(Sketch | Mission Composer | Conductor)
 ¬ flatten(hop_names) in operator chat
 ```
 
 Canonical hops (say these; aliases in parentheses):
 
-| Hop | Does | Alias |
+| Hop | Product | Alias |
 |---|---|---|
-| **Architect** | Bind the plan / shape (Fable/CDP consult) | “architect a plan”, “dispatch to Architect” |
-| **Mission Architect** | Author the conductor packet + scoreboard so the mission is runnable | Mission writer, conductor-architect |
-| **Conductor** | Admit and operate the mission root | “admit the conductor”, “run it” |
+| **Sketch** | **shape bind** (consult sidecar) | Architect, “architect a plan”, “dispatch to Architect”, “dispatch to Sketch” |
+| **Mission Composer** | **conductor score** | Mission Architect, mission writer, conductor-architect |
+| **Conductor** | plays that score | “admit the conductor”, “run it” |
 
-Lawful sequence: Architect → Mission Architect → Conductor. They may name any one step.
+**conductor score** = conductor packet (admit file) + scoreboard (G-rows). ¬ shorten to **score**. **Admit package** retired. Mission Composer ≠ `cursor/composer-2.5` (T0 mechanical nest). Sketch ≠ path-sim / `/layer` architecture and ≠ a casual doodle — it is the symphony sketchbooks: bind themes, movements, in/out.
+
+Lawful sequence: Sketch → Mission Composer → Conductor. They may name any one step.
 
 ## Remaining hops
 
-Skip anything already harvested (consult sidecar, conductor packet + scoreboard, G-row DONE).
+Skip anything already harvested (shape bind, conductor score, G-row DONE).
 
 | They say | Seat runs |
 |---|---|
-| “architect a plan” / “dispatch to Architect” / “think / what should this be” | **Architect** only |
-| “dispatch to Mission Architect” / “architect the mission” / “write the mission” | **Mission Architect** only |
+| “sketch it” / “dispatch to Sketch” / “architect a plan” / “dispatch to Architect” / “think / what should this be” | **Sketch** only |
+| “dispatch to Mission Composer” / “compose the mission” / “write the score” / “architect the mission” / “write the mission” | **Mission Composer** only |
 | “dispatch to the Conductor” / “run it / ship it / admit the conductor” | **Conductor** only |
 | “have cursor do X” / “just do it” / “make X real” (no hop named) | **remaining** hops, no quiz |
 | “watch / don’t post / just look” | monitor — not this chain |
@@ -70,16 +76,17 @@ Skip anything already harvested (consult sidecar, conductor packet + scoreboard,
 1. Pin X (outcome). Name harvested hops + evidence (thread, sidecar sha, `execution_id`).
 2. If they named one hop → fire only that hop.
 3. Else fire the next unharvested hop; continue until remaining is empty or a true operator-only gate.
-4. Announce each hop by its canonical name (Architect / Mission Architect / Conductor) + seat + why. Do not ask which hop. Do not paraphrase hops as only “remaining work.”
+4. Announce each hop by its canonical name (Sketch / Mission Composer / Conductor) + seat + why. Do not ask which hop. Do not paraphrase hops as only “remaining work.”
 
-Specimen: 9473 Architect harvested ∧ 9487 Mission Architect harvested ∧ 9488 packet+scoreboard exist ⇒ “have cursor do recall” admits the **Conductor** on 9488 — ¬ re-ask Architect / Mission Architect.
+Specimen: 9473 Sketch harvested ∧ 9487 Mission Composer harvested ∧ 9488 conductor score exists ⇒ “have cursor do recall” admits the **Conductor** on 9488 — ¬ re-ask Sketch / Mission Composer.
 
 ## Anti-patterns
 
 | Bad | Good |
 |---|---|
-| “Do you want Architect, Mission Architect, or Conductor?” | Run remaining, or fire the hop they named |
-| Hide hop names in chat (“the next remaining hop”) when they are speaking hops | Say Architect / Mission Architect / Conductor |
+| “Do you want Sketch, Mission Composer, or Conductor?” | Run remaining, or fire the hop they named |
+| Hide hop names in chat (“the next remaining hop”) when they are speaking hops | Say Sketch / Mission Composer / Conductor |
+| Call the Mission Composer product “packet + scoreboard” or “admit package” | Say **conductor score** |
 | “have cursor do X” → only `request` / `delegate` | Compose the chain |
 | Re-run a harvested hop because they did not name the next | Skip harvested |
 | Quiz after they pinned one hop | That hop only |
