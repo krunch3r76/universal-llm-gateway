@@ -1,12 +1,14 @@
 """Server-side caller identity resolution and lease gate at ``agent_bus.request``.
 
 Census over ``identity_rows`` (execution-store ``rows`` ∪ registry
-``seated_rows``). Bind order: caller wire → N≥2 refuse → origin CSR when
-N≤1 → exactly-one operator-purpose match → unresolvable. Watch-row
-``registration_id`` is lease SOT only — never promoted to admission identity.
+``seated_rows``). Bind order: caller wire → N≥2 refuse → N==1
+(origin CSR then single-seat) → N==0 resume chain (watch / mailbox / bus CSE /
+origin CSR) → unresolvable. Watch-row ``registration_id`` is lease SOT for hop
+and resume identity when ``census_n==0`` — never ``superseded_registration_id``.
 
-N≠1 (``ambiguous_matches`` / ``zero_matches`` / ``empty_snap``) refuses at
-enqueue. ``snap_load_failed`` and ``missing_thread_id`` still admit.
+N≠1 without a resume bind (``ambiguous_matches`` / ``zero_matches`` /
+``empty_snap``) refuses at enqueue. ``snap_load_failed`` and
+``missing_thread_id`` still admit.
 """
 
 from __future__ import annotations
@@ -29,6 +31,7 @@ from claude_bundles.request_admission_census import (
     census_refusal_envelope,
     classify_unresolvable,
 )
+from claude_bundles.request_admission_resume import resolve_n0_resume_identity
 
 logger = get_logger(__name__)
 
@@ -37,6 +40,9 @@ IdentitySource = Literal[
     "caller_supplied",
     "origin_cse",
     "single_seat_active_work",
+    "watch_resume",
+    "mailbox_resume",
+    "cse_resume",
     "unresolvable",
 ]
 
@@ -142,11 +148,12 @@ def resolve_request_admission_identity(
     *,
     thread_id: str | None,
     caller_registration_id: str | None,
+    from_agent: str | None = None,
     active_work_snap: dict[str, Any] | None = None,
     path: Path | None = None,
     snap_load_failed: bool = False,
 ) -> AdmissionIdentity:
-    """Resolve caller registration_id for admission bind (never from watch row)."""
+    """Resolve caller registration_id for admission bind."""
     tid = (thread_id or "").strip()
     watch_present = bool(tid and hop_seat_cutover.load_watches(path).get(tid))
     caller = (caller_registration_id or "").strip()
@@ -183,17 +190,16 @@ def resolve_request_admission_identity(
             match_registration_ids=match_ids,
         )
 
-    origin = _resolve_origin_cse_registration(tid)
-    if origin:
-        return AdmissionIdentity(
-            registration_id=origin,
-            source="origin_cse",
-            watch_present=watch_present,
-            census_n=census_n,
-            match_registration_ids=match_ids,
-        )
-
     if census_n == 1:
+        origin = _resolve_origin_cse_registration(tid)
+        if origin:
+            return AdmissionIdentity(
+                registration_id=origin,
+                source="origin_cse",
+                watch_present=watch_present,
+                census_n=census_n,
+                match_registration_ids=match_ids,
+            )
         return AdmissionIdentity(
             registration_id=matches[0],
             source="single_seat_active_work",
@@ -201,6 +207,21 @@ def resolve_request_admission_identity(
             census_n=census_n,
             match_registration_ids=match_ids,
         )
+
+    if not snap_load_failed:
+        resume_reg, resume_source = resolve_n0_resume_identity(
+            thread_id=tid,
+            from_agent=from_agent,
+            path=path,
+        )
+        if resume_reg and resume_source:
+            return AdmissionIdentity(
+                registration_id=resume_reg,
+                source=resume_source,
+                watch_present=watch_present,
+                census_n=census_n,
+                match_registration_ids=match_ids,
+            )
 
     return AdmissionIdentity(
         registration_id=None,
@@ -221,6 +242,7 @@ def gate_request_admission(
     *,
     thread_id: str | None,
     caller_registration_id: str | None,
+    from_agent: str | None = None,
     active_work_snap: dict[str, Any] | None = None,
     path: Path | None = None,
 ) -> dict[str, Any] | None:
@@ -241,6 +263,7 @@ def gate_request_admission(
     identity = resolve_request_admission_identity(
         thread_id=tid or None,
         caller_registration_id=caller_registration_id,
+        from_agent=from_agent,
         active_work_snap=snap,
         path=path,
         snap_load_failed=snap_load_failed,
@@ -320,6 +343,7 @@ def observe_identity_on_gate(
     *,
     thread_id: str | None,
     caller_registration_id: str | None,
+    from_agent: str | None = None,
     active_work_snap: dict[str, Any] | None,
     path: Path | None = None,
 ) -> AdmissionIdentity:
@@ -327,6 +351,7 @@ def observe_identity_on_gate(
     identity = resolve_request_admission_identity(
         thread_id=thread_id,
         caller_registration_id=caller_registration_id,
+        from_agent=from_agent,
         active_work_snap=active_work_snap,
         path=path,
     )

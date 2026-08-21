@@ -43,6 +43,7 @@ def _resolve_hop_seat_request_refusal(
     *,
     thread_id: str | None,
     cse_registration_id: str | None,
+    from_agent: str | None = None,
 ) -> dict[str, Any] | None:
     """Bind identity and refuse superseded predecessor writes when fenced.
 
@@ -54,6 +55,7 @@ def _resolve_hop_seat_request_refusal(
     refusal = gate_request_admission(
         thread_id=thread_id,
         caller_registration_id=cse_registration_id,
+        from_agent=from_agent,
     )
     if refusal is None:
         return None
@@ -445,6 +447,7 @@ def _request_dispatch(
     seat_refusal = _resolve_hop_seat_request_refusal(
         thread_id=thread_hint,
         cse_registration_id=cse_registration_id,
+        from_agent=from_agent,
     )
     if seat_refusal is not None:
         return seat_refusal

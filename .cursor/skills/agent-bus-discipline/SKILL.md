@@ -248,6 +248,19 @@ agent_bus(tool="threads", arguments='{"tags":["lane:life-to-code"],"status":"act
 
 Close completed exchanges with `close(thread, summary)`; closed threads reduce false unread boot signals. Pass `mark_read:true` when fetching turns you intend to act on.
 
+### cursor_request on a private lane — continue vs resume
+
+Two legal states for `agent_bus.request(thread=…)` / `cursor_request(thread=…)` on the **same** private lane:
+
+| State | Census | Identity bind | When |
+|---|---|---|---|
+| **continue-while-running** | N=1 active-work row | `origin_cse` or `single_seat_active_work` | Prior Auto job still `pending`/`running` on that thread |
+| **resume-after-terminal** | N=0 after `terminal_done` | `watch_resume` → `mailbox_resume` → `cse_resume` → `origin_cse` | Prior job finished; watch / mailbox / bus CSE still names the holder |
+
+Watch `registration_id` is lease SOT for hop **and** resume identity when `census_n==0`. It is **ignored** when `census_n==1` (continue path unchanged).
+
+When **no** resume identity exists, admission returns `seat.identity_unresolvable` with `retryable:false` — that is a **pivot**, not a retry loop. Escape: `new_slug` + `parent_thread` + `lane_role=sub_mission` (child-thread fallback), not hammering the same `thread=` admission.
+
 ### Bulk inbox triage (`triage`)
 
 For historical unread backlogs, use the two-phase `triage` op (**agent_bus only** — not on `agent_bus_read`):

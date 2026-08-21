@@ -41,11 +41,15 @@ def test_resolve_from_origin_cse_when_caller_omits_registration():
     with (
         patch(
             "claude_bundles.hop_seat_cutover.load_watches",
-            return_value={"7188": {"registration_id": "5420b367-watch"}},
+            return_value={"7188": {"thread_id": "7188"}},
         ),
         patch(
             "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
             return_value="5420b367-origin",
+        ),
+        patch(
+            "claude_bundles.request_admission_resume._resolve_bus_cse_registration",
+            return_value=None,
         ),
     ):
         identity = resolve_request_admission_identity(
@@ -97,6 +101,10 @@ def test_unresolvable_on_watch_lane_without_bind_sources():
         ),
         patch(
             "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value=None,
+        ),
+        patch(
+            "claude_bundles.request_admission_resume._resolve_bus_cse_registration",
             return_value=None,
         ),
     ):
@@ -200,6 +208,10 @@ def test_gate_refuses_empty_snap_on_watched_lane():
         ),
         patch(
             "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value=None,
+        ),
+        patch(
+            "claude_bundles.request_admission_resume._resolve_bus_cse_registration",
             return_value=None,
         ),
     ):
@@ -357,11 +369,146 @@ def test_gate_admits_self_supersede_poison_row_via_single_seat_bind():
     assert refusal is None
 
 
-def test_watch_row_is_not_admission_bind():
+def test_n0_watch_reg_admits_watch_resume():
+    """AC-R1: N=0 + watch.reg → admit via watch_resume after terminal."""
     with (
         patch(
             "claude_bundles.hop_seat_cutover.load_watches",
             return_value={"7188": {"registration_id": "5420b367-watch-only"}},
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value=None,
+        ),
+    ):
+        identity = resolve_request_admission_identity(
+            thread_id="7188",
+            caller_registration_id=None,
+            active_work_snap={"rows": []},
+        )
+    assert identity.source == "watch_resume"
+    assert identity.registration_id == "5420b367-watch-only"
+    assert identity.watch_present is True
+
+
+def test_n1_watch_ignored_when_census_has_row():
+    """AC-R3: continue-while-running — watch ignored when census_n==1."""
+    snap = {
+        "rows": [
+            {
+                "execution_id": "exec-holder",
+                "registration_id": "5420b367-holder",
+                "parent_thread": "7188",
+                "purpose": "operator-proxy",
+                "status": "running",
+            }
+        ]
+    }
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={"7188": {"registration_id": "5420b367-watch-only"}},
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value=None,
+        ),
+    ):
+        identity = resolve_request_admission_identity(
+            thread_id="7188",
+            caller_registration_id=None,
+            active_work_snap=snap,
+        )
+    assert identity.source == "single_seat_active_work"
+    assert identity.registration_id == "5420b367-holder"
+    assert identity.census_n == 1
+
+
+def test_n0_mailbox_resume_when_thread_watch_misses():
+    """AC-R4: mailbox home-lane watch when watch[thread] misses."""
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={
+                "9473": {"registration_id": "5420b367-mailbox"},
+            },
+        ),
+        patch(
+            "claude_bundles.request_admission_resume._resolve_bus_cse_registration",
+            return_value=None,
+        ),
+        patch(
+            "claude_bundles.request_admission_resume._resolve_origin_cse_registration",
+            return_value=None,
+        ),
+    ):
+        identity = resolve_request_admission_identity(
+            thread_id="9551",
+            caller_registration_id=None,
+            from_agent="cdp-operator-9473-proxy",
+            active_work_snap={"rows": []},
+        )
+    assert identity.source == "mailbox_resume"
+    assert identity.registration_id == "5420b367-mailbox"
+
+
+def test_n0_cse_resume_when_watch_and_mailbox_miss():
+    """AC-R4: bus CSE association when watch/mailbox miss."""
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={},
+        ),
+        patch(
+            "claude_bundles.request_admission_resume._resolve_bus_cse_registration",
+            return_value="5420b367-cse-bus",
+        ),
+        patch(
+            "claude_bundles.request_admission_resume._resolve_origin_cse_registration",
+            return_value=None,
+        ),
+    ):
+        identity = resolve_request_admission_identity(
+            thread_id="7188",
+            caller_registration_id=None,
+            from_agent="web-anthropic",
+            active_work_snap={"rows": []},
+        )
+    assert identity.source == "cse_resume"
+    assert identity.registration_id == "5420b367-cse-bus"
+
+
+def test_n0_never_binds_superseded_registration_id_from_watch():
+    """AC-R4: superseded_registration_id is never admission identity."""
+    with patch(
+        "claude_bundles.hop_seat_cutover.load_watches",
+        return_value={
+            "7188": {
+                "registration_id": "5420b367-current",
+                "superseded_registration_id": "5420b367-old",
+            }
+        },
+    ):
+        identity = resolve_request_admission_identity(
+            thread_id="7188",
+            caller_registration_id=None,
+            active_work_snap={"rows": []},
+        )
+    assert identity.source == "watch_resume"
+    assert identity.registration_id == "5420b367-current"
+    assert identity.registration_id != "5420b367-old"
+
+
+def test_watch_row_without_registration_id_still_unresolvable():
+    """AC-R5: watch present without registration_id still refuses."""
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={"7188": {"thread_id": "7188"}},
+        ),
+        patch(
+            "claude_bundles.request_admission_identity.resolve_n0_resume_identity",
+            return_value=(None, None),
         ),
         patch(
             "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
@@ -400,6 +547,10 @@ def test_counterfactual_refuse_when_bound_predecessor_after_confirm():
         patch(
             "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
             return_value="5420b367-old",
+        ),
+        patch(
+            "claude_bundles.request_admission_resume._resolve_bus_cse_registration",
+            return_value=None,
         ),
     ):
         observe_identity_on_gate(
@@ -484,16 +635,20 @@ def test_identity_gated_emits_on_both_outcomes_and_unwatched():
                 "claude_bundles.hop_seat_cutover.load_watches",
                 return_value={"7188": {"thread_id": "7188"}},
             ),
-            patch(
-                "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
-                return_value=None,
-            ),
-            patch(
-                "claude_bundles.request_admission_identity.load_active_work_snap_result",
-                return_value=({"rows": [], "seated_rows": []}, False),
-            ),
-        ):
-            gate_request_admission(thread_id="7188", caller_registration_id=None)
+                patch(
+                    "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+                    return_value=None,
+                ),
+                patch(
+                    "claude_bundles.request_admission_resume._resolve_bus_cse_registration",
+                    return_value=None,
+                ),
+                patch(
+                    "claude_bundles.request_admission_identity.load_active_work_snap_result",
+                    return_value=({"rows": [], "seated_rows": []}, False),
+                ),
+            ):
+                gate_request_admission(thread_id="7188", caller_registration_id=None)
 
         with (
             patch(
@@ -560,9 +715,19 @@ def test_unresolvable_reason_snap_load_failed():
 
 
 def test_unresolvable_reason_empty_snap():
-    with patch(
-        "claude_bundles.hop_seat_cutover.load_watches",
-        return_value={"7188": {"thread_id": "7188"}},
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={"7188": {"thread_id": "7188"}},
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value=None,
+        ),
+        patch(
+            "claude_bundles.request_admission_resume._resolve_bus_cse_registration",
+            return_value=None,
+        ),
     ):
         identity = resolve_request_admission_identity(
             thread_id="7188",
@@ -585,9 +750,19 @@ def test_unresolvable_reason_zero_matches():
             }
         ]
     }
-    with patch(
-        "claude_bundles.hop_seat_cutover.load_watches",
-        return_value={"7188": {"thread_id": "7188"}},
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={"7188": {"thread_id": "7188"}},
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value=None,
+        ),
+        patch(
+            "claude_bundles.request_admission_resume._resolve_bus_cse_registration",
+            return_value=None,
+        ),
     ):
         identity = resolve_request_admission_identity(
             thread_id="7188",
@@ -784,6 +959,10 @@ def test_gate_refuses_zero_matches():
         ),
         patch(
             "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value=None,
+        ),
+        patch(
+            "claude_bundles.request_admission_resume._resolve_bus_cse_registration",
             return_value=None,
         ),
     ):

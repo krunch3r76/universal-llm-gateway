@@ -83,6 +83,7 @@ def _hop_dispatch(
     seat_refusal = _resolve_hop_seat_request_refusal(
         thread_id=thread_id,
         cse_registration_id=cse_registration_id,
+        from_agent=from_agent,
     )
     if seat_refusal is not None:
         return seat_refusal
