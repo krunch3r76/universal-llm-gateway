@@ -477,7 +477,7 @@ skills:
     surface_class: cursor_only
     mcp_surface_required: none
   tax:
-    surface_class: cursor_only
+    surface_class: life_local
     mcp_surface_required: none
   teach-once-routine-mint:
     # Both seats mint taught recipes; classifier must load on Customize too.
