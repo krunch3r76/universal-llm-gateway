@@ -36,6 +36,7 @@ import httpx
 from deploy_identity.code_version import resolve_code_version
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from llm_adapters.capability_dispatch import CatalogMissError
 from starlette.responses import Response
 from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
 
@@ -323,6 +324,45 @@ async def _publish_translation_failed_event(
     )
 
 
+def catalog_miss_http_detail(exc: CatalogMissError) -> dict[str, str]:
+    """Typed 4xx body for an uncarded dispatch — never Internal Server Error."""
+    return {
+        "error": "catalog_miss",
+        "miss_key": exc.miss_key,
+        "miss_reason": exc.miss_reason,
+        "message": str(exc),
+    }
+
+
+async def raise_catalog_miss_http(
+    *,
+    exc: CatalogMissError,
+    event_bus: EventBus | None,
+    provider: str,
+    model: str,
+    adapter_type: str,
+) -> None:
+    """Publish catalog-miss + request-failed, then raise HTTP 422."""
+    detail = catalog_miss_http_detail(exc)
+    if event_bus is not None:
+        await event_bus.publish(
+            CloudProxyDispatchCatalogMiss(
+                provider=provider,
+                model_id=model,
+                reason=exc.miss_reason[:300],
+            )
+        )
+    await _publish_request_failed_event(
+        event_bus=event_bus,
+        provider=provider,
+        model=model,
+        status_code=422,
+        error=str(exc)[:300],
+        adapter_type=adapter_type,
+    )
+    raise HTTPException(status_code=422, detail=detail) from exc
+
+
 async def _read_json_object_body(
     *, request: Request, event_bus: EventBus | None, endpoint_name: str
 ) -> dict[str, Any]:
@@ -442,6 +482,41 @@ async def _relay_stream_safe(
                 "message": message,
                 "type": "provider_error",
                 "code": str(status),
+            }
+        }
+        yield f"data: {json.dumps(error_dict)}\n\n".encode()
+        yield b"data: [DONE]\n\n"
+    except CatalogMissError as exc:
+        error_text = str(exc)[:300]
+        logger.error(
+            "Streaming catalog-miss from provider %s model=%s: %s",
+            provider,
+            model_id,
+            error_text,
+        )
+        if event_bus is not None:
+            await event_bus.publish(
+                CloudProxyDispatchCatalogMiss(
+                    provider=provider,
+                    model_id=model_id,
+                    reason=exc.miss_reason[:300],
+                )
+            )
+        await _publish_request_failed_event(
+            event_bus=event_bus,
+            provider=provider,
+            model=model_id,
+            status_code=422,
+            error=error_text,
+            adapter_type=adapter_type,
+        )
+        error_dict = {
+            "error": {
+                "message": error_text,
+                "type": "catalog_miss",
+                "code": "422",
+                "miss_key": exc.miss_key,
+                "miss_reason": exc.miss_reason,
             }
         }
         yield f"data: {json.dumps(error_dict)}\n\n".encode()
@@ -696,7 +771,16 @@ async def chat_completions(request: Request) -> Response:
                 provider=provider_catalog.provider, request_body=b
             )
 
-        response_json = await mcp_executor.run_tool_loop(_proxy_forward, body)
+        try:
+            response_json = await mcp_executor.run_tool_loop(_proxy_forward, body)
+        except CatalogMissError as exc:
+            await raise_catalog_miss_http(
+                exc=exc,
+                event_bus=event_bus,
+                provider=provider_catalog.provider,
+                model=model_id,
+                adapter_type=adapter,
+            )
         if event_bus:
             await event_bus.publish(
                 CloudProxyRequestForwarded(
@@ -757,6 +841,14 @@ async def chat_completions(request: Request) -> Response:
             )
         return JSONResponse(content=response_json)
 
+    except CatalogMissError as exc:
+        await raise_catalog_miss_http(
+            exc=exc,
+            event_bus=event_bus,
+            provider=provider_catalog.provider,
+            model=model_id,
+            adapter_type=adapter,
+        )
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code if exc.response else 502
         error_text = str(exc)[:300]

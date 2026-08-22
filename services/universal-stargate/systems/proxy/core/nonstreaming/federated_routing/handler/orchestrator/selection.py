@@ -225,7 +225,29 @@ async def run_initial_selection(
         model_id in g.available_models for g in all_gateways
     )
     if federated_gateways and not model_in_any_catalog:
-        raise_model_unavailable_error(str(model_id))
+        startup_timeout_s = float(
+            (routing_config or {})
+            .get("request_queue", {})
+            .get("startup_queue_timeout_s", DEFAULT_STARTUP_QUEUE_TIMEOUT_S)
+        )
+        remaining = startup_timeout_s - federated_manager.uptime_s
+        if remaining > 0:
+            recovered = await wait_for_model_gateway(
+                federated_manager=federated_manager,
+                context=context,
+                event_bus=event_bus,
+                model_id=str(model_id),
+                timeout_s=remaining,
+                unhealthy_gateway_ids=[],
+            )
+            if recovered:
+                all_gateways = federated_manager.get_all_gateways()
+                federated_gateways = federated_manager.get_healthy_gateways()
+                model_in_any_catalog = any(
+                    model_id in g.available_models for g in all_gateways
+                )
+        if not model_in_any_catalog:
+            raise_model_unavailable_error(str(model_id))
 
     gateways_for_routing = federated_gateways_to_routing_candidates(
         [g for g in federated_gateways if g.dispatchable]

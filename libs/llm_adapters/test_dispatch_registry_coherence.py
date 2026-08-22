@@ -119,6 +119,15 @@ def test_fable_5_is_carded_adaptive_128k() -> None:
     assert dispatch.reasoning.value_kind == "adaptive"
 
 
+def test_sonnet_5_is_carded_adaptive_128k() -> None:
+    """Advertised classify slug must resolve; missing card was the untyped 500."""
+    dispatch = resolve("anthropic/claude-sonnet-5")
+    assert dispatch.api_surface == SURFACE_ANTHROPIC
+    assert dispatch.max_output.ceiling == 128000
+    assert dispatch.reasoning is not None
+    assert dispatch.reasoning.value_kind == "adaptive"
+
+
 # ── §3.5: reasoning value_kind ⇔ surface ─────────────────────────────────────
 
 
