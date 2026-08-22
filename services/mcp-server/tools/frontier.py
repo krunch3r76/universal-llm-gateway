@@ -330,6 +330,17 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 ),
             ),
         ] = None,
+        workspace: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Allowlisted satellite repo name for per-dispatch git "
+                    "identity (capture, land lease, head_sha). Omit for hub "
+                    "ULG; control-plane stays on hub. cursor-sdk-seat-only; "
+                    "other seats → 422 workspace_sdk_only."
+                ),
+            ),
+        ] = None,
         purpose: Annotated[
             str | None,
             Field(
@@ -764,6 +775,17 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 },
                 "field": "lane",
             }
+        if workspace is not None and seat != "cursor-sdk":
+            return {
+                "error": {
+                    "code": "workspace_sdk_only",
+                    "message": (
+                        "workspace is only valid for seat='cursor-sdk' generate/"
+                        "to_thread dispatches (named satellite git identity)"
+                    ),
+                },
+                "field": "workspace",
+            }
         lane_required_err = require_cursor_sdk_checkout_lane(
             op=op,
             seat=seat,
@@ -889,6 +911,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 body["nest_under"] = nest_under
             if lane is not None:
                 body["lane"] = lane
+            if workspace is not None:
+                body["workspace"] = workspace
             if purpose is not None:
                 body["purpose"] = purpose
         else:

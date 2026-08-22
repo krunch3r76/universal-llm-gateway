@@ -176,6 +176,26 @@ empty `files_expected` → A (`opt_out`) ≻ `contract_regime` B. Empty scope + 
 `active_by_lane` for the lane you will pass. Service-up ≠ slot-free. After
 admit, quote `sdk.lane.selected` or `active_by_lane` before naming the lane.
 
+## cursor-sdk satellite git (`workspace=`)
+
+`team_dispatch(op=generate|to_thread, seat=cursor-sdk)`: optional `workspace=`
+names an **allowlisted satellite** under `/mnt/torus/projects/{name}` for
+per-dispatch **git identity** — capture, Gate D, land lease, `head_sha`,
+`git_refs`, Lane-B mint source. **Omit** for hub ULG (default). **One name**
+per dispatch; hub name is invalid (422 `CURSOR_WORKSPACE_HUB_USE_OMIT` — omit
+instead). Control-plane stays on hub: packet_path read, SDK HOME/plugin,
+closeout receipt sidecars under `workspaces://universal-llm-gateway/…`.
+Allowlist SoT: `cursor-plugins/ulg-ecosystem/SATELLITES.txt`.
+
+| Situation | Pass | Git identity |
+|---|---|---|
+| Hub ULG implement | omit `workspace=` | hub |
+| Satellite bot (e.g. claudeburst) | `workspace="claudeburst"` + `lane="B"` typical | that repo |
+| Sibling write without `workspace=` | omit | hub (sibling = outside_repo — honest) |
+
+`workspace=` does **not** force `lane=B` — caller chooses A or B per checkout
+recipe above. Satellite Lane A: cwd = satellite root + lease keyed to satellite.
+
 Stay on one designated tree per arc: reuse when `nest_under`, `resume_of`, or
 `lookup_lane_worktree(thread_id)` already holds a worktree — see `git-posture`
 § Stay on one designated tree. `conductor` defers this recipe here.

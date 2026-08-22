@@ -67,6 +67,7 @@ def _register_cursor_sdk_seat_writes(
     dispatch_id: str,
     baseline: dict[str, Any] | None,
     repo_change_set: ChangeSet,
+    seat_write_source_repo: Path | None = None,
 ) -> None:
     """Register attributed closeout paths for lane-A cursor-sdk Rank-2 authorship.
 
@@ -74,9 +75,9 @@ def _register_cursor_sdk_seat_writes(
     ``resolve_repo_change_set`` completes. Register the attributed set only —
     ambient/parallel-WIP diverted by resolve must not seed the ledger. Arc stays
     open (never ``close_arc`` here) so lane-B quiescent sweep does not commit
-    cursor-sdk rows. ``source_repo`` uses the consumer key from ``load_config``
-    (matches ``nested_outcome`` relay); Lane-B/worktree binding divergence can
-    leave rows unread at a different resolved path.
+    cursor-sdk rows. ``source_repo`` uses the dispatch git identity (write tree),
+    not the control-plane hub, so satellite dispatches register under the
+    satellite key.
     """
     if baseline is None:
         return
@@ -87,7 +88,9 @@ def _register_cursor_sdk_seat_writes(
     )
     if not paths:
         return
-    source_repo = str(Path(load_config().source_repo).resolve())
+    source_repo = str(
+        Path(seat_write_source_repo or load_config().source_repo).resolve()
+    )
     SeatWriteLedger.instance().register_paths(
         arc_id=dispatch_id,
         seat_id="cursor-sdk",
@@ -225,6 +228,7 @@ def resolve_closeout_change_set(
         dispatch_id=dispatch_id,
         baseline=baseline,
         repo_change_set=repo_change_set,
+        seat_write_source_repo=write_tree,
     )
     all_outside_repo = tuple(dict.fromkeys([*outside_repo_paths, *manifest_outside]))
     verification_cs = build_verification_change_set(

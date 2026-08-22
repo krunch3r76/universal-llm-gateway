@@ -1,7 +1,7 @@
 ---
 name: satellite-workspace
 description: "On opening email-bridge, journal-bridge, sms-bridge, or any Cursor satellite under /mnt/torus/projects — ecosystem vs checkout-local, PYTHONPATH→ULG libs, vortex-code, ulg-ecosystem plugin."
-trigger_match_terms: ["satellite-workspace", "satellite", "email-bridge", "journal-bridge", "sms-bridge", "sibling workspace", "PYTHONPATH", "vortex-code", "ecosystem pack", "ulg-ecosystem"]
+trigger_match_terms: ["satellite-workspace", "satellite", "email-bridge", "journal-bridge", "sms-bridge", "sibling workspace", "PYTHONPATH", "vortex-code", "ecosystem pack", "ulg-ecosystem", "deploy.sh", "satellite restart"]
 ---
 
 # Satellite workspace (Cursor IDE)
@@ -17,6 +17,7 @@ trigger_match_terms: ["satellite-workspace", "satellite", "email-bridge", "journ
 | 5 | **Sharing API** = Cursor plugin. **¬** hardlink commands into each satellite; **¬** `config/skills.yaml` as satellite API; **¬** re-add census skills under hub `.cursor/skills/` or `.claude/skills/`; **¬** shared commands under `projects/.cursor/commands/` (install duplex guard fails closed). Shared_sync Customize staging = `/mnt/torus/gateway/claude-ai-sync/skills/`. |
 | 6 | **Pin drift** = corrected by re-running `install-ecosystem-plugin.sh` (roster `SATELLITES.txt` + templates). |
 | 7 | **Code cascade** = `vortex-code` on a satellite ⇒ full leverage of census-shipped cascade skills (`path-sim`, `consult-posture`, `claude-ai-cdp-navigation`). `config/skills.yaml` `cursor_only` means ¬Claude.ai Customize slug — **not** hub-exclusive. Skill body presence (census) is independent of whether Jupiter `project-ask` is an MCP endpoint yet. |
+| 8 | **Runtime recycle** = after a satellite code revision, restart the process that imported those files in the same turn. Bind-mount ≠ live. `manage` does not list satellites — use that repo’s deploy (claudeburst: `scripts/deploy.sh --restart --service perps\|bot\|cb`). Proof: process start after file mtime. SOT: `restart-drain-discipline` § Code revision. |
 
 ## Partition (binary)
 
@@ -44,3 +45,5 @@ Follow `/mnt/torus/projects/.cursor/shared-workspace-setup.md`:
 ## Agent duty (ULG hub seat)
 
 When minting a satellite: add it to `SATELLITES.txt`, run the install script, add only checkout-local `*_ws` rules. Do not hardlink shared commands. Do not mint a per-satellite venv.
+
+After editing satellite runtime code: recycle that satellite in the same turn (invariant 8). Do not wait for an operator “go live.”

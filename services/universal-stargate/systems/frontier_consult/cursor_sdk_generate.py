@@ -76,6 +76,7 @@ async def dispatch_prepared_cursor_sdk(
             dispatch_id=handle.dispatch_id,
             nest_under=handle.nest_under,
             lane=handle.lane,
+            workspace=handle.workspace,
             refuse_if_lease_held=handle.refuse_if_lease_held,
         )
     else:
@@ -92,6 +93,7 @@ async def dispatch_prepared_cursor_sdk(
             dispatch_id=handle.dispatch_id,
             nest_under=handle.nest_under,
             lane=handle.lane,
+            workspace=handle.workspace,
             refuse_if_lease_held=handle.refuse_if_lease_held,
         )
 
@@ -190,6 +192,7 @@ async def dispatch_cursor_sdk_generate(
     dispatch_lane: str | None = None,
     nest_under: str | None = None,
     lane: Literal["A", "B"] | None = None,
+    workspace: str | None = None,
     refuse_if_lease_held: bool = False,
     prompt_turn_number: int | None = None,
     prompt_bind_mode: str | None = None,
@@ -231,6 +234,7 @@ async def dispatch_cursor_sdk_generate(
         dispatch_lane=dispatch_lane,
         nest_under=nest_under,
         lane=lane,
+        workspace=workspace,
         refuse_if_lease_held=refuse_if_lease_held,
         prompt_turn_number=prompt_turn_number,
         prompt_bind_mode=prompt_bind_mode,

@@ -164,6 +164,10 @@ from services.git_integration_worker.cursor_sdk_lane_select import (
     select_lane,
     wire_lane_explicit,
 )
+from services.git_integration_worker.cursor_sdk_satellite_workspace import (
+    CursorWorkspaceError,
+    resolve_dispatch_source_repo,
+)
 from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
     extract_instructed_paths,
     first_landed_fs_uri,
@@ -1264,6 +1268,7 @@ async def _start_promoted_dispatch(
     binding = binding_for_dispatch(
         cfg=cfg,
         lease_key=promoted.lease_key or promoted.source_repo,
+        dispatch_source_repo=Path(promoted.source_repo or cfg.source_repo).resolve(),
     )
     dispatch_workspace = resolve_promoted_workspace(
         lease_key=promoted.lease_key or promoted.source_repo,
@@ -2389,6 +2394,22 @@ async def cursor_dispatch(
         else None
     )
     source_repo_str = str(cfg.source_repo.resolve())
+    try:
+        resolved_source_repo = resolve_dispatch_source_repo(
+            req.workspace,
+            hub=cfg.source_repo,
+            projects_root=cfg.dispatch_workspace,
+        )
+    except CursorWorkspaceError as exc:
+        return _reject_pre_admission(
+            req,
+            worker_error_code=exc.code,
+            failure_layer="validation",
+            http_status=422,
+            detail_summary=exc.message,
+            invalid_fields=["workspace"],
+        )
+    dispatch_git_str = str(resolved_source_repo.resolve())
     parent_isolated: bool | None = None
     inherit_parent = req.nest_under or req.resume_of
     if inherit_parent:
@@ -2402,7 +2423,7 @@ async def cursor_dispatch(
         selected_lane, lane_advisories, lane_reason = select_lane(
             req=req,
             regime_active=lane_b_regime_active(),
-            source_repo=cfg.source_repo,
+            source_repo=resolved_source_repo,
             files_expected=files_expected,
             contract=contract,
             lane_worktree=prior_lane_tree,
@@ -2436,7 +2457,8 @@ async def cursor_dispatch(
         dispatch_workspace, lease_key = await asyncio.to_thread(
             resolve_admit_binding,
             req=req,
-            source_repo=cfg.source_repo,
+            source_repo=resolved_source_repo,
+            hub=cfg.source_repo,
             worktree_root=cfg.worktree_root,
             dispatch_workspace_default=cfg.dispatch_workspace,
             lane=selected_lane,
@@ -2452,7 +2474,7 @@ async def cursor_dispatch(
         isolation_materialized = b_worktree_materialized(
             admit_lane=selected_lane,
             lease_key=lease_key,
-            source_repo=source_repo_str,
+            source_repo=dispatch_git_str,
         )
         if minted_lane_b:
             from services.git_integration_worker.cursor_sdk_worktree_registry import (
@@ -2483,7 +2505,11 @@ async def cursor_dispatch(
             retryable=getattr(exc, "retryable", False),
             validation_stage="worktree_mint",
         )
-    binding = binding_for_dispatch(cfg=cfg, lease_key=lease_key)
+    binding = binding_for_dispatch(
+        cfg=cfg,
+        lease_key=lease_key,
+        dispatch_source_repo=resolved_source_repo,
+    )
     gate_lane = sdk_dispatch_lane(
         caller_agent=req.caller_agent,
         dispatch_id=req.dispatch_id,
@@ -2494,23 +2520,23 @@ async def cursor_dispatch(
         read_only=effective_read_only,
         nest_under=req.nest_under,
         worktree_path=Path(lease_key) if selected_lane == "B" else None,
-        source_repo=source_repo_str,
+        source_repo=dispatch_git_str,
     )
     if lane_b_worktree_missing(
         selected_lane=selected_lane,
         lease_key=lease_key,
-        source_repo=source_repo_str,
+        source_repo=dispatch_git_str,
     ):
         emit_sdk_lane_b_worktree_missing_observed(
             dispatch_id=req.dispatch_id,
             thread_id=req.thread_id,
             lease_key=lease_key,
-            source_repo=source_repo_str,
+            source_repo=dispatch_git_str,
         )
         await _rollback_lane_b_mint_if_needed(
             dispatch_id=req.dispatch_id,
             thread_id=req.thread_id,
-            source_repo=cfg.source_repo,
+            source_repo=resolved_source_repo,
             minted_lane_b=minted_lane_b,
             reason="b_worktree_missing",
         )
@@ -2528,7 +2554,7 @@ async def cursor_dispatch(
             invalid_fields=["lane"],
             extra_data={
                 "lease_key": lease_key,
-                "source_repo": source_repo_str,
+                "source_repo": dispatch_git_str,
             },
         )
     slot_limit = (
@@ -2546,7 +2572,7 @@ async def cursor_dispatch(
             resolved_model=config.model_id,
             admission=admission,
             contract=contract,
-            source_repo=source_repo_str,
+            source_repo=dispatch_git_str,
             lease_key=lease_key,
             read_only=effective_read_only,
             worker_instance=controller.worker_id,
@@ -2563,7 +2589,7 @@ async def cursor_dispatch(
         await _rollback_lane_b_mint_if_needed(
             dispatch_id=req.dispatch_id,
             thread_id=req.thread_id,
-            source_repo=cfg.source_repo,
+            source_repo=resolved_source_repo,
             minted_lane_b=minted_lane_b,
             reason="write_lease_held",
         )
@@ -2586,7 +2612,7 @@ async def cursor_dispatch(
         await _rollback_lane_b_mint_if_needed(
             dispatch_id=req.dispatch_id,
             thread_id=req.thread_id,
-            source_repo=cfg.source_repo,
+            source_repo=resolved_source_repo,
             minted_lane_b=minted_lane_b,
             reason="source_ref_conflict",
         )
@@ -2627,7 +2653,7 @@ async def cursor_dispatch(
         await _rollback_lane_b_mint_if_needed(
             dispatch_id=req.dispatch_id,
             thread_id=req.thread_id,
-            source_repo=cfg.source_repo,
+            source_repo=resolved_source_repo,
             minted_lane_b=minted_lane_b,
             reason="dispatch_conflict",
         )
@@ -2644,7 +2670,7 @@ async def cursor_dispatch(
         await _rollback_lane_b_mint_if_needed(
             dispatch_id=req.dispatch_id,
             thread_id=req.thread_id,
-            source_repo=cfg.source_repo,
+            source_repo=resolved_source_repo,
             minted_lane_b=minted_lane_b,
             reason="nest_depth_exceeded",
         )
@@ -2661,7 +2687,7 @@ async def cursor_dispatch(
         await _rollback_lane_b_mint_if_needed(
             dispatch_id=req.dispatch_id,
             thread_id=req.thread_id,
-            source_repo=cfg.source_repo,
+            source_repo=resolved_source_repo,
             minted_lane_b=minted_lane_b,
             reason="nest_parent_not_live",
         )
@@ -2680,9 +2706,9 @@ async def cursor_dispatch(
             _emit_enriched_queued(
                 req=req,
                 cached=cached,
-                source_repo_str=source_repo_str,
+                source_repo_str=dispatch_git_str,
                 packet_text=packet_text,
-                lease_key=lease_key or source_repo_str,
+                lease_key=lease_key or dispatch_git_str,
             )
         return JSONResponse(status_code=status_code, content=cached.model_dump())
 
@@ -2701,7 +2727,7 @@ async def cursor_dispatch(
     if not effective_read_only and concurrency_posture is not None:
         emit_write_lease_acquired(
             dispatch_id=req.dispatch_id,
-            source_repo=lease_key or source_repo_str,
+            source_repo=lease_key or dispatch_git_str,
         )
 
     emit_sdk_lane_selected(
@@ -2734,7 +2760,7 @@ async def cursor_dispatch(
                 await transfer_capacity_after_park(
                     parent_id=req.nest_under,
                     child_id=req.dispatch_id,
-                    source_repo=source_repo_str,
+                    source_repo=dispatch_git_str,
                     nest_depth=nest_depth,
                 )
             except Exception as exc:
@@ -2781,7 +2807,7 @@ async def cursor_dispatch(
         await _rollback_lane_b_mint_if_needed(
             dispatch_id=req.dispatch_id,
             thread_id=req.thread_id,
-            source_repo=cfg.source_repo,
+            source_repo=resolved_source_repo,
             minted_lane_b=minted_lane_b,
             reason="draining503",
         )

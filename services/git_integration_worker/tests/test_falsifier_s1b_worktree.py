@@ -170,6 +170,7 @@ def test_falsifier_ac1_lane_b_mints_worktree_under_root(
     workspace, lease_key = resolve_admit_binding(
         req=req,
         source_repo=source_repo,
+        hub=source_repo,
         worktree_root=worktree_root,
         dispatch_workspace_default=shared,
         lane="B",

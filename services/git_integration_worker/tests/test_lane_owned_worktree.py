@@ -101,6 +101,7 @@ def test_second_dispatch_reuses_lane_tree(source_repo: Path, tmp_path: Path) -> 
     first, key1 = resolve_admit_binding(
         req=_req(dispatch_id="disp-1"),
         source_repo=source_repo,
+        hub=source_repo,
         worktree_root=worktree_root,
         dispatch_workspace_default=source_repo.parent,
         lane="B",
@@ -108,6 +109,7 @@ def test_second_dispatch_reuses_lane_tree(source_repo: Path, tmp_path: Path) -> 
     second, key2 = resolve_admit_binding(
         req=_req(dispatch_id="disp-2", execution_id="exec-disp-2"),
         source_repo=source_repo,
+        hub=source_repo,
         worktree_root=worktree_root,
         dispatch_workspace_default=source_repo.parent,
         lane="B",
@@ -126,6 +128,7 @@ def test_distinct_lanes_get_distinct_trees(source_repo: Path, tmp_path: Path) ->
     a, key_a = resolve_admit_binding(
         req=_req(thread_id="lane-a", dispatch_id="da"),
         source_repo=source_repo,
+        hub=source_repo,
         worktree_root=worktree_root,
         dispatch_workspace_default=source_repo.parent,
         lane="B",
@@ -133,6 +136,7 @@ def test_distinct_lanes_get_distinct_trees(source_repo: Path, tmp_path: Path) ->
     b, key_b = resolve_admit_binding(
         req=_req(thread_id="lane-b", dispatch_id="db", execution_id="exec-db"),
         source_repo=source_repo,
+        hub=source_repo,
         worktree_root=worktree_root,
         dispatch_workspace_default=source_repo.parent,
         lane="B",
@@ -146,6 +150,7 @@ def test_same_lane_write_lease_queues(source_repo: Path, tmp_path: Path) -> None
     workspace, lease_key = resolve_admit_binding(
         req=_req(dispatch_id="holder"),
         source_repo=source_repo,
+        hub=source_repo,
         worktree_root=worktree_root,
         dispatch_workspace_default=source_repo.parent,
         lane="B",
@@ -196,6 +201,7 @@ def test_existing_lane_tree_binds_empty_files_expected(
     workspace, _key = resolve_admit_binding(
         req=_req(dispatch_id="first"),
         source_repo=source_repo,
+        hub=source_repo,
         worktree_root=worktree_root,
         dispatch_workspace_default=source_repo.parent,
         lane="B",
@@ -234,6 +240,7 @@ def test_sequential_lane_work_is_visible(source_repo: Path, tmp_path: Path) -> N
     first, _key = resolve_admit_binding(
         req=_req(dispatch_id="n1"),
         source_repo=source_repo,
+        hub=source_repo,
         worktree_root=worktree_root,
         dispatch_workspace_default=source_repo.parent,
         lane="B",
@@ -244,6 +251,7 @@ def test_sequential_lane_work_is_visible(source_repo: Path, tmp_path: Path) -> N
     second, _key2 = resolve_admit_binding(
         req=_req(dispatch_id="n2", execution_id="exec-n2"),
         source_repo=source_repo,
+        hub=source_repo,
         worktree_root=worktree_root,
         dispatch_workspace_default=source_repo.parent,
         lane="B",

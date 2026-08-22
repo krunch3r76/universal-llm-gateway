@@ -29,12 +29,20 @@ trigger_match_terms:
   - not live yet
   - live@sha
   - go-live-proof
+  - satellite
+  - bind-mount
+  - deploy.sh
 ---
 # Restart drain discipline
 
 **Invariant:** `needed(restart) ⇒ fire(restart)` — busy is never a reason to skip one.
 On `git_integration_worker`, busy means **drain** (never force, never kill). On every
 other service, busy that defers a needed restart is cleared with `force=true`.
+
+**Code revision (BINDING — operator 2026-08-22):**
+`edit(served_path) ∧ running(process) ⇒ recycle(process)` in the same turn.
+`manage ∉ owners(process) ⇏ skip`. `bind_mount ⇏ live`. Fresh `import` in a new
+interpreter is not proof — quote process start after file mtime.
 
 Operator bind 2026-07-31; MCP same-window classifier 2026-08-05; **force
 generalized 2026-08-13**.
@@ -103,6 +111,7 @@ Cowork attach.” Attach-loss is expected and recoverable.
 | "MCP/`cdp_ask` restart would drop Cowork attach / kill the CSE" | Conflates attach handle with CSE identity (`chat_url`); claude.ai is resilient to all service restarts | Restart (force if it defers). Recover: followup/reattach or continuity hop after healthy |
 | Sit in-window polling `wait_healthy` while holding a lease | The lease you hold is what the drain waits on — never converges (friction 25989) | Arm, then **exit**; probe after |
 | Hop or keep streaming so an open Cowork tab “stays alive” | Tab ⟂ session (`decision:cse-tab-decoupled-from-session`); an idle tab is not a live stream | PARK / idle is legal; hop is MCP-refresh, never tab-keepalive |
+| Bind-mount / “operator did not say go live” / harvest wrote files ⇒ skip recycle | Python imported at process start; satellite compose is not a `manage` service | Recycle the process that loaded the path. Fleet → `manage`. Satellite → that repo’s deploy (`scripts/deploy.sh --restart --service …`) |
 
 ## Mechanism already exists — use it, do not reinvent
 
@@ -204,8 +213,14 @@ loaded the files and you only lack `live@<sha>`.
 ## Go-live proof loop
 
 Operator phrases that **open** a go-live: `go live`, `make live`, `activate`,
-`everything live?`, `not live yet?`. `commit` and `/session-end` do **not** open
-it. Doctrine: `decision:go-live-proof-loop`.
+`everything live?`, `not live yet?`. **Code revision that a running process
+already imported also opens it** — harvest / implement close is not a park.
+`commit` and `/session-end` do **not** open it. Doctrine:
+`decision:go-live-proof-loop`.
+
+Satellites (claudeburst and any compose service `manage` does not list) recycle
+via that repo’s deploy script, not `manage`. Proof is still process start after
+served-file mtime.
 
 ```
 go_live_open ⇒

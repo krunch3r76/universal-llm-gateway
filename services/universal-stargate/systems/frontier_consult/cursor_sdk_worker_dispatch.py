@@ -210,6 +210,7 @@ async def dispatch_cursor_sdk_worker(
     dispatch_id: str | None = None,
     nest_under: str | None = None,
     lane: Literal["A", "B"] | None = None,
+    workspace: str | None = None,
     refuse_if_lease_held: bool = False,
 ) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/cursor/dispatch``; return structured ``(ok, detail)``.
@@ -243,6 +244,8 @@ async def dispatch_cursor_sdk_worker(
         payload["nest_under"] = nest_under
     if lane:
         payload["lane"] = lane
+    if workspace:
+        payload["workspace"] = workspace
     if refuse_if_lease_held:
         payload["refuse_if_lease_held"] = True
     try:
@@ -293,6 +296,7 @@ async def dispatch_cursor_sdk_worker_message(
     dispatch_id: str | None = None,
     nest_under: str | None = None,
     lane: Literal["A", "B"] | None = None,
+    workspace: str | None = None,
     refuse_if_lease_held: bool = False,
 ) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/cursor/dispatch`` with ``message`` (prompt= path)."""
@@ -315,6 +319,8 @@ async def dispatch_cursor_sdk_worker_message(
         payload["nest_under"] = nest_under
     if lane:
         payload["lane"] = lane
+    if workspace:
+        payload["workspace"] = workspace
     if refuse_if_lease_held:
         payload["refuse_if_lease_held"] = True
     try:

@@ -94,6 +94,7 @@ def test_s1b_lane_b_resolve_admit_binding_mints(
     workspace, lease_key = resolve_admit_binding(
         req=req,
         source_repo=source_repo,
+        hub=source_repo,
         worktree_root=worktree_root,
         dispatch_workspace_default=source_repo.parent,
         lane="B",
@@ -241,6 +242,7 @@ def test_s1b_admit_reattaches_when_registry_dir_gone(
     first, _key = resolve_admit_binding(
         req=_req(dispatch_id="gone-dir-1", thread_id="t-gone", worktree_isolated=True),
         source_repo=source_repo,
+        hub=source_repo,
         worktree_root=worktree_root,
         dispatch_workspace_default=source_repo.parent,
         lane="B",
@@ -254,6 +256,7 @@ def test_s1b_admit_reattaches_when_registry_dir_gone(
     second, key2 = resolve_admit_binding(
         req=_req(dispatch_id="gone-dir-2", thread_id="t-gone", worktree_isolated=True),
         source_repo=source_repo,
+        hub=source_repo,
         worktree_root=worktree_root,
         dispatch_workspace_default=source_repo.parent,
         lane="B",
@@ -288,6 +291,7 @@ def test_s1b_lane_a_binding_unchanged(source_repo: Path, tmp_path: Path) -> None
     workspace, lease_key = resolve_admit_binding(
         req=req,
         source_repo=source_repo,
+        hub=source_repo,
         worktree_root=tmp_path / "worktrees",
         dispatch_workspace_default=shared,
         lane="A",

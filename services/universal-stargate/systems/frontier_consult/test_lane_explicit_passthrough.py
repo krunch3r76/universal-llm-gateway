@@ -18,7 +18,9 @@ from systems.frontier_consult.cursor_sdk_worker_dispatch import (
 )
 
 
-def _minimal_handle(*, lane: str | None = None) -> PreparedCursorSdkHandle:
+def _minimal_handle(
+    *, lane: str | None = None, workspace: str | None = None
+) -> PreparedCursorSdkHandle:
     return PreparedCursorSdkHandle(
         request_id="req-lane",
         execution_id="exec-lane",
@@ -51,6 +53,7 @@ def _minimal_handle(*, lane: str | None = None) -> PreparedCursorSdkHandle:
         knob_resolution=(),
         nest_under=None,
         lane=lane,
+        workspace=workspace,
         refuse_if_lease_held=False,
     )
 
@@ -66,6 +69,26 @@ def test_team_dispatch_generate_body_accepts_lane_b() -> None:
         lane="B",
     )
     assert body.lane == "B"
+
+
+def test_team_dispatch_generate_body_accepts_workspace() -> None:
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        contract="implement",
+        dispatch_thread_id="5777",
+        seat="cursor-sdk",
+        workspace="claudeburst",
+        lane="B",
+    )
+    assert body.workspace == "claudeburst"
+
+
+def test_prepared_handle_workspace_roundtrip() -> None:
+    handle = _minimal_handle(lane="B", workspace="claudeburst")
+    restored = handle_from_dict(handle_to_dict(handle))
+    assert restored.workspace == "claudeburst"
 
 
 def test_team_dispatch_generate_body_rejects_invalid_lane() -> None:
@@ -127,6 +150,49 @@ async def test_worker_packet_dispatch_forwards_lane(
     )
     assert ok is True
     assert captured[0]["lane"] == "B"
+
+
+@pytest.mark.asyncio
+async def test_worker_packet_dispatch_forwards_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[dict[str, object]] = []
+
+    async def _post(_url: str, *, json: dict[str, object]) -> MagicMock:
+        captured.append(json)
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.text = "{}"
+        resp.json.return_value = {"admitted": True}
+        return resp
+
+    client = AsyncMock()
+    client.post = _post
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_worker_dispatch.make_async_client",
+        lambda *_a, **_k: client,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_worker_dispatch.worker_base_url",
+        lambda: "http://worker.test",
+    )
+
+    ok, _detail = await dispatch_cursor_sdk_worker(
+        request_id="req-ws",
+        thread_id="thread-1",
+        model="composer-2.5",
+        execution_id="exec-ws",
+        packet_path="tmp/packet.md",
+        handoff_contract="implement",
+        dispatch_id="disp-ws",
+        lane="B",
+        workspace="claudeburst",
+    )
+    assert ok is True
+    assert captured[0]["workspace"] == "claudeburst"
 
 
 @pytest.mark.asyncio

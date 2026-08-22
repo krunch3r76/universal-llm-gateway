@@ -968,3 +968,19 @@ def test_team_dispatch_lane_rejects_non_sdk_seat() -> None:
         )
     )
     assert result["error"]["code"] == "lane_sdk_only"
+
+
+def test_workspace_sdk_only_on_non_sdk_seat() -> None:
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    team_dispatch_fn = recorder.functions["team_dispatch"]
+    result = asyncio.run(
+        team_dispatch_fn(
+            op="generate",
+            seat="web-anthropic",
+            contract="light-bounded",
+            dispatch_thread_id="5777",
+            workspace="claudeburst",
+        )
+    )
+    assert result["error"]["code"] == "workspace_sdk_only"

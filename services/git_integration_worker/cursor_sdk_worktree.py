@@ -304,6 +304,7 @@ def resolve_admit_binding(
     *,
     req: CursorDispatchRequest,
     source_repo: Path,
+    hub: Path,
     worktree_root: Path,
     dispatch_workspace_default: Path,
     lane: Literal["A", "B"],
@@ -369,7 +370,9 @@ def resolve_admit_binding(
 
     from services.git_integration_worker.cursor_sdk_workspace import lane_a_lease_key
 
-    return dispatch_workspace_default, lane_a_lease_key(source_repo)
+    if source_repo.resolve() == hub.resolve():
+        return dispatch_workspace_default, lane_a_lease_key(source_repo)
+    return source_repo.resolve(), lane_a_lease_key(source_repo)
 
 
 def workspace_from_promoted_lease(

@@ -41,15 +41,26 @@ class CaptureBinding:
     repo_roots: tuple[Path, ...]
 
     @classmethod
-    def lane_a(cls, cfg: WorkerConfig) -> CaptureBinding:
-        repo = cfg.source_repo.resolve()
-        mount = resolve_mount_root(repo)
+    def lane_a(
+        cls,
+        cfg: WorkerConfig,
+        *,
+        dispatch_source_repo: Path | None = None,
+    ) -> CaptureBinding:
+        hub = cfg.source_repo.resolve()
+        write_tree = (dispatch_source_repo or hub).resolve()
+        receipt_tree = hub
+        mount = resolve_mount_root(write_tree)
+        if write_tree == hub:
+            repo_roots = _lane_a_repo_roots(cfg, mount)
+        else:
+            repo_roots = (write_tree,)
         return cls(
             lane="A",
-            write_tree=repo,
-            receipt_tree=repo,
+            write_tree=write_tree,
+            receipt_tree=receipt_tree,
             mount_root=mount,
-            repo_roots=_lane_a_repo_roots(cfg, mount),
+            repo_roots=repo_roots,
         )
 
     @classmethod
@@ -68,8 +79,9 @@ def binding_for_dispatch(
     *,
     cfg: WorkerConfig,
     lease_key: str | None = None,
+    dispatch_source_repo: Path | None = None,
 ) -> CaptureBinding:
     """Rebuild capture binding from a dispatch lease key."""
     if lease_key and is_managed_worktree(Path(lease_key), cfg.worktree_root):
         return CaptureBinding.lane_b(cfg, Path(lease_key))
-    return CaptureBinding.lane_a(cfg)
+    return CaptureBinding.lane_a(cfg, dispatch_source_repo=dispatch_source_repo)

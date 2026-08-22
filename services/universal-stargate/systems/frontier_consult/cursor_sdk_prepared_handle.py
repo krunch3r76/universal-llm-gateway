@@ -42,6 +42,7 @@ class PreparedCursorSdkHandle:
     knob_resolution: tuple[dict[str, Any], ...]
     nest_under: str | None = None
     lane: Literal["A", "B"] | None = None
+    workspace: str | None = None
     refuse_if_lease_held: bool = False
     prompt_turn_number: int | None = None
     prompt_bind_mode: str | None = None
@@ -97,6 +98,7 @@ def handle_to_dict(handle: PreparedCursorSdkHandle) -> dict[str, Any]:
         "knob_resolution": list(handle.knob_resolution),
         "nest_under": handle.nest_under,
         "lane": handle.lane,
+        "workspace": handle.workspace,
         "refuse_if_lease_held": handle.refuse_if_lease_held,
         "prompt_turn_number": handle.prompt_turn_number,
         "prompt_bind_mode": handle.prompt_bind_mode,
@@ -137,6 +139,7 @@ def handle_from_dict(data: dict[str, Any]) -> PreparedCursorSdkHandle:
         knob_resolution=tuple(data.get("knob_resolution") or ()),
         nest_under=data.get("nest_under"),
         lane=data.get("lane"),
+        workspace=data.get("workspace"),
         refuse_if_lease_held=bool(data.get("refuse_if_lease_held", False)),
         prompt_turn_number=data.get("prompt_turn_number"),
         prompt_bind_mode=data.get("prompt_bind_mode"),

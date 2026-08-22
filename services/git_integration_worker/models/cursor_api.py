@@ -30,6 +30,14 @@ class CursorDispatchRequest(BaseModel):
     nest_under: str | None = None
     refuse_if_lease_held: bool = False
     lane: Literal["A", "B"] | None = None
+    workspace: str | None = Field(
+        default=None,
+        description=(
+            "Allowlisted satellite repo name under the projects root for "
+            "per-dispatch git identity (capture, land lease, head_sha). "
+            "Omit for hub ULG; control-plane (packet, SDK HOME) stays on hub."
+        ),
+    )
     worktree_isolated: bool = False
     worktree_path: str | None = Field(
         default=None,
