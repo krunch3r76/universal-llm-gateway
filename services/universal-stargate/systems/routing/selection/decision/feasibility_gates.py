@@ -1,8 +1,8 @@
 """
 Early T0/T1 feasibility gates before resource and eviction planning.
 
-Short-circuits on circuit-breaker, health, catalog miss, already-loaded T1,
-and in-progress loading states shared by evaluate_feasibility.
+Short-circuits on circuit-breaker, health, catalog miss, cloud T1,
+already-loaded T1, and in-progress loading states shared by evaluate_feasibility.
 """
 
 from __future__ import annotations
@@ -82,6 +82,15 @@ def early_feasibility_gates(
         return FeasibilityTier.T0_INFEASIBLE, tuple(failures), None
 
     logger.info(f"✅ Model {placement.model_id} found in {gateway.name} catalog")
+
+    # Cloud APIs have no VRAM. Catalog hit is enough for T1 — do not treat
+    # advertised models as GPU-resident or enter eviction planning.
+    if gateway.is_cloud:
+        logger.info(
+            f"✅ Model {placement.model_id} on cloud gateway {gateway.name} — T1 "
+            "(no VRAM residency)"
+        )
+        return FeasibilityTier.T1_FEASIBLE_NOW, (), None
 
     # Admission control handled by CapacityPool (master-local, count-based).
     # busy_models is a telemetry hint — NOT a hard gate.

@@ -52,11 +52,22 @@ async def attempt_oom_recovery(
 
     INVARIANT: ∀ evicted_model: ¬has_routing_key(evicted_model)
     INVARIANT: target_model ∉ evicted_models
+    INVARIANT: gateway.is_cloud ⇒ ¬evict (cloud APIs have no VRAM)
     """
     from systems.routing.eviction.executor import execute_eviction_plan
     from systems.routing.selection.decision.types import EvictionPlanSummary
 
     gateway_id = gateway.gateway_id
+
+    if gateway.is_cloud:
+        logger.warning(
+            "OOM recovery skipped on cloud gateway %s — no VRAM to free "
+            "(request=%s, target=%s)",
+            gateway_id,
+            request_id[:8],
+            model_id,
+        )
+        return False
 
     # Determine which models are busy (protected from eviction)
     busy_routing_keys: set[str] = set()

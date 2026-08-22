@@ -145,7 +145,7 @@ class CursorSdkCatalogPoller:
             backend_type="cursor_sdk",
             provider_name="cursor",
             available_models=frozenset(model_ids),
-            loaded_models=frozenset(model_ids),
+            loaded_models=frozenset(),
             model_resources=model_resources,
             dispatchable=False,
             telemetry_timestamp=time.time(),

@@ -79,6 +79,7 @@ def stargate_to_gateway(stargate: Stargate) -> Gateway:
         last_heartbeat=stargate.last_heartbeat,
         remote_stargate_id=stargate.ref.remote_stargate_id,
         node_id=getattr(stargate.ref, "node_id", ""),
+        is_cloud=getattr(stargate.ref, "is_cloud", False),
     )
     return gateway_obj
 
@@ -127,6 +128,7 @@ def federated_gateways_to_routing_candidates(
                 model_loaded_at=getattr(fg, "model_loaded_at", {}),
                 remote_stargate_id=fg.remote_stargate_id,
                 node_id=getattr(fg, "node_id", ""),
+                is_cloud=fg.is_cloud,
             )
         )
 

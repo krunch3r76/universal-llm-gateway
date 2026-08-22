@@ -98,6 +98,9 @@ class Gateway:
     telemetry_timestamp: float = 0.0  # When this snapshot was captured
     last_heartbeat: float = 0.0  # Last gateway heartbeat time
 
+    # Cloud virtual catalogs have no GPU residency (backend_type == cloud_api).
+    is_cloud: bool = False
+
     @property
     def telemetry_age_ms(self) -> int:
         """Age of telemetry in milliseconds."""

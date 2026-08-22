@@ -243,7 +243,7 @@ class CloudProxyCatalogPoller:
             provider_url=self._proxy_url,
             provider_name=provider,
             available_models=models_frozenset,
-            loaded_models=models_frozenset,
+            loaded_models=frozenset(),
             model_resources=model_resources,
             telemetry_timestamp=time.time(),
             last_heartbeat=time.time(),

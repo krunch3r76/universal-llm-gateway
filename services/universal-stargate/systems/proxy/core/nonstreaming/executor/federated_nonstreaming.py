@@ -200,6 +200,12 @@ async def _forward_or_recover(
     if status != 500:
         return content, headers, status
 
+    # Cloud 500 is upstream, not VRAM exhaustion.
+    if fed_gateway.is_cloud:
+        if first_error is not None:
+            raise first_error
+        return content, headers, status
+
     # 500 detected — attempt OOM recovery
     await _emit_federated_execute_debug(
         "oom_recovery_start",

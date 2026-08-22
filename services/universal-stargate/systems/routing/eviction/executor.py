@@ -147,6 +147,16 @@ async def execute_eviction_plan(
     """
     from systems.routing.selection.decision.types import is_eviction_plan_actionable
 
+    if federated_gateway.is_cloud:
+        logger.warning(
+            "Refusing VRAM eviction on cloud gateway %s — no unload target",
+            gateway_name,
+        )
+        return EvictionOutcome(
+            status=EvictionStatus.FAILED_HTTP,
+            reason="cloud_gateway_has_no_vram",
+        )
+
     if not is_eviction_plan_actionable(eviction_plan):
         return EvictionOutcome(status=EvictionStatus.CONFIRMED)
 
