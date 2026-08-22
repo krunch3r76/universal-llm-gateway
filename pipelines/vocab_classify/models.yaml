@@ -14,4 +14,4 @@ models:
     profile: qwen3-instruct
 
   frontier_classify:
-    model: anthropic/claude-sonnet-4-6
+    model: anthropic/claude-sonnet-5
