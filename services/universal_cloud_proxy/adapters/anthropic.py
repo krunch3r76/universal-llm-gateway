@@ -32,6 +32,7 @@ from .anthropic_format import (
     extract_system_text,
 )
 from .anthropic_response import convert_response_content
+from .anthropic_sampling import strip_claude5_sampling
 from .anthropic_stream import StreamTranslator
 
 if TYPE_CHECKING:
@@ -245,8 +246,14 @@ class AnthropicAdapter:
         if system_text:
             payload["system"] = system_text
 
+        sampling = dict(request_body)
+        strip_claude5_sampling(
+            sampling,
+            upstream_model=anthropic_model,
+            surface="messages_stream" if request_body.get("stream") else "messages",
+        )
         for key in ("temperature", "top_p", "top_k"):
-            value = request_body.get(key)
+            value = sampling.get(key)
             if value is not None:
                 payload[key] = value
 
@@ -603,8 +610,14 @@ class AnthropicAdapter:
         t0 = time.monotonic()
         outcome = "error"
         try:
-            has_mcp = bool(request_body.get("mcp_servers"))
-            needs_v2 = _body_uses_mcp_v2(request_body)
+            body = dict(request_body)
+            strip_claude5_sampling(
+                body,
+                upstream_model=str(body.get("model", "")),
+                surface="native",
+            )
+            has_mcp = bool(body.get("mcp_servers"))
+            needs_v2 = _body_uses_mcp_v2(body)
             req_headers = dict(
                 self._headers(include_mcp_beta=has_mcp, force_mcp_v2=needs_v2)
             )
@@ -620,14 +633,14 @@ class AnthropicAdapter:
                     CloudproxyMcpRequestStarted(
                         correlation_id=correlation_id,
                         provider=self._config.provider,
-                        model=str(request_body.get("model", "")),
+                        model=str(body.get("model", "")),
                         has_mcp_servers=has_mcp,
                         streaming=False,
                     )
                 )
             response = await self._client.post(
                 f"{self._config.base_url}/messages",
-                json=request_body,
+                json=body,
                 headers=req_headers,
             )
             if response.status_code >= 400:
@@ -670,6 +683,11 @@ class AnthropicAdapter:
             requested_model = str(request_body.get("model", ""))
             try:
                 body = {**request_body, "stream": True}
+                strip_claude5_sampling(
+                    body,
+                    upstream_model=str(body.get("model", "")),
+                    surface="native_stream",
+                )
                 has_mcp = bool(body.get("mcp_servers"))
                 needs_v2 = _body_uses_mcp_v2(body)
                 req_headers = dict(
