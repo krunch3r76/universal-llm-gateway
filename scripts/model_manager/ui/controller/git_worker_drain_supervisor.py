@@ -11,10 +11,11 @@ Owns the deferred-drain lifecycle for ONE restart intent:
      same epoch, draining, active_count==0 — before any kill;
   4. SIGTERM via the injected kill callable (``stop_git_integration_worker``).
 
-Timeout-as-alert (R-F): if the deadline passes before convergence the intent goes
-to ``timeout`` and ``manage.restart.timeout`` is emitted with the stuck-op
-identity + the explicit-force affordance. The supervisor NEVER auto-SIGKILLs.
-Default deadline is 7 days (assume drain inevitable under normal holds —
+Timeout and occupancy stall are alert-only: a passed deadline emits
+``manage.restart.timeout`` (stuck-op identity + explicit-force affordance) and
+keep-awaits. Stall never SIGTERMs. The sole occupant force is recycle
+``idle_escalate_s`` (default 180s, ``occupant_progress_fresh``). Default
+deadline is 7 days (assume drain inevitable under normal holds —
 todo:manage-busy-drain-restart); progress heartbeats remain the visibility path.
 
 All worker/event transports are injected callables so the lifecycle is unit
@@ -31,16 +32,12 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from universal_logging import get_logger
 
 from scripts.model_manager import observation_event as events
-from services.git_integration_worker.drain_progress import (
-    STALL_WINDOW_S,
-    OccupancyProgressTracker,
-)
 
 from .restart_intent_store import (
     STATUS_CANCELLED,
@@ -77,7 +74,6 @@ CancelDrainCaller = Callable[[str, int], Awaitable[dict[str, Any]]]
 _AWAIT_CONVERGED = "converged"
 _AWAIT_TIMEOUT = "timeout"
 _AWAIT_CANCELLED = "cancelled"
-_AWAIT_STALLED = "stalled"
 _AWAIT_IDLE = "idle"
 
 
@@ -119,12 +115,10 @@ class GitWorkerDrainSupervisor:
     deadline_s: float = _DEFAULT_DEADLINE_S
     reconcile_interval_s: float = _DEFAULT_RECONCILE_INTERVAL_S
     progress_interval_s: float = _DEFAULT_PROGRESS_INTERVAL_S
-    stall_window_s: float = STALL_WINDOW_S
     on_timeout_mutex_release: Callable[[], Awaitable[None]] | None = None
     idle_escalate_s: float | None = None
     liveness_state: DrainStateCaller | None = None
     _settle_boundary_monotonic: float | None = None
-    _progress_tracker: OccupancyProgressTracker | None = field(default=None, repr=False)
     _idle_last_progress: float | None = None
     _idle_token: tuple[frozenset[str], tuple[tuple[str, str], ...], bool] | None = None
 
@@ -141,10 +135,6 @@ class GitWorkerDrainSupervisor:
         self._idle_token = None
         t0 = time.monotonic()
         deadline = t0 + self.deadline_s
-        self._progress_tracker = OccupancyProgressTracker(
-            stall_window_s=self.stall_window_s
-        )
-        self._progress_tracker.reset(t0)
         timeout_alerted = False
         try:
             intent = await self._begin_drain(intent)
@@ -164,9 +154,6 @@ class GitWorkerDrainSupervisor:
                         return
                     deadline = time.monotonic() + _DEFAULT_DEADLINE_S
                     continue
-                if outcome == _AWAIT_STALLED:
-                    await self._force_kill_from_stall(intent, t0)
-                    return
                 if outcome == _AWAIT_IDLE:
                     await self._on_idle(intent, t0)
                     return
@@ -283,8 +270,6 @@ class GitWorkerDrainSupervisor:
                     await self._emit_progress(intent, now - start)
                     last_progress = now
                 snapshot = await self._safe_drain_state()
-                if snapshot is not None and self._snapshot_stalled(snapshot, now):
-                    return _AWAIT_STALLED
                 if snapshot is not None and self._drain_state_matches(snapshot, intent):
                     return _AWAIT_CONVERGED
                 if snapshot is not None and await self._idle_gate_tripped(snapshot, now, start):
@@ -479,16 +464,6 @@ class GitWorkerDrainSupervisor:
         )
 
     # ----------------------------------------------------------- predicates
-    def _snapshot_stalled(self, snap: dict[str, Any], now_mono: float) -> bool:
-        """Prefer GIW ``stalled``; fall back to a local tracker for old snapshots."""
-        if "stalled" in snap:
-            return bool(snap["stalled"])
-        tracker = self._progress_tracker
-        if tracker is None:
-            return False
-        ops = snap.get("active_ops") or []
-        return tracker.stalled(ops, now_mono=now_mono)
-
     def _claim_kill(self, intent: Intent) -> bool:
         if (
             not intent.worker_id
@@ -502,22 +477,6 @@ class GitWorkerDrainSupervisor:
             worker_started_at=intent.worker_started_at,
             drain_epoch=intent.drain_epoch,
         )
-
-    async def _force_kill_from_stall(self, intent: Intent, t0: float) -> None:
-        """R1′ occupied-stall or R2′ completed-unconsumed: force SIGTERM via CAS."""
-        snapshot = await self._safe_drain_state()
-        if snapshot is not None and self._generation_gone(snapshot, intent):
-            await self._resolve_non_kill(intent, snapshot)
-            return
-        if not self._claim_kill(intent):
-            await self._resolve_non_kill(intent, snapshot)
-            return
-        await events.emit_manage_restart_drain_completed(
-            intent_id=intent.intent_id,
-            drain_epoch=intent.drain_epoch or 0,
-            worker_id=intent.worker_id,
-        )
-        await self._sigterm(intent, t0)
 
     def _intent_cancelled(self, intent: Intent) -> bool:
         current = self.store.get(intent.intent_id)

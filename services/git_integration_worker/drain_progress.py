@@ -1,8 +1,8 @@
 """Shared drain occupancy-progress / stall predicate (R1′ / R2′).
 
 Evaluated GIW-side where Auto and SDK heartbeat ledgers live. Manage reads the
-same verdict from ``drain_state()["stalled"]`` so the belt and keep-await
-cannot drift.
+same verdict from ``drain_state()["stalled"]`` so the Auto belt and telemetry
+cannot drift. Stall does not arm supervisor SIGTERM.
 
 Progress (R1′)::
 
@@ -24,10 +24,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-# Auto heartbeat cadence is ≤2s; SDK poll is slower. k≈3–5 of the slower
-# class. Tickets rely on turnover, not this TTL.
-HEARTBEAT_TTL_S = 15.0
-STALL_WINDOW_S = 15.0
+# Auto heartbeat cadence is ≤2s; SDK poll / GIW health heartbeat_ttl_s is ~30s.
+# k≈3 of that slower class so a live cursor-sdk occupant is not stalled.
+# Tickets rely on turnover, not this TTL. These feed R1 progress / telemetry
+# and the Auto belt — they must not arm a supervisor kill.
+HEARTBEAT_TTL_S = 90.0
+STALL_WINDOW_S = 90.0
 # Above the ~2 min completed→SIGTERM lookalike window named in the bind.
 COMPLETED_UNCONSUMED_GRACE_S = 150.0
 

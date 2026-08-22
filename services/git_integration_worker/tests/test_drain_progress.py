@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from services.git_integration_worker.drain_progress import (
     COMPLETED_UNCONSUMED_GRACE_S,
+    HEARTBEAT_TTL_S,
+    STALL_WINDOW_S,
     OccupancyProgressTracker,
     heartbeat_fresh,
     is_progress,
@@ -46,12 +48,27 @@ def test_fresh_heartbeat_is_progress_without_turnover() -> None:
 
 
 def test_stale_heartbeat_same_set_is_not_progress() -> None:
-    ops = [{"op_id": "job-1", "heartbeat_age_s": 90.0}]
+    ops = [{"op_id": "job-1", "heartbeat_age_s": 120.0}]
     assert not is_progress(
         prev_count=1,
         prev_ids=frozenset({"job-1"}),
         count=1,
         ids=frozenset({"job-1"}),
+        ops=ops,
+    )
+
+
+def test_sdk_poll_30s_is_fresh_under_default_ttl() -> None:
+    """9569 class: ~30s SDK poll is progress under HEARTBEAT_TTL_S ≥ 90."""
+    assert HEARTBEAT_TTL_S >= 90.0
+    assert STALL_WINDOW_S >= 90.0
+    ops = [{"op_id": "sdk-1", "heartbeat_age_s": 30.0}]
+    assert heartbeat_fresh(ops)
+    assert is_progress(
+        prev_count=1,
+        prev_ids=frozenset({"sdk-1"}),
+        count=1,
+        ids=frozenset({"sdk-1"}),
         ops=ops,
     )
 

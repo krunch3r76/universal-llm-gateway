@@ -11,7 +11,9 @@ Covers AC-1..AC-9 of tasks/specs/git-worker-drain-p2-manage.md.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+import time
+from collections.abc import AsyncIterator, Callable
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -141,7 +143,6 @@ def _supervisor(
     kill: _Kill,
     *,
     deadline_s: float = 5.0,
-    stall_window_s: float = 15.0,
     idle_escalate_s: float | None = None,
 ) -> GitWorkerDrainSupervisor:
     return GitWorkerDrainSupervisor(
@@ -151,11 +152,36 @@ def _supervisor(
         subscribe_events=feed,
         kill=kill,
         deadline_s=deadline_s,
-        stall_window_s=stall_window_s,
         reconcile_interval_s=0.01,
         progress_interval_s=999.0,
         idle_escalate_s=idle_escalate_s,
     )
+
+
+async def _supervise_until(
+    sup: GitWorkerDrainSupervisor,
+    intent: Any,
+    *,
+    done: Callable[[], bool] | None = None,
+    hold_s: float = 1.0,
+) -> None:
+    """Run supervise briefly, then cancel. Fleet-stop keep-awaits after timeout."""
+    task = asyncio.create_task(sup.supervise(intent))
+    try:
+        deadline = time.monotonic() + hold_s
+        while time.monotonic() < deadline:
+            if done is not None and done():
+                break
+            await asyncio.sleep(0.01)
+        if done is not None and not done():
+            raise AssertionError(f"condition not met within {hold_s}s")
+    finally:
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 # --------------------------------------------------------------------------- store
@@ -247,7 +273,7 @@ def test_event_drives_completion_and_sigterm(
 def test_stale_event_timeout_then_stall_force_kill(
     tmp_path: Any, events_log: list[tuple[str, dict[str, Any]]]
 ) -> None:
-    """Wrong-epoch event never converges: timeout alerts, then R1′ stall force-kills."""
+    """Wrong-epoch event never converges: timeout alerts; stall does not kill."""
     store = _store(tmp_path)
     intent = store.create_intent(
         service=_SERVICE, action="restart", deadline_at="d", reason="r"
@@ -269,16 +295,63 @@ def test_stale_event_timeout_then_stall_force_kill(
         _Feed([_drain_completed(epoch=2, worker_id="w1")]),
         kill,
         deadline_s=0.05,
-        stall_window_s=0.08,
     )
 
-    _run(sup.supervise(intent))
+    def _timeout_seen() -> bool:
+        return any(s == "manage.restart.timeout" for s, _ in events_log)
 
-    assert kill.calls == 1
+    _run(_supervise_until(sup, intent, done=_timeout_seen, hold_s=1.0))
+
+    assert kill.calls == 0
     got = store.get(intent.intent_id)
     assert got is not None
-    assert got.status in {STATUS_VERIFYING_ACTIVATION, STATUS_ACTIVATION_UNVERIFIED}
+    assert got.status == STATUS_TIMEOUT
     assert "manage.restart.timeout" in [s for s, _ in events_log]
+
+
+def test_sdk_heartbeat_survives_old_stall_windows(
+    tmp_path: Any, events_log: list[tuple[str, dict[str, Any]]]
+) -> None:
+    """9569 class: advancing SDK heartbeat must not SIGTERM across >2 old 15s windows.
+
+    Hold 0.2s is a short stand-in for 2× the former 0.08s stall_window used in
+    the timeout-then-stall test (ratio matches 2×15s without a 30s wall wait).
+    """
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE, action="restart", deadline_at="d", reason="r"
+    )
+
+    class _AdvancingHeartbeatWorker(_Worker):
+        async def drain_state(self) -> dict[str, Any]:
+            return _snap(
+                draining=True,
+                epoch=1,
+                active=1,
+                ops=[
+                    {
+                        "op_id": "sdk-conductor",
+                        "kind": "cursor-sdk",
+                        "last_heartbeat_at": datetime.now(UTC).isoformat(),
+                    }
+                ],
+            )
+
+    busy = _snap(
+        draining=True,
+        epoch=1,
+        active=1,
+        ops=[{"op_id": "sdk-conductor", "kind": "cursor-sdk"}],
+    )
+    worker = _AdvancingHeartbeatWorker(drain_states=[busy], begin_snap=busy)
+    kill = _Kill()
+    sup = _supervisor(store, worker, _Feed([]), kill, deadline_s=5.0)
+
+    _run(_supervise_until(sup, intent, hold_s=0.2))
+
+    assert kill.calls == 0
+    signals = [s for s, _ in events_log]
+    assert "manage.restart.completed" not in signals
 
 
 def test_final_check_fresh_generation_aborts_kill(
@@ -607,10 +680,12 @@ def test_timeout_affordance_cites_cancel_restart_intent(
         _Feed([_drain_completed(epoch=2, worker_id="w1")]),
         kill,
         deadline_s=0.05,
-        stall_window_s=0.08,
     )
 
-    _run(sup.supervise(intent))
+    def _timeout_seen() -> bool:
+        return any(s == "manage.restart.timeout" for s, _ in events_log)
+
+    _run(_supervise_until(sup, intent, done=_timeout_seen, hold_s=1.0))
 
     timeout_payloads = [p for s, p in events_log if s == "manage.restart.timeout"]
     assert timeout_payloads
