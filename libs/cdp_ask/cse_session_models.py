@@ -72,7 +72,7 @@ class ProvenanceResponse(BaseModel):
 
 
 class HarvestRequest(BaseModel):
-    """Bounded read-only harvest — no paste, submit, or Chrome relaunch."""
+    """Bounded harvest — no paste or submit. Opens chat_url when no lane is live."""
 
     chat_url: str | None = None
     registration_id: str | None = None

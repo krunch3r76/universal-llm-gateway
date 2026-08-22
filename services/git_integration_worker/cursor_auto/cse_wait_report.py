@@ -1,9 +1,8 @@
-"""Mid-wait CSE paste so the operator seat PARKs instead of streaming.
+"""Retired mid-wait CSE paste — admit still calls the scheduler; it no-ops.
 
-Park-on-WAKE (``cse_wake_delivery``) pastes after CLOSEOUT and may re-park.
-This helper pastes *during* a serial-queue wait into an already-attached lane:
-``reattach`` off, ``retain_lane`` on — followup teardown must not dormant the
-operator tab. Enqueue calls ``schedule_wait_report_if_waiting``.
+A ``TYPE: WAITING`` followup starts a generate. Tab ⟂ session means that
+paste is keepalive churn. Completion paging (``cse_pager_resolve`` +
+Park-on-WAKE) replaced it. ``should_emit_wait_report`` is permanently false.
 """
 
 from __future__ import annotations
@@ -145,14 +144,13 @@ def should_emit_wait_report(
     occupied: bool,
     queue_position: int | None,
 ) -> bool:
-    """True when a chat-capable CSE job will sit behind serial work."""
-    if job.continuity_hop:
-        return False
-    if not is_chat_delivery_capable(job.from_agent):
-        return False
-    if occupied:
-        return True
-    return queue_position is not None and queue_position > 1
+    """False. Mid-wait WAITING paste was replaced by completion paging.
+
+    ``occupied`` / ``queue_position`` stay on the signature so admit can
+    still call through; they must not mint a CSE followup.
+    """
+    _ = (job, occupied, queue_position)
+    return False
 
 
 def schedule_wait_report_if_waiting(

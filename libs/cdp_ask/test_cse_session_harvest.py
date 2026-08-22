@@ -10,7 +10,7 @@ from claude_bundles import cdp_registry
 from pydantic import ValidationError
 
 from cdp_ask.cse_session_harvest import HARVEST_HARD_CAP, execute_harvest
-from cdp_ask.cse_session_models import HarvestRequest
+from cdp_ask.cse_session_models import HarvestRequest, HarvestResponse
 from cdp_ask.execution_store import ExecutionStore
 from cdp_ask.followup_envelope import FollowupCandidate
 
@@ -74,6 +74,7 @@ async def test_harvest_hard_cap_clamp_forwards_limit_and_after_turn() -> None:
             AsyncMock(return_value=(pw, MagicMock(), MagicMock(), MagicMock())),
         ),
         patch("cdp_ask.cse_session_harvest.harvest_turns", harvest_mock),
+        patch("cdp_ask.cse_session_harvest.resolve_harvest_body", AsyncMock(return_value=None)),
         patch("cdp_ask.cse_session_harvest.emit", lambda _event: None),
     ):
         await execute_harvest(
@@ -93,31 +94,7 @@ async def test_harvest_hard_cap_clamp_forwards_limit_and_after_turn() -> None:
 
 
 @pytest.mark.asyncio
-async def test_dormant_without_relaunch(monkeypatch) -> None:
-    seat = cdp_registry.DormantSeat(
-        registration_id="reg-d",
-        chat_url="https://claude.ai/cowork/cse_d",
-        profile_suffix="d",
-        profile=Path("/tmp/p"),
-        holder="h",
-        purpose="ask",
-        dormant_at=1.0,
-    )
-    monkeypatch.setattr(cdp_registry, "dormant_for_chat_url", lambda _u: seat)
-    store = ExecutionStore()
-    with patch(
-        "cdp_ask.cse_session_harvest.discover_candidates",
-        AsyncMock(return_value=([], None, None)),
-    ):
-        result = await execute_harvest(
-            HarvestRequest(chat_url="https://claude.ai/cowork/cse_d"),
-            store,
-        )
-    assert result.outcome == "dormant"
-
-
-@pytest.mark.asyncio
-async def test_harvest_never_calls_connect_cdp_when_unattached() -> None:
+async def test_unattached_without_url_does_not_open() -> None:
     store = ExecutionStore()
     with (
         patch(
@@ -125,7 +102,45 @@ async def test_harvest_never_calls_connect_cdp_when_unattached() -> None:
             AsyncMock(return_value=([], None, None)),
         ),
         patch("cdp_ask.cse_session_harvest.connect_cdp", AsyncMock()) as connect,
-        patch("cdp_ask.cse_session_harvest.cdp_registry.dormant_for_chat_url", lambda _u: None),
+        patch(
+            "cdp_ask.cse_session_harvest.harvest_by_opening_url",
+            AsyncMock(),
+        ) as opener,
     ):
-        await execute_harvest(HarvestRequest(chat_url="https://claude.ai/cowork/x"), store)
+        result = await execute_harvest(HarvestRequest(registration_id="missing"), store)
     connect.assert_not_called()
+    opener.assert_not_awaited()
+    assert result.outcome == "not_attached"
+    assert result.reason == "no_target"
+
+
+@pytest.mark.asyncio
+async def test_unattached_with_url_opens_then_scrapes() -> None:
+    store = ExecutionStore()
+    opened = HarvestResponse(
+        outcome="harvested",
+        turns=[],
+        provenance={"opened_on_demand": True},
+    )
+    with (
+        patch(
+            "cdp_ask.cse_session_harvest.discover_candidates",
+            AsyncMock(return_value=([], None, None)),
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest.cdp_registry.dormant_for_chat_url",
+            lambda _u: None,
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest.harvest_by_opening_url",
+            AsyncMock(return_value=opened),
+        ) as opener,
+        patch("cdp_ask.cse_session_harvest.emit", lambda _event: None),
+    ):
+        result = await execute_harvest(
+            HarvestRequest(chat_url="https://claude.ai/cowork/cse_x"),
+            store,
+        )
+    opener.assert_awaited_once()
+    assert result.outcome == "harvested"
+    assert result.provenance and result.provenance.get("opened_on_demand") is True

@@ -100,41 +100,23 @@ def _job(**extra) -> AutoJob:
     return AutoJob(**fields)
 
 
-def test_should_emit_wait_report_when_occupied():
+def test_should_emit_wait_report_never_mints_waiting():
+    """Paging replaced mid-wait WAITING — occupied/queued must not paste."""
     from services.git_integration_worker.cursor_auto.cse_wait_report import (
         should_emit_wait_report,
     )
 
     job = _job()
-    assert should_emit_wait_report(job, occupied=True, queue_position=1) is True
-    assert should_emit_wait_report(job, occupied=False, queue_position=1) is False
-    assert should_emit_wait_report(job, occupied=False, queue_position=6) is True
-
-
-def test_should_emit_wait_report_skips_hops_and_ide():
-    from services.git_integration_worker.cursor_auto.cse_wait_report import (
-        should_emit_wait_report,
-    )
-
+    assert should_emit_wait_report(job, occupied=True, queue_position=1) is False
+    assert should_emit_wait_report(job, occupied=False, queue_position=6) is False
     hop = _job(continuity_hop=True)
     assert should_emit_wait_report(hop, occupied=True, queue_position=2) is False
-    ide = _job(from_agent="cursor")
-    assert should_emit_wait_report(ide, occupied=True, queue_position=2) is False
-    no_cse = _job(cse_chat_url=None, cse_registration_id=None)
-    assert should_emit_wait_report(no_cse, occupied=True, queue_position=2) is True
-
-
-def test_should_emit_wait_report_cdp_operator_without_stamp():
-    from services.git_integration_worker.cursor_auto.cse_wait_report import (
-        should_emit_wait_report,
-    )
-
-    job = _job(
+    operator = _job(
         from_agent="cdp-operator-6655-day5i",
         cse_chat_url=None,
         cse_registration_id=None,
     )
-    assert should_emit_wait_report(job, occupied=True, queue_position=2) is True
+    assert should_emit_wait_report(operator, occupied=True, queue_position=2) is False
 
 
 def test_serial_queue_occupant_skips_hops():

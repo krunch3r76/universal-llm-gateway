@@ -1,4 +1,4 @@
-"""Bounded read-only CSE harvest — no submit, followup, abort, or Chrome relaunch."""
+"""Bounded CSE harvest — no paste or submit. Opens chat_url when no lane is live."""
 
 from __future__ import annotations
 
@@ -17,6 +17,8 @@ from cdp_ask.cse_session_events import (
     mcp_cse_session_acknowledged,
     mcp_cse_session_harvested,
 )
+from cdp_ask.cse_session_harvest_identity import resolve_harvest_chat_url
+from cdp_ask.cse_session_harvest_open import harvest_by_opening_url
 from cdp_ask.cse_session_models import (
     CseSessionTurn,
     HarvestRequest,
@@ -67,155 +69,87 @@ async def _resolve_target(
     return chosen.registration_id, chosen.chat_url, chosen.provenance, None
 
 
-async def execute_harvest(
-    req: HarvestRequest,
-    store: ExecutionStore,
-) -> HarvestResponse:
-    """Harvest bounded turns from an attached lane without side effects."""
-    limit = min(int(req.limit), HARVEST_HARD_CAP)
-    registration_id, chat_url, provenance, early = await _resolve_target(req, store)
-    if early is not None:
+def _emit(registration_id: str | None, response: HarvestResponse) -> HarvestResponse:
+    if response.ack_class == "typed_ack":
         emit(
-            mcp_cse_session_harvested(
+            mcp_cse_session_acknowledged(
                 registration_id=registration_id,
-                outcome=early.outcome,
-                ack_class=early.ack_class,
+                ack_class=response.ack_class,
             )
         )
-        return early
-
-    lane = next(
-        (row for row in cdp_registry.list_active() if row.registration_id == registration_id),
-        None,
+    emit(
+        mcp_cse_session_harvested(
+            registration_id=registration_id,
+            outcome=response.outcome,
+            ack_class=response.ack_class,
+            turn_count=len(response.turns),
+        )
     )
-    if lane is None:
-        dormant = cdp_registry.dormant_for_chat_url(chat_url or "")
-        if dormant is not None:
-            response = HarvestResponse(
-                outcome="dormant",
-                provenance=provenance,
-            )
-            emit(
-                mcp_cse_session_harvested(
-                    registration_id=dormant.registration_id,
-                    outcome="dormant",
-                    ack_class="no_proof",
-                )
-            )
-            return response
-        return HarvestResponse(outcome="not_attached", reason="lane_not_attached")
+    return response
 
+
+async def harvest_page(
+    page: Any,
+    req: HarvestRequest,
+    provenance: dict[str, Any] | None,
+) -> HarvestResponse:
+    """Scrape an already-open CSE page (attached lane or just-opened URL)."""
     if req.metadata_only:
-        response = HarvestResponse(
+        return HarvestResponse(
             outcome="harvested",
             provenance=provenance,
             content_provenance="metadata_only",
         )
-        emit(
-            mcp_cse_session_harvested(
-                registration_id=registration_id,
-                outcome="harvested",
-                ack_class="no_proof",
-                turn_count=0,
-            )
-        )
-        return response
-
+    limit = min(int(req.limit), HARVEST_HARD_CAP)
     if req.source in {"output-file", "auto"}:
         try:
-            pw, _browser, _ctx, page = await connect_cdp(lane.cdp_url)
-            try:
-                preview = await harvest_turns(page, limit=1)
-                chat_body = ""
-                if preview.get("turns"):
-                    chat_body = str(preview["turns"][-1].get("text") or "")
-                body_result = await resolve_harvest_body(
-                    page,
-                    chat_body,
-                    harvest_source=req.source,
-                    expected_size="auto",
-                    download_output=False,
-                )
-            finally:
-                await pw.stop()
+            preview = await harvest_turns(page, limit=1)
+            chat_body = ""
+            if preview.get("turns"):
+                chat_body = str(preview["turns"][-1].get("text") or "")
+            body_result = await resolve_harvest_body(
+                page,
+                chat_body,
+                harvest_source=req.source,
+                expected_size="auto",
+                download_output=False,
+            )
             if body_result and body_result.content:
                 ack = classify_ack(
                     body_result.content,
                     marker=req.marker,
                     successor_birth_id=req.successor_birth_id,
                 )
-                turn = CseSessionTurn(
-                    author="assistant",
-                    text=body_result.content,
-                    source="output-file",
-                )
-                response = HarvestResponse(
+                return HarvestResponse(
                     outcome="harvested",
                     ack_class=ack,
-                    turns=[turn],
+                    turns=[
+                        CseSessionTurn(
+                            author="assistant",
+                            text=body_result.content,
+                            source="output-file",
+                        )
+                    ],
                     content_provenance=str(body_result.provenance),
                     provenance=provenance,
                 )
-                if ack == "typed_ack":
-                    emit(
-                        mcp_cse_session_acknowledged(
-                            registration_id=registration_id,
-                            ack_class=ack,
-                        )
-                    )
-                emit(
-                    mcp_cse_session_harvested(
-                        registration_id=registration_id,
-                        outcome="harvested",
-                        ack_class=ack,
-                        turn_count=1,
-                    )
-                )
-                return response
         except Exception:
             if req.source == "output-file":
                 return HarvestResponse(outcome="unreachable", reason="output_file_miss")
-
     try:
-        pw, _browser, _ctx, page = await connect_cdp(lane.cdp_url)
-        try:
-            dom = await harvest_turns(page, limit=limit, after_turn=req.after_turn)
-        finally:
-            await pw.stop()
+        dom = await harvest_turns(page, limit=limit, after_turn=req.after_turn)
     except Exception as exc:
         return HarvestResponse(outcome="unreachable", reason=str(exc))
-
     if dom.get("in_flight"):
-        response = HarvestResponse(
+        return HarvestResponse(
             outcome="streaming",
             provenance=provenance,
             streaming=bool(dom.get("streaming")),
             stop=bool(dom.get("stop")),
             tool_pause=bool(dom.get("tool_pause")),
         )
-        emit(
-            mcp_cse_session_harvested(
-                registration_id=registration_id,
-                outcome="streaming",
-                ack_class="no_proof",
-            )
-        )
-        return response
-
     if dom.get("incomplete_dom"):
-        response = HarvestResponse(
-            outcome="incomplete_dom",
-            provenance=provenance,
-        )
-        emit(
-            mcp_cse_session_harvested(
-                registration_id=registration_id,
-                outcome="incomplete_dom",
-                ack_class="no_proof",
-            )
-        )
-        return response
-
+        return HarvestResponse(outcome="incomplete_dom", provenance=provenance)
     turns = [
         CseSessionTurn(
             author=row["author"],
@@ -227,37 +161,65 @@ async def execute_harvest(
         for row in dom.get("turns") or []
     ]
     if not turns:
-        response = HarvestResponse(outcome="no_reply_yet", provenance=provenance)
-    else:
-        latest_text = turns[-1].text
-        ack = classify_ack(
-            latest_text,
-            marker=req.marker,
-            successor_birth_id=req.successor_birth_id,
-        )
-        response = HarvestResponse(
-            outcome="harvested",
-            ack_class=ack,
-            turns=turns,
-            truncated=bool(dom.get("truncated")),
-            cursor=turns[-1].ordinal if turns else None,
-            content_provenance="cse-dom",
-            provenance=provenance,
-        )
-        if ack == "typed_ack":
-            emit(
-                mcp_cse_session_acknowledged(
-                    registration_id=registration_id,
-                    ack_class=ack,
-                )
-            )
-
-    emit(
-        mcp_cse_session_harvested(
-            registration_id=registration_id,
-            outcome=response.outcome,
-            ack_class=response.ack_class,
-            turn_count=len(response.turns),
-        )
+        return HarvestResponse(outcome="no_reply_yet", provenance=provenance)
+    ack = classify_ack(
+        turns[-1].text,
+        marker=req.marker,
+        successor_birth_id=req.successor_birth_id,
     )
-    return response
+    return HarvestResponse(
+        outcome="harvested",
+        ack_class=ack,
+        turns=turns,
+        truncated=bool(dom.get("truncated")),
+        cursor=turns[-1].ordinal,
+        content_provenance="cse-dom",
+        provenance=provenance,
+    )
+
+
+async def _open_detached(
+    chat_url: str,
+    req: HarvestRequest,
+    provenance: dict[str, Any] | None,
+    registration_id: str | None,
+) -> HarvestResponse:
+    response = await harvest_by_opening_url(chat_url, req, provenance, harvest_page)
+    return _emit(registration_id, response)
+
+
+async def execute_harvest(
+    req: HarvestRequest,
+    store: ExecutionStore,
+) -> HarvestResponse:
+    """Harvest turns from a live lane, or open chat_url and scrape it."""
+    registration_id, chat_url, provenance, early = await _resolve_target(req, store)
+    url = (chat_url or req.chat_url or "").strip() or (
+        await resolve_harvest_chat_url(req, store)
+    ) or ""
+    if early is not None:
+        if url and early.outcome in {"not_attached", "dormant"}:
+            return await _open_detached(url, req, early.provenance or provenance, registration_id)
+        return _emit(registration_id, early)
+
+    lane = next(
+        (row for row in cdp_registry.list_active() if row.registration_id == registration_id),
+        None,
+    )
+    if lane is None:
+        if url:
+            return await _open_detached(url, req, provenance, registration_id)
+        return _emit(
+            registration_id,
+            HarvestResponse(outcome="not_attached", reason="lane_not_attached"),
+        )
+
+    try:
+        pw, _browser, _ctx, page = await connect_cdp(lane.cdp_url)
+        try:
+            response = await harvest_page(page, req, provenance)
+        finally:
+            await pw.stop()
+    except Exception as exc:
+        return HarvestResponse(outcome="unreachable", reason=str(exc))
+    return _emit(registration_id, response)

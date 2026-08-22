@@ -202,6 +202,14 @@ complete(turn) ⇐ assistant_body ∧ ¬streaming ∧ ¬Stop ∧ stable_length
 
 `¬ complete(h) ⇒ ¬delete ∧ friction`. Stop detection only in generation/composer roots — sidebar Stop excluded (24873). `error_banner`: banner/toast only, exclude composer (25486); `Overloaded` may linger after completion — structural completion wins (25684). Cowork CSE fallback + detail: L3 `operations-annex.md`.
 
+### Harvest by URL (BINDING)
+
+`cse_session(op=harvest, chat_url=… | execution_id=… | cse_…)` resolves the
+Cowork URL from the request, the harvest archive, or the registry, **opens it**
+when no live attach exists, scrapes, then parks the host. Pass the satellite
+id, Stargate id, or `cse_…` token — do not reason about attach. `not_attached`
+means the URL could not be opened (deleted or login miss), not “the tab closed.”
+
 ### Reading the harvest — chrome ≠ delivery (BINDING — operator 2026-08-11)
 
 The scraped CSE body carries claude.ai **UI chrome** alongside assistant prose: artifact
