@@ -101,9 +101,15 @@ class SkillCatalog:
             if entry.surface_class in _CLAUDE_AI_CLASSES
         )
 
-    def source_uri_for(self, slug: str) -> str:
+    def source_uri_for(self, slug: str, repo_root: Path | None = None) -> str:
         entry = self.get(slug)
         dirname = entry.sot_dirname or entry.slug
+        root = repo_root or _REPO_ROOT
+        plugin = (
+            root / "cursor-plugins" / "ulg-ecosystem" / "skills" / dirname / "SKILL.md"
+        )
+        if plugin.is_file():
+            return f"{_WS}/cursor-plugins/ulg-ecosystem/skills/{dirname}/SKILL.md"
         if entry.surface_class == "life_local":
             return f"{_WS}/.claude/skills/{dirname}/SKILL.md"
         return f"{_WS}/.cursor/skills/{dirname}/SKILL.md"

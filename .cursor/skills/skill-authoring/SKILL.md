@@ -15,9 +15,10 @@ Routing skill only — SOT for form, taxonomy, compression, and lifecycle is `sk
 
 `author|revise|compress|retire(SKILL.md) ⇒ catalog_row ∧ SOT per surface_class`.
 Sole placement authority: `config/skills.yaml` (`surface_class` + `mcp_surface_required`).
-SOT paths:
-`shared_sync` / `cursor_only` → `workspaces://universal-llm-gateway/.cursor/skills/{slug}/SKILL.md`;
-`life_local` → `workspaces://universal-llm-gateway/.claude/skills/{slug}/SKILL.md`.
+SOT paths (`catalog.resolve_sot` — plugin wins when the file exists):
+census (`SKILLS_CENSUS.txt`) → `cursor-plugins/ulg-ecosystem/skills/{slug}/SKILL.md`;
+non-census `shared_sync` / `cursor_only` → `.cursor/skills/{slug}/SKILL.md`;
+`life_local` → `.claude/skills/{slug}/SKILL.md`.
 ¬ hand-edit a shared-sync `.claude/skills/` render or legacy `agent-skills/` mirrors.
 ¬ invent list membership (`UI_TARGET_*`, GAP, SHARED_SYNC constants) — edit the catalog row.
 

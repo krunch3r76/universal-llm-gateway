@@ -31,6 +31,31 @@ def _workspace_source_uri(slug: str) -> str:
     return f"{_WS}/{_CURSOR_SKILLS_REL}{slug}/SKILL.md"
 
 
+def _source_uri_for_sot_path(path: Path, repo_root: Path) -> str:
+    rel = path.resolve().relative_to(repo_root.resolve()).as_posix()
+    return f"{_WS}/{rel}"
+
+
+def _sot_skill_paths(repo_root: Path | None = None) -> dict[str, Path]:
+    """Hub ``.cursor/skills`` plus plugin census bodies (plugin wins)."""
+    from claude_bundles.catalog import get_skill_catalog
+
+    root = repo_root or _REPO_DEFAULT
+    found: dict[str, Path] = {}
+    skills_dir = _cursor_skills_dir(root)
+    if skills_dir.is_dir():
+        for path in skills_dir.glob("*/SKILL.md"):
+            found[path.parent.name] = path
+    catalog = get_skill_catalog()
+    for slug in catalog.cursor_indexed_slugs():
+        try:
+            path, _ = catalog.resolve_sot(slug, root)
+        except FileNotFoundError:
+            continue
+        found[slug] = path
+    return found
+
+
 def _life_local_source_uri(slug: str) -> str:
     return f"{_WS}/{_CLAUDE_SKILLS_REL}{slug}/SKILL.md"
 
@@ -65,25 +90,19 @@ def _scan_life_local_skills(repo_root: Path | None = None) -> dict[str, dict[str
 
 
 def cortex_sot_slugs(repo_root: Path | None = None) -> set[str]:
-    """Every slug under repo ``.cursor/skills/*/SKILL.md`` minus skipped names."""
-    skills_dir = _cursor_skills_dir(repo_root)
-    if not skills_dir.is_dir():
-        return set()
+    """Every Cursor SOT slug (hub ``.cursor/skills`` ∪ plugin census) minus skipped names."""
     return {
-        path.parent.name
-        for path in skills_dir.glob("*/SKILL.md")
-        if path.parent.name not in _SKIP_CORTEX_SOT
+        slug
+        for slug in _sot_skill_paths(repo_root)
+        if slug not in _SKIP_CORTEX_SOT
     }
 
 
 def _scan_cortex_sot_metadata(repo_root: Path | None = None) -> dict[str, dict[str, object]]:
-    """Declared frontmatter from repo ``.cursor/skills/*/SKILL.md``."""
-    skills_dir = _cursor_skills_dir(repo_root)
-    if not skills_dir.is_dir():
-        return {}
+    """Declared frontmatter from hub ``.cursor/skills`` and plugin census SOTs."""
+    root = repo_root or _REPO_DEFAULT
     found: dict[str, dict[str, object]] = {}
-    for path in sorted(skills_dir.glob("*/SKILL.md")):
-        slug = path.parent.name
+    for slug, path in sorted(_sot_skill_paths(root).items()):
         if slug in _SKIP_CORTEX_SOT:
             continue
         try:
@@ -116,17 +135,14 @@ def _scan_cortex_sot_declared(repo_root: Path | None = None) -> dict[str, list[s
 
 
 def _scan_cortex_sot_skills(repo_root: Path | None = None) -> dict[str, dict[str, object]]:
-    """Projection-ready rows for repo ``.cursor/skills/*/SKILL.md``.
+    """Projection-ready rows for hub ``.cursor/skills`` and plugin census SOTs.
 
     Empty or missing frontmatter ``description:`` still yields a row — that state
     is SOT drift surfaced via ``_matches`` downstream, not a scan skip.
     """
-    skills_dir = _cursor_skills_dir(repo_root)
-    if not skills_dir.is_dir():
-        return {}
+    root = repo_root or _REPO_DEFAULT
     found: dict[str, dict[str, object]] = {}
-    for path in sorted(skills_dir.glob("*/SKILL.md")):
-        slug = path.parent.name
+    for slug, path in sorted(_sot_skill_paths(root).items()):
         if slug in _SKIP_CORTEX_SOT:
             continue
         try:
@@ -142,7 +158,7 @@ def _scan_cortex_sot_skills(repo_root: Path | None = None) -> dict[str, dict[str
             "slug": slug,
             "frontmatter": fm,
             "description": description,
-            "source_uri": _workspace_source_uri(slug),
+            "source_uri": _source_uri_for_sot_path(path, root),
             "related_skills": declared_related_skills(text, fm),
             "surface_class": surface_class_for_slug(slug),
         }

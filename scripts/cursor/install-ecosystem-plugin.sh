@@ -248,6 +248,9 @@ sync_satellite_pins() {
       skipped=$((skipped + 1))
       continue
     fi
+    if [[ -f "$sat/.cursor/mcp.json" ]]; then
+      die "satellite $name has .cursor/mcp.json — shadows user-global vortex-code/life; delete it"
+    fi
     mkdir -p "$sat/.vscode"
     cp -a "$tpl_vscode" "$sat/.vscode/settings.json"
     cp -a "$tpl_envrc" "$sat/.envrc"

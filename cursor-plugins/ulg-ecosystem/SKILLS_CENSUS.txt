@@ -40,3 +40,18 @@ satellite-workspace
 modularize-path
 teach-once-routine-mint
 work-item-seed-path
+# ULG leverage from any ecosystem workspace (MCP agent_bus / fs / boot / close).
+# ¬ hub-only. Satellite seats must discover these via the plugin.
+agent-bus-discipline
+agent-bus-multitask
+checkpoint-discipline
+cortex-orientation
+cursor-sdk-instruction-standard
+debug-with-events
+fs
+handoff-pickup
+lead-seat-boot
+life-to-code-request-lane
+required-skills-pickup
+session-close-audit
+session-close-kernel

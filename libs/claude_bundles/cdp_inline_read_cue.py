@@ -3,8 +3,8 @@
 Life Customize Skills does not carry ``cursor_only`` slugs. ``<skills_inline>``
 excerpts are the delivered body; this module tells the seat to read them and
 gives an ``fs`` SOT path when the excerpt is truncated. Paths come from
-``catalog.resolve_sot``, never ``source_uri_for`` (that always points at
-``.cursor/skills/``; census SOTs live under the plugin tree).
+``catalog.resolve_sot``, never a hub-only URI guess. Census SOTs live under
+the plugin tree.
 """
 
 from __future__ import annotations
