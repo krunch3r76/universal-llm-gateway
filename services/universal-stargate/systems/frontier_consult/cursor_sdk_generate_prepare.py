@@ -188,8 +188,12 @@ async def prepare_cursor_sdk_generate(
     )
     coord_recipient = caller_agent or "dispatch"
 
-    has_explicit_prompt_source = packet_path is not None or (
-        prompt_bind_mode == "explicit_inline"
+    # Wrap skips prompt resolution for packets; classify/coord share this mode.
+    if packet_path is not None and not prompt_bind_mode:
+        prompt_bind_mode = "explicit_external"
+    has_explicit_prompt_source = packet_path is not None or prompt_bind_mode in (
+        "explicit_inline",
+        "explicit_external",
     )
     admit_target = (parent_dispatch_thread_id or "").strip()
     prompt_source = (dispatch_thread_id or "").strip()

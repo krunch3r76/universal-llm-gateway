@@ -187,3 +187,66 @@ async def test_b3_row1_cross_thread_still_admits(
     )
     assert handle.thread_id == "thread-worker"
     assert probes["created"] == ["handoff"]
+
+
+@pytest.mark.asyncio
+async def test_b3_packet_path_standing_arc_admits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Standing dispatch_thread_id + packet_path is explicit_external, not loop."""
+    probes = _patch_prepare_deps(monkeypatch)
+    monkeypatch.setattr(
+        "systems.frontier_consult.light_bounded_ac_observer.prepare_lb_auto_review_for_generate",
+        lambda **_k: (False, False, "# packet\n"),
+    )
+    handle = await prepare_mod.prepare_cursor_sdk_generate(
+        request_id="req-packet-arc",
+        role="cursor-sdk",
+        model=None,
+        subject="s",
+        caller_agent="dispatch",
+        contract="light-bounded",
+        packet_path="tmp/reviews/9586-packet.md",
+        message_text=None,
+        parent_dispatch_thread_id="9584",
+        dispatch_thread_id="9584",
+    )
+    assert handle.thread_id == "thread-worker"
+    assert handle.prompt_bind_mode == "explicit_external"
+    assert probes["created"] == ["handoff"]
+    assert probes["requested"] == ["generate.requested"]
+    assert probes["coord"]
+    coord_kwargs = dict(probes["coord"][0])
+    assert coord_kwargs["prompt_bind_mode"] == "explicit_external"
+    signals = [getattr(ev, "signal", "") for ev in probes["published"]]
+    assert "frontier.admit_pointer.loop_closure" not in signals
+
+
+@pytest.mark.asyncio
+async def test_b3_explicit_external_standing_arc_admits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sidecar/prompt resolution arrives as explicit_external on a standing arc."""
+    probes = _patch_prepare_deps(monkeypatch)
+    handle = await prepare_mod.prepare_cursor_sdk_generate(
+        request_id="req-sidecar-arc",
+        role="cursor-sdk",
+        model=None,
+        subject="s",
+        caller_agent="dispatch",
+        contract="light-bounded",
+        packet_path=None,
+        message_text="sidecar body",
+        parent_dispatch_thread_id="9584",
+        dispatch_thread_id="9584",
+        prompt_bind_mode="explicit_external",
+        prompt_turn_number=None,
+    )
+    assert handle.thread_id == "thread-worker"
+    assert handle.prompt_bind_mode == "explicit_external"
+    assert probes["created"] == ["handoff"]
+    assert probes["coord"]
+    coord_kwargs = dict(probes["coord"][0])
+    assert coord_kwargs["prompt_bind_mode"] == "explicit_external"
+    signals = [getattr(ev, "signal", "") for ev in probes["published"]]
+    assert "frontier.admit_pointer.loop_closure" not in signals

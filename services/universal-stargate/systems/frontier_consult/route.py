@@ -142,6 +142,13 @@ class TeamDispatchGenerateBody(_DispatchCommon):
 
     ``dispatch_thread_id`` binds server-owned thread persistence on the
     team-dispatch pipeline (distinct from ``transcript_id`` provenance-only).
+    On ``seat=cursor-sdk``, a standing (non-pending-empty) id is the **coord**
+    parent — a sibling worker thread is minted. ``admit_pointer.loop_closure``
+    refuses only unbounded same-thread **thread-latest** (``latest`` /
+    review-child ``explicit_inline``). ``packet_path``, ``sidecar_ref``, and
+    inline ``prompt=`` bind as ``explicit_external`` and are legal on a
+    standing arc. Do not pre-mint ``lifecycle_state=pending`` as the common
+    path.
     """
 
     op: Literal["generate"]

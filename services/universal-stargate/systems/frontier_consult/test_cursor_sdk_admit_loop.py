@@ -77,6 +77,34 @@ def test_row4_incident_seed_explicit_same_thread_loop() -> None:
     assert result.spawn_uses_latest_on_thread is True
 
 
+def test_explicit_external_same_thread_not_loop() -> None:
+    """Packet/sidecar/prompt are not a thread latch — not loop, not allowlist."""
+    from .cursor_sdk_admit_loop import is_allowlisted_silent_legal
+
+    result = classify_admit_pointer_loop(
+        admit_target_thread="9584",
+        prompt_source_thread="9584",
+        prompt_bind_mode="explicit_external",
+        prompt_turn_number=None,
+        has_explicit_prompt_source=True,
+    )
+    assert result.loop_closure is False
+    assert result.would_have_refused is False
+    assert result.spawn_uses_latest_on_thread is False
+    assert result.reason == "no_loop"
+    assert result.allowlisted_silent is False
+    assert (
+        is_allowlisted_silent_legal(
+            admit_target_thread="9584",
+            prompt_source_thread="9584",
+            prompt_bind_mode="explicit_external",
+            prompt_turn_number=None,
+            has_explicit_prompt_source=True,
+        )
+        is False
+    )
+
+
 def test_dead_allowlist_branch_deleted_explicit_unpinned_not_legal() -> None:
     """Former 4th is_allowlisted branch must not resurrect row-4 as silent."""
     from .cursor_sdk_admit_loop import is_allowlisted_silent_legal

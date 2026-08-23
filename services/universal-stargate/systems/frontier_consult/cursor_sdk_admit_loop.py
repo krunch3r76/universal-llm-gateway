@@ -47,6 +47,9 @@ def spawn_prompt_builder_uses_latest_on_thread(
         return False
     if prompt_bind_mode == "frozen_turn" and prompt_turn_number is not None:
         return False
+    # File / caller text is not a thread latch. Not an allowlist row.
+    if prompt_bind_mode == "explicit_external":
+        return False
     return True
 
 

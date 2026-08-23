@@ -219,6 +219,35 @@ async def test_sidecar_ref_bypasses_bus_read() -> None:
 
 
 @pytest.mark.asyncio
+async def test_explicit_sources_bind_explicit_external() -> None:
+    with patch(
+        "systems.frontier_consult.dispatch_thread_context._read_schemed_prompt_file",
+        return_value="Packet body.",
+    ):
+        packet = await resolve_generate_prompt_resolution(
+            request_id="req-ext-packet",
+            role="cursor-sdk",
+            dispatch_thread_id="9584",
+            packet_path="tmp/reviews/9586-packet.md",
+        )
+        sidecar = await resolve_generate_prompt_resolution(
+            request_id="req-ext-sidecar",
+            role="cursor-sdk",
+            dispatch_thread_id="9584",
+            sidecar_ref="cortex://notes/system/threads/review.md",
+        )
+    prompt = await resolve_generate_prompt_resolution(
+        request_id="req-ext-prompt",
+        role="cursor-sdk",
+        dispatch_thread_id="9584",
+        prompt="Inline caller text.",
+    )
+    assert packet.prompt_bind_mode == "explicit_external"
+    assert sidecar.prompt_bind_mode == "explicit_external"
+    assert prompt.prompt_bind_mode == "explicit_external"
+
+
+@pytest.mark.asyncio
 async def test_resolve_latest_captures_turn_number() -> None:
     turn = {
         "from": "cursor",

@@ -37,7 +37,13 @@ _SERVER_TURN_MARKERS: tuple[str, ...] = (
     _ADMIT_BODY_FIRST_LINE_MARKER,
 )
 
-PromptBindMode = Literal["frozen_turn", "latest", "explicit_inline", "sentinel_fallback"]
+PromptBindMode = Literal[
+    "frozen_turn",
+    "latest",
+    "explicit_inline",
+    "explicit_external",
+    "sentinel_fallback",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -498,7 +504,7 @@ async def resolve_generate_prompt_resolution(
             request_id=request_id, text=text, field="packet_path"
         )
         return GeneratePromptResolution(
-            text=text, prompt_bind_mode="explicit_inline"
+            text=text, prompt_bind_mode="explicit_external"
         )
 
     if prompt is not None:
@@ -513,7 +519,7 @@ async def resolve_generate_prompt_resolution(
             )
         reject_unresolved_placeholders(request_id=request_id, text=text, field="prompt")
         return GeneratePromptResolution(
-            text=text, prompt_bind_mode="explicit_inline"
+            text=text, prompt_bind_mode="explicit_external"
         )
 
     if sidecar_ref is not None:
@@ -543,7 +549,7 @@ async def resolve_generate_prompt_resolution(
             request_id=request_id, text=text, field="sidecar_ref"
         )
         return GeneratePromptResolution(
-            text=text, prompt_bind_mode="explicit_inline"
+            text=text, prompt_bind_mode="explicit_external"
         )
 
     if not dispatch_thread_id or not dispatch_thread_id.strip():
