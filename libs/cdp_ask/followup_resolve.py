@@ -259,6 +259,7 @@ async def resolve_followup_target(
                 None,
             )
 
+    registry_matches: list[FollowupCandidate] = []
     if chat_url:
         registry_matches = _registry_pairs_for_chat_url(chat_url, cdp_url=cdp_url)
         if len(registry_matches) > 1:
@@ -274,7 +275,17 @@ async def resolve_followup_target(
     candidates, resolution_path, _ = await discover_candidates(req, store)
     if not candidates:
         if chat_url:
-            return None, fail_followup("cse_not_found_on_lane"), resolution_path, None
+            infos = [c.as_info() for c in registry_matches] or None
+            return (
+                None,
+                fail_followup(
+                    "cse_not_found_on_lane",
+                    url=chat_url,
+                    candidates=infos,
+                ),
+                resolution_path,
+                None,
+            )
         return (
             None,
             fail_followup("lane_not_attached", detail=lane_not_attached_detail()),
@@ -286,7 +297,8 @@ async def resolve_followup_target(
         infos = [c.as_info() for c in candidates]
         code = (
             "ambiguous_attended"
-            if chat_url and len(_registry_pairs_for_chat_url(chat_url, cdp_url=cdp_url)) > 1
+            if chat_url
+            and len(_registry_pairs_for_chat_url(chat_url, cdp_url=cdp_url)) > 1
             else "ambiguous_identity"
         )
         return (

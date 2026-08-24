@@ -193,7 +193,8 @@ class ExecutionPollResponse(BaseModel):
     delete_after: dict[str, Any] | None = None
     results: list[dict[str, Any]] | None = None
     harvest_provenance: (
-        Literal["output-file", "cortex-uri", "chat", "chat-large", "artifact-card"] | None
+        Literal["output-file", "cortex-uri", "chat", "chat-large", "artifact-card"]
+        | None
     ) = Field(
         default=None,
         description=(
@@ -394,3 +395,4 @@ class FollowupProjectAskResponse(BaseModel):
     reattach_used: bool = False
     lane_created: bool = False
     target_binding: TargetBinding | None = None
+    reattach_skipped_reason: str | None = None

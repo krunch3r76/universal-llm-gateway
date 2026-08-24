@@ -20,6 +20,8 @@ from cdp_ask.followup_dormant import (
     park_relaunched_host,
     reattach_chat_url,
     reattach_reason,
+    restrict_registration_id,
+    skipped_reason_for_miss,
 )
 from cdp_ask.followup_events import (
     cdp_ask_followup_paste_attempt,
@@ -60,6 +62,8 @@ _inflight_guard = asyncio.Lock()
 _REATTACH_ELIGIBLE_ERRORS = frozenset(
     {"cse_not_found_on_lane", "lane_not_attached", "attended_dormant"}
 )
+
+
 async def _find_page_on_lane(cdp_url: str, chat_url: str) -> tuple[Any, Any] | None:
     """Connect to *cdp_url* and return ``(page, playwright)`` when URL matches."""
     pw, _browser, ctx, _page0 = await connect_cdp(cdp_url)
@@ -114,7 +118,7 @@ async def _maybe_reattach(
     store: ExecutionStore,
     err: FollowupProjectAskResponse,
 ) -> tuple[ReattachOutcome | None, FollowupProjectAskResponse | None]:
-    """Reattach when the error is eligible and a dormant seat or opt-in allows it."""
+    """Reattach when the error is eligible and a dormant/bound seat or opt-in allows it."""
     if err.error not in _REATTACH_ELIGIBLE_ERRORS:
         return None, err
     chat_url = reattach_chat_url(req, err)
@@ -122,7 +126,14 @@ async def _maybe_reattach(
         return None, fail_followup("reattach_requires_chat_url")
     reason = reattach_reason(req, chat_url)
     if reason is None or not chat_url:
-        return None, err
+        skipped = skipped_reason_for_miss(reason=reason, chat_url=chat_url)
+        return None, fail_followup(
+            err.error or "followup_failed",
+            detail=err.detail,
+            candidates=err.candidates,
+            url=chat_url or err.url,
+            reattach_skipped_reason=skipped,
+        )
 
     holder = await _resolve_holder(req, store)
     emit_followup_event(
@@ -137,6 +148,7 @@ async def _maybe_reattach(
         holder=holder,
         purpose=req.purpose,
         allow_mint=bool(req.reattach),
+        restrict_to_registration_id=restrict_registration_id(reason, chat_url),
     )
     emit_followup_event(
         cdp_ask_followup_reattach_result(
@@ -147,7 +159,14 @@ async def _maybe_reattach(
         )
     )
     if not outcome.ok:
-        return outcome, fail_followup(outcome.error or "reattach_navigate_failed")
+        skipped = skipped_reason_for_miss(
+            reason=reason, chat_url=chat_url, outcome_error=outcome.error
+        )
+        return outcome, fail_followup(
+            outcome.error or "reattach_navigate_failed",
+            url=chat_url,
+            reattach_skipped_reason=skipped,
+        )
     return outcome, None
 
 
@@ -218,6 +237,8 @@ async def execute_followup(
                 err.error or "followup_failed",
                 detail=err.detail,
                 candidates=err.candidates,
+                url=err.url or (req.chat_url or "").strip() or None,
+                reattach_skipped_reason=err.reattach_skipped_reason,
                 **response_extra(
                     reattach_used=reattach_used,
                     lane_created=lane_created,
@@ -251,7 +272,10 @@ async def execute_followup(
         found = await _find_page_on_lane(target.cdp_url, target.chat_url)
         if found is None:
             resp = fail_followup(
-                "cse_not_found_on_lane", detail="page gone before paste", **extra
+                "cse_not_found_on_lane",
+                detail="page gone before paste",
+                url=target.chat_url,
+                **extra,
             )
             emit_followup_event(
                 cdp_ask_followup_paste_verified(
@@ -270,7 +294,10 @@ async def execute_followup(
         page, pw = found
         if normalize_cse_url(page.url or "") != normalize_cse_url(target.chat_url):
             resp = fail_followup(
-                "lane_not_attached", detail=lane_not_attached_detail(), **extra
+                "lane_not_attached",
+                detail=lane_not_attached_detail(),
+                url=target.chat_url,
+                **extra,
             )
             emit_followup_event(
                 cdp_ask_followup_paste_verified(

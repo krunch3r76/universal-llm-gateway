@@ -7,9 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from claude_bundles import cdp_registry
+from claude_bundles.cowork_output_download import HarvestBody
 from pydantic import ValidationError
 
-from cdp_ask.cse_session_harvest import HARVEST_HARD_CAP, execute_harvest
+from cdp_ask.cse_session_harvest import HARVEST_HARD_CAP, execute_harvest, harvest_page
 from cdp_ask.cse_session_models import HarvestRequest, HarvestResponse
 from cdp_ask.execution_store import ExecutionStore
 from cdp_ask.followup_envelope import FollowupCandidate
@@ -144,3 +145,53 @@ async def test_unattached_with_url_opens_then_scrapes() -> None:
     opener.assert_awaited_once()
     assert result.outcome == "harvested"
     assert result.provenance and result.provenance.get("opened_on_demand") is True
+
+
+_BANNER_ONLY = (
+    "Claude responded: API Error: 529 Overloaded.\n\n"
+    "API Error: 529 Overloaded. This is a server-side issue, usually temporary "
+    "— try again in a moment. If it persists, check https://status.claude.com."
+)
+
+
+@pytest.mark.asyncio
+async def test_auto_error_banner_preview_falls_through_to_full_scrape() -> None:
+    """a:30411: error-banner last turn does not prove the CSE is empty."""
+    keep_body = "KEEP 4 — document:life-coding-playbook verdict body."
+    harvest_mock = AsyncMock(
+        side_effect=[
+            {"turns": [{"author": "assistant", "text": _BANNER_ONLY, "ordinal": 2}]},
+            {
+                "turns": [
+                    {"author": "assistant", "text": keep_body, "ordinal": 1},
+                    {"author": "assistant", "text": _BANNER_ONLY, "ordinal": 2},
+                ],
+                "streaming": False,
+                "stop": False,
+                "tool_pause": False,
+                "incomplete_dom": False,
+                "truncated": False,
+            },
+        ]
+    )
+    page = MagicMock()
+    with (
+        patch("cdp_ask.cse_session_harvest.harvest_turns", harvest_mock),
+        patch(
+            "cdp_ask.cse_session_harvest.resolve_harvest_body",
+            AsyncMock(
+                return_value=HarvestBody(content=_BANNER_ONLY, provenance="chat")
+            ),
+        ),
+    ):
+        result = await harvest_page(
+            page,
+            HarvestRequest(source="auto", limit=10),
+            provenance=None,
+        )
+    assert harvest_mock.await_count == 2
+    assert result.outcome == "harvested"
+    assert result.content_provenance == "cse-dom"
+    texts = [turn.text for turn in result.turns]
+    assert keep_body in texts
+

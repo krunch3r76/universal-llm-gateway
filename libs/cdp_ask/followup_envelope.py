@@ -19,7 +19,9 @@ from cdp_ask.models import (
 REGISTRY_SOURCE = "cse-session-registry"
 
 _CLI_ESCAPE = "scripts/cortex/cowork_chat_followup.py"
-_HORIZON = "v1 requires an attached lane; post-deregister reattach is horizon"
+_HORIZON = (
+    "v1 prefers an attached or dormant seat; reattach=true mints or borrows a host"
+)
 
 __all__ = [
     "REGISTRY_SOURCE",
@@ -45,6 +47,8 @@ def fail_followup(
     detail: str | None = None,
     candidates: list[FollowupCandidateInfo] | None = None,
     send_verified: bool = False,
+    url: str | None = None,
+    reattach_skipped_reason: str | None = None,
     **extra: Any,
 ) -> FollowupProjectAskResponse:
     """Build a typed ``ok=false`` followup response with optional detail fields."""
@@ -54,6 +58,8 @@ def fail_followup(
         detail=detail,
         candidates=candidates,
         send_verified=send_verified,
+        url=url,
+        reattach_skipped_reason=reattach_skipped_reason,
         **extra,
     )
 

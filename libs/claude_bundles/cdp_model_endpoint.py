@@ -26,6 +26,7 @@ from claude_bundles.cdp_progress_trace import ProgressTrace
 from claude_bundles.cdp_progress_trace import fingerprint as progress_fingerprint
 from claude_bundles.chat_model_match import normalize_picker_request
 from claude_bundles.operator_proxy_mission import is_operator_proxy_mission_purpose
+from claude_bundles.overload_only_harvest import is_error_banner_only_harvest
 
 DEFAULT_MAX_WALL_S = 1800
 DEFAULT_NO_PROGRESS_S = 600
@@ -51,12 +52,7 @@ SUBMIT_RETRY_BACKOFF_S = 5.0
 MAX_OVERLOAD_SUBMIT_ATTEMPTS = 2
 UPSTREAM_OVERLOADED = "upstream_overloaded"
 WEEKLY_LIMIT = "weekly_limit"
-_OVERLOAD_ONLY_BODY_RE = re.compile(r"API Error:\s*52[93]", re.IGNORECASE)
-_OVERLOAD_ONLY_LINE_RE = re.compile(
-    r"^(?:Claude responded: )?API Error:\s*52[93].*$",
-    re.IGNORECASE,
-)
-_OVERLOAD_ONLY_MAX_LEN = 500
+_is_overload_only_harvest = is_error_banner_only_harvest
 _WEEKLY_LIMIT_RE = re.compile(
     r"weekly\s+limit|hit\s+your\s+.+\s*limit|you've\s+hit\s+your",
     re.IGNORECASE,
@@ -318,26 +314,6 @@ def _client_error_dict(exc: CdpAskClientError) -> dict[str, Any]:
 def _is_retryable_overload_status(exc: CdpAskClientError) -> bool:
     """True when submit HTTP status is in the bounded overload retry set."""
     return exc.status_code in RETRYABLE_OVERLOAD_STATUS
-
-
-def _is_overload_only_harvest(body: str) -> bool:
-    """Detect Anthropic overload-only harvest bodies (529/503 API Error text).
-
-    Requires every non-empty line to be overload-error shaped so a legitimate
-    short harvest that merely quotes ``API Error: 529`` is not terminalized.
-    """
-    text = body.strip()
-    if not text or len(text) > _OVERLOAD_ONLY_MAX_LEN:
-        return False
-    if not _OVERLOAD_ONLY_BODY_RE.search(text):
-        return False
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        if not _OVERLOAD_ONLY_LINE_RE.match(stripped):
-            return False
-    return True
 
 
 def _proof_rejects_overload(snapshot: dict[str, Any]) -> bool:

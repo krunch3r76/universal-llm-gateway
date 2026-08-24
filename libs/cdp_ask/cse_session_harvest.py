@@ -9,6 +9,7 @@ from claude_bundles.cowork_output_download import resolve_harvest_body
 from claude_bundles.cse_provenance import resolve as resolve_provenance
 from claude_bundles.cse_provenance_resolve import is_row_present
 from claude_bundles.cse_turns_harvest import harvest_turns
+from claude_bundles.overload_only_harvest import is_error_banner_only_harvest
 from claude_bundles.skills_ui_panel import connect_cdp
 
 from cdp_ask.cse_session_ack import classify_ack
@@ -115,24 +116,29 @@ async def harvest_page(
                 download_output=False,
             )
             if body_result and body_result.content:
-                ack = classify_ack(
-                    body_result.content,
-                    marker=req.marker,
-                    successor_birth_id=req.successor_birth_id,
-                )
-                return HarvestResponse(
-                    outcome="harvested",
-                    ack_class=ack,
-                    turns=[
-                        CseSessionTurn(
-                            author="assistant",
-                            text=body_result.content,
-                            source="output-file",
-                        )
-                    ],
-                    content_provenance=str(body_result.provenance),
-                    provenance=provenance,
-                )
+                # Auto last-turn banner is tracker chrome, not CSE-empty (a:30411).
+                if not (
+                    req.source == "auto"
+                    and is_error_banner_only_harvest(body_result.content)
+                ):
+                    ack = classify_ack(
+                        body_result.content,
+                        marker=req.marker,
+                        successor_birth_id=req.successor_birth_id,
+                    )
+                    return HarvestResponse(
+                        outcome="harvested",
+                        ack_class=ack,
+                        turns=[
+                            CseSessionTurn(
+                                author="assistant",
+                                text=body_result.content,
+                                source="output-file",
+                            )
+                        ],
+                        content_provenance=str(body_result.provenance),
+                        provenance=provenance,
+                    )
         except Exception:
             if req.source == "output-file":
                 return HarvestResponse(outcome="unreachable", reason="output_file_miss")

@@ -905,6 +905,12 @@ def test_is_overload_only_harvest_matches_archive_fixture() -> None:
         )
         is False
     )
+    assert (
+        _is_overload_only_harvest(
+            "Claude responded: API Error: 500 Internal Server Error."
+        )
+        is True
+    )
 
 
 def test_run_cdp_generate_proof_short_answer_with_529_quote_succeeds(

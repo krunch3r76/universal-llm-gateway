@@ -127,7 +127,9 @@ async def _wake_dormant_seat(chat_url: str, *, holder: str) -> ReattachOutcome |
     opened = await _navigate_new_page(reg, chat_url)
     if opened is None:
         with contextlib.suppress(Exception):
-            cdp_registry.make_dormant(reg.registration_id, reason="relaunch_navigate_failed")
+            cdp_registry.make_dormant(
+                reg.registration_id, reason="relaunch_navigate_failed"
+            )
         return ReattachOutcome(ok=False, error="reattach_navigate_failed")
     page, pw = opened
     return ReattachOutcome(
@@ -146,18 +148,27 @@ async def ensure_cse_attached(
     holder: str,
     purpose: str | None = None,
     allow_mint: bool = True,
+    restrict_to_registration_id: str | None = None,
 ) -> ReattachOutcome:
     """Attach a registry Chrome host and navigate to *chat_url* when needed.
 
     A dormant seat bound to the URL is woken first: it owns the session's profile,
     so it resumes rather than borrowing another host's glass. With *allow_mint*
     false, an unbound URL is refused instead of minting a fresh host.
+    ``restrict_to_registration_id`` limits navigation to that host after wake —
+    auto-resume must not ``goto`` a lane that already holds a different CSE.
     """
     woken = await _wake_dormant_seat(chat_url, holder=holder)
     if woken is not None:
         return woken
 
     lanes = list(cdp_registry.list_active())
+    if restrict_to_registration_id:
+        lanes = [
+            lane
+            for lane in lanes
+            if lane.registration_id == restrict_to_registration_id
+        ]
     for lane in _lane_order(lanes, purpose, chat_url):
         opened = await _navigate_new_page(lane, chat_url)
         if opened is None:

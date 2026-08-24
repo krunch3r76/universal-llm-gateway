@@ -119,7 +119,10 @@ async def test_stale_registration_id_two_ports_same_chat_url_not_waived(
     store = ExecutionStore()
     monkeypatch.setattr(
         "cdp_ask.followup_resolve.cdp_registry.list_active",
-        lambda: [_reg("reg-1", cdp="http://127.0.0.1:9223"), _reg("reg-2", cdp="http://127.0.0.1:9224")],
+        lambda: [
+            _reg("reg-1", cdp="http://127.0.0.1:9223"),
+            _reg("reg-2", cdp="http://127.0.0.1:9224"),
+        ],
     )
     monkeypatch.setattr(
         "cdp_ask.followup_resolve.cdp_registry.chat_url_for_registration",
@@ -184,6 +187,7 @@ async def test_chat_url_only_cse_not_found(monkeypatch: pytest.MonkeyPatch) -> N
     _target, err, _path, _binding = await resolve_followup_target(req, store)
     assert err is not None
     assert err.error == "cse_not_found_on_lane"
+    assert err.url == CSE_A
 
 
 @pytest.mark.asyncio
@@ -363,7 +367,9 @@ async def test_resolver_never_register_or_goto(monkeypatch: pytest.MonkeyPatch) 
 async def test_deregister_race_before_paste(monkeypatch: pytest.MonkeyPatch) -> None:
     store = ExecutionStore()
     reg = _reg("reg-1")
-    monkeypatch.setattr("cdp_ask.followup_resolve.cdp_registry.list_active", lambda: [reg])
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.cdp_registry.list_active", lambda: [reg]
+    )
     monkeypatch.setattr(
         "cdp_ask.followup_resolve.scan_lane_cse_urls",
         AsyncMock(return_value=[CSE_A]),
@@ -385,7 +391,9 @@ async def test_send_unverified_when_verification_fails(
 ) -> None:
     store = ExecutionStore()
     reg = _reg("reg-1")
-    monkeypatch.setattr("cdp_ask.followup_resolve.cdp_registry.list_active", lambda: [reg])
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.cdp_registry.list_active", lambda: [reg]
+    )
     monkeypatch.setattr(
         "cdp_ask.followup_resolve.scan_lane_cse_urls",
         AsyncMock(return_value=[CSE_A]),
@@ -427,7 +435,9 @@ async def test_stale_registration_id_execute_followup_proceeds(
     """End-to-end: stale arm-time registration_id still pastes on unique chat_url."""
     store = ExecutionStore()
     reg = _reg("reg-live")
-    monkeypatch.setattr("cdp_ask.followup_resolve.cdp_registry.list_active", lambda: [reg])
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.cdp_registry.list_active", lambda: [reg]
+    )
     monkeypatch.setattr(
         "cdp_ask.followup_resolve.cdp_registry.chat_url_for_registration",
         lambda rid: CSE_A if rid == "reg-live" else None,
@@ -475,7 +485,9 @@ async def test_stale_registration_id_execute_followup_proceeds(
 async def test_ok_requires_send_verified(monkeypatch: pytest.MonkeyPatch) -> None:
     store = ExecutionStore()
     reg = _reg("reg-1")
-    monkeypatch.setattr("cdp_ask.followup_resolve.cdp_registry.list_active", lambda: [reg])
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.cdp_registry.list_active", lambda: [reg]
+    )
     monkeypatch.setattr(
         "cdp_ask.followup_resolve.scan_lane_cse_urls",
         AsyncMock(return_value=[CSE_A]),

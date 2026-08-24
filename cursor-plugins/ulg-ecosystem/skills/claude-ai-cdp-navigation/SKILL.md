@@ -61,7 +61,7 @@ running → turn_idle → content_proof → archiving → terminal | failed
 | `running` ∧ `stall_stage=null` | **In flight** — keep polling; wall-clock alone ≠ stall |
 | `turn_idle` | CDP turn idle — **≠ advance-eligible** alone (24864) |
 | `content_proof` | Durable sidecar + idle — advance only after **consumer fs-read + sha re-verify**; must **not** trigger `delete_after` |
-| `archive_uri` / `terminal` | Harvest terminal |
+| `archive_uri` / `terminal` | Harvest terminal **for that generate's tracker file**. An archive body that is only an API 529/500 banner is **not** consult-body proof and **not** "CSE empty" — scrape that generate's `chat_url` (`cse_session(op=harvest, source=chat)`). Artifact cards need body harvest, not the tracker envelope (a:30408 / a:30411). Do not retarget harvest at a prior retained CSE as the sole live session. |
 | `failed` + `stall_stage` | Stall lane — **≠ running** |
 
 **Long-running ≠ stalled:** Opus/Cowork may sit `running`+`stall_stage=null` many minutes. Forbidden: duration → `cdp_unavailable`, abort-and-skip, or Stage-B without harvest proof.
@@ -210,6 +210,12 @@ when no live attach exists, scrapes, then parks the host. Pass the satellite
 id, Stargate id, or `cse_…` token — do not reason about attach. `not_attached`
 means the URL could not be opened (deleted or login miss), not “the tab closed.”
 
+`wait(first_reply_from)` complete + generate `archive_uri` is **not** harvest
+proof when the archive body is an error banner. Scrape the **generate CSE's**
+`chat_url` (the URL on that archive), not a sibling retained window, and not
+the tracker envelope (a:30411). `source=auto` that returns only a 500/529
+banner or `card_without_body` → retry `source=chat` on that same URL.
+
 ### Reading the harvest — chrome ≠ delivery (BINDING — operator 2026-08-11)
 
 The scraped CSE body carries claude.ai **UI chrome** alongside assistant prose: artifact
@@ -279,16 +285,16 @@ A retained operator-proxy CSE is a **live correspondent**, not an archive. Reach
 | New turn with no retained CSE — or its context is stale / Customize skills refreshed | `team_dispatch(model=cdp/…)` (default) · CLI project-ask (IF6) — a **fresh window**, ¬ warm paste | n/a |
 | Audit trail for either | bus turn **accompanies** — ¬ substitutes | n/a |
 
-`in_chat_delivery ≻ bus_NOTE` · identity ladder `chat_url ≻ registration_id ≻ execution_id` · **v1 = attached lane only** (no post-deregister reattach). **Launch-path paste** (reattach mints satellite lane) proves **satellite-scope** DOM only — relaying `ok=true` / `send_verified=true` as human/CSE-seat delivery when `lane_created=true` is the **a:27855** failure class.
+`in_chat_delivery ≻ bus_NOTE` · identity ladder `chat_url ≻ registration_id ≻ execution_id` · dormant/bound `chat_url` auto-wakes that seat; mint/borrow still needs `reattach=true`. **Launch-path paste** (reattach mints satellite lane) proves **satellite-scope** DOM only — relaying `ok=true` / `send_verified=true` as human/CSE-seat delivery when `lane_created=true` is the **a:27855** failure class.
 
 #### Followup failure triage (2026-08-01 — do not misread the error)
 
 | Error | What it actually means | Next move | Receipt note |
 |---|---|---|---|
 | `lane_not_attached` after passing **only** `execution_id` | Often **wrong id space**. A `cdp/*` `team_dispatch` returns a **Stargate** id; the satellite mints its own (see harvest archive `execution_id:`). The resolver maps exe→registration and **bails before scanning any lane** when that lookup misses — so this error does **not** prove the CSE is gone | Retry with `chat_url` (highest precedence — skips the mapping and scans all lanes), or with the **satellite** id from the archive | n/a |
-| `cse_not_found_on_lane` | Lanes were scanned; the page is **not open** on any attached lane. The URL may still be perfectly valid | Retry with `chat_url`: a dormant seat for that URL is woken automatically. Only when no seat holds the URL is `reattach=true` needed (borrow a host / mint one) | n/a |
+| `cse_not_found_on_lane` | Lanes were scanned; the page is **not open** on any attached lane. The URL may still be perfectly valid. `url` echoes the scanned `chat_url`; `reattach_skipped_reason` names why auto-resume did not run. `state=historical` is attach-journal (`host_state=not_listable`), **not** a dead CSE | Unique dormant/bound seats auto-resume. If `reattach_skipped_reason=no_bound_or_dormant_seat` (or `bound_host_unlistable`), retry `reattach=true`. **Forbidden:** `team_dispatch(model=cdp/…)` generate as recovery — that mints a second window (a:30405 / a:27476) | n/a |
 | `attended_dormant` | The attended seat exists and is reattachable; its Chrome was released. Not a missing session | Pass `chat_url` (the error carries it in `candidates[0]`) — the satellite relaunches and parks it again | n/a |
-| Both, with `list_active()` empty | No attached Chrome lane at all; the lane was torn down after harvest | Fresh `team_dispatch(model=cdp/…)` | n/a |
+| Both, with `list_active()` empty | No attached Chrome lane at all; the lane was torn down after harvest | If a `chat_url` is known, followup it (`reattach=true` when no dormant/bound seat). Fresh `team_dispatch(model=cdp/…)` only when there is **no** URL to resume | n/a |
 | `human_visible_receipt_unavailable` | Caller requested `min_receipt=human_visible` — unsatisfiable in v1; zero side effects | Do not relay as delivery; use attended session or bus | `receipt=None` |
 | `send_unverified` with `receipt=dom_paste` | Paste proven in automation DOM but caller gate was `dom_committed` | Retry or accept satellite-scope paste proof | partial |
 
@@ -297,11 +303,12 @@ A retained operator-proxy CSE is a **live correspondent**, not an archive. Reach
 seeded profile persist. `cse_session(op=followup, chat_url=…)` relaunches that
 seat, pastes, and parks it again; `resolve_attended` answers 200 with
 `dormant: true` / `reattachable: true` / null `cdp_url`. `¬` report a dormant seat
-as "the session is gone," and `¬` read a low live-host count as a dead CSE.
+as "the session is gone," `¬` read `state=historical` or a low `live_cse_count` as a
+dead CSE (`live_cse_count` is attachment occupancy, not session liveness — a:27476).
 Bounding live Chrome this way is what keeps the Xvfb client pool (default ceiling
 64) from exhausting — the failure that broke hopping when ~100 hosts accumulated.
 
-**Anti-patterns:** bus NOTE + operator push reminder standing in as the *delivery* of a wake the seat could have read in chat; reaching SSH-first for `cowork_chat_followup.py` from an IDE seat that holds `cse_session` (CLI is the escape, for hub checkout / no attached lane); CLI submit onto `/new` for a turn that belongs on a retained CSE; relaying `ok=true` / `send_verified=true` from a **launch-path** (`lane_created=true`) paste as human/CSE-seat delivery (a:27855).
+**Anti-patterns:** bus NOTE + operator push reminder standing in as the *delivery* of a wake the seat could have read in chat; reaching SSH-first for `cowork_chat_followup.py` from an IDE seat that holds `cse_session` (CLI is the escape, for hub checkout / no attached lane); CLI submit onto `/new` for a turn that belongs on a retained CSE; relaying `ok=true` / `send_verified=true` from a **launch-path** (`lane_created=true`) paste as human/CSE-seat delivery (a:27855); treating `cse_not_found_on_lane` / `state=historical` as license for a fresh `team_dispatch(model=cdp/…)` generate (a:30405).
 
 Full FOL + escape recipe: L3 `reference-annex.md` § Warm follow-up.
 
