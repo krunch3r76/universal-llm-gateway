@@ -78,7 +78,7 @@ def prepare_claude_ai_upload_md(
     *,
     slug: str | None = None,
 ) -> tuple[Path, bool, int]:
-    """Stage a fleet-safe copy when description exceeds the SOT ceiling (200).
+    """Stage a fleet-safe copy when description or H1 needs Customize adapt.
 
     Fleet policy caps YAML ``description`` at 200 for Cursor SOT, Customize UI,
     and future Skills API inject (API/spec allow 1024; unused). See
@@ -90,15 +90,18 @@ def prepare_claude_ai_upload_md(
     if not skill_md.is_file():
         raise FileNotFoundError(skill_md)
     text = skill_md.read_text()
-    adapted, truncated = adapt_skill_md_for_claude_ai(text)
-    orig_len = len(extract_rendered_description(text))
-    if not truncated:
-        return skill_md, False, orig_len
     name = slug or skill_md.parent.name
+    adapted, changed = adapt_skill_md_for_claude_ai(text, slug=name)
+    orig_len = len(extract_rendered_description(text))
+    desc_truncated = extract_rendered_description(
+        adapted
+    ) != extract_rendered_description(text)
+    if not changed:
+        return skill_md, False, orig_len
     staging_dir.mkdir(parents=True, exist_ok=True)
     out = staging_dir / f"{name}.md"
     out.write_text(adapted)
-    return out, True, orig_len
+    return out, desc_truncated, orig_len
 
 
 def render_minimal_skill_md(slug: str, description: str) -> str:
@@ -125,7 +128,7 @@ def prepare_ui_upload_artifact(
         raise FileNotFoundError(skill_md)
     name = slug or skill_md.parent.name
     text = skill_md.read_text()
-    adapted, _ = adapt_skill_md_for_claude_ai(text)
+    adapted, _ = adapt_skill_md_for_claude_ai(text, slug=name)
     desc = extract_rendered_description(adapted)
     staging_dir.mkdir(parents=True, exist_ok=True)
 
@@ -144,7 +147,9 @@ def prepare_ui_upload_artifact(
     return zip_path, len(desc)
 
 
-def multipart_files(slug: str, bundle_dir: Path) -> list[tuple[str, tuple[str, bytes, str]]]:
+def multipart_files(
+    slug: str, bundle_dir: Path
+) -> list[tuple[str, tuple[str, bytes, str]]]:
     """Build httpx multipart tuples for ``files[]`` upload."""
     parent = bundle_dir.parent
     parts: list[tuple[str, tuple[str, bytes, str]]] = []
@@ -199,7 +204,9 @@ def build_slug_index(client: httpx.Client) -> dict[str, str]:
     return index
 
 
-def create_skill(client: httpx.Client, files: list[tuple[str, tuple[str, bytes, str]]]) -> dict[str, Any]:
+def create_skill(
+    client: httpx.Client, files: list[tuple[str, tuple[str, bytes, str]]]
+) -> dict[str, Any]:
     resp = client.post("/v1/skills", files=files)
     resp.raise_for_status()
     return resp.json()

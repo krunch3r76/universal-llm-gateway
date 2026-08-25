@@ -16,6 +16,7 @@ from claude_bundles.bundle_description import (
     resolve_bundle_description,
 )
 from claude_bundles.catalog import get_skill_catalog
+from claude_bundles.composer_skill_match import normalize_first_h1
 
 _SOT_LINE_RE = re.compile(r"^\*\*SOT")
 _SOURCE_LINE_RE = re.compile(r"^\*\*Source:\*\*")
@@ -150,6 +151,7 @@ def render_bundle(
         fm = {}
         body = raw[match.end() :].lstrip("\n") if match else raw
     cleaned = _strip_pointer_fences(body)
+    cleaned, _ = normalize_first_h1(slug, cleaned)
     name = str(fm.get("name") or slug)
     description = resolve_bundle_description(
         slug,

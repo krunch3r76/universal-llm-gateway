@@ -14,7 +14,9 @@ MIN_BUNDLE_DESCRIPTION_LEN = 50
 # Anthropic Help Center (Customize web) = 200; Agent Skills API/spec allow 1024 —
 # we do not use the 1024 headroom. decision:claude-ai-skill-description-limits-by-surface
 MAX_SKILL_DESCRIPTION_LEN = 200
-MAX_CLAUDE_AI_DESCRIPTION_LEN = MAX_SKILL_DESCRIPTION_LEN  # alias — prefer MAX_SKILL_DESCRIPTION_LEN
+MAX_CLAUDE_AI_DESCRIPTION_LEN = (
+    MAX_SKILL_DESCRIPTION_LEN  # alias — prefer MAX_SKILL_DESCRIPTION_LEN
+)
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
 _TRIGGER_LINE_RE = re.compile(r"^\*\*Trigger(?::\*\*|\*\*:)\s*(.+)$", re.MULTILINE)
@@ -215,7 +217,10 @@ def resolve_bundle_description(
 
     for pool in (primary, body_fallback):
         for candidate in pool:
-            if is_trigger_grade(candidate) and len(candidate) <= MAX_CLAUDE_AI_DESCRIPTION_LEN:
+            if (
+                is_trigger_grade(candidate)
+                and len(candidate) <= MAX_CLAUDE_AI_DESCRIPTION_LEN
+            ):
                 return candidate
         for candidate in pool:
             if is_trigger_grade(candidate):
@@ -269,13 +274,21 @@ def fit_claude_ai_description(
     return f"{cut}…"
 
 
-def adapt_skill_md_for_claude_ai(text: str) -> tuple[str, bool]:
-    """Return SKILL.md with description capped for claude.ai upload."""
+def adapt_skill_md_for_claude_ai(
+    text: str, *, slug: str | None = None
+) -> tuple[str, bool]:
+    """Return SKILL.md capped and H1-normalized for claude.ai upload."""
+    from claude_bundles.composer_skill_match import normalize_first_h1
+
     fm, body = parse_frontmatter(text)
     name = str(fm.get("name") or "").strip()
+    attach_slug = (slug or name).strip()
     desc = str(fm.get("description") or "").strip()
     fitted = fit_claude_ai_description(desc)
-    if fitted == desc:
+    new_body, h1_changed = (
+        normalize_first_h1(attach_slug, body) if attach_slug else (body, False)
+    )
+    if fitted == desc and not h1_changed:
         return text, False
     header = f"---\nname: {name}\ndescription: {_yaml_scalar(fitted)}\n---\n\n"
-    return header + body, True
+    return header + new_body, True

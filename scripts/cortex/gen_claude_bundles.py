@@ -18,6 +18,7 @@ if str(_SCRIPTS_CORTEX) not in sys.path:
 
 from _skill_entity_reconcile import run_entity_reconcile_check  # noqa: E402
 from _skill_git_guard import run_skill_git_guard  # noqa: E402
+from claude_bundles.attach_h1_check import collect_attach_h1_errors  # noqa: E402
 from claude_bundles.bundle_description import (  # noqa: E402
     MAX_CLAUDE_AI_DESCRIPTION_LEN,
     MIN_BUNDLE_DESCRIPTION_LEN,
@@ -275,9 +276,7 @@ def run_dry_run(root: Path) -> int:
     return fail
 
 
-def _check_bundle_descriptions(
-    root: Path, entity_descriptions: dict[str, str]
-) -> int:
+def _check_bundle_descriptions(root: Path, entity_descriptions: dict[str, str]) -> int:
     fail = 0
     for slug in shared_sync_slugs():
         try:
@@ -379,6 +378,12 @@ def run_check(root: Path) -> int:
         fail |= proc.returncode
     fail |= run_skill_git_guard(root)
     fail |= _check_bundle_descriptions(root, entity_descriptions)
+    attach_errs = collect_attach_h1_errors(root, entity_descriptions)
+    for msg in attach_errs:
+        print(msg, file=sys.stderr)
+    fail |= 1 if attach_errs else 0
+    if not attach_errs:
+        print("OK attach-h1", flush=True)
     try:
         from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
 

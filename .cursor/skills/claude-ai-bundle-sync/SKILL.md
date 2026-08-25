@@ -341,7 +341,7 @@ Then open **Customize → Skills** in that Chrome session if not already on that
 | SOT → bundle render | `gen_claude_bundles.py --check` | Missing SOT, bad descriptions, entity drift |
 | Local vs UI table | `claude-ai-sync-jupiter status` | Slugs missing on claude.ai, extra UI slugs |
 | Container user 1:1 | `claude-ai-sync-jupiter recon` | dump + uninstall extras + upload missing + replace stale (**library** only) |
-| Cowork attach labels | unit `label_matches_slug` (a:30502) | H1/title vs kebab; not a live picker scrape |
+| Cowork attach labels | `normalize_first_h1` at render/upload + `label_matches_slug` (a:30502) | Uploaded H1 is slug-prefix; literary SOT titles may stay |
 | Upload dry-run | `… upload --slugs SLUG --dry-run` (or `--all --dry-run` for new-only) | Which files would be staged |
 
 Ledger write on upload success is still TODO. Until then, `recon` is the
@@ -364,7 +364,7 @@ Zip `mirrored` ≠ Cowork `+` → Skills attach-ready.
 | `libs/claude_bundles/skills_ui_uninstall.py` | Uninstall path: More options → Uninstall → confirm |
 | `config/skills.yaml` + `libs/claude_bundles/catalog.py` | Sole placement authority; `claude_ai_targets()` |
 | `libs/claude_bundles/resolver.py` | Thin catalog facade for bundle consumers |
-| `libs/claude_bundles/composer_skill_match.py` | Cowork `+` → Skills label match (collapsed H1/title vs slug) |
+| `libs/claude_bundles/composer_skill_match.py` | Cowork `+` → Skills label match + uploaded H1 normalize |
 | `libs/claude_bundles/bundle_description.py` | 200-char + claude.ai description rules |
 
 ## Troubleshooting
@@ -376,7 +376,7 @@ Zip `mirrored` ≠ Cowork `+` → Skills attach-ready.
 | `ModuleNotFoundError: universal_logging` on Jupiter | System `sitecustomize` wins; venv hook never injects `libs/` | Wrapper must set `PYTHONPATH=$REPO/libs` (and `PROJECT_ROOT`) |
 | Preflight: hash URL but “Skills panel not open” | Hash alone no longer mounts Settings; Customize is a **button**, not a link | `_reopen_skills_from_hash` must click Customize button then Skills |
 | `Add → Upload a skill menu item not found` | Portal timing, label drift, or nested menu; Add-only preflight was a false green | `diagnose-upload-menu`, attach `menu.json` / `preflight.json` to the friction |
-| Zip `in_match` but Cowork attach `undelivered` | Zip is library-only; picker label may be H1 (a:30502) | Matcher in `composer_skill_match`; stall `click_errors` carries `items[:30]`; ¬ treat `recon` as attach-ready |
+| Zip `in_match` but Cowork attach `undelivered` | Zip is library-only; picker label may be a pre-normalize H1 (a:30502) | Regen + upload/replace so Customize gets `normalize_first_h1`; stall `click_errors` carries `items[:30]` |
 | WebSocket 403 from Playwright | Missing `--remote-allow-origins=*` | Restart Chrome with flags in runbook |
 | `gen_claude_bundles --check` httpx error on Jupiter | Cortex socket not on Jupiter | Run `--check` from workstation |
 | Run report `network_status.ok` but upload failed | F9 regex matches Datadog `/api/v2/rum` + bare-2xx slug_echo | Live-verify 2026-07-09 — reopen harden; do not trust F9 until tightened |

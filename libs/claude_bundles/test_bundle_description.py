@@ -75,18 +75,16 @@ def test_entity_description_fallback_when_frontmatter_title_grade() -> None:
 
 
 def test_render_bundle_uses_entity_fallback() -> None:
-    raw = (
-        "---\n"
-        "name: service-lifecycle\n"
-        "---\n\n"
-        "# Skill: Service Lifecycle (manage)\n"
-    )
+    raw = "---\nname: service-lifecycle\n---\n\n# Skill: Service Lifecycle (manage)\n"
     entity = (
         "Start, stop, restart, rebuild, or wait_healthy for gateway services via MCP. "
         "Use when the user asks to manage universal-llm-gateway ecosystem services."
     )
     rendered = render_bundle("service-lifecycle", raw, entity_description=entity)
-    assert f"description: {entity}" in rendered or f'description: "{entity}"' in rendered
+    assert (
+        f"description: {entity}" in rendered or f'description: "{entity}"' in rendered
+    )
+    assert "# Service lifecycle — Skill: Service Lifecycle (manage)" in rendered
     assert len(entity) >= MIN_BUNDLE_DESCRIPTION_LEN
 
 
@@ -149,6 +147,7 @@ def test_prepare_ui_upload_zip_contains_skill_md() -> None:
             body = zf.read("demo/SKILL.md").decode()
         assert "demo/SKILL.md" in names
         assert "On any demo task" in body
+        assert "# Demo body" in body
 
 
 def test_adapt_skill_md_for_claude_ai_preserves_body() -> None:
@@ -160,9 +159,9 @@ def test_adapt_skill_md_for_claude_ai_preserves_body() -> None:
         "# Body heading\n\n"
         "Keep this paragraph.\n"
     )
-    adapted, changed = adapt_skill_md_for_claude_ai(raw)
+    adapted, changed = adapt_skill_md_for_claude_ai(raw, slug="demo")
     assert changed
-    assert "# Body heading" in adapted
+    assert "# Demo — Body heading" in adapted
     assert "Keep this paragraph." in adapted
     assert len(extract_rendered_description(adapted)) <= MAX_CLAUDE_AI_DESCRIPTION_LEN
 

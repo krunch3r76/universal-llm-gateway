@@ -6,40 +6,36 @@ from pathlib import Path
 
 import pytest
 
-from claude_bundles.bundle_description import parse_frontmatter
+from claude_bundles.bundle_description import adapt_skill_md_for_claude_ai
 from claude_bundles.composer_skill_match import (
+    attach_h1_error,
     collapse_separators,
+    first_h1,
     label_matches_slug,
+    normalize_first_h1,
+    title_from_slug,
 )
-from claude_bundles.resolver import claude_ai_target_slugs, resolve_sot
+from claude_bundles.resolver import (
+    claude_ai_target_slugs,
+    render_bundle,
+    resolve_sot,
+    surface_class_for_slug,
+)
 
 pytestmark = pytest.mark.offline
 
 _REPO = Path(__file__).resolve().parents[2]
 
-# H1s whose collapsed tokens are not a prefix of the slug (picker still
-# needs the kebab name, or a retitle). Not the a:30502 hyphen-mix class.
-_KNOWN_H1_ATTACH_MISSES = frozenset(
-    {
-        "document-review-timeline-linkage-audit",  # extra "assertion", comma
-        "fs",  # H1 prefixed "Skill: MCP …"
-        "life-to-code-request-lane",  # arrow drops the "to" token
-        "session-close-kernel",  # H1 omits "kernel"
-        "srm",  # acronym only in trailing "(SRM)"
-    }
+_LITERARY_H1_MISSES = (
+    ("life-to-code-request-lane", "Life→Code Request Lane"),
+    ("fs", "Skill: MCP fs Tool"),
+    ("session-close-kernel", "Session Close — Trigger + Editorial Card"),
+    ("srm", "Scientific Reasoning Mode (SRM)"),
+    (
+        "document-review-timeline-linkage-audit",
+        "Document review, timeline, and assertion-linkage audit",
+    ),
 )
-
-
-def _first_h1(text: str) -> str | None:
-    _, body = parse_frontmatter(text)
-    for line in body.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("<!--"):
-            continue
-        if stripped.startswith("#"):
-            return stripped.lstrip("#").strip()
-        return None
-    return None
 
 
 def test_specimen_h1_life_operator_do_chain_matches() -> None:
@@ -83,20 +79,46 @@ def test_collapse_folds_arrow_and_emdash() -> None:
     assert collapse_separators("Proxy — extra") == "proxy extra"
 
 
-def test_claude_ai_target_h1s_are_matcher_reachable_or_known() -> None:
-    """Zoom-out: every Customize target H1 either attaches or is allowlisted."""
+def test_normalize_rewrites_literary_misses() -> None:
+    for slug, literary in _LITERARY_H1_MISSES:
+        assert not label_matches_slug(slug, literary)
+        body, changed = normalize_first_h1(slug, f"# {literary}\n\nBody.\n")
+        assert changed
+        title = first_h1(body)
+        assert title is not None
+        assert label_matches_slug(slug, title)
+        assert literary in title
+
+
+def test_normalize_leaves_reachable_h1_alone() -> None:
+    body, changed = normalize_first_h1(
+        "cdp-operator-proxy",
+        "# CDP Operator Proxy — operator seat protocol\n",
+    )
+    assert changed is False
+    assert body.startswith("# CDP Operator Proxy")
+
+
+def test_title_from_slug_is_collapse_equal() -> None:
+    assert title_from_slug("life-to-code-request-lane") == "Life to code request lane"
+    assert label_matches_slug(
+        "life-to-code-request-lane", title_from_slug("life-to-code-request-lane")
+    )
+
+
+def test_customize_bytes_are_attach_reachable() -> None:
+    """Zoom-out: rendered / adapted Customize bytes match, not raw SOT H1."""
     misses: list[str] = []
     for slug in claude_ai_target_slugs():
         path, _label = resolve_sot(slug, _REPO)
         if not path.is_file():
             continue
-        h1 = _first_h1(path.read_text(encoding="utf-8"))
-        if h1 is None:
-            continue
-        if label_matches_slug(slug, h1):
-            continue
-        misses.append(slug)
-    unexpected = sorted(set(misses) - _KNOWN_H1_ATTACH_MISSES)
-    stale = sorted(_KNOWN_H1_ATTACH_MISSES - set(misses))
-    assert unexpected == [], f"new H1 attach misses: {unexpected}"
-    assert stale == [], f"allowlist stale (H1 now matches): {stale}"
+        raw = path.read_text(encoding="utf-8")
+        if surface_class_for_slug(slug) == "life_local":
+            shipped, _ = adapt_skill_md_for_claude_ai(raw, slug=slug)
+        else:
+            shipped = render_bundle(slug, raw)
+        err = attach_h1_error(slug, shipped)
+        if err:
+            misses.append(err)
+    assert misses == []
