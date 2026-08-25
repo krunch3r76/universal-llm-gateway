@@ -13,7 +13,7 @@ import time
 
 from deploy_identity.code_version import resolve_code_version
 from deploy_identity.tree_state import resolve_tree_state
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -26,6 +26,10 @@ from cdp_ask.attended_operator import (
     resolve_attended_operator,
     success_to_http_body,
 )
+from cdp_ask.chat_session_harvest import execute_harvest as execute_chat_session_harvest
+from cdp_ask.chat_session_harvest import execute_probe as execute_chat_session_probe
+from cdp_ask.chat_session_models import ChatHarvestRequest, ChatPasteRequest
+from cdp_ask.chat_session_paste import execute_paste as execute_chat_session_paste
 from cdp_ask.cse_session_harvest import execute_harvest
 from cdp_ask.cse_session_models import HarvestRequest, PasteRequest, ProvenanceQuery
 from cdp_ask.cse_session_paste import execute_paste
@@ -57,6 +61,20 @@ from cdp_ask.runner import (
 )
 
 logger = logging.getLogger(__name__)
+
+_CHAT_SESSION_REFUSE_409 = frozenset(
+    {"use_cse_session", "grant_required", "relay_lock_fresh"}
+)
+
+
+def _chat_session_refuse_body(code: str, message: str) -> dict[str, object]:
+    return {
+        "code": code,
+        "message": message,
+        "source": "gateway",
+        "retryable": False,
+        "data": {},
+    }
 
 
 class HealthResponse(BaseModel):
@@ -234,6 +252,68 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
                     "retryable": False,
                     "data": {},
                 },
+            )
+        return JSONResponse(
+            status_code=200, content=result.model_dump(exclude_none=True)
+        )
+
+    @app.post("/v1/chat-session/harvest")
+    async def chat_session_harvest(req: ChatHarvestRequest) -> JSONResponse:
+        """Product-chat harvest — pointer-first sidecar, no CSE lane identity."""
+        verify_harvest_root()
+        result = await execute_chat_session_harvest(req)
+        if result.code in _CHAT_SESSION_REFUSE_409:
+            return JSONResponse(
+                status_code=409,
+                content=_chat_session_refuse_body(
+                    result.code,
+                    result.reason or result.code,
+                ),
+            )
+        return JSONResponse(
+            status_code=200, content=result.model_dump(exclude_none=True)
+        )
+
+    @app.post("/v1/chat-session/probe")
+    async def chat_session_probe(req: ChatHarvestRequest) -> JSONResponse:
+        """Metadata-only probe — no sidecar write and no Event Service emit."""
+        verify_harvest_root()
+        result = await execute_chat_session_probe(req)
+        if result.code in _CHAT_SESSION_REFUSE_409:
+            return JSONResponse(
+                status_code=409,
+                content=_chat_session_refuse_body(
+                    result.code,
+                    result.reason or result.code,
+                ),
+            )
+        return JSONResponse(
+            status_code=200, content=result.model_dump(exclude_none=True)
+        )
+
+    @app.post("/v1/chat-session/paste")
+    async def chat_session_paste(request: Request) -> JSONResponse:
+        """Grant-gated product-chat paste — live URL + harvest pointer on success."""
+        verify_harvest_root()
+        body = await request.json()
+        grant = body.get("grant")
+        if grant not in ("explicit", "operator"):
+            return JSONResponse(
+                status_code=409,
+                content=_chat_session_refuse_body(
+                    "grant_required",
+                    "grant must be explicit or operator",
+                ),
+            )
+        req = ChatPasteRequest.model_validate(body)
+        result = await execute_chat_session_paste(req)
+        if result.code in _CHAT_SESSION_REFUSE_409:
+            return JSONResponse(
+                status_code=409,
+                content=_chat_session_refuse_body(
+                    result.code,
+                    result.reason or result.code,
+                ),
             )
         return JSONResponse(
             status_code=200, content=result.model_dump(exclude_none=True)
