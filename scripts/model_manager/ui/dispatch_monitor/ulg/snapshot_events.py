@@ -55,8 +55,6 @@ def events_from_lease_snapshot(
             ts_unix_ms=stamp,
             payload={
                 "queue_depth": int(snapshot.get("queue_depth") or 0),
-                "lease_holder": snapshot.get("holder_dispatch_id")
-                or snapshot.get("holder_thread_id"),
                 signals.PROVENANCE_RECONCILED_KEY: signals.PROVENANCE_RECONCILED,
             },
             source=_RECONCILED_SOURCE,
@@ -85,6 +83,20 @@ def events_from_lease_snapshot(
                     if snapshot.get("holder_thread_id")
                     else dispatch_id
                 ),
+            )
+        )
+        events.append(
+            Event(
+                signal=signals.SDK_LEASE_ACQUIRED,
+                ts_unix_ms=started_ms,
+                payload={
+                    "dispatch_id": dispatch_id,
+                    "execution_id": dispatch_id,
+                    "thread_id": snapshot.get("holder_thread_id"),
+                    signals.PROVENANCE_RECONCILED_KEY: signals.PROVENANCE_RECONCILED,
+                },
+                source=_RECONCILED_SOURCE,
+                subject=dispatch_id,
             )
         )
     return events

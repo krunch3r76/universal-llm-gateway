@@ -21,7 +21,9 @@ from scripts.model_manager.ui.dispatch_monitor.core.codec import (
 )
 from scripts.model_manager.ui.dispatch_monitor.core.dtos import (
     SCHEMA_VERSION,
+    HealthProjection,
     SdkDispatchRow,
+    SupervisorProjection,
 )
 from scripts.model_manager.ui.dispatch_monitor.core.model import Model, hints_after_drop
 from scripts.model_manager.ui.dispatch_monitor.core.protocols import Event
@@ -258,3 +260,29 @@ def test_sdk_live_line_shows_elapsed_before_idle() -> None:
     assert "el=6m12s" in line
     assert "idle=0s" in line
     assert line.index("el=") < line.index("idle=")
+
+
+def test_watch_lease_line_includes_giw_holder_tokens() -> None:
+    """LEASE strip names holder, thread, model, and heartbeat age compactly."""
+    health = HealthProjection(
+        lease_holder="disp-1",
+        lease_thread_id="9627",
+        lease_model="composer-2.5",
+        lease_heartbeat_age_ms=45_000,
+        queue_depth=1,
+        wip_in_use=1,
+        wip_capacity=2,
+    )
+    text = render(
+        SupervisorProjection(
+            schema_version=SCHEMA_VERSION,
+            generated_at_ms=100_000,
+            fingerprint="fp",
+            health=health,
+        )
+    )
+    lease_line = next(line for line in text.splitlines() if line.startswith("lease:"))
+    assert "holder=disp-1" in lease_line
+    assert "th=9627" in lease_line
+    assert "model=composer-2.5" in lease_line
+    assert "hb=45s" in lease_line

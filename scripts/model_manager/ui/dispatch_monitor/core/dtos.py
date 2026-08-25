@@ -65,6 +65,9 @@ class HealthProjection:
     tick_last_error_message: str | None = None
     skipped_by_reason: Mapping[str, int] = field(default_factory=dict)
     lease_holder: str | None = None
+    lease_thread_id: str | None = None
+    lease_model: str | None = None
+    lease_heartbeat_age_ms: int | None = None
     lease_expires_ms: int | None = None
     queue_depth: int = 0
     wip_capacity: int | None = None

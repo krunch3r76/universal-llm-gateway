@@ -40,7 +40,6 @@ from .. import signals
 from ..correlation import CorrelationIndex
 from ..protocols import EventRecord, envelope_source
 from .sdk_handlers import sdk_handler_table
-from .sdk_provenance import note_lease_park
 from .sdk_review_child import close_terminal_row
 from .sdk_state import (
     SdkIdAliases,
@@ -54,9 +53,6 @@ from .sdk_state import (
 )
 from .sdk_state import (
     first_str as _first_str,
-)
-from .sdk_state import (
-    lease_row_id as _lease_row_id,
 )
 from .sdk_state import (
     payload_alt_ids as _payload_alt_ids,
@@ -80,6 +76,8 @@ class SdkFold:
         self.duplicate_refused: dict[str, tuple[int, str, str]] = {}
         #: Evidence-only park edges ``(parent_id, child_id)`` in first-seen order.
         self.lease_parks: list[tuple[str, str]] = []
+        #: Live GIW write-lease dispatch id (alias-resolved canonical key).
+        self.write_lease_holder_id: str | None = None
 
     def handlers(self) -> dict[str, Any]:
         """Return this fold's signal-to-handler table."""
@@ -389,67 +387,6 @@ class SdkFold:
         if row.contract is None:
             row.contract = "implement"
         self._advance_progress(row, record.ts_unix_ms)
-
-    def _on_lease_promoted(self, record: EventRecord) -> None:
-        """FIFO advance — queued dispatch becomes lease holder (v3 §5)."""
-        row = self._state(record)
-        if row is None or row.terminal_ms is not None:
-            return
-        row.state = "running"
-        row.queue_position = None
-        self._advance_progress(row, record.ts_unix_ms)
-
-    def _on_lease_released(self, record: EventRecord) -> None:
-        """Write lease released for a dispatch (v3 §5).
-
-        When still LIVE, sets ``lease_released_without_terminal`` for G4 attention.
-        Clearing LIVE requires a worker terminal — applied live or via ulg backfill
-        (``terminal_backfill``); this handler never invents ``terminal_ms``.
-        """
-        row = self._state(record)
-        if row is None:
-            return
-        if payload := record.payload:
-            if payload.get("source_repo") and row.source_repo is None:
-                row.source_repo = str(payload["source_repo"])
-        if (
-            row.terminal_ms is None
-            and row.state != "parked_waiting"
-        ):
-            row.lease_released_without_terminal = True
-
-    def _on_park_enter(self, record: EventRecord) -> None:
-        """Parent yields lease to nested child — parent → ``parked_waiting`` (v3 §5)."""
-        payload = record.payload
-        parent_id = _lease_row_id(payload, "parent_id")
-        child_id = _lease_row_id(payload, "child_id")
-        if parent_id:
-            parent = self._row_for_id(parent_id, record)
-            if parent.terminal_ms is None and parent.state != "parked_waiting":
-                parent.pre_park_state = parent.state
-                parent.state = "parked_waiting"
-        if child_id:
-            child = self._row_for_id(child_id, record)
-            if child.terminal_ms is None:
-                child.state = "running"
-                self._advance_progress(child, record.ts_unix_ms)
-        if parent_id and child_id:
-            note_lease_park(self, parent_id, child_id)
-
-    def _on_park_restore(self, record: EventRecord) -> None:
-        """Child terminal returns lease to parent — restore prior parent state (v3 §5)."""
-        payload = record.payload
-        parent_id = _lease_row_id(payload, "parent_id")
-        if not parent_id:
-            return
-        parent_id = self._aliases.resolve(parent_id)
-        parent = self.dispatches.get(parent_id)
-        if parent is None or parent.terminal_ms is not None:
-            return
-        restored = parent.pre_park_state or "running"
-        parent.state = restored
-        parent.pre_park_state = None
-        parent.last_progress_ms = record.ts_unix_ms
 
     def _on_closeout_relocated(self, record: EventRecord) -> None:
         """Record durable closeout URI when inline body exceeds limits (v3 §5)."""
