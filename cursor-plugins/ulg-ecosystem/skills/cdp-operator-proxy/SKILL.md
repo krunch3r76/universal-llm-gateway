@@ -69,7 +69,7 @@ audit — vocabulary only.
 
 **Tab ⟂ session (BINDING — operator 2026-08-20):** a Cowork Chrome tab does **not** keep the session alive. `open(tab) ⇏ alive(stream ∨ lane)`. `¬stream ⇏ dead(lane ∨ chat_url)`. Forbidden: hop-cadence or keep-streaming so the tab “stays warm.” Inv 30 “stream continues” on a **Leg** means do not emit `MISSION_CLOSEOUT` after a work unit — it does **not** mean keep generating to hold a tab open.
 
-**Service recycle ≠ CSE death (BINDING):** `identity(CSE)=chat_url`. Fleet restarts drop attach, ¬ end tab — recover after `wait_healthy`. Reattach same `chat_url`; hop = MCP refresh only. IDE: ¬ skip restart citing attach loss.
+**Service recycle ≠ CSE death (BINDING):** `identity(CSE)=chat_url`. Fleet restarts drop attach, ¬ end tab — recover after `wait_healthy`. Reattach same `chat_url`; hop = MCP refresh only. IDE: ¬ skip restart citing attach loss or this-session `in_flight` / `mcp_session_hot`.
 
 **Refresh ≠ follow-up (BINDING)** — two moves against the same CSE; pick by *what is stale*:
 
