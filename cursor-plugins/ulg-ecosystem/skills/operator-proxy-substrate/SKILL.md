@@ -162,9 +162,9 @@ the operator lane — **paste ≠ commission**. Operator-facing contract: `cdp-o
 
 | Element | Value |
 |---|---|
-| Default reviewer | `cursor/gpt-5.6-terra` — family independence **and** live checkout sight |
+| Default reviewer | `cursor/grok-4.6` — Cursor Models family-cross vs Anthropic **and** live checkout. Terra / Other Models only if named |
 | Escalation | local `cursor/claude-opus-5` only when grok already escalated for checkout depth; Fable only for frame/doctrine meta — ¬ local Fable for this lane |
-| Fire | `team_dispatch(op=generate, seat=cursor-sdk, model=cursor/gpt-5.6-terra, contract=light-bounded)` — queues behind the live holder, ¬ contend |
+| Fire | `team_dispatch(op=generate, seat=cursor-sdk, model=cursor/grok-4.6, contract=light-bounded)` — queues behind the live holder, ¬ contend |
 | Deliver | `cse_session(op=followup)` into the attached CSE |
 | Log | NOTE on the **MONITOR sibling** — silence on the watched lane |
 

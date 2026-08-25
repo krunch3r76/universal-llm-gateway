@@ -178,7 +178,9 @@ def layer_independence_ok(
         (R3a: today implies web-anthropic CDP operator vs cursor executor;
         if operator_proxy ever runs on a cursor-substrate operator seat,
         (C) must become a substrate comparison);
-    (B) G4 Check family ≠ G3 densifier family (checkpoint body or seat bind).
+    (B) G4 Check family ≠ G3 densifier family when G4 is pinned in
+        the checkpoint; unpinned G4 is skipped (``g4_unpinned``) and
+        family diversity is already G1 Fable vs G3 Grok.
     """
     if parsed is None:
         return LayerIndependenceVerdict(False, None, None)
@@ -199,10 +201,10 @@ def layer_independence_ok(
         branch_b = g4_family != g3_family
         branch_b_source = "checkpoint_provenance"
     else:
-        from ..window_exec.materializer_layer import layer_g4_check_family_diverse
-
-        branch_b = layer_g4_check_family_diverse()
-        branch_b_source = "seat_bind"
+        # G4 is explicit-only (operator 2026-08-25). Unpinned ⇒ skip;
+        # family diversity is G1 vs G3 when structural_ok.
+        branch_b = True
+        branch_b_source = "g4_unpinned"
     structural_ok = structural_reason is not None
     ok = structural_ok and branch_b
     return LayerIndependenceVerdict(

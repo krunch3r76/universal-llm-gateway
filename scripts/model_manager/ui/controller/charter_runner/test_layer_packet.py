@@ -446,7 +446,7 @@ def test_layer_g5_operator_proxy_admitted_without_provenance() -> None:
     )
     assert verdict.ok
     assert verdict.structural_reason == "operator_proxy_attends"
-    assert verdict.branch_b_source == "seat_bind"
+    assert verdict.branch_b_source == "g4_unpinned"
     assert layer_independence_unproven(
         arc_lane="layer",
         attendance="autonomous",

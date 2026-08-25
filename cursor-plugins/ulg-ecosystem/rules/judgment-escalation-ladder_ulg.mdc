@@ -1,5 +1,5 @@
 ---
-description: Judgment escalation ladder — any cursor seat (including cursor/opus) unsure consults an independent binder (CDP/Fable or GPT terra/sol — different model family than the producing seat); binder unsure consults human operator (rare). Standing bind for fork resolution without routine operator gates.
+description: Judgment escalation ladder — any cursor seat (including cursor/opus) unsure consults an independent binder (CDP/Fable, then Grok; Terra/Other Models only if explicit); binder unsure consults human operator (rare). Standing bind for fork resolution without routine operator gates.
 alwaysApply: true
 rule_category: workflow
 apply_tier: required_gate
@@ -26,10 +26,11 @@ trigger_match_terms:
 
 **CDP operator-seat stuck (BINDING — operator 2026-08-03):** when the unsure seat **is**
 `cdp/opus-5` or `cdp/fable` (operator-proxy), do **not** Cowork-Ask the human for judgment.
-Transport: **`cursor-auto` → nested `cursor-sdk`** with `model=cursor/gpt-5.6-terra`
-(default) or `model=cursor/claude-opus-5` (live checkout / premium; inform-then-proceed).
-Human principal only for **true operator-only gates**. SOT detail: `cdp-operator-proxy`
-blocked→ask **2b** · inv 19.
+Transport: **`cursor-auto` → nested `cursor-sdk`** with `model=cursor/grok-4.6`
+(default — Cursor Models) or `model=cursor/claude-opus-5` (live checkout / premium;
+inform-then-proceed). **`cursor/gpt-5.6-terra` only if operator/packet names Other
+Models.** Human principal only for **true operator-only gates**. SOT detail:
+`cdp-operator-proxy` blocked→ask **2b** · inv 19.
 
 **Independence is the load-bearing property, not human-ness** (operator bind
 2026-07-28 · `decision:gate-independence-not-human-ness`). A gate is honest when the
@@ -69,8 +70,8 @@ already covers.
 | Step | Seat | When | Transport |
 |---|---|---|---|
 | 1 | **Cursor** (IDE lead, cursor-sdk, subagents, **`cursor/*` including Opus**) | Default — execute, orchestrate, dispatch | In-seat + `team_dispatch` / `Task` per `lean-context-dispatch-first` |
-| 2 | **Independent binder** — pick a family ≠ producer (table below) | **Any** cursor step-1 seat is **unsure** — including when that seat is already `cursor/claude-opus-5` | Anthropic: **`team_dispatch(model=cdp/opus-5)`** · **encourage Fable** via **`team_dispatch(model=cdp/fable)`** (IF6 = CLI project-ask) · lane `agent_bus:6006`. OpenAI (code lane): **`team_dispatch(op=generate, seat=cursor-sdk, model=cursor/gpt-5.6-terra, contract=light-bounded)`**; **`cursor/gpt-5.6-sol`** for **targeted low-token** consults — per `consult-routing` + `claude-ai-cdp-navigation`. **`openai/gpt-5.6-*` API** only for **life / checkout-free** non-code (¬ code-lane default; `decision:code-review-panel-cursor-substrate`) |
-| 3 | **Human operator** | True operator-only gate (credentials, irreversible non-revertible act, spend pause, IDE restart) **or** binders exhausted after CDP-stuck path (`cursor-auto` → terra/cursor-opus) still cannot bind a genuine *what we want* ambiguity | Cowork Ask / direct — **rare**; one question + recommended answer |
+| 2 | **Independent binder** — pick a family ≠ producer (table below) | **Any** cursor step-1 seat is **unsure** — including when that seat is already `cursor/claude-opus-5` | Anthropic: **`team_dispatch(model=cdp/opus-5)`** · **encourage Fable** via **`team_dispatch(model=cdp/fable)`** (IF6 = CLI project-ask) · lane `agent_bus:6006`. Cursor Models family-cross: **`cursor/grok-4.6`**. Other Models (`cursor/gpt-5.6-terra` / `sol`) **only if operator/packet names that pool**. **`openai/gpt-5.6-*` API** only for **life / checkout-free** non-code (¬ code-lane default; `decision:code-review-panel-cursor-substrate`) |
+| 3 | **Human operator** | True operator-only gate (credentials, irreversible non-revertible act, spend pause, IDE restart) **or** binders exhausted after CDP-stuck path (`cursor-auto` → grok / cursor-opus / explicit Terra) still cannot bind a genuine *what we want* ambiguity | Cowork Ask / direct — **rare**; one question + recommended answer |
 
 ### Step-2 binder order (operator bind 2026-07-28)
 
@@ -80,18 +81,19 @@ Try in order; stop at the first that clears independence for the artifact in han
 |---|---|---|---|
 | **2a** | `cdp/opus-5` | family (vs Composer / Grok / GPT producers) | Default step 2 — producer is **not** Anthropic |
 | **2b** | **`cdp/fable`** | **weight class** (vs Opus) | Producer is `cdp/opus-5` (incl. its own output), **or** Opus is unsure. **Preferred before crossing families** — Fable is the in-lane escalation, not a formality |
-| **2c** | **`cursor/gpt-5.6-terra`** (code-lane default) · **`cursor/gpt-5.6-sol`** (**targeted, low-token only**) · `openai/gpt-5.6-*` API only life/checkout-free | family + lineage | **Fable** is unsure, **or** the risk is Anthropic-lineage **correlated error** the family may share |
-| **2d** | `cursor/grok-4.6` (≤ `high`) | family | Cheap breadth / third opinion; ¬ a substitute for 2b–2c on material binds |
+| **2c** | **`cursor/gpt-5.6-terra`** / **`cursor/gpt-5.6-sol`** (targeted) · `openai/gpt-5.6-*` API only life/checkout-free | family + lineage | **Explicit Other Models pin only** (cost, operator 2026-08-25). Fable unsure ∧ operator/packet names Terra/Sol. `cursor/claude-fable-5` **blocked** (cost) — use `cdp/fable` |
+| **2d** | `cursor/grok-4.6` (≤ `high`) | family | **Default after Fable** when no Other Models pin — Cursor Models family-cross vs Anthropic. ¬ a substitute for 2b |
 
 `anthropic/*` API stays **PROHIBITED** — CDP/Fable is the Anthropic web product lane,
 per `anthropic-dispatch-authorization`.
 
 **Non-primary gate carve-out:** `lean-context-dispatch-first` §"Non-primary cursor
 model gate" normally makes an explicit `gpt-5.6-*` bind operator-gated. Naming
-`cursor/gpt-5.6-terra` / `cursor/gpt-5.6-sol` here as the 2c binder **is** the
-standing authorization — fire without re-asking; still announce the slug + why.
-**Substrate:** `cursor/*` = cursor-sdk (code checkout); bare `gpt-5.6-terra` or
-`openai/gpt-5.6-terra` = metered API — ¬ the code-lane default.
+`cursor/gpt-5.6-terra` / `cursor/gpt-5.6-sol` here as the 2c binder **is**
+authorization **when the pin is explicit** — fire without re-asking; still announce
+the slug + why. It is **not** a silent default. **Substrate:** `cursor/*` = cursor-sdk
+(code checkout); bare `gpt-5.6-terra` or `openai/gpt-5.6-terra` = metered API —
+¬ the code-lane default.
 
 `seat_unsure` (was `cursor_unsure`) ≠ permission-seeking on clear work. It means a
 **genuine fork** remains after recon and the seat lacks authority or evidence to bind —
@@ -99,9 +101,10 @@ standing authorization — fire without re-asking; still announce the slug + why
 
 `binder_unsure` ≠ cursor relaying every closeout. It means independent binders were
 exhausted under sealed-unattended rules. When the stuck seat was **CDP Opus/Fable**,
-exhaustion requires the **cursor-auto → terra / cursor-opus** leg first — only then
-may a human bind (or an `ESCALATE` flag with `minimal_question` per `cdp-operator-proxy`)
-fire. Human is not the first escape from a stuck CDP operator seat.
+exhaustion requires the **cursor-auto → grok / cursor-opus** (or explicit Terra) leg
+first — only then may a human bind (or an `ESCALATE` flag with `minimal_question`
+per `cdp-operator-proxy`) fire. Human is not the first escape from a stuck CDP
+operator seat.
 
 ## Anti-patterns
 
@@ -112,14 +115,14 @@ fire. Human is not the first escape from a stuck CDP operator seat.
 | Park on the operator for `manage` / `charter_reload` / manage quit-start / git-tracked implement | Seat executes or implements autonomous recovery. Auto wedged ⇒ life `send(to=cursor)` (inv 40), not a human-hand page. `recovery_path=human` / no supervisor / manage ∉ `VALID_SERVICES` is a substrate deficiency, not an operator-only gate (`cdp-operator-proxy` inv 39). tmux `0:0` is a seat recipe when a seat can drive it — never a wake. `charter_reload` = loop bounce only. |
 | Treat every consult as operator-gated | CDP consult is **autonomous** under `lean-context-dispatch-first` CDP trigger |
 | Skip CDP and go straight to human on judgment forks | Cursor (incl. cursor/opus) → CDP/Fable first; human only when CDP/Fable flags `ESCALATE` or operator-only |
-| CDP Opus/Fable stuck → Ask the human | `cursor-auto` → `cursor/gpt-5.6-terra` or `cursor/claude-opus-5` (`cdp-operator-proxy` 2b) |
+| CDP Opus/Fable stuck → Ask the human | `cursor-auto` → `cursor/grok-4.6` or `cursor/claude-opus-5` (`cdp-operator-proxy` 2b); Terra only if named |
 | Treat `cursor/claude-opus-5` as ladder-top — ask human when Opus is unsure | Opus-in-cursor is step 1; consult an independent binder (step 2) before human |
 | `cdp/opus-5` ratifies its own output at the same tier | Escalate that artifact to **Fable** (2b) — weight-class independence |
-| Treat any two Anthropic seats as self-review and skip straight to GPT | Opus→**Fable** is a genuine check; 2b **precedes** 2c |
-| Reach for `cursor/gpt-5.6-terra` before Fable has been tried | 2c is for **Fable unsure** or lineage-correlated risk |
-| Ask operator to approve `cursor/gpt-5.6-terra`/`sol` as a consult binder | Standing authorization (2026-07-28) — fire and announce; ¬ re-gate |
-| `team_dispatch(model=gpt-5.6-terra)` bare slug on code-lane bind | `seat=cursor-sdk` + `model=cursor/gpt-5.6-terra` — bare/`openai/*` hits API |
-| Spend `cursor/gpt-5.6-sol` on broad open-ended review | `sol` is **targeted, low-token** only; `terra` is the OpenAI-family default on cursor-sdk |
+| Treat any two Anthropic seats as self-review and skip straight to GPT | Opus→**Fable** is a genuine check; 2b **precedes** 2d Grok (or explicit 2c) |
+| Silent Terra / Other Models as the next binder | 2c is **explicit pin only**; default after Fable is 2d Grok |
+| Pin `cursor/claude-fable-5` because Fable is wanted | Blocked for cost — use `cdp/fable` |
+| `team_dispatch(model=gpt-5.6-terra)` bare slug on code-lane bind | `seat=cursor-sdk` + `model=cursor/gpt-5.6-terra` — and only when the pin is explicit |
+| Spend `cursor/gpt-5.6-sol` on broad open-ended review | `sol` is **targeted, low-token**, and still Other Models — explicit pin only |
 | Default Opus/Fable binder consult to a leftover `project_ask` recipe | `team_dispatch(model=cdp/…)` — IF6 = CLI; missions pass `purpose=` on `team_dispatch` |
 
 ## Composes with

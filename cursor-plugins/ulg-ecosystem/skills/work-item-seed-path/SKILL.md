@@ -44,8 +44,8 @@ addition”. Do not wait for a slash.
 
 ## When Fable defaults (CDP — not a Cursor pool)
 
-Fable is `cdp/fable` (web product). It is **not** in Cursor Models and **not**
-in Other Models (the secondary pool). `cursor/*` Fable does not exist.
+Fable is `cdp/fable` (web product). It is **not** in Cursor Models. `cursor/claude-fable-5`
+is a carded Other Models option; we **block** it for cost — do not pin it. Use `cdp/fable`.
 
 | Default Fable | When |
 |---|---|
@@ -59,10 +59,10 @@ in Other Models (the secondary pool). `cursor/*` Fable does not exist.
 
 | Pool | Models | Job on a codework arc |
 |---|---|---|
-| **Cursor Models** | Grok-4.6, Composer 2.5 | G3 densify / G5 implement / T1 orchestrate — **after** Fable harvest |
-| **Other Models (secondary)** | Sonnet 5, Opus-in-cursor, Terra | G4 Terra · T2/T3 named trigger · ladder 2c Terra · hop-4 live-checkout Opus. **¬** default G1 |
+| **Cursor Models** | Grok-4.6, Composer 2.5 | G3 densify / G5 implement / T1 orchestrate / CDP-stuck 2b default — **after** Fable harvest |
+| **Other Models (secondary)** | Sonnet 5, Opus-in-cursor, Terra, Sol, Luna, `cursor/claude-fable-5` | **Explicit pin only** (cost). Includes Terra. `cursor/claude-fable-5` **blocked** (cost) → `cdp/fable`. ¬ silent G4 / ladder 2c / reviewer / hop-5 default. |
 
-G2 frame is **CDP Opus**, not the Other Models pool. Other Models quota is not a reason to skip CDP Fable G1 or to spend T3 Opus as a Fable substitute.
+G2 frame is **CDP Opus**, not the Other Models pool. Other Models quota is not a reason to skip CDP Fable G1 or to spend T3 Opus as a Fable substitute. T2/T3 and hop-4 live-checkout Opus still need their **named** trigger — they are not silent defaults.
 
 ## When
 
@@ -166,8 +166,9 @@ four-condition trigger in `decision:architecture-bind-escalation-chain` holds
 That trigger picks the **seat**, not a second effort gate; once picked, knobs follow
 the model card. Hop 4 may recommend `{xhigh|max}` for that hop's duty. Announce
 model + effort + why. That SOT also binds the **mandatory** independent
-check (`cursor/gpt-5.6-terra` default, `cdp/fable` alternate — an Opus-authored
-architecture is not self-ratifiable) and verbatim densify. ¬ fork those rules here.
+check (`cdp/fable` default; `cursor/gpt-5.6-terra` only if operator/packet names
+Other Models — an Opus-authored architecture is not self-ratifiable) and verbatim
+densify. ¬ fork those rules here.
 
 | Mode | Sequence | Choose when |
 |---|---|---|

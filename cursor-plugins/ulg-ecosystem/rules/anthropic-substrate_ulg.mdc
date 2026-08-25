@@ -17,7 +17,7 @@ trigger_match_terms:
 | Want | Do |
 |---|---|
 | `anthropic/*` (Stargate API) | **PROHIBITED** by default |
-| `cursor/*` (cursor-sdk) | **OK** except **Fable** |
+| `cursor/*` (cursor-sdk) | **OK** except **Fable** (`cursor/claude-fable-5` is carded Other Models; **blocked for cost** — use `cdp/fable`) |
 | Opus / Sonnet product consult | **web-anthropic-cdp** preferred (cortex-packaged corpus); **encourage Fable** when outside perspective helps |
 | Need live checkout browse | **`cursor/claude-opus-*`** — **inform-then-proceed** when escalation warrants (announce); ¬ default wait for approval |
 

@@ -33,7 +33,10 @@ once the second pool is empty.
 | **T3** | `cursor/claude-opus-5` | full card (`low`→`max`); inform-then-proceed | Invariant-touching bind (trigger is *whether to pick T3*, not the effort rung) |
 
 Nested legs: mechanical → Composer · investigate densify → Grok @ `xhigh`
-· Other Models only on a named trigger · binder when unsure → `judgment-escalation-ladder`.
+· Other Models (Sonnet / Opus-in-cursor / Terra / Sol / Luna) only on an **explicit
+pin** · `cursor/claude-fable-5` **blocked** (cost) — use `cdp/fable` · binder when
+unsure → `judgment-escalation-ladder` (2c Terra is explicit-only; default after
+Fable is Grok).
 
 Detail + admit shapes: Use the `conductor` skill.
 

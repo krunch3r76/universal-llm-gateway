@@ -46,8 +46,8 @@ or blocking.
 |---|---|---|
 | **2a** | `cdp/opus-5` | Producer not Anthropic |
 | **2b** | `cdp/fable` | Opus producer or Opus unsure |
-| **2c** | `cursor/gpt-5.6-terra` / `cursor/gpt-5.6-sol` (targeted) | Fable unsure or lineage-correlated risk |
-| **2d** | `cursor/grok-4.6` (≤ high) | Cheap breadth — not substitute for 2b–2c on material binds |
+| **2c** | `cursor/gpt-5.6-terra` / `cursor/gpt-5.6-sol` (targeted) | **Explicit Other Models pin only** (cost). `cursor/claude-fable-5` blocked |
+| **2d** | `cursor/grok-4.6` (≤ high) | **Default after Fable** when no Other Models pin |
 
 `anthropic/*` API **prohibited** — CDP/Fable web lane only.
 

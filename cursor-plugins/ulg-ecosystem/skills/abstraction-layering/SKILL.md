@@ -110,7 +110,7 @@ Tick recognizes `[GR]\d+` only — layer names never replace G-ordinals in Steps
 | 1 | Architecture | Fable/wide CDP · **arch skill floor** | `[consult:judgment_gap]` | `fable-answer.md` |
 | 2 | Frame | Opus · **inherit arch floor** (¬ “skills optional”) | `[consult:judgment_gap]` | `opus-grok-instructions.md` ≤120L |
 | 3 | Densify | `cursor/grok-4.6` @ `effort=xhigh`, `fast=false` | `[judgment]` | `specs/{slug}.md` + Gate-2 |
-| 4 | Check | `cursor/gpt-5.6-terra` | `[judgment]` | check sidecar |
+| 4 | Check | **Explicit Other Models pin only** (e.g. Terra). Default **skip** (G3→G5). `cursor/claude-fable-5` blocked (cost). | `[judgment]` | check sidecar |
 | 5 | Implement | `cursor/composer-2.5` | `[implement]` | code + quality gate |
 | 6 | Verify | inline | `[inline]` | ACs, docstrings, close |
 
@@ -146,13 +146,12 @@ Same fail-closed class as `/modularize` M-Arch (`modularize-path` § Skill deliv
 
 **G4 Check diversity (6524 R4, BINDING):** substrate diversity is discharged **upstream**
 at G1/G2 via ``independence_ok`` branch (A) cross-substrate consult or architecture
-``derived_from`` edge — not a per-gate seat requirement at G4. G4 Check owes **family**
-diversity from G3 Densify (`family(G3) ≠ family(G4)`); both seats may share
-cursor-sdk substrate by design. Under ``attendance=operator_proxy``, branch (C)
-``operator_proxy_attends`` satisfies the upstream arm live (R3a: web-anthropic
-operator vs cursor executor). Seat bind locus:
-``charter_runner/window_exec/materializer_layer.py`` (`LAYER_G3_SEAT` /
-``LAYER_G4_SEAT``); ``layer_g4_check_family_diverse()`` enforces the floor.
+``derived_from`` edge — not a per-gate seat requirement at G4. **G4 is explicit-only**
+(operator 2026-08-25): Other Models including Terra are not a silent default (cost).
+When G4 is pinned, it owes **family** diversity from G3 Densify
+(`family(G3) ≠ family(G4)`). When G4 is unpinned, default auto-advance is G3→G5;
+family diversity is already G1 Fable vs G3 Grok. ``LAYER_G4_SEAT`` is the model
+**when** G4 is named, not a silent fire. Unpinned admission source: ``g4_unpinned``.
 
 Web corpus: `cortex://` only.
 
@@ -225,7 +224,8 @@ Tier-1 → `cortex://notes/system/recon/{slug}/tier1-anchors.md`.
    `cortex://notes/system/specs/vision-align-grammar.md` §5), dense spec MUST carry a
    `VISION-ALIGN` block per shared grammar (hashes into `spec_sha256`). G5-entry mechanical
    legs with no G3 densify: skip emit.
-4. **G4** — merged GPT check; fold amendments + refresh `spec_sha256`.
+4. **G4** — optional explicit Other Models check (Terra if named). Default **skip**.
+   When run: fold amendments + refresh `spec_sha256`.
 5. **G5** — Composer `contract=implement`, `source_ref=todo:{slug}`.
 6. **G6** — mechanical: gates · `files_expected` · ACs · docstrings · `friction_close` · `implement-todo` §5.
    **VISION-ALIGN check:** when trigger fires (`density_triage = judgment_required` ∨
@@ -243,7 +243,8 @@ architecture re-opens · ≥2 rivals · invariant/cross-agent · failure ≥2×.
 |---|---|
 | G1→2 | Verdict sidecar; **lead-fired, advise-only** — adjudication duties AD1–AD5, typed closeout block, block list: `cortex://notes/system/specs/g1-g2-adjudication-transfer-gate-v1.md` (auto-advance retired as a category) |
 | G2→3 | Frame ≤120L |
-| G3→4 | `doc_validate` · zero `OPEN:` · `implement_ready` |
+| G3→5 | `doc_validate` · zero `OPEN:` · `implement_ready` · **G4 not pinned** (default) |
+| G3→4 | Gate-2 close **and** operator/packet names G4 / Other Models |
 | G4→5 | check done · preflight admitted |
 | G5→6 | implement ∩ `files_expected` |
 | G6→✓ | gates green · AC ledger |

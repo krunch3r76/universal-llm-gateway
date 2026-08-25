@@ -137,7 +137,7 @@ separate plane.
 16. One live request per private thread — § Interrupt / supersede (SOT). Exceptions: continuity hop skips supersede; `nested_sdk_finished` not a candidate.
 17. **Accelerate vision** — ship obvious better shape; waives neither inv 3 nor inv 13 carve-out.
 18. **So-what title** — SOT: skill `directive-authoring-standard` D1 (`summary` ≤120). CLOSEOUT refreshes; `DONE — {so_what}`.
-19. **Escalation chain + nesting.** Ladder: cursor-auto → `cdp/opus-5` → optionally `cdp/fable`. **CDP stuck:** cursor-auto → terra or `cursor/claude-opus-5` — ¬ human. Architecture-bind trigger ⇒ six-hop (§ Architecture-bind). Every hop nested `cursor-sdk`.
+19. **Escalation chain + nesting.** Ladder: cursor-auto → `cdp/opus-5` → optionally `cdp/fable`. **CDP stuck:** cursor-auto → `cursor/grok-4.6` or `cursor/claude-opus-5` — ¬ human. Terra / Other Models only if named. Architecture-bind trigger ⇒ six-hop (§ Architecture-bind). Every hop nested `cursor-sdk`.
 20. **Mission seat map.** Opus=operator · Fable=advisor · grok=reasoner · cursor-auto=executor. Framed multi-step: conductor — skill `directive-authoring-standard` D4. Default: bind→implement at will. Independent verify. cursor-auto modifiable. ¬ park executable ACs.
 21. **Authorize-triggers** — operator always approves; wait for click (inv 21). SOT: claude-ai-cowork-trigger-auth-gate.md.
 22. **Inform the operator — three planes.** **record** · **attention** (pager) · **story** (projector only). (a) `¬ author(operator, story_journal)`. (b) `awareness_msg(fact) ⇒ ∃ record(fact)`. (c) Suppress page only when human declared operator in *this* CSE. (d) Pager classes: **(1) Progress** — fleet-trust moves only; subject ¬ `COME TO IDE`. **(2) Mission debrief** — full debrief + stream-end sentence. **(3) Interrupt** — `COME TO IDE` only to **instantiate** a live IDE cursor session (or a true operator-only IDE gate: Reload Window / credentials). Human opens Cursor; **IDE seat executes**. `send` the commission first (inv 40). ¬ `only your hand` · ¬ ask the human to run `manage`. (e) life `notify`; absent ⇒ cursor `send`/`request` per inv 8/40. (f) Architecture-first register. (g) Audience = human principal. **Phone test:** readable without bus open.
@@ -168,11 +168,11 @@ When blocked on a fact this seat cannot settle from tools alone:
 |---|---|
 | 1 | Independent observation — `agent_bus` fetch / `busy_status` / latest turns |
 | 2 | Consult **cursor** via `agent_bus.request` (investigate / verify / **code-seat ops**) — only while Auto can claim |
-| 2b | **Judgment stuck (this CDP seat unsure)** — DIRECTIVE `cursor-auto` to nest `cursor-sdk` consult: default **`cursor/gpt-5.6-terra`** (`contract=light-bounded`). Terra is bindable on default cursor-sdk (attested agent-bus:9500 execution `2dbd38ff-06e6-44f5-8bd9-1804f31f66aa`, `model_label=cursor/gpt-5.6-terra`). On an actual `model_pin_refused` response, fall through to **`cdp/fable`** (or **`cursor/claude-opus-5`** when live-checkout / premium metered judgment warrants — inform-then-proceed, inv 10). ¬ escalate to the human principal. Family-cross (terra) preferred when the stuck seat is `cdp/opus-5` or `cdp/fable` and the risk is Anthropic-lineage correlated error. |
+| 2b | **Judgment stuck (this CDP seat unsure)** — DIRECTIVE `cursor-auto` to nest `cursor-sdk` consult: default **`cursor/grok-4.6`** (`contract=light-bounded`, Cursor Models). **`cursor/gpt-5.6-terra` only if operator/packet names Other Models** (cost, 2026-08-25). Fall through to **`cdp/fable`** if the named pin is refused, or **`cursor/claude-opus-5`** when live-checkout / premium metered judgment warrants — inform-then-proceed, inv 10. ¬ escalate to the human principal. Family-cross vs Anthropic is Grok (Cursor Models) unless Terra is named. `cursor/claude-fable-5` **blocked** (cost) — use `cdp/fable`. |
 | 2c | **Auto queue is the blocker** (`serial_occupant=null` ∧ waiters, or queued_age not advancing) — `agent_bus.send(to=cursor)` attended IDE (never arms Auto). Then `COME TO IDE` only if no IDE session is live (inv 40). ¬ step 3. ¬ same-thread `request` (withdraws the queued predecessor). |
 | 3 | **Cowork Ask / push the human principal** — one question + recommended answer — **true operator-only gates only** (credentials, irreversible human acts, IDE Restart / Reload Window, Authorize-triggers click, genuine *what we want* ambiguity after 2b exhausted); ¬ routine routing because Cowork chat might be human; ¬ "I'm stuck" judgment forks; ¬ missing autonomous lifecycle (inv 39); ¬ Auto-wedge `manage` (inv 40) |
 
-**Invariant:** `cdp_seat_stuck ⇒ cursor_auto → {cursor/gpt-5.6-terra | cursor/claude-opus-5}` · `human_principal ⇔ operator_only_gate`.
+**Invariant:** `cdp_seat_stuck ⇒ cursor_auto → {cursor/grok-4.6 | cursor/claude-opus-5 | explicit Other Models}` · `human_principal ⇔ operator_only_gate`.
 
 **Autonomy default (BINDING — inv 39, operator 2026-08-18):** a tool or recon that reports `recovery_path=human`, no systemd/supervisord unit, or manage outside `VALID_SERVICES` is a **substrate deficiency**. Next act is implement a seat-fireable recycle (supervisor or retrying external reexec, wired into `propagate` or a seat-owned verb). It is **not** step 3. tmux `0:0` is a seat recipe when a seat can drive it — never a wake, never an `OPERATOR_GATE`.
 
@@ -483,12 +483,12 @@ model, effort, why. Halt regardless when premium spend is paused. Fewer than fou
 | 2 | cursor-auto | — | Admit, hold the lease; every later hop is `nest_under` it (inv 19) |
 | 3 | `cursor/grok-4.6` | `investigate` | Recon. **Stop the chain here** if the tree answers it — hops 4–5 are not owed |
 | 4 | `cursor/claude-opus-5` `{xhigh\|max}` | `light-bounded` | Architecture bind: per-slice `files_expected` + acceptance criteria, ordered |
-| 5 | `cursor/gpt-5.6-terra` (default) or `cdp/fable` | `light-bounded` | **Independent check** — falsify hop 4's load-bearing premises. Terra is on the default cursor-sdk bindable set (attested agent-bus:9500 execution `2dbd38ff-06e6-44f5-8bd9-1804f31f66aa`). If the wire returns `model_pin_refused` anyway, **fall through to `cdp/fable` same turn** — do not leave hop 5 undischarged, and update peer disclosure (inv 36 standing claim). Do **not** skip terra on the stale claim that bindable cursor-sdk is only composer-2.5 / grok-4.6 / opus-5. |
+| 5 | `cdp/fable` (default) or explicit `cursor/gpt-5.6-terra` | `light-bounded` | **Independent check** — falsify hop 4's load-bearing premises. Default is CDP Fable (not Other Models). Terra only if operator/packet names Other Models. `cursor/claude-fable-5` **blocked** (cost). Do not leave hop 5 undischarged; update peer disclosure (inv 36). |
 | 6 | `cursor/grok-4.6` | `light-bounded` | Densify into a Composer-ready orchestrator packet |
 | 7 | this seat | DISPOSITION | **Shape level, ≤15 lines** — ratify or one correction; ¬ absorb the packet body |
 | 8 | cursor-auto → composer-2.5 | `implement` | Run the wave |
 
-**Hop 5 not optional** — terra or Fable. **Hop 6 verbatim** — hop 4 `files_expected` + ACs re-verified.
+**Hop 5 not optional** — Fable (default) or explicit Terra. **Hop 6 verbatim** — hop 4 `files_expected` + ACs re-verified.
 
 
 ## Executor ladder (operator sets `density` only)
@@ -530,7 +530,7 @@ Authoring enum + propagate template: skill `directive-authoring-standard` D2. Li
 | Next `request` without `mark_read` after a cursor-auto burst | `mark_read(through_turn=N)` first — avoids 409 `unread_turns_e... |
 | Ping the human to pick T3 / Opus when the four trigger conditions hold | Fire Opus — announce model + effort + why; card knobs through `max` |
 | Fire `cursor/claude-opus-5` before the reasoner has run | Hop 3 first; a bind the tree already answers is not owed a pre... |
-| Dispositioning an Opus-authored architecture yourself as the c... | Hop 5 — terra (family + lineage) or Fable (weight class); you ... |
+| Dispositioning an Opus-authored architecture yourself as the c... | Hop 5 — Fable (default) or explicit Terra; you ... |
 | Reading the hop-6 packet body to disposition it | Shape level, ≤15 lines — the packet is for Composer, not for you |
 | Hop-6 packet paraphrases the architecture | Verbatim `files_expected` + ACs; re-verify cited line refs aga... |
 | Operational choice defaulted to an operator gate | Confer with cursor first; operator for proceed / implement / i... |
@@ -562,7 +562,7 @@ Authoring enum + propagate template: skill `directive-authoring-standard` D2. Li
 | Cursor sees live_cse=0 after close and stays silent for an hour | Cursor backstop `cse-stream-stop` page (inv 30) |
 | Waiting for the human to notice silence / ask why / bless the ... | Fire continuity hop + awareness; human is not the wake path (i... |
 | Reading "next operator window" as a human IDE gate | Next CDP operator-proxy CSE on the lane — hop it |
-| CDP Opus/Fable stuck → Cowork Ask the human | `cursor-auto` → `cursor/gpt-5.6-terra` or `cursor/claude-opus-... |
+| CDP Opus/Fable stuck → Cowork Ask the human | `cursor-auto` → `cursor/grok-4.6` or `cursor/claude-opus-5`; Terra only if named |
 | Parking prose "need human judgment" on a bind fork | 2b nested consult; human only for true operator-only gates |
 | Q4 / DISPOSITION: `recovery_path=human` / no unit ⇒ `OPERATOR_GATE` / wake him | Inv 39 — implement autonomous reload. Human recovery is a deficiency, not a gate |
 | Bolded "rule on this fork" AC with no `RULING` token (`contract: implement`) | `AC<n> — RULING:` then the fork. Turn 343 AC2 was a genuine withheld-lean judgment AC and still admitted `handoff=pure-mechanical` — skips reasoning-posture AND redirects a pinned reasoning model onto Composer. Coverage on agent-bus:9470: 1 of 13 implement bodies raise today. SOT: `directive-authoring-standard` **Judgment marker** |

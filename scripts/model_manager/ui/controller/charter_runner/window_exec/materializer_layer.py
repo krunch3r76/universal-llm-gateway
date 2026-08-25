@@ -22,6 +22,8 @@ logger = get_logger(__name__)
 REVISE_CAP_DEFAULT = 3
 
 # Layer G3/G4 seat bind — single locus for family-diversity enforcement (6524 R4).
+# G4 is explicit-only (operator 2026-08-25): LAYER_G4_SEAT is the model when G4
+# is named, not a silent default. Unpinned arcs skip G4 (G3→G5).
 LAYER_G3_SEAT = "cursor/grok-4.6"
 LAYER_G3_MODEL_KNOBS: dict[str, str] = {"effort": "xhigh", "fast": "false"}
 LAYER_G4_SEAT = "cursor/gpt-5.6-terra"
@@ -131,7 +133,8 @@ G1  Architecture     consult seat · cdp/fable — architecture verdict sidecar
                      (lane-architecture-consult-brief-template-v2 envelope).
 G2  Frame            consult seat · cdp/opus-5 — densifier instructions ≤120L.
 G3  Densify          {LAYER_G3_SEAT} ({", ".join(f"{k}={v}" for k, v in sorted(LAYER_G3_MODEL_KNOBS.items()))}) — dense spec + Gate-2 + implement_ready.
-G4  Check            {LAYER_G4_SEAT} — merged check; refresh spec_sha256.
+G4  Check            explicit Other Models pin only ({LAYER_G4_SEAT} when named);
+                     default skip (G3→G5). Family diversity already G1 vs G3.
 G5  Implement        cursor/composer-2.5 — contract=implement + source_ref.
 G6  Verify + close   inline — quality_gate · files_expected · ACs · docstrings.
                      Escalate to `[consult:judgment_gap]` on highest re-opened
