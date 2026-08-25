@@ -37,7 +37,7 @@ from .board_lines import (
 from .curses_sections import paint_attention, paint_lease
 from .dtos import CdpLegRow, CharterRootRow, SdkDispatchRow, SupervisorProjection
 from .sdk_posture import row_role
-from .watch import _cdp_line, _ms, _truncate
+from .watch import _cdp_line, _ms, _truncate, cdp_id_legend
 
 
 class CursesBoard:
@@ -372,11 +372,14 @@ class CursesBoard:
         if not live and y < height - 1:
             self._safe_addstr(y, 0, "  idle — no cdp legs in flight", 0)
             y += 1
+        if live and y < height - 1:
+            self._safe_addstr(y, 0, cdp_id_legend()[: width - 1], 3)
+            y += 1
         shown = 0
         for row in live:
             if y >= height - 1 or shown >= row_cap:
                 break
-            self._safe_addstr(y, 0, _cdp_line(row)[: width - 1], 0)
+            self._safe_addstr(y, 0, _cdp_line(row, width=width - 1), 0)
             y += 1
             shown += 1
         if shown < len(live) and y < height - 1:

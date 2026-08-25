@@ -6,6 +6,7 @@ from scripts.model_manager.ui.dispatch_monitor.core import signals
 from scripts.model_manager.ui.dispatch_monitor.core.board_lines import attention_line
 from scripts.model_manager.ui.dispatch_monitor.core.dtos import (
     AttentionItem,
+    CdpLegRow,
     SdkDispatchRow,
 )
 from scripts.model_manager.ui.dispatch_monitor.core.model import Model
@@ -299,3 +300,61 @@ def test_sdk_live_line_paints_topic_when_present() -> None:
     assert "topic=ULG gains a topic line" in line
     assert "nest=parent-1" in line
     assert "cursor-auto" in line
+
+
+def test_cdp_line_labels_full_exec_and_req_and_thread() -> None:
+    from scripts.model_manager.ui.dispatch_monitor.core.watch import (
+        _cdp_line,
+        cdp_id_legend,
+        render,
+    )
+
+    exec_id = "4182c834-696d-4abc-8def-0123456789ab"
+    req_id = "b72ae1a039f2"
+    row = CdpLegRow(
+        request_id=req_id,
+        execution_id=exec_id,
+        thread_id="6329",
+        model="cdp/fable-5",
+        caller_agent="cursor",
+        state="admitted",
+        elapsed_ms=3_493_000,
+        topic="bind the CDP id legend",
+    )
+    line = _cdp_line(row)
+    assert f"req={req_id}" in line
+    assert f"exec={exec_id}" in line
+    assert "th=6329" in line
+    assert "lane=" not in line
+    assert "cse" not in line.lower()
+    assert line.index("req=") < line.index("exec=")
+    narrow = _cdp_line(row, width=40)
+    assert f"req={req_id}" in narrow
+    assert "ids: req=cdp.generate request_id (fold key)" in cdp_id_legend()
+    assert "CSE" not in cdp_id_legend()
+
+    no_exec = CdpLegRow(request_id=req_id, state="admitted")
+    bare = _cdp_line(no_exec)
+    assert f"req={req_id}" in bare
+    assert "exec=" not in bare
+    assert "th=" not in bare
+
+    model = Model()
+    model.apply(
+        Event(
+            signals.CDP_ADMITTED,
+            1_000,
+            {
+                "request_id": req_id,
+                "execution_id": exec_id,
+                "thread_id": "6329",
+                "model": "cdp/fable-5",
+                "caller_agent": "cursor",
+            },
+        )
+    )
+    text = render(model.derive(2_000))
+    assert cdp_id_legend() in text
+    assert f"req={req_id}" in text
+    assert f"exec={exec_id}" in text
+    assert "th=6329" in text

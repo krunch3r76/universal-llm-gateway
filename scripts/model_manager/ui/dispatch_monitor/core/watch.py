@@ -88,16 +88,45 @@ def _sdk_line(row: SdkDispatchRow) -> str:
     )
 
 
-def _cdp_line(row: CdpLegRow) -> str:
-    """Render one CDP leg row, marking proof presence."""
+def cdp_id_legend() -> str:
+    """One-line CDP identity legend. Does not name CSE or checkout lanes."""
+    return (
+        "  ids: req=cdp.generate request_id (fold key) · "
+        "exec=execution_id · th=agent-bus thread"
+    )
+
+
+def _cdp_line(row: CdpLegRow, *, width: int | None = None) -> str:
+    """Render one CDP leg with labeled ids so ATTENTION ``request_id`` can join.
+
+    Identity tokens are unpadded. ``exec=`` / ``th=`` omit when unknown.
+    Width drops trailing status tokens; it does not invent CSE/checkout lanes.
+    """
     proof = "proof" if row.proof_present else "-"
     timing = row.elapsed_ms if row.terminal_ms is None else None
-    label = row.execution_id or row.request_id[:14]
-    return (
-        f"  {_truncate(label, 14)} {_truncate(row.state, 14)} "
-        f"{_truncate(row.model, 18)} elapsed={_ms(timing):>7} "
-        f"caller={_truncate(row.caller_agent, 8)} [{proof}]"
-    )
+    parts = [f"req={row.request_id}"]
+    if row.execution_id:
+        parts.append(f"exec={row.execution_id}")
+    if row.thread_id:
+        parts.append(f"th={row.thread_id}")
+    base = "  " + " ".join(parts)
+    extras = [
+        f" {row.state}",
+        f" {row.model or '-'}",
+        f" elapsed={_ms(timing)}",
+        f" caller={row.caller_agent or '-'}",
+        f" [{proof}]",
+    ]
+    if row.topic:
+        extras.append(f" topic={clip_text(row.topic, 28)}")
+    for token in extras:
+        if width is None or len(base) + len(token) <= width:
+            base += token
+        elif width is not None:
+            break
+    if width is not None and len(base) > width:
+        return clip_text(base, width)
+    return base
 
 
 def render(projection: SupervisorProjection) -> str:
@@ -128,6 +157,8 @@ def render(projection: SupervisorProjection) -> str:
     lines.append(f"-- sdk dispatches ({len(projection.sdk)}) --")
     lines.extend(_sdk_line(row) for row in projection.sdk)
     lines.append(f"-- cdp legs ({len(projection.cdp)}) --")
+    if projection.cdp:
+        lines.append(cdp_id_legend())
     lines.extend(_cdp_line(row) for row in projection.cdp)
     lines.append(f"-- relations ({len(projection.relations)}) --")
     for edge in projection.relations:
