@@ -75,16 +75,12 @@ def _sdk_line(row: SdkDispatchRow) -> str:
         timing = f"dur={_ms(row.duration_ms):>7}"
     else:
         timing = f"el={_ms(row.elapsed_ms):>7} idle={_ms(row.idle_age_ms)}"
-    extra: list[str] = []
-    if row.topic:
-        extra.append(f"topic={clip_text(row.topic, 40)}")
-    if row.provenance == "signal" and (row.admitted_via or row.asked_by):
-        extra.append(f"{row.admitted_via or '?'}←{row.asked_by or '?'}")
-    extra_s = (" " + " ".join(extra)) if extra else ""
+    prov = f"from={row.caller_from or 'ide'} via={row.caller_via or 'http'}"
+    topic_s = f" topic={clip_text(row.topic, 40)}" if row.topic else ""
     return (
         f"  {_truncate(row.dispatch_id, 14)} {_truncate(row.state, 10)} "
         f"root={_truncate(row.root_id, 8)} {_truncate(row.model, 18)} "
-        f"{timing} [{flag}]{extra_s}"
+        f"{timing} {prov} [{flag}]{topic_s}"
     )
 
 

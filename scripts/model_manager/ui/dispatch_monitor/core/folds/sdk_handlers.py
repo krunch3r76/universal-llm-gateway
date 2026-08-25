@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from .. import signals
+from .sdk_caller import stash_or_stamp
 from .sdk_provenance import (
     on_duplicate_refused,
     on_lease_acquired,
@@ -58,4 +59,7 @@ def sdk_handler_table(fold: SdkFold) -> dict[str, Any]:
         fold._on_implement_source_ref_unresolved
     )
     table[signals.SYSTEM_STARTED] = lambda record: on_system_started(fold, record)
+    table[signals.MCP_TEAM_DISPATCH_DISPATCHED] = lambda record: stash_or_stamp(
+        fold, record
+    )
     return table

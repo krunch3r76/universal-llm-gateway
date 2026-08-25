@@ -93,6 +93,7 @@ SDK_CLOSEOUT_RELAYED = "frontier.sdk.closeout.relayed"
 SDK_WORKER_DISPATCHED = "frontier.sdk.worker.dispatched"
 SDK_REVIEW_CHILD_SPAWNED = "frontier.sdk.review_child.spawned"
 SDK_IMPLEMENT_SOURCE_REF_UNRESOLVED = "frontier.sdk.implement.source_ref_unresolved"
+MCP_TEAM_DISPATCH_DISPATCHED = "mcp.team.dispatch.dispatched"
 
 # --- sdk family: pipeline lane (GS2 emitter B) -----------------------------
 SDK_PIPELINE_STARTED = "pipeline.frontier.dispatch.started"
@@ -156,6 +157,7 @@ SDK_LIFECYCLE_SIGNALS = (
     SDK_ADMIT_DUPLICATE_REFUSED,
     SDK_REVIEW_CHILD_SPAWNED,
     SDK_IMPLEMENT_SOURCE_REF_UNRESOLVED,
+    MCP_TEAM_DISPATCH_DISPATCHED,
 )
 
 # --- cdp family (VERIFIED live — v3 §6) ------------------------------------

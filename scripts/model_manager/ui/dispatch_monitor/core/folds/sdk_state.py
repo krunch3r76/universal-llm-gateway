@@ -52,6 +52,10 @@ class SdkState:
         "topic",
         "nest_under",
         "resume_of",
+        "mcp_seat_class",
+        "mcp_surface",
+        "caller_from",
+        "caller_via",
     )
 
     def __init__(self, dispatch_id: str) -> None:
@@ -96,6 +100,10 @@ class SdkState:
         self.topic: str | None = None
         self.nest_under: str | None = None
         self.resume_of: str | None = None
+        self.mcp_seat_class: str | None = None
+        self.mcp_surface: str | None = None
+        self.caller_from: str | None = None
+        self.caller_via: str | None = None
 
 
 def as_int(value: Any) -> int | None:
@@ -272,6 +280,10 @@ def merge_sdk_state(canonical: SdkState, alt: SdkState) -> None:
         "topic",
         "nest_under",
         "resume_of",
+        "mcp_seat_class",
+        "mcp_surface",
+        "caller_from",
+        "caller_via",
     ):
         if getattr(canonical, field) is None and getattr(alt, field) is not None:
             setattr(canonical, field, getattr(alt, field))

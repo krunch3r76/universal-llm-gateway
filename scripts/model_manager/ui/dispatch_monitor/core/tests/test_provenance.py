@@ -299,7 +299,7 @@ def test_sdk_live_line_paints_topic_when_present() -> None:
     line = sdk_live_line(row, width=200)
     assert "topic=ULG gains a topic line" in line
     assert "nest=parent-1" in line
-    assert "cursor-auto" in line
+    assert "from=ide" in line
 
 
 def test_cdp_line_labels_full_exec_and_req_and_thread() -> None:

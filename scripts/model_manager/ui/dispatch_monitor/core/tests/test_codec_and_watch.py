@@ -194,7 +194,7 @@ def test_duplicate_redelivery_does_not_move_the_fingerprint() -> None:
 
 
 def test_sdk_live_line_provenance_within_width_budget() -> None:
-    """Paint appends provenance token only when the full line fits."""
+    """Paint puts first-class from=/via= before emitters; drops when width-bound."""
     row = SdkDispatchRow(
         dispatch_id="auto-short",
         state="running",
@@ -204,15 +204,17 @@ def test_sdk_live_line_provenance_within_width_budget() -> None:
         elapsed_ms=300_000,
         idle_age_ms=30_000,
         emitters_seen=("worker",),
-        admitted_via="cursor-auto",
-        asked_by="web-anthropic",
+        caller_from="auto",
+        caller_via="http",
         provenance="signal",
     )
     line = sdk_live_line(row, width=140)
     assert len(line) <= 140
     assert "el=5m00s" in line
     assert "idle=30s" in line
-    assert "cursor-auto" in line
+    bracket = line.index("[")
+    assert "from=auto" in line[:bracket]
+    assert "via=http" in line[:bracket]
 
     crowded = SdkDispatchRow(
         dispatch_id="auto-" + ("x" * 20),
@@ -223,24 +225,23 @@ def test_sdk_live_line_provenance_within_width_budget() -> None:
         elapsed_ms=300_000,
         idle_age_ms=30_000,
         emitters_seen=("worker",),
-        admitted_via="cursor-auto",
-        asked_by="web-anthropic",
+        caller_from="auto",
+        caller_via="http",
         provenance="signal",
     )
     crowded_line = sdk_live_line(crowded, width=120)
     assert len(crowded_line) <= 120
     assert "el=5m00s" in crowded_line
-    # provenance drops when elapsed+idle push past width
-    assert "cursor-auto" not in crowded_line
 
     reconciled = SdkDispatchRow(
         dispatch_id="auto-reconciled",
         state="running",
-        admitted_via="cursor-auto",
-        asked_by="web-anthropic",
+        caller_from="auto",
+        caller_via="http",
         provenance="reconciled",
     )
-    assert "cursor-auto" not in sdk_live_line(reconciled, width=120)
+    reconciled_line = sdk_live_line(reconciled, width=120)
+    assert "from=auto" in reconciled_line
 
 
 def test_sdk_live_line_shows_elapsed_before_idle() -> None:

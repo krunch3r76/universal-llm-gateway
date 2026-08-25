@@ -1089,3 +1089,125 @@ def test_consult_queued_streak_surfaces_stuck_after_n_scans() -> None:
         else:
             assert root.state == "stuck"
             assert root.skip_reason == "consult_queued_streak"
+
+
+# --- SDK caller provenance (MCP stamp / HTTP fallback) -----------------------
+def _mcp_code(execution_id: str, ts: int = 900) -> Event:
+    return Event(
+        signals.MCP_TEAM_DISPATCH_DISPATCHED,
+        ts,
+        {
+            "execution_id": execution_id,
+            "seat_class": "cursor",
+            "surface": "code",
+        },
+    )
+
+
+def _mcp_life(execution_id: str, ts: int = 900) -> Event:
+    return Event(
+        signals.MCP_TEAM_DISPATCH_DISPATCHED,
+        ts,
+        {
+            "execution_id": execution_id,
+            "seat_class": "claude",
+            "surface": "life",
+        },
+    )
+
+
+def _worker_dispatched(
+    execution_id: str,
+    *,
+    ts: int = 1_000,
+    admitted_via: str | None = None,
+    asked_by: str | None = None,
+) -> Event:
+    payload: dict[str, str] = {
+        "dispatch_id": execution_id,
+        "execution_id": execution_id,
+    }
+    if admitted_via is not None:
+        payload["admitted_via"] = admitted_via
+    if asked_by is not None:
+        payload["asked_by"] = asked_by
+    return Event(signals.SDK_WORKER_DISPATCHED, ts, payload)
+
+
+def test_mcp_code_stamps_ide_via_mcp_on_live_row() -> None:
+    from scripts.model_manager.ui.dispatch_monitor.core.board_lines import sdk_live_line
+
+    model = Model()
+    exec_id = "exec-mcp-code"
+    model.apply(_worker_dispatched(exec_id))
+    model.apply(_mcp_code(exec_id))
+    row = _row(model.derive(2_000).sdk, "dispatch_id", exec_id)
+    assert row.caller_from == "ide"
+    assert row.caller_via == "mcp"
+    line = sdk_live_line(row, width=200)
+    bracket = line.index("[")
+    assert "from=ide" in line[:bracket]
+    assert "via=mcp" in line[:bracket]
+
+
+def test_mcp_life_stamps_claude_ai_via_mcp() -> None:
+    model = Model()
+    exec_id = "exec-mcp-life"
+    model.apply(_worker_dispatched(exec_id))
+    model.apply(_mcp_life(exec_id))
+    row = _row(model.derive(2_000).sdk, "dispatch_id", exec_id)
+    assert row.caller_from == "claude.ai"
+    assert row.caller_via == "mcp"
+
+
+def test_mcp_first_then_worker_dispatched_one_row() -> None:
+    model = Model()
+    exec_id = "exec-mcp-first"
+    model.apply(_mcp_code(exec_id, ts=500))
+    assert len(model.sdk.dispatches) == 0
+    model.apply(_worker_dispatched(exec_id, ts=1_000))
+    frame = model.derive(2_000)
+    assert len(frame.sdk) == 1
+    row = frame.sdk[0]
+    assert row.caller_from == "ide"
+    assert row.caller_via == "mcp"
+
+
+def test_http_fallback_auto_when_cursor_auto() -> None:
+    model = Model()
+    exec_id = "exec-http-auto"
+    model.apply(
+        _worker_dispatched(exec_id, admitted_via="cursor-auto", asked_by="cursor")
+    )
+    row = _row(model.derive(2_000).sdk, "dispatch_id", exec_id)
+    assert row.caller_from == "auto"
+    assert row.caller_via == "http"
+
+
+def test_http_fallback_ide_when_stargate_cursor() -> None:
+    model = Model()
+    exec_id = "exec-http-ide"
+    model.apply(
+        _worker_dispatched(exec_id, admitted_via="stargate", asked_by="cursor")
+    )
+    row = _row(model.derive(2_000).sdk, "dispatch_id", exec_id)
+    assert row.caller_from == "ide"
+    assert row.caller_via == "http"
+
+
+def test_http_fallback_claude_ai_when_web_anthropic() -> None:
+    model = Model()
+    exec_id = "exec-http-life"
+    model.apply(
+        _worker_dispatched(exec_id, admitted_via="stargate", asked_by="web-anthropic")
+    )
+    row = _row(model.derive(2_000).sdk, "dispatch_id", exec_id)
+    assert row.caller_from == "claude.ai"
+    assert row.caller_via == "http"
+
+
+def test_mcp_only_does_not_create_sdk_row() -> None:
+    model = Model()
+    model.apply(_mcp_code("ghost-exec"))
+    assert len(model.sdk.dispatches) == 0
+    assert model.derive(2_000).sdk == ()
