@@ -126,6 +126,15 @@ def test_every_family_is_represented_in_the_handler_table() -> None:
         assert not missing, f"{label} family not fully handled: {sorted(missing)}"
 
 
+def test_cdp_observation_signals_disjoint_from_handled_registry() -> None:
+    """Observation emitters are declared but not folded (I-7 / I-9)."""
+    observation = set(signals.CDP_OBSERVATION_SIGNALS)
+    handled = set(Model().handled_signals)
+    assert observation.isdisjoint(handled)
+    assert observation.isdisjoint(set(signals.ALL_HANDLED))
+    assert observation.isdisjoint(set(signals.CDP_FAMILY))
+
+
 def test_readme_documents_every_handled_signal() -> None:
     """Self-check 3, documentation half: the README names each handled signal."""
     readme = os.path.join(_PACKAGE_ROOT, "README.md")

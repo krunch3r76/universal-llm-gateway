@@ -45,7 +45,7 @@ from .cdp_horizon_probe import (
 
 logger = get_logger(__name__)
 
-FinalizeVia = Literal["worker", "reconcile"]
+FinalizeVia = Literal["worker", "reconcile", "attest"]
 RECONCILE_INTERVAL_S = 20.0
 HARVEST_LAG_S = 600.0
 MIN_OPEN_LEG_S = 3600.0
@@ -218,6 +218,7 @@ async def finalize_cdp_generate(
     to_agent: str,
     pointer_turn: int,
     via: FinalizeVia = "worker",
+    attested_by: str | None = None,
 ) -> None:
     """Publish proof/stalled once, then attempt on-behalf delivery (AC8/AC9)."""
     from .cdp_generate_worker import (
@@ -258,6 +259,8 @@ async def finalize_cdp_generate(
             satellite_execution_id=sat_id,
             archive_uri=result.archive_uri,
             content_proof_uri=result.content_proof_uri,
+            via=via,
+            attested_by=attested_by,
         )
     else:
         publish_cdp_kwargs(

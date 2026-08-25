@@ -685,3 +685,156 @@ async def test_reconcile_module_has_no_run_cdp_generate() -> None:
 
     source = Path(reconcile.__file__).read_text(encoding="utf-8")
     assert "run_cdp_generate" not in source
+
+
+@pytest.mark.asyncio
+async def test_finalize_proof_carries_via_worker_and_reconcile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Slice 1 — CdpGenerateProof publish receives via= from worker vs reconcile."""
+    captured: list[dict[str, Any]] = []
+
+    def _capture(factory: Any, **kwargs: Any) -> bool:
+        if factory.__name__ == "CdpGenerateProof":
+            captured.append(dict(kwargs))
+        return True
+
+    monkeypatch.setattr(reconcile, "publish_cdp_kwargs", _capture)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.deliver_cdp_result_turn",
+        AsyncMock(return_value=True),
+    )
+    result = CdpGenerateResult(
+        ok=True,
+        body="harvest",
+        execution_id="exec-via-worker",
+        satellite_execution_id="sat-via",
+        prompt_uri="cortex://p.md",
+        picker_model="opus-5",
+        content_proof_uri="cortex://proof.md",
+    )
+
+    upsert_inflight_leg(
+        execution_id="exec-via-worker",
+        request_id="req-via",
+        thread_id="5583",
+        pointer_turn=1,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    worker_result = CdpGenerateResult(
+        ok=True,
+        body="harvest",
+        execution_id="exec-via-worker",
+        satellite_execution_id="sat-via",
+        prompt_uri="cortex://p.md",
+        picker_model="opus-5",
+        content_proof_uri="cortex://proof.md",
+    )
+    await finalize_cdp_generate(
+        result=worker_result,
+        request_id="req-via",
+        thread_id="5583",
+        to_agent="dispatch",
+        pointer_turn=1,
+        via="worker",
+    )
+
+    upsert_inflight_leg(
+        execution_id="exec-via-reconcile",
+        request_id="req-via-2",
+        thread_id="5583",
+        pointer_turn=1,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    reconcile_result = CdpGenerateResult(
+        ok=True,
+        body="harvest",
+        execution_id="exec-via-reconcile",
+        satellite_execution_id="sat-via",
+        prompt_uri="cortex://p.md",
+        picker_model="opus-5",
+        content_proof_uri="cortex://proof.md",
+    )
+    await finalize_cdp_generate(
+        result=reconcile_result,
+        request_id="req-via-2",
+        thread_id="5583",
+        to_agent="dispatch",
+        pointer_turn=1,
+        via="reconcile",
+    )
+
+    assert captured == [
+        {
+            "request_id": "req-via",
+            "execution_id": "exec-via-worker",
+            "satellite_execution_id": "sat-via",
+            "archive_uri": None,
+            "content_proof_uri": "cortex://proof.md",
+            "via": "worker",
+            "attested_by": None,
+        },
+        {
+            "request_id": "req-via-2",
+            "execution_id": "exec-via-reconcile",
+            "satellite_execution_id": "sat-via",
+            "archive_uri": None,
+            "content_proof_uri": "cortex://proof.md",
+            "via": "reconcile",
+            "attested_by": None,
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_finalize_attest_does_not_emit_reconciled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Attest success must not emit cdp.generate.reconciled."""
+    published: list[str] = []
+
+    def _capture(factory: Any, **kwargs: Any) -> bool:
+        published.append(factory.__name__)
+        return True
+
+    monkeypatch.setattr(reconcile, "publish_cdp_kwargs", _capture)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.deliver_cdp_result_turn",
+        AsyncMock(return_value=True),
+    )
+    upsert_inflight_leg(
+        execution_id="exec-attest-no-reconcile",
+        request_id="req-attest",
+        thread_id="5583",
+        pointer_turn=1,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    result = CdpGenerateResult(
+        ok=True,
+        body="attested",
+        execution_id="exec-attest-no-reconcile",
+        satellite_execution_id="sat-attest",
+        prompt_uri="cortex://p.md",
+        picker_model="opus-5",
+        content_proof_uri="cortex://proof.md",
+        content_proof_sha256="abc",
+    )
+    await finalize_cdp_generate(
+        result=result,
+        request_id="req-attest",
+        thread_id="5583",
+        to_agent="dispatch",
+        pointer_turn=1,
+        via="attest",
+        attested_by="test-seat",
+    )
+    assert published == ["CdpGenerateProof"]

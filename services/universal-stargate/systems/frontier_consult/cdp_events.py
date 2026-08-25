@@ -64,17 +64,23 @@ def CdpGenerateProof(  # noqa: N802
     satellite_execution_id: str | None,
     archive_uri: str | None = None,
     content_proof_uri: str | None = None,
+    via: str = "worker",
+    attested_by: str | None = None,
 ) -> Event:
     """Harvest proof present (archive or content_proof)."""
+    payload: dict[str, Any] = {
+        "request_id": request_id,
+        "execution_id": execution_id,
+        "satellite_execution_id": satellite_execution_id,
+        "archive_uri": archive_uri,
+        "content_proof_uri": content_proof_uri,
+        "via": via,
+    }
+    if attested_by is not None:
+        payload["attested_by"] = attested_by
     return Event(
         signal="cdp.generate.proof",
-        payload={
-            "request_id": request_id,
-            "execution_id": execution_id,
-            "satellite_execution_id": satellite_execution_id,
-            "archive_uri": archive_uri,
-            "content_proof_uri": content_proof_uri,
-        },
+        payload=payload,
         scope="node",
     )
 

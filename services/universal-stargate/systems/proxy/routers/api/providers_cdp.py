@@ -7,6 +7,7 @@ Routes:
   POST /api/v1/providers/cdp/ask
   GET  /api/v1/providers/cdp/executions/{execution_id}
   POST /api/v1/providers/cdp/executions/{execution_id}/abort
+  POST /api/v1/providers/cdp/generate/{execution_id}/attest
 """
 
 from __future__ import annotations
@@ -18,6 +19,13 @@ from cdp_ask.models import SubmitProjectAskRequest
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 from universal_logging import get_logger
+from universal_protocol.errors import ProtocolError
+
+from systems.frontier_consult.cdp_generate_attest import (
+    AttestConflictError,
+    AttestDeliverableRequest,
+    attest_cdp_generate_deliverable,
+)
 
 logger = get_logger(__name__)
 
@@ -74,3 +82,37 @@ async def cdp_ask_abort(execution_id: str, request: Request) -> Response:
         json_body=json_body,
     )
     return _as_response(status, payload, media)
+
+
+@router.post("/generate/{execution_id}/attest")
+async def cdp_generate_attest(
+    execution_id: str,
+    body: AttestDeliverableRequest,
+) -> Response:
+    """Attest a server-verified cortex deliverable into CDP generate finalize."""
+    try:
+        result = await attest_cdp_generate_deliverable(
+            execution_id=execution_id,
+            body=body,
+        )
+    except AttestConflictError as exc:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "ok": False,
+                "via": "attest",
+                "proof_emitted": exc.proof_emitted,
+                "delivered": exc.delivered,
+            },
+        )
+    except ProtocolError as exc:
+        return JSONResponse(status_code=422, content=exc.to_dict())
+    return JSONResponse(
+        status_code=200,
+        content={
+            "ok": result.ok,
+            "via": result.via,
+            "proof_emitted": result.proof_emitted,
+            "delivered": result.delivered,
+        },
+    )

@@ -2,7 +2,9 @@
 
 Authority: v3 §6 handler table (G5.2 slice 1). ``request_id`` is the sole leg key
 present on every ``cdp.generate.*`` payload. The G3 leg is a black box between
-``admitted`` and terminal — no mid-flight progress exists on the wire (§6.2).
+``admitted`` and terminal — no mid-flight **lifecycle** progress exists on the
+wire (§6.2). Observation signals in ``CDP_OBSERVATION_SIGNALS`` are declared and
+ignored at the Model gate; they must not set or hold ``terminal_ms``.
 """
 
 from __future__ import annotations

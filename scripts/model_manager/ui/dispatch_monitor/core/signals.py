@@ -170,6 +170,17 @@ POLL_HINT_ISSUED = "frontier.poll.hint.issued"
 
 CDP_TERMINAL_SIGNALS = frozenset({CDP_PROOF, CDP_STALLED, CDP_DELIVERY_FAILED})
 
+CDP_COMPOSE_ATTESTED = "cdp.generate.compose_attested"
+CDP_RECONCILED = "cdp.generate.reconciled"
+CDP_HORIZON_UNVERIFIABLE = "cdp.generate.horizon.unverifiable"
+CDP_OBSERVATION_SIGNALS = frozenset(
+    {
+        CDP_COMPOSE_ATTESTED,
+        CDP_RECONCILED,
+        CDP_HORIZON_UNVERIFIABLE,
+    }
+)
+
 #: G4 contract signals never emitted live — removed from handler table G5.2 slice 1.
 CDP_PHANTOM = (
     "cdp.generate.running",

@@ -139,3 +139,35 @@ def test_ac6_e2e_fixture_populates_projection() -> None:
     assert "cdp legs (1)" in text
     assert "739dcb9ad06a" in text or "cdp-req-e2e" in text
     assert "proof" in text
+
+
+def test_ac7_observation_signals_not_unhandled_or_terminal() -> None:
+    """AC (e) — observation signals are ignored without fold or unhandled count."""
+    payloads = {
+        signals.CDP_COMPOSE_ATTESTED: {
+            "request_id": "obs-req",
+            "execution_id": "obs-exec",
+            "satellite_execution_id": "obs-sat",
+        },
+        signals.CDP_RECONCILED: {
+            "request_id": "obs-req",
+            "execution_id": "obs-exec",
+            "satellite_execution_id": "obs-sat",
+            "via": "reconcile",
+        },
+        signals.CDP_HORIZON_UNVERIFIABLE: {
+            "request_id": "obs-req",
+            "execution_id": "obs-exec",
+            "satellite_execution_id": "obs-sat",
+            "thread_id": "1",
+            "stall_stage": "horizon_unverifiable_retained",
+        },
+    }
+    for signal, payload in payloads.items():
+        model = Model()
+        model.apply(Event(signal, 1_000, payload))
+        frame = model.derive(1_100)
+        assert frame.health.unhandled_signals == {}
+        assert model.cdp.legs.get("obs-req") is None or (
+            model.cdp.legs["obs-req"].terminal_ms is None
+        )

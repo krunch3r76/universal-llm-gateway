@@ -91,6 +91,8 @@ class Model:
             self.seq_high_water is None or seq > self.seq_high_water
         ):
             self.seq_high_water = seq
+        if record.signal in signals.CDP_OBSERVATION_SIGNALS:
+            return
         handler = self._handlers.get(record.signal)
         if handler is None:
             if self.unhandled_first_ms is None:
