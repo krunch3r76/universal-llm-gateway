@@ -8,6 +8,8 @@
 #   scripts/cortex/claude-ai-sync-jupiter ensure-chrome
 #   scripts/cortex/claude-ai-sync-jupiter ensure-chrome --port 9223 --profile-suffix ask
 #   scripts/cortex/claude-ai-sync-jupiter status
+#   scripts/cortex/claude-ai-sync-jupiter preflight
+#   scripts/cortex/claude-ai-sync-jupiter diagnose-upload-menu
 #   # Context→Skills DOM scrape (session-loaded; never model self-report):
 #   scripts/cortex/claude-ai-sync-jupiter loaded-skills \\
 #     --chat-url 'https://claude.ai/cowork/cse_…' \\
@@ -80,7 +82,8 @@ _cdp_xauthority() {
 usage() {
   sed -n '2,24p' "$0" | sed 's/^# \?//'
   echo ""
-  echo "Commands: ensure-chrome | status | loaded-skills | upload | uninstall |"
+  echo "Commands: ensure-chrome | status | preflight | diagnose-upload-menu |"
+  echo "          loaded-skills | upload | uninstall |"
   echo "          restore-connector | set-tool-permissions | refresh-connector |"
   echo "          project-chrome | project-ask |"
   echo "          register-lane | deregister-lane | list-lanes"
@@ -350,6 +353,14 @@ case "$cmd" in
   status)
     ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
     remote_py scripts/cortex/upload_claude_bundles_ui.py --status
+    ;;
+  preflight)
+    ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
+    remote_py scripts/cortex/upload_claude_bundles_ui.py --preflight
+    ;;
+  diagnose-upload-menu)
+    ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
+    remote_py scripts/cortex/upload_claude_bundles_ui.py --diagnose-upload-menu
     ;;
   loaded-skills)
     # DOM scrape of chat Context→Skills — sync verify for *session-loaded*

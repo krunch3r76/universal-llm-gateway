@@ -15,9 +15,11 @@ from claude_bundles.skills_ui_network import (
     _is_skills_upload,
     _slug_in_text,
 )
-from claude_bundles.skills_ui_upload import (
+from claude_bundles.skills_ui_open import (
     UploadModalMissingError,
     _modal_file_input,
+)
+from claude_bundles.skills_ui_upload import (
     _select_file_in_modal,
 )
 
@@ -114,7 +116,7 @@ async def test_modal_file_input_raises_when_modal_absent() -> None:
     page = AsyncMock()
     page.url = "https://claude.ai/new#settings/customize-skills"
     with patch(
-        "claude_bundles.skills_ui_upload._upload_modal_root",
+        "claude_bundles.skills_ui_open._upload_modal_root",
         new_callable=AsyncMock,
         return_value=None,
     ):
@@ -127,7 +129,7 @@ async def test_select_file_in_modal_raises_when_modal_absent() -> None:
     page = AsyncMock()
     page.url = "https://claude.ai/new#settings/customize-skills"
     with patch(
-        "claude_bundles.skills_ui_upload._upload_modal_root",
+        "claude_bundles.skills_ui_open._upload_modal_root",
         new_callable=AsyncMock,
         return_value=None,
     ):

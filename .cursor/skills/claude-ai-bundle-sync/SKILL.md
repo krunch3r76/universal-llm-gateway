@@ -124,6 +124,22 @@ EOF
 Exit code **0** with no `missing_on_ui` lines = full parity. Partial drift is normal
 (extra UI-only slugs, unrelated missing slugs).
 
+### Step 2b — Preflight (Jupiter, before any upload)
+
+Asserts CDP + Skills panel + Add + a selectable **Upload a skill** menuitem.
+A green Add-only click is not enough — that is the 30450 false-green.
+
+```bash
+scripts/cortex/claude-ai-sync-jupiter preflight
+```
+
+Exit **1** writes `~/.gateway/claude-ai-sync/runs/<ts>/preflight.json` (menu
+inventory). Diagnose without opening the upload dialog:
+
+```bash
+scripts/cortex/claude-ai-sync-jupiter diagnose-upload-menu
+```
+
 ### Step 3 — Upload NEW slugs (Jupiter)
 
 ```bash
@@ -272,7 +288,7 @@ not implemented yet; use `--slugs … --replace` after substantive SOT edits unt
 |---|---|
 | `scripts/cortex/claude-ai-sync-jupiter` | SSH wrapper — **default entry for status/upload/uninstall** |
 | `scripts/cortex/gen_claude_bundles.py` | Render + validate local bundles |
-| `scripts/cortex/upload_claude_bundles_ui.py` | CLI: `--status`, `--uninstall`, upload (run **on Jupiter**) |
+| `scripts/cortex/upload_claude_bundles_ui.py` | CLI: `--status`, `--preflight`, `--diagnose-upload-menu`, upload (run **on Jupiter**) |
 | `libs/claude_bundles/skills_ui*.py` | Playwright CDP automation |
 | `libs/claude_bundles/skills_ui_uninstall.py` | Uninstall path: More options → Uninstall → confirm |
 | `config/skills.yaml` + `libs/claude_bundles/catalog.py` | Sole placement authority; `claude_ai_targets()` |
@@ -287,6 +303,7 @@ not implemented yet; use `--slugs … --replace` after substantive SOT edits unt
 | `CDP connect failed` on Jupiter | Chrome not running | `claude-ai-sync-jupiter ensure-chrome` |
 | `ModuleNotFoundError: universal_logging` on Jupiter | System `sitecustomize` wins; venv hook never injects `libs/` | Wrapper must set `PYTHONPATH=$REPO/libs` (and `PROJECT_ROOT`) |
 | Preflight: hash URL but “Skills panel not open” | Hash alone no longer mounts Settings; Customize is a **button**, not a link | `_reopen_skills_from_hash` must click Customize button then Skills |
+| `Add → Upload a skill menu item not found` | Portal timing, label drift, or nested menu; Add-only preflight was a false green | `diagnose-upload-menu`, attach `menu.json` / `preflight.json` to the friction |
 | WebSocket 403 from Playwright | Missing `--remote-allow-origins=*` | Restart Chrome with flags in runbook |
 | `gen_claude_bundles --check` httpx error on Jupiter | Cortex socket not on Jupiter | Run `--check` from workstation |
 | Run report `network_status.ok` but upload failed | F9 regex matches Datadog `/api/v2/rum` + bare-2xx slug_echo | Live-verify 2026-07-09 — reopen harden; do not trust F9 until tightened |

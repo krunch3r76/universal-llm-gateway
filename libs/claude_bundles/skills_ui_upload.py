@@ -6,7 +6,7 @@ import re
 import sys
 from pathlib import Path
 
-from playwright.async_api import Locator, Page
+from playwright.async_api import Page
 
 from claude_bundles.bundle_description import MAX_CLAUDE_AI_DESCRIPTION_LEN
 from claude_bundles.skills_ui_confirm import (
@@ -16,23 +16,17 @@ from claude_bundles.skills_ui_confirm import (
     replace_confirm_root,
     wait_replace_confirm,
 )
-from claude_bundles.skills_ui_menu import (
-    add_menu_expanded,
-    js_click_upload_menuitem,
-    stability_guarded_add_click,
-    wait_upload_menuitem,
-)
 from claude_bundles.skills_ui_network import UploadNetworkOracle, UploadResult
+from claude_bundles.skills_ui_open import (
+    UploadModalMissingError,
+    _assert_upload_modal_scoped,
+    _open_upload_dialog,
+)
 from claude_bundles.skills_ui_panel import (
     NavigationGate,
     _dismiss_modals,
-    _find_add_button,
-    _is_skills_url,
-    _panel_lost_mid_attempt,
-    _recover_panel_spa,
     _upload_modal_open,
     _upload_modal_root,
-    panel_state_summary,
     slug_in_skills_table,
     snapshot_slug_row,
 )
@@ -47,31 +41,6 @@ _REJECT_RE = re.compile(
 
 class ReplaceBlockedError(Exception):
     """Legacy — replace flow uses confirm dialog instead of blocking."""
-
-
-class UploadModalMissingError(RuntimeError):
-    """Upload modal absent — refuse page-wide file input."""
-
-
-async def _assert_upload_modal_scoped(page: Page) -> Locator:
-    if not _is_skills_url(page.url):
-        raise UploadModalMissingError(
-            f"Not on skills panel URL — refusing file input ({page.url})"
-        )
-    root = await _upload_modal_root(page)
-    if root is None:
-        raise UploadModalMissingError(
-            "Upload modal not open — refusing page-wide file input"
-        )
-    return root
-
-
-async def _modal_file_input(page: Page) -> Locator:
-    root = await _assert_upload_modal_scoped(page)
-    inp = root.locator('input[type="file"]')
-    if not await inp.count():
-        raise UploadModalMissingError("Upload modal has no scoped file input")
-    return inp.first
 
 
 async def _modals_blocking(page: Page) -> bool:
@@ -115,93 +84,6 @@ async def _upload_verified(
     if network is None:
         return await page.locator("table tbody tr").count() > rows_before
     return False
-
-
-async def _open_upload_dialog(
-    page: Page,
-    context,
-    *,
-    nav_gate: NavigationGate | None,
-) -> Locator:
-    if await _upload_modal_open(page):
-        return await _modal_file_input(page)
-
-    await _dismiss_modals(page)
-    add_btn = await _find_add_button(page)
-    if not add_btn:
-        raise RuntimeError(
-            "Add button not found — open Customize → Skills (Browse + Add visible), then re-run"
-        )
-
-    last_err: Exception | None = None
-    for attempt in range(5):
-        try:
-            add_btn = await _find_add_button(page)
-            if add_btn is None:
-                page = await _recover_panel_spa(page, context, nav_gate=nav_gate)
-                add_btn = await _find_add_button(page)
-                if add_btn is None:
-                    raise RuntimeError("Add button not found after SPA panel recovery")
-
-            try:
-                await stability_guarded_add_click(add_btn)
-            except Exception as click_exc:
-                # Menu often already open (aria-expanded) while locator is unstable —
-                # proceed if expanded; only fail when menu is closed.
-                add_btn = await _find_add_button(page) or add_btn
-                if not await add_menu_expanded(add_btn):
-                    print(
-                        f"OPEN_UPLOAD_DIALOG add-click failed: {click_exc!r}",
-                        file=sys.stderr,
-                    )
-                    raise
-
-            if await _panel_lost_mid_attempt(page):
-                page = await _recover_panel_spa(page, context, nav_gate=nav_gate)
-                if await _find_add_button(page) is None:
-                    raise RuntimeError("Panel not recovered after nav-away to /new")
-                continue
-
-            # Wait for portal menuitem before JS/locator click (fixed sleep raced).
-            upload_item = await wait_upload_menuitem(
-                page, timeout_ms=2_000 + 500 * attempt
-            )
-            js_clicked = await js_click_upload_menuitem(page, add_btn)
-            if not js_clicked.get("ok"):
-                if upload_item is None:
-                    upload_item = await wait_upload_menuitem(page, timeout_ms=1_500)
-                if upload_item is None:
-                    raise RuntimeError("Add → Upload a skill menu item not found")
-                try:
-                    await upload_item.click(force=True, timeout=5_000)
-                except Exception as click_exc:
-                    print(f"OPEN_UPLOAD_DIALOG force-click failed: {click_exc!r}", file=sys.stderr)
-                    item_handle = await upload_item.element_handle()
-                    if item_handle is None:
-                        raise
-                    await page.evaluate("(el) => el.click()", item_handle)
-
-            for _ in range(30):
-                if await _upload_modal_open(page):
-                    return await _modal_file_input(page)
-                await page.wait_for_timeout(500)
-            raise RuntimeError("Upload modal did not open within 15s")
-        except Exception as exc:
-            last_err = exc
-            print(f"OPEN_UPLOAD_DIALOG attempt={attempt} err={exc!r}", file=sys.stderr)
-            await page.keyboard.press("Escape")
-            await page.wait_for_timeout(400)
-            if await _panel_lost_mid_attempt(page):
-                page = await _recover_panel_spa(page, context, nav_gate=nav_gate)
-            if await _find_add_button(page) is None:
-                page = await _recover_panel_spa(page, context, nav_gate=nav_gate)
-                if await _find_add_button(page) is None:
-                    break
-
-    summary = await panel_state_summary(page, context)
-    raise RuntimeError(
-        f"Add → Upload a skill failed after retries: {last_err}\n{summary}"
-    )
 
 
 async def _modal_error_text(page: Page) -> str | None:

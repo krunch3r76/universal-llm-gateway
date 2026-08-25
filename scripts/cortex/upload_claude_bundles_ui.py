@@ -17,6 +17,7 @@ On Jupiter (or via claude-ai-sync-jupiter wrapper):
     --chat-url 'https://claude.ai/cowork/cse_…' \\
     --require-loaded reasoning-posture
   python scripts/cortex/upload_claude_bundles_ui.py --preflight
+  python scripts/cortex/upload_claude_bundles_ui.py --diagnose-upload-menu
   python scripts/cortex/upload_claude_bundles_ui.py --slugs SLUG --continue-on-error
   python scripts/cortex/upload_claude_bundles_ui.py --slugs SLUG --replace --continue-on-error
   python scripts/cortex/upload_claude_bundles_ui.py --all --continue-on-error
@@ -52,6 +53,7 @@ from claude_bundles.skills_ui import (  # noqa: E402
     DEFAULT_CDP_URL,
     chrome_start_hint,
     debug_cdp,
+    diagnose_upload_menu_session,
     list_bundle_mds,
     list_zip_dir,
     prepare_session,
@@ -132,7 +134,14 @@ def main() -> int:
     parser.add_argument("--cdp-url", default=DEFAULT_CDP_URL)
     parser.add_argument("--prepare", action="store_true")
     parser.add_argument(
-        "--preflight", action="store_true", help="Validate CDP session and Skills panel"
+        "--preflight",
+        action="store_true",
+        help="Validate CDP, Skills panel, and Add → Upload menuitem",
+    )
+    parser.add_argument(
+        "--diagnose-upload-menu",
+        action="store_true",
+        help="Snapshot Add → menu inventory JSON; never open the upload dialog",
     )
     parser.add_argument("--print-chrome-cmd", action="store_true")
     parser.add_argument("--bundles-dir", metavar="DIR")
@@ -245,6 +254,15 @@ def main() -> int:
         except Exception as exc:
             logger.error("preflight failed", extra={"error": str(exc)})
             print(f"PREFLIGHT FAILED: {exc}", file=sys.stderr)
+            return 1
+    if args.diagnose_upload_menu:
+        try:
+            path, found = asyncio.run(diagnose_upload_menu_session(args.cdp_url))
+            print(path)
+            return 0 if found else 1
+        except Exception as exc:
+            logger.error("diagnose-upload-menu failed", extra={"error": str(exc)})
+            print(f"DIAGNOSE FAILED: {exc}", file=sys.stderr)
             return 1
     if args.status:
         if args.bundles_dir:

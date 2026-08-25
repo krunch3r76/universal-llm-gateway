@@ -1,91 +1,95 @@
-Keep **claude.ai Customize → Skills** aligned with local `CLAUDE_BUNDLE_SLUGS`.
+Keep **claude.ai Customize → Skills** aligned with catalog Claude.ai targets.
 
-**Skill:** `docs/agent-guides/skills/claude-ai-bundle-sync.md`  
+**Skill:** `.cursor/skills/claude-ai-bundle-sync/SKILL.md`  
 **Cortex:** `decision:claude-ai-skill-upload-automation`  
-**Authority:** `libs/claude_bundles/resolver.py` → `CLAUDE_BUNDLE_SLUGS`
+**Authority:** `config/skills.yaml` → `claude_ai_targets()`  
+**CDP host:** Jupiter. Every status / preflight / diagnose / upload / uninstall
+command goes through `scripts/cortex/claude-ai-sync-jupiter`.
 
 ## Subcommands
 
 | Invocation | Action |
 |---|---|
 | `/claude-ai-sync` | Default: **status** — regen check + UI parity scan |
-| `/claude-ai-sync status` | Drift scan only (Chrome CDP required) |
-| `/claude-ai-sync regen` | Render shared_sync to `/mnt/torus/gateway/claude-ai-sync/skills/` + validate |
+| `/claude-ai-sync status` | Drift scan only |
+| `/claude-ai-sync preflight` | CDP + panel + Add → Upload menuitem (fail-closed) |
+| `/claude-ai-sync diagnose` | Menu inventory JSON; never opens the upload dialog |
+| `/claude-ai-sync regen` | Render shared_sync + validate |
 | `/claude-ai-sync upload` | Upload **NEW** slugs (skip table hits) |
-| `/claude-ai-sync replace` | Re-upload **all** slugs (content refresh) |
+| `/claude-ai-sync replace` | Re-upload **named** slugs (`--slugs SLUG --replace`) |
+
+Fleet-wide `--all --replace` requires `--force-replace-all`. Cursor owns
+regen → preflight → replace → status in-session.
 
 ## Prerequisites
 
-Operator must have Chrome attached (logged into claude.ai, Customize → Skills open):
-
-```bash
-python scripts/cortex/upload_claude_bundles_ui.py --print-chrome-cmd
-# run printed google-chrome … command on Jupiter (or local), then open Skills
-```
-
-If CDP is unavailable, run **regen** steps only and report that `--status`/upload need Chrome.
+Chrome CDP on Jupiter (`scripts/cortex/claude-ai-sync-jupiter ensure-chrome`).
+If CDP is down, run **regen** only and report that status/upload need Chrome.
 
 ## Agent sequence
 
 ### 1. Orient
 
-Read `docs/agent-guides/skills/claude-ai-bundle-sync.md` (md_read first section if long).
+Read `.cursor/skills/claude-ai-bundle-sync/SKILL.md` (md_read first section if long).
 
 ### 2. Regen (status, regen, upload, replace)
 
 From repo root `/mnt/torus/projects/universal-llm-gateway`:
 
 ```bash
-python scripts/cortex/gen_claude_bundles.py
-python scripts/cortex/gen_claude_bundles.py --check
+"$HOME/.venvs/universal/bin/python" scripts/cortex/gen_claude_bundles.py
+"$HOME/.venvs/universal/bin/python" scripts/cortex/gen_claude_bundles.py --check
 ```
 
 Stop on `--check` failure; fix SOT/description issues before upload.
 
-### 3. Status (default, status)
+### 3. Status
 
 ```bash
-python scripts/cortex/upload_claude_bundles_ui.py --status
+scripts/cortex/claude-ai-sync-jupiter status
 ```
 
-Interpret stderr:
-
-- `missing_on_ui` → run **upload**
-- `invalid_local` → fix regen, re-run **regen**
-- `extra_on_ui` → optional manual delete on claude.ai (automation does not delete)
+- `missing_on_ui` → **upload**
+- `invalid_local` → fix regen
+- `extra_on_ui` → `uninstall --slugs …`
 - exit **0** → parity OK
 
-Dry-run preview (optional):
+### 4. Preflight (before any upload)
 
 ```bash
-python scripts/cortex/upload_claude_bundles_ui.py --all --dry-run
+scripts/cortex/claude-ai-sync-jupiter preflight
 ```
 
-### 4. Upload (upload)
-
-**Operator runs** (CDP + logged-in session — agent may propose, not assume Chrome):
+Exit 1 writes `preflight.json`. Isolate the menu without uploading:
 
 ```bash
-python scripts/cortex/upload_claude_bundles_ui.py --all --continue-on-error
+scripts/cortex/claude-ai-sync-jupiter diagnose-upload-menu
 ```
 
-Re-run `--status` after operator confirms upload finished.
-
-### 5. Replace (replace)
-
-After substantive SOT/bundle content changes:
+### 5. Upload new slugs
 
 ```bash
-python scripts/cortex/upload_claude_bundles_ui.py --all --replace --continue-on-error
+scripts/cortex/claude-ai-sync-jupiter upload --slugs SLUG --continue-on-error
+scripts/cortex/claude-ai-sync-jupiter status
+```
+
+### 6. Replace named slugs
+
+After SOT/bundle content changes:
+
+```bash
+scripts/cortex/claude-ai-sync-jupiter upload --slugs SLUG --replace
+scripts/cortex/claude-ai-sync-jupiter status
 ```
 
 ## Invariants
 
-- **UI path only** — Skills API (`upload_claude_bundles.py --api`) does **not** populate Customize → Skills.
+- **UI path only** — Skills API (`upload_claude_bundles.py --api`) does not populate Customize → Skills.
 - Descriptions ≤200 chars; no XML-like tags in YAML description.
-- Cursor-only skills (e.g. `hei-application-discipline`) are **not** in `CLAUDE_BUNDLE_SLUGS`.
-- Success = slug visible in Skills table (`--status` clean), not merely modal closed.
+- `cursor_only` skills never upload here.
+- Success = slug visible in Skills table (`status` clean) plus network oracle on replace — not plugin MATCH and not Stargate `running`.
 
 ## Report
 
-Close with: target count, on_ui count, missing/extra/invalid lists, next recommended subcommand.
+Close with: target count, on_ui count, missing/extra/invalid lists, preflight
+path if failed, next recommended subcommand.

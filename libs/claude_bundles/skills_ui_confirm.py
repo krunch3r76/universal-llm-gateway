@@ -27,9 +27,15 @@ async def replace_confirm_open(page: Page) -> bool:
 
 
 async def replace_confirm_root(page: Page) -> Locator | None:
+    # Base UI portals use data-popup-open; Radix replace-confirm still uses
+    # data-state=open. Keep both — title/body text is the discriminator.
     for sel in (
-        page.locator('[data-state="open"]').filter(has_text=_REPLACE_CONFIRM_TITLE),
-        page.locator('[data-state="open"]').filter(has_text=_REPLACE_BODY),
+        page.locator('[data-popup-open], [role="dialog"], [data-state="open"]').filter(
+            has_text=_REPLACE_CONFIRM_TITLE
+        ),
+        page.locator('[data-popup-open], [role="dialog"], [data-state="open"]').filter(
+            has_text=_REPLACE_BODY
+        ),
     ):
         if await sel.count():
             ov = sel.last

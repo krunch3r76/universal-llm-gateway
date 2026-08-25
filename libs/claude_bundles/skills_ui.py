@@ -1,8 +1,13 @@
-"""Playwright orchestration for claude.ai Customize → Skills uploads."""
+"""Playwright orchestration for claude.ai Customize → Skills uploads.
+
+Session entrypoints: preflight, diagnose-upload-menu, and multi-slug upload.
+CDP must already be up on Jupiter; this module does not launch Chrome.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import tempfile
 from collections.abc import Sequence
@@ -22,16 +27,29 @@ from claude_bundles.skills_ui_evidence import (
     capture_failure_state,
     composer_has_attachments,
 )
+from claude_bundles.skills_ui_menu import (
+    PreflightMenuError,
+    diagnose_payload,
+    empty_inventory,
+    resolve_upload_selection,
+    select_upload_item,
+    stability_guarded_add_click,
+    wait_menu_idle,
+)
 from claude_bundles.skills_ui_network import UploadNetworkOracle
 from claude_bundles.skills_ui_panel import (
     DEFAULT_CDP_URL,
     NavigationGate,
     _dismiss_modals,
+    _find_add_button,
+    _skills_panel_visible,
+    _skills_table_rows,
     chrome_start_hint,
     connect_cdp,
     debug_cdp,
     listed_skill_names,
     open_skills_panel,
+    panel_state_summary,
     prepare_session,
     run_preflight,
 )
@@ -47,6 +65,7 @@ __all__ = [
     "list_zip_dir",
     "prepare_session",
     "run_preflight_session",
+    "diagnose_upload_menu_session",
     "upload_skills",
     "upload_zips",
 ]
@@ -79,13 +98,77 @@ async def _assert_composer_clean(page: Page, slug: str) -> None:
         )
 
 
-async def run_preflight_session(cdp_url: str) -> None:
-    """Standalone preflight — CDP, session, panel, Add button."""
+def _write_menu_json(run_dir: Path, name: str, payload: dict) -> Path:
+    run_dir.mkdir(parents=True, exist_ok=True)
+    path = run_dir / name
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return path
+
+
+async def run_preflight_session(cdp_url: str, *, run_dir: Path | None = None) -> None:
+    """Connect CDP, assert Add → Upload is selectable, write ``preflight.json`` on fail."""
+    effective_run_dir = run_dir or _default_run_dir()
     pw, _browser, context, page = await connect_cdp(cdp_url)
     try:
         await run_preflight(page, context)
         logger.info("preflight OK", extra={"cdp_url": cdp_url, "url": page.url})
         print(f"OK preflight — {page.url}", file=sys.stderr)
+    except PreflightMenuError as exc:
+        payload = diagnose_payload(
+            exc.inventory,
+            panel_visible=await _skills_panel_visible(page),
+            rows=await _skills_table_rows(page),
+            composer_chips=await composer_has_attachments(page),
+            selection=select_upload_item(exc.inventory),
+        )
+        path = _write_menu_json(effective_run_dir, "preflight.json", payload)
+        print(f"PREFLIGHT FAILED: {exc}\n{path}", file=sys.stderr)
+        raise
+    finally:
+        await pw.stop()
+
+
+async def diagnose_upload_menu_session(
+    cdp_url: str, *, run_dir: Path | None = None
+) -> tuple[Path, bool]:
+    """Snapshot Add → menu inventory; never open the upload dialog.
+
+    Returns ``(json_path, upload_item_found)``. Escape closes the menu before
+    return so the composer and upload modal stay untouched.
+    """
+    effective_run_dir = run_dir or _default_run_dir()
+    pw, _browser, context, page = await connect_cdp(cdp_url)
+    try:
+        page = await open_skills_panel(page, context)
+        add = await _find_add_button(page)
+        if add is None:
+            inv = empty_inventory(page.url)
+            sel = select_upload_item(inv)
+        else:
+            await stability_guarded_add_click(add)
+            inv = await wait_menu_idle(page, add)
+            sel, inv = await resolve_upload_selection(page, add, inv)
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(300)
+        png_path = effective_run_dir / "diagnose-upload-menu.png"
+        effective_run_dir.mkdir(parents=True, exist_ok=True)
+        await page.screenshot(path=str(png_path), full_page=True)
+        payload = diagnose_payload(
+            inv,
+            panel_visible=await _skills_panel_visible(page),
+            rows=await _skills_table_rows(page),
+            composer_chips=await composer_has_attachments(page),
+            selection=sel,
+            evidence_paths={"screenshot": str(png_path)},
+        )
+        path = _write_menu_json(effective_run_dir, "diagnose-upload-menu.json", payload)
+        found = sel.status in ("found", "drift")
+        print(
+            f"{'OK' if found else 'MISSING'} diagnose-upload-menu — {path}",
+            file=sys.stderr,
+        )
+        print(await panel_state_summary(page, context), file=sys.stderr)
+        return path, found
     finally:
         await pw.stop()
 
@@ -222,7 +305,13 @@ async def upload_skills(
                 except ComposerPollutedError as exc:
                     last_exc = exc
                     print(f"ERROR {slug} (composer polluted): {exc}", file=sys.stderr)
-                    evidence = await capture_failure_state(page, slug, effective_run_dir, oracle)
+                    evidence = await capture_failure_state(
+                        page,
+                        slug,
+                        effective_run_dir,
+                        oracle,
+                        inventory=getattr(exc, "inventory", None),
+                    )
                     report.composer_polluted = True
                     report.record_failure(
                         slug,
@@ -239,7 +328,13 @@ async def upload_skills(
                 except Exception as exc:
                     last_exc = exc
                     print(f"ERROR {slug} (attempt {attempts}): {exc}", file=sys.stderr)
-                    evidence = await capture_failure_state(page, slug, effective_run_dir, oracle)
+                    evidence = await capture_failure_state(
+                        page,
+                        slug,
+                        effective_run_dir,
+                        oracle,
+                        inventory=getattr(exc, "inventory", None),
+                    )
                     await _dismiss_modals(page)
                     if attempt == 0:
                         page = await open_skills_panel(page, context, nav_gate=nav_gate)
@@ -297,6 +392,7 @@ upload_zips = upload_skills
 
 
 def list_zip_dir(zip_dir: Path, *, slugs: Sequence[str] | None = None) -> list[tuple[str, Path]]:
+    """Return ``(slug, zip_path)`` pairs from ``zip_dir``, optionally filtered."""
     if not zip_dir.is_dir():
         raise FileNotFoundError(f"Zip dir not found: {zip_dir}")
     paths = sorted(zip_dir.glob("*.zip"))
@@ -309,6 +405,7 @@ def list_zip_dir(zip_dir: Path, *, slugs: Sequence[str] | None = None) -> list[t
 def list_bundle_mds(
     bundles_dir: Path, *, slugs: Sequence[str] | None = None
 ) -> list[tuple[str, Path]]:
+    """Return ``(slug, SKILL.md)`` pairs from staged bundle dirs, optionally filtered."""
     if not bundles_dir.is_dir():
         raise FileNotFoundError(f"Bundles dir not found: {bundles_dir}")
     if slugs:

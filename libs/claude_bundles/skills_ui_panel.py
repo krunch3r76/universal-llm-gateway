@@ -15,6 +15,12 @@ from playwright.async_api import (
     async_playwright,
 )
 
+from claude_bundles.skills_ui_menu import (
+    PreflightMenuError,
+    assert_add_menu_upload_ready,
+    stability_guarded_add_click,
+)
+
 SKILLS_URL = "https://claude.ai/new#settings/customize-skills"
 DEFAULT_CDP_URL = os.environ.get("BROWSER_CDP_URL", "http://127.0.0.1:9222")
 
@@ -380,7 +386,7 @@ async def open_skills_panel(
 
 
 async def run_preflight(page: Page, context: BrowserContext) -> None:
-    """CDP session valid, panel mounts, Add visible, dry menu open/close."""
+    """CDP + panel + Add + selectable Upload menuitem (fail-closed)."""
     if await _page_blocked(page):
         raise RuntimeError(
             "Preflight failed: Cloudflare or login gate — solve in Chrome, then re-run"
@@ -392,8 +398,14 @@ async def run_preflight(page: Page, context: BrowserContext) -> None:
             "Preflight failed: Add button not visible — open Customize → Skills\n"
             + await panel_state_summary(page, context)
         )
-    await add.click()
-    await page.wait_for_timeout(600)
+    await stability_guarded_add_click(add)
+    try:
+        await assert_add_menu_upload_ready(page, add)
+    except PreflightMenuError as exc:
+        raise PreflightMenuError(
+            f"{exc}\n{await panel_state_summary(page, context)}",
+            exc.inventory,
+        ) from exc
     await page.keyboard.press("Escape")
     await page.wait_for_timeout(400)
     if not await _find_add_button(page):
@@ -404,7 +416,10 @@ async def run_preflight(page: Page, context: BrowserContext) -> None:
 
 
 async def _upload_modal_root(page: Page) -> Locator | None:
-    overlays = page.locator('[data-state="open"].fixed, [role="dialog"]')
+    # Base UI uses data-popup-open; Radix dialogs still use data-state=open.
+    overlays = page.locator(
+        '[data-popup-open], [role="dialog"], [data-state="open"].fixed'
+    )
     for i in range(await overlays.count()):
         ov = overlays.nth(i)
         if not await ov.is_visible():
@@ -414,7 +429,7 @@ async def _upload_modal_root(page: Page) -> Locator | None:
     title = page.get_by_text(_UPLOAD_TITLE)
     if await title.count() and await title.first.is_visible():
         parent = title.first.locator(
-            "xpath=ancestor::*[@data-state='open' or @role='dialog'][1]"
+            "xpath=ancestor::*[@data-popup-open or @data-state='open' or @role='dialog'][1]"
         )
         if await parent.count():
             return parent.first
@@ -449,12 +464,18 @@ async def _upload_modal_open(page: Page) -> bool:
 
 async def _dismiss_modals(page: Page) -> None:
     for _ in range(8):
-        blocking = page.locator('[data-state="open"].fixed')
+        blocking = page.locator('[data-popup-open], [data-state="open"].fixed')
         if not await blocking.count() and not await _upload_modal_open(page):
             return
         for close in (
-            page.locator('[data-state="open"] button[aria-label="Close"]'),
-            page.locator('[data-state="open"] button[aria-label="close"]'),
+            page.locator(
+                '[data-popup-open] button[aria-label="Close"], '
+                '[data-state="open"] button[aria-label="Close"]'
+            ),
+            page.locator(
+                '[data-popup-open] button[aria-label="close"], '
+                '[data-state="open"] button[aria-label="close"]'
+            ),
             page.get_by_role("button", name=re.compile(r"^close$", re.I)),
         ):
             if await close.count() and await close.first.is_visible():
