@@ -39,6 +39,66 @@ _EXTRACT_JS = """() => {
 }"""
 
 
+def _is_sso(url: str) -> bool:
+    """True when the tab is PingFederate Sign On, not a live Reflexis roster."""
+    return "sso.walgreens.com" in url or "/idp/SSO.saml2" in url
+
+
+def _pick_reflexis_page(ctx):
+    """Prefer a live Reflexis tab. Skip SSO RelayState URLs that also contain reflexisinc.com."""
+    return next(
+        (
+            pg
+            for pg in ctx.pages
+            if "reflexisinc.com" in (pg.url or "") and not _is_sso(pg.url or "")
+        ),
+        None,
+    )
+
+
+def _pick_wconnect_page(ctx):
+    """W Connect My Schedule shell — used to re-launch Workforce Scheduler."""
+    return next(
+        (pg for pg in ctx.pages if "wconnect.walgreens.com" in (pg.url or "")),
+        None,
+    )
+
+
+async def _launch_workforce_scheduler(page) -> None:
+    """Click Launch Workforce Scheduler on W Connect so Reflexis My Work opens."""
+    clicked = await page.evaluate(
+        """() => {
+          const el = [...document.querySelectorAll('a,button,span')]
+            .find((n) => (n.innerText || '').trim() === 'Launch Workforce Scheduler');
+          if (!el) return false;
+          el.click();
+          return true;
+        }"""
+    )
+    if not clicked:
+        raise RuntimeError("Launch Workforce Scheduler not found on W Connect")
+
+
+async def _wait_live_reflexis(ctx, timeout_s: float = 20.0):
+    """Wait until a Reflexis tab is stable (not an SSO hop that briefly looks live)."""
+    deadline = asyncio.get_event_loop().time() + timeout_s
+    while asyncio.get_event_loop().time() < deadline:
+        page = _pick_reflexis_page(ctx)
+        if page is not None:
+            try:
+                await page.wait_for_timeout(400)
+                url = page.url or ""
+                if "reflexisinc.com" in url and not _is_sso(url):
+                    await page.evaluate("() => document.readyState")
+                    return page
+            except Exception:
+                pass
+        await asyncio.sleep(0.25)
+    raise RuntimeError(
+        "Workforce Scheduler did not open a live Reflexis tab; Sign On may have lapsed"
+    )
+
+
 async def _week_label(frame) -> str:
     raw = await frame.locator(".weekDateLabel").first.inner_text()
     return raw.replace("\xa0", " ").strip()
@@ -50,14 +110,24 @@ async def _ensure_my_schedule(page):
         return frame
     await page.evaluate(
         """() => {
-          const rail = [...document.querySelectorAll('li')]
-            .find((el) => el.classList.contains('active-submodule'))
-            || [...document.querySelectorAll('li')]
-            .find((el) => (el.innerText || '').trim() === 'ESS');
-          if (rail) rail.click();
+          const byText = (label) => [...document.querySelectorAll('li')]
+            .find((el) => (el.innerText || '').trim() === label);
+          let ess = byText('ESS');
+          if (!ess) {
+            const more = byText('More');
+            if (more) more.click();
+          }
         }"""
     )
-    await page.wait_for_timeout(800)
+    await page.wait_for_timeout(400)
+    await page.evaluate(
+        """() => {
+          const ess = [...document.querySelectorAll('li')]
+            .find((el) => (el.innerText || '').trim() === 'ESS');
+          if (ess) ess.click();
+        }"""
+    )
+    await page.wait_for_timeout(1200)
     await page.evaluate(
         """() => {
           const header = [...document.querySelectorAll('mat-expansion-panel-header')]
@@ -65,11 +135,12 @@ async def _ensure_my_schedule(page):
           if (header) header.click();
         }"""
     )
-    await page.wait_for_timeout(2500)
-    frame = next((f for f in page.frames if _FRAME_NEEDLE in (f.url or "")), None)
-    if frame is None:
-        raise RuntimeError("My Schedule iframe not found; stay on signed-in My Work")
-    return frame
+    for _ in range(16):
+        await page.wait_for_timeout(250)
+        frame = next((f for f in page.frames if _FRAME_NEEDLE in (f.url or "")), None)
+        if frame is not None:
+            return frame
+    raise RuntimeError("My Schedule iframe not found; stay on signed-in My Work")
 
 
 async def _wait_rows(frame, minimum: int = 7) -> int:
@@ -150,12 +221,16 @@ async def harvest(cdp: str, weeks: int) -> dict:
     async with async_playwright() as playwright:
         browser = await playwright.chromium.connect_over_cdp(cdp)
         ctx = browser.contexts[0]
-        page = next(
-            (pg for pg in ctx.pages if "reflexisinc.com" in (pg.url or "")),
-            None,
-        )
+        page = _pick_reflexis_page(ctx)
         if page is None:
-            raise RuntimeError("no Reflexis tab on CDP; open Workforce Scheduler first")
+            wconnect = _pick_wconnect_page(ctx)
+            if wconnect is None:
+                raise RuntimeError(
+                    "no Reflexis or W Connect tab on CDP; open Workforce Scheduler first"
+                )
+            await wconnect.bring_to_front()
+            await _launch_workforce_scheduler(wconnect)
+            page = await _wait_live_reflexis(ctx)
         await page.bring_to_front()
         frame = await _ensure_my_schedule(page)
         await _rewind_to_today(frame)
