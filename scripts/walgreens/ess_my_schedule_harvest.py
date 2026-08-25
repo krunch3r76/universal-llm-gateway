@@ -2,6 +2,8 @@
 """Harvest ESS My Schedule weeks from a standing Jupiter Chrome CDP session.
 
 Reattach only — does not launch Chrome or enter credentials.
+Skips PingFederate SSO tabs even when RelayState contains reflexisinc.com.
+Opens ESS My Schedule by rail text (not COMPASS ``active-submodule``).
 
     HOME=$HOME PLAYWRIGHT_BROWSERS_PATH=$HOME/.cache/ms-playwright \\
       $HOME/.venvs/universal/bin/python scripts/walgreens/ess_my_schedule_harvest.py \\

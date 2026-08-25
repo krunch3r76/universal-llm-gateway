@@ -4,9 +4,10 @@ alwaysApply: false
 ---
 # Walgreens shift sync (on demand)
 
-**Invariant**: `operator_asks(sync_shifts ∨ new_reflexis ∨ run_walgreens_runbook) ⇒ execute(runbook:walgreens-sync-shift)` · `¬email_as_sot` · `¬schedule_unless_asked`.
+**Invariant**: `operator_asks(sync_shifts ∨ new_reflexis ∨ run_walgreens_runbook) ⇒ execute(runbook:walgreens-sync-shift)` · `¬email_as_sot` · `¬schedule_unless_asked` · `¬pin_dated_roster_in_runbook`.
 
 SOT body: `cortex://notes/runbooks/walgreens-sync-shift.md` · entity `runbook:walgreens-sync-shift`.
+Roster authority = live ESS My Schedule only. Calendar is one-way reconcile (phone). Harvest JSON + Cortex events are projections, not a second roster.
 
 ## Order
 
@@ -21,6 +22,8 @@ Harvest SHA unchanged ⇒ skip B and C, report no-op.
 | Cowork scrape as Leg A | Jupiter scripts on `:9260` |
 | Claim Clock alarm with no connector | `clock_connector=none` + Calendar popups |
 | Invent Maps minutes on the dashboard | `—` or skip the new edge |
+| Pin dated store/clock/wake rows in the runbook | Harvest JSON + wake **formula**; last bake is historical |
+| Bake the dashboard from Calendar / old HTML / email | Remaining scheduled days from the **current** harvest |
 | Install a cron because it might help | Schedule is a later ask; cost table is in the runbook |
 
 ## Trigger phrases
