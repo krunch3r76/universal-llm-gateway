@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scripts.model_manager.ui.dispatch_monitor.core import fingerprint as fingerprint_mod
+from scripts.model_manager.ui.dispatch_monitor.core import (
+    fingerprint as fingerprint_mod,
+)
 from scripts.model_manager.ui.dispatch_monitor.core import signals
 from scripts.model_manager.ui.dispatch_monitor.core.board_lines import lease_body_lines
 from scripts.model_manager.ui.dispatch_monitor.core.model import Model
 from scripts.model_manager.ui.dispatch_monitor.core.protocols import Event
-from scripts.model_manager.ui.dispatch_monitor.core.tests.conftest import fixture_path
 from scripts.model_manager.ui.dispatch_monitor.core.replay import JsonlEventSource
+from scripts.model_manager.ui.dispatch_monitor.core.tests.conftest import fixture_path
 from scripts.model_manager.ui.dispatch_monitor.ulg.seeder import seed_model
 from scripts.model_manager.ui.dispatch_monitor.ulg.snapshot_events import (
     events_from_lease_snapshot,

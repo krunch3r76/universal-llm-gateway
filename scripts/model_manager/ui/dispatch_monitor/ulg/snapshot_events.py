@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
-from typing import Any, Mapping
+from typing import Any
 
 from scripts.model_manager.ui.dispatch_monitor.core import signals
-from scripts.model_manager.ui.dispatch_monitor.core.protocols import Event
-from scripts.model_manager.ui.dispatch_monitor.core.protocols import EventRecord
+from scripts.model_manager.ui.dispatch_monitor.core.protocols import Event, EventRecord
 
 _RECONCILED_SOURCE = "ulg://git-integration-worker/reconciled"
 
