@@ -149,6 +149,12 @@ bouncing between two incompatible approaches.
 - The value here is escaping the executor's framing trap: a packet-booted consult
   pass often identifies root causes the executor missed
 
+**CDP carve-out (BINDING — a:30435):** operator-named `team_dispatch(model=cdp/…)`
+that has not reached claude.ai (`satellite_execution_id=None`, 429-before-create)
+is **not** a stop. Next move is `claude-ai-cdp-navigation` § Followup failure
+triage (followup retained CSE), not consult/park. Do not apply this detent
+until dispatch-delivery is attempted.
+
 ### 4. At Phase Boundaries
 
 ∀ multi-step task (3+ distinct steps): checkpoint at each phase transition.
@@ -190,6 +196,7 @@ bouncing between two incompatible approaches.
 | Use handoff for thin implement ping | `agent_bus(post, to=cursor, …)` + spec/tags |
 | Poll `pipeline(op=result)` after handoff | `agent_bus(wait)` from `poll_hint` — handoff has no `execution_id` (code-surface `pipeline` ¬ for life) |
 | Override operator `team_dispatch` with `agent_bus`, citing the thin-ping row | Operator-named transport wins; obey it or stop and ask — never silently substitute |
+| Apply §3 ≥2-failure stop to operator-named `cdp/…` that never reached claude.ai | Followup retained CSE per `claude-ai-cdp-navigation` 429-before-create; ¬ park |
 | `cursor-implement` as the first hop on a bug with open root cause / design (friction 13571 → thread 1377) | recon/investigate first — code-lane `judgment_required` → autonomous spine (`decision:autonomous-work-item-spine`); attended `web-consult`/`cursor-consult` = opt-in/escalate; then distill attrs → execute default `cursor-sdk` + `source_ref`; `cursor-implement` = fallback |
 | Composer / `cursor-implement` authors its own dispatch-ready spec (`cortex://notes/system/specs/{slug}.md`) | Reasoning tier (`web-consult` / `cursor-consult` / Opus) authors spec + todo seed; mechanical tier executes — never the reverse (`handoff-packet-authoring.md` § Dispatch lifecycle) |
 | Open a codified bug report with redesign / graph-walk before investigate/fix/report | Run the bug cycle first; secondary findings belong in the closeout |

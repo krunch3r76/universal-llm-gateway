@@ -64,6 +64,22 @@ running → turn_idle → content_proof → archiving → terminal | failed
 | `archive_uri` / `terminal` | Harvest terminal **for that generate's tracker file**. An archive body that is only an API 529/500 banner is **not** consult-body proof and **not** "CSE empty" — scrape that generate's `chat_url` (`cse_session(op=harvest, source=chat)`). Artifact cards need body harvest, not the tracker envelope (a:30408 / a:30411). Do not retarget harvest at a prior retained CSE as the sole live session. |
 | `failed` + `stall_stage` | Stall lane — **≠ running** |
 
+### Dispatch delivery (BINDING — a:30435)
+
+This ladder harvests a generate that already has a Cowork session. Operator
+“dispatch to cdp/X” is a **different** complete:
+
+```
+operator dispatch-to-cdp complete ⇔
+  chat_url observed (satellite_execution_id set)
+  ∨ cse_session(followup) send_verified on a model-attested CSE
+admit ∧ satellite_execution_id=None = not delivered
+Stargate status=running ≠ on claude.ai
+```
+
+A Stargate 202 / bus `status=running` / FAILED harvest `no_target` is **not**
+instruction-complete. Recovery: § Followup failure triage (429-before-create).
+
 **Long-running ≠ stalled:** Opus/Cowork may sit `running`+`stall_stage=null` many minutes. Forbidden: duration → `cdp_unavailable`, abort-and-skip, or Stage-B without harvest proof.
 
 **Operator-proxy CSE retain (BINDING):** for `purpose=operator-proxy|mission`, the generate poller must **not** Stop-click / kill the CSE on `max_wall_s` or `no_progress_s`. Idle between DIRECTIVE legs is expected. Clean CSE break is allowed only for **continuity handoff** (after a new CSE launch is confirmed) or rare human escalation — see `cdp-operator-proxy` § CSE lifetime. `wall_clock_exceeded` on a mission is poller-detach / false FAILED if it still appears — reattach; ¬ treat as arc dead. Generate `max_wall_s` measures seconds since the last observed fingerprint progress (reset on each delta), not cumulative job elapsed time; mission retain posture is unchanged.
@@ -246,8 +262,17 @@ body + `cortex://`* explicitly so the seat does not answer into an artifact card
 ## Parallel Chrome (BINDING)
 
 **DEFAULT:** `register_lane` / `project-ask --register`. Soft=**2**, hard=**3**
-concurrent for recorded stream admission — use `free_slots` /
-`at_hard_limit` from the recorded admission projection, not drain-only
+concurrent for recorded **stream** admission.
+
+**purpose=ask (BINDING — a:30435):** read `other_count` vs `advisor_reserve`,
+not `free_slots` / `at_hard_limit`. Current gate: a second unattended ask is
+refused when `other_count >= advisor_reserve` (today `1`) even if
+`free_slots=2` and `at_hard_limit=false`. Those two fields are **stream**
+headroom (seat / operator-proxy), not ask-mint room. Occupancy-policy change
+is a separate todo — describe the live gate, do not assume two asks are legal.
+
+Use `free_slots` / `at_hard_limit` from the recorded admission projection
+for stream (seat) capacity, not drain-only `effective_count`.
 `effective_count` is the recorded execution count for restart state; live
 browser attachments are diagnostic evidence only. `live_cse_count` remains
 unique normalized session URLs and `live_cse_target_count` preserves duplicate
@@ -274,6 +299,7 @@ orphan observability: L3 `reference-annex.md`.
 | Register / list | `list-lanes` / `deregister-lane` |
 
 **Anti-pattern:** opening a new CDP consult via any leftover `project_ask` recipe. Product is `team_dispatch(model=cdp/…)`.
+Admit / `status=running` is not delivery — § Dispatch delivery.
 
 ### Warm follow-up duty (BINDING — 2026-07-31)
 
@@ -291,6 +317,7 @@ A retained operator-proxy CSE is a **live correspondent**, not an archive. Reach
 
 | Error | What it actually means | Next move | Receipt note |
 |---|---|---|---|
+| 429-before-create (`cdp lane admission refused (hard)` + `satellite_execution_id=None`) | Stargate admitted; satellite never minted Chrome. Harvest `not_attached` / `no_target` on the Stargate id is **expected**, not “CSE gone.” Current ask gate: `other_count >= advisor_reserve` | If a retained `chat_url` exists for this consult, `cse_session(op=followup)` it. **Forbidden:** third `team_dispatch(model=cdp/…)`; parking as instruction-complete; applying advisor-timing ≥2-failure stop before followup (a:30435). Same second-window ban as a:30405 | n/a |
 | `lane_not_attached` after passing **only** `execution_id` | Often **wrong id space**. A `cdp/*` `team_dispatch` returns a **Stargate** id; the satellite mints its own (see harvest archive `execution_id:`). The resolver maps exe→registration and **bails before scanning any lane** when that lookup misses — so this error does **not** prove the CSE is gone | Retry with `chat_url` (highest precedence — skips the mapping and scans all lanes), or with the **satellite** id from the archive | n/a |
 | `cse_not_found_on_lane` | Lanes were scanned; the page is **not open** on any attached lane. The URL may still be perfectly valid. `url` echoes the scanned `chat_url`; `reattach_skipped_reason` names why auto-resume did not run. `state=historical` is attach-journal (`host_state=not_listable`), **not** a dead CSE | Unique dormant/bound seats auto-resume. If `reattach_skipped_reason=no_bound_or_dormant_seat` (or `bound_host_unlistable`), retry `reattach=true`. **Forbidden:** `team_dispatch(model=cdp/…)` generate as recovery — that mints a second window (a:30405 / a:27476) | n/a |
 | `attended_dormant` | The attended seat exists and is reattachable; its Chrome was released. Not a missing session | Pass `chat_url` (the error carries it in `candidates[0]`) — the satellite relaunches and parks it again | n/a |
@@ -308,7 +335,7 @@ dead CSE (`live_cse_count` is attachment occupancy, not session liveness — a:2
 Bounding live Chrome this way is what keeps the Xvfb client pool (default ceiling
 64) from exhausting — the failure that broke hopping when ~100 hosts accumulated.
 
-**Anti-patterns:** bus NOTE + operator push reminder standing in as the *delivery* of a wake the seat could have read in chat; reaching SSH-first for `cowork_chat_followup.py` from an IDE seat that holds `cse_session` (CLI is the escape, for hub checkout / no attached lane); CLI submit onto `/new` for a turn that belongs on a retained CSE; relaying `ok=true` / `send_verified=true` from a **launch-path** (`lane_created=true`) paste as human/CSE-seat delivery (a:27855); treating `cse_not_found_on_lane` / `state=historical` as license for a fresh `team_dispatch(model=cdp/…)` generate (a:30405).
+**Anti-patterns:** bus NOTE + operator push reminder standing in as the *delivery* of a wake the seat could have read in chat; reaching SSH-first for `cowork_chat_followup.py` from an IDE seat that holds `cse_session` (CLI is the escape, for hub checkout / no attached lane); CLI submit onto `/new` for a turn that belongs on a retained CSE; relaying `ok=true` / `send_verified=true` from a **launch-path** (`lane_created=true`) paste as human/CSE-seat delivery (a:27855); treating `cse_not_found_on_lane` / `state=historical` as license for a fresh `team_dispatch(model=cdp/…)` generate (a:30405); treating 429-before-create / `satellite_execution_id=None` as instruction-complete or as license to park before followup (a:30435).
 
 Full FOL + escape recipe: L3 `reference-annex.md` § Warm follow-up.
 
@@ -327,7 +354,8 @@ IF6 / leftover CLI executions:
 
 - NEVER curl, fetch, or HTTP GET/POST to localhost/127.0.0.1 — especially **:8765** — for `/v1/project-ask/*`.
 - Port **8765** is **web-fetcher**, NOT the satellite. The cdp-ask satellite listens on **:8770** (`PROJECT_ASK_URL`).
-- Completion proof: `poll_hint` `archive_uri` (cortex:// harvest) or CLI harvest out-dir.
+- Harvest proof: `poll_hint` `archive_uri` (cortex:// harvest) or CLI harvest out-dir.
+- Dispatch-to-cdp complete: `chat_url` observed or followup `send_verified` — § Dispatch delivery. `archive_uri` is a later harvest rung, not admit-as-delivery.
 
 ```
 # IF6 only — prefer team_dispatch(model=cdp/…[, purpose=operator-proxy])

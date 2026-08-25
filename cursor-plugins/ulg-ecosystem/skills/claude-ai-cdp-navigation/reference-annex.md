@@ -105,8 +105,10 @@ SOT: `libs/cdp_ask/work_projection.py` `drain_projection()` and
 | `live_port_count` | Every responding registry-pool CDP `/json/version` port, including unrelated tabs |
 | `effective_count` | Recorded `running_count` alias — restart-drain only |
 | `soft_limit` / `hard_limit` | 2 / 3 |
-| `free_slots` | Recorded stream admission headroom from `admission_count` |
-| `at_soft_limit` / `at_hard_limit` | Recorded admission thresholds, not browser occupancy |
+| `free_slots` | Recorded **stream** admission headroom from `admission_count` — **¬** ask-mint room (a:30435) |
+| `at_soft_limit` / `at_hard_limit` | Recorded stream admission thresholds, not browser occupancy, not ask-mint room |
+| `other_count` | Pending/running non-seat (advisor / `purpose=ask`) rows |
+| `advisor_reserve` | Reserved advisor slot count (today `1`). For `purpose=ask`, compare `other_count` to this — not `free_slots` |
 
 **Recorded-only vs effective (BINDING):** `list_capacity()` counts registry rows with
 `status == active` only — recorded host capacity. `busy_status` / `/drain-state`

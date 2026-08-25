@@ -30,6 +30,7 @@ gap: `life-to-code-request-lane` (`lane:life-to-code`).
 ### CDP transport (MCP `project_ask` removed)
 
 Product = `team_dispatch(model=cdp/opus-5|cdp/fable)` → poll `poll_hint`.
+Delivery complete iff `chat_url` observed or followup `send_verified` — Stargate admit ≠ on claude.ai (`claude-ai-cdp-navigation` § Dispatch delivery).
 Warm paste / attended resolve = `cse_session(op=followup|resolve_attended)`.
 Admission/busy = `manage(action=busy_status)`. IF6 / satellite-direct submit =
 CLI (`scripts/cortex/claude-ai-sync-jupiter project-ask`). MCP `project_ask`

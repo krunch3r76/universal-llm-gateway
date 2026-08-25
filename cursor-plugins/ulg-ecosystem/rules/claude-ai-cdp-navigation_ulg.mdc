@@ -69,4 +69,6 @@ Until operator override or substrate change (friction 24906):
 | Re-poll aborted `execution_id` expecting reconnect | Dead id — warm submit same `holder` + `converse=true` for Cowork CSE; bus continuity = request thread |
 | Blame poller retain when Opus self-stopped after a leg | Load `cdp-operator-proxy` inv 30; page `cse-stream-stop` if unauthorized |
 | Treat card-toolbar **Google Drive** label as file location / Drive write | It is the **export-dropdown trigger** (choices: optional Drive — fleet never uses — ∨ **Download**); artifact bytes live in Outputs / in-chat card body — skill § File-card chrome |
+| Treat Stargate `status=running` as “on claude.ai” | Delivery = `chat_url` ∨ followup `send_verified` — skill § Dispatch delivery |
+| Read `free_slots` as ask-mint room | `purpose=ask`: `other_count` vs `advisor_reserve` — skill § Parallel Chrome |
 | Copy CDP mechanics into this rule | Defer to skill SOT |
