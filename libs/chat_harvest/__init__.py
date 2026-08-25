@@ -9,6 +9,10 @@ from chat_harvest.archive import (
     is_prefix_superset,
     parse_turns_from_archive,
 )
+from chat_harvest.claude_chat_adapter import (
+    execute_claude_harvest,
+    execute_claude_paste,
+)
 from chat_harvest.grok_adapter import (
     execute_grok_harvest,
     execute_grok_paste,
@@ -46,6 +50,8 @@ __all__ = [
     "classify_chat_url",
     "conv12",
     "cortex_files_root",
+    "execute_claude_harvest",
+    "execute_claude_paste",
     "execute_grok_harvest",
     "execute_grok_paste",
     "harvest_full_transcript",

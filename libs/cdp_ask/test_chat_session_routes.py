@@ -204,16 +204,96 @@ def test_paste_ok_emits_event(
     assert "registration_id" not in pasted[0]["payload"]
 
 
-def test_claude_chat_harvest_claude_adapter_pending(
+def test_claude_chat_harvest_200_emits_event(
     client: TestClient,
     emitted_events: list,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    harvest_response = ChatHarvestResponse(
+        outcome="harvested",
+        site="claude",
+        conversation_id="thread-uuid",
+        url=CLAUDE_CHAT_URL,
+        archive_uri="cortex://notes/system/threads/chat-harvest-claude-thread-uuid.md",
+        archive_sha256="c" * 64,
+        turn_count=2,
+    )
+
+    async def _fake_harvest(**_kwargs: object) -> ChatHarvestResponse:
+        return harvest_response
+
+    monkeypatch.setattr(
+        "cdp_ask.chat_session_harvest.execute_claude_harvest",
+        _fake_harvest,
+    )
+
     resp = client.post(
         "/v1/chat-session/harvest",
         json={"url": CLAUDE_CHAT_URL},
     )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["code"] == "claude_adapter_pending"
-    assert body["outcome"] == "refused"
+    assert body["archive_uri"] == harvest_response.archive_uri
+    assert body["archive_sha256"] == harvest_response.archive_sha256
+    assert body["turn_count"] == 2
+    harvested = [
+        e for e in emitted_events if e["signal"] == "mcp.chat.session.harvested"
+    ]
+    assert len(harvested) == 1
+    assert harvested[0]["payload"]["site"] == "claude"
+    assert harvested[0]["payload"]["conversation_id"] == "thread-uuid"
+
+
+def test_claude_new_harvest_no_conversation_no_event(
+    client: TestClient,
+    emitted_events: list,
+) -> None:
+    resp = client.post(
+        "/v1/chat-session/harvest",
+        json={"url": "https://claude.ai/new"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["outcome"] == "no_conversation"
+    assert body["conversation_id"] == ""
     assert not any(e["signal"] == "mcp.chat.session.harvested" for e in emitted_events)
+
+
+def test_claude_paste_ok_emits_event(
+    client: TestClient,
+    emitted_events: list,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paste_response = ChatPasteResponse(
+        ok=True,
+        site="claude",
+        conversation_id="thread-uuid",
+        url=CLAUDE_CHAT_URL,
+        archive_uri="cortex://notes/system/threads/chat-harvest-claude-thread-uuid.md",
+        archive_sha256="d" * 64,
+        send_verified=True,
+        pasted_at="2026-08-25T12:00:00+00:00",
+    )
+
+    monkeypatch.setattr(
+        "cdp_ask.chat_session_paste.execute_claude_paste",
+        AsyncMock(return_value=paste_response),
+    )
+
+    resp = client.post(
+        "/v1/chat-session/paste",
+        json={
+            "url": CLAUDE_CHAT_URL,
+            "prompt_text": "hello",
+            "grant": "operator",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["conversation_id"] == "thread-uuid"
+    assert body["archive_uri"] == paste_response.archive_uri
+    pasted = [e for e in emitted_events if e["signal"] == "mcp.chat.session.pasted"]
+    assert len(pasted) == 1
+    assert pasted[0]["payload"]["ok"] is True
+    assert pasted[0]["payload"]["archive_sha256"] == paste_response.archive_sha256

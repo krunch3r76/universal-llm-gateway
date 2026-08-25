@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
+from chat_harvest.claude_chat_adapter import execute_claude_harvest
 from chat_harvest.grok_adapter import execute_grok_harvest
 from chat_harvest.models import ClassifyRefuse, classify_chat_url
-from universal_logging import get_logger
 from web_chat_relay.grok_session import DEFAULT_CDP_URL
 
 from cdp_ask.chat_session_events import emit, mcp_chat_session_harvested
 from cdp_ask.chat_session_models import ChatHarvestRequest, ChatHarvestResponse
-
-logger = get_logger(__name__)
 
 
 def _emit_harvested(response: ChatHarvestResponse) -> None:
@@ -65,18 +63,29 @@ async def execute_harvest(req: ChatHarvestRequest) -> ChatHarvestResponse:
             _emit_harvested(result)
         return result
 
-    logger.info(
-        "chat_session harvest claude pending site=%s conversation_id=%s",
-        classified.site,
-        classified.conversation_id,
-    )
+    if classified.site == "claude":
+        result = await execute_claude_harvest(
+            url=classified.url,
+            site=classified.site,
+            conversation_id=classified.conversation_id,
+            cdp_url=cdp_url,
+            include_turns=req.include_turns,
+            limit=req.limit,
+            after_turn=req.after_turn,
+            supersede=req.supersede,
+            metadata_only=req.metadata_only,
+        )
+        if not req.metadata_only:
+            _emit_harvested(result)
+        return result
+
     return ChatHarvestResponse(
         outcome="refused",
         site=classified.site,
         conversation_id=classified.conversation_id,
         url=classified.url,
-        code="claude_adapter_pending",
-        reason="claude /chat/ adapter not implemented in this slice",
+        code="unsupported_site",
+        reason=f"unsupported site for harvest: {classified.site!r}",
     )
 
 

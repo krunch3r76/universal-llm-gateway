@@ -269,3 +269,275 @@ def test_relay_lock_fresh(tmp_path: Path) -> None:
     assert not relay_lock_fresh(state)
     state.write_text(json.dumps({"updated_at": time.time() - 5}), encoding="utf-8")
     assert relay_lock_fresh(state)
+
+
+CLAUDE_ID = "thread-uuid"
+CLAUDE_URL = f"https://claude.ai/chat/{CLAUDE_ID}"
+CSE_URL = "https://claude.ai/cowork/cse_abc123"
+
+
+class _FakeClaudePage:
+    def __init__(
+        self,
+        *,
+        url: str,
+        evaluate_result: dict | None = None,
+    ) -> None:
+        self.url = url
+        self._evaluate_result = evaluate_result or {}
+        self.keyboard = _FakeKeyboard()
+
+    async def bring_to_front(self) -> None:
+        return None
+
+    async def evaluate(self, _js, _arg=None) -> dict:  # noqa: ANN001
+        result = dict(self._evaluate_result)
+        result.setdefault("url", self.url)
+        return result
+
+    async def goto(self, url: str) -> None:
+        self.url = url
+
+    def get_by_role(self, _role: str, *, name=None):  # noqa: ANN001
+        return _FakeLocator(visible=True)
+
+
+class _FakeKeyboard:
+    async def insert_text(self, _text: str) -> None:
+        return None
+
+
+class _FakeLocator:
+    def __init__(self, *, visible: bool) -> None:
+        self._visible = visible
+
+    async def count(self) -> int:
+        return 1
+
+    def nth(self, _index: int) -> _FakeLocator:
+        return self
+
+    async def is_visible(self) -> bool:
+        return self._visible
+
+    async def click(self, *, force: bool = False) -> None:  # noqa: ARG002
+        return None
+
+
+class _FakeComposer:
+    async def click(self, *, force: bool = False) -> None:  # noqa: ARG002
+        return None
+
+
+class _FakeContext:
+    def __init__(self, pages: list[_FakeClaudePage]) -> None:
+        self.pages = pages
+
+    async def new_page(self) -> _FakeClaudePage:
+        page = _FakeClaudePage(url="https://claude.ai/new")
+        self.pages.append(page)
+        return page
+
+
+class _FakePlaywright:
+    async def stop(self) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_claude_harvest_cse_url_refuses_without_connect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _fail_connect(_cdp_url: str):
+        raise AssertionError("connect_cdp must not be called for cse_ URLs")
+
+    monkeypatch.setattr(
+        "chat_harvest.claude_chat_adapter.connect_cdp",
+        _fail_connect,
+    )
+    from chat_harvest.claude_chat_adapter import execute_claude_harvest
+
+    result = await execute_claude_harvest(
+        url=CSE_URL,
+        site="claude",
+        conversation_id="abc123",
+        cdp_url="http://127.0.0.1:9222",
+    )
+    assert result.outcome == "refused"
+    assert result.code == "use_cse_session"
+
+
+def test_claude_turns_from_dom_strip_thinking_prefix() -> None:
+    from chat_harvest.claude_chat_adapter import _turns_from_dom
+    from claude_bundles.project_ask import strip_thinking_prefix
+
+    raw_turns = [
+        {"author": "user", "ordinal": 1, "text": "question"},
+        {
+            "author": "assistant",
+            "ordinal": 2,
+            "text": "Thought for 2s\n\nWorked for 3s\n\nanswer",
+        },
+    ]
+    turns = _turns_from_dom(raw_turns)
+    assert turns[0].author == "user"
+    assert turns[0].ordinal == 1
+    assert turns[1].author == "assistant"
+    assert turns[1].ordinal == 2
+    assert turns[1].text == strip_thinking_prefix(raw_turns[1]["text"])
+
+
+@pytest.mark.asyncio
+async def test_claude_harvest_happy_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    evaluate_result = {
+        "login_wall": False,
+        "streaming": False,
+        "turns": [
+            {"author": "user", "ordinal": 1, "text": "hello"},
+            {"author": "assistant", "ordinal": 2, "text": "hi there"},
+        ],
+    }
+    page = _FakeClaudePage(url=CLAUDE_URL, evaluate_result=evaluate_result)
+    context = _FakeContext([page])
+    pw = _FakePlaywright()
+
+    async def _fake_connect(_cdp_url: str):
+        return pw, object(), context, page
+
+    async def _noop_scroll(_page, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "chat_harvest.claude_chat_adapter.connect_cdp",
+        _fake_connect,
+    )
+    monkeypatch.setattr(
+        "chat_harvest.claude_chat_adapter.scroll_stabilize",
+        _noop_scroll,
+    )
+    from chat_harvest.claude_chat_adapter import execute_claude_harvest
+
+    result = await execute_claude_harvest(
+        url=CLAUDE_URL,
+        site="claude",
+        conversation_id=CLAUDE_ID,
+        cdp_url="http://127.0.0.1:9222",
+    )
+    assert result.outcome == "harvested"
+    assert result.conversation_id == CLAUDE_ID
+    assert result.archive_uri
+    assert result.archive_sha256
+    assert result.turn_count == 2
+
+
+@pytest.mark.asyncio
+async def test_claude_harvest_cse_only_tabs_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cse_page = _FakeClaudePage(url=CSE_URL)
+    context = _FakeContext([cse_page])
+    pw = _FakePlaywright()
+
+    async def _fake_connect(_cdp_url: str):
+        return pw, object(), context, cse_page
+
+    monkeypatch.setattr(
+        "chat_harvest.claude_chat_adapter.connect_cdp",
+        _fake_connect,
+    )
+    from chat_harvest.claude_chat_adapter import execute_claude_harvest
+
+    result = await execute_claude_harvest(
+        url=CLAUDE_URL,
+        site="claude",
+        conversation_id=CLAUDE_ID,
+        cdp_url="http://127.0.0.1:9222",
+    )
+    assert result.outcome == "refused"
+    assert result.code == "use_cse_session"
+
+
+@pytest.mark.asyncio
+async def test_claude_paste_grant_refuse() -> None:
+    from chat_harvest.claude_chat_adapter import execute_claude_paste
+
+    result = await execute_claude_paste(
+        url=CLAUDE_URL,
+        prompt_text="hello",
+        cdp_url="http://127.0.0.1:9222",
+        grant="none",
+    )
+    assert result.ok is False
+    assert result.code == "grant_required"
+
+
+@pytest.mark.asyncio
+async def test_claude_paste_happy_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    evaluate_result = {
+        "login_wall": False,
+        "streaming": False,
+        "turns": [
+            {"author": "user", "ordinal": 1, "text": "hello"},
+            {"author": "assistant", "ordinal": 2, "text": "reply"},
+        ],
+    }
+    page = _FakeClaudePage(url=CLAUDE_URL, evaluate_result=evaluate_result)
+    context = _FakeContext([page])
+    pw = _FakePlaywright()
+
+    async def _fake_connect(_cdp_url: str):
+        return pw, object(), context, page
+
+    async def _fake_harvest_assistant(_page, **_kwargs) -> dict:
+        return {"n": 0, "body_len": 0}
+
+    async def _fake_wait(_page, **_kwargs) -> dict:
+        return {"n": 1, "body_len": 10}
+
+    async def _fake_find_composer(_page):
+        return _FakeComposer()
+
+    async def _noop_scroll(_page, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "chat_harvest.claude_chat_adapter.connect_cdp",
+        _fake_connect,
+    )
+    monkeypatch.setattr(
+        "chat_harvest.claude_chat_adapter.harvest_assistant",
+        _fake_harvest_assistant,
+    )
+    monkeypatch.setattr(
+        "chat_harvest.claude_chat_adapter.wait_assistant_reply",
+        _fake_wait,
+    )
+    monkeypatch.setattr(
+        "chat_harvest.claude_chat_adapter.find_composer",
+        _fake_find_composer,
+    )
+    monkeypatch.setattr(
+        "chat_harvest.claude_chat_adapter.scroll_stabilize",
+        _noop_scroll,
+    )
+    from chat_harvest.claude_chat_adapter import execute_claude_paste
+
+    result = await execute_claude_paste(
+        url=CLAUDE_URL,
+        prompt_text="hello",
+        cdp_url="http://127.0.0.1:9222",
+        grant="operator",
+    )
+    assert result.ok is True
+    assert result.site == "claude"
+    assert result.conversation_id == CLAUDE_ID
+    assert result.archive_uri
+    assert result.send_verified is True

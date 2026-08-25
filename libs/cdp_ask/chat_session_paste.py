@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
+from chat_harvest.claude_chat_adapter import execute_claude_paste
 from chat_harvest.grok_adapter import execute_grok_paste
 from chat_harvest.models import ClassifyRefuse, classify_chat_url
-from universal_logging import get_logger
 from web_chat_relay.grok_session import DEFAULT_CDP_URL
 
 from cdp_ask.chat_session_events import emit, mcp_chat_session_pasted
 from cdp_ask.chat_session_models import ChatPasteRequest, ChatPasteResponse
 from cdp_ask.runner import resolve_followup_prompt
-
-logger = get_logger(__name__)
 
 
 def _emit_pasted(response: ChatPasteResponse) -> None:
@@ -69,16 +67,29 @@ async def execute_paste(req: ChatPasteRequest) -> ChatPasteResponse:
             _emit_pasted(result)
         return result
 
-    logger.info(
-        "chat_session paste claude pending site=%s conversation_id=%s",
-        classified.site,
-        classified.conversation_id,
-    )
+    if classified.site == "claude":
+        try:
+            prompt_text = resolve_followup_prompt(req)
+        except ValueError as exc:
+            return ChatPasteResponse(
+                ok=False,
+                code="prompt_required",
+                reason=str(exc),
+            )
+        result = await execute_claude_paste(
+            url=classified.url,
+            prompt_text=prompt_text,
+            cdp_url=cdp_url,
+            grant=grant,
+        )
+        _emit_pasted(result)
+        return result
+
     return ChatPasteResponse(
         ok=False,
         site=classified.site,
         conversation_id=classified.conversation_id,
         url=classified.url,
-        code="claude_adapter_pending",
-        reason="claude /chat/ adapter not implemented in this slice",
+        code="unsupported_site",
+        reason=f"unsupported site for paste: {classified.site!r}",
     )
