@@ -704,15 +704,6 @@ async def test_finalize_proof_carries_via_worker_and_reconcile(
         "systems.frontier_consult.cdp_generate_worker.deliver_cdp_result_turn",
         AsyncMock(return_value=True),
     )
-    result = CdpGenerateResult(
-        ok=True,
-        body="harvest",
-        execution_id="exec-via-worker",
-        satellite_execution_id="sat-via",
-        prompt_uri="cortex://p.md",
-        picker_model="opus-5",
-        content_proof_uri="cortex://proof.md",
-    )
 
     upsert_inflight_leg(
         execution_id="exec-via-worker",

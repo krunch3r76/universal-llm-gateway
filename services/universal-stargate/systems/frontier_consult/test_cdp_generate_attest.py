@@ -127,7 +127,7 @@ async def test_attest_refusals_emit_zero_events(
     setup: str,
     code: str,
 ) -> None:
-    """AC (b) — mismatched sha, missing target, or non-open leg ⇒ ProtocolError, zero events."""
+    """AC (b) — sha/target/leg refusals raise ProtocolError with zero events."""
     published = _publish_spy(monkeypatch)
     body = AttestDeliverableRequest(
         content_proof_uri="cortex://notes/missing.md",
@@ -137,7 +137,9 @@ async def test_attest_refusals_emit_zero_events(
 
     if setup == "sha_mismatch":
         _seed_open_leg()
-        uri, digest = _write_proof_file(cortex_root, "notes/test/proof.md", b"proof-bytes")
+        uri, digest = _write_proof_file(
+            cortex_root, "notes/test/proof.md", b"proof-bytes"
+        )
         body = AttestDeliverableRequest(
             content_proof_uri=uri,
             written_sha256="f" * 64,
@@ -173,7 +175,9 @@ async def test_attest_conflict_when_proof_already_emitted(
     mark_proof_emitted("exec-attest-1")
 
     def _forbidden_read(**kwargs: Any) -> Path:
-        raise AssertionError("filesystem read should not happen when proof already emitted")
+        raise AssertionError(
+            "filesystem read should not happen when proof already emitted"
+        )
 
     monkeypatch.setattr(attest_mod, "_resolve_attest_file", _forbidden_read)
     _publish_spy(monkeypatch)
@@ -249,7 +253,7 @@ def test_attest_request_model_rejects_archive_uri_only() -> None:
 
 
 def test_attest_route_rejects_extra_archive_uri_field() -> None:
-    """AC (d) — three-fields-plus-archive_uri refused at HTTP 422; handler not entered."""
+    """AC (d) — extra archive_uri field refused at HTTP 422; handler not entered."""
     app = FastAPI()
     app.include_router(providers_cdp_router, prefix="/api/v1")
     client = TestClient(app)
@@ -314,7 +318,7 @@ async def test_attest_after_horizon_unverifiable_still_terminalizes(
     monkeypatch: pytest.MonkeyPatch,
     cortex_root: Path,
 ) -> None:
-    """AC (g) — prior horizon.unverifiable retain does not block attest terminalization."""
+    """AC (g) — horizon.unverifiable retain does not block attest terminalization."""
     _seed_open_leg()
     publish_horizon_unverifiable_once(
         request_id="req-attest-1",

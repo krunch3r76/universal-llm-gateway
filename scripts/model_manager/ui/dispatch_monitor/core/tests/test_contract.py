@@ -12,12 +12,13 @@ import os
 import sys
 
 import pytest
-from .conftest import FIXTURE_NAMES, fixture_path, replay
 
 from scripts.model_manager.ui.dispatch_monitor.core import signals
 from scripts.model_manager.ui.dispatch_monitor.core.dtos import SEVERITIES, Thresholds
 from scripts.model_manager.ui.dispatch_monitor.core.model import Model
 from scripts.model_manager.ui.dispatch_monitor.core.replay import load_fixture
+
+from .conftest import FIXTURE_NAMES, fixture_path, replay
 
 _PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -43,7 +44,7 @@ def _core_modules() -> list[str]:
 
 def _imported_roots(path: str) -> set[str]:
     """Return the top-level module names ``path`` imports."""
-    with open(path, "r", encoding="utf-8") as handle:
+    with open(path, encoding="utf-8") as handle:
         tree = ast.parse(handle.read(), filename=path)
     roots: set[str] = set()
     for node in ast.walk(tree):
@@ -87,7 +88,7 @@ def test_no_checkpoint_parsing_in_core() -> None:
     """
     suspicious = ("re.search", "re.match", "re.compile", "re.findall", "splitlines()")
     for path in _core_modules():
-        with open(path, "r", encoding="utf-8") as handle:
+        with open(path, encoding="utf-8") as handle:
             source = handle.read()
         for token in suspicious:
             assert token not in source, (
@@ -140,7 +141,7 @@ def test_readme_documents_every_handled_signal() -> None:
     readme = os.path.join(_PACKAGE_ROOT, "README.md")
     if not os.path.exists(readme):  # pragma: no cover - README ships with the sidecar
         pytest.skip("README.md not present in this checkout")
-    with open(readme, "r", encoding="utf-8") as handle:
+    with open(readme, encoding="utf-8") as handle:
         text = handle.read()
     missing = [s for s in signals.ALL_HANDLED if s not in text]
     assert not missing, f"README omits handled signals: {missing}"
@@ -202,7 +203,7 @@ def test_model_does_not_read_the_clock() -> None:
         name = os.path.relpath(path, _PACKAGE_ROOT)
         if name in view_modules:
             continue
-        with open(path, "r", encoding="utf-8") as handle:
+        with open(path, encoding="utf-8") as handle:
             source = handle.read()
         for token in ("time.time", "time.monotonic", "datetime.now", "utcnow"):
             assert token not in source, f"{name} reads a clock via {token}"
@@ -226,7 +227,7 @@ def test_only_the_harness_touches_the_filesystem() -> None:
     offenders: dict[str, set[str]] = {}
     for path in _core_modules():
         name = os.path.relpath(path, _PACKAGE_ROOT)
-        with open(path, "r", encoding="utf-8") as handle:
+        with open(path, encoding="utf-8") as handle:
             tree = ast.parse(handle.read(), filename=path)
         found: set[str] = set()
         for module in _imported_roots(path) & set(_IO_IMPORTS):

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from .conftest import replay
-
 from scripts.model_manager.ui.dispatch_monitor.core import signals
 from scripts.model_manager.ui.dispatch_monitor.core.folds.cdp import DEFAULT_MAX_WALL_S
 from scripts.model_manager.ui.dispatch_monitor.core.model import Model
 from scripts.model_manager.ui.dispatch_monitor.core.protocols import Event
 from scripts.model_manager.ui.dispatch_monitor.core.watch import render
+
+from .conftest import replay
 
 
 def _row(rows, key: str, value: str):
