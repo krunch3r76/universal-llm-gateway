@@ -1,6 +1,7 @@
 Layer — full idea→implementation codework workflow; peer/alternative to `/path-sim`.
 
-**This command wraps a skill.** Machinery SOT: Use the `abstraction-layering` skill (§ When · § Entry surfaces · § The arc · § Stage 0 · § Recon · § Gate obligations · § Mechanical leg · § Auto-advance · § Tick enrollment · § Conformance). Tick CHECKPOINT template + lane mechanics + wired/pending: skill L3 `tick-enrollment-annex.md`. This file is a thin wrapper — ¬ re-derive the arc, gate table, dispatch shapes, enrollment template, or anti-patterns here.
+**This command wraps a skill.** Natural language fires the same chooser — the
+slash is optional. Machinery SOT: Use the `abstraction-layering` skill (§ When · § Entry surfaces · § The arc · § Stage 0 · § Recon · § Gate obligations · § Mechanical leg · § Auto-advance · § Tick enrollment · § Conformance). Tick CHECKPOINT template + lane mechanics + wired/pending: skill L3 `tick-enrollment-annex.md`. This file is a thin wrapper — ¬ re-derive the arc, gate table, dispatch shapes, enrollment template, or anti-patterns here.
 
 Arc: `G1 architecture → G2 frame → G3 densify (Gate-2 close) → G4 check → G5 implement → G6 verify+close`, entered at the highest still-open gate, ratification inherited downward. Lane brand = **layering** / `/layer`; G3 stage token **`densify`** stays (dense-spec hop only).
 
@@ -15,6 +16,7 @@ Supersedes `path-sim` ratification windows for codework (`decision:abstraction-l
 | Operator `/layer …` | This command → skill § When (entry-gate chooser) |
 | Any request to change the codebase — cursor-auto DIRECTIVE, friction fix cycle, charter codework arc | This lane; enter at the highest gate still open |
 | Idea / friction with no work item yet | `/work-item-seed` (skill `work-item-seed-path`) — mint first; then re-enter `/layer`; ¬ dispatch before todo exists |
+| Operator asked Fable / architectural guidance ∧ (no todo ∨ Mode B mandatory) ∧ ¬ G1 skip | `/work-item-seed` first; G1 kwargs = skill `work-item-seed-path` § S3 Fable generate recipe — ¬ reconstruct here |
 | Architecture consult already harvested | Skill § G1 skip + § Architecture-consult attach — stamp `derived_from` → `consult_kind=architecture` document; `/layer` enters G2 |
 | Hang the item on the charter tick | Skill § Tick enrollment + L3 `tick-enrollment-annex.md` — layer-shaped G1–G6 CHECKPOINT, **attended only** today |
 | Non-codework question/solution-space search · fat-packet deepen lane | `/path-sim` — not this lane |

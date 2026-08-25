@@ -1,6 +1,8 @@
 Work-item seed — friction/idea → closable work item that `/layer` can enter correctly.
 
-**This command wraps a skill.** Machinery SOT: Use the `work-item-seed-path` skill
+**This command wraps a skill.** Natural language (“loop Fable”, “architectural
+guidance”, “seed this feature”) fires the same path — the slash is optional.
+Machinery SOT: Use the `work-item-seed-path` skill
 (§ When · § Stages S1–S6 · § Mint modes · § Architecture order A/B · § Handoff · § Anti-patterns).
 Full stage rationale: `cortex://notes/system/specs/work-item-seed-path.md`. This file is a thin
 wrapper — ¬ re-derive stages, mint modes, or attach duty here.
@@ -51,8 +53,8 @@ When S3 mode B is mandatory (`mode=fable-before-seed`, operator asked Fable/arch
 skill triggers fire):
 
 1. Same turn as the Mode B disposition claim: either
-   - **Admit:** `team_dispatch(model=cdp/fable|cdp/opus-5, …)` returns `execution_id` +
-     `poll_hint` (quote those fields), **or**
+   - **Admit:** copy skill § S3 Fable generate recipe (followup vs fresh generate);
+     quote `execution_id` + `poll_hint` (or followup admit fields), **or**
    - **Honest halt:** name the concrete blocker (validation/CDP capacity/tool error) — ¬ claim
      firing succeeded.
 2. **Forbidden:** prose-only "staging then firing" / "will dispatch Fable" then end the turn

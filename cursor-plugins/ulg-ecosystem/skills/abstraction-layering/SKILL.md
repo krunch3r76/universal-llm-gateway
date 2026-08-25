@@ -35,7 +35,10 @@ related_skills:
 **layers** seats and inherits ratification downward.
 
 Lane brand = **layering** / `/layer`. The G3 stage token remains **`densify`**
-(dense-spec hop only — ¬ the lane name).
+(dense-spec hop only — ¬ the lane name). Slash `/layer` is a **wrapper** —
+natural language (“loop Fable”, “architectural guidance”) fires the same
+chooser. Fable default vs Cursor / Other Models pools:
+`work-item-seed-path` § When Fable defaults.
 
 ## Invariant
 
@@ -50,6 +53,7 @@ No standing R-admit/R-after. G6 = mechanical verify.
 | Codebase change (DIRECTIVE, friction, charter) | Highest open G1–G6 |
 | **G1 skip (graph)** — active structural `derived_from` from the work item → a `document:` with `consult_kind=architecture` whose `source_uri` resolves | **G2** (mark G1 `[x]` with that URI) |
 | Architecture rival live (detent ≥ wide) ∧ ¬ G1 skip | G1 |
+| Operator asked Fable / architectural guidance ∧ (no closable todo ∨ Mode B mandatory) ∧ ¬ G1 skip | `/work-item-seed` first — G1 kwargs = seed-path § S3 Fable generate recipe |
 | No frame yet | G2 |
 | Frame exists | G3 |
 | Dense spec unchecked | G4 |
@@ -128,7 +132,10 @@ architecture:
 1. Compose packet with arch pair inlined or Customize-attached.
 2. **Check:** confirm `ulg-architecture` is present in the sealed prompt **or** attested
    session-skill membership (not merely listed in todo `required_skills` / chat).
-3. Same turn: admit with quoted `execution_id`+`poll_hint` (or followup admit) **or**
+3. **Generate kwargs:** copy `work-item-seed-path` § S3 Fable generate recipe
+   (live-CSE followup vs fresh `team_dispatch`). **¬** reconstruct; **¬** a second
+   copy of that block in this skill.
+4. Same turn: admit with quoted `execution_id`+`poll_hint` (or followup admit) **or**
    honest halt naming missing skill floor.
 
 **Falsifier:** Fable G1 fires with only judgment skills / empty arch inline → protocol
@@ -261,7 +268,8 @@ implements · ¬ G6 review consult · frame >120L · bare tick w/o G-rows ·
 ¬ claim G1 closed from chat inform / sidecar path alone without `derived_from` →
 `consult_kind=architecture` document · ¬ mint a second Fable G1 when that edge already
 resolves · ¬ Fable/Opus G1 without `architecture-invariants` ∧ `ulg-architecture` sealed
-(URI-only / judgment-chips-only / announce-only) ≺ densify.
+(URI-only / judgment-chips-only / announce-only) ≺ densify · ¬ reconstruct G1
+`team_dispatch` kwargs (cite `work-item-seed-path` § S3 Fable generate recipe).
 
 ## Conformance
 

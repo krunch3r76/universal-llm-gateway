@@ -36,12 +36,41 @@ S3 mode B claim ⇒ same_turn(admit(execution_id,poll_hint) ∨ honest_halt) —
 rich_seed_field_lists ∈ /todo ∨ decision:todo-creation-rich-seed-contract — ¬ fork here
 ```
 
+## Operator surface
+
+Slash commands (`/work-item-seed`, `/layer`) are **wrappers**. Natural language
+fires the same path — “loop Fable in”, “architectural guidance”, “feature
+addition”. Do not wait for a slash.
+
+## When Fable defaults (CDP — not a Cursor pool)
+
+Fable is `cdp/fable` (web product). It is **not** in Cursor Models and **not**
+in Other Models (the secondary pool). `cursor/*` Fable does not exist.
+
+| Default Fable | When |
+|---|---|
+| **This path Mode B** + `/layer` G1 | Architecture open: named Fable / architectural consult / ≥2 unranked forks / feature-add ∧ invariant-touching / detent≥wide. Recipe: § S3 |
+| **Path-sim Q** | Non-codework bundled Q — not this path |
+| **Ladder 2b** | Independent binder when the producer is Opus |
+
+**Skip Fable:** G1 skip edge resolves · S3 skip (single obvious / mechanical) · Mode A opt-in (`mode=seed-then-layer`; G1 still owed later) · feature not commissioned.
+
+### Cursor pools — do not substitute for Fable G1
+
+| Pool | Models | Job on a codework arc |
+|---|---|---|
+| **Cursor Models** | Grok-4.6, Composer 2.5 | G3 densify / G5 implement / T1 orchestrate — **after** Fable harvest |
+| **Other Models (secondary)** | Sonnet 5, Opus-in-cursor, Terra | G4 Terra · T2/T3 named trigger · ladder 2c Terra · hop-4 live-checkout Opus. **¬** default G1 |
+
+G2 frame is **CDP Opus**, not the Other Models pool. Other Models quota is not a reason to skip CDP Fable G1 or to spend T3 Opus as a Fable substitute.
+
 ## When
 
 | Condition | Route |
 |---|---|
 | Need new closable `todo:` (or backlog park) for feature/bug | This path |
 | Architecture open; rich-seed would harden wrong shape | This path · prefer **S3 mode B** |
+| Operator “loop Fable” / architectural guidance / named Fable (even if they also said `/layer`) | This path · **Mode B** · copy § S3 Fable generate recipe |
 | Actionable friction; mint is next act | This path (cite `a:{id}`) |
 | Todo already exists ∧ **no** Mode B / arch-consult ask | `/layer todo:{slug}` |
 | Todo already exists ∧ Mode B mandatory | **This path** · Mode B on existing slug · ¬ remint · S5 → `/layer` G2 |
@@ -125,11 +154,10 @@ Classify kind · channel · subsumption.
 
 **Fire:** rival shapes / detent≥wide ∨ invariant-touching ∨ consult-before-seed asked ∨ recon left ≥2 co-primaries.  
 **Skip:** single obvious shape ∨ mechanical.  
-**Do:** CDP architecture consult per Mode B transport above — followup into live
-operator-proxy CSE when attached; else `team_dispatch(model=cdp/fable|cdp/opus-5)`
-(consult-routing). **Before fire:** Fable/Opus G1 skill floor —
-`architecture-invariants` ∧ `ulg-architecture` sealed (abstraction-layering § Fable /
-CDP G1 lead preflight); judgment chips alone ≠ floor. Harvest to cortex.
+**Do:** CDP architecture consult per Mode B transport above. Copy **§ S3 Fable
+generate recipe** (followup vs fresh generate). **Before fire:** Fable/Opus G1 skill
+floor — `architecture-invariants` ∧ `ulg-architecture` sealed (abstraction-layering
+§ Fable / CDP G1 lead preflight); judgment chips alone ≠ floor. Harvest to cortex.
 
 **Premium rung:** fork needs live-checkout verification at file:line depth a CDP seat
 structurally cannot perform ⇒ escalate to `cursor/claude-opus-5` (hop 4) when the
@@ -145,6 +173,42 @@ architecture is not self-ratifiable) and verbatim densify. ¬ fork those rules h
 |---|---|---|
 | **A** seed→layer-G1 | S4 rich-seed → `/layer` G1 → harvest → S5 → G2 | Problem clear; stable slug; arch is layer-G1 concern |
 | **B** Fable-before-seed | Consult+harvest → S4 informed mint → S5 → `/layer` **G2** | Premature rich-seed locks wrong shape; operator asked consult-first; nebulous strategy fork |
+
+#### S3 Fable generate recipe (BINDING — sole copy-paste)
+
+Canonical admit for Mode B **and** `/layer` G1. `/layer` cites this section — ¬ fork a
+second block. Live CSE ≻ fresh generate (transport rule above).
+
+**Followup** (attached operator-proxy CSE — `chat_url ≻ registration_id ≻ execution_id`):
+
+```
+cse_session(
+    op="followup",
+    purpose="operator-proxy",
+    chat_url="<attached>",  # or registration_id / execution_id
+    prompt_text=…,          # or prompt_uri=cortex://…
+)
+# same-turn: quote followup admit fields, or honest halt
+```
+
+**Fresh generate** (no live attached CSE):
+
+```
+manage(action="busy_status")  # serialize a second purpose=ask
+team_dispatch(
+    op="generate",
+    model="cdp/fable",
+    contract="light-bounded",
+    purpose="ask",
+    packet_path="tmp/reviews/{slug}-fable-g1.md",  # or sidecar_ref=cortex://…
+    dispatch_thread_id="<work thread, not an unrelated charter root>",
+    skills=["architecture-invariants", "ulg-architecture", "reasoning-posture"],
+)
+# same-turn: quote execution_id + poll_hint, or honest halt
+```
+
+`skills=` must include the arch pair; judgment chips alone ≠ floor. `purpose=ask` is
+the architecture-consult tag — ¬ `operator-proxy` unless this *is* a mission followup.
 
 ### S4 Mint (exactly one)
 
@@ -196,6 +260,7 @@ Name: `todo:{slug}` · entry gate · consult URI · recon URI.
 | S3 fired ∧ no Fable harvest | Minting or `/layer` — harvest consult first |
 | Announce Mode B / "staging Fable" then end turn with no admit | Same-turn admit (`execution_id`+`poll_hint` or followup admit) or named halt |
 | Fable/Opus Mode B with only judgment skills (no `ulg-architecture`) | Seal arch pair per abstraction-layering G1 preflight before admit |
+| Reconstruct the Fable generate from memory / path-sim Q | Copy § S3 Fable generate recipe (arch-pair `skills=` + `purpose=ask`) |
 | Mode B under live operator-proxy CSE via fresh `team_dispatch(cdp/…)` | `cse_session(op=followup)` into attached CSE (inv 23); fresh CDP only if no live CSE |
 | Existing todo + Mode B ask → divert to bare `/layer` | Mode B on existing slug · attach · `/layer` G2 |
 | S2 breadth via Composer or in-seat Grep spray | Explore subagent first (cheap-recon Tier-1) |
