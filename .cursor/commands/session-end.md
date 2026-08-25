@@ -310,6 +310,13 @@ When depth is `verbatim` or `light`, also capture:
 When depth is `none`, `transcript_entity_id`, `transcript_path`, and
 `content_hash` are null — journal row is the durable record.
 
+**Standing-root Windows fill (after 201):** if `entity_ids` cited a `role:root`
+thread, fill the open `## Windows` row on that root's charter surface
+(scoreboard if chartered, continuity-doc otherwise) with `Arc:` from `summary`,
+`journal_row_id`, `session_id`, and transcript URI when present. Schema §3.5 ·
+`session-close-kernel` · `session-close.mdc` root disposition. Skip when no
+standing root was cited.
+
 **Optional `handoff_prompt`:** include on the `session_close` call only when
 the operator explicitly requests a continuation handoff in the same message
 (see § Continuation handoff below). Default: omit.

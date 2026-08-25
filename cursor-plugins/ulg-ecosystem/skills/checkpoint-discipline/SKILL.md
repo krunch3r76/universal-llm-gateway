@@ -2,14 +2,14 @@
 name: checkpoint-discipline
 description: "Author/resume CHECKPOINTs on standing roots (spine=root): profile pick tick_charter vs orchestrator_continuity, tip supersede + lean resume, role:root stamp, RESUME footer, scoreboard birth."
 skill_category: orchestration
-trigger_match_terms: ["checkpoint-discipline", "CHECKPOINT", "tick_charter", "orchestrator_continuity", "tip supersede", "lean resume", "role:root", "RESUME footer", "scoreboard birth", "standing root"]
+trigger_match_terms: ["checkpoint-discipline", "CHECKPOINT", "tick_charter", "orchestrator_continuity", "tip supersede", "lean resume", "role:root", "RESUME footer", "scoreboard birth", "standing root", "Windows log"]
 ---
 
 # Checkpoint Discipline
 
 `∀ spine=root: tip_hygiene ∧ lean_resume`; enrollment picks **body profile only**.
 
-**Schema SOT (field IDs):** `cortex://notes/system/specs/checkpoint-schema-profiles.md` — B1–B5 / T1–T9 live there; ¬ copy defs into this skill.
+**Schema SOT (field IDs):** `cortex://notes/system/specs/checkpoint-schema-profiles.md` — B1–B5 / T1–T9 / §3.5 Windows log live there; ¬ copy defs into this skill.
 
 ## When to load
 
@@ -46,12 +46,13 @@ Enrollment tag is SOT. `tick_charter` = machine consumer (base + T extras; malfo
 | Body | WIP + pointers; Next-pickup = gated G-rows only; tangent by pointer |
 | Primary OPEN vs WIP | Name G-rows separately from seat WIP; divergence without bind/child = named fork |
 | Delta gate board | Carry settled `[x]` by reference; emit open/delta rows; evidence in sidecar |
-| Scoreboard birth | **Chartered root** (`charter-runner` enrolled): mint `cortex://notes/system/threads/<id>-charter-scoreboard.md` from template **before** first CP if absent. `Scoreboard: none` = violation. **Unchartered orchestrator_continuity root**: omit scoreboard birth — no charter scoreboard path required |
+| Scoreboard birth | **Chartered root** (`charter-runner` enrolled): mint `cortex://notes/system/threads/<id>-charter-scoreboard.md` from template **before** first CP if absent (includes empty `## Windows`). `Scoreboard: none` = violation. **Unchartered orchestrator_continuity root**: omit scoreboard birth — mint `## Windows` on the continuity-doc instead |
 | Scoreboard write-back | `retract ∨ flip(status) ⇒ update scoreboard BEFORE next CP` (chartered roots only; unchartered roots have no standing scoreboard file) |
 | G-row prefix order | `DONE(Gₙ) ⇒ ∀k<n: DONE(Gₖ)` — gated IDs are an ordered prefix, not birth stickers. Skip / out-of-order land ⇒ **renumber** open rows to the end (or retract to Tangentials) in the **same** scoreboard write before the next CP. `OPEN` mid-table above later `DONE` = hygiene defect (operator bind 2026-08-10 · agent-bus:7059). Distinct from mission-roadmap permanent ordinals (`cdp-operator-proxy` inv 29). |
 | Terminal-block coherence | Appending a terminal verdict block (`ARC COMPLETE`, closure table) ⇒ refresh the file's `RESUME` / next-actor footer in the **same** write. A footer naming actors the block just closed makes the file contradict itself, and R12 computes against the **file**, not the newest block — either verdict is pickable (friction `27099`) |
 | Side-quest | Multi-step ∉ OPEN G-row ⇒ operator bind or child thread before act |
 | Residual sweep | Checkpoint-time: named residuals still in chat only? → Use the `residual-imprint` skill |
+| Windows append | On each CHECKPOINT **post**, append one row to `## Windows` on the charter surface (scoreboard if chartered, continuity-doc if unchartered): `cp_ordinal`, turn, `session_id` if known, State one-liner if Arc empty. Tip **pointers** at that table — ¬ paste it. Schema §3.5. `/session-end` fills Arc later. |
 
 ## Tip hygiene (spine=root)
 
@@ -67,13 +68,14 @@ Enrollment tag is SOT. `tick_charter` = machine consumer (base + T extras; malfo
 2. Tip body: `fetch(thread, compact=true, last=K)` → subject index → `get(turn_number=<latest subject starting with CHECKPOINT>)`. **¬** `last=1` as tip (latest turn may be closeout).
 3. Other unread: compact subjects only; ¬ auto-widen on `has_earlier_turns`.
 4. Child lanes (`lane_bind` → append-only `thread_lane_associations`; CHECKPOINT's **Child lanes** derived zone = depth-1 substantiated, per `agent-bus-discipline` § Lane parentage): pointer IDs only — ¬ fetch child history on parent resume.
-5. Then: tip → scoreboard if named → roadmap if named → Cortex cards. Mid-tier: ≤3 further sidecars before drafting.
+5. Then: tip → scoreboard if named → roadmap if named → Cortex cards. Mid-tier: ≤3 further sidecars before drafting. **¬** load `## Windows` on resume.
 
 | Widen when | Fetch |
 |---|---|
 | Operator asks / `--all` / `--context N` | As asked |
 | Unread `from≠self` ∧ subject ¬CHECKPOINT | That body (+ optional context) |
 | Tip lacks Next-pickup / Anchor / stale vs known child activity | Prior 2–3 CPs or named sidecar |
+| Review / audit of whole-history | Charter-surface `## Windows` (schema §3.5) — not linear thread read |
 | Execute on child lane | Open **that** thread separately |
 
 **Operator-facing:** `orchestrator_continuity` → Been→Are→Going → `In one line:` → charter · settled·live·next · next (`operator-posture` Rule 3). `tick_charter` → wave · in-flight · next pickup only.
@@ -128,4 +130,4 @@ Prefix must stay `— RESUME (any seat, no command):` (parser T8).
 - `orchestrator-workflow` — coding-arc R12
 - `operator-posture` — Rule 3 resume ceremony
 - path-sim `tick-enrollment-annex` — enroll template
-- Schema URI above
+- Schema URI above · §3.5 Windows log

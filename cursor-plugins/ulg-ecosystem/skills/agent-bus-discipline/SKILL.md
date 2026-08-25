@@ -72,7 +72,7 @@ High-turn-count roots fail by many turns, not large bodies. `¬ linearly_read(ro
 
 **CHECKPOINT author / resume / tip hygiene / profiles:** Use the `checkpoint-discipline` skill (schema field IDs: `cortex://notes/system/specs/checkpoint-schema-profiles.md`). This skill keeps bus mechanics + R12 done/close below.
 
-State reconstitution default = tip CHECKPOINT + roadmap (+ scoreboard when chartered). Completeness projection = scoreboard (graph canonical). `empty(Next-pickup) ⇏ arc_complete`. **Done-claim gate:** § R12. Templates: `charter-scoreboard.md` · `continuity-doc.md`.
+State reconstitution default = tip CHECKPOINT + roadmap (+ scoreboard when chartered). Completeness projection = scoreboard (graph canonical). Window history = `## Windows` on the charter surface (schema §3.5) — resume does not load it. `empty(Next-pickup) ⇏ arc_complete`. **Done-claim gate:** § R12. Templates: `charter-scoreboard.md` · `continuity-doc.md`.
 
 ### Orchestration birth gate (binding — operator 2026-07-30)
 
@@ -178,7 +178,7 @@ Disposition derives from **spine** (+ 480 special) — not a parallel taxonomy:
 
 | Spine / special | Close report block |
 |---|---|
-| **root** (standing continuity) | At minimum `advise-close` + root thread id, roadmap path, latest checkpoint turn or stale flag, active item ids/seats, child root ids, scoreboard path when chartered — **unless** orchestration was just birthed and charter surfaces are still incomplete ⇒ `leave-open+reason` (see § Orchestration birth gate); `advise-close` is a disposition report, not arc-complete authority |
+| **root** (standing continuity) | At minimum `advise-close` + root thread id, roadmap path, latest checkpoint turn or stale flag, active item ids/seats, child root ids, scoreboard path when chartered — **unless** orchestration was just birthed and charter surfaces are still incomplete ⇒ `leave-open+reason` (see § Orchestration birth gate); `advise-close` is a disposition report, not arc-complete authority. After `session_close` 201, fill `## Windows` Arc + `journal_row_id` on the charter surface (schema §3.5) |
 | **work** (one-off / dispatch / window) | Exactly one enum value + thread id |
 | **Thread 480** (`agent-activity-journal`) | Debrief reply only — **not** a disposition target; never `update_thread status=closed` on 480 |
 

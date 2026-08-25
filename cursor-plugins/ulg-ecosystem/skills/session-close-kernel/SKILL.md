@@ -34,7 +34,7 @@ Handoff after commit: `close(op=handoff)`.
 
 ## Editorial (the part that is genuinely yours)
 
-- `summary` opens with `Arc: <one-line position>` (≤120 chars) — it feeds the next boot.
+- `summary` opens with `Arc: <one-line position>` (≤120 chars) — it feeds the next boot **and**, when this close cited a standing root (`entity_ids` / disposition), the open `## Windows` row on that root's charter surface (scoreboard if chartered, continuity-doc otherwise). Fill **after** `session_close` 201 so `journal_row_id` is real. Schema §3.5.
 - Decisions are settled claims with the settler named, not narrative.
 - Durable follow-ons become `todo:` entities, not prose open items.
 - Reflections: write for next-boot-you; register honestly; consolidation only on a real shift.

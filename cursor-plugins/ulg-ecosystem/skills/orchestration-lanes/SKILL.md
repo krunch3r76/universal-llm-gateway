@@ -20,7 +20,7 @@ identified by its handle and parent association, never inferred from spine.
 ## Root birth
 
 1. Bind one objective sentence describing the topic being continued.
-2. Mint a continuity document or charter pointer.
+2. Mint a continuity document or charter pointer. Include an empty `## Windows` table on that charter surface (scoreboard if chartered, continuity-doc if not). Schema §3.5.
 3. Create the root thread and post a birth CHECKPOINT indexing the document and
    a concrete `Next-pickup`.
 4. Stamp `role:root`; enroll `charter-runner` only when machine ticks are wanted.
@@ -45,7 +45,8 @@ Use `mission-operator` for every subsequent turn.
 1. Read the durable handle and verify `thread_id`, parent, lane role, request
    id, mission kind, and CSE/chat handle as applicable.
 2. Read the latest root CHECKPOINT for continuity, or the mission schema state
-   and latest CLOSEOUT for a mission.
+   and latest CLOSEOUT for a mission. Do **not** load `## Windows` on resume
+   (review / audit only — `checkpoint-discipline`).
 3. Designate the current operator by role, not model name. Cowork, IDE, and a
    tick window may fill the role.
 4. Continue the existing thread. Never create a second private request lane
