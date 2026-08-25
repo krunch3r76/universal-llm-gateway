@@ -129,7 +129,7 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
 logger = get_logger(__name__)
 
 _FROM_AUTO = "cursor-auto"
-_NESTED_CONTRACTS = nested_scope_contracts() | {"confer"}
+_NESTED_CONTRACTS = nested_scope_contracts() | {"confer", "ask"}
 
 
 def _close_dispatch_ticket(
@@ -477,7 +477,10 @@ async def process_job(
     if isinstance(nest_under, dict):
         return nest_under
 
-    resolved_lane, _lane_reason = resolve_nested_checkout_lane(job, read_only=False)
+    read_only = contract in {"ask", "recon"}
+    resolved_lane, _lane_reason = resolve_nested_checkout_lane(
+        job, read_only=read_only
+    )
     message = build_sdk_message(
         job.body,
         contract=contract,
@@ -536,6 +539,7 @@ async def process_job(
         message=message,
         nest_under=nest_under,
         model_knobs=knobs or None,
+        read_only=True if read_only else None,
         relay_ctx=relay_ctx,
     )
     if submit.get("reason") == "worker_draining":

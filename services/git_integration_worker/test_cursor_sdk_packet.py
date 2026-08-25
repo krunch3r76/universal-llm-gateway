@@ -61,7 +61,7 @@ def test_resolve_prompt_preamble_injects_reasoning_posture_on_consult() -> None:
 
 @pytest.mark.parametrize(
     "contract",
-    ["implement", "pure-mechanical", "propagate", "execute", "answer"],
+    ["implement", "pure-mechanical", "propagate", "execute", "answer", "ask"],
 )
 def test_resolve_prompt_preamble_skips_reasoning_posture_on_mechanical_or_quick(
     contract: str,

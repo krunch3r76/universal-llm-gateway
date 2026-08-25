@@ -89,4 +89,21 @@ def assess_static_pin_refusal(
             contract=resolved_contract,
         )
 
+    if resolved_contract in {"ask", "recon"} and (escalation or "").strip():
+        summary = (
+            f"{resolved_contract} does not support CDP escalation "
+            f"(ask_escalation_unsupported); omit escalation= and desired_model=cdp/*."
+        )
+        return StaticPinRefusal(
+            reason="ask_escalation_unsupported",
+            summary=summary,
+            payload={
+                "summary": summary,
+                "reason": "ask_escalation_unsupported",
+                "contract": resolved_contract,
+                "requested_escalation": (escalation or "").strip(),
+            },
+            contract=resolved_contract,
+        )
+
     return None

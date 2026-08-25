@@ -255,6 +255,9 @@ async def submit_nested_dispatch(
             job.job_id,
             dispatch_id,
         )
+    workspace = (job.workspace or "").strip()
+    if workspace:
+        payload["workspace"] = workspace
     url = _dispatch_url()
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:

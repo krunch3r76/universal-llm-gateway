@@ -85,6 +85,13 @@ def build_briefing_block(
                 "Standing mission: attended-charter-birth-with-cursor.md (7281).",
             ]
         )
+    elif raw == "ask":
+        lines.extend(
+            [
+                "",
+                "Ask: how-it-works ≤12 lines + file:line anchors. ¬ design bind.",
+            ]
+        )
     block = "\n".join(lines)
     if len(lines) > _MAX_BRIEFING_LINES:
         raise ValueError(f"BRIEFING exceeds {_MAX_BRIEFING_LINES} lines")

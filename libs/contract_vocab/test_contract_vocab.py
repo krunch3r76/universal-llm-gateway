@@ -30,6 +30,7 @@ def test_canonical_names_stable() -> None:
     assert CANONICAL_CONTRACTS == (
         "answer",
         "confer",
+        "ask",
         "investigate",
         "implement",
         "verify",
@@ -99,7 +100,7 @@ def test_consumer_flag_sets_agree_with_records() -> None:
 def test_handler_nested_contracts_are_nested_scope_plus_confer() -> None:
     from services.git_integration_worker.cursor_auto.handler import _NESTED_CONTRACTS
 
-    assert _NESTED_CONTRACTS == nested_scope_contracts() | {"confer"}
+    assert _NESTED_CONTRACTS == nested_scope_contracts() | {"confer", "ask"}
 
 
 def test_vision_required_admit_disclosure_lists_all_enforced_contracts() -> None:

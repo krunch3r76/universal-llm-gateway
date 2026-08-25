@@ -13,6 +13,7 @@ from effort_vocabulary import WIRE_LADDER, normalize_effort
 Contract = Literal[
     "answer",
     "confer",
+    "ask",
     "investigate",
     "implement",
     "verify",
@@ -145,9 +146,10 @@ BINDABLE_EFFORT_VALUES: tuple[str, ...] = _EFFORT_LADDER
 BINDABLE_CDP_ESCALATIONS: tuple[str, ...] = ("cdp/opus-5", "cdp/fable")
 _CONTRACT_EFFORT_DEFAULTS: dict[str, str] = {
     "investigate": "xhigh",
-    "recon": "xhigh",
+    "recon": "medium",
     "seed": "xhigh",
     "confer": "xhigh",
+    "ask": "medium",
     "answer": "medium",
 }
 # Life seats often put CDP models on desired_model by mistake; map → escalation.
@@ -170,7 +172,8 @@ def resolve_desired_model(
     """Map request ``desired_model`` hint → resolved ``model_id`` + notes.
 
     ``auto`` (default) picks by contract: answer→grok, investigate→grok,
-    implement→composer, verify→composer. Explicit hints are honored and reported.
+    implement→composer, verify→composer, ask/recon→composer. Explicit hints
+    are honored and reported.
     Other Models (Sonnet/Opus/Terra) are never the auto default — they draw
     Cursor's capped second pool; unattended judgment stays on Cursor Models.
     """
@@ -179,11 +182,12 @@ def resolve_desired_model(
         by_contract = {
             "answer": "cursor/grok-4.6",
             "confer": "cursor/grok-4.6",
+            "ask": "cursor/composer-2.5",
             "investigate": "cursor/grok-4.6",
             "implement": "cursor/composer-2.5",
             "verify": "cursor/composer-2.5",
             "seed": "cursor/grok-4.6",
-            "recon": "cursor/grok-4.6",
+            "recon": "cursor/composer-2.5",
         }
         model_id = by_contract.get(contract, "cursor/composer-2.5")
         return {
@@ -409,7 +413,7 @@ def resolve_desired_effort(
     ``extra-high``, ``Extra High``) normalize to ``xhigh`` via effort_vocabulary.
 
     When ``desired_effort`` is omitted, per-contract defaults apply (investigate/
-    recon/seed/confer → ``xhigh``; answer → ``medium``) so omit-path does not
+    seed/confer → ``xhigh``; ask/recon/answer → ``medium``) so omit-path does not
     hedge to medium on confer.
     """
     contract_key = (contract or "answer").strip().lower()
@@ -449,6 +453,7 @@ def resolve_contract_disposition(contract: str | None) -> dict[str, Any]:
     hints: dict[str, Disposition] = {
         "answer": "answered",
         "confer": "conferred",
+        "ask": "dispatched-and-relayed",
         "investigate": "dispatched-and-relayed",
         "implement": "dispatched-and-relayed",
         "verify": "dispatched-and-relayed",
@@ -490,6 +495,8 @@ def resolve_handoff_contract(
         return "light-bounded"
     if raw == "propagate":
         return "light-bounded"
+    if raw == "ask":
+        return "ask"
     if raw in {"investigate", "confer", "seed"}:
         return "light-bounded"
     if raw == "verify":

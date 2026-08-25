@@ -44,6 +44,8 @@ class AutoJob:
     advisor_brief: str | None = None
     # GIW checkout-isolation lane (``A``|``B``); None ⇒ select_lane defaults.
     lane: str | None = None
+    # Satellite repo name under the projects root; None/omit ⇒ hub ULG.
+    workspace: str | None = None
     # Declared execution mode (S-3). "serial" (default) uses the exclusive
     # single-occupant loop unchanged since before this mission. Any other
     # value is looked up against the default-deny allowlist in

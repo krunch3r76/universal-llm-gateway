@@ -178,6 +178,55 @@ def test_cursor_request_forwards_cse_registration_id():
     assert "cse_registration_id" in CALLER_FIELDS
 
 
+def test_fastmcp_signatures_include_workspace() -> None:
+    import inspect
+
+    recorder = _ToolNameRecorder()
+    register_cursor_request_tool(recorder)
+    for name in ("cursor_request", "operator_request"):
+        params = inspect.signature(recorder.functions[name]).parameters
+        assert "workspace" in params, name
+    assert "workspace" in CALLER_FIELDS
+
+
+def test_cursor_request_forwards_workspace() -> None:
+    recorder = _ToolNameRecorder()
+    register_cursor_request_tool(recorder)
+    cursor_request_fn = recorder.functions["cursor_request"]
+    captured: list[dict[str, Any]] = []
+
+    def _fake_dispatch(**kwargs: Any) -> dict[str, Any]:
+        captured.append(kwargs)
+        return {"thread": {"id": "900"}, "turn": {"turn_number": 1}}
+
+    with patch("tools.cursor_request._request_dispatch", side_effect=_fake_dispatch):
+        with bind_request("default", surface="life"):
+            cursor_request_fn(
+                new_slug="ulg-ask-satellite",
+                subject="ask: satellite workspace",
+                body="Where does this live?",
+                from_agent="web-anthropic",
+                contract="ask",
+                workspace="claudeburst",
+            )
+
+    assert captured[0]["workspace"] == "claudeburst"
+
+
+def test_cursor_request_descriptor_has_ask_first_and_playbook_pointer() -> None:
+    recorder = _ToolNameRecorder()
+    register_cursor_request_tool(recorder)
+    description = recorder.kwargs["cursor_request"].get("description") or ""
+    posture = description.index("Standing seat posture")
+    aperture = description.index("Life coding aperture")
+    playbook = description.index("document:life-coding-playbook")
+    conductor = description.index("COMMISSION_CONDUCTOR")
+    assert posture < aperture < playbook < conductor
+    assert "agent_skill:conductor" in description
+    assert "six-block conductor packet" not in description
+    assert "unknown-loci" in description
+
+
 def test_unknown_caller_argument_rejected_with_accepted_set_error() -> None:
     result = _dispatch_cursor_request(
         {

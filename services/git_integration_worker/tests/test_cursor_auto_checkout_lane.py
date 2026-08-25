@@ -62,6 +62,7 @@ def _job(*, contract: str = "implement", lane: str | None = None) -> AutoJob:
         ("implement", "B", "auto_implement_class"),
         ("verify", "B", "auto_implement_class"),
         ("confer", "A", "auto_named_a_non_implement"),
+        ("ask", "A", "auto_named_a_non_implement"),
         ("investigate", "A", "auto_named_a_non_implement"),
         ("answer", "A", "auto_named_a_non_implement"),
         ("seed", "A", "auto_named_a_non_implement"),

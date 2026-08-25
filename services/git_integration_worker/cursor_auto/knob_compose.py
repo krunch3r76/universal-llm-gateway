@@ -21,7 +21,7 @@ from effort_vocabulary import WIRE_LADDER
 
 from services.git_integration_worker.cursor_auto.wire_map import _MODEL_TABLE
 
-_JUDGMENT_CONTRACTS = frozenset({"investigate", "recon", "seed"})
+_JUDGMENT_CONTRACTS = frozenset({"investigate", "seed"})
 # Leanest accepted Anthropic window. Catalog default is 1m; leaving context
 # unset re-primes the capped Other Models pool on every judgment step.
 _ANTHROPIC_JUDGMENT_KNOBS = {"thinking": "true", "context": "300k"}

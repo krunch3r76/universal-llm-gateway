@@ -50,6 +50,7 @@ CALLER_FIELDS: frozenset[str] = frozenset(
         "require_attended",
         "after_turn",
         "lane",
+        "workspace",
         "parent_thread",
         "lane_role",
         "request_id",
@@ -118,6 +119,7 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         require_attended: bool = False,
         after_turn: int = 0,
         lane: str | None = None,
+        workspace: str | None = None,
         parent_thread: str | None = None,
         lane_role: str | None = None,
         request_id: str | None = None,
@@ -137,6 +139,17 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         ∀ operator-only gate: terminal status:needs-attended + one recommended answer.
         SOT: decision:operator-request-front-door.
 
+        **Life coding aperture (BINDING)**
+
+        Coding interest or how-question → ``contract=ask`` first (omit
+        ``desired_model`` / ``escalation`` / ``workspace`` unless satellite).
+        Cortex/RAG ≠ checkout. ¬ sequential ``fs``/``rag`` as the unknown-loci
+        hunter — that hop is ``cursor_request(ask|recon)``. After Auto CLOSEOUT
+        (or a named neighborhood): oriented reads OK (anchors, siblings,
+        ``docs/architecture/``, cursor rules/skills). Index:
+        ``document:life-coding-playbook`` (body ``cortex://notes/playbooks/life-coding.md``).
+        In-seat ``answer`` executes nothing — re-issue ``ask``, not ``confer``.
+
         Claude.ai: scheduling_trigger? = option; Authorize_prompt ⇒ operator_approves
         (⊃ schedule). Expect click — ¬ bypass.
 
@@ -151,39 +164,9 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         CLOSEOUT must quote ``execution_id`` + ``poll_hint`` (or honest transport halt).
         Predecessor stream may end only after successor launch is confirmed (inv 30).
 
-        COMMISSION_CONDUCTOR(web-anthropic): to hand a multi-step mission to an
-        autonomous cursor-sdk conductor instead of driving every step yourself via
-        the DIRECTIVE loop, this is an ordinary request — **no dedicated contract
-        token exists or is needed**. Fire with ``contract="investigate"``,
-        ``desired_model="cursor/grok-4.6"`` (T1 default — Cursor Models pool;
-        ``sonnet-5`` / ``opus-5`` are Other Models pins, T2/T3 only), ``lane="B"``
-        (**wire parameter, not packet prose** — an omitted ``lane=`` resolves to
-        Lane A/shared-master regardless of what the body says; only name Lane A
-        when the mission itself is T0-mechanical single-locus), and
-        ``desired_effort="xhigh"``. ``lane="B"`` is a worktree requirement, not a
-        label: GIW mints or inherits an isolated tree, or returns 422
-        ``CURSOR_LANE_B_WORKTREE_MISSING`` — it does not silently admit on
-        shared master. ``investigate`` resolves to
-        ``handoff_contract=light-bounded``, so the mechanical-executor redirect
-        (Composer-only) never fires — that redirect is scoped to ``implement``.
-        Body MUST include a ``vision:`` line (admit body gate above) and the full
-        six-block conductor packet (root thread/charter/scoreboard URIs, the
-        mandatory literal line ``Use the conductor skill — nest specialists; ¬
-        hand-code mechanical G-rows; cost tier from this skill.``) — see
-        agent_skill:conductor for packet shape + tier table. Effort knobs are
-        gated by the model card (``cursor_capabilities``): accepted rungs pass
-        (Sonnet 5 / Opus through ``max``, Grok through ``xhigh``); above-card
-        values degrade and ``resolved_effort`` on the admit reply reports the
-        clamp. Hop-cadence's in-flight probe checks claimed jobs by home
-        lane as well as literal thread-id, so committing onto a thread other than
-        this DIRECTIVE's own (``dispatch_thread_id`` = a mission root, the usual
-        conductor shape) correctly inhibits an automatic hop while it runs
-        (fixed + unit-tested 2026-08-15; not yet confirmed against a live
-        commission — poll the target thread yourself until that confirmation
-        lands). Separately, a nested dispatch's own poll loop times out at 3600s
-        server-side — a conductor mission genuinely running past an hour gets
-        marked failed there even while the bus-visible work continues; unfixed,
-        watch missions approaching that age.
+        COMMISSION_CONDUCTOR(web-anthropic): multi-step mission to an autonomous
+        cursor-sdk conductor is an ordinary ``investigate`` + ``lane="B"`` request —
+        packet shape + nest/tier table: ``agent_skill:conductor``.
 
         Sync: plugin_install ∧ per-slug Customize sync ∈ Auto capabilities — offer/fire,
         ¬ defer to IDE lead. Bulk census = slow ⇒ named slugs only. IDE restart ⇒ operator.
@@ -198,7 +181,7 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
 
         **Contract vocabulary**
 
-        ``contract`` ∈ answer | confer | investigate | implement | verify | execute |
+        ``contract`` ∈ answer | confer | ask | investigate | implement | verify | execute |
         propagate | seed | recon. Unknown ⇒ 422 before turn write. ``consult`` aliases confer.
 
         **Mission negotiation (body-level, ``contract=confer`` only)**
@@ -213,6 +196,7 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
 
         ``lane``: optional GIW checkout-isolation ``A`` | ``B``. Omit for
         current ``select_lane`` defaults. Distinct from ``lane_role``.
+        ``workspace``: optional satellite repo name (``SATELLITES.txt``); omit for hub.
 
         **Admit body gate (implement / investigate)**
 
@@ -252,6 +236,7 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         | contract | CLOSEOUT carries |
         | answer | disposition:answered + inline relay |
         | confer | codebase-grounded recommendation |
+        | ask | how-it-works in ≤12 lines + file:line anchors |
         | investigate | findings / nested dispatch summary |
         | implement | file changes + AC evidence (codework: ``abstraction-layering`` lane) |
         | verify | verification verdict + evidence (codework: ``abstraction-layering`` G6) |
@@ -300,6 +285,8 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
             }
             if lane is not None:
                 parsed["lane"] = lane
+            if workspace is not None:
+                parsed["workspace"] = workspace
             if parent_thread is not None:
                 parsed["parent_thread"] = parent_thread
             if lane_role is not None:
@@ -353,6 +340,7 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         require_attended: bool = False,
         after_turn: int = 0,
         lane: str | None = None,
+        workspace: str | None = None,
         parent_thread: str | None = None,
         lane_role: str | None = None,
         request_id: str | None = None,
@@ -377,6 +365,7 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
             require_attended=require_attended,
             after_turn=after_turn,
             lane=lane,
+            workspace=workspace,
             parent_thread=parent_thread,
             lane_role=lane_role,
             request_id=request_id,

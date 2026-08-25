@@ -157,12 +157,13 @@ async def post_terminal_status(
 
 ANSWER_DECLINED_REASON = "answer_in_seat_no_execution"
 ANSWER_ROUTING_HINT = (
-    "The in-seat answer contract executes nothing. For execution re-issue with "
+    "The in-seat answer contract executes nothing. For a codebase how-question "
+    "re-issue with contract=ask; for execution re-issue with "
     "contract=implement and a scoped DIRECTIVE (scope: or tool_op: + "
     "effects_expected:, plus files_expected: and vision:); for service restart "
     "use contract=propagate (scope: propagation sync_restart <service> or "
-    "## propagation YAML + effects_expected:); for advisory judgment use "
-    "contract=confer."
+    "## propagation YAML + effects_expected:); for advisory judgment after "
+    "tree context use contract=confer."
 )
 
 

@@ -45,7 +45,7 @@ _PROSE_RULING_WORD = (
 @pytest.mark.offline
 def test_skip_set_unchanged() -> None:
     assert REASONING_POSTURE_SKIP_CONTRACTS == frozenset(
-        {"implement", "pure-mechanical", "propagate", "execute", "answer"}
+        {"implement", "pure-mechanical", "propagate", "execute", "answer", "ask"}
     )
 
 

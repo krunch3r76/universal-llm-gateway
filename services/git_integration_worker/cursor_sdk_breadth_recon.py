@@ -55,7 +55,14 @@ def packet_owes_breadth_recon(
 ) -> bool:
     """True when dispatch contract class typically owes breadth recon before implement."""
     resolved = (contract or _contract_from_wrapper(wrapper_text) or "").lower()
-    if resolved in {"implement", "pure-mechanical", "propagate", "execute", "answer"}:
+    if resolved in {
+        "implement",
+        "pure-mechanical",
+        "propagate",
+        "execute",
+        "answer",
+        "ask",
+    }:
         return False
     if resolved in _BREADTH_RECON_OWED_CONTRACTS:
         return True

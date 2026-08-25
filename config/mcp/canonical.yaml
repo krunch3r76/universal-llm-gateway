@@ -1985,7 +1985,7 @@ tools:
     Injects lane:cursor-auto (dedupe). Arm predicate = live Auto handler heartbeat — ¬ turn-write
     alone (F1).\nDegrade keeps lane:cursor-auto; ¬ dual-tag lane:life-to-code.\nparent_thread
     + lane_role are optional birth-binding fields and must be supplied together.\ndesired_model/desired_effort/contract/require_attended?
-    are structured hints; Auto reports requested vs actual.\ncontract ∈ answer|confer|investigate|implement|verify|execute|propagate|seed|recon;
+    are structured hints; Auto reports requested vs actual.\ncontract ∈ answer|confer|ask|investigate|implement|verify|execute|propagate|seed|recon;
     execute=one tier-M op; propagate=operator restart (ledger+drain-gated sync_restart); seed=closable
     work item (architecture may be open).\nimplement|investigate DIRECTIVE body requires vision:
     else admit blocks vision_field_missing (pre-model). See agent_skill:cdp-operator-proxy.\n\
@@ -2051,7 +2051,7 @@ tools:
       contract:
         type: string
         description: answer | confer | investigate | implement | verify | execute | 
-          propagate | seed | recon (default answer).
+          propagate | seed | recon | ask (default answer).
       require_attended:
         type: boolean
         description: When true, refuse unattended nested dispatch and in-seat Auto 
@@ -2059,6 +2059,10 @@ tools:
           reason=operator_require_attended. ORs with DIRECTIVE body require_attended or 
           executor_bind attended.
         default: false
+      workspace:
+        type: string
+        description: Optional satellite repo name under the projects root (SATELLITES.txt).
+          Omit for hub ULG.
     required:
     - subject
     - body
@@ -2088,7 +2092,7 @@ tools:
     + handler_status ∈ {auto-admit-armed, no-auto-handler} + poll_hint.\nDedicated narrow
     registration of agent_bus request — recipient to=cursor fixed; ¬ exposed as caller param.\n\
     Injects lane:cursor-auto (dedupe). Arm predicate = live Auto handler heartbeat.\ncontract
-    ∈ answer|confer|investigate|implement|verify|execute|propagate|seed|recon. Mutating. Life+code
+    ∈ answer|confer|investigate|implement|verify|execute|propagate|seed|recon|ask. Mutating. Life+code
     callable.\nimplement|investigate DIRECTIVE body requires vision: else admit blocks vision_field_missing
     (pre-model). See agent_skill:cdp-operator-proxy.\n"
   json_schema:
@@ -2139,7 +2143,7 @@ tools:
       contract:
         type: string
         description: answer | confer | investigate | implement | verify | execute | 
-          propagate | seed | recon (default answer).
+          propagate | seed | recon | ask (default answer).
       require_attended:
         type: boolean
         description: When true, refuse unattended nested dispatch and in-seat Auto 
@@ -2164,6 +2168,10 @@ tools:
       request_id:
         type: string
         description: Caller idempotency key; correlates admit and closeout.
+      workspace:
+        type: string
+        description: Optional satellite repo name under the projects root (SATELLITES.txt).
+          Omit for hub ULG.
     required:
     - subject
     - body
@@ -2193,7 +2201,7 @@ tools:
     + handler_status ∈ {auto-admit-armed, no-auto-handler} + poll_hint.\nRecipient-neutral
     approval-gated operator request lane — the operator is a role, not a model.\nparent_thread
     + lane_role=operator_proxy (both-or-neither) births a parented mission lane.\nInjects
-    lane:cursor-auto (dedupe). Arm predicate = live Auto handler heartbeat.\ncontract ∈ answer|confer|investigate|implement|verify|execute|propagate|seed|recon.
+    lane:cursor-auto (dedupe). Arm predicate = live Auto handler heartbeat.\ncontract ∈ answer|confer|ask|investigate|implement|verify|execute|propagate|seed|recon.
     Mutating. Life+code callable.\nimplement|investigate DIRECTIVE body requires vision: else
     admit blocks vision_field_missing (pre-model). See agent_skill:mission-operator.\n"
   json_schema:
@@ -2237,7 +2245,7 @@ tools:
       contract:
         type: string
         description: answer | confer | investigate | implement | verify | execute | 
-          propagate | seed | recon (default answer).
+          propagate | seed | recon | ask (default answer).
       require_attended:
         type: boolean
         description: When true, refuse unattended nested dispatch and in-seat Auto 
@@ -2262,6 +2270,10 @@ tools:
       request_id:
         type: string
         description: Caller idempotency key; correlates admit and closeout.
+      workspace:
+        type: string
+        description: Optional satellite repo name under the projects root (SATELLITES.txt).
+          Omit for hub ULG.
     required:
     - subject
     - body

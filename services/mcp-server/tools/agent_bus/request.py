@@ -104,6 +104,7 @@ def _request_impl(
     escalation: str | None = None,
     continuity_hop: bool = False,
     lane: str | None = None,
+    workspace: str | None = None,
     parent_thread: str | None = None,
     lane_role: str | None = None,
     prompt_uri: str | None = None,
@@ -234,6 +235,7 @@ def _request_impl(
         escalation=escalation,
         continuity_hop=continuity_hop,
         lane=lane,
+        workspace=workspace,
         prompt_uri=prompt_uri,
         advisor_brief=advisor_brief,
     )
@@ -365,6 +367,7 @@ def _request_dispatch(
     cse_registration_id: str | None = None,
     escalation: str | None = None,
     lane: str | None = None,
+    workspace: str | None = None,
     parent_thread: str | None = None,
     lane_role: str | None = None,
     prompt_uri: str | None = None,
@@ -383,7 +386,7 @@ def _request_dispatch(
     ``request_id``: optional caller idempotency key; echoed on success; duplicate
     values are refused (``duplicate_request_id``) before the turn is written.
 
-    ``contract``: one of ``answer|confer|investigate|implement|verify|execute|propagate|seed|recon``.
+    ``contract``: one of ``answer|confer|ask|investigate|implement|verify|execute|propagate|seed|recon``.
     Unknown values are rejected (422 ``request_contract_unknown``) before the
     turn is written; legacy ``consult`` is aliased to ``confer`` with a
     deprecation note on the response. ``execute`` = one tier-M allowlisted op;
@@ -483,6 +486,7 @@ def _request_dispatch(
         cse_registration_id=cse_registration_id,
         escalation=escalation,
         lane=checkout_lane,
+        workspace=workspace,
         parent_thread=parent_thread,
         lane_role=lane_role,
         prompt_uri=prompt_uri,

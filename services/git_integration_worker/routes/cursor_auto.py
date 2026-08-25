@@ -86,6 +86,8 @@ class EnqueueBody(BaseModel):
     # GIW checkout isolation — same lever as POST /api/v1/cursor/dispatch.
     # Distinct from lane_role (bus parentage) and tag lane:cursor-auto.
     lane: Literal["A", "B"] | None = None
+    # Satellite repo name under the projects root; omit for hub ULG.
+    workspace: str | None = None
     # Declared execution mode (S-3). Claim paths never infer from contract;
     # enqueue maps ``contract:propagate`` via ``declared_execution_mode``.
     execution_mode: str = "serial"
@@ -273,6 +275,7 @@ async def enqueue(body: EnqueueBody, request: Request):
         prompt_uri=body.prompt_uri,
         advisor_brief=body.advisor_brief,
         lane=body.lane,
+        workspace=body.workspace,
         execution_mode=declared_execution_mode(
             contract=body.contract,
             requested=body.execution_mode,
@@ -302,6 +305,7 @@ async def enqueue(body: EnqueueBody, request: Request):
             prompt_uri=None,
             advisor_brief=None,
             lane=body.lane,
+            workspace=body.workspace,
             execution_mode=declared_execution_mode(
                 contract=body.contract,
                 requested=body.execution_mode,

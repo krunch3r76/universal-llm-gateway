@@ -215,6 +215,7 @@ def enqueue_auto_job(
     cse_registration_id: str | None = None,
     continuity_hop: bool = False,
     lane: str | None = None,
+    workspace: str | None = None,
     prompt_uri: str | None = None,
     advisor_brief: str | None = None,
     base_url: str | None = None,
@@ -224,6 +225,7 @@ def enqueue_auto_job(
 
     ``lane`` is optional GIW checkout isolation (``A``|``B``). I3: omit the
     JSON key when unset so older GIW receivers keep ``select_lane`` defaults.
+    ``workspace`` is optional satellite repo name; omit for hub ULG.
     """
     url = _auto_url("/enqueue", base_url=base_url)
     payload = {
@@ -250,6 +252,8 @@ def enqueue_auto_job(
         payload["continuity_hop"] = True
     if lane:
         payload["lane"] = lane
+    if workspace:
+        payload["workspace"] = workspace
     if prompt_uri:
         payload["prompt_uri"] = prompt_uri
     if advisor_brief:

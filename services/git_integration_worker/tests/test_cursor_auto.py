@@ -40,7 +40,11 @@ def test_wire_map_auto_by_contract():
     )
     assert (
         resolve_desired_model("auto", contract="recon")["resolved_model_id"]
-        == "cursor/grok-4.6"
+        == "cursor/composer-2.5"
+    )
+    assert (
+        resolve_desired_model("auto", contract="ask")["resolved_model_id"]
+        == "cursor/composer-2.5"
     )
     assert (
         resolve_desired_model("auto", contract="seed")["resolved_model_id"]

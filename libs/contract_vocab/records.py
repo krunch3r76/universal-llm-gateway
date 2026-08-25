@@ -36,6 +36,12 @@ RECORDS: tuple[ContractRecord, ...] = (
         briefing_stanza="confer",
     ),
     ContractRecord(
+        name="ask",
+        purpose="read-only how-it-works opener (life coding aperture)",
+        closeout_shape="how-it-works in ≤12 lines + file:line anchors",
+        briefing_stanza="ask",
+    ),
+    ContractRecord(
         name="investigate",
         purpose="findings / nested dispatch summary",
         closeout_shape="findings / nested dispatch summary",

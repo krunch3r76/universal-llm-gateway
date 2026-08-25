@@ -11,7 +11,7 @@ from __future__ import annotations
 CONSUMERS: tuple[str, ...] = ('git_integration_worker', 'stargate')
 
 REASONING_POSTURE_SKIP_CONTRACTS = frozenset(
-    {"implement", "pure-mechanical", "propagate", "execute", "answer"}
+    {"implement", "pure-mechanical", "propagate", "execute", "answer", "ask"}
 )
 
 __all__ = ["REASONING_POSTURE_SKIP_CONTRACTS"]
