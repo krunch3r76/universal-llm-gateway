@@ -150,7 +150,7 @@ already-enrolled tag never needs the flag. Worker/window threads use
 ```
 G1 Q (lead CDP Fable L0) → G2 A+Gate-2 (cursor-sdk Grok, dense spec) →
 [CONSULT_PENDING ⇒ consult seat (depth-1) ⇒ resume] →
-G3 R-admit (team_dispatch model=cdp/opus-5 → web-anthropic Opus; project_ask escape) → G4 implement (Composer) + deploy-verify →
+G3 R-admit (team_dispatch model=cdp/opus-5 → web-anthropic Opus; IF6 escape = CLI `claude-ai-sync-jupiter project-ask`) → G4 implement (Composer) + deploy-verify →
 [G4a/G4b/G4c revise, cap 3] → G5 R-after (cursor-sdk Grok /work-item-review) → G6 close
 ```
 
@@ -186,7 +186,7 @@ R-admit, restart services for deploy-verify, and revise.
 Attended R-admit fires from the lead IDE seat's CDP browser lane — which a headless
 worker lacks (so a headless worker "running R" collapses to self-certify). Autonomous
 R-admit fires the **same web-anthropic Opus** via the **primary** `team_dispatch(model=cdp/opus-5)`
-model-endpoint (MCP `project_ask` = escape only), invocable from any vortex-code seat:
+model-endpoint (IF6 escape = CLI `claude-ai-sync-jupiter project-ask`. MCP `project_ask` is removed), invocable from any vortex-code seat:
 
 ```
 # Primary
@@ -272,7 +272,7 @@ Global ``charter_pause`` remains the fleet stop for quit/start. Teaching SOT:
 
 **Substrate separation, not operator presence, keeps autonomous R honest.**
 Q/A run on cursor-sdk Grok; implement on cursor-sdk Composer; R-admit runs on web-anthropic Opus
-via `team_dispatch(model=cdp/opus-5)` (MCP `project_ask` escape) — a different family on a
+via `team_dispatch(model=cdp/opus-5)` (IF6 escape = CLI `claude-ai-sync-jupiter project-ask`; MCP `project_ask` is removed) — a different family on a
 different transport. The background lead firing its own R is legitimate **only** because
 the reviewer model/family differs. Collapsing R-admit into the cursor-sdk window's
 self-assessment = self-certify = invalid. R-admit stays web Opus; R-after keeps its

@@ -92,9 +92,9 @@ Both pins **default-on** for bundled `judgment_required` arcs — skip only the 
 | Phase | Executor | Model (post-Fable window) | Sidecar |
 |---|---|---|---|
 | 0 Recon | **Orchestrated by lead** — breadth default = **Explore subagent** (`Task(subagent_type="explore")`; ¬ Explore tool; UI "Exploring" ≠ Explore). Adjudicate anchors sidecar. Narrow known-locus Greps MAY stay in-seat. If Task unavailable → `team_dispatch(seat=cursor-sdk, contract=light-bounded)` per model split. `rag(op=recon)` optional. | **Explore subagent** for breadth/unknown locus. **Dispatched fallback:** investigate/judgment → `cursor/grok-4.6`; pure mechanical inventory only → `cursor/composer-2.5`. **¬** Composer as default recon. | `cortex://notes/system/recon/{slug}/…` (Tier-1 anchors required when breadth/unknown locus) |
-| 1 Q (L0) | **Lead fires CDP Fable** — default bundled/full arc. Primary: `team_dispatch(model=cdp/fable, contract=light-bounded, …)` (Use the `claude-ai-cdp-navigation` skill · consult-routing Anthropic substrate). Escape: `project_ask` / CLI with `model=fable-5`. Operator-framed only via **positive attestation** (`operator_framed` + `pinned_question` + resolvable `frame_uri`) ⇒ **bounded adopt-or-contradict Q** (`frame_verdict` + `frame_delta`) then A — **¬** `q_skipped`, **¬** frame-as-Q. Unframed/isolated ⇒ normal **Fable Q** → Grok A — ¬ escalate to human (§ L0 / Q pairing). **Downgrade Q to Grok** only under closed detent (§ Closed-detent quick recipe) or explicit operator skip. **¬** default Q to Opus CDP (R-admit owns Opus — keep Q≠R seats). | Fable Max (CDP) | `cortex://notes/system/threads/path-sim-{slug}-fable-l0-q.md` |
+| 1 Q (L0) | **Lead fires CDP Fable** — default bundled/full arc. Primary: `team_dispatch(model=cdp/fable, contract=light-bounded, …)` (Use the `claude-ai-cdp-navigation` skill · consult-routing Anthropic substrate). Escape: CLI `claude-ai-sync-jupiter project-ask` with `model=fable-5`. MCP `project_ask` is removed. Operator-framed only via **positive attestation** (`operator_framed` + `pinned_question` + resolvable `frame_uri`) ⇒ **bounded adopt-or-contradict Q** (`frame_verdict` + `frame_delta`) then A — **¬** `q_skipped`, **¬** frame-as-Q. Unframed/isolated ⇒ normal **Fable Q** → Grok A — ¬ escalate to human (§ L0 / Q pairing). **Downgrade Q to Grok** only under closed detent (§ Closed-detent quick recipe) or explicit operator skip. **¬** default Q to Opus CDP (R-admit owns Opus — keep Q≠R seats). | Fable Max (CDP) | `cortex://notes/system/threads/path-sim-{slug}-fable-l0-q.md` |
 | 2 A (L1+L2) | **`team_dispatch(op=generate, seat=cursor-sdk, model=cursor/grok-4.6, contract=light-bounded, …)`** — **halts at admit-gate, ¬ implement** | Grok-4.5 High | `…/path-sim-{slug}-grok-a-l1l2.md` |
-| 3 R-admit | **LEAD fires CDP `project-ask` bus-nudge** (Use the `claude-ai-cdp-navigation` skill) | web-anthropic **Opus 5** | **default-on, lead-owned** — skip only closed set |
+| 3 R-admit | **LEAD fires `team_dispatch(model=cdp/opus-5)`** (Use the `claude-ai-cdp-navigation` skill; IF6 escape = CLI `claude-ai-sync-jupiter project-ask`; MCP `project_ask` is removed) | web-anthropic **Opus 5** | **default-on, lead-owned** — skip only closed set |
 | 4 Implement | **`team_dispatch(op=generate, seat=cursor-sdk, contract=implement, source_ref=todo:{slug})`** — **separate dispatch, after R-admit ADMIT** | cursor-sdk Composer 2.5 (role default) | code diff + closeout sidecar |
 | 5 R-after | **LEAD fires `/work-item-review todo:{slug}`** via **`seat=cursor-sdk, model=cursor/grok-4.6`** — after Stage-B ship | **Grok-4.5 High (cursor-sdk)** | **default-on, lead-owned** — same closed skip set; entry SOT = `.cursor/commands/work-item-review.md`. Checkout-native delivery critique (≠ R-admit web seat). |
 | 6 Closeout | lead (orchestrator) | — | `…/path-sim-{slug}-implement-closeout.md` (+ R-after verdict URI) |
@@ -122,7 +122,7 @@ rag(op=recon, durable_sink=cortex) ≡ optional iff a named corpus scope is know
 
 Dogfood (2026-07-18, `todo:packet-ac-l0-planning-rubric` / a:25086): RAG returned research PDFs; Tier-1 code anchors carried the bind.
 
-**R is lead-owned (BINDING).** CDP `project-ask` needs the Jupiter Chrome lane + profile, which exist **only on the lead cursor IDE seat** — the headless cursor-sdk worker sandbox HOME has **no** CDP transport. Therefore **R MUST NOT be a phase inside the cursor-sdk worker packet**; a worker asked to "run R" can only self-certify (the 2026-07-18 dogfood defect). The lead fires R between the A dispatch and the implement dispatch.
+**R is lead-owned (BINDING).** CDP R-admit (`team_dispatch(model=cdp/opus-5)`; IF6 = CLI `claude-ai-sync-jupiter project-ask`) needs the Jupiter Chrome lane + profile, which exist **only on the lead cursor IDE seat** — the headless cursor-sdk worker sandbox HOME has **no** CDP transport. MCP `project_ask` is removed. Therefore **R MUST NOT be a phase inside the cursor-sdk worker packet**; a worker asked to "run R" can only self-certify (the 2026-07-18 dogfood defect). The lead fires R between the A dispatch and the implement dispatch.
 
 ### R ≠ skeptic ≠ Gate-6 (do not substitute)
 
@@ -179,7 +179,7 @@ Same R semantics live in the parent skill. `/work-item-review` owns after-ship t
 
 **Pairing invariant (P1):** path-sim always runs **Q∧A as a coupled unit** — never A without a Q sidecar/verdict, never Q without a following A. The operator frame is **input to Q**, never a substitute for Q (P2 rejected — destroys the falsifier).
 
-**Default executor for path-sim Q is CDP Fable** (`team_dispatch(model=cdp/fable)` / `project_ask` `fable-5` escape — Use the `claude-ai-cdp-navigation` skill; ¬ `anthropic/*` API). Rationale (operator 2026-07-28): Fable owns explore / L0 width; **R-admit stays Opus CDP** so Q and R are not the same seat; **A stays `cursor/grok-4.6`**. Do **¬** default Q to Opus CDP. Do **¬** default Q to Grok on the bundled arc — Grok Q is the **closed-detent / explicit-skip** carve-out only. A strong frame makes Q **cheap** (bounded adopt-or-contradict), not **absent**.
+**Default executor for path-sim Q is CDP Fable** (`team_dispatch(model=cdp/fable)` / CLI `claude-ai-sync-jupiter project-ask --model fable-5` escape — Use the `claude-ai-cdp-navigation` skill; ¬ `anthropic/*` API). MCP `project_ask` is removed. Rationale (operator 2026-07-28): Fable owns explore / L0 width; **R-admit stays Opus CDP** so Q and R are not the same seat; **A stays `cursor/grok-4.6`**. Do **¬** default Q to Opus CDP. Do **¬** default Q to Grok on the bundled arc — Grok Q is the **closed-detent / explicit-skip** carve-out only. A strong frame makes Q **cheap** (bounded adopt-or-contradict), not **absent**.
 
 Vision / architecture-suitability framing belongs on the **operator seat**, which must engage `reasoning-posture` (pin Question · Out-of-scope · detent ≺ widen; then steelman / calibrate) so it sees further and wider — Use the `cdp-operator-proxy` skill § Invariants. Path-sim then **tests** that frame when attested (falsifiable feedback), ¬ rubber-stamps it.
 
@@ -234,17 +234,15 @@ team_dispatch(
 # poll: agent_bus.wait from poll_hint (from_agent=web-anthropic)
 ```
 
-**Escape — MCP `project_ask` / CLI** (same sealed `/new` posture as R-admit recipe; Use the `claude-ai-cdp-navigation` skill):
+**Escape — CLI `claude-ai-sync-jupiter project-ask`** (IF6 / satellite-direct; same sealed `/new` posture as R-admit recipe; Use the `claude-ai-cdp-navigation` skill). MCP `project_ask` is removed.
 
 ```
-project_ask(
-  op=submit,
-  prompt_uri=cortex://notes/system/threads/path-sim-{slug}-q-prompt.md,
-  converse=true,
-  no_project_uuid=true,
-  model=fable-5,
-  purpose=ask,  # or purpose=fable when Cowork Auto lane applies
-)
+scripts/cortex/claude-ai-sync-jupiter project-ask \
+  --register --purpose ask \
+  --converse --no-uuid \
+  --model fable-5 \
+  --prompt-file tmp/reviews/path-sim-{slug}-q-prompt.md \
+  --out-dir <mcp-data>/notes/system/threads/path-sim-{slug}-q-harvest
 ```
 
 **Downgrade carve-out (closed detent ∨ explicit operator skip only):**
@@ -292,7 +290,7 @@ On the default Fable-Q path, footer may still emit `Q-CASCADE: sufficient` (alre
 |---|---|
 | Default | Lead CDP Fable Q — already on; no escalate needed |
 | Recovery trigger | Worker `Q-CASCADE: escalate-fable` **after Grok-Q downgrade** (self-decided) — lead honors; lead may also force on explicit operator ask |
-| Transport | Fable ⇒ **web-anthropic-cdp** `team_dispatch(model=cdp/fable)` / `project_ask` (Use the `claude-ai-cdp-navigation` skill); ¬ `anthropic/*` API; Opus Max only if Fable unavailable on **this Q hop** (rare Q-CASCADE fallback — ¬ R-admit Opus, which is the usual `cdp/opus-5` event on the coordination thread) |
+| Transport | Fable ⇒ **web-anthropic-cdp** `team_dispatch(model=cdp/fable)` / CLI `claude-ai-sync-jupiter project-ask` (Use the `claude-ai-cdp-navigation` skill); ¬ `anthropic/*` API; MCP `project_ask` is removed. Opus Max only if Fable unavailable on **this Q hop** (rare Q-CASCADE fallback — ¬ R-admit Opus, which is the usual `cdp/opus-5` event on the coordination thread) |
 | Input (recovery) | Grok sidecar = ranked tables (not discarded); Fable output = revised ask-now + killed rows + one tightened Question set |
 | Sidecar | `cortex://notes/system/threads/path-sim-{slug}-fable-l0-q.md` (default) or `…-fable-l0-qsharpen.md` (recovery after Grok draft); A consumes the Fable Question set |
 | Skip escalate | Default Fable Q, or Grok-downgrade `sufficient` ⇒ A dispatch consumes that Question set |
@@ -339,7 +337,7 @@ notes are **not** Gate-2 closeout. `fs`-readable `source_uri` and dense-spec
 
 **Densify before R (BINDING).** Gate-2 closeout completes **before** lead R-admit — not after. If R verdict ∈ `{ADMIT_WITH_AMENDMENTS, RATIFY_WITH_CONDITIONS}`, lead amends the dense spec to reflect R-bound changes, re-runs `doc_validate`, refreshes `implement_ready` assertion `spec_sha256`, **then** auto-advances to Stage-B — prevents `implement_spec_drifted_since_ready`.
 
-**Lead R (default-on, CDP)** — on Gate-2 closeout OK (A sidecar + dense spec PASS + attrs + implement_ready), the **lead** stages review corpus to `cortex://` and fires `project-ask` per `claude-ai-cdp-navigation` § Path-sim R-admit; writes verdict sidecar `…/path-sim-{slug}-web-anthropic-review.md` citing the **CDP harvest URI**. **¬ delegate R to the worker.** Staging review corpus ≠ RAG activation: when the CDP endpoint is **MCP-enabled for RAG**, the executing agent calls `rag` via MCP (live or `mapped=true`) even when a corpus URI is mapped; lead does **¬** post-hoc merge a staged RAG harvest into the expand (`decision:cdp-rag-via-mcp-not-lead-merge`).
+**Lead R (default-on, CDP)** — on Gate-2 closeout OK (A sidecar + dense spec PASS + attrs + implement_ready), the **lead** stages review corpus to `cortex://` and fires `team_dispatch(model=cdp/opus-5)` per `claude-ai-cdp-navigation` § Path-sim R-admit (IF6 escape = CLI `claude-ai-sync-jupiter project-ask`; MCP `project_ask` is removed); writes verdict sidecar `…/path-sim-{slug}-web-anthropic-review.md` citing the **CDP harvest URI**. **¬ delegate R to the worker.** Staging review corpus ≠ RAG activation: when the CDP endpoint is **MCP-enabled for RAG**, the executing agent calls `rag` via MCP (live or `mapped=true`) even when a corpus URI is mapped; lead does **¬** post-hoc merge a staged RAG harvest into the expand (`decision:cdp-rag-via-mcp-not-lead-merge`).
 
 **R prompt life skills (Customize Skills — synced):** nudge body MUST engage by canonical name — `Use the reasoning-posture skill` + `Use the consult-posture skill` — then keep the injected R-gate (`¬` path-sim / `¬` L0 reopen / ADMIT enum). Template: `cortex://notes/system/templates/path-sim-cdp-review-nudge.md`. ¬ inject full skill bodies (already on Customize Skills).
 
