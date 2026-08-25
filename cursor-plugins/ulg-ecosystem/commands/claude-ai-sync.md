@@ -1,17 +1,24 @@
-Keep **claude.ai Customize → Skills** aligned with catalog Claude.ai targets.
+Keep **claude.ai Customize → Skills** a 1:1 mirror of catalog Claude.ai targets.
+
+**How a Cursor agent finds the script:** this command (`/claude-ai-sync`) and
+skill `claude-ai-bundle-sync` both name the only entry:
+`scripts/cortex/claude-ai-sync-jupiter`. Remote seats SSH from that wrapper;
+do not call `upload_claude_bundles_ui.py` on a machine without Jupiter CDP.
 
 **Skill:** `.cursor/skills/claude-ai-bundle-sync/SKILL.md`  
 **Cortex:** `decision:claude-ai-skill-upload-automation`  
 **Authority:** `config/skills.yaml` → `claude_ai_targets()`  
-**CDP host:** Jupiter. Every status / preflight / diagnose / upload / uninstall
-command goes through `scripts/cortex/claude-ai-sync-jupiter`.
+**CDP host:** Jupiter. Every status / preflight / diagnose / dump / recon /
+upload / uninstall goes through `scripts/cortex/claude-ai-sync-jupiter`.
 
 ## Subcommands
 
 | Invocation | Action |
 |---|---|
-| `/claude-ai-sync` | Default: **status** — regen check + UI parity scan |
-| `/claude-ai-sync status` | Drift scan only |
+| `/claude-ai-sync` | Default: regen check + **recon** (dump + 1:1 apply) |
+| `/claude-ai-sync recon` | Dump `/mnt/skills`, then uninstall extras / upload missing / replace stale |
+| `/claude-ai-sync dump-skills` | Dump only (`tmp/reviews/claude-skills-latest.zip`) |
+| `/claude-ai-sync status` | Playwright **name** scrape (presence/extras — not body bytes) |
 | `/claude-ai-sync preflight` | CDP + panel + Add → Upload menuitem (fail-closed) |
 | `/claude-ai-sync diagnose` | Menu inventory JSON; never opens the upload dialog |
 | `/claude-ai-sync regen` | Render shared_sync + validate |
@@ -43,16 +50,27 @@ From repo root `/mnt/torus/projects/universal-llm-gateway`:
 
 Stop on `--check` failure; fix SOT/description issues before upload.
 
-### 3. Status
+### 3. Recon (dispatch chat zip — not table-first)
+
+Ordinary `/chat/` code-exec is the standing dump. CSE is fallback only.
+`/v1/chat/completions` artifact grab is untested.
+
+```bash
+scripts/cortex/claude-ai-sync-jupiter recon
+scripts/cortex/claude-ai-sync-jupiter recon --dry-run
+```
+
+`recon` applies the catalog 1:1 **library** mirror: uninstall `extra_in_user` (not stock),
+upload `missing_from_user`, replace `stale_content`. Stock copies under
+`user/` (`docx`, `import-memory`, …) are not extras.
+Zip `mirrored=true` is container `skills/user/` vs staged bodies — **not**
+proof Cowork `+` → Skills can attach (friction a:30502).
+
+Playwright table scrape is presence-only:
 
 ```bash
 scripts/cortex/claude-ai-sync-jupiter status
 ```
-
-- `missing_on_ui` → **upload**
-- `invalid_local` → fix regen
-- `extra_on_ui` → `uninstall --slugs …`
-- exit **0** → parity OK
 
 ### 4. Preflight (before any upload)
 
@@ -87,7 +105,7 @@ scripts/cortex/claude-ai-sync-jupiter status
 - **UI path only** — Skills API (`upload_claude_bundles.py --api`) does not populate Customize → Skills.
 - Descriptions ≤200 chars; no XML-like tags in YAML description.
 - `cursor_only` skills never upload here.
-- Success = slug visible in Skills table (`status` clean) plus network oracle on replace — not plugin MATCH and not Stargate `running`.
+- Success = slug visible in Customize **Skills table** (`status` clean) plus network oracle on replace — not plugin MATCH, not Stargate `running`, and **not** Cowork `+` → Skills attach (zip/`mirrored` is library-only; a:30502).
 
 ## Report
 

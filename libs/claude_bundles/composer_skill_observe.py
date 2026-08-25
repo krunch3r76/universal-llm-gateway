@@ -21,12 +21,15 @@ Context anchor at all (probed 2026-08-06), so an empty read there means
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 from playwright.async_api import Page
 
 from claude_bundles.cowork_skill_delivery import SkillDeliveryError
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_ATTEMPTS = 3
 _SETTLE_MS = 400
@@ -62,6 +65,7 @@ class SkillAttachObservation:
     missing: tuple[str, ...]
     attempts: int
     surface: str = "composer_chip"
+    click_errors: tuple[str, ...] = ()
 
     @property
     def complete(self) -> bool:
@@ -74,6 +78,7 @@ class SkillAttachObservation:
             "observed": list(self.observed),
             "missing": list(self.missing),
             "attempts": self.attempts,
+            "click_errors": list(self.click_errors),
         }
 
 
@@ -115,18 +120,33 @@ async def attach_skills_verified(
         return SkillAttachObservation((), (), (), 0)
 
     observed: list[str] = []
+    click_errors: list[str] = []
     for attempt in range(1, max(1, attempts) + 1):
         observed = await observe_composer_skill_chips(page)
         missing = [slug for slug in requested if slug not in observed]
         if not missing:
-            return SkillAttachObservation(requested, tuple(observed), (), attempt)
+            return SkillAttachObservation(
+                requested,
+                tuple(observed),
+                (),
+                attempt,
+                click_errors=tuple(click_errors),
+            )
         for slug in missing:
             try:
                 await attach_one_session_skill(page, slug, composer=composer)
-            except SkillDeliveryError:
+            except SkillDeliveryError as exc:
+                click_errors.append(f"{slug}: {exc}")
+                logger.warning("skill attach click failed slug=%s err=%s", slug, exc)
                 continue
             await page.wait_for_timeout(settle_ms)
 
     observed = await observe_composer_skill_chips(page)
     missing = tuple(slug for slug in requested if slug not in observed)
-    return SkillAttachObservation(requested, tuple(observed), missing, max(1, attempts))
+    return SkillAttachObservation(
+        requested,
+        tuple(observed),
+        missing,
+        max(1, attempts),
+        click_errors=tuple(click_errors),
+    )

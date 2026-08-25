@@ -7,12 +7,16 @@ choose **Skills**, then select each Customize skill from the list one by one.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
 from playwright.async_api import Page
 
+from claude_bundles.composer_skill_match import label_matches_slug, strip_pua
 from claude_bundles.cowork_skill_delivery import SkillDeliveryError
+
+logger = logging.getLogger(__name__)
 
 _PLUS_ARIA = re.compile(
     r"^(add(\s+(attachment|files?|content|more))?|plus|\+|attach|"
@@ -42,23 +46,6 @@ _NAV_AWAY_URL = re.compile(
 _COMPOSE_URL = re.compile(r"/new(?:\?|$|#)|/cowork/cse_|/chat/", re.I)
 _MIN_PLUS_SCORE = 30
 _MAX_PLUS_LABEL_CHARS = 28
-
-
-def _slug_matchers(slug: str) -> list[re.Pattern[str]]:
-    """Match Customize list labels — exact slug, then spaced/prefixed variants.
-
-    Start-anchored throughout: an unanchored substring match lets one slug select
-    another slug's entry, attaching a skill nobody asked for while the caller
-    records a success.
-    """
-    raw = slug.strip()
-    spaced = raw.replace("-", " ")
-    return [
-        re.compile(rf"^{re.escape(raw)}$", re.I),
-        re.compile(rf"^{re.escape(spaced)}$", re.I),
-        re.compile(rf"^{re.escape(raw)}\b", re.I),
-        re.compile(rf"^{re.escape(spaced)}\b", re.I),
-    ]
 
 
 def require_compose_surface(page: Page) -> str:
@@ -217,11 +204,8 @@ async def _open_menu_items(page: Page) -> list[dict[str, str]]:
     )
 
 
-_PUA_RE = re.compile(r"[\ue000-\uf8ff]")
-
-
 def _norm_menu_label(label: str) -> str:
-    return _PUA_RE.sub("", label).strip()
+    return strip_pua(label)
 
 
 async def _click_skills_entry(page: Page) -> None:
@@ -309,9 +293,7 @@ async def _ranked_plus_candidates(page: Page) -> list[dict[str, Any]]:
     # Prefer controls next to the composer — sidebar Scheduled/Quick task misleads.
     near = [b for b in inv.get("buttons", []) if b.get("visible") and b.get("near")]
     pool = near or [
-        b
-        for b in inv.get("buttons", [])
-        if b.get("visible") and b.get("h_near")
+        b for b in inv.get("buttons", []) if b.get("visible") and b.get("h_near")
     ]
     ranked = sorted(pool, key=_score_plus_candidate, reverse=True)
     usable = [b for b in ranked if _is_usable_plus_candidate(b)]
@@ -445,7 +427,9 @@ async def _open_plus_skills_menu(page: Page) -> dict[str, Any]:
             await _recover_compose_if_needed(page)
             continue
         await page.wait_for_timeout(450)
-        if not _COMPOSE_URL.search(page.url or "") or _NAV_AWAY_URL.search(page.url or ""):
+        if not _COMPOSE_URL.search(page.url or "") or _NAV_AWAY_URL.search(
+            page.url or ""
+        ):
             tried.append(
                 {
                     "cand": {k: cand.get(k) for k in ("i", "aria", "text", "testid")},
@@ -466,26 +450,30 @@ async def _open_plus_skills_menu(page: Page) -> dict[str, Any]:
             }
         )
         if any(
-            _SKILLS_ITEM.search(_norm_menu_label(row.get("text") or row.get("aria") or ""))
+            _SKILLS_ITEM.search(
+                _norm_menu_label(row.get("text") or row.get("aria") or "")
+            )
             for row in items
         ):
             return {"ok": True, "cand": cand, "items": items}
         await page.keyboard.press("Escape")
         await page.wait_for_timeout(250)
     raise SkillDeliveryError(
-        "no composer + control opened a Skills menu — tried="
-        f"{tried!r}"
+        f"no composer + control opened a Skills menu — tried={tried!r}"
     )
 
 
 async def _click_skill_slug(page: Page, slug: str) -> None:
-    for pat in _slug_matchers(slug):
-        try:
-            await _click_menu_text(page, pat, what=f"skill:{slug}")
-            return
-        except SkillDeliveryError:
-            continue
+    """Pick the Skills-list row whose collapsed label names ``slug`` (a:30502)."""
     items = await _open_menu_items(page)
+    for row in items:
+        label = row.get("text") or row.get("aria") or ""
+        if not label_matches_slug(slug, label):
+            continue
+        norm = _norm_menu_label(label)
+        needle = re.compile(rf"^{re.escape(norm[:60])}", re.I)
+        await _click_menu_text(page, needle, what=f"skill:{slug}")
+        return
     raise SkillDeliveryError(
         f"skill {slug!r} not in Skills list — items={items[:30]!r}"
     )
@@ -522,7 +510,8 @@ async def attach_session_skills(page: Page, slugs: list[str], *, composer) -> li
     for slug in slugs:
         try:
             await attach_one_session_skill(page, slug, composer=composer)
-        except SkillDeliveryError:
+        except SkillDeliveryError as exc:
+            logger.warning("skill attach click failed slug=%s err=%s", slug, exc)
             continue
         attached.append(slug)
     return attached

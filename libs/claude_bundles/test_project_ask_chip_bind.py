@@ -100,6 +100,33 @@ async def test_insert_prompt_aborts_when_required_attach_slugs_undelivered() -> 
 
 
 @pytest.mark.asyncio
+async def test_insert_prompt_surfaces_click_errors_on_undelivered() -> None:
+    """a:30502 — swallowed attach miss must keep the Skills-list items."""
+    from claude_bundles.cowork_skill_delivery import SkillDeliveryError
+
+    page = _page_mock([[]])
+    composer = _composer_mock()
+
+    async def _fail(_page, slug, *, composer):  # noqa: ARG001
+        raise SkillDeliveryError(
+            f"skill {slug!r} not in Skills list — "
+            "items=[{'text': 'Life operator do-chain'}]"
+        )
+
+    with patch(ATTACH_ONE, new=_fail):
+        with pytest.raises(SkillDeliveryError, match="click_errors") as caught:
+            await _insert_prompt_text(
+                page,
+                "/life-operator-do-chain\n\n# Sealed\n",
+                composer=composer,
+            )
+    err = str(caught.value)
+    assert "undelivered" in err
+    assert "Life operator do-chain" in err
+    page.keyboard.insert_text.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_insert_prompt_aborts_when_clicker_succeeds_but_no_chip_lands() -> None:
     """The a25806 regression: a clean click return is not a landed skill."""
     from claude_bundles.cowork_skill_delivery import SkillDeliveryError

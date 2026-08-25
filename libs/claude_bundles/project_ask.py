@@ -316,6 +316,7 @@ async def _insert_prompt_text(
     """
     from claude_bundles.composer_skill_observe import attach_skills_verified
     from claude_bundles.cowork_skill_delivery import (
+        SkillDeliveryError,
         attest_delivery_channels,
         extract_cdp_required_authority,
         parse_cdp_sealed_skill_channels,
@@ -333,18 +334,27 @@ async def _insert_prompt_text(
         return
 
     attached: list[str] = []
+    click_errors: tuple[str, ...] = ()
     if attach_slugs:
         observation = await attach_skills_verified(
             page, attach_slugs, composer=composer
         )
         attached = list(observation.observed)
-    attest_delivery_channels(
-        required,
-        attached=attached,
-        inlined=inline_slugs,
-        execution_id=str(stargate_execution_id or ""),
-        satellite_execution_id=str(satellite_execution_id or ""),
-    )
+        click_errors = observation.click_errors
+    try:
+        attest_delivery_channels(
+            required,
+            attached=attached,
+            inlined=inline_slugs,
+            execution_id=str(stargate_execution_id or ""),
+            satellite_execution_id=str(satellite_execution_id or ""),
+        )
+    except SkillDeliveryError as exc:
+        if click_errors:
+            raise SkillDeliveryError(
+                f"{exc}; click_errors={list(click_errors)}"
+            ) from exc
+        raise
 
     if rest:
         body = rest

@@ -140,6 +140,7 @@ async def test_attach_failure_does_not_abort_remaining_slugs(monkeypatch):
     )
     assert "consult-posture" in attempted
     assert obs.missing == ("reasoning-posture",)
+    assert obs.click_errors == ("reasoning-posture: not in Skills list",)
 
 
 @asyncio_test
@@ -149,9 +150,4 @@ async def test_empty_request_is_a_no_op(record_attaches):
     assert obs.as_dict()["requested"] == []
     assert page.evaluate_calls == 0
     assert record_attaches == []
-
-
-def test_slug_matchers_do_not_select_a_superstring_entry():
-    matchers = css._slug_matchers("reasoning-posture")
-    assert not any(m.search("meta-reasoning-posture-draft") for m in matchers)
-    assert any(m.search("reasoning-posture") for m in matchers)
+    assert obs.click_errors == ()
