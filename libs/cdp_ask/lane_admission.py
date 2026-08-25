@@ -1,9 +1,11 @@
-"""Purpose-aware CDP lane admission — Option A with transitional additive regime.
+"""Purpose-aware CDP lane admission — class ceilings with transitional additive regime.
 
-When ``seat_count > (LANE_HARD_LIMIT - ADVISOR_RESERVE)`` the advisor reservation
-is **additive** (effective absolute hard raised by exactly ``ADVISOR_RESERVE`` for
-non-seat admits only). Once occupancy falls to or below that line the reservation
-is **carved** from the existing hard limit (+0 steady-state cost).
+``ADVISOR_RESERVE`` is the first-advisor floor that seats cannot consume. Additional
+advisors share stream limits up to ``LANE_HARD_LIMIT - SEAT_FLOOR``. When
+``seat_count > (LANE_HARD_LIMIT - ADVISOR_RESERVE)`` the reservation is **additive**
+(effective absolute hard raised by exactly ``ADVISOR_RESERVE`` for non-seat admits
+only). Once occupancy falls to or below that line the reservation is **carved** from
+the existing hard limit (+0 steady-state cost).
 """
 
 from __future__ import annotations
@@ -15,10 +17,11 @@ from claude_bundles.operator_proxy_mission import OPERATOR_PROXY_MISSION_PURPOSE
 LANE_SOFT_LIMIT = 2
 LANE_HARD_LIMIT = 3
 ADVISOR_RESERVE = 1
+SEAT_FLOOR = 1
 
 SEAT_PURPOSES = OPERATOR_PROXY_MISSION_PURPOSES
 
-AdmissionRefusal = str  # seat_cap | abs_hard | soft | hard
+AdmissionRefusal = str  # seat_cap | abs_hard | soft | hard | advisor_cap
 
 
 def is_seat_purpose(purpose: str | None) -> bool:
@@ -96,13 +99,11 @@ def evaluate_new_admission(
     if regime == "additive":
         return True, None
 
-    if other_count >= ADVISOR_RESERVE:
-        if unattended and total >= LANE_SOFT_LIMIT:
-            return False, "soft"
-        return False, "abs_hard"
-
-    if seat_count >= LANE_HARD_LIMIT - ADVISOR_RESERVE and other_count < ADVISOR_RESERVE:
+    if other_count < ADVISOR_RESERVE:
         return True, None
+
+    if other_count >= LANE_HARD_LIMIT - SEAT_FLOOR:
+        return False, "advisor_cap"
 
     if unattended and total >= LANE_SOFT_LIMIT:
         return False, "soft"

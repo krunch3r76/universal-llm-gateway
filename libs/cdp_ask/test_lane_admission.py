@@ -1,4 +1,4 @@
-"""Tests for purpose-aware CDP lane admission (Option A + transitional additive)."""
+"""Tests for purpose-aware CDP lane admission (class ceilings + transitional additive)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import pytest
 from cdp_ask.lane_admission import (
     ADVISOR_RESERVE,
     LANE_HARD_LIMIT,
+    SEAT_FLOOR,
     admission_regime,
     count_by_purpose_class,
     effective_abs_hard,
@@ -290,3 +291,40 @@ def test_count_by_purpose_class_from_rows() -> None:
     seat, other = count_by_purpose_class(rows)
     assert seat == 2
     assert other == 2
+
+
+def test_dual_advisor_no_seat_admits() -> None:
+    admit, label = evaluate_new_admission(
+        "ask", seat_count=0, other_count=1, unattended=True
+    )
+    assert admit is True
+    assert label is None
+
+
+def test_third_advisor_no_seat_is_advisor_cap() -> None:
+    admit, label = evaluate_new_admission(
+        "ask", seat_count=0, other_count=2, unattended=True
+    )
+    assert admit is False
+    assert label == "advisor_cap"
+
+
+def test_attended_seat_plus_advisor_admits_second_advisor() -> None:
+    admit, label = evaluate_new_admission(
+        "ask", seat_count=1, other_count=1, unattended=False
+    )
+    assert admit is True
+    assert label is None
+
+
+def test_purpose_lane_refusal_advisor_cap_not_hard() -> None:
+    rows = [_row("ask") for _ in range(2)]
+    snap = _snap(rows)
+    refuse, label = purpose_lane_refusal(snap, purpose="ask", unattended=True)
+    assert refuse is True
+    assert label == "advisor_cap"
+
+
+def test_seat_floor_constant() -> None:
+    assert ADVISOR_RESERVE == 1
+    assert SEAT_FLOOR == 1
