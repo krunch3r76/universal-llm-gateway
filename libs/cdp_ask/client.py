@@ -25,6 +25,14 @@ def project_ask_base_url() -> str:
     return os.environ.get("PROJECT_ASK_URL", "").strip().rstrip("/")
 
 
+def format_cdp_ask_http_error(status_code: int, detail: str | None = None) -> str:
+    """Caller-visible satellite HTTP error. MCP ``project_ask`` is gone."""
+    text = (detail or "").strip()
+    if text:
+        return f"cdp-ask HTTP {status_code}: {text[:400]}"
+    return f"cdp-ask HTTP {status_code}"
+
+
 class CdpAskClientError(RuntimeError):
     """Satellite unreachable or returned a non-success HTTP status."""
 
@@ -135,16 +143,17 @@ class CdpAskClient:
         try:
             resp = http.request(method, path, json=json_body)
             if resp.status_code >= 400:
+                detail = resp.text[:400]
                 raise CdpAskClientError(
-                    f"project-ask HTTP {resp.status_code}",
+                    format_cdp_ask_http_error(resp.status_code, detail),
                     status_code=resp.status_code,
-                    detail=resp.text[:400],
+                    detail=detail,
                 )
             if resp.content:
                 return resp.json()
             return {"ok": True}
         except httpx.RequestError as exc:
-            raise CdpAskClientError(f"project-ask unreachable: {exc}") from exc
+            raise CdpAskClientError(f"cdp-ask unreachable: {exc}") from exc
         finally:
             if owns:
                 http.close()

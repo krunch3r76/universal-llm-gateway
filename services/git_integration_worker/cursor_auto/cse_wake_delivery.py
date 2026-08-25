@@ -11,6 +11,7 @@ import os
 from typing import Any, Protocol
 
 import httpx
+from cdp_ask.client import format_cdp_ask_http_error
 from claude_bundles.operator_mailbox import is_operator_proxy_mailbox
 from universal_logging import get_logger
 
@@ -102,11 +103,12 @@ def deliver_cse_wake(
             with httpx.Client(timeout=http_timeout) as client:
                 resp = client.post(url, json=body)
         if resp.status_code >= 400:
+            detail = (resp.text or "")[:400]
             return {
                 "ok": False,
-                "error": f"project-ask HTTP {resp.status_code}",
+                "error": format_cdp_ask_http_error(resp.status_code, detail),
                 "status_code": resp.status_code,
-                "detail": (resp.text or "")[:400],
+                "detail": detail,
             }
         data = resp.json() if resp.content else {"ok": True}
         if isinstance(data, dict) and data.get("ok") is False:
@@ -119,13 +121,13 @@ def deliver_cse_wake(
         return {
             "ok": False,
             "code": "cse_session_http_timeout",
-            "error": f"project-ask timed out after {http_timeout:.0f}s waiting for satellite",
+            "error": f"cdp-ask timed out after {http_timeout:.0f}s waiting for satellite",
             "retryable": True,
             "indeterminate": True,
         }
     except httpx.HTTPError as exc:
         logger.warning("cse_wake_delivery unreachable url=%s error=%s", url, exc)
-        return {"ok": False, "error": f"project-ask unreachable: {exc}"}
+        return {"ok": False, "error": f"cdp-ask unreachable: {exc}"}
 
 
 async def maybe_deliver_cse_wake(

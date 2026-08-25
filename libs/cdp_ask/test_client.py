@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
+
 from cdp_ask.client import CdpAskClient, CdpAskClientError
 from cdp_ask.models import SubmitProjectAskRequest
 
@@ -42,3 +43,22 @@ def test_missing_base_url_raises() -> None:
     client = CdpAskClient(base_url="")
     with pytest.raises(CdpAskClientError, match="PROJECT_ASK_URL"):
         client.poll("e1")
+
+
+def test_http_error_uses_cdp_ask_prefix_and_detail() -> None:
+    client = CdpAskClient(base_url="http://satellite:8770")
+    mock_http = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 429
+    mock_resp.text = "cdp lane admission refused (hard)"
+    mock_resp.content = b""
+    mock_http.request.return_value = mock_resp
+
+    with pytest.raises(CdpAskClientError) as caught:
+        client.poll("e1", client=mock_http)
+
+    err = caught.value
+    assert str(err) == "cdp-ask HTTP 429: cdp lane admission refused (hard)"
+    assert err.status_code == 429
+    assert err.detail == "cdp lane admission refused (hard)"
+    assert "project-ask" not in str(err)

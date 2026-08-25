@@ -343,7 +343,7 @@ def test_format_cdp_result_body_upstream_overloaded() -> None:
         prompt_uri="cortex://notes/system/threads/r-prompt.md",
         picker_model="opus-4.8",
         stall_stage="upstream_overloaded",
-        error="project-ask HTTP 529",
+        error="cdp-ask HTTP 529",
         extras={"reason": "upstream_overloaded", "status_code": 529},
     )
     text = format_cdp_result_body(result)
@@ -427,7 +427,7 @@ async def test_emit_upstream_overload_friction_dedupes(
         prompt_uri="cortex://notes/system/threads/r-prompt.md",
         picker_model="opus-4.8",
         stall_stage="upstream_overloaded",
-        error="project-ask HTTP 529",
+        error="cdp-ask HTTP 529",
         extras={"reason": "upstream_overloaded", "status_code": 529},
     )
     await worker._emit_upstream_overload_friction(

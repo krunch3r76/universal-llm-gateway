@@ -537,7 +537,7 @@ async def test_horizon_404_plus_seated_authorship_not_failed(
     monkeypatch.setattr(
         reconcile,
         "poll_satellite_snapshot",
-        AsyncMock(return_value={"error": "project-ask HTTP 404", "status_code": 404}),
+        AsyncMock(return_value={"error": "cdp-ask HTTP 404", "status_code": 404}),
     )
     monkeypatch.setattr(
         reconcile,
@@ -570,7 +570,7 @@ async def test_horizon_404_plus_seated_authorship_not_failed(
             "satellite_execution_id": "a8f51c9fc54e4d96bd591abebf053537",
             "thread_id": "9501",
             "stall_stage": reconcile.STALL_HORIZON_SEATED_AUTHORSHIP,
-            "error": "project-ask HTTP 404",
+            "error": "cdp-ask HTTP 404",
         }
     ]
     leg = reconcile.read_inflight_leg("a3ba868b-4aa9-4475-8944-1ac5981e48f6")

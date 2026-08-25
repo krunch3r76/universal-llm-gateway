@@ -102,7 +102,7 @@ async def test_commission_non_2xx_posts_failed_not_done(monkeypatch):
         return {
             "ok": False,
             "status_code": 429,
-            "error": {"detail": "project-ask HTTP 429"},
+            "error": {"detail": "cdp-ask HTTP 429"},
         }
 
     async def _fake_terminal(j, **kwargs):
@@ -145,7 +145,7 @@ def test_harvest_failed_successor_seated_true_when_registration_present() -> Non
         row=row,
         payload={
             "execution_id": _EXEC,
-            "error": "project-ask HTTP 429",
+            "error": "cdp-ask HTTP 429",
             "stall_stage": "submit",
         },
         poster=lambda _t, _s, _b: None,
@@ -161,7 +161,7 @@ def test_harvest_failed_turn_shape_quotes_status_failed() -> None:
     subject, body = build_harvest_failed_turn(
         thread_id=_THREAD,
         execution_id=_EXEC,
-        error="project-ask HTTP 429",
+        error="cdp-ask HTTP 429",
         stall_stage="submit",
         successor_birth_id="fce45372d33d49f6993959f18113f839",
     )
@@ -171,7 +171,7 @@ def test_harvest_failed_turn_shape_quotes_status_failed() -> None:
     assert payload["disposition"] == "failed"
     assert payload["reason"] == "continuity_hop_generate_harvest_failed"
     assert payload["execution_id"] == _EXEC
-    assert payload["error"] == "project-ask HTTP 429"
+    assert payload["error"] == "cdp-ask HTTP 429"
     # No registration_id on watch — successor_seated stays False (minted key only).
     assert payload["successor_seated"] is False
     assert payload["history_integrity"] == "append"
@@ -211,7 +211,7 @@ def test_generate_stall_429_appends_failed_not_done(tmp_path: Path) -> None:
                 "payload": {
                     "execution_id": _EXEC,
                     "stall_stage": "submit",
-                    "error": "project-ask HTTP 429",
+                    "error": "cdp-ask HTTP 429",
                 },
             }
         ]
@@ -234,7 +234,7 @@ def test_generate_stall_429_appends_failed_not_done(tmp_path: Path) -> None:
     assert "status:done" not in subject
     payload = json.loads(body)
     assert payload["disposition"] == "failed"
-    assert payload["error"] == "project-ask HTTP 429"
+    assert payload["error"] == "cdp-ask HTTP 429"
     assert payload["execution_id"] == _EXEC
     watches = load_watches(watch_path)
     assert watches[_THREAD]["succession_status"] == "revoked"
@@ -282,7 +282,7 @@ def test_post_admit_generate_failure_never_successor_produced(tmp_path: Path) ->
                 "payload": {
                     "execution_id": _EXEC,
                     "stall_stage": "submit",
-                    "error": "project-ask HTTP 429",
+                    "error": "cdp-ask HTTP 429",
                 },
             },
         ]
