@@ -174,6 +174,8 @@ class SdkDispatchRow:
     topic: str | None = None
     nest_under: str | None = None
     resume_of: str | None = None
+    checkout_lane: str | None = None
+    checkout_branch: str | None = None
 
 
 @dataclass(frozen=True)

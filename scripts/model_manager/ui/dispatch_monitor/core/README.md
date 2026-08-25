@@ -136,6 +136,8 @@ all agree, so none of the three can drift silently.
 | `frontier.sdk.admit.duplicate_refused` | `worker` | **VERIFIED** — attention item, never a live row |
 | `frontier.sdk.closeout.partial_work.production_specimen` | `worker` | **VERIFIED** — production `partial:work` specimen; identity only, never terminal |
 | `frontier.sdk.review_child.spawned` | `worker` | **VERIFIED** — auto-review child nested under parent execution |
+| `sdk.lane.selected` | — | **VERIFIED** — checkout lane A/B; stash/stamp only (no row mint) |
+| `sdk.lane_b.minted` | — | **VERIFIED** — Lane-B branch mint; stash/stamp only (no row mint) |
 
 **Endpoint provenance (agent-bus 6164):** `SdkDispatchRow.admitted_via` / `asked_by` /
 `purpose` / `story_id` / `topic` / `nest_under` / `resume_of` fold first-writer-wins

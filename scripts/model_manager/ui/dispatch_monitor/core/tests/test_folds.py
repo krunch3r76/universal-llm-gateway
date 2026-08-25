@@ -9,6 +9,7 @@ gap read as a dispatch.
 from __future__ import annotations
 
 from scripts.model_manager.ui.dispatch_monitor.core import signals
+from scripts.model_manager.ui.dispatch_monitor.core.dtos import SdkDispatchRow
 from scripts.model_manager.ui.dispatch_monitor.core.model import Model
 from scripts.model_manager.ui.dispatch_monitor.core.protocols import Event
 
@@ -1089,3 +1090,161 @@ def test_consult_queued_streak_surfaces_stuck_after_n_scans() -> None:
         else:
             assert root.state == "stuck"
             assert root.skip_reason == "consult_queued_streak"
+
+
+# --- SDK checkout lane / branch (agent-bus 6164) -----------------------------
+def _lane_selected(dispatch_id: str, lane: str, *, ts: int = 500) -> Event:
+    return Event(
+        signals.SDK_LANE_SELECTED,
+        ts,
+        {
+            "dispatch_id": dispatch_id,
+            "thread_id": "9630",
+            "lane": lane,
+            "reason": "regime_default",
+            "regime_active": True,
+            "contract": "implement",
+            "selecting_predicate": "lane_b_default",
+        },
+    )
+
+
+def _lane_b_minted(dispatch_id: str, branch: str, *, ts: int = 600) -> Event:
+    return Event(
+        signals.SDK_LANE_B_MINTED,
+        ts,
+        {
+            "dispatch_id": dispatch_id,
+            "thread_id": "9630",
+            "worktree_path": "/tmp/wt",
+            "branch": branch,
+            "branch_point": "abc123",
+            "mint_wait_ms": 42.0,
+        },
+    )
+
+
+def _worker_dispatched_lane(
+    dispatch_id: str,
+    *,
+    ts: int = 1_000,
+    source: str = "ulg://git_integration_worker",
+) -> Event:
+    return Event(
+        signals.SDK_WORKER_DISPATCHED,
+        ts,
+        {"dispatch_id": dispatch_id, "execution_id": dispatch_id},
+        source=source,
+    )
+
+
+def test_sdk_lane_b_minted_paints_lane_and_branch_before_emitters() -> None:
+    """dispatched + lane.selected B + lane_b.minted → lane=/br= before [."""
+    from scripts.model_manager.ui.dispatch_monitor.core.board_lines import sdk_live_line
+
+    dispatch_id = "8cffe53e8cec"
+    branch = "cursor-sdk/lane-9630"
+    model = Model()
+    model.apply(_worker_dispatched_lane(dispatch_id))
+    model.apply(_lane_selected(dispatch_id, "B"))
+    model.apply(_lane_b_minted(dispatch_id, branch))
+    frame = model.derive(2_000)
+    assert len(frame.sdk) == 1
+    row = frame.sdk[0]
+    assert row.checkout_lane == "B"
+    assert row.checkout_branch == branch
+    line = sdk_live_line(row, width=200)
+    bracket = line.index("[")
+    assert "lane=B" in line[:bracket]
+    assert "br=lane-9630" in line[:bracket]
+
+
+def test_sdk_lane_events_before_dispatched_same_paint_one_row() -> None:
+    """lane.selected → minted → dispatched preserves stash/join; one row."""
+    from scripts.model_manager.ui.dispatch_monitor.core.board_lines import sdk_live_line
+
+    dispatch_id = "events-first-abc"
+    branch = "cursor-sdk/lane-9630"
+    model = Model()
+    model.apply(_lane_selected(dispatch_id, "B", ts=100))
+    model.apply(_lane_b_minted(dispatch_id, branch, ts=200))
+    model.apply(_worker_dispatched_lane(dispatch_id, ts=300))
+    assert len(model.sdk.dispatches) == 1
+    frame = model.derive(400)
+    assert len(frame.sdk) == 1
+    row = frame.sdk[0]
+    line = sdk_live_line(row, width=200)
+    bracket = line.index("[")
+    assert "lane=B" in line[:bracket]
+    assert "br=lane-9630" in line[:bracket]
+
+
+def test_sdk_lane_a_only_no_branch_suffix() -> None:
+    """lane.selected A without mint → lane=A, no br=."""
+    from scripts.model_manager.ui.dispatch_monitor.core.board_lines import sdk_live_line
+
+    dispatch_id = "lane-a-only"
+    model = Model()
+    model.apply(_worker_dispatched_lane(dispatch_id))
+    model.apply(_lane_selected(dispatch_id, "A"))
+    row = model.derive(2_000).sdk[0]
+    line = sdk_live_line(row, width=200)
+    assert "lane=A" in line
+    assert "br=" not in line
+
+
+def test_sdk_lane_signals_alone_do_not_mint_rows() -> None:
+    """selected/minted without dispatched → dispatches empty."""
+    model = Model()
+    model.apply(_lane_selected("orphan-lane", "B"))
+    model.apply(_lane_b_minted("orphan-lane", "cursor-sdk/lane-9999"))
+    assert len(model.sdk.dispatches) == 0
+    assert len(model.derive(2_000).sdk) == 0
+
+
+def test_sdk_live_line_shortens_git_integration_worker_emitter() -> None:
+    """git_integration_worker in emitters_seen → giw in flag, not long name."""
+    from scripts.model_manager.ui.dispatch_monitor.core.board_lines import sdk_live_line
+
+    row = SdkDispatchRow(
+        dispatch_id="giw-short",
+        state="running",
+        emitters_seen=("git_integration_worker",),
+        checkout_lane="B",
+        checkout_branch="cursor-sdk/lane-9630",
+    )
+    line = sdk_live_line(row, width=200)
+    assert "giw" in line
+    assert "git_integration_worker" not in line
+
+
+def test_sdk_live_line_width_keeps_lane_over_emitter_clip() -> None:
+    """width=140 keeps lane=/br= when width=120 would clip [git.. emitter tail."""
+    from scripts.model_manager.ui.dispatch_monitor.core.board_lines import sdk_live_line
+
+    row = SdkDispatchRow(
+        dispatch_id="8cffe53e8cec",
+        state="running",
+        root_id="6164",
+        thread_id="9630",
+        model="composer-2.5",
+        elapsed_ms=120_000,
+        idle_age_ms=5_000,
+        emitters_seen=("git_integration_worker",),
+        checkout_lane="B",
+        checkout_branch="cursor-sdk/lane-9630",
+    )
+    wide = sdk_live_line(row, width=200)
+    bracket = wide.index("[")
+    assert "lane=B" in wide[:bracket]
+    assert "br=lane-9630" in wide[:bracket]
+
+    medium = sdk_live_line(row, width=140)
+    bracket_m = medium.index("[")
+    assert "lane=B" in medium[:bracket_m]
+    assert "br=lane-9630" in medium[:bracket_m]
+
+    narrow = sdk_live_line(row, width=120)
+    assert "lane=B" in narrow
+    assert "br=lane-9630" in narrow
+    assert "git_integration_worker" not in narrow

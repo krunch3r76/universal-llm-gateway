@@ -70,11 +70,18 @@ def _root_line(row: CharterRootRow) -> str:
 
 def _sdk_line(row: SdkDispatchRow) -> str:
     """Render one cursor-sdk dispatch row, flagging GS2 divergence inline."""
-    flag = "DIVERGENT" if row.divergent_fields else ",".join(row.emitters_seen) or "-"
+    from .board_lines import _sdk_identity_suffix, _short_emitter
+
+    flag = (
+        "DIVERGENT"
+        if row.divergent_fields
+        else ",".join(_short_emitter(e) for e in row.emitters_seen) or "-"
+    )
     if row.terminal_ms is not None:
         timing = f"dur={_ms(row.duration_ms):>7}"
     else:
         timing = f"el={_ms(row.elapsed_ms):>7} idle={_ms(row.idle_age_ms)}"
+    identity = _sdk_identity_suffix(row)
     extra: list[str] = []
     if row.topic:
         extra.append(f"topic={clip_text(row.topic, 40)}")
@@ -84,7 +91,7 @@ def _sdk_line(row: SdkDispatchRow) -> str:
     return (
         f"  {_truncate(row.dispatch_id, 14)} {_truncate(row.state, 10)} "
         f"root={_truncate(row.root_id, 8)} {_truncate(row.model, 18)} "
-        f"{timing} [{flag}]{extra_s}"
+        f"{timing}{identity} [{flag}]{extra_s}"
     )
 
 

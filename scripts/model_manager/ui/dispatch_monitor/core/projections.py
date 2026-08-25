@@ -94,6 +94,8 @@ def sdk_rows(
                 topic=state.topic,
                 nest_under=state.nest_under,
                 resume_of=state.resume_of,
+                checkout_lane=state.checkout_lane,
+                checkout_branch=state.checkout_branch,
             )
         )
     rows.sort(key=lambda r: r.dispatch_id)

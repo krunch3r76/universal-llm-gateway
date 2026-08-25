@@ -30,6 +30,8 @@ from scripts.model_manager.ui.dispatch_monitor.ulg.terminal_backfill import (
 _LIVE_FILTERS: tuple[str, ...] = (
     "manage.charter.tick.*",
     "frontier.sdk.*",
+    "sdk.lane.*",
+    "sdk.lane_b.*",
     "cdp.generate.*",
     "frontier.poll.hint.issued",
     "system.started",
@@ -63,6 +65,8 @@ _PRIORITY_SIGNALS: tuple[str, ...] = (
     "pipeline.frontier.dispatch.completed",
     "pipeline.frontier.dispatch.failed",
     "frontier.sdk.review_child.spawned",
+    "sdk.lane.selected",
+    "sdk.lane_b.minted",
     "system.started",
 )
 
