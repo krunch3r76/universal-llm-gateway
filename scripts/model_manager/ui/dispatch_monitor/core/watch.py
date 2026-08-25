@@ -38,6 +38,16 @@ def _truncate(text: str | None, width: int) -> str:
     return value[: width - 1] + "…"
 
 
+def clip_text(text: str | None, width: int) -> str:
+    """Truncate ``text`` to ``width`` without padding — for optional suffixes."""
+    value = text or ""
+    if len(value) <= width:
+        return value
+    if width <= 1:
+        return "…"[:width]
+    return value[: width - 1] + "…"
+
+
 def _root_line(row: CharterRootRow) -> str:
     """Render one charter root row."""
     step = row.arc_g_step or row.pickup_gid or "-"
@@ -65,10 +75,16 @@ def _sdk_line(row: SdkDispatchRow) -> str:
         timing = f"dur={_ms(row.duration_ms):>7}"
     else:
         timing = f"el={_ms(row.elapsed_ms):>7} idle={_ms(row.idle_age_ms)}"
+    extra: list[str] = []
+    if row.topic:
+        extra.append(f"topic={clip_text(row.topic, 40)}")
+    if row.provenance == "signal" and (row.admitted_via or row.asked_by):
+        extra.append(f"{row.admitted_via or '?'}←{row.asked_by or '?'}")
+    extra_s = (" " + " ".join(extra)) if extra else ""
     return (
         f"  {_truncate(row.dispatch_id, 14)} {_truncate(row.state, 10)} "
         f"root={_truncate(row.root_id, 8)} {_truncate(row.model, 18)} "
-        f"{timing} [{flag}]"
+        f"{timing} [{flag}]{extra_s}"
     )
 
 
@@ -113,11 +129,21 @@ def render(projection: SupervisorProjection) -> str:
     lines.extend(_sdk_line(row) for row in projection.sdk)
     lines.append(f"-- cdp legs ({len(projection.cdp)}) --")
     lines.extend(_cdp_line(row) for row in projection.cdp)
+    lines.append(f"-- relations ({len(projection.relations)}) --")
+    for edge in projection.relations:
+        lines.append(
+            f"  {edge.kind} {edge.from_id} → {edge.to_id} ({edge.evidence_signal})"
+        )
     lines.append(f"-- arcs ({len(projection.arcs)}) -- v1: present-but-empty by design")
     lines.append(f"-- attention ({len(projection.attention)}) --")
+    now_ms = projection.generated_at_ms
     for item in projection.attention:
         mark = SEVERITY_MARK.get(item.severity, "  ")
-        lines.append(f"  {mark} [{item.kind}] {item.subject}: {item.title}")
+        elapsed = item.age_ms
+        if elapsed is None and item.since_ms is not None:
+            elapsed = max(0, now_ms - item.since_ms)
+        age = f"{_ms(elapsed):>7}"
+        lines.append(f"  {mark} {age} [{item.kind}] {item.subject}: {item.title}")
         if item.detail:
             lines.append(f"       {item.detail}")
     if projection.changed_hints:

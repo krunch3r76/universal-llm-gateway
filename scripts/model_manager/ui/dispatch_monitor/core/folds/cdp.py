@@ -31,6 +31,7 @@ class CdpState:
         "thread_id",
         "model",
         "caller_agent",
+        "topic",
         "state",
         "hint_issued_ms",
         "admitted_at_ms",
@@ -50,6 +51,7 @@ class CdpState:
         self.thread_id: str | None = None
         self.model: str | None = None
         self.caller_agent: str | None = None
+        self.topic: str | None = None
         self.state = "unknown"
         self.hint_issued_ms: int | None = None
         self.admitted_at_ms: int | None = None
@@ -106,6 +108,7 @@ class CdpFold:
             ("thread_id", "thread_id"),
             ("root", "root_id"),
             ("root_id", "root_id"),
+            ("purpose", "topic"),
         ):
             if getattr(row, dst) is None and payload.get(src):
                 setattr(row, dst, str(payload[src]))

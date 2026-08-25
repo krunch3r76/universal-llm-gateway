@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# One-shot restore / focus for the dispatch board (tmux session 0).
+#
+#   board          # create, respawn if dead, or select if live
+#   Ctrl-b B       # same, when bound (see end of this script's comments)
+#
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SESSION="${BOARD_TMUX_SESSION:-0}"
+NAME=dispatch-board
+LAUNCH="$ROOT/scripts/tmux-dispatch-board"
+
+if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+  echo "no tmux session '$SESSION'" >&2
+  exit 1
+fi
+
+if tmux list-windows -t "$SESSION" -F '#{window_name}' 2>/dev/null | grep -qx "$NAME"; then
+  target="$SESSION:$NAME"
+  dead="$(tmux display-message -t "$target" -p '#{pane_dead}' 2>/dev/null || echo 1)"
+  if [[ "$dead" == "1" ]]; then
+    tmux set-option -t "$target" remain-on-exit on
+    tmux respawn-pane -t "$target" -k "$LAUNCH"
+  fi
+  tmux select-window -t "$target"
+else
+  tmux new-window -t "$SESSION:" -n "$NAME" "$LAUNCH"
+  tmux set-option -t "$SESSION:$NAME" remain-on-exit on
+  tmux select-window -t "$SESSION:$NAME"
+fi

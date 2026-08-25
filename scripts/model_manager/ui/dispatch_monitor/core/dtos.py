@@ -171,6 +171,9 @@ class SdkDispatchRow:
     asked_by: str | None = None
     purpose: str | None = None
     story_id: str | None = None
+    topic: str | None = None
+    nest_under: str | None = None
+    resume_of: str | None = None
 
 
 @dataclass(frozen=True)
@@ -188,6 +191,7 @@ class CdpLegRow:
     thread_id: str | None = None
     model: str | None = None
     caller_agent: str | None = None
+    topic: str | None = None
     state: str = "unknown"
     admitted_at_ms: int | None = None
     terminal_ms: int | None = None
@@ -239,6 +243,16 @@ class AttentionItem:
 
 
 @dataclass(frozen=True)
+class RelationEdge:
+    """One evidence-backed relationship. Views may paint; they must not invent."""
+
+    kind: str
+    from_id: str
+    to_id: str
+    evidence_signal: str
+
+
+@dataclass(frozen=True)
 class SupervisorProjection:
     """One immutable frame. The whole of what a View is allowed to know.
 
@@ -263,6 +277,7 @@ class SupervisorProjection:
     sdk: tuple[SdkDispatchRow, ...] = ()
     cdp: tuple[CdpLegRow, ...] = ()
     attention: tuple[AttentionItem, ...] = ()
+    relations: tuple[RelationEdge, ...] = ()
     arcs: Mapping[str, PathSimArcRow] = field(default_factory=dict)
     changed_hints: tuple[str, ...] = ()
 

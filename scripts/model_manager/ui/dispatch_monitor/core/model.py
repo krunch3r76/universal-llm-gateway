@@ -40,6 +40,7 @@ from .folds import CdpFold, CharterFold, SdkFold
 from .projections import age as _age
 from .projections import cdp_rows, root_rows, sdk_rows
 from .protocols import EventRecord
+from .relations import project_relations
 
 
 class Model:
@@ -55,10 +56,13 @@ class Model:
         self.seq_high_water: int | None = None
         self.dropped_ingest = 0
         self.dropped_subscribe = 0
+        self.dropped_ingest_first_ms: int | None = None
+        self.dropped_subscribe_first_ms: int | None = None
         self.unhandled: dict[str, int] = {}
+        self.unhandled_first_ms: int | None = None
         self.fold_status = "live"
-        self.reconcile_failures: dict[str, tuple[str, str, str]] = {}
-        self.replay_truncations: dict[str, tuple[int | None, str, int | None]] = {}
+        self.reconcile_failures: dict[str, tuple[str, str, str, int]] = {}
+        self.replay_truncations: dict[str, tuple[int | None, str, int | None, int]] = {}
         self._handlers: dict[str, Callable[[EventRecord], None]] = {}
         self._handlers.update(self.charter.handlers())
         self._handlers.update(self.sdk.handlers())
@@ -89,6 +93,8 @@ class Model:
             self.seq_high_water = seq
         handler = self._handlers.get(record.signal)
         if handler is None:
+            if self.unhandled_first_ms is None:
+                self.unhandled_first_ms = record.ts_unix_ms
             self.unhandled[record.signal] = self.unhandled.get(record.signal, 0) + 1
             return
         handler(record)
@@ -100,10 +106,14 @@ class Model:
 
     def _on_dropped_ingest(self, record: EventRecord) -> None:
         """Count lost fold inputs. These mean folded state may be incomplete."""
+        if self.dropped_ingest_first_ms is None:
+            self.dropped_ingest_first_ms = record.ts_unix_ms
         self.dropped_ingest += _count(record.payload)
 
     def _on_dropped_subscribe(self, record: EventRecord) -> None:
         """Count View-side drops. Correct behaviour under overload, not an error."""
+        if self.dropped_subscribe_first_ms is None:
+            self.dropped_subscribe_first_ms = record.ts_unix_ms
         self.dropped_subscribe += _count(record.payload)
 
     def _on_fold_status(self, record: EventRecord) -> None:
@@ -121,7 +131,7 @@ class Model:
         if not all(isinstance(value, str) and value for value in (subject, source, error)):
             return
         key = f"monitor.reconcile.failed:{subject}:{source}"
-        self.reconcile_failures[key] = (subject, source, error)
+        self.reconcile_failures[key] = (subject, source, error, record.ts_unix_ms)
 
     def _on_replay_truncated(self, record: EventRecord) -> None:
         """Remember GX1 truncation per subscribe connection for attention projection."""
@@ -136,7 +146,7 @@ class Model:
         first_seq = payload.get("first_seq")
         req = requested if isinstance(requested, int) and not isinstance(requested, bool) else None
         first = first_seq if isinstance(first_seq, int) and not isinstance(first_seq, bool) else None
-        self.replay_truncations[connection] = (req, reason, first)
+        self.replay_truncations[connection] = (req, reason, first, record.ts_unix_ms)
 
     # --- derive -----------------------------------------------------------
     def derive(
@@ -159,16 +169,29 @@ class Model:
             dispatches=dispatches,
             legs=legs,
             thresholds=self.thresholds,
+            now_ms=now_ms,
             reconcile_failures=self.reconcile_failures,
+            ingest_since_ms=self.dropped_ingest_first_ms,
+            subscribe_since_ms=self.dropped_subscribe_first_ms,
+            unhandled_since_ms=self.unhandled_first_ms,
+            duplicate_refused=self.sdk.duplicate_refused,
         )
         if self.replay_truncations:
-            merged = (*attention, *transport_truncation_items(self.replay_truncations))
+            merged = (
+                *attention,
+                *transport_truncation_items(
+                    self.replay_truncations, now_ms=now_ms
+                ),
+            )
             attention = tuple(
                 sorted(
                     merged,
                     key=lambda i: (-severity_rank(i.severity), i.kind, i.subject, i.key),
                 )
             )
+        relations = project_relations(
+            fold=self.sdk, index=self.index, dispatches=dispatches, legs=legs
+        )
         frame = SupervisorProjection(
             schema_version=SCHEMA_VERSION,
             generated_at_ms=now_ms,
@@ -178,6 +201,7 @@ class Model:
             sdk=dispatches,
             cdp=legs,
             attention=attention,
+            relations=relations,
             arcs={},
             changed_hints=(),
         )
@@ -243,7 +267,7 @@ def _count(payload: Mapping[str, Any]) -> int:
 
 
 #: Frame sections a hint may name, in render order.
-HINT_SECTIONS = ("health", "roots", "sdk", "cdp", "attention", "arcs")
+HINT_SECTIONS = ("health", "roots", "sdk", "cdp", "attention", "relations", "arcs")
 
 
 def _hints(

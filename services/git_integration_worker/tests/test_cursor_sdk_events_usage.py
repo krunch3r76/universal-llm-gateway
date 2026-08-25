@@ -62,6 +62,20 @@ def test_dispatched_event_carries_request_id() -> None:
     assert event.payload["admitted_via"] == "cursor-auto"
 
 
+def test_dispatched_event_carries_topic_and_nest_under() -> None:
+    event = FrontierSdkWorkerDispatched(
+        dispatch_id="req1-abc12345",
+        thread_id="5867",
+        execution_id="exec-1",
+        request_id="ledger-req-abc123",
+        admitted_via="cursor-auto",
+        topic="ULG gains a glanceable dispatch topic",
+        nest_under="parent-disp",
+    )
+    assert event.payload["topic"] == "ULG gains a glanceable dispatch topic"
+    assert event.payload["nest_under"] == "parent-disp"
+
+
 def test_resumed_event_factory() -> None:
     event = FrontierSdkWorkerResumed(
         dispatch_id="child",

@@ -116,8 +116,8 @@ def test_watch_render_is_pure_text_and_names_every_section(any_fixture: str) -> 
     """The text sink renders all panels and never raises on any fixture."""
     model, now = replay(any_fixture)
     text = render(model.derive(now))
-    for heading in ("-- roots", "-- sdk dispatches", "-- cdp legs", "-- arcs",
-                    "-- attention"):
+    for heading in ("-- roots", "-- sdk dispatches", "-- cdp legs", "-- relations",
+                    "-- arcs", "-- attention"):
         assert heading in text
     assert model.derive(now).fingerprint in text
 

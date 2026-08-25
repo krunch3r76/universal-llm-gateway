@@ -91,6 +91,9 @@ def sdk_rows(
                 asked_by=state.asked_by,
                 purpose=state.purpose,
                 story_id=state.story_id,
+                topic=state.topic,
+                nest_under=state.nest_under,
+                resume_of=state.resume_of,
             )
         )
     rows.sort(key=lambda r: r.dispatch_id)
@@ -113,6 +116,7 @@ def cdp_rows(
                 thread_id=state.thread_id,
                 model=state.model,
                 caller_agent=state.caller_agent,
+                topic=state.topic,
                 state=state.state,
                 admitted_at_ms=state.admitted_at_ms,
                 terminal_ms=state.terminal_ms,

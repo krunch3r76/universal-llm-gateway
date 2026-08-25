@@ -36,7 +36,7 @@ def classify_sdk_live(live: list[SdkDispatchRow]) -> SdkMultiPosture:
         return "solo"
     if any(row.state == "parked_waiting" for row in live):
         return "nested"
-    if _has_review_child_nest(live):
+    if _has_review_child_nest(live) or _has_nest_under(live):
         return "nested"
     roots = {row.root_id for row in live if row.root_id}
     if len(roots) == 1 and any(row.root_id for row in live):
@@ -65,6 +65,12 @@ def _has_review_child_nest(live: list[SdkDispatchRow]) -> bool:
     return False
 
 
+def _has_nest_under(live: list[SdkDispatchRow]) -> bool:
+    """True when a live row names ``nest_under`` pointing at another live row."""
+    live_ids = {row.dispatch_id for row in live}
+    return any(row.nest_under in live_ids for row in live if row.nest_under)
+
+
 def _parent_dispatch_id(row: SdkDispatchRow, live: list[SdkDispatchRow]) -> str | None:
     if row.parent_execution_id and any(
         r.dispatch_id == row.parent_execution_id for r in live
@@ -86,9 +92,13 @@ def row_role(
             return "parent"
         if row.review_child and _parent_dispatch_id(row, live):
             return "child"
+        if row.nest_under and any(r.dispatch_id == row.nest_under for r in live):
+            return "child"
         if any(
             r.review_child and r.parent_execution_id == row.dispatch_id for r in live
         ):
+            return "parent"
+        if any(r.nest_under == row.dispatch_id for r in live):
             return "parent"
         return "child"
     if posture == "parallel":
@@ -111,7 +121,7 @@ def posture_legend(posture: SdkMultiPosture) -> str | None:
     if posture == "nested":
         return (
             "  multi: nested — PARENT/CHILD "
-            "(parked_waiting lease or auto-review child)"
+            "(parked_waiting lease, nest_under, or auto-review child)"
         )
     if posture == "id_split":
         return (

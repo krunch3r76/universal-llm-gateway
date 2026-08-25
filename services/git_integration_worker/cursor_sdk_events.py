@@ -508,6 +508,8 @@ def FrontierSdkWorkerDispatched(  # noqa: N802
     asked_by: str | None = None,
     purpose: str | None = None,
     story_id: str | None = None,
+    topic: str | None = None,
+    nest_under: str | None = None,
 ) -> Event:
     """GIW worker lane start signal after ``mark_running``.
 
@@ -533,6 +535,10 @@ def FrontierSdkWorkerDispatched(  # noqa: N802
         payload["purpose"] = purpose
     if story_id is not None:
         payload["story_id"] = story_id
+    if topic is not None:
+        payload["topic"] = topic
+    if nest_under is not None:
+        payload["nest_under"] = nest_under
     return Event(
         signal="frontier.sdk.worker.dispatched",
         payload=payload,
@@ -550,6 +556,8 @@ def emit_sdk_worker_dispatched(
     asked_by: str | None = None,
     purpose: str | None = None,
     story_id: str | None = None,
+    topic: str | None = None,
+    nest_under: str | None = None,
     seat: str = "cursor-sdk",
 ) -> None:
     """Publish GIW worker-lane start after ``mark_running``.
@@ -571,6 +579,8 @@ def emit_sdk_worker_dispatched(
             asked_by=asked_by,
             purpose=purpose,
             story_id=story_id,
+            topic=topic,
+            nest_under=nest_under,
         )
     )
 

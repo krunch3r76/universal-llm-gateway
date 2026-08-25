@@ -497,6 +497,8 @@ def _maybe_emit_giw_dispatched(
         asked_by=association["asked_by"],
         purpose=association["purpose"],
         story_id=association["story_id"],
+        topic=association["topic"],
+        nest_under=association["nest_under"],
     )
 
 

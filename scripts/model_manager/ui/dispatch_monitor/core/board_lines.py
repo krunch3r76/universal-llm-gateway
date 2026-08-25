@@ -23,7 +23,7 @@ from .sdk_posture import (
     row_role,
     sort_sdk_live,
 )
-from .watch import SEVERITY_MARK, _ms, _truncate
+from .watch import SEVERITY_MARK, _ms, _truncate, clip_text
 
 _TZ = ZoneInfo("America/Los_Angeles")
 
@@ -69,12 +69,11 @@ def attention_line(
     now_ms: int | None = None,
 ) -> str:
     mark = SEVERITY_MARK.get(item.severity, "  ")
-    when = ""
-    if item.since_ms is not None:
-        when = f" @{la_wall_from_ms(item.since_ms)}"
-        if now_ms is not None and now_ms >= item.since_ms:
-            when += f"/{_ms(now_ms - item.since_ms)}"
-    body = f"{mark} [{item.kind}] {item.subject}: {item.title}{when}"
+    elapsed = item.age_ms
+    if elapsed is None and item.since_ms is not None and now_ms is not None:
+        elapsed = max(0, now_ms - item.since_ms)
+    age = f"{_ms(elapsed):>7}"
+    body = f"{mark} {age} [{item.kind}] {item.subject}: {item.title}"
     if item.detail and len(body) < width - 8:
         body = f"{body} — {item.detail[: width - len(body) - 3]}"
     return _truncate(body, width)
@@ -221,6 +220,7 @@ def sdk_live_line(
     timing = _sdk_live_timing(row)
     stall = f" stall={row.stall_stage}" if row.stall_stage else ""
     tc = f" tc={row.tool_call_count}" if row.tool_call_count is not None else ""
+    topic_col = f" topic={clip_text(row.topic, 28)}" if row.topic else ""
     if row.last_tool_name:
         tool = row.last_tool_name
         if row.last_tool_status and row.last_tool_status != "completed":
@@ -232,19 +232,22 @@ def sdk_live_line(
         f"  {role_tag}{_truncate(row.dispatch_id, 14)} {_truncate(row.state, 10)} "
         f"root={_truncate(row.root_id, 8)} "
         f"w={_truncate(row.thread_id, 8)} "
-        f"{_truncate(row.model, 18)} "
+        f"{_truncate(row.model, 18)}{topic_col} "
         f"{timing}{tc}{tool_col} [{flag}]{stall}"
     )
-    if row.provenance != "signal":
-        return _truncate(base, width)
-    via = row.admitted_via or "?"
-    asked = row.asked_by
-    if via == "?" and not asked:
-        return _truncate(base, width)
-    asked_label = asked or "?"
-    prov_token = f" {_truncate(f'{via}←{asked_label}', 22)}"
-    if len(base) + len(prov_token) <= width:
-        return base + prov_token
+    extras: list[str] = []
+    if row.nest_under:
+        extras.append(f" nest={clip_text(row.nest_under, 12)}")
+    if row.provenance == "signal":
+        via = row.admitted_via or "?"
+        asked = row.asked_by
+        if via != "?" or asked:
+            extras.append(f" {_truncate(f'{via}←{asked or '?'}', 22)}")
+    for token in extras:
+        if len(base) + len(token) <= width:
+            base += token
+        else:
+            break
     return _truncate(base, width)
 
 

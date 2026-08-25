@@ -345,4 +345,6 @@ def test_maybe_emit_giw_dispatched_emits_for_cursor_auto() -> None:
         asked_by=emit_mock.call_args.kwargs["asked_by"],
         purpose=emit_mock.call_args.kwargs["purpose"],
         story_id=emit_mock.call_args.kwargs["story_id"],
+        topic=emit_mock.call_args.kwargs["topic"],
+        nest_under=emit_mock.call_args.kwargs["nest_under"],
     )

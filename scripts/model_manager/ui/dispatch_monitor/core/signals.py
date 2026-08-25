@@ -77,10 +77,13 @@ SDK_WORKER_ORPHANED = "frontier.sdk.worker.orphaned"
 SDK_WORKER_CANCELLED = "frontier.sdk.worker.cancelled"
 SDK_WORKER_DELIVERY_FAILED = "frontier.sdk.worker.delivery_failed"
 SDK_GENERATE_REQUESTED = "frontier.sdk.generate.requested"
+SDK_LEASE_ACQUIRED = "frontier.sdk.worker.lease.acquired"
 SDK_LEASE_PROMOTED = "frontier.sdk.worker.lease.promoted"
 SDK_LEASE_RELEASED = "frontier.sdk.worker.lease.released"
 SDK_LEASE_PARK_ENTER = "frontier.sdk.worker.lease.park_enter"
 SDK_LEASE_PARK_RESTORE = "frontier.sdk.worker.lease.park_restore"
+SDK_WORKER_RESUMED = "frontier.sdk.worker.resumed"
+SDK_ADMIT_DUPLICATE_REFUSED = "frontier.sdk.admit.duplicate_refused"
 SDK_CLOSEOUT_RELOCATED = "frontier.sdk.closeout.relocated"
 SDK_CLOSEOUT_PARTIAL_WORK_PRODUCTION_SPECIMEN = (
     "frontier.sdk.closeout.partial_work.production_specimen"
@@ -139,6 +142,7 @@ SDK_LIFECYCLE_SIGNALS = (
     SDK_WORKER_CANCELLED,
     SDK_WORKER_DELIVERY_FAILED,
     SDK_GENERATE_REQUESTED,
+    SDK_LEASE_ACQUIRED,
     SDK_LEASE_PROMOTED,
     SDK_LEASE_RELEASED,
     SDK_LEASE_PARK_ENTER,
@@ -148,6 +152,8 @@ SDK_LIFECYCLE_SIGNALS = (
     SDK_CLOSEOUT_RECONCILED,
     SDK_CLOSEOUT_RELAYED,
     SDK_WORKER_DISPATCHED,
+    SDK_WORKER_RESUMED,
+    SDK_ADMIT_DUPLICATE_REFUSED,
     SDK_REVIEW_CHILD_SPAWNED,
     SDK_IMPLEMENT_SOURCE_REF_UNRESOLVED,
 )

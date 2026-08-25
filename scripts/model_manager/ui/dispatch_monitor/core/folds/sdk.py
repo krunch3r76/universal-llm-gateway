@@ -39,11 +39,9 @@ from typing import Any
 from .. import signals
 from ..correlation import CorrelationIndex
 from ..protocols import EventRecord, envelope_source
-from .sdk_review_child import (
-    close_terminal_row,
-    on_review_child_spawned,
-    on_system_started,
-)
+from .sdk_handlers import sdk_handler_table
+from .sdk_provenance import note_lease_park
+from .sdk_review_child import close_terminal_row
 from .sdk_state import (
     SdkIdAliases,
     SdkState,
@@ -78,41 +76,14 @@ class SdkFold:
         self._aliases = SdkIdAliases()
         #: Model stamps from ``generate.requested`` before a dispatch row exists.
         self._pending_models: dict[str, str] = {}
+        #: Refused admits — attention only, never a live row.
+        self.duplicate_refused: dict[str, tuple[int, str, str]] = {}
+        #: Evidence-only park edges ``(parent_id, child_id)`` in first-seen order.
+        self.lease_parks: list[tuple[str, str]] = []
 
     def handlers(self) -> dict[str, Any]:
         """Return this fold's signal-to-handler table."""
-        table: dict[str, Any] = {}
-        for signal in (
-            signals.MONITOR_META_SDK_STARTED,
-            signals.SDK_PIPELINE_STARTED,
-            signals.SDK_WORKER_DISPATCHED,
-        ):
-            table[signal] = self._on_started
-        table[signals.SDK_WORKER_PROGRESS] = self._on_progress
-        table[signals.SDK_WORKER_TOOLCALL] = self._on_toolcall
-        for signal in sorted(signals.SDK_TERMINAL_SIGNALS):
-            table[signal] = self._on_terminal
-        table[signals.SDK_WORKER_QUEUED] = self._on_queued
-        table[signals.SDK_GENERATE_REQUESTED] = self._on_generate_requested
-        table[signals.SDK_WORKER_TIMEOUT] = self._on_timeout
-        table[signals.SDK_WORKER_ORPHANED] = self._on_orphaned
-        table[signals.SDK_WORKER_CANCELLED] = self._on_cancelled
-        table[signals.SDK_WORKER_DELIVERY_FAILED] = self._on_delivery_failed
-        table[signals.SDK_LEASE_PROMOTED] = self._on_lease_promoted
-        table[signals.SDK_LEASE_RELEASED] = self._on_lease_released
-        table[signals.SDK_LEASE_PARK_ENTER] = self._on_park_enter
-        table[signals.SDK_LEASE_PARK_RESTORE] = self._on_park_restore
-        table[signals.SDK_CLOSEOUT_RELOCATED] = self._on_closeout_relocated
-        table[signals.SDK_CLOSEOUT_RECONCILED] = self._on_closeout_reconciled
-        table[signals.SDK_CLOSEOUT_RELAYED] = self._on_closeout_relayed
-        table[signals.SDK_REVIEW_CHILD_SPAWNED] = (
-            lambda record: on_review_child_spawned(self, record)
-        )
-        table[signals.SDK_IMPLEMENT_SOURCE_REF_UNRESOLVED] = (
-            self._on_implement_source_ref_unresolved
-        )
-        table[signals.SYSTEM_STARTED] = lambda record: on_system_started(self, record)
-        return table
+        return sdk_handler_table(self)
 
     def _resolve_row(
         self,
@@ -213,6 +184,9 @@ class SdkFold:
             ("asked_by", "asked_by"),
             ("purpose", "purpose"),
             ("story_id", "story_id"),
+            ("topic", "topic"),
+            ("nest_under", "nest_under"),
+            ("resume_of", "resume_of"),
         ):
             if getattr(row, dst) is None and payload.get(src):
                 setattr(row, dst, str(payload[src]))
@@ -459,6 +433,8 @@ class SdkFold:
             if child.terminal_ms is None:
                 child.state = "running"
                 self._advance_progress(child, record.ts_unix_ms)
+        if parent_id and child_id:
+            note_lease_park(self, parent_id, child_id)
 
     def _on_park_restore(self, record: EventRecord) -> None:
         """Child terminal returns lease to parent — restore prior parent state (v3 §5)."""

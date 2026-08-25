@@ -36,6 +36,7 @@ from .dtos import (
     CharterRootRow,
     HealthProjection,
     PathSimArcRow,
+    RelationEdge,
     SdkDispatchRow,
     SupervisorProjection,
 )
@@ -49,6 +50,7 @@ _TUPLE_FIELD_TYPES = {
     "sdk": SdkDispatchRow,
     "cdp": CdpLegRow,
     "attention": AttentionItem,
+    "relations": RelationEdge,
 }
 
 

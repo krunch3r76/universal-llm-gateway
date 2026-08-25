@@ -49,6 +49,9 @@ class SdkState:
         "asked_by",
         "purpose",
         "story_id",
+        "topic",
+        "nest_under",
+        "resume_of",
     )
 
     def __init__(self, dispatch_id: str) -> None:
@@ -90,6 +93,9 @@ class SdkState:
         self.asked_by: str | None = None
         self.purpose: str | None = None
         self.story_id: str | None = None
+        self.topic: str | None = None
+        self.nest_under: str | None = None
+        self.resume_of: str | None = None
 
 
 def as_int(value: Any) -> int | None:
@@ -263,6 +269,9 @@ def merge_sdk_state(canonical: SdkState, alt: SdkState) -> None:
         "asked_by",
         "purpose",
         "story_id",
+        "topic",
+        "nest_under",
+        "resume_of",
     ):
         if getattr(canonical, field) is None and getattr(alt, field) is not None:
             setattr(canonical, field, getattr(alt, field))
