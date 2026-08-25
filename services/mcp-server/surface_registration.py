@@ -11,6 +11,7 @@ from tools.advisor import register_advisor_tools
 from tools.agent_bus import register_agent_bus_tools
 from tools.browse import register_browse_tool
 from tools.browser import register_browser_tools
+from tools.chat_session import register_chat_session_tool
 from tools.close import register_close_tools
 from tools.context import register_context_tools
 from tools.cortex import register_cortex_tools
@@ -94,6 +95,7 @@ def register_tools_for_surface(mcp: FastMCP, surface: Surface) -> None:
     register_agent_bus_tools(mcp)
     register_agent_bus_read_tool(mcp)
     register_cse_session_tool(mcp)
+    register_chat_session_tool(mcp)
     register_cursor_request_tool(mcp)
     register_fleet_liveness_tools(mcp)
     register_cortex_tools(mcp, surface=surface)
