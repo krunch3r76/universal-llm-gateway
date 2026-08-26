@@ -48,6 +48,8 @@ def test_harvest_and_ack_events_distinct() -> None:
         outcome="harvested",
         ack_class="ordinary_content",
         turn_count=1,
+        reason="settled_empty",
+        waited_ms=500,
     )
     acked = mcp_cse_session_acknowledged(
         registration_id="reg-1",
@@ -56,3 +58,5 @@ def test_harvest_and_ack_events_distinct() -> None:
     assert harvested.signal == "mcp.cse.session.harvested"
     assert acked.signal == "mcp.cse.session.acknowledged"
     assert harvested.signal != acked.signal
+    assert harvested.payload["reason"] == "settled_empty"
+    assert harvested.payload["waited_ms"] == 500

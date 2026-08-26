@@ -14,9 +14,18 @@ from cdp_ask.followup_reattach import _teardown_attempt, ensure_cse_attached
 HARVEST_HOLDER = "cse-session-harvest"
 
 
-async def _teardown_opened(outcome) -> None:
+async def _teardown_opened(outcome, response: HarvestResponse | None = None) -> None:
     """Park a woken seat or drop a minted/borrowed tab after scrape."""
     if outcome is None or not outcome.ok:
+        return
+    if (
+        response is not None
+        and response.outcome == "incomplete_dom"
+        and response.reason == "loading"
+        and (outcome.lane_created or outcome.relaunched)
+    ):
+        # RegistryHygieneLoop reclaims stale lanes on ~20min cadence.
+        await _teardown_attempt(outcome.page, outcome.pw, close_page=False)
         return
     if outcome.relaunched:
         await park_relaunched_host(outcome)
@@ -53,11 +62,13 @@ async def harvest_by_opening_url(
             reason=outcome.error or "open_failed",
             provenance=_with_opened(provenance),
         )
+    response: HarvestResponse | None = None
     try:
-        return await harvest_page(
+        response = await harvest_page(
             outcome.page,
             req,
             provenance=_with_opened(provenance),
         )
+        return response
     finally:
-        await _teardown_opened(outcome)
+        await _teardown_opened(outcome, response)

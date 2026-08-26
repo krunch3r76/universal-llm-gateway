@@ -53,8 +53,8 @@ async def test_harvest_hard_cap_clamp_forwards_limit_and_after_turn() -> None:
             "streaming": False,
             "stop": False,
             "tool_pause": False,
-            "incomplete_dom": False,
-            "truncated": False,
+            "title": "Session - Claude",
+            "loading": False,
         }
     )
     pw = MagicMock()
@@ -74,8 +74,10 @@ async def test_harvest_hard_cap_clamp_forwards_limit_and_after_turn() -> None:
             "cdp_ask.cse_session_harvest.connect_cdp",
             AsyncMock(return_value=(pw, MagicMock(), MagicMock(), MagicMock())),
         ),
-        patch("cdp_ask.cse_session_harvest.harvest_turns", harvest_mock),
-        patch("cdp_ask.cse_session_harvest.resolve_harvest_body", AsyncMock(return_value=None)),
+        patch(
+            "cdp_ask.cse_session_harvest_scrape.harvest_turns",
+            harvest_mock,
+        ),
         patch("cdp_ask.cse_session_harvest.emit", lambda _event: None),
     ):
         await execute_harvest(
@@ -161,7 +163,14 @@ async def test_auto_error_banner_preview_falls_through_to_full_scrape() -> None:
     keep_body = "KEEP 4 — document:life-coding-playbook verdict body."
     harvest_mock = AsyncMock(
         side_effect=[
-            {"turns": [{"author": "assistant", "text": _BANNER_ONLY, "ordinal": 2}]},
+            {
+                "turns": [{"author": "assistant", "text": _BANNER_ONLY, "ordinal": 2}],
+                "title": "Session - Claude",
+            },
+            {
+                "turns": [{"author": "assistant", "text": _BANNER_ONLY, "ordinal": 2}],
+                "title": "Session - Claude",
+            },
             {
                 "turns": [
                     {"author": "assistant", "text": keep_body, "ordinal": 1},
@@ -170,16 +179,15 @@ async def test_auto_error_banner_preview_falls_through_to_full_scrape() -> None:
                 "streaming": False,
                 "stop": False,
                 "tool_pause": False,
-                "incomplete_dom": False,
-                "truncated": False,
+                "title": "Session - Claude",
             },
         ]
     )
     page = MagicMock()
     with (
-        patch("cdp_ask.cse_session_harvest.harvest_turns", harvest_mock),
+        patch("cdp_ask.cse_session_harvest_scrape.harvest_turns", harvest_mock),
         patch(
-            "cdp_ask.cse_session_harvest.resolve_harvest_body",
+            "cdp_ask.cse_session_harvest_scrape.resolve_harvest_body",
             AsyncMock(
                 return_value=HarvestBody(content=_BANNER_ONLY, provenance="chat")
             ),
@@ -190,7 +198,7 @@ async def test_auto_error_banner_preview_falls_through_to_full_scrape() -> None:
             HarvestRequest(source="auto", limit=10),
             provenance=None,
         )
-    assert harvest_mock.await_count == 2
+    assert harvest_mock.await_count >= 2
     assert result.outcome == "harvested"
     assert result.content_provenance == "cse-dom"
     texts = [turn.text for turn in result.turns]
@@ -198,34 +206,46 @@ async def test_auto_error_banner_preview_falls_through_to_full_scrape() -> None:
 
 
 @pytest.mark.asyncio
-async def test_open_on_demand_incomplete_dom_retries_then_harvests(
+async def test_open_on_demand_loading_then_overlay_title_harvests(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """a:30681 — open-on-demand empty DOM is wait-retry, not never-dispatched."""
+    """Open-on-demand loading shell waits, then harvests when overlay/title settles."""
     monkeypatch.setattr(
-        "cdp_ask.cse_session_harvest.OPEN_ON_DEMAND_INCOMPLETE_WAIT_S", 5.0
+        "cdp_ask.cse_session_harvest_scrape.OPEN_ON_DEMAND_INCOMPLETE_WAIT_S",
+        5.0,
     )
     monkeypatch.setattr(
-        "cdp_ask.cse_session_harvest.OPEN_ON_DEMAND_INCOMPLETE_POLL_S", 0.0
+        "cdp_ask.cse_session_harvest_scrape.OPEN_ON_DEMAND_INCOMPLETE_POLL_S",
+        0.0,
     )
     harvest_mock = AsyncMock(
         side_effect=[
-            {"incomplete_dom": True, "turns": []},
             {
-                "incomplete_dom": False,
+                "turns": [],
+                "streaming": False,
+                "title": "New chat - Claude",
+                "spinner": False,
+                "aria_busy": False,
+            },
+            {
                 "turns": [
                     {"author": "assistant", "text": "late reply", "ordinal": 1}
                 ],
                 "streaming": False,
                 "stop": False,
                 "tool_pause": False,
+                "title": "Playbook - Claude",
             },
         ]
     )
     page = MagicMock()
     with (
-        patch("cdp_ask.cse_session_harvest.harvest_turns", harvest_mock),
-        patch("cdp_ask.cse_session_harvest.asyncio.sleep", AsyncMock()),
+        patch("cdp_ask.cse_session_harvest_scrape.harvest_turns", harvest_mock),
+        patch("cdp_ask.cse_session_harvest_scrape.asyncio.sleep", AsyncMock()),
+        patch(
+            "cdp_ask.cse_session_harvest_scrape.resolve_harvest_body",
+            AsyncMock(return_value=None),
+        ),
     ):
         result = await harvest_page(
             page,
@@ -238,15 +258,146 @@ async def test_open_on_demand_incomplete_dom_retries_then_harvests(
 
 
 @pytest.mark.asyncio
-async def test_attached_incomplete_dom_returns_immediately() -> None:
-    harvest_mock = AsyncMock(return_value={"incomplete_dom": True, "turns": []})
+async def test_overlay_body_refused_while_loading() -> None:
+    harvest_mock = AsyncMock(
+        return_value={
+            "turns": [],
+            "streaming": False,
+            "title": "New task - Claude",
+            "spinner": True,
+            "aria_busy": False,
+        }
+    )
     page = MagicMock()
-    with patch("cdp_ask.cse_session_harvest.harvest_turns", harvest_mock):
+    with (
+        patch("cdp_ask.cse_session_harvest_scrape.harvest_turns", harvest_mock),
+        patch(
+            "cdp_ask.cse_session_harvest_scrape.resolve_harvest_body",
+            AsyncMock(
+                return_value=HarvestBody(content="premature body", provenance="chat")
+            ),
+        ),
+        patch("cdp_ask.cse_session_harvest_scrape.asyncio.sleep", AsyncMock()),
+        patch(
+            "cdp_ask.cse_session_harvest_scrape.OPEN_ON_DEMAND_INCOMPLETE_WAIT_S",
+            0.0,
+        ),
+    ):
+        result = await harvest_page(
+            page,
+            HarvestRequest(source="auto", limit=10),
+            provenance={"opened_on_demand": True},
+        )
+    assert result.outcome == "incomplete_dom"
+    assert result.reason == "loading"
+
+
+@pytest.mark.asyncio
+async def test_attached_settled_empty_returns_no_reply_yet() -> None:
+    harvest_mock = AsyncMock(
+        return_value={
+            "turns": [],
+            "streaming": False,
+            "title": "Named session - Claude",
+            "spinner": False,
+            "aria_busy": False,
+        }
+    )
+    page = MagicMock()
+    with patch("cdp_ask.cse_session_harvest_scrape.harvest_turns", harvest_mock):
         result = await harvest_page(
             page,
             HarvestRequest(source="chat", limit=10),
             provenance={"opened_on_demand": False},
         )
     assert harvest_mock.await_count == 1
-    assert result.outcome == "incomplete_dom"
+    assert result.outcome == "no_reply_yet"
+    assert result.reason == "settled_empty"
 
+
+@pytest.mark.asyncio
+async def test_attached_loading_waits_then_incomplete_dom(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "cdp_ask.cse_session_harvest_scrape.OPEN_ON_DEMAND_INCOMPLETE_WAIT_S",
+        0.0,
+    )
+    harvest_mock = AsyncMock(
+        return_value={
+            "turns": [],
+            "streaming": False,
+            "title": "New chat - Claude",
+            "spinner": True,
+            "aria_busy": False,
+        }
+    )
+    page = MagicMock()
+    with (
+        patch("cdp_ask.cse_session_harvest_scrape.harvest_turns", harvest_mock),
+        patch("cdp_ask.cse_session_harvest_scrape.asyncio.sleep", AsyncMock()),
+    ):
+        result = await harvest_page(
+            page,
+            HarvestRequest(source="chat", limit=10),
+            provenance={"opened_on_demand": False},
+        )
+    assert harvest_mock.await_count >= 1
+    assert result.outcome == "incomplete_dom"
+    assert result.reason == "loading"
+
+
+@pytest.mark.asyncio
+async def test_execute_harvest_uses_url_picker_on_attached_path() -> None:
+    candidate = FollowupCandidate(
+        registration_id="reg-x",
+        chat_url="https://claude.ai/cowork/cse_x",
+        holder="h",
+        purpose="ask",
+        cdp_url="http://127.0.0.1:9222",
+        provenance={"registration_id": "reg-x"},
+    )
+    lane = cdp_registry.Registration(
+        registration_id="reg-x",
+        port=9222,
+        profile_suffix="x",
+        profile=Path("/tmp/p"),
+        cdp_url="http://127.0.0.1:9222",
+        holder="h",
+        purpose="ask",
+    )
+    fallback = MagicMock()
+    picked = MagicMock()
+    ctx = MagicMock()
+    pw = MagicMock()
+    pw.stop = AsyncMock()
+    store = ExecutionStore()
+    with (
+        patch(
+            "cdp_ask.cse_session_harvest.discover_candidates",
+            AsyncMock(return_value=([candidate], None, None)),
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest.cdp_registry.list_active",
+            lambda: [lane],
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest.connect_cdp",
+            AsyncMock(return_value=(pw, MagicMock(), ctx, fallback)),
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest.pick_page_for_chat_url",
+            AsyncMock(return_value=picked),
+        ) as picker,
+        patch(
+            "cdp_ask.cse_session_harvest.harvest_with_loading_wait",
+            AsyncMock(return_value=HarvestResponse(outcome="no_reply_yet")),
+        ) as harvest_wait,
+        patch("cdp_ask.cse_session_harvest.emit", lambda _event: None),
+    ):
+        await execute_harvest(
+            HarvestRequest(registration_id="reg-x", source="chat"),
+            store,
+        )
+    picker.assert_awaited_once()
+    assert harvest_wait.await_args.args[0] is picked

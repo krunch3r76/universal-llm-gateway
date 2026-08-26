@@ -43,7 +43,9 @@ async def test_harvest_turns_ordering_and_bounds_hermetic() -> None:
             "streaming": False,
             "stop": False,
             "tool_pause": False,
-            "incomplete_dom": False,
+            "title": "Session - Claude",
+            "spinner": False,
+            "aria_busy": False,
             "truncated": len(selected) < len(
                 [o for o in ordinals if after_turn is None or o > int(after_turn)]
             ),

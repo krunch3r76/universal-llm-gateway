@@ -10,6 +10,7 @@ from claude_bundles.project_ask import strip_thinking_prefix
 CSE_TURNS_JS = """
 ({ limit, afterTurn }) => {
   const url = location.href || '';
+  const title = document.title || '';
   const isCoworkCse = /\\/cowork\\/cse_/.test(url);
   const baseSelectors = [
     '[data-testid="assistant-message"]',
@@ -51,13 +52,19 @@ CSE_TURNS_JS = """
   );
   const toolPause = !!document.querySelector('[data-testid*="tool" i][class*="pause" i]');
   const stop = streaming;
-  const incomplete = turns.length === 0 && !streaming;
+  const spinner = !!document.querySelector(
+    '[class*="spinner" i], [class*="loading" i], svg[class*="animate" i]'
+  );
+  const ariaBusy = !!document.querySelector('[aria-busy="true"]');
   return {
+    title,
+    url,
     turns,
     streaming,
     stop,
     tool_pause: toolPause,
-    incomplete_dom: incomplete,
+    spinner,
+    aria_busy: ariaBusy,
     truncated: ordinal > (afterTurn || 0) + limit,
   };
 }
@@ -88,4 +95,5 @@ async def harvest_turns(
         )
     raw["turns"] = turns
     raw["in_flight"] = _in_flight(raw)
+    raw.pop("incomplete_dom", None)
     return raw

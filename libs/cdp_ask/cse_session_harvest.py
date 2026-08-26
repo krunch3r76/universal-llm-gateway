@@ -2,19 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
-import time
 from typing import Any
 
 from claude_bundles import cdp_registry
-from claude_bundles.cowork_output_download import resolve_harvest_body
 from claude_bundles.cse_provenance import resolve as resolve_provenance
 from claude_bundles.cse_provenance_resolve import is_row_present
-from claude_bundles.cse_turns_harvest import harvest_turns
-from claude_bundles.overload_only_harvest import is_error_banner_only_harvest
 from claude_bundles.skills_ui_panel import connect_cdp
 
-from cdp_ask.cse_session_ack import classify_ack
 from cdp_ask.cse_session_events import (
     emit,
     mcp_cse_session_acknowledged,
@@ -22,8 +16,11 @@ from cdp_ask.cse_session_events import (
 )
 from cdp_ask.cse_session_harvest_identity import resolve_harvest_chat_url
 from cdp_ask.cse_session_harvest_open import harvest_by_opening_url
+from cdp_ask.cse_session_harvest_scrape import (
+    harvest_with_loading_wait,
+    pick_page_for_chat_url,
+)
 from cdp_ask.cse_session_models import (
-    CseSessionTurn,
     HarvestRequest,
     HarvestResponse,
 )
@@ -31,8 +28,6 @@ from cdp_ask.execution_store import ExecutionStore
 from cdp_ask.followup_resolve import discover_candidates
 
 HARVEST_HARD_CAP = 50
-OPEN_ON_DEMAND_INCOMPLETE_WAIT_S = 12.0
-OPEN_ON_DEMAND_INCOMPLETE_POLL_S = 0.5
 
 
 async def _resolve_target(
@@ -96,6 +91,8 @@ def _emit(registration_id: str | None, response: HarvestResponse) -> HarvestResp
             outcome=response.outcome,
             ack_class=response.ack_class,
             turn_count=len(response.turns),
+            reason=response.reason,
+            waited_ms=response.waited_ms,
         )
     )
     return response
@@ -114,99 +111,7 @@ async def harvest_page(
             content_provenance="metadata_only",
         )
     limit = min(int(req.limit), HARVEST_HARD_CAP)
-    if req.source in {"output-file", "auto"}:
-        try:
-            preview = await harvest_turns(page, limit=1)
-            chat_body = ""
-            if preview.get("turns"):
-                chat_body = str(preview["turns"][-1].get("text") or "")
-            body_result = await resolve_harvest_body(
-                page,
-                chat_body,
-                harvest_source=req.source,
-                expected_size="auto",
-                download_output=False,
-            )
-            if body_result and body_result.content:
-                # Auto last-turn banner is tracker chrome, not CSE-empty (a:30411).
-                if not (
-                    req.source == "auto"
-                    and is_error_banner_only_harvest(body_result.content)
-                ):
-                    ack = classify_ack(
-                        body_result.content,
-                        marker=req.marker,
-                        successor_birth_id=req.successor_birth_id,
-                    )
-                    return HarvestResponse(
-                        outcome="harvested",
-                        ack_class=ack,
-                        turns=[
-                            CseSessionTurn(
-                                author="assistant",
-                                text=body_result.content,
-                                source="output-file",
-                            )
-                        ],
-                        content_provenance=str(body_result.provenance),
-                        provenance=provenance,
-                    )
-        except Exception:
-            if req.source == "output-file":
-                return HarvestResponse(outcome="unreachable", reason="output_file_miss")
-    try:
-        dom = await harvest_turns(page, limit=limit, after_turn=req.after_turn)
-    except Exception as exc:
-        return HarvestResponse(outcome="unreachable", reason=str(exc))
-    wait_open = bool((provenance or {}).get("opened_on_demand"))
-    if wait_open and dom.get("incomplete_dom"):
-        deadline = time.monotonic() + OPEN_ON_DEMAND_INCOMPLETE_WAIT_S
-        while time.monotonic() < deadline:
-            await asyncio.sleep(OPEN_ON_DEMAND_INCOMPLETE_POLL_S)
-            try:
-                dom = await harvest_turns(
-                    page, limit=limit, after_turn=req.after_turn
-                )
-            except Exception as exc:
-                return HarvestResponse(outcome="unreachable", reason=str(exc))
-            if not dom.get("incomplete_dom"):
-                break
-    if dom.get("in_flight"):
-        return HarvestResponse(
-            outcome="streaming",
-            provenance=provenance,
-            streaming=bool(dom.get("streaming")),
-            stop=bool(dom.get("stop")),
-            tool_pause=bool(dom.get("tool_pause")),
-        )
-    if dom.get("incomplete_dom"):
-        return HarvestResponse(outcome="incomplete_dom", provenance=provenance)
-    turns = [
-        CseSessionTurn(
-            author=row["author"],
-            timestamp=row.get("timestamp"),
-            text=row["text"],
-            source="cse-dom",
-            ordinal=row.get("ordinal"),
-        )
-        for row in dom.get("turns") or []
-    ]
-    if not turns:
-        return HarvestResponse(outcome="no_reply_yet", provenance=provenance)
-    ack = classify_ack(
-        turns[-1].text,
-        marker=req.marker,
-        successor_birth_id=req.successor_birth_id,
-    )
-    return HarvestResponse(
-        outcome="harvested",
-        ack_class=ack,
-        turns=turns,
-        truncated=bool(dom.get("truncated")),
-        cursor=turns[-1].ordinal,
-        content_provenance="cse-dom",
-        provenance=provenance,
-    )
+    return await harvest_with_loading_wait(page, req, provenance, limit=limit)
 
 
 async def _open_detached(
@@ -257,7 +162,9 @@ async def execute_harvest(
         )
 
     try:
-        pw, _browser, _ctx, page = await connect_cdp(lane.cdp_url)
+        pw, _browser, ctx, page = await connect_cdp(lane.cdp_url)
+        if url:
+            page = await pick_page_for_chat_url(ctx, url, fallback=page)
         try:
             response = await harvest_page(page, req, provenance)
         finally:

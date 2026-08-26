@@ -65,3 +65,137 @@ async def test_open_success_scrapes_then_tears_down() -> None:
     teardown.assert_awaited_once()
     assert result.outcome == "harvested"
     assert result.provenance and result.provenance.get("opened_on_demand") is True
+
+
+@pytest.mark.asyncio
+async def test_loading_incomplete_skips_park_for_minted_lane() -> None:
+    page = MagicMock()
+    pw = MagicMock()
+    opened = ReattachOutcome(
+        ok=True,
+        page=page,
+        pw=pw,
+        lane_created=True,
+        registration_id="reg-new",
+    )
+    harvest_page = AsyncMock(
+        return_value=HarvestResponse(
+            outcome="incomplete_dom",
+            reason="loading",
+        )
+    )
+    with (
+        patch(
+            "cdp_ask.cse_session_harvest_open.ensure_cse_attached",
+            AsyncMock(return_value=opened),
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest_open._teardown_attempt",
+            AsyncMock(),
+        ) as teardown,
+        patch(
+            "cdp_ask.cse_session_harvest_open.cdp_registry.deregister_lane",
+        ) as deregister,
+        patch(
+            "cdp_ask.cse_session_harvest_open.park_relaunched_host",
+            AsyncMock(),
+        ) as park,
+    ):
+        result = await harvest_by_opening_url(
+            "https://claude.ai/cowork/cse_x",
+            HarvestRequest(chat_url="https://claude.ai/cowork/cse_x"),
+            None,
+            harvest_page,
+        )
+    teardown.assert_awaited_once_with(page, pw, close_page=False)
+    deregister.assert_not_called()
+    park.assert_not_awaited()
+    assert result.outcome == "incomplete_dom"
+    assert result.reason == "loading"
+
+
+@pytest.mark.asyncio
+async def test_loading_incomplete_borrowed_host_still_closes() -> None:
+    page = MagicMock()
+    pw = MagicMock()
+    opened = ReattachOutcome(
+        ok=True,
+        page=page,
+        pw=pw,
+        lane_created=False,
+        relaunched=False,
+    )
+    harvest_page = AsyncMock(
+        return_value=HarvestResponse(
+            outcome="incomplete_dom",
+            reason="loading",
+        )
+    )
+    with (
+        patch(
+            "cdp_ask.cse_session_harvest_open.ensure_cse_attached",
+            AsyncMock(return_value=opened),
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest_open._teardown_attempt",
+            AsyncMock(),
+        ) as teardown,
+    ):
+        await harvest_by_opening_url(
+            "https://claude.ai/cowork/cse_x",
+            HarvestRequest(chat_url="https://claude.ai/cowork/cse_x"),
+            None,
+            harvest_page,
+        )
+    teardown.assert_awaited_once_with(page, pw)
+
+
+@pytest.mark.asyncio
+async def test_skip_park_keeps_registration_for_lane_order() -> None:
+    """Skip-teardown on loading mint leaves registration live for _lane_order."""
+    from cdp_ask.followup_reattach import _lane_order
+
+    page = MagicMock()
+    pw = MagicMock()
+    reg_id = "reg-mint-loading"
+    opened = ReattachOutcome(
+        ok=True,
+        page=page,
+        pw=pw,
+        lane_created=True,
+        registration_id=reg_id,
+    )
+    harvest_page = AsyncMock(
+        return_value=HarvestResponse(outcome="incomplete_dom", reason="loading")
+    )
+    lane = __import__("claude_bundles.cdp_registry", fromlist=["cdp_registry"]).Registration(
+        registration_id=reg_id,
+        port=9222,
+        profile_suffix="x",
+        profile=__import__("pathlib").Path("/tmp/p"),
+        cdp_url="http://127.0.0.1:9222",
+        holder="cse-session-harvest",
+        purpose="ask",
+    )
+    with (
+        patch(
+            "cdp_ask.cse_session_harvest_open.ensure_cse_attached",
+            AsyncMock(return_value=opened),
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest_open._teardown_attempt",
+            AsyncMock(),
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest_open.cdp_registry.deregister_lane",
+        ) as deregister,
+    ):
+        await harvest_by_opening_url(
+            "https://claude.ai/cowork/cse_x",
+            HarvestRequest(chat_url="https://claude.ai/cowork/cse_x"),
+            None,
+            harvest_page,
+        )
+    deregister.assert_not_called()
+    ordered = _lane_order([lane], None, "https://claude.ai/cowork/cse_x")
+    assert ordered[0].registration_id == reg_id

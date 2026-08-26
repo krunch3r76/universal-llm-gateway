@@ -61,6 +61,8 @@ def mcp_cse_session_harvested(
     outcome: str,
     ack_class: str,
     turn_count: int = 0,
+    reason: str | None = None,
+    waited_ms: int | None = None,
 ) -> Event:
     """Emit when harvest completes or reports an incomplete outcome."""
     return Event(
@@ -72,6 +74,8 @@ def mcp_cse_session_harvested(
             "outcome": outcome,
             "ack_class": ack_class,
             "turn_count": turn_count,
+            "reason": reason,
+            "waited_ms": waited_ms,
         },
     )
 
