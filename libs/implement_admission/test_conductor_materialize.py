@@ -18,6 +18,7 @@ from implement_admission.conductor_materialize import (
     resolve_entry_gate,
 )
 from implement_admission.conductor_score_journal import (
+    forward_mutate_tip,
     load_journal,
     read_tip,
     scoreboard_tip_uri,
@@ -173,6 +174,62 @@ def test_materialize_conductor_attended_packet_strings(tmp_path: Path) -> None:
         "Explicit see-score while attended: ROW_PINNED at G3, no pager"
         in mp.text
     )
+
+
+def test_materialize_conductor_skips_birth_when_tip_exists(tmp_path: Path) -> None:
+    files_root = tmp_path / "cortex"
+    slug = "rematerialize-skip-test"
+    source_ref = f"todo:{slug}"
+    out_dir = tmp_path / "packets"
+    materialize_conductor(
+        source_ref,
+        cortex=_StubCortex(),
+        out_dir=out_dir,
+        files_root=files_root,
+    )
+    tip_before = read_tip(slug, files_root=files_root)
+    assert tip_before is not None
+    g1_done_body = re.sub(
+        r"(\|\s*G1\s*\|[^|]*\|)\s*OPEN\b",
+        r"\1 DONE",
+        tip_before[0],
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    forward_mutate_tip(
+        slug,
+        next_body=g1_done_body,
+        seat="conductor",
+        dispatch_id="d1",
+        reason="G1 harvest",
+        rows=("G1",),
+        delta="G1 OPEN→DONE",
+        files_root=files_root,
+    )
+    tip_mutated = read_tip(slug, files_root=files_root)
+    assert tip_mutated is not None
+    journal_before = load_journal(slug, files_root=files_root)
+    birth_count_before = sum(
+        1 for record in journal_before if record.get("reason") == "conductor spawn birth"
+    )
+    assert birth_count_before == 1
+
+    materialize_conductor(
+        source_ref,
+        cortex=_StubCortex(),
+        out_dir=tmp_path / "packets-rematerialize",
+        files_root=files_root,
+    )
+    tip_after = read_tip(slug, files_root=files_root)
+    assert tip_after is not None
+    assert tip_after[0] == tip_mutated[0]
+    assert tip_after[1] == tip_mutated[1]
+    journal_after = load_journal(slug, files_root=files_root)
+    birth_count_after = sum(
+        1 for record in journal_after if record.get("reason") == "conductor spawn birth"
+    )
+    assert birth_count_after == 1
+    assert len(journal_after) == len(journal_before)
 
 
 def test_materialize_conductor_default_confer_and_finish_strings(tmp_path: Path) -> None:

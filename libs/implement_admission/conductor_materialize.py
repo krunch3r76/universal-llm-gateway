@@ -18,6 +18,7 @@ from implement_admission.admission_read import (
 from implement_admission.conductor_score_journal import (
     G_ROWS,
     birth_journal_record,
+    read_tip,
     render_sparse_scoreboard,
     scoreboard_tip_uri,
     write_birth_scoreboard,
@@ -282,7 +283,12 @@ def materialize_conductor(
     caller_agent: str | None = None,
     summon_text: str | None = None,
 ) -> MaterializedPacket:
-    """Write conductor six-block packet + birth scoreboard/journal; return hash."""
+    """Write conductor six-block packet; birth scoreboard/journal only when tip absent.
+
+    When ``write_scoreboard`` is true and ``read_tip`` finds an existing tip for the
+    todo slug, skip ``write_birth_scoreboard`` and the birth journal record so a
+    re-admit cannot rewind forward progress on the scoreboard.
+    """
     ctx = load_conductor_context(
         source_ref,
         cortex=cortex,
@@ -299,7 +305,7 @@ def materialize_conductor(
     text = replace_frontmatter_value(pending, "packet_sha256", digest)
     out_path.write_text(text, encoding="utf-8")
 
-    if write_scoreboard:
+    if write_scoreboard and read_tip(slug, files_root=files_root) is None:
         scoreboard_body = render_sparse_scoreboard(
             source_ref=ctx.source_ref,
             slug=ctx.slug,
