@@ -625,6 +625,149 @@ def test_cdp_poll_hint_populates_caller_agent() -> None:
     assert row.thread_id == "5901"
 
 
+_CSE_CHAT = "claude.ai/cowork/cse_paint123"
+
+
+def test_cdp_admitted_plus_cse_bound_one_row_url_paint() -> None:
+    """Admitted + cse.bound on same thread_id → one row with url= and no req=/exec=."""
+    from scripts.model_manager.ui.dispatch_monitor.core.watch import _cdp_line
+
+    model = Model()
+    thread_id = "9639"
+    model.apply(
+        Event(
+            signals.CDP_ADMITTED,
+            1_000,
+            {
+                "request_id": "req-paint",
+                "execution_id": "exec-paint",
+                "model": "cdp/opus-5",
+                "thread_id": thread_id,
+            },
+        )
+    )
+    model.apply(
+        Event(
+            signals.AGENTBUS_THREAD_CSE_BOUND,
+            1_100,
+            {
+                "thread_id": thread_id,
+                "cse_chat_url": f"https://{_CSE_CHAT}/",
+            },
+        )
+    )
+    frame = model.derive(2_000)
+    assert len(frame.cdp) == 1
+    row = frame.cdp[0]
+    assert row.chat_url == _CSE_CHAT
+    line = _cdp_line(row)
+    assert f"url={_CSE_CHAT}" in line
+    assert "req=" not in line
+    assert "exec=" not in line
+    assert "lane=" not in line
+
+
+def test_cdp_cse_bound_before_admitted_same_paint() -> None:
+    """cse.bound first, then admitted → same url= paint; still one row."""
+    from scripts.model_manager.ui.dispatch_monitor.core.watch import _cdp_line
+
+    model = Model()
+    thread_id = "9640"
+    model.apply(
+        Event(
+            signals.CDP_PROVENANCE_BOUND,
+            900,
+            {
+                "lane_thread": thread_id,
+                "chat_url": f"https://{_CSE_CHAT}",
+            },
+        )
+    )
+    model.apply(
+        Event(
+            signals.CDP_ADMITTED,
+            1_000,
+            {
+                "request_id": "req-order",
+                "execution_id": "exec-order",
+                "model": "cdp/fable-5",
+                "thread_id": thread_id,
+            },
+        )
+    )
+    frame = model.derive(2_000)
+    assert len(frame.cdp) == 1
+    row = frame.cdp[0]
+    assert row.chat_url == _CSE_CHAT
+    line = _cdp_line(row)
+    assert f"url={_CSE_CHAT}" in line
+    assert "req=" not in line
+
+
+def test_cdp_cse_bound_alone_leaves_cdp_empty() -> None:
+    """cse.bound alone must not mint a CDP row."""
+    model = Model()
+    model.apply(
+        Event(
+            signals.AGENTBUS_THREAD_CSE_BOUND,
+            1_000,
+            {
+                "thread_id": "9641",
+                "cse_chat_url": f"https://{_CSE_CHAT}",
+            },
+        )
+    )
+    assert model.derive(2_000).cdp == ()
+
+
+def test_cdp_admitted_purpose_not_mapped_to_topic() -> None:
+    """purpose=operator-proxy without payload topic → no topic= on the line."""
+    from scripts.model_manager.ui.dispatch_monitor.core.watch import _cdp_line
+
+    model = Model()
+    model.apply(
+        Event(
+            signals.CDP_ADMITTED,
+            1_000,
+            {
+                "request_id": "req-purpose",
+                "execution_id": "exec-purpose",
+                "model": "cdp/opus-5",
+                "thread_id": "9642",
+                "purpose": "operator-proxy",
+            },
+        )
+    )
+    row = model.derive(2_000).cdp[0]
+    assert row.topic is None
+    line = _cdp_line(row)
+    assert "topic=operator-proxy" not in line
+
+
+def test_cdp_admitted_payload_topic_painted() -> None:
+    """Admitted payload topic= is painted on the live line."""
+    from scripts.model_manager.ui.dispatch_monitor.core.watch import _cdp_line
+
+    model = Model()
+    topic = "Paint the CSE chat"
+    model.apply(
+        Event(
+            signals.CDP_ADMITTED,
+            1_000,
+            {
+                "request_id": "req-topic",
+                "execution_id": "exec-topic",
+                "model": "cdp/opus-5",
+                "thread_id": "9643",
+                "topic": topic,
+            },
+        )
+    )
+    row = model.derive(2_000).cdp[0]
+    assert row.topic == topic
+    line = _cdp_line(row)
+    assert f"topic={topic}" in line
+
 
 # --- totality --------------------------------------------------------------
 def test_unknown_signal_is_counted_never_raised() -> None:

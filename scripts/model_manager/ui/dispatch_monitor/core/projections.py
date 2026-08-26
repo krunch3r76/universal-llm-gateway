@@ -136,6 +136,7 @@ def cdp_rows(
                 model=state.model,
                 caller_agent=state.caller_agent,
                 topic=state.topic,
+                chat_url=state.chat_url,
                 state=state.state,
                 admitted_at_ms=state.admitted_at_ms,
                 terminal_ms=state.terminal_ms,

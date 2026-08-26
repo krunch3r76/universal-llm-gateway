@@ -23,16 +23,20 @@ def CdpGenerateAdmitted(  # noqa: N802
     execution_id: str,
     model: str,
     thread_id: str,
+    topic: str | None = None,
 ) -> Event:
     """CDP generate admitted; worker task spawned."""
+    payload: dict[str, Any] = {
+        "request_id": request_id,
+        "execution_id": execution_id,
+        "model": model,
+        "thread_id": thread_id,
+    }
+    if topic:
+        payload["topic"] = topic
     return Event(
         signal="cdp.generate.admitted",
-        payload={
-            "request_id": request_id,
-            "execution_id": execution_id,
-            "model": model,
-            "thread_id": thread_id,
-        },
+        payload=payload,
         scope="node",
     )
 
@@ -207,17 +211,44 @@ def publish_cdp_event(event: Event) -> bool:
     bus or publish raised. Horizon sizing retries on False; other callers
     ignore the return (observability must not fail the lane).
     """
+    payload = event.payload or {}
+    request_id = payload.get("request_id")
+    execution_id = payload.get("execution_id")
+
+    def _debug(outcome: str, *, exc_type: str | None = None) -> None:
+        parts = [
+            f"cdp.event.publish outcome={outcome}",
+            f"signal={event.signal}",
+        ]
+        if request_id is not None:
+            parts.append(f"request_id={request_id}")
+        if execution_id is not None:
+            parts.append(f"execution_id={execution_id}")
+        if exc_type is not None:
+            parts.append(f"exc_type={exc_type}")
+        logger.debug(" ".join(parts))
+
     try:
         from systems.proxy.dependencies import get_proxy
 
         proxy = get_proxy()
         event_bus = getattr(proxy, "event_bus", None)
         if event_bus is None:
+            _debug("bus_none")
             _warn_swallowed(event.signal, "proxy has no event_bus")
             return False
         event_bus.publish_from_sync(event)
+        _debug("ok")
         return True
+    except RuntimeError as exc:
+        if "Proxy not initialized" in str(exc):
+            _debug("proxy_uninitialized")
+        else:
+            _debug("publish_exception", exc_type=type(exc).__name__)
+        _warn_swallowed(event.signal, f"{type(exc).__name__}: {exc}")
+        return False
     except Exception as exc:  # noqa: BLE001 — observability must not fail the lane
+        _debug("publish_exception", exc_type=type(exc).__name__)
         _warn_swallowed(event.signal, f"{type(exc).__name__}: {exc}")
         return False
 
@@ -228,12 +259,18 @@ def publish_cdp_kwargs(factory: Any, **kwargs: Any) -> bool:
     Returns False only on a failed delivery (bus missing, publish raised, or
     factory raised). None-returning test stubs count as delivered.
     """
+    kwarg_names = ",".join(sorted(kwargs))
     try:
         delivered = publish_cdp_event(factory(**kwargs))
         if delivered is False:
             return False
         return True
     except Exception as exc:  # noqa: BLE001
+        logger.debug(
+            "cdp.event.publish outcome=factory_exception "
+            f"signal={getattr(factory, '__name__', 'cdp.generate.?')} "
+            f"exc_type={type(exc).__name__} kwarg_names={kwarg_names}"
+        )
         _warn_swallowed(
             getattr(factory, "__name__", "cdp.generate.?"),
             f"{type(exc).__name__}: {exc}",

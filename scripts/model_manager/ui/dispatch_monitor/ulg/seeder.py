@@ -74,6 +74,8 @@ _PRIORITY_SIGNALS: tuple[str, ...] = (
     "sdk.lane.selected",
     "sdk.lane_b.minted",
     "system.started",
+    "mcp.agentbus.thread.cse.bound",
+    "cdp.provenance.bound",
 )
 
 #: Signals whose payload names a charter root worth tip-grafting.

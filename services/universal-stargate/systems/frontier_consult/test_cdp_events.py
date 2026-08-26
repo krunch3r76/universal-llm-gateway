@@ -188,3 +188,51 @@ def test_healthy_emit_capture(
         if "outcome=ok" in rec.message
     ]
     assert len(ok_logs) == 2
+
+
+def test_cdp_generate_admitted_with_topic_includes_key() -> None:
+    admitted = CdpGenerateAdmitted(
+        request_id="req-topic",
+        execution_id="exec-topic",
+        model="cdp/opus-5",
+        thread_id="thread-topic",
+        topic="ULG gains glanceable CDP topics",
+    )
+    assert admitted.payload["topic"] == "ULG gains glanceable CDP topics"
+
+
+def test_cdp_generate_admitted_without_topic_omits_key() -> None:
+    admitted = CdpGenerateAdmitted(
+        request_id="req-notopic",
+        execution_id="exec-notopic",
+        model="cdp/opus-5",
+        thread_id="thread-notopic",
+    )
+    assert "topic" not in admitted.payload
+
+
+def test_healthy_emit_with_topic_capture(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    captured: list[Event] = []
+
+    mock_bus = MagicMock()
+    mock_bus.publish_from_sync = captured.append
+    monkeypatch.setattr(
+        "systems.proxy.dependencies.get_proxy",
+        lambda: MagicMock(event_bus=mock_bus),
+    )
+
+    publish_cdp_kwargs(
+        CdpGenerateAdmitted,
+        request_id="req-healthy-topic",
+        execution_id="exec-healthy-topic",
+        model="cdp/opus-5",
+        thread_id="thread-healthy-topic",
+        topic="Paint the CSE chat",
+    )
+
+    assert len(captured) == 1
+    assert captured[0].payload["topic"] == "Paint the CSE chat"

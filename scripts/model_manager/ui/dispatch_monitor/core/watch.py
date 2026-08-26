@@ -98,35 +98,35 @@ def _sdk_line(row: SdkDispatchRow) -> str:
 
 def cdp_id_legend() -> str:
     """One-line CDP identity legend. Does not name CSE or checkout lanes."""
-    return (
-        "  ids: req=cdp.generate request_id (fold key) · "
-        "exec=execution_id · th=agent-bus thread"
-    )
+    return "  ids: url=CSE chat (when bound) · th=agent-bus thread"
 
 
 def _cdp_line(row: CdpLegRow, *, width: int | None = None) -> str:
     """Render one CDP leg with labeled ids so ATTENTION ``request_id`` can join.
 
-    Identity tokens are unpadded. ``exec=`` / ``th=`` omit when unknown.
+    Identity tokens are unpadded. ``url=`` / ``th=`` omit when unknown.
     Width drops trailing status tokens; it does not invent CSE/checkout lanes.
     """
     proof = "proof" if row.proof_present else "-"
     timing = row.elapsed_ms if row.terminal_ms is None else None
-    parts = [f"req={row.request_id}"]
-    if row.execution_id:
-        parts.append(f"exec={row.execution_id}")
+    parts: list[str] = []
+    if row.chat_url:
+        parts.append(f"url={row.chat_url}")
     if row.thread_id:
         parts.append(f"th={row.thread_id}")
-    base = "  " + " ".join(parts)
-    extras = [
-        f" {row.state}",
-        f" {row.model or '-'}",
-        f" elapsed={_ms(timing)}",
-        f" caller={row.caller_agent or '-'}",
-        f" [{proof}]",
-    ]
+    base = "  " + (" ".join(parts) if parts else "-")
+    extras: list[str] = []
     if row.topic:
-        extras.append(f" topic={clip_text(row.topic, 28)}")
+        extras.append(f" topic={clip_text(row.topic, 40)}")
+    extras.extend(
+        [
+            f" {row.state}",
+            f" {row.model or '-'}",
+            f" elapsed={_ms(timing)}",
+            f" caller={row.caller_agent or '-'}",
+            f" [{proof}]",
+        ]
+    )
     for token in extras:
         if width is None or len(base) + len(token) <= width:
             base += token
