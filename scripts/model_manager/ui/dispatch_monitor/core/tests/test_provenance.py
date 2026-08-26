@@ -295,6 +295,8 @@ def test_sdk_live_line_paints_topic_when_present() -> None:
         admitted_via="cursor-auto",
         asked_by="web-anthropic",
         provenance="signal",
+        caller_from="ide",
+        caller_via="http",
     )
     line = sdk_live_line(row, width=200)
     assert "topic=ULG gains a topic line" in line

@@ -93,7 +93,6 @@ def _sdk_line(row: SdkDispatchRow) -> str:
         f"root={_truncate(row.root_id, 8)} {_truncate(row.model, 18)} "
         f"{timing}{identity} [{flag}]{extra_s}"
     )
-    )
 
 
 def cdp_id_legend() -> str:
