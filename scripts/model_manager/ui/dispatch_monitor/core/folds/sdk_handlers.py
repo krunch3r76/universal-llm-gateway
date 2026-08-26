@@ -8,6 +8,10 @@ from .. import signals
 from .sdk_provenance import (
     on_duplicate_refused,
     on_lease_acquired,
+    on_lease_promoted,
+    on_lease_released,
+    on_park_enter,
+    on_park_restore,
     on_partial_work_specimen,
     on_worker_resumed,
 )
@@ -37,10 +41,10 @@ def sdk_handler_table(fold: SdkFold) -> dict[str, Any]:
     table[signals.SDK_WORKER_CANCELLED] = fold._on_cancelled
     table[signals.SDK_WORKER_DELIVERY_FAILED] = fold._on_delivery_failed
     table[signals.SDK_LEASE_ACQUIRED] = lambda record: on_lease_acquired(fold, record)
-    table[signals.SDK_LEASE_PROMOTED] = fold._on_lease_promoted
-    table[signals.SDK_LEASE_RELEASED] = fold._on_lease_released
-    table[signals.SDK_LEASE_PARK_ENTER] = fold._on_park_enter
-    table[signals.SDK_LEASE_PARK_RESTORE] = fold._on_park_restore
+    table[signals.SDK_LEASE_PROMOTED] = lambda record: on_lease_promoted(fold, record)
+    table[signals.SDK_LEASE_RELEASED] = lambda record: on_lease_released(fold, record)
+    table[signals.SDK_LEASE_PARK_ENTER] = lambda record: on_park_enter(fold, record)
+    table[signals.SDK_LEASE_PARK_RESTORE] = lambda record: on_park_restore(fold, record)
     table[signals.SDK_CLOSEOUT_RELOCATED] = fold._on_closeout_relocated
     table[signals.SDK_CLOSEOUT_RECONCILED] = fold._on_closeout_reconciled
     table[signals.SDK_CLOSEOUT_RELAYED] = fold._on_closeout_relayed

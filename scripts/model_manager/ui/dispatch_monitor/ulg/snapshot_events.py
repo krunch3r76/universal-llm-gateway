@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
-from typing import Any, Mapping
+from typing import Any
 
 from scripts.model_manager.ui.dispatch_monitor.core import signals
-from scripts.model_manager.ui.dispatch_monitor.core.protocols import Event
-from scripts.model_manager.ui.dispatch_monitor.core.protocols import EventRecord
+from scripts.model_manager.ui.dispatch_monitor.core.protocols import Event, EventRecord
 
 _RECONCILED_SOURCE = "ulg://git-integration-worker/reconciled"
 
@@ -55,8 +55,6 @@ def events_from_lease_snapshot(
             ts_unix_ms=stamp,
             payload={
                 "queue_depth": int(snapshot.get("queue_depth") or 0),
-                "lease_holder": snapshot.get("holder_dispatch_id")
-                or snapshot.get("holder_thread_id"),
                 signals.PROVENANCE_RECONCILED_KEY: signals.PROVENANCE_RECONCILED,
             },
             source=_RECONCILED_SOURCE,
@@ -85,6 +83,20 @@ def events_from_lease_snapshot(
                     if snapshot.get("holder_thread_id")
                     else dispatch_id
                 ),
+            )
+        )
+        events.append(
+            Event(
+                signal=signals.SDK_LEASE_ACQUIRED,
+                ts_unix_ms=started_ms,
+                payload={
+                    "dispatch_id": dispatch_id,
+                    "execution_id": dispatch_id,
+                    "thread_id": snapshot.get("holder_thread_id"),
+                    signals.PROVENANCE_RECONCILED_KEY: signals.PROVENANCE_RECONCILED,
+                },
+                source=_RECONCILED_SOURCE,
+                subject=dispatch_id,
             )
         )
     return events

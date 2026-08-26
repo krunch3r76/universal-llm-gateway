@@ -825,6 +825,119 @@ def test_lease_released_during_park_does_not_raise_attention() -> None:
     )
 
 
+def test_write_lease_acquired_then_released_clears_health_holder() -> None:
+    """GIW lease paint clears when lease.released follows lease.acquired."""
+    model = Model()
+    dispatch_id = "exec-lease-acq-rel"
+    model.apply(
+        Event(
+            signals.SDK_WORKER_DISPATCHED,
+            1_000,
+            {"dispatch_id": dispatch_id, "execution_id": dispatch_id},
+        )
+    )
+    model.apply(
+        Event(
+            signals.SDK_LEASE_ACQUIRED,
+            1_500,
+            {"dispatch_id": dispatch_id, "execution_id": dispatch_id},
+        )
+    )
+    assert model.derive(2_000).health.lease_holder == dispatch_id
+    model.apply(
+        Event(
+            signals.SDK_LEASE_RELEASED,
+            2_500,
+            {"dispatch_id": dispatch_id, "source_repo": "universal-llm-gateway"},
+        )
+    )
+    assert model.derive(3_000).health.lease_holder is None
+
+
+def test_write_lease_terminal_without_release_clears_health_holder() -> None:
+    """Terminal holder row ⇒ no lease paint even when released never arrived."""
+    model = Model()
+    dispatch_id = "exec-lease-terminal-only"
+    model.apply(
+        Event(
+            signals.SDK_WORKER_DISPATCHED,
+            1_000,
+            {"dispatch_id": dispatch_id, "execution_id": dispatch_id},
+        )
+    )
+    model.apply(
+        Event(
+            signals.SDK_LEASE_ACQUIRED,
+            1_500,
+            {"dispatch_id": dispatch_id, "execution_id": dispatch_id},
+        )
+    )
+    assert model.derive(2_000).health.lease_holder == dispatch_id
+    model.apply(
+        Event(
+            signals.SDK_WORKER_FAILED,
+            3_000,
+            {
+                "dispatch_id": dispatch_id,
+                "execution_id": dispatch_id,
+                "status": "failed",
+            },
+        )
+    )
+    assert model.derive(4_000).health.lease_holder is None
+
+
+def test_charter_scanned_manage_does_not_paint_giw_lease_holder() -> None:
+    """Tick ``lease_holder=manage`` must not appear on the GIW write-lease strip."""
+    model = Model()
+    model.apply(
+        Event(
+            signals.CHARTER_SCANNED,
+            1_000,
+            {"roots": 0, "admitted": 0, "lease_holder": "manage"},
+        )
+    )
+    assert model.derive(2_000).health.lease_holder is None
+    assert model.charter.lease_holder == "manage"
+
+
+def test_park_enter_paints_child_as_write_lease_holder() -> None:
+    """Nested park yields the write-lease to the live child dispatch."""
+    model = Model()
+    parent_id = "exec-park-parent-holder"
+    child_id = "exec-park-child-holder"
+    model.apply(
+        Event(
+            signals.SDK_WORKER_DISPATCHED,
+            1_000,
+            {"dispatch_id": parent_id, "execution_id": parent_id},
+        )
+    )
+    model.apply(
+        Event(
+            signals.SDK_LEASE_ACQUIRED,
+            1_200,
+            {"dispatch_id": parent_id, "execution_id": parent_id},
+        )
+    )
+    model.apply(
+        Event(
+            signals.SDK_WORKER_DISPATCHED,
+            1_500,
+            {"dispatch_id": child_id, "execution_id": child_id},
+        )
+    )
+    model.apply(
+        Event(
+            signals.SDK_LEASE_PARK_ENTER,
+            2_000,
+            {"parent_id": parent_id, "child_id": child_id},
+        )
+    )
+    frame = model.derive(3_000)
+    assert frame.health.lease_holder == child_id
+
+
 def test_shadow_diff_does_not_mint_unknown_root_rows() -> None:
     """shadow.diff is high-volume Phase-1 noise — swallow without creating ACTIVE unknowns."""
     model = Model()

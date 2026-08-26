@@ -37,6 +37,7 @@ from .dtos import (
     severity_rank,
 )
 from .folds import CdpFold, CharterFold, SdkFold
+from .folds.sdk_provenance import live_write_lease
 from .projections import age as _age
 from .projections import cdp_rows, root_rows, sdk_rows
 from .protocols import EventRecord
@@ -229,6 +230,9 @@ class Model:
         ):
             degraded.append("charter_tick_error")
         in_flight = sum(1 for r in roots if r.state in ("in_flight", "waiting_open"))
+        lease_holder, lease_thread_id, lease_model, lease_hb = live_write_lease(
+            self.sdk, now_ms=now_ms
+        )
         return HealthProjection(
             tick_last_scan_ms=self.charter.last_scan_ms,
             tick_last_scan_age_ms=_age(now_ms, self.charter.last_scan_ms),
@@ -238,7 +242,10 @@ class Model:
             tick_last_error_ms=self.charter.last_error_ms,
             tick_last_error_message=self.charter.last_error_message,
             skipped_by_reason=dict(sorted(self.charter.skipped_by_reason.items())),
-            lease_holder=self.charter.lease_holder,
+            lease_holder=lease_holder,
+            lease_thread_id=lease_thread_id,
+            lease_model=lease_model,
+            lease_heartbeat_age_ms=lease_hb,
             lease_expires_ms=self.charter.lease_expires_ms,
             queue_depth=self.charter.queue_depth,
             wip_capacity=self.charter.wip_capacity,

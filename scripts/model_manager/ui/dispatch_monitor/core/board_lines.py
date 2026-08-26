@@ -355,7 +355,9 @@ def lease_body_lines(health: HealthProjection) -> list[tuple[str, int]]:
     cap = health.wip_capacity if health.wip_capacity is not None else "?"
     lines.append(
         (
-            f"  holder={health.lease_holder or '-'}  queue={health.queue_depth}  "
+            f"  holder={health.lease_holder or '-'}  th={health.lease_thread_id or '-'}  "
+            f"model={health.lease_model or '-'}  hb={_ms(health.lease_heartbeat_age_ms)}  "
+            f"queue={health.queue_depth}  "
             f"wip={health.wip_in_use}/{cap}  "
             f"dropped={health.events_dropped_ingest}/{health.events_dropped_subscribe}",
             0,

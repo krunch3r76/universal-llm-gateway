@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scripts.model_manager.ui.dispatch_monitor.core import fingerprint as fingerprint_mod
+from scripts.model_manager.ui.dispatch_monitor.core import (
+    fingerprint as fingerprint_mod,
+)
 from scripts.model_manager.ui.dispatch_monitor.core import signals
+from scripts.model_manager.ui.dispatch_monitor.core.board_lines import lease_body_lines
 from scripts.model_manager.ui.dispatch_monitor.core.model import Model
 from scripts.model_manager.ui.dispatch_monitor.core.protocols import Event
-from scripts.model_manager.ui.dispatch_monitor.core.tests.conftest import fixture_path
 from scripts.model_manager.ui.dispatch_monitor.core.replay import JsonlEventSource
+from scripts.model_manager.ui.dispatch_monitor.core.tests.conftest import fixture_path
 from scripts.model_manager.ui.dispatch_monitor.ulg.seeder import seed_model
 from scripts.model_manager.ui.dispatch_monitor.ulg.snapshot_events import (
     events_from_lease_snapshot,
@@ -67,6 +70,25 @@ def test_snapshot_events_enter_model_via_apply_only() -> None:
     assert dispatch.state == "running"
     assert frame.health.queue_depth == 2
     assert frame.health.fold_status == "seeded"
+    assert frame.health.lease_holder == "disp-inflight-1"
+    assert frame.health.lease_thread_id == "2678"
+    assert frame.health.lease_model == "composer-2.5"
+    assert frame.health.lease_heartbeat_age_ms is not None
+    body = lease_body_lines(frame.health)[0][0]
+    assert "holder=" in body
+    assert "th=" in body
+    assert "model=" in body
+    assert "hb=" in body
+
+
+def test_empty_snapshot_yields_holder_dash() -> None:
+    model = Model()
+    for event in events_from_lease_snapshot({"queue_depth": 0}):
+        model.apply(event)
+    frame = model.derive(1_000)
+    assert frame.health.lease_holder is None
+    body = lease_body_lines(frame.health)[0][0]
+    assert "holder=-" in body
 
 
 def test_real_signal_upgrades_provenance_and_snapshot_does_not_clobber() -> None:
