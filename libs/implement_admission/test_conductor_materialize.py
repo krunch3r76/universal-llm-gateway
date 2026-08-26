@@ -42,22 +42,16 @@ class _StubCortex:
         }
 
 
-def test_resolve_entry_gate_g1_without_derived_from() -> None:
-    assert resolve_entry_gate(density_triage="judgment_required", derived_from=None) == "G1"
+def test_resolve_entry_gate_g1_without_fold() -> None:
+    assert resolve_entry_gate(density_triage="judgment_required") == "G1"
 
 
-def test_resolve_entry_gate_g2_with_derived_from() -> None:
-    assert (
-        resolve_entry_gate(
-            density_triage="judgment_required",
-            derived_from="document:foo-architecture-consult",
-        )
-        == "G2"
-    )
+def test_resolve_entry_gate_from_fold() -> None:
+    assert resolve_entry_gate(density_triage="judgment_required", fold_entry_gate="G4") == "G4"
 
 
-def test_resolve_entry_gate_g5_mechanical() -> None:
-    assert resolve_entry_gate(density_triage="mechanical", derived_from=None) == "G5"
+def test_resolve_entry_gate_g5_mechanical_without_fold() -> None:
+    assert resolve_entry_gate(density_triage="mechanical") == "G5"
 
 
 def test_materialize_conductor_packet_shape(tmp_path: Path) -> None:

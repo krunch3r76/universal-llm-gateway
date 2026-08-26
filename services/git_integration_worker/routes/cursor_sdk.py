@@ -2218,6 +2218,7 @@ async def _finalize_success(
         from services.git_integration_worker.cursor_sdk_closeout.degraded_reasons import (
             conductor_g1_pin_s4b_degraded_reason,
             conductor_q2_score_ratify_degraded_reason,
+            conductor_unwitnessed_done_degraded_reason,
         )
 
         _packet_kind = (
@@ -2232,6 +2233,11 @@ async def _finalize_success(
                 packet_kind=_packet_kind,
             )
             or conductor_q2_score_ratify_degraded_reason(
+                body=outcome.body,
+                packet_text=packet_text or None,
+                packet_kind=_packet_kind,
+            )
+            or conductor_unwitnessed_done_degraded_reason(
                 body=outcome.body,
                 packet_text=packet_text or None,
                 packet_kind=_packet_kind,

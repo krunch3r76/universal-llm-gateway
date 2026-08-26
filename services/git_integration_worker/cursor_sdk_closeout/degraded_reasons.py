@@ -193,6 +193,67 @@ def conductor_g1_pin_s4b_degraded_reason(
     return None
 
 
+def conductor_unwitnessed_done_degraded_reason(
+    *,
+    body: str,
+    packet_text: str | None = None,
+    packet_kind: str | None = None,
+) -> str | None:
+    """Fail-closed degrade when closeout claims G-row DONE without a hung witness."""
+    is_conductor = packet_kind == "conductor"
+    if not is_conductor and packet_text:
+        from services.git_integration_worker.cursor_sdk_packet import (
+            extract_packet_kind_from_packet,
+        )
+
+        is_conductor = extract_packet_kind_from_packet(packet_text) == "conductor"
+    if not is_conductor:
+        return None
+    from implement_admission.conductor_witness import (
+        FoldDeps,
+        closeout_witnesses_for_slug,
+        done_rows_claimed_in_closeout,
+    )
+    from implement_admission.conductor_witness_defaults import (
+        DefaultWitnessCortex,
+        DefaultWitnessGit,
+    )
+
+    claimed = done_rows_claimed_in_closeout(body)
+    if not claimed:
+        return None
+    slug: str | None = None
+    if packet_text:
+        import re
+
+        match = re.search(r"work_key:\s*todo:([^\s]+)", packet_text)
+        if match:
+            slug = match.group(1).strip()
+    if slug is None:
+        return None
+    repo = None
+    try:
+        from pathlib import Path
+
+        from implement_admission.closeout_helpers import workspaces_root
+
+        repo = workspaces_root() / "universal-llm-gateway"
+        if not repo.is_dir():
+            repo = Path.cwd()
+    except Exception:  # noqa: BLE001
+        repo = None
+    deps = FoldDeps(
+        cortex=DefaultWitnessCortex(),
+        git=DefaultWitnessGit(repo) if repo is not None else None,
+        source_ref=f"todo:{slug}",
+    )
+    witnesses = closeout_witnesses_for_slug(slug, tip_body=None, deps=deps)
+    for gid in sorted(claimed):
+        if witnesses.get(gid) is None:
+            return "unwitnessed_done_claim"
+    return None
+
+
 def _map_closeout_status(degraded_reason: str | None) -> CloseoutStatus:
     """Map the worker's degraded_reason to an ImplementCloseout status.
 

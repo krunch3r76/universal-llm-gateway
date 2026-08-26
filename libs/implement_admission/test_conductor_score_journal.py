@@ -101,6 +101,39 @@ def test_rewind_closed_row_rejected(tmp_path: Path) -> None:
     assert "DONE" in tip[0]
 
 
+def test_parse_journal_ndjson_lines(tmp_path: Path) -> None:
+    files_root = tmp_path
+    slug = "ndjson-journal"
+    journal_path = files_root / "notes/system/scoreboards" / f"{slug}-score-journal.md"
+    journal_path.parent.mkdir(parents=True, exist_ok=True)
+    journal_path.write_text(
+        '{"reason":"birth","tip_sha":"a"}\n{"reason":"mutate","tip_sha":"b"}\n',
+        encoding="utf-8",
+    )
+    records = load_journal(slug, files_root=files_root)
+    assert len(records) == 2
+
+
+def test_reject_rewind_witnessed_done_to_claimed() -> None:
+    prior = _g1_done_body()
+    next_body = prior.replace("DONE", "CLAIMED")
+    reason = reject_rewind_closed_row(
+        prior_body=prior,
+        next_body=next_body,
+        prior_witnessed_done=frozenset({"G1"}),
+    )
+    assert reason is not None
+
+
+def test_unwitnessed_done_to_claimed_allowed() -> None:
+    reason = reject_rewind_closed_row(
+        prior_body=_g1_done_body(),
+        next_body=_g1_done_body().replace("DONE", "CLAIMED"),
+        prior_witnessed_done=frozenset(),
+    )
+    assert reason is None
+
+
 def test_reject_rewind_closed_row_unit() -> None:
     reason = reject_rewind_closed_row(prior_body=_g1_done_body(), next_body=_sparse_body())
     assert reason is not None

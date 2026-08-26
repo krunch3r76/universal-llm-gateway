@@ -12,11 +12,14 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from durable_io.atomic import durable_write_text
 
 from implement_admission.closeout_helpers import cortex_files_root
+
+if TYPE_CHECKING:
+    from implement_admission.conductor_witness import FoldDeps
 
 _SCOREBOARDS_DIR = "notes/system/scoreboards"
 _WRITER_ID = "implement_admission.conductor_score_journal"
@@ -24,6 +27,13 @@ _RECORD_SEP = "\n---\n"
 _CLOSED_ROW_RE = re.compile(
     r"^\|\s*(G[1-6])\s*\|[^|]*\|\s*DONE\b",
     re.IGNORECASE | re.MULTILINE,
+)
+_ROW_STATUS_RE = re.compile(
+    r"^\|\s*(G[1-6])\s*\|[^|]*\|\s*(?P<status>[A-Za-z_()]+)",
+    re.MULTILINE,
+)
+STATUS_VOCABULARY: frozenset[str] = frozenset(
+    {"OPEN", "DONE", "CLAIMED", "WIP", "RETRACTED"}
 )
 G_ROWS: tuple[str, ...] = ("G1", "G2", "G3", "G4", "G5", "G6")
 _G_LABELS: dict[str, str] = {
@@ -131,6 +141,12 @@ def tip_sha256(body: str) -> str:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
+def _valid_tip_sha(sha: object) -> bool:
+    if not isinstance(sha, str):
+        return False
+    return bool(re.fullmatch(r"[0-9a-f]{64}", sha.strip().lower()))
+
+
 def recover_tip_from_journal(slug: str, *, files_root: Path | None = None) -> bool:
     """Restore tip from last journal ``tip_body`` when disk tip is missing or stale."""
     records = load_journal(slug, files_root=files_root)
@@ -139,7 +155,7 @@ def recover_tip_from_journal(slug: str, *, files_root: Path | None = None) -> bo
     last = records[-1]
     expected_sha = last.get("tip_sha")
     tip_body = last.get("tip_body")
-    if not expected_sha or not isinstance(tip_body, str):
+    if not _valid_tip_sha(expected_sha) or not isinstance(tip_body, str):
         return False
     path = _tip_path(slug, files_root=files_root)
     disk_sha: str | None = None
@@ -152,30 +168,58 @@ def recover_tip_from_journal(slug: str, *, files_root: Path | None = None) -> bo
     return True
 
 
-def read_tip(slug: str, *, files_root: Path | None = None) -> tuple[str, str] | None:
+def read_tip(
+    slug: str,
+    *,
+    files_root: Path | None = None,
+    fold_deps: FoldDeps | None = None,
+) -> tuple[str, str] | None:
     """Return ``(body, sha256)`` for the current tip, healing from journal when needed."""
     recover_tip_from_journal(slug, files_root=files_root)
     path = _tip_path(slug, files_root=files_root)
     if not path.is_file():
         return None
     body = path.read_text(encoding="utf-8")
+    if fold_deps is not None:
+        from implement_admission.conductor_witness import fold_scoreboard
+
+        fold = fold_scoreboard(slug, deps=fold_deps, files_root=files_root)
+        if fold is not None:
+            return fold.folded_body, fold.tip_sha or tip_sha256(fold.folded_body)
     return body, tip_sha256(body)
+
+
+def _parse_journal_chunk(chunk: str) -> list[dict[str, Any]]:
+    try:
+        parsed = json.loads(chunk)
+    except json.JSONDecodeError:
+        parsed = None
+    else:
+        if isinstance(parsed, dict):
+            return [parsed]
+    records: list[dict[str, Any]] = []
+    for line in chunk.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict):
+            records.append(row)
+    return records
 
 
 def _parse_journal(text: str) -> list[dict[str, Any]]:
     if not text.strip():
         return []
+    chunks = [part.strip() for part in text.split(_RECORD_SEP) if part.strip()]
+    if not chunks:
+        return []
     records: list[dict[str, Any]] = []
-    for chunk in text.split(_RECORD_SEP):
-        chunk = chunk.strip()
-        if not chunk:
-            continue
-        try:
-            parsed = json.loads(chunk)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, dict):
-            records.append(parsed)
+    for chunk in chunks:
+        records.extend(_parse_journal_chunk(chunk))
     return records
 
 
@@ -187,30 +231,37 @@ def load_journal(slug: str, *, files_root: Path | None = None) -> list[dict[str,
     return _parse_journal(path.read_text(encoding="utf-8"))
 
 
-def closed_rows_in_tip(body: str) -> frozenset[str]:
-    """Return G-row ids marked DONE in the scoreboard tip."""
+def closed_rows_in_tip(
+    body: str,
+    *,
+    witnessed_done: frozenset[str] | None = None,
+) -> frozenset[str]:
+    """Return G-row ids marked DONE in the scoreboard tip (witnessed when supplied)."""
+    if witnessed_done is not None:
+        return witnessed_done
     return frozenset(_CLOSED_ROW_RE.findall(body))
+
+
+def _row_status(body: str, gid: str) -> str | None:
+    for match in _ROW_STATUS_RE.finditer(body):
+        if match.group(1).upper() == gid.upper():
+            return match.group("status").strip().upper()
+    return None
 
 
 def reject_rewind_closed_row(
     *,
     prior_body: str,
     next_body: str,
+    prior_witnessed_done: frozenset[str] | None = None,
 ) -> str | None:
-    """Return rejection reason when next_body rewinds a closed G-row."""
-    prior_closed = closed_rows_in_tip(prior_body)
+    """Return rejection reason when next_body rewinds a witnessed-closed G-row."""
+    prior_closed = closed_rows_in_tip(prior_body, witnessed_done=prior_witnessed_done)
     if not prior_closed:
         return None
-    next_closed = closed_rows_in_tip(next_body)
-    reopened = prior_closed - next_closed
-    if reopened:
-        return f"rewind closed row(s): {', '.join(sorted(reopened))}"
     for gid in prior_closed:
-        if gid in next_body and re.search(
-            rf"^\|\s*{re.escape(gid)}\s*\|[^|]*\|\s*OPEN\b",
-            next_body,
-            re.IGNORECASE | re.MULTILINE,
-        ):
+        next_status = _row_status(next_body, gid)
+        if next_status != "DONE":
             return f"rewind closed row: {gid}"
     return None
 
@@ -293,13 +344,18 @@ def forward_mutate_tip(
     rows: tuple[str, ...],
     delta: str,
     files_root: Path | None = None,
+    prior_witnessed_done: frozenset[str] | None = None,
 ) -> JournalAppendResult:
-    """Forward-only journal-then-tip mutation; reject closed-row rewind."""
+    """Forward-only journal-then-tip mutation; reject witnessed-closed-row rewind."""
     recover_tip_from_journal(slug, files_root=files_root)
     prior = read_tip(slug, files_root=files_root)
     prior_sha = prior[1] if prior else None
     if prior is not None:
-        reject = reject_rewind_closed_row(prior_body=prior[0], next_body=next_body)
+        reject = reject_rewind_closed_row(
+            prior_body=prior[0],
+            next_body=next_body,
+            prior_witnessed_done=prior_witnessed_done,
+        )
         if reject:
             return JournalAppendResult(
                 tip_sha=prior_sha or "",

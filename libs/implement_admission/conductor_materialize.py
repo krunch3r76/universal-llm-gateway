@@ -23,6 +23,7 @@ from implement_admission.conductor_score_journal import (
     scoreboard_tip_uri,
 )
 from implement_admission.conductor_summon import resolve_summon_mode
+from implement_admission.conductor_witness import FoldDeps, fold_scoreboard
 from implement_admission.materialize import MaterializedPacket, _extract_block
 from implement_admission.source_ref import parse_source_ref, todo_slug_from_ref
 
@@ -54,16 +55,17 @@ class ConductorMaterializeContext:
     problem: str | None
     scope: str | None
     acceptance: str | None
+    fold_missing_witnesses: dict[str, str] | None = None
 
 
 def resolve_entry_gate(
     *,
     density_triage: str | None,
-    derived_from: str | None,
+    fold_entry_gate: str | None = None,
 ) -> str:
-    """Pick the G-row entry gate from todo attrs (sheet bind i + Q1)."""
-    if derived_from:
-        return "G2"
+    """Pick the G-row entry gate from a witness fold or sparse birth defaults."""
+    if fold_entry_gate:
+        return fold_entry_gate
     triage = (density_triage or "").strip().lower()
     if triage == "mechanical":
         return "G5"
@@ -77,6 +79,8 @@ def load_conductor_context(
     summon_mode: str | None = None,
     caller_agent: str | None = None,
     summon_text: str | None = None,
+    fold_entry_gate: str | None = None,
+    fold_missing_witnesses: dict[str, str] | None = None,
 ) -> ConductorMaterializeContext:
     """Read todo attrs and derive conductor spawn context."""
     ref = parse_source_ref(source_ref)
@@ -95,7 +99,7 @@ def load_conductor_context(
     stop_after = str(stop_raw).strip() if stop_raw else None
     entry_gate = resolve_entry_gate(
         density_triage=attrs.get("density_triage"),
-        derived_from=derived_from,
+        fold_entry_gate=fold_entry_gate,
     )
     resolved_summon_mode = resolve_summon_mode(
         explicit=summon_mode,
@@ -114,6 +118,7 @@ def load_conductor_context(
         problem=attrs.get("problem") or attrs.get("Problem"),
         scope=attrs.get("scope") or attrs.get("Scope"),
         acceptance=attrs.get("acceptance") or attrs.get("Acceptance"),
+        fold_missing_witnesses=fold_missing_witnesses,
     )
 
 
@@ -126,6 +131,11 @@ def _render_scope(ctx: ConductorMaterializeContext) -> str:
         "Checkout: Lane B (explicit).",
         f"summon_mode: {ctx.summon_mode}.",
     ]
+    if ctx.fold_missing_witnesses:
+        lines.append("CLAIMED rows — attach witnesses, do not re-derive:")
+        for gid in G_ROWS:
+            if gid in ctx.fold_missing_witnesses:
+                lines.append(f"- {gid} CLAIMED: {ctx.fold_missing_witnesses[gid]}.")
     if ctx.stop_after:
         lines.append(f"stop_after pin: {ctx.stop_after}.")
     return " ".join(lines)
@@ -134,13 +144,14 @@ def _render_scope(ctx: ConductorMaterializeContext) -> str:
 def _render_invariants(ctx: ConductorMaterializeContext) -> str:
     lines = [
         _CONDUCTOR_USE_LINE,
+        "- DONE is rendered from witnesses; you hang witnesses, you do not write DONE.",
         "- Run to completion: admit authorizes landing this mission Lane-B branch on green.",
         "- Nest Composer for mechanical G-rows (`nest_under` this conductor dispatch_id).",
         "- Forward-only score mutation; journal every tip write.",
-        "- lane=\"B\" — pass explicitly on nested mechanical legs.",
+        '- lane="B" — pass explicitly on nested mechanical legs.',
     ]
     if ctx.derived_from:
-        lines.append(f"- G1 skip: derived_from → `{ctx.derived_from}`.")
+        lines.append(f"- G1 skip note: derived_from edge exists → `{ctx.derived_from}`.")
     if ctx.density_triage:
         lines.append(f"- density_triage: {ctx.density_triage} (≠ implement_ready until G5).")
     return "\n".join(lines)
@@ -281,21 +292,48 @@ def materialize_conductor(
     summon_mode: str | None = None,
     caller_agent: str | None = None,
     summon_text: str | None = None,
+    fold_deps: FoldDeps | None = None,
+    summoning_thread_id: str | None = None,
 ) -> MaterializedPacket:
     """Write conductor six-block packet; birth scoreboard/journal only when tip absent.
 
     When ``write_scoreboard`` is true and ``read_tip`` finds an existing tip for the
     todo slug, skip ``birth_scoreboard`` so a re-admit cannot rewind forward progress.
+    When a tip exists and ``fold_deps`` is supplied, fold witness projection first.
     """
+    slug = todo_slug_from_ref(source_ref)
+    fold_entry_gate: str | None = None
+    fold_missing: dict[str, str] | None = None
+    if read_tip(slug, files_root=files_root) is not None and fold_deps is not None:
+        effective_deps = FoldDeps(
+            cortex=fold_deps.cortex,
+            bus=fold_deps.bus,
+            git=fold_deps.git,
+            source_ref=source_ref,
+            summon_mode=fold_deps.summon_mode
+            or resolve_summon_mode(
+                explicit=summon_mode,
+                caller_agent=caller_agent,
+                summon_text=summon_text,
+            ),
+            summoning_thread_id=fold_deps.summoning_thread_id or summoning_thread_id,
+            repo=fold_deps.repo,
+        )
+        fold = fold_scoreboard(slug, deps=effective_deps, files_root=files_root)
+        if fold is not None:
+            fold_entry_gate = fold.entry_gate
+            fold_missing = fold.missing_witnesses or None
+
     ctx = load_conductor_context(
         source_ref,
         cortex=cortex,
         summon_mode=summon_mode,
         caller_agent=caller_agent,
         summon_text=summon_text,
+        fold_entry_gate=fold_entry_gate,
+        fold_missing_witnesses=fold_missing,
     )
     out_dir.mkdir(parents=True, exist_ok=True)
-    slug = ctx.slug
     out_path = out_dir / f"conductor-{slug}.md"
 
     pending = _render_packet(ctx)

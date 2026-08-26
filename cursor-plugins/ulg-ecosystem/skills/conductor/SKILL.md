@@ -253,8 +253,14 @@ is open → 409.
 
 - Tip: `cortex://notes/system/scoreboards/{slug}-scoreboard.md`
 - Journal: `cortex://notes/system/scoreboards/{slug}-score-journal.md` (append-only)
+- **Witnessed DONE:** Status cells are a **projection** folded from witnesses (cortex
+  relationships, bus turns, git land). Nobody writes `DONE` — hang witnesses; the fold
+  renders `DONE`. Self-marked `DONE` without a witness renders **`CLAIMED`** (not a
+  rewind of a closed row).
+- **Conductor duty:** attach witnesses (G1 `derived_from` edge, G5 `SCORE_RESURFACE`
+  when attended, etc.); do not re-derive work already in sidecar artifacts.
 - Stops: `CONSULT_PENDING` · `CONFIRM_PENDING` · `ROW_PINNED` · `HOLD_MERGE` ·
-  `OPERATOR_GATE` · `PARKED_TRANSPORT` · `DONE`
+  `OPERATOR_GATE` · `PARKED_TRANSPORT` · `DONE` (stop token only — not row Status)
 - G3→G5 default: in-process CDP score-ratify (do-not-fight / likely-optimal).
   Explicit see-score → `ROW_PINNED` + ping.
 - Attended IDE spawn: resurface the score in the summoning chat at G3→G5 unless
