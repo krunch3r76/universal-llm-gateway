@@ -6,7 +6,6 @@ from pathlib import Path
 
 from implement_admission.conductor_score_journal import (
     JournalRecord,
-    _journal_path,
     _tip_path,
     append_journal_record,
     birth_scoreboard,
