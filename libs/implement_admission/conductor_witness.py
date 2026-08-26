@@ -53,7 +53,7 @@ def _missing_witness_message(gid: str) -> str:
     if gid == "G1":
         return "hang active derived_from todo→document:* (consult_kind=architecture)"
     if gid == "G4":
-        return "hang G4 verdict artifact URI in tip table"
+        return "hang a G4 verdict that clears G5 (URI whose body does not withhold/FAIL)"
     if gid == "G5":
         return "post SCORE_RESURFACE on summoning thread after G3 journal"
     if gid == "G6":
@@ -64,17 +64,23 @@ def _missing_witness_message(gid: str) -> str:
 def _render_folded_body(body: str, row_status: dict[str, str]) -> str:
     lines = body.splitlines()
     out: list[str] = []
+    in_gated = False
     for line in lines:
-        for gid in G_ROWS:
-            prefix = f"| {gid} |"
-            if line.startswith(prefix) or line.startswith(f"| {gid.lower()} |"):
-                status = row_status.get(gid)
-                if status:
-                    parts = line.split("|")
-                    if len(parts) >= 4:
-                        parts[3] = f" {status} "
-                        line = "|".join(parts)
-                break
+        if line.startswith("## Gated deliverables"):
+            in_gated = True
+        elif line.startswith("## "):
+            in_gated = False
+        if in_gated:
+            for gid in G_ROWS:
+                prefix = f"| {gid} |"
+                if line.startswith(prefix) or line.startswith(f"| {gid.lower()} |"):
+                    status = row_status.get(gid)
+                    if status:
+                        parts = line.split("|")
+                        if len(parts) >= 4:
+                            parts[3] = f" {status} "
+                            line = "|".join(parts)
+                    break
         out.append(line)
     return "\n".join(out) + ("\n" if body.endswith("\n") else "")
 
@@ -106,15 +112,15 @@ def fold_scoreboard(
     rows_claimed: set[str] = set()
     missing: dict[str, str] = {}
     for gid in G_ROWS:
+        raw_status = (row_status_in_tip(raw_body, gid) or "OPEN").upper()
         if witnesses.get(gid) is not None:
             row_status[gid] = "DONE"
-        elif (row_status_in_tip(raw_body, gid) or "") == "DONE":
+        elif raw_status in {"DONE", "CLAIMED"}:
             row_status[gid] = "CLAIMED"
             rows_claimed.add(gid)
             missing[gid] = _missing_witness_message(gid)
         else:
-            raw = row_status_in_tip(raw_body, gid) or "OPEN"
-            row_status[gid] = raw if raw != "DONE" else "OPEN"
+            row_status[gid] = raw_status if raw_status != "DONE" else "OPEN"
 
     folded_body = _render_folded_body(raw_body, row_status)
     sources = {gid: w.source for gid, w in witnesses.items() if w is not None}

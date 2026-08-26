@@ -13,8 +13,8 @@ from implement_admission.implement_ready_gate import (
 )
 
 from .admission import FrontierEndpointError
-from .implement_admission_bridge import StargateCortexReader
 from .skeptic_evidence_grounding import evaluate_skeptic_evidence_grounding
+from .stargate_cortex_reader import StargateCortexReader
 
 
 def require_implement_ready(

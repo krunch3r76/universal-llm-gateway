@@ -55,7 +55,7 @@ Not a model name. Not `mission-operator` (that skill is the formal
 
 | Seat | Duty |
 |---|---|
-| **Continuity lead** (IDE / `/conductor`) | Read this skill to author/admit; **require** it on the conductor dispatch (below) |
+| **Continuity lead** (IDE / `/conductor`) | Read this skill to author/admit; **require** it on the conductor dispatch (below). **Harvest reader** of any after-ship overlay the conductor fires — quote the sidecar or name why unread |
 | **Conductor** (cursor-sdk) | Load this skill on pickup — nest, tier, scoreboard, ¬ hand-code any G-row whose remainder is files+tests after a pick |
 
 **Continuity-lead required-skill gate (BINDING):** before
@@ -123,6 +123,9 @@ per-G-row one. Default posture once running:
   **Scoreboard default:** Mission Composer comments this overlay on the
   scoreboard at mint (Sidecars / WIP — **¬** a gated G-row; done-claim must
   not wait on it). Template: `cortex://notes/system/templates/charter-scoreboard.md`.
+  **Reader (BINDING):** `fired(overlay) ⇒ reader = summoning-thread lead at harvest`.
+  `¬wait(latency) ≠ ¬read`. Harvest MUST quote overlay `read_sha256` ∨ name why unread.
+  A check with no reader is not an independent check (dogfood 9655 / assertion 30663).
 
 ## When
 
@@ -259,6 +262,12 @@ is open → 409.
   rewind of a closed row).
 - **Conductor duty:** attach witnesses (G1 `derived_from` edge, G5 `SCORE_RESURFACE`
   when attended, etc.); do not re-derive work already in sidecar artifacts.
+- **G5 ≠ attended-door only.** `SCORE_RESURFACE` witnesses the attended resurface,
+  ¬ implement completeness. `G4.withhold ∨ G4.AC_red ∨ G4.says(remainder is mechanical)
+  ⇒ ¬ close G5` on Composer land ∧ empty-template green. Hang G5 until a *read*
+  independent check (overlay quoted at harvest) ∨ a seeded-ladder fixture witnesses
+  the named remainder. Fold: a G4 URI whose body withholds/FAIL G5 is **not** a
+  G4 witness (v1 URI-resolve alone was the 9655 collapse).
 - Stops: `CONSULT_PENDING` · `CONFIRM_PENDING` · `ROW_PINNED` · `HOLD_MERGE` ·
   `OPERATOR_GATE` · `PARKED_TRANSPORT` · `DONE` (stop token only — not row Status)
 - G3→G5 default: in-process CDP score-ratify (do-not-fight / likely-optimal).
@@ -438,3 +447,5 @@ the after-ship `cdp/opus-5` review comment (good default; ¬ a G-row).
 | Conductor judges the mission "too big"/risky and stops before any G-row, unasked — or verifies the mission is genuine then refuses it over a later step's scale (7419) | Nest Composer, drive to green; only a **named** packet exception holds the merge — scale/blast-radius/"verified legitimate" alone are never an implicit one. Execute the current step, raise the concern in the closeout, reassess only at the flagged step under standing authorization (reasoning-posture rule 6 mirror) |
 | Closes `status: partial`/`checks_failed` with zero files touched because it wanted to flag the plan first | Flag the concern on the CHECKPOINT while still driving — flagging is commentary, not a hold |
 | Independent `team_dispatch` (no `nest_under`) for mechanical G-row landing work | `nest_under=<conductor dispatch_id>` + Composer `contract=implement` — independent dispatch is judgment/spec-only |
+| Close G5 because G4 said “remainder is mechanical” + empty-template green | Hang G5; read the overlay or seed a fixture — G4 withhold is not a G5 witness |
+| Fire after-ship `cdp/opus-5` review and never read it | Summoning-thread lead quotes the overlay sidecar at harvest, or names why unread |

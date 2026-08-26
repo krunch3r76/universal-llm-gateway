@@ -11,12 +11,14 @@ from pathlib import Path
 
 from implement_admission.normalize import CortexReader
 
-from systems.frontier_consult.implement_admission_bridge import StargateCortexReader, _repo_base
+from systems.frontier_consult.implement_admission_bridge import _repo_base
+from systems.frontier_consult.stargate_cortex_reader import StargateCortexReader
 
 
 def test_stargate_cortex_reader_exposes_entity_get() -> None:
     assert hasattr(StargateCortexReader, "entity_get")
     assert callable(getattr(StargateCortexReader, "entity_get"))
+    assert hasattr(StargateCortexReader, "list_relationships")
 
 
 def test_stargate_cortex_reader_usable_as_cortex_reader() -> None:

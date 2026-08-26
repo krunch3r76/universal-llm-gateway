@@ -87,7 +87,6 @@ from .handoff_response import (
 )
 from .implement_admission_bridge import (
     BridgeResult,
-    StargateCortexReader,
     _executor_probe_root,
     resolve_source_ref_to_packet,
     verify_both_present_hash,
@@ -103,6 +102,7 @@ from .service import (
     FrontierGenerateRequest,
     build_dispatch_body,
 )
+from .stargate_cortex_reader import StargateCortexReader
 
 team_router = APIRouter(prefix="/api/v1/team", tags=["team"])
 frontier_router = APIRouter(prefix="/api/v1/frontier", tags=["frontier"])

@@ -135,7 +135,7 @@ def _dispatch_lane_from_source_ref(source_ref: str | None) -> str | None:
     if not source_ref:
         return None
     try:
-        from .implement_admission_bridge import StargateCortexReader
+        from .stargate_cortex_reader import StargateCortexReader
 
         entity = StargateCortexReader().entity_get(source_ref, intent="full")
     except Exception:

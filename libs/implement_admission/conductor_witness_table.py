@@ -20,6 +20,10 @@ _ARTIFACT_URI_RE = re.compile(
     re.MULTILINE | re.IGNORECASE,
 )
 _SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
+_G4_BLOCKS_DONE_RE = re.compile(
+    r"(?is)does not clear G5|withhold G5|withhold(?:s)? completeness"
+    r"|AC-\d+\s*\|\s*\*\*FAIL\*\*"
+)
 
 
 def _artifact_map(tip_body: str) -> dict[str, str]:
@@ -45,6 +49,18 @@ def _uri_resolves(uri: str, *, files_root: Path, repo: Path | None) -> bool:
     return False
 
 
+def _g4_body_clears(uri: str, *, files_root: Path) -> bool:
+    """URI-resolve is not enough: a withhold/FAIL G4 body is not a witness."""
+    if not uri.startswith("cortex://"):
+        return True
+    path = files_root / uri.removeprefix("cortex://")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return _G4_BLOCKS_DONE_RE.search(text) is None
+
+
 def _g3_journal_written_at(slug: str, *, files_root: Path) -> str | None:
     for record in reversed(load_journal(slug, files_root=files_root)):
         rows = record.get("rows") or []
@@ -62,7 +78,11 @@ def _witness_g1(*, source_ref: str, cortex: WitnessCortex) -> Witness | None:
             continue
         doc = cortex.entity_get(target, intent="card")
         attrs = doc.get("attributes") or {}
-        kind = str(attrs.get("consult_kind") or "").strip().lower()
+        kind = str(attrs.get("consult_kind") or doc.get("consult_kind") or "").strip().lower()
+        if kind != "architecture":
+            summary = str(doc.get("summary_row") or "")
+            if "consult_kind=architecture" in summary.lower().replace(" ", ""):
+                kind = "architecture"
         if kind == "architecture":
             rel_id = rel.get("id")
             return Witness(
@@ -110,11 +130,18 @@ def row_witnesses(
             witnesses["G3"] = Witness(row="G3", source="artifact:S4b", detail=s4b_uri)
 
     g4_uri = artifacts.get("G4")
-    if g4_uri and _uri_resolves(g4_uri, files_root=root, repo=repo):
+    if (
+        g4_uri
+        and _uri_resolves(g4_uri, files_root=root, repo=repo)
+        and _g4_body_clears(g4_uri, files_root=root)
+    ):
         witnesses["G4"] = Witness(row="G4", source="artifact:G4", detail=g4_uri)
 
+    g4_blocked = bool(g4_uri) and witnesses["G4"] is None
     summon = (deps.summon_mode or "").strip().lower().replace("-", "_")
-    if summon == "attended" and deps.bus is not None and deps.summoning_thread_id:
+    if g4_blocked:
+        witnesses["G5"] = None
+    elif summon == "attended" and deps.bus is not None and deps.summoning_thread_id:
         after = _g3_journal_written_at(slug, files_root=root)
         if deps.bus.has_score_resurface_after(
             thread_id=deps.summoning_thread_id,

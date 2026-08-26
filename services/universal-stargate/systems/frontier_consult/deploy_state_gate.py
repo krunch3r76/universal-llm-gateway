@@ -23,7 +23,8 @@ from universal_logging import get_logger
 
 from .admission import FrontierEndpointError
 from .handoff import _workspaces_root
-from .implement_admission_bridge import StargateCortexReader, _repo_base
+from .implement_admission_bridge import _repo_base
+from .stargate_cortex_reader import StargateCortexReader
 
 logger = get_logger(__name__)
 

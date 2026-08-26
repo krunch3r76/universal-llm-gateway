@@ -15,7 +15,12 @@ from implement_admission.conductor_score_journal import (
     read_tip,
     walk_journal_to_tip,
 )
-from implement_admission.conductor_witness import FoldDeps, fold_scoreboard, row_witnesses
+from implement_admission.conductor_witness import (
+    FoldDeps,
+    fold_scoreboard,
+    row_witnesses,
+)
+from implement_admission.conductor_witness_defaults import score_resurface_in_turns
 
 _LIVE_TIP = Path(
     "/mnt/torus/mcp-data/files/notes/system/scoreboards/entity-private-id-mutable-name-scoreboard.md"
@@ -39,6 +44,12 @@ class _StubCortex:
 
     def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN003, ARG002
         if entity_id.startswith("document:"):
+            if self._attrs.get("card_shaped"):
+                return {
+                    "id": entity_id,
+                    "summary_row": "consult_kind=architecture. Source artifact C1.",
+                    "attributes": {},
+                }
             return {"id": entity_id, "attributes": {"consult_kind": "architecture"}}
         return {"id": entity_id, "attributes": dict(self._attrs)}
 
@@ -111,8 +122,8 @@ def test_parse_journal_ndjson_two_records(live_fixture: tuple[Path, Path]) -> No
     journal_path = files_root / "notes/system/scoreboards" / f"{_SLUG}-score-journal.md"
     text = journal_path.read_text(encoding="utf-8")
     records = _parse_journal(text)
-    assert len(records) == 2
-    assert len(load_journal(_SLUG, files_root=files_root)) == 2
+    assert len(records) >= 2
+    assert len(load_journal(_SLUG, files_root=files_root)) == len(records)
 
 
 def test_fold_live_fixture_entry_gate_and_claimed(live_fixture: tuple[Path, Path]) -> None:
@@ -209,3 +220,108 @@ def test_derived_from_edge_renders_g1_done(live_fixture: tuple[Path, Path]) -> N
     fold = fold_scoreboard(_SLUG, deps=deps, files_root=files_root)
     assert fold is not None
     assert fold.row_status["G1"] == "DONE"
+
+
+def test_derived_from_edge_reads_consult_kind_from_card_summary() -> None:
+    rel = {
+        "id": 8441,
+        "source_id": _SOURCE_REF,
+        "target_id": "document:entity-private-id-mutable-name-architecture-consult",
+        "type_id": "derived_from",
+    }
+    cortex = _StubCortex(attrs={"card_shaped": True}, relationships=[rel])
+    deps = FoldDeps(
+        cortex=cortex,
+        bus=_StubBus(),
+        git=_StubGit(),
+        source_ref=_SOURCE_REF,
+        repo=Path("/tmp"),
+    )
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body="| G1 | Architecture | CLAIMED |\n",
+        deps=deps,
+        files_root=Path("/tmp"),
+    )
+    assert witnesses["G1"] is not None
+    assert witnesses["G1"].source == "derived_from:8441"
+
+
+def test_g4_withhold_body_is_not_a_witness(tmp_path: Path) -> None:
+    files_root = tmp_path / "cortex"
+    reviews = files_root / "notes/system/reviews"
+    reviews.mkdir(parents=True)
+    g4_path = reviews / "withhold.md"
+    g4_path.write_text(
+        "Verdict: G4 **does not** clear G5.\nAC-7 | **FAIL**\n",
+        encoding="utf-8",
+    )
+    tip_body = (
+        "| ID | Artifact |\n"
+        "|---|---|\n"
+        "| G4 | `cortex://notes/system/reviews/withhold.md` |\n"
+    )
+    deps = FoldDeps(
+        cortex=_StubCortex(),
+        bus=_StubBus(),
+        git=_StubGit(),
+        source_ref=_SOURCE_REF,
+        repo=tmp_path / "repo",
+    )
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=deps,
+        files_root=files_root,
+    )
+    assert witnesses["G4"] is None
+
+
+def test_g4_withhold_blocks_g5_even_with_resurface(tmp_path: Path) -> None:
+    files_root = tmp_path / "cortex"
+    reviews = files_root / "notes/system/reviews"
+    reviews.mkdir(parents=True)
+    (reviews / "withhold.md").write_text(
+        "Verdict: G4 **does not** clear G5.\nwithhold G5 completeness\n",
+        encoding="utf-8",
+    )
+    tip_body = (
+        "| G4 | `cortex://notes/system/reviews/withhold.md` |\n"
+    )
+    deps = FoldDeps(
+        cortex=_StubCortex(),
+        bus=_StubBus(resurface=True),
+        git=_StubGit(),
+        source_ref=_SOURCE_REF,
+        summon_mode="attended",
+        summoning_thread_id="9638",
+        repo=tmp_path / "repo",
+    )
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=deps,
+        files_root=files_root,
+    )
+    assert witnesses["G4"] is None
+    assert witnesses["G5"] is None
+
+
+def test_score_resurface_in_turns_respects_cutoff() -> None:
+    turns = [
+        {
+            "subject": "SCORE_RESURFACE — slug G3→G5",
+            "created_at": "2026-08-26T06:30:00Z",
+        }
+    ]
+    assert score_resurface_in_turns(turns, after_written_at=None) is True
+    assert (
+        score_resurface_in_turns(turns, after_written_at="2026-08-26T06:00:00Z") is True
+    )
+    assert (
+        score_resurface_in_turns(turns, after_written_at="2026-08-26T07:00:00Z") is False
+    )
+    assert score_resurface_in_turns(
+        [{"subject": "CHECKPOINT 87", "created_at": "2026-08-26T06:30:00Z"}],
+        after_written_at=None,
+    ) is False

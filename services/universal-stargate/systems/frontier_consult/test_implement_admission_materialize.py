@@ -12,10 +12,10 @@ from implement_admission.spec import (
     Acceptance,
     Closeout,
     CloseoutAdapterKind,
+    ExecutorStyle,
     ImplementSpec,
     Intent,
     OrchestrationMode,
-    ExecutorStyle,
     Readiness,
     ReadinessState,
     Routing,
@@ -173,3 +173,46 @@ def test_materialize_lane_cross_mount_sets_absent(
     assert len(result.warnings) == 1
     assert "materialization.executor_absent" in result.warnings[0]
     assert "use source_ref fallback" in result.warnings[0]
+
+
+def test_conductor_resolve_passes_fold_deps(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class _Packet:
+        path = str(
+            tmp_path
+            / "universal-llm-gateway"
+            / "tmp"
+            / "implement-admission"
+            / "materialized"
+            / "conductor-fold-probe.md"
+        )
+        packet_sha256 = "deadbeef"
+        text = ""
+
+    def _materialize(source_ref: str, **kwargs: Any) -> _Packet:
+        captured["source_ref"] = source_ref
+        captured.update(kwargs)
+        Path(_Packet.path).parent.mkdir(parents=True, exist_ok=True)
+        Path(_Packet.path).write_text("ok\n", encoding="utf-8")
+        return _Packet()
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.implement_admission_bridge.materialize_conductor",
+        _materialize,
+    )
+    result = resolve_source_ref_to_packet(
+        "todo:fold-probe-slug",
+        cortex=_MaterializeStubCortex(),
+        workspaces_root=tmp_path,
+        packet_kind="conductor",
+        summoning_thread_id="9638",
+    )
+    assert result.gated is False
+    assert captured["fold_deps"] is not None
+    assert captured["fold_deps"].source_ref == "todo:fold-probe-slug"
+    assert captured["fold_deps"].summoning_thread_id == "9638"
+    assert captured["summoning_thread_id"] == "9638"

@@ -24,11 +24,9 @@ from .cursor_sdk_thread_reuse import (
 )
 from .dispatch_thread_context import resolve_generate_prompt_resolution
 from .handoff import _resolve_packet_file, _workspaces_root
-from .implement_admission_bridge import (
-    StargateCortexReader,
-    resolve_source_ref_to_packet,
-)
+from .implement_admission_bridge import resolve_source_ref_to_packet
 from .implement_ready_gate import require_implement_ready
+from .stargate_cortex_reader import StargateCortexReader
 
 if TYPE_CHECKING:
     from fastapi import Response
@@ -60,6 +58,7 @@ def prepare_conductor_packet(
     workspaces_root: Path,
     role: str = "cursor-sdk",
     transport: str = "team_dispatch",
+    summoning_thread_id: str | None = None,
 ) -> GenerateWrapResult:
     """Materialize a conductor six-block packet from ``source_ref=todo:``."""
     del request_id, role, transport
@@ -71,6 +70,7 @@ def prepare_conductor_packet(
         contract="light-bounded",
         caller_agent=caller_agent,
         summon_text=summon_text,
+        summoning_thread_id=summoning_thread_id,
     )
     if bridge.gated:
         return GenerateWrapResult(
@@ -317,6 +317,11 @@ async def dispatch_cursor_sdk_generate_route(
                     summon_text=getattr(body, "prompt", None),
                     cortex=StargateCortexReader(),
                     workspaces_root=_workspaces_root(),
+                    summoning_thread_id=(
+                        str(body.dispatch_thread_id).strip()
+                        if getattr(body, "dispatch_thread_id", None)
+                        else None
+                    ),
                 ),
             )
         elif body.contract == "implement":
