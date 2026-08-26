@@ -56,8 +56,7 @@ def _fresh_conn(*, with_belongs_to_type: bool = True) -> sqlite3.Connection:
             entity_type TEXT NOT NULL,
             alias TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            PRIMARY KEY (entity_id, alias),
-            UNIQUE (entity_type, alias)
+            PRIMARY KEY (entity_id, alias)
         );
         CREATE TABLE relationship_types (
             type TEXT PRIMARY KEY,

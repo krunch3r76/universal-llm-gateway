@@ -10,13 +10,21 @@ from cortex_store.entity_crud import update_entity_impl
 from cortex_store.routes.assertions import _ASSERTION_COLS
 
 
-def _load_migration_056():
-    path = Path(__file__).resolve().parent / "migrations" / "056_entity_aliases.py"
-    spec = importlib.util.spec_from_file_location("migration_056_entity_aliases", path)
+def _load_migration(stem: str):
+    path = Path(__file__).resolve().parent / "migrations" / f"{stem}.py"
+    spec = importlib.util.spec_from_file_location(f"migration_{stem}", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _load_migration_056():
+    return _load_migration("056_entity_aliases")
+
+
+def _load_migration_075():
+    return _load_migration("075_entity_aliases_relax_type_alias_unique")
 
 
 def _conn() -> sqlite3.Connection:
@@ -172,8 +180,7 @@ def test_sync_skips_non_live_entity() -> None:
             entity_type TEXT NOT NULL,
             alias TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            PRIMARY KEY (entity_id, alias),
-            UNIQUE (entity_type, alias)
+            PRIMARY KEY (entity_id, alias)
         )
         """
     )
@@ -237,8 +244,7 @@ def _full_entities_conn() -> sqlite3.Connection:
             entity_type TEXT NOT NULL,
             alias TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            PRIMARY KEY (entity_id, alias),
-            UNIQUE (entity_type, alias)
+            PRIMARY KEY (entity_id, alias)
         )
         """
     )
@@ -331,6 +337,62 @@ def test_update_entity_lifecycle_only_clears_alias_rows() -> None:
         ).fetchall()
         assert list(rows) == [], (
             "a lifecycle-only transition to merged must clear the entity's alias rows"
+        )
+    finally:
+        conn.close()
+
+
+def test_migration_075_drops_type_alias_unique_keeps_pk_and_index() -> None:
+    """075 rebuilds entity_aliases without UNIQUE (entity_type, alias)."""
+    migration_056 = _load_migration_056()
+    migration_075 = _load_migration_075()
+    conn = _conn()
+    try:
+        conn.execute(
+            "INSERT INTO entities (id, type, aliases) VALUES (?, ?, ?)",
+            ("person:a", "person", json.dumps(["Only A"])),
+        )
+        migration_056.migrate(conn)
+        conn.execute(
+            "INSERT INTO entity_aliases (entity_id, entity_type, alias)"
+            " VALUES ('person:b', 'person', 'Shared Name')"
+        )
+
+        migration_075.migrate(conn)
+
+        table_sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='entity_aliases'"
+        ).fetchone()[0]
+        assert "UNIQUE (entity_type, alias)" not in " ".join(str(table_sql).split())
+
+        pk_cols = conn.execute("PRAGMA table_info(entity_aliases)").fetchall()
+        pk_names = [row[1] for row in pk_cols if row[5]]
+        assert pk_names == ["entity_id", "alias"]
+
+        indexes = {
+            row[1]: row[2]
+            for row in conn.execute("PRAGMA index_list('entity_aliases')").fetchall()
+        }
+        assert "idx_entity_aliases_alias" in indexes
+
+        conn.execute(
+            "INSERT INTO entity_aliases (entity_id, entity_type, alias)"
+            " VALUES ('person:c', 'person', 'Shared Name')"
+        )
+        rows = conn.execute(
+            "SELECT entity_id FROM entity_aliases WHERE entity_type='person'"
+            " AND alias='Shared Name' ORDER BY entity_id"
+        ).fetchall()
+        assert [r[0] for r in rows] == ["person:b", "person:c"]
+
+        migration_075.migrate(conn)
+        assert "UNIQUE (entity_type, alias)" not in " ".join(
+            str(
+                conn.execute(
+                    "SELECT sql FROM sqlite_master"
+                    " WHERE type='table' AND name='entity_aliases'"
+                ).fetchone()[0]
+            ).split()
         )
     finally:
         conn.close()

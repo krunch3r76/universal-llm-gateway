@@ -1495,7 +1495,7 @@
           0
         ]
       ],
-      "sql": "CREATE TABLE entity_aliases (\n            entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,\n            entity_type TEXT NOT NULL,\n            alias TEXT NOT NULL,\n            created_at TEXT NOT NULL DEFAULT (datetime('now')),\n            PRIMARY KEY (entity_id, alias),\n            UNIQUE (entity_type, alias)\n        )"
+      "sql": "CREATE TABLE entity_aliases (\n            entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,\n            entity_type TEXT NOT NULL,\n            alias TEXT NOT NULL,\n            created_at TEXT NOT NULL DEFAULT (datetime('now')),\n            PRIMARY KEY (entity_id, alias)\n        )"
     },
     "entity_salience_cache": {
       "columns": [

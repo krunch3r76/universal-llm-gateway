@@ -28,8 +28,7 @@ def _ensure_entity_aliases_table(conn: sqlite3.Connection) -> None:
             entity_type TEXT NOT NULL,
             alias TEXT NOT NULL,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (entity_id, alias),
-            UNIQUE (entity_type, alias)
+            PRIMARY KEY (entity_id, alias)
         )
         """
     )
