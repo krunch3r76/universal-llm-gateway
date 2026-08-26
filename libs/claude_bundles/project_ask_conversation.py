@@ -33,6 +33,19 @@ from claude_bundles.project_ask import (
 from claude_bundles.project_chrome import project_url
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp
 
+
+async def _emit_page_url(on_harvest, page) -> None:
+    """Bind chat_url at send time — wait/harvest may fail before CSE is persisted."""
+    if on_harvest is None:
+        return
+    await on_harvest(
+        {
+            "url": str(getattr(page, "url", "") or ""),
+            "body": "",
+            "body_len": 0,
+        }
+    )
+
 _TRANSCRIPT_MARKER_JS = """
 () => {
   function excluded(el) {
@@ -358,6 +371,7 @@ async def run_project_conversation(
                 satellite_execution_id=satellite_execution_id,
             )
             if not model_info.get("ok"):
+                await _emit_page_url(on_harvest, page)
                 return [
                     ProjectAskResult(
                         ok=False,
@@ -378,6 +392,7 @@ async def run_project_conversation(
                 stargate_execution_id=stargate_execution_id,
                 satellite_execution_id=satellite_execution_id,
             )
+            await _emit_page_url(on_harvest, page)
             state = await wait_assistant_reply(
                 page,
                 before=before,

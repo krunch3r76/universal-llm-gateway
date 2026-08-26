@@ -1232,6 +1232,91 @@ def test_run_cdp_generate_mission_overload_retain_cse(
     assert retain_calls == [True]
 
 
+def test_run_cdp_generate_unverifiable_stall_skips_abort(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """a:30678 — compose-attest fail is retain + observer_unverified, not Stop-click."""
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-unverified")
+    cse = "https://claude.ai/cowork/cse_abc"
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-uv", "status": "running"},
+            {
+                "execution_id": "sat-uv",
+                "status": "failed",
+                "stall_stage": "unknown",
+                "error": "model select failed: picker",
+                "url": cse,
+            },
+        ]
+    )
+    retain_calls: list[tuple[bool, str | None]] = []
+    from claude_bundles import cdp_model_endpoint as mod
+
+    orig = mod._abort_then_sweep
+
+    def _track(*args, **kwargs):
+        retain_calls.append(
+            (bool(kwargs.get("retain_cse")), kwargs.get("retain_reason"))
+        )
+        return orig(*args, **kwargs)
+
+    monkeypatch.setattr(mod, "_abort_then_sweep", _track)
+    result = run_cdp_generate(
+        execution_id="dispatch-unverified",
+        model_id="cdp/fable-5",
+        prompt_text="ping",
+        purpose="review",
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert result.ok is False
+    assert result.stall_stage == "observer_unverified"
+    assert result.extras.get("chat_url") == cse
+    assert retain_calls == [(True, "observer_unverified")]
+    assert result.extras.get("abort", {}).get("abort_skipped") is True
+
+
+def test_run_cdp_generate_weekly_limit_still_aborts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-death")
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-death", "status": "running"},
+            {
+                "execution_id": "sat-death",
+                "status": "failed",
+                "stall_stage": "weekly_limit",
+                "error": "hit a limit",
+            },
+        ]
+    )
+    retain_calls: list[bool] = []
+    from claude_bundles import cdp_model_endpoint as mod
+
+    orig = mod._abort_then_sweep
+
+    def _track(*args, **kwargs):
+        retain_calls.append(bool(kwargs.get("retain_cse")))
+        return orig(*args, **kwargs)
+
+    monkeypatch.setattr(mod, "_abort_then_sweep", _track)
+    result = run_cdp_generate(
+        execution_id="dispatch-death",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        purpose="ask",
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert result.ok is False
+    assert result.stall_stage == "weekly_limit"
+    assert retain_calls == [False]
+
+
 def test_stage_cdp_prompt_twice_yields_single_manifest_block(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

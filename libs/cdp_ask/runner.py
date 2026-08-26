@@ -35,6 +35,11 @@ from cdp_ask.page_liveness import (
     advance_ladder_from_harvest,
     make_harvest_ladder_hook,
 )
+from cdp_ask.unverifiable import (
+    converse_fail_error,
+    converse_stall_stage,
+    is_unverifiable_stall,
+)
 
 _CSE_URL_MARKER = "claude.ai/cowork/cse_"
 
@@ -421,6 +426,7 @@ async def run_execution(
         registration_id=reg.registration_id,
         execution_id=execution_id,
     )
+    retain_host = False
     try:
         if req.converse:
             delete_after = (
@@ -471,6 +477,7 @@ async def run_execution(
                         stargate_execution_id=stargate_execution_id or None,
                     )
                 except HarvestArchiveError as exc:
+                    retain_host = True
                     _persist_session_address(
                         reg.registration_id,
                         last.url,
@@ -513,6 +520,14 @@ async def run_execution(
                 progress=progress, ladder=ladder, archive_uri=archive_uri
             )
             conv_ok = all(r.ok for r in results)
+            fail_error = None if conv_ok else converse_fail_error(
+                last.error if last else None
+            )
+            stall = converse_stall_stage(
+                last.error if last else None, conv_ok=conv_ok
+            )
+            if is_unverifiable_stall(stall, fail_error):
+                retain_host = True
             _persist_session_address(
                 reg.registration_id,
                 last.url if last else None,
@@ -533,12 +548,8 @@ async def run_execution(
                 "harvest_provenance": (
                     last.harvest_provenance if last and last.ok else None
                 ),
-                "error": None if conv_ok else "conversation failed",
-                "stall_stage": (
-                    classify_stall_stage(last.error if last else "conversation failed")
-                    if not conv_ok
-                    else None
-                ),
+                "error": fail_error,
+                "stall_stage": stall,
                 **_wake_debt_extras(reg.registration_id, ok=conv_ok),
             }
 
@@ -587,7 +598,11 @@ async def run_execution(
             execution_id=execution_id,
         )
         if not result.ok:
-            payload["stall_stage"] = classify_stall_stage(result.error)
+            payload["stall_stage"] = converse_stall_stage(
+                result.error, conv_ok=False
+            )
+            if is_unverifiable_stall(payload["stall_stage"], result.error):
+                retain_host = True
         elif result.archive_uri and ladder and ladder.on_archiving:
             await ladder.on_archiving()
         await _release_f6_and_advance_proof(
@@ -598,7 +613,9 @@ async def run_execution(
         payload.update(_wake_debt_extras(reg.registration_id, ok=result.ok))
         return payload
     finally:
-        if not await abort_check():
+        if retain_host:
+            pass
+        elif not await abort_check():
             if not registration_has_wake_debt(reg.registration_id):
                 deregister_on_exit(reg, purpose=req.purpose)
 

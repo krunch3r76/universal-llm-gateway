@@ -107,6 +107,25 @@ def test_result_from_snapshot_completed_without_proof_carries_deliverable() -> N
     assert "do not blind re-dispatch" in str(result.extras.get("recovery"))
 
 
+def test_result_from_snapshot_failed_unknown_is_observer_unverified() -> None:
+    result = result_from_snapshot(
+        snapshot={
+            "status": "failed",
+            "stall_stage": "unknown",
+            "error": "model select failed: picker",
+            "url": "https://claude.ai/cowork/cse_abc",
+        },
+        execution_id="exec-uv",
+        satellite_execution_id="sat-uv",
+        prompt_uri="cortex://p.md",
+        picker_model="fable-5",
+    )
+    assert result is not None
+    assert result.ok is False
+    assert result.stall_stage == "observer_unverified"
+    assert result.extras.get("chat_url") == "https://claude.ai/cowork/cse_abc"
+
+
 def _age_leg_past_horizon(execution_id: str, *, max_wall_s: float = 1800.0) -> None:
     old = (
         datetime.now(UTC) - timedelta(seconds=max_open_leg_s(max_wall_s) + 10)
@@ -362,7 +381,27 @@ def test_classify_horizon_probe() -> None:
     assert reconcile.classify_horizon_probe(_running_snapshot()) == "alive"
     assert (
         reconcile.classify_horizon_probe({"status": "failed", "error": "boom"})
+        == "unverifiable"
+    )
+    assert (
+        reconcile.classify_horizon_probe(
+            {
+                "status": "failed",
+                "stall_stage": "weekly_limit",
+                "error": "hit a limit",
+            }
+        )
         == "confirmed_dead"
+    )
+    assert (
+        reconcile.classify_horizon_probe({"status": "aborted", "error": "aborted"})
+        == "confirmed_dead"
+    )
+    assert (
+        reconcile.classify_horizon_probe(
+            {"status": "failed", "stall_stage": "observer_unverified"}
+        )
+        == "unverifiable"
     )
     assert reconcile.classify_horizon_probe({"error": "unreachable"}) == "unverifiable"
     assert reconcile.classify_horizon_probe(None) == "unverifiable"
@@ -421,7 +460,13 @@ async def test_abandonment_emits_reconcile_abandoned_confirmed_dead(
     monkeypatch.setattr(
         reconcile,
         "poll_satellite_snapshot",
-        AsyncMock(return_value={"status": "failed", "error": "satellite dead"}),
+        AsyncMock(
+            return_value={
+                "status": "failed",
+                "stall_stage": "weekly_limit",
+                "error": "hit a limit",
+            }
+        ),
     )
     monkeypatch.setattr(
         "systems.frontier_consult.cdp_generate_worker.deliver_cdp_result_turn",

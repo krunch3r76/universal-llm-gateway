@@ -180,6 +180,55 @@ async def test_converse_path_threads_correlation_ids_to_send_prompt() -> None:
 
 
 @pytest.mark.asyncio
+async def test_converse_emits_page_url_after_send_prompt() -> None:
+    """a:30678 — bind cse_ URL even when wait fails after send."""
+    page = AsyncMock()
+    page.url = "https://claude.ai/new"
+    captured: list[str] = []
+
+    async def _send(*_args, **_kwargs):
+        page.url = "https://claude.ai/cowork/cse_after_send"
+
+    async def _harvest(state):
+        captured.append(str(state.get("url") or ""))
+
+    with (
+        patch(
+            "claude_bundles.project_ask_conversation.connect_cdp",
+            new=AsyncMock(return_value=(AsyncMock(), None, None, None)),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.pick_chat_page",
+            new=AsyncMock(return_value=page),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation._compose_model_selected",
+            new=AsyncMock(return_value={"ok": True, "current_model": "Model: Fable 5"}),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.harvest_assistant",
+            new=AsyncMock(return_value={"count": 0}),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.send_prompt",
+            new=AsyncMock(side_effect=_send),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.wait_assistant_reply",
+            new=AsyncMock(side_effect=RuntimeError("wait failed")),
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="wait failed"):
+            await run_project_conversation(
+                ["first prompt"],
+                model="fable-5",
+                on_harvest=_harvest,
+            )
+
+    assert "https://claude.ai/cowork/cse_after_send" in captured
+
+
+@pytest.mark.asyncio
 async def test_converse_path_threads_ids_via_project_ask_on_page() -> None:
     """Converse + project_uuid must pass Stargate/satellite ids into on_page."""
     from claude_bundles.project_ask import ProjectAskResult

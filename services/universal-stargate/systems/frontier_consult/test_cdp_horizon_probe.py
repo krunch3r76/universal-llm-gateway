@@ -27,6 +27,17 @@ def test_seated_authorship_ignores_substrate_failed_subject() -> None:
     assert seated_authorship_hit(turns) is False
 
 
+def test_seated_authorship_ignores_substrate_unverified_subject() -> None:
+    turns = [
+        {
+            "from_agent": SEATED_CDP_FROM_AGENT,
+            "subject": "cdp UNVERIFIED — 3f492a7c",
+            "body": "# CDP generate UNVERIFIED (fable-5-high)",
+        }
+    ]
+    assert seated_authorship_hit(turns) is False
+
+
 def test_seated_authorship_counts_seated_cse_speech() -> None:
     turns = [
         {

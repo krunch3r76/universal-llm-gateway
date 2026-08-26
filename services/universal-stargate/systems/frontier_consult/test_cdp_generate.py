@@ -18,6 +18,7 @@ from systems.frontier_consult.cdp_generate import (
 from systems.frontier_consult.cdp_generate_worker import (
     ONBEHALF_POST_FAILED_STALL,
     _unread_latest_from_409,
+    cdp_result_subject,
     deliver_cdp_result_turn,
     format_cdp_result_body,
     format_onbehalf_delivery_failed_body,
@@ -376,6 +377,53 @@ def test_format_cdp_result_body_completed_without_proof_honest() -> None:
     assert "- deliverable_present_unproven: true" in text
     assert "do not blind re-dispatch" in text
     assert "without archive_uri" not in text
+
+
+def test_cdp_result_subject_unverified_not_failed() -> None:
+    result = CdpGenerateResult(
+        ok=False,
+        body="",
+        execution_id="3f492a7c344a491b",
+        satellite_execution_id="sat-1",
+        prompt_uri="cortex://p.md",
+        picker_model="fable-5-high",
+        stall_stage="observer_unverified",
+        error="model select failed: picker",
+        extras={"chat_url": "https://claude.ai/cowork/cse_abc"},
+    )
+    assert cdp_result_subject(result) == "cdp UNVERIFIED — 3f492a7c"
+    text = format_cdp_result_body(result)
+    assert "# CDP generate UNVERIFIED" in text
+    assert "# CDP generate FAILED" not in text
+    assert "chat_url:" in text
+
+
+def test_cdp_result_subject_reconcile_abandoned_unverifiable() -> None:
+    result = CdpGenerateResult(
+        ok=False,
+        body="",
+        execution_id="abcdef0123456789",
+        satellite_execution_id="sat-1",
+        prompt_uri="cortex://p.md",
+        picker_model="opus-5",
+        stall_stage="reconcile_abandoned_unverifiable",
+        error="horizon unverifiable",
+    )
+    assert cdp_result_subject(result).startswith("cdp UNVERIFIED")
+
+
+def test_cdp_result_subject_weekly_limit_stays_failed() -> None:
+    result = CdpGenerateResult(
+        ok=False,
+        body="",
+        execution_id="abcdef0123456789",
+        satellite_execution_id="sat-1",
+        prompt_uri="cortex://p.md",
+        picker_model="opus-5",
+        stall_stage="weekly_limit",
+        error="product weekly-limit banner (not a seat reply)",
+    )
+    assert cdp_result_subject(result).startswith("cdp FAILED")
 
 
 def test_format_onbehalf_delivery_failed_preserves_upstream_reason() -> None:

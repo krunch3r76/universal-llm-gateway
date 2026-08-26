@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 from typing import Any
 
 from claude_bundles import cdp_registry
@@ -29,6 +31,8 @@ from cdp_ask.execution_store import ExecutionStore
 from cdp_ask.followup_resolve import discover_candidates
 
 HARVEST_HARD_CAP = 50
+OPEN_ON_DEMAND_INCOMPLETE_WAIT_S = 12.0
+OPEN_ON_DEMAND_INCOMPLETE_POLL_S = 0.5
 
 
 async def _resolve_target(
@@ -154,6 +158,19 @@ async def harvest_page(
         dom = await harvest_turns(page, limit=limit, after_turn=req.after_turn)
     except Exception as exc:
         return HarvestResponse(outcome="unreachable", reason=str(exc))
+    wait_open = bool((provenance or {}).get("opened_on_demand"))
+    if wait_open and dom.get("incomplete_dom"):
+        deadline = time.monotonic() + OPEN_ON_DEMAND_INCOMPLETE_WAIT_S
+        while time.monotonic() < deadline:
+            await asyncio.sleep(OPEN_ON_DEMAND_INCOMPLETE_POLL_S)
+            try:
+                dom = await harvest_turns(
+                    page, limit=limit, after_turn=req.after_turn
+                )
+            except Exception as exc:
+                return HarvestResponse(outcome="unreachable", reason=str(exc))
+            if not dom.get("incomplete_dom"):
+                break
     if dom.get("in_flight"):
         return HarvestResponse(
             outcome="streaming",

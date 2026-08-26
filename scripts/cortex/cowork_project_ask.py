@@ -379,7 +379,8 @@ def _dispatch(
             )
         )
         delete_requested = bool(args.close)
-        last_delete = results[-1].delete_after if results else None
+        last = results[-1] if results else None
+        last_delete = last.delete_after if last else None
         cleanup_ok = _derive_cleanup_ok(
             last_delete,
             delete_requested=delete_requested,
@@ -401,6 +402,8 @@ def _dispatch(
                 for r in results
             ],
         }
+        if not summary["ok"] and last is not None:
+            summary["error"] = last.error
         if delete_requested:
             summary["ok"] = summary["ok"] and cleanup_ok
         print(json.dumps(summary, indent=2))

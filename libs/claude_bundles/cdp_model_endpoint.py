@@ -16,6 +16,7 @@ from typing import Any, Literal
 import httpx
 from cdp_ask.client import CdpAskClient, CdpAskClientError, project_ask_base_url
 from cdp_ask.models import SubmitProjectAskRequest
+from cdp_ask.unverifiable import failed_snapshot_fields
 
 from claude_bundles.cdp_model_endpoint_staging import (
     CdpStagingError,
@@ -281,15 +282,20 @@ def _abort_then_sweep(
     ask_client: CdpAskClient | None = None,
     client: httpx.Client | None = None,
     retain_cse: bool = False,
+    retain_reason: str | None = None,
 ) -> dict[str, Any]:
     """Abort satellite (Stop-click) then sweep staging — unless *retain_cse*.
 
-    When ``retain_cse`` is true (operator-proxy / mission), skip ``abort`` so the
-    Cowork page keeps streaming; only ephemeral prompt staging is swept.
+    When ``retain_cse`` is true (operator-proxy / mission, or unverifiable-class
+    stall after compose-attest), skip ``abort`` so the Cowork page keeps
+    streaming; only ephemeral prompt staging is swept.
     """
     abort_info: dict[str, Any] = {}
     if retain_cse:
-        abort_info = {"abort_skipped": True, "reason": "operator_proxy_cse_retain"}
+        abort_info = {
+            "abort_skipped": True,
+            "reason": retain_reason or "operator_proxy_cse_retain",
+        }
         sweep_ephemeral(execution_id)
         return abort_info
     if satellite_id:
@@ -479,6 +485,7 @@ def result_from_snapshot(
         )
 
     if _terminal_failure(snapshot):
+        fields = failed_snapshot_fields(snapshot)
         return CdpGenerateResult(
             ok=False,
             body=str(snapshot.get("body") or ""),
@@ -486,11 +493,12 @@ def result_from_snapshot(
             satellite_execution_id=satellite_execution_id,
             prompt_uri=prompt_uri,
             picker_model=picker_model,
-            stall_stage=snapshot.get("stall_stage"),
-            error=str(snapshot.get("error") or snapshot.get("status")),
+            stall_stage=fields["stall_stage"],
+            error=fields["error"],
             archive_uri=carry["archive_uri"],
             content_proof_uri=carry["content_proof_uri"],
             content_proof_sha256=carry["content_proof_sha256"],
+            extras=dict(fields["extras"]),
         )
 
     return None
@@ -831,13 +839,22 @@ def run_cdp_generate(
             )
 
         if _terminal_failure(snapshot):
+            fields = failed_snapshot_fields(snapshot)
+            retain = mission_retain or bool(fields["unverifiable"])
+            reason = (
+                "operator_proxy_cse_retain"
+                if mission_retain
+                else fields["retain_reason"]
+            )
             abort_info = _abort_then_sweep(
                 sat_id,
                 execution_id,
                 ask_client=relay,
                 client=client,
-                retain_cse=mission_retain,
+                retain_cse=retain,
+                retain_reason=reason,
             )
+            extras = {"abort": abort_info, **fields["extras"]}
             return CdpGenerateResult(
                 ok=False,
                 body=str(snapshot.get("body") or ""),
@@ -845,10 +862,10 @@ def run_cdp_generate(
                 satellite_execution_id=sat_id,
                 prompt_uri=staged.prompt_uri,
                 picker_model=picker,
-                stall_stage=snapshot.get("stall_stage"),
-                error=str(snapshot.get("error") or snapshot.get("status")),
+                stall_stage=fields["stall_stage"],
+                error=fields["error"],
                 poll_snapshots=polls,
-                extras={"abort": abort_info},
+                extras=extras,
                 **proof_carry.as_result_fields(),
             )
 

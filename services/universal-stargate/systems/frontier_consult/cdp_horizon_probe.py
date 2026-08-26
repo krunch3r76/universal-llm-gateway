@@ -12,6 +12,7 @@ import os
 from collections.abc import Callable, Sequence
 from typing import Any, Literal
 
+from cdp_ask.unverifiable import is_unverifiable_stall
 from claude_bundles.cdp_model_endpoint import CDP_REPLY_FROM, terminal_failure
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 from universal_logging import get_logger
@@ -20,7 +21,12 @@ logger = get_logger(__name__)
 
 HorizonObservation = Literal["alive", "confirmed_dead", "unverifiable"]
 SEATED_CDP_FROM_AGENT = CDP_REPLY_FROM
-SUBSTRATE_FAILED_SUBJECT_MARKERS = ("cdp FAILED", "CDP generate FAILED")
+SUBSTRATE_FAILED_SUBJECT_MARKERS = (
+    "cdp FAILED",
+    "CDP generate FAILED",
+    "cdp UNVERIFIED",
+    "CDP generate UNVERIFIED",
+)
 AUTH_FETCH_LAST = 40
 
 TurnsFetch = Callable[[str], Sequence[dict[str, Any]]]
@@ -38,13 +44,19 @@ def classify_horizon_probe(snapshot: dict[str, Any] | None) -> HorizonObservatio
     status = str(snapshot.get("status") or "")
     if status in {"running", "pending"}:
         return "alive"
-    if status in {"failed", "aborted"} or terminal_failure(snapshot):
+    if status == "aborted":
+        return "confirmed_dead"
+    if status == "failed" or terminal_failure(snapshot):
+        stall = snapshot.get("stall_stage")
+        error = snapshot.get("error")
+        if is_unverifiable_stall(stall, str(error) if error is not None else None):
+            return "unverifiable"
         return "confirmed_dead"
     return "unverifiable"
 
 
 def is_substrate_terminal_subject(subject: str) -> bool:
-    """True when the turn is an on-behalf FAILED delivery, not CSE speech."""
+    """True when the turn is an on-behalf FAILED/UNVERIFIED delivery, not CSE speech."""
     return any(marker in subject for marker in SUBSTRATE_FAILED_SUBJECT_MARKERS)
 
 

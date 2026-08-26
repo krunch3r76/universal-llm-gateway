@@ -196,3 +196,57 @@ async def test_auto_error_banner_preview_falls_through_to_full_scrape() -> None:
     texts = [turn.text for turn in result.turns]
     assert keep_body in texts
 
+
+@pytest.mark.asyncio
+async def test_open_on_demand_incomplete_dom_retries_then_harvests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """a:30681 — open-on-demand empty DOM is wait-retry, not never-dispatched."""
+    monkeypatch.setattr(
+        "cdp_ask.cse_session_harvest.OPEN_ON_DEMAND_INCOMPLETE_WAIT_S", 5.0
+    )
+    monkeypatch.setattr(
+        "cdp_ask.cse_session_harvest.OPEN_ON_DEMAND_INCOMPLETE_POLL_S", 0.0
+    )
+    harvest_mock = AsyncMock(
+        side_effect=[
+            {"incomplete_dom": True, "turns": []},
+            {
+                "incomplete_dom": False,
+                "turns": [
+                    {"author": "assistant", "text": "late reply", "ordinal": 1}
+                ],
+                "streaming": False,
+                "stop": False,
+                "tool_pause": False,
+            },
+        ]
+    )
+    page = MagicMock()
+    with (
+        patch("cdp_ask.cse_session_harvest.harvest_turns", harvest_mock),
+        patch("cdp_ask.cse_session_harvest.asyncio.sleep", AsyncMock()),
+    ):
+        result = await harvest_page(
+            page,
+            HarvestRequest(source="chat", limit=10),
+            provenance={"opened_on_demand": True},
+        )
+    assert harvest_mock.await_count == 2
+    assert result.outcome == "harvested"
+    assert result.turns[0].text == "late reply"
+
+
+@pytest.mark.asyncio
+async def test_attached_incomplete_dom_returns_immediately() -> None:
+    harvest_mock = AsyncMock(return_value={"incomplete_dom": True, "turns": []})
+    page = MagicMock()
+    with patch("cdp_ask.cse_session_harvest.harvest_turns", harvest_mock):
+        result = await harvest_page(
+            page,
+            HarvestRequest(source="chat", limit=10),
+            provenance={"opened_on_demand": False},
+        )
+    assert harvest_mock.await_count == 1
+    assert result.outcome == "incomplete_dom"
+

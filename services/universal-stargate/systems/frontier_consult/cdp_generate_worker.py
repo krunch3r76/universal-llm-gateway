@@ -7,6 +7,7 @@ import json
 import os
 from typing import Any
 
+from cdp_ask.unverifiable import is_unverifiable_stall
 from claude_bundles.cdp_model_endpoint import (
     CDP_REPLY_FROM,
     DEFAULT_MAX_WALL_S,
@@ -37,6 +38,23 @@ def _upstream_overloaded(result: CdpGenerateResult) -> bool:
     return (result.extras or {}).get("reason") == UPSTREAM_OVERLOADED
 
 
+def cdp_result_unverified(result: CdpGenerateResult) -> bool:
+    """True when the envelope is observer-unverifiable, not CSE death."""
+    return (not result.ok) and is_unverifiable_stall(
+        result.stall_stage, result.error
+    )
+
+
+def cdp_result_subject(result: CdpGenerateResult) -> str:
+    """On-behalf bus subject for a generate result."""
+    short = result.execution_id[:8]
+    if result.ok:
+        return f"cdp reply — {short}"
+    if cdp_result_unverified(result):
+        return f"cdp UNVERIFIED — {short}"
+    return f"cdp FAILED — {short}"
+
+
 def _agent_bus_token() -> str:
     return os.getenv("AGENT_BUS_TOKEN", "").strip()
 
@@ -58,8 +76,9 @@ def format_cdp_result_body(result: CdpGenerateResult) -> str:
             lines.append(f"- content_proof_uri: `{result.content_proof_uri}`")
         lines.extend(["", result.body or "_empty harvest_"])
         return "\n".join(lines)
+    heading = "UNVERIFIED" if cdp_result_unverified(result) else "FAILED"
     lines = [
-        f"# CDP generate FAILED ({result.picker_model})",
+        f"# CDP generate {heading} ({result.picker_model})",
         "",
         f"- execution_id: `{result.execution_id}`",
         f"- satellite_execution_id: `{result.satellite_execution_id}`",
@@ -74,6 +93,9 @@ def format_cdp_result_body(result: CdpGenerateResult) -> str:
     if result.content_proof_uri:
         lines.append(f"- content_proof_uri: `{result.content_proof_uri}`")
     extras = result.extras or {}
+    chat_url = extras.get("chat_url")
+    if chat_url:
+        lines.append(f"- chat_url: `{chat_url}`")
     if extras.get("deliverable_present_unproven"):
         lines.append("- deliverable_present_unproven: true")
         recovery = extras.get("recovery")
@@ -277,11 +299,7 @@ async def deliver_cdp_result_turn(
     pointer_turn: int = 1,
 ) -> bool:
     """Post result with one retry; then terminal DELIVERY FAILED (fail-closed)."""
-    subject = (
-        f"cdp reply — {result.execution_id[:8]}"
-        if result.ok
-        else f"cdp FAILED — {result.execution_id[:8]}"
-    )
+    subject = cdp_result_subject(result)
     body = format_cdp_result_body(result)
     posted = await post_cdp_turn(
         thread_id=thread_id,
@@ -402,7 +420,10 @@ async def run_cdp_worker(
     topic: str | None = None,
 ) -> None:
     """Stage already done at admit; run adapter and post proof/failure turn."""
-    from .cdp_generate_reconcile import attach_satellite_execution_id, finalize_cdp_generate
+    from .cdp_generate_reconcile import (
+        attach_satellite_execution_id,
+        finalize_cdp_generate,
+    )
 
     to_agent = caller_agent or "dispatch"
     publish_cdp_kwargs(

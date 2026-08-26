@@ -23,6 +23,7 @@ StallStage = Literal[
     "archive_write",
     "mark_terminal",
     "post_terminal_poll",
+    "observer_unverified",
     "unknown",
 ]
 
@@ -47,6 +48,8 @@ def classify_stall_stage(error: str | None) -> StallStage:
         return "archive_write"
     if error in {"cancelled", "aborted"}:
         return "mark_terminal"
+    if "conversation failed" in low:
+        return "observer_unverified"
     return "unknown"
 
 
@@ -256,7 +259,9 @@ class ExecutionPollResponse(BaseModel):
             "Best-effort failure locus when completion_phase=failed and status=failed. "
             "Enum: `completion_detection` — wait/harvest/banner timeout; `archive_write` — "
             "archive_harvest or path failure; `mark_terminal` — runner/satellite exception; "
-            "`post_terminal_poll` — late poll mismatch; `unknown` — unclassified. "
+            "`post_terminal_poll` — late poll mismatch; `observer_unverified` — harness "
+            "fail after compose-attest without CSE-death proof (a:30678); "
+            "`unknown` — unclassified. "
             "Non-null on failed terminals so consumers distinguish stall from dual-completion lag."
         ),
     )

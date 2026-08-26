@@ -62,7 +62,9 @@ running → turn_idle → content_proof → archiving → terminal | failed
 | `turn_idle` | CDP turn idle — **≠ advance-eligible** alone (24864) |
 | `content_proof` | Durable sidecar + idle — advance only after **consumer fs-read + sha re-verify**; must **not** trigger `delete_after` |
 | `archive_uri` / `terminal` | Harvest terminal **for that generate's tracker file**. An archive body that is only an API 529/500 banner is **not** consult-body proof and **not** "CSE empty" — scrape that generate's `chat_url` (`cse_session(op=harvest, source=chat)`). Artifact cards need body harvest, not the tracker envelope (a:30408 / a:30411). Do not retarget harvest at a prior retained CSE as the sole live session. |
-| `failed` + `stall_stage` | Stall lane — **≠ running** |
+| `failed` + `stall_stage` | Stall lane — **≠ running**. `observer_unverified` / bus `cdp UNVERIFIED` is observer envelope, not CSE death — harvest `chat_url`. |
+
+### Dispatch delivery (BINDING — a:30435)
 
 ### Dispatch delivery (BINDING — a:30435)
 
@@ -81,6 +83,8 @@ A Stargate 202 / bus `status=running` / FAILED harvest `no_target` is **not**
 instruction-complete. Recovery: § Followup failure triage (429-before-create).
 
 **Long-running ≠ stalled:** Opus/Cowork may sit `running`+`stall_stage=null` many minutes. Forbidden: duration → `cdp_unavailable`, abort-and-skip, or Stage-B without harvest proof.
+
+**False-negative FAILED (BINDING — a:30678 / a:30679 / a:30681):** bus `cdp FAILED` or `cdp UNVERIFIED` plus `compose_attested` is not product FAIL and not "never reached claude.ai". Scrape `chat_url` (`cse_session(op=harvest, source=chat)`). `no_episode` is a join miss when the registry never bound `cse_`. Open-on-demand `incomplete_dom` is harvest-too-fast — wait/retry; do not conclude the generate never ran.
 
 **Operator-proxy CSE retain (BINDING):** for `purpose=operator-proxy|mission`, the generate poller must **not** Stop-click / kill the CSE on `max_wall_s` or `no_progress_s`. Idle between DIRECTIVE legs is expected. Clean CSE break is allowed only for **continuity handoff** (after a new CSE launch is confirmed) or rare human escalation — see `cdp-operator-proxy` § CSE lifetime. `wall_clock_exceeded` on a mission is poller-detach / false FAILED if it still appears — reattach; ¬ treat as arc dead. Generate `max_wall_s` measures seconds since the last observed fingerprint progress (reset on each delta), not cumulative job elapsed time; mission retain posture is unchanged.
 
