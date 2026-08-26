@@ -54,3 +54,16 @@ def test_failed_snapshot_fields_coerces_unknown() -> None:
     assert fields["unverifiable"] is True
     assert fields["stall_stage"] == "observer_unverified"
     assert fields["extras"]["chat_url"].endswith("cse_abc")
+
+
+def test_failed_snapshot_fields_skips_new_as_chat_url() -> None:
+    """F1 — /new is compose fingerprint, never CSE identity."""
+    fields = failed_snapshot_fields(
+        {
+            "status": "failed",
+            "stall_stage": "unknown",
+            "error": "model select failed: picker",
+            "url": "https://claude.ai/new",
+        }
+    )
+    assert fields["extras"] == {}

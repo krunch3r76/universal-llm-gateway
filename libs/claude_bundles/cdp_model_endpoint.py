@@ -349,9 +349,13 @@ def _weekly_limit_result(
     picker_model: str,
     carry: dict[str, str | None] | None = None,
     poll_snapshots: int = 0,
+    abort: dict[str, Any] | None = None,
 ) -> CdpGenerateResult:
     """Grade weekly-limit banner as ``cdp FAILED`` (mark: banner_not_a_seat)."""
     carry = carry or {}
+    extras: dict[str, Any] = {"mark": "banner_not_a_seat", "reason": WEEKLY_LIMIT}
+    if abort is not None:
+        extras["abort"] = abort
     return CdpGenerateResult(
         ok=False,
         body=body,
@@ -361,7 +365,7 @@ def _weekly_limit_result(
         picker_model=picker_model,
         stall_stage=WEEKLY_LIMIT,
         error="product weekly-limit banner (not a seat reply)",
-        extras={"mark": "banner_not_a_seat", "reason": WEEKLY_LIMIT},
+        extras=extras,
         archive_uri=carry.get("archive_uri"),
         content_proof_uri=carry.get("content_proof_uri"),
         content_proof_sha256=carry.get("content_proof_sha256"),
@@ -786,6 +790,13 @@ def run_cdp_generate(
                     extras=_upstream_overloaded_extras(abort=abort_info),
                 )
             if _proof_rejects_weekly_limit(snapshot):
+                abort_info = _abort_then_sweep(
+                    sat_id,
+                    execution_id,
+                    ask_client=relay,
+                    client=client,
+                    retain_cse=mission_retain,
+                )
                 return _weekly_limit_result(
                     body=body,
                     execution_id=execution_id,
@@ -798,6 +809,7 @@ def run_cdp_generate(
                         "content_proof_sha256": snapshot.get("content_proof_sha256"),
                     },
                     poll_snapshots=polls,
+                    abort=abort_info,
                 )
             sweep_ephemeral(execution_id)
             return CdpGenerateResult(

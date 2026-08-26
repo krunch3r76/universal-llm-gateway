@@ -1278,7 +1278,7 @@ def test_run_cdp_generate_unverifiable_stall_skips_abort(
     assert result.extras.get("abort", {}).get("abort_skipped") is True
 
 
-def test_run_cdp_generate_weekly_limit_still_aborts(
+def test_run_cdp_generate_weekly_limit_terminal_failure_still_aborts(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-death")
@@ -1314,6 +1314,50 @@ def test_run_cdp_generate_weekly_limit_still_aborts(
     )
     assert result.ok is False
     assert result.stall_stage == "weekly_limit"
+    assert retain_calls == [False]
+
+
+def test_run_cdp_generate_weekly_limit_proof_path_aborts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """F4 — weekly-limit harvest that already has_proof still Stop-clicks (ask)."""
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-wl-proof")
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-wl-proof", "status": "running"},
+            {
+                "execution_id": "sat-wl-proof",
+                "status": "running",
+                "archive_uri": "cortex://notes/system/threads/cdp-ask-archive-wl.md",
+                "body": "You've hit your weekly limit. Try again next week.",
+                "attested_model": "Model: Opus 5 High",
+                "harvest_provenance": "chat",
+            },
+        ]
+    )
+    retain_calls: list[bool] = []
+    from claude_bundles import cdp_model_endpoint as mod
+
+    orig = mod._abort_then_sweep
+
+    def _track(*args, **kwargs):
+        retain_calls.append(bool(kwargs.get("retain_cse")))
+        return orig(*args, **kwargs)
+
+    monkeypatch.setattr(mod, "_abort_then_sweep", _track)
+    result = run_cdp_generate(
+        execution_id="dispatch-wl-proof",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        purpose="ask",
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert result.ok is False
+    assert result.stall_stage == "weekly_limit"
+    assert result.extras.get("mark") == "banner_not_a_seat"
+    assert result.extras.get("abort")
     assert retain_calls == [False]
 
 

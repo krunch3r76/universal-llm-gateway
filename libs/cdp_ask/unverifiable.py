@@ -25,6 +25,8 @@ DEATH_STALL_STAGES = frozenset(
     }
 )
 
+_CSE_URL_MARKER = "claude.ai/cowork/cse_"
+
 _DEATH_ERROR_TOKENS = (
     "weekly limit",
     "hit a limit",
@@ -78,9 +80,9 @@ def failed_snapshot_fields(snapshot: dict[str, Any]) -> dict[str, Any]:
     if unverifiable and (not stall or stall == "unknown"):
         stall = "observer_unverified"
     extras: dict[str, Any] = {}
-    url = snapshot.get("url")
-    if url:
-        extras["chat_url"] = url
+    raw = str(snapshot.get("url") or "").strip()
+    if raw and _CSE_URL_MARKER in raw:
+        extras["chat_url"] = raw
     return {
         "stall_stage": stall,
         "error": error,
