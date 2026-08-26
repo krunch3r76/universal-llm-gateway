@@ -103,6 +103,10 @@ from services.git_integration_worker.cursor_sdk_concurrency_posture import (
     lease_is_isolated_worktree,
     write_lease_slot_limit,
 )
+from services.git_integration_worker.cursor_sdk_conductor_conflict import (
+    find_open_conductor_holder_conn,
+    should_block_implement_for_open_conductor,
+)
 from services.git_integration_worker.cursor_sdk_context import (
     CursorSdkParityError,
     build_agent_options,
@@ -164,10 +168,6 @@ from services.git_integration_worker.cursor_sdk_lane_select import (
     select_lane,
     wire_lane_explicit,
 )
-from services.git_integration_worker.cursor_sdk_satellite_workspace import (
-    CursorWorkspaceError,
-    resolve_dispatch_source_repo,
-)
 from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
     extract_instructed_paths,
     first_landed_fs_uri,
@@ -191,10 +191,6 @@ from services.git_integration_worker.cursor_sdk_orphan import (
     mark_dispatch_orphaned,
     reap_orphan_bridge_os,
     register_active_client,
-)
-from services.git_integration_worker.cursor_sdk_conductor_conflict import (
-    find_open_conductor_holder_conn,
-    should_block_implement_for_open_conductor,
 )
 from services.git_integration_worker.cursor_sdk_packet import (
     extract_packet_kind_from_packet,
@@ -222,6 +218,10 @@ from services.git_integration_worker.cursor_sdk_resume import (
     reject_resume_if_ineligible,
     sdk_agent_id_from_agent,
     start_or_resume_agent,
+)
+from services.git_integration_worker.cursor_sdk_satellite_workspace import (
+    CursorWorkspaceError,
+    resolve_dispatch_source_repo,
 )
 from services.git_integration_worker.cursor_sdk_stream_capture import (
     StreamCapture,

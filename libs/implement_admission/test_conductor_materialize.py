@@ -6,8 +6,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from implement_admission.conductor_materialize import (
     conductor_packet_contains_use_line,
     conductor_packet_has_lane_b,

@@ -11,7 +11,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from implement_admission.admission_read import compute_packet_sha256, replace_frontmatter_value
+from implement_admission.admission_read import (
+    compute_packet_sha256,
+    replace_frontmatter_value,
+)
 from implement_admission.conductor_score_journal import (
     G_ROWS,
     birth_journal_record,
@@ -190,9 +193,9 @@ def _render_packet(ctx: ConductorMaterializeContext) -> str:
     frontmatter = "\n".join(
         [
             "---",
-            f"packet_kind: conductor",
+            "packet_kind: conductor",
             f"work_key: {ctx.source_ref}",
-            f"role_name: conductor",
+            "role_name: conductor",
             "contract: light-bounded",
             "lane: B",
             "packet_sha256: PENDING",

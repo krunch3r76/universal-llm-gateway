@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from implement_admission.conductor_score_journal import (
     forward_mutate_tip,
     load_journal,
