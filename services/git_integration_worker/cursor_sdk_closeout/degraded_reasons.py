@@ -144,6 +144,30 @@ def empty_assistant_turn_reason(outcome: SdkRunOutcome) -> str | None:
     return None
 
 
+def conductor_g1_pin_s4b_degraded_reason(
+    *,
+    body: str,
+    packet_text: str | None = None,
+    packet_kind: str | None = None,
+) -> str | None:
+    """Fail-closed degrade when a conductor G1-pin closeout lacks S4b rich-seed evidence."""
+    is_conductor = packet_kind == "conductor"
+    if not is_conductor and packet_text:
+        from services.git_integration_worker.cursor_sdk_packet import (
+            extract_packet_kind_from_packet,
+        )
+
+        is_conductor = extract_packet_kind_from_packet(packet_text) == "conductor"
+    if not is_conductor:
+        return None
+    from claude_bundles.conductor_stop import validate_conductor_closeout
+
+    verdict = validate_conductor_closeout(body, packet_text=packet_text)
+    if not verdict.ok and verdict.reason == "s4b_g1_pin_missing":
+        return "s4b_g1_pin_missing"
+    return None
+
+
 def _map_closeout_status(degraded_reason: str | None) -> CloseoutStatus:
     """Map the worker's degraded_reason to an ImplementCloseout status.
 

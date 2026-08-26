@@ -2215,9 +2215,22 @@ async def _finalize_success(
     # must not claim complete when a named deliverable never landed. Holds
     # regardless of whether the #1/#2 write-path instrumentation saw the choke.
     if degraded_reason is None:
+        from services.git_integration_worker.cursor_sdk_closeout.degraded_reasons import (
+            conductor_g1_pin_s4b_degraded_reason,
+        )
+
         degraded_reason = (
             empty_assistant_turn_reason(outcome)
             or empty_output_degraded_reason(outcome)
+            or conductor_g1_pin_s4b_degraded_reason(
+                body=outcome.body,
+                packet_text=packet_text or None,
+                packet_kind=(
+                    extract_packet_kind_from_packet(packet_text)
+                    if packet_text
+                    else None
+                ),
+            )
             or light_bounded_deliverable_reason(
                 body=outcome.body,
                 tool_calls=outcome.tool_calls,
