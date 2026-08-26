@@ -84,10 +84,11 @@ def render_sparse_scoreboard(
 
 @dataclass(frozen=True, slots=True)
 class JournalRecord:
-    """One append-only score mutation record."""
+    """One append-only score mutation record with recoverable tip body."""
 
     prior_tip_sha: str | None
     tip_sha: str
+    tip_body: str
     seat: str
     dispatch_id: str | None
     reason: str
@@ -130,8 +131,30 @@ def tip_sha256(body: str) -> str:
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
+def recover_tip_from_journal(slug: str, *, files_root: Path | None = None) -> bool:
+    """Restore tip from last journal ``tip_body`` when disk tip is missing or stale."""
+    records = load_journal(slug, files_root=files_root)
+    if not records:
+        return False
+    last = records[-1]
+    expected_sha = last.get("tip_sha")
+    tip_body = last.get("tip_body")
+    if not expected_sha or not isinstance(tip_body, str):
+        return False
+    path = _tip_path(slug, files_root=files_root)
+    disk_sha: str | None = None
+    if path.is_file():
+        disk_sha = tip_sha256(path.read_text(encoding="utf-8"))
+    if disk_sha == str(expected_sha):
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    durable_write_text(path, tip_body)
+    return True
+
+
 def read_tip(slug: str, *, files_root: Path | None = None) -> tuple[str, str] | None:
-    """Return ``(body, sha256)`` for the current tip, or None when absent."""
+    """Return ``(body, sha256)`` for the current tip, healing from journal when needed."""
+    recover_tip_from_journal(slug, files_root=files_root)
     path = _tip_path(slug, files_root=files_root)
     if not path.is_file():
         return None
@@ -196,6 +219,7 @@ def _record_to_json(record: JournalRecord) -> str:
     payload = {
         "prior_tip_sha": record.prior_tip_sha,
         "tip_sha": record.tip_sha,
+        "tip_body": record.tip_body,
         "seat": record.seat,
         "dispatch_id": record.dispatch_id,
         "reason": record.reason,
@@ -225,43 +249,38 @@ def append_journal_record(
         durable_write_text(path, block + "\n")
 
 
-def write_birth_scoreboard(
+def birth_scoreboard(
     slug: str,
     *,
     scoreboard_body: str,
+    seat: str = "materializer",
+    dispatch_id: str | None = None,
+    reason: str = "conductor spawn birth",
+    rows: tuple[str, ...] = G_ROWS,
+    delta: str = "sparse birth",
     files_root: Path | None = None,
 ) -> str:
-    """Write the sparse birth tip; return its sha256."""
+    """Append birth journal record then write sparse tip; return tip sha256."""
+    new_sha = tip_sha256(scoreboard_body)
+    append_journal_record(
+        slug,
+        JournalRecord(
+            prior_tip_sha=None,
+            tip_sha=new_sha,
+            tip_body=scoreboard_body,
+            seat=seat,
+            dispatch_id=dispatch_id,
+            reason=reason,
+            rows=rows,
+            delta=delta,
+            written_at=datetime.now(UTC).isoformat(),
+        ),
+        files_root=files_root,
+    )
     path = _tip_path(slug, files_root=files_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     durable_write_text(path, scoreboard_body)
-    return tip_sha256(scoreboard_body)
-
-
-def birth_journal_record(
-    slug: str,
-    *,
-    prior_tip_sha: str | None,
-    tip_sha: str,
-    seat: str,
-    dispatch_id: str | None,
-    reason: str,
-    rows: tuple[str, ...],
-    delta: str,
-    files_root: Path | None = None,
-) -> None:
-    """Append the birth mutation record after tip write."""
-    record = JournalRecord(
-        prior_tip_sha=prior_tip_sha,
-        tip_sha=tip_sha,
-        seat=seat,
-        dispatch_id=dispatch_id,
-        reason=reason,
-        rows=rows,
-        delta=delta,
-        written_at=datetime.now(UTC).isoformat(),
-    )
-    append_journal_record(slug, record, files_root=files_root)
+    return new_sha
 
 
 def forward_mutate_tip(
@@ -275,7 +294,8 @@ def forward_mutate_tip(
     delta: str,
     files_root: Path | None = None,
 ) -> JournalAppendResult:
-    """Forward-only tip write with journal append; reject closed-row rewind."""
+    """Forward-only journal-then-tip mutation; reject closed-row rewind."""
+    recover_tip_from_journal(slug, files_root=files_root)
     prior = read_tip(slug, files_root=files_root)
     prior_sha = prior[1] if prior else None
     if prior is not None:
@@ -286,15 +306,13 @@ def forward_mutate_tip(
                 record_count=len(load_journal(slug, files_root=files_root)),
                 rejected_reason=reject,
             )
-    path = _tip_path(slug, files_root=files_root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    durable_write_text(path, next_body)
     new_sha = tip_sha256(next_body)
     append_journal_record(
         slug,
         JournalRecord(
             prior_tip_sha=prior_sha,
             tip_sha=new_sha,
+            tip_body=next_body,
             seat=seat,
             dispatch_id=dispatch_id,
             reason=reason,
@@ -304,6 +322,9 @@ def forward_mutate_tip(
         ),
         files_root=files_root,
     )
+    path = _tip_path(slug, files_root=files_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    durable_write_text(path, next_body)
     return JournalAppendResult(
         tip_sha=new_sha,
         record_count=len(load_journal(slug, files_root=files_root)),
