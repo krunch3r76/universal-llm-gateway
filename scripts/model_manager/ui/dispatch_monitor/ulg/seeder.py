@@ -64,6 +64,8 @@ _PRIORITY_SIGNALS: tuple[str, ...] = (
     "pipeline.frontier.dispatch.failed",
     "frontier.sdk.review_child.spawned",
     "system.started",
+    "mcp.agentbus.thread.cse.bound",
+    "cdp.provenance.bound",
 )
 
 #: Signals whose payload names a charter root worth tip-grafting.

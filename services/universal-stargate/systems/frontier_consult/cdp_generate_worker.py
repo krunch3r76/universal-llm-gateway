@@ -399,6 +399,7 @@ async def run_cdp_worker(
     purpose: str = "ask",
     mission_kind: str | None = None,
     parent_thread: str | None = None,
+    topic: str | None = None,
 ) -> None:
     """Stage already done at admit; run adapter and post proof/failure turn."""
     from .cdp_generate_reconcile import attach_satellite_execution_id, finalize_cdp_generate
@@ -410,6 +411,7 @@ async def run_cdp_worker(
         execution_id=execution_id,
         model=model_id,
         thread_id=thread_id,
+        topic=topic,
     )
     wall = float(max_wall_s) if max_wall_s is not None else DEFAULT_MAX_WALL_S
     loop = asyncio.get_running_loop()

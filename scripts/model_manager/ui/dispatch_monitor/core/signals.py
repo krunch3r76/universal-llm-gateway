@@ -165,6 +165,10 @@ CDP_PROOF = "cdp.generate.proof"
 CDP_STALLED = "cdp.generate.stalled"
 CDP_DELIVERY_FAILED = "cdp.generate.delivery_failed"
 
+#: CSE chat URL bind — stamp-only; never opens a CDP leg (join on thread).
+AGENTBUS_THREAD_CSE_BOUND = "mcp.agentbus.thread.cse.bound"
+CDP_PROVENANCE_BOUND = "cdp.provenance.bound"
+
 #: Earliest G3 marker; filtered to ``reply_from_agent == \"cdp\"`` in the fold.
 POLL_HINT_ISSUED = "frontier.poll.hint.issued"
 
@@ -249,6 +253,8 @@ CDP_FAMILY = (
     CDP_STALLED,
     CDP_DELIVERY_FAILED,
     POLL_HINT_ISSUED,
+    AGENTBUS_THREAD_CSE_BOUND,
+    CDP_PROVENANCE_BOUND,
 )
 
 META_FAMILY = (

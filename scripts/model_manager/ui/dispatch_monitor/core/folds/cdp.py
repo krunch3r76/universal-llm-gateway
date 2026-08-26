@@ -15,6 +15,7 @@ from typing import Any
 from .. import signals
 from ..correlation import CorrelationIndex
 from ..protocols import EventRecord
+from .cdp_chat import apply_pending_chat, normalize_chat_url, stash_or_stamp_chat
 
 #: Default wall from ``libs/claude_bundles/cdp_model_endpoint.py`` — cost ceiling, not completion.
 DEFAULT_MAX_WALL_S = 1800
@@ -34,6 +35,7 @@ class CdpState:
         "model",
         "caller_agent",
         "topic",
+        "chat_url",
         "state",
         "hint_issued_ms",
         "admitted_at_ms",
@@ -54,6 +56,7 @@ class CdpState:
         self.model: str | None = None
         self.caller_agent: str | None = None
         self.topic: str | None = None
+        self.chat_url: str | None = None
         self.state = "unknown"
         self.hint_issued_ms: int | None = None
         self.admitted_at_ms: int | None = None
@@ -80,6 +83,7 @@ class CdpFold:
     def __init__(self, index: CorrelationIndex) -> None:
         self._index = index
         self.legs: dict[str, CdpState] = {}
+        self._pending_chat: dict[str, str] = {}
 
     def handlers(self) -> dict[str, Any]:
         """Return this fold's signal-to-handler table (v3 §6 verbatim)."""
@@ -90,6 +94,8 @@ class CdpFold:
             signals.CDP_PROOF: self._on_proof,
             signals.CDP_STALLED: self._on_stalled,
             signals.CDP_DELIVERY_FAILED: self._on_delivery_failed,
+            signals.AGENTBUS_THREAD_CSE_BOUND: self._on_chat_bind,
+            signals.CDP_PROVENANCE_BOUND: self._on_chat_bind,
         }
 
     def _state(
@@ -110,15 +116,25 @@ class CdpFold:
             ("thread_id", "thread_id"),
             ("root", "root_id"),
             ("root_id", "root_id"),
-            ("purpose", "topic"),
+            ("topic", "topic"),
         ):
             if getattr(row, dst) is None and payload.get(src):
                 setattr(row, dst, str(payload[src]))
+        if row.chat_url is None:
+            for src in ("chat_url", "cse_chat_url"):
+                if payload.get(src):
+                    row.chat_url = normalize_chat_url(str(payload[src]))
+                    break
         if row.thread_id and row.root_id is None:
             row.root_id = self._index.root_for_thread(row.thread_id)
         if row.root_id:
             self._index.link_cdp_leg(rid, row.root_id)
+        apply_pending_chat(self, row)
         return row
+
+    def _on_chat_bind(self, record: EventRecord) -> None:
+        """Stamp-only CSE chat URL — never opens a leg row."""
+        stash_or_stamp_chat(self, record)
 
     def _on_poll_hint(self, record: EventRecord) -> None:
         """Earliest G3 marker; non-CDP hints are ignored, not folded (v3 §6.3)."""

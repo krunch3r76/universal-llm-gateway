@@ -192,6 +192,7 @@ class CdpLegRow:
     model: str | None = None
     caller_agent: str | None = None
     topic: str | None = None
+    chat_url: str | None = None
     state: str = "unknown"
     admitted_at_ms: int | None = None
     terminal_ms: int | None = None

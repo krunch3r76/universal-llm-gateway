@@ -365,6 +365,9 @@ async def dispatch_cdp_generate(
             synthesized=declared_parent is None,
         )
     opts = getattr(body, "generation_options", None) or {}
+    from .cdp_dispatch_topic import extract_cdp_dispatch_topic
+
+    dispatch_topic = extract_cdp_dispatch_topic(prompt if isinstance(prompt, str) else None)
     worker_kwargs: dict[str, Any] = {
         "execution_id": execution_id,
         "model_id": str(model),
@@ -377,6 +380,7 @@ async def dispatch_cdp_generate(
         "purpose": purpose,
         "mission_kind": mission_kind,
         "parent_thread": parent_thread,
+        "topic": dispatch_topic,
     }
     if isinstance(opts, dict):
         if "harvest_source" in opts:

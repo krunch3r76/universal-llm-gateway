@@ -153,6 +153,11 @@ on `sdk_live_line` when `provenance=signal` (reconciled rows abstain).
 `cdp.generate.delivery_failed` · `frontier.poll.hint.issued` (filter
 `reply_from_agent == 'cdp'`).
 
+**Handled (stamp-only — join on thread; never open a leg):**
+`mcp.agentbus.thread.cse.bound` · `cdp.provenance.bound`. These stash or stamp
+`chat_url` on an existing CDP leg keyed by `thread_id` / `lane_thread`; alone
+they leave `cdp` empty.
+
 **Removed from handler table (G4 phantom — never emitted live):**
 `cdp.generate.running` · `cdp.generate.progress` · `cdp.generate.completed` ·
 `cdp.generate.failed` · `cdp.generate.aborted`.
