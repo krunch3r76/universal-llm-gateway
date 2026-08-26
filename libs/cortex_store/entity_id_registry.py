@@ -66,7 +66,7 @@ _ENTITY_ID_REFERENCES: tuple[EntityIdReference, ...] = (
         "entity_id",
         "fk",
         "dedup_aliases",
-        ("sqlite_autoindex_entity_aliases_1", "sqlite_autoindex_entity_aliases_2"),
+        ("sqlite_autoindex_entity_aliases_1",),
     ),
     EntityIdReference(
         "surface_forms",

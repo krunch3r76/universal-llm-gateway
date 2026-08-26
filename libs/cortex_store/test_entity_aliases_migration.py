@@ -5,6 +5,9 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
+from fastapi import HTTPException
+
 from cortex_store.entity_aliases import resolve_entity_reference, sync_entity_aliases
 from cortex_store.entity_crud import update_entity_impl
 from cortex_store.routes.assertions import _ASSERTION_COLS
@@ -21,6 +24,10 @@ def _load_migration(stem: str):
 
 def _load_migration_056():
     return _load_migration("056_entity_aliases")
+
+
+def _load_migration_057():
+    return _load_migration("057_entity_aliases_lifecycle_rebuild")
 
 
 def _load_migration_075():
@@ -62,7 +69,8 @@ def test_entity_aliases_migration_backfills_unique_aliases() -> None:
         conn.close()
 
 
-def test_entity_aliases_migration_first_wins_cross_entity_collisions() -> None:
+def test_entity_aliases_migration_056_unique_era_first_wins_cross_entity() -> None:
+    """056 UNIQUE-era contract: one winner per (entity_type, alias) under first-wins."""
     migration = _load_migration_056()
     conn = _conn()
     try:
@@ -354,11 +362,12 @@ def test_migration_075_drops_type_alias_unique_keeps_pk_and_index() -> None:
         )
         migration_056.migrate(conn)
         conn.execute(
-            "INSERT INTO entity_aliases (entity_id, entity_type, alias)"
-            " VALUES ('person:b', 'person', 'Shared Name')"
+            "INSERT INTO entities (id, type, aliases) VALUES (?, ?, ?)",
+            ("person:b", "person", json.dumps(["Shared Name"])),
         )
 
         migration_075.migrate(conn)
+        assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
         table_sql = conn.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='entity_aliases'"
@@ -375,6 +384,10 @@ def test_migration_075_drops_type_alias_unique_keeps_pk_and_index() -> None:
         }
         assert "idx_entity_aliases_alias" in indexes
 
+        conn.execute(
+            "INSERT INTO entities (id, type, aliases) VALUES (?, ?, ?)",
+            ("person:c", "person", json.dumps([])),
+        )
         conn.execute(
             "INSERT INTO entity_aliases (entity_id, entity_type, alias)"
             " VALUES ('person:c', 'person', 'Shared Name')"
@@ -394,5 +407,74 @@ def test_migration_075_drops_type_alias_unique_keeps_pk_and_index() -> None:
                 ).fetchone()[0]
             ).split()
         )
+    finally:
+        conn.close()
+
+
+def _seeded_ladder_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        """
+        CREATE TABLE entities (
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL,
+            name TEXT,
+            aliases TEXT,
+            lifecycle TEXT,
+            attributes TEXT
+        )
+        """
+    )
+    return conn
+
+
+def test_migration_ladder_g5_colliding_names_survive_075() -> None:
+    """056→057→075 seeded ladder: colliding names restored; resolve returns 400."""
+    migration_056 = _load_migration_056()
+    migration_057 = _load_migration_057()
+    migration_075 = _load_migration_075()
+    conn = _seeded_ladder_conn()
+    try:
+        conn.execute(
+            "INSERT INTO entities (id, type, name) VALUES (?, ?, ?)",
+            ("person:js1", "person", "John Smith"),
+        )
+        conn.execute(
+            "INSERT INTO entities (id, type, name) VALUES (?, ?, ?)",
+            ("person:js2", "person", "John Smith"),
+        )
+        conn.execute(
+            "INSERT INTO entities (id, type, name, aliases) VALUES (?, ?, ?, ?)",
+            (
+                "person:dup-head",
+                "person",
+                "Dup Head",
+                json.dumps(["Dup Head", "D. Head"]),
+            ),
+        )
+
+        migration_056.migrate(conn)
+        migration_057.migrate(conn)
+        migration_075.migrate(conn)
+
+        js_rows = conn.execute(
+            "SELECT entity_id FROM entity_aliases"
+            " WHERE entity_type='person' AND alias='John Smith'"
+            " ORDER BY entity_id"
+        ).fetchall()
+        assert [r[0] for r in js_rows] == ["person:js1", "person:js2"]
+
+        dup_aliases = {
+            r[0]
+            for r in conn.execute(
+                "SELECT alias FROM entity_aliases WHERE entity_id='person:dup-head'"
+            ).fetchall()
+        }
+        assert dup_aliases == {"Dup Head", "D. Head"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            resolve_entity_reference(conn, "person:John Smith")
+        assert exc_info.value.status_code == 400
     finally:
         conn.close()

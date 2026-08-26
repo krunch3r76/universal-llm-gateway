@@ -17,10 +17,6 @@ from fastapi import HTTPException, status
 from .db import query
 from .trait_vocabulary import NON_LIVE_LIFECYCLE as _NON_LIVE_LIFECYCLE
 
-# ``_NON_LIVE_LIFECYCLE`` (imported above) is the canonical non-live lifecycle
-# set; a NULL lifecycle is the live default (Option-C trait backfill) and is
-# treated as active. The SQL mirror below is table-qualified for the
-# alias-index JOIN context.
 _LIVE_LIFECYCLE_SQL = (
     "(entities.lifecycle IS NULL"
     " OR entities.lifecycle NOT IN ('merged','deprecated','reaped'))"
@@ -41,13 +37,7 @@ class ResolvedEntityRef:
 
 @dataclass(frozen=True)
 class AliasRebuildReport:
-    """Result of an alias-index rebuild.
-
-    ``row_count`` is the number of rows inserted into ``entity_aliases``.
-    ``residual_collisions`` carries the cross-entity collisions that survived
-    deterministic first-wins selection, as structured data the caller can log
-    or surface (replaces the previously swallowed per-collision warning).
-    """
+    """Rebuild result: inserted row count and cross-entity collision records."""
 
     row_count: int
     residual_collisions: list[dict[str, object]]
@@ -98,6 +88,31 @@ def live_alias_rows(conn: sqlite3.Connection) -> list[tuple[str, str, str]]:
     return alias_rows + name_rows
 
 
+def has_type_alias_unique(conn: sqlite3.Connection) -> bool:
+    """True when a unique index covers exactly ``(entity_type, alias)``."""
+    for idx in conn.execute("PRAGMA index_list('entity_aliases')"):
+        if idx[2]:
+            cols = [c[2] for c in conn.execute(f"PRAGMA index_info('{idx[1]}')")]
+            if cols == ["entity_type", "alias"]:
+                return True
+    return False
+
+
+def _dedup_entity_alias_rows(
+    rows: list[tuple[str, str, str]],
+) -> list[tuple[str, str, str]]:
+    """Drop duplicate ``(entity_id, alias)`` pairs (e.g. name also listed in aliases)."""
+    seen: set[tuple[str, str]] = set()
+    deduped: list[tuple[str, str, str]] = []
+    for entity_id, entity_type, alias in rows:
+        key = (entity_id, alias)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append((entity_id, entity_type, alias))
+    return deduped
+
+
 def _duplicate_aliases(
     rows: list[tuple[str, str, str]],
 ) -> list[dict[str, object]]:
@@ -134,6 +149,28 @@ def _duplicate_aliases(
     return duplicates
 
 
+def _assert_no_within_entity(duplicates: list[dict[str, object]]) -> None:
+    within = [d for d in duplicates if d["kind"] == "within_entity"]
+    if within:
+        raise RuntimeError(
+            "Cannot create entity_aliases until within-entity alias "
+            f"collisions are resolved: {within[:20]}"
+        )
+
+
+def _cross_collision_records(
+    cross_collisions: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    return [
+        {
+            "entity_type": d["entity_type"],
+            "alias": d["alias"],
+            "entity_ids": d["entity_ids"],
+        }
+        for d in cross_collisions
+    ]
+
+
 def _rows_for_backfill(
     rows: list[tuple[str, str, str]],
     *,
@@ -146,13 +183,9 @@ def _rows_for_backfill(
     resolve by lexicographically smallest ``entity_id`` (first-wins).  After
     migration 075 the default keeps all rows for ambiguous lookup at read time.
     """
+    rows = _dedup_entity_alias_rows(rows)
     duplicates = _duplicate_aliases(rows)
-    within = [d for d in duplicates if d["kind"] == "within_entity"]
-    if within:
-        raise RuntimeError(
-            "Cannot create entity_aliases until within-entity alias "
-            f"collisions are resolved: {within[:20]}"
-        )
+    _assert_no_within_entity(duplicates)
 
     cross_collisions = [d for d in duplicates if d["kind"] == "cross_entity"]
     if resolve_cross_entity_collisions:
@@ -179,31 +212,37 @@ def _rows_for_backfill(
                 selected.extend(group)
         return selected, collisions
 
-    seen: set[tuple[str, str]] = set()
-    selected = []
-    for row in rows:
-        key = (row[0], row[2])
-        if key in seen:
-            continue
-        seen.add(key)
-        selected.append(row)
-    return selected, cross_collisions
+    return rows, cross_collisions
 
 
 def rebuild_entity_aliases(conn: sqlite3.Connection) -> AliasRebuildReport:
     """Rebuild ``entity_aliases`` from live entities; idempotent (DELETE + filtered reinsert).
 
-    Returns an :class:`AliasRebuildReport` carrying the inserted row count and
-    any residual cross-entity collisions resolved by first-wins.  Assumes the
-    ``entity_aliases`` table already exists (created by migration 056).
+    When ``UNIQUE (entity_type, alias)`` is still present, cross-entity alias
+    collisions are deferred (all rows in the colliding group omitted).  After
+    migration 075 drops that constraint, all deduped rows are kept and
+    collisions are reported for ambiguous lookup at read time.
     """
-    rows, collisions = _rows_for_backfill(live_alias_rows(conn))
+    deduped = _dedup_entity_alias_rows(live_alias_rows(conn))
+    duplicates = _duplicate_aliases(deduped)
+    _assert_no_within_entity(duplicates)
+
+    cross_collisions = [d for d in duplicates if d["kind"] == "cross_entity"]
+    if has_type_alias_unique(conn):
+        defer_pairs = {(d["entity_type"], d["alias"]) for d in cross_collisions}
+        selected = [row for row in deduped if (row[1], row[2]) not in defer_pairs]
+    else:
+        selected = deduped
+
     conn.execute("DELETE FROM entity_aliases")
     conn.executemany(
         "INSERT INTO entity_aliases (entity_id, entity_type, alias) VALUES (?, ?, ?)",
-        rows,
+        selected,
     )
-    return AliasRebuildReport(row_count=len(rows), residual_collisions=collisions)
+    return AliasRebuildReport(
+        row_count=len(selected),
+        residual_collisions=_cross_collision_records(cross_collisions),
+    )
 
 
 def _indexed_aliases(
