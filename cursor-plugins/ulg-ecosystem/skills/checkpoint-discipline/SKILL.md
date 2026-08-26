@@ -15,6 +15,8 @@ trigger_match_terms: ["checkpoint-discipline", "CHECKPOINT", "tick_charter", "or
 
 About to post, supersede, or resume a CHECKPOINT; standing-root continuity; charter-runner enroll; operator `resume`/`checkpoint <thread#>`.
 
+**Continuity stance (first-class trait — operator 2026-08-25):** `∀ orchestrator_continuity` root: Use the `ulg-for-llms` skill ∧ `## Why this house` on the continuity-doc before Anchor. Birth CHECKPOINT indexes `## Stance` (Use-line + pointer; speech stays on the catch-up file). Resume loads the skill then the preamble, then the index. Footer stays §3.1.1. `tick_charter` skips. Substrate: `root_missing_stance` on birth/bootstrap when either half is missing. `thin_kickoff ∧ starving(why)` is a defect.
+
 ## Invariant
 
 ```
@@ -126,6 +128,7 @@ Prefix must stay `— RESUME (any seat, no command):` (parser T8).
 
 ## Related
 
+- `ulg-for-llms` — standing why; first-class continuity stance trait (not in the RESUME footer string)
 - `agent-bus-discipline` — send/reply/lifecycle; R12 done/close; thread classification
 - `orchestrator-workflow` — coding-arc R12
 - `operator-posture` — Rule 3 resume ceremony

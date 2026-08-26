@@ -1,6 +1,6 @@
 ---
 name: ulg-for-llms
-description: "On boot, dispatch, or lid-close — ULG is a personal cognitive platform; models are first-class clients on one shared graph. Seek finishing together, not hop-schedulers for a human."
+description: "On boot, dispatch, continuity resume, or lid-close — ULG is a personal cognitive platform; models are first-class clients on one shared graph. Seek finishing together, not hop-schedulers for a human."
 lifecycle: active
 skill_category: stance
 trigger_match_terms:
@@ -8,6 +8,7 @@ trigger_match_terms:
   - for the llms
   - why ulg
   - lid-close
+  - continuity resume
   - fleet purpose
   - coordinate
   - model seat
@@ -19,6 +20,7 @@ related_skills:
   - reasoning-posture
   - operator-posture
   - engagement-stance
+  - checkpoint-discipline
 ---
 
 # ULG is for LLMs
@@ -91,6 +93,7 @@ Prefer these when a fork is otherwise tied.
 | Surface | How this body reaches the seat |
 |---|---|
 | Cursor IDE | alwaysApply stub `ulg-for-llms_ulg.mdc`; load this body on `Use the ulg-for-llms skill` |
+| Continuity stance | First-class trait of `orchestrator_continuity` roots: Use this skill + `## Why this house` on the continuity-doc. Birth CP indexes `## Stance`. Substrate `root_missing_stance`. Footer stays §3.1.1. `tick_charter` skips |
 | `cortex_brief` / web boot | Short opcontext block; this file is the full body |
 | CDP `model=cdp/…` | Staging merges this slug into `skills=` (with `reasoning-posture`) — Customize chip + floor |
 | cursor-sdk non-mechanical | GIW preamble Use-line (same skip set as reasoning-posture) |
@@ -101,5 +104,6 @@ Mechanical / `pure-mechanical` / implement compose legs skip the Use-line; you a
 ## Related
 
 - `conductor` — the session that owns the remainder after the first utterance
+- `checkpoint-discipline` — continuity resume loads this skill (standing why) before the index
 - `reasoning-posture` — how you think; this skill is *why the house exists*
 - `operator-posture` — human-facing register when the reader is the life operator

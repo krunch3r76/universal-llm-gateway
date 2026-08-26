@@ -20,6 +20,7 @@ from cortex_store.dispatch_ops._thread_sidecar import (
 
 from .body_briefing_advisory import BriefingAdvisory, briefing_advisory
 from .checkpoint_charter_lint import orchestration_charter_advisory
+from .checkpoint_stance_lint import orchestration_stance_advisory
 from .checkpoint_projection import CheckpointBodyTooLargeError
 from .checkpoint_projection_wiring import maybe_project_checkpoint_body
 from .turns_models import (
@@ -96,6 +97,13 @@ def prepare_body_for_insert(
             thread_tags=thread_tags,
             supersedes_turn=supersedes_turn,
         )
+        if advisory is None:
+            advisory = orchestration_stance_advisory(
+                body=body,
+                subject=subject,
+                thread_tags=thread_tags,
+                supersedes_turn=supersedes_turn,
+            )
         if advisory is None:
             advisory = briefing_advisory(
                 body=body,

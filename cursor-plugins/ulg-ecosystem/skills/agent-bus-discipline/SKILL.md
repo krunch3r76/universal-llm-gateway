@@ -78,6 +78,7 @@ State reconstitution default = tip CHECKPOINT + roadmap (+ scoreboard when chart
 
 ```
 ∀ spine=root (orchestration thread): charter_exists ∧ objective_bound
+∀ orchestrator_continuity: stance := Use(ulg-for-llms) ∧ Why_this_house
 ```
 
 **Charter** here is distinct from **`charter-runner` enrollment** (machine tick). Manual orchestration (`orchestrator_continuity`) still requires a charter; enrollment only selects the CHECKPOINT profile (`tick_charter` vs `orchestrator_continuity`).
@@ -87,8 +88,9 @@ State reconstitution default = tip CHECKPOINT + roadmap (+ scoreboard when chart
 | **Objective** | always on birth | one bound sentence (`Objective:`, `## Anchor`, or `Primary OPEN:`) |
 | **Scoreboard** | deliverable sequence ∨ `charter-runner` enrolled | `cortex://…/<thread-id>-charter-scoreboard.md` indexed in CHECKPOINT |
 | **Continuity doc** | manual root without scoreboard yet | `continuity-doc` or `Charter: cortex://…` pointer + objective |
+| **Stance** | `orchestrator_continuity` (unenrolled) | `## Stance`: Use the `ulg-for-llms` skill + `## Why this house` (durable on the continuity-doc; birth CP indexes). `tick_charter` skips |
 
-**Birth order (do not invert):** (1) mint charter surfaces (scoreboard and/or continuity doc) → (2) post birth CHECKPOINT indexing them + concrete Next-pickup → (3) stamp `role:root` / enroll when belt path applies.
+**Birth order (do not invert):** (1) mint charter surfaces (scoreboard and/or continuity doc) **with stance** (`## Stance` + `## Why this house`) → (2) post birth CHECKPOINT indexing them + `## Stance` + concrete Next-pickup → (3) stamp `role:root` / enroll when belt path applies.
 
 **Close / disposition forbids on newborn roots:**
 
@@ -98,7 +100,7 @@ State reconstitution default = tip CHECKPOINT + roadmap (+ scoreboard when chart
 | Empty / ungated Next-pickup on birth | incomplete birth — fix charter surfaces | arc complete |
 | Session close with open root | report disposition fields | treat as permission to declare done |
 
-Server posts a non-blocking `briefing_advisory` (`reason=root_missing_charter`) on birth/bootstrap CHECKPOINTs that lack charter surfaces — fix before relying on the root.
+Server posts a non-blocking `briefing_advisory` on birth/bootstrap CHECKPOINTs: `reason=root_missing_charter` when charter surfaces are missing; `reason=root_missing_stance` (`turn_kind=continuity_stance`) when an unenrolled continuity root lacks Use `ulg-for-llms` or a Why this house pointer. Fix before relying on the root.
 
 Doctrine: `orchestrator-core` § Standing root threads · `orchestrator-workflow` R12.
 
