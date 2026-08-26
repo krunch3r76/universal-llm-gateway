@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from admission_common.tree_probe import probe_working_tree
+from implement_admission.conductor_materialize import materialize_conductor
 from implement_admission.drift_gates import (
     DriftGateState,
     check_packet_hash_drift,
@@ -17,7 +18,6 @@ from implement_admission.drift_gates import (
     gate_state,
     review_attestation_findings,
 )
-from implement_admission.conductor_materialize import materialize_conductor
 from implement_admission.materialize import materialize
 from implement_admission.normalize import normalize
 from implement_admission.preflight import (

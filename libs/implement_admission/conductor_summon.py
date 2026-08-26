@@ -25,7 +25,7 @@ def resolve_summon_mode(
 ) -> str:
     """Pick attended vs confer_and_finish for conductor spawn."""
     if explicit is not None:
-        mode = explicit.strip().lower()
+        mode = explicit.strip().lower().replace("-", "_")
         if mode not in _VALID_SUMMON_MODES:
             msg = f"invalid summon_mode: {explicit!r}"
             raise ValueError(msg)

@@ -17,13 +17,13 @@ from implement_admission.conductor_materialize import (
     render_sparse_scoreboard,
     resolve_entry_gate,
 )
-from implement_admission.conductor_summon import resolve_summon_mode
 from implement_admission.conductor_score_journal import (
     load_journal,
     read_tip,
     scoreboard_tip_uri,
     walk_journal_to_tip,
 )
+from implement_admission.conductor_summon import resolve_summon_mode
 
 
 class _StubCortex:
@@ -118,7 +118,7 @@ def test_sparse_scoreboard_stop_after_when_set() -> None:
 def test_resolve_summon_mode_explicit_wins() -> None:
     assert (
         resolve_summon_mode(
-            explicit="confer_and_finish",
+            explicit="confer-and-finish",
             caller_agent="cursor",
             summon_text="anything",
         )
