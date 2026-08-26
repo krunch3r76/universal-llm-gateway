@@ -21,9 +21,10 @@ trigger_match_terms:
 
 `commit` records a repository checkpoint; it does not activate code.
 `deploy` names propagation of a selected working-tree or commit identity.
-`activate`, `make live`, and `go live` are synonyms for a runtime restart or
-reload that is then verified. “Commit and go live” means commit, activate, and
-prove the running service identity with `fleet_liveness(code_ref=...)`.
+`activate`, `make live`, and `go live` are synonyms for **finishing work**:
+path-explicit commit + recycle of every serving process + graph stamp, then
+prove the running identity with `fleet_liveness(code_ref=...)`. Detail:
+`restart-drain-discipline` § Go-live proof loop.
 Repository timestamps and `fs(op="recent_commits")` remain a deprecated,
 lower-confidence fallback during migration; they never establish validated
 liveness.

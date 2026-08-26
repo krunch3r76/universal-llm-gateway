@@ -203,15 +203,14 @@ State the chosen route before any irreversible step.
 
 `close ⇒ evidence_cited ∧ workflow_state_advanced ∧ graph_coherent`.
 
-**Dirty tree / `¬live@sha` ⇏ withhold stamp (BINDING — operator 2026-08-25):**
-`close ⇒ ordinary_live_proven ∨ liveness_n/a(no process serves this change)`.
-`¬live@sha ⇏ withhold`; `¬proven(live) ⇒ prove, ¬park`. Graph close fires
-when ACs + this §5 evidence + that floor are met. Closure assertion states
-claim class and, when `¬live@sha`, the reason (which served paths, whose WIP).
-Do not park stamps because porcelain is dirty. `go live` is commit of the
-work paths + recycle of **every** serving process + this stamp.
+**Work complete = go live (BINDING — operator 2026-08-25):**
+`close ⇒ commit(work paths) ∧ (ordinary_live_proven ∨ liveness_n/a) ∧ stamp`.
+Finishing the item **is** the loop — not a later "go live" ask.
+`¬live@sha ⇏ withhold`; `¬proven(live) ⇒ prove, ¬park`. Closure assertion
+states claim class and, when `¬live@sha`, the reason (which served paths,
+whose WIP). Mid-arc checkpoint commit without claiming done stays commit-only.
 `decision:go-live-proof-loop` assertions 30579 (stamp) / 30577 (recycle) /
-30584 (go-live loop).
+30584 (loop) / 30585 (done opens the loop).
 
 Include dispatch id + result line for DISPATCH; entity/assertion ids for DIRECT. Update `workflow_state`, write backing assertions with `evidence_uris`, and wire provenance edges.
 

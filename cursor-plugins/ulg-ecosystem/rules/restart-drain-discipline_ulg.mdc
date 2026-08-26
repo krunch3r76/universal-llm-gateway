@@ -235,14 +235,17 @@ graph stamps. Close the todo and friction when ACs and §5 evidence are met
 **and** ordinary `live` is proven (or `liveness n/a` — no process serves).
 Do not leave stamps pending for the operator to track.
 
-**Operator bind (2026-08-25, go-live loop):** `go live` is one loop —
-path-explicit **commit** of the work paths ∧ recycle of **every** service
-that serves those paths ∧ prove each process is running the updated bytes ∧
-**graph stamp**. `¬` recycle one of N serving processes and call it live.
-`¬` stamp before that proof. `¬live@sha` (foreign served dirt) does not hold
-the stamp once ordinary `live` of **this** change is proven. Bare `commit`
-does not open the loop; the operator phrase does — and then commit is a
-required leg, not a leftover.
+**Operator bind (2026-08-25, go-live loop):** finishing work **is** go-live.
+`work_complete ⇒ commit(path-explicit work paths) ∧ recycle(every serving
+process) ∧ stamp(graph)`. The phrases `go live` / `make live` / `activate`
+are synonyms for that completion contract, not a permission gate the
+operator must say after "done." `¬` recycle one of N serving processes and
+call it live. `¬` stamp before that proof. `¬live@sha` (foreign served dirt)
+does not hold the stamp once ordinary `live` of **this** change is proven.
+
+Carve-outs (not work-complete): a mid-arc checkpoint `commit` without
+claiming done is commit-only; `/session-end` without claiming remaining
+work done does not silent-recycle the dirty tree.
 
 A later commit does not upgrade dirty `live` to `live@<sha>` — that needs a
 **new** recycle after the commit. Never say `not live` when the process already
@@ -250,11 +253,15 @@ loaded the files and you only lack `live@<sha>`.
 
 ## Go-live proof loop
 
-Operator phrases that **open** a go-live: `go live`, `make live`, `activate`,
-`everything live?`, `not live yet?`. **Code revision that a running process
-already imported also opens it** — harvest / implement close is not a park.
-`commit` **alone** and `/session-end` do **not** open it. Once open, commit
-of the work paths is a required leg. Doctrine:
+**Open** when ANY:
+- this seat claims the work **done** / closes the todo or friction / ships
+- operator says `go live` / `make live` / `activate` / `everything live?` /
+  `not live yet?` (synonyms for the same loop, not a second gate)
+- a running process already imported the revised bytes — harvest / implement
+  close is not a park
+
+A mid-arc checkpoint `commit` and `/session-end` are **not** work-complete
+by themselves. Once open, all three legs are required. Doctrine:
 `decision:go-live-proof-loop`.
 
 Satellites (claudeburst and any compose service `manage` does not list) recycle

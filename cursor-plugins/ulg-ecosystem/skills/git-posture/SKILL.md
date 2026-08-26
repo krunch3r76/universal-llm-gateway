@@ -92,10 +92,10 @@ relevant dirty paths or served-ahead-of-HEAD state; do not imply exact clean
 attribution. A dirty-tree restart remains ordinary `live` and remains legal.
 
 A later commit does not upgrade an earlier dirty-tree `live` to `live@<sha>`.
-That class needs a **new** recycle after the path-explicit commit. Operator
-`go live` / `everything live?` is the `restart-drain-discipline` proof loop —
-path-explicit commit of the work paths + recycle of every serving process +
-graph stamp. `commit` **alone** and `/session-end` do not open go-live
+That class needs a **new** recycle after the path-explicit commit. Finishing
+work **is** go-live (`restart-drain-discipline` proof loop): path-explicit
+commit of the work paths + recycle of every serving process + graph stamp.
+A mid-arc checkpoint `commit` and `/session-end` are not work-complete
 (`decision:go-live-proof-loop`).
 
 **Anti-patterns this kills:** treating uncommitted-but-restarted code as illicit
