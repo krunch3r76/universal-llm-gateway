@@ -41,6 +41,7 @@ from ..correlation import CorrelationIndex
 from ..protocols import EventRecord, envelope_source
 from .sdk_caller import apply_pending_caller
 from .sdk_handlers import sdk_handler_table
+from .sdk_lane import apply_pending_lane
 from .sdk_review_child import close_terminal_row
 from .sdk_state import (
     SdkIdAliases,
@@ -75,6 +76,9 @@ class SdkFold:
         self._pending_models: dict[str, str] = {}
         #: MCP caller provenance stashed until ``worker.dispatched`` opens the row.
         self._pending_caller: dict[str, tuple[str, str]] = {}
+        #: Checkout lane/branch stashed until ``worker.dispatched`` opens the row.
+        self._pending_lane: dict[str, str] = {}
+        self._pending_branch: dict[str, str] = {}
         #: Refused admits — attention only, never a live row.
         self.duplicate_refused: dict[str, tuple[int, str, str]] = {}
         #: Evidence-only park edges ``(parent_id, child_id)`` in first-seen order.
@@ -112,6 +116,7 @@ class SdkFold:
         self._apply_provenance(row, record)
         self._apply_pending_model(row)
         apply_pending_caller(self, row)
+        apply_pending_lane(self, row)
         return row
 
     def _row_for_id(self, dispatch_id: str, record: EventRecord) -> SdkState:

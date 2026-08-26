@@ -56,6 +56,8 @@ class SdkState:
         "mcp_surface",
         "caller_from",
         "caller_via",
+        "checkout_lane",
+        "checkout_branch",
     )
 
     def __init__(self, dispatch_id: str) -> None:
@@ -104,6 +106,8 @@ class SdkState:
         self.mcp_surface: str | None = None
         self.caller_from: str | None = None
         self.caller_via: str | None = None
+        self.checkout_lane: str | None = None
+        self.checkout_branch: str | None = None
 
 
 def as_int(value: Any) -> int | None:
@@ -284,6 +288,8 @@ def merge_sdk_state(canonical: SdkState, alt: SdkState) -> None:
         "mcp_surface",
         "caller_from",
         "caller_via",
+        "checkout_lane",
+        "checkout_branch",
     ):
         if getattr(canonical, field) is None and getattr(alt, field) is not None:
             setattr(canonical, field, getattr(alt, field))

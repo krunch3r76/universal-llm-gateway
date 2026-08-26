@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from .. import signals
 from .sdk_caller import stash_or_stamp
+from .sdk_lane import stash_or_stamp_branch, stash_or_stamp_lane
 from .sdk_provenance import (
     on_duplicate_refused,
     on_lease_acquired,
@@ -61,6 +62,10 @@ def sdk_handler_table(fold: SdkFold) -> dict[str, Any]:
     )
     table[signals.SDK_IMPLEMENT_SOURCE_REF_UNRESOLVED] = (
         fold._on_implement_source_ref_unresolved
+    )
+    table[signals.SDK_LANE_SELECTED] = lambda record: stash_or_stamp_lane(fold, record)
+    table[signals.SDK_LANE_B_MINTED] = lambda record: stash_or_stamp_branch(
+        fold, record
     )
     table[signals.SYSTEM_STARTED] = lambda record: on_system_started(fold, record)
     table[signals.MCP_TEAM_DISPATCH_DISPATCHED] = lambda record: stash_or_stamp(

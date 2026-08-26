@@ -205,6 +205,30 @@ def _sdk_live_timing(row: SdkDispatchRow) -> str:
     return " ".join(parts)
 
 
+def _short_emitter(name: str) -> str:
+    if name in ("git_integration_worker", "git-integration-worker"):
+        return "giw"
+    return name
+
+
+def _sdk_identity_suffix(row: SdkDispatchRow) -> str:
+    parts: list[str] = []
+    if row.checkout_lane:
+        parts.append(f"lane={row.checkout_lane}")
+    if row.checkout_branch:
+        branch = row.checkout_branch
+        if branch.startswith("cursor-sdk/"):
+            branch = branch[len("cursor-sdk/") :]
+        parts.append(f"br={branch}")
+    caller_from = getattr(row, "caller_from", None)
+    caller_via = getattr(row, "caller_via", None)
+    if caller_from is not None:
+        parts.append(f"from={caller_from}")
+    if caller_via is not None:
+        parts.append(f"via={caller_via}")
+    return (" " + " ".join(parts)) if parts else ""
+
+
 def sdk_live_line(
     row: SdkDispatchRow,
     *,
@@ -216,9 +240,13 @@ def sdk_live_line(
     multi = posture if posture is not None else classify_sdk_live(peers)
     role = row_role(row, peers, multi)
     role_tag = f"{ROW_TAG[role]} " if role else ""
-    flag = "DIVERGENT" if row.divergent_fields else ",".join(row.emitters_seen) or "-"
+    flag_raw = (
+        "DIVERGENT"
+        if row.divergent_fields
+        else ",".join(_short_emitter(e) for e in row.emitters_seen) or "-"
+    )
     timing = _sdk_live_timing(row)
-    stall = f" stall={row.stall_stage}" if row.stall_stage else ""
+    stall_suffix = f" stall={row.stall_stage}" if row.stall_stage else ""
     tc = f" tc={row.tool_call_count}" if row.tool_call_count is not None else ""
     topic_col = f" topic={clip_text(row.topic, 28)}" if row.topic else ""
     if row.last_tool_name:
@@ -228,14 +256,25 @@ def sdk_live_line(
         tool_col = f" tool={_truncate(tool, 14)}"
     else:
         tool_col = ""
-    prov = f" from={row.caller_from or 'ide'} via={row.caller_via or 'http'}"
-    base = (
+    identity = _sdk_identity_suffix(row)
+    core = (
         f"  {role_tag}{_truncate(row.dispatch_id, 14)} {_truncate(row.state, 10)} "
         f"root={_truncate(row.root_id, 8)} "
         f"w={_truncate(row.thread_id, 8)} "
         f"{_truncate(row.model, 18)}{topic_col} "
-        f"{timing}{tc}{tool_col}{prov} [{flag}]{stall}"
+        f"{timing}{tc}"
     )
+    candidates = [
+        f"{core}{tool_col}{identity} [{flag_raw}]{stall_suffix}",
+        f"{core}{identity} [{flag_raw}]{stall_suffix}",
+        f"{core}{identity}{stall_suffix}",
+        f"{core}{identity}",
+    ]
+    base = candidates[-1]
+    for candidate in candidates:
+        if len(candidate) <= width:
+            base = candidate
+            break
     extras: list[str] = []
     if row.nest_under:
         extras.append(f" nest={clip_text(row.nest_under, 12)}")

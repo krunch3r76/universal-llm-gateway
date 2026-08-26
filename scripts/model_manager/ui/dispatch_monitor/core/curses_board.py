@@ -330,7 +330,7 @@ class CursesBoard:
                 pair = 3
             else:
                 pair = 0
-            line = sdk_live_line(row, live=live, posture=posture)
+            line = sdk_live_line(row, live=live, posture=posture, width=width - 1)
             self._safe_addstr(y, 0, line[: width - 1], pair)
             y += 1
             shown += 1

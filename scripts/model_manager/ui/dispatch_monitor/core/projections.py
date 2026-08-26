@@ -111,6 +111,8 @@ def sdk_rows(
                 resume_of=state.resume_of,
                 caller_from=caller_from,
                 caller_via=caller_via,
+                checkout_lane=state.checkout_lane,
+                checkout_branch=state.checkout_branch,
             )
         )
     rows.sort(key=lambda r: r.dispatch_id)

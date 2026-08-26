@@ -179,6 +179,8 @@ class SdkDispatchRow:
     resume_of: str | None = None
     caller_from: str | None = None
     caller_via: str | None = None
+    checkout_lane: str | None = None
+    checkout_branch: str | None = None
 
 
 @dataclass(frozen=True)

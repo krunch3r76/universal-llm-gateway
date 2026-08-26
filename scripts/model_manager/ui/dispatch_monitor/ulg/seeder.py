@@ -31,6 +31,8 @@ _LIVE_FILTERS: tuple[str, ...] = (
     "manage.charter.tick.*",
     "frontier.sdk.*",
     "mcp.team.dispatch.dispatched",
+    "sdk.lane.*",
+    "sdk.lane_b.*",
     "cdp.generate.*",
     "frontier.poll.hint.issued",
     "system.started",
@@ -69,6 +71,8 @@ _PRIORITY_SIGNALS: tuple[str, ...] = (
     "pipeline.frontier.dispatch.failed",
     "frontier.sdk.review_child.spawned",
     "mcp.team.dispatch.dispatched",
+    "sdk.lane.selected",
+    "sdk.lane_b.minted",
     "system.started",
 )
 
