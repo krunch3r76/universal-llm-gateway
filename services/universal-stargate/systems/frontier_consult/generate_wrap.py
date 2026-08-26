@@ -55,19 +55,22 @@ def prepare_conductor_packet(
     request_id: str,
     source_ref: str,
     caller_agent: str | None,
+    summon_text: str | None = None,
     cortex: StargateCortexReader,
     workspaces_root: Path,
     role: str = "cursor-sdk",
     transport: str = "team_dispatch",
 ) -> GenerateWrapResult:
     """Materialize a conductor six-block packet from ``source_ref=todo:``."""
-    del request_id, caller_agent, role, transport
+    del request_id, role, transport
     bridge = resolve_source_ref_to_packet(
         source_ref,
         cortex=cortex,
         workspaces_root=workspaces_root,
         packet_kind="conductor",
         contract="light-bounded",
+        caller_agent=caller_agent,
+        summon_text=summon_text,
     )
     if bridge.gated:
         return GenerateWrapResult(
@@ -311,6 +314,7 @@ async def dispatch_cursor_sdk_generate_route(
                     request_id=request_id,
                     source_ref=source_ref,
                     caller_agent=body.caller_agent,
+                    summon_text=getattr(body, "prompt", None),
                     cortex=StargateCortexReader(),
                     workspaces_root=_workspaces_root(),
                 ),

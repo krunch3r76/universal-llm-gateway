@@ -5,6 +5,7 @@ from __future__ import annotations
 from claude_bundles.conductor_stop import (
     STOP_TOKENS,
     parse_stop_tokens,
+    pings_for_stops,
     resume_row_from_closeout,
     validate_conductor_closeout,
     validate_score_ratify_packet,
@@ -54,3 +55,23 @@ def test_score_ratify_missing_markers_fails() -> None:
 def test_all_catalog_tokens_valid() -> None:
     for token in STOP_TOKENS:
         assert validate_stop_token(token)
+
+
+def test_pings_for_stops_default_includes_row_pinned() -> None:
+    tokens = frozenset({"ROW_PINNED", "HOLD_MERGE"})
+    assert pings_for_stops(tokens) == frozenset({"ROW_PINNED", "HOLD_MERGE"})
+
+
+def test_pings_for_stops_live_summoning_chat_drops_row_pinned() -> None:
+    tokens = frozenset({"ROW_PINNED", "HOLD_MERGE"})
+    assert pings_for_stops(tokens, live_summoning_chat=True) == frozenset(
+        {"HOLD_MERGE"}
+    )
+
+
+def test_validate_conductor_closeout_live_summoning_chat() -> None:
+    body = "ROW_PINNED HOLD_MERGE checkpoint"
+    verdict = validate_conductor_closeout(body, live_summoning_chat=True)
+    assert verdict.ok
+    assert "ROW_PINNED" not in verdict.pings_required
+    assert "HOLD_MERGE" in verdict.pings_required

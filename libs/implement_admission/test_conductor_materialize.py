@@ -6,6 +6,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from implement_admission.conductor_materialize import (
     conductor_packet_contains_use_line,
     conductor_packet_has_lane_b,
@@ -15,6 +17,7 @@ from implement_admission.conductor_materialize import (
     render_sparse_scoreboard,
     resolve_entry_gate,
 )
+from implement_admission.conductor_summon import resolve_summon_mode
 from implement_admission.conductor_score_journal import (
     load_journal,
     read_tip,
@@ -110,3 +113,90 @@ def test_sparse_scoreboard_stop_after_when_set() -> None:
         stop_after=ctx.stop_after,
     )
     assert "**stop_after:** G1" in body
+
+
+def test_resolve_summon_mode_explicit_wins() -> None:
+    assert (
+        resolve_summon_mode(
+            explicit="confer_and_finish",
+            caller_agent="cursor",
+            summon_text="anything",
+        )
+        == "confer_and_finish"
+    )
+    assert (
+        resolve_summon_mode(
+            explicit="attended",
+            caller_agent="cursor-auto",
+            summon_text="run with it",
+        )
+        == "attended"
+    )
+
+
+def test_resolve_summon_mode_caller_defaults() -> None:
+    assert resolve_summon_mode(caller_agent="cursor") == "attended"
+    assert resolve_summon_mode(caller_agent="cursor-ide") == "attended"
+    assert resolve_summon_mode(caller_agent="cursor-auto") == "confer_and_finish"
+    assert resolve_summon_mode(caller_agent=None) == "confer_and_finish"
+
+
+def test_resolve_summon_mode_confer_markers_in_text() -> None:
+    assert (
+        resolve_summon_mode(
+            caller_agent="cursor",
+            summon_text="please run with it on this",
+        )
+        == "confer_and_finish"
+    )
+
+
+def test_resolve_summon_mode_invalid_explicit_raises() -> None:
+    with pytest.raises(ValueError, match="invalid summon_mode"):
+        resolve_summon_mode(explicit="solo")
+
+
+def test_materialize_conductor_attended_packet_strings(tmp_path: Path) -> None:
+    out_dir = tmp_path / "packets"
+    mp = materialize_conductor(
+        "todo:layer-conductor-unify",
+        cortex=_StubCortex(),
+        out_dir=out_dir,
+        caller_agent="cursor",
+    )
+    assert "summon_mode: attended" in mp.text
+    assert (
+        "G3→G5 attended: resurface score in the summoning IDE chat"
+        in mp.text
+    )
+    assert (
+        "Explicit see-score while attended: ROW_PINNED at G3, no pager"
+        in mp.text
+    )
+
+
+def test_materialize_conductor_default_confer_and_finish_strings(tmp_path: Path) -> None:
+    out_dir = tmp_path / "packets"
+    mp = materialize_conductor(
+        "todo:layer-conductor-unify",
+        cortex=_StubCortex(),
+        out_dir=out_dir,
+    )
+    assert "summon_mode: confer_and_finish" in mp.text
+    assert (
+        "G3→G5 default: in-process CDP score-ratify (do-not-fight / likely-optimal)."
+        in mp.text
+    )
+    assert "Explicit see-score: ROW_PINNED at G3 + ping." in mp.text
+
+    auto_mp = materialize_conductor(
+        "todo:layer-conductor-unify",
+        cortex=_StubCortex(),
+        out_dir=tmp_path / "packets-auto",
+        caller_agent="cursor-auto",
+    )
+    assert (
+        "G3→G5 default: in-process CDP score-ratify (do-not-fight / likely-optimal)."
+        in auto_mp.text
+    )
+    assert "Explicit see-score: ROW_PINNED at G3 + ping." in auto_mp.text

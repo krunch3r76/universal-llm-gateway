@@ -371,13 +371,21 @@ def resolve_source_ref_to_packet(
     autonomy: str | None = None,
     packet_text: str | None = None,
     packet_kind: str | None = None,
+    caller_agent: str | None = None,
+    summon_text: str | None = None,
 ) -> BridgeResult:
     """Normalize + materialize source_ref into a workspaces-relative packet path."""
     root = (workspaces_root or _workspaces_root()).resolve()
     materialize_kind = resolve_materialize_kind(packet_kind=packet_kind)
     if materialize_kind == MATERIALIZE_KIND_CONDUCTOR:
         out_dir = _materialized_out_dir(root)
-        mp = materialize_conductor(source_ref, cortex=cortex, out_dir=out_dir)
+        mp = materialize_conductor(
+            source_ref,
+            cortex=cortex,
+            out_dir=out_dir,
+            caller_agent=caller_agent,
+            summon_text=summon_text,
+        )
         rel_path = _path_relative_to_workspaces(Path(mp.path), root)
         probe_root = _executor_probe_root(root)
         present = probe_packet_presence(

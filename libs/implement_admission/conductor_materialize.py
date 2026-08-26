@@ -22,6 +22,7 @@ from implement_admission.conductor_score_journal import (
     scoreboard_tip_uri,
     write_birth_scoreboard,
 )
+from implement_admission.conductor_summon import resolve_summon_mode
 from implement_admission.materialize import MaterializedPacket, _extract_block
 from implement_admission.source_ref import parse_source_ref, todo_slug_from_ref
 
@@ -49,6 +50,7 @@ class ConductorMaterializeContext:
     derived_from: str | None
     stop_after: str | None
     entry_gate: str
+    summon_mode: str
     problem: str | None
     scope: str | None
     acceptance: str | None
@@ -72,6 +74,9 @@ def load_conductor_context(
     source_ref: str,
     *,
     cortex: CortexReader,
+    summon_mode: str | None = None,
+    caller_agent: str | None = None,
+    summon_text: str | None = None,
 ) -> ConductorMaterializeContext:
     """Read todo attrs and derive conductor spawn context."""
     ref = parse_source_ref(source_ref)
@@ -92,6 +97,11 @@ def load_conductor_context(
         density_triage=attrs.get("density_triage"),
         derived_from=derived_from,
     )
+    resolved_summon_mode = resolve_summon_mode(
+        explicit=summon_mode,
+        caller_agent=caller_agent,
+        summon_text=summon_text,
+    )
     return ConductorMaterializeContext(
         source_ref=source_ref,
         slug=slug,
@@ -100,6 +110,7 @@ def load_conductor_context(
         derived_from=derived_from,
         stop_after=stop_after,
         entry_gate=entry_gate,
+        summon_mode=resolved_summon_mode,
         problem=attrs.get("problem") or attrs.get("Problem"),
         scope=attrs.get("scope") or attrs.get("Scope"),
         acceptance=attrs.get("acceptance") or attrs.get("Acceptance"),
@@ -113,6 +124,7 @@ def _render_scope(ctx: ConductorMaterializeContext) -> str:
         f"Entry gate: {ctx.entry_gate}.",
         f"Scoreboard tip: `{scoreboard_tip_uri(ctx.slug)}`.",
         "Checkout: Lane B (explicit).",
+        f"summon_mode: {ctx.summon_mode}.",
     ]
     if ctx.stop_after:
         lines.append(f"stop_after pin: {ctx.stop_after}.")
@@ -135,12 +147,21 @@ def _render_invariants(ctx: ConductorMaterializeContext) -> str:
 
 
 def _render_task_guidance(ctx: ConductorMaterializeContext) -> str:
+    if ctx.summon_mode == "attended":
+        g3_g5_lines = [
+            "G3→G5 attended: resurface score in the summoning IDE chat (discussion, not implement, not pager, not CONFIRM_PENDING).",
+            "Explicit see-score while attended: ROW_PINNED at G3, no pager (live summoning chat).",
+        ]
+    else:
+        g3_g5_lines = [
+            "G3→G5 default: in-process CDP score-ratify (do-not-fight / likely-optimal).",
+            "Explicit see-score: ROW_PINNED at G3 + ping.",
+        ]
     ac = [
         "Spawn receipt quotes dispatch_id + scoreboard URI + Lane B.",
         f"Resume at persisted row (entry gate {ctx.entry_gate}).",
         "Mode B admit-proof on CHECKPOINT: execution_id+poll_hint or honest halt.",
-        "G3→G5 default: in-process CDP score-ratify (do-not-fight / likely-optimal).",
-        "Explicit see-score: ROW_PINNED at G3 + ping.",
+        *g3_g5_lines,
         f"stop_after={ctx.stop_after!r}: run bound leg before ROW_PINNED when set.",
     ]
     numbered = "\n".join(f"{i}. {c}" for i, c in enumerate(ac, start=1))
@@ -177,6 +198,7 @@ def _render_corpus(ctx: ConductorMaterializeContext) -> str:
         f"Source: {ctx.source_ref}",
         f"Intent: Conductor unify — {ctx.name}",
         f"Entry gate: {ctx.entry_gate}",
+        f"summon_mode: {ctx.summon_mode}",
     ]
     if ctx.problem:
         header.append(f"Problem: {ctx.problem}")
@@ -256,9 +278,18 @@ def materialize_conductor(
     out_dir: Path,
     write_scoreboard: bool = True,
     files_root: Path | None = None,
+    summon_mode: str | None = None,
+    caller_agent: str | None = None,
+    summon_text: str | None = None,
 ) -> MaterializedPacket:
     """Write conductor six-block packet + birth scoreboard/journal; return hash."""
-    ctx = load_conductor_context(source_ref, cortex=cortex)
+    ctx = load_conductor_context(
+        source_ref,
+        cortex=cortex,
+        summon_mode=summon_mode,
+        caller_agent=caller_agent,
+        summon_text=summon_text,
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
     slug = ctx.slug
     out_path = out_dir / f"conductor-{slug}.md"

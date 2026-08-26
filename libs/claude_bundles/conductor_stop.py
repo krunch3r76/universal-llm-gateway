@@ -118,15 +118,23 @@ def resume_row_from_closeout(body: str, *, default: str = "G1") -> str:
     return default.upper()
 
 
-def pings_for_stops(tokens: frozenset[str]) -> frozenset[str]:
+def pings_for_stops(
+    tokens: frozenset[str],
+    *,
+    live_summoning_chat: bool = False,
+) -> frozenset[str]:
     """Return stop tokens that require operator ping per ping table."""
-    return tokens & _PING_STOPS
+    pings = tokens & _PING_STOPS
+    if live_summoning_chat:
+        return pings - frozenset({"ROW_PINNED"})
+    return pings
 
 
 def validate_conductor_closeout(
     body: str,
     *,
     require_mode_b_proof: bool = False,
+    live_summoning_chat: bool = False,
 ) -> CloseoutStopVerdict:
     """Validate closeout stop vocabulary + optional Mode B admit-proof."""
     parsed = parse_stop_tokens(body)
@@ -156,7 +164,10 @@ def validate_conductor_closeout(
     return CloseoutStopVerdict(
         ok=True,
         resume_row=resume,
-        pings_required=pings_for_stops(parsed.tokens),
+        pings_required=pings_for_stops(
+            parsed.tokens,
+            live_summoning_chat=live_summoning_chat,
+        ),
     )
 
 

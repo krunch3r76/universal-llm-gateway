@@ -257,6 +257,11 @@ is open → 409.
   `OPERATOR_GATE` · `PARKED_TRANSPORT` · `DONE`
 - G3→G5 default: in-process CDP score-ratify (do-not-fight / likely-optimal).
   Explicit see-score → `ROW_PINNED` + ping.
+- Attended IDE spawn: resurface the score in the summoning chat at G3→G5 unless
+  the summon named confer-and-finish.
+- `cursor-auto` / no live summoning chat = confer-and-finish (Q2 unchanged).
+- `ROW_PINNED` pages when away / explicit see-score; no pager when resurface is
+  the live summoning IDE chat.
 - Mode B admit-proof on CHECKPOINT when `CONSULT_PENDING`: `execution_id`+
   `poll_hint` or honest halt.
 
