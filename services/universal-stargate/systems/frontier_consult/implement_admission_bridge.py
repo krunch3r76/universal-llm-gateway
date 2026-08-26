@@ -17,13 +17,18 @@ from implement_admission.drift_gates import (
     gate_state,
     review_attestation_findings,
 )
+from implement_admission.conductor_materialize import materialize_conductor
 from implement_admission.materialize import materialize
 from implement_admission.normalize import normalize
 from implement_admission.preflight import (
     admission_route_contract_payload,
     run_route_preflight,
 )
-from implement_admission.source_ref import parse_source_ref
+from implement_admission.source_ref import (
+    MATERIALIZE_KIND_CONDUCTOR,
+    parse_source_ref,
+    resolve_materialize_kind,
+)
 from implement_admission.spec import ReadinessState, SourceKind, implement_spec_hash
 from transport_utils import DEFAULT_AGENT_BUS_URL, DEFAULT_CORTEX_URL, make_sync_client
 
@@ -365,9 +370,36 @@ def resolve_source_ref_to_packet(
     operator_pickup_required: bool | None = None,
     autonomy: str | None = None,
     packet_text: str | None = None,
+    packet_kind: str | None = None,
 ) -> BridgeResult:
     """Normalize + materialize source_ref into a workspaces-relative packet path."""
     root = (workspaces_root or _workspaces_root()).resolve()
+    materialize_kind = resolve_materialize_kind(packet_kind=packet_kind)
+    if materialize_kind == MATERIALIZE_KIND_CONDUCTOR:
+        out_dir = _materialized_out_dir(root)
+        mp = materialize_conductor(source_ref, cortex=cortex, out_dir=out_dir)
+        rel_path = _path_relative_to_workspaces(Path(mp.path), root)
+        probe_root = _executor_probe_root(root)
+        present = probe_packet_presence(
+            rel_path, workspaces_root=root, probe_root=probe_root
+        )
+        warnings: list[str] = []
+        if not present:
+            warnings.append(
+                "materialization.executor_absent: "
+                f"{rel_path} not visible at executor root {probe_root}; "
+                "use source_ref fallback"
+            )
+        return BridgeResult(
+            gated=False,
+            source_ref=source_ref,
+            packet_path=rel_path,
+            implement_spec_hash=None,
+            packet_sha256=mp.packet_sha256,
+            materialization_present=present,
+            warnings=warnings,
+            route_contract={"packet_kind": "conductor", "lane": "B"},
+        )
     dirty_tree_risk = _resolve_dirty_tree_risk(
         enable_dirty_tree_risk=enable_dirty_tree_risk,
         cwd=cwd or str(_repo_base(root)),

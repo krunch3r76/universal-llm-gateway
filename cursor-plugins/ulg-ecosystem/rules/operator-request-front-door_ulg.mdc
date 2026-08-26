@@ -46,7 +46,7 @@ True operator-only (credentials, irreversible human act, genuine *what we want*)
 
 1. **R0** explicit override (`belt` / `off-tick` / `/path-sim` / `/layer` / root id) ≺ silent tree.
 2. **Q1** belt (scoreboard / G-row / enrolled charter) → **C**; else direct → Q2. Enrolled/lane-stamped ⇒ **C**, never caller-execute.
-3. **Q2** (direct only): codework → **B** (`mechanical(r)` ⇒ **B-mech** G5+G6; else **B-arc**); non-codework → **A** path-sim. Layer wins when both apply.
+3. **Q2** (direct only): codework → **spawn conductor** (`team_dispatch` `packet_kind=conductor` `lane="B"`) — B-mech still spawns T0 conductor (G5+G6 scoreboard); non-codework → **A** path-sim. Path-sim is not a codework todo driver.
 4. **C** ⇒ tick admits later; caller ¬ steals admit. Charter birth ⇒ operator confirm (Auto ESCALATEs; IDE may draft packet).
 
 Explicit phrases + conflict (Q1 outranks skill name): decision + Fable answer.

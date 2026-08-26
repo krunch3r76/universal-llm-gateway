@@ -192,14 +192,16 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     # Required on top-level cursor-sdk generate. Omit only for nest_under inherit.
     # Missing → 422 lane_required. wrap is exempt. Distinct from dispatch_lane.
     lane: Literal["A", "B"] | None = None
+    packet_kind: Literal["conductor"] | None = None
     # Allowlisted satellite name; omit = hub ULG git identity.
     workspace: str | None = None
     read_only: bool = False
     refuse_if_lease_held: bool = False
     prompt_turn_number: int | None = None
     prompt_bind_mode: str | None = None
-    # CDP registry / mission tag (model=cdp/… only). Default ask when omitted;
-    # operator-proxy|mission triggers skill-chip inject on the satellite.
+    # CDP registry / mission tag (model=cdp/… only). Omitted → infer
+    # (sonnet → produce, else ask). operator-proxy|mission triggers
+    # skill-chip inject on the satellite.
     purpose: str | None = None
     # Chrome-host lineage (model=cdp/… only). Distinct from purpose retain tag.
     mission_kind: str | None = None

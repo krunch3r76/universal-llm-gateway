@@ -134,11 +134,20 @@ _REASONING_POSTURE_PREAMBLE = (
     "Use the `reasoning-posture` skill — pin Question/OOS/detent before merits; "
     "steelman / calibrate / courage; thinking_off does not waive."
 )
+_ULG_FOR_LLMS_PREAMBLE = (
+    "Use the `ulg-for-llms` skill — first-class client on one shared graph; "
+    "seek lid-close and a house that remembers, not hop-scheduler "
+    "reconstruction for a human."
+)
 
 # Shared with Stargate ``handoff_reasoning_posture.REASONING_POSTURE_SKIP_CONTRACTS``.
 _REASONING_POSTURE_SKIP_CONTRACTS = REASONING_POSTURE_SKIP_CONTRACTS
 _REASONING_POSTURE_INVOKE_RE = re.compile(
     r"Use the `?reasoning-posture`? skill",
+    re.IGNORECASE,
+)
+_ULG_FOR_LLMS_INVOKE_RE = re.compile(
+    r"Use the `?ulg-for-llms`? skill",
     re.IGNORECASE,
 )
 _CONDUCTOR_PACKET_MARKER_RE = re.compile(
@@ -169,6 +178,30 @@ _WORK_ITEM_KEY_RE = re.compile(
 _WORK_ITEM_SCHEMES = ("todo:", "plan:", "plan_phase:", "packet:", "agent-bus:")
 
 
+_WORK_KEY_FRONTMATTER_RE = re.compile(
+    r"^work_key:\s*(\S+)\s*$", re.IGNORECASE | re.MULTILINE
+)
+_PACKET_KIND_FRONTMATTER_RE = re.compile(
+    r"^packet_kind:\s*(\S+)\s*$", re.IGNORECASE | re.MULTILINE
+)
+
+
+def extract_work_key_from_packet(text: str) -> str | None:
+    """Return ``work_key:`` frontmatter when present."""
+    match = _WORK_KEY_FRONTMATTER_RE.search(text)
+    if not match:
+        return None
+    return match.group(1).strip()
+
+
+def extract_packet_kind_from_packet(text: str) -> str | None:
+    """Return ``packet_kind:`` frontmatter when present."""
+    match = _PACKET_KIND_FRONTMATTER_RE.search(text)
+    if not match:
+        return None
+    return match.group(1).strip().lower()
+
+
 def extract_source_ref_from_packet(text: str) -> str | None:
     """Canonical work-item source_ref from packet frontmatter, or None.
 
@@ -189,6 +222,11 @@ def extract_source_ref_from_packet(text: str) -> str | None:
 def _already_invokes_reasoning_posture(*texts: str | None) -> bool:
     """True when any text already carries the Cursor invoke cue."""
     return any(bool(t) and _REASONING_POSTURE_INVOKE_RE.search(t) for t in texts)
+
+
+def _already_invokes_ulg_for_llms(*texts: str | None) -> bool:
+    """True when any text already carries the fleet-purpose invoke cue."""
+    return any(bool(t) and _ULG_FOR_LLMS_INVOKE_RE.search(t) for t in texts)
 
 
 def resolve_prompt_preamble(
@@ -257,6 +295,11 @@ def resolve_prompt_preamble(
         and not _already_invokes_reasoning_posture(prompt_preamble, existing_text)
     ):
         parts.append(_REASONING_POSTURE_PREAMBLE)
+    if (
+        contract not in _REASONING_POSTURE_SKIP_CONTRACTS
+        and not _already_invokes_ulg_for_llms(prompt_preamble, existing_text)
+    ):
+        parts.append(_ULG_FOR_LLMS_PREAMBLE)
     if preamble:
         parts.append(preamble.strip())
     return "\n\n".join(parts) + "\n\n"

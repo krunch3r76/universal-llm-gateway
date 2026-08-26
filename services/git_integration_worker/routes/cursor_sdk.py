@@ -103,6 +103,10 @@ from services.git_integration_worker.cursor_sdk_concurrency_posture import (
     lease_is_isolated_worktree,
     write_lease_slot_limit,
 )
+from services.git_integration_worker.cursor_sdk_conductor_conflict import (
+    find_open_conductor_holder_conn,
+    should_block_implement_for_open_conductor,
+)
 from services.git_integration_worker.cursor_sdk_context import (
     CursorSdkParityError,
     build_agent_options,
@@ -164,10 +168,6 @@ from services.git_integration_worker.cursor_sdk_lane_select import (
     select_lane,
     wire_lane_explicit,
 )
-from services.git_integration_worker.cursor_sdk_satellite_workspace import (
-    CursorWorkspaceError,
-    resolve_dispatch_source_repo,
-)
 from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
     extract_instructed_paths,
     first_landed_fs_uri,
@@ -193,7 +193,9 @@ from services.git_integration_worker.cursor_sdk_orphan import (
     register_active_client,
 )
 from services.git_integration_worker.cursor_sdk_packet import (
+    extract_packet_kind_from_packet,
     extract_source_ref_from_packet,
+    extract_work_key_from_packet,
     infer_contract_from_text,
     resolve_prompt_preamble,
 )
@@ -216,6 +218,10 @@ from services.git_integration_worker.cursor_sdk_resume import (
     reject_resume_if_ineligible,
     sdk_agent_id_from_agent,
     start_or_resume_agent,
+)
+from services.git_integration_worker.cursor_sdk_satellite_workspace import (
+    CursorWorkspaceError,
+    resolve_dispatch_source_repo,
 )
 from services.git_integration_worker.cursor_sdk_stream_capture import (
     StreamCapture,
@@ -2375,13 +2381,16 @@ async def cursor_dispatch(
             invalid_fields=["read_only"],
         )
     candidate_source_ref = req.source_ref or extract_source_ref_from_packet(packet_text)
-    candidate_work_key = req.work_key
-    if not candidate_work_key and packet_text:
-        import re
-
-        match = re.search(r"(?im)^work_key:\s*(\S+)\s*$", packet_text)
-        if match:
-            candidate_work_key = match.group(1)
+    packet_kind = extract_packet_kind_from_packet(packet_text) if packet_text else None
+    candidate_work_key = req.work_key or (
+        extract_work_key_from_packet(packet_text) if packet_text else None
+    )
+    if packet_kind == "conductor":
+        if not candidate_work_key and req.source_ref:
+            candidate_work_key = req.source_ref
+        candidate_source_ref = None
+    elif not candidate_work_key and candidate_source_ref:
+        candidate_work_key = candidate_source_ref
     if contract == "implement" and not candidate_source_ref:
         emit_sdk_implement_unresolved_source_ref(
             dispatch_id=req.dispatch_id,
@@ -2564,6 +2573,40 @@ async def cursor_dispatch(
         if concurrency_posture is not None
         else 1
     )
+    block_key = candidate_work_key or candidate_source_ref
+    if (
+        should_block_implement_for_open_conductor(
+            contract=contract,
+            nest_under=req.nest_under,
+            work_key=block_key,
+        )
+        and block_key
+    ):
+        with ledger._connect() as conn:
+            holder = find_open_conductor_holder_conn(
+                conn,
+                work_key=block_key,
+                exclude_dispatch_id=req.dispatch_id,
+            )
+        if holder is not None:
+            return _reject_pre_admission(
+                req,
+                worker_error_code="CURSOR_SOURCE_REF_IN_FLIGHT",
+                failure_layer="admission",
+                http_status=409,
+                detail_summary=(
+                    f"open conductor holds work identity {block_key!r} "
+                    f"(holder_dispatch_id={holder.dispatch_id!r})"
+                ),
+                retryable=False,
+                validation_stage="ledger_conductor_open",
+                extra_data={
+                    "work_key": block_key,
+                    "holder_dispatch_id": holder.dispatch_id,
+                    "holder_thread_id": holder.thread_id,
+                    "holder_kind": "conductor",
+                },
+            )
     try:
         cached = await asyncio.to_thread(
             ledger.admit,
@@ -2713,6 +2756,15 @@ async def cursor_dispatch(
                 lease_key=lease_key or dispatch_git_str,
             )
         return JSONResponse(status_code=status_code, content=cached.model_dump())
+
+    if packet_kind == "conductor":
+        ledger.merge_record_json(
+            dispatch_id=req.dispatch_id,
+            patch={
+                "packet_kind": "conductor",
+                "work_key": candidate_work_key,
+            },
+        )
 
     if req.resume_of:
         parent_row = load_parent_row(ledger, parent_id=req.resume_of)

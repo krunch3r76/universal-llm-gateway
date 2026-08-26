@@ -52,6 +52,10 @@ Canonical hops (say these; aliases in parentheses):
 
 Lawful sequence: Sketch → Mission Composer → Conductor. They may name any one step.
 
+**stop_after pins** (todo attrs → conductor scoreboard): hop names may set
+`stop_after: G1|G2|…` on the todo; conductor runs the bound leg before
+`ROW_PINNED` (e.g. G1-pin ⇒ S4b rich-seed, not `implement_ready`).
+
 ## Remaining hops
 
 Skip anything already harvested (shape bind, conductor score, G-row DONE).
