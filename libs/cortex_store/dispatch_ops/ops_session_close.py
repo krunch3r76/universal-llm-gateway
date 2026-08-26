@@ -351,6 +351,16 @@ def _op_session_close_preflight(
         if not handoff_preview.get("handoff_valid", True):
             preflight["ok"] = False
             preflight["reason"] = handoff_preview.get("reason") or "handoff.invalid"
+    if preflight.get("ok"):
+        from ..session_close_successor_hop import apply_successor_hop_fields
+
+        apply_successor_hop_fields(
+            preflight,
+            supplied_session_id=session_id,
+            agent=agent,
+            transcript_jsonl_path=transcript_jsonl_path,
+            jsonl_resolved=jsonl_resolved,
+        )
     return preflight
 
 

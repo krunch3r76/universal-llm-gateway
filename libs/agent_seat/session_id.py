@@ -58,13 +58,16 @@ def derive_session_id_from_timestamp(
     timestamp: str,
     *,
     deterministic: bool = False,
+    conversation_uuid: str | None = None,
 ) -> str:
     """Derive a session ID from agent + ISO or date fragment timestamp.
 
     When *deterministic* is True and the timestamp parses, the 3-hex suffix is
-    a stable hash of ``agent|iso`` so successive JSONL-start derivations do not
-    flap (friction 23205). Unparseable timestamps still fall through to a live
-    wall-clock mint unless the caller refuses that path.
+    a stable hash of ``agent|iso|<conversation_uuid>`` when the uuid is
+    supplied (JSONL parent dir — two tabs starting the same UTC second must
+    not share a suffix). Without a uuid the material is ``agent|iso``
+    (legacy). Unparseable timestamps still fall through to a live wall-clock
+    mint unless the caller refuses that path.
     """
     match = _TIMESTAMP_PARSE_RE.search(timestamp)
     if match:
@@ -80,7 +83,12 @@ def derive_session_id_from_timestamp(
         )
         if deterministic:
             iso = at.strftime("%Y-%m-%d-%H%M%S")
-            digest = hashlib.sha256(f"{agent}|{iso}".encode()).hexdigest()[:3]
+            material = (
+                f"{agent}|{iso}|{conversation_uuid}"
+                if conversation_uuid
+                else f"{agent}|{iso}"
+            )
+            digest = hashlib.sha256(material.encode()).hexdigest()[:3]
             return mint_session_id(agent, at=at, suffix=digest)
         return mint_session_id(agent, at=at)
     return mint_session_id(agent)

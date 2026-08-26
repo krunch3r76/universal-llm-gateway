@@ -142,7 +142,9 @@ Format: `{agent}-YYYY-MM-DD-HHMMSS-{3hex}` (UTC session **start**, not close).
 
 Priority order:
 
-1. **`cortex_brief` `session_id`** — reuse when `cortex_brief` ran this session.
+1. **`cortex_brief` `session_id`** — reuse when `cortex_brief` ran this session,
+   unless preflight returns `hop_reason=session_id_already_journaled` (then
+   discard the sealed boot id).
 2. **`session_close_preflight`** — canonical when no boot-held ID. **Not an
    ID-only probe** — `summary` + `session_summary_md` are required (placeholders
    OK for the ID-resolution call). Example:
@@ -158,7 +160,10 @@ cortex(tool="session_close_preflight", arguments='{
 ```
 
    Use returned copy-paste **`session_id`** when present, else
-   `session_id_from_jsonl_start`. Optional: `prior_session_id_suggestion`.
+   `session_id_from_jsonl_start`. When `hop_reason=session_id_already_journaled`,
+   use returned `session_id` + `prior_session_id` (work since the last lid
+   only; do not ask). Persist of a sealed id still echoes `already_closed`.
+   Optional: `prior_session_id_suggestion`.
 
    **`light` / `none` depth + no boot-held ID (id-derivation ≠ archival depth):**
    Step 0 was skipped, so you have no `<PATH FROM STEP 0>` — but preflight is the
@@ -332,7 +337,7 @@ the operator explicitly requests a continuation handoff in the same message
 | `transcript.missing_structure` | Structural layer too thin; add Decisions/Files/Open items |
 | `summary.too_short` | Extend summary to ≥20 chars |
 | `session_id.invalid` | Re-run Step 0b preflight; use returned `session_id` (`cursor-YYYY-MM-DD-HHMMSS-{3hex}`) |
-| `session.already_closed` | SUCCESS-EQUIVALENT — quote IDs from detail object |
+| `session.already_closed` | SUCCESS-EQUIVALENT only for same-close retry (same `session_id`, no later user turn). Quote IDs. If preflight hopped, close the successor. |
 | `handoff.requires_transcript_entity` | Re-close with `transcript_depth="light"` (or `verbatim`); omit handoff only if arc complete |
 | `handoff.missing_transcript_anchor` | Prepend the anchor block (`**Closing session:** transcript:{session_id}` + `**Load context:**` line) to `handoff_prompt`; re-call |
 | `session_close_validate_attestation_missing` | Run Step 2.5 `doc_validate(doc_type="session_close", …)`; pass `attestation_tokens` as `validate_attestation` |

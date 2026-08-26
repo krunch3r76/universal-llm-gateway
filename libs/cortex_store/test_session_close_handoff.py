@@ -997,31 +997,35 @@ def test_close_depth_invalid_value_rejected(session_env: dict[str, Path]) -> Non
 def test_close_already_closed_idempotent_when_handoff_unchanged(
     session_env: dict[str, Path],
 ) -> None:
-    """Second close with same handoff ⟹ idempotent snapshot (2-A v2 binding #5)."""
-    summary_a = "First close — depth=none, no transcript artifact written."
+    """Second close with same handoff ⟹ idempotent snapshot (2-A v2 binding #5).
+
+    Depth is ``light`` so the first close stamps a transcript entity.
+    ``depth=none`` leaves ``file_path`` NULL and is the legacy-reclose
+    path, not ``already_closed``.
+    """
+    summary_a = "First close — depth=light, transcript entity stamped."
     first = ops_journals._op_session_close(
         session_id="web-2026-05-27-100900-a24",
         agent="web",
         session_summary_md=_session_summary(summary_a),
         summary=summary_a,
-        transcript_depth="none",
+        transcript_depth="light",
     )
     assert "error" not in first, first
-    assert first["transcript_depth"] == "none"
+    assert first["transcript_depth"] == "light"
 
     summary_b = "Second close attempt — idempotent when handoff unchanged."
     second = ops_journals._op_session_close(
         session_id="web-2026-05-27-100900-a24",
         agent="web",
-        transcript_md=_web_transcript_md("web-2026-05-27-100900-a24"),
         session_summary_md=_session_summary(summary_b),
         summary=summary_b,
-        transcript_depth="verbatim",
+        transcript_depth="light",
     )
     assert "error" not in second
+    assert second.get("already_closed") is True
     assert second["journal_row_id"] == first["journal_row_id"]
-    assert second["transcript_depth"] == "none"
-    assert second.get("transcript_entity_id") is None
+    assert second["transcript_depth"] == "light"
 
 
 def test_preflight_none_skips_source_check(session_env: dict[str, Path]) -> None:

@@ -149,17 +149,24 @@ def derive_session_id_from_jsonl_start(*, jsonl_path: Path, agent: str) -> str |
         if not _ISO_LIKE_TIMESTAMP_RE.search(normalized):
             return None
         return derive_session_id_from_timestamp(
-            agent, normalized, deterministic=True
+            agent,
+            normalized,
+            deterministic=True,
+            conversation_uuid=jsonl_path.parent.name,
         )
     st = jsonl_path.stat()
     started = getattr(st, "st_birthtime", None)
     if started is None or started <= 0:
         return None
     dt = datetime.fromtimestamp(started, tz=UTC)
-    # Birth-time path: deterministic suffix from agent|iso so preflight
-    # copy-paste does not flap across retries.
+    # Birth-time path: deterministic suffix from agent|iso|uuid so
+    # preflight copy-paste does not flap across retries, and two tabs
+    # starting the same UTC second do not collide.
     return derive_session_id_from_timestamp(
-        agent, dt.strftime("%Y-%m-%d %H:%M:%S"), deterministic=True
+        agent,
+        dt.strftime("%Y-%m-%d %H:%M:%S"),
+        deterministic=True,
+        conversation_uuid=jsonl_path.parent.name,
     )
 
 
