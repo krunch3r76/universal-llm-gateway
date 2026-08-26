@@ -58,6 +58,8 @@ def test_normalize_picker_request_strips_cdp_prefix() -> None:
         ("cdp/opus-5", "", "cdp/opus-5"),
         ("cdp/opus-5-max", "high", "cdp/opus-5-max"),
         ("cdp/fable", "max", "cdp/fable-5-max"),
+        ("cdp/sonnet-5", "max", "cdp/sonnet-5-max"),
+        ("cdp/sonnet-5", "extra", "cdp/sonnet-5-extra"),
     ],
 )
 def test_compose_cdp_model_with_effort(
@@ -80,7 +82,7 @@ def test_parse_model_request_max_effort() -> None:
         ("fable-5", "high"),
         ("fable-5-max", "high"),
         ("opus-5", "high"),
-        ("sonnet-5", None),
+        ("sonnet-5", "extra"),
         ("haiku-4.5", None),
     ],
 )

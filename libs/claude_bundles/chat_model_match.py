@@ -24,8 +24,14 @@ PREDICTED_MODEL_LABELS: tuple[str, ...] = (
 
 
 def sealed_ask_default_effort(family: str) -> str | None:
-    """Sealed-ask wire default when effort unset (operator 2026-07-16, a25255)."""
+    """Sealed-ask wire default when effort unset.
+
+    Opus/Fable → High (operator 2026-07-16, a25255). Sonnet → Extra
+    (operator 2026-08-25); Max remains an explicit option.
+    """
     key = (family or "").strip().lower()
+    if key.startswith("sonnet"):
+        return "extra"
     if key.startswith("opus") or key.startswith("fable"):
         return "high"
     return None

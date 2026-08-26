@@ -10,6 +10,7 @@ from implement_admission.admission_read import frontmatter_value
 from reasoning_posture_contracts import REASONING_POSTURE_SKIP_CONTRACTS
 
 REASONING_POSTURE_SLUG = "reasoning-posture"
+ULG_FOR_LLMS_SLUG = "ulg-for-llms"
 
 # Shared with GIW ``cursor_sdk_packet._REASONING_POSTURE_SKIP_CONTRACTS``.
 REASONING_POSTURE_SKIP_CONTRACTS = REASONING_POSTURE_SKIP_CONTRACTS

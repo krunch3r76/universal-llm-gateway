@@ -143,6 +143,8 @@ def test_enrich_injects_reasoning_posture_on_consult() -> None:
     result = enrich_handoff_packet(_THIN_WEB_PACKET, cortex=cortex)
     assert "reasoning-posture" in result.skills_added
     assert "`reasoning-posture`" in result.text
+    assert "ulg-for-llms" in result.skills_added
+    assert "`ulg-for-llms`" in result.text
 
 
 def test_enrich_injects_reasoning_posture_from_route_contract() -> None:
@@ -151,10 +153,12 @@ def test_enrich_injects_reasoning_posture_from_route_contract() -> None:
     cortex = _StubCortex()
     skipped = enrich_handoff_packet(packet, cortex=cortex)
     assert "reasoning-posture" not in skipped.skills_added
+    assert "ulg-for-llms" not in skipped.skills_added
     injected = enrich_handoff_packet(
         packet, cortex=cortex, handoff_contract="light-bounded"
     )
     assert "reasoning-posture" in injected.skills_added
+    assert "ulg-for-llms" in injected.skills_added
 
 
 def test_enrich_skips_reasoning_posture_on_implement() -> None:
@@ -163,12 +167,14 @@ def test_enrich_skips_reasoning_posture_on_implement() -> None:
     result = enrich_handoff_packet(packet, cortex=cortex)
     assert "reasoning-posture" not in result.skills_added
     assert "reasoning-posture" not in result.skills_already_wired
+    assert "ulg-for-llms" not in result.skills_added
     routed = enrich_handoff_packet(
         packet.replace("contract: implement\n", ""),
         cortex=cortex,
         handoff_contract="implement",
     )
     assert "reasoning-posture" not in routed.skills_added
+    assert "ulg-for-llms" not in routed.skills_added
 
 
 def test_enrich_reports_already_wired_not_readded() -> None:
@@ -181,6 +187,7 @@ def test_enrich_reports_already_wired_not_readded() -> None:
         "consult-routing",
         "handoff-packet-authoring",
         "reasoning-posture",
+        "ulg-for-llms",
     ):
         assert slug in second.skills_already_wired
         assert slug not in second.skills_added

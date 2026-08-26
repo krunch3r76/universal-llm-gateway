@@ -44,6 +44,9 @@ def test_resolve_escalation_honors_bindable():
     out = resolve_escalation("cdp/fable")
     assert out["honored"] is True
     assert out["resolved_escalation"] == "cdp/fable"
+    sonnet = resolve_escalation("cdp/sonnet")
+    assert sonnet["honored"] is True
+    assert sonnet["resolved_escalation"] == "cdp/sonnet-5"
 
 
 def test_resolve_escalation_rejects_unknown():

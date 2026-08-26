@@ -186,6 +186,8 @@ def render_operational_context(
     # seats; skipped for inline-only subagent execution where the discipline
     # belongs to the dispatcher, not the executor.
     if not (family == "subagent" and platform == "subagent"):
+        # inject-channel section key: ulg-for-llms
+        sections.append(templates.ULG_FOR_LLMS)
         # inject-channel section key: reasoning-posture
         sections.append(
             templates.render_reasoning_posture(lead_posture=is_lead_agent(agent))

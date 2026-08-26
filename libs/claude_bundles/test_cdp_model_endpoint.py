@@ -55,17 +55,21 @@ def test_stage_prompt_text_writes_ephemeral(
 def test_ensure_cdp_judgment_skills_prepends_missing() -> None:
     from claude_bundles.cdp_model_endpoint_staging import ensure_cdp_judgment_skills
 
-    assert ensure_cdp_judgment_skills(None) == ["reasoning-posture"]
-    assert ensure_cdp_judgment_skills([]) == ["reasoning-posture"]
+    assert ensure_cdp_judgment_skills(None) == ["ulg-for-llms", "reasoning-posture"]
+    assert ensure_cdp_judgment_skills([]) == ["ulg-for-llms", "reasoning-posture"]
     assert ensure_cdp_judgment_skills(["consult-posture"]) == [
+        "ulg-for-llms",
         "reasoning-posture",
         "consult-posture",
     ]
     assert ensure_cdp_judgment_skills(
         ["reasoning-posture", "consult-posture", "path-sim"]
-    ) == ["reasoning-posture", "consult-posture", "path-sim"]
+    ) == ["ulg-for-llms", "reasoning-posture", "consult-posture", "path-sim"]
     # Slash-prefixed caller entry still counts as present (``have`` lstrips "/").
-    assert ensure_cdp_judgment_skills(["/reasoning-posture"]) == ["/reasoning-posture"]
+    assert ensure_cdp_judgment_skills(["/reasoning-posture"]) == [
+        "ulg-for-llms",
+        "/reasoning-posture",
+    ]
 
 
 def test_stage_cdp_prompt_with_skills_prepends_manifest(
@@ -80,7 +84,7 @@ def test_stage_cdp_prompt_with_skills_prepends_manifest(
     on_disk = tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills/prompt.md"
     text = on_disk.read_text(encoding="utf-8")
     # Judgment skill is always on, even when the caller lists others.
-    assert text.startswith("/reasoning-posture\n/consult-posture\n")
+    assert text.startswith("/ulg-for-llms\n/reasoning-posture\n/consult-posture\n")
     assert "## Task" in text
     assert staged.prompt_uri.endswith("exec-skills/prompt.md")
 
@@ -99,7 +103,7 @@ def test_stage_cdp_prompt_omitted_skills_still_gets_judgment_skill(
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-default/prompt.md"
     )
     text = on_disk.read_text(encoding="utf-8")
-    assert text.startswith("/reasoning-posture\n")
+    assert text.startswith("/ulg-for-llms\n/reasoning-posture\n")
     assert "## light ask" in text
     assert staged.staged is True
 
@@ -138,11 +142,12 @@ def test_stage_cdp_prompt_with_skills_rejects_path_sim(
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-judgment-ok/prompt.md"
     )
     text = on_disk.read_text(encoding="utf-8")
-    assert text.startswith("/reasoning-posture\n/consult-posture\n")
+    assert text.startswith("/ulg-for-llms\n/reasoning-posture\n/consult-posture\n")
     assert "path-sim" not in text
     assert "## architect bind" in text
     assert staged.staged is True
     assert ensure_cdp_judgment_skills(["consult-posture"]) == [
+        "ulg-for-llms",
         "reasoning-posture",
         "consult-posture",
     ]
@@ -159,7 +164,7 @@ def test_stage_cdp_prompt_with_skills_inlines_cursor_only(
     )
     on_disk = tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-mixed/prompt.md"
     text = on_disk.read_text(encoding="utf-8")
-    assert text.startswith("/reasoning-posture\n")
+    assert text.startswith("/ulg-for-llms\n/reasoning-posture\n")
     assert '<skill slug="investigation-economy"' in text
     assert "## Task" in text
     assert staged.prompt_uri.endswith("exec-skills-mixed/prompt.md")
@@ -184,7 +189,7 @@ def test_stage_cdp_presealed_cortex_uri_passes_through(
 
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     sealed, _, _ = prepend_cdp_dispatch_skills(
-        "## pre-staged ask\nbody\n", ["reasoning-posture"]
+        "## pre-staged ask\nbody\n", ["ulg-for-llms", "reasoning-posture"]
     )
     src = tmp_path / "notes/system/specs/presealed.md"
     src.parent.mkdir(parents=True, exist_ok=True)
@@ -223,7 +228,7 @@ def test_stage_cdp_bare_cortex_uri_is_rewritten_with_rails(
     text = (
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-bare/prompt.md"
     ).read_text(encoding="utf-8")
-    assert text.startswith("/reasoning-posture\n")
+    assert text.startswith("/ulg-for-llms\n/reasoning-posture\n")
     assert "## bare ask" in text
 
 

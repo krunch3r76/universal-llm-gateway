@@ -44,6 +44,7 @@ from .handoff_life_mirror import (
 )
 from .handoff_reasoning_posture import (
     REASONING_POSTURE_SLUG,
+    ULG_FOR_LLMS_SLUG,
     handoff_wants_reasoning_posture,
 )
 from .handoff_web_mcp_default import apply_web_mcp_default
@@ -406,6 +407,7 @@ def _collect_skill_slugs(
     slugs: list[str] = list(_DEFAULT_DENSIFY_SLUGS)
     if handoff_wants_reasoning_posture(text, handoff_contract):
         slugs.insert(0, REASONING_POSTURE_SLUG)
+        slugs.insert(0, ULG_FOR_LLMS_SLUG)
     for entity_id in _bound_entity_ids(text):
         for slug in _entity_required_skills(cortex, entity_id):
             if slug not in slugs:

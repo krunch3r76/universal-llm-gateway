@@ -24,6 +24,7 @@ from claude_bundles.cdp_model_endpoint_staging import (
     CdpStagingError,
     stage_cdp_prompt_with_skills,
 )
+from claude_bundles.cdp_skill_profiles import infer_cdp_purpose
 from claude_bundles.chat_model_match import compose_cdp_model_with_effort
 from claude_bundles.operator_proxy_mission import is_operator_proxy_mission_purpose
 from model_id import ModelId
@@ -155,6 +156,7 @@ def _stage_inputs(
     sidecar_ref: str | None,
     packet_path: str | None,
     skills: list[str] | None = None,
+    purpose: str | None = None,
 ) -> Any:
     """Stage prompt; ``skills`` → slash manifest for + → Skills attach at runtime.
 
@@ -184,6 +186,7 @@ def _stage_inputs(
             packet_path=packet_non_cortex,
             sidecar_ref=sidecar_non_cortex,
             skills=skills if isinstance(skills, list) else None,
+            purpose=purpose,
         )
     except CdpStagingError:
         raise
@@ -262,6 +265,13 @@ async def dispatch_cdp_generate(
 
     execution_id = str(uuid.uuid4())
     skills = getattr(body, "skills", None)
+    purpose_raw = getattr(body, "purpose", None)
+    purpose = infer_cdp_purpose(
+        str(purpose_raw).strip()
+        if isinstance(purpose_raw, str) and purpose_raw.strip()
+        else None,
+        model,
+    )
     try:
         staged = _stage_inputs(
             execution_id=execution_id,
@@ -269,6 +279,7 @@ async def dispatch_cdp_generate(
             sidecar_ref=sidecar_ref,
             packet_path=packet_path,
             skills=skills if isinstance(skills, list) else None,
+            purpose=purpose,
         )
     except CdpStagingError as exc:
         field = "skills" if str(exc.code).startswith("cdp_skills") else "prompt"
@@ -326,12 +337,6 @@ async def dispatch_cdp_generate(
         max_wall_s=max_wall,
     )
 
-    purpose_raw = getattr(body, "purpose", None)
-    purpose = (
-        str(purpose_raw).strip()
-        if isinstance(purpose_raw, str) and purpose_raw.strip()
-        else "ask"
-    )
     mission_kind_raw = getattr(body, "mission_kind", None)
     mission_kind = (
         str(mission_kind_raw).strip()

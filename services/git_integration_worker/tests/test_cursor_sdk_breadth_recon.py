@@ -39,6 +39,7 @@ def test_packet_preamble_includes_breadth_recon_block() -> None:
     assert 'Task(subagent_type="explore"' in preamble
     assert "recon_method:" in preamble
     assert "reasoning-posture" not in preamble
+    assert "ulg-for-llms" not in preamble
 
 
 def test_packet_preamble_light_bounded_includes_reasoning_posture() -> None:
@@ -49,6 +50,7 @@ def test_packet_preamble_light_bounded_includes_reasoning_posture() -> None:
     )
     assert "BREADTH RECON — EXPLORE DEFAULT" in preamble
     assert "Use the `reasoning-posture` skill" in preamble
+    assert "Use the `ulg-for-llms` skill" in preamble
 
 
 @pytest.mark.parametrize(

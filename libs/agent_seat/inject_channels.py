@@ -69,13 +69,14 @@ _ORIENTATION_BLOCKS_CURSOR: frozenset[str] = frozenset(
 
 # Channel 3 — operational-context sections (``render_operational_context``).
 OPCONTEXT_SECTION_SKILL_MAP: dict[str, tuple[str, ...]] = {
+    "ulg-for-llms": ("ulg-for-llms",),
     "reasoning-posture": ("reasoning-posture",),
     "prose-discipline": ("prose-discipline",),
     "team-consultation": ("consult-routing",),
 }
 
 _OPCONTEXT_SUBAGENT_EXCLUDED: frozenset[str] = frozenset(
-    {"reasoning-posture", "team-consultation"}
+    {"ulg-for-llms", "reasoning-posture", "team-consultation"}
 )
 
 

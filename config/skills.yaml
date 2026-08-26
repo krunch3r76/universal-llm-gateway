@@ -494,6 +494,9 @@ skills:
     surface_class: cursor_only
     mcp_surface_required: none
     delivery_priority: 1
+  ulg-for-llms:
+    surface_class: shared_sync
+    mcp_surface_required: none
   writing-with-provenance:
     # Demoted from shared_sync 2026-08-02 — claim-record drafting on-demand,
     # ¬ every web/Customize open (opening-context cost).

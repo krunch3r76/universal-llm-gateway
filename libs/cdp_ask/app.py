@@ -291,6 +291,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             purpose=req.purpose,
             parent_thread=req.parent_thread,
             mission_kind=req.mission_kind,
+            stargate_execution_id=req.stargate_execution_id,
         )
 
         async def _abort_check() -> bool:

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import re
+import sqlite3
 from pathlib import Path
 
 from claude_bundles import cdp_registry
@@ -70,6 +72,46 @@ def chat_url_from_archives(
     return None
 
 
+def chat_url_from_provenance(execution_id: str) -> str | None:
+    """Latest provenance episode whose correlation_id matches the token."""
+    token = (execution_id or "").strip()
+    if not token:
+        return None
+    from claude_bundles.cse_provenance import read_episodes
+
+    for episode in reversed(read_episodes()):
+        if episode.correlation_id == token and episode.chat_url:
+            return cse_url_from_token(episode.chat_url)
+    return None
+
+
+def satellite_id_from_inflight(stargate_execution_id: str) -> str | None:
+    """Read durable Stargate→satellite map (survives cdp_ask recycle)."""
+    token = (stargate_execution_id or "").strip()
+    if not token:
+        return None
+    data_dir = Path(os.getenv("DATA_DIR", str(Path.home() / ".gateway"))).expanduser()
+    db = data_dir / "stargate-cdp-generate-inflight.db"
+    if not db.is_file():
+        return None
+    try:
+        conn = sqlite3.connect(db, timeout=2.0)
+        try:
+            row = conn.execute(
+                "SELECT satellite_execution_id FROM cdp_inflight_leg "
+                "WHERE execution_id=?",
+                (token,),
+            ).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None
+    if row is None:
+        return None
+    sat = (row[0] or "").strip()
+    return sat or None
+
+
 async def resolve_harvest_chat_url(
     req: HarvestRequest,
     store: ExecutionStore,
@@ -92,4 +134,20 @@ async def resolve_harvest_chat_url(
         archived = chat_url_from_archives(req.execution_id)
         if archived:
             return archived
+        from_prov = chat_url_from_provenance(req.execution_id)
+        if from_prov:
+            return from_prov
+        satellite = satellite_id_from_inflight(req.execution_id)
+        if satellite:
+            rec = await store.get(satellite)
+            if rec is not None and rec.registration_id:
+                bound = cdp_registry.chat_url_for_registration(rec.registration_id)
+                if bound:
+                    return normalize_cse_url(bound)
+            archived = chat_url_from_archives(satellite)
+            if archived:
+                return archived
+            from_prov = chat_url_from_provenance(satellite)
+            if from_prov:
+                return from_prov
     return None

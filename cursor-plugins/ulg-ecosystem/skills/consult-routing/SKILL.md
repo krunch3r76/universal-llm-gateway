@@ -29,12 +29,36 @@ gap: `life-to-code-request-lane` (`lane:life-to-code`).
 
 ### CDP transport (MCP `project_ask` removed)
 
-Product = `team_dispatch(model=cdp/opus-5|cdp/fable)` → poll `poll_hint`.
+Product = `team_dispatch(model=cdp/opus-5|cdp/fable|cdp/sonnet-5)` → poll `poll_hint`.
 Delivery complete iff `chat_url` observed or followup `send_verified` — Stargate admit ≠ on claude.ai (`claude-ai-cdp-navigation` § Dispatch delivery).
 Warm paste / attended resolve = `cse_session(op=followup|resolve_attended)`.
 Admission/busy = `manage(action=busy_status)`. IF6 / satellite-direct submit =
 CLI (`scripts/cortex/claude-ai-sync-jupiter project-ask`). MCP `project_ask`
 is gone from `tools/list` — do not call it.
+
+**Purpose-keyed skill floor** (`ensure_cdp_judgment_skills`): every purpose
+merges `ulg-for-llms` + `reasoning-posture`. `ask` also prepends the arch pair;
+`review` adds `consult-posture`; `mission` / `operator-proxy` add
+`cdp-operator-proxy`. Caller `skills=` is additive.
+Omitted purpose + `cdp/sonnet-5` → `produce`; omitted + opus/fable → `ask`.
+Stock container skills (`docx`/`xlsx`/`pptx`/`pdf`/`skill-creator`/…) are a
+**prompt verb**, never `skills=` (`cdp_skills_unknown` 422 is the collision
+guard). Consults about claude.ai / Cowork / the picker itself prime
+`product-self-knowledge` the same way (prompt, not `skills=`).
+
+| Job | Picker | Effort | Transport | `purpose` |
+|---|---|---|---|---|
+| G1 / Mode B / path-sim Q / hop-5 check | `cdp/fable` | high (max when bind gates a wave) | fresh `/new`; followup only into a live op-proxy CSE | `ask` |
+| G2 frame | `cdp/fable` followup in the G1 CSE; else `cdp/opus-5` fresh | high | followup ≻ fresh | inherit `ask` |
+| R-admit / verifier / mission / M-Arch | `cdp/opus-5` | high | fresh (R); mission followup | `review` or `mission` |
+| Session / work review of **code changes** | `cdp/opus-5` | high | **optional, recommended** — background (conductor / unattended) preferred; defer when it would block the next attended move. Stage diff + closeout to `cortex://`. ¬ a silent G4; ¬ a substitute for checkout-native R-after (`cursor/grok-4.6`) | `review` |
+| Docs / closeouts / spec polish / office I/O / dashboards | `cdp/sonnet-5` | **Extra** default; **Max** via `reasoning_effort=max` | pipeline or fresh; office → `harvest_source=output-file` | `produce` |
+| Skill authoring | `cdp/opus-5` draft · `cdp/sonnet-5` revise | high / Extra | fresh, output-file → cortex staging | `produce` |
+| Haiku | `cdp/haiku-4.5` | — | **no recipe** until Sonnet caps | — |
+
+Standing: verifier ≠ producer; independent check ≠ author; Other Models /
+`cursor/claude-fable-5` are not substitutes. Slash commands cite this table —
+they are not SOT.
 
 ## Dispatch targets (code surface only)
 
@@ -57,7 +81,7 @@ independent of life/operator-proxy. Mechanical implement skips.
 |---|---|
 | `op=generate` `seat=cursor-sdk` | GIW preamble on `light-bounded` / `consult`; skip `implement` / `pure-mechanical` / quick (`answer` / `execute` / `propagate`). `skills=` is a no-op on cursor-sdk. |
 | `op=handoff` consult / light-bounded | Enrich Block 2 `Use the reasoning-posture skill`; skip implement / `cursor-implement`. |
-| CDP `model=cdp/…` generate | `skills=` merge (`ensure_cdp_judgment_skills`) |
+| CDP `model=cdp/…` generate | `skills=` merge (`ensure_cdp_judgment_skills`, purpose-keyed — § CDP transport) |
 
 Packet MAY still open with the invoke as belt-and-suspenders. SOT: skill `reasoning-posture` § Always-on injection.
 
@@ -240,17 +264,25 @@ One merged GPT check. Gate-6 substrate, zoom-out, seeding ladder, overhaul, `aut
 
 ## Address — bind_status chooser (SOT)
 
-Peer `/path-sim`. Attrs: `bind_status∈{unsettled,settled,shipping,deferred}`, `workflow`, `next_action`.
+Codework default is `/layer` (`decision:abstraction-layering` · front-door Q2).
+Path-sim is **not** the unmatched default. `/address` is the settled-ship peer.
+
+Attrs: `bind_status∈{unsettled,settled,shipping,deferred}`, `density_triage`,
+`arc_lane`. **PATH-SIM** only when **any**: non-codework · `arc_lane=path_sim` ·
+operator named `/path-sim`.
 
 | # | Condition | Route |
 |---|---|---|
 | 1 | `deferred` | held |
 | 2 | `settled\|shipping` ∧ ¬`recon_pending` | **ADDRESS** |
-| 3 | `unsettled` ∧ `judgment_required\|recon_pending` | **PATH-SIM** |
-| 4 | `mechanical` ∨ (`implement_ready` ∧ stamped) | **DISPATCH** |
-| 5 | else | **PATH-SIM** |
+| 3 | no closable `todo:` ∧ codework | **SEED** (`work-item-seed-path`) |
+| 4 | `unsettled` ∧ `judgment_required\|recon_pending` ∧ PATH-SIM trigger | **PATH-SIM** |
+| 5 | `unsettled` ∧ `judgment_required\|recon_pending` ∧ codework | **LAYER** |
+| 6 | `mechanical` ∨ (`implement_ready` ∧ stamped) | **DISPATCH** |
+| 7 | else | **LAYER** if codework else **PATH-SIM** |
 
 Gate-2 sets `bind_status=settled`. Mirrors cite `SOT: consult-routing § Address`.
+Lid-close / “spawn a conductor” is **not** this chooser — unify discuss.
 
 ## Codified bug reports
 

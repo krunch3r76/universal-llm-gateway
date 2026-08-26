@@ -48,6 +48,7 @@ def test_resolve_prompt_preamble_injects_reasoning_posture_on_light_bounded() ->
         inferred_contract=None,
     )
     assert text.count("Use the `reasoning-posture` skill") == 1
+    assert text.count("Use the `ulg-for-llms` skill") == 1
 
 
 def test_resolve_prompt_preamble_injects_reasoning_posture_on_consult() -> None:
@@ -57,6 +58,7 @@ def test_resolve_prompt_preamble_injects_reasoning_posture_on_consult() -> None:
         inferred_contract=None,
     )
     assert "Use the `reasoning-posture` skill" in text
+    assert "Use the `ulg-for-llms` skill" in text
 
 
 @pytest.mark.parametrize(
@@ -72,6 +74,7 @@ def test_resolve_prompt_preamble_skips_reasoning_posture_on_mechanical_or_quick(
         inferred_contract=None,
     )
     assert "reasoning-posture" not in text
+    assert "ulg-for-llms" not in text
 
 
 def test_resolve_prompt_preamble_reasoning_posture_idempotent_existing_text() -> None:

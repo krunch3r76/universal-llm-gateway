@@ -9,8 +9,10 @@ import pytest
 
 from cdp_ask.cse_session_harvest_identity import (
     chat_url_from_archives,
+    chat_url_from_provenance,
     cse_url_from_token,
     resolve_harvest_chat_url,
+    satellite_id_from_inflight,
 )
 from cdp_ask.cse_session_models import HarvestRequest
 from cdp_ask.execution_store import ExecutionStore
@@ -91,3 +93,78 @@ async def test_harvest_execution_id_opens_when_store_missed() -> None:
         )
     opener.assert_awaited_once()
     assert result.outcome == "harvested"
+
+
+@pytest.mark.asyncio
+async def test_store_get_aliases_stargate_execution_id() -> None:
+    store = ExecutionStore()
+    rec = await store.create(
+        holder="cursor",
+        purpose="ask",
+        stargate_execution_id="sg-exec-alias",
+    )
+    aliased = await store.get("sg-exec-alias")
+    assert aliased is not None
+    assert aliased.execution_id == rec.execution_id
+    assert (await store.get(rec.execution_id)).execution_id == rec.execution_id
+
+
+def test_chat_url_from_provenance_matches_correlation() -> None:
+    episode = type("E", (), {})()
+    episode.correlation_id = "sat-abc"
+    episode.chat_url = "https://claude.ai/cowork/cse_provHarvest1"
+    with patch(
+        "claude_bundles.cse_provenance.read_episodes",
+        return_value=[episode],
+    ):
+        assert chat_url_from_provenance("sat-abc") == (
+            "https://claude.ai/cowork/cse_provHarvest1"
+        )
+        assert chat_url_from_provenance("other") is None
+
+
+def test_satellite_id_from_inflight(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import sqlite3
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    db = tmp_path / "stargate-cdp-generate-inflight.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE cdp_inflight_leg ("
+        "execution_id TEXT PRIMARY KEY, satellite_execution_id TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO cdp_inflight_leg VALUES (?, ?)",
+        ("sg-stargate-1", "sat-from-inflight"),
+    )
+    conn.commit()
+    conn.close()
+    assert satellite_id_from_inflight("sg-stargate-1") == "sat-from-inflight"
+    assert satellite_id_from_inflight("missing") is None
+
+
+@pytest.mark.asyncio
+async def test_stargate_id_opens_via_inflight_then_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "cdp_ask.cse_session_harvest_identity.satellite_id_from_inflight",
+        lambda token: "sat-from-inflight" if token == "sg-stargate-1" else None,
+    )
+    monkeypatch.setattr(
+        "cdp_ask.cse_session_harvest_identity.chat_url_from_archives",
+        lambda token: None,
+    )
+    monkeypatch.setattr(
+        "cdp_ask.cse_session_harvest_identity.chat_url_from_provenance",
+        lambda token: (
+            "https://claude.ai/cowork/cse_fromProv"
+            if token == "sat-from-inflight"
+            else None
+        ),
+    )
+    url = await resolve_harvest_chat_url(
+        HarvestRequest(execution_id="sg-stargate-1"),
+        ExecutionStore(),
+    )
+    assert url == "https://claude.ai/cowork/cse_fromProv"

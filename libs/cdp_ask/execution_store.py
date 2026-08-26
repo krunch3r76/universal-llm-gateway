@@ -34,6 +34,7 @@ class ExecutionRecord:
     created_at: float
     updated_at: float
     registration_id: str | None = None
+    stargate_execution_id: str | None = None
     holder: str = ""
     purpose: str | None = None
     result: dict[str, Any] | None = None
@@ -64,6 +65,7 @@ class ExecutionStore:
         reaper_interval_s: float = 30.0,
     ) -> None:
         self._records: dict[str, ExecutionRecord] = {}
+        self._by_stargate: dict[str, str] = {}
         self._execution_ttl_s = execution_ttl_s
         self._idle_ttl_s = idle_ttl_s
         self._reaper_interval_s = reaper_interval_s
@@ -114,9 +116,11 @@ class ExecutionStore:
         purpose: str | None,
         parent_thread: str | None = None,
         mission_kind: str | None = None,
+        stargate_execution_id: str | None = None,
     ) -> ExecutionRecord:
         now = time.time()
         execution_id = uuid.uuid4().hex
+        stargate = (stargate_execution_id or "").strip() or None
         record = ExecutionRecord(
             execution_id=execution_id,
             status="pending",
@@ -124,6 +128,7 @@ class ExecutionStore:
             updated_at=now,
             holder=holder,
             purpose=purpose,
+            stargate_execution_id=stargate,
             parent_thread=(str(parent_thread).strip() or None)
             if parent_thread
             else None,
@@ -131,11 +136,20 @@ class ExecutionStore:
         )
         async with self._lock:
             self._records[execution_id] = record
+            if stargate:
+                self._by_stargate[stargate] = execution_id
         return record
 
     async def get(self, execution_id: str) -> ExecutionRecord | None:
+        token = (execution_id or "").strip()
         async with self._lock:
-            return self._records.get(execution_id)
+            rec = self._records.get(token)
+            if rec is not None:
+                return rec
+            aliased = self._by_stargate.get(token)
+            if aliased is None:
+                return None
+            return self._records.get(aliased)
 
     async def list_running_registration_ids(self) -> set[str]:
         async with self._lock:
@@ -403,6 +417,8 @@ class ExecutionStore:
                     and idle > self._idle_ttl_s
                 ):
                     self._records.pop(rec.execution_id, None)
+                    if rec.stargate_execution_id:
+                        self._by_stargate.pop(rec.stargate_execution_id, None)
 
         for rec in expired:
             if rec.task and not rec.task.done():

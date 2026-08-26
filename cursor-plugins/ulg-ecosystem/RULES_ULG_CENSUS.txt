@@ -38,4 +38,5 @@ shared-checkout-housekeeping_ulg
 skill-authoring_ulg
 skill-surface_ulg
 todo_ulg
+ulg-for-llms_ulg
 web-anthropic-canvas-dialogue_ulg

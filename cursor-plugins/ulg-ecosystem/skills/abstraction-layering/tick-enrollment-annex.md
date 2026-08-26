@@ -56,6 +56,7 @@ TYPE: CHECKPOINT
 ## State
 **Primary OPEN:** G{ENTRY}–G6 (abstraction layering).
 **WIP:** none.
+**Recommended overlay (not a G-row):** after-ship `cdp/opus-5` `purpose=review` of landed code — good default. Background after G6; deferral is sequencing. ¬ Next-pickup · ¬ done-claim.
 
 ## Steps
 1. [ ] G1 — architecture verdict + target shape · [consult:judgment_gap]

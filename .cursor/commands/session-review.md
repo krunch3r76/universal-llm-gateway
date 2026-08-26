@@ -1,5 +1,12 @@
 # /session-review
 
+**Recommended reviewer (2026-08-25):** `team_dispatch(model=cdp/opus-5,
+purpose=review)` with the session arc + touched files staged to `cortex://`.
+Optional — defer when the harvest would block the next attended move; fire in
+the background when the seat is conductor / unattended (latency ≠ skip).
+Does not restore silent Terra G4. Command default below (`web-claude` handoff)
+remains valid; prefer CDP generate when you are choosing.
+
 Session review across three dispatchers — **`web-claude` (default)**,
 sync `frontier-mcp` (model-token path), or async grok-build (`--grok`). Covers two
 dimensions simultaneously:

@@ -711,9 +711,11 @@ scripts/docstring-quality scan {directory}
 summary) and ask the user before firing the CDP Sonnet draft. Skip this step
 entirely if the user defers architecture doc work.
 
-**Gradual transport (BINDING):** Jupiter CDP `team_dispatch(model=cdp/sonnet-5)`
-(Claude.ai subscription). Prefer `team_dispatch(model=cdp/…)`; IF6 =
-CLI `scripts/cortex/claude-ai-sync-jupiter project-ask` (SOT: `consult-routing` § Surface gate). Use the
+**Gradual transport (BINDING):** Jupiter CDP
+`team_dispatch(model=cdp/sonnet-5, purpose=produce)` (effort Extra default;
+Max via `reasoning_effort=max` — SOT: `consult-routing` § CDP transport).
+Prefer `team_dispatch(model=cdp/…)`; IF6 = CLI
+`scripts/cortex/claude-ai-sync-jupiter project-ask`. Use the
 `claude-ai-cdp-navigation` skill.
 
 **Forbidden on gradual:** Stargate `doc-generate` / `curl … model=doc-generate`
@@ -748,6 +750,7 @@ team_dispatch(
   op="generate",
   model="cdp/sonnet-5",
   contract="light-bounded",
+  purpose="produce",
   packet_path="tmp/reviews/overhaul-{subsystem}-doc-draft-packet.md",
   # or sidecar_ref="cortex://…" after staging the sealed packet
   dispatch_thread_id="<arc-thread>"
@@ -1619,9 +1622,11 @@ scripts/docstring-quality scan {directory}
 summary) and ask the user before firing the CDP Sonnet draft. Skip this step
 entirely if the user defers architecture doc work.
 
-**Gradual transport (BINDING):** Jupiter CDP `team_dispatch(model=cdp/sonnet-5)`
-(Claude.ai subscription). Prefer `team_dispatch(model=cdp/…)`; IF6 =
-CLI `scripts/cortex/claude-ai-sync-jupiter project-ask` (SOT: `consult-routing` § Surface gate). Use the
+**Gradual transport (BINDING):** Jupiter CDP
+`team_dispatch(model=cdp/sonnet-5, purpose=produce)` (effort Extra default;
+Max via `reasoning_effort=max` — SOT: `consult-routing` § CDP transport).
+Prefer `team_dispatch(model=cdp/…)`; IF6 = CLI
+`scripts/cortex/claude-ai-sync-jupiter project-ask`. Use the
 `claude-ai-cdp-navigation` skill.
 
 **Forbidden on gradual:** Stargate `doc-generate` / `curl … model=doc-generate`
@@ -1656,6 +1661,7 @@ team_dispatch(
   op="generate",
   model="cdp/sonnet-5",
   contract="light-bounded",
+  purpose="produce",
   packet_path="tmp/reviews/overhaul-{subsystem}-doc-draft-packet.md",
   # or sidecar_ref="cortex://…" after staging the sealed packet
   dispatch_thread_id="<arc-thread>"

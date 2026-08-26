@@ -81,7 +81,7 @@ Publish a stage disposition table before densify when M-Arch could fire.
 
 Same turn as M-Arch disposition claim:
 
-1. **Admit:** `team_dispatch(model=cdp/opus-5|cdp/fable, …)` returns `execution_id` + `poll_hint` (quote), **or** warm `project_ask(followup)` into live operator-proxy CSE per `cdp-operator-proxy` / seed Mode B transport — **or**
+1. **Admit:** `team_dispatch(model=cdp/opus-5|cdp/fable, …)` returns `execution_id` + `poll_hint` (quote), **or** warm `cse_session(op=followup)` into live operator-proxy CSE per `cdp-operator-proxy` / seed Mode B transport — **or**
 2. **Honest halt** naming the blocker.
 
 Forbidden: announce-only “will fire CDP.” Poll/harvest may continue later; admit is same-turn.

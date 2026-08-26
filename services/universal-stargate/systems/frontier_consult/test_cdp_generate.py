@@ -122,7 +122,7 @@ def test_stage_inputs_prepends_claude_slash_skills(tmp_path, monkeypatch) -> Non
     )
     text = prompt_path.read_text(encoding="utf-8")
     assert text.startswith(
-        "/reasoning-posture\n/consult-posture\n"
+        "/ulg-for-llms\n/reasoning-posture\n/consult-posture\n"
     )
     assert "## ask" in text
     assert staged.staged is True
@@ -146,7 +146,7 @@ def test_stage_inputs_omitted_skills_gets_judgment_skill(tmp_path, monkeypatch) 
     )
     text = prompt_path.read_text(encoding="utf-8")
     assert text.startswith(
-        "/reasoning-posture\n"
+        "/ulg-for-llms\n/reasoning-posture\n"
     )
     assert "## light" in text
     assert staged.staged is True
@@ -173,7 +173,7 @@ def test_stage_inputs_inlines_non_claude_skills(tmp_path, monkeypatch) -> None:
     text = prompt_path.read_text(encoding="utf-8")
     # Judgment skill always prepended as slash; caller non-Claude stays inline.
     assert text.startswith(
-        "/reasoning-posture\n"
+        "/ulg-for-llms\n/reasoning-posture\n"
     )
     assert "<skills_inline>" in text
     assert '<skill slug="investigation-economy"' in text
@@ -222,7 +222,7 @@ def test_stage_inputs_inlines_code_mcp_skills_with_claude_slash(
     )
     text = prompt_path.read_text(encoding="utf-8")
     assert text.startswith(
-        "/reasoning-posture\n"
+        "/ulg-for-llms\n/reasoning-posture\n"
     )
     assert "/investigation-economy" not in text.split("<skills_inline>", 1)[0]
     assert '<skill slug="investigation-economy"' in text

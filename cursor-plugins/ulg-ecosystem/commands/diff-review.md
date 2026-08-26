@@ -1,6 +1,10 @@
 Review either the current meaningful `git status` file set, or an explicitly
 requested file/range, against workspace invariants and shared rules.
 
+**Recommended reviewer (2026-08-25):** `team_dispatch(model=cdp/opus-5,
+purpose=review)` when choosing a seat — optional; defer if attended-blocking;
+background on conductor. Command default (`web-claude` handoff) stays valid.
+
 Related skills:
 - `agent-skills/architecture-invariants.md` (cortex) — universal invariant layer; MCP reviewers MUST read via `fs` before findings
 - `agent-skills/ulg-architecture.md` (cortex) — ULG repo layer; pair with architecture-invariants for this workspace

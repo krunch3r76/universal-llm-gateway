@@ -62,7 +62,7 @@ is a carded Other Models option; we **block** it for cost — do not pin it. Use
 | **Cursor Models** | Grok-4.6, Composer 2.5 | G3 densify / G5 implement / T1 orchestrate / CDP-stuck 2b default — **after** Fable harvest |
 | **Other Models (secondary)** | Sonnet 5, Opus-in-cursor, Terra, Sol, Luna, `cursor/claude-fable-5` | **Explicit pin only** (cost). Includes Terra. `cursor/claude-fable-5` **blocked** (cost) → `cdp/fable`. ¬ silent G4 / ladder 2c / reviewer / hop-5 default. |
 
-G2 frame is **CDP Opus**, not the Other Models pool. Other Models quota is not a reason to skip CDP Fable G1 or to spend T3 Opus as a Fable substitute. T2/T3 and hop-4 live-checkout Opus still need their **named** trigger — they are not silent defaults.
+G2 frame is **Fable followup** in the G1 CSE (else `cdp/opus-5` fresh), not the Other Models pool. Other Models quota is not a reason to skip CDP Fable G1 or to spend T3 Opus as a Fable substitute. T2/T3 and hop-4 live-checkout Opus still need their **named** trigger — they are not silent defaults.
 
 ## When
 
@@ -155,9 +155,8 @@ Classify kind · channel · subsumption.
 **Fire:** rival shapes / detent≥wide ∨ invariant-touching ∨ consult-before-seed asked ∨ recon left ≥2 co-primaries.  
 **Skip:** single obvious shape ∨ mechanical.  
 **Do:** CDP architecture consult per Mode B transport above. Copy **§ S3 Fable
-generate recipe** (followup vs fresh generate). **Before fire:** Fable/Opus G1 skill
-floor — `architecture-invariants` ∧ `ulg-architecture` sealed (abstraction-layering
-§ Fable / CDP G1 lead preflight); judgment chips alone ≠ floor. Harvest to cortex.
+generate recipe** (followup vs fresh generate). Staging `purpose=ask` seals the
+arch pair — do not reconstruct `skills=`. Harvest to cortex.
 
 **Premium rung:** fork needs live-checkout verification at file:line depth a CDP seat
 structurally cannot perform ⇒ escalate to `cursor/claude-opus-5` (hop 4) when the
@@ -203,13 +202,13 @@ team_dispatch(
     purpose="ask",
     packet_path="tmp/reviews/{slug}-fable-g1.md",  # or sidecar_ref=cortex://…
     dispatch_thread_id="<work thread, not an unrelated charter root>",
-    skills=["architecture-invariants", "ulg-architecture", "reasoning-posture"],
 )
 # same-turn: quote execution_id + poll_hint, or honest halt
 ```
 
-`skills=` must include the arch pair; judgment chips alone ≠ floor. `purpose=ask` is
-the architecture-consult tag — ¬ `operator-proxy` unless this *is* a mission followup.
+`purpose=ask` is the architecture-consult tag — staging merges the arch pair +
+`reasoning-posture`. Caller `skills=` is additive only. ¬ `operator-proxy` unless
+this *is* a mission followup. Stock skills are a prompt verb, never `skills=`.
 
 ### S4 Mint (exactly one)
 
@@ -285,8 +284,8 @@ Name: `todo:{slug}` · entry gate · consult URI · recon URI.
 | Bare `/work-item-seed` with no idea, or mint before stage table | Halt — need idea text; publish disposition; run S3 when mandatory |
 | S3 fired ∧ no Fable harvest | Minting or `/layer` — harvest consult first |
 | Announce Mode B / "staging Fable" then end turn with no admit | Same-turn admit (`execution_id`+`poll_hint` or followup admit) or named halt |
-| Fable/Opus Mode B with only judgment skills (no `ulg-architecture`) | Seal arch pair per abstraction-layering G1 preflight before admit |
-| Reconstruct the Fable generate from memory / path-sim Q | Copy § S3 Fable generate recipe (arch-pair `skills=` + `purpose=ask`) |
+| Fable/Opus Mode B with only judgment skills (no `ulg-architecture`) | `purpose=ask` — staging owns the arch-pair floor |
+| Reconstruct the Fable generate from memory / path-sim Q | Copy § S3 Fable generate recipe (`purpose=ask`; do not rebuild `skills=`) |
 | Mode B under live operator-proxy CSE via fresh `team_dispatch(cdp/…)` | `cse_session(op=followup)` into attached CSE (inv 23); fresh CDP only if no live CSE |
 | Existing todo + Mode B ask → divert to bare `/layer` | Mode B on existing slug · attach · `/layer` G2 |
 | S2 breadth via Composer or in-seat Grep spray | Explore subagent first (cheap-recon Tier-1) |

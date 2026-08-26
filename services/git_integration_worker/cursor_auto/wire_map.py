@@ -143,7 +143,12 @@ def _lookup_explicit_model(raw: str) -> str | None:
 _EFFORT_LADDER: tuple[str, ...] = WIRE_LADDER
 _EFFORT_VALUES = frozenset(_EFFORT_LADDER)
 BINDABLE_EFFORT_VALUES: tuple[str, ...] = _EFFORT_LADDER
-BINDABLE_CDP_ESCALATIONS: tuple[str, ...] = ("cdp/opus-5", "cdp/fable")
+# Judgment: opus + fable. ``cdp/sonnet-5`` is a producer alias, not a binder.
+BINDABLE_CDP_ESCALATIONS: tuple[str, ...] = (
+    "cdp/opus-5",
+    "cdp/fable",
+    "cdp/sonnet-5",
+)
 _CONTRACT_EFFORT_DEFAULTS: dict[str, str] = {
     "investigate": "xhigh",
     "recon": "medium",
@@ -160,6 +165,9 @@ _CDP_DESIRED_MODEL_ALIASES: dict[str, str] = {
     "cdp/fable": "cdp/fable",
     "cdp/fable-5": "cdp/fable",
     "cdp/fable5": "cdp/fable",
+    "cdp/sonnet-5": "cdp/sonnet-5",
+    "cdp/sonnet": "cdp/sonnet-5",
+    "cdp/sonnet5": "cdp/sonnet-5",
 }
 _CONTRACTS = frozenset(CANONICAL_CONTRACTS)
 
@@ -259,8 +267,8 @@ def assess_model_pin(
 def resolve_escalation(escalation: str | None) -> dict[str, Any]:
     """Map wire ``escalation`` hint → resolved CDP model or absent.
 
-    Values ``cdp/opus-5`` and ``cdp/fable`` honor; absent/empty ⇒ no CDP leg;
-    unknown ⇒ ``rejected`` for admit refusal.
+    Values ``cdp/opus-5``, ``cdp/fable``, and producer alias ``cdp/sonnet-5``
+    honor; absent/empty ⇒ no CDP leg; unknown ⇒ ``rejected`` for admit refusal.
     """
     raw = (escalation or "").strip().lower()
     if not raw:
@@ -270,10 +278,11 @@ def resolve_escalation(escalation: str | None) -> dict[str, Any]:
             "honored": False,
             "notes": "no escalation requested",
         }
-    if raw in BINDABLE_CDP_ESCALATIONS:
+    resolved = coerce_cdp_desired_model_alias(raw) or raw
+    if resolved in BINDABLE_CDP_ESCALATIONS:
         return {
             "requested": raw,
-            "resolved_escalation": raw,
+            "resolved_escalation": resolved,
             "honored": True,
             "notes": "honored explicit escalation",
         }

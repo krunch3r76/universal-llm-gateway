@@ -10,10 +10,11 @@ architecture doc refresh. Stargate API pipeline is frontier-only override.
 ```
 
 Where `{path}` is a Python file or directory relative to the project root.
-**Default transport:** `team_dispatch(model=cdp/sonnet-5)` (prefer
-`team_dispatch(model=cdp/…)`; `project_ask` = escape only — deprecation
-candidate; SOT: `consult-routing` § Surface gate). Use `frontier` only when the
-operator explicitly approves paid Stargate API cost.
+**Default transport:** `team_dispatch(model=cdp/sonnet-5, purpose=produce)`
+(effort Extra default; Max via `reasoning_effort=max` — `consult-routing` § CDP
+transport). Prefer `team_dispatch(model=cdp/…)`; CLI `project-ask` = escape
+only. Use `frontier` only when the operator explicitly approves paid Stargate
+API cost.
 
 ## Instructions (gradual default — CDP)
 
@@ -75,6 +76,7 @@ team_dispatch(
   op="generate",
   model="cdp/sonnet-5",
   contract="light-bounded",
+  purpose="produce",
   packet_path="tmp/reviews/docstring-enhance-{slug}-cdp-packet.md",
   # or sidecar_ref / prompt_uri after staging the sealed packet to cortex
   dispatch_thread_id="<arc-thread>"

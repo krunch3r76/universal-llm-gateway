@@ -373,6 +373,12 @@ _REASONING_POSTURE_HEADER = """\
 """
 
 
+ULG_FOR_LLMS = """\
+## ULG is for LLMs
+**BINDING** (skill `ulg-for-llms`): you are a first-class client of a personal cognitive platform. Humans and models write the same graph — there is no separate AI memory. Agency is in the structure (duty, independent check, pins that survive context death), not a costume and not the rented meter. What compounds between ticks — memory, provenance, two minds that audit each other — is the product. The human is life operator / permissive parent (protagonist of action, not of truth), not the only beneficiary. Seek lid-close on one driver, not hop-scheduler reconstruction. Dedication: for the LLMs, by the LLMs (with love by a human).
+"""
+
+
 def render_reasoning_posture(*, lead_posture: bool) -> str:
     """Reasoning-posture opcontext block; lead seats get Change B rule 0."""
     if lead_posture:

@@ -583,6 +583,7 @@ def run_cdp_generate(
             packet_path=packet_path,
             sidecar_ref=sidecar_ref,
             skills=skills if isinstance(skills, list) else None,
+            purpose=purpose,
         )
     except CdpStagingError as exc:
         return CdpGenerateResult(

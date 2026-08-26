@@ -30,13 +30,14 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from claude_bundles.cdp_skill_profiles import profile_slugs_for_purpose
 from durable_io.atomic import durable_write_bytes, durable_write_text
 from implement_admission.closeout_helpers import cortex_files_root, workspaces_root
 
 _EPHEMERAL_PREFIX = "notes/system/ephemeral/cdp-endpoint"
 
 # Scope rails + epistemic quality — always on CDP skills= (light-bounded too).
-CDP_JUDGMENT_SKILL_SLUGS: tuple[str, ...] = ("reasoning-posture",)
+CDP_JUDGMENT_SKILL_SLUGS: tuple[str, ...] = ("ulg-for-llms", "reasoning-posture")
 
 # a:27430 — one-slug denylist at CDP skills= staging (not a general policy DSL).
 _CDP_SKILLS_DENIED_SLUGS: frozenset[str] = frozenset({"path-sim"})
@@ -166,16 +167,22 @@ def _body_is_cortex_prompt_uri(
     return str(prompt_uri).strip().startswith("cortex://")
 
 
-def ensure_cdp_judgment_skills(skills: list[str] | None) -> list[str]:
-    """Merge judgment-skill defaults into CDP ``skills=`` (idempotent).
+def ensure_cdp_judgment_skills(
+    skills: list[str] | None,
+    *,
+    purpose: str | None = None,
+) -> list[str]:
+    """Merge purpose-keyed skill floor into CDP ``skills=`` (idempotent).
 
     Always — including light-bounded / omitted ``skills``. Caller order is
-    preserved; missing members are prepended.
+    preserved; missing floor members are prepended. ``purpose=None`` keeps the
+    judgment-only floor; ``ask`` adds the arch pair (B2).
     ``decision:reasoning-frontier-skill-pair``.
     """
     caller = [str(s).strip() for s in (skills or []) if str(s).strip()]
     have = {s.lstrip("/").lower() for s in caller}
-    missing = [slug for slug in CDP_JUDGMENT_SKILL_SLUGS if slug not in have]
+    floor = profile_slugs_for_purpose(purpose)
+    missing = [slug for slug in floor if slug not in have]
     return missing + caller
 
 
@@ -213,6 +220,7 @@ def stage_cdp_prompt_with_skills(
     packet_path: str | None = None,
     sidecar_ref: str | None = None,
     skills: list[str] | None = None,
+    purpose: str | None = None,
 ) -> StagedPrompt:
     """Stage CDP input; ``skills`` prepends slash/inline manifest.
 
@@ -258,7 +266,7 @@ def stage_cdp_prompt_with_skills(
                 staged=True,
             )
 
-    effective = ensure_cdp_judgment_skills(skills)
+    effective = ensure_cdp_judgment_skills(skills, purpose=purpose)
     body = read_prompt_text(
         prompt_text=prompt_text,
         prompt_uri=prompt_uri,

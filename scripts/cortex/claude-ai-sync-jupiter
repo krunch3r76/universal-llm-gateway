@@ -16,6 +16,9 @@
 #     --require-loaded reasoning-posture
 #   scripts/cortex/claude-ai-sync-jupiter upload --slugs my-skill --continue-on-error
 #   scripts/cortex/claude-ai-sync-jupiter upload --slugs my-skill --replace --continue-on-error
+#   scripts/cortex/claude-ai-sync-jupiter dump-skills [--out PATH] [--download-only --chat-url …]
+#   scripts/cortex/claude-ai-sync-jupiter recon   # dump + 1:1 apply (uninstall/upload/replace)
+#   scripts/cortex/claude-ai-sync-jupiter recon --dry-run
 #   scripts/cortex/claude-ai-sync-jupiter upload --all --continue-on-error   # NEW slugs only
 #   # --all --replace is refused unless --force-replace-all (never the default)
 #   scripts/cortex/claude-ai-sync-jupiter uninstall --slugs retired-skill
@@ -83,7 +86,7 @@ usage() {
   sed -n '2,24p' "$0" | sed 's/^# \?//'
   echo ""
   echo "Commands: ensure-chrome | status | preflight | diagnose-upload-menu |"
-  echo "          loaded-skills | upload | uninstall |"
+  echo "          loaded-skills | dump-skills | recon | reconcile | upload | uninstall |"
   echo "          restore-connector | set-tool-permissions | refresh-connector |"
   echo "          project-chrome | project-ask |"
   echo "          register-lane | deregister-lane | list-lanes"
@@ -367,6 +370,33 @@ case "$cmd" in
     # skills. Customize --status alone does not prove a CSE bound the body.
     ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
     remote_py scripts/cortex/upload_claude_bundles_ui.py --loaded-skills "$@"
+    ;;
+  dump-skills)
+    # Cheap ordinary /chat/ code-exec zip of /mnt/skills. CSE submit refused.
+    ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
+    remote_py scripts/cortex/dump_claude_container_skills.py "$@"
+    ;;
+  recon)
+    # Dump /mnt/skills then apply catalog 1:1 (uninstall extras, upload missing,
+    # replace stale). --dry-run prints the plan and skips Playwright apply.
+    ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
+    dump_out="${REMOTE_REPO}/tmp/reviews/claude-skills-latest.zip"
+    dump_args=()
+    recon_apply=(--apply)
+    for a in "$@"; do
+      case "$a" in
+        --dry-run) recon_apply=(--dry-run) ;;
+        *) dump_args+=("$a") ;;
+      esac
+    done
+    remote_py scripts/cortex/dump_claude_container_skills.py --out "${dump_out}" "${dump_args[@]+"${dump_args[@]}"}"
+    remote_py scripts/cortex/reconcile_claude_user_skills.py --zip "${dump_out}" "${recon_apply[@]}"
+    ;;
+  reconcile)
+    # Apply 1:1 from an existing zip (no new dump). Default zip is the last recon dump.
+    ensure_chrome "${CDP_PORT}" "${PROFILE_SUFFIX}"
+    dump_out="${REMOTE_REPO}/tmp/reviews/claude-skills-latest.zip"
+    remote_py scripts/cortex/reconcile_claude_user_skills.py --zip "${dump_out}" --apply "$@"
     ;;
   upload)
     # Soft preflight BEFORE ensure_chrome: refuse --all --replace unless

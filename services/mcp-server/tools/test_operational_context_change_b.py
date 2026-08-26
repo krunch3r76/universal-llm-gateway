@@ -15,6 +15,7 @@ def test_change_b_drops_non_negotiable_register_label() -> None:
     assert "## Proactive Posture" in rendered
     assert "Non-Negotiable" not in rendered
     assert "Never ask for what's in Cortex" in rendered
+    assert "skill `ulg-for-llms`" in rendered
 
 
 def test_change_b_lead_seats_get_consensus_rule_zero() -> None:

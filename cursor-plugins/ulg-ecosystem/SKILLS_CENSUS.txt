@@ -39,6 +39,7 @@ residual-imprint
 satellite-workspace
 modularize-path
 teach-once-routine-mint
+ulg-for-llms
 work-item-seed-path
 # ULG leverage from any ecosystem workspace (MCP agent_bus / fs / boot / close).
 # ¬ hub-only. Satellite seats must discover these via the plugin.
