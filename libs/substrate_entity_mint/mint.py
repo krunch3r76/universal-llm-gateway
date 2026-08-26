@@ -16,8 +16,9 @@ from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
 _TIMEOUT = 30.0
 
 # Named params ``_op_entity_create`` consumes (excluding ``**extra`` aliases).
-ENTITY_CREATE_REQUIRED = ("id", "type", "name")
+ENTITY_CREATE_REQUIRED = ("type", "name")
 ENTITY_CREATE_OPTIONAL = (
+    "id",
     "description",
     "status",
     "workflow_state",
@@ -51,7 +52,7 @@ def resolve_create_slot(
 
 def mint_entity(
     *,
-    id: str,
+    id: str | None = None,
     type: str,
     name: str,
     description: str | None = None,
@@ -62,6 +63,7 @@ def mint_entity(
     attributes: dict[str, Any] | str | None = None,
     source_uri: str | None = None,
     content_hash: str | None = None,
+    duplicate_name_ok: bool | None = None,
     seat: str = "cursor-sdk",
     via_adapter: bool = True,
     surface: str = "code",
@@ -73,10 +75,11 @@ def mint_entity(
     exact-slug collision passes through.
     """
     arguments: dict[str, Any] = {
-        "id": id.strip(),
         "type": type.strip(),
         "name": name.strip(),
     }
+    if id is not None and id.strip():
+        arguments["id"] = id.strip()
     if description is not None:
         arguments["description"] = description
     if status is not None:
@@ -93,6 +96,8 @@ def mint_entity(
         arguments["source_uri"] = source_uri
     if content_hash is not None:
         arguments["content_hash"] = content_hash
+    if duplicate_name_ok is not None:
+        arguments["duplicate_name_ok"] = duplicate_name_ok
     body = {
         "tool": "entity_create",
         "arguments": json.dumps(arguments),

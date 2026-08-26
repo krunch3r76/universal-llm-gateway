@@ -60,7 +60,10 @@ entities
 └── created_at, updated_at: TEXT
 ```
 
-- **ID format:** `type:slug` (the database primary key).
+- **ID format:** `type:slug` (the database primary key). For referent types in
+  `MINTED_TYPES` (`person`, `organization`), the slug is a server-minted opaque
+  lowercase ULID; callers omit `id` at create and supply the display string in
+  `name`. All other types keep caller-designated slugs.
 - **URI format:** `cortex://type/slug[?r=N][&a=artifact]` (see §6).
 
 ### 2.1 Status-trait normalization (v2.5, Phase 0)
@@ -258,7 +261,7 @@ cortex://TYPE/SLUG[?r=REVISION][&a=ARTIFACT]
 | Component | Maps to | Required | Notes |
 |---|---|---|---|
 | `TYPE` | `entities.type` | yes | entity-type namespace |
-| `SLUG` | slug portion of `entities.id` | yes | with `TYPE`, resolves to `type:slug` |
+| `SLUG` | slug portion of `entities.id` | yes | with `TYPE`, resolves to `type:slug`; opaque ULID for minted referent types |
 | `r=N` | the Nth assertion on the entity (creation order) | no | revision pinning; omitted = current |
 | `a=ARTIFACT` | `assertions.artifact_uri` | no | dereferences to the payload |
 
@@ -268,6 +271,7 @@ Examples:
 cortex://decision/rag-noncode-indexing-phased-rollout
 cortex://decision/rag-noncode-indexing-phased-rollout?r=3
 cortex://person/ada-lovelace
+cortex://person/01k3mz8f4v9q2x7c5b6n8t1r3e
 cortex://assertion/847
 ```
 

@@ -4,6 +4,15 @@ from __future__ import annotations
 
 from fastapi import HTTPException, status
 
+from .entity_id_mint import MINTED_TYPES, is_minted_local_slug, is_minted_type
+
+__all__ = [
+    "MINTED_TYPES",
+    "canonicalize_entity_id",
+    "is_minted_local_slug",
+    "is_minted_type",
+]
+
 
 def canonicalize_entity_id(raw_id: str, entity_type: str) -> str:
     """Return ``type:slug`` form, canonicalizing bare slugs or rejecting mismatches."""

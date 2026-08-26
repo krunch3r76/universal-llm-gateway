@@ -142,7 +142,12 @@ def entity_create_preflight_errors(
     attributes: dict[str, Any] | str | None,
 ) -> list[dict[str, Any]]:
     """Top-level + todo density_triage checks before entity_create impl."""
-    errors = collect_missing_required({"id": id, "type": type, "name": name})
+    from ..entity_id_mint import is_minted_type
+
+    required: dict[str, object] = {"type": type, "name": name}
+    if not is_minted_type(str(type or "")):
+        required["id"] = id
+    errors = collect_missing_required(required)
     if type == "todo":
         from implement_admission.density_triage_create_gate import (
             format_implement_triage_unknown_reason,

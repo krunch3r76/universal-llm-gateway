@@ -56,11 +56,11 @@ class AliasRebuildReport:
 def live_alias_rows(conn: sqlite3.Connection) -> list[tuple[str, str, str]]:
     """Return ``(entity_id, entity_type, alias)`` rows for live entities only.
 
-    Excludes entities whose ``lifecycle`` is ``merged``, ``deprecated``, or
-    ``reaped``.  NULL ``lifecycle`` is the active default and is included.
-    Used by migration 056 backfill and migration 057 rebuild.
+    Includes ``entities.name`` (primary display label) unioned with JSON
+    ``aliases``.  Excludes entities whose ``lifecycle`` is ``merged``,
+    ``deprecated``, or ``reaped``.  NULL ``lifecycle`` is the active default.
     """
-    return [
+    alias_rows = [
         (str(row[0]), str(row[1]), str(row[2]))
         for row in conn.execute(
             f"""
@@ -78,6 +78,24 @@ def live_alias_rows(conn: sqlite3.Connection) -> list[tuple[str, str, str]]:
             """
         ).fetchall()
     ]
+    name_rows: list[tuple[str, str, str]] = []
+    try:
+        name_rows = [
+            (str(row[0]), str(row[1]), str(row[2]))
+            for row in conn.execute(
+                f"""
+                SELECT entities.id, entities.type, entities.name
+                FROM entities
+                WHERE entities.name IS NOT NULL
+                  AND trim(entities.name) != ''
+                  AND {_LIVE_LIFECYCLE_SQL}
+                """
+            ).fetchall()
+        ]
+    except sqlite3.OperationalError as exc:
+        if "no such column" not in str(exc):
+            raise
+    return alias_rows + name_rows
 
 
 def _duplicate_aliases(
@@ -118,15 +136,15 @@ def _duplicate_aliases(
 
 def _rows_for_backfill(
     rows: list[tuple[str, str, str]],
+    *,
+    resolve_cross_entity_collisions: bool = False,
 ) -> tuple[list[tuple[str, str, str]], list[dict[str, object]]]:
-    """Select the rows to insert, applying deterministic first-wins on collisions.
+    """Select rows to insert; hard-error on within-entity duplicate aliases.
 
-    Returns ``(selected_rows, residual_collisions)``.  Within-entity duplicate
-    aliases are a hard error (raises ``RuntimeError``).  Cross-entity collisions
-    on ``(entity_type, alias)`` are resolved by keeping the lexicographically
-    smallest ``entity_id`` (stable first-wins) and the dropped peers are
-    returned as structured ``residual_collisions`` for the caller to log or
-    surface — not silently discarded.
+    When ``resolve_cross_entity_collisions`` is True (migration 056 backfill
+    while ``UNIQUE (entity_type, alias)`` still holds), cross-entity collisions
+    resolve by lexicographically smallest ``entity_id`` (first-wins).  After
+    migration 075 the default keeps all rows for ambiguous lookup at read time.
     """
     duplicates = _duplicate_aliases(rows)
     within = [d for d in duplicates if d["kind"] == "within_entity"]
@@ -136,28 +154,40 @@ def _rows_for_backfill(
             f"collisions are resolved: {within[:20]}"
         )
 
-    by_pair: dict[tuple[str, str], list[tuple[str, str, str]]] = {}
-    for row in rows:
-        by_pair.setdefault((row[1], row[2]), []).append(row)
+    cross_collisions = [d for d in duplicates if d["kind"] == "cross_entity"]
+    if resolve_cross_entity_collisions:
+        by_pair: dict[tuple[str, str], list[tuple[str, str, str]]] = {}
+        for row in rows:
+            by_pair.setdefault((row[1], row[2]), []).append(row)
 
-    selected: list[tuple[str, str, str]] = []
-    collisions: list[dict[str, object]] = []
-    for (entity_type, alias), group in sorted(by_pair.items()):
-        entity_ids = sorted({row[0] for row in group})
-        if len(entity_ids) > 1:
-            winner = min(group, key=lambda row: row[0])
-            selected.append(winner)
-            collisions.append(
-                {
-                    "entity_type": entity_type,
-                    "alias": alias,
-                    "kept": winner[0],
-                    "dropped": [eid for eid in entity_ids if eid != winner[0]],
-                }
-            )
-        else:
-            selected.extend(group)
-    return selected, collisions
+        selected: list[tuple[str, str, str]] = []
+        collisions: list[dict[str, object]] = []
+        for (entity_type, alias), group in sorted(by_pair.items()):
+            entity_ids = sorted({row[0] for row in group})
+            if len(entity_ids) > 1:
+                winner = min(group, key=lambda row: row[0])
+                selected.append(winner)
+                collisions.append(
+                    {
+                        "entity_type": entity_type,
+                        "alias": alias,
+                        "kept": winner[0],
+                        "dropped": [eid for eid in entity_ids if eid != winner[0]],
+                    }
+                )
+            else:
+                selected.extend(group)
+        return selected, collisions
+
+    seen: set[tuple[str, str]] = set()
+    selected = []
+    for row in rows:
+        key = (row[0], row[2])
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append(row)
+    return selected, cross_collisions
 
 
 def rebuild_entity_aliases(conn: sqlite3.Connection) -> AliasRebuildReport:
@@ -176,25 +206,42 @@ def rebuild_entity_aliases(conn: sqlite3.Connection) -> AliasRebuildReport:
     return AliasRebuildReport(row_count=len(rows), residual_collisions=collisions)
 
 
+def _indexed_aliases(
+    name: str | None,
+    aliases: list[str] | None,
+) -> list[str]:
+    """Build ``[name] ∪ aliases`` with name first and within-list dedup."""
+    indexed: list[str] = []
+    if name and str(name).strip():
+        indexed.append(str(name).strip())
+    if aliases:
+        for alias in aliases:
+            text = str(alias).strip()
+            if text and text not in indexed:
+                indexed.append(text)
+    return indexed
+
+
 def sync_entity_aliases(
     conn: sqlite3.Connection,
     *,
     entity_id: str,
     entity_type: str,
-    aliases: list[str] | None,
+    name: str | None = None,
+    aliases: list[str] | None = None,
     lifecycle: str | None = None,
 ) -> None:
     """Replace the normalized alias rows for one entity.
 
-    Non-live entities (``lifecycle`` in ``_NON_LIVE_LIFECYCLE``) have their
-    rows cleared and no new rows are inserted, preventing tombstones from
-    holding alias slots after a lifecycle transition.
+    Indexes ``[name] ∪ aliases`` (name first).  Non-live entities have their
+    rows cleared and no new rows are inserted.
     """
     try:
         conn.execute("DELETE FROM entity_aliases WHERE entity_id = ?", (entity_id,))
-        if not aliases or lifecycle in _NON_LIVE_LIFECYCLE:
+        indexed = _indexed_aliases(name, aliases)
+        if not indexed or lifecycle in _NON_LIVE_LIFECYCLE:
             return
-        rows = [(entity_id, entity_type, alias) for alias in aliases]
+        rows = [(entity_id, entity_type, alias) for alias in indexed]
         conn.executemany(
             "INSERT INTO entity_aliases (entity_id, entity_type, alias) VALUES (?, ?, ?)",
             rows,
@@ -287,6 +334,13 @@ def resolve_entity_reference(
         )
     entity_ids = {str(row["entity_id"]) for row in rows}
     if len(entity_ids) > 1:
+        from .event_publisher import cortex_entity_alias_ambiguous
+
+        cortex_entity_alias_ambiguous(
+            ref=ref,
+            entity_type=type_hint or str(rows[0]["entity_type"]),
+            match_count=len(entity_ids),
+        )
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             {

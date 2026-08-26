@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from cortex_store.entity_id_mint import is_minted_type
 from mcp_events import record
 from substrate_entity_mint import mint_entity, resolve_create_slot
 
@@ -54,6 +55,7 @@ def _entity_mint_dispatch(
     lifecycle: str | None = None,
     adoption: str | None = None,
     density_triage: str | None = None,
+    duplicate_name_ok: bool | None = None,
 ) -> dict[str, Any]:
     """Validate + dispatch ``agent_bus.substrate_entity_mint``.
 
@@ -107,10 +109,11 @@ def _entity_mint_dispatch(
         return _reject("entity_mint_name_alias_conflict", message=name_err)
 
     if not resolved_id:
-        return _reject(
-            "entity_mint_id_required",
-            message="substrate_entity_mint: id is required (entity_id= alias accepted)",
-        )
+        if not is_minted_type(resolved_type or ""):
+            return _reject(
+                "entity_mint_id_required",
+                message="substrate_entity_mint: id is required (entity_id= alias accepted)",
+            )
     if not resolved_type:
         return _reject(
             "entity_mint_type_required",
@@ -134,6 +137,7 @@ def _entity_mint_dispatch(
         attributes=attributes,
         source_uri=source_uri,
         content_hash=content_hash,
+        duplicate_name_ok=duplicate_name_ok,
         seat="mcp",
         via_adapter=True,
         surface="code",

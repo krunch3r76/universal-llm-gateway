@@ -50,9 +50,10 @@ RetentionPolicy = Literal["permanent", "ephemeral", "archival"]
 
 
 class EntityCreate(_EntityCommon):
-    id: str
+    id: str | None = None
     type: str
     name: str
+    duplicate_name_ok: bool | None = None
     description: str | None = None
     status: EntityStatus | None = None
     workflow_state: str | None = None

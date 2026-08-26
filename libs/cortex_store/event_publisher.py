@@ -668,3 +668,110 @@ def cortex_view_rendered(
     )
     record(ev.signal, **ev.payload)
     return ev
+
+
+@event_factory
+def cortex_entity_id_minted(
+    entity_id: str,
+    entity_type: str,
+    mint: str,
+) -> Event:
+    """cortex.entity.id.minted — server mint on create for referent types."""
+    ev = Event(
+        signal="cortex.entity.id.minted",
+        role="observation",
+        scope="global",
+        payload={
+            "entity_id": entity_id,
+            "entity_type": entity_type,
+            "mint": mint,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
+def cortex_entity_name_changed(
+    entity_id: str,
+    prior_name: str,
+    name: str,
+    prior_name_retained: bool,
+) -> Event:
+    """cortex.entity.name.changed — authority transition on display name."""
+    ev = Event(
+        signal="cortex.entity.name.changed",
+        role="observation",
+        scope="global",
+        payload={
+            "entity_id": entity_id,
+            "prior_name": prior_name,
+            "name": name,
+            "prior_name_retained": prior_name_retained,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
+def cortex_entity_create_id_rejected(
+    entity_type: str,
+    supplied_id: str,
+    caller: str,
+) -> Event:
+    """cortex.entity.create.id_rejected — id supplied for a minted type."""
+    ev = Event(
+        signal="cortex.entity.create.id_rejected",
+        role="observation",
+        scope="global",
+        payload={
+            "entity_type": entity_type,
+            "supplied_id": supplied_id,
+            "caller": caller,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
+def cortex_entity_alias_ambiguous(
+    ref: str,
+    entity_type: str,
+    match_count: int,
+) -> Event:
+    """cortex.entity.alias.ambiguous — alias lookup matched multiple entities."""
+    ev = Event(
+        signal="cortex.entity.alias.ambiguous",
+        role="observation",
+        scope="global",
+        payload={
+            "ref": ref,
+            "entity_type": entity_type,
+            "match_count": match_count,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
+def cortex_entity_name_duplicate_rejected(
+    entity_type: str,
+    name: str,
+    existing_entity_id: str,
+) -> Event:
+    """cortex.entity.name.duplicate_rejected — near-duplicate name blocked at create."""
+    ev = Event(
+        signal="cortex.entity.name.duplicate_rejected",
+        role="observation",
+        scope="global",
+        payload={
+            "entity_type": entity_type,
+            "name": name,
+            "existing_entity_id": existing_entity_id,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev

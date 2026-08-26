@@ -544,24 +544,27 @@ def _op_entity_create(
         **({} if source_uri is None else {"source_uri": source_uri}),
         **({} if content_hash is None else {"content_hash": content_hash}),
     }
+    if extra.get("duplicate_name_ok") is not None:
+        payload["duplicate_name_ok"] = extra["duplicate_name_ok"]
     _create_entity_impl, _, _get_entity_impl, _, _ = _impls()
     write_nudge = None
-    try:
-        with cortex_conn() as conn:
-            write_nudge = build_entity_create_nudge(
-                conn,
-                entity_id=str(id),
-                entity_type=str(type),
-                name=str(name),
-                description=description,
+    if id:
+        try:
+            with cortex_conn() as conn:
+                write_nudge = build_entity_create_nudge(
+                    conn,
+                    entity_id=str(id),
+                    entity_type=str(type),
+                    name=str(name),
+                    description=description,
+                )
+        except Exception:  # noqa: BLE001 — advisory nudge must never block the create
+            logger.warning(
+                "build_entity_create_nudge failed for %s — proceeding without advisory",
+                id,
+                exc_info=True,
             )
-    except Exception:  # noqa: BLE001 — advisory nudge must never block the create
-        logger.warning(
-            "build_entity_create_nudge failed for %s — proceeding without advisory",
-            id,
-            exc_info=True,
-        )
-        write_nudge = None
+            write_nudge = None
     try:
         with cortex_conn() as conn:
             result = _create_entity_impl(conn, payload)
@@ -605,15 +608,16 @@ def _op_entity_create(
             },
         )
     if "error" not in result:
-        logger.info("cortex entity_create: %s (%s)", id, type)
-        record("mcp.cortex.entity.created", entity_id=id, entity_type=type)
+        created_id = str(result.get("id") or id or "")
+        logger.info("cortex entity_create: %s (%s)", created_id, type)
+        record("mcp.cortex.entity.created", entity_id=created_id, entity_type=type)
         if write_nudge:
             attach_write_discipline(result, write_nudge)
         try:
             with cortex_conn() as conn:
                 collision = check_entity_collision(
                     conn,
-                    entity_id=str(id),
+                    entity_id=created_id,
                     entity_type=str(type),
                     name=str(name),
                     description=description,
@@ -623,14 +627,14 @@ def _op_entity_create(
         except Exception:  # noqa: BLE001 — advisory warning must never block create
             logger.warning(
                 "entity_create collision_warning failed for %s — proceeding",
-                id,
+                created_id,
                 exc_info=True,
             )
         try:
             with cortex_conn() as conn:
                 birth_warning = check_endeavor_birth_incomplete(
                     conn,
-                    entity_id=str(id),
+                    entity_id=created_id,
                     entity_type=str(type),
                     attrs=attributes if isinstance(attributes, dict) else None,
                 )

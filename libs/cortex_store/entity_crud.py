@@ -32,10 +32,20 @@ from .entity_exhibit_lint import (
     enforce_exhibit_belongs_to,
     insert_exhibit_belongs_to_relationship,
 )
+from .entity_id_mint import (
+    check_duplicate_name,
+    is_minted_type,
+    mint_entity_id,
+    reject_minted_type_id_supplied,
+)
 from .entity_id_norm import canonicalize_entity_id
 from .entity_read import get_entity_impl
 from .entity_source_uri_write import normalize_create_write, normalize_update_write
-from .event_publisher import cortex_entity_source_changed
+from .event_publisher import (
+    cortex_entity_id_minted,
+    cortex_entity_name_changed,
+    cortex_entity_source_changed,
+)
 from .models import (
     EntityCreate,
     EntityDetail,
@@ -448,6 +458,24 @@ def update_entity_impl(
             updates = redirect_status_update_to_traits(conn, updates)
         updates = {k: v for k, v in updates.items() if k != "status"}
 
+    prior_name = prior.get("name")
+    name_changed = "name" in updates and updates["name"] != prior_name
+    prior_name_retained = False
+    if name_changed:
+        prior_aliases = prior.get("aliases")
+        alias_list = list(prior_aliases) if isinstance(prior_aliases, list) else []
+        if prior_name and str(prior_name) not in alias_list:
+            prior_name_retained = True
+            alias_list = [*alias_list, str(prior_name)]
+        if "aliases" in updates and isinstance(updates["aliases"], list):
+            for alias in updates["aliases"]:
+                text = str(alias)
+                if text not in alias_list:
+                    alias_list.append(text)
+            updates = {**updates, "aliases": alias_list}
+        elif prior_name_retained:
+            updates = {**updates, "aliases": alias_list}
+
     merged: dict[str, object] = dict(prior)
     for field, value in updates.items():
         if value is None:
@@ -532,18 +560,18 @@ def update_entity_impl(
     params.append(entity_id)
     conn.execute(f"UPDATE entities SET {', '.join(sets)} WHERE id = ?", tuple(params))
 
-    # Re-sync alias rows when aliases change OR when lifecycle changes. A
-    # lifecycle-only transition to a non-live value (merged/deprecated/reaped)
-    # must evict the entity's existing alias rows even with no "aliases" key in
-    # the update; sync_entity_aliases owns the live/non-live decision (the single
-    # shared rule per [universal:no-bc]).
-    if "aliases" in updates or "lifecycle" in updates:
-        aliases = updates["aliases"] if "aliases" in updates else prior.get("aliases")
+    # Re-sync alias rows when name, aliases, or lifecycle change. A lifecycle-only
+    # transition to a non-live value must evict alias rows even without an
+    # explicit aliases key; sync_entity_aliases owns the live/non-live decision.
+    if "name" in updates or "aliases" in updates or "lifecycle" in updates:
+        aliases_value = updates["aliases"] if "aliases" in updates else prior.get("aliases")
+        sync_name = updates["name"] if "name" in updates else prior.get("name")
         sync_entity_aliases(
             conn,
             entity_id=entity_id,
             entity_type=str(prior["type"]),
-            aliases=aliases if isinstance(aliases, list) else None,
+            name=str(sync_name) if sync_name is not None else None,
+            aliases=aliases_value if isinstance(aliases_value, list) else None,
             lifecycle=updates.get("lifecycle", prior.get("lifecycle")),
         )
 
@@ -593,17 +621,42 @@ def update_entity_impl(
 
         source_uri_emit = _deferred_source_emit
 
+    name_change_emit: Callable[[], None] | None = None
+    if name_changed:
+        _eid_nm = entity_id
+        _prior_nm = str(prior_name) if prior_name is not None else ""
+        _new_nm = str(updates.get("name", prior_name or ""))
+
+        def _deferred_name_emit(
+            _eid: str = _eid_nm,
+            _prior: str = _prior_nm,
+            _name: str = _new_nm,
+            _retained: bool = prior_name_retained,
+        ) -> None:
+            cortex_entity_name_changed(
+                entity_id=_eid,
+                prior_name=_prior,
+                name=_name,
+                prior_name_retained=_retained,
+            )
+
+        name_change_emit = _deferred_name_emit
+
     if commit:
         conn.commit()
         if closure_gap_emit is not None:
             closure_gap_emit()
         if source_uri_emit is not None:
             source_uri_emit()
+        if name_change_emit is not None:
+            name_change_emit()
     else:
         if closure_gap_emit is not None and post_commit_emits is not None:
             post_commit_emits.append(closure_gap_emit)
         if source_uri_emit is not None and post_commit_emits is not None:
             post_commit_emits.append(source_uri_emit)
+        if name_change_emit is not None and post_commit_emits is not None:
+            post_commit_emits.append(name_change_emit)
 
     if not commit:
         # Bulk callers (commit=False) discard the return value; avoid
@@ -722,7 +775,31 @@ def create_entity_impl(
         body = EntityCreate.model_validate(payload)
     except ValidationError as exc:
         raise entity_payload_validation_exception(exc) from exc
-    body = body.model_copy(update={"id": canonicalize_entity_id(body.id, body.type)})
+
+    minted_create = is_minted_type(body.type)
+    if minted_create:
+        if body.id is not None and str(body.id).strip():
+            reject_minted_type_id_supplied(body.type, str(body.id).strip())
+        check_duplicate_name(
+            conn,
+            entity_type=body.type,
+            name=body.name,
+            duplicate_name_ok=bool(body.duplicate_name_ok),
+        )
+        body = body.model_copy(update={"id": mint_entity_id(body.type)})
+    else:
+        if body.id is None or not str(body.id).strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": "missing_required_fields",
+                    "field": "id",
+                    "message": "id is required",
+                },
+            )
+        body = body.model_copy(
+            update={"id": canonicalize_entity_id(str(body.id), body.type)}
+        )
 
     body = normalize_create_write(
         body,
@@ -848,6 +925,7 @@ def create_entity_impl(
         conn,
         entity_id=body.id,
         entity_type=body.type,
+        name=body.name,
         aliases=body.aliases,
     )
     # Spec § 1.3 — auto-create the exhibit→case `belongs_to` row inside
@@ -861,6 +939,12 @@ def create_entity_impl(
         )
     if commit:
         conn.commit()
+        if minted_create:
+            cortex_entity_id_minted(
+                entity_id=body.id,
+                entity_type=body.type,
+                mint="ulid",
+            )
         if body.source_uri:
             # Refresh nudge for the RAG EntityAdmissionGate; backstop self-heals
             # if this races a deferred commit (commit=False callers are covered
