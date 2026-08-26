@@ -19,7 +19,6 @@ related_skills:
   - consult-routing
   - bind-then-compose-dispatch
   - reasoning-posture
-  - ulg-for-llms
   - judgment-escalation-ladder
   - life-operator-do-chain
 ---
@@ -29,8 +28,7 @@ related_skills:
 **Conductor** = the cursor-sdk seat that **operates** a continuity root (or its
 work child) **to completion**: owns the scoreboard, nests specialist legs,
 lands its own verified work, and pages the human only for true operator-only
-gates. This is how models finish together on one graph after the lid closes
-(skill `ulg-for-llms`).
+gates.
 
 **Do-chain vocabulary** (hop product SOT: `life-operator-do-chain`):
 
@@ -115,14 +113,6 @@ per-G-row one. Default posture once running:
   G-row starts — zero files touched, nothing nested — is the same violation
   as skipping straight to a merge ask (refuse-and-close, incident 7419;
   distinct from absorb, incident 7407, which hand-codes instead of nesting).
-- **After-ship `cdp/opus-5` session/work review is recommended, not a hold.**
-  On green land, fire `team_dispatch(model=cdp/opus-5, purpose=review)` in
-  the background (`consult-routing` § CDP transport). Latency is not a skip
-  on this seat. Defer only when the harvest would block the next *attended*
-  move — and name the deferral. Does not replace path-sim R-after (Grok).
-  **Scoreboard default:** Mission Composer comments this overlay on the
-  scoreboard at mint (Sidecars / WIP — **¬** a gated G-row; done-claim must
-  not wait on it). Template: `cortex://notes/system/templates/charter-scoreboard.md`.
 
 ## When
 
@@ -216,10 +206,6 @@ Required in `<scope>` / `<invariants>`:
   specific hold-merge exception in this same list
 - **Bound conductor model + effort** (or "lead picks at admit from tier table")
 - **G-row contract honesty** — do not mark a G-row light-bounded-direct / `owner: cursor-sdk` when `files_expected` includes production code+tests. Conductor binds; Composer implements.
-- **Scoreboard overlay (good default)** — after the last landed code G-row,
-  comment `cdp/opus-5` `purpose=review` of the landed diff as recommended
-  background review. Record fire or named deferral in Sidecars / WIP.
-  **¬** mint it as a gated G-row (done-claim must not wait on it).
 
 Continuity sidecar during run: `cortex://notes/system/threads/{root}-conductor.md`
 (G-row table, nested `execution_id`s, `NEXT_ADMIT`, judgment calls) — same shape
@@ -386,8 +372,7 @@ only in this skill file. Further fixes fold under
 Command `/conductor` (plugin): orient → ask establishing questions (incl. **model
 tier**; checkout regime pre-filled **Lane B**, confirm or override to Lane A) →
 draft charter/scoreboard/packet → confirm → admit. Skill body does not re-ask
-when the operator already bound the answers in chat. Scoreboard mint includes
-the after-ship `cdp/opus-5` review comment (good default; ¬ a G-row).
+when the operator already bound the answers in chat.
 
 ## Composes with
 

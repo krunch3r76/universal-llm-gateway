@@ -199,9 +199,8 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     refuse_if_lease_held: bool = False
     prompt_turn_number: int | None = None
     prompt_bind_mode: str | None = None
-    # CDP registry / mission tag (model=cdp/… only). Omitted → infer
-    # (sonnet → produce, else ask). operator-proxy|mission triggers
-    # skill-chip inject on the satellite.
+    # CDP registry / mission tag (model=cdp/… only). Default ask when omitted;
+    # operator-proxy|mission triggers skill-chip inject on the satellite.
     purpose: str | None = None
     # Chrome-host lineage (model=cdp/… only). Distinct from purpose retain tag.
     mission_kind: str | None = None

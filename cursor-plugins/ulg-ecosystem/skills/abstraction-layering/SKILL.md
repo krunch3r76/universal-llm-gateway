@@ -48,11 +48,8 @@ execution moves to conductor CHECKPOINTs, score journal, and nested Composer G5.
 ## Invariant
 
 `∀ layering:` high abstraction → low concreteness; inherit binds above; ¬ re-reason
-closed layers. `Fable CDP → Fable followup frame (or Opus if G1 was not Fable) →
-Grok densify → optional explicit Other Models check → Composer → verify`.
-No standing path-sim R-windows. G6 = mechanical verify. After-ship
-`cdp/opus-5` session/work review is **optional, recommended** (§ After-ship)
-— not a G-row and not silent Terra G4. Keep path-sim Q≠R.
+closed layers. `Fable CDP → Opus frame → Grok densify → GPT check → Composer → verify`.
+No standing R-admit/R-after. G6 = mechanical verify.
 
 ## When
 
@@ -116,7 +113,7 @@ Tick recognizes `[GR]\d+` only — layer names never replace G-ordinals in Steps
 | G | Layer | Seat | Token | Exit |
 |---|---|---|---|---|
 | 1 | Architecture | Fable/wide CDP · **arch skill floor** | `[consult:judgment_gap]` | `fable-answer.md` |
-| 2 | Frame | **Fable followup** in the G1 CSE · else `cdp/opus-5` fresh · **inherit arch floor** | `[consult:judgment_gap]` | `opus-grok-instructions.md` ≤120L |
+| 2 | Frame | Opus · **inherit arch floor** (¬ “skills optional”) | `[consult:judgment_gap]` | `opus-grok-instructions.md` ≤120L |
 | 3 | Densify | `cursor/grok-4.6` @ `effort=xhigh`, `fast=false` | `[judgment]` | `specs/{slug}.md` + Gate-2 |
 | 4 | Check | **Explicit Other Models pin only** (e.g. Terra). Default **skip** (G3→G5). `cursor/claude-fable-5` blocked (cost). | `[judgment]` | check sidecar |
 | 5 | Implement | `cursor/composer-2.5` | `[implement]` | code + quality gate |
@@ -132,20 +129,23 @@ densify. Under-primed G1/G2 → densify hardens the wrong shape.
 | **G1 (incl. default Fable)** | **Always** for ULG codebase layer work: sealed delivery of **`architecture-invariants` ∧ `ulg-architecture`**. Prefer Customize attach for Claude-slug skills; **non-slugs / cursor_only must be inlined**. URI-cite alone ≠ delivery. Judgment chips (`reasoning-posture`) **do not substitute** for the arch pair. **Halt** if floor missing. Compose `claude-ai-cdp-navigation` § Skill delivery. |
 | **G2** | Frame instructions inherit the G1 floor (and cite it). “Minimal `skills=`” means **minimal beyond the arch floor** — ¬ license stripping `architecture-invariants` / `ulg-architecture`. When frame touches placement/hosting, keep `[ulg:host-process]` inline. |
 
-#### Fable / CDP G1 admit (BINDING)
+#### Fable / CDP G1 lead preflight (BINDING — ulg-architecture check)
 
-Staging `purpose=ask` owns the arch-pair floor (`consult-routing` § CDP transport).
-Lead duty is the S3 recipe + same-turn admit — not a preflight checklist.
+Before `team_dispatch(model=cdp/fable|cdp/opus-5)` (or warm CSE followup) for G1 / Mode B
+architecture:
 
-1. Copy `work-item-seed-path` § S3 Fable generate recipe (live-CSE followup vs
-   fresh `team_dispatch(purpose=ask)`). **¬** reconstruct `skills=`.
-2. Same turn: admit with quoted `execution_id`+`poll_hint` (or followup admit)
-   **or** honest halt.
+1. Compose packet with arch pair inlined or Customize-attached.
+2. **Check:** confirm `ulg-architecture` is present in the sealed prompt **or** attested
+   session-skill membership (not merely listed in todo `required_skills` / chat).
+3. **Generate kwargs:** copy `work-item-seed-path` § S3 Fable generate recipe
+   (live-CSE followup vs fresh `team_dispatch`). **¬** reconstruct; **¬** a second
+   copy of that block in this skill.
+4. Same turn: admit with quoted `execution_id`+`poll_hint` (or followup admit) **or**
+   honest halt naming missing skill floor.
 
-**G2:** followup into the G1 CSE (`cse_session(op=followup)`). Fresh `cdp/opus-5`
-only when G1 ran on a live operator-proxy CSE that is not Fable. Keep path-sim
-Q≠R — that split is independence-bearing. Falsifier: a recorded G2-contradicts-G1
-case ⇒ keep a fresh Opus G2.
+**Falsifier:** Fable G1 fires with only judgment skills / empty arch inline → protocol
+defect (same class as announce-without-admit). Observed gap: Fable often got judgment
+chips without `ulg-architecture` — this check closes it.
 
 Same fail-closed class as `/modularize` M-Arch (`modularize-path` § Skill delivery floor).
 
@@ -157,8 +157,6 @@ When G4 is pinned, it owes **family** diversity from G3 Densify
 (`family(G3) ≠ family(G4)`). When G4 is unpinned, default auto-advance is G3→G5;
 family diversity is already G1 Fable vs G3 Grok. ``LAYER_G4_SEAT`` is the model
 **when** G4 is named, not a silent fire. Unpinned admission source: ``g4_unpinned``.
-Dropping silent Terra G4 loses a **third-family spec check** (OpenAI vs Grok G3),
-not session/code-change review — that slot is the after-ship overlay below.
 
 Web corpus: `cortex://` only.
 
@@ -223,8 +221,8 @@ Tier-1 → `cortex://notes/system/recon/{slug}/tier1-anchors.md`.
    envelope **R1** (semantic locator: registry URI + row id; ¬ row sha — W7); ¬ restate envelope vocabulary.
    **Exit also stamps** the architecture-consult document + `derived_from` edge (§ Stage 0 attach)
    before G1→2 — that edge is the standing skip signal for later `/layer` entry.
-2. **G2** — Fable followup in the G1 CSE (else Opus fresh) → densifier instructions
-   ≤120L; ¬ dense spec. **Inherit arch skill floor**.
+2. **G2** — Opus → densifier instructions ≤120L; ¬ dense spec. **Inherit arch skill floor**
+   (minimal beyond floor — ¬ strip `architecture-invariants` / `ulg-architecture`).
 3. **G3** — Grok dense spec; Gate-2 (`doc_validate`, attrs, `implement_ready`, STOP).
    **VISION-ALIGN emit (Gate-2):** when `density_triage = judgment_required` ∨
    `files_expected ∩ surface-glob-table ≠ ∅` (table in
@@ -259,34 +257,13 @@ architecture re-opens · ≥2 rivals · invariant/cross-agent · failure ≥2×.
 G1→2 is **advise-only** — judgment content, no validator (`decision:verifier-detent`;
 envelope advise-vs-reject). G3→4 / G5→6 keep their reject-mode checkers.
 
-### After-ship CDP Opus review (optional, recommended)
-
-`cdp/opus-5` is the recommended **session / work review** of landed code
-(`purpose=review`). It is **not** G4 (pre-ship spec check) and **not** G6
-(mechanical verify — `¬ G6 review consult` still binds). Fire after G5∩G6
-when the change was judgment-bearing or cross-cutting.
-
-| Posture | Do |
-|---|---|
-| Background / conductor / unattended | **Recommend fire** — latency is not a skip. `team_dispatch(model=cdp/opus-5, purpose=review)` + staged diff/closeout |
-| Attended, next move would wait on the harvest | **Defer** (name it on the closeout). Slow is a sequencing reason, not a quality reason |
-| Checkout-native delivery scan still owed | Path-sim R-after stays `cursor/grok-4.6` — this overlay does not replace it |
-
-Recipe: `consult-routing` § CDP transport row **Session / work review**.
-
-**Scoreboard default:** at mint, comment this overlay on the scoreboard
-(Sidecars / WIP — **¬** a gated G-row; done-claim must not wait on it).
-Template: `cortex://notes/system/templates/charter-scoreboard.md` · L3
-CHECKPOINT State line.
-
 ## Tick enrollment
 
 Scoreboard → todo attrs → CHECKPOINT on `layer-{slug}` + `enroll_charter_runner=true`.
 Attended default (leave `attendance` unset); `attendance=autonomous` allowed with
 `arc_lane=layer` (recommended) or unset (defaults layer). Stamp `arc_lane=path_sim`
 only for deepen / non-layer arcs. Annotate every G-row. Template + mechanics:
-L3 `tick-enrollment-annex.md`. Scoreboard / CHECKPOINT State carry the
-after-ship `cdp/opus-5` review comment as a **good default** (not a G-row).
+L3 `tick-enrollment-annex.md`.
 
 ## Forbidden / anti-patterns
 
@@ -296,9 +273,9 @@ after-ship `cdp/opus-5` review comment as a **good default** (not a G-row).
 implements · ¬ G6 review consult · frame >120L · bare tick w/o G-rows ·
 ¬ claim G1 closed from chat inform / sidecar path alone without `derived_from` →
 `consult_kind=architecture` document · ¬ mint a second Fable G1 when that edge already
-resolves · ¬ Fable/Opus G1 without `purpose=ask` (staging owns the arch pair) ≺ densify ·
-¬ reconstruct G1 `team_dispatch` kwargs (cite `work-item-seed-path` § S3).
-¬ fresh Opus G2 when a Fable G1 CSE is live (followup first).
+resolves · ¬ Fable/Opus G1 without `architecture-invariants` ∧ `ulg-architecture` sealed
+(URI-only / judgment-chips-only / announce-only) ≺ densify · ¬ reconstruct G1
+`team_dispatch` kwargs (cite `work-item-seed-path` § S3 Fable generate recipe).
 
 ## Conformance
 
