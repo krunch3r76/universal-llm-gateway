@@ -112,8 +112,9 @@ def test_result_from_snapshot_failed_unknown_is_observer_unverified() -> None:
         snapshot={
             "status": "failed",
             "stall_stage": "unknown",
-            "error": "model select failed: picker",
+            "error": "wait_assistant_reply timed out",
             "url": "https://claude.ai/cowork/cse_abc",
+            "satellite_execution_id": "sat-uv",
         },
         execution_id="exec-uv",
         satellite_execution_id="sat-uv",
@@ -378,9 +379,16 @@ async def test_delivery_fail_no_reproof(
 
 
 def test_classify_horizon_probe() -> None:
+    cse = "https://claude.ai/cowork/cse_horizon"
     assert reconcile.classify_horizon_probe(_running_snapshot()) == "alive"
     assert (
         reconcile.classify_horizon_probe({"status": "failed", "error": "boom"})
+        == "confirmed_dead"
+    )
+    assert (
+        reconcile.classify_horizon_probe(
+            {"status": "failed", "error": "boom", "url": cse}
+        )
         == "unverifiable"
     )
     assert (
@@ -394,6 +402,17 @@ def test_classify_horizon_probe() -> None:
         == "confirmed_dead"
     )
     assert (
+        reconcile.classify_horizon_probe(
+            {
+                "status": "failed",
+                "stall_stage": "weekly_limit",
+                "error": "hit a limit",
+                "url": cse,
+            }
+        )
+        == "confirmed_dead"
+    )
+    assert (
         reconcile.classify_horizon_probe({"status": "aborted", "error": "aborted"})
         == "confirmed_dead"
     )
@@ -401,7 +420,7 @@ def test_classify_horizon_probe() -> None:
         reconcile.classify_horizon_probe(
             {"status": "failed", "stall_stage": "observer_unverified"}
         )
-        == "unverifiable"
+        == "confirmed_dead"
     )
     assert reconcile.classify_horizon_probe({"error": "unreachable"}) == "unverifiable"
     assert reconcile.classify_horizon_probe(None) == "unverifiable"

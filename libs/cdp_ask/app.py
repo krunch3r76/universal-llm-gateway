@@ -421,6 +421,11 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             raise HTTPException(404, f"unknown execution_id: {execution_id}")
         payload = record.result or {}
         live = record.status == "running"
+        from claude_bundles import cdp_registry
+
+        url = payload.get("url") or cdp_registry.chat_url_for_registration(
+            record.registration_id
+        )
         return ExecutionPollResponse(
             execution_id=record.execution_id,
             status=record.status,
@@ -429,7 +434,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             archive_uri=payload.get("archive_uri"),
             body=payload.get("body"),
             body_len=payload.get("body_len"),
-            url=payload.get("url"),
+            url=url,
             project_uuid=payload.get("project_uuid"),
             project_url=payload.get("project_url"),
             model=payload.get("model"),

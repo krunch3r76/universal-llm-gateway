@@ -12,6 +12,7 @@ UNVERIFIABLE_STALL_STAGES = frozenset(
         "horizon_unverifiable_retained",
         "reconcile_abandoned_unverifiable",
         "archive_write",
+        "post_terminal_poll",
     }
 )
 
@@ -22,10 +23,14 @@ DEATH_STALL_STAGES = frozenset(
         "worker_cancelled",
         "mark_terminal",
         "completion_detection",
+        "no_progress",
+        "wall_clock_exceeded",
     }
 )
 
 _CSE_URL_MARKER = "claude.ai/cowork/cse_"
+
+_UNSET = object()
 
 _DEATH_ERROR_TOKENS = (
     "weekly limit",
@@ -40,18 +45,26 @@ _DEATH_ERROR_TOKENS = (
 
 
 def is_unverifiable_stall(
-    stall_stage: str | None, error: str | None = None
+    stall_stage: str | None,
+    error: str | None = None,
+    *,
+    url: str | None = None,
+    satellite_execution_id: Any = _UNSET,
 ) -> bool:
-    """True when a failed snapshot is observer-unverifiable, not CSE death."""
+    """True when a failed snapshot is observer-unverifiable, not CSE death.
+
+    Requires compose witness (``cse_`` in *url*) after death-stage/token gates.
+    Explicit ``satellite_execution_id=None`` means pre-submit death (``cdp FAILED``).
+    """
     stage = (stall_stage or "").strip()
     if stage in DEATH_STALL_STAGES:
         return False
-    if stage in UNVERIFIABLE_STALL_STAGES:
-        return True
     err = (error or "").lower()
     if any(token in err for token in _DEATH_ERROR_TOKENS):
         return False
-    return stage in {"", "unknown"}
+    if satellite_execution_id is not _UNSET and satellite_execution_id is None:
+        return False
+    return _CSE_URL_MARKER in str(url or "")
 
 
 def converse_fail_error(last_error: str | None) -> str:
@@ -72,15 +85,44 @@ def converse_stall_stage(
     return stall
 
 
+def transport_miss_fields(
+    error: str | None,
+    url: str | None,
+    satellite_execution_id: Any = _UNSET,
+) -> dict[str, Any]:
+    """Project a poller transport-miss onto stall, retain, and envelope extras."""
+    unverifiable = is_unverifiable_stall(
+        None,
+        error,
+        url=url,
+        satellite_execution_id=satellite_execution_id,
+    )
+    extras: dict[str, Any] = {}
+    raw = str(url or "").strip()
+    if raw and _CSE_URL_MARKER in raw:
+        extras["chat_url"] = raw
+    return {
+        "stall_stage": "observer_unverified",
+        "error": str(error or ""),
+        "unverifiable": unverifiable,
+        "retain_reason": "observer_unverified" if unverifiable else None,
+        "extras": extras,
+    }
+
+
 def failed_snapshot_fields(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Project a failed satellite snapshot onto stall, error, and extras."""
     stall = snapshot.get("stall_stage")
     error = str(snapshot.get("error") or snapshot.get("status") or "")
-    unverifiable = is_unverifiable_stall(stall, error)
+    url = snapshot.get("url")
+    sat_kw: dict[str, Any] = {}
+    if "satellite_execution_id" in snapshot:
+        sat_kw["satellite_execution_id"] = snapshot.get("satellite_execution_id")
+    unverifiable = is_unverifiable_stall(stall, error, url=url, **sat_kw)
     if unverifiable and (not stall or stall == "unknown"):
         stall = "observer_unverified"
     extras: dict[str, Any] = {}
-    raw = str(snapshot.get("url") or "").strip()
+    raw = str(url or "").strip()
     if raw and _CSE_URL_MARKER in raw:
         extras["chat_url"] = raw
     return {

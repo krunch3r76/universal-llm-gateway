@@ -16,7 +16,11 @@ from typing import Any, Literal
 import httpx
 from cdp_ask.client import CdpAskClient, CdpAskClientError, project_ask_base_url
 from cdp_ask.models import SubmitProjectAskRequest
-from cdp_ask.unverifiable import failed_snapshot_fields
+from cdp_ask.unverifiable import (
+    _CSE_URL_MARKER,
+    failed_snapshot_fields,
+    transport_miss_fields,
+)
 
 from claude_bundles.cdp_model_endpoint_staging import (
     CdpStagingError,
@@ -200,10 +204,14 @@ class _ProofCarry:
     archive_uri: str | None = None
     content_proof_uri: str | None = None
     content_proof_sha256: str | None = None
+    url: str | None = None
 
     def absorb_status_snapshot(self, snapshot: dict[str, Any]) -> None:
         if "status" not in snapshot:
             return
+        snap_url = str(snapshot.get("url") or "")
+        if _CSE_URL_MARKER in snap_url:
+            self.url = snap_url
         uri = snapshot.get("archive_uri")
         if uri is not None:
             self.archive_uri = uri
@@ -730,28 +738,22 @@ def run_cdp_generate(
                 if mission_retain:
                     last_progress_at = clock()
                     continue
-                abort_info = _abort_then_sweep(
-                    sat_id, execution_id, ask_client=relay, client=client
-                )
                 since_last_progress_s = clock() - last_progress_at
+                fields = transport_miss_fields(
+                    str(snapshot.get("error")), proof_carry.url, satellite_execution_id=sat_id
+                )
+                abort_info = _abort_then_sweep(
+                    sat_id, execution_id, ask_client=relay, client=client,
+                    retain_cse=bool(fields["unverifiable"]) or mission_retain,
+                    retain_reason="operator_proxy_cse_retain" if mission_retain else fields["retain_reason"],
+                )
                 return CdpGenerateResult(
-                    ok=False,
-                    body="",
-                    execution_id=execution_id,
-                    satellite_execution_id=sat_id,
-                    prompt_uri=staged.prompt_uri,
-                    picker_model=picker,
-                    stall_stage="no_progress",
-                    error=str(snapshot.get("error")),
-                    poll_snapshots=polls,
-                    extras={
-                        "abort": abort_info,
-                        "since_last_progress_s": since_last_progress_s,
-                        "progress_trace": trace.as_dict(
-                            now_s=clock() - trace_started,
-                            no_progress_s=no_progress_s,
-                        ),
-                    },
+                    ok=False, body="", execution_id=execution_id, satellite_execution_id=sat_id,
+                    prompt_uri=staged.prompt_uri, picker_model=picker,
+                    stall_stage=fields["stall_stage"], error=fields["error"], poll_snapshots=polls,
+                    extras={"abort": abort_info, "since_last_progress_s": since_last_progress_s,
+                            "progress_trace": trace.as_dict(now_s=clock()-trace_started, no_progress_s=no_progress_s),
+                            **fields["extras"]},
                     **proof_carry.as_result_fields(),
                 )
             continue

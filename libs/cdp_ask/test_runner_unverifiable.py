@@ -55,6 +55,47 @@ async def test_run_execution_preserves_inner_error_and_skips_deregister() -> Non
             "cdp_ask.runner.run_project_conversation",
             new=AsyncMock(
                 return_value=[
+                    _fail_result(
+                        url=cse, error="wait_assistant_reply timed out after 120s"
+                    )
+                ]
+            ),
+        ),
+        patch("cdp_ask.runner.deregister_on_exit", deregister),
+        patch("cdp_ask.runner.registration_has_wake_debt", return_value=False),
+        patch("cdp_ask.runner.cdp_registry.bind_session_address"),
+        patch("cdp_ask.runner._wake_debt_extras", return_value={}),
+    ):
+        payload = await run_execution(
+            SubmitProjectAskRequest(
+                prompt_text="ping",
+                converse=True,
+                no_project_uuid=True,
+                purpose="review",
+            ),
+            execution_id="sat-1",
+            abort_check=AsyncMock(return_value=False),
+        )
+    assert payload["ok"] is False
+    assert "timed out" in payload["error"]
+    assert payload["stall_stage"] == "observer_unverified"
+    assert payload["url"] == cse
+    deregister.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_execution_model_select_failed_deregisters() -> None:
+    reg = MagicMock()
+    reg.registration_id = "reg-review"
+    reg.cdp_url = "http://127.0.0.1:9222"
+    deregister = MagicMock()
+    cse = "https://claude.ai/cowork/cse_abc"
+    with (
+        patch("cdp_ask.runner.bind_execution_lane", return_value=reg),
+        patch(
+            "cdp_ask.runner.run_project_conversation",
+            new=AsyncMock(
+                return_value=[
                     _fail_result(url=cse, error="model select failed: picker")
                 ]
             ),
@@ -76,6 +117,4 @@ async def test_run_execution_preserves_inner_error_and_skips_deregister() -> Non
         )
     assert payload["ok"] is False
     assert payload["error"] == "model select failed: picker"
-    assert payload["stall_stage"] == "observer_unverified"
-    assert payload["url"] == cse
-    deregister.assert_not_called()
+    deregister.assert_called_once()

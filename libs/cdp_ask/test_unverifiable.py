@@ -6,10 +6,12 @@ import pytest
 
 from cdp_ask.models import classify_stall_stage
 from cdp_ask.unverifiable import (
+    DEATH_STALL_STAGES,
     converse_fail_error,
     converse_stall_stage,
     failed_snapshot_fields,
     is_unverifiable_stall,
+    transport_miss_fields,
 )
 
 pytestmark = pytest.mark.offline
@@ -34,12 +36,15 @@ def test_classify_conversation_failed_token() -> None:
 
 
 def test_is_unverifiable_stall_death_vs_observer() -> None:
-    assert is_unverifiable_stall("observer_unverified") is True
-    assert is_unverifiable_stall("unknown", "model select failed") is True
+    cse = "https://claude.ai/cowork/cse_abc"
+    assert is_unverifiable_stall("observer_unverified", url=cse) is True
+    assert is_unverifiable_stall("unknown", "model select failed") is False
+    assert is_unverifiable_stall("unknown", "wait timed out", url=cse) is True
     assert is_unverifiable_stall("weekly_limit") is False
     assert is_unverifiable_stall("unknown", "aborted") is False
-    assert is_unverifiable_stall("archive_write") is True
+    assert is_unverifiable_stall("archive_write", url=cse) is True
     assert is_unverifiable_stall("completion_detection") is False
+    assert is_unverifiable_stall("unknown", url=cse, satellite_execution_id=None) is False
 
 
 def test_failed_snapshot_fields_coerces_unknown() -> None:
@@ -47,8 +52,9 @@ def test_failed_snapshot_fields_coerces_unknown() -> None:
         {
             "status": "failed",
             "stall_stage": "unknown",
-            "error": "model select failed: x",
+            "error": "wait_assistant_reply timed out",
             "url": "https://claude.ai/cowork/cse_abc",
+            "satellite_execution_id": "sat-1",
         }
     )
     assert fields["unverifiable"] is True
@@ -67,3 +73,17 @@ def test_failed_snapshot_fields_skips_new_as_chat_url() -> None:
         }
     )
     assert fields["extras"] == {}
+    assert fields["unverifiable"] is False
+
+
+def test_transport_miss_fields_witness() -> None:
+    cse = "https://claude.ai/cowork/cse_x"
+    fields = transport_miss_fields("connection reset", cse, satellite_execution_id="sat")
+    assert fields["stall_stage"] == "observer_unverified"
+    assert fields["unverifiable"] is True
+    assert fields["extras"]["chat_url"] == cse
+
+
+def test_no_progress_in_death_stages() -> None:
+    assert "no_progress" in DEATH_STALL_STAGES
+    assert "wall_clock_exceeded" in DEATH_STALL_STAGES

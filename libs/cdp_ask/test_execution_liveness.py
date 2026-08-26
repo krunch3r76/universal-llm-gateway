@@ -207,3 +207,60 @@ async def test_abort_retain_idle_running_execution_terminalizes(
     sleeper.cancel()
     with pytest.raises(asyncio.CancelledError):
         await sleeper
+
+
+@pytest.mark.asyncio
+async def test_poll_execution_url_from_registry_when_unbound(
+    store: ExecutionStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC6 — running poll resolves chat_url from registry when payload lacks url."""
+    cse = "https://claude.ai/cowork/cse_poll"
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.chat_url_for_registration",
+        lambda rid: cse if rid == "reg-cse" else None,
+    )
+    record = await store.create(holder="test", purpose="ask")
+    await store.set_registration_id(record.execution_id, "reg-cse")
+    client = TestClient(create_app(store=store))
+    live = client.get(f"/v1/project-ask/executions/{record.execution_id}").json()
+    assert live["url"] == cse
+
+
+@pytest.mark.asyncio
+async def test_poll_execution_terminal_payload_url_wins(
+    store: ExecutionStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC6 — terminal payload url wins over registry fallback."""
+    terminal_url = "https://claude.ai/cowork/cse_terminal"
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.chat_url_for_registration",
+        lambda _rid: "https://claude.ai/cowork/cse_registry",
+    )
+    record = await store.create(holder="test", purpose="ask")
+    await store.set_registration_id(record.execution_id, "reg-cse")
+    await store.mark_terminal(
+        record.execution_id,
+        status="failed",
+        error="boom",
+        result={"url": terminal_url},
+    )
+    client = TestClient(create_app(store=store))
+    done = client.get(f"/v1/project-ask/executions/{record.execution_id}").json()
+    assert done["url"] == terminal_url
+
+
+@pytest.mark.asyncio
+async def test_poll_execution_url_none_without_registry(
+    store: ExecutionStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = await store.create(holder="test", purpose="ask")
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.chat_url_for_registration",
+        lambda _rid: None,
+    )
+    client = TestClient(create_app(store=store))
+    live = client.get(f"/v1/project-ask/executions/{record.execution_id}").json()
+    assert live.get("url") is None

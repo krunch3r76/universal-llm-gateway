@@ -692,6 +692,9 @@ def test_has_proof_accepts_specimen_when_cards_resolved() -> None:
 def test_run_cdp_generate_stall_no_progress(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    from cdp_ask.unverifiable import DEATH_STALL_STAGES
+    from systems.frontier_consult.cdp_generate_worker import cdp_result_unverified
+
     _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-3")
     perpetual = {
         "execution_id": "sat-3",
@@ -732,6 +735,15 @@ def test_run_cdp_generate_stall_no_progress(
     assert result.ok is False
     assert result.stall_stage == "no_progress"
     assert result.stall_stage != "wall_clock_exceeded"
+    from dataclasses import replace
+
+    assert "no_progress" in DEATH_STALL_STAGES
+    assert not (result.extras or {}).get("abort", {}).get("retain_cse")
+    injected = replace(
+        result,
+        extras={**(result.extras or {}), "chat_url": "https://claude.ai/cowork/cse_x"},
+    )
+    assert cdp_result_unverified(injected) is False
 
 
 def test_run_cdp_generate_post_idle_wall_since_last_progress(
@@ -1235,21 +1247,26 @@ def test_run_cdp_generate_mission_overload_retain_cse(
 def test_run_cdp_generate_unverifiable_stall_skips_abort(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """a:30678 — compose-attest fail is retain + observer_unverified, not Stop-click."""
+    """a:30678 — post-send transport miss with cse witness retains, not Stop-click."""
+    from systems.frontier_consult.cdp_generate_worker import cdp_result_subject
+
     _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-unverified")
     cse = "https://claude.ai/cowork/cse_abc"
+    running = {
+        "execution_id": "sat-uv",
+        "status": "running",
+        "completion_phase": "running",
+        "body_len": 1,
+        "url": cse,
+    }
     client = _FakeClient(
         [
             {"execution_id": "sat-uv", "status": "running"},
-            {
-                "execution_id": "sat-uv",
-                "status": "failed",
-                "stall_stage": "unknown",
-                "error": "model select failed: picker",
-                "url": cse,
-            },
+            running,
+            {"error": "connection reset"},
         ]
     )
+    clock = {"t": 0.0}
     retain_calls: list[tuple[bool, str | None]] = []
     from claude_bundles import cdp_model_endpoint as mod
 
@@ -1262,20 +1279,134 @@ def test_run_cdp_generate_unverifiable_stall_skips_abort(
         return orig(*args, **kwargs)
 
     monkeypatch.setattr(mod, "_abort_then_sweep", _track)
+
+    def _sleep(_s: float) -> None:
+        clock["t"] += 6.0
+
     result = run_cdp_generate(
         execution_id="dispatch-unverified",
         model_id="cdp/fable-5",
         prompt_text="ping",
         purpose="review",
+        no_progress_s=5,
         poll_interval_s=0,
         client=client,  # type: ignore[arg-type]
-        sleep=lambda _s: None,
+        sleep=_sleep,
+        now=lambda: clock["t"],
     )
     assert result.ok is False
     assert result.stall_stage == "observer_unverified"
     assert result.extras.get("chat_url") == cse
     assert retain_calls == [(True, "observer_unverified")]
     assert result.extras.get("abort", {}).get("abort_skipped") is True
+    assert "UNVERIFIED" in cdp_result_subject(result)
+
+
+def test_run_cdp_generate_transport_miss_no_witness_aborts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """AC2 — transport miss without cse witness: FAILED, no chat_url, retain false."""
+    from systems.frontier_consult.cdp_generate_worker import cdp_result_subject
+
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-tm-fail")
+    running = {
+        "execution_id": "sat-tm",
+        "status": "running",
+        "completion_phase": "running",
+        "body_len": 1,
+        "url": "https://claude.ai/new",
+    }
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-tm", "status": "running"},
+            running,
+            {"error": "connection reset"},
+        ]
+    )
+    clock = {"t": 0.0}
+    retain_calls: list[bool] = []
+    from claude_bundles import cdp_model_endpoint as mod
+
+    orig = mod._abort_then_sweep
+
+    def _track(*args, **kwargs):
+        retain_calls.append(bool(kwargs.get("retain_cse")))
+        return orig(*args, **kwargs)
+
+    monkeypatch.setattr(mod, "_abort_then_sweep", _track)
+    result = run_cdp_generate(
+        execution_id="dispatch-tm-fail",
+        model_id="cdp/fable-5",
+        prompt_text="ping",
+        purpose="review",
+        no_progress_s=5,
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=lambda _s: clock.__setitem__("t", clock["t"] + 6.0),
+        now=lambda: clock["t"],
+    )
+    assert result.ok is False
+    assert result.stall_stage == "observer_unverified"
+    assert "chat_url" not in (result.extras or {})
+    assert retain_calls == [False]
+    assert "FAILED" in cdp_result_subject(result)
+
+
+def test_run_cdp_generate_mission_transport_miss_continues(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """AC3 — purpose=mission transport miss keeps polling (no early abort return)."""
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-mission-tm")
+    archive = "cortex://notes/system/threads/mission-tm.md"
+    running = {
+        "execution_id": "sat-mm",
+        "status": "running",
+        "completion_phase": "running",
+        "body_len": 1,
+    }
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-mm", "status": "running"},
+            running,
+            {"error": "connection reset"},
+            {
+                "execution_id": "sat-mm",
+                "status": "completed",
+                "archive_uri": archive,
+                "body": "done",
+                "attested_model": "Model: Opus 5",
+            },
+        ]
+    )
+    clock = {"t": 0.0}
+    aborts: list[str] = []
+    from claude_bundles import cdp_model_endpoint as mod
+
+    orig = mod._abort_then_sweep
+
+    def _track(*args, **kwargs):
+        aborts.append("abort")
+        return orig(*args, **kwargs)
+
+    monkeypatch.setattr(mod, "_abort_then_sweep", _track)
+
+    def _sleep(_s: float) -> None:
+        clock["t"] += 6.0
+
+    result = run_cdp_generate(
+        execution_id="dispatch-mission-tm",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        purpose="mission",
+        no_progress_s=5,
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=_sleep,
+        now=lambda: clock["t"],
+    )
+    assert result.ok is True
+    assert result.archive_uri == archive
+    assert aborts == []
 
 
 def test_run_cdp_generate_weekly_limit_terminal_failure_still_aborts(

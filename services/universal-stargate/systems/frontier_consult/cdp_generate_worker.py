@@ -41,7 +41,10 @@ def _upstream_overloaded(result: CdpGenerateResult) -> bool:
 def cdp_result_unverified(result: CdpGenerateResult) -> bool:
     """True when the envelope is observer-unverifiable, not CSE death."""
     return (not result.ok) and is_unverifiable_stall(
-        result.stall_stage, result.error
+        result.stall_stage,
+        result.error,
+        url=(result.extras or {}).get("chat_url"),
+        satellite_execution_id=result.satellite_execution_id,
     )
 
 

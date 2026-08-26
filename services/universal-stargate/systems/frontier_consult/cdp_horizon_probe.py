@@ -49,7 +49,11 @@ def classify_horizon_probe(snapshot: dict[str, Any] | None) -> HorizonObservatio
     if status == "failed" or terminal_failure(snapshot):
         stall = snapshot.get("stall_stage")
         error = snapshot.get("error")
-        if is_unverifiable_stall(stall, str(error) if error is not None else None):
+        if is_unverifiable_stall(
+            stall,
+            str(error) if error is not None else None,
+            url=snapshot.get("url"),
+        ):
             return "unverifiable"
         return "confirmed_dead"
     return "unverifiable"

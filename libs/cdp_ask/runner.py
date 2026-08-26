@@ -44,6 +44,13 @@ from cdp_ask.unverifiable import (
 _CSE_URL_MARKER = "claude.ai/cowork/cse_"
 
 
+def _compose_witness_satellite_id(error: str | None, execution_id: str) -> str | None:
+    """Return None when the harness failed before compose (model select, staging)."""
+    if "model select failed" in (error or "").lower():
+        return None
+    return execution_id or None
+
+
 def bind_execution_lane(req: SubmitProjectAskRequest, *, holder: str):
     """Bind the Chrome host for one project-ask execution.
 
@@ -526,7 +533,14 @@ async def run_execution(
             stall = converse_stall_stage(
                 last.error if last else None, conv_ok=conv_ok
             )
-            if is_unverifiable_stall(stall, fail_error):
+            if is_unverifiable_stall(
+                stall,
+                fail_error,
+                url=last.url if last else None,
+                satellite_execution_id=_compose_witness_satellite_id(
+                    fail_error, execution_id
+                ),
+            ):
                 retain_host = True
             _persist_session_address(
                 reg.registration_id,
@@ -601,7 +615,14 @@ async def run_execution(
             payload["stall_stage"] = converse_stall_stage(
                 result.error, conv_ok=False
             )
-            if is_unverifiable_stall(payload["stall_stage"], result.error):
+            if is_unverifiable_stall(
+                payload["stall_stage"],
+                result.error,
+                url=result.url,
+                satellite_execution_id=_compose_witness_satellite_id(
+                    result.error, execution_id
+                ),
+            ):
                 retain_host = True
         elif result.archive_uri and ladder and ladder.on_archiving:
             await ladder.on_archiving()
