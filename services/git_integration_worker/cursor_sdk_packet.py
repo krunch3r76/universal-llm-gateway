@@ -98,6 +98,15 @@ _CONDUCTOR_RUN_TO_COMPLETION_TEMPLATE = (
     "land on green."
 )
 
+_CONDUCTOR_ATTENDED_RESURFACE_PREAMBLE = (
+    "CONDUCTOR ATTENDED RESURFACE (mandatory): summon_mode is attended — the "
+    "summoning IDE chat is live. At G3→G5: resurface the scoreboard tip in "
+    "this chat for discussion (not implement, not pager, not CONFIRM_PENDING). "
+    "Explicit see-score while attended: ROW_PINNED at G3, no pager. "
+    "Do not fire in-process CDP score-ratify unless operator redirects to "
+    "confer-and-finish."
+)
+
 _LANE_B_BRANCH_CONTRACT_TEMPLATE = (
     "LANE-B BRANCH CONTRACT (mandatory): Your commits land on {branch}. That branch "
     "is yours to retire — a lane that walks away from it leaves an attributed debt "
@@ -154,6 +163,9 @@ _CONDUCTOR_PACKET_MARKER_RE = re.compile(
     r"Use the `?conductor`? skill",
     re.IGNORECASE,
 )
+_SUMMON_MODE_RE = re.compile(
+    r"(?i)summon_mode:\s*(attended|confer[_-]and[_-]finish)\b"
+)
 
 _CONTRACT_FRONTMATTER_RE = re.compile(
     r"^contract:\s*(\S+)\s*$",
@@ -200,6 +212,14 @@ def extract_packet_kind_from_packet(text: str) -> str | None:
     if not match:
         return None
     return match.group(1).strip().lower()
+
+
+def extract_summon_mode_from_packet(text: str) -> str | None:
+    """Return normalized summon_mode from packet scope/corpus/frontmatter."""
+    match = _SUMMON_MODE_RE.search(text or "")
+    if not match:
+        return None
+    return match.group(1).lower().replace("-", "_")
 
 
 def extract_source_ref_from_packet(text: str) -> str | None:
@@ -290,6 +310,8 @@ def resolve_prompt_preamble(
         parts.append(
             _CONDUCTOR_RUN_TO_COMPLETION_TEMPLATE.format(dispatch_id=dispatch_id)
         )
+        if extract_summon_mode_from_packet(existing_text or "") == "attended":
+            parts.append(_CONDUCTOR_ATTENDED_RESURFACE_PREAMBLE)
     if (
         contract not in _REASONING_POSTURE_SKIP_CONTRACTS
         and not _already_invokes_reasoning_posture(prompt_preamble, existing_text)
