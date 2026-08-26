@@ -169,6 +169,30 @@ _WORK_ITEM_KEY_RE = re.compile(
 _WORK_ITEM_SCHEMES = ("todo:", "plan:", "plan_phase:", "packet:", "agent-bus:")
 
 
+_WORK_KEY_FRONTMATTER_RE = re.compile(
+    r"^work_key:\s*(\S+)\s*$", re.IGNORECASE | re.MULTILINE
+)
+_PACKET_KIND_FRONTMATTER_RE = re.compile(
+    r"^packet_kind:\s*(\S+)\s*$", re.IGNORECASE | re.MULTILINE
+)
+
+
+def extract_work_key_from_packet(text: str) -> str | None:
+    """Return ``work_key:`` frontmatter when present."""
+    match = _WORK_KEY_FRONTMATTER_RE.search(text)
+    if not match:
+        return None
+    return match.group(1).strip()
+
+
+def extract_packet_kind_from_packet(text: str) -> str | None:
+    """Return ``packet_kind:`` frontmatter when present."""
+    match = _PACKET_KIND_FRONTMATTER_RE.search(text)
+    if not match:
+        return None
+    return match.group(1).strip().lower()
+
+
 def extract_source_ref_from_packet(text: str) -> str | None:
     """Canonical work-item source_ref from packet frontmatter, or None.
 

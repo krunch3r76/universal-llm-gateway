@@ -47,6 +47,55 @@ class GenerateWrapResult:
     packet_sha256: str | None = None
     materialization_present: bool | None = None
     route_contract: dict[str, Any] | None = None
+    scoreboard_uri: str | None = None
+
+
+def prepare_conductor_packet(
+    *,
+    request_id: str,
+    source_ref: str,
+    caller_agent: str | None,
+    cortex: StargateCortexReader,
+    workspaces_root: Path,
+    role: str = "cursor-sdk",
+    transport: str = "team_dispatch",
+) -> GenerateWrapResult:
+    """Materialize a conductor six-block packet from ``source_ref=todo:``."""
+    del request_id, caller_agent, role, transport
+    bridge = resolve_source_ref_to_packet(
+        source_ref,
+        cortex=cortex,
+        workspaces_root=workspaces_root,
+        packet_kind="conductor",
+        contract="light-bounded",
+    )
+    if bridge.gated:
+        return GenerateWrapResult(
+            packet_path=None,
+            gated=True,
+            gated_reason=bridge.gated_reason,
+        )
+    from implement_admission.conductor_materialize import extract_scoreboard_uri
+
+    scoreboard_uri: str | None = None
+    materialized_path = bridge.packet_path
+    if materialized_path is not None:
+        materialized_file = _resolve_packet_file(
+            workspaces_root.resolve(), materialized_path
+        )
+        if materialized_file is not None:
+            scoreboard_uri = extract_scoreboard_uri(
+                materialized_file.read_text(encoding="utf-8", errors="replace")
+            )
+    return GenerateWrapResult(
+        packet_path=materialized_path,
+        materialized=True,
+        warnings=list(bridge.warnings),
+        packet_sha256=bridge.packet_sha256,
+        materialization_present=bridge.materialization_present,
+        route_contract=bridge.route_contract,
+        scoreboard_uri=scoreboard_uri,
+    )
 
 
 def prepare_implement_packet(
@@ -246,7 +295,27 @@ async def dispatch_cursor_sdk_generate_route(
             return payload
 
         wrap = GenerateWrapResult(packet_path=getattr(body, "packet_path", None))
-        if body.contract == "implement":
+        packet_kind = getattr(body, "packet_kind", None)
+        source_ref = getattr(body, "source_ref", None)
+        if (
+            body.contract == "light-bounded"
+            and (packet_kind or "").lower() == "conductor"
+            and source_ref
+            and not getattr(body, "packet_path", None)
+        ):
+            loop = asyncio.get_running_loop()
+            wrap = await loop.run_in_executor(
+                None,
+                partial(
+                    prepare_conductor_packet,
+                    request_id=request_id,
+                    source_ref=source_ref,
+                    caller_agent=body.caller_agent,
+                    cortex=StargateCortexReader(),
+                    workspaces_root=_workspaces_root(),
+                ),
+            )
+        elif body.contract == "implement":
             loop = asyncio.get_running_loop()
             wrap = await loop.run_in_executor(
                 None,
@@ -379,6 +448,8 @@ async def dispatch_cursor_sdk_generate_route(
                 result["warnings"] = list(result.get("warnings") or []) + wrap.warnings
             if wrap.route_contract is not None:
                 result["route_contract"] = wrap.route_contract
+            if wrap.scoreboard_uri is not None:
+                result["scoreboard_uri"] = wrap.scoreboard_uri
     except RouteContractContradictionError as exc:
         return JSONResponse(
             status_code=422,

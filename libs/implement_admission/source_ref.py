@@ -31,6 +31,32 @@ class SourceRef:
     turn: int | None = None
 
 
+MATERIALIZE_KIND_IMPLEMENT = "implement"
+MATERIALIZE_KIND_CONDUCTOR = "conductor"
+
+
+def resolve_materialize_kind(*, packet_kind: str | None) -> str:
+    """Return implement vs conductor materializer key from wire ``packet_kind``."""
+    kind = (packet_kind or "").strip().lower()
+    if kind == MATERIALIZE_KIND_CONDUCTOR:
+        return MATERIALIZE_KIND_CONDUCTOR
+    return MATERIALIZE_KIND_IMPLEMENT
+
+
+def todo_slug_from_ref(source_ref: str) -> str:
+    """Filesystem slug for a todo-keyed conductor/scoreboard artifact."""
+    ref = parse_source_ref(source_ref)
+    if ref.source_kind != "todo":
+        msg = f"todo slug requires todo: ref, got {source_ref!r}"
+        raise SourceRefError(
+            code="source_ref_not_todo",
+            source_ref=source_ref,
+            rule=msg,
+        )
+    rest = ref.canonical_ref.split(":", 1)[-1]
+    return rest.replace("/", "-").replace(":", "-")[:80]
+
+
 class SourceRefError(Exception):
     """Typed resolution failure carrying code, source_ref, and rule."""
 

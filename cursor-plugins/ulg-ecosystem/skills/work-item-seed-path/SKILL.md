@@ -213,10 +213,21 @@ the architecture-consult tag — ¬ `operator-proxy` unless this *is* a mission 
 
 ### S4 Mint (exactly one)
 
+**S4a — identity mint (IDE, before spawn):** mint closable `todo:` slug + kind +
+`density_triage` only. Problem/Scope/Acceptance may be sparse. **Do not** set
+`implement_ready`. **Do not** hand to `/layer` yet.
+
+**S4b — rich-seed after G1 harvest (conductor):** after architecture consult
+harvest, densify Problem/Scope/Acceptance on the **same slug**, hang
+`derived_from`, update `density_triage` (still ≠ `implement_ready`), then
+`ROW_PINNED` when `stop_after: G1` binds. Mode B admit-proof lives on conductor
+CHECKPOINT (`execution_id`+`poll_hint` or honest halt) — not the IDE turn.
+
 | Mode | When | What |
 |---|---|---|
-| **Rich-seed** | Actionable; slug+Problem/Scope/Acceptance nameable | Compose `/todo` rich-seed contract. Set `arc_lane=layer`, `density_triage`, `source_uri`, kind |
-| **Backlog-park** | Trackable ¬ ready | `backlog=true` (or deferred) · ¬ `/layer` |
+| **S4a identity** | First utterance / pre-spawn | `/todo` identity mint only |
+| **S4b rich-seed** | G1-pin / post-harvest | Conductor densifies same slug |
+| **Backlog-park** | Trackable ¬ ready | `backlog=true` (or deferred) · ¬ spawn |
 | **Hold** | ¬ backlog-worthy | Ack · optional friction · exit |
 
 `¬` rich-seed pretending arch settled when mode B required.
@@ -227,14 +238,28 @@ the architecture-consult tag — ¬ `operator-proxy` unless this *is* a mission 
 **Do:** `document:{slug}-architecture-consult` (`consult_kind=architecture`, `source_uri`) + `todo --derived_from--> document` (structural).  
 **Skip:** no consult.
 
-### S6 `/layer` handoff
+### S6 Spawn conductor (¬ `/layer` handoff)
+
+First codework utterance after S4a mint:
+
+```text
+team_dispatch(
+  seat="cursor-sdk",
+  contract="light-bounded",
+  lane="B",
+  source_ref="todo:{slug}",
+  packet_kind="conductor",
+)
+```
+
+Receipt must quote `dispatch_id` + scoreboard URI + Lane B. Conductor drives
+G-ladder; IDE does not fire `/layer` or Mode B Fable on the seed path.
 
 | Condition | Enter |
 |---|---|
-| `derived_from` → architecture doc resolves | `/layer` at **G2** (G1 skip + URI) |
-| Rich-seeded; arch still open (A) | `/layer` at **G1** |
-| `density_triage=mechanical` ∧ no higher gate | `/layer` **G5** |
-| Backlog ∨ hold | **¬** `/layer` |
+| S4a identity mint complete | **Spawn** conductor (above) |
+| Resume after terminal | Re-admit conductor at persisted G-row |
+| Backlog ∨ hold | **¬** spawn |
 
 Name: `todo:{slug}` · entry gate · consult URI · recon URI.
 

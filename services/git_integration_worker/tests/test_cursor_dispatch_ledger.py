@@ -17,6 +17,10 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
     SourceRefConflict,
     _connect,
 )
+from services.git_integration_worker.cursor_sdk_conductor_conflict import (
+    find_open_conductor_holder_conn,
+    should_block_implement_for_open_conductor,
+)
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
     CursorDispatchResponse,
@@ -1279,3 +1283,44 @@ def test_terminal_row_bytes_stable_across_reopen(tmp_path, monkeypatch) -> None:
             "FROM cursor_sdk_dispatches WHERE dispatch_id='term-persist'"
         ).fetchone()
     assert dict(before) == dict(after)
+
+
+_CONDUCTOR_WORK_KEY = "todo:conductor-open-fixture"
+
+
+def test_open_conductor_holder_visible_in_ledger() -> None:
+    """Phase 2: conductor work_key + packet_kind is ledger-visible."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="cond-open-1", thread_id="t-cond")
+    _admit(
+        ledger,
+        req,
+        source_repo=_REPO,
+        contract="light-bounded",
+        work_key=_CONDUCTOR_WORK_KEY,
+    )
+    ledger.merge_record_json(
+        dispatch_id="cond-open-1",
+        patch={"packet_kind": "conductor"},
+    )
+    with ledger._connect() as conn:
+        holder = find_open_conductor_holder_conn(
+            conn,
+            work_key=_CONDUCTOR_WORK_KEY,
+        )
+    assert holder is not None
+    assert holder.dispatch_id == "cond-open-1"
+    assert holder.thread_id == "t-cond"
+
+
+def test_should_block_top_level_implement_not_nested() -> None:
+    assert should_block_implement_for_open_conductor(
+        contract="implement",
+        nest_under=None,
+        work_key=_CONDUCTOR_WORK_KEY,
+    )
+    assert not should_block_implement_for_open_conductor(
+        contract="implement",
+        nest_under="parent-dispatch",
+        work_key=_CONDUCTOR_WORK_KEY,
+    )

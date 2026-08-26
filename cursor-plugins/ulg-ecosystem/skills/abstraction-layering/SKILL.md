@@ -40,6 +40,11 @@ natural language (“loop Fable”, “architectural guidance”) fires the same
 chooser. Fable default vs Cursor / Other Models pools:
 `work-item-seed-path` § When Fable defaults.
 
+**Conductor unify (2026-08):** IDE `/layer` on a live `todo:` with an open
+conductor session is **superseded** — the conductor drives G1–G6 inside
+`packet_kind=conductor`. `/layer` remains the lead reference for gate shape;
+execution moves to conductor CHECKPOINTs, score journal, and nested Composer G5.
+
 ## Invariant
 
 `∀ layering:` high abstraction → low concreteness; inherit binds above; ¬ re-reason

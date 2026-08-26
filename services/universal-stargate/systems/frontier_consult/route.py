@@ -192,6 +192,7 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     # Required on top-level cursor-sdk generate. Omit only for nest_under inherit.
     # Missing → 422 lane_required. wrap is exempt. Distinct from dispatch_lane.
     lane: Literal["A", "B"] | None = None
+    packet_kind: Literal["conductor"] | None = None
     # Allowlisted satellite name; omit = hub ULG git identity.
     workspace: str | None = None
     read_only: bool = False

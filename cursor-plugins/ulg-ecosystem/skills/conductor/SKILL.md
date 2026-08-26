@@ -215,6 +215,37 @@ Worked packet example: `tmp/reviews/7310-conductor-packet.md` /
 `cortex://notes/system/threads/7310-conductor-packet.md` (early dogfood used
 Opus — not the standing default).
 
+### First-utterance spawn (standing path)
+
+IDE mints todo identity (S4a); Stargate materializes the packet:
+
+```text
+team_dispatch(
+  op=generate,
+  seat=cursor-sdk,
+  contract=light-bounded,
+  lane="B",
+  source_ref="todo:{slug}",
+  packet_kind="conductor",
+)
+```
+
+Receipt quotes `dispatch_id` + `scoreboard_uri` + Lane B. Ledger holds
+`work_key=todo:{slug}` (no `todo:` packet front-matter — nested G5 uses
+`nest_under`). Top-level `contract=implement` on the same todo while conductor
+is open → 409.
+
+### Score journal + stops
+
+- Tip: `cortex://notes/system/scoreboards/{slug}-scoreboard.md`
+- Journal: `cortex://notes/system/scoreboards/{slug}-score-journal.md` (append-only)
+- Stops: `CONSULT_PENDING` · `CONFIRM_PENDING` · `ROW_PINNED` · `HOLD_MERGE` ·
+  `OPERATOR_GATE` · `PARKED_TRANSPORT` · `DONE`
+- G3→G5 default: in-process CDP score-ratify (do-not-fight / likely-optimal).
+  Explicit see-score → `ROW_PINNED` + ping.
+- Mode B admit-proof on CHECKPOINT when `CONSULT_PENDING`: `execution_id`+
+  `poll_hint` or honest halt.
+
 ## Admit
 
 ```text
