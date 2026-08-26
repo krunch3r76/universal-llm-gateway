@@ -228,21 +228,17 @@ def sdk_live_line(
         tool_col = f" tool={_truncate(tool, 14)}"
     else:
         tool_col = ""
+    prov = f" from={row.caller_from or 'ide'} via={row.caller_via or 'http'}"
     base = (
         f"  {role_tag}{_truncate(row.dispatch_id, 14)} {_truncate(row.state, 10)} "
         f"root={_truncate(row.root_id, 8)} "
         f"w={_truncate(row.thread_id, 8)} "
         f"{_truncate(row.model, 18)}{topic_col} "
-        f"{timing}{tc}{tool_col} [{flag}]{stall}"
+        f"{timing}{tc}{tool_col}{prov} [{flag}]{stall}"
     )
     extras: list[str] = []
     if row.nest_under:
         extras.append(f" nest={clip_text(row.nest_under, 12)}")
-    if row.provenance == "signal":
-        via = row.admitted_via or "?"
-        asked = row.asked_by
-        if via != "?" or asked:
-            extras.append(f" {_truncate(f'{via}←{asked or '?'}', 22)}")
     for token in extras:
         if len(base) + len(token) <= width:
             base += token

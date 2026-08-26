@@ -39,6 +39,20 @@ def age(now_ms: int, since_ms: int | None) -> int | None:
     return max(0, now_ms - since_ms)
 
 
+def _resolve_caller(state: object) -> tuple[str, str]:
+    """MCP stamp when present; else HTTP fallback from SDK identity fields."""
+    from .folds.sdk_state import SdkState
+
+    assert isinstance(state, SdkState)
+    if state.caller_via == "mcp" and state.caller_from:
+        return state.caller_from, state.caller_via
+    if state.admitted_via == "cursor-auto":
+        return "auto", "http"
+    if state.asked_by == "web-anthropic":
+        return "claude.ai", "http"
+    return "ide", "http"
+
+
 def sdk_rows(
     fold: SdkFold, index: CorrelationIndex, now_ms: int
 ) -> tuple[SdkDispatchRow, ...]:
@@ -52,6 +66,7 @@ def sdk_rows(
             else None
         )
         elapsed = age(now_ms, state.started_ms) if live else None
+        caller_from, caller_via = _resolve_caller(state)
         rows.append(
             SdkDispatchRow(
                 dispatch_id=state.dispatch_id,
@@ -94,6 +109,8 @@ def sdk_rows(
                 topic=state.topic,
                 nest_under=state.nest_under,
                 resume_of=state.resume_of,
+                caller_from=caller_from,
+                caller_via=caller_via,
             )
         )
     rows.sort(key=lambda r: r.dispatch_id)

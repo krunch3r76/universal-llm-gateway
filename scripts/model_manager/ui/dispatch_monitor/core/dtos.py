@@ -177,6 +177,8 @@ class SdkDispatchRow:
     topic: str | None = None
     nest_under: str | None = None
     resume_of: str | None = None
+    caller_from: str | None = None
+    caller_via: str | None = None
 
 
 @dataclass(frozen=True)
