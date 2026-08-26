@@ -221,8 +221,28 @@ health, and a changed-surface probe. `live@<sha>` additionally needs a
 path-explicit commit **before** restart, `code_ref_satisfied` (equal or ancestor),
 identity movement, and relevant dirty-path disclosure. This ordering binds the
 claim, not the restart: dirty-checkout restarts remain legal and are reported as
-`live` plus tree state, never exact `live@<sha>`. Never withhold a needed restart
-because the tree is dirty or a busy probe defers; downgrade the claim instead.
+`live` plus tree state, never exact `live@<sha>` **when the served load
+surface was dirty**. Never withhold a needed restart because the tree is dirty
+or a busy probe defers; downgrade the claim instead.
+
+**Operator bind (2026-08-25):** recycles are permitted regardless of master
+porcelain or peer WIP on the load surface. If that dirty tree trips a process,
+the operator owns it. `¬` withhold, park, or ask. Claim class still downgrades
+(`live`, never exact `live@sha`) when served dirt was loaded.
+
+**Operator bind (2026-08-25, stamp):** dirty tree / `¬live@sha` does not hold
+graph stamps. Close the todo and friction when ACs and §5 evidence are met
+**and** ordinary `live` is proven (or `liveness n/a` — no process serves).
+Do not leave stamps pending for the operator to track.
+
+**Operator bind (2026-08-25, go-live loop):** `go live` is one loop —
+path-explicit **commit** of the work paths ∧ recycle of **every** service
+that serves those paths ∧ prove each process is running the updated bytes ∧
+**graph stamp**. `¬` recycle one of N serving processes and call it live.
+`¬` stamp before that proof. `¬live@sha` (foreign served dirt) does not hold
+the stamp once ordinary `live` of **this** change is proven. Bare `commit`
+does not open the loop; the operator phrase does — and then commit is a
+required leg, not a leftover.
 
 A later commit does not upgrade dirty `live` to `live@<sha>` — that needs a
 **new** recycle after the commit. Never say `not live` when the process already
@@ -233,7 +253,8 @@ loaded the files and you only lack `live@<sha>`.
 Operator phrases that **open** a go-live: `go live`, `make live`, `activate`,
 `everything live?`, `not live yet?`. **Code revision that a running process
 already imported also opens it** — harvest / implement close is not a park.
-`commit` and `/session-end` do **not** open it. Doctrine:
+`commit` **alone** and `/session-end` do **not** open it. Once open, commit
+of the work paths is a required leg. Doctrine:
 `decision:go-live-proof-loop`.
 
 Satellites (claudeburst and any compose service `manage` does not list) recycle
@@ -242,15 +263,20 @@ served-file mtime.
 
 ```
 go_live_open ⇒
-  recycle(services that serve the changed paths)
+  commit(path-explicit work paths)
+  ∧ recycle(every service that serves those paths)
   ∧ hold(restart_intent_id) until terminal
   ∧ edit(served_path) ⇒ stale(intent) ∧ re-arm
+  ∧ stamp(graph) once ordinary live is proven ∨ liveness_n/a
   ∧ report exactly one class: live | live@sha | not_live | drain_pending
 ```
 
-- Recycle only services whose load surface includes a changed path **newer than
-  the last sync**. Hop-cadence / wait-report → `git_integration_worker`. `mcp` /
-  `cdp_ask` only when those files postdate the last sync.
+- Recycle **every** service whose load surface includes a changed path **newer
+  than the last sync** — the complete serving set, not a convenient subset.
+  Hop-cadence / wait-report → `git_integration_worker`. `mcp` / `cdp_ask` only
+  when those files postdate the last sync. Plugin / Customize / graph-only
+  deliverables: install or upload is the serve path; fleet recycle is
+  `liveness n/a`.
 - `restart_intent_id` is WIP until process start is after served-file mtime (or a
   `fleet_liveness` path probe). `status=deferred` arms the drain; it is not live.
 - After arming GIW: do not admit new GIW-occupying work on that slice without

@@ -124,13 +124,15 @@ Pick the cheapest sound route for this seat. **SOT:** consult-routing § Address
 |---|---|---|
 | DIRECT | cortex/skill/doc codification, graph edits, sidecars; reversible, no shared-tree mutation | `fs(cortex)` + cortex ops |
 | **ADDRESS** | **`bind_status∈{settled,shipping}`** ∧ **`density_triage≠recon_pending`** | **`/address`** — ship/advance settled binds; `entity_update` + `merge_state_card` for stage/`shipping` advances |
-| **PATH-SIM** | **`bind_status=unsettled`** ∧ **`density_triage∈{judgment_required,recon_pending}`**; default when unmatched | **Default.** `/path-sim` (bundled) — Use the `path-sim` skill § Bundled dispatch; A bind = admit gate; **defer §3b** unless `check_requested=true` |
+| **SEED** | no closable `todo:` ∧ codework | **`/work-item-seed`** — Use the `work-item-seed-path` skill |
+| **LAYER** | **`bind_status=unsettled`** ∧ **`density_triage∈{judgment_required,recon_pending}`** ∧ codework; default when unmatched codework | **`/layer`** — Use the `abstraction-layering` skill; **defer §3b** unless `check_requested=true` |
+| **PATH-SIM** | same bind ∧ (**non-codework** ∨ `arc_lane=path_sim` ∨ operator named `/path-sim`) | `/path-sim` (bundled) — Use the `path-sim` skill § Bundled dispatch |
 | DISPATCH | **`density_triage=mechanical`**; or **`implement_ready`** ∧ dense spec after Gate-2; explicit post-densify implement after opt-in Gate-6 | `team_dispatch(op=generate, seat=cursor-sdk, contract=implement, source_ref=…)` |
 | COORDINATE | operator/other seat needed; dirty-tree commit; cross-seat changes; owner ratification | ask/operator or agent_bus handoff |
 
 `bind_status=deferred` ⇒ **held** (no route; `next_action=await_unblock`).
 
-`doc_or_cortex_codification ⇒ DIRECT`; **`unsettled` + `{judgment_required,recon_pending}` ⇒ PATH-SIM** (¬ ADDRESS); **`settled`/`shipping` (≠ `recon_pending`) ⇒ ADDRESS** (¬ default bundled `/path-sim`); `mechanical ∨ (implement_ready ∧ dense_spec) ⇒ DISPATCH`; `dirty_tree_commit ∨ cross_seat ∨ owner_gate ⇒ COORDINATE`; unmatched ⇒ PATH-SIM.
+`doc_or_cortex_codification ⇒ DIRECT`; no todo ∧ codework ⇒ **SEED**; **`unsettled` + `{judgment_required,recon_pending}` + codework ⇒ LAYER** (¬ ADDRESS, ¬ default PATH-SIM); same bind + PATH-SIM trigger ⇒ **PATH-SIM**; **`settled`/`shipping` (≠ `recon_pending`) ⇒ ADDRESS**; `mechanical ∨ (implement_ready ∧ dense_spec) ⇒ DISPATCH`; `dirty_tree_commit ∨ cross_seat ∨ owner_gate ⇒ COORDINATE`; unmatched codework ⇒ LAYER.
 
 SOT: consult-routing § Address
 
@@ -138,7 +140,8 @@ Routes are for one bounded pickup only. If you are deriving per-phase routes, yo
 
 ### 3b. Judgment_required DISPATCH admit recipe — **opt-in only**
 
-**Default:** `judgment_required` ⇒ **PATH-SIM route (§3)** — skip this section.
+**Default:** `judgment_required` codework ⇒ **LAYER route (§3)** — skip this section.
+PATH-SIM only on the §3 trigger set (non-codework / `arc_lane=path_sim` / named `/path-sim`).
 
 **Fire §3b only when:** `attributes.check_requested=true` on the todo, operator explicitly requests Gate-6/API check, or post-path-sim follow-up `contract=implement` after split-phase densify (legacy spine).
 
@@ -190,7 +193,7 @@ Proceed autonomously only on `READY ∧ (DIRECT ∨ read_only_low_risk_DISPATCH)
 
 `judgment_required ∧ contract=implement ⇒ §3b complete before DISPATCH` **only when `check_requested`**.
 
-**PATH-SIM default (§3):** §3b skipped; A bind + post-arc `path_sim_self_certify` waiver.
+**LAYER default (§3) for codework:** §3b skipped. PATH-SIM A-bind + `path_sim_self_certify` only on the §3 PATH-SIM trigger set.
 
 Checkpoint first on `COORDINATE ∨ code_mutating_DISPATCH ∨ irreversible ∨ cross_seat`.
 
@@ -199,6 +202,16 @@ State the chosen route before any irreversible step.
 ### 5. Close out
 
 `close ⇒ evidence_cited ∧ workflow_state_advanced ∧ graph_coherent`.
+
+**Dirty tree / `¬live@sha` ⇏ withhold stamp (BINDING — operator 2026-08-25):**
+`close ⇒ ordinary_live_proven ∨ liveness_n/a(no process serves this change)`.
+`¬live@sha ⇏ withhold`; `¬proven(live) ⇒ prove, ¬park`. Graph close fires
+when ACs + this §5 evidence + that floor are met. Closure assertion states
+claim class and, when `¬live@sha`, the reason (which served paths, whose WIP).
+Do not park stamps because porcelain is dirty. `go live` is commit of the
+work paths + recycle of **every** serving process + this stamp.
+`decision:go-live-proof-loop` assertions 30579 (stamp) / 30577 (recycle) /
+30584 (go-live loop).
 
 Include dispatch id + result line for DISPATCH; entity/assertion ids for DIRECT. Update `workflow_state`, write backing assertions with `evidence_uris`, and wire provenance edges.
 
@@ -212,6 +225,11 @@ Include dispatch id + result line for DISPATCH; entity/assertion ids for DIRECT.
 `¬ close` with empty/critical docstring debt on new public surface. Mechanical inventory-only / no public Python touch ⇒ n/a (state why).
 
 **Event instrumentation closeout (BINDING — judgment, not a scan):** when the pickup touched behavioral edges or `@event_factory` emit sites, closeout states in one line — events added (`signal` · `role` · why) OR "no event warranted (reason)", plus any prune/relabel candidates spotted (Use the `event-instrumentation-discipline` skill). No criticals scan — add/prune is judgment. Silence on an event-bearing change is the miss.
+
+**Session / work review (optional, recommended):** on judgment-bearing ship, cue
+`team_dispatch(model=cdp/opus-5, purpose=review)` (`consult-routing` § CDP
+transport). Background preferred; defer and name it when attended-blocking.
+¬ a close gate; ¬ silent Terra G4; ¬ a substitute for path-sim R-after.
 
 ## Anti-patterns
 
@@ -240,7 +258,7 @@ Include dispatch id + result line for DISPATCH; entity/assertion ids for DIRECT.
 | Todo blocked on owner call despite partial ready design | GATED; report, do not force |
 | Bus says remaining but primary assertion shows superseded/done | Primary source wins |
 | Gate-6 turn has FILE_EVIDENCE but preflight `skeptic_pass_missing` | Stamp `skeptic_ratified` citing that `#turn-N` + `spec_sha256` (§3b), or set `gate6_ratification_uri` (§3b alternate), or `path_sim_self_certify` waiver after path-sim A bind |
-| `judgment_required` todo at pickup | Default PATH-SIM route — skip §3b unless `check_requested=true` |
+| `judgment_required` todo at pickup | Default **LAYER** (codework) — skip §3b unless `check_requested=true`; PATH-SIM only on §3 trigger set |
 | Need Composer without fresh skeptic stamp; path-sim A bind complete | `recon_waived` with `path_sim_self_certify` + matching `spec_sha256`, then preflight (§3b waiver path) |
 
 ## Minimal operating summary
@@ -250,6 +268,6 @@ Include dispatch id + result line for DISPATCH; entity/assertion ids for DIRECT.
 3. Apply Todo→Plan threshold; if plan arc, exit to `implementation-plan-workflow`.
 4. Classify READY/GATED/UNDER-SPEC'D; stop unless READY.
 5. When densifying toward ready: §2b (`doc_template` start → `doc_validate` PASS → then `implement_ready` / Proceed).
-6. Route DIRECT/**PATH-SIM**/DISPATCH/COORDINATE; PATH-SIM is default for `judgment_required`; §3b only when `check_requested`.
+6. Route DIRECT/**LAYER**/SEED/PATH-SIM/DISPATCH/COORDINATE; **LAYER** is default for codework `judgment_required`; PATH-SIM only on §3 trigger set; §3b only when `check_requested`.
 7. Close with evidence and coherent Cortex bookkeeping.
 8. Public Python touch ⇒ docstring-quality scan criticals=0 cited (§5) before todo-close.
