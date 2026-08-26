@@ -65,9 +65,10 @@ def test_attended_conductor_preamble_includes_resurface_block() -> None:
     assert "CONDUCTOR ATTENDED RESURFACE" in preamble
     assert "resurface the scoreboard tip" in preamble
     assert "no pager" in preamble
+    assert "CONDUCTOR AWAY SCORE-RATIFY" not in preamble
 
 
-def test_confer_conductor_preamble_omits_resurface_block() -> None:
+def test_confer_conductor_preamble_includes_away_score_ratify() -> None:
     preamble = resolve_prompt_preamble(
         handoff_contract="light-bounded",
         prompt_preamble=None,
@@ -78,4 +79,29 @@ def test_confer_conductor_preamble_omits_resurface_block() -> None:
         existing_text=_CONFER_CONDUCTOR_PACKET,
         has_packet_path=True,
     )
+    assert "CONDUCTOR ATTENDED RESURFACE" not in preamble
+    assert "CONDUCTOR AWAY SCORE-RATIFY" in preamble
+    assert "do-not-fight" in preamble
+
+
+def test_absent_summon_mode_preamble_includes_away_score_ratify() -> None:
+    absent_packet = """---
+packet_kind: conductor
+contract: light-bounded
+lane: B
+---
+<scope>Conductor session — no summon_mode.</scope>
+<invariants>Use the conductor skill.</invariants>
+"""
+    preamble = resolve_prompt_preamble(
+        handoff_contract="light-bounded",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        lane_branch="cursor-sdk/lane-9642",
+        dispatch_id="5ee138e1094b-992cebb5",
+        existing_text=absent_packet,
+        has_packet_path=True,
+    )
+    assert "CONDUCTOR AWAY SCORE-RATIFY" in preamble
     assert "CONDUCTOR ATTENDED RESURFACE" not in preamble

@@ -144,6 +144,31 @@ def empty_assistant_turn_reason(outcome: SdkRunOutcome) -> str | None:
     return None
 
 
+def conductor_q2_score_ratify_degraded_reason(
+    *,
+    body: str,
+    packet_text: str | None = None,
+    packet_kind: str | None = None,
+) -> str | None:
+    """Fail-closed degrade when away conductor G3→G5 lacks score-ratify posture."""
+    is_conductor = packet_kind == "conductor"
+    if not is_conductor and packet_text:
+        from services.git_integration_worker.cursor_sdk_packet import (
+            extract_packet_kind_from_packet,
+        )
+
+        is_conductor = extract_packet_kind_from_packet(packet_text) == "conductor"
+    if not is_conductor:
+        return None
+    from claude_bundles.conductor_score_ratify import validate_q2_away_score_ratify
+
+    return validate_q2_away_score_ratify(
+        body,
+        packet_text=packet_text,
+        packet_kind=packet_kind,
+    )
+
+
 def conductor_g1_pin_s4b_degraded_reason(
     *,
     body: str,

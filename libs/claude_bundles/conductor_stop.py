@@ -219,6 +219,14 @@ def validate_conductor_closeout(
     s4b_reason = validate_s4b_g1_pin(body, packet_text=packet_text)
     if s4b_reason is not None:
         return CloseoutStopVerdict(ok=False, reason=s4b_reason)
+    from claude_bundles.conductor_score_ratify import validate_q2_away_score_ratify
+
+    q2_reason = validate_q2_away_score_ratify(
+        body,
+        packet_text=packet_text,
+    )
+    if q2_reason is not None:
+        return CloseoutStopVerdict(ok=False, reason=q2_reason)
     resume = resume_row_from_closeout(body)
     return CloseoutStopVerdict(
         ok=True,

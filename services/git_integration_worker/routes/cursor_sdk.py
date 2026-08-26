@@ -2217,19 +2217,24 @@ async def _finalize_success(
     if degraded_reason is None:
         from services.git_integration_worker.cursor_sdk_closeout.degraded_reasons import (
             conductor_g1_pin_s4b_degraded_reason,
+            conductor_q2_score_ratify_degraded_reason,
         )
 
+        _packet_kind = (
+            extract_packet_kind_from_packet(packet_text) if packet_text else None
+        )
         degraded_reason = (
             empty_assistant_turn_reason(outcome)
             or empty_output_degraded_reason(outcome)
             or conductor_g1_pin_s4b_degraded_reason(
                 body=outcome.body,
                 packet_text=packet_text or None,
-                packet_kind=(
-                    extract_packet_kind_from_packet(packet_text)
-                    if packet_text
-                    else None
-                ),
+                packet_kind=_packet_kind,
+            )
+            or conductor_q2_score_ratify_degraded_reason(
+                body=outcome.body,
+                packet_text=packet_text or None,
+                packet_kind=_packet_kind,
             )
             or light_bounded_deliverable_reason(
                 body=outcome.body,

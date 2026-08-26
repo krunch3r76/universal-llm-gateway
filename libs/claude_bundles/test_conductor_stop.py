@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from claude_bundles.conductor_score_ratify import (
+    Q2_SCORE_RATIFY_MISSING,
+    is_g3_g5_exit,
+    validate_q2_away_score_ratify,
+)
 from claude_bundles.conductor_stop import (
     S4B_G1_PIN_MISSING,
     STOP_TOKENS,
@@ -140,3 +145,104 @@ def test_g1_pin_from_stop_after_in_packet() -> None:
     verdict = validate_conductor_closeout(body, packet_text=packet)
     assert not verdict.ok
     assert verdict.reason == S4B_G1_PIN_MISSING
+
+
+_CONDUCTOR_PACKET = """\
+---
+packet_kind: conductor
+contract: light-bounded
+---
+<scope>Conductor session.</scope>
+"""
+
+_ATTENDED_CONDUCTOR_PACKET = """\
+---
+packet_kind: conductor
+contract: light-bounded
+---
+<scope>summon_mode: attended</scope>
+"""
+
+_G3_DONE_AWAY_NO_MARKERS = """\
+| G3 | Densify | DONE |
+status: complete
+land_disposition: landed
+"""
+
+_G3_DONE_AWAY_WITH_MARKERS = """\
+| G3 | Densify | DONE |
+Posture: do-not-fight; likely-optimal completion.
+status: complete
+"""
+
+_G3_ROW_PINNED_SEE_SCORE = """\
+| G3 | Densify | OPEN | ROW_PINNED |
+resume_at: G3
+status: complete
+"""
+
+_G3_GATE_G5 = """\
+resume_at: G5
+status: complete
+"""
+
+
+def test_is_g3_g5_exit_g3_done() -> None:
+    assert is_g3_g5_exit(_G3_DONE_AWAY_NO_MARKERS)
+
+
+def test_is_g3_g5_exit_g3_row_pinned_false() -> None:
+    assert not is_g3_g5_exit(_G3_ROW_PINNED_SEE_SCORE)
+
+
+def test_is_g3_g5_exit_resume_g5() -> None:
+    assert is_g3_g5_exit(_G3_GATE_G5)
+
+
+def test_q2_away_g3_done_missing_markers_fails() -> None:
+    reason = validate_q2_away_score_ratify(
+        _G3_DONE_AWAY_NO_MARKERS,
+        packet_text=_CONDUCTOR_PACKET,
+    )
+    assert reason == Q2_SCORE_RATIFY_MISSING
+
+
+def test_q2_away_g3_done_with_markers_passes() -> None:
+    reason = validate_q2_away_score_ratify(
+        _G3_DONE_AWAY_WITH_MARKERS,
+        packet_text=_CONDUCTOR_PACKET,
+    )
+    assert reason is None
+
+
+def test_q2_g3_row_pinned_see_score_not_tripped() -> None:
+    reason = validate_q2_away_score_ratify(
+        _G3_ROW_PINNED_SEE_SCORE,
+        packet_text=_CONDUCTOR_PACKET,
+    )
+    assert reason is None
+
+
+def test_q2_attended_g3_done_not_tripped() -> None:
+    reason = validate_q2_away_score_ratify(
+        _G3_DONE_AWAY_NO_MARKERS,
+        packet_text=_ATTENDED_CONDUCTOR_PACKET,
+    )
+    assert reason is None
+
+
+def test_q2_g1_pin_body_not_tripped() -> None:
+    reason = validate_q2_away_score_ratify(
+        _G1_PIN_NO_S4B,
+        packet_text=_CONDUCTOR_PACKET,
+    )
+    assert reason is None
+
+
+def test_validate_conductor_closeout_q2_fold() -> None:
+    verdict = validate_conductor_closeout(
+        _G3_DONE_AWAY_NO_MARKERS,
+        packet_text=_CONDUCTOR_PACKET,
+    )
+    assert not verdict.ok
+    assert verdict.reason == Q2_SCORE_RATIFY_MISSING

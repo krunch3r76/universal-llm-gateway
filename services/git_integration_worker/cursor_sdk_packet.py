@@ -107,6 +107,13 @@ _CONDUCTOR_ATTENDED_RESURFACE_PREAMBLE = (
     "confer-and-finish."
 )
 
+_CONDUCTOR_AWAY_SCORE_RATIFY_PREAMBLE = (
+    "CONDUCTOR AWAY SCORE-RATIFY (mandatory): At G3→G5 fire in-process CDP "
+    "score-ratify (do-not-fight / likely-optimal); explicit see-score = "
+    "ROW_PINNED at G3 + ping. This is not CONFIRM_PENDING — record "
+    "likely-optimal / not on the score; do not reopen the mission."
+)
+
 _LANE_B_BRANCH_CONTRACT_TEMPLATE = (
     "LANE-B BRANCH CONTRACT (mandatory): Your commits land on {branch}. That branch "
     "is yours to retire — a lane that walks away from it leaves an attributed debt "
@@ -312,6 +319,8 @@ def resolve_prompt_preamble(
         )
         if extract_summon_mode_from_packet(existing_text or "") == "attended":
             parts.append(_CONDUCTOR_ATTENDED_RESURFACE_PREAMBLE)
+        else:
+            parts.append(_CONDUCTOR_AWAY_SCORE_RATIFY_PREAMBLE)
     if (
         contract not in _REASONING_POSTURE_SKIP_CONTRACTS
         and not _already_invokes_reasoning_posture(prompt_preamble, existing_text)
