@@ -468,6 +468,7 @@ async def run_execution(
                             req, execution_id=execution_id
                         ),
                         execution_id=execution_id or None,
+                        stargate_execution_id=stargate_execution_id or None,
                     )
                 except HarvestArchiveError as exc:
                     _persist_session_address(

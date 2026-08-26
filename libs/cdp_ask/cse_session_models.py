@@ -99,6 +99,7 @@ class HarvestResponse(BaseModel):
     stop: bool | None = None
     tool_pause: bool | None = None
     reason: str | None = None
+    chat_url: str | None = None
 
 
 class PasteRequest(BaseModel):

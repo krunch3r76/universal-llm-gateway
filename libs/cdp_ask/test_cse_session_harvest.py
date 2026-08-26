@@ -144,6 +144,7 @@ async def test_unattached_with_url_opens_then_scrapes() -> None:
         )
     opener.assert_awaited_once()
     assert result.outcome == "harvested"
+    assert result.chat_url == "https://claude.ai/cowork/cse_x"
     assert result.provenance and result.provenance.get("opened_on_demand") is True
 
 

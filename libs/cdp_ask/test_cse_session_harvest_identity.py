@@ -42,6 +42,21 @@ def test_archive_filename_and_header_lookup(tmp_path: Path) -> None:
     assert chat_url_from_archives("missing", archive_dir=tmp_path) is None
 
 
+def test_archive_header_lookup_by_stargate_id(tmp_path: Path) -> None:
+    sat = "2ba8da0ac9254bc08ffcefdbeb11db84"
+    stargate = "eddc877e-3f63-439a-a115-994b2856200f"
+    (tmp_path / f"cdp-ask-archive-sonnet-5-{sat}.md").write_text(
+        "# CDP ask harvest\n\n"
+        f"- execution_id: `{sat}`\n"
+        f"- stargate_execution_id: `{stargate}`\n"
+        "- url: `https://claude.ai/cowork/cse_015Wj9BxzFrBhp6D5jPoQW7D`\n",
+        encoding="utf-8",
+    )
+    assert chat_url_from_archives(stargate, archive_dir=tmp_path) == (
+        "https://claude.ai/cowork/cse_015Wj9BxzFrBhp6D5jPoQW7D"
+    )
+
+
 @pytest.mark.asyncio
 async def test_execution_id_opens_via_archive(tmp_path: Path) -> None:
     exe = "2ba8da0ac9254bc08ffcefdbeb11db84"
@@ -93,6 +108,7 @@ async def test_harvest_execution_id_opens_when_store_missed() -> None:
         )
     opener.assert_awaited_once()
     assert result.outcome == "harvested"
+    assert result.chat_url == "https://claude.ai/cowork/cse_x"
 
 
 @pytest.mark.asyncio

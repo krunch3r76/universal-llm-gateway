@@ -83,6 +83,23 @@ def test_submit_control_names_cowork_before_chat() -> None:
     assert "Send message" in names
 
 
+def test_archive_harvest_stamps_stargate_execution_id(tmp_path: Path) -> None:
+    archive = tmp_path / "harvest.md"
+    archive_harvest(
+        body="ok",
+        url="https://claude.ai/cowork/cse_015Wj9BxzFrBhp6D5jPoQW7D",
+        project_uuid="",
+        model={"ok": True},
+        attested_model="sonnet-5",
+        archive_path=str(archive),
+        execution_id="sat" + "a" * 29,
+        stargate_execution_id="eddc877e-3f63-439a-a115-994b2856200f",
+    )
+    text = archive.read_text(encoding="utf-8")
+    assert "- stargate_execution_id: `eddc877e-3f63-439a-a115-994b2856200f`" in text
+    assert "- execution_id: `" + ("sat" + "a" * 29) + "`" in text
+
+
 def test_archive_harvest_same_execution_growth_rewrites(tmp_path: Path) -> None:
     archive = tmp_path / "harvest.md"
     execution_id = "exec" + "a" * 28

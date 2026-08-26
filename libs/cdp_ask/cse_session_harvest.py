@@ -70,6 +70,14 @@ async def _resolve_target(
     return chosen.registration_id, chosen.chat_url, chosen.provenance, None
 
 
+def _bind_chat_url(response: HarvestResponse, chat_url: str) -> HarvestResponse:
+    """Copy the resolved Cowork URL onto the payload so recycle harvests stay quotable."""
+    token = (chat_url or "").strip()
+    if token and not response.chat_url:
+        response.chat_url = token
+    return response
+
+
 def _emit(registration_id: str | None, response: HarvestResponse) -> HarvestResponse:
     if response.ack_class == "typed_ack":
         emit(
@@ -205,8 +213,13 @@ async def execute_harvest(
     ) or ""
     if early is not None:
         if url and early.outcome in {"not_attached", "dormant"}:
-            return await _open_detached(url, req, early.provenance or provenance, registration_id)
-        return _emit(registration_id, early)
+            return _bind_chat_url(
+                await _open_detached(
+                    url, req, early.provenance or provenance, registration_id
+                ),
+                url,
+            )
+        return _bind_chat_url(_emit(registration_id, early), url)
 
     lane = next(
         (row for row in cdp_registry.list_active() if row.registration_id == registration_id),
@@ -214,10 +227,16 @@ async def execute_harvest(
     )
     if lane is None:
         if url:
-            return await _open_detached(url, req, provenance, registration_id)
-        return _emit(
-            registration_id,
-            HarvestResponse(outcome="not_attached", reason="lane_not_attached"),
+            return _bind_chat_url(
+                await _open_detached(url, req, provenance, registration_id),
+                url,
+            )
+        return _bind_chat_url(
+            _emit(
+                registration_id,
+                HarvestResponse(outcome="not_attached", reason="lane_not_attached"),
+            ),
+            url,
         )
 
     try:
@@ -227,5 +246,8 @@ async def execute_harvest(
         finally:
             await pw.stop()
     except Exception as exc:
-        return HarvestResponse(outcome="unreachable", reason=str(exc))
-    return _emit(registration_id, response)
+        return _bind_chat_url(
+            HarvestResponse(outcome="unreachable", reason=str(exc)),
+            url,
+        )
+    return _bind_chat_url(_emit(registration_id, response), url)

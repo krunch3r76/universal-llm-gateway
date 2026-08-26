@@ -167,6 +167,7 @@ def archive_harvest(
     attested_model: str | None,
     archive_path: str,
     execution_id: str | None = None,
+    stargate_execution_id: str | None = None,
     artifact_cards: list[dict[str, str]] | None = None,
     artifact_cards_unresolved: bool = False,
 ) -> str:
@@ -197,6 +198,10 @@ def archive_harvest(
     path.parent.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).isoformat()
     exec_line = f"- execution_id: `{execution_id}`\n" if execution_id else ""
+    stargate = (stargate_execution_id or "").strip()
+    stargate_line = (
+        f"- stargate_execution_id: `{stargate}`\n" if stargate else ""
+    )
     card_lines = ""
     if artifact_cards:
         card_lines = f"- artifact_cards: `{artifact_cards}`\n"
@@ -209,6 +214,7 @@ def archive_harvest(
         f"# CDP ask harvest\n\n"
         f"- archived_at: `{stamp}`\n"
         f"{exec_line}"
+        f"{stargate_line}"
         f"- url: `{url}`\n"
         f"- project_uuid: `{project_uuid}`\n"
         f"- model_select: `{model}`\n"
@@ -649,6 +655,7 @@ async def project_ask_on_page(
                     attested_model=attested,
                     archive_path=archive_path,
                     execution_id=execution_id,
+                    stargate_execution_id=stargate_execution_id or None,
                     artifact_cards=cards,
                     artifact_cards_unresolved=False,
                 )
