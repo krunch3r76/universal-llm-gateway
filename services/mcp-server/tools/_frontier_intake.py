@@ -145,13 +145,54 @@ def validate_wrap_inputs(
     return None
 
 
+_CONDUCTOR_PACKET_KIND = "conductor"
+
+
 def reject_unsupported_packet_inputs(
     op: str,
     contract: str | None,
     packet_path: str | None,
     source_ref: str | None,
+    packet_kind: str | None = None,
 ) -> dict[str, Any] | None:
-    """Reject packet_path/source_ref where downstream cannot honor them (F17378)."""
+    """Reject packet_path/source_ref where downstream cannot honor them (F17378).
+
+    ``packet_kind=conductor`` is the attended/Auto spawn carve-out: Stargate
+    materializes from ``source_ref`` on ``contract=light-bounded``.
+    """
+    kind = (packet_kind or "").strip().lower() or None
+    if kind is not None and kind != _CONDUCTOR_PACKET_KIND:
+        return _validation_error(
+            "packet_kind only accepts 'conductor' (conductor spawn)",
+            field="packet_kind",
+            code="packet_kind_invalid",
+        )
+    if kind == _CONDUCTOR_PACKET_KIND:
+        if op != "generate":
+            return _validation_error(
+                "packet_kind=conductor is only valid on op='generate'",
+                field="packet_kind",
+                code="packet_kind_op_invalid",
+            )
+        if contract != "light-bounded":
+            return _validation_error(
+                "packet_kind=conductor requires contract='light-bounded'",
+                field="contract",
+                code="conductor_contract_invalid",
+            )
+        if source_ref is None:
+            return _validation_error(
+                "packet_kind=conductor requires source_ref=todo:{slug}",
+                field="source_ref",
+                code="conductor_requires_source_ref",
+            )
+        if packet_path is not None:
+            return _validation_error(
+                "packet_kind=conductor forbids packet_path; Stargate materializes",
+                field="packet_path",
+                code="conductor_with_packet_path",
+            )
+        return None
     if op not in ("generate", "to_thread"):
         return None
     if packet_path is None and source_ref is None:
@@ -166,7 +207,9 @@ def reject_unsupported_packet_inputs(
     if source_ref is not None and contract not in ("implement", "wrap"):
         return _validation_error(
             "source_ref materialization is only supported for contract='implement' "
-            "(cursor-sdk implement lane); remove source_ref or set contract='implement'.",
+            "(cursor-sdk implement lane) or packet_kind='conductor' with "
+            "contract='light-bounded'; remove source_ref, set contract='implement', "
+            "or pass packet_kind='conductor'.",
             field="source_ref",
         )
     return None

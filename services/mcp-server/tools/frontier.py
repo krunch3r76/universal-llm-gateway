@@ -42,6 +42,7 @@ from pydantic import Field
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
+from ._dispatch_caller_agent import infer_caller_agent_for_conductor
 from ._frontier_intake import (
     normalize_dispatch_model,
     reject_pointer_body_on_generate,
@@ -330,6 +331,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 ),
             ),
         ] = None,
+        packet_kind: Literal["conductor"] | None = None,
         workspace: Annotated[
             str | None,
             Field(
@@ -436,7 +438,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         gating-misleading knobs (``density_triage``, ``review_opt_out_reason_code``,
         ``auto_review_child``). For ``seat=cursor-sdk`` generate,
         ``packet_path`` is honored across ``light-bounded``, ``pure-mechanical``,
-        and ``implement``; ``source_ref`` is implement-only (and ``wrap``).
+        and ``implement``; ``source_ref`` is implement/wrap, or
+        ``packet_kind=conductor`` with ``contract=light-bounded`` (conductor
+        spawn — See agent_skill:conductor).
         When no ``packet_path`` is supplied, prompt context is read from the
         latest turn on ``dispatch_thread_id`` (bus-turn fallback). Prefer
         ``prompt=`` or ``sidecar_ref=`` (cortex:// or workspaces path) to
@@ -852,7 +856,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         if wrap_err is not None:
             return wrap_err
         packet_input_err = reject_unsupported_packet_inputs(
-            op, contract, packet_path, source_ref
+            op, contract, packet_path, source_ref, packet_kind=packet_kind
         )
         if packet_input_err is not None:
             return packet_input_err
@@ -891,6 +895,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 body["packet_path"] = packet_path
             if source_ref is not None:
                 body["source_ref"] = source_ref
+            if packet_kind is not None:
+                body["packet_kind"] = packet_kind
             if prompt is not None:
                 body["prompt"] = prompt
             if sidecar_ref is not None:
@@ -949,6 +955,10 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         # Empty string ≡ absent (BIND_B); do not relay "" to Stargate.
         effort_for_relay = (reasoning_effort or "").strip() or None
+        caller_agent = infer_caller_agent_for_conductor(
+            caller_agent,
+            packet_kind=packet_kind,
+        )
         for key, val in (
             ("model", model),
             ("mcp", mcp),

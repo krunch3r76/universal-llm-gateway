@@ -116,6 +116,16 @@ def test_team_dispatch_source_ref_signature() -> None:
     assert sig.parameters["source_ref"].default is None
 
 
+def test_team_dispatch_packet_kind_signature() -> None:
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+
+    sig = inspect.signature(recorder.functions["team_dispatch"])
+    assert "packet_kind" in sig.parameters
+    assert sig.parameters["packet_kind"].default is None
+    assert "conductor" in str(sig.parameters["packet_kind"].annotation)
+
+
 def test_team_dispatch_inline_prompt_params_present() -> None:
     recorder = _ToolNameRecorder()
     register_frontier_tools(recorder)
@@ -342,6 +352,43 @@ def test_team_dispatch_generate_forwards_source_ref() -> None:
     assert body["source_ref"] == "todo:first-class-wrap-transport"
     assert body["contract"] == "implement"
     # bare source_ref → no caller packet_path forwarded
+    assert "packet_path" not in body
+
+
+def test_team_dispatch_generate_forwards_conductor_packet_kind() -> None:
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    team_dispatch_fn = recorder.functions["team_dispatch"]
+
+    relay_calls: list[dict[str, Any]] = []
+
+    async def _fake_relay(
+        *, endpoint: str, body: dict[str, Any], record_prefix: str
+    ) -> dict[str, Any]:
+        relay_calls.append({"endpoint": endpoint, "body": body})
+        return {"execution_id": "exec-conductor", "thread_id": "thread-test"}
+
+    with (
+        patch("tools.frontier._relay", side_effect=_fake_relay),
+        patch("tools.frontier.record", side_effect=lambda *a, **k: None),
+    ):
+        asyncio.run(
+            team_dispatch_fn(
+                op="generate",
+                seat="cursor-sdk",
+                contract="light-bounded",
+                source_ref="todo:s4-attended-summon-probe",
+                packet_kind="conductor",
+                dispatch_thread_id="9638",
+                lane="B",
+            )
+        )
+
+    assert len(relay_calls) == 1
+    body = relay_calls[0]["body"]
+    assert body["packet_kind"] == "conductor"
+    assert body["source_ref"] == "todo:s4-attended-summon-probe"
+    assert body["contract"] == "light-bounded"
     assert "packet_path" not in body
 
 

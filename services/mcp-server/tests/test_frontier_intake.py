@@ -219,6 +219,55 @@ def test_source_ref_rejected_on_light_bounded_generate() -> None:
     assert err["field"] == "source_ref"
 
 
+def test_source_ref_ok_on_light_bounded_conductor() -> None:
+    assert (
+        reject_unsupported_packet_inputs(
+            "generate",
+            "light-bounded",
+            None,
+            "todo:x",
+            packet_kind="conductor",
+        )
+        is None
+    )
+
+
+def test_conductor_rejects_packet_path() -> None:
+    err = reject_unsupported_packet_inputs(
+        "generate",
+        "light-bounded",
+        "tmp/p.md",
+        "todo:x",
+        packet_kind="conductor",
+    )
+    assert err is not None
+    assert err["field"] == "packet_path"
+
+
+def test_conductor_rejects_non_light_bounded() -> None:
+    err = reject_unsupported_packet_inputs(
+        "generate",
+        "implement",
+        None,
+        "todo:x",
+        packet_kind="conductor",
+    )
+    assert err is not None
+    assert err["field"] == "contract"
+
+
+def test_packet_kind_rejects_unknown() -> None:
+    err = reject_unsupported_packet_inputs(
+        "generate",
+        "light-bounded",
+        None,
+        "todo:x",
+        packet_kind="solo",
+    )
+    assert err is not None
+    assert err["field"] == "packet_kind"
+
+
 def test_packet_path_ok_on_implement_generate() -> None:
     assert (
         reject_unsupported_packet_inputs(
