@@ -11,7 +11,6 @@ from implement_admission.conductor_witness_types import (
     FoldDeps,
     Witness,
     WitnessCortex,
-    row_status_in_tip,
 )
 from implement_admission.evidence_verify import resolve_artifact_path
 
@@ -101,7 +100,7 @@ def row_witnesses(
 
     f_uri = artifacts.get("F1")
     if f_uri and _uri_resolves(f_uri, files_root=root, repo=repo):
-        witnesses["G2"] = Witness(row="G2", source=f"artifact:F1", detail=f_uri)
+        witnesses["G2"] = Witness(row="G2", source="artifact:F1", detail=f_uri)
 
     s4b_uri = artifacts.get("S4b")
     if s4b_uri and _uri_resolves(s4b_uri, files_root=root, repo=repo):

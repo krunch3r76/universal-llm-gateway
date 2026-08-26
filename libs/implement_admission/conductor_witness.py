@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from implement_admission.closeout_helpers import cortex_files_root
 from implement_admission.conductor_score_journal import (
     G_ROWS,
@@ -25,7 +27,9 @@ from implement_admission.conductor_witness_types import (
     done_rows_claimed_in_closeout,
     row_status_in_tip,
 )
-from implement_admission.events_conductor_witness import emit_conductor_score_witness_fold
+from implement_admission.events_conductor_witness import (
+    emit_conductor_score_witness_fold,
+)
 
 __all__ = [
     "DefaultWitnessCortex",
