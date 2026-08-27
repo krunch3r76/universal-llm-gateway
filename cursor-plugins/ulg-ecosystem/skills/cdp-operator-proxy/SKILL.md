@@ -190,14 +190,15 @@ body or episode BRIEFING (`cursor_request` tool descriptor mirrors this table).
 
 | Lane | IDE command | Headless skill (SOT) | Wire `contract` (`cursor_request`) |
 |---|---|---|---|
-| Mint todo / seed path | `/work-item-seed` | `work-item-seed-path` | `seed` |
-| Idea→implement codework | `/layer` | `abstraction-layering` | `implement` \| `investigate` \| `verify` on existing todo; mint via seed first |
+| Mint todo / identity punch | `/work-item-seed` | `work-item-seed-path` | `seed` (S4a then spawn) |
+| Idea→implement codework | `/layer` (gate-shape) | `abstraction-layering` | re-admit conductor; `implement` \| `investigate` \| `verify` on existing todo; punch identity first if no todo |
 | Non-codework Q→A | `/path-sim` | `path-sim` (`cursor_only` — commission cursor) | — |
 
-Commission grok sub-PM: body `Use the work-item-seed-path skill`; S6 hands off to
-`abstraction-layering` at the named G gate. Existing `todo:{slug}` codework: body
-`Use the abstraction-layering skill` (+ `todo:{slug}` · entry gate). ¬ prose-only
-`/layer` without the skill slug on the wire.
+Commission grok sub-PM: body `Use the work-item-seed-path skill`; S6 **spawns
+conductor** (G-rows *are* layering). Existing `todo:{slug}` codework: body
+`Use the conductor skill` + `Use the abstraction-layering skill` (+ `todo:{slug}`
+· entry gate). ¬ prose-only `/layer` without the skill slug on the wire. ¬ `/layer`
+as a second admit after seed.
 
 ## cursor-auto ↔ tick posting (BINDING)
 

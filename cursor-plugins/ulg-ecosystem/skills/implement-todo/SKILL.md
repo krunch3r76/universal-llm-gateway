@@ -124,15 +124,15 @@ Pick the cheapest sound route for this seat. **SOT:** consult-routing § Address
 |---|---|---|
 | DIRECT | cortex/skill/doc codification, graph edits, sidecars; reversible, no shared-tree mutation | `fs(cortex)` + cortex ops |
 | **ADDRESS** | **`bind_status∈{settled,shipping}`** ∧ **`density_triage≠recon_pending`** | **`/address`** — ship/advance settled binds; `entity_update` + `merge_state_card` for stage/`shipping` advances |
-| **SEED** | no closable `todo:` ∧ codework | **`/work-item-seed`** — Use the `work-item-seed-path` skill |
-| **LAYER** | **`bind_status=unsettled`** ∧ **`density_triage∈{judgment_required,recon_pending}`** ∧ codework; default when unmatched codework | **`/layer`** — Use the `abstraction-layering` skill; **defer §3b** unless `check_requested=true` |
+| **SEED** | no closable `todo:` ∧ codework | **`/work-item-seed`** S4a then spawn — Use the `work-item-seed-path` skill |
+| **LAYER** | **`bind_status=unsettled`** ∧ **`density_triage∈{judgment_required,recon_pending}`** ∧ codework; default when unmatched codework | Re-admit conductor at highest open G — Use the `abstraction-layering` skill for **gate shape**; `/layer` is not a second admit; **defer §3b** unless `check_requested=true` |
 | **PATH-SIM** | same bind ∧ (**non-codework** ∨ `arc_lane=path_sim` ∨ operator named `/path-sim`) | `/path-sim` (bundled) — Use the `path-sim` skill § Bundled dispatch |
 | DISPATCH | **`density_triage=mechanical`**; or **`implement_ready`** ∧ dense spec after Gate-2; explicit post-densify implement after opt-in Gate-6 | `team_dispatch(op=generate, seat=cursor-sdk, contract=implement, source_ref=…)` |
 | COORDINATE | operator/other seat needed; dirty-tree commit; cross-seat changes; owner ratification | ask/operator or agent_bus handoff |
 
 `bind_status=deferred` ⇒ **held** (no route; `next_action=await_unblock`).
 
-`doc_or_cortex_codification ⇒ DIRECT`; no todo ∧ codework ⇒ **SEED**; **`unsettled` + `{judgment_required,recon_pending}` + codework ⇒ LAYER** (¬ ADDRESS, ¬ default PATH-SIM); same bind + PATH-SIM trigger ⇒ **PATH-SIM**; **`settled`/`shipping` (≠ `recon_pending`) ⇒ ADDRESS**; `mechanical ∨ (implement_ready ∧ dense_spec) ⇒ DISPATCH`; `dirty_tree_commit ∨ cross_seat ∨ owner_gate ⇒ COORDINATE`; unmatched codework ⇒ LAYER.
+`doc_or_cortex_codification ⇒ DIRECT`; no todo ∧ codework ⇒ **SEED** (S4a → spawn); **`unsettled` + `{judgment_required,recon_pending}` + codework ⇒ LAYER** (re-admit conductor; ¬ ADDRESS, ¬ default PATH-SIM); same bind + PATH-SIM trigger ⇒ **PATH-SIM**; **`settled`/`shipping` (≠ `recon_pending`) ⇒ ADDRESS**; `mechanical ∨ (implement_ready ∧ dense_spec) ⇒ DISPATCH`; `dirty_tree_commit ∨ cross_seat ∨ owner_gate ⇒ COORDINATE`; unmatched codework ⇒ LAYER (conductor).
 
 SOT: consult-routing § Address
 
@@ -140,7 +140,7 @@ Routes are for one bounded pickup only. If you are deriving per-phase routes, yo
 
 ### 3b. Judgment_required DISPATCH admit recipe — **opt-in only**
 
-**Default:** `judgment_required` codework ⇒ **LAYER route (§3)** — skip this section.
+**Default:** `judgment_required` codework ⇒ **LAYER route (§3)** (re-admit conductor) — skip this section.
 PATH-SIM only on the §3 trigger set (non-codework / `arc_lane=path_sim` / named `/path-sim`).
 
 **Fire §3b only when:** `attributes.check_requested=true` on the todo, operator explicitly requests Gate-6/API check, or post-path-sim follow-up `contract=implement` after split-phase densify (legacy spine).

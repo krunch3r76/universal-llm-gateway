@@ -37,9 +37,9 @@ memorable; seed when work is commissioned.
 
 | Operator input | `friction()`? | `todo:`? | Then |
 |---|---|---|---|
-| "Report this as a friction" **and** it names a tool/schema/boot/protocol gap | Yes — log first | Yes if actionable — cite the friction assertion as context | Mint via `work-item-seed-path` (`/work-item-seed friction a:{id}`) when no todo yet → then investigate→execute / `/layer` |
+| "Report this as a friction" **and** it names a tool/schema/boot/protocol gap | Yes — log first | Yes if actionable — cite the friction assertion as context | Mint via `work-item-seed-path` (`/work-item-seed friction a:{id}`) when no todo yet → then spawn conductor; existing todo → re-admit |
 | "This broke / is wrong / fix this" (defect, clear fix) | Yes if not already logged and it fits a category | Yes — fix-cycle `todo:` unless one exists | Same mint path if no todo; else investigate→execute below |
-| "Feature request: add X" / "file this as a feature" — no defect, design may be open | Yes — `category=feature` | **No** unless the operator commissions work | Reopen via `frictions(category=feature)`. Seed only on commission; architecture-open ⇒ Fable-before-seed (skill S3 mode B) |
+| "Feature request: add X" / "file this as a feature" — no defect, design may be open | Yes — `category=feature` | **No** unless the operator commissions work | Reopen via `frictions(category=feature)`. Identity-punch only on commission; architecture-open ⇒ Mode B (Fable-before-S4b) |
 | "Maybe this is a friction" / ambiguous root cause | Yes only if symptom maps to a category | Yes only if there is an actionable change | Prefer investigate; ask only if it changes the next action; mint via seed path when actionable |
 | Pure observation of a real tool/protocol gap, no requested change | Yes — records the gap | No unless a fix is asked for or nameable | None |
 | Neither — not a gap, not a feature ask, no commissioned change | No | No | Acknowledge |

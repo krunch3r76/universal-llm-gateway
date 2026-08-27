@@ -264,8 +264,9 @@ One merged GPT check. Gate-6 substrate, zoom-out, seeding ladder, overhaul, `aut
 
 ## Address — bind_status chooser (SOT)
 
-Codework default is `/layer` (`decision:abstraction-layering` · front-door Q2).
-Path-sim is **not** the unmatched default. `/address` is the settled-ship peer.
+Codework default is S4a → spawn conductor (`decision:operator-request-front-door` Q2 ·
+unify §3.1). `/layer` is gate-shape, ¬ a second admit. Path-sim is **not** the
+unmatched default. `/address` is the settled-ship peer.
 
 Attrs: `bind_status∈{unsettled,settled,shipping,deferred}`, `density_triage`,
 `arc_lane`. **PATH-SIM** only when **any**: non-codework · `arc_lane=path_sim` ·
@@ -275,14 +276,14 @@ operator named `/path-sim`.
 |---|---|---|
 | 1 | `deferred` | held |
 | 2 | `settled\|shipping` ∧ ¬`recon_pending` | **ADDRESS** |
-| 3 | no closable `todo:` ∧ codework | **SEED** (`work-item-seed-path`) |
+| 3 | no closable `todo:` ∧ codework | **SEED** (`work-item-seed-path` S4a → spawn) |
 | 4 | `unsettled` ∧ `judgment_required\|recon_pending` ∧ PATH-SIM trigger | **PATH-SIM** |
-| 5 | `unsettled` ∧ `judgment_required\|recon_pending` ∧ codework | **LAYER** |
+| 5 | `unsettled` ∧ `judgment_required\|recon_pending` ∧ codework | **LAYER** (re-admit conductor; `/layer` = gate-shape) |
 | 6 | `mechanical` ∨ (`implement_ready` ∧ stamped) | **DISPATCH** |
-| 7 | else | **LAYER** if codework else **PATH-SIM** |
+| 7 | else | **LAYER** (conductor) if codework else **PATH-SIM** |
 
 Gate-2 sets `bind_status=settled`. Mirrors cite `SOT: consult-routing § Address`.
-Lid-close / “spawn a conductor” is **not** this chooser — unify discuss.
+Rows 3 and 5 **are** lid-close / spawn-or-re-admit.
 
 ## Codified bug reports
 

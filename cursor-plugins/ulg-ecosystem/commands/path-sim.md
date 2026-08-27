@@ -8,15 +8,15 @@ Path-sim — frontier question/solution-space search with **off-seat Q→A→R�
 
 | Condition | Route |
 |---|---|
-| **Request to change the codebase** (cursor-auto DIRECTIVE, friction fix, codework arc) | **`/layer`** — abstraction layering supersedes path-sim ratification windows for codework (`decision:abstraction-layering`). Non-codework search + fat-packet deepen lane stay here |
+| **Request to change the codebase** (cursor-auto DIRECTIVE, friction fix, codework arc) | S4a → conductor (`work-item-seed-path`); `/layer` is gate-shape. Abstraction layering supersedes path-sim ratification windows for codework (`decision:abstraction-layering`). Non-codework search + fat-packet deepen lane stay here |
 | Operator `/path-sim …` | This command → skill § Dispatch bindings |
-| Friction / bug needing **codework** fix cycle | **`/layer`** (or `/work-item-seed` if no todo) — not this command |
+| Friction / bug needing **codework** fix cycle | S4a → conductor (or re-admit if todo exists) — not this command |
 | Non-codework friction / fat-packet deepen | Skill § Friction entry → **bundled** (or split Q-then-A when mid-cascade) |
 | `judgment_required` todo ∧ (`arc_lane=path_sim` ∨ `dispatch_lane=path-sim-admit-gate` ∨ named `/path-sim`) | **Bundled** → skill § Bundled dispatch |
-| `judgment_required` **codework** todo pickup | **`/layer`** — not this command |
+| `judgment_required` **codework** todo pickup | Re-admit conductor — not this command |
 | `density_triage=mechanical` + dense spec + `implement_ready` | `/todo pickup` → `source_ref` implement only |
 | `bind_status=settled` or `shipping` (≠ `recon_pending`) | `/address` peer — settled bind ship/advance (SOT: consult-routing § Address) |
-| `bind_status=unsettled` ∧ `density_triage∈{judgment_required,recon_pending}` ∧ codework | **`/layer`** (SOT: consult-routing § Address) |
+| `bind_status=unsettled` ∧ `density_triage∈{judgment_required,recon_pending}` ∧ codework | Re-admit conductor (SOT: consult-routing § Address) |
 | same bind ∧ (non-codework ∨ `arc_lane=path_sim` ∨ named `/path-sim`) | **Bundled** `/path-sim` — `workflow=path_sim` recon front-half |
 | Operator wants to **skip** web R-admit **and** R-after | `check_requested=false` on todo (or say "no check") |
 | Post-ship critique (standalone / non-path-sim work item) | `/work-item-review` — also **auto-fired** after path-sim Stage-B (skill § R positions) |
