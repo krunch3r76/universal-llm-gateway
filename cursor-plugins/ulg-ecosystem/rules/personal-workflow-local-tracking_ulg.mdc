@@ -1,0 +1,54 @@
+---
+description: "Personal-life helper scripts and employer/matter workflows stay in ignored local trees with nested git — never on the public remote. Fires when authoring helpers, ingest/pharmacy/bills/tax/life runbooks, or deciding whether a path is git-tracked."
+alwaysApply: true
+rule_category: engineering
+apply_tier: required_gate
+trigger_match_terms:
+  - personal workflow
+  - scripts.local
+  - helper script
+  - bills ingest
+  - walgreens
+  - pharmacy
+  - life helper
+  - tools.local
+  - pipelines.local
+---
+# Personal workflows — local tracking
+
+**Invariant**: `personal_life(helper ∨ workflow) ⇒ ¬track(public_remote) ∧ track(local_nested_git)` · `track ≡ publish`.
+
+Fleet/generic stays on the public tree. Parent `.gitignore` already ignores the `*.local/` homes.
+
+## Homes
+
+| Class | Home |
+|---|---|
+| Personal helper scripts | `scripts.local/` (nested git) |
+| Private MCP tools | `services/mcp-server/tools/local/` |
+| Local pipelines | `pipelines.local/` |
+| Local service_ctl plugins | `scripts/model_manager/ui/controller/service_ctl/local/` |
+| Life-domain skills | `.cursor/skills/{tax,lawyer-stance,…}` (already ignored) |
+| Employer/matter Cursor rules | ignore in place + copy under `scripts.local/cursor-rules/` |
+| Fleet / generic | `scripts/`, public `_ws` / `_ulg` |
+
+`∀ new personal helper: write(scripts.local/…) ∧ git -C scripts.local add ∧ ¬git add scripts/`
+
+## Forbidden / Permitted
+
+| Forbidden | Permitted |
+|---|---|
+| Personal harvest/upsert/ingest under `scripts/` | Same files under `scripts.local/` |
+| New `_ws`/`_ulg` rule naming an employer or matter | Ignored life rule + nested-git copy; SOT on `cortex://` |
+| Personal defaults baked into public CLIs (employer folder names) | Parameterize, or move the CLI |
+| Leave a public-tree copy after relocate | `git rm` the parent path; update runbook cites |
+
+## Anti-patterns
+
+| Bad | Good |
+|---|---|
+| ESS harvest under `scripts/walgreens/` because “scripts go in scripts/” | `scripts.local/walgreens/` + nested `git add` |
+| Track a pharmacy trigger rule as `_ws` for discoverability | Ignore like life skills; runbook stays `cortex://` |
+| Relocate the file and leave `scripts/walgreens/` tracked | `git rm` parent; rewrite runbook paths |
+
+SOT: `decision:scripts-local-personal-helpers`. Placement pointer: `cursor-rule-placement_ulg` § Personal-life.

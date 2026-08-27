@@ -113,6 +113,7 @@ mcps/
 scripts/model_manager/ui/controller/service_ctl/local/
 
 # Local-only scripts (not for public release; same idea as pipelines.local)
+# Personal-life helpers/workflows: nested git here. Rule: personal-workflow-local-tracking_ulg
 scripts.local/
 
 # RAG scope vocabulary (auto-generated, per-machine)
@@ -203,9 +204,12 @@ libs/cortex_store/migrations/
 #
 # Rules/skills/commands are a common target of agent reasoning; leaving them
 # untracked made every cross-seat claim about guidance unverifiable from the
-# repo. Tracking here is NOT publication — this repo is private, and the
-# pre-publication scrub (operator name, /home/* paths, `jupiter` hostname,
-# private MCP host) is tracked separately as a residual.
+# repo. Engineering guidance is tracked so those claims stay verifiable.
+# Personal-life workflows are the exception: track ≡ publish on the public
+# remote — they belong in scripts.local/ (nested git) or this ignore list.
+# Rule: personal-workflow-local-tracking_ulg. Pre-publication scrub
+# (operator name, /home/* paths, `jupiter` hostname, private MCP host)
+# remains a residual on remaining tracked guidance.
 #
 # Life-domain skills stay ignored: they carry real names, probate/APN numbers,
 # account identifiers, and psych/relationship material. `.claude/skills/`
@@ -231,6 +235,7 @@ libs/cortex_store/migrations/
 .cursor/skills/legal-opinion-corpus-ingestion/
 .cursor/skills/w2-ingestion/
 .cursor/skills/messages-check/
+.cursor/rules/walgreens-shift-sync_ws.mdc
 
 # Ecosystem plugin SoT — skills, commands, seat overlays (markdown re-included)
 !cursor-plugins/**

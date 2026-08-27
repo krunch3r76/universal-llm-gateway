@@ -24,6 +24,7 @@ mcp-selector-naming_ulg
 mcp-tool-awareness_ulg
 mcp-tool-param-types_ulg
 pager-notify_ulg
+personal-workflow-local-tracking_ulg
 phase-vocabulary_ulg
 plan-slug-coherence_ulg
 operator-posture_ulg
