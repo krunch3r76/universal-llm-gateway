@@ -8,6 +8,7 @@ from claude_bundles.chat_model_match import (
     compose_cdp_model_with_effort,
     family_nested_in_more_models,
     label_satisfies_request,
+    match_effort_qualified_radio,
     normalize_picker_request,
     parse_model_request,
     sealed_ask_default_effort,
@@ -109,3 +110,21 @@ def test_family_nested_in_more_models_fable_only() -> None:
     assert family_nested_in_more_models("fable") is True
     assert family_nested_in_more_models("fable-5") is True
     assert family_nested_in_more_models("opus-5") is False
+
+
+@pytest.mark.offline
+def test_match_effort_qualified_radio_clicks_high_sku() -> None:
+    """a:30693 — High is a first-class radio; do not pick Extra/Max for high."""
+    labels = ["Opus 5", "Opus 5 High", "Opus 5 Extra High", "Opus 5 Max"]
+    assert (
+        match_effort_qualified_radio("opus-5", labels, effort="high") == "Opus 5 High"
+    )
+    assert (
+        match_effort_qualified_radio("opus-5", labels, effort="extra")
+        == "Opus 5 Extra High"
+    )
+    assert match_effort_qualified_radio("opus-5", labels, effort="max") == "Opus 5 Max"
+    assert match_effort_qualified_radio("opus-5", labels, effort=None) is None
+    assert (
+        match_effort_qualified_radio("opus-5", ["Opus 5"], effort="high") is None
+    )

@@ -5,9 +5,12 @@ sole SOT for available models. ``select_model`` may try a predicted label list
 first (fast path — not an availability gate); on miss it discovers radios
 (including under "More models") and matches the requested name/pattern.
 
-Effort High/Extra/Max live under ``effort-menu-trigger`` → ``effort-option-*``
-(friction 24592). Sealed-ask default for Opus/Fable is Effort **High** (operator
-2026-07-16); request ``opus-5-extra`` when Extra is required.
+Effort High/Extra/Max may be first-class radios (click ``Opus 5 High``
+directly — a:30693 workaround) **or** live under ``effort-menu-trigger`` →
+``effort-option-*`` (friction 24592). Skip the submenu when the dropdown
+label already attests the requested effort. Sealed-ask default for
+Opus/Fable is Effort **High** (operator 2026-07-16); request
+``opus-5-extra`` when Extra is required.
 
 Cowork Project nests some models under "More models" and mounts the picker
 only after chat composer chrome is live.
@@ -23,6 +26,7 @@ from claude_bundles.chat_model_match import (
     family_pattern,
     is_leave_request,
     label_satisfies_request,
+    match_effort_qualified_radio,
     match_model_request,
     normalize_picker_request,
     parse_model_request,
@@ -37,6 +41,7 @@ __all__ = [
     "family_pattern",
     "label_satisfies_request",
     "list_picker_radios",
+    "match_effort_qualified_radio",
     "match_model_request",
     "normalize_picker_request",
     "parse_model_request",
@@ -157,6 +162,56 @@ async def _click_family_radio(page, family: str) -> str | None:
     return text or family
 
 
+async def _click_radio_named(page, label: str) -> str | None:
+    """Click a live menuitemradio by its visible label (effort-qualified SKU)."""
+    text = (label or "").strip()
+    if not text:
+        return None
+    item = page.locator("[role=menuitemradio]").filter(
+        has_text=re.compile(rf"^{re.escape(text)}$", re.I)
+    )
+    if not await item.count():
+        item = page.locator("[role=menuitemradio]").filter(
+            has_text=re.compile(re.escape(text), re.I)
+        )
+    if not await item.count():
+        return None
+    await item.first.click(force=True)
+    await page.wait_for_timeout(800)
+    return text
+
+
+async def _effort_after_click(
+    page,
+    *,
+    requested: str,
+    effort: str | None,
+    matched: str | None,
+    before: str,
+) -> tuple[dict | None, dict | None]:
+    """Skip the effort submenu when the dropdown already attests it (a:30693)."""
+    if not effort:
+        return None, None
+    await page.keyboard.press("Escape")
+    await page.wait_for_timeout(300)
+    after_click = await current_model_label(page)
+    if label_satisfies_request(requested, after_click, effort=effort):
+        return (
+            {
+                "ok": True,
+                "step": "effort_already_on_label",
+                "level": effort,
+                "current_model": after_click,
+            },
+            None,
+        )
+    applied = await _apply_effort(page, effort, matched=matched)
+    if not applied.get("ok"):
+        applied["before"] = before
+        return None, applied
+    return applied.get("effort"), None
+
+
 async def _apply_effort(page, effort: str, *, matched: str | None) -> dict:
     await page.keyboard.press("Escape")
     await page.wait_for_timeout(300)
@@ -183,6 +238,7 @@ async def _discover_and_click(
     before: str,
     requested: str,
     predicted: str | None,
+    effort: str | None = None,
 ) -> tuple[str | None, list[str], dict | None]:
     """Live UI SOT path. Returns (matched, available, error_dict|None)."""
     await page.keyboard.press("Escape")
@@ -190,6 +246,9 @@ async def _discover_and_click(
     await _open_picker(page)
     await _expand_more_models(page)
     available = await list_picker_radios(page)
+    qualified = match_effort_qualified_radio(family, available, effort=effort)
+    if qualified and await _click_radio_named(page, qualified) is not None:
+        return qualified, available, None
     matched = match_model_request(family, available)
     if not matched:
         return (
@@ -251,9 +310,15 @@ async def select_from_ui(
     predicted = match_model_request(family, list(PREDICTED_MODEL_LABELS))
     path = "discover"
     matched: str | None = None
-    available: list[str] = []
+    available: list[str] = await list_picker_radios(page)
+    qualified = match_effort_qualified_radio(family, available, effort=effort)
+    if qualified:
+        clicked = await _click_radio_named(page, qualified)
+        if clicked is not None:
+            path = "effort_qualified_radio"
+            matched = qualified
 
-    if predicted:
+    if path == "discover" and predicted:
         matched = await _click_family_radio(page, family)
         if matched is None:
             await _expand_more_models(page)
@@ -262,45 +327,51 @@ async def select_from_ui(
             path = "predicted"
             matched = predicted
 
-    if path != "predicted":
+    if path == "discover":
         matched, available, err = await _discover_and_click(
             page,
             family=family,
             before=before,
             requested=requested,
             predicted=predicted,
+            effort=effort,
         )
         if err is not None:
             return err
 
-    effort_result = None
-    if effort:
-        applied = await _apply_effort(page, effort, matched=matched)
-        if not applied.get("ok"):
-            applied["before"] = before
-            return applied
-        effort_result = applied.get("effort")
+    effort_result, effort_err = await _effort_after_click(
+        page,
+        requested=requested,
+        effort=effort,
+        matched=matched,
+        before=before,
+    )
+    if effort_err is not None:
+        return effort_err
 
     after = await current_model_label(page)
     if not label_satisfies_request(requested, after, effort=effort):
-        if path == "predicted":
+        if path in {"predicted", "effort_qualified_radio"}:
             matched, available, err = await _discover_and_click(
                 page,
                 family=family,
                 before=before,
                 requested=requested,
                 predicted=predicted,
+                effort=effort,
             )
             if err is not None:
                 return err
             path = "discover_after_predict_miss"
-            effort_result = None
-            if effort:
-                applied = await _apply_effort(page, effort, matched=matched)
-                if not applied.get("ok"):
-                    applied["before"] = before
-                    return applied
-                effort_result = applied.get("effort")
+            effort_result, effort_err = await _effort_after_click(
+                page,
+                requested=requested,
+                effort=effort,
+                matched=matched,
+                before=before,
+            )
+            if effort_err is not None:
+                return effort_err
             after = await current_model_label(page)
             if label_satisfies_request(requested, after, effort=effort):
                 return {

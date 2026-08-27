@@ -139,6 +139,32 @@ def match_model_request(family_request: str, labels: list[str]) -> str | None:
     return scored[0][1]
 
 
+def match_effort_qualified_radio(
+    family: str,
+    labels: list[str],
+    *,
+    effort: str | None,
+) -> str | None:
+    """Prefer a live radio whose label already attests family+effort (a:30693).
+
+    Cowork exposes High/Extra/Max as first-class radios. Clicking that SKU is
+    the destination; ``effort-menu-trigger`` is optional. ``None`` means fall
+    back to family match + submenu.
+    """
+    if not effort:
+        return None
+    hits = [
+        text
+        for raw in labels
+        if (text := (raw or "").strip())
+        and label_satisfies_request(family, text, effort=effort)
+    ]
+    if not hits:
+        return None
+    hits.sort(key=len)
+    return hits[0]
+
+
 def label_satisfies_request(
     requested: str,
     label: str,
