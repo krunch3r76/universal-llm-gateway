@@ -225,6 +225,7 @@ class LedgerRow:
     read_only: bool = False
     record_json: str = "{}"
     resume_of: str | None = None
+    terminal_status: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

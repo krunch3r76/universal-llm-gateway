@@ -63,7 +63,8 @@ def test_attended_conductor_preamble_includes_resurface_block() -> None:
         has_packet_path=True,
     )
     assert "CONDUCTOR ATTENDED RESURFACE" in preamble
-    assert "resurface the scoreboard tip" in preamble
+    assert "SCORE_RESURFACE" in preamble
+    assert "summoning lead" in preamble
     assert "no pager" in preamble
     assert "CONDUCTOR AWAY SCORE-RATIFY" not in preamble
 

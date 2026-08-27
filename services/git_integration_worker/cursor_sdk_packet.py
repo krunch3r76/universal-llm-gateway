@@ -100,9 +100,12 @@ _CONDUCTOR_RUN_TO_COMPLETION_TEMPLATE = (
 
 _CONDUCTOR_ATTENDED_RESURFACE_PREAMBLE = (
     "CONDUCTOR ATTENDED RESURFACE (mandatory): summon_mode is attended — the "
-    "summoning IDE chat is live. At G3→G5: resurface the scoreboard tip in "
-    "this chat for discussion (not implement, not pager, not CONFIRM_PENDING). "
-    "Explicit see-score while attended: ROW_PINNED at G3, no pager. "
+    "summoning IDE chat is live. At G3→G5: post SCORE_RESURFACE to "
+    "{caller_agent} on the summoning bus thread and close out with the stop "
+    "token so the summoning lead's agent_bus wait returns; the summoning lead "
+    "relays the score into the IDE chat for discussion (not implement, not "
+    "CONFIRM_PENDING). Explicit see-score while attended: ROW_PINNED at G3, "
+    "no pager — the relay is the summoning lead's duty, not this SDK seat. "
     "Do not fire in-process CDP score-ratify unless operator redirects to "
     "confer-and-finish."
 )

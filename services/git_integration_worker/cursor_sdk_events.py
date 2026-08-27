@@ -1605,17 +1605,21 @@ def FrontierSdkWorkerResumed(  # noqa: N802
     state_root: str,
     thread_id: str,
     execution_id: str,
+    parent_terminal_status: str | None = None,
 ) -> Event:
+    payload: dict[str, Any] = {
+        "dispatch_id": dispatch_id,
+        "resume_of": resume_of,
+        "sdk_agent_id": sdk_agent_id,
+        "state_root": state_root,
+        "thread_id": thread_id,
+        "execution_id": execution_id,
+    }
+    if parent_terminal_status is not None:
+        payload["parent_terminal_status"] = parent_terminal_status
     return Event(
         signal="frontier.sdk.worker.resumed",
-        payload={
-            "dispatch_id": dispatch_id,
-            "resume_of": resume_of,
-            "sdk_agent_id": sdk_agent_id,
-            "state_root": state_root,
-            "thread_id": thread_id,
-            "execution_id": execution_id,
-        },
+        payload=payload,
         scope="node",
         role="observation",
     )
@@ -1629,6 +1633,7 @@ def emit_sdk_worker_resumed(
     state_root: str,
     thread_id: str,
     execution_id: str,
+    parent_terminal_status: str | None = None,
 ) -> None:
     """Publish child resume admission — lineage authority transition (advisory)."""
     _emit(
@@ -1639,6 +1644,7 @@ def emit_sdk_worker_resumed(
             state_root=state_root,
             thread_id=thread_id,
             execution_id=execution_id,
+            parent_terminal_status=parent_terminal_status,
         )
     )
     logger.info(

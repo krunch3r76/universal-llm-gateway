@@ -17,11 +17,15 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
 )
 from services.git_integration_worker.cursor_sdk_events import FrontierSdkWorkerResumed
 from services.git_integration_worker.cursor_sdk_resume import (
+    closeout_qualifies_for_resume_retain,
     cursor_sdk_timeout_retain_s,
+    dispatch_retain_active,
     load_resume_run_context,
+    persist_resume_retain,
     persist_timeout_retain,
     reject_resume_if_ineligible,
     resume_eligibility_reason,
+    resume_retain_active,
     start_or_resume_agent,
     timeout_retain_active,
 )
@@ -66,6 +70,10 @@ def _insert_parent_row(
     record_json: dict | None = None,
     terminal_at: str | None = None,
 ) -> None:
+    if state_root:
+        store = Path(state_root)
+        store.mkdir(parents=True, exist_ok=True)
+        (store / ".keep").write_text("")
     ledger = CursorDispatchLedger.instance()
     req = _req(dispatch_id=dispatch_id, message="parent")
     fp = ledger.fingerprint(req)
@@ -129,7 +137,7 @@ def test_ledger_resume_of_column_on_child_insert() -> None:
     ("setup", "reason"),
     [
         ("missing", "parent_missing"),
-        ("running", "parent_not_failed"),
+        ("running", "parent_still_live"),
         ("no_state_root", "state_root_missing"),
         ("no_agent_id", "sdk_agent_id_missing"),
     ],
@@ -153,12 +161,48 @@ def test_resume_eligibility_reasons(
 
 def test_state_root_absent_on_disk_reason(tmp_path: Path) -> None:
     state_path = tmp_path / "missing-dir"
-    _insert_parent_row(state_root=str(state_path))
     ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="parent-disp", message="parent")
+    fp = ledger.fingerprint(req)
+    with ledger._connect() as conn:
+        conn.execute(
+            "INSERT INTO cursor_sdk_dispatches "
+            "(dispatch_id, fingerprint, thread_id, execution_id, resolved_model, "
+            "message_present, status, state_root, sdk_agent_id) "
+            "VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)",
+            (
+                "parent-disp",
+                fp,
+                req.thread_id,
+                req.execution_id,
+                "composer-2.5",
+                "failed",
+                str(state_path),
+                "agent-parent",
+            ),
+        )
     assert (
         resume_eligibility_reason(ledger, parent_id="parent-disp")
         == "state_root_absent_on_disk"
     )
+
+
+def test_completed_parent_eligible_with_store(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "agent.db").write_text("x")
+    _insert_parent_row(status="completed", state_root=str(store))
+    ledger = CursorDispatchLedger.instance()
+    assert resume_eligibility_reason(ledger, parent_id="parent-disp") is None
+
+
+def test_cancelled_parent_eligible_with_store(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "agent.db").write_text("x")
+    _insert_parent_row(status="cancelled", state_root=str(store))
+    ledger = CursorDispatchLedger.instance()
+    assert resume_eligibility_reason(ledger, parent_id="parent-disp") is None
 
 
 def test_reject_resume_ineligible_envelope() -> None:
@@ -367,6 +411,65 @@ def test_load_resume_run_context() -> None:
     assert ctx.sdk_agent_id == "agent-parent"
 
 
+def test_resume_retain_blocks_prune_for_completed_conductor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_repo = tmp_path / "repo"
+    source_repo.mkdir()
+    wt_path = tmp_path / "wt"
+    wt_path.mkdir()
+    register_dispatch_worktree(
+        dispatch_id="parent-disp",
+        worktree_path=wt_path,
+        branch_name="cursor-sdk/test",
+        branch_point="abc123",
+    )
+    store = tmp_path / "state"
+    _insert_parent_row(
+        dispatch_id="parent-disp",
+        status="completed",
+        state_root=str(store),
+        record_json={"resume_retain": True},
+        terminal_at=(datetime.now(UTC) - timedelta(seconds=10)).isoformat(),
+    )
+    monkeypatch.setenv("CURSOR_SDK_TIMEOUT_RETAIN_S", "3600")
+    assert resume_retain_active(dispatch_id="parent-disp")
+    assert dispatch_retain_active(dispatch_id="parent-disp")
+    result = prune_dispatch_worktree(
+        dispatch_id="parent-disp",
+        source_repo=source_repo,
+    )
+    assert result.pruned is False
+
+
+def test_closeout_qualifies_for_resume_retain() -> None:
+    assert closeout_qualifies_for_resume_retain(
+        closeout_body="status: complete\nstop: ROW_PINNED",
+        packet_kind=None,
+    )
+    assert closeout_qualifies_for_resume_retain(
+        closeout_body="status: complete",
+        packet_kind="conductor",
+    )
+    assert not closeout_qualifies_for_resume_retain(
+        closeout_body="status: complete",
+        packet_kind=None,
+    )
+
+
+def test_persist_resume_retain_merges_record_json() -> None:
+    _insert_parent_row(record_json={"existing": True})
+    persist_resume_retain(dispatch_id="parent-disp")
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            ("parent-disp",),
+        ).fetchone()
+    data = json.loads(row["record_json"])
+    assert data["resume_retain"] is True
+    assert data["existing"] is True
+
+
 def test_persist_timeout_retain_merges_record_json() -> None:
     _insert_parent_row(record_json={"existing": True})
     persist_timeout_retain(dispatch_id="parent-disp")
@@ -377,6 +480,7 @@ def test_persist_timeout_retain_merges_record_json() -> None:
         ).fetchone()
     data = json.loads(row["record_json"])
     assert data["timeout_retain"] is True
+    assert data["resume_retain"] is True
     assert data["existing"] is True
 
 

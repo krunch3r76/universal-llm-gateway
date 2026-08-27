@@ -54,6 +54,7 @@ from services.git_integration_worker.cursor_home import (
     CursorVenvConfigError,
     build_dispatch_path_prepend,
     dispatch_git_env_vars,
+    dispatch_home_path,
     operator_real_home,
     prune_stale_dispatch_homes,
     resolve_repo_venv,
@@ -212,8 +213,10 @@ from services.git_integration_worker.cursor_sdk_restart_orphan import (
     salvage_restart_survivor_worktree,
 )
 from services.git_integration_worker.cursor_sdk_resume import (
+    closeout_qualifies_for_resume_retain,
     load_parent_row,
     load_resume_run_context,
+    persist_resume_retain,
     persist_timeout_retain,
     reject_resume_if_ineligible,
     sdk_agent_id_from_agent,
@@ -896,15 +899,20 @@ def _run_sdk_sync(
     # Pin operator home via passwd — never trust process HOME (may be a leaked
     # dispatch overlay; CURSOR_VENV_CONFIG / agent-bus:6468).
     real_home = operator_real_home()
-    dispatch_home = setup_cursor_dispatch_home(dispatch_id, real_home=real_home)
-    repo_venv = resolve_repo_venv(real_home=real_home)
-    validate_repo_venv(repo_venv)
     resume_ctx = load_resume_run_context(dispatch_id=dispatch_id)
     if resume_ctx is not None:
+        dispatch_home = dispatch_home_path(resume_ctx.resume_of)
+        if not dispatch_home.is_dir():
+            dispatch_home = setup_cursor_dispatch_home(
+                resume_ctx.resume_of, real_home=real_home
+            )
         bridge_state = Path(resume_ctx.state_root)
     else:
+        dispatch_home = setup_cursor_dispatch_home(dispatch_id, real_home=real_home)
         bridge_state = dispatch_home / "bridge-state"
         bridge_state.mkdir(parents=True, exist_ok=True)
+    repo_venv = resolve_repo_venv(real_home=real_home)
+    validate_repo_venv(repo_venv)
     CursorDispatchLedger.instance().record_state_root(
         dispatch_id=dispatch_id, state_root=str(bridge_state)
     )
@@ -1682,6 +1690,18 @@ async def _deliver_sdk_closeout(
             controller=controller,
             emit_tag="CURSOR_CLOSEOUT_COMPLETED",
         )
+        from services.git_integration_worker.cursor_sdk_packet import (
+            extract_packet_kind_from_packet,
+        )
+
+        packet_kind = extract_packet_kind_from_packet(packet_text or "")
+        if closeout_qualifies_for_resume_retain(
+            closeout_body=delivery.body,
+            packet_kind=packet_kind,
+        ):
+            await asyncio.to_thread(
+                persist_resume_retain, dispatch_id=req.dispatch_id
+            )
         return
 
     logger.error(
@@ -2792,14 +2812,19 @@ async def cursor_dispatch(
 
     if req.resume_of:
         parent_row = load_parent_row(ledger, parent_id=req.resume_of)
-        if parent_row is not None and parent_row.state_root and parent_row.sdk_agent_id:
+        if parent_row is not None and parent_row.sdk_agent_id:
+            store_root = parent_row.state_root or ""
             emit_sdk_worker_resumed(
                 dispatch_id=req.dispatch_id,
                 resume_of=req.resume_of,
                 sdk_agent_id=parent_row.sdk_agent_id,
-                state_root=parent_row.state_root,
+                state_root=store_root,
                 thread_id=req.thread_id,
                 execution_id=req.execution_id,
+                parent_terminal_status=getattr(
+                    parent_row, "terminal_status", None
+                )
+                or parent_row.status,
             )
 
     if not effective_read_only and concurrency_posture is not None:

@@ -85,9 +85,9 @@ def prune_dispatch_worktree(
     Fails closed: when the worktree holds work that git refused to commit, the
     worktree is the only copy, so it is kept and the registry row is left intact.
     """
-    from services.git_integration_worker.cursor_sdk_resume import timeout_retain_active
+    from services.git_integration_worker.cursor_sdk_resume import dispatch_retain_active
 
-    if timeout_retain_active(dispatch_id=dispatch_id):
+    if dispatch_retain_active(dispatch_id=dispatch_id):
         return PruneResult(pruned=False)
     record = lookup_dispatch_worktree(dispatch_id=dispatch_id)
     if record is None:

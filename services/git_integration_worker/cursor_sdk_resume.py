@@ -14,9 +14,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from claude_bundles.conductor_stop import parse_stop_tokens
 from cursor_sdk import Client
 from cursor_sdk.types import AgentOptions
 from fastapi.responses import JSONResponse
+from universal_logging import get_logger
 from universal_protocol import error_envelope
 
 from services.git_integration_worker.cursor_dispatch_ledger import (
@@ -29,7 +31,6 @@ from services.git_integration_worker.git_worker_lifecycle_events import (
     log_dispatch_rejection,
 )
 from services.git_integration_worker.models.cursor_api import CursorDispatchRequest
-from universal_logging import get_logger
 
 _DISPATCH_ROUTE = "/api/v1/cursor/dispatch"
 
@@ -37,13 +38,25 @@ logger = get_logger(__name__)
 
 ResumeIneligibleReason = Literal[
     "parent_missing",
-    "parent_not_failed",
+    "parent_still_live",
     "state_root_missing",
     "sdk_agent_id_missing",
     "state_root_absent_on_disk",
     "dispatch_id_equals_parent",
     "nest_under_conflict",
 ]
+
+_LIVE_STATUSES = frozenset({"queued", "admitted", "running", "parked_waiting"})
+
+_DESIGNED_STOP_RETAIN_TOKENS = frozenset(
+    {
+        "ROW_PINNED",
+        "CONSULT_PENDING",
+        "HOLD_MERGE",
+        "OPERATOR_GATE",
+        "PARKED_TRANSPORT",
+    }
+)
 
 _DEFAULT_HOME_RETENTION_DAYS = 14
 
@@ -93,12 +106,48 @@ def load_parent_row(
         columns=(
             "dispatch_id, thread_id, execution_id, caller_agent, resolved_model, "
             "state_root, sdk_agent_id, sdk_run_id, status, started_at, "
-            "last_heartbeat_at, source_repo, contract, read_only, record_json"
+            "last_heartbeat_at, source_repo, contract, read_only, record_json, "
+            "terminal_status"
         ),
     )
     if data is None:
         return None
     return LedgerRow(**data)
+
+
+def _find_sdk_store_under_home(home: Path) -> Path | None:
+    """Return the sdk-agent-store directory under a dispatch HOME, if present."""
+    projects = home / ".cursor" / "projects"
+    if not projects.is_dir():
+        return None
+    for candidate in projects.rglob("sdk-agent-store"):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def resolve_sdk_store_dir(
+    *,
+    parent_id: str,
+    state_root: str | None,
+) -> Path | None:
+    """Locate the on-disk SDK sqlite store for a resume parent.
+
+    Prefers a non-empty ``state_root`` directory; falls back to the store under
+    the parent dispatch HOME (store-A — HOME-bound per 9675 observation).
+    """
+    if state_root:
+        root_path = Path(state_root)
+        if root_path.is_dir():
+            if any(root_path.iterdir()):
+                return root_path
+            store_in_root = root_path / "sdk-agent-store"
+            if store_in_root.is_dir():
+                return store_in_root
+    from services.git_integration_worker.cursor_home import dispatch_home_path
+
+    parent_home = dispatch_home_path(parent_id)
+    return _find_sdk_store_under_home(parent_home)
 
 
 def resume_eligibility_reason(
@@ -108,13 +157,17 @@ def resume_eligibility_reason(
     row = load_parent_row(ledger, parent_id=parent_id)
     if row is None:
         return "parent_missing"
-    if row.status != "failed":
-        return "parent_not_failed"
-    if not row.state_root:
-        return "state_root_missing"
+    if row.status in _LIVE_STATUSES:
+        return "parent_still_live"
     if not row.sdk_agent_id:
         return "sdk_agent_id_missing"
-    if not Path(row.state_root).is_dir():
+    store_dir = resolve_sdk_store_dir(
+        parent_id=parent_id,
+        state_root=row.state_root,
+    )
+    if store_dir is None:
+        if not row.state_root:
+            return "state_root_missing"
         return "state_root_absent_on_disk"
     return None
 
@@ -189,8 +242,69 @@ def persist_timeout_retain(*, dispatch_id: str) -> None:
     """Mark timeout-terminal parent rows so prune/reap skip until TTL expires."""
     CursorDispatchLedger.instance().merge_record_json(
         dispatch_id=dispatch_id,
-        patch={"timeout_retain": True},
+        patch={"timeout_retain": True, "resume_retain": True},
     )
+
+
+def persist_resume_retain(*, dispatch_id: str) -> None:
+    """Mark designed-stop / conductor terminals for worktree+HOME retention."""
+    CursorDispatchLedger.instance().merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={"resume_retain": True},
+    )
+
+
+def _retain_ttl_elapsed(*, terminal_at: datetime | None, retain_s: int) -> bool:
+    if terminal_at is None or retain_s <= 0:
+        return True
+    now = datetime.now(UTC)
+    if terminal_at.tzinfo is None:
+        terminal_at = terminal_at.replace(tzinfo=UTC)
+    return (now - terminal_at).total_seconds() >= retain_s
+
+
+def resume_retain_active(*, dispatch_id: str) -> bool:
+    """True while a resume-retained dispatch is inside the retain TTL window."""
+    ledger = CursorDispatchLedger.instance()
+    data = _load_row_columns(
+        ledger,
+        dispatch_id=dispatch_id,
+        columns="record_json, terminal_at, terminal_status, sdk_agent_id, status",
+    )
+    if data is None:
+        return False
+    if data["status"] in _LIVE_STATUSES:
+        return False
+    if not data.get("sdk_agent_id"):
+        return False
+    try:
+        record = json.loads(data["record_json"] or "{}")
+    except json.JSONDecodeError:
+        record = {}
+    if not isinstance(record, dict) or not record.get("resume_retain"):
+        return False
+    terminal_at = _parse_iso(data["terminal_at"])
+    retain_s = cursor_sdk_timeout_retain_s()
+    return not _retain_ttl_elapsed(terminal_at=terminal_at, retain_s=retain_s)
+
+
+def dispatch_retain_active(*, dispatch_id: str) -> bool:
+    """True when timeout or designed-stop retain blocks worktree prune."""
+    return timeout_retain_active(dispatch_id=dispatch_id) or resume_retain_active(
+        dispatch_id=dispatch_id
+    )
+
+
+def closeout_qualifies_for_resume_retain(
+    *,
+    closeout_body: str,
+    packet_kind: str | None = None,
+) -> bool:
+    """Return True when a terminal closeout should retain store + worktree."""
+    if packet_kind == "conductor":
+        return True
+    parsed = parse_stop_tokens(closeout_body or "")
+    return bool(parsed.tokens & _DESIGNED_STOP_RETAIN_TOKENS)
 
 
 def timeout_retain_active(*, dispatch_id: str) -> bool:
@@ -245,11 +359,17 @@ def load_resume_run_context(*, dispatch_id: str) -> ResumeRunContext | None:
         return None
     parent_id = str(child["resume_of"])
     parent = load_parent_row(ledger, parent_id=parent_id)
-    if parent is None or not parent.state_root or not parent.sdk_agent_id:
+    if parent is None or not parent.sdk_agent_id:
+        return None
+    store_dir = resolve_sdk_store_dir(
+        parent_id=parent_id,
+        state_root=parent.state_root,
+    )
+    if store_dir is None:
         return None
     return ResumeRunContext(
         resume_of=parent_id,
-        state_root=parent.state_root,
+        state_root=str(store_dir),
         sdk_agent_id=parent.sdk_agent_id,
     )
 
