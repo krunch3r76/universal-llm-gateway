@@ -12,6 +12,22 @@ logger = get_logger(__name__)
 
 _PERSISTENCED_SOCKET = Path("/run/nvidia-persistenced/socket")
 _TUI_WARNING_TITLE = "GPU host check — Gateway / Sync+Restart blocked until fixed"
+_INFERENCE_DRIVER_CAPABILITIES = "compute,utility"
+
+
+def apply_gpu_runtime_env(env: dict[str, str]) -> dict[str, str]:
+    """Pin NVIDIA container mounts to inference capabilities.
+
+    Edge containers run inference servers. Toolkit default ``all`` also mounts
+    graphics/EGL/Wayland driver libs; when those host files are absent or
+    version-skewed, compose fails at OCI create with ``failed to fulfil mount
+    request``. ``compute,utility`` is the required CUDA inference set.
+    """
+    current = (env.get("NVIDIA_DRIVER_CAPABILITIES") or "").strip()
+    if not current or current == "all":
+        env["NVIDIA_DRIVER_CAPABILITIES"] = _INFERENCE_DRIVER_CAPABILITIES
+    env.setdefault("NVIDIA_VISIBLE_DEVICES", "all")
+    return env
 
 
 def check_gpu_docker_prerequisites() -> str | None:

@@ -13,6 +13,9 @@ from pathlib import Path
 from universal_event_bus.events.debug import emit_debug_event
 
 from scripts.model_manager import relay_state
+from scripts.model_manager.ui.controller.gpu_docker_preflight import (
+    apply_gpu_runtime_env,
+)
 from scripts.model_manager.ui.controller.service_config import (
     apply_checkout_code_version,
     ensure_relay_dirs,
@@ -56,6 +59,7 @@ def _build_env(node_env: dict[str, str]) -> dict[str, str]:
     env: dict[str, str] = dict(os.environ)
     env.update(load_env_file(_ROOT / ".env.local"))
     env.update(node_env)
+    apply_gpu_runtime_env(env)
     return env
 
 

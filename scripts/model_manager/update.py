@@ -25,6 +25,9 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
 
+from scripts.model_manager.ui.controller.gpu_docker_preflight import (
+    apply_gpu_runtime_env,
+)
 from scripts.model_manager.ui.controller.service_config import (
     apply_checkout_code_version,
     build_service_env,
@@ -177,6 +180,7 @@ def restart_local_edge(node_id: str = "localhost") -> int:
     env = build_service_env(_ROOT, node_env_path)
     env["COMPOSE_PROJECT_NAME"] = f"edge-{node_id}"
     apply_checkout_code_version(env, _ROOT)
+    apply_gpu_runtime_env(env)
 
     # Stop before claiming bind-mount sources (same race as relay.py Fix 1).
     subprocess.run(

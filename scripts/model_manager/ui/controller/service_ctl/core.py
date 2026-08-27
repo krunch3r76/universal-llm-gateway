@@ -22,7 +22,10 @@ from scripts.model_manager.observation_event import (
 from ...model.build_state import BuildState, BuildStatus, ImageInfo
 from ...model.service_state import ServiceState
 from ..git_worker_drain_supervisor import build_git_worker_drain_supervisor
-from ..gpu_docker_preflight import check_gpu_docker_prerequisites
+from ..gpu_docker_preflight import (
+    apply_gpu_runtime_env,
+    check_gpu_docker_prerequisites,
+)
 from ..restart_drain import (
     GIT_INTEGRATION_WORKER_URL,
     RestartDrainGate,
@@ -552,6 +555,7 @@ class ServiceController:
         env = build_service_env(self._root, node_env_path)
         env["COMPOSE_PROJECT_NAME"] = f"edge-{node_id}"
         apply_checkout_code_version(env, self._root)
+        apply_gpu_runtime_env(env)
 
         result = await asyncio.create_subprocess_exec(
             "docker",
