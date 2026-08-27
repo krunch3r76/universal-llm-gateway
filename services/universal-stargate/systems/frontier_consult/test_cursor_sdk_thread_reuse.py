@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import pytest
 
+from .admission import FrontierEndpointError
 from .cursor_sdk_thread_reuse import (
+    CONDUCTOR_COORD_SPLIT_CODE,
+    CONDUCTOR_COORD_SPLIT_HINT,
     api_split_warning,
     consolidation_split_warning,
     resolve_cursor_sdk_thread_targets,
@@ -219,6 +222,175 @@ async def test_api_lane_explicit_reuse_probes_turn_count(
     assert parent == "5001"
     assert is_auto is False
     assert reuse_after_turn == 3
+
+
+@pytest.mark.asyncio
+async def test_conductor_empty_non_pending_raises_coord_split(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _probe(thread_id: str) -> dict | None:
+        if thread_id == "9676":
+            return {
+                "bus_lifecycle_state": None,
+                "turn_count": 0,
+                "parent_thread": "9582",
+                "tags": [],
+            }
+        return None
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.probe_thread",
+        _probe,
+    )
+    with pytest.raises(FrontierEndpointError) as excinfo:
+        await resolve_cursor_sdk_thread_targets(
+            reuse_thread=None,
+            dispatch_thread_id="9676",
+            packet_kind="conductor",
+            request_id="req-split",
+        )
+    err = excinfo.value
+    assert err.code == CONDUCTOR_COORD_SPLIT_CODE
+    assert err.status_code == 422
+    assert err.details is not None
+    assert "reuse_thread=" in err.details["hint"]
+    assert "reuse_thread=" in CONDUCTOR_COORD_SPLIT_HINT
+
+
+@pytest.mark.asyncio
+async def test_conductor_pending_empty_child_reuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _probe(thread_id: str) -> dict | None:
+        if thread_id == "9001":
+            return {
+                "bus_lifecycle_state": "pending",
+                "turn_count": 0,
+                "parent_thread": "9582",
+                "tags": [],
+            }
+        return None
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.probe_thread",
+        _probe,
+    )
+    reuse, parent, is_auto = await resolve_cursor_sdk_thread_targets(
+        reuse_thread=None,
+        dispatch_thread_id="9001",
+        packet_kind="conductor",
+        request_id="req-pending",
+    )
+    assert reuse == "9001"
+    assert parent is None
+    assert is_auto is True
+
+
+@pytest.mark.asyncio
+async def test_conductor_root_with_turns_mints_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _probe(thread_id: str) -> dict | None:
+        if thread_id == "9582":
+            return {
+                "bus_lifecycle_state": None,
+                "turn_count": 12,
+                "parent_thread": None,
+                "tags": ["role:root"],
+            }
+        return None
+
+    async def _not_pending(_thread_id: str) -> bool:
+        return False
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.probe_thread",
+        _probe,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.is_pending_empty_worker_thread",
+        _not_pending,
+    )
+    reuse, parent, is_auto = await resolve_cursor_sdk_thread_targets(
+        reuse_thread=None,
+        dispatch_thread_id="9582",
+        packet_kind="conductor",
+        request_id="req-root",
+    )
+    assert reuse is None
+    assert parent == "9582"
+    assert is_auto is False
+
+
+@pytest.mark.asyncio
+async def test_conductor_reuse_thread_work_thread_does_not_422(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _probe(thread_id: str) -> dict | None:
+        return {"turn_count": 4, "bus_lifecycle_state": "failed", "tags": []}
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.probe_thread",
+        _probe,
+    )
+    reuse, parent, is_auto = await resolve_cursor_sdk_thread_targets(
+        reuse_thread="9677",
+        dispatch_thread_id="9582",
+        packet_kind="conductor",
+        request_id="req-readmit",
+    )
+    assert reuse == "9677"
+    assert parent == "9582"
+    assert is_auto is False
+
+
+@pytest.mark.asyncio
+async def test_non_conductor_active_empty_still_splits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _not_pending(_thread_id: str) -> bool:
+        return False
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.is_pending_empty_worker_thread",
+        _not_pending,
+    )
+    reuse, parent, is_auto = await resolve_cursor_sdk_thread_targets(
+        reuse_thread=None,
+        dispatch_thread_id="2683",
+        packet_kind=None,
+    )
+    assert reuse is None
+    assert parent == "2683"
+    assert is_auto is False
+
+
+@pytest.mark.asyncio
+async def test_conductor_pending_empty_root_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _probe(thread_id: str) -> dict | None:
+        if thread_id == "9100":
+            return {
+                "bus_lifecycle_state": "pending",
+                "turn_count": 0,
+                "parent_thread": None,
+                "tags": ["role:root"],
+            }
+        return None
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.probe_thread",
+        _probe,
+    )
+    with pytest.raises(FrontierEndpointError) as excinfo:
+        await resolve_cursor_sdk_thread_targets(
+            reuse_thread=None,
+            dispatch_thread_id="9100",
+            packet_kind="conductor",
+            request_id="req-pending-root",
+        )
+    assert excinfo.value.code == CONDUCTOR_COORD_SPLIT_CODE
 
 
 def test_api_split_warning_on_non_reusable_active_arc() -> None:

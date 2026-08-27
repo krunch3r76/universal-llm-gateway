@@ -14,6 +14,7 @@ from typing import Any
 
 from implement_admission.closeout_models import ImplementCloseout, Verification
 from implement_admission.deliverable_verification import (
+    build_gate_d_verification,
     evaluate_deliverable_verification,
 )
 from implement_admission.normalize import _files_from_packet
@@ -58,6 +59,14 @@ def verify_deliverables(
     See ``classify_capture_status`` for the repo capture trust boundary (porcelain +
     manifest fold vs shell side effects).
     """
+    from claude_bundles.conductor_stop import is_consult_pending_wait
+
+    if is_consult_pending_wait(outcome.body):
+        return [
+            build_gate_d_verification(
+                reason="passed", passed=True, note="consult_pending_wait"
+            )
+        ]
     expected = files_expected or (spec.scope.files_expected if spec else [])
     closeout_probe = ImplementCloseout(
         status=CloseoutStatus.COMPLETE,

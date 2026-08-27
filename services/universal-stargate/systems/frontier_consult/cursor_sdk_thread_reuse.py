@@ -106,15 +106,100 @@ async def resolve_generate_thread_targets(
     return None, arc_id, False, 0
 
 
+CONDUCTOR_COORD_SPLIT_CODE = "conductor_coord_split_refused"
+CONDUCTOR_COORD_SPLIT_HINT = (
+    "Legal conductor shapes: dispatch_thread_id=<continuity root with turns> "
+    "(Stargate mints a worker child of the root); or pre-create a child with "
+    "lifecycle_state=pending and turn_count==0 and pass that id; or re-admit "
+    "with reuse_thread=<work thread>. Lifecycle-null empty threads are refused."
+)
+
+
+def _is_continuity_root(payload: dict[str, Any]) -> bool:
+    """True when the probed thread is a continuity root that may mint a worker child."""
+    turn_count = int(payload.get("turn_count") or 0)
+    if turn_count < 1:
+        return False
+    tags = payload.get("tags") or []
+    if "role:root" in tags:
+        return True
+    return not payload.get("parent_thread")
+
+
+def _is_pending_empty_child(payload: dict[str, Any]) -> bool:
+    """Pending shell that is a child of a root — legal conductor reuse (shape 2)."""
+    parent = payload.get("parent_thread")
+    return (
+        payload.get("bus_lifecycle_state") == "pending"
+        and int(payload.get("turn_count") or 0) == 0
+        and bool(parent)
+    )
+
+
+def _conductor_coord_split_error(request_id: str):
+    """Build the 422 envelope — hint names root, pending child, and reuse_thread=."""
+    from .admission import FrontierEndpointError
+
+    return FrontierEndpointError(
+        request_id=request_id,
+        field="dispatch_thread_id",
+        reason=CONDUCTOR_COORD_SPLIT_HINT,
+        status_code=422,
+        code=CONDUCTOR_COORD_SPLIT_CODE,
+        details={"hint": CONDUCTOR_COORD_SPLIT_HINT},
+    )
+
+
+async def refuse_conductor_coord_split(
+    *,
+    request_id: str,
+    packet_kind: str | None,
+    reuse_thread: str | None,
+    dispatch_thread_id: str | None,
+) -> None:
+    """Raise 422 when conductor generate would mint a grandchild coord split.
+
+    Legal: explicit ``reuse_thread`` (re-admit); pending-empty *child*; continuity
+    root with turns (mint child). Probe failure is fail-closed for conductor.
+    """
+    if (packet_kind or "").strip().lower() != "conductor":
+        return
+    explicit = reuse_thread.strip() if reuse_thread and reuse_thread.strip() else None
+    if explicit is not None:
+        return
+    arc = (
+        dispatch_thread_id.strip()
+        if dispatch_thread_id and dispatch_thread_id.strip()
+        else None
+    )
+    if arc is None or not arc.isdigit():
+        raise _conductor_coord_split_error(request_id)
+    payload = await probe_thread(arc)
+    if payload is None:
+        raise _conductor_coord_split_error(request_id)
+    if _is_pending_empty_child(payload) or _is_continuity_root(payload):
+        return
+    raise _conductor_coord_split_error(request_id)
+
+
 async def resolve_cursor_sdk_thread_targets(
     *,
     reuse_thread: str | None,
     dispatch_thread_id: str | None,
+    packet_kind: str | None = None,
+    request_id: str = "",
 ) -> tuple[str | None, str | None, bool]:
     """Return ``(reuse_thread, parent_dispatch_thread_id, is_auto_consolidation)``.
 
     Thin delegate over ``resolve_generate_thread_targets`` for cursor-sdk lane.
+    Conductor ``packet_kind`` refuses grandchild coord-split (422) before resolve.
     """
+    await refuse_conductor_coord_split(
+        request_id=request_id,
+        packet_kind=packet_kind,
+        reuse_thread=reuse_thread,
+        dispatch_thread_id=dispatch_thread_id,
+    )
     reuse, parent, is_auto, _reuse_after_turn = await resolve_generate_thread_targets(
         reuse_thread=reuse_thread,
         dispatch_thread_id=dispatch_thread_id,

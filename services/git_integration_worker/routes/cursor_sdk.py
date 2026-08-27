@@ -2246,9 +2246,7 @@ async def _finalize_success(
     # regardless of whether the #1/#2 write-path instrumentation saw the choke.
     if degraded_reason is None:
         from services.git_integration_worker.cursor_sdk_closeout.degraded_reasons import (
-            conductor_g1_pin_s4b_degraded_reason,
-            conductor_q2_score_ratify_degraded_reason,
-            conductor_unwitnessed_done_degraded_reason,
+            conductor_closeout_degraded_reason,
         )
 
         _packet_kind = (
@@ -2257,17 +2255,7 @@ async def _finalize_success(
         degraded_reason = (
             empty_assistant_turn_reason(outcome)
             or empty_output_degraded_reason(outcome)
-            or conductor_g1_pin_s4b_degraded_reason(
-                body=outcome.body,
-                packet_text=packet_text or None,
-                packet_kind=_packet_kind,
-            )
-            or conductor_q2_score_ratify_degraded_reason(
-                body=outcome.body,
-                packet_text=packet_text or None,
-                packet_kind=_packet_kind,
-            )
-            or conductor_unwitnessed_done_degraded_reason(
+            or conductor_closeout_degraded_reason(
                 body=outcome.body,
                 packet_text=packet_text or None,
                 packet_kind=_packet_kind,

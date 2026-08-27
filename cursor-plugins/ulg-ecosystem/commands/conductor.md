@@ -101,7 +101,7 @@ team_dispatch(
   model=cursor/claude-sonnet-5,
   contract=light-bounded,
   packet_path=tmp/reviews/{slug}-conductor-packet.md,
-  dispatch_thread_id={root},
+  dispatch_thread_id={root},  # continuity root with turns, or pending-empty child of root
   model_knobs={effort: max, thinking: "true", context: "1m"},
   lane="B",                    # DEFAULT (Q4) — pass explicitly even when
                                 # unopposed; omitting resolves to Lane A at GIW

@@ -244,10 +244,16 @@ team_dispatch(
   lane="B",
   source_ref="todo:{slug}",
   packet_kind="conductor",
+  dispatch_thread_id="{root}",   # continuity root with turns, or pending-empty work child
 )
 ```
 
-Receipt quotes `dispatch_id` + `scoreboard_uri` + Lane B. Ledger holds
+`{root}` = continuity root that already has turns, **or** a
+`lifecycle_state=pending` ∧ `turn_count==0` child of that root. Lifecycle-null
+pre-create 422s (`conductor_coord_split_refused`). Resume-after-terminal:
+`reuse_thread=<work thread>`. Receipt quotes the **admitted** thread +
+`branch_current=cursor-sdk/lane-{that id}` + `dispatch_id` + `scoreboard_uri`.
+Ledger holds
 `work_key=todo:{slug}` (no `todo:` packet front-matter — nested G5 uses
 `nest_under`). Top-level `contract=implement` on the same todo while conductor
 is open → 409.
@@ -268,8 +274,13 @@ is open → 409.
   independent check (overlay quoted at harvest) ∨ a seeded-ladder fixture witnesses
   the named remainder. Fold: a G4 URI whose body withholds/FAIL G5 is **not** a
   G4 witness (v1 URI-resolve alone was the 9655 collapse).
-- Stops: `CONSULT_PENDING` · `CONFIRM_PENDING` · `ROW_PINNED` · `HOLD_MERGE` ·
+- Stops: `CONSULT_PENDING` (wait token — not a session-ending stop) ·
+  `CONFIRM_PENDING` · `ROW_PINNED` · `HOLD_MERGE` ·
   `OPERATOR_GATE` · `PARKED_TRANSPORT` · `DONE` (stop token only — not row Status)
+- **`CONSULT_PENDING` wait:** the generate session waits or hands off — it does
+  not end. `agent_bus.wait` until `archive_uri` or `from=web-anthropic` harvest
+  turn; chrome-only continues wait (bounded under remaining wall). Honest
+  closeout is `partial:consult` + `NEXT_ADMIT`, never `gate_d` / `work`.
 - G3→G5 default: in-process CDP score-ratify (do-not-fight / likely-optimal).
   Explicit see-score → `ROW_PINNED` + ping.
 - Attended IDE spawn: resurface the score in the summoning chat at G3→G5 unless
@@ -329,7 +340,7 @@ team_dispatch(
   model=cursor/claude-sonnet-5,   # omit for T0; terra/opus only per tier
   contract=light-bounded,
   packet_path=tmp/reviews/{slug}-conductor-packet.md,
-  dispatch_thread_id={root},      # work child when G-rows live there (e.g. 7286)
+  dispatch_thread_id={root},      # continuity root with turns, or pending-empty child of root
   model_knobs={effort: max, thinking: "true", context: "1m"},
   lane="B",                       # DEFAULT — always pass explicitly. SOT:
                                    # consult-routing § cursor-sdk checkout lane.

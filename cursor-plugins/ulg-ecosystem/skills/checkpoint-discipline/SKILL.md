@@ -69,7 +69,7 @@ Enrollment tag is SOT. `tick_charter` = machine consumer (base + T extras; malfo
 1. Detect root: `role:root` ∨ legacy CHECKPOINT read ∨ enrollment.
 2. Tip body: `fetch(thread, compact=true, last=K)` → subject index → `get(turn_number=<latest subject starting with CHECKPOINT>)`. **¬** `last=1` as tip (latest turn may be closeout).
 3. Other unread: compact subjects only; ¬ auto-widen on `has_earlier_turns`.
-4. Child lanes (`lane_bind` → append-only `thread_lane_associations`; CHECKPOINT's **Child lanes** derived zone = depth-1 substantiated, per `agent-bus-discipline` § Lane parentage): pointer IDs only — ¬ fetch child history on parent resume.
+4. Child lanes (`lane_bind` → append-only `thread_lane_associations`; CHECKPOINT's **Child lanes** derived zone = depth-1 substantiated, per `agent-bus-discipline` § Lane parentage): pointer IDs only — ¬ fetch child history on parent resume. Leftover conductor workers that landed as grandchildren of a coord stub (9676/9677 class) are **not** Child lanes — cite `agent-bus:{worker}` on the root CHECKPOINT or `lane_bind` the worker to the root. `conductor_coord_split_refused` retires the class going forward.
 5. Then: tip → scoreboard if named → roadmap if named → Cortex cards. Mid-tier: ≤3 further sidecars before drafting. **¬** load `## Windows` on resume.
 
 | Widen when | Fetch |

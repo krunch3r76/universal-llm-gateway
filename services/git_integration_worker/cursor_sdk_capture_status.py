@@ -862,6 +862,12 @@ def resolve_work_outcome(
     """
     if degraded_reason and degraded_reason.startswith("run_status="):
         return WorkOutcome.NOT_SHIPPED
+    from services.git_integration_worker.cursor_sdk_closeout.degraded_reasons import (
+        CONDUCTOR_CONSULT_REASONS,
+    )
+
+    if degraded_reason in CONDUCTOR_CONSULT_REASONS:
+        return WorkOutcome.UNVERIFIED
 
     if _has_work_cap_deviation(divergence_reason, deviations):
         return WorkOutcome.UNVERIFIED

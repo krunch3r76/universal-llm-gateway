@@ -17,7 +17,7 @@ from implement_admission.spec import (
     WorkOutcome,
 )
 
-StatusIncompleteClass = Literal["work", "capture"]
+StatusIncompleteClass = Literal["work", "capture", "consult"]
 StatusAuthorityWinner = Literal["measure", "claim"]
 NextStepAuthority = Literal[
     "deviations_qualified_measure",
@@ -26,7 +26,7 @@ NextStepAuthority = Literal[
 ]
 
 _PLANE_LEGEND_RE = re.compile(r"(?im)^plane-legend:\s*.+$")
-_INCOMPLETE_CLASS_SUFFIX_RE = re.compile(r"^(partial):(work|capture)$", re.I)
+_INCOMPLETE_CLASS_SUFFIX_RE = re.compile(r"^(partial):(work|capture|consult)$", re.I)
 _MEASURE_ALIAS_MAP = {
     "failed": "blocked",
     "gated": "blocked",
@@ -78,7 +78,15 @@ def classify_status_incomplete_class(
     """Classify why ``status`` is partial — work residual vs capture/measure noise."""
     if status != CloseoutStatus.PARTIAL:
         return None
+    from services.git_integration_worker.cursor_sdk_closeout.degraded_reasons import (
+        CONDUCTOR_CONSULT_REASONS,
+    )
+
+    if degraded_reason in CONDUCTOR_CONSULT_REASONS:
+        return "consult"
     devs = list(deviations or [])
+    if any(d.startswith("conductor.consult.") for d in devs):
+        return "consult"
     if work_outcome == WorkOutcome.CHECKS_FAILED:
         return "work"
     if work_outcome == WorkOutcome.NOT_SHIPPED:
@@ -107,7 +115,7 @@ def classify_status_incomplete_class(
 def incomplete_class_from_wrapper(payload: dict[str, object]) -> StatusIncompleteClass | None:
     """Read stamped class from ImplementCloseout JSON when present."""
     raw = payload.get("status_incomplete_class")
-    if raw in ("work", "capture"):
+    if raw in ("work", "capture", "consult"):
         return raw  # type: ignore[return-value]
     return None
 
@@ -118,7 +126,7 @@ def resolve_qualified_measurement_status(
     wrapper_text: str | None,
     incomplete_class: StatusIncompleteClass | None = None,
 ) -> str:
-    """Return measurement token with ``partial:work|capture`` when applicable."""
+    """Return measurement token with ``partial:work|capture|consult`` when applicable."""
     normalized = (base_status or "").strip().lower()
     if normalized != "partial":
         return normalized

@@ -10,7 +10,10 @@ from claude_bundles.conductor_score_ratify import (
 from claude_bundles.conductor_stop import (
     S4B_G1_PIN_MISSING,
     STOP_TOKENS,
+    WAIT_STOPS,
+    has_consult_handoff,
     has_s4b_evidence,
+    is_consult_pending_wait,
     is_g1_pin,
     parse_stop_tokens,
     pings_for_stops,
@@ -237,6 +240,32 @@ def test_q2_g1_pin_body_not_tripped() -> None:
         packet_text=_CONDUCTOR_PACKET,
     )
     assert reason is None
+
+
+def test_consult_pending_is_wait_stop_not_session_end() -> None:
+    assert "CONSULT_PENDING" in WAIT_STOPS
+    assert "CONSULT_PENDING" in STOP_TOKENS
+    assert "DONE" not in WAIT_STOPS
+
+
+def test_consult_pending_wait_needs_admit_and_no_archive() -> None:
+    waiting = (
+        "CONSULT_PENDING\nexecution_id: exec-abc\npoll_hint: wait\nNEXT_ADMIT: G1"
+    )
+    assert is_consult_pending_wait(waiting)
+    assert has_consult_handoff(waiting)
+    harvested = waiting + "\narchive_uri: cortex://notes/system/threads/x.md"
+    assert not is_consult_pending_wait(harvested)
+    chrome_only = "CONSULT_PENDING\nexecution_id: exec-abc\ncse: cse_01abc"
+    assert is_consult_pending_wait(chrome_only)
+    assert not has_consult_handoff(chrome_only)
+
+
+def test_consult_pending_without_admit_proof_fails_mode_b() -> None:
+    body = "CONSULT_PENDING — staging Fable"
+    verdict = validate_conductor_closeout(body, require_mode_b_proof=True)
+    assert not verdict.ok
+    assert "admit-proof" in (verdict.reason or "").lower()
 
 
 def test_validate_conductor_closeout_q2_fold() -> None:

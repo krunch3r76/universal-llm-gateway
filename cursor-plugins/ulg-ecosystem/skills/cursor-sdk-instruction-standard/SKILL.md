@@ -106,7 +106,7 @@ pass, not only service-up.
 - [ ] Destructive steps include `HARD STOP` + precondition.
 - [ ] Every fork is bound in the dispatch.
 - [ ] Propagation named for every touched surface that needs one (service restart, plugin install), or `propagation: none` stated.
-- [ ] cursor-sdk `op=generate`: before `team_dispatch`, verify `dispatch_thread_id` has `lifecycle_state=pending ∧ turn_count=0`; otherwise halt and fix. Response `consolidation_split_warning` is too late.
+- [ ] cursor-sdk `op=generate`: before `team_dispatch`, verify `dispatch_thread_id` has `lifecycle_state=pending ∧ turn_count=0`; otherwise halt and fix. Response `consolidation_split_warning` is too late. **Conductor carve-out:** `packet_kind=conductor` may pass a continuity root with turns (mint child) or a pending-empty *child* of the root — still never a lifecycle-null empty thread.
 - [ ] Top-level cursor-sdk generate: `lane=` set (`A` or `B`) unless `nest_under` / `resume_of`. After admit, quote the lane event / `active_by_lane`.
 
 ## Gate-2 implement-ready checklist

@@ -17,6 +17,9 @@ STOP_TOKENS: frozenset[str] = frozenset(
     }
 )
 
+WAIT_STOPS: frozenset[str] = frozenset({"CONSULT_PENDING"})
+SESSION_STOPS: frozenset[str] = STOP_TOKENS - WAIT_STOPS
+
 _PING_STOPS: frozenset[str] = frozenset(
     {
         "HOLD_MERGE",
@@ -36,6 +39,10 @@ _RESUME_ROW_RE = re.compile(
 _MODE_B_ADMIT_RE = re.compile(
     r"(?im)(execution_id:\s*\S+|poll_hint:\s*\S+|status:\s*blocked|honest\s+halt)"
 )
+_ARCHIVE_OR_HARVEST_RE = re.compile(
+    r"(?im)(archive_uri:\s*\S+|from:\s*web-anthropic|from_agent:\s*web-anthropic)"
+)
+_NEXT_ADMIT_RE = re.compile(r"(?im)\bNEXT_ADMIT\b")
 _SCORE_RATIFY_MARKERS = (
     "do-not-fight",
     "do not fight",
@@ -112,6 +119,28 @@ def parse_stop_tokens(text: str) -> StopParseResult:
 def validate_stop_token(token: str) -> bool:
     """True when token is in the sealed stop catalog."""
     return token.strip().upper() in STOP_TOKENS
+
+
+def is_consult_pending_wait(body: str) -> bool:
+    """True when CONSULT_PENDING is a wait token with live admit and no harvest.
+
+    Chrome-only presence is not harvest — ``archive_uri`` or ``from=web-anthropic``
+    clears the wait. Used by GIW to suppress ``gate_d`` / ``work`` grading.
+    """
+    parsed = parse_stop_tokens(body)
+    if "CONSULT_PENDING" not in parsed.tokens:
+        return False
+    text = body or ""
+    if not _MODE_B_ADMIT_RE.search(text):
+        return False
+    if _ARCHIVE_OR_HARVEST_RE.search(text):
+        return False
+    return True
+
+
+def has_consult_handoff(body: str) -> bool:
+    """True when a CONSULT_PENDING wrapper named the next admit (NEXT_ADMIT)."""
+    return _NEXT_ADMIT_RE.search(body or "") is not None
 
 
 def resume_row_from_closeout(body: str, *, default: str = "G1") -> str:

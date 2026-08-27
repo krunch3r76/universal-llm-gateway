@@ -391,6 +391,8 @@ async def dispatch_cursor_sdk_generate_route(
         ) = await resolve_cursor_sdk_thread_targets(
             reuse_thread=getattr(body, "reuse_thread", None),
             dispatch_thread_id=body.dispatch_thread_id,
+            packet_kind=getattr(body, "packet_kind", None),
+            request_id=request_id,
         )
         result = await dispatch_cursor_sdk_generate(
             request_id=request_id,

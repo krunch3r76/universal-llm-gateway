@@ -169,6 +169,81 @@ def conductor_q2_score_ratify_degraded_reason(
     )
 
 
+CONDUCTOR_CONSULT_PENDING = "conductor_consult_pending"
+CONDUCTOR_CONSULT_HANDOFF_MISSING = "conductor_consult_handoff_missing"
+CONDUCTOR_CONSULT_REASONS = frozenset(
+    {CONDUCTOR_CONSULT_PENDING, CONDUCTOR_CONSULT_HANDOFF_MISSING}
+)
+
+
+def conductor_consult_pending_degraded_reason(
+    *,
+    body: str,
+    packet_text: str | None = None,
+    packet_kind: str | None = None,
+) -> str | None:
+    """Classify wrapper CONSULT_PENDING from observables; wire Mode B proof.
+
+    ``CONSULT_PENDING`` is a wait token. Missing admit-proof or NEXT_ADMIT is
+    ``conductor_consult_handoff_missing``. Live nested id without archive is
+    ``conductor_consult_pending``. Neither is ``gate_d`` / ``work``.
+    """
+    is_conductor = packet_kind == "conductor"
+    if not is_conductor and packet_text:
+        from services.git_integration_worker.cursor_sdk_packet import (
+            extract_packet_kind_from_packet,
+        )
+
+        is_conductor = extract_packet_kind_from_packet(packet_text) == "conductor"
+    if not is_conductor:
+        return None
+    from claude_bundles.conductor_stop import (
+        has_consult_handoff,
+        is_consult_pending_wait,
+        parse_stop_tokens,
+        validate_conductor_closeout,
+    )
+
+    parsed = parse_stop_tokens(body)
+    if "CONSULT_PENDING" not in parsed.tokens:
+        return None
+    verdict = validate_conductor_closeout(
+        body,
+        require_mode_b_proof=True,
+        packet_text=packet_text,
+    )
+    if not verdict.ok and verdict.reason and "admit-proof" in verdict.reason.lower():
+        return CONDUCTOR_CONSULT_HANDOFF_MISSING
+    if is_consult_pending_wait(body) and not has_consult_handoff(body):
+        return CONDUCTOR_CONSULT_HANDOFF_MISSING
+    if is_consult_pending_wait(body):
+        return CONDUCTOR_CONSULT_PENDING
+    return None
+
+
+def conductor_closeout_degraded_reason(
+    *,
+    body: str,
+    packet_text: str | None = None,
+    packet_kind: str | None = None,
+) -> str | None:
+    """Aggregator so ``routes/cursor_sdk.py`` does not grow a fourth caller."""
+    return (
+        conductor_consult_pending_degraded_reason(
+            body=body, packet_text=packet_text, packet_kind=packet_kind
+        )
+        or conductor_g1_pin_s4b_degraded_reason(
+            body=body, packet_text=packet_text, packet_kind=packet_kind
+        )
+        or conductor_q2_score_ratify_degraded_reason(
+            body=body, packet_text=packet_text, packet_kind=packet_kind
+        )
+        or conductor_unwitnessed_done_degraded_reason(
+            body=body, packet_text=packet_text, packet_kind=packet_kind
+        )
+    )
+
+
 def conductor_g1_pin_s4b_degraded_reason(
     *,
     body: str,

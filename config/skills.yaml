@@ -159,17 +159,16 @@ skills:
     surface_class: cursor_only
     mcp_surface_required: code
   abstraction-layering:
-    # Codework layer contract (architecture → frame → densify → check → implement).
+    # Codework G1–G6 layer contract (architecture → frame → densify → check → implement).
+    # Conductor owns execution after S4a spawn; /layer is gate-shape reference.
     # Supersedes path-sim ratification windows for codework
-    # (decision:abstraction-layering). cursor_only: the lane is driven from a
-    # Cursor/cursor-sdk seat that dispatches the CDP layers — web receives per-layer
-    # packets, it does not run the lane. G3 stage token densify unchanged.
+    # (decision:abstraction-layering). cursor_only. G3 stage token densify unchanged.
     surface_class: cursor_only
     mcp_surface_required: code
   work-item-seed-path:
-    # Pre-/layer mint path (friction/idea → recon? → architecture? → mint → attach →
-    # /layer handoff). cursor_only: IDE/cursor-sdk/auto execute; web may be consulted
-    # on S3 but does not own the seed path. Sibling to abstraction-layering Stage 0.
+    # Pre-spawn identity mint (friction/idea → S4a → spawn conductor). Mode B is
+    # Fable-before-S4b, not Fable-before-identity. cursor_only: IDE mints S4a;
+    # conductor owns S3/S4b/S5 + G-ladder. Sibling to abstraction-layering Stage 0.
     surface_class: cursor_only
     mcp_surface_required: code
   descriptor-authoring-discipline:

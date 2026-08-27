@@ -1,6 +1,6 @@
 ---
 name: abstraction-layering
-description: "Codework idea→implement peer to path-sim: G1–G6 layering on charter tick. Use on codebase changes, friction fixes, DIRECTIVEs. Layers inherit binds; ¬ re-reason closed."
+description: "Codework G1–G6 layer contract. Conductor owns execution after S4a spawn; /layer is gate-shape reference. Use on codebase changes."
 lifecycle: active
 trigger_match_terms:
   - abstraction-layering
@@ -30,20 +30,19 @@ related_skills:
 
 # Abstraction Layering
 
-**Codework idea→shipped.** Peer to `path-sim` for codebase changes
-(`decision:abstraction-layering`). Path-sim pays R-admit/R-after; this lane
-**layers** seats and inherits ratification downward.
+**Codework idea→shipped.** G1–G6 **layer contract**
+(`decision:abstraction-layering`). Path-sim is the non-codework / fat-packet
+lane — not a peer chooser on a live `todo:`. This contract **layers** seats and
+inherits ratification downward.
 
-Lane brand = **layering** / `/layer`. The G3 stage token remains **`densify`**
-(dense-spec hop only — ¬ the lane name). Slash `/layer` is a **wrapper** —
-natural language (“loop Fable”, “architectural guidance”) fires the same
-chooser. Fable default vs Cursor / Other Models pools:
-`work-item-seed-path` § When Fable defaults.
+Lane brand = **layering**. The G3 stage token remains **`densify`**.
+`/layer` is a **gate-shape wrapper**, not the front door. First commissioned
+utterance: `work-item-seed-path` S4a → spawn `packet_kind=conductor`. The
+conductor drives G1–G6. Fable defaults:
+`work-item-seed-path` § When Fable defaults. Bind: `layer-conductor-unify` §3.1.
 
-**Conductor unify (2026-08):** IDE `/layer` on a live `todo:` with an open
-conductor session is **superseded** — the conductor drives G1–G6 inside
-`packet_kind=conductor`. `/layer` remains the lead reference for gate shape;
-execution moves to conductor CHECKPOINTs, score journal, and nested Composer G5.
+**Conductor unify (2026-08):** IDE `/layer` on a live `todo:` is **superseded**.
+Execution lives on conductor CHECKPOINTs, score journal, and nested Composer G5.
 
 ## Invariant
 
@@ -58,10 +57,11 @@ No standing path-sim R-windows. G6 = mechanical verify. After-ship
 
 | Condition | Entry |
 |---|---|
-| Codebase change (DIRECTIVE, friction, charter) | Highest open G1–G6 |
+| Codebase change (DIRECTIVE, friction, charter) | Highest open G1–G6 **on the conductor** |
+| No closable todo yet | `work-item-seed-path` **S4a** → spawn · ¬ `/layer` first |
 | **G1 skip (graph)** — active structural `derived_from` from the work item → a `document:` with `consult_kind=architecture` whose `source_uri` resolves | **G2** (mark G1 `[x]` with that URI) |
 | Architecture rival live (detent ≥ wide) ∧ ¬ G1 skip | G1 |
-| Operator asked Fable / architectural guidance ∧ (no closable todo ∨ Mode B mandatory) ∧ ¬ G1 skip | `/work-item-seed` first — G1 kwargs = seed-path § S3 Fable generate recipe |
+| Operator asked Fable / architectural guidance ∧ (no closable todo ∨ Mode B mandatory) ∧ ¬ G1 skip | S4a if needed → spawn conductor — G1 kwargs = seed-path § S3 Fable generate recipe (conductor copies) |
 | No frame yet | G2 |
 | Frame exists | G3 |
 | Dense spec unchecked | G4 |
@@ -103,7 +103,7 @@ owns R-admit machinery only — codework does not route through path-sim process
 
 | Caller | How |
 |---|---|
-| Cursor IDE | `/layer` |
+| Cursor IDE | S4a then spawn conductor · `/layer` = gate-shape reference |
 | Dispatch / charter / cursor-auto | `Use the abstraction-layering skill` |
 | Charter tick | G1–G6 CHECKPOINT (L3 `tick-enrollment-annex.md`) |
 
@@ -164,23 +164,26 @@ Web corpus: `cortex://` only.
 
 ## Stage 0 — todo first
 
-`¬ dispatch before todo.` **Mint path SOT:** Use the `work-item-seed-path` skill
-(`/work-item-seed`) when no closable work item exists yet — recon?, architecture order A/B,
-rich-seed|backlog|hold, then hand off into this lane. This section keeps **attrs + attach
-duty** only; ¬ re-derive seed-path stages here.
+`¬ spawn before S4a.` **Mint path SOT:** Use the `work-item-seed-path` skill
+(`/work-item-seed`) when no closable work item exists yet — **S4a identity only**,
+then spawn conductor. Architecture order A/B, S4b rich-seed, and attach are
+**conductor-owned**. This section keeps **attrs + attach duty** only; ¬ re-derive
+seed-path stages here.
 
 Friction → `todo:{slug}` + attrs (via seed path or equivalent). Key attrs: `density_triage`
 (`mechanical` ⇒ G5), `executor_harness=cursor-sdk`, `required_skills` includes this
-slug + `cheap-recon-before-escalation` + docstring/event floors, `dispatch_lane=path-sim-admit-gate`,
-`arc_lane=layer` (recommended explicit stamp for layer charter enrollments; unset defaults
-to `layer` per G6), `source_uri=cortex://notes/system/specs/{slug}.md`. Bus root `layer-{todo-slug}`
-(new enrollments; legacy `densify-{todo-slug}` roots remain valid if already live).
+slug + `cheap-recon-before-escalation` + docstring/event floors,
+`arc_lane=layer` (recommended explicit stamp; unset defaults to `layer` per G6),
+`source_uri=cortex://notes/system/specs/{slug}.md`.
+`¬` stamp `dispatch_lane=path-sim-admit-gate` as a front door — that residue is retired.
+Bus root `layer-{todo-slug}` (new enrollments; legacy `densify-{todo-slug}` roots remain
+valid if already live).
 
 ### Architecture-consult attach (seeding duty — BINDING)
 
 When a G1 architecture consult has produced (or will produce) an answer the work item
-binds against — including **Fable-before-seed** (operator/architecture-open carve-out of
-todo-first dispatch; seed-path S3 mode B) — stamp the graph before `/layer` proceeds past G1:
+binds against — including **Fable-before-S4b** (seed-path S3 mode B; identity already
+exists) — stamp the graph before the conductor proceeds past G1:
 
 1. **Answer sidecar** at `cortex://notes/system/threads/…` (or consultations/) — durable text.
 2. **Document entity** for that answer: `document:{slug}-architecture-consult` (or stable
@@ -200,8 +203,8 @@ todo-first dispatch; seed-path S3 mode B) — stamp the graph before `/layer` pr
 
 | Sequence | When |
 |---|---|
-| todo → `/layer` G1 Fable → harvest → document + `derived_from` → G2 | Default Stage 0 |
-| Fable first → harvest → seed todo + document + `derived_from` → `/layer` enters G2 | Architecture-open / nebulous; operator asked consult-before-seed |
+| S4a → spawn → conductor G1 Fable → harvest → document + `derived_from` → G2 | Default (Mode A) |
+| S4a → spawn → Fable-before-S4b → harvest → rich-seed + document + `derived_from` → G2 | Architecture-open / nebulous; operator asked consult-first |
 
 ¬ leave a harvested Fable answer unlinked on a seeded todo — that forces tribal “inform the
 agent” and re-risks a duplicate G1.
@@ -270,7 +273,7 @@ when the change was judgment-bearing or cross-cutting.
 |---|---|
 | Background / conductor / unattended | **Recommend fire** — latency is not a skip. `team_dispatch(model=cdp/opus-5, purpose=review)` + staged diff/closeout |
 | Attended, next move would wait on the harvest | **Defer** (name it on the closeout). Slow is a sequencing reason, not a quality reason |
-| Checkout-native delivery scan still owed | Path-sim R-after stays `cursor/grok-4.6` — this overlay does not replace it |
+| Checkout-native delivery scan still owed | Layering-owned overlay: `cursor/grok-4.6` after G6 — ¬ a path-sim admit |
 
 Recipe: `consult-routing` § CDP transport row **Session / work review**.
 
@@ -315,6 +318,6 @@ fat-packet deepen stays `path-sim`. Former slug/command: `densify-abstraction-la
 
 ## Skills
 
-`work-item-seed-path` (pre-lane mint) · `consult-routing` · `cheap-recon-before-escalation` ·
+`work-item-seed-path` (S4a identity ≺ spawn) · `consult-routing` · `cheap-recon-before-escalation` ·
 `handoff-packet-authoring` · `claude-ai-cdp-navigation` · `agent-bus-discipline` ·
 `implement-todo` · `event-instrumentation-discipline`
