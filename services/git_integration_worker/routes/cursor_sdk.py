@@ -218,7 +218,9 @@ from services.git_integration_worker.cursor_sdk_resume import (
     load_resume_run_context,
     persist_resume_retain,
     persist_timeout_retain,
+    record_resolved_store_roots,
     reject_resume_if_ineligible,
+    resolve_sdk_store_dir,
     sdk_agent_id_from_agent,
     start_or_resume_agent,
 )
@@ -906,16 +908,24 @@ def _run_sdk_sync(
             dispatch_home = setup_cursor_dispatch_home(
                 resume_ctx.resume_of, real_home=real_home
             )
-        bridge_state = Path(resume_ctx.state_root)
+        parent = load_parent_row(
+            CursorDispatchLedger.instance(), parent_id=resume_ctx.resume_of
+        )
+        store_path = record_resolved_store_roots(
+            parent_id=resume_ctx.resume_of,
+            child_id=dispatch_id,
+            parent_state_root=parent.state_root if parent else resume_ctx.state_root,
+        )
+        bridge_state = Path(store_path or resume_ctx.state_root)
     else:
         dispatch_home = setup_cursor_dispatch_home(dispatch_id, real_home=real_home)
         bridge_state = dispatch_home / "bridge-state"
         bridge_state.mkdir(parents=True, exist_ok=True)
+        CursorDispatchLedger.instance().record_state_root(
+            dispatch_id=dispatch_id, state_root=str(bridge_state)
+        )
     repo_venv = resolve_repo_venv(real_home=real_home)
     validate_repo_venv(repo_venv)
-    CursorDispatchLedger.instance().record_state_root(
-        dispatch_id=dispatch_id, state_root=str(bridge_state)
-    )
     try:
         config = resolve_cursor(config_model_id)
         selection = build_model_selection(config, selection_overrides)
@@ -2813,7 +2823,11 @@ async def cursor_dispatch(
     if req.resume_of:
         parent_row = load_parent_row(ledger, parent_id=req.resume_of)
         if parent_row is not None and parent_row.sdk_agent_id:
-            store_root = parent_row.state_root or ""
+            store_dir = resolve_sdk_store_dir(
+                parent_id=req.resume_of,
+                state_root=parent_row.state_root,
+            )
+            store_root = str(store_dir) if store_dir is not None else ""
             emit_sdk_worker_resumed(
                 dispatch_id=req.dispatch_id,
                 resume_of=req.resume_of,

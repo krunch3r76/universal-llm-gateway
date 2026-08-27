@@ -280,6 +280,44 @@ is open → 409.
 - Mode B admit-proof on CHECKPOINT when `CONSULT_PENDING`: `execution_id`+
   `poll_hint` or honest halt.
 
+### Designed-stop resume (binding)
+
+When a conductor terminates on a designed stop (`ROW_PINNED`, `CONSULT_PENDING`,
+`HOLD_MERGE`, `OPERATOR_GATE`, `PARKED_TRANSPORT`, or `packet_kind=conductor`),
+the parent row retains store + worktree (`resume_retain`). The **live id after
+resume is the child** — not the parent.
+
+**Resume recipe (continuity lead or conductor after CLOSEOUT):**
+
+```text
+team_dispatch(
+  op=generate,
+  seat=cursor-sdk,
+  contract=light-bounded,
+  resume_of=<parent dispatch_id>,
+  packet_path=<same conductor packet>,   # or message carries Use-line + summon_mode
+  dispatch_thread_id={root},
+  # lane= omitted — inherit parent isolation (consult-routing § cursor-sdk lane)
+)
+```
+
+**Packet carry is mandatory.** GIW preambles (`Use the conductor skill`, attended
+`SCORE_RESURFACE`, seat-identity) extract from **packet text only** — a bare
+continuation prompt on resume gets no conductor/attended preambles. Re-admit with
+the same packet (or at minimum the Use-line + `summon_mode`).
+
+**Identity rewrite (binding on the resumed seat):**
+
+| Artifact | After resume, name the **child** |
+|---|---|
+| Sidecar `NEXT_ADMIT` / nested Composer | `nest_under=<child dispatch_id>` |
+| Seat-identity preamble | child `dispatch_id` supersedes parent |
+| Scoreboard tip (when present) | rewrite `NEXT_ADMIT` nest target to child |
+
+Pager only when `summon_mode` is absent/away or the packet names see-score-page —
+not on every attended `ROW_PINNED` (attended floor = bus `SCORE_RESURFACE` on the
+summoning thread + summoning lead relay).
+
 ## Admit
 
 ```text

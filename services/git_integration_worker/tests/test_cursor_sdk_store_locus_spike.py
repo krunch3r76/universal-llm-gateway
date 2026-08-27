@@ -41,8 +41,9 @@ def test_resolve_sdk_store_dir_prefers_nonempty_state_root(tmp_path: Path) -> No
 def test_resolve_sdk_store_dir_falls_back_to_parent_home_store(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("CURSOR_DISPATCH_HOME_ROOT", str(tmp_path / "homes"))
-    parent_id = "parent-home-bound"
+    homes_root = tmp_path / "homes"
+    monkeypatch.setenv("CURSOR_DISPATCH_HOME_ROOT", str(homes_root))
+    parent_id = "parent-home-bound-test"
     parent_home = dispatch_home_path(parent_id)
     cwd_slug = "mnt-torus-projects-repo"
     store = (
@@ -52,7 +53,7 @@ def test_resolve_sdk_store_dir_falls_back_to_parent_home_store(
         / cwd_slug
         / "sdk-agent-store"
     )
-    store.mkdir(parents=True)
+    store.mkdir(parents=True, exist_ok=True)
     (store / "agents.db").write_text("x")
     empty_bridge = tmp_path / "empty-bridge-state"
     empty_bridge.mkdir()

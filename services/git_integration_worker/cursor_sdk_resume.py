@@ -347,6 +347,31 @@ class ResumeRunContext:
     sdk_agent_id: str
 
 
+def record_resolved_store_roots(
+    *,
+    parent_id: str,
+    child_id: str,
+    parent_state_root: str | None = None,
+) -> str | None:
+    """Persist the real SDK store path on parent and child ledger rows.
+
+    Replaces a lying ``state_root`` (empty ``bridge-state``) with the path
+    ``resolve_sdk_store_dir`` finds — typically the HOME-bound
+    ``sdk-agent-store`` (store-A).
+    """
+    store_dir = resolve_sdk_store_dir(
+        parent_id=parent_id,
+        state_root=parent_state_root,
+    )
+    if store_dir is None:
+        return None
+    store_path = str(store_dir)
+    ledger = CursorDispatchLedger.instance()
+    ledger.record_state_root(dispatch_id=parent_id, state_root=store_path)
+    ledger.record_state_root(dispatch_id=child_id, state_root=store_path)
+    return store_path
+
+
 def load_resume_run_context(*, dispatch_id: str) -> ResumeRunContext | None:
     """Return parent resume context when ``dispatch_id`` is a resume child row."""
     ledger = CursorDispatchLedger.instance()

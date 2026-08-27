@@ -16,6 +16,7 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
     _connect,
 )
 from services.git_integration_worker.cursor_sdk_events import FrontierSdkWorkerResumed
+from services.git_integration_worker.cursor_home import dispatch_home_path
 from services.git_integration_worker.cursor_sdk_resume import (
     closeout_qualifies_for_resume_retain,
     cursor_sdk_timeout_retain_s,
@@ -23,6 +24,7 @@ from services.git_integration_worker.cursor_sdk_resume import (
     load_resume_run_context,
     persist_resume_retain,
     persist_timeout_retain,
+    record_resolved_store_roots,
     reject_resume_if_ineligible,
     resume_eligibility_reason,
     resume_retain_active,
@@ -409,6 +411,88 @@ def test_load_resume_run_context() -> None:
     assert ctx is not None
     assert ctx.resume_of == "parent-disp"
     assert ctx.sdk_agent_id == "agent-parent"
+
+
+def test_empty_state_root_dir_eligible_via_home_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Empty bridge-state column + HOME sdk-agent-store → eligible; store rewritten."""
+    homes_root = tmp_path / "homes"
+    monkeypatch.setenv("CURSOR_DISPATCH_HOME_ROOT", str(homes_root))
+    parent_id = "parent-empty-bridge"
+    empty_bridge = tmp_path / "empty-bridge-state"
+    empty_bridge.mkdir()
+    parent_home = dispatch_home_path(parent_id)
+    store = (
+        parent_home
+        / ".cursor"
+        / "projects"
+        / "mnt-torus-projects-repo"
+        / "sdk-agent-store"
+    )
+    store.mkdir(parents=True, exist_ok=True)
+    (store / "agents.db").write_text("x")
+
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id=parent_id, message="parent")
+    fp = ledger.fingerprint(req)
+    with ledger._connect() as conn:
+        conn.execute(
+            "INSERT INTO cursor_sdk_dispatches "
+            "(dispatch_id, fingerprint, thread_id, execution_id, resolved_model, "
+            "message_present, status, state_root, sdk_agent_id) "
+            "VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)",
+            (
+                parent_id,
+                fp,
+                req.thread_id,
+                req.execution_id,
+                "composer-2.5",
+                "completed",
+                str(empty_bridge),
+                "agent-parent",
+            ),
+        )
+
+    assert resume_eligibility_reason(ledger, parent_id=parent_id) is None
+
+    child = _req(dispatch_id="child-resume", resume_of=parent_id)
+    child_fp = ledger.fingerprint(child)
+    from services.git_integration_worker.models.cursor_api import CursorDispatchResponse
+
+    ledger.admit(
+        req=child,
+        fingerprint=child_fp,
+        execution_id=child.execution_id,
+        caller_agent=None,
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=child.dispatch_id,
+            thread_id=child.thread_id,
+            model_id="composer-2.5",
+        ),
+    )
+    ctx = load_resume_run_context(dispatch_id="child-resume")
+    assert ctx is not None
+    assert ctx.state_root == str(store)
+
+    record_resolved_store_roots(
+        parent_id=parent_id,
+        child_id="child-resume",
+        parent_state_root=str(empty_bridge),
+    )
+    with ledger._connect() as conn:
+        parent_row = conn.execute(
+            "SELECT state_root FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (parent_id,),
+        ).fetchone()
+        child_row = conn.execute(
+            "SELECT state_root FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            ("child-resume",),
+        ).fetchone()
+    assert parent_row["state_root"] == str(store)
+    assert child_row["state_root"] == str(store)
 
 
 def test_resume_retain_blocks_prune_for_completed_conductor(
