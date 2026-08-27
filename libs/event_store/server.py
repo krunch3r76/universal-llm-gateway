@@ -23,6 +23,32 @@ logger = logging.getLogger(__name__)
 
 _SECONDS_PER_DAY = 86400
 _DEFAULT_QUERY_SOCK_MODE = 0o660
+_GRACEFUL_TIMEOUT_ENV = "EVENT_STORE_GRACEFUL_TIMEOUT_S"
+
+
+def _graceful_shutdown_timeout_kwargs() -> dict[str, int]:
+    """Return ``timeout_graceful_shutdown`` for uvicorn when env is a finite int.
+
+    When ``EVENT_STORE_GRACEFUL_TIMEOUT_S`` is unset or not a base-10 integer,
+    returns an empty dict so uvicorn keeps its default graceful-shutdown behavior.
+    """
+    raw = os.environ.get(_GRACEFUL_TIMEOUT_ENV)
+    if raw is None or raw == "":
+        return {}
+    try:
+        timeout_s = int(raw, 10)
+    except ValueError:
+        return {}
+    return {"timeout_graceful_shutdown": timeout_s}
+
+
+def _uvicorn_query_config_kwargs() -> dict[str, Any]:
+    """Shared uvicorn.Config kwargs for event-store UDS and TCP query servers."""
+    return {
+        "log_level": "warning",
+        "access_log": False,
+        **_graceful_shutdown_timeout_kwargs(),
+    }
 
 
 def _event_timestamp() -> tuple[int, str]:
@@ -174,9 +200,7 @@ async def run_service(
         if query_sock_path.exists():
             query_sock_path.unlink()
 
-        uds_config = uvicorn.Config(
-            app, uds=query_sock, log_level="warning", access_log=False
-        )
+        uds_config = uvicorn.Config(app, uds=query_sock, **_uvicorn_query_config_kwargs())
         uds_server = uvicorn.Server(uds_config)
         uds_task = asyncio.create_task(uds_server.serve())
         serve_tasks.append(uds_task)
@@ -191,8 +215,7 @@ async def run_service(
                 app,
                 host="0.0.0.0",
                 port=tcp_query_port,
-                log_level="warning",
-                access_log=False,
+                **_uvicorn_query_config_kwargs(),
             )
             tcp_server = uvicorn.Server(tcp_config)
             tcp_task = asyncio.create_task(tcp_server.serve())
