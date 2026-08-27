@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import re
 
+from effort_vocabulary import to_testid as _effort_testid
+
 from claude_bundles.chat_model_match import (
     PREDICTED_MODEL_LABELS,
     family_nested_in_more_models,
@@ -32,7 +34,6 @@ from claude_bundles.chat_model_match import (
     parse_model_request,
     sealed_ask_default_effort,
 )
-from effort_vocabulary import to_testid as _effort_testid
 
 # Re-export pure helpers for existing callers / tests.
 __all__ = [
