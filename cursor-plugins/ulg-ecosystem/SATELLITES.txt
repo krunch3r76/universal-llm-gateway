@@ -11,3 +11,4 @@ pajournal
 treasure-chest
 claudeburst
 gollm
+cryptax
