@@ -13,13 +13,14 @@ from effort_vocabulary.core import (
     PROVIDER_EXTENDED,
     WIRE_LADDER,
     normalize_effort,
+    to_picker_label,
     to_picker_suffix,
     to_testid,
     to_wire,
 )
 
 # Harvest nominates these manage slugs when this lib lands (package-grain).
-CONSUMERS: tuple[str, ...] = ('git_integration_worker', 'stargate')
+CONSUMERS: tuple[str, ...] = ("git_integration_worker", "stargate")
 
 __all__ = [
     "EFFORT_TOKENS",
@@ -27,6 +28,7 @@ __all__ = [
     "PROVIDER_EXTENDED",
     "WIRE_LADDER",
     "normalize_effort",
+    "to_picker_label",
     "to_picker_suffix",
     "to_testid",
     "to_wire",

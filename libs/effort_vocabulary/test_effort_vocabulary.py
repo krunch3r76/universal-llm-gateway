@@ -8,6 +8,7 @@ from effort_vocabulary import (
     EFFORT_TOKENS,
     WIRE_LADDER,
     normalize_effort,
+    to_picker_label,
     to_picker_suffix,
     to_testid,
     to_wire,
@@ -58,3 +59,21 @@ def test_unknown_effort_returns_none() -> None:
     assert normalize_effort("turbo") is None
     assert to_picker_suffix("") is None
     assert to_testid(None) is None
+    assert to_picker_label(None) is None
+    assert to_picker_label("turbo") is None
+
+
+@pytest.mark.offline
+@pytest.mark.parametrize(
+    ("raw", "label"),
+    [
+        ("max", "Max"),
+        ("high", "High"),
+        ("extra", "Extra"),
+        ("xhigh", "Extra"),
+        ("medium", "Medium"),
+        ("low", "Low"),
+    ],
+)
+def test_picker_label_for_cowork_flyout(raw: str, label: str) -> None:
+    assert to_picker_label(raw) == label

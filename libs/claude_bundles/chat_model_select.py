@@ -6,9 +6,10 @@ first (fast path — not an availability gate); on miss it discovers radios
 (including under "More models") and matches the requested name/pattern.
 
 Effort High/Extra/Max may be first-class radios (click ``Opus 5 High``
-directly — a:30693) **or** ``effort-menu-trigger`` → ``effort-option-*`` (24592).
-Skip submenu when label attests effort; on trigger/option miss recover via
-effort-qualified radio (a:31011). Sealed-ask default for Opus/Fable is **High**;
+directly — a:30693), ``effort-menu-trigger`` → ``effort-option-*`` (24592),
+or the Chat/Cowork ``Effort`` flyout row (a:31119). Skip submenu when the
+label attests effort; on trigger/option miss recover via effort-qualified
+radio (a:31011). Sealed-ask default for Opus/Fable is **High**;
 request ``opus-5-extra`` when Extra is required.
 
 Cowork Project nests some models under "More models" and mounts the picker
@@ -87,10 +88,17 @@ async def _ensure_picker(page) -> bool:
 
 
 async def _open_picker(page) -> None:
+    """Open the model dropdown; retry until radios mount (empty /new race)."""
     btn = page.locator('[data-testid="model-selector-dropdown"]')
-    if await btn.count():
+    if not await btn.count():
+        return
+    for attempt in range(6):
         await btn.first.click(force=True)
-        await page.wait_for_timeout(1200)
+        await page.wait_for_timeout(1200 if attempt == 0 else 800)
+        if await list_picker_radios(page):
+            return
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(200)
 
 
 async def _expand_more_models(page) -> None:
@@ -218,7 +226,12 @@ async def select_from_ui(
         }
 
     if not await _ensure_picker(page):
-        return {"ok": False, "step": "no_picker", "before": before, "requested": requested}
+        return {
+            "ok": False,
+            "step": "no_picker",
+            "before": before,
+            "requested": requested,
+        }
 
     await page.keyboard.press("Escape")
     await page.wait_for_timeout(400)
@@ -237,8 +250,12 @@ async def select_from_ui(
             path = "effort_qualified_radio"
             matched = qualified
 
-    if path == "discover" and predicted and not (
-        effort and not label_satisfies_request(requested, before, effort=effort)
+    if (
+        path == "discover"
+        and predicted
+        and not (
+            effort and not label_satisfies_request(requested, before, effort=effort)
+        )
     ):
         matched = await _click_family_radio(page, family)
         if matched is None:

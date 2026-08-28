@@ -32,6 +32,16 @@ _TESTIDS: dict[str, str] = {
     "max": "effort-option-max",
 }
 
+# Visible Cowork / claude.ai Effort flyout labels (a:31119).
+_PICKER_LABELS: dict[str, str] = {
+    "low": "Low",
+    "medium": "Medium",
+    "high": "High",
+    "extra": "Extra",
+    "xhigh": "Extra",
+    "max": "Max",
+}
+
 
 def normalize_effort(raw: str | None) -> str | None:
     """Normalize a surface token to the wire ladder (or provider-extended).
@@ -78,3 +88,14 @@ def to_testid(raw: str | None) -> str | None:
     if key == "extra":
         return _TESTIDS["extra"]
     return _TESTIDS.get(wire)
+
+
+def to_picker_label(raw: str | None) -> str | None:
+    """Visible Effort-flyout label (``Max``, ``Extra``, …)."""
+    key = (raw or "").strip().lower()
+    if key == "extra":
+        return _PICKER_LABELS["extra"]
+    wire = normalize_effort(raw)
+    if wire is None:
+        return None
+    return _PICKER_LABELS.get(wire)

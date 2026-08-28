@@ -2,12 +2,38 @@
 
 from __future__ import annotations
 
+import re
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from claude_bundles.chat_model_effort import _effort_after_click
-from claude_bundles.chat_model_select import select_from_ui
+from claude_bundles.chat_model_effort import (
+    _EFFORT_ROW,
+    _effort_after_click,
+    set_effort,
+)
+from claude_bundles.chat_model_select import _open_picker, select_from_ui
+
+
+class _CountLoc:
+    def __init__(self, n: int = 0) -> None:
+        self._n = n
+        self.first = self
+        self.click = AsyncMock()
+        self._filters: dict[str, _CountLoc] = {}
+
+    async def count(self) -> int:
+        return self._n
+
+    def filter(self, has_text=None, **_kwargs):
+        pat = getattr(has_text, "pattern", str(has_text or ""))
+        cached = self._filters.get(pat)
+        if cached is not None:
+            return cached
+        n = 1 if re.search(r"Effort|Max", pat, re.I) else 0
+        child = _CountLoc(n)
+        self._filters[pat] = child
+        return child
 
 
 @pytest.mark.offline
@@ -261,3 +287,43 @@ def test_set_effort_still_exported_from_select() -> None:
     from claude_bundles.chat_model_select import set_effort as exported
 
     assert exported is origin
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_set_effort_clicks_effort_row_when_testid_absent() -> None:
+    """Chat/Cowork flyout: Effort menuitem + Max label (a:31119)."""
+    locs = {
+        '[data-testid="effort-menu-trigger"]': _CountLoc(0),
+        "[role=menuitem]": _CountLoc(0),
+        '[data-testid="effort-option-max"]': _CountLoc(0),
+        "[role=menuitemradio]": _CountLoc(0),
+    }
+    page = AsyncMock()
+    page.wait_for_timeout = AsyncMock()
+    page.locator = lambda sel, **_k: locs.get(sel, _CountLoc(0))
+    page.get_by_role = AsyncMock(return_value=_CountLoc(0))
+    result = await set_effort(page, "max")
+    assert result["ok"] is True
+    assert result["trigger_via"] == "menuitem"
+    assert result["option_via"] == "label-radio"
+    effort_row = locs["[role=menuitem]"].filter(has_text=_EFFORT_ROW)
+    assert effort_row.click.await_count == 1
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_open_picker_retries_until_radios_mount() -> None:
+    page = AsyncMock()
+    page.keyboard.press = AsyncMock()
+    page.wait_for_timeout = AsyncMock()
+    btn = _CountLoc(1)
+    page.locator = lambda _sel, **_k: btn
+    with patch(
+        "claude_bundles.chat_model_select.list_picker_radios",
+        new_callable=AsyncMock,
+        side_effect=[[], [], ["Fable 5", "Opus 5"]],
+    ):
+        await _open_picker(page)
+    assert btn.click.await_count == 3
+    assert page.keyboard.press.await_count == 2
