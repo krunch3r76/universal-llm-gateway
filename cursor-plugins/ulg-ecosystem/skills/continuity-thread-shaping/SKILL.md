@@ -1,7 +1,8 @@
 ---
 name: continuity-thread-shaping
-description: "On continuity-root (role:root) birth, resume, catch-up, drop-on-liaison, or hub wrap — not work/conductor-worker/MONITOR: shape catch-up body, mint/associate the document hub, fill resume slots."
+description: "On role:root birth, resume, catch-up, drop-on-liaison, hub wrap, or inbound LIAISON send — not work/worker/MONITOR: shape catch-up, mint hub, fill resume slots, mark inbound acts."
 skill_category: orchestration
+trigger_short: "role:root house ∨ inbound LIAISON/NOTE on liaison-inbox"
 trigger_match_terms:
   - continuity-thread-shaping
   - catch-up shape
@@ -13,6 +14,11 @@ trigger_match_terms:
   - sit-journal
   - liaison inbox
   - runbook-recall
+  - LIAISON
+  - operator-relayed
+  - inbound LIAISON
+  - TYPE: NOTE
+  - fyi:
 related_skills:
   - checkpoint-discipline
   - operator-posture
@@ -21,16 +27,18 @@ related_skills:
   - ulg-for-llms
   - cortex-orientation
   - teach-once-routine-mint
+  - mission-operator
 ---
 
 # Continuity Thread Shaping
 
 `spine=root ⇒ house(file ∧ hub) ∧ shape(body) ∧ fill(slots from durable surfaces)`
-CHECKPOINT = reconstitution **index** (`checkpoint-discipline`). This skill owns catch-up **body** + hub wrap. ¬ field IDs. ¬ a second profile.
+`liaison-inbox ∧ inbound(web-anthropic) ⇒ mark(act) ≺ send`
+CHECKPOINT = reconstitution **index** (`checkpoint-discipline`). This skill owns catch-up **body** + hub wrap. ¬ field IDs. ¬ a second profile. ¬ DIRECTIVE fields on this root.
 
 ## When
 
-Standing-root (`role:root`) birth · resume of **that** root (`resume <n>` only when `n` is `role:root`) · catch-up file shape · "drop this on the liaison" · "where do we leave this" · wrapping **that root** as a Cortex entity.
+Standing-root (`role:root`) birth · resume of **that** root (`resume <n>` only when `n` is `role:root`) · catch-up file shape · "drop this on the liaison" · "where do we leave this" · wrapping **that root** as a Cortex entity · inbound `LIAISON` / `NOTE` / `fyi:` send onto a liaison-inbox root.
 
 ## Scope
 
@@ -69,9 +77,37 @@ Life: `recall` first. Forbidden: reconstruct from chat · linear thread read · 
 
 Residuals park on the **matter** node (`residual-imprint`). Hub ≠ parking lot.
 
-## Header-first
+## Header schema (catch-up file — ¬ CHECKPOINT field IDs)
 
-`## Stance` → `## Why this house` → `## Objective` (+ In/Out) precede any body. Newest-first journal prepends **below** the header. One schema, one file per root; body below may shape.
+This skill owns the **file** header. CHECKPOINT B1–B5 stay in `checkpoint-schema-profiles`. Birth mints the whole header in one write. Resume loads it before any `team_dispatch`.
+
+| Heading | Required | Owns |
+|---|---|---|
+| `## Stance` | yes (`orchestrator_continuity`; `tick_charter` skips speech) | Use `ulg-for-llms` |
+| `## Why this house` | yes | this-arc why |
+| `## Objective` | yes | Mission + In / Out |
+| `## Rules` | yes | lane law that **overrides** global skill omit-paths |
+
+Newest-first journal prepends **below** this header. Body below may shape. One schema, one file per root.
+
+### `## Rules` (field)
+
+```
+## Rules
+∀ continuity-doc:
+  lane_law that a later seat must obey before team_dispatch
+  ≺ global skill omit-path
+absence ⇒ house_gap  # ¬ license to follow the card/skill default
+```
+
+| | |
+|---|---|
+| **Holds** | Dispatch knobs (e.g. T1 `fast=true`) · hop remainder (score → Conductor) · seat register (liaison ≠ conductor) |
+| **Shape** | Table `Rule \| Bind`, or short MUST lines. No recipes. No leftover execute holds. |
+| **Birth** | Same write as Stance / Why / Objective. Empty table + `_None yet._` is legal; **missing heading is not**. |
+| **Resume** | Fill-map slot 5b. Read before fire. |
+| **Tip** | CHECKPOINT indexes a pointer when a rule **changes**; speech stays on this file. |
+| **Specimen** | 9638 |
 
 Mission text SOT = file `## Objective`. Hub mirrors same write. Speech order: `operator-posture` Rule 3 · `decision:continuity-resume-mission-open`. Drift: hub `content_hash` ≠ file sha.
 
@@ -86,6 +122,7 @@ Slot **order** = `operator-posture` Rule 3. This skill owns **fill sources**.
 | 3 been / are | tip `## State` + Handoff pointer | `## Windows` · linear thread |
 | 4 `In one line:` | tip Handoff *State (1 line)* | omit the label |
 | 5 Settled / Live / Next | file `## Settled` · tip `## WIP` · tip `## Next pickup` | inventory dump · scoreboard paste |
+| 5b Lane rules | file `## Rules` | omit and follow a global skill omit-path |
 | 6 Tab + reconstitution | tip CHECKPOINT turn# · leftover imprint assertion/edge ids on hub or matter · resume CITE turn | chat as memory |
 | 7 What I need from you | `OPERATOR_GATE` / `HOLD_MERGE` · hub deadlines | model-seat work · direction quiz |
 
@@ -96,18 +133,32 @@ Slot 6 is the only slot this skill originates — spoken form of "the imprint is
 | Reader job | Body | Default edges | Specimen |
 |---|---|---|---|
 | sit-journal | newest-first `# Current` below header | `related_to` worker todos | 9582 |
-| liaison-inbox | `owner=` next-pickup; rows = pointers. **Temporary**, ¬ default foreign-work drop | `references` decisions/frictions | 9638 |
+| liaison-inbox | `owner=` next-pickup; rows = pointers. **Temporary**, ¬ default foreign-work drop. Inbound: table below | `references` decisions/frictions | 9638 |
 | runbook-recall | runbook table + hazards | `references` `runbook:*` | 9732 |
 
 A row exists only with ≥1 living specimen. `screenshot-spec` is a sidecar kind, ¬ a catch-up shape.
+
+### Liaison-inbox inbound (BINDING)
+
+`from=web-anthropic` on this root is overloaded. Marker + provenance, ¬ DIRECTIVE fields. Specimen: 9638#187.
+
+| Act | Shape | Weight |
+|---|---|---|
+| Operator-relayed input to the liaison | subject `LIAISON —` · `send` ¬ `request` · first line `operator-relayed` (voice / chat) · `to=cursor` | Commission. ACK. ¬ `TYPE: DIRECTIVE` |
+| Seat-own counsel to the lane agent | `TYPE: NOTE` or `fyi:` | Advisory. ¬ BIND |
+| Unmarked web-anthropic prose | chatter / dialectic | Child work thread + one-line pointer on the root |
+| Operator-proxy | `TYPE: DIRECTIVE` | Private request lane only. Never this root |
+
+`unmatched ≠ chatter` on this root — authority also arrives as `BIND` · `CHECKPOINT` · `SCORE_RESURFACE`. Invert (typed parsers skip unmatched) is `mission-operator` law on the request lane, ¬ here.
 
 ## Triggers → acts
 
 | Trigger | Act |
 |---|---|
-| Birth | header + hub + edges (same write as charter surfaces) |
-| Resume | Cortex-house order + fill map. Only when the thread is `role:root` |
+| Birth | header schema (Stance · Why · Objective · Rules) + hub + edges (same write as charter surfaces) |
+| Resume | Cortex-house order + fill map. Only when the thread is `role:root`. IDE: tab `{n} {slug}` (`operator-posture`) |
 | "where do we leave this" | matter node first → hub `related_to` if the house owns it → else new root |
+| Inbound LIAISON / NOTE onto liaison-inbox root | Mark per inbound table; `send` ¬ `request` |
 
 ## Never in L2
 
@@ -126,3 +177,9 @@ Test: *would this line still be true as a `runbook:` for one matter?* ⇒ pointe
 | Both `{matter-slug}` and `{N}-continuity` for one root | One hub |
 | Mint `{N}-continuity` for a work / conductor-worker / MONITOR thread | House the root; pointer the worker |
 | Hub as leftover parking lot | `residual-imprint` on the matter |
+| Bury lane law under Living house / MAY notes | `## Rules` in the header schema |
+| Missing `## Rules` then follow a skill omit-path | House gap — mint the heading before dispatch |
+| `TYPE: DIRECTIVE` on a shared liaison root | Private request lane (`mission-operator`) |
+| Field-schema a LIAISON like DIRECTIVE | Marker + provenance only |
+| Treat NOTE / unmarked prose as operator BIND | Weight per inbound table |
+| Treat non-DIRECTIVE on this root as chatter | LIAISON / BIND / CHECKPOINT still bind |
