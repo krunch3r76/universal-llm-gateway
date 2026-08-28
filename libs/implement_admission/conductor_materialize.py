@@ -56,6 +56,7 @@ class ConductorMaterializeContext:
     scope: str | None
     acceptance: str | None
     fold_missing_witnesses: dict[str, str] | None = None
+    summoning_thread_id: str | None = None
 
 
 def resolve_entry_gate(
@@ -81,6 +82,7 @@ def load_conductor_context(
     summon_text: str | None = None,
     fold_entry_gate: str | None = None,
     fold_missing_witnesses: dict[str, str] | None = None,
+    summoning_thread_id: str | None = None,
 ) -> ConductorMaterializeContext:
     """Read todo attrs and derive conductor spawn context."""
     ref = parse_source_ref(source_ref)
@@ -101,8 +103,13 @@ def load_conductor_context(
         density_triage=attrs.get("density_triage"),
         fold_entry_gate=fold_entry_gate,
     )
+    explicit_summon = summon_mode
+    if explicit_summon is None:
+        todo_summon = attrs.get("summon_mode")
+        if todo_summon:
+            explicit_summon = str(todo_summon).strip()
     resolved_summon_mode = resolve_summon_mode(
-        explicit=summon_mode,
+        explicit=explicit_summon,
         caller_agent=caller_agent,
         summon_text=summon_text,
     )
@@ -119,6 +126,7 @@ def load_conductor_context(
         scope=attrs.get("scope") or attrs.get("Scope"),
         acceptance=attrs.get("acceptance") or attrs.get("Acceptance"),
         fold_missing_witnesses=fold_missing_witnesses,
+        summoning_thread_id=summoning_thread_id,
     )
 
 
@@ -131,6 +139,11 @@ def _render_scope(ctx: ConductorMaterializeContext) -> str:
         "Checkout: Lane B (explicit).",
         f"summon_mode: {ctx.summon_mode}.",
     ]
+    if ctx.summoning_thread_id:
+        lines.append(f"summoning_thread_id: {ctx.summoning_thread_id}.")
+        lines.append(
+            "SCORE_RESURFACE posts to that parent/root thread, not this worker thread."
+        )
     if ctx.fold_missing_witnesses:
         lines.append("CLAIMED rows — attach witnesses, do not re-derive:")
         for gid in G_ROWS:
@@ -160,7 +173,12 @@ def _render_invariants(ctx: ConductorMaterializeContext) -> str:
 def _render_task_guidance(ctx: ConductorMaterializeContext) -> str:
     if ctx.summon_mode == "attended":
         g3_g5_lines = [
-            "G3→G5 attended: resurface score in the summoning IDE chat (discussion, not implement, not pager, not CONFIRM_PENDING).",
+            (
+                "G3→G5 attended: post SCORE_RESURFACE on "
+                f"summoning_thread_id={ctx.summoning_thread_id or '<parent/root>'} "
+                "(never this worker thread); resurface in the summoning IDE chat "
+                "(discussion, not implement, not pager, not CONFIRM_PENDING)."
+            ),
             "Explicit see-score while attended: ROW_PINNED at G3, no pager (live summoning chat).",
         ]
     else:
@@ -332,6 +350,7 @@ def materialize_conductor(
         summon_text=summon_text,
         fold_entry_gate=fold_entry_gate,
         fold_missing_witnesses=fold_missing,
+        summoning_thread_id=summoning_thread_id,
     )
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"conductor-{slug}.md"

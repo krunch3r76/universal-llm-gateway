@@ -208,6 +208,95 @@ async def resolve_cursor_sdk_thread_targets(
     return reuse, parent, is_auto
 
 
+CURSOR_WORKER_THREAD_OCCUPIED = "CURSOR_WORKER_THREAD_OCCUPIED"
+_LIVE_WORKER_STATUSES = frozenset(
+    {"queued", "admitted", "running", "parked_waiting"}
+)
+
+
+async def refuse_occupied_worker_thread(
+    *,
+    request_id: str,
+    reuse_thread: str | None,
+    nest_under: str | None,
+    read_only: bool = False,
+) -> None:
+    """422 before bus admit when reuse_thread already has a live GIW runner.
+
+    Must fire before ``admit_handoff_dispatch`` — a second execution_id on the
+    same thread orphans the first (9675#8). ``nest_under`` is a legal park.
+    Read-only admits do not occupy the write slot. Pending-empty shells have
+    no occupant. GIW unreachable on a thread that already has turns is
+    fail-closed.
+    """
+    if not reuse_thread or nest_under or read_only:
+        return
+    probed = await probe_thread(reuse_thread)
+    pending_empty = (
+        probed is not None
+        and probed.get("bus_lifecycle_state") == "pending"
+        and int(probed.get("turn_count") or 0) == 0
+    )
+    if pending_empty:
+        return
+    from .admission import FrontierEndpointError
+    from .cursor_sdk_worker_dispatch import worker_base_url
+
+    try:
+        async with make_async_client(worker_base_url(), timeout=5.0) as client:
+            resp = await client.get(
+                f"{worker_base_url()}/api/v1/git/admin/dispatch-status",
+                params={"thread_id": reuse_thread},
+            )
+    except httpx.HTTPError:
+        if probed is not None and int(probed.get("turn_count") or 0) >= 1:
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="reuse_thread",
+                reason=(
+                    f"worker thread {reuse_thread!r} may still hold a live "
+                    "dispatch; GIW occupancy probe failed — refuse second "
+                    "top-level generate"
+                ),
+                status_code=422,
+                code=CURSOR_WORKER_THREAD_OCCUPIED,
+            )
+        return
+    if resp.status_code != 200:
+        if probed is not None and int(probed.get("turn_count") or 0) >= 1:
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="reuse_thread",
+                reason=(
+                    f"worker thread {reuse_thread!r} occupancy probe HTTP "
+                    f"{resp.status_code}; refuse second top-level generate"
+                ),
+                status_code=422,
+                code=CURSOR_WORKER_THREAD_OCCUPIED,
+            )
+        return
+    payload = resp.json()
+    status = payload.get("status")
+    if status in _LIVE_WORKER_STATUSES:
+        holder = payload.get("dispatch_id")
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="reuse_thread",
+            reason=(
+                f"worker thread {reuse_thread!r} already holds live dispatch "
+                f"{holder!r}; nest_under that holder or wait — do not "
+                "second-generate"
+            ),
+            status_code=422,
+            code=CURSOR_WORKER_THREAD_OCCUPIED,
+            details={
+                "holder_dispatch_id": holder,
+                "holder_thread_id": reuse_thread,
+                "holder_status": status,
+            },
+        )
+
+
 def consolidation_split_warning(
     *,
     reuse_thread: str | None,

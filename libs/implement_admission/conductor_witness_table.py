@@ -24,6 +24,33 @@ _G4_BLOCKS_DONE_RE = re.compile(
     r"(?is)does not clear G5|withhold G5|withhold(?:s)? completeness"
     r"|AC-\d+\s*\|\s*\*\*FAIL\*\*"
 )
+_G_ROW_URI_RE = re.compile(
+    r"^\|\s*(?P<gid>G[23])\s*\|.*?(?P<uri>cortex://[^\s|`]+)",
+    re.MULTILINE | re.IGNORECASE,
+)
+_G2_ARTIFACT_IDS = ("F1", "S7")
+_G3_ARTIFACT_IDS = ("S4b", "S9")
+
+
+def _first_resolving_artifact(
+    artifacts: dict[str, str],
+    keys: tuple[str, ...],
+    *,
+    files_root: Path,
+    repo: Path | None,
+) -> tuple[str | None, str | None]:
+    for key in keys:
+        uri = artifacts.get(key)
+        if uri and _uri_resolves(uri, files_root=files_root, repo=repo):
+            return key, uri
+    return None, None
+
+
+def _tip_row_uri(tip_body: str, gid: str) -> str | None:
+    for match in _G_ROW_URI_RE.finditer(tip_body):
+        if match.group("gid").upper() == gid:
+            return match.group("uri")
+    return None
 
 
 def _artifact_map(tip_body: str) -> dict[str, str]:
@@ -80,8 +107,14 @@ def _witness_g1(*, source_ref: str, cortex: WitnessCortex) -> Witness | None:
         attrs = doc.get("attributes") or {}
         kind = str(attrs.get("consult_kind") or doc.get("consult_kind") or "").strip().lower()
         if kind != "architecture":
-            summary = str(doc.get("summary_row") or "")
-            if "consult_kind=architecture" in summary.lower().replace(" ", ""):
+            blob = " ".join(
+                (
+                    str(doc.get("summary_row") or ""),
+                    str(doc.get("description") or ""),
+                    str(attrs.get("description") or ""),
+                )
+            )
+            if "consult_kind=architecture" in blob.lower().replace(" ", ""):
                 kind = "architecture"
         if kind == "architecture":
             rel_id = rel.get("id")
@@ -118,16 +151,32 @@ def row_witnesses(
 
     witnesses["G1"] = _witness_g1(source_ref=source_ref, cortex=deps.cortex)
 
-    f_uri = artifacts.get("F1")
-    if f_uri and _uri_resolves(f_uri, files_root=root, repo=repo):
-        witnesses["G2"] = Witness(row="G2", source="artifact:F1", detail=f_uri)
+    g2_id, g2_uri = _first_resolving_artifact(
+        artifacts, _G2_ARTIFACT_IDS, files_root=root, repo=repo
+    )
+    if g2_id is None:
+        g2_uri = _tip_row_uri(tip_body, "G2")
+        if g2_uri and _uri_resolves(g2_uri, files_root=root, repo=repo):
+            g2_id = "tip"
+    if g2_id and g2_uri:
+        witnesses["G2"] = Witness(
+            row="G2", source=f"artifact:{g2_id}", detail=g2_uri
+        )
 
-    s4b_uri = artifacts.get("S4b")
-    if s4b_uri and _uri_resolves(s4b_uri, files_root=root, repo=repo):
+    g3_id, g3_uri = _first_resolving_artifact(
+        artifacts, _G3_ARTIFACT_IDS, files_root=root, repo=repo
+    )
+    if g3_id is None:
+        g3_uri = _tip_row_uri(tip_body, "G3")
+        if g3_uri and _uri_resolves(g3_uri, files_root=root, repo=repo):
+            g3_id = "tip"
+    if g3_id and g3_uri:
         entity = deps.cortex.entity_get(source_ref, intent="card")
         triage = str((entity.get("attributes") or {}).get("density_triage") or "")
         if triage.strip().lower() != "implement_ready":
-            witnesses["G3"] = Witness(row="G3", source="artifact:S4b", detail=s4b_uri)
+            witnesses["G3"] = Witness(
+                row="G3", source=f"artifact:{g3_id}", detail=g3_uri
+            )
 
     g4_uri = artifacts.get("G4")
     if (

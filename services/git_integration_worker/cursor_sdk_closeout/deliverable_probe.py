@@ -59,12 +59,22 @@ def verify_deliverables(
     See ``classify_capture_status`` for the repo capture trust boundary (porcelain +
     manifest fold vs shell side effects).
     """
-    from claude_bundles.conductor_stop import is_consult_pending_wait
+    from claude_bundles.conductor_stop import (
+        is_exit_persist_stop,
+        parse_stop_tokens,
+    )
 
-    if is_consult_pending_wait(outcome.body):
+    tokens = parse_stop_tokens(outcome.body).tokens
+    if "CONSULT_PENDING" in tokens:
         return [
             build_gate_d_verification(
                 reason="passed", passed=True, note="consult_pending_wait"
+            )
+        ]
+    if is_exit_persist_stop(outcome.body):
+        return [
+            build_gate_d_verification(
+                reason="passed", passed=True, note="exit_persist_stop"
             )
         ]
     expected = files_expected or (spec.scope.files_expected if spec else [])

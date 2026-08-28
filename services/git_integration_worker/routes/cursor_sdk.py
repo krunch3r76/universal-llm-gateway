@@ -47,6 +47,7 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
     DispatchConflict,
     PromotedDispatch,
     SourceRefConflict,
+    WorkerThreadOccupied,
     WriteLeaseHeld,
 )
 from services.git_integration_worker.cursor_home import (
@@ -631,6 +632,7 @@ def _resolve_prompt(req: CursorDispatchRequest, source_repo: Path) -> str:
         lane_branch=lane_branch,
         dispatch_id=req.dispatch_id,
         has_packet_path=req.packet_path is not None,
+        caller_agent=req.caller_agent,
     )
     return f"{preamble}{packet_text}"
 
@@ -2252,21 +2254,44 @@ async def _finalize_success(
         _packet_kind = (
             extract_packet_kind_from_packet(packet_text) if packet_text else None
         )
-        degraded_reason = (
-            empty_assistant_turn_reason(outcome)
-            or empty_output_degraded_reason(outcome)
-            or conductor_closeout_degraded_reason(
-                body=outcome.body,
-                packet_text=packet_text or None,
-                packet_kind=_packet_kind,
+        _is_conductor = _packet_kind == "conductor"
+        _nested_live = False
+        if _is_conductor:
+            from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
+                conductor_has_live_nested,
             )
-            or light_bounded_deliverable_reason(
-                body=outcome.body,
-                tool_calls=outcome.tool_calls,
-                contract=contract,
-                deliverable_present=deliverable_present,
-            )
+
+            _nested_live = conductor_has_live_nested(dispatch_id=req.dispatch_id)
+        _conductor_reason = conductor_closeout_degraded_reason(
+            body=outcome.body,
+            packet_text=packet_text or None,
+            packet_kind=_packet_kind,
+            nested_live=_nested_live,
         )
+        if _is_conductor:
+            degraded_reason = (
+                _conductor_reason
+                or empty_assistant_turn_reason(outcome)
+                or empty_output_degraded_reason(outcome)
+                or light_bounded_deliverable_reason(
+                    body=outcome.body,
+                    tool_calls=outcome.tool_calls,
+                    contract=contract,
+                    deliverable_present=deliverable_present,
+                )
+            )
+        else:
+            degraded_reason = (
+                empty_assistant_turn_reason(outcome)
+                or empty_output_degraded_reason(outcome)
+                or _conductor_reason
+                or light_bounded_deliverable_reason(
+                    body=outcome.body,
+                    tool_calls=outcome.tool_calls,
+                    contract=contract,
+                    deliverable_present=deliverable_present,
+                )
+            )
         # Observability: if filesystem ground truth suppressed a would-be
         # light-bounded degrade, surface it (frontier.sdk.closeout.reconciled).
         if deliverable_present and degraded_reason is None:
@@ -2769,6 +2794,27 @@ async def cursor_dispatch(
             detail_summary=str(exc),
             retryable=False,
             validation_stage="ledger_nest_depth",
+        )
+    except WorkerThreadOccupied as exc:
+        await _rollback_lane_b_mint_if_needed(
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            source_repo=resolved_source_repo,
+            minted_lane_b=minted_lane_b,
+            reason="worker_thread_occupied",
+        )
+        return _reject_pre_admission(
+            req,
+            worker_error_code="CURSOR_WORKER_THREAD_OCCUPIED",
+            failure_layer="admission",
+            http_status=422,
+            detail_summary=str(exc),
+            retryable=False,
+            validation_stage="ledger_thread_occupied",
+            extra_data={
+                "holder_dispatch_id": exc.holder_dispatch_id,
+                "holder_thread_id": exc.holder_thread_id,
+            },
         )
     except NestParentNotLive as exc:
         await _rollback_lane_b_mint_if_needed(

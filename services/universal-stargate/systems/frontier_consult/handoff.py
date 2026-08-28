@@ -790,7 +790,7 @@ async def claim_and_post_pointer_turn(
     execution_id: str,
     pipeline_id: str,
     parent_thread_id: str | None = None,
-) -> None:
+) -> int:
     """POST /threads/{id}/dispatch-claim-and-post — atomic claim + pointer turn.
 
     Raises PendingShellContention when the agent-bus returns 409
@@ -861,6 +861,14 @@ async def claim_and_post_pointer_turn(
             ),
             status_code=502,
         )
+    try:
+        body = resp.json()
+        turn_number = body.get("turn_number")
+        if turn_number is not None:
+            return int(turn_number)
+    except (TypeError, ValueError):
+        pass
+    return 0
 
 
 async def create_handoff_thread(

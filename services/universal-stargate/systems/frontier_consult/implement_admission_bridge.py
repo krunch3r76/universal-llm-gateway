@@ -303,6 +303,7 @@ def resolve_source_ref_to_packet(
     packet_kind: str | None = None,
     caller_agent: str | None = None,
     summon_text: str | None = None,
+    summon_mode: str | None = None,
     summoning_thread_id: str | None = None,
 ) -> BridgeResult:
     """Normalize + materialize source_ref into a workspaces-relative packet path."""
@@ -319,10 +320,12 @@ def resolve_source_ref_to_packet(
             out_dir=out_dir,
             caller_agent=caller_agent,
             summon_text=summon_text,
+            summon_mode=summon_mode,
             fold_deps=fold_deps_for_admit(
                 source_ref,
                 cortex=cortex,
                 repo=repo,
+                summon_mode=summon_mode,
                 summoning_thread_id=summoning_thread_id,
             ),
             summoning_thread_id=summoning_thread_id,

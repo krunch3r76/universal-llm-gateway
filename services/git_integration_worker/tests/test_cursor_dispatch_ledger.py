@@ -15,6 +15,7 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
     DispatchConflict,
     SourceRefConflict,
+    WorkerThreadOccupied,
     _connect,
 )
 from services.git_integration_worker.cursor_sdk_conductor_conflict import (
@@ -1195,7 +1196,7 @@ def test_work_fingerprint_force_bypasses() -> None:
     shared_message = "force-shared-content"
     req1 = _req(dispatch_id="fp-h1", thread_id="t-force", message=shared_message)
     _admit(ledger, req1, source_repo=_REPO, contract="consult")
-    req2 = _req(dispatch_id="fp-h2", thread_id="t-force", message=shared_message)
+    req2 = _req(dispatch_id="fp-h2", thread_id="t-force-2", message=shared_message)
     result = _admit(ledger, req2, source_repo=_REPO, contract="consult", force=True)
     assert result is None or result.status in ("admitted", "queued")
 
@@ -1231,6 +1232,26 @@ def test_work_fingerprint_null_skips() -> None:
     assert ledger.work_fingerprint(req) is not None
     result = _admit(ledger, req, source_repo=_REPO, contract="consult")
     assert result is None or result.status == "admitted"
+
+
+def test_second_live_admit_on_same_thread_raises_occupied() -> None:
+    ledger = CursorDispatchLedger.instance()
+    _admit(
+        ledger,
+        _req(dispatch_id="occ-hold", thread_id="t-occ"),
+        source_repo=_REPO,
+        contract="consult",
+    )
+    with pytest.raises(WorkerThreadOccupied) as exc_info:
+        _admit(
+            ledger,
+            _req(dispatch_id="occ-dup", thread_id="t-occ", message="other"),
+            source_repo="/other-repo",
+            contract="consult",
+        )
+    err = exc_info.value
+    assert err.holder_dispatch_id == "occ-hold"
+    assert err.holder_thread_id == "t-occ"
 
 
 def test_work_fingerprint_allows_after_terminal() -> None:

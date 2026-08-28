@@ -50,6 +50,12 @@ class _StubCortex:
                     "summary_row": "consult_kind=architecture. Source artifact C1.",
                     "attributes": {},
                 }
+            if self._attrs.get("desc_shaped"):
+                return {
+                    "id": entity_id,
+                    "description": "consult_kind=architecture",
+                    "attributes": {},
+                }
             return {"id": entity_id, "attributes": {"consult_kind": "architecture"}}
         return {"id": entity_id, "attributes": dict(self._attrs)}
 
@@ -220,6 +226,110 @@ def test_derived_from_edge_renders_g1_done(live_fixture: tuple[Path, Path]) -> N
     fold = fold_scoreboard(_SLUG, deps=deps, files_root=files_root)
     assert fold is not None
     assert fold.row_status["G1"] == "DONE"
+
+
+def test_derived_from_edge_reads_consult_kind_from_description() -> None:
+    rel = {
+        "id": 8442,
+        "source_id": _SOURCE_REF,
+        "target_id": "document:desc-shaped-architecture",
+        "type_id": "derived_from",
+    }
+    cortex = _StubCortex(attrs={"desc_shaped": True}, relationships=[rel])
+    deps = FoldDeps(
+        cortex=cortex,
+        bus=_StubBus(),
+        git=_StubGit(),
+        source_ref=_SOURCE_REF,
+        repo=Path("/tmp"),
+    )
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body="| G1 | Architecture | CLAIMED |\n",
+        deps=deps,
+        files_root=Path("/tmp"),
+    )
+    assert witnesses["G1"] is not None
+    assert witnesses["G1"].source == "derived_from:8442"
+
+
+def test_s7_frame_witnesses_g2(tmp_path: Path) -> None:
+    files_root = tmp_path / "cortex"
+    frames = files_root / "notes/system/frames"
+    frames.mkdir(parents=True)
+    (frames / "slug-g2-frame.md").write_text("frame", encoding="utf-8")
+    tip_body = (
+        "| ID | Artifact |\n"
+        "|---|---|\n"
+        "| S7 | `cortex://notes/system/frames/slug-g2-frame.md` |\n"
+    )
+    deps = FoldDeps(
+        cortex=_StubCortex(),
+        bus=_StubBus(),
+        git=_StubGit(),
+        source_ref=_SOURCE_REF,
+        repo=tmp_path / "repo",
+    )
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=deps,
+        files_root=files_root,
+    )
+    assert witnesses["G2"] is not None
+    assert witnesses["G2"].source == "artifact:S7"
+
+
+def test_s9_spec_witnesses_g3(tmp_path: Path) -> None:
+    files_root = tmp_path / "cortex"
+    specs = files_root / "notes/system/specs"
+    specs.mkdir(parents=True)
+    (specs / "slug.md").write_text("spec", encoding="utf-8")
+    tip_body = (
+        "| ID | Artifact |\n"
+        "|---|---|\n"
+        "| S9 | `cortex://notes/system/specs/slug.md` |\n"
+    )
+    deps = FoldDeps(
+        cortex=_StubCortex(),
+        bus=_StubBus(),
+        git=_StubGit(),
+        source_ref=_SOURCE_REF,
+        repo=tmp_path / "repo",
+    )
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=deps,
+        files_root=files_root,
+    )
+    assert witnesses["G3"] is not None
+    assert witnesses["G3"].source == "artifact:S9"
+
+
+def test_tip_g2_cell_uri_is_witness(tmp_path: Path) -> None:
+    files_root = tmp_path / "cortex"
+    frames = files_root / "notes/system/frames"
+    frames.mkdir(parents=True)
+    (frames / "hung.md").write_text("frame", encoding="utf-8")
+    tip_body = (
+        "| G2 | Frame | hung | `cortex://notes/system/frames/hung.md` |\n"
+    )
+    deps = FoldDeps(
+        cortex=_StubCortex(),
+        bus=_StubBus(),
+        git=_StubGit(),
+        source_ref=_SOURCE_REF,
+        repo=tmp_path / "repo",
+    )
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=deps,
+        files_root=files_root,
+    )
+    assert witnesses["G2"] is not None
+    assert witnesses["G2"].source == "artifact:tip"
 
 
 def test_derived_from_edge_reads_consult_kind_from_card_summary() -> None:

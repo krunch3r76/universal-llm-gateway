@@ -51,7 +51,6 @@ _LIVE_STATUSES = frozenset({"queued", "admitted", "running", "parked_waiting"})
 _DESIGNED_STOP_RETAIN_TOKENS = frozenset(
     {
         "ROW_PINNED",
-        "CONSULT_PENDING",
         "HOLD_MERGE",
         "OPERATOR_GATE",
         "PARKED_TRANSPORT",

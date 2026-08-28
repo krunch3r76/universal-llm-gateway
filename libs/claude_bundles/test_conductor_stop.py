@@ -8,12 +8,14 @@ from claude_bundles.conductor_score_ratify import (
     validate_q2_away_score_ratify,
 )
 from claude_bundles.conductor_stop import (
+    EXIT_PERSIST_STOPS,
     S4B_G1_PIN_MISSING,
     STOP_TOKENS,
     WAIT_STOPS,
     has_consult_handoff,
     has_s4b_evidence,
     is_consult_pending_wait,
+    is_exit_persist_stop,
     is_g1_pin,
     parse_stop_tokens,
     pings_for_stops,
@@ -245,7 +247,15 @@ def test_q2_g1_pin_body_not_tripped() -> None:
 def test_consult_pending_is_wait_stop_not_session_end() -> None:
     assert "CONSULT_PENDING" in WAIT_STOPS
     assert "CONSULT_PENDING" in STOP_TOKENS
+    assert "CONSULT_PENDING" not in EXIT_PERSIST_STOPS
     assert "DONE" not in WAIT_STOPS
+
+
+def test_row_pinned_is_exit_persist_not_wait() -> None:
+    assert "ROW_PINNED" in EXIT_PERSIST_STOPS
+    assert "ROW_PINNED" not in WAIT_STOPS
+    assert is_exit_persist_stop("| G3 | x | OPEN | ROW_PINNED |")
+    assert not is_exit_persist_stop("CONSULT_PENDING\nexecution_id: x")
 
 
 def test_consult_pending_wait_needs_admit_and_no_archive() -> None:

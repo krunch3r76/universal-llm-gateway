@@ -26,6 +26,7 @@ from .cursor_sdk_prepared_handle import (
 )
 from .cursor_sdk_reasoning_effort_reject import reject_nonempty_reasoning_effort
 from .cursor_sdk_worker_dispatch import derive_cursor_sdk_prompt_preamble
+from .cursor_sdk_thread_reuse import probe_thread, refuse_occupied_worker_thread
 from .handoff import (
     PendingShellContention,
     admit_handoff_dispatch,
@@ -241,12 +242,19 @@ async def prepare_cursor_sdk_generate(
 
     claimed_via_atomic = False
     thread_id: str
+    pointer_turn = 0
 
     if reuse_thread is not None:
+        await refuse_occupied_worker_thread(
+            request_id=request_id,
+            reuse_thread=reuse_thread,
+            nest_under=nest_under,
+            read_only=read_only,
+        )
         thread_id = reuse_thread
         if is_auto_consolidation:
             try:
-                await claim_and_post_pointer_turn(
+                pointer_turn = await claim_and_post_pointer_turn(
                     request_id=request_id,
                     thread_id=thread_id,
                     to_agent=to_agent,
@@ -288,7 +296,7 @@ async def prepare_cursor_sdk_generate(
                     reused=False,
                 )
         else:
-            await post_pointer_turn(
+            pointer_turn = await post_pointer_turn(
                 request_id=request_id,
                 thread_id=thread_id,
                 to_agent=to_agent,
@@ -417,6 +425,15 @@ async def prepare_cursor_sdk_generate(
             packet_text=packet_text,
         )
 
+    poll_after_turn = 1
+    if reuse_thread is not None:
+        if pointer_turn > 0:
+            poll_after_turn = pointer_turn
+        else:
+            probed = await probe_thread(thread_id)
+            count = int(probed.get("turn_count") or 0) if probed else 0
+            poll_after_turn = count if count > 0 else 1
+
     return PreparedCursorSdkHandle(
         request_id=request_id,
         execution_id=execution_id,
@@ -453,4 +470,5 @@ async def prepare_cursor_sdk_generate(
         refuse_if_lease_held=refuse_if_lease_held,
         prompt_turn_number=prompt_turn_number,
         prompt_bind_mode=prompt_bind_mode,
+        poll_after_turn=poll_after_turn,
     )

@@ -52,6 +52,10 @@ __all__ = [
 def _missing_witness_message(gid: str) -> str:
     if gid == "G1":
         return "hang active derived_from todo→document:* (consult_kind=architecture)"
+    if gid == "G2":
+        return "hang F1 or S7 frame URI on the tip"
+    if gid == "G3":
+        return "hang S4b or S9 spec URI on the tip"
     if gid == "G4":
         return "hang a G4 verdict that clears G5 (URI whose body does not withhold/FAIL)"
     if gid == "G5":

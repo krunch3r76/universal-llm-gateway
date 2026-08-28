@@ -56,6 +56,7 @@ Not a model name. Not `mission-operator` (that skill is the formal
 | Seat | Duty |
 |---|---|
 | **Continuity lead** (IDE / `/conductor`) | Read this skill to author/admit; **require** it on the conductor dispatch (below). **Harvest reader** of any after-ship overlay the conductor fires — quote the sidecar or name why unread |
+| **Liaison** (IDE continuity lead when not the conductor) | **Default register** = liaison register (BINDING — operator 2026-08-27). Speak so the human does not need the bus, scoreboard, `SCORE_RESURFACE`, or closeout open. Gloss IDs only when they change what he does next. Skill `audience-register` plain half is the closest written match; the duty name is **liaison register**, not that skill. Off when this seat *is* the conductor |
 | **Conductor** (cursor-sdk) | Load this skill on pickup — nest, tier, scoreboard, ¬ hand-code any G-row whose remainder is files+tests after a pick |
 
 **Continuity-lead required-skill gate (BINDING):** before
@@ -274,13 +275,21 @@ is open → 409.
   independent check (overlay quoted at harvest) ∨ a seeded-ladder fixture witnesses
   the named remainder. Fold: a G4 URI whose body withholds/FAIL G5 is **not** a
   G4 witness (v1 URI-resolve alone was the 9655 collapse).
-- Stops: `CONSULT_PENDING` (wait token — not a session-ending stop) ·
-  `CONFIRM_PENDING` · `ROW_PINNED` · `HOLD_MERGE` ·
-  `OPERATOR_GATE` · `PARKED_TRANSPORT` · `DONE` (stop token only — not row Status)
+- **`SCORE_RESURFACE` thread:** post on `summoning_thread_id` (parent/root —
+  9582/9638-class), **never** the leftover worker thread. Packet scope names
+  `summoning_thread_id:`; GIW attended preamble repeats it.
+- Stops:
+  - **Wait (do not terminate):** `CONSULT_PENDING` — harvest → document →
+    `derived_from` → next row. Honest wrapper is `partial:consult` +
+    `NEXT_ADMIT`, never `gate_d` / `work`.
+  - **Exit-and-persist:** `ROW_PINNED` · `HOLD_MERGE` · `OPERATOR_GATE` ·
+    `PARKED_TRANSPORT` — persist, then exit. `ROW_PINNED` after honest
+    `SCORE_RESURFACE` on the summoning thread is `partial:consult`, not work
+    failure.
+  - Also: `CONFIRM_PENDING` · `DONE` (stop token only — not row Status)
 - **`CONSULT_PENDING` wait:** the generate session waits or hands off — it does
   not end. `agent_bus.wait` until `archive_uri` or `from=web-anthropic` harvest
-  turn; chrome-only continues wait (bounded under remaining wall). Honest
-  closeout is `partial:consult` + `NEXT_ADMIT`, never `gate_d` / `work`.
+  turn; chrome-only continues wait (bounded under remaining wall).
 - G3→G5 default: in-process CDP score-ratify (do-not-fight / likely-optimal).
   Explicit see-score → `ROW_PINNED` + ping.
 - Attended IDE spawn: resurface the score in the summoning chat at G3→G5 unless
@@ -291,39 +300,65 @@ is open → 409.
 - Mode B admit-proof on CHECKPOINT when `CONSULT_PENDING`: `execution_id`+
   `poll_hint` or honest halt.
 
-### Designed-stop resume (binding)
+### Resume-if-dead (binding)
 
-When a conductor terminates on a designed stop (`ROW_PINNED`, `CONSULT_PENDING`,
-`HOLD_MERGE`, `OPERATOR_GATE`, `PARKED_TRANSPORT`, or `packet_kind=conductor`),
-the parent row retains store + worktree (`resume_retain`). The **live id after
-resume is the child** — not the parent.
+`CONSULT_PENDING` is **not** a designed-stop terminate. Exit-and-persist stops
+(`ROW_PINNED`, `HOLD_MERGE`, `OPERATOR_GATE`, `PARKED_TRANSPORT`) retain store +
+worktree (`resume_retain`).
 
-**Resume recipe (continuity lead or conductor after CLOSEOUT):**
+**Never** `team_dispatch(..., resume_of=...)`. `resume_of` is a GIW worker-POST
+field only (a:30793) — team_dispatch 422s it.
+
+If the worker thread is **still live**: do not second-generate on it —
+`422 CURSOR_WORKER_THREAD_OCCUPIED`. Poll or `nest_under` the live holder.
+
+If the worker is **terminal**, mint a **new** top-level conductor (new
+`dispatch_id`). Nest Composer under **that** id, not a ghost parent.
+
+**Unused legal resume is a feature gap (BINDING — operator 2026-08-27):**
+`ROW_PINNED` ∧ worker terminal ∧ `reuse_thread=<that worker>` is legal ∧
+summoning chat still live ⇒ the conjurer **fires that reuse this session**.
+Park-for-later sibling, “CI first then maybe resume”, or minting a new work
+thread while the pinned worker is reusable = the defect, not patience.
+New `dispatch_id` is required (dead execution ≠ dead thread). `resume_of=`
+stays illegal. House folds (pager, nest-orphan, scoreboard) ride **on** that
+resume — they do not postpone it.
+
+**Resume incompleteness (named gap — operator 2026-08-27):** `reuse_thread`
+is **not** SDK resume. It admits a **new** generate on the same bus thread.
+GIW `resume_of` continues the **same** Cursor agent (`resume_agent` + retained
+store/worktree). That field is worker-POST only; `team_dispatch` has no
+`resume_of` (schema `additionalProperties: false`; a:30793 422). `/conductor`
+has no resume step. Attended `ROW_PINNED` **exits** the generate (W3), so
+pin-then-continue is never the same stream. Do not flatten: unused legal
+`reuse_thread` (practice) ≠ missing conjurer `resume_of` (product).
 
 ```text
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
   contract=light-bounded,
-  resume_of=<parent dispatch_id>,
-  packet_path=<same conductor packet>,   # or message carries Use-line + summon_mode
-  dispatch_thread_id={root},
-  # lane= omitted — inherit parent isolation (consult-routing § cursor-sdk lane)
+  packet_kind=conductor,
+  source_ref=todo:{slug},
+  reuse_thread=<terminal work thread>,   # omit to mint a sibling worker
+  dispatch_thread_id=<parent root>,      # SCORE_RESURFACE + coord target
+  lane="B",
+  # confer-and-finish without prompt+source_ref 422:
+  #   generation_options={summon_mode: confer_and_finish}
+  #   or todo attr summon_mode=confer_and_finish
 )
 ```
 
-**Packet carry is mandatory.** GIW preambles (`Use the conductor skill`, attended
-`SCORE_RESURFACE`, seat-identity) extract from **packet text only** — a bare
-continuation prompt on resume gets no conductor/attended preambles. Re-admit with
-the same packet (or at minimum the Use-line + `summon_mode`).
+**Packet carry is mandatory.** GIW preambles extract from **packet text only**.
+Re-admit with `source_ref` materialize (or the same packet + Use-line).
 
-**Identity rewrite (binding on the resumed seat):**
+**Identity rewrite (binding on the new seat):**
 
-| Artifact | After resume, name the **child** |
+| Artifact | After re-admit, name the **new** `dispatch_id` |
 |---|---|
-| Sidecar `NEXT_ADMIT` / nested Composer | `nest_under=<child dispatch_id>` |
-| Seat-identity preamble | child `dispatch_id` supersedes parent |
-| Scoreboard tip (when present) | rewrite `NEXT_ADMIT` nest target to child |
+| Sidecar `NEXT_ADMIT` / nested Composer | `nest_under=<new dispatch_id>` |
+| Seat-identity preamble | new `dispatch_id` supersedes the dead parent |
+| Scoreboard tip (when present) | rewrite `NEXT_ADMIT` nest target to the new id |
 
 Pager only when `summon_mode` is absent/away or the packet names see-score-page —
 not on every attended `ROW_PINNED` (attended floor = bus `SCORE_RESURFACE` on the
@@ -341,6 +376,7 @@ team_dispatch(
   contract=light-bounded,
   packet_path=tmp/reviews/{slug}-conductor-packet.md,
   dispatch_thread_id={root},      # continuity root with turns, or pending-empty child of root
+  # generation_options={summon_mode: confer_and_finish},  # optional; or todo attr
   model_knobs={effort: max, thinking: "true", context: "1m"},
   lane="B",                       # DEFAULT — always pass explicitly. SOT:
                                    # consult-routing § cursor-sdk checkout lane.

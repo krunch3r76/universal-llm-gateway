@@ -17,6 +17,12 @@ from services.git_integration_worker.cursor_sdk_manifest import (
 )
 
 from .closeout_records import SdkRunOutcome
+from .conductor_exit_reasons import (
+    CONDUCTOR_EXIT_PERSIST,
+    CONDUCTOR_NEST_IN_FLIGHT,
+    CONDUCTOR_ROW_PINNED,
+    conductor_row_pinned_degraded_reason,
+)
 
 
 def merge_degraded_reasons(
@@ -172,7 +178,13 @@ def conductor_q2_score_ratify_degraded_reason(
 CONDUCTOR_CONSULT_PENDING = "conductor_consult_pending"
 CONDUCTOR_CONSULT_HANDOFF_MISSING = "conductor_consult_handoff_missing"
 CONDUCTOR_CONSULT_REASONS = frozenset(
-    {CONDUCTOR_CONSULT_PENDING, CONDUCTOR_CONSULT_HANDOFF_MISSING}
+    {
+        CONDUCTOR_CONSULT_PENDING,
+        CONDUCTOR_CONSULT_HANDOFF_MISSING,
+        CONDUCTOR_ROW_PINNED,
+        CONDUCTOR_EXIT_PERSIST,
+        CONDUCTOR_NEST_IN_FLIGHT,
+    }
 )
 
 
@@ -218,7 +230,7 @@ def conductor_consult_pending_degraded_reason(
         return CONDUCTOR_CONSULT_HANDOFF_MISSING
     if is_consult_pending_wait(body):
         return CONDUCTOR_CONSULT_PENDING
-    return None
+    return CONDUCTOR_CONSULT_PENDING
 
 
 def conductor_closeout_degraded_reason(
@@ -226,10 +238,16 @@ def conductor_closeout_degraded_reason(
     body: str,
     packet_text: str | None = None,
     packet_kind: str | None = None,
+    nested_live: bool = False,
 ) -> str | None:
     """Aggregator so ``routes/cursor_sdk.py`` does not grow a fourth caller."""
+    if nested_live:
+        return CONDUCTOR_NEST_IN_FLIGHT
     return (
         conductor_consult_pending_degraded_reason(
+            body=body, packet_text=packet_text, packet_kind=packet_kind
+        )
+        or conductor_row_pinned_degraded_reason(
             body=body, packet_text=packet_text, packet_kind=packet_kind
         )
         or conductor_g1_pin_s4b_degraded_reason(

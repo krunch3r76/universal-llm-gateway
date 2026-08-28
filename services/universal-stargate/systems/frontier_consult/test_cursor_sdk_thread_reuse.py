@@ -8,8 +8,10 @@ from .admission import FrontierEndpointError
 from .cursor_sdk_thread_reuse import (
     CONDUCTOR_COORD_SPLIT_CODE,
     CONDUCTOR_COORD_SPLIT_HINT,
+    CURSOR_WORKER_THREAD_OCCUPIED,
     api_split_warning,
     consolidation_split_warning,
+    refuse_occupied_worker_thread,
     resolve_cursor_sdk_thread_targets,
     resolve_generate_thread_targets,
 )
@@ -402,3 +404,82 @@ def test_api_split_warning_on_non_reusable_active_arc() -> None:
     assert msg is not None
     assert "6001" in msg
     assert "split_thread=true" in msg
+
+
+@pytest.mark.asyncio
+async def test_refuse_occupied_skips_nest_under() -> None:
+    await refuse_occupied_worker_thread(
+        request_id="req-nest",
+        reuse_thread="9675",
+        nest_under="parent-disp",
+    )
+
+
+@pytest.mark.asyncio
+async def test_refuse_occupied_skips_read_only() -> None:
+    await refuse_occupied_worker_thread(
+        request_id="req-ro",
+        reuse_thread="9675",
+        nest_under=None,
+        read_only=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_refuse_occupied_skips_pending_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _probe(thread_id: str) -> dict | None:
+        return {"bus_lifecycle_state": "pending", "turn_count": 0}
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.probe_thread",
+        _probe,
+    )
+    await refuse_occupied_worker_thread(
+        request_id="req-empty",
+        reuse_thread="9100",
+        nest_under=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_refuse_occupied_live_status_422(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _probe(thread_id: str) -> dict | None:
+        return {"bus_lifecycle_state": "admitted", "turn_count": 6}
+
+    class _Resp:
+        status_code = 200
+
+        def json(self) -> dict:
+            return {"status": "running", "dispatch_id": "85e312e900aa-26c192cf"}
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url, params=None):
+            _ = url, params
+            return _Resp()
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.probe_thread",
+        _probe,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.make_async_client",
+        lambda *a, **k: _Client(),
+    )
+    with pytest.raises(FrontierEndpointError) as excinfo:
+        await refuse_occupied_worker_thread(
+            request_id="req-occ",
+            reuse_thread="9675",
+            nest_under=None,
+        )
+    assert excinfo.value.code == CURSOR_WORKER_THREAD_OCCUPIED
+    assert excinfo.value.details["holder_dispatch_id"] == "85e312e900aa-26c192cf"

@@ -108,6 +108,26 @@ class WriteLeaseHeld(Exception):  # noqa: N818 — release-before-admit fence (2
         )
 
 
+class WorkerThreadOccupied(Exception):  # noqa: N818 — second live admit on thread
+    """Raised when a top-level admit would occupy a thread that already has a live runner."""
+
+    def __init__(
+        self,
+        *,
+        holder_dispatch_id: str,
+        holder_thread_id: str,
+        incoming_dispatch_id: str,
+    ) -> None:
+        self.holder_dispatch_id = holder_dispatch_id
+        self.holder_thread_id = holder_thread_id
+        self.incoming_dispatch_id = incoming_dispatch_id
+        super().__init__(
+            f"worker thread {holder_thread_id!r} already holds live dispatch "
+            f"{holder_dispatch_id!r}; refuse second top-level generate "
+            f"{incoming_dispatch_id!r}"
+        )
+
+
 class SourceRefConflict(Exception):  # noqa: N818 — peer implement gate
     """Raised when a non-terminal dispatch already holds the same work identity.
 
@@ -1148,6 +1168,26 @@ class CursorDispatchLedger:
                         )
                     insert_status = _STATUS_QUEUED
                     queued_at = _now()
+            if (
+                insert_status == _STATUS_ADMITTED
+                and not nest_under
+                and not req.resume_of
+                and not read_only
+                and req.thread_id
+            ):
+                occupant = conn.execute(
+                    "SELECT dispatch_id, thread_id FROM cursor_sdk_dispatches "
+                    "WHERE thread_id=? AND dispatch_id<>? "
+                    "AND status IN ('queued','admitted','running','parked_waiting') "
+                    "LIMIT 1",
+                    (req.thread_id, req.dispatch_id),
+                ).fetchone()
+                if occupant is not None:
+                    raise WorkerThreadOccupied(
+                        holder_dispatch_id=occupant["dispatch_id"],
+                        holder_thread_id=occupant["thread_id"] or req.thread_id,
+                        incoming_dispatch_id=req.dispatch_id,
+                    )
             conn.execute(
                 "INSERT INTO cursor_sdk_dispatches "
                 "(dispatch_id, fingerprint, thread_id, execution_id, caller_agent, "

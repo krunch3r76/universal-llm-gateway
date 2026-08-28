@@ -14,6 +14,7 @@ lane: B
 ---
 <scope>
 Conductor session. summon_mode: attended.
+summoning_thread_id: 9638.
 </scope>
 
 <invariants>
@@ -64,6 +65,8 @@ def test_attended_conductor_preamble_includes_resurface_block() -> None:
     )
     assert "CONDUCTOR ATTENDED RESURFACE" in preamble
     assert "SCORE_RESURFACE" in preamble
+    assert "summoning bus thread 9638" in preamble
+    assert "never this leftover worker thread" in preamble
     assert "summoning lead" in preamble
     assert "no pager" in preamble
     assert "CONDUCTOR AWAY SCORE-RATIFY" not in preamble

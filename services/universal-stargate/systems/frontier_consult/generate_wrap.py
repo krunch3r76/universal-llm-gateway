@@ -54,6 +54,7 @@ def prepare_conductor_packet(
     source_ref: str,
     caller_agent: str | None,
     summon_text: str | None = None,
+    summon_mode: str | None = None,
     cortex: StargateCortexReader,
     workspaces_root: Path,
     role: str = "cursor-sdk",
@@ -70,6 +71,7 @@ def prepare_conductor_packet(
         contract="light-bounded",
         caller_agent=caller_agent,
         summon_text=summon_text,
+        summon_mode=summon_mode,
         summoning_thread_id=summoning_thread_id,
     )
     if bridge.gated:
@@ -307,6 +309,8 @@ async def dispatch_cursor_sdk_generate_route(
             and not getattr(body, "packet_path", None)
         ):
             loop = asyncio.get_running_loop()
+            gen_opts = getattr(body, "generation_options", None) or {}
+            raw_summon = gen_opts.get("summon_mode")
             wrap = await loop.run_in_executor(
                 None,
                 partial(
@@ -315,6 +319,9 @@ async def dispatch_cursor_sdk_generate_route(
                     source_ref=source_ref,
                     caller_agent=body.caller_agent,
                     summon_text=getattr(body, "prompt", None),
+                    summon_mode=(
+                        str(raw_summon).strip() if raw_summon else None
+                    ),
                     cortex=StargateCortexReader(),
                     workspaces_root=_workspaces_root(),
                     summoning_thread_id=(

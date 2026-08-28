@@ -105,7 +105,7 @@ def test_s1a_ledger_distinct_lease_key_parallel_admit() -> None:
     assert (
         _admit(
             ledger,
-            _req(dispatch_id="iso-a"),
+            _req(dispatch_id="iso-a", thread_id="t-iso-a"),
             source_repo=shared_repo,
             lease_key=key_a,
         )
@@ -113,7 +113,7 @@ def test_s1a_ledger_distinct_lease_key_parallel_admit() -> None:
     )
     second = _admit(
         ledger,
-        _req(dispatch_id="iso-b"),
+        _req(dispatch_id="iso-b", thread_id="t-iso-b"),
         source_repo=shared_repo,
         lease_key=key_b,
     )
@@ -135,9 +135,17 @@ def test_s1a_lane_a_same_repo_queues() -> None:
     repo = "/mnt/torus/projects/universal-llm-gateway"
     key = lane_a_lease_key(Path(repo))
 
-    _admit(ledger, _req(dispatch_id="lane-a-1"), source_repo=repo, lease_key=key)
+    _admit(
+        ledger,
+        _req(dispatch_id="lane-a-1", thread_id="t-lane-a-1"),
+        source_repo=repo,
+        lease_key=key,
+    )
     queued = _admit(
-        ledger, _req(dispatch_id="lane-a-2"), source_repo=repo, lease_key=key
+        ledger,
+        _req(dispatch_id="lane-a-2", thread_id="t-lane-a-2"),
+        source_repo=repo,
+        lease_key=key,
     )
     assert queued is not None
     assert queued.status == "queued"
@@ -149,11 +157,16 @@ def test_s1a_nest_park_transfer_holder_on_shared_lease_key() -> None:
     repo = "/repo"
     key = "/repo"
 
-    _admit(ledger, _req(dispatch_id="parent"), source_repo=repo, lease_key=key)
+    _admit(
+        ledger,
+        _req(dispatch_id="parent", thread_id="t-parent"),
+        source_repo=repo,
+        lease_key=key,
+    )
     assert (
         _admit(
             ledger,
-            _req(dispatch_id="child"),
+            _req(dispatch_id="child", thread_id="t-child"),
             source_repo=repo,
             lease_key=key,
             nest_under="parent",
@@ -174,7 +187,10 @@ def test_s1a_nest_park_transfer_holder_on_shared_lease_key() -> None:
     assert child["status"] == "admitted"
 
     sibling = _admit(
-        ledger, _req(dispatch_id="sibling"), source_repo=repo, lease_key=key
+        ledger,
+        _req(dispatch_id="sibling", thread_id="t-sibling"),
+        source_repo=repo,
+        lease_key=key,
     )
     assert sibling is not None
     assert sibling.status == "queued"
@@ -198,13 +214,13 @@ def test_s1a_lane_a_zero_runtime_delta() -> None:
     ledger = CursorDispatchLedger.instance()
     _admit(
         ledger,
-        _req(dispatch_id="delta-1"),
+        _req(dispatch_id="delta-1", thread_id="t-delta-1"),
         source_repo=key,
         lease_key=key,
     )
     queued = _admit(
         ledger,
-        _req(dispatch_id="delta-2"),
+        _req(dispatch_id="delta-2", thread_id="t-delta-2"),
         source_repo=key,
         lease_key=key,
     )

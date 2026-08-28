@@ -20,6 +20,7 @@ grant the default.
 |---|---|
 | Operator `/conductor` (optional ring / objective) | This command |
 | Continuity root already live; just admit | Skip Qs already bound; author/admit packet |
+| Pinned worker terminal; `reuse_thread` legal | Skill § Resume-if-dead — fire reuse this session. Not GIW `resume_of` (illegal on `team_dispatch`). Named gap: conjurer cannot call `resume_agent` |
 | Formal CDP `operator_proxy` mission | `mission-operator` + `cdp-operator-proxy` — not this |
 | Single dense implement | `/todo` / wrap — not conductor |
 

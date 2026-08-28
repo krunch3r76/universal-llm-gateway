@@ -98,16 +98,17 @@ _CONDUCTOR_RUN_TO_COMPLETION_TEMPLATE = (
     "land on green."
 )
 
-_CONDUCTOR_ATTENDED_RESURFACE_PREAMBLE = (
+_CONDUCTOR_ATTENDED_RESURFACE_TEMPLATE = (
     "CONDUCTOR ATTENDED RESURFACE (mandatory): summon_mode is attended — the "
     "summoning IDE chat is live. At G3→G5: post SCORE_RESURFACE to "
-    "{caller_agent} on the summoning bus thread and close out with the stop "
-    "token so the summoning lead's agent_bus wait returns; the summoning lead "
-    "relays the score into the IDE chat for discussion (not implement, not "
-    "CONFIRM_PENDING). Explicit see-score while attended: ROW_PINNED at G3, "
-    "no pager — the relay is the summoning lead's duty, not this SDK seat. "
-    "Do not fire in-process CDP score-ratify unless operator redirects to "
-    "confer-and-finish."
+    "{caller_agent} on summoning bus thread {summoning_thread_id} "
+    "(the parent/root — never this leftover worker thread) and close out "
+    "with the stop token so the summoning lead's agent_bus wait returns; "
+    "the summoning lead relays the score into the IDE chat for discussion "
+    "(not implement, not CONFIRM_PENDING). Explicit see-score while attended: "
+    "ROW_PINNED at G3, no pager — the relay is the summoning lead's duty, "
+    "not this SDK seat. Do not fire in-process CDP score-ratify unless "
+    "operator redirects to confer-and-finish."
 )
 
 _CONDUCTOR_AWAY_SCORE_RATIFY_PREAMBLE = (
@@ -176,6 +177,7 @@ _CONDUCTOR_PACKET_MARKER_RE = re.compile(
 _SUMMON_MODE_RE = re.compile(
     r"(?i)summon_mode:\s*(attended|confer[_-]and[_-]finish)\b"
 )
+_SUMMONING_THREAD_RE = re.compile(r"(?i)summoning_thread_id:\s*(\d+)\b")
 
 _CONTRACT_FRONTMATTER_RE = re.compile(
     r"^contract:\s*(\S+)\s*$",
@@ -232,6 +234,14 @@ def extract_summon_mode_from_packet(text: str) -> str | None:
     return match.group(1).lower().replace("-", "_")
 
 
+def extract_summoning_thread_id_from_packet(text: str) -> str | None:
+    """Return summoning/parent-root thread id from packet text, if named."""
+    match = _SUMMONING_THREAD_RE.search(text or "")
+    if not match:
+        return None
+    return match.group(1)
+
+
 def extract_source_ref_from_packet(text: str) -> str | None:
     """Canonical work-item source_ref from packet frontmatter, or None.
 
@@ -269,6 +279,7 @@ def resolve_prompt_preamble(
     lane_branch: str | None = None,
     dispatch_id: str | None = None,
     has_packet_path: bool = False,
+    caller_agent: str | None = None,
 ) -> str:
     """Assemble the worker prompt prefix for one cursor-sdk dispatch.
 
@@ -321,7 +332,18 @@ def resolve_prompt_preamble(
             _CONDUCTOR_RUN_TO_COMPLETION_TEMPLATE.format(dispatch_id=dispatch_id)
         )
         if extract_summon_mode_from_packet(existing_text or "") == "attended":
-            parts.append(_CONDUCTOR_ATTENDED_RESURFACE_PREAMBLE)
+            summoning = extract_summoning_thread_id_from_packet(
+                existing_text or ""
+            ) or (
+                "the parent/root named as summoning_thread_id in this packet "
+                "(not this worker thread)"
+            )
+            parts.append(
+                _CONDUCTOR_ATTENDED_RESURFACE_TEMPLATE.format(
+                    caller_agent=caller_agent or "cursor",
+                    summoning_thread_id=summoning,
+                )
+            )
         else:
             parts.append(_CONDUCTOR_AWAY_SCORE_RATIFY_PREAMBLE)
     if (

@@ -19,6 +19,14 @@ STOP_TOKENS: frozenset[str] = frozenset(
 
 WAIT_STOPS: frozenset[str] = frozenset({"CONSULT_PENDING"})
 SESSION_STOPS: frozenset[str] = STOP_TOKENS - WAIT_STOPS
+EXIT_PERSIST_STOPS: frozenset[str] = frozenset(
+    {
+        "ROW_PINNED",
+        "HOLD_MERGE",
+        "OPERATOR_GATE",
+        "PARKED_TRANSPORT",
+    }
+)
 
 _PING_STOPS: frozenset[str] = frozenset(
     {
@@ -119,6 +127,12 @@ def parse_stop_tokens(text: str) -> StopParseResult:
 def validate_stop_token(token: str) -> bool:
     """True when token is in the sealed stop catalog."""
     return token.strip().upper() in STOP_TOKENS
+
+
+def is_exit_persist_stop(body: str) -> bool:
+    """True when closeout carries an exit-and-persist token (Mission E §5)."""
+    parsed = parse_stop_tokens(body)
+    return bool(parsed.tokens & EXIT_PERSIST_STOPS)
 
 
 def is_consult_pending_wait(body: str) -> bool:

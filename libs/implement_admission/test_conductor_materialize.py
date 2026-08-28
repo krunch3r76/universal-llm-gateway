@@ -151,6 +151,15 @@ def test_resolve_summon_mode_invalid_explicit_raises() -> None:
         resolve_summon_mode(explicit="solo")
 
 
+def test_todo_attr_summon_mode_overrides_attended_caller() -> None:
+    ctx = load_conductor_context(
+        "todo:layer-conductor-unify",
+        cortex=_StubCortex(attrs={"summon_mode": "confer_and_finish"}),
+        caller_agent="cursor",
+    )
+    assert ctx.summon_mode == "confer_and_finish"
+
+
 def test_materialize_conductor_attended_packet_strings(tmp_path: Path) -> None:
     out_dir = tmp_path / "packets"
     mp = materialize_conductor(
@@ -158,12 +167,12 @@ def test_materialize_conductor_attended_packet_strings(tmp_path: Path) -> None:
         cortex=_StubCortex(),
         out_dir=out_dir,
         caller_agent="cursor",
+        summoning_thread_id="9638",
     )
+    assert "summoning_thread_id: 9638" in mp.text
     assert "summon_mode: attended" in mp.text
-    assert (
-        "G3→G5 attended: resurface score in the summoning IDE chat"
-        in mp.text
-    )
+    assert "SCORE_RESURFACE on summoning_thread_id=" in mp.text
+    assert "never this worker thread" in mp.text
     assert (
         "Explicit see-score while attended: ROW_PINNED at G3, no pager"
         in mp.text
