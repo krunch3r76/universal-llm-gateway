@@ -1,6 +1,6 @@
 ---
 related_skills: ["subgraph-render", "cortex-provenance-discipline"]
-trigger_match_terms: ["cortex-orientation", "cortex_orientation", "cortex", "call", "boot", "close", "cortex-planning", "calling", "convention", "four"]
+trigger_match_terms: ["cortex-orientation", "cortex_orientation", "cortex", "call", "boot", "close", "cortex-planning", "calling", "convention", "four", "myelinate", "myelination"]
 description: "Before any cortex(...) call, on session boot, or before session close — calling convention, four canonical ops, confidence ladder, three-gate channel-routing test, retract-don't-supersede discipline."
 ---
 
@@ -159,14 +159,22 @@ complexity ⇏ professional_referral
 
 Cursor repairs in-seat when both endpoints are known. Life that will not write edges may hire cursor **to repair**. Hiring cursor **only to recon** when the missing edges are already visible is the defect.
 
+### Myelinate
+
+`both_ends_known ∧ missing(link) ⇒ write(relationship ∨ edge) now`. That is the live duty — new associations so the next `recall` / `activate` / ingest walk can find the intersecting matter (PG&E bill ↔ back-billing case; WCI invoice ↔ October deadline).
+
+Strength on *existing* edges is **retrospective**, not live auto-count (`decision:cortex-edge-myelination-model`): hippocampal consolidation, not myelination during the act. The frequent retrospective surface is **CHECKPOINT** (we checkpoint often; session-close is not automatic). At each CP: write still-missing associations; `edge_update` load-bearing edges you just used. Session-close may do the same when it happens — it is not the wait. A later dream / power-nap pipeline may outsource strength-delta — **not shipped**. `¬` wait for automatic thickening or lid-close to create a missing link.
+
 ## Related / depth
 
 - `cortex` — op catalog, taxonomies, workflow chains.
 - `cortex-provenance-discipline` — citing Cortex substrate.
 - `cortex-entity-restructure` — splits/migrations.
 - `subgraph-render` — before `render_subgraph`.
-- `session-close` / `session-close-audit` — close protocol and gate.
+- `checkpoint-discipline` — frequent myelinate surface (writer convention).
+- `session-close` / `session-close-audit` — close protocol and gate (optional extra myelinate when lid closes).
 - `entity-creation-discipline` — entity birth verification.
 - `boot-execution-discipline` — boot write/verify/report mechanics.
+- `decision:cortex-edge-myelination-model` — retrospective strength; CHECKPOINT is the frequent surface.
 
 Load `agent_skill:cortex` by entity name when you need depth; do not hardcode paths or reintroduce parallel deep copies.

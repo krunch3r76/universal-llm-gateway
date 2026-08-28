@@ -2,7 +2,7 @@
 name: checkpoint-discipline
 description: "Author/resume CHECKPOINTs on standing roots (spine=root): profile pick tick_charter vs orchestrator_continuity, tip supersede + lean resume, role:root stamp, RESUME footer, scoreboard birth."
 skill_category: orchestration
-trigger_match_terms: ["checkpoint-discipline", "CHECKPOINT", "tick_charter", "orchestrator_continuity", "tip supersede", "lean resume", "role:root", "RESUME footer", "scoreboard birth", "standing root", "Windows log"]
+trigger_match_terms: ["checkpoint-discipline", "CHECKPOINT", "tick_charter", "orchestrator_continuity", "tip supersede", "lean resume", "role:root", "RESUME footer", "scoreboard birth", "standing root", "Windows log", "myelinate"]
 ---
 
 # Checkpoint Discipline
@@ -54,6 +54,7 @@ Enrollment tag is SOT. `tick_charter` = machine consumer (base + T extras; malfo
 | Terminal-block coherence | Appending a terminal verdict block (`ARC COMPLETE`, closure table) ⇒ refresh the file's `RESUME` / next-actor footer in the **same** write. A footer naming actors the block just closed makes the file contradict itself, and R12 computes against the **file**, not the newest block — either verdict is pickable (friction `27099`) |
 | Side-quest | Multi-step ∉ OPEN G-row ⇒ operator bind or child thread before act |
 | Residual sweep | Checkpoint-time: named residuals still in chat only? → Use the `residual-imprint` skill |
+| Myelinate | Checkpoint-time graph: both-ends-known missing links → `relationship_create` / `edge_create` now; load-bearing existing edges → `edge_update` if judgment changed. `¬` defer to session-close (close is not automatic). Detail: `cortex-orientation` § Myelinate |
 | Windows append | On each CHECKPOINT **post**, append one row to `## Windows` on the charter surface (scoreboard if chartered, continuity-doc if unchartered): `cp_ordinal`, turn, `session_id` if known, State one-liner if Arc empty. Tip **pointers** at that table — ¬ paste it. Schema §3.5. `/session-end` fills Arc later. |
 
 ## Tip hygiene (spine=root)
@@ -134,3 +135,4 @@ Prefix must stay `— RESUME (any seat, no command):` (parser T8).
 - `operator-posture` — Rule 3 resume ceremony
 - path-sim `tick-enrollment-annex` — enroll template
 - Schema URI above · §3.5 Windows log
+- `cortex-orientation` § Myelinate — checkpoint-time associations + strength rating

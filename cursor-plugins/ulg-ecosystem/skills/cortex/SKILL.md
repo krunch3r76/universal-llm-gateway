@@ -348,7 +348,7 @@ cortex(tool="friction_close", arguments='{"assertion_id": 1234, "resolution_kind
 
 | Skill | Load when |
 |---|---|
-| `agent_skill:cortex-orientation` | Every Cortex session — calling convention, boot, four canonical ops, channel routing, claim shape |
+| `agent_skill:cortex-orientation` | Every Cortex session — calling convention, boot, four ops, channel routing, claim shape, **myelinate** (write missing links now; rate strength at CHECKPOINT) |
 | `agent_skill:cortex-provenance-discipline` | Citing Cortex substrate in derived artifacts — `[assertion:NNNN]` grammar, reader-defense |
 | `agent_skill:cortex-entity-restructure` | Splitting overloaded entities, assertion migration, compaction pointers |
 | `agent_skill:cortex-v24-implementation-arc` | `intent=card`, predicate_form/summary, compaction pointer reads, tier ladder |
