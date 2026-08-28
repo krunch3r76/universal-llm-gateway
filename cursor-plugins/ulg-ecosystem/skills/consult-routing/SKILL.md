@@ -225,6 +225,29 @@ Stay on one designated tree per arc: reuse when `nest_under`, `resume_of`, or
 `lookup_lane_worktree(thread_id)` already holds a worktree — see `git-posture`
 § Stay on one designated tree. `conductor` defers this recipe here.
 
+## Scripts / satellites — composed client surface
+
+Scripts and satellite netns that need a **blocking reasoned hop** POST Stargate
+`:9999` `/api/v1/team/dispatch` (what charter-runner `dispatch_client` and
+`opus-summons-watchdog` already do). GIW `:8091` is **peer-only** (`nested_sdk`
+inside GIW). Never `POST` GIW from a script; never `import cursor_sdk` outside
+GIW. Netns: `GATEWAY_URL` as IP — refuse hostname `io`.
+
+Mechanical tools (ESS harvest, Graph, hydra observe) are **not** dispatch
+clients. Happy path stays SHA-gate / JSON. Failure reports a typed
+`{code,message,source,retryable,data}` artifact; an already-admitted fleet actor
+(cursor-auto / conductor) fires team-dispatch. That keep-and-add-kill is
+**advisory** until operator ratify
+(`document:satellite-script-dispatch-surface-architecture-consult`).
+
+Git identity is three distinct: hub (omit `workspace=`), satellite (`workspace=`
+from `SATELLITES.txt`, Lane B typical), `scripts.local` (never allowlisted;
+reasoned edits Lane A or artifact-mediated).
+
+Cite: `cortex://notes/system/threads/satellite-script-dispatch-surface-architecture-consult-answer.md`.
+O2 envelope draft (not convention):
+`cortex://notes/system/threads/satellite-script-dispatch-surface-o2-envelope-draft.md`.
+
 ## Abstraction layering (codework lane)
 
 SOT: `abstraction-layering` skill · `/layer`. Route by highest open layer; mechanical-only skips to
