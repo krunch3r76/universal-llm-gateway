@@ -6,11 +6,10 @@ first (fast path — not an availability gate); on miss it discovers radios
 (including under "More models") and matches the requested name/pattern.
 
 Effort High/Extra/Max may be first-class radios (click ``Opus 5 High``
-directly — a:30693 workaround) **or** live under ``effort-menu-trigger`` →
-``effort-option-*`` (friction 24592). Skip the submenu when the dropdown
-label already attests the requested effort. Sealed-ask default for
-Opus/Fable is Effort **High** (operator 2026-07-16); request
-``opus-5-extra`` when Extra is required.
+directly — a:30693) **or** ``effort-menu-trigger`` → ``effort-option-*`` (24592).
+Skip submenu when label attests effort; on trigger/option miss recover via
+effort-qualified radio (a:31011). Sealed-ask default for Opus/Fable is **High**;
+request ``opus-5-extra`` when Extra is required.
 
 Cowork Project nests some models under "More models" and mounts the picker
 only after chat composer chrome is live.
@@ -20,8 +19,10 @@ from __future__ import annotations
 
 import re
 
-from effort_vocabulary import to_testid as _effort_testid
-
+from claude_bundles.chat_model_effort import (
+    _effort_after_click,
+    set_effort,
+)
 from claude_bundles.chat_model_match import (
     PREDICTED_MODEL_LABELS,
     family_nested_in_more_models,
@@ -58,6 +59,7 @@ __all__ = [
 
 
 async def current_model_label(page) -> str:
+    """Read the live model-selector dropdown label (aria-label or inner text)."""
     btn = page.locator('[data-testid="model-selector-dropdown"]')
     if not await btn.count():
         return ""
@@ -111,44 +113,14 @@ async def list_picker_radios(page) -> list[str]:
     return [str(x) for x in (labels or []) if str(x).strip()]
 
 
-async def _find_radio(page, pattern: str):
-    item = page.locator("[role=menuitemradio]").filter(
-        has_text=re.compile(pattern, re.I)
-    )
-    if await item.count():
-        return item
-    return page.get_by_role("menuitemradio", name=re.compile(pattern, re.I))
-
-
-async def set_effort(page, level: str) -> dict:
-    """Set Thinking Effort via model-picker submenu (High / Extra / Max / …).
-
-    Requires the model picker menu to already be open. ``level`` is one of
-    low|medium|high|extra|xhigh|max.
-    """
-    key = (level or "").strip().lower()
-    testid = _effort_testid(key)
-    if not testid:
-        return {"ok": False, "step": "effort_unknown", "requested": level}
-
-    trigger = page.locator('[data-testid="effort-menu-trigger"]')
-    if not await trigger.count():
-        return {"ok": False, "step": "effort_trigger_missing"}
-    await trigger.first.click(force=True)
-    await page.wait_for_timeout(600)
-
-    opt = page.locator(f'[data-testid="{testid}"]')
-    if not await opt.count():
-        return {"ok": False, "step": "effort_option_missing", "testid": testid}
-    await opt.first.click(force=True)
-    await page.wait_for_timeout(800)
-    return {"ok": True, "step": "effort_set", "level": key, "testid": testid}
-
-
 async def _click_family_radio(page, family: str) -> str | None:
     """Click a family radio by pattern. Return matched label hint or None."""
     pat = family_pattern(family)
-    item = await _find_radio(page, pat.pattern)
+    item = page.locator("[role=menuitemradio]").filter(
+        has_text=re.compile(pat.pattern, re.I)
+    )
+    if not await item.count():
+        item = page.get_by_role("menuitemradio", name=re.compile(pat.pattern, re.I))
     if not await item.count():
         item = page.get_by_text(pat)
     if not await item.count():
@@ -169,67 +141,13 @@ async def _click_radio_named(page, label: str) -> str | None:
     if not text:
         return None
     item = page.locator("[role=menuitemradio]").filter(
-        has_text=re.compile(rf"^{re.escape(text)}$", re.I)
+        has_text=re.compile(re.escape(text), re.I)
     )
-    if not await item.count():
-        item = page.locator("[role=menuitemradio]").filter(
-            has_text=re.compile(re.escape(text), re.I)
-        )
     if not await item.count():
         return None
     await item.first.click(force=True)
     await page.wait_for_timeout(800)
     return text
-
-
-async def _effort_after_click(
-    page,
-    *,
-    requested: str,
-    effort: str | None,
-    matched: str | None,
-    before: str,
-) -> tuple[dict | None, dict | None]:
-    """Skip the effort submenu when the dropdown already attests it (a:30693)."""
-    if not effort:
-        return None, None
-    await page.keyboard.press("Escape")
-    await page.wait_for_timeout(300)
-    after_click = await current_model_label(page)
-    if label_satisfies_request(requested, after_click, effort=effort):
-        return (
-            {
-                "ok": True,
-                "step": "effort_already_on_label",
-                "level": effort,
-                "current_model": after_click,
-            },
-            None,
-        )
-    applied = await _apply_effort(page, effort, matched=matched)
-    if not applied.get("ok"):
-        applied["before"] = before
-        return None, applied
-    return applied.get("effort"), None
-
-
-async def _apply_effort(page, effort: str, *, matched: str | None) -> dict:
-    await page.keyboard.press("Escape")
-    await page.wait_for_timeout(300)
-    await _open_picker(page)
-    effort_result = await set_effort(page, effort)
-    if not effort_result.get("ok"):
-        after = await current_model_label(page)
-        return {
-            "ok": False,
-            "step": "effort_failed",
-            "after": after,
-            "effort": effort_result,
-            "matched": matched,
-        }
-    await page.keyboard.press("Escape")
-    await page.wait_for_timeout(400)
-    return {"ok": True, "effort": effort_result}
 
 
 async def _discover_and_click(
@@ -319,7 +237,9 @@ async def select_from_ui(
             path = "effort_qualified_radio"
             matched = qualified
 
-    if path == "discover" and predicted:
+    if path == "discover" and predicted and not (
+        effort and not label_satisfies_request(requested, before, effort=effort)
+    ):
         matched = await _click_family_radio(page, family)
         if matched is None:
             await _expand_more_models(page)
