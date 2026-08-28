@@ -3,7 +3,7 @@ name: path-sim
 description: "On dispatching or running a frontier consult that searches a solution or question space — L0/L1/L2 machinery, aperture detents, scope-lock handshake, conformance checklist."
 lifecycle: active
 trigger_match_terms: ["path-sim", "path_sim", "path simulation", "aperture", "detent", "L0", "L1", "L2", "question space", "solution space", "scope-lock", "frontier consult", "tree of thoughts", "cascade", "effort dialing", "charter-runner", "enroll_charter_runner", "tick enrollment", "hang on tick"]
-related_skills: ["reasoning-posture", "consult-routing", "dispatch-workflow", "handoff-packet-authoring", "frontier-model-instructions"]
+related_skills: ["hypothesize-simulate", "reasoning-posture", "consult-routing", "dispatch-workflow", "handoff-packet-authoring", "frontier-model-instructions"]
 ---
 
 # Path-Sim — frontier solution/question-space search
@@ -20,9 +20,9 @@ Composes with `notes/system/specs/consult-scope-lock-template.md` (scope-lock pi
 
 **Codework carve-out (`decision:abstraction-layering`, bound operator 2026-07-27).** A request to *change the codebase* does **not** run a path-sim ratification window — it runs the **abstraction layering** lane: `architecture → frame → densify → check → implement`, entered at the highest still-open layer, ratification **inherited** from the layer above. Use the `abstraction-layering` skill (command `/layer`). ¬ open R-admit / R-after path-sim windows on a codework arc. **Not superseded:** non-codework question/solution-space search, and the fat-packet deepen lane (`workflow:path-sim-fat-packet-lane`) — those stay here. Where both would apply to codework, layering wins. Charter-tick enrollment (annex B) still runs this skill's arc: the tick kernel rewrite **landed** (Phase 3 cutover, kernel is sole admitter) **without** adding a layer-specific materializer, so path-sim remains what an enrolled root materializes — a standing state, not an interim one (`cortex://notes/system/specs/charter-tick-kernel-rewrite.md`).
 
-Also: `consult_posture_fire ∧ ¬exempt ⇒ thin_L2_hypotheticals_fill` even when full path-sim tables are not required (operator bind 2026-07-19 — every consult fills reasoning space with **decorrelated** rival architectures/libraries/control flows). **The fill brakes only while rivals are decorrelated and the scaffold fits the task/model; a correlated set or a mismatched scaffold is flagged and down-weighted at bind time — not treated as a brake, not skipped.** **Optional thin dissent beat (one line, single-seat) may follow the fill before bind; keep it single-seat — N-way multi-agent debate is not the default (`consult-posture` demote guards).**
+Also: `consult_posture_fire ∧ ¬exempt ⇒ answering_seat.runs(hypothesize-simulate)` even when full path-sim tables are not required (operator bind 2026-07-19 — every consult fills reasoning space). Seat procedure lives in `hypothesize-simulate`. Lead still requires the fill; ¬ skip to a single bind with an empty rival space.
 
-Closed aperture: `|material_sub_parts| ≤ 2 ⇒ detent=closed` — wide L0 branching and deep tables are redundant; **thin L2 fill still runs** (few **decorrelated** rivals + research-anchor gloss **as lexical spark**), then Opus-shaped answer under the closed aperture. ¬ skip straight to a single bind with an empty hypotheticals space.
+Closed aperture: `|material_sub_parts| ≤ 2 ⇒ detent=closed` — wide L0 branching and deep tables are redundant; **hypothesize-simulate fill still required** (closed detent), then Opus-shaped answer under the closed aperture.
 
 ## Cascade principle (operator bind 2026-07-16)
 

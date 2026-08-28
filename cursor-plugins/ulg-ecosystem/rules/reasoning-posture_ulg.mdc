@@ -38,6 +38,7 @@ discipline). Full body — including the one-determinate-step doctrine — is th
 | Concern | Owner |
 |---|---|
 | Scope rails + epistemic quality + one determinate step | `reasoning-posture` (this) |
+| Rival fill / simulation | `hypothesize-simulate` |
 | Consult fire grammar | `consult-posture` (trigger-gated) |
 | Pause timing | `advisor-timing` |
 | L0/L1/L2 machinery | `path-sim` |

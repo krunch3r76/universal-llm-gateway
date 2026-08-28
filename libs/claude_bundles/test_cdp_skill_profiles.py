@@ -21,11 +21,13 @@ def test_ask_floor_prepends_arch_pair() -> None:
         "ulg-architecture",
         "ulg-for-llms",
         "reasoning-posture",
+        "hypothesize-simulate",
     ]
     assert ensure_cdp_judgment_skills(["reasoning-posture"], purpose="ask") == [
         "architecture-invariants",
         "ulg-architecture",
         "ulg-for-llms",
+        "hypothesize-simulate",
         "reasoning-posture",
     ]
 
@@ -35,6 +37,7 @@ def test_review_produce_mission_floors() -> None:
         "ulg-for-llms",
         "reasoning-posture",
         "consult-posture",
+        "hypothesize-simulate",
     ]
     assert ensure_cdp_judgment_skills(None, purpose="produce") == [
         "ulg-for-llms",

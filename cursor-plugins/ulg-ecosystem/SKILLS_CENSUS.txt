@@ -24,6 +24,7 @@ event-instrumentation-discipline
 friction-review
 git-posture
 handoff-packet-authoring
+hypothesize-simulate
 implement-todo
 multi-model-review
 mission-operator

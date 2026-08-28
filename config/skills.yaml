@@ -262,6 +262,9 @@ skills:
   handoff-prompt-authoring:
     surface_class: cursor_only
     mcp_surface_required: none
+  hypothesize-simulate:
+    surface_class: shared_sync
+    mcp_surface_required: none
   image-video-generation:
     surface_class: cursor_only
     mcp_surface_required: code

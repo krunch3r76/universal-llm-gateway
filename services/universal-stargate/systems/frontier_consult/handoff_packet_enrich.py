@@ -43,8 +43,10 @@ from .handoff_life_mirror import (
     mirror_workspaces_pointers_for_web,
 )
 from .handoff_reasoning_posture import (
+    HYPOTHESIZE_SIMULATE_SLUG,
     REASONING_POSTURE_SLUG,
     ULG_FOR_LLMS_SLUG,
+    handoff_wants_hypothesize_simulate,
     handoff_wants_reasoning_posture,
 )
 from .handoff_web_mcp_default import apply_web_mcp_default
@@ -408,6 +410,8 @@ def _collect_skill_slugs(
     if handoff_wants_reasoning_posture(text, handoff_contract):
         slugs.insert(0, REASONING_POSTURE_SLUG)
         slugs.insert(0, ULG_FOR_LLMS_SLUG)
+    if handoff_wants_hypothesize_simulate(text, handoff_contract):
+        slugs.insert(0, HYPOTHESIZE_SIMULATE_SLUG)
     for entity_id in _bound_entity_ids(text):
         for slug in _entity_required_skills(cortex, entity_id):
             if slug not in slugs:

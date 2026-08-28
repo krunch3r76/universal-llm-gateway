@@ -127,6 +127,7 @@ Scope-lock field shape (consult/path-sim): `cortex://notes/system/specs/consult-
 | Concern | Owner |
 |---|---|
 | Scope rails + epistemic quality + one determinate step | **this skill** |
+| Rival fill / simulation | `hypothesize-simulate` |
 | Consult fire grammar / exemptions / posture-before-transport ordering | `consult-posture` |
 | When to pause at all | `advisor-timing` |
 | Recon-before-implement intake | `recon-default` / `cheap-recon-before-escalation` |

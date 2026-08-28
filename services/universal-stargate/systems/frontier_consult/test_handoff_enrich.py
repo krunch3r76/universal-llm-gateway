@@ -145,6 +145,16 @@ def test_enrich_injects_reasoning_posture_on_consult() -> None:
     assert "`reasoning-posture`" in result.text
     assert "ulg-for-llms" in result.skills_added
     assert "`ulg-for-llms`" in result.text
+    assert "hypothesize-simulate" in result.skills_added
+    assert "`hypothesize-simulate`" in result.text
+
+
+def test_enrich_skips_hypothesize_simulate_on_light_bounded() -> None:
+    packet = _THIN_WEB_PACKET.replace("contract: consult", "contract: light-bounded")
+    cortex = _StubCortex()
+    result = enrich_handoff_packet(packet, cortex=cortex)
+    assert "reasoning-posture" in result.skills_added
+    assert "hypothesize-simulate" not in result.skills_added
 
 
 def test_enrich_injects_reasoning_posture_from_route_contract() -> None:
@@ -186,6 +196,7 @@ def test_enrich_reports_already_wired_not_readded() -> None:
         "lead-seat-boot",
         "consult-routing",
         "handoff-packet-authoring",
+        "hypothesize-simulate",
         "reasoning-posture",
         "ulg-for-llms",
     ):

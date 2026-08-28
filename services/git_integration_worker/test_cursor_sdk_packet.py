@@ -59,6 +59,28 @@ def test_resolve_prompt_preamble_injects_reasoning_posture_on_consult() -> None:
     )
     assert "Use the `reasoning-posture` skill" in text
     assert "Use the `ulg-for-llms` skill" in text
+    assert "Use the `hypothesize-simulate` skill" in text
+
+
+def test_resolve_prompt_preamble_hypothesize_simulate_consult_only() -> None:
+    consult = resolve_prompt_preamble(
+        handoff_contract="consult",
+        prompt_preamble=None,
+        inferred_contract=None,
+    )
+    assert "Use the `hypothesize-simulate` skill" in consult
+    light_bounded = resolve_prompt_preamble(
+        handoff_contract="light-bounded",
+        prompt_preamble=None,
+        inferred_contract=None,
+    )
+    assert "hypothesize-simulate" not in light_bounded
+    implement = resolve_prompt_preamble(
+        handoff_contract="implement",
+        prompt_preamble=None,
+        inferred_contract=None,
+    )
+    assert "hypothesize-simulate" not in implement
 
 
 @pytest.mark.parametrize(

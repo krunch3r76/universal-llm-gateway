@@ -11,6 +11,7 @@ from reasoning_posture_contracts import REASONING_POSTURE_SKIP_CONTRACTS
 
 REASONING_POSTURE_SLUG = "reasoning-posture"
 ULG_FOR_LLMS_SLUG = "ulg-for-llms"
+HYPOTHESIZE_SIMULATE_SLUG = "hypothesize-simulate"
 
 # Shared with GIW ``cursor_sdk_packet._REASONING_POSTURE_SKIP_CONTRACTS``.
 REASONING_POSTURE_SKIP_CONTRACTS = REASONING_POSTURE_SKIP_CONTRACTS
@@ -27,3 +28,9 @@ def handoff_wants_reasoning_posture(text: str, handoff_contract: str | None) -> 
     if not raw:
         return False
     return raw.lower() not in REASONING_POSTURE_SKIP_CONTRACTS
+
+
+def handoff_wants_hypothesize_simulate(text: str, handoff_contract: str | None) -> bool:
+    """Return True when this handoff is a consult contract (not light-bounded)."""
+    raw = (handoff_contract or frontmatter_value(text, "contract") or "").strip()
+    return raw.lower() == "consult"
