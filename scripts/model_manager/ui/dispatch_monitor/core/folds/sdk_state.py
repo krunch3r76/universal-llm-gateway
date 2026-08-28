@@ -58,6 +58,8 @@ class SdkState:
         "caller_via",
         "checkout_lane",
         "checkout_branch",
+        "fast",
+        "packet_kind",
     )
 
     def __init__(self, dispatch_id: str) -> None:
@@ -108,6 +110,22 @@ class SdkState:
         self.caller_via: str | None = None
         self.checkout_lane: str | None = None
         self.checkout_branch: str | None = None
+        self.fast: bool | None = None
+        self.packet_kind: str | None = None
+
+
+def absorb_admit_stamps(row: SdkState, payload: Mapping[str, Any]) -> None:
+    """Fold G5.1 admit stamps from queued/dispatched payloads (first-writer-wins)."""
+    if row.packet_kind is None and payload.get("packet_kind"):
+        row.packet_kind = str(payload["packet_kind"])
+    if row.fast is None:
+        knobs = payload.get("model_knobs_requested")
+        if isinstance(knobs, dict):
+            fast_raw = knobs.get("fast")
+            if fast_raw == "true":
+                row.fast = True
+            elif fast_raw == "false":
+                row.fast = False
 
 
 def as_int(value: Any) -> int | None:
@@ -290,9 +308,13 @@ def merge_sdk_state(canonical: SdkState, alt: SdkState) -> None:
         "caller_via",
         "checkout_lane",
         "checkout_branch",
+        "packet_kind",
     ):
         if getattr(canonical, field) is None and getattr(alt, field) is not None:
             setattr(canonical, field, getattr(alt, field))
+
+    if canonical.fast is None and alt.fast is not None:
+        canonical.fast = alt.fast
 
     if alt.started_ms is not None and (
         canonical.started_ms is None or alt.started_ms < canonical.started_ms

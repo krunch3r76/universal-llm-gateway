@@ -23,6 +23,7 @@ from .sdk_posture import (
     row_role,
     sort_sdk_live,
 )
+from .sdk_tree import cycle_nodes, nest_pointer, nest_under_edges, tree_glyph
 from .watch import SEVERITY_MARK, _ms, _truncate, clip_text
 
 _TZ = ZoneInfo("America/Los_Angeles")
@@ -229,6 +230,28 @@ def _sdk_identity_suffix(row: SdkDispatchRow) -> str:
     return (" " + " ".join(parts)) if parts else ""
 
 
+def _sdk_model_display(model: str | None) -> str:
+    if not model:
+        return "-"
+    if model.startswith("cursor/"):
+        return model[len("cursor/") :]
+    return model
+
+
+def _sdk_fast_token(row: SdkDispatchRow) -> str:
+    if row.fast is True:
+        return " fast"
+    if row.fast is False:
+        return " fast=no"
+    return ""
+
+
+def _sdk_cond_token(row: SdkDispatchRow) -> str:
+    if (row.packet_kind or "").lower() == "conductor":
+        return " cond"
+    return ""
+
+
 def sdk_live_line(
     row: SdkDispatchRow,
     *,
@@ -239,7 +262,13 @@ def sdk_live_line(
     peers = live if live is not None else [row]
     multi = posture if posture is not None else classify_sdk_live(peers)
     role = row_role(row, peers, multi)
-    role_tag = f"{ROW_TAG[role]} " if role else ""
+    role_tag = f"{ROW_TAG[role]} " if role and multi != "nested" else ""
+    live_ids = {r.dispatch_id for r in peers}
+    edges = nest_under_edges(peers)
+    cyclic = cycle_nodes(edges)
+    glyph = tree_glyph(row, edges=edges, cyclic=cyclic)
+    pointer = nest_pointer(row, live_ids=live_ids, edges=edges, cyclic=cyclic)
+
     flag_raw = (
         "DIVERGENT"
         if row.divergent_fields
@@ -248,42 +277,45 @@ def sdk_live_line(
     timing = _sdk_live_timing(row)
     stall_suffix = f" stall={row.stall_stage}" if row.stall_stage else ""
     tc = f" tc={row.tool_call_count}" if row.tool_call_count is not None else ""
-    topic_col = f" topic={clip_text(row.topic, 28)}" if row.topic else ""
+    model = _sdk_model_display(row.model)
+    core = (
+        f"  {role_tag}{glyph}{row.dispatch_id} {row.state} "
+        f"root={row.root_id or '-'} w={row.thread_id or '-'} "
+        f"{model}{_sdk_fast_token(row)}{_sdk_cond_token(row)} {timing}"
+    )
+    mission = row.topic or ""
+    tool_col = ""
     if row.last_tool_name:
         tool = row.last_tool_name
         if row.last_tool_status and row.last_tool_status != "completed":
             tool = f"{tool}:{row.last_tool_status}"
-        tool_col = f" tool={_truncate(tool, 14)}"
-    else:
-        tool_col = ""
-    identity = _sdk_identity_suffix(row)
-    core = (
-        f"  {role_tag}{_truncate(row.dispatch_id, 14)} {_truncate(row.state, 10)} "
-        f"root={_truncate(row.root_id, 8)} "
-        f"w={_truncate(row.thread_id, 8)} "
-        f"{_truncate(row.model, 18)}{topic_col} "
-        f"{timing}{tc}"
-    )
-    candidates = [
-        f"{core}{tool_col}{identity} [{flag_raw}]{stall_suffix}",
-        f"{core}{identity} [{flag_raw}]{stall_suffix}",
-        f"{core}{identity}{stall_suffix}",
-        f"{core}{identity}",
-    ]
-    base = candidates[-1]
-    for candidate in candidates:
+        tool_col = f"tool={_truncate(tool, 14)}"
+    identity = _sdk_identity_suffix(row).strip()
+    optional: list[str] = []
+    if pointer:
+        optional.append(pointer)
+    if mission:
+        optional.append(mission)
+    if identity:
+        optional.append(identity)
+    if tool_col:
+        optional.append(tool_col)
+    optional.append(f"[{flag_raw}]")
+    if stall_suffix:
+        optional.append(stall_suffix.strip())
+    if tc:
+        optional.append(tc.strip())
+
+    kept = list(optional)
+    while True:
+        suffix = " ".join(part for part in kept if part)
+        candidate = f"{core} {suffix}".rstrip() if suffix else core
         if len(candidate) <= width:
-            base = candidate
-            break
-    extras: list[str] = []
-    if row.nest_under:
-        extras.append(f" nest={clip_text(row.nest_under, 12)}")
-    for token in extras:
-        if len(base) + len(token) <= width:
-            base += token
-        else:
-            break
-    return _truncate(base, width)
+            return candidate
+        if kept:
+            kept.pop()  # drop tc/stall → identity → tool → [emitter] → mission → pointer
+            continue
+        return clip_text(core, width)
 
 
 def primary_sdk_dispatch_for_root(

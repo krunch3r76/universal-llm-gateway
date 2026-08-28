@@ -291,7 +291,6 @@ def test_sdk_live_line_paints_topic_when_present() -> None:
         idle_age_ms=0,
         emitters_seen=("worker",),
         topic="ULG gains a topic line",
-        nest_under="parent-1",
         admitted_via="cursor-auto",
         asked_by="web-anthropic",
         provenance="signal",
@@ -299,8 +298,9 @@ def test_sdk_live_line_paints_topic_when_present() -> None:
         caller_via="http",
     )
     line = sdk_live_line(row, width=200)
-    assert "topic=ULG gains a topic line" in line
-    assert "nest=parent-1" in line
+    assert "SDK nest tree + fast" in line or row.topic in line
+    assert "topic=" not in line
+    assert "nest=" not in line
     assert "from=ide" in line
 
 

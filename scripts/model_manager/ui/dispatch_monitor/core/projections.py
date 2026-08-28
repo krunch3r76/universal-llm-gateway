@@ -113,6 +113,8 @@ def sdk_rows(
                 caller_via=caller_via,
                 checkout_lane=state.checkout_lane,
                 checkout_branch=state.checkout_branch,
+                fast=state.fast,
+                packet_kind=state.packet_kind,
             )
         )
     rows.sort(key=lambda r: r.dispatch_id)

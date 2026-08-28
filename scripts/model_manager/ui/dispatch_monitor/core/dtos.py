@@ -181,6 +181,8 @@ class SdkDispatchRow:
     caller_via: str | None = None
     checkout_lane: str | None = None
     checkout_branch: str | None = None
+    fast: bool | None = None
+    packet_kind: str | None = None
 
 
 @dataclass(frozen=True)

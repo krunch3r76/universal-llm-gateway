@@ -46,6 +46,7 @@ from .sdk_review_child import close_terminal_row
 from .sdk_state import (
     SdkIdAliases,
     SdkState,
+    absorb_admit_stamps,
     absorb_tool_call_count,
     ensure_canonical_row,
     note_tool_call_id,
@@ -197,6 +198,7 @@ class SdkFold:
         ):
             if getattr(row, dst) is None and payload.get(src):
                 setattr(row, dst, str(payload[src]))
+        absorb_admit_stamps(row, payload)
         self._index.link_dispatch(row.dispatch_id, row.root_id, row.thread_id)
         if row.root_id is None:
             row.root_id = self._index.root_for_dispatch(row.dispatch_id)

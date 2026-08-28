@@ -2,11 +2,12 @@
 
 Three operator-facing classes (≠ solo):
 
-* ``nested`` — lease park or auto-review child: a live parent row waits while
-  a child runs (``parked_waiting`` or explicit ``parent_execution_id`` link).
+* ``nested`` — lease park or auto-review child, or a closed ``nest_under`` family
+  with no unrelated live peers.
 * ``id_split`` — same root, ≥2 live rows, no park — usually Stargate ``execution_id``
   vs worker ``dispatch_id`` for one logical dispatch (ghost + live).
-* ``parallel`` — ≥2 live rows on distinct roots (concurrent work).
+* ``parallel`` — ≥2 live rows on distinct roots, or unrelated peers beside a nest
+  family (bar says parallel; tree glyphs still mark the family).
 
 Membership stays Rival A (open obligation = live). This module only names the
 relationship so the board does not leave the operator to infer it.
@@ -17,10 +18,11 @@ from __future__ import annotations
 from typing import Literal
 
 from .dtos import SdkDispatchRow
+from .sdk_tree import resolved_nest_members
 
 SdkMultiPosture = Literal["solo", "nested", "id_split", "parallel"]
 
-#: Short tags painted on each live row when multi.
+#: Short tags painted on each live row when multi (id_split / parallel only).
 ROW_TAG = {
     "parent": "PARENT",
     "child": "CHILD",
@@ -36,14 +38,18 @@ def classify_sdk_live(live: list[SdkDispatchRow]) -> SdkMultiPosture:
         return "solo"
     if any(row.state == "parked_waiting" for row in live):
         return "nested"
-    if _has_review_child_nest(live) or _has_nest_under(live):
+    if _has_review_child_nest(live):
         return "nested"
+    nest_members = resolved_nest_members(live)
+    if nest_members:
+        if all(row.dispatch_id in nest_members for row in live):
+            return "nested"
+        return "parallel"
     roots = {row.root_id for row in live if row.root_id}
     if len(roots) == 1 and any(row.root_id for row in live):
         return "id_split"
     if len(roots) >= 2:
         return "parallel"
-    # Multi live with missing roots — treat as id_split (same unknown bucket).
     return "id_split"
 
 
@@ -65,12 +71,6 @@ def _has_review_child_nest(live: list[SdkDispatchRow]) -> bool:
     return False
 
 
-def _has_nest_under(live: list[SdkDispatchRow]) -> bool:
-    """True when a live row names ``nest_under`` pointing at another live row."""
-    live_ids = {row.dispatch_id for row in live}
-    return any(row.nest_under in live_ids for row in live if row.nest_under)
-
-
 def _parent_dispatch_id(row: SdkDispatchRow, live: list[SdkDispatchRow]) -> str | None:
     if row.parent_execution_id and any(
         r.dispatch_id == row.parent_execution_id for r in live
@@ -84,12 +84,14 @@ def row_role(
     live: list[SdkDispatchRow],
     posture: SdkMultiPosture,
 ) -> str | None:
-    """Return a short per-row role tag, or None when solo / unneeded."""
+    """Return a short per-row role tag for id_split / parallel chrome, else None."""
     if posture == "solo":
         return None
     if posture == "nested":
         if row.state == "parked_waiting":
             return "parent"
+        if any(r.state == "parked_waiting" for r in live) and row.state != "parked_waiting":
+            return "child"
         if row.review_child and _parent_dispatch_id(row, live):
             return "child"
         if row.nest_under and any(r.dispatch_id == row.nest_under for r in live):
@@ -100,10 +102,9 @@ def row_role(
             return "parent"
         if any(r.nest_under == row.dispatch_id for r in live):
             return "parent"
-        return "child"
+        return None
     if posture == "parallel":
         return "para"
-    # id_split — mark silent sibling GHOST when another same-root row has progress.
     root = row.root_id
     siblings = [r for r in live if r.root_id == root] if root else live
     any_progress = any(_has_progress(r) for r in siblings)
@@ -120,8 +121,7 @@ def posture_legend(posture: SdkMultiPosture) -> str | None:
         return None
     if posture == "nested":
         return (
-            "  multi: nested — PARENT/CHILD "
-            "(parked_waiting lease, nest_under, or auto-review child)"
+            "  multi: nested — lease park, nest_under family, or auto-review child"
         )
     if posture == "id_split":
         return (
@@ -143,7 +143,10 @@ def sort_sdk_live(
     live: list[SdkDispatchRow],
     posture: SdkMultiPosture,
 ) -> list[SdkDispatchRow]:
-    """Order live rows for glance: parent→child, live→ghost, else idle-desc."""
+    """Order live rows for glance: parent→child within nest families, else idle-desc."""
+    from .sdk_tree import sort_sdk_tree
+
+    tree_ordered = sort_sdk_tree(live) if posture == "nested" else live
 
     def key(row: SdkDispatchRow) -> tuple:
         role = row_role(row, live, posture)
@@ -155,10 +158,13 @@ def sort_sdk_live(
             "para": 0,
             None: 0,
         }.get(role, 0)
+        tree_rank = (
+            tree_ordered.index(row) if posture == "nested" and row in tree_ordered else 0
+        )
         return (
             0 if row.divergent_fields else 1,
             0 if row.queue_position is None else 1,
-            role_rank,
+            role_rank if posture != "nested" else tree_rank,
             -(row.idle_age_ms or 0),
         )
 
