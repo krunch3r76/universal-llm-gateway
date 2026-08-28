@@ -4,47 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from implement_admission.dispatch_topic import extract_dispatch_topic
+
 from services.git_integration_worker.git_worker_lifecycle_events import (
     request_id_from_dispatch_id,
 )
 from services.git_integration_worker.models.cursor_api import CursorDispatchRequest
-
-_TOPIC_MAX_CHARS = 160
-_PREFERRED_TOPIC_PREFIXES = ("so_what:", "ulg_gain:")
-
-
-def extract_dispatch_topic(body: str | None) -> str | None:
-    """One-line operator topic from packet/message prose, capped at 160 chars.
-
-    Prefers a ``so_what:`` / ``ulg_gain:`` line when present; otherwise the first
-    non-empty line. Does not parse CHECKPOINT structure.
-    """
-    if not body:
-        return None
-    preferred: str | None = None
-    first: str | None = None
-    for raw_line in body.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        if first is None:
-            first = line
-        lower = line.lower()
-        for prefix in _PREFERRED_TOPIC_PREFIXES:
-            if lower.startswith(prefix):
-                value = line[len(prefix) :].strip()
-                preferred = value or line
-                break
-        if preferred is not None:
-            break
-    raw_topic = preferred or first
-    if not raw_topic:
-        return None
-    if len(raw_topic) <= _TOPIC_MAX_CHARS:
-        return raw_topic
-    clipped = raw_topic[:_TOPIC_MAX_CHARS]
-    head, _, _ = clipped.rpartition(" ")
-    return f"{head or clipped}…"
 
 
 def build_dispatch_association_fields(
@@ -68,12 +33,19 @@ def build_dispatch_association_fields(
         dispatch_id=req.dispatch_id,
         packet_path=req.packet_path,
     )
+    from services.git_integration_worker.cursor_sdk_packet import (
+        extract_packet_kind_from_packet,
+    )
+
     return {
         "asked_by": envelope.asked_by,
         "purpose": envelope.purpose,
         "story_id": envelope.story_id,
         "topic": extract_dispatch_topic(packet_text or req.message),
         "nest_under": req.nest_under,
+        "packet_kind": (
+            extract_packet_kind_from_packet(packet_text) if packet_text else None
+        ),
     }
 
 
@@ -92,3 +64,6 @@ def association_from_record_json(record_json: str) -> dict[str, Any]:
         if data.get(key) is not None:
             out[key] = data[key]
     return out
+
+
+__all__ = ["build_dispatch_association_fields", "association_from_record_json", "extract_dispatch_topic"]

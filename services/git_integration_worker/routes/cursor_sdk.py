@@ -487,6 +487,10 @@ def _emit_enriched_queued(
         asked_by=association["asked_by"],
         purpose=association["purpose"],
         story_id=association["story_id"],
+        topic=association["topic"],
+        nest_under=association["nest_under"],
+        packet_kind=association["packet_kind"],
+        model_knobs_requested=req.model_knobs,
         queued_on=f"write_lease:{lease_key}",
     )
 
@@ -511,6 +515,8 @@ def _maybe_emit_giw_dispatched(
         story_id=association["story_id"],
         topic=association["topic"],
         nest_under=association["nest_under"],
+        packet_kind=association["packet_kind"],
+        model_knobs_requested=req.model_knobs,
     )
 
 

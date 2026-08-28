@@ -182,6 +182,10 @@ def FrontierSdkWorkerDispatched(  # noqa: N802
     story_id: str | None = None,
     admitted_via: str | None = None,
     seat: str | None = None,
+    nest_under: str | None = None,
+    topic: str | None = None,
+    packet_kind: str | None = None,
+    model_knobs_requested: dict[str, str] | None = None,
 ) -> Event:
     """SDK worker dispatch accepted.
 
@@ -205,6 +209,14 @@ def FrontierSdkWorkerDispatched(  # noqa: N802
         payload["admitted_via"] = admitted_via
     if seat is not None:
         payload["seat"] = seat
+    if nest_under is not None:
+        payload["nest_under"] = nest_under
+    if topic is not None:
+        payload["topic"] = topic
+    if packet_kind is not None:
+        payload["packet_kind"] = packet_kind
+    if model_knobs_requested is not None:
+        payload["model_knobs_requested"] = model_knobs_requested
     return Event(
         signal="frontier.sdk.worker.dispatched",
         payload=payload,
@@ -281,6 +293,10 @@ def FrontierSdkWorkerQueued(  # noqa: N802
     story_id: str | None = None,
     admitted_via: str | None = None,
     seat: str | None = None,
+    nest_under: str | None = None,
+    topic: str | None = None,
+    packet_kind: str | None = None,
+    model_knobs_requested: dict[str, str] | None = None,
 ) -> Event:
     """SDK worker dispatch durably queued awaiting write-lease."""
     payload: dict[str, object] = {
@@ -301,6 +317,14 @@ def FrontierSdkWorkerQueued(  # noqa: N802
         payload["admitted_via"] = admitted_via
     if seat is not None:
         payload["seat"] = seat
+    if nest_under is not None:
+        payload["nest_under"] = nest_under
+    if topic is not None:
+        payload["topic"] = topic
+    if packet_kind is not None:
+        payload["packet_kind"] = packet_kind
+    if model_knobs_requested is not None:
+        payload["model_knobs_requested"] = model_knobs_requested
     return Event(
         signal="frontier.sdk.worker.queued",
         payload=payload,

@@ -107,6 +107,10 @@ async def dispatch_prepared_cursor_sdk(
             caller_agent=handle.caller_agent,
             purpose_body=handle.message,
             packet_path=handle.packet_path,
+            nest_under=handle.nest_under,
+            topic=handle.topic,
+            packet_kind=handle.packet_kind,
+            model_knobs_requested=handle.aligned_knobs,
         )
         _worker_dispatch_error(request_id=handle.request_id, detail=worker_detail)
 
@@ -120,6 +124,10 @@ async def dispatch_prepared_cursor_sdk(
         caller_agent=handle.caller_agent,
         purpose_body=handle.message,
         packet_path=handle.packet_path,
+        nest_under=handle.nest_under,
+        topic=handle.topic,
+        packet_kind=handle.packet_kind,
+        model_knobs_requested=handle.aligned_knobs,
     )
 
     profile = get_profile(handle.family, handle.platform)
@@ -197,6 +205,7 @@ async def dispatch_cursor_sdk_generate(
     refuse_if_lease_held: bool = False,
     prompt_turn_number: int | None = None,
     prompt_bind_mode: str | None = None,
+    packet_kind: str | None = None,
 ) -> dict[str, Any]:
     """Execute cursor-sdk generate with to_thread default delivery.
 
@@ -239,5 +248,6 @@ async def dispatch_cursor_sdk_generate(
         refuse_if_lease_held=refuse_if_lease_held,
         prompt_turn_number=prompt_turn_number,
         prompt_bind_mode=prompt_bind_mode,
+        packet_kind=packet_kind,
     )
     return await dispatch_prepared_cursor_sdk(handle)

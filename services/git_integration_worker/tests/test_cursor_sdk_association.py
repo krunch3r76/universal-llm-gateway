@@ -21,13 +21,15 @@ def test_extract_dispatch_topic_prefers_ulg_gain() -> None:
     assert extract_dispatch_topic(body) == "operators see mission prose on the board"
 
 
-def test_extract_dispatch_topic_falls_back_to_first_line() -> None:
-    assert extract_dispatch_topic("\n\nFirst non-empty\nsecond\n") == "First non-empty"
+def test_extract_dispatch_topic_skips_yaml_frontmatter() -> None:
+    body = "---\npacket_kind: implement\n---\nso_what: real topic\n"
+    assert extract_dispatch_topic(body) == "real topic"
+    assert extract_dispatch_topic("---\n...\n---") is None
 
 
 def test_extract_dispatch_topic_caps_at_160() -> None:
     long = "word " * 80
-    topic = extract_dispatch_topic(long)
+    topic = extract_dispatch_topic(f"so_what: {long}")
     assert topic is not None
     assert len(topic) <= 161
     assert topic.endswith("…")

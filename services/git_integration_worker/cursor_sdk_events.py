@@ -510,6 +510,8 @@ def FrontierSdkWorkerDispatched(  # noqa: N802
     story_id: str | None = None,
     topic: str | None = None,
     nest_under: str | None = None,
+    packet_kind: str | None = None,
+    model_knobs_requested: dict[str, str] | None = None,
 ) -> Event:
     """GIW worker lane start signal after ``mark_running``.
 
@@ -539,6 +541,10 @@ def FrontierSdkWorkerDispatched(  # noqa: N802
         payload["topic"] = topic
     if nest_under is not None:
         payload["nest_under"] = nest_under
+    if packet_kind is not None:
+        payload["packet_kind"] = packet_kind
+    if model_knobs_requested is not None:
+        payload["model_knobs_requested"] = model_knobs_requested
     return Event(
         signal="frontier.sdk.worker.dispatched",
         payload=payload,
@@ -558,6 +564,8 @@ def emit_sdk_worker_dispatched(
     story_id: str | None = None,
     topic: str | None = None,
     nest_under: str | None = None,
+    packet_kind: str | None = None,
+    model_knobs_requested: dict[str, str] | None = None,
     seat: str = "cursor-sdk",
 ) -> None:
     """Publish GIW worker-lane start after ``mark_running``.
@@ -581,6 +589,8 @@ def emit_sdk_worker_dispatched(
             story_id=story_id,
             topic=topic,
             nest_under=nest_under,
+            packet_kind=packet_kind,
+            model_knobs_requested=model_knobs_requested,
         )
     )
 
@@ -602,6 +612,10 @@ def FrontierSdkWorkerQueued(  # noqa: N802
     purpose: str | None = None,
     story_id: str | None = None,
     queued_on: str | None = None,
+    topic: str | None = None,
+    nest_under: str | None = None,
+    packet_kind: str | None = None,
+    model_knobs_requested: dict[str, str] | None = None,
 ) -> Event:
     payload: dict[str, object] = {
         "dispatch_id": dispatch_id,
@@ -631,6 +645,14 @@ def FrontierSdkWorkerQueued(  # noqa: N802
         payload["story_id"] = story_id
     if queued_on is not None:
         payload["queued_on"] = queued_on
+    if topic is not None:
+        payload["topic"] = topic
+    if nest_under is not None:
+        payload["nest_under"] = nest_under
+    if packet_kind is not None:
+        payload["packet_kind"] = packet_kind
+    if model_knobs_requested is not None:
+        payload["model_knobs_requested"] = model_knobs_requested
     return Event(
         signal="frontier.sdk.worker.queued",
         payload=payload,
@@ -1443,6 +1465,10 @@ def emit_sdk_worker_queued(
     purpose: str | None = None,
     story_id: str | None = None,
     queued_on: str | None = None,
+    topic: str | None = None,
+    nest_under: str | None = None,
+    packet_kind: str | None = None,
+    model_knobs_requested: dict[str, str] | None = None,
 ) -> None:
     """Publish FIFO queue placement while another dispatch holds the write lease."""
     _emit(
@@ -1462,6 +1488,10 @@ def emit_sdk_worker_queued(
             purpose=purpose,
             story_id=story_id,
             queued_on=queued_on,
+            topic=topic,
+            nest_under=nest_under,
+            packet_kind=packet_kind,
+            model_knobs_requested=model_knobs_requested,
         )
     )
 

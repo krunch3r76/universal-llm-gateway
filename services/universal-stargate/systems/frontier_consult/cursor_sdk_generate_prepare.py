@@ -82,6 +82,7 @@ async def prepare_cursor_sdk_generate(
     refuse_if_lease_held: bool = False,
     prompt_turn_number: int | None = None,
     prompt_bind_mode: str | None = None,
+    packet_kind: str | None = None,
 ) -> PreparedCursorSdkHandle:
     """Validate, mint/reuse IDs, create pending thread; do not POST the worker."""
     from .light_bounded_ac_observer import (
@@ -378,6 +379,7 @@ async def prepare_cursor_sdk_generate(
         )
 
     prompt_preamble: str | None = None
+    packet_text: str | None = None
     if worker_packet is not None:
         preamble_pointer = pointer_body
         if handoff_contract == "implement" and "Contract:" not in pointer_body:
@@ -434,6 +436,20 @@ async def prepare_cursor_sdk_generate(
             count = int(probed.get("turn_count") or 0) if probed else 0
             poll_after_turn = count if count > 0 else 1
 
+    from implement_admission.dispatch_topic import (
+        derive_handle_topic,
+        extract_packet_kind_from_body,
+    )
+
+    resolved_packet_kind = (packet_kind or "").strip().lower() or None
+    if packet_text and not resolved_packet_kind:
+        resolved_packet_kind = extract_packet_kind_from_body(packet_text)
+    handle_topic = derive_handle_topic(
+        packet_kind=resolved_packet_kind,
+        packet_text=packet_text,
+        message_text=worker_message,
+    )
+
     return PreparedCursorSdkHandle(
         request_id=request_id,
         execution_id=execution_id,
@@ -465,6 +481,8 @@ async def prepare_cursor_sdk_generate(
         alignment_warnings=tuple(alignment.warnings_as_dicts()),
         knob_resolution=tuple(alignment.knob_resolution_as_dicts()),
         nest_under=nest_under,
+        topic=handle_topic,
+        packet_kind=resolved_packet_kind,
         lane=lane,
         workspace=workspace,
         refuse_if_lease_held=refuse_if_lease_held,

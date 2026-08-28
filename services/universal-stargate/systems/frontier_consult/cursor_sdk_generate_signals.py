@@ -72,6 +72,10 @@ def emit_sdk_worker_outcome(
     caller_agent: str | None = None,
     purpose_body: str | None = None,
     packet_path: str | None = None,
+    nest_under: str | None = None,
+    topic: str | None = None,
+    packet_kind: str | None = None,
+    model_knobs_requested: dict[str, str] | None = None,
 ) -> None:
     envelope = build_association_envelope(
         purpose_body=purpose_body,
@@ -89,6 +93,12 @@ def emit_sdk_worker_outcome(
         "purpose": envelope.purpose,
         "story_id": envelope.story_id,
     }
+    admit_fields = {
+        "nest_under": nest_under,
+        "topic": topic,
+        "packet_kind": packet_kind,
+        "model_knobs_requested": model_knobs_requested,
+    }
     if worker_ok:
         if worker_detail.get("queued"):
             ticket = worker_detail.get("ticket") or {}
@@ -105,6 +115,7 @@ def emit_sdk_worker_outcome(
                     admitted_via="stargate",
                     seat="cursor-sdk",
                     **association,
+                    **admit_fields,
                 )
             )
             return
@@ -117,6 +128,7 @@ def emit_sdk_worker_outcome(
                 admitted_via="stargate",
                 seat="cursor-sdk",
                 **association,
+                **admit_fields,
             )
         )
         return
