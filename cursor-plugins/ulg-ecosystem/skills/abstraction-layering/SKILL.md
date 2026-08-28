@@ -117,7 +117,7 @@ Tick recognizes `[GR]\d+` only — layer names never replace G-ordinals in Steps
 |---|---|---|---|---|
 | 1 | Architecture | Fable/wide CDP · **arch skill floor** | `[consult:judgment_gap]` | `fable-answer.md` |
 | 2 | Frame | **Fable followup** in the G1 CSE · else `cdp/opus-5` fresh · **inherit arch floor** | `[consult:judgment_gap]` | `opus-grok-instructions.md` ≤120L |
-| 3 | Densify | `cursor/grok-4.6` @ `effort=xhigh`, `fast=false` | `[judgment]` | `specs/{slug}.md` + Gate-2 |
+| 3 | Densify | `cursor/grok-4.6` @ `effort=xhigh` | `[judgment]` | `specs/{slug}.md` + Gate-2 |
 | 4 | Check | **Explicit Other Models pin only** (e.g. Terra). Default **skip** (G3→G5). `cursor/claude-fable-5` blocked (cost). | `[judgment]` | check sidecar |
 | 5 | Implement | `cursor/composer-2.5` | `[implement]` | code + quality gate |
 | 6 | Verify | inline | `[inline]` | ACs, docstrings, close |

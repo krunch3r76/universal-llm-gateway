@@ -28,7 +28,7 @@ once the second pool is empty.
 | Tier | Model | Effort / knobs | When |
 |---|---|---|---|
 | **T0** | omit → `cursor/composer-2.5` | — | Mechanical scoreboard drive; nest only |
-| **T1** | **`cursor/grok-4.6`** | **`xhigh`**, `fast=false` | **Standing default** — multi-G orchestrate, rank, adjudicate (Cursor Models pool) |
+| **T1** | **`cursor/grok-4.6`** | **`xhigh`** | **Standing default** — multi-G orchestrate, rank, adjudicate (Cursor Models pool) |
 | **T2** | `cursor/claude-sonnet-5` | `high`, `thinking=true`, `context=300k` | Named trigger only — grok cannot hold the remit. Other Models |
 | **T3** | `cursor/claude-opus-5` | full card (`low`→`max`); inform-then-proceed | Invariant-touching bind (trigger is *whether to pick T3*, not the effort rung) |
 

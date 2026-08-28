@@ -56,7 +56,7 @@ Ask in one batch; skip any already bound in chat:
    mission needs its merge held for review.
 7. **Conductor model tier** — accept the standing default, or pin
    `composer` / `claude-sonnet-5` / `claude-opus-5` (+ effort). Standing default:
-   **T1 `cursor/grok-4.6` @ `effort=xhigh`** (`fast=false`). Sonnet/Opus draw the
+   **T1 `cursor/grok-4.6` @ `effort=xhigh`**. Sonnet/Opus draw the
    capped Other Models pool — named T2/T3 trigger only.
 8. **Admit now?** — draft packet only vs admit after confirm.
 

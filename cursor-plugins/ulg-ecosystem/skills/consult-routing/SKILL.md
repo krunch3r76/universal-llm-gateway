@@ -234,19 +234,56 @@ Scripts and satellite netns that need a **blocking reasoned hop** POST Stargate
 inside GIW). Never `POST` GIW from a script; never `import cursor_sdk` outside
 GIW. Netns: `GATEWAY_URL` as IP — refuse hostname `io`.
 
-Mechanical tools (ESS harvest, Graph, hydra observe) are **not** dispatch
-clients. Happy path stays SHA-gate / JSON. Failure reports a typed
-`{code,message,source,retryable,data}` artifact; an already-admitted fleet actor
-(cursor-auto / conductor) fires team-dispatch. That keep-and-add-kill is
-**advisory** until operator ratify
+Mechanical tools (ESS harvest, Graph, hydra observe, `scripts.local` helpers)
+are **not** dispatch clients. Happy path stays SHA-gate / JSON. Failure ⇒ file
+a cortex `friction` (owner-typed, categorised, `evidence_uris` → the tool's own
+artifact). Local JSON is `evidence_uris` only. The follow-on `todo:friction-…`
+is the pickup; any already-admitted actor may fire team-dispatch from it
+(conductor, cursor-auto triage, IDE lead, operator via friction-review) — never
+the producer, never a new daemon. Netns producers are filed by their host-side
+sweep (hydra: the circle). That keep-and-add-kill is **advisory** until
+operator ratify
 (`document:satellite-script-dispatch-surface-architecture-consult`).
+
+**Happy-path composition (advisory until operator ratify).** Mechanical work is
+three layers. Satellites serve HTTP resources (`[universal:satellite]`). **Pipelines
+are the composer for any compound, inference-bearing, or replayable step** —
+`pipeline(op="run"|"async")` / `POST :9999/api/v1/pipelines/dispatch` against hub
+`pipelines/{domain}/v1/` or personal `pipelines.local/` — and are addressed as
+one more `:9999` resource. **Scripts, ticks, and circles are thin clients**:
+trigger + reach + SHA/JSON gate + friction on failure (O2′). A script never
+re-implements an LLM stage, an adjudication loop, or a multi-model merge; when
+it grows one, that step is a pipeline missing — author it, shrink the script.
+Pipelines own no trigger and reach no satellite today (no HTTP step; `shell_v1`
+is network-none); do not push reach into them. Judgment hops remain O1. Cite:
+`cortex://notes/system/threads/pipeline-happy-path-composer-fable-answer.md`.
+
+Local surface = the two `:9999` doors (team-dispatch, pipelines) plus this
+producer table. Not GIW. Not `import cursor_sdk`. Not a fourth git identity.
+
+| Producer | Happy path (L3) | Compound inference (L2) | Failure (O2′) | Judgment / self-correct (O1) |
+|---|---|---|---|---|
+| Fleet script / tick | SHA/JSON or thin HTTP | `pipeline` / `:9999/pipelines/dispatch` | `friction` over cortex UDS | POST `:9999/team/dispatch`; hub omit `workspace=` |
+| claudeburst / hydra netns | observe + SHA; Opus stub stays; `FORBIDDEN_BINDERS` | **not** from inside netns (no MCP; no pipeline trigger) | **host-side circle** files friction; evidence_uris → container artifact | Host or netns O1 via `GATEWAY_URL` IP (proven). Circle binds auto-live, not Composer |
+| `scripts.local` | Playwright / Graph / SHA-gate | `pipelines.local/` YAML (not personal Python into a new identity) | friction; `git_identity=personal` | hub Lane A or artifact-mediated; **never** `SATELLITES.txt` |
 
 Git identity is three distinct: hub (omit `workspace=`), satellite (`workspace=`
 from `SATELLITES.txt`, Lane B typical), `scripts.local` (never allowlisted;
-reasoned edits Lane A or artifact-mediated).
+reasoned edits Lane A or artifact-mediated). Lane B cannot see gitignored
+personal code.
 
-Cite: `cortex://notes/system/threads/satellite-script-dispatch-surface-architecture-consult-answer.md`.
-O2 envelope draft (not convention):
+**Facilitation (advisory until operator ratify).** A satellite workflow is
+effective when an L3 client can reach typed L1 HTTP and file O2′ on failure;
+every-tick predicates live in the satellite loop and are read, not re-derived;
+named fires are L1 POSTs with the gate on the endpoint. Pipelines compose the
+inference-bearing step only. Do not wait for pipeline satellite-reach (Alt-X,
+DEFER) to ship the next satellite job. Missing L1 is a satellite spec, not a
+ULG composer gap. The satellite's served OpenAPI is the catalog; this skill
+names no paths.
+
+Cite: `cortex://notes/system/threads/satellite-script-dispatch-surface-g2-stamp-vs-migrate-answer.md`
+(`read_sha256=79f2bc92620f98ca1c3f1a1a4844cf1acdc7da791db11e43cd76ccd62ccc4c7f`).
+O2 envelope draft (superseded by G2, not convention):
 `cortex://notes/system/threads/satellite-script-dispatch-surface-o2-envelope-draft.md`.
 
 ## Abstraction layering (codework lane)

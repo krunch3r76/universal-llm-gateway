@@ -163,7 +163,7 @@ Rates: `config/model_rates.yaml`.
 | Tier | Default conductor model | Effort | Use when |
 |---|---|---|---|
 | **T0 — mechanical drive** | omit `model=` → `cursor/composer-2.5` | (n/a) | Scoreboard fully bound; only nest Composer/investigate; conductor is traffic cop |
-| **T1 — default judgment** | **`cursor/grok-4.6`** | **`xhigh`**, `fast=false` | **Standing default.** Multi-G orchestrate, rank, adjudicate — Cursor Models pool |
+| **T1 — default judgment** | **`cursor/grok-4.6`** | **`xhigh`** | **Standing default.** Multi-G orchestrate, rank, adjudicate — Cursor Models pool. Omit `fast` unless an arc pin names it (card omit-path). |
 | **T2 — Other Models** | `cursor/claude-sonnet-5` | `xhigh`/`max` (`thinking=true`, `context=1m`) | Named trigger only — grok cannot hold the remit or the context window. **Explicit pin holds its card ceiling even unattended** — the pool cap only ever bites the *silent default* path (`resolve_desired_model`'s omit branch never resolves to Other Models for any contract), never a deliberate T2/T3 pick |
 | **T3 — premium** | `cursor/claude-opus-5` | full card (`low`→`max`) | Invariant-touching, architecture-suitability, ≥2 unranked co-primaries, recurrence — **inform-then-proceed** + one-line why (trigger is *whether to pick T3*, not the effort rung) |
 
