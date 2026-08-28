@@ -71,7 +71,7 @@ Enrollment tag is SOT. `tick_charter` = machine consumer (base + T extras; malfo
 2. Tip body: `fetch(thread, compact=true, last=K)` → subject index → `get(turn_number=<latest subject starting with CHECKPOINT>)`. **¬** `last=1` as tip (latest turn may be closeout).
 3. Other unread: compact subjects only; ¬ auto-widen on `has_earlier_turns`.
 4. Child lanes (`lane_bind` → append-only `thread_lane_associations`; CHECKPOINT's **Child lanes** derived zone = depth-1 substantiated, per `agent-bus-discipline` § Lane parentage): pointer IDs only — ¬ fetch child history on parent resume. Leftover conductor workers that landed as grandchildren of a coord stub (9676/9677 class) are **not** Child lanes — cite `agent-bus:{worker}` on the root CHECKPOINT or `lane_bind` the worker to the root. `conductor_coord_split_refused` retires the class going forward.
-5. Then: tip → scoreboard if named → roadmap if named → Cortex cards. Mid-tier: ≤3 further sidecars before drafting. **¬** load `## Windows` on resume.
+5. Then: tip → Cortex hub (`continuity-thread-shaping`) → scoreboard if named → roadmap if named → Cortex cards. Mid-tier: ≤3 further sidecars before drafting. **¬** load `## Windows` on resume. Catch-up *body* shape + hub wrap: Use the `continuity-thread-shaping` skill.
 
 | Widen when | Fetch |
 |---|---|
@@ -81,7 +81,7 @@ Enrollment tag is SOT. `tick_charter` = machine consumer (base + T extras; malfo
 | Review / audit of whole-history | Charter-surface `## Windows` (schema §3.5) — not linear thread read |
 | Execute on child lane | Open **that** thread separately |
 
-**Operator-facing:** `orchestrator_continuity` → Been→Are→Going → `In one line:` → charter · settled·live·next · next (`operator-posture` Rule 3). `tick_charter` → wave · in-flight · next pickup only.
+**Operator-facing:** Mission + In/Out first (`operator-posture` Rule 3 · `decision:continuity-resume-mission-open`). Then `orchestrator_continuity` → Been→Are→Going → `In one line:` → settled·live·next · next. `tick_charter` → Mission + Scope, then wave · in-flight · next pickup.
 
 ## MONITOR / mission resume — fast successor (BINDING — 2026-08-02)
 
@@ -133,6 +133,7 @@ Prefix must stay `— RESUME (any seat, no command):` (parser T8).
 - `agent-bus-discipline` — send/reply/lifecycle; R12 done/close; thread classification
 - `orchestrator-workflow` — coding-arc R12
 - `operator-posture` — Rule 3 resume ceremony
+- `continuity-thread-shaping` — catch-up body shape, Cortex hub wrap, resume slot fill sources (`role:root` house only; ¬ work/conductor-worker/MONITOR)
 - path-sim `tick-enrollment-annex` — enroll template
 - Schema URI above · §3.5 Windows log
 - `cortex-orientation` § Myelinate — checkpoint-time associations + strength rating

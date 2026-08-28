@@ -47,6 +47,7 @@ work-item-seed-path
 agent-bus-discipline
 agent-bus-multitask
 checkpoint-discipline
+continuity-thread-shaping
 cortex-orientation
 cursor-sdk-instruction-standard
 debug-with-events

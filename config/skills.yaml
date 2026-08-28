@@ -36,6 +36,9 @@ skills:
   checkpoint-discipline:
     surface_class: shared_sync
     mcp_surface_required: life
+  continuity-thread-shaping:
+    surface_class: shared_sync
+    mcp_surface_required: life
   agent-bus-multitask:
     surface_class: cursor_only
     mcp_surface_required: code
