@@ -52,6 +52,7 @@ IMAP/sms-gate/env, Stargate/gateway hub-only, IDE-boot quirks for one repo → `
 
 `personal_life(rule ∨ skill ∨ helper) ⇒ ¬public(_ws ∨ _ulg ∨ scripts/)`.
 Ignore in place (life-skill / employer-rule list) + nested git under `scripts.local/` when the workflow needs history.
+Hub helpers → `universal-llm-gateway/scripts.local/`. Satellite-bound helpers → `{repo}/scripts.local/` (own nest).
 The fleet hygiene rule itself is public: `personal-workflow-local-tracking_ulg`.
 SOT: `decision:scripts-local-personal-helpers`.
 

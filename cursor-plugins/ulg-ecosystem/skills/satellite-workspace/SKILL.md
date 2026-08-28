@@ -25,6 +25,7 @@ trigger_match_terms: ["satellite-workspace", "satellite", "email-bridge", "journ
 |---|---|---|
 | Ecosystem (`_ulg`) | Plugin only (SoT under `cursor-plugins/ulg-ecosystem/`) | cortex, git-posture, operator-posture, agent-bus commands |
 | Checkout-local (`_ws`) | `{repo}/.cursor/rules/*_ws.mdc` | IMAP hosts, sms-gate env, Stargate/gateway hub-only |
+| Personal-life helpers | `{repo}/scripts.local/` (nested git, gitignored) | ¬ `scripts/`; hub nest is ULG `scripts.local/` |
 
 ## Authoring a shared rule
 

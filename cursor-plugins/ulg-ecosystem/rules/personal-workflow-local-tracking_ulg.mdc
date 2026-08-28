@@ -24,15 +24,16 @@ Fleet/generic stays on the public tree. Parent `.gitignore` already ignores the 
 
 | Class | Home |
 |---|---|
-| Personal helper scripts | `scripts.local/` (nested git) |
+| Personal helper scripts (hub) | `universal-llm-gateway/scripts.local/` (nested git) |
+| Personal helper scripts (satellite-bound) | `{satellite}/scripts.local/` (own nested git). Use when default paths assume the satellite root (e.g. `data/*.db`). ¬ dump those into the hub nest. |
 | Private MCP tools | `services/mcp-server/tools/local/` |
 | Local pipelines | `pipelines.local/` |
 | Local service_ctl plugins | `scripts/model_manager/ui/controller/service_ctl/local/` |
-| Life-domain skills | `.cursor/skills/{tax,lawyer-stance,…}` (already ignored) |
+| Life-domain skills | `.cursor/skills/{tax,lawyer-stance,…}` (already ignored) + copy under that nest's `skills/` |
 | Employer/matter Cursor rules | ignore in place + copy under `scripts.local/cursor-rules/` |
 | Fleet / generic | `scripts/`, public `_ws` / `_ulg` |
 
-`∀ new personal helper: write(scripts.local/…) ∧ git -C scripts.local add ∧ ¬git add scripts/`
+`∀ new personal helper: write(<correct nest>/…) ∧ git -C <that nest> add ∧ ¬git add scripts/`
 
 ## Forbidden / Permitted
 
