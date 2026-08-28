@@ -25,8 +25,8 @@ from .cursor_sdk_prepared_handle import (
     mint_cursor_sdk_ids,
 )
 from .cursor_sdk_reasoning_effort_reject import reject_nonempty_reasoning_effort
-from .cursor_sdk_worker_dispatch import derive_cursor_sdk_prompt_preamble
 from .cursor_sdk_thread_reuse import probe_thread, refuse_occupied_worker_thread
+from .cursor_sdk_worker_dispatch import derive_cursor_sdk_prompt_preamble
 from .handoff import (
     PendingShellContention,
     admit_handoff_dispatch,
