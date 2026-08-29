@@ -73,6 +73,8 @@ see the house card              # shape: mission · runbooks · rules-as-ids · 
 
 `recall(op=continuity)` is **not** in this order (it dumps). Matter questions may still call it. A walk without a stated purpose is a dump with extra steps.
 
+**Pointers, not status copies.** A house runbook or card **names** the matter `todo:` / `decision:` to walk — it does not copy `T14 open` / `unwired`. If that card is still `open`, **probe the locus** (path + content) before treating the work as undone. Open card + SHA in tree = stale card, not undone work. Stamp lives on the matter entity (`implement-todo` §5 · `cursor-sdk-instruction-standard` D3).
+
 Life: shape first. Forbidden: reconstruct from chat · linear thread read · stuffing work on the open liaison · paste tool recipes or `## Windows` · treating a fat continuity-doc as the constitution.
 Cite: `operator-posture` Rule 1.
 
@@ -117,5 +119,6 @@ Residuals: `residual-imprint`. Hub ≠ parking lot.
 | Equate the motif with `entity_get(intent=card)` | Cognition: structure ≺ details; Cortex card is one instance |
 | Skill that describes cards but ships a file schema | Motif first; header is the house-card instance laid out |
 | Walk the whole neighborhood "to be thorough" | Name the purpose; one hop |
+| Copy `T14 open` / `unwired` onto the house runbook | Point at `todo:…`; walk + probe if the card is still open |
 | Boot through `recall(op=continuity)` | Hub card → runbooks → sidecars |
 | Missing `## Rules` / `## Runbooks` then follow a skill omit-path | House gap — mint before dispatch |

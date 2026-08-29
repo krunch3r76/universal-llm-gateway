@@ -87,9 +87,12 @@ W5 (`reuse_thread` + same `source_ref`) is unfinished-conductor only.
 **After land (binding):** prompt go-live for each serving process that loaded
 those paths (hub GIW vs satellite — name the process and what “live” means).
 OR if this liaison chooses not to recycle: announce skip in the same turn —
-process, why skipped, what stays landed-not-live. Code-live ≠ trading-live
-(recycle claudeburst ≠ activate `LIGHTER_LIVE_TRADING`). Continuity `status`
-LAND-LIVE names **skipped recycles**, not only “not live.”
+process, why skipped, what stays landed-not-live. When the land was a named
+`todo:`: stamp that entity (`todo-close` or LANDED assertion) in the same
+turn — recycle without stamp leaves the next resume walking an open card.
+Code-live ≠ trading-live (recycle claudeburst ≠ activate
+`LIGHTER_LIVE_TRADING`). Continuity `status` LAND-LIVE names **skipped
+recycles** and **unstamped matter entities**, not only “not live.”
 
 ### Follow up (operator phrases)
 
@@ -599,3 +602,4 @@ the after-ship `cdp/opus-5` review comment (good default; ¬ a G-row).
 | Fire after-ship `cdp/opus-5` review and never read it | Summoning-thread lead quotes the overlay sidecar at harvest, or names why unread |
 | Treat named hop / `packet_kind=conductor` + `source_ref=todo:X` as a recipe when the score is harvested / `NEXT_ADMIT: none` | Liaison-decide; park remints; new remit → sibling todo + Composer implement |
 | Land then stay silent on recycle (or write LAND-LIVE as only “not live”) | Prompt go-live for each serving process, or announce skip in the same turn; LAND-LIVE names the skipped recycle |
+| Land a named `todo:` and leave the card `open` | Stamp `todo-close` / LANDED on that entity in the same turn |

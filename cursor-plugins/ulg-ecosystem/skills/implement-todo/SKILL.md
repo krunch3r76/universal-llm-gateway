@@ -212,6 +212,8 @@ whose WIP). Mid-arc checkpoint commit without claiming done stays commit-only.
 `decision:go-live-proof-loop` assertions 30579 (stamp) / 30577 (recycle) /
 30584 (loop) / 30585 (done opens the loop).
 
+**Named todo stamp (BINDING):** `land(todo:{slug}) ∧ ¬(todo-close ∨ LANDED assertion on that entity) ⇒ incomplete`. The git SHA is not the graph stamp. House/runbook/CHECKPOINT copies of "still open" are not a substitute.
+
 Include dispatch id + result line for DISPATCH; entity/assertion ids for DIRECT. Update `workflow_state`, write backing assertions with `evidence_uris`, and wire provenance edges.
 
 **Docstring ship gate (BINDING — path-agnostic):** when the pickup mutated **public** Python surface (module/class/public fn), before todo-close:
@@ -239,6 +241,7 @@ transport). Background preferred; defer and name it when attended-blocking.
 - Over-routing DIRECT work to DISPATCH/COORDINATE; under-routing dirty-tree/cross-seat work.
 - Mutating another seat’s in-flight work without coordination.
 - Closing without graph bookkeeping.
+- Landing a named `todo:` in git and leaving `workflow_state=open` (the card becomes the next session's lie).
 - Closing a public-Python pickup without docstring-quality scan criticals=0 (path-sim or not — §5 Ship gate).
 - Closing an event-bearing change silent on instrumentation (add/prune judgment — §5 event closeout).
 - Firing `contract=implement` on `judgment_required` after Gate-6 FILE_EVIDENCE without stamping `skeptic_ratified` (or a designated `gate6_ratification_uri` turn, or hash-matched `recon_waived`).
