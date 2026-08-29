@@ -106,8 +106,8 @@ _CONDUCTOR_ATTENDED_RESURFACE_TEMPLATE = (
     "with the stop token so the summoning lead's agent_bus wait returns; "
     "the summoning lead relays the score into the IDE chat for discussion "
     "(not implement, not CONFIRM_PENDING). Explicit see-score while attended: "
-    "ROW_PINNED at G3, no pager — the relay is the summoning lead's duty, "
-    "not this SDK seat. Do not fire in-process CDP score-ratify unless "
+    "ROW_PINNED at G3 + page the operator (liaison IDE ≠ operator-present). "
+    "Bus SCORE_RESURFACE is not a page. Do not fire in-process CDP score-ratify unless "
     "operator redirects to confer-and-finish."
 )
 

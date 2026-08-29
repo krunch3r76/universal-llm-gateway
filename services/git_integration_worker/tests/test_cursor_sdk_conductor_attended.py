@@ -68,7 +68,8 @@ def test_attended_conductor_preamble_includes_resurface_block() -> None:
     assert "summoning bus thread 9638" in preamble
     assert "never this leftover worker thread" in preamble
     assert "summoning lead" in preamble
-    assert "no pager" in preamble
+    assert "liaison IDE" in preamble
+    assert "not a page" in preamble
     assert "CONDUCTOR AWAY SCORE-RATIFY" not in preamble
 
 
