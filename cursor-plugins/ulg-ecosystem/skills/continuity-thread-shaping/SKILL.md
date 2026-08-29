@@ -58,6 +58,8 @@ recall(op=continuity) ∨ entity_get(hub)
 
 Life: `recall` first. Forbidden: reconstruct from chat · linear thread read · stuffing work on the open liaison · paste tool recipes or `## Windows`.
 
+**Operator-facing cite:** `agent-bus:{n} {slug}` (`thread_get`). Never a bare thread or child-lane number. Same duty: skill `operator-posture` Rule 1.
+
 ## Hub — one per root, never both
 
 | Root kind | `document:` id |

@@ -84,6 +84,13 @@ a harvested conductor. ¬ leftover-execute.
 `contract=implement` (Composer). Never replay the harvested conductor todo.
 W5 (`reuse_thread` + same `source_ref`) is unfinished-conductor only.
 
+**After land (binding):** prompt go-live for each serving process that loaded
+those paths (hub GIW vs satellite — name the process and what “live” means).
+OR if this liaison chooses not to recycle: announce skip in the same turn —
+process, why skipped, what stays landed-not-live. Code-live ≠ trading-live
+(recycle claudeburst ≠ activate `LIGHTER_LIVE_TRADING`). Continuity `status`
+LAND-LIVE names **skipped recycles**, not only “not live.”
+
 ### Follow up (operator phrases)
 
 Joint convention — the human-visible box lives on the continuity card
@@ -94,11 +101,16 @@ from CHECKPOINT (reconstitution index, not a follow-up ask).
 |---|---|
 | `follow up` | Harvest what's terminal. One Been / Are / Going paragraph in the summoning IDE chat. ¬ new hop unless the last bind already said to admit. |
 | `follow up on the pager` · `page me when done` · `I'm leaving — follow up` | Same harvest + Use the `pager-notify` skill (awareness; ¬ `COME TO IDE` unless they said come to IDE). Aligns to that skill's “ping me when X”. |
-| `status` | Live hops + blockers only. ¬ decide-and-admit. |
+| `status` | **HOPS / BLOCKERS / PENDING / SCORES / BREAKS / LAND-LIVE**. PENDING = leftovers this liaison already named or still dirty on this arc (Mission/resume WIP, in-seat files, landed-not-live, branch-debt). Land-then-live is the default sequence to report. After any land: prompt recycle of each serving process, or announce skip (process · why · landed-not-live). LAND-LIVE names skipped recycles, not only “not live.” Recon-spawn fills the continuity `## Scores / breaks / land-live` box — ¬ dump tables into this skill. ¬ decide-and-admit. |
 
 Named subject (`follow up when hedges land`) is the trigger. Hops still in
 flight → say so; do not invent done. `follow up` ≠ remint conductor ≠
 leftover-execute. Pin Question (`reasoning-posture`) then report.
+
+**Identity (operator-facing):** never a bare `Qn` / `Gn` / hop id **or bare
+bus thread / child-lane number**. One-line identity: what question or score
+or hop, whose thread as `{id} {slug}` (`thread_get`). Same for G7 (never a
+commissioned live-arm row unless the scoreboard says so) and hop numbers.
 
 **Continuity-lead required-skill gate (BINDING):** before
 `team_dispatch(op=generate, seat=cursor-sdk, …)` for a conductor packet, the
@@ -586,3 +598,4 @@ the after-ship `cdp/opus-5` review comment (good default; ¬ a G-row).
 | Close G5 because G4 said “remainder is mechanical” + empty-template green | Hang G5; read the overlay or seed a fixture — G4 withhold is not a G5 witness |
 | Fire after-ship `cdp/opus-5` review and never read it | Summoning-thread lead quotes the overlay sidecar at harvest, or names why unread |
 | Treat named hop / `packet_kind=conductor` + `source_ref=todo:X` as a recipe when the score is harvested / `NEXT_ADMIT: none` | Liaison-decide; park remints; new remit → sibling todo + Composer implement |
+| Land then stay silent on recycle (or write LAND-LIVE as only “not live”) | Prompt go-live for each serving process, or announce skip in the same turn; LAND-LIVE names the skipped recycle |

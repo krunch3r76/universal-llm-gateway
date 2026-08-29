@@ -77,7 +77,7 @@ Skip anything already harvested (shape bind, conductor score, G-row DONE).
 
 ## Procedure
 
-1. Pin X (outcome). Name harvested hops + evidence (thread, sidecar sha, `execution_id`).
+1. Pin X (outcome). Name harvested hops + evidence (`{thread_id} {slug}`, sidecar sha, `execution_id`). Never a bare bus thread number.
 2. If they named one hop → fire only that hop.
 3. Else fire the next unharvested hop; continue until remaining is empty or a true operator-only gate.
 4. Announce each hop by its canonical name (Sketch / Mission Composer / Conductor) + seat + why. Do not ask which hop. Do not paraphrase hops as only “remaining work.”

@@ -113,7 +113,7 @@ Doctrine: `decision:checkout-disk-is-executable`.
 |---|---|---|
 | cursor-sdk generate (regime on, in-repo, `lane="B"`) | Lane-B worktree (`cursor-sdk/lane-{thread}`) | Commit on the lane branch; declare `land_disposition` on closeout |
 | cursor-sdk generate (`lane="A"` or out-of-repo) | Live shared checkout | Path-explicit commit on `master` when checkpointing |
-| Attended Cursor IDE | Live shared checkout | No standing workflow. On-disk tree = truth. Commits sporadic; `git diff` unreliable. |
+| Attended Cursor IDE | Live shared checkout | **Lane A hygiene (operator 2026-08-28):** path-explicit commit of *this-session* authorship often, **or** put *new* implement on `lane="B"`. ¬ leave this-session dirt on shared `master`. ¬ remint work already authored on A onto B (commit A, or leave as peer WIP). On-disk tree = truth. Commit ≠ done / live gate. |
 
 `lane=` is required on top-level cursor-sdk generate except `nest_under` /
 `resume_of` inherit. Empty `files_expected` + **omit** selects Lane A
@@ -166,10 +166,15 @@ Authority: `decision:lead-agent-git-integration` (atomic gated primitive). Routi
 
 ## Commit posture
 
-Commits happen only when operator asks, an agent chooses to checkpoint, or a
-named workflow defines commit/merge/release. Absence of commit does not mean
-incomplete, undeployed, or unsafe to build on. Sporadic master commits make
-`git diff` unreliable as a task/session summary.
+Commit is **not** a done / live / restart gate. Absence of commit does not mean
+incomplete, undeployed, or unsafe to build on.
+
+**IDE / shared-checkout hygiene (operator 2026-08-28):** this-session authored
+paths on Lane A should not sit dirty. Path-explicit commit often, or send
+*new* implement to `lane="B"` and land. `dirty(A) ∧ authored_on(A) ⇒ commit(A) ∨ leave_as_peer_WIP` — never a second writer on B for the same hunks.
+
+Named workflow or operator ask still defines merge/release. Sporadic *foreign*
+dirt remains peer WIP (`shared-checkout-housekeeping`) — never `--all`.
 
 **Named workflow — lane A regular commit (6642):** cursor-auto ↔ operator-proxy
 closeouts carry a fail-closed ``checkpoint:`` disposition

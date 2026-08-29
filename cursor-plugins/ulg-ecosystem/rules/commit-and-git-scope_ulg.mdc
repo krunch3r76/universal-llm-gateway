@@ -41,6 +41,10 @@ checkout lane.
 ¬`git stash` to isolate or A/B vs clean HEAD — read the tree (doctrine:
 `git-posture`).
 
+**IDE Lane A hygiene (operator 2026-08-28):** commit this-session paths often
+∨ dispatch *new* implement on `lane="B"`. ¬ remint A-authored dirt onto B.
+Commit ≠ done gate. Detail: `git-posture` § Commit posture.
+
 **Canonical skill (load on trigger or coding-session work):** Use the `git-posture` skill
 (seat self-fetches; ¬ fs-read skill body). Entity: `agent_skill:git-posture`.
 Headless `git_*` MCP (`git_commit` default; gated `git_land`/`git_integrate` only when
