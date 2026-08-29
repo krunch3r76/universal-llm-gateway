@@ -11,6 +11,9 @@ trigger_match_terms:
   - conductor packet
   - conductor score
   - /conductor
+  - follow up
+  - page me when done
+  - I'm leaving
 related_skills:
   - orchestration-lanes
   - mission-operator
@@ -19,6 +22,7 @@ related_skills:
   - consult-routing
   - bind-then-compose-dispatch
   - reasoning-posture
+  - pager-notify
   - ulg-for-llms
   - judgment-escalation-ladder
   - life-operator-do-chain
@@ -56,8 +60,45 @@ Not a model name. Not `mission-operator` (that skill is the formal
 | Seat | Duty |
 |---|---|
 | **Continuity lead** (IDE / `/conductor`) | Read this skill to author/admit; **require** it on the conductor dispatch (below). **Harvest reader** of any after-ship overlay the conductor fires — quote the sidecar or name why unread |
-| **Liaison** (IDE continuity lead when not the conductor) | **Default register** = liaison register (BINDING — operator 2026-08-27). Speak so the human does not need the bus, scoreboard, `SCORE_RESURFACE`, or closeout open. Gloss IDs only when they change what he does next. Skill `audience-register` plain half is the closest written match; the duty name is **liaison register**, not that skill. Off when this seat *is* the conductor |
+| **Liaison** (IDE continuity lead when not the conductor) | **Default register** = liaison register (BINDING — operator 2026-08-27). Speak so the human does not need the bus, scoreboard, `SCORE_RESURFACE`, or closeout open. Gloss IDs only when they change what he does next. Skill `audience-register` plain half is the closest written match; the duty name is **liaison register**, not that skill. Off when this seat *is* the conductor. **Decide** = § Liaison-decide |
 | **Conductor** (cursor-sdk) | Load this skill on pickup — nest, tier, scoreboard, ¬ hand-code any G-row whose remainder is files+tests after a pick |
+
+### Liaison-decide (binding)
+
+Operator direction ≠ hop recipe. Anticipate harvested score / `NEXT_ADMIT: none` /
+spawn-stale materialize / in-flight orphan; choose the next useful move. Inform;
+do not wait for a rewritten recipe.
+
+**Decide-before-admit:** Use the `reasoning-posture` skill — pin Question / OOS /
+detent. Question is whether the leftover score is still the remit. Resident
+alwaysApply does **not** substitute for this cue.
+
+**Named hop vs harvested state:** `runbook:extraordinary-aperture`
+(`cortex://notes/runbooks/extraordinary-aperture.md`) — in-seat widen that can
+kill the conventional “replay that hop” frame. ¬ `/path-sim` cascade. ¬ remint
+a harvested conductor. ¬ leftover-execute.
+
+**Rematerialize trap:** `packet_kind=conductor` + `source_ref=todo:X` forbids
+`packet_path` and rematerializes the **old** conductor packet. Harvested score /
+`NEXT_ADMIT: none` ⇒ park remints. New remit ⇒ **new sibling todo** +
+`contract=implement` (Composer). Never replay the harvested conductor todo.
+W5 (`reuse_thread` + same `source_ref`) is unfinished-conductor only.
+
+### Follow up (operator phrases)
+
+Joint convention — the human-visible box lives on the continuity card
+(`## Follow up`). Any one phrase is enough. Distinct from page-on-stall and
+from CHECKPOINT (reconstitution index, not a follow-up ask).
+
+| Phrase | Liaison |
+|---|---|
+| `follow up` | Harvest what's terminal. One Been / Are / Going paragraph in the summoning IDE chat. ¬ new hop unless the last bind already said to admit. |
+| `follow up on the pager` · `page me when done` · `I'm leaving — follow up` | Same harvest + Use the `pager-notify` skill (awareness; ¬ `COME TO IDE` unless they said come to IDE). Aligns to that skill's “ping me when X”. |
+| `status` | Live hops + blockers only. ¬ decide-and-admit. |
+
+Named subject (`follow up when hedges land`) is the trigger. Hops still in
+flight → say so; do not invent done. `follow up` ≠ remint conductor ≠
+leftover-execute. Pin Question (`reasoning-posture`) then report.
 
 **Continuity-lead required-skill gate (BINDING):** before
 `team_dispatch(op=generate, seat=cursor-sdk, …)` for a conductor packet, the
@@ -163,7 +204,7 @@ Rates: `config/model_rates.yaml`.
 | Tier | Default conductor model | Effort | Use when |
 |---|---|---|---|
 | **T0 — mechanical drive** | omit `model=` → `cursor/composer-2.5` | (n/a) | Scoreboard fully bound; only nest Composer/investigate; conductor is traffic cop |
-| **T1 — default judgment** | **`cursor/grok-4.6`** | **`xhigh`** | **Standing default.** Multi-G orchestrate, rank, adjudicate — Cursor Models pool. Omit `fast` unless an arc pin names it (card omit-path). |
+| **T1 — default judgment** | **`cursor/grok-4.6`** | **`xhigh`** | **Standing default.** Multi-G orchestrate, rank, adjudicate — Cursor Models pool. Omit `fast` unless an arc pin **or the summoning continuity-doc `## Rules`** names it (card omit-path). Nested T1 judgment inherits when that house names T1 fast. |
 | **T2 — Other Models** | `cursor/claude-sonnet-5` | `xhigh`/`max` (`thinking=true`, `context=1m`) | Named trigger only — grok cannot hold the remit or the context window. **Explicit pin holds its card ceiling even unattended** — the pool cap only ever bites the *silent default* path (`resolve_desired_model`'s omit branch never resolves to Other Models for any contract), never a deliberate T2/T3 pick |
 | **T3 — premium** | `cursor/claude-opus-5` | full card (`low`→`max`) | Invariant-touching, architecture-suitability, ≥2 unranked co-primaries, recurrence — **inform-then-proceed** + one-line why (trigger is *whether to pick T3*, not the effort rung) |
 
@@ -249,6 +290,9 @@ team_dispatch(
 )
 ```
 
+First-utterance **mint** only. Harvested score / `NEXT_ADMIT: none` is the
+rematerialize trap (§ Liaison-decide), not this recipe.
+
 `{root}` = continuity root that already has turns, **or** a
 `lifecycle_state=pending` ∧ `turn_count==0` child of that root. Lifecycle-null
 pre-create 422s (`conductor_coord_split_refused`). Resume-after-terminal:
@@ -295,8 +339,11 @@ is open → 409.
 - Attended IDE spawn: resurface the score in the summoning chat at G3→G5 unless
   the summon named confer-and-finish.
 - `cursor-auto` / no live summoning chat = confer-and-finish (Q2 unchanged).
-- `ROW_PINNED` pages when away / explicit see-score; no pager when resurface is
-  the live summoning IDE chat.
+- `ROW_PINNED` / stall / QWA pages the operator when away, when see-score is
+  explicit, **or** when the summoning IDE is liaison (human not in that chat).
+  No pager only when the live summoning chat **is the human operator**.
+  Liaison IDE ≠ operator-present. Bus `Quiet with work in flight` is not a page
+  (`qwa-*` on the worker thread → `to=cursor` is the named miss; 9638#187).
 - Mode B admit-proof on CHECKPOINT when `CONSULT_PENDING`: `execution_id`+
   `poll_hint` or honest halt.
 
@@ -350,7 +397,9 @@ team_dispatch(
 ```
 
 **Packet carry is mandatory.** GIW preambles extract from **packet text only**.
-Re-admit with `source_ref` materialize (or the same packet + Use-line).
+Re-admit with `source_ref` materialize (or the same packet + Use-line) only
+when the conductor is **unfinished**. Harvested / `NEXT_ADMIT: none` is not
+resume — rematerialize trap (§ Liaison-decide).
 
 **Identity rewrite (binding on the new seat):**
 
@@ -507,7 +556,9 @@ the after-ship `cdp/opus-5` review comment (good default; ¬ a G-row).
 | `git-posture` | Lane-B branch land = merge/`git_land`; ¬ path-copy onto master. Conductor admit = standing "operator directs a merge" for its own branch (§ Run to completion) — ¬ a second gate |
 | `lean-context-dispatch-first` | Tier ladder + Opus inform-then-proceed |
 | `consult-routing` | Model split / non-primary gate · **cursor-sdk `lane=` caller recipe** (this skill does not own omit semantics) |
-| `life-operator-do-chain` | Hop names + products (Sketch → shape bind · Mission Composer → conductor score · this seat plays it) |
+| `life-operator-do-chain` | Hop names + products (Sketch → shape bind · Mission Composer → conductor score · this seat plays it) — named hop is direction, not a recipe when harvest conflicts |
+| `reasoning-posture` | Liaison decide-before-admit — pin Question / OOS / detent |
+| `runbook:extraordinary-aperture` | Named hop vs harvested state — in-seat widen; ¬ path-sim cascade |
 
 ## Anti-patterns
 
@@ -534,3 +585,4 @@ the after-ship `cdp/opus-5` review comment (good default; ¬ a G-row).
 | Independent `team_dispatch` (no `nest_under`) for mechanical G-row landing work | `nest_under=<conductor dispatch_id>` + Composer `contract=implement` — independent dispatch is judgment/spec-only |
 | Close G5 because G4 said “remainder is mechanical” + empty-template green | Hang G5; read the overlay or seed a fixture — G4 withhold is not a G5 witness |
 | Fire after-ship `cdp/opus-5` review and never read it | Summoning-thread lead quotes the overlay sidecar at harvest, or names why unread |
+| Treat named hop / `packet_kind=conductor` + `source_ref=todo:X` as a recipe when the score is harvested / `NEXT_ADMIT: none` | Liaison-decide; park remints; new remit → sibling todo + Composer implement |

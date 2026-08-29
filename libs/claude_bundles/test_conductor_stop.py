@@ -76,9 +76,18 @@ def test_pings_for_stops_default_includes_row_pinned() -> None:
     assert pings_for_stops(tokens) == frozenset({"ROW_PINNED", "HOLD_MERGE"})
 
 
-def test_pings_for_stops_live_summoning_chat_drops_row_pinned() -> None:
+def test_pings_for_stops_live_summoning_chat_keeps_row_pinned() -> None:
     tokens = frozenset({"ROW_PINNED", "HOLD_MERGE"})
     assert pings_for_stops(tokens, live_summoning_chat=True) == frozenset(
+        {"ROW_PINNED", "HOLD_MERGE"}
+    )
+
+
+def test_pings_for_stops_operator_present_drops_row_pinned() -> None:
+    tokens = frozenset({"ROW_PINNED", "HOLD_MERGE"})
+    assert pings_for_stops(
+        tokens, live_summoning_chat=True, operator_present=True
+    ) == frozenset(
         {"HOLD_MERGE"}
     )
 
@@ -87,7 +96,7 @@ def test_validate_conductor_closeout_live_summoning_chat() -> None:
     body = "ROW_PINNED HOLD_MERGE checkpoint"
     verdict = validate_conductor_closeout(body, live_summoning_chat=True)
     assert verdict.ok
-    assert "ROW_PINNED" not in verdict.pings_required
+    assert "ROW_PINNED" in verdict.pings_required
     assert "HOLD_MERGE" in verdict.pings_required
 
 

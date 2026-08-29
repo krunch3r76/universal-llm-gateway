@@ -173,10 +173,15 @@ def pings_for_stops(
     tokens: frozenset[str],
     *,
     live_summoning_chat: bool = False,
+    operator_present: bool = False,
 ) -> frozenset[str]:
-    """Return stop tokens that require operator ping per ping table."""
+    """Return stop tokens that require operator ping per ping table.
+
+    ``live_summoning_chat`` alone does not suppress ``ROW_PINNED`` — liaison
+    IDE is not operator-present (9638#187). Only ``operator_present`` drops it.
+    """
     pings = tokens & _PING_STOPS
-    if live_summoning_chat:
+    if live_summoning_chat and operator_present:
         return pings - frozenset({"ROW_PINNED"})
     return pings
 
@@ -233,6 +238,7 @@ def validate_conductor_closeout(
     *,
     require_mode_b_proof: bool = False,
     live_summoning_chat: bool = False,
+    operator_present: bool = False,
     packet_text: str | None = None,
 ) -> CloseoutStopVerdict:
     """Validate closeout stop vocabulary + optional Mode B admit-proof."""
@@ -277,6 +283,7 @@ def validate_conductor_closeout(
         pings_required=pings_for_stops(
             parsed.tokens,
             live_summoning_chat=live_summoning_chat,
+            operator_present=operator_present,
         ),
     )
 
