@@ -283,6 +283,10 @@ Fable on the seed path.
 
 Name: `todo:{slug}` · entry gate · consult URI · recon URI.
 
+Conductor fault after spawn: operator names the worker/lane to the sitting
+liaison (specimen 9638). That house debugs. ¬ fold seed into the liaison
+drop list — the command stays punch-then-spawn.
+
 ## Kind deltas
 
 | Stage | feature-add | investigate+fix |
@@ -298,6 +302,7 @@ Name: `todo:{slug}` · entry gate · consult URI · recon URI.
 |---|---|
 | Fable answer on disk, no `derived_from` | S5 attach ≺ G1 skip claim |
 | Spawn conductor before S4a | S4a first |
+| Rewrite `/work-item-seed` into a liaison drop-list | Seed stays spawn; conductor fault → operator names the lane to the sitting liaison |
 | Halt S4a until Fable harvest | Mode B = Fable-before-S4b; identity always fires |
 | Feature vs bug as two workflows | One path; kind attribute |
 | Copy rich-seed field lists into this skill | Point `/todo` + rich-seed decision |

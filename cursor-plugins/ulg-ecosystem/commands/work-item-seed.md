@@ -59,6 +59,10 @@ After S4a, spawn `packet_kind=conductor` per skill § S6. Pass
 `dispatch_thread_id` ∈ {continuity root with turns, pending-empty child of root}.
 Receipt identity is the admitted thread + `branch_current=cursor-sdk/lane-{that id}`.
 
+Conductor fault after spawn: operator names the lane to the sitting liaison
+(specimen 9638). Debug lives there. ¬ rewrite this command into that house's
+drop list.
+
 Mode B admit-proof binds the **conductor CHECKPOINT**, not this IDE turn.
 
 ## Skills
