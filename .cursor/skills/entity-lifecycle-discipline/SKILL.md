@@ -81,7 +81,7 @@ Invoked Cortex command. Operator trigger → execute the body at `source_uri`. N
 
 Shape: `description` = trigger + one-line pointer; `source_uri` = `cortex://notes/runbooks/{slug}.md` or an existing capability card; ≥1 assertion with `evidence_uris` to the body; edges to touch-points. One handle — ¬ also mint `document:{slug}-runbook`.
 
-Mint via `teach-once-routine-mint` when a taught path is invoked and fails the skill split-test. SOT: `decision:runbook-as-cortex-command`.
+Mint via `teach-once-routine-mint` when a taught path is invoked and fails the skill split-test. Body authoring: that skill § Author runbook body (skill-writing principles, ¬ SkillReducer pipeline). SOT: `decision:runbook-as-cortex-command`.
 
 ### Execution / dispatch thread pattern
 
