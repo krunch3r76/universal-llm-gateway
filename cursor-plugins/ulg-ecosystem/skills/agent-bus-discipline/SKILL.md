@@ -85,7 +85,7 @@ State reconstitution default = tip CHECKPOINT + roadmap (+ scoreboard when chart
 
 | Surface | Required when | Minimum |
 |---|---|---|
-| **Objective** | always on birth | one bound sentence (`Objective:`, `## Anchor`, or `Primary OPEN:`) |
+| **Objective** | always on birth; reprint on every continuity resume as **`Mission:`** + In/Out | one bound sentence (`Objective:`, `## Anchor`, or `Primary OPEN:`) — `decision:continuity-resume-mission-open` |
 | **Scoreboard** | deliverable sequence ∨ `charter-runner` enrolled | `cortex://…/<thread-id>-charter-scoreboard.md` indexed in CHECKPOINT |
 | **Continuity doc** | manual root without scoreboard yet | `continuity-doc` or `Charter: cortex://…` pointer + objective |
 | **Stance** | `orchestrator_continuity` (unenrolled) | `## Stance`: Use the `ulg-for-llms` skill + `## Why this house` (durable on the continuity-doc; birth CP indexes). `tick_charter` skips |

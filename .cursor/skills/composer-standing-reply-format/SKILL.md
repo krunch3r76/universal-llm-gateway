@@ -51,28 +51,28 @@ Lead with problem → direction + decision. Operator may stop after the first tw
 
 Operator correction class (2026-07-19 / friction 25419): seats reconstituted from CHECKPOINTs internally (orchestrator-workflow R12 resume step 0) but opened the operator turn without restating the charter — even with this skill active. Internal reconstitution ≠ operator-facing orientation.
 
-**Profile gate (binding — todo:orchestration-resume-charter-print):** This section binds **`orchestrator_continuity`** manual orchestration roots only (¬ root tagged `charter-runner` / `tick_charter`). Discriminator: `agent-bus-discipline` § Two CHECKPOINT profiles. **`tick_charter`** resume: internal step 0 still applies; slot 1 is **not** this ceremony — report tick index (wave · in-flight · next pickup). Composes with `operator-posture` Rule 3 (shared_sync / claude.ai SOT).
+**Profile gate (binding — todo:orchestration-resume-charter-print):** Continuity-root resume always opens with **`Mission:`** + In/Out (`decision:continuity-resume-mission-open`). The rest of this section binds **`orchestrator_continuity`** only (¬ root tagged `charter-runner` / `tick_charter`). Discriminator: `agent-bus-discipline` § Two CHECKPOINT profiles. **`tick_charter`** resume: Mission + Scope, then tick index (wave · in-flight · next pickup) — ¬ the state walk. Composes with `operator-posture` Rule 3.
 
-**Fire when any holds (and profile = `orchestrator_continuity`):** reply after a CHECKPOINT turn, `resume <thread#>`, pasted orchestration handoff, or any standing-root pickup that has a charter/brief/scoreboard.
+**Fire when any holds (and profile = `orchestrator_continuity`):** reply after a CHECKPOINT turn, `resume <thread#>`, pasted orchestration handoff, or any standing-root pickup that has a charter/brief/scoreboard/Objective.
 
-**Slot 1 MUST lead with both**, in spoken prose, before surfaces detail or the decision line:
+**Slot 1 MUST lead with**, in spoken prose, before surfaces detail or the decision line:
 
-1. **Charter** — the root's **original** objective in one sentence (what success is). Same referent as operator-posture § Charter referent — not a mid-session seeded todo or parked friction.
-2. **Current state** — compact vs that objective: what's settled · what's live · what's next (≤3 short clauses). Outcomes and position, not mechanism and not a scoreboard row walk.
-3. **`In one line:`** — one explicit labeled sentence distilling what the arc/session is doing (after Been→Are→Going when rule 1 orientation precedes slot 1; todo:checkpoint-resume-one-liner). The scan line — not a substitute for charter + state above.
+1. **`Mission:`** — the root's **original** Objective in one sentence (what success is) plus **In** / **Out**. Same referent as operator-posture § Charter / mission referent — not a mid-session seeded todo, parked friction, or slug.
+2. **Current state** — compact vs that mission: what's settled · what's live · what's next (≤3 short clauses). Outcomes and position, not mechanism and not a scoreboard row walk.
+3. **`In one line:`** — one explicit labeled sentence distilling what the arc/session is doing (after Been→Are→Going when rule 1 orientation precedes slot 1; todo:checkpoint-resume-one-liner). The scan line — not a substitute for mission + state above.
 
-Surfaces card (below) may follow when ≥2 live surfaces; it does **not** replace charter + state + In one line.
+Surfaces card (below) may follow when ≥2 live surfaces; it does **not** replace mission + state + In one line.
 
 | Miss | Why |
 |---|---|
-| Jump to decision / WIP / fork with no charter sentence | Cold reader cannot tell what arc this is |
+| Jump to decision / WIP / fork with no Mission + In/Out | Cold reader cannot agree the lock |
 | Surfaces-only open with no charter purpose | Status of pieces ≠ charter of the whole |
 | A1–A8 / slug inventory as “state” | Scoreboard dump (still banned); state is a spoken position line |
-| Charter + state without explicit `In one line:` | Missing scan sentence (todo:checkpoint-resume-one-liner) |
+| Mission + state without explicit `In one line:` | Missing scan sentence (todo:checkpoint-resume-one-liner) |
 
-`checkpoint_or_orchestration_resume ∧ slot-1-omits-(charter ∨ current_state ∨ in_one_line)` ⇒ format miss.
+`checkpoint_or_orchestration_resume ∧ slot-1-omits-(mission ∨ current_state ∨ in_one_line)` ⇒ format miss.
 
-Composes with operator-posture: `¬` dump scoreboard rows **≠** omit charter. Inventory dump remains a miss; charter silence is the other miss.
+Composes with operator-posture: `¬` dump scoreboard rows **≠** omit mission. Inventory dump remains a miss; mission silence is the other miss.
 
 ## Re-entry orientation (multi-session operator)
 
