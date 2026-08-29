@@ -1570,6 +1570,16 @@ async def _deliver_sdk_closeout(
     extra_deviations: tuple[str, ...] = (),
     worktree_isolated: bool = False,
 ) -> None:
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_closeout_pager import (
+        page_conductor_silence,
+    )
+
+    await page_conductor_silence(
+        degraded_reason=degraded_reason,
+        nest_under=req.nest_under,
+        dispatch_id=req.dispatch_id,
+        thread_id=req.thread_id,
+    )
     baseline = await asyncio.to_thread(
         CursorDispatchLedger.instance().read_wt_baseline,
         dispatch_id=req.dispatch_id,
