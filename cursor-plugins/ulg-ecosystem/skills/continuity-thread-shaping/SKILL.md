@@ -88,7 +88,9 @@ This skill owns the **file** header. CHECKPOINT B1–B5 stay in `checkpoint-sche
 | `## Objective` | yes | Mission + In / Out |
 | `## Rules` | yes | lane law that **overrides** global skill omit-paths |
 
-Newest-first journal prepends **below** this header. Body below may shape. One schema, one file per root.
+Newest-first journal prepends **below** this header — never above it. Body below may shape. One schema, one file per root.
+
+**Bounded archive:** older `# Current` cuts fold into `## Archive` on the **same** file when the header + newest cut no longer fit a `fs read offset=0 limit≈120` budget. ¬ a second file (`{N}-window-ledger` / `{N}-recall.md`). Specimen drift: 9582 opens with `# Current`, header buried (~line 859) — reorder header-first on next touch; missing `## Rules` is a house gap (not legal), not this skill's mint on that root.
 
 ### `## Rules` (field)
 
@@ -121,7 +123,7 @@ Slot **order** = `operator-posture` Rule 3. This skill owns **fill sources**.
 | 2 In / Out | same block | widen silently |
 | 3 been / are | tip `## State` + Handoff pointer | `## Windows` · linear thread |
 | 4 `In one line:` | tip Handoff *State (1 line)* | omit the label |
-| 5 Settled / Live / Next | file `## Settled` · tip `## WIP` · tip `## Next pickup` | inventory dump · scoreboard paste |
+| 5 Settled / Live / Next | newest `# Current` full cut · tip `## Next pickup` | overwrite snapshot tables · inventory dump · scoreboard paste |
 | 5b Lane rules | file `## Rules` | omit and follow a global skill omit-path |
 | 6 Tab + reconstitution | tip CHECKPOINT turn# · leftover imprint assertion/edge ids on hub or matter · resume CITE turn | chat as memory |
 | 7 What I need from you | `OPERATOR_GATE` / `HOLD_MERGE` · hub deadlines | model-seat work · direction quiz |
@@ -133,7 +135,7 @@ Slot 6 is the only slot this skill originates — spoken form of "the imprint is
 | Reader job | Body | Default edges | Specimen |
 |---|---|---|---|
 | sit-journal | newest-first `# Current` below header | `related_to` worker todos | 9582 |
-| liaison-inbox | `owner=` next-pickup; rows = pointers. **Temporary**, ¬ default foreign-work drop. Inbound: table below | `references` decisions/frictions | 9638 |
+| liaison-inbox | **Recall** = newest-first `# Current` **full cut** (keys `score · stop · land · live · break · next`), written on `status` / `follow up` / every harvest, never edited. Inbox `owner=` table stays the **drop list**, not the recall surface. Inbound: table below. **Temporary** drop list, ¬ default foreign-work dump. | `references` decisions/frictions | 9638 |
 | runbook-recall | runbook table + hazards | `references` `runbook:*` | 9732 |
 
 A row exists only with ≥1 living specimen. `screenshot-spec` is a sidecar kind, ¬ a catch-up shape.
@@ -173,7 +175,8 @@ Test: *would this line still be true as a `runbook:` for one matter?* ⇒ pointe
 | Stuff unrelated work on the open liaison | Matter node or new root |
 | Reconstruct from chat | Hub → file → tip |
 | Copy the full template when a `# Current` journal meets the reader | Header-first + sit-journal below |
-| Mint `{N}-window-ledger.md` or a second CHECKPOINT profile | One schema, one file, body may shape |
+| Overwrite a mutate-in-place scores / pickup snapshot | Prepend a `# Current` full cut; prior entry is the audit |
+| Mint `{N}-window-ledger.md` / `{N}-recall.md` or a second CHECKPOINT profile | One schema, one file, body may shape; older cuts → same-file `## Archive` |
 | Both `{matter-slug}` and `{N}-continuity` for one root | One hub |
 | Mint `{N}-continuity` for a work / conductor-worker / MONITOR thread | House the root; pointer the worker |
 | Hub as leftover parking lot | `residual-imprint` on the matter |
