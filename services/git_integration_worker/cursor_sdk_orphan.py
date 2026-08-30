@@ -33,7 +33,6 @@ _BRIDGE_MARKERS = (
     "cursor_sdk_bridge",
     "cursor-sdk bridge",
 )
-_NON_BRIDGE_MARKERS = ("sms-bridge", "sms_bridge")
 
 _lock = threading.Lock()
 _active_clients: dict[str, Client] = {}
@@ -55,8 +54,8 @@ class BridgeReapResult:
 def is_cursor_sdk_bridge_process(proc: psutil.Process) -> bool:
     """Return whether *proc* is a cursor-sdk bridge rather than an inherited env match.
 
-    Requires bridge cmdline/exe markers and rejects sms-bridge-shaped processes
-    that only inherited ``CURSOR_SDK_DISPATCH_ID`` from a parent shell.
+    Requires bridge cmdline/exe markers. Env-only matches (dispatch id in environ,
+    no bridge marker in cmdline/exe) return False.
     """
     try:
         cmdline = proc.cmdline()
@@ -64,8 +63,6 @@ def is_cursor_sdk_bridge_process(proc: psutil.Process) -> bool:
     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
         return False
     haystack = f"{' '.join(cmdline)} {exe}".lower()
-    if any(marker in haystack for marker in _NON_BRIDGE_MARKERS):
-        return False
     configured = os.environ.get(_BRIDGE_BIN_ENV, "").strip()
     if configured and configured.lower() in haystack:
         return True
@@ -76,7 +73,7 @@ def reap_orphan_bridge_os(dispatch_id: str) -> BridgeReapResult:
     """Kill a surviving cursor-sdk bridge subprocess stamped with *dispatch_id*.
 
     Scans live processes for ``CURSOR_SDK_DISPATCH_ID`` plus bridge cmdline/exe
-    identity. Skips env-only matches (e.g. sms-bridge inheritance). Returns a
+    identity. Skips env-only matches. Returns a
     ``BridgeReapResult`` describing kill success and whether a matched bridge
     resisted termination; best-effort and never raises.
     """

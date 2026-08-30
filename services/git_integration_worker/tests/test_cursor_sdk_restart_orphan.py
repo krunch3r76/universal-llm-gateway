@@ -105,17 +105,17 @@ def test_emit_restart_survivor_terminal() -> None:
     assert emitted[-1][1]["bridge_aborted"] is True
 
 
-def test_is_cursor_sdk_bridge_process_rejects_sms_bridge() -> None:
+def test_is_cursor_sdk_bridge_process_rejects_non_bridge_daemon() -> None:
     class _Proc:
         pid = 999
 
         @staticmethod
         def cmdline() -> list[str]:
-            return ["/usr/bin/sms-bridge", "--serve"]
+            return ["some-daemon", "--serve"]
 
         @staticmethod
         def exe() -> str:
-            return "/usr/bin/sms-bridge"
+            return "/usr/bin/some-daemon"
 
     assert not is_cursor_sdk_bridge_process(_Proc())  # type: ignore[arg-type]
 
@@ -140,7 +140,7 @@ def test_reap_orphan_bridge_os_skips_non_bridge_env_match(
 ) -> None:
     dispatch_id = "d-reap-skip"
 
-    class _SmsProc:
+    class _NonBridgeProc:
         pid = 1001
 
         @staticmethod
@@ -149,11 +149,11 @@ def test_reap_orphan_bridge_os_skips_non_bridge_env_match(
 
         @staticmethod
         def cmdline() -> list[str]:
-            return ["sms-bridge"]
+            return ["some-daemon"]
 
         @staticmethod
         def exe() -> str:
-            return "/usr/bin/sms-bridge"
+            return "/usr/bin/some-daemon"
 
     class _BridgeProc:
         pid = 1002
@@ -181,7 +181,7 @@ def test_reap_orphan_bridge_os_skips_non_bridge_env_match(
 
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_orphan.psutil.process_iter",
-        lambda *args, **kwargs: [_SmsProc(), bridge],
+        lambda *args, **kwargs: [_NonBridgeProc(), bridge],
     )
     result = reap_orphan_bridge_os(dispatch_id)
     assert isinstance(result, BridgeReapResult)

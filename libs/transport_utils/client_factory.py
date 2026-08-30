@@ -51,11 +51,6 @@ EMAIL_BRIDGE_SOCK = os.environ.get(
 )
 DEFAULT_EMAIL_BRIDGE_URL = f"unix://{EMAIL_BRIDGE_SOCK}"
 
-SMS_BRIDGE_SOCK = os.environ.get(
-    "SMS_BRIDGE_SOCK", "/tmp/universal-protocol/sms-bridge.sock"
-)
-DEFAULT_SMS_BRIDGE_URL = f"unix://{SMS_BRIDGE_SOCK}"
-
 
 def parse_rag_url(url: str) -> tuple[str | None, str]:
     """Parse a service URL into (uds_path, base_url)."""
