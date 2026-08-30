@@ -6,7 +6,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from claude_bundles.compose_chip_probe import _size_reject, try_click_compose_chip
+from claude_bundles.compose_chip_probe import (
+    _size_reject,
+    collect_effort_candidates,
+    try_click_compose_chip,
+)
 from claude_bundles.events_compose_attest import (
     emit_compose_attested,
     emit_compose_attested_from_result,
@@ -24,6 +28,37 @@ def test_size_reject_bounds() -> None:
     assert _size_reject(None) == {"reason": "no_box"}
     assert _size_reject({"width": 10, "height": 20})["reason"] == "size"
     assert _size_reject({"width": 40, "height": 20}) is None
+
+
+@pytest.mark.asyncio
+async def test_collect_effort_candidates_returns_dom_rows() -> None:
+    """a:31333 — census matches Effort vocabulary; tolerates a PUA-suffixed row.
+
+    Fixture mirrors the exact live-observed row from production (a real
+    trailing ``U+E02A`` chevron glyph) — the row must still come through the
+    census as a normal candidate, codepoints included, not get filtered out.
+    """
+    page = AsyncMock()
+    page.evaluate = AsyncMock(
+        return_value=[
+            {
+                "tag": "DIV",
+                "role": "menuitem",
+                "aria": "",
+                "text": "Effort\nExtra\n\ue02a",
+                "codepoints": ["U+0045", "U+0066", "U+0066", "U+E02A"],
+                "offsetParent": True,
+                "w": 200.0,
+                "h": 32.0,
+            }
+        ]
+    )
+    rows = await collect_effort_candidates(page)
+    assert len(rows) == 1
+    assert rows[0]["role"] == "menuitem"
+    assert rows[0]["text"] == "Effort\nExtra\n\ue02a"
+    assert rows[0]["codepoints"][-1] == "U+E02A"
+    page.evaluate.assert_awaited_once()
 
 
 def test_emit_compose_attested_dual_ids_every_row() -> None:

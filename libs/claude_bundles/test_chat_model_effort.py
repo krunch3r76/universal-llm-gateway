@@ -9,10 +9,34 @@ import pytest
 
 from claude_bundles.chat_model_effort import (
     _EFFORT_ROW,
+    _apply_effort,
     _effort_after_click,
+    _effort_trigger,
     set_effort,
 )
 from claude_bundles.chat_model_select import _open_picker, select_from_ui
+
+
+class _StaticLoc:
+    """Minimal locator stub: fixed or scripted ``count()``, no ``filter()``."""
+
+    def __init__(self, count_value: int = 0, count_side_effect=None) -> None:
+        if count_side_effect is not None:
+            self.count = AsyncMock(side_effect=count_side_effect)
+        else:
+            self.count = AsyncMock(return_value=count_value)
+        self.first = self
+        self.click = AsyncMock()
+
+
+class _MenuitemLocator:
+    """``page.locator("[role=menuitem]")`` stub — only ``.filter()`` matters."""
+
+    def __init__(self, filtered: _StaticLoc) -> None:
+        self._filtered = filtered
+
+    def filter(self, has_text=None, **_kwargs):  # noqa: ANN001 — mirrors Playwright
+        return self._filtered
 
 
 class _CountLoc:
@@ -309,6 +333,105 @@ async def test_set_effort_clicks_effort_row_when_testid_absent() -> None:
     assert result["option_via"] == "label-radio"
     effort_row = locs["[role=menuitem]"].filter(has_text=_EFFORT_ROW)
     assert effort_row.click.await_count == 1
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_effort_trigger_retries_before_giving_up() -> None:
+    """a:31333 — flyout trigger can mount a beat late; poll before failing.
+
+    testid and ``[role=menuitem]`` text-match both stay missing throughout;
+    only the ``get_by_role`` name match hits, and only on the third attempt.
+    """
+    testid_loc = _StaticLoc(0)
+    row_loc = _StaticLoc(0)
+    menuitem_locator = _MenuitemLocator(row_loc)
+    named_loc = _StaticLoc(count_side_effect=[0, 0, 1])
+
+    def _page_locator(sel, **_kwargs):
+        if sel == '[data-testid="effort-menu-trigger"]':
+            return testid_loc
+        if sel == "[role=menuitem]":
+            return menuitem_locator
+        raise AssertionError(f"unexpected locator: {sel}")
+
+    page = AsyncMock()
+    page.wait_for_timeout = AsyncMock()
+    page.locator = _page_locator
+    page.get_by_role = lambda *_a, **_k: named_loc
+
+    trigger, via = await _effort_trigger(page)
+    assert trigger is named_loc
+    assert via == "menuitem-name"
+    assert named_loc.count.await_count == 3
+    # Polled between attempts (2x for 3 attempts), never after the final hit.
+    assert page.wait_for_timeout.await_count == 2
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_effort_trigger_gives_up_after_retries_exhausted() -> None:
+    """All three lookup strategies miss on every attempt ⇒ (None, None)."""
+    testid_loc = _StaticLoc(0)
+    row_loc = _StaticLoc(0)
+    menuitem_locator = _MenuitemLocator(row_loc)
+    named_loc = _StaticLoc(0)
+
+    def _page_locator(sel, **_kwargs):
+        if sel == '[data-testid="effort-menu-trigger"]':
+            return testid_loc
+        if sel == "[role=menuitem]":
+            return menuitem_locator
+        raise AssertionError(f"unexpected locator: {sel}")
+
+    page = AsyncMock()
+    page.wait_for_timeout = AsyncMock()
+    page.locator = _page_locator
+    page.get_by_role = lambda *_a, **_k: named_loc
+
+    trigger, via = await _effort_trigger(page)
+    assert trigger is None
+    assert via is None
+    assert named_loc.count.await_count == 3
+    assert page.wait_for_timeout.await_count == 2
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_apply_effort_failure_includes_candidate_census() -> None:
+    """a:31333 — effort_failed dumps a full DOM census, not just available_models."""
+    page = AsyncMock()
+    page.keyboard.press = AsyncMock()
+    page.wait_for_timeout = AsyncMock()
+    candidates = [{"role": "menuitem", "text": "Effort", "aria": ""}]
+
+    with (
+        patch(
+            "claude_bundles.chat_model_select._open_picker",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "claude_bundles.chat_model_effort.set_effort",
+            new_callable=AsyncMock,
+            return_value={"ok": False, "step": "effort_trigger_missing"},
+        ),
+        patch(
+            "claude_bundles.chat_model_select.current_model_label",
+            new_callable=AsyncMock,
+            return_value="Model: Opus 5 High",
+        ),
+        patch(
+            "claude_bundles.chat_model_effort.collect_effort_candidates",
+            new_callable=AsyncMock,
+            return_value=candidates,
+        ) as candidates_mock,
+    ):
+        result = await _apply_effort(page, "extra", matched="Opus 5")
+
+    assert result["ok"] is False
+    assert result["step"] == "effort_failed"
+    assert result["candidates"] == candidates
+    candidates_mock.assert_awaited_once()
 
 
 @pytest.mark.offline

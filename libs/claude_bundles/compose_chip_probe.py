@@ -138,6 +138,45 @@ async def collect_approval_candidates(page) -> list[dict[str, Any]]:
     return list(raw or [])
 
 
+async def collect_effort_candidates(page) -> list[dict[str, Any]]:
+    """Census Effort-trigger/option candidates for failure dumps (a:31333).
+
+    Mirrors ``collect_approval_candidates`` for the effort flyout: matches on
+    either aria or text against the effort vocabulary (Effort/Low/Medium/
+    High/Extra/Max) rather than requiring one exact label. Also records raw
+    codepoints so a trailing icon-font glyph (confirmed benign via live
+    census against production — a real ``U+E03B``/``U+E02A`` suffix that the
+    existing substring-based matching already tolerates) is distinguishable
+    from a genuinely missing row, rather than re-litigating that theory on
+    every future ``effort_trigger_missing``.
+    """
+    raw = await page.evaluate(
+        """() => {
+          const wanted = /effort|low|medium|high|extra|max/i;
+          const out = [];
+          const sel = '[role="menuitem"], [role="menuitemradio"]';
+          for (const el of document.querySelectorAll(sel)) {
+            const aria = el.getAttribute('aria-label') || '';
+            const text = (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
+            if (!wanted.test(aria) && !wanted.test(text)) continue;
+            const r = el.getBoundingClientRect();
+            out.push({
+              tag: el.tagName,
+              role: el.getAttribute('role') || '',
+              aria,
+              text: text.slice(0, 60),
+              codepoints: Array.from(text).map((ch) => 'U+' + ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')),
+              offsetParent: !!el.offsetParent,
+              w: r.width,
+              h: r.height,
+            });
+          }
+          return out;
+        }"""
+    )
+    return list(raw or [])
+
+
 def _size_reject(box: dict[str, float] | None) -> dict[str, Any] | None:
     if not box:
         return {"reason": "no_box"}

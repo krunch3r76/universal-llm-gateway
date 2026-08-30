@@ -2,6 +2,22 @@
 
 Callers include ``chat_model_select.select_from_ui`` and ``_effort_after_click``.
 Invariant: ``set_effort`` stays submenu-only and never clicks Cowork effort-qualified radios.
+
+a:31333 (2026-08-29): friction theorized a live claude.ai UI change — a trailing
+Private-Use-Area glyph on the "Opus 5" row (``U+E03B``) — broke the effort
+picker. A live census against production (isolated tab, real ``select_model``/
+``_effort_trigger``/``set_effort`` calls, raw codepoint dump) found that glyph
+is real but benign: it's a checkmark icon on the *selected* family radio, and
+an identical-class chevron glyph (``U+E02A``) sits on the "Effort" row itself
+— both tolerated fine by the existing substring-based regex matching (none of
+it anchors on string end). The census could not reproduce
+``effort_trigger_missing`` at all; ``_effort_trigger`` found the row on the
+first try every time. That, plus this exact call site being the target of two
+prior fixes for the same symptom (a:31011, a:31119), points to a render race
+on the freshly-reopened popover rather than a markup regression — the same
+class of flake ``chat_model_select._open_picker`` already retries for family
+radios, just never applied here. ``_effort_trigger`` now polls briefly instead
+of failing on the first miss.
 """
 
 from __future__ import annotations
@@ -17,8 +33,11 @@ from claude_bundles.chat_model_match import (
     match_effort_qualified_radio,
     parse_model_request,
 )
+from claude_bundles.compose_chip_probe import collect_effort_candidates
 
 _EFFORT_ROW = re.compile(r"\bEffort\b", re.I)
+_EFFORT_TRIGGER_RETRIES = 3
+_EFFORT_TRIGGER_POLL_MS = 400
 
 
 async def _count(locator) -> int:
@@ -26,16 +45,24 @@ async def _count(locator) -> int:
 
 
 async def _effort_trigger(page):
-    """Legacy testid, else the Cowork/Chat ``Effort`` menuitem (a:31119)."""
-    testid = page.locator('[data-testid="effort-menu-trigger"]')
-    if await _count(testid):
-        return testid, "testid"
-    row = page.locator("[role=menuitem]").filter(has_text=_EFFORT_ROW)
-    if await _count(row):
-        return row, "menuitem"
-    named = page.get_by_role("menuitem", name=_EFFORT_ROW)
-    if await _count(named):
-        return named, "menuitem-name"
+    """Legacy testid, else the Cowork/Chat ``Effort`` menuitem (a:31119).
+
+    Polls briefly (a:31333) — on a freshly re-opened picker the flyout
+    trigger row can mount a beat after the family radios do, the same class
+    of render race ``chat_model_select._open_picker`` already retries for.
+    """
+    for attempt in range(_EFFORT_TRIGGER_RETRIES):
+        testid = page.locator('[data-testid="effort-menu-trigger"]')
+        if await _count(testid):
+            return testid, "testid"
+        row = page.locator("[role=menuitem]").filter(has_text=_EFFORT_ROW)
+        if await _count(row):
+            return row, "menuitem"
+        named = page.get_by_role("menuitem", name=_EFFORT_ROW)
+        if await _count(named):
+            return named, "menuitem-name"
+        if attempt < _EFFORT_TRIGGER_RETRIES - 1:
+            await page.wait_for_timeout(_EFFORT_TRIGGER_POLL_MS)
     return None, None
 
 
@@ -108,6 +135,9 @@ async def _apply_effort(page, effort: str, *, matched: str | None) -> dict:
             "after": after,
             "effort": effort_result,
             "matched": matched,
+            # a:31333 — full DOM census on failure so a recurrence is
+            # diagnosable from the failure dump alone, not another live census.
+            "candidates": await collect_effort_candidates(page),
         }
     await page.keyboard.press("Escape")
     await page.wait_for_timeout(400)
