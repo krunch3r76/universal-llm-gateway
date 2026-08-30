@@ -9,6 +9,12 @@ Verified on Jupiter CDP ask profile (:9223) 2026-07-16:
 - Cowork + Auto default on bare ``/new`` (friction 25051).
 - Chat via ``ensure_chat_compose`` — **operator-gated only** until dogfood passes.
 - Toggle repair + poll-until-attest (friction 25052 — dual-primary Q1 bind).
+
+a:31319 (2026-08-30): the approval chip can render with **no aria-label at
+all** — a live census found a bare ``<button>`` reading just ``"Auto"``. The
+old aria-only assumption above is no longer guaranteed; ``approval_label``
+(compose_attest) and the short-form regex alternation below cover the
+aria-less short-text shape alongside the original sentence-form aria.
 """
 
 from __future__ import annotations
@@ -18,10 +24,12 @@ from typing import Any, Literal
 
 from claude_bundles.compose_attest import (
     _POLL_MS,
+    approval_label,
     await_compose_attest,
     compose_mode_fingerprint,
 )
 from claude_bundles.compose_chip_probe import (
+    collect_approval_candidates,
     collect_chip_candidates,
     collect_radiogroup_evidence,
     try_click_compose_chip,
@@ -35,10 +43,12 @@ _CHIP_POLL_TIMEOUT_S = 8.0
 ApprovalMode = Literal["auto", "manual", "skip"]
 ComposeMode = Literal["chat", "cowork"]
 
+# Short-form alternation (a:31319) — chip can render aria-less with just the
+# bare state name as its button text.
 _APPROVAL_ARIA = {
-    "auto": re.compile(r"Automatically approve", re.I),
-    "manual": re.compile(r"Manually approve", re.I),
-    "skip": re.compile(r"Skip all approvals|Never pause", re.I),
+    "auto": re.compile(r"Automatically approve|^Auto$", re.I),
+    "manual": re.compile(r"Manually approve|^Manual$", re.I),
+    "skip": re.compile(r"Skip all approvals|Never pause|^Skip$", re.I),
 }
 
 _APPROVAL_MENU = {
@@ -219,7 +229,15 @@ async def select_compose_mode(page, mode: ComposeMode) -> dict[str, Any]:
 
 
 async def _open_approval_menu(page) -> dict[str, Any]:
-    """Click current approval chip (Manual/Auto/Skip)."""
+    """Click current approval chip (Manual/Auto/Skip) and confirm a menu opened.
+
+    a:31319 — the chip's aria-label can be entirely absent, and a click
+    landing on *some* button is not proof the approval dropdown opened (the
+    click might land on an unrelated aria-less control). Verify a
+    ``menuitemradio`` actually appeared before reporting success; on
+    exhaustion, dump every Auto/approve/manual/skip-like candidate so the
+    next occurrence is a one-look diagnosis instead of a fresh investigation.
+    """
     for aria_re in (
         _APPROVAL_ARIA["auto"],
         _APPROVAL_ARIA["manual"],
@@ -229,24 +247,33 @@ async def _open_approval_menu(page) -> dict[str, Any]:
         if await loc.count():
             await loc.first.click(force=True)
             await page.wait_for_timeout(1000)
-            return {"ok": True, "opened_via": "aria", "pattern": aria_re.pattern}
-    # Fallback: visible Manual/Auto button text
-    for pat in (r"^Manual", r"^Auto", r"^Skip"):
-        loc = page.locator("button").filter(has_text=re.compile(pat, re.I))
+            if await page.get_by_role("menuitemradio").count():
+                return {"ok": True, "opened_via": "aria", "pattern": aria_re.pattern}
+    # Fallback: visible Manual/Auto/Skip button text (chip may carry no aria).
+    for pat in (r"^Manual\b", r"^Auto\b", r"^Skip\b"):
+        loc = page.locator('button, [role="button"]').filter(
+            has_text=re.compile(pat, re.I)
+        )
         if await loc.count():
             await loc.first.click(force=True)
             await page.wait_for_timeout(1000)
-            return {"ok": True, "opened_via": "text", "pattern": pat}
-    return {"ok": False, "step": "approval_control_missing"}
+            if await page.get_by_role("menuitemradio").count():
+                return {"ok": True, "opened_via": "text", "pattern": pat}
+    return {
+        "ok": False,
+        "step": "approval_control_missing",
+        "candidates": await collect_approval_candidates(page),
+    }
 
 
 async def set_approval_mode(page, mode: ApprovalMode = "auto") -> dict[str, Any]:
     """Set Cowork approval mode. Requires Cowork compose chrome."""
     before = await compose_mode_fingerprint(page)
     wanted_aria = _APPROVAL_ARIA[mode]
-    if before.get("approval") and wanted_aria.search(
-        before["approval"].get("aria") or ""
-    ):
+    # approval_label falls back to the chip's short text when aria is absent
+    # (a:31319) — without this, an already-attested aria-less "Auto" chip
+    # would fall through to _open_approval_menu and click needlessly.
+    if before.get("approval") and wanted_aria.search(approval_label(before)):
         return {
             "ok": True,
             "step": f"already_{mode}",
@@ -295,21 +322,22 @@ async def set_approval_mode(page, mode: ApprovalMode = "auto") -> dict[str, Any]
                 "opened": opened,
                 "before": before,
                 "exclusive": exclusive,
+                "candidates": await collect_approval_candidates(page),
             }
         await item.first.click(force=True)
     await page.wait_for_timeout(1200)
     after = await compose_mode_fingerprint(page)
-    ok = bool(
-        after.get("approval")
-        and wanted_aria.search(after["approval"].get("aria") or "")
-    )
-    return {
+    ok = bool(after.get("approval") and wanted_aria.search(approval_label(after)))
+    result = {
         "ok": ok,
         "step": f"selected_{mode}" if ok else f"select_{mode}_no_attest",
         "opened": opened,
         "before": before,
         "after": after,
     }
+    if not ok:
+        result["candidates"] = await collect_approval_candidates(page)
+    return result
 
 
 async def ensure_chat_compose(page) -> dict[str, Any]:

@@ -103,6 +103,41 @@ async def collect_radiogroup_evidence(page) -> dict[str, Any]:
     }
 
 
+async def collect_approval_candidates(page) -> list[dict[str, Any]]:
+    """Census Auto/Manual/Skip approval-control candidates for failure dumps.
+
+    a:31319 — the approval chip can render aria-label-less with a bare
+    "Auto"/"Manual"/"Skip" text label, so this matches on *either* aria or
+    text against the full approval vocabulary rather than one exact label
+    (contrast ``collect_chip_candidates``, which needs an exact Chat/Cowork
+    match). Verified shape via live census: a plain ``<button>``, no aria.
+    """
+    raw = await page.evaluate(
+        """() => {
+          const wanted = /auto|approve|manual|skip/i;
+          const out = [];
+          const sel = 'button, [role="button"], [role="radio"], [role="menuitemradio"]';
+          for (const el of document.querySelectorAll(sel)) {
+            const aria = el.getAttribute('aria-label') || '';
+            const text = (el.innerText || '').trim().replace(/\\s+/g, ' ');
+            if (!wanted.test(aria) && !wanted.test(text)) continue;
+            const r = el.getBoundingClientRect();
+            out.push({
+              tag: el.tagName,
+              role: el.getAttribute('role') || '',
+              aria,
+              text: text.slice(0, 60),
+              offsetParent: !!el.offsetParent,
+              w: r.width,
+              h: r.height,
+            });
+          }
+          return out;
+        }"""
+    )
+    return list(raw or [])
+
+
 def _size_reject(box: dict[str, float] | None) -> dict[str, Any] | None:
     if not box:
         return {"reason": "no_box"}

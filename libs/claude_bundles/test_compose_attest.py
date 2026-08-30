@@ -11,6 +11,10 @@ from playwright.async_api import async_playwright  # noqa: E402
 
 from claude_bundles.chat_cowork_mode import select_compose_mode
 from claude_bundles.compose_attest import (
+    _compose_attested,
+    approval_label,
+    compose_mode_fingerprint,
+    cowork_auto_refuse_reason,
     discover_live_submit,
     is_excluded_submit_control,
     is_positive_submit_match,
@@ -41,6 +45,21 @@ _BARE_NEW_COWORK_HTML = """
 <main>
   <button aria-label="Model: Opus 4.8 High">Opus</button>
   <button aria-label="Automatically approve">Auto</button>
+  <div data-testid="chat-input" contenteditable="true" style="min-height:80px;width:400px"></div>
+  <button aria-label="Start task">Start task</button>
+</main>
+</body></html>
+"""
+
+# a:31319 — live census against a fresh /new tab (2026-08-30) found the
+# approval chip with NO aria-label at all, just plain text "Auto". This
+# fixture reproduces that exact shape (falsifies the private-use-area-prefix
+# theory floated in the friction — text is plain ASCII).
+_BARE_NEW_COWORK_ARIA_LESS_HTML = """
+<!doctype html><html><head><title>New task - Claude</title></head><body>
+<main>
+  <button aria-label="Model: Opus 4.8 High">Opus</button>
+  <button>Auto</button>
   <div data-testid="chat-input" contenteditable="true" style="min-height:80px;width:400px"></div>
   <button aria-label="Start task">Start task</button>
 </main>
@@ -247,3 +266,55 @@ async def test_select_compose_mode_polls_until_chip_click_succeeds(
     assert result["ok"] is True
     assert result["step"] == "selected_cowork"
     assert result["step"] != "chip_missing"
+
+
+@pytest.mark.asyncio
+async def test_compose_mode_fingerprint_falls_back_to_text_when_aria_absent() -> None:
+    """a:31319 — aria-less "Auto" button must still fingerprint as approval."""
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(_BARE_NEW_COWORK_ARIA_LESS_HTML)
+            fp = await compose_mode_fingerprint(page)
+            assert fp["mode"] == "cowork"
+            assert fp["approval"] is not None
+            assert fp["approval"]["aria"] == ""
+            assert fp["approval"]["text"] == "Auto"
+            assert fp["approval"]["via"] == "text"
+        finally:
+            await browser.close()
+
+
+def test_approval_label_prefers_aria_falls_back_to_text() -> None:
+    aria_fp = {"approval": {"aria": "Automatically approve", "text": "Auto"}}
+    text_fp = {"approval": {"aria": "", "text": "Auto"}}
+    assert approval_label(aria_fp) == "Automatically approve"
+    assert approval_label(text_fp) == "Auto"
+    assert approval_label({"approval": None}) == ""
+
+
+def test_compose_attested_cowork_auto_text_only_passes() -> None:
+    """Direct regression for a:31319 — no aria, just the short "Auto" label."""
+    fp = {
+        "title": "New task - Claude",
+        "mode": "cowork",
+        "approval": {"aria": "", "text": "Auto", "via": "text"},
+        "url": "https://claude.ai/new",
+    }
+    assert _compose_attested(fp, "cowork") is True
+    assert cowork_auto_refuse_reason(fp) is None
+
+
+def test_cowork_auto_refuse_reason_text_only_manual_still_refuses() -> None:
+    """Text-only fallback must not silently pass a stuck-Manual chip either."""
+    fp = {
+        "title": "New task - Claude",
+        "mode": "cowork",
+        "approval": {"aria": "", "text": "Manual", "via": "text"},
+        "url": "https://claude.ai/new",
+    }
+    assert _compose_attested(fp, "cowork") is False
+    reason = cowork_auto_refuse_reason(fp)
+    assert reason is not None
+    assert "Automatically approve" in reason

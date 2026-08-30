@@ -6,6 +6,12 @@ Ship gate (Start task): Cowork requires aria ``Automatically approve`` —
 ``mode==cowork`` alone or any approval chip (Manual/Skip) is not success.
 Chat success: ``mode==chat`` and approval is None. Project-shell rows without
 chips are a named skip, not a silent Auto waiver on ``/new``.
+
+a:31319 (2026-08-30): Anthropic dropped the descriptive aria-label on the
+approval chip — a live census against a fresh ``/new`` tab found a bare
+``<button>`` with ``aria-label=""`` and plain ASCII text ``"Auto"`` (no
+private-use-area prefix; that theory is falsified). ``compose_mode_fingerprint``
+now falls back to the short text label when aria is absent.
 """
 
 from __future__ import annotations
@@ -38,9 +44,11 @@ _EXCLUDE_SUBMIT_RE = re.compile(
 )
 
 _POLL_MS = 400
-_AUTO_ARIA_RE = re.compile(r"Automatically approve", re.I)
-_MANUAL_ARIA_RE = re.compile(r"Manually approve", re.I)
-_SKIP_ARIA_RE = re.compile(r"Skip all approvals|Never pause", re.I)
+# Short-form alternation (a:31319) — the chip can render with no aria-label at
+# all, just a bare "Auto"/"Manual"/"Skip" button label.
+_AUTO_ARIA_RE = re.compile(r"Automatically approve|^Auto$", re.I)
+_MANUAL_ARIA_RE = re.compile(r"Manually approve|^Manual$", re.I)
+_SKIP_ARIA_RE = re.compile(r"Skip all approvals|Never pause|^Skip$", re.I)
 _SUBMIT_ROLE = {
     "cowork": re.compile(r"start task", re.I),
     "chat": re.compile(r"send message", re.I),
@@ -52,18 +60,31 @@ _SUBMIT_ARIA = {
 
 
 async def compose_mode_fingerprint(page) -> dict[str, Any]:
-    """Lightweight attest: title + approval aria currently shown."""
+    """Lightweight attest: title + approval control currently shown.
+
+    Prefers the descriptive aria-label (``/approve/i``). Falls back to a bare
+    short text label (``"Auto"``/``"Manual"``/``"Skip"``) when no button
+    carries that aria at all — a:31319, confirmed via live census: the chip
+    can render aria-label-less with the raw state name as its only signal.
+    """
     title = await page.title()
     approval = await page.evaluate(
         """() => {
-          const btns = Array.from(document.querySelectorAll('button'));
-          for (const b of btns) {
-            const aria = b.getAttribute('aria-label') || '';
+          const els = Array.from(document.querySelectorAll('button, [role="button"]'));
+          for (const el of els) {
+            const aria = el.getAttribute('aria-label') || '';
             if (/approve/i.test(aria)) {
               return {
                 aria,
-                text: (b.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 40),
+                text: (el.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 40),
+                via: 'aria',
               };
+            }
+          }
+          for (const el of els) {
+            const text = (el.innerText || '').trim().replace(/\\s+/g, ' ');
+            if (text.length > 0 && text.length <= 12 && /^(auto|manual|skip)/i.test(text)) {
+              return { aria: '', text, via: 'text' };
             }
           }
           return null;
@@ -77,12 +98,21 @@ async def compose_mode_fingerprint(page) -> dict[str, Any]:
     return {"title": title, "mode": mode, "approval": approval, "url": page.url}
 
 
-def _approval_aria(fp: dict[str, Any]) -> str:
-    """Return the approval chip aria-label, or empty when chrome is absent."""
+def approval_label(fp: dict[str, Any]) -> str:
+    """Return the approval control's aria-label, or its short text label when
+    aria is absent (a:31319). Shared with ``chat_cowork_mode.set_approval_mode``
+    so both modules classify the aria-less short-label chip identically.
+    """
     approval = fp.get("approval")
     if not isinstance(approval, dict):
         return ""
-    return str(approval.get("aria") or "")
+    aria = str(approval.get("aria") or "")
+    return aria or str(approval.get("text") or "")
+
+
+def _approval_aria(fp: dict[str, Any]) -> str:
+    """Return the approval chip's label, or empty when chrome is absent."""
+    return approval_label(fp)
 
 
 def _approval_is_auto(fp: dict[str, Any]) -> bool:
