@@ -62,6 +62,8 @@ from services.git_integration_worker.cursor_home import (
     setup_cursor_dispatch_home,
     validate_repo_venv,
 )
+from cursor_capabilities import effective_knobs
+
 from services.git_integration_worker.cursor_models import (
     build_model_selection,
     resolve_cursor,
@@ -490,7 +492,7 @@ def _emit_enriched_queued(
         topic=association["topic"],
         nest_under=association["nest_under"],
         packet_kind=association["packet_kind"],
-        model_knobs_requested=req.model_knobs,
+        model_knobs_requested=_stamp_model_knobs_requested(cached.model_id, req.model_knobs),
         queued_on=f"write_lease:{lease_key}",
     )
 
@@ -516,8 +518,18 @@ def _maybe_emit_giw_dispatched(
         topic=association["topic"],
         nest_under=association["nest_under"],
         packet_kind=association["packet_kind"],
-        model_knobs_requested=req.model_knobs,
+        model_knobs_requested=_stamp_model_knobs_requested(cached.model_id, req.model_knobs),
     )
+
+
+def _stamp_model_knobs_requested(
+    model: str,
+    overrides: Mapping[str, str] | None,
+) -> dict[str, str] | None:
+    """Project omit-path defaults onto admit knobs for observability stamps."""
+    bare = resolve_cursor(model).model_id
+    stamped = effective_knobs(bare, overrides)
+    return stamped or None
 
 
 _DISPATCH_ROUTE = "/api/v1/cursor/dispatch"
@@ -1662,9 +1674,8 @@ async def _deliver_sdk_closeout(
                 "cursor check/review role bridge failed: dispatch_id=%s",
                 req.dispatch_id,
             )
-        # model_knobs_requested: admit-time knobs from CursorDispatchRequest, also
-        # persisted in cursor_sdk_dispatches.record_json at admit; req threads them
-        # through the drive path to emit (no ledger re-read required).
+        # model_knobs_requested: effective/aligned knobs (omit-path defaults included),
+        # projected from req.model + admit-time overrides — not raw caller wire alone.
         # Missing SDK requestId is an observability gap (R F-1), not a crash.
         # Emit with request_id_source=absent + degrade token so fleet join stays
         # diagnosable without aborting an otherwise successful closeout.
@@ -1688,7 +1699,7 @@ async def _deliver_sdk_closeout(
                 run_outcome=run_outcome, delivery_ok=True
             ),
             resolved_model=req.model,
-            model_knobs_requested=req.model_knobs,
+            model_knobs_requested=_stamp_model_knobs_requested(req.model, req.model_knobs),
             usage=outcome.usage,
             usage_capture_status=outcome.usage_capture_status,
             request_id=envelope_request_id,
@@ -1766,7 +1777,7 @@ async def _deliver_sdk_closeout(
         result_bytes=delivery.full_result_bytes,
         outcome=resolve_completion_outcome(run_outcome=run_outcome, delivery_ok=False),
         resolved_model=req.model,
-        model_knobs_requested=req.model_knobs,
+        model_knobs_requested=_stamp_model_knobs_requested(req.model, req.model_knobs),
         usage=outcome.usage,
         usage_capture_status=outcome.usage_capture_status,
         request_id=envelope_request_id,

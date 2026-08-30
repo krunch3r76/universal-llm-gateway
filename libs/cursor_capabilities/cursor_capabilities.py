@@ -348,6 +348,32 @@ def effort_knob_name(model_id: str) -> str | None:
     return None
 
 
+def effective_knobs(
+    model_id: str,
+    overrides: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Return aligned overrides plus descriptor omit-path defaults for event stamps.
+
+    Used for ``model_knobs_requested`` on SDK queued/dispatched/completed events so
+    the dispatch board folds bridge truth (``build_model_selection`` omit-path),
+    not caller wire alone.
+    """
+    bare = canonical_cursor_bare_id(model_id)
+    knob_specs = supported_knobs(bare)
+    if not knob_specs:
+        return dict(overrides or {})
+    result: dict[str, str] = {}
+    override_map = dict(overrides or {})
+    for name, spec in knob_specs.items():
+        if name in override_map:
+            value = override_map[name]
+            if value in spec.accepted:
+                result[name] = value
+        elif spec.default is not None:
+            result[name] = spec.default
+    return result
+
+
 def suggest_effort_knobs(model_id: str, requested: str) -> dict[str, str]:
     """Remedy dict for callers: map *requested* onto the model's effort-like knob.
 

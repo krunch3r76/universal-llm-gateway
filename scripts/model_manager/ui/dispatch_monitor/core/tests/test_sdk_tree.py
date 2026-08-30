@@ -154,6 +154,29 @@ def test_fast_cond_omit_rules() -> None:
     assert " cond " not in sdk_live_line(implement, width=200)
 
 
+def test_fold_grok_omit_path_fast_from_effective_stamp() -> None:
+    """IDE grok admit omitting fast folds fast=false from effective stamp."""
+    model = Model()
+    dispatch_id = "disp-grok-omit-fast"
+    model.apply(
+        Event(
+            signals.SDK_WORKER_QUEUED,
+            1_000,
+            {
+                "dispatch_id": dispatch_id,
+                "execution_id": dispatch_id,
+                "model": "grok-4.6",
+                "model_knobs_requested": {"effort": "xhigh", "fast": "false"},
+                "topic": "Conductor mission",
+            },
+        )
+    )
+    row = next(r for r in model.derive(2_000).sdk if r.dispatch_id == dispatch_id)
+    assert row.fast is False
+    line = sdk_live_line(row, width=200)
+    assert " fast=no" in line
+
+
 def test_fold_queued_dispatched_stamps_before_terminal() -> None:
     model = Model()
     dispatch_id = "disp-g52-fold"

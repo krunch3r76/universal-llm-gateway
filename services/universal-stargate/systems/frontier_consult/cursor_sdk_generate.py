@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from agent_seat.profiles import get_profile
+from cursor_capabilities import effective_knobs
+from model_id import ModelId
 
 from .cursor_sdk_generate_prepare import (
     PreparedCursorSdkHandle,
@@ -23,6 +25,16 @@ from .handoff_response import (
 from .poll_hint_events import emit_poll_hint_from_handoff
 
 CURSOR_SDK_REPLY_SEAT = "cursor-sdk"
+
+
+def _stamp_model_knobs_requested(
+    resolved_model: str,
+    aligned_knobs: dict[str, str] | None,
+) -> dict[str, str] | None:
+    """Project omit-path defaults onto aligned knobs for observability stamps."""
+    bare = ModelId.parse(resolved_model).api_model_id.lower()
+    stamped = effective_knobs(bare, aligned_knobs)
+    return stamped or None
 
 
 def _worker_dispatch_error(
@@ -110,7 +122,9 @@ async def dispatch_prepared_cursor_sdk(
             nest_under=handle.nest_under,
             topic=handle.topic,
             packet_kind=handle.packet_kind,
-            model_knobs_requested=handle.aligned_knobs,
+            model_knobs_requested=_stamp_model_knobs_requested(
+                handle.resolved_model, handle.aligned_knobs
+            ),
         )
         _worker_dispatch_error(request_id=handle.request_id, detail=worker_detail)
 
@@ -127,7 +141,9 @@ async def dispatch_prepared_cursor_sdk(
         nest_under=handle.nest_under,
         topic=handle.topic,
         packet_kind=handle.packet_kind,
-        model_knobs_requested=handle.aligned_knobs,
+        model_knobs_requested=_stamp_model_knobs_requested(
+            handle.resolved_model, handle.aligned_knobs
+        ),
     )
 
     profile = get_profile(handle.family, handle.platform)

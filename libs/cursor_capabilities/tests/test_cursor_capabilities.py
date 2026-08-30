@@ -6,6 +6,7 @@ import pytest
 from cursor_capabilities import (
     CURSOR_MODEL_CAPABILITIES,
     ModelCapability,
+    effective_knobs,
     effort_knob_name,
     suggest_effort_knobs,
     to_model_card_dict,
@@ -89,3 +90,24 @@ def test_suggest_effort_knobs_accepted_and_empty() -> None:
     assert suggest_effort_knobs("grok-4.6", "xhigh") == {"effort": "xhigh"}
     assert suggest_effort_knobs("grok-4.6", "max") == {}
     assert suggest_effort_knobs("composer-2.5", "low") == {}
+
+
+def test_effective_knobs_grok_omit_path_fast_false() -> None:
+    """Grok caller omits fast → stamp includes descriptor default fast=false."""
+    assert effective_knobs("grok-4.6", {"effort": "xhigh"}) == {
+        "effort": "xhigh",
+        "fast": "false",
+    }
+
+
+def test_effective_knobs_explicit_fast_true() -> None:
+    assert effective_knobs("grok-4.6", {"effort": "xhigh", "fast": "true"}) == {
+        "effort": "xhigh",
+        "fast": "true",
+    }
+
+
+def test_effective_knobs_drops_invalid_override() -> None:
+    assert effective_knobs("grok-4.6", {"effort": "max", "fast": "true"}) == {
+        "fast": "true",
+    }
