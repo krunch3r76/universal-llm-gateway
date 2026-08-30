@@ -171,6 +171,26 @@ team_dispatch(op="generate", seat="cursor-sdk", contract="implement", source_ref
 Materializer reads attrs only; spec prose = hash input. Preflight: `entity_get`; `workflow_state ∈ {open,in_progress}`.
 `wrap` = materialize-only. Contract↔source matrix: L3 annex.
 
+## Conductor spawn — light-bounded + source_ref
+
+Standing first-utterance (`agent_skill:conductor`):
+
+```python
+team_dispatch(
+    op="generate",
+    seat="cursor-sdk",
+    contract="light-bounded",
+    lane="B",
+    source_ref="todo:{slug}",
+    packet_kind="conductor",
+    dispatch_thread_id="{root}",
+)
+```
+
+Kickoff body = Stargate materializer or explicit `packet_path` on non-conductor admits —
+**never** `sidecar_ref` beside `source_ref` (`multiple_prompt_sources`). Conductor
+forbids `packet_path`; materializer owns the six-block packet.
+
 ## cursor-sdk checkout lane (`lane=`)
 
 `team_dispatch(op=generate|to_thread, seat=cursor-sdk)`: `lane=` is a **wire

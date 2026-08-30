@@ -9,11 +9,17 @@ Authoring-time map for `seat=cursor-sdk` `op=generate` — do not mix shapes:
 | `contract` | Allowed source | Forbidden |
 |---|---|---|
 | `implement` | `source_ref` **or** `packet_path` | — |
-| `light-bounded` | `packet_path` **or** bus-turn body | `source_ref` |
+| `light-bounded` | `packet_path` **or** bus-turn body | `source_ref` (except conductor spawn — next row) |
+| `light-bounded` + `packet_kind=conductor` | `source_ref=todo:{slug}` only | `packet_path`, `prompt`, `sidecar_ref` |
 | `pure-mechanical` | `packet_path` **or** bus-turn body | `source_ref` |
 | `wrap` | `source_ref` only | `packet_path` |
 
-Foot-gun: `contract=light-bounded` + `source_ref` is invalid (agent-bus:4866).
+**Conductor spawn:** Stargate materializes from `source_ref`; kickoff body = materializer
+output — never `sidecar_ref` (or `prompt`) beside `source_ref` (`multiple_prompt_sources`).
+See `agent_skill:conductor` § First-utterance spawn.
+
+Foot-gun: `contract=light-bounded` + `source_ref` without `packet_kind=conductor` is invalid
+(agent-bus:4866). Do not paper over conductor spawn with `sidecar_ref`.
 
 ## Writing consult substrate
 
