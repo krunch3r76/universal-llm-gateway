@@ -1,7 +1,7 @@
 ---
 name: satellite-workspace
-description: "On opening email-bridge, journal-bridge, sms-bridge, or any Cursor satellite under /mnt/torus/projects — ecosystem vs checkout-local, PYTHONPATH→ULG libs, vortex-code, ulg-ecosystem plugin."
-trigger_match_terms: ["satellite-workspace", "satellite", "email-bridge", "journal-bridge", "sms-bridge", "sibling workspace", "PYTHONPATH", "vortex-code", "ecosystem pack", "ulg-ecosystem", "deploy.sh", "satellite restart", "env-refresh"]
+description: "On opening email-bridge, journal-bridge, or any Cursor satellite under /mnt/torus/projects — ecosystem vs checkout-local, PYTHONPATH→ULG libs, vortex-code, ulg-ecosystem plugin."
+trigger_match_terms: ["satellite-workspace", "satellite", "email-bridge", "journal-bridge", "sibling workspace", "PYTHONPATH", "vortex-code", "ecosystem pack", "ulg-ecosystem", "deploy.sh", "satellite restart", "env-refresh"]
 ---
 
 # Satellite workspace (Cursor IDE)
@@ -24,7 +24,7 @@ trigger_match_terms: ["satellite-workspace", "satellite", "email-bridge", "journ
 | Layer | Suffix / where | Examples |
 |---|---|---|
 | Ecosystem (`_ulg`) | Plugin only (SoT under `cursor-plugins/ulg-ecosystem/`) | cortex, git-posture, operator-posture, agent-bus commands |
-| Checkout-local (`_ws`) | `{repo}/.cursor/rules/*_ws.mdc` | IMAP hosts, sms-gate env, Stargate/gateway hub-only |
+| Checkout-local (`_ws`) | `{repo}/.cursor/rules/*_ws.mdc` | IMAP hosts, env files, Stargate/gateway hub-only |
 | Personal-life helpers | `{repo}/scripts.local/` (nested git, gitignored) | ¬ `scripts/`; hub nest is ULG `scripts.local/` |
 
 ## Authoring a shared rule

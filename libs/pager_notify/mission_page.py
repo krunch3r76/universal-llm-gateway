@@ -60,7 +60,6 @@ ULG_SYSTEM_LEXICON: tuple[str, ...] = (
     "pager",
     "project_ask",
     "stargate",
-    "sms-bridge",
 )
 
 SUMMONS_ARCH_ONE_LINER = (
@@ -126,6 +125,7 @@ _STOP_LOOK_AHEAD = {
 
 
 def summons_look_back(reason: str) -> str:
+    """Return the stop-page look-back copy for ``reason``, or a generic fallback line."""
     return _STOP_LOOK_BACK.get(
         reason,
         f"The overnight episode loop stopped ({reason}) before the mission finish line.",
@@ -133,6 +133,7 @@ def summons_look_back(reason: str) -> str:
 
 
 def summons_look_ahead(reason: str) -> str:
+    """Return the stop-page look-ahead copy for ``reason``, or a generic recovery prompt."""
     return _STOP_LOOK_AHEAD.get(
         reason,
         "Read the commission, restore the finish line, and re-arm the loop.",

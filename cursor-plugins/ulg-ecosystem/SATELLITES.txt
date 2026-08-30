@@ -3,7 +3,6 @@
 # Hub (universal-llm-gateway) is NOT listed — it already pins the same interpreter.
 # Add new satellites here; remove retired ones. Re-run install to correct drift.
 
-sms-bridge
 email-bridge
 journal-bridge
 agent-bus

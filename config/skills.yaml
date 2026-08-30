@@ -211,12 +211,6 @@ skills:
   email-tool-dispatch:
     surface_class: life_local
     mcp_surface_required: life
-  sms-bridge-mailbox:
-    surface_class: life_local
-    mcp_surface_required: life
-  sms-tool-dispatch:
-    surface_class: life_local
-    mcp_surface_required: life
   engagement-stance:
     surface_class: life_local
     mcp_surface_required: none
@@ -315,8 +309,8 @@ skills:
   life-operator-do-chain:
     # English outcome → remaining hops; named Sketch / Mission Composer /
     # Conductor pin that hop (products: shape bind / conductor score).
-    # shared_sync so Cowork/Customize load it;
-    # ¬ census (not a plugin always-on). Mechanics stay in consult-routing / conductor.
+    # shared_sync so Cowork/Customize load it; census so satellite IDEs
+    # (claudeburst, etc.) ship the Sketch hop via the ulg-ecosystem plugin.
     surface_class: shared_sync
     mcp_surface_required: none
   local-chat-completions:

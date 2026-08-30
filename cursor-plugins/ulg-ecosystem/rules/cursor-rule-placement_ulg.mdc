@@ -46,7 +46,7 @@ Same install+reload gate applies to ecosystem **skills** and **commands**
 
 ## Checkout-local (`_ws`)
 
-IMAP/sms-gate/env, Stargate/gateway hub-only, IDE-boot quirks for one repo → `{repo}/.cursor/rules/*_ws.mdc` only. No census / no plugin step.
+IMAP hosts, env files, Stargate/gateway hub-only, IDE-boot quirks for one repo → `{repo}/.cursor/rules/*_ws.mdc` only. No census / no plugin step.
 
 ## Personal-life (binding)
 
