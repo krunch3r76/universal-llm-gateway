@@ -135,7 +135,24 @@ table) and `handoff-dispatchers.mdc`. Do not re-state that table here.
 | **Execute** | `[quality:bug-class-sweep]` before `declare_complete` — fix every instance or defer with `SF{n}` |
 | **Closeout** | `## Secondary findings (labeled — separate cycle if pursued)` — `None observed.` if empty |
 
-Per finding: disposition `verify-now` | `flag-deferred` | `spin-ticket`. Zoom-out runs inside the bug cycle; it does not block the primary fix with an open-ended redesign.
+Per finding: disposition `verify-now` | `flag-deferred` | `spin-ticket` — see the
+same-class/other-class table below for which one applies. Zoom-out runs inside the
+bug cycle; it does not block the primary fix with an open-ended redesign.
+
+**Same-class vs other-class disposition (BINDING — operator bind 2026-08-30):**
+
+| Finding class | Disposition | Scoreboard |
+|---|---|---|
+| **Same-class** — another instance of the exact filed bug pattern | **Always `verify-now`** | Auto-add as a new G-row on this mission's scoreboard; fix in this pass. Never `flag-deferred`/`spin-ticket` solely for being "more of the same" |
+| **Other-class, low complexity** — different bug, single-file/mechanical, no design fork | **May `verify-now`** (seat's call) | Add as a new G-row and fix in this pass |
+| **Other-class, complex** — cross-service, design fork, invariant-touching | `flag-deferred` (residual-imprint) or `spin-ticket` (own `/work-item-seed`) | Not added — keep this mission's scope bounded |
+
+`verify-now` here means an explicit new G-row on `{slug}-scoreboard.md` (`conductor`
+§ Score journal), not a silent extra diff — the scoreboard is what makes "we knew
+about this and fixed it here" auditable, distinct from a diff nobody tracked. A
+same-class row that turns out complex once attempted still escalates normally
+(`abstraction-layering` § Mechanical leg) — the class test gates *whether it's
+added*, not a guarantee it stays simple.
 
 **Mechanical gate (BINDING):** `/work-item-seed` stamps `bug_class_sweep_required=true`
 on every non-feature friction seed (`work-item-seed-path` § Friction-sourced override) —

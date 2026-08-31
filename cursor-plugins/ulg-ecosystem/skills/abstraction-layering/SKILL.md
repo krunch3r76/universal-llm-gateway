@@ -245,8 +245,10 @@ Tier-1 → `cortex://notes/system/recon/{slug}/tier1-anchors.md`.
    aptness = seat judgment.
    **Bug-class sweep check:** when todo attrs carry `bug_class_sweep_required=true`
    (`work-item-seed-path` § Friction-sourced override), verify closeout carries a
-   labeled `## Secondary findings` block (`None observed.` accepted) — contract:
-   `friction-review` § Pass zoom-out duty. Fail ⇒ no close, reopen highest open gate.
+   labeled `## Secondary findings` block (`None observed.` accepted) **and** every
+   same-class finding in that block resolves to a scoreboard G-row, not prose-only
+   — contract: `friction-review` § Pass zoom-out duty → same-class vs other-class.
+   Fail ⇒ no close, reopen highest open gate.
 
 **Mechanical leg:** G5+G6 when no gate above open. **Escalate** (re-enter highest gate):
 architecture re-opens · ≥2 rivals · invariant/cross-agent · failure ≥2×.
