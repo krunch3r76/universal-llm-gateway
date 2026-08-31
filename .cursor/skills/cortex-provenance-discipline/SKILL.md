@@ -1,12 +1,12 @@
 ---
 name: cortex-provenance-discipline
 description: "Before citing Cortex entities, assertions, relationships, or journals in derived artifacts — provenance discipline for substrate factual citations."
-trigger_match_terms: ["cortex-provenance-discipline", "cortex_provenance_discipline", "cite", "quote", "cortex", "artifact", "cortex-planning", "reference", "entities", "assertions", "relationships", "edges"]
+trigger_match_terms: ["cortex-provenance-discipline", "cortex_provenance_discipline", "cite", "quote", "cortex", "artifact", "cortex-planning", "reference", "entities", "assertions", "relationships", "edges", "outbound", "counterparty", "external", "correspondence"]
 ---
 
 # Cortex Provenance Discipline
 
-**Version:** 2.1-compressed  
+**Version:** 2.2  
 **Authority:** HIGH — Cortex-substrate factual citations in derived artifacts.
 
 ## Trigger / scope
@@ -92,6 +92,10 @@ Direct verbatim quotes: `[assertion:NNNN]` gives assertion provenance, but the q
 
 Required for structural-grade Cortex-substrate claims in human-consumed output and load-bearing belief-grade claims. Not required for orientation prose or non-load-bearing conversation. Not applicable to domain-authority citations.
 
+**Audience split.** `[assertion:NNNN]` grammar is for fleet-internal consumption — ledgers, sidecars, bus turns, agent-to-agent dispatch, and operator-facing analysis. For artifacts bound for an external counterparty (correspondence, filings, regulatory submissions, responses to an employer or agency), the citation obligation is discharged *upstream*, not in the text: run the claim ledger, apply permitted-language mapping, and hold the ledger alongside the draft in the internal channel. Outbound prose carries the permitted language and no assertion IDs. The ledger is what makes the hedge auditable; the brackets would only tell the counterparty that the sender keeps a database.
+
+Falsifier: name any factual sentence in the outbound draft; if the backing assertion and its `derivation_type` cannot be produced from the adjacent ledger, the draft is not ready to send.
+
 Blocking read-time findings:
 - `output_citation_missing_assertion`: citation absent/unresolved/superseded on load-bearing ledger entry.
 - `output_citation_semantic_mismatch`: cited assertion resolves but does not semantically support the claim. Cite the source, not pattern-completed plausible IDs.
@@ -129,6 +133,7 @@ For non-Cortex claims (legal doctrine/statutes/cases/regulations, financial mech
 - Treating session edges as structural relationships, or structural relationships as session edges.
 - Encoding domain authorities in `[assertion:NNNN]`.
 - Pattern-completing plausible assertion IDs without verification.
+- Emitting `[assertion:NNNN]` in prose bound for an external counterparty — permitted language in the artifact, ledger in the internal channel.
 
 ## Failure anchors
 
@@ -144,4 +149,4 @@ For non-Cortex claims (legal doctrine/statutes/cases/regulations, financial mech
 
 ## Minimal operating summary
 
-Cortex-substrate claim → read assertion claim text → inspect confidence/derivation/freshness/conflict → apply permitted language → emit adjacent `[assertion:NNNN]` → run reader defense. Domain authorities use domain citations, not Cortex assertion IDs.
+Cortex-substrate claim → read assertion claim text → inspect confidence/derivation/freshness/conflict → apply permitted language → fleet-internal: emit adjacent `[assertion:NNNN]`; outbound counterparty: permitted language only + ledger in internal channel → run reader defense. Domain authorities use domain citations, not Cortex assertion IDs.
