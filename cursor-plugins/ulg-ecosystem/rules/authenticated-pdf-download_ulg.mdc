@@ -1,0 +1,31 @@
+---
+description: Authenticated PDF or binary download — Playwright timeout is not unreachable; browse save_to on Jupiter, then xxd
+alwaysApply: true
+rule_category: workflow
+apply_tier: catalog
+trigger_match_terms:
+  - PDF
+  - save_to
+  - expect_download
+  - statement PDF
+  - Playwright download
+  - browse download
+  - PDF timed out
+  - issuer statement
+---
+# Authenticated PDF / binary download (class)
+
+**Invariant:** `timeout(Playwright expect_download) ⇏ unreachable(PDF)` · `stale(last_statement) ⇒ export(since close)` · any authenticated host.
+
+9784 BofA August PDF was parked as “timed out.” That is the class, not the site.
+
+| Want | Do |
+|---|---|
+| File from a signed-in tab (bank, court, Scribd, invoice) | `dispatch(tool="browse")` + `save_to` on Jupiter `:9222` |
+| `save_to` wrote HTML, or the click opens a viewer | `save_to` + click `actions`, or CDP `Browser.setDownloadBehavior` |
+| Prove it is a PDF | `xxd -p -l 5` → `255044462d` (`%PDF-`) |
+| Last statement PDF is stale | Export activity / CSV / SimpleFIN since close — ¬ wait for the next cycle |
+
+¬ park “PDF timed out” as a standing gap. ¬ treat Playwright download timeout as done.
+
+**Lean-on (Cortex):** `runbook:issuer-portal-login` → `cortex://notes/runbooks/issuer-portal-login.md`. This stub orients; it does not own the playbook. Procedure depth is still in skill `jupiter-browser-via-mcp` until that body is distilled — ¬ fatten this rule, ¬ relocate tonight.

@@ -272,6 +272,7 @@ event (or inline response bytes), and writes the file to a local path on Jupiter
   (Scribd, PACER, court portals, gated document platforms)
 - You need the actual binary file for RAG indexing, not extracted text
 - The user says "I'm logged in" or "I have an account" for a gated resource
+- Issuer / bank / any authenticated host after login — statement PDF, invoice, court filing. Playwright `expect_download` timeout is **not** “PDF unreachable” (9784 BofA class, 2026-08-30)
 
 ### Workflow
 
@@ -710,6 +711,7 @@ If `screenshot_path` is missing from the response or `view_image` returns "file 
 | `save_to` → `size: 3000` (suspiciously small) | Got HTML error page instead of file | Check auth: fetch the page first and confirm content is readable |
 | `save_to` → `size: 1MB+` but `xxd -p -l 5` shows `3c21...` (HTML) | Download URL rendered a JS-challenge page; web-fetcher saved the HTML, not the binary | Use CDP `Browser.setDownloadBehavior` approach |
 | `save_to` succeeds but PDF is blank/corrupted | Download URL requires a click event, not direct navigation | Use `save_to` + `actions=[{click}]` or CDP native download |
+| Playwright `expect_download` / `wait_for_event("download")` times out | Click opened a viewer, blob URL, or delayed attachment — not a Playwright download | **Class (any site):** `dispatch(tool="browse")` + `save_to` on the signed-in Jupiter tab; if HTML, `save_to`+click `actions` or CDP `Browser.setDownloadBehavior`. `xxd` for `%PDF-`. Do not park “PDF timed out” as a standing gap |
 | Sequential Python SSH download loop times out | SSH connection timeout exceeded with >3-4 sequential 20-40s downloads | Use parallel `dispatch` MCP calls in a single agent message instead |
 | CDP WebSocket → 403 Forbidden | Chrome launched without `--remote-allow-origins=*` | Restart Chrome with that flag (see launch commands) |
 | Extracted text is garbled (`Jdtrjd\`kg...`) | Font DRM — Scribd encodes glyphs via custom CSS font | Don't parse; use CDP native download or `save_to` to get the actual PDF |

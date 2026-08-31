@@ -5,6 +5,7 @@
 agent-bus-push-reminder_ulg
 agent-skills_ulg
 anthropic-dispatch-authorization_ulg
+authenticated-pdf-download_ulg
 cursor-rule-placement_ulg
 anthropic-substrate_ulg
 awareness_ulg
