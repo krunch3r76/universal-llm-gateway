@@ -461,12 +461,9 @@ skills:
   session-close-transcript:
     surface_class: cursor_only
     mcp_surface_required: life
-  skill-authoring:
-    surface_class: cursor_only
-    mcp_surface_required: none
   skill-document-writing:
     surface_class: cursor_only
-    mcp_surface_required: none
+    mcp_surface_required: life
   srm:
     surface_class: life_local
     mcp_surface_required: none

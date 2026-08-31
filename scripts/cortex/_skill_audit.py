@@ -89,7 +89,10 @@ _PARITY_ALLOWLIST: dict[str, dict[str, str]] = {
         "temporary working notebook, sunset when Phase 3 ships",
         temporary="temporary",
     ),
-    "skill-authoring": _meta("skill writing load-order router; defers to skill-document-writing"),
+    "skill-authoring": _meta(
+        "RETIRED 2026-08-30 → agent_skill:skill-document-writing (cardinality-1; document:skill-writing-stack-architecture-consult)",
+        temporary="temporary",
+    ),
     "add-mcp-tool": _meta(
         "workspace-only stub (no cortex SOT file)", directionality="stub-only"
     ),

@@ -13,7 +13,6 @@ trigger_match_terms:
   - show once
   - runbook
 related_skills:
-  - skill-authoring
   - skill-document-writing
   - session-close-transcript
   - entity-lifecycle-discipline
@@ -118,4 +117,4 @@ Quote `written_sha256` from the SOT write **or** `entity_get` 200. ¬ narrate a 
 
 ## Related skills
 
-`skill-authoring` · `skill-document-writing` · `session-close-transcript` · `entity-lifecycle-discipline`
+`skill-document-writing` · `session-close-transcript` · `entity-lifecycle-discipline`

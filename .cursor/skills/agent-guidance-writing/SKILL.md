@@ -79,7 +79,7 @@ fs(sandbox="workspaces", op="read", path="universal-llm-gateway/.cursor/skills/<
 4. Tables replace prose where ≥3 comparable items.
 5. No duplication of alwaysApply content.
 6. Registered: row in `config/skills.yaml` + run `scripts/cortex/ingest_skills.py`; verify `cortex(entity_get agent_skill:<slug>)` resolves with correct `source_uri` / projected `surface_class` and appears in `GET /boot-skills`. Filesystem-only skills (no catalog row / no ingest) are invisible to boot-skills, web, and dispatch seats.
-7. **Open `CANDIDATE SKILL REVISION` assertions adjudicated** on this entity before closing the touch — audit-visible via `agent_skill_revision_candidate_unadjudicated`; accept (`committed` / applied supersede) or reject (`review_status=rejected`). Full protocol: `agent_skill:skill-document-writing` § CANDIDATE SKILL REVISION.
+7. **Open `CANDIDATE SKILL REVISION` assertions adjudicated** on this entity before closing the touch — audit-visible via `agent_skill_revision_candidate_unadjudicated`; accept (`committed` / applied supersede) or reject (`review_status=rejected`). Full protocol: `cortex://notes/system/references/skill-compression-workflow-map.md` § CANDIDATE SKILL REVISION.
 
 ## Universal procedure only (binding)
 
