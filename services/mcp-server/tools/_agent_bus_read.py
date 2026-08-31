@@ -70,7 +70,7 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
 
         Operations (identical semantics to the matching agent_bus ops):
           thread_get   (thread)  — single ThreadDetail (+ cursor_auto_job when a non-terminal Auto job is on the lane)
-          threads      (status?, tags?, lifecycle_state?, last?, limit?, has_unread?, query?)
+          threads      (status?, tags?, lifecycle_state?, last?, has_unread?, query?)
           job_state    (thread|thread_id?, job_id?, include_terminal?)  — keyed cursor-auto phase+clocks
           fetch        (to?, thread?, last?, unread?, compact?, mark_read?, all?)
           fetch_unread (to?, thread?, mark_read?, compact?, active_since?, limit?, all?)  — recipient scope: enriched per-thread unread digest; thread scope: that thread's full unread turn list

@@ -221,6 +221,8 @@ agent_bus(tool="send", arguments='{"new_slug":"topic","to":"grok-web","subject":
 
 The sidecar is the communication; the turn body is the table-of-contents entry. Use `allow_long_body=true` only when inline long-form is required by recipient contract.
 
+Liaison seat procedure compose: `runbook:liaison-seat-on-a-lane` § Procedure step 4.
+
 ## Lane parentage (operator-visible)
 
 Folded lane parentage lives on **`thread_get`**, **unread TOC**, and CHECKPOINT derived zones as `parent_thread` + `lane_role` (store authority: append-only `thread_lane_associations`). Bind explicitly via `lane_bind` or atomically on `send(new_slug=…)` when both fields are supplied. Author prose may use `agent-bus:7188 (sub_mission of 7182)`; role-less bare citations get advisory lint only (non-blocking). CHECKPOINT derived zones split **Child lanes** (depth-1 substantiated) vs **Cited lanes** (citation-derived / deeper). A conductor worker minted under a coord stub is a leftover cite (or `lane_bind` onto the root), not a Child lane of the root — 422 `conductor_coord_split_refused` blocks the class going forward.

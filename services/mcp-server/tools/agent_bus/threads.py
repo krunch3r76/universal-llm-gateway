@@ -21,7 +21,6 @@ def _threads_impl(
     tags: list[str] | None = None,
     lifecycle_state: str | None = None,
     last: int | None = None,
-    limit: int | None = None,
     has_unread: bool | None = None,
     query: str | None = None,
 ) -> dict[str, Any]:
@@ -33,7 +32,7 @@ def _threads_impl(
         params.append(("tags", tag))
     if lifecycle_state:
         params.append(("lifecycle_state", lifecycle_state))
-    limit_applied = limit if limit is not None else (last if last is not None else _DEFAULT_THREAD_LIMIT)
+    limit_applied = last if last is not None else _DEFAULT_THREAD_LIMIT
     params.append(("limit", str(limit_applied)))
     if has_unread is not None:
         params.append(("has_unread", "true" if has_unread else "false"))
@@ -119,7 +118,6 @@ def _threads_dispatch(
     tags: list[str] | None = None,
     lifecycle_state: str | None = None,
     last: int | None = None,
-    limit: int | None = None,
     has_unread: bool | None = None,
     query: str | None = None,
 ) -> dict[str, Any]:
@@ -128,7 +126,6 @@ def _threads_dispatch(
         tags=tags,
         lifecycle_state=lifecycle_state,
         last=last,
-        limit=limit,
         has_unread=has_unread,
         query=query,
     )

@@ -72,11 +72,11 @@ def reconcile_post_arguments(
             "error": (
                 f"post: {key!r} is a continuation field and has no effect "
                 "on post, which always creates a NEW thread. To continue an "
-                "existing thread use reply(thread=<id>, after_turn=<n>)."
+                "existing thread use send(thread=<id>, after_turn=<n>)."
             ),
             "reason": f"{key}_not_valid_on_post",
             key: args[key],
-            "suggestion": "use_reply_to_continue",
+            "suggestion": "use_send_to_continue",
         }
     return args, None
 

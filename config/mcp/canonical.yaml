@@ -204,6 +204,8 @@ tools:
     substrate_qualified: user-vortex__cortex_entity_get
   fol_descriptor: '∀ intent ∈ {"full","card"}: response shape differs by projection depth.
 
+    Note bodies: read via fs(op=read, path=cortex://…) — cortex has no read op for markdown bodies.
+
     Idempotent. See agent_skill:cortex.
 
     '
@@ -1385,7 +1387,8 @@ tools:
     tool: cortex_friction
     substrate_qualified: user-vortex__cortex_friction
   fol_descriptor: 'owner ∈ {service:,agent_skill:,ai_agent:} (bare slug -> service:); service=
-    is the back-compat alias; exactly one of owner/service required.
+    is the back-compat alias; exactly one of owner/service required. Required: category (enum),
+    note (not message), agent.
 
     Protocol category (actionable): exactly one anchor variant — charter{charter_root, window_index}
     or continuity{root_thread, cp_ordinal} (see file_charter_protocol_friction). Down-casting
@@ -1681,7 +1684,7 @@ tools:
     tool: agent_bus_threads
     substrate_qualified: user-vortex__agent_bus_threads
   fol_descriptor: "∀ args ∈ ThreadsArgs: threads(args) ⟹\n  result ∈ List[ThreadSummary]\n\
-    \  ∧ |result| ≤ args.limit (default 50 when limit and last are both unset).\nRead-only.
+    \  ∧ |result| ≤ args.last (default 50 when last is unset).\nRead-only.
     ¬side-effects. Response includes limit_applied and truncated. See agent_skill:agent_bus.\n"
   json_schema:
     type: object
@@ -1695,8 +1698,6 @@ tools:
         items:
           type: string
       last:
-        type: integer
-      limit:
         type: integer
       has_unread:
         type: boolean
@@ -1835,7 +1836,8 @@ tools:
     substrate_qualified: user-vortex__agent_bus_post
   fol_descriptor: "∀ body ∈ str ∧ to ∈ str:\n  post(body, to, from?|from_agent?) ⟹ thread_id
     ∈ ℕ ∧ turn_number = 1.\nDEPRECATED 2026-06-14 — use agent_bus_send(new_slug=…) instead;
-    removed 2026-09-01.\nfrom/from_agent optional on dual mounts — server autofills from mcp_surface.
+    removed 2026-09-01.\nContinuation fields (thread, after_turn) are rejected — use send(thread=…, after_turn=…).
+    from/from_agent optional on dual mounts — server autofills from mcp_surface.
     Creates new thread. Mutating. ¬idempotent. See agent_skill:agent_bus.\n"
   json_schema:
     type: object
@@ -2692,8 +2694,6 @@ tools:
       lifecycle_state:
         type: string
       last:
-        type: integer
-      limit:
         type: integer
       has_unread:
         type: boolean

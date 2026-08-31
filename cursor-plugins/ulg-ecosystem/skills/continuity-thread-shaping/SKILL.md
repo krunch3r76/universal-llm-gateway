@@ -107,6 +107,8 @@ Residuals: `residual-imprint`. Hub ≠ parking lot.
 | "where do we leave this" | matter node first → hub `related_to` if the house owns it → else new root |
 | Inbound LIAISON / NOTE | per `liaison-inbound.md` · `send` ¬ `request` · `runbook:liaison-seat-on-a-lane` |
 
+Inbound LIAISON: body <2KB sidecar-first → `agent-bus-discipline` § Body size. To write the whole continuity artefact you also need spec `checkpoint-schema-profiles` B1–B5 (`cortex://notes/system/specs/checkpoint-schema-profiles.md`).
+
 ## L2 test
 
 *Would this line still be true as a `runbook:` for one matter?* ⇒ it goes there, pointed from the card — ¬ this skill.

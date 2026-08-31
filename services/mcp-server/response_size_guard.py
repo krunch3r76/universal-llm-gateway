@@ -518,7 +518,7 @@ def _agent_bus_manifest(
         ]
         example_thread = thread_ids[0] if thread_ids else ""
         selective_options = [
-            'agent_bus(tool="threads", arguments=\'{"status":"active","limit":20}\')',
+            'agent_bus(tool="threads", arguments=\'{"status":"active","last":20}\')',
             'agent_bus(tool="threads", arguments=\'{"status":"active","tags":["project:YOUR_PROJECT"]}\')',
         ]
         if example_thread:
@@ -820,7 +820,7 @@ def _replacement_result(
             )
         if manifest.get("listing_op"):
             note_lines.append(
-                "Suggested narrowing: filter threads by status, tags, or limit "
+                "Suggested narrowing: filter threads by status, tags, or last "
                 "(threads() has no last= window — use fetch(thread=...) for turn windows)."
             )
         note_lines.extend(

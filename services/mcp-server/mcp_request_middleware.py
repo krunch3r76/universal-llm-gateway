@@ -161,7 +161,7 @@ def _extract_request_tool_context(
 
     interesting_keys = {
         "cortex": ("entity_id", "type", "limit", "review_status", "assertion_id"),
-        "agent_bus": ("thread", "turn_number", "last", "status", "limit", "tags"),
+        "agent_bus": ("thread", "turn_number", "last", "status", "tags"),
     }
     for key in interesting_keys[tool_name]:
         value = nested.get(key)

@@ -57,8 +57,8 @@ def test_thread_key_rejected_with_actionable_envelope() -> None:
     _, misuse = reconcile_post_arguments(args)
     assert misuse is not None
     assert misuse["reason"] == "thread_not_valid_on_post"
-    assert misuse["suggestion"] == "use_reply_to_continue"
-    assert "reply(" in misuse["error"]
+    assert misuse["suggestion"] == "use_send_to_continue"
+    assert "send(" in misuse["error"]
 
 
 def test_after_turn_key_rejected_with_actionable_envelope() -> None:
@@ -67,7 +67,7 @@ def test_after_turn_key_rejected_with_actionable_envelope() -> None:
     assert misuse is not None
     assert misuse["reason"] == "after_turn_not_valid_on_post"
     assert misuse["after_turn"] == 4
-    assert "reply(" in misuse["error"]
+    assert "send(" in misuse["error"]
 
 
 def test_after_turn_zero_skip_sentinel_stripped_on_post() -> None:

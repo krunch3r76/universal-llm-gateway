@@ -23,7 +23,6 @@ _ARG_ALIASES: dict[str, str] = {
     "msg": "body",
     "text": "body",
     "content": "body",
-    "turn": "turn_number",
     "title": "subject",
 }
 

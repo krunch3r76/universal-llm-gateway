@@ -22,7 +22,7 @@ def test_threads_default_limit_forwarded() -> None:
     assert result["truncated"] is False
 
 
-def test_threads_explicit_limit_forwarded() -> None:
+def test_threads_explicit_last_forwarded() -> None:
     captured: dict[str, object] = {}
 
     def _relay(service: str, method: str, path: str) -> dict[str, object]:
@@ -30,7 +30,7 @@ def test_threads_explicit_limit_forwarded() -> None:
         return {"threads": []}
 
     with patch("tools.agent_bus.threads.relay", side_effect=_relay):
-        result = _threads_impl(status="active", limit=200)
+        result = _threads_impl(status="active", last=200)
 
     assert "limit=200" in str(captured["path"])
     assert result["limit_applied"] == 200
