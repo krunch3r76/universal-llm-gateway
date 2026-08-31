@@ -5,8 +5,6 @@ from __future__ import annotations
 import time
 from unittest.mock import patch
 
-import pytest
-
 from services.git_integration_worker.cursor_auto.gate_serialize import (
     NESTED_IN_SEAT_REASON,
     plan_nested_dispatch,
@@ -19,12 +17,10 @@ from services.git_integration_worker.cursor_auto.wire_map import (
     admit_model_override_rule_line,
     admit_model_pin_flags,
     assess_effort_pin,
-    assess_escalation_pin,
     assess_model_pin,
     resolve_contract_disposition,
     resolve_desired_effort,
     resolve_desired_model,
-    resolve_escalation,
     resolve_handoff_contract,
 )
 
