@@ -133,7 +133,7 @@ steelman in-seat + `agent_bus` a code seat, or stamp `steelman-only`) when a har
 - Make deliverables **durable** before this checkpoint (files written, changes
   staged) — if a consultation happens here and the session ends during it,
   durable work persists
-- **Session / work review (optional, recommended):** `cdp/opus-5` `purpose=review`
+- **Session / work review (optional, recommended):** `cdp/opus-5` `purpose=review` `reasoning_effort="high"`
   on judgment-bearing code changes (`consult-routing` § CDP transport). Fire in
   the background when possible; defer (and name it) when the harvest would block
   the next attended move. ¬ silent Terra G4; ¬ skip because "slow" on conductor.

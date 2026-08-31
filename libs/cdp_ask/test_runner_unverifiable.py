@@ -117,4 +117,57 @@ async def test_run_execution_model_select_failed_deregisters() -> None:
         )
     assert payload["ok"] is False
     assert payload["error"] == "model select failed: picker"
+    assert payload["family_substituted"] is True
+    assert payload["overlay_select_attempts"] == ["opus-5", "opus-5", "fable-5"]
+    assert payload["stall_stage"] == "observer_unverified"
     deregister.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_run_execution_retries_opus_high_before_unverified() -> None:
+    """a:31534 — first picker miss is not the terminal observer_unverified."""
+    reg = MagicMock()
+    reg.registration_id = "reg-review"
+    reg.cdp_url = "http://127.0.0.1:9222"
+    cse = "https://claude.ai/cowork/cse_abc"
+    converse = AsyncMock(
+        side_effect=[
+            [_fail_result(url=cse, error="model select failed: picker")],
+            [
+                ProjectAskResult(
+                    ok=True,
+                    body="ok",
+                    url=cse,
+                    project_uuid="",
+                    project_url="https://claude.ai/new",
+                    model={"ok": True},
+                    body_len=2,
+                    delete_after=None,
+                    error=None,
+                )
+            ],
+        ]
+    )
+    with (
+        patch("cdp_ask.runner.bind_execution_lane", return_value=reg),
+        patch("cdp_ask.runner.run_project_conversation", new=converse),
+        patch("cdp_ask.runner.deregister_on_exit"),
+        patch("cdp_ask.runner.registration_has_wake_debt", return_value=False),
+        patch("cdp_ask.runner.cdp_registry.bind_session_address"),
+        patch("cdp_ask.runner._wake_debt_extras", return_value={}),
+    ):
+        payload = await run_execution(
+            SubmitProjectAskRequest(
+                prompt_text="ping",
+                converse=True,
+                no_project_uuid=True,
+                purpose="review",
+                model="opus-5",
+            ),
+            execution_id="sat-retry",
+            abort_check=AsyncMock(return_value=False),
+        )
+    assert payload["ok"] is True
+    assert payload.get("stall_stage") is None
+    assert payload["overlay_retry"] == "opus_high"
+    assert converse.await_count == 2

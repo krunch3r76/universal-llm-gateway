@@ -228,7 +228,7 @@ Include dispatch id + result line for DISPATCH; entity/assertion ids for DIRECT.
 **Event instrumentation closeout (BINDING — judgment, not a scan):** when the pickup touched behavioral edges or `@event_factory` emit sites, closeout states in one line — events added (`signal` · `role` · why) OR "no event warranted (reason)", plus any prune/relabel candidates spotted (Use the `event-instrumentation-discipline` skill). No criticals scan — add/prune is judgment. Silence on an event-bearing change is the miss.
 
 **Session / work review (optional, recommended):** on judgment-bearing ship, cue
-`team_dispatch(model=cdp/opus-5, purpose=review)` (`consult-routing` § CDP
+`team_dispatch(model=cdp/opus-5, purpose=review, reasoning_effort="high")` (`consult-routing` § CDP
 transport). Background preferred; defer and name it when attended-blocking.
 ¬ a close gate; ¬ silent Terra G4; ¬ a substitute for path-sim R-after.
 

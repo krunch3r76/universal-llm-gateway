@@ -52,7 +52,7 @@ guard). Consults about claude.ai / Cowork / the picker itself prime
 | G1 / Mode B / path-sim Q / hop-5 check | `cdp/fable` | high (max when bind gates a wave) | fresh `/new`; followup only into a live op-proxy CSE | `ask` |
 | G2 frame | `cdp/fable` followup in the G1 CSE; else `cdp/opus-5` fresh | high | followup ≻ fresh | inherit `ask` |
 | R-admit / verifier / mission / M-Arch | `cdp/opus-5` | high | fresh (R); mission followup | `review` or `mission` |
-| Session / work review of **code changes** | `cdp/opus-5` | high | **optional, recommended** — background (conductor / unattended) preferred; defer when it would block the next attended move. Stage diff + closeout to `cortex://`. ¬ a silent G4; ¬ a substitute for checkout-native R-after (`cursor/grok-4.6`) | `review` |
+| Session / work review of **code changes** | `cdp/opus-5` | high — pin `reasoning_effort="high"` (do not inherit conductor admit `effort:max`) | **optional, recommended** — background (conductor / unattended) preferred; defer when it would block the next attended move. Stage diff + closeout to `cortex://`. Fire: `team_dispatch(model=cdp/opus-5, purpose=review, reasoning_effort="high")`. ¬ a silent G4; ¬ a substitute for checkout-native R-after (`cursor/grok-4.6`) | `review` |
 | Docs / closeouts / spec polish / office I/O / dashboards | `cdp/sonnet-5` | **Extra** default; **Max** via `reasoning_effort=max` | pipeline or fresh; office → `harvest_source=output-file` | `produce` |
 | Skill authoring | `cdp/opus-5` draft · `cdp/sonnet-5` revise | high / Extra | fresh, output-file → cortex staging | `produce` |
 | Haiku | `cdp/haiku-4.5` | — | **no recipe** until Sonnet caps | — |

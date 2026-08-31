@@ -1,23 +1,15 @@
 #!/usr/bin/env python3
-"""Live-DOM census for the cdp/opus-5 effort-picker break (a:31333).
+"""Live-DOM census for cdp/opus-5 effort picker (a:31333 + a:31534).
 
-Friction a:31333 theorizes a live claude.ai UI change: the "Opus 5" model-list
-row now carries a trailing Private-Use-Area glyph (U+E03B) that Fable/Sonnet/
-Haiku rows don't have, and that this is why ``set_effort`` fails at
-``effort_trigger_missing``. Reading the code shows that glyph only appears in
-the *diagnostic* ``available_models`` dump from the qualified-radio recovery
-fallback (``_recover_effort_via_qualified_radio``) — a different DOM surface
-than the ``[role=menuitem]`` "Effort" row ``_effort_trigger`` actually looks
-for. This script censuses both surfaces on a live page before any fix is
-written, so the diff targets the confirmed cause rather than the friction's
-own (plausible but unverified) theory — same discipline that let a:31319 land
-on its real cause (aria-label dropped) instead of its own PUA-prefix theory.
+a:31333 asked whether a trailing PUA on the Opus row caused
+``effort_trigger_missing``. That glyph is real and benign.
 
-Opens a brand-new isolated tab (never touches an existing live CSE session),
-lands on ``https://claude.ai/new``, opens the model picker, selects the
-Opus 5 family radio, and censuses the resulting menu (role/aria/text/raw
-codepoints/outerHTML) — the exact state ``_effort_trigger`` inspects — before
-running the real ``select_model`` end-to-end for the official verdict.
+a:31534 is the live after-ship failure: family-click lands Opus on Max, then
+High fails. Stock ``opus-5-max`` PASS is **not** this AC-0. The High-after-Max
+leg (``set_effort("high")`` + ``select_model("opus-5")``) is the verdict that
+matters.
+
+Opens a brand-new isolated tab (never touches an existing live CSE session).
 
 Run on the CDP host (io, per current topology; script itself is host-agnostic
 via ``BROWSER_CDP_URL``):
@@ -35,7 +27,12 @@ from typing import Any
 _REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_REPO / "libs"))
 
-from claude_bundles.chat_model_effort import _effort_trigger, set_effort  # noqa: E402
+from claude_bundles.chat_model_effort import (  # noqa: E402
+    _effort_option,
+    _effort_trigger,
+    set_effort,
+)
+from claude_bundles.chat_model_match import label_satisfies_request  # noqa: E402
 from claude_bundles.chat_model_select import (  # noqa: E402
     _click_family_radio,
     _open_picker,
@@ -43,6 +40,7 @@ from claude_bundles.chat_model_select import (  # noqa: E402
     list_picker_radios,
     select_model,
 )
+from effort_vocabulary import to_testid as _effort_testid  # noqa: E402
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp  # noqa: E402
 
 _MENU_SELECTOR = "[role=menuitem], [role=menuitemradio]"
@@ -118,18 +116,40 @@ async def main() -> int:
             # Picker from the reopen (above) is still open here — run the real
             # set_effort against it directly for the ground-truth verdict.
             report["set_effort_max_result"] = await set_effort(page, "max")
+            report["after_family_click_label"] = await current_model_label(page)
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(300)
+            await _open_picker(page)
+            high_opt, high_via = await _effort_option(
+                page, "high", _effort_testid("high") or "effort-option-high"
+            )
+            report["high_option_found_before_trigger"] = high_opt is not None
+            report["high_option_via_before_trigger"] = high_via
+            report["set_effort_high_result"] = await set_effort(page, "high")
         except Exception as exc:  # noqa: BLE001 — partial census beats none
             report["step1_error"] = repr(exc)
 
-        # Step 2: run the real production call end-to-end for the official
-        # verdict — request an effort ("max") distinct from whatever "before"
-        # showed, so the already_selected/already_on_label fast paths can't
-        # mask a genuine submenu failure.
+        # Max-only probe — recorded, not the a:31534 verdict.
         await page.keyboard.press("Escape")
         await page.wait_for_timeout(300)
-        result = await select_model(page, "opus-5-max")
-        report["select_model_result"] = result
-        report["verdict"] = "PASS" if bool(result.get("ok")) else "FAIL"
+        max_result = await select_model(page, "opus-5-max")
+        report["select_model_opus5_max"] = max_result
+        report["verdict_max"] = "PASS" if bool(max_result.get("ok")) else "FAIL"
+
+        # a:31534 AC-0 — High after family default Max.
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(300)
+        high_result = await select_model(page, "opus-5")
+        report["select_model_opus5"] = high_result
+        after_high = high_result.get("current_model") or await current_model_label(
+            page
+        )
+        high_ok = bool(high_result.get("ok")) and label_satisfies_request(
+            "opus-5", after_high, effort="high"
+        )
+        report["after_high_label"] = after_high
+        report["verdict_high_after_max"] = "PASS" if high_ok else "FAIL"
+        report["verdict"] = report["verdict_high_after_max"]
 
         print(json.dumps(report, indent=2, ensure_ascii=False))
         return 0 if report["verdict"] == "PASS" else 1

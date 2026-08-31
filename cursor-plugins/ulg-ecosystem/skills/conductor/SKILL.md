@@ -173,7 +173,7 @@ per-G-row one. Default posture once running:
   as skipping straight to a merge ask (refuse-and-close, incident 7419;
   distinct from absorb, incident 7407, which hand-codes instead of nesting).
 - **After-ship `cdp/opus-5` session/work review is recommended, not a hold.**
-  On green land, fire `team_dispatch(model=cdp/opus-5, purpose=review)` in
+  On green land, fire `team_dispatch(model=cdp/opus-5, purpose=review, reasoning_effort="high")` in
   the background (`consult-routing` § CDP transport). Latency is not a skip
   on this seat. Defer only when the harvest would block the next *attended*
   move — and name the deferral. Does not replace path-sim R-after (Grok).
@@ -277,7 +277,7 @@ Required in `<scope>` / `<invariants>`:
 - **Bound conductor model + effort** (or "lead picks at admit from tier table")
 - **G-row contract honesty** — do not mark a G-row light-bounded-direct / `owner: cursor-sdk` when `files_expected` includes production code+tests. Conductor binds; Composer implements.
 - **Scoreboard overlay (good default)** — after the last landed code G-row,
-  comment `cdp/opus-5` `purpose=review` of the landed diff as recommended
+  comment `cdp/opus-5` `purpose=review` `reasoning_effort="high"` of the landed diff as recommended
   background review. Record fire or named deferral in Sidecars / WIP.
   **¬** mint it as a gated G-row (done-claim must not wait on it).
 

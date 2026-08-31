@@ -59,7 +59,7 @@ token overrides when explicitly supplied. **¬** default to web-anthropic / CDP 
 R-after (that seat is R-admit).
 
 **Optional overlay (recommended):** after R-after (or instead of a second Grok
-pass on non-path-sim work), fire `team_dispatch(model=cdp/opus-5, purpose=review)`
+pass on non-path-sim work), fire `team_dispatch(model=cdp/opus-5, purpose=review, reasoning_effort="high")`
 on the staged delivery + session arc. Background preferred; defer when attended
 blocking. SOT: `consult-routing` § CDP transport · `abstraction-layering`
 § After-ship. This is session/work judgment review — not a G4 Terra restore

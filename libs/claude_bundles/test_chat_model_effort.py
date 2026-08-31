@@ -11,7 +11,9 @@ from claude_bundles.chat_model_effort import (
     _EFFORT_ROW,
     _apply_effort,
     _effort_after_click,
+    _effort_option_pattern,
     _effort_trigger,
+    _recover_effort_via_qualified_radio,
     set_effort,
 )
 from claude_bundles.chat_model_select import _open_picker, select_from_ui
@@ -450,3 +452,168 @@ async def test_open_picker_retries_until_radios_mount() -> None:
         await _open_picker(page)
     assert btn.click.await_count == 3
     assert page.keyboard.press.await_count == 2
+
+
+@pytest.mark.offline
+def test_effort_option_pattern_matches_high_default_subtitle() -> None:
+    """a:31534 — High radio text is ``High\\nDefault`` or ``High Default``."""
+    pat = _effort_option_pattern("High")
+    assert pat.search("High")
+    assert pat.search("High Default")
+    assert pat.search("High\nDefault")
+    assert not pat.search("Extra High")
+    assert not pat.search("Max")
+
+
+class _HighDefaultRadio:
+    """``[role=menuitemradio]`` whose filter applies the real High pattern."""
+
+    def __init__(self) -> None:
+        self.click = AsyncMock()
+        self.first = self
+        self._n = 0
+
+    async def count(self) -> int:
+        return self._n
+
+    def filter(self, has_text=None, **_kwargs):
+        text = "High\nDefault"
+        child = _HighDefaultRadio()
+        child.click = self.click
+        child.first = child
+        if has_text is not None and getattr(has_text, "search", None):
+            child._n = 1 if has_text.search(text) else 0
+        return child
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_set_effort_high_clicks_high_default_radio() -> None:
+    """a:31534 — High-after-Max flyout option is clickable without testid."""
+    trigger = _StaticLoc(1)
+    radios = _HighDefaultRadio()
+
+    def _page_locator(sel, **_kwargs):
+        if sel == '[data-testid="effort-menu-trigger"]':
+            return trigger
+        if sel == '[data-testid="effort-option-high"]':
+            return _StaticLoc(0)
+        if sel == "[role=menuitemradio]":
+            return radios
+        if sel == "[role=menuitem]":
+            return _MenuitemLocator(_StaticLoc(0))
+        return _StaticLoc(0)
+
+    page = AsyncMock()
+    page.wait_for_timeout = AsyncMock()
+    page.locator = _page_locator
+    page.get_by_role = lambda *_a, **_k: _StaticLoc(0)
+
+    result = await set_effort(page, "high")
+    assert result["ok"] is True
+    assert result["option_via"] == "label-radio"
+    assert radios.click.await_count == 1
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_recover_failure_keeps_option_missing_and_candidates() -> None:
+    """a:31534 — recover must not relabel option-miss as trigger-miss."""
+    page = AsyncMock()
+    page.keyboard.press = AsyncMock()
+    page.wait_for_timeout = AsyncMock()
+    candidates = [{"role": "menuitemradio", "text": "High\nDefault"}]
+    inner = {
+        "ok": False,
+        "step": "effort_option_missing",
+        "testid": "effort-option-high",
+    }
+    with (
+        patch(
+            "claude_bundles.chat_model_select._open_picker",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "claude_bundles.chat_model_select.list_picker_radios",
+            new_callable=AsyncMock,
+            return_value=["Opus 5", "Fable 5"],
+        ),
+        patch(
+            "claude_bundles.chat_model_select.current_model_label",
+            new_callable=AsyncMock,
+            return_value="Model: Opus 5 · Max",
+        ),
+        patch(
+            "claude_bundles.chat_model_effort.collect_effort_candidates",
+            new_callable=AsyncMock,
+            return_value=candidates,
+        ),
+    ):
+        result = await _recover_effort_via_qualified_radio(
+            page,
+            family="opus-5",
+            effort="high",
+            requested="opus-5",
+            before="Model: Fable 5 · High",
+            matched="Opus 5For complex tasks",
+            inner_effort=inner,
+        )
+    assert result["ok"] is False
+    assert result["effort"]["step"] == "effort_option_missing"
+    assert result["candidates"] == candidates
+    assert result["available_models"] == ["Opus 5", "Fable 5"]
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_effort_after_click_recover_miss_preserves_inner_dump() -> None:
+    """Recover envelope must keep applied inner step + candidates (a:31534)."""
+    page = AsyncMock()
+    page.keyboard.press = AsyncMock()
+    page.wait_for_timeout = AsyncMock()
+    candidates = [{"role": "menuitemradio", "text": "High\nDefault"}]
+    apply_miss = {
+        "ok": False,
+        "step": "effort_failed",
+        "after": "Model: Opus 5 · Max",
+        "effort": {"ok": False, "step": "effort_option_missing"},
+        "matched": "Opus 5",
+        "candidates": candidates,
+    }
+    recover_lie = {
+        "ok": False,
+        "step": "effort_failed",
+        "after": "Model: Opus 5 · Max",
+        "effort": {"ok": False, "step": "effort_trigger_missing"},
+        "matched": "Opus 5",
+        "before": "Model: Fable 5 · High",
+        "available_models": ["Opus 5"],
+    }
+    with (
+        patch(
+            "claude_bundles.chat_model_effort._apply_effort",
+            new_callable=AsyncMock,
+            return_value=apply_miss,
+        ),
+        patch(
+            "claude_bundles.chat_model_effort._recover_effort_via_qualified_radio",
+            new_callable=AsyncMock,
+            return_value=recover_lie,
+        ),
+        patch(
+            "claude_bundles.chat_model_select.current_model_label",
+            new_callable=AsyncMock,
+            return_value="Model: Opus 5 · Max",
+        ),
+    ):
+        result, err = await _effort_after_click(
+            page,
+            requested="opus-5",
+            effort="high",
+            matched="Opus 5",
+            before="Model: Fable 5 · High",
+        )
+    assert result is None
+    assert err is not None
+    assert err["effort"]["step"] == "effort_option_missing"
+    assert err["candidates"] == candidates

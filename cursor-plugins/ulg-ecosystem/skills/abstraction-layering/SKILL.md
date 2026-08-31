@@ -277,7 +277,7 @@ when the change was judgment-bearing or cross-cutting.
 
 | Posture | Do |
 |---|---|
-| Background / conductor / unattended | **Recommend fire** — latency is not a skip. `team_dispatch(model=cdp/opus-5, purpose=review)` + staged diff/closeout |
+| Background / conductor / unattended | **Recommend fire** — latency is not a skip. `team_dispatch(model=cdp/opus-5, purpose=review, reasoning_effort="high")` + staged diff/closeout |
 | Attended, next move would wait on the harvest | **Defer** (name it on the closeout). Slow is a sequencing reason, not a quality reason |
 | Checkout-native delivery scan still owed | Layering-owned overlay: `cursor/grok-4.6` after G6 — ¬ a path-sim admit |
 

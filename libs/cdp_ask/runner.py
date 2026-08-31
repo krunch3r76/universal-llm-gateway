@@ -35,6 +35,7 @@ from cdp_ask.page_liveness import (
     advance_ladder_from_harvest,
     make_harvest_ladder_hook,
 )
+from cdp_ask.overlay_effort_retry import run_with_overlay_retry
 from cdp_ask.unverifiable import (
     converse_fail_error,
     converse_stall_stage,
@@ -440,22 +441,31 @@ async def run_execution(
                 bool(req.delete_after) if req.delete_after is not None else False
             )
             stargate_execution_id = resolve_stargate_execution_id(req)
-            results = await run_project_conversation(
-                prompts,
-                project_uuid="" if req.no_project_uuid else req.project_uuid,
-                model=req.model,
-                delete_after=delete_after,
-                cdp_url=reg.cdp_url,
-                timeout_s=max(req.timeout_s, 600),
-                min_growth=req.min_growth,
-                min_body=req.min_body,
-                ensure_cowork_auto=req.ensure_cowork_auto,
-                on_harvest=on_harvest,
-                expected_size=req.expected_size,
-                harvest_source=req.harvest_source,
-                download_output=req.download_output,
-                stargate_execution_id=stargate_execution_id,
-                satellite_execution_id=execution_id,
+
+            async def _converse_once(model: str):
+                return await run_project_conversation(
+                    prompts,
+                    project_uuid="" if req.no_project_uuid else req.project_uuid,
+                    model=model,
+                    delete_after=delete_after,
+                    cdp_url=reg.cdp_url,
+                    timeout_s=max(req.timeout_s, 600),
+                    min_growth=req.min_growth,
+                    min_body=req.min_body,
+                    ensure_cowork_auto=req.ensure_cowork_auto,
+                    on_harvest=on_harvest,
+                    expected_size=req.expected_size,
+                    harvest_source=req.harvest_source,
+                    download_output=req.download_output,
+                    stargate_execution_id=stargate_execution_id,
+                    satellite_execution_id=execution_id,
+                )
+
+            results, retry_meta = await run_with_overlay_retry(
+                requested_model=req.model,
+                run_once=_converse_once,
+                error_of=lambda rs: rs[-1].error if rs else None,
+                ok_of=lambda rs: bool(rs) and all(r.ok for r in rs),
             )
             if await abort_check():
                 abort_cleanup(reg, purpose=req.purpose)
@@ -505,6 +515,7 @@ async def run_execution(
                         "error": str(exc),
                         "harvest_provenance": None,
                         "stall_stage": classify_stall_stage(str(exc)),
+                        **retry_meta,
                     }
                 if not last.archive_uri and archive_uri:
                     backfilled = ProjectAskResult(
@@ -564,6 +575,7 @@ async def run_execution(
                 ),
                 "error": fail_error,
                 "stall_stage": stall,
+                **retry_meta,
                 **_wake_debt_extras(reg.registration_id, ok=conv_ok),
             }
 
@@ -579,22 +591,30 @@ async def run_execution(
             if delete_after
             else (resolve_archive_path(req.archive_path) if req.archive_path else None)
         )
-        result = await run_project_ask(
-            prompt,
-            project_uuid=req.project_uuid,
-            model=req.model,
-            delete_after=delete_after,
-            cdp_url=reg.cdp_url,
-            timeout_s=req.timeout_s,
-            min_growth=req.min_growth,
-            min_body=req.min_body,
-            archive_path=archive,
-            execution_id=execution_id or None,
-            stargate_execution_id=resolve_stargate_execution_id(req),
-            on_harvest=on_harvest,
-            expected_size=req.expected_size,
-            harvest_source=req.harvest_source,
-            download_output=req.download_output,
+        async def _ask_once(model: str):
+            return await run_project_ask(
+                prompt,
+                project_uuid=req.project_uuid,
+                model=model,
+                delete_after=delete_after,
+                cdp_url=reg.cdp_url,
+                timeout_s=req.timeout_s,
+                min_growth=req.min_growth,
+                min_body=req.min_body,
+                archive_path=archive,
+                execution_id=execution_id or None,
+                stargate_execution_id=resolve_stargate_execution_id(req),
+                on_harvest=on_harvest,
+                expected_size=req.expected_size,
+                harvest_source=req.harvest_source,
+                download_output=req.download_output,
+            )
+
+        result, retry_meta = await run_with_overlay_retry(
+            requested_model=req.model,
+            run_once=_ask_once,
+            error_of=lambda r: r.error,
+            ok_of=lambda r: bool(r.ok),
         )
         if await abort_check():
             abort_cleanup(reg, purpose=req.purpose)
@@ -631,6 +651,7 @@ async def run_execution(
             ladder=ladder,
             archive_uri=result.archive_uri if result.ok else None,
         )
+        payload.update(retry_meta)
         payload.update(_wake_debt_extras(reg.registration_id, ok=result.ok))
         return payload
     finally:
