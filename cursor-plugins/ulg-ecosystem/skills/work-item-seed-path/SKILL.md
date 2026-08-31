@@ -275,6 +275,8 @@ team_dispatch(
   lane="B",
   source_ref="todo:{slug}",
   packet_kind="conductor",
+  model="cursor/grok-4.6",
+  model_knobs={"effort": "xhigh", "fast": "false"},
   dispatch_thread_id="{root}",   # continuity root with turns — or pending-empty child of root
 )
 ```
@@ -286,8 +288,8 @@ after terminal: `reuse_thread=<work thread>` — do not re-pass the work thread 
 
 Receipt identity **is** the admitted thread with
 `branch_current=cursor-sdk/lane-{that id}` — quote `dispatch_id` + scoreboard URI
-+ that Lane B. Conductor drives G-ladder; IDE does not fire `/layer` or Mode B
-Fable on the seed path.
++ that Lane B. Spawn is **T1 Grok** (`cursor/grok-4.6` @ `xhigh`). Conductor
+drives G-ladder; IDE does not fire `/layer` or Mode B Fable on the seed path.
 
 | Condition | Enter |
 |---|---|

@@ -55,8 +55,9 @@ Load the skill and run S1→S4a→S6 in order. **Publish stage disposition befor
 **¬ halt S4a for Mode B.** IDE does **not** fire Mode B Fable on this command.
 
 Compose `/todo` identity mint only — Problem/Scope/Acceptance may be sparse.
-After S4a, spawn `packet_kind=conductor` per skill § S6. Pass
-`dispatch_thread_id` ∈ {continuity root with turns, pending-empty child of root}.
+After S4a, spawn `packet_kind=conductor` per skill § S6 — **T1**
+`cursor/grok-4.6` @ `xhigh`. Pass `dispatch_thread_id` ∈ {continuity root with
+turns, pending-empty child of root}.
 Receipt identity is the admitted thread + `branch_current=cursor-sdk/lane-{that id}`.
 
 Conductor fault after spawn: operator names the lane to the sitting liaison

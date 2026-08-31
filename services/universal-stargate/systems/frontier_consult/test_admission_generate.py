@@ -59,6 +59,36 @@ def test_g4b_seat_cursor_sdk_admitted_on_generate() -> None:
     )
 
 
+def test_conductor_omit_model_resolves_grok() -> None:
+    _, _, _, resolved = resolve_auto_seat_generate_target(
+        "cursor-sdk",
+        model=None,
+        request_id="req-conductor-omit",
+        packet_kind="conductor",
+    )
+    assert resolved == "cursor/grok-4.6"
+
+
+def test_omit_model_without_packet_kind_resolves_composer() -> None:
+    _, _, _, resolved = resolve_auto_seat_generate_target(
+        "cursor-sdk",
+        model=None,
+        request_id="req-omit-none",
+        packet_kind=None,
+    )
+    assert resolved == "cursor/composer-2.5"
+
+
+def test_explicit_composer_with_conductor_packet_kind() -> None:
+    _, _, _, resolved = resolve_auto_seat_generate_target(
+        "cursor-sdk",
+        model="cursor/composer-2.5",
+        request_id="req-explicit-composer",
+        packet_kind="conductor",
+    )
+    assert resolved == "cursor/composer-2.5"
+
+
 def test_role_seat_exclusive_rejected() -> None:
     with pytest.raises(FrontierEndpointError) as exc_info:
         enforce_generate_role_seat_exclusive(

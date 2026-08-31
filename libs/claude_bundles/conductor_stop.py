@@ -45,7 +45,12 @@ _RESUME_ROW_RE = re.compile(
     r"(?im)^(?:resume_at|entry_gate|persisted_row):\s*(G[1-6])\b"
 )
 _MODE_B_ADMIT_RE = re.compile(
-    r"(?im)(execution_id:\s*\S+|poll_hint:\s*\S+|status:\s*blocked|honest\s+halt)"
+    r"(?im)(execution_id:\s*\S+|poll_hint:\s*\S+|status:\s*blocked|honest\s+halt|"
+    r'"execution_id"\s*:\s*"[^"]+"|"poll_hint"\s*:\s*"[^"]+")'
+)
+_RESUME_AT_LINE_RE = re.compile(r"(?im)^(?:resume_at|resumed_at):.*$")
+_RESUME_AT_JSON_RE = re.compile(
+    r'"(?:resume_at|resumed_at)"\s*:\s*"[^"]*"'
 )
 _ARCHIVE_OR_HARVEST_RE = re.compile(
     r"(?im)(archive_uri:\s*\S+|from:\s*web-anthropic|from_agent:\s*web-anthropic)"
@@ -95,12 +100,19 @@ class ScoreRatifyVerdict:
     reason: str | None = None
 
 
+def _strip_narrative_resume_at(text: str) -> str:
+    """Remove resume_at/resumed_at lines and JSON values before stop-token scan."""
+    stripped = _RESUME_AT_LINE_RE.sub("", text or "")
+    return _RESUME_AT_JSON_RE.sub("", stripped)
+
+
 def parse_stop_tokens(text: str) -> StopParseResult:
     """Extract stop tokens from scoreboard markdown or closeout prose."""
+    scan_text = _strip_narrative_resume_at(text)
     tokens: set[str] = set()
     malformed: list[str] = []
     rows: dict[str, set[str]] = {}
-    for match in _STOP_CELL_RE.finditer(text or ""):
+    for match in _STOP_CELL_RE.finditer(scan_text):
         token = match.group(1).upper()
         if token in STOP_TOKENS:
             tokens.add(token)
@@ -111,7 +123,7 @@ def parse_stop_tokens(text: str) -> StopParseResult:
         row_start = row_match.start()
         next_row = _G_ROW_RE.search(text, row_match.end())
         row_end = next_row.start() if next_row else len(text)
-        row_text = text[row_start:row_end]
+        row_text = _strip_narrative_resume_at(text[row_start:row_end])
         row_tokens = frozenset(
             m.group(1).upper() for m in _STOP_CELL_RE.finditer(row_text)
         )

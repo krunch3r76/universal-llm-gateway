@@ -22,6 +22,7 @@ def resolve_summon_mode(
     explicit: str | None = None,
     caller_agent: str | None = None,
     summon_text: str | None = None,
+    summoning_turn_count: int | None = None,
 ) -> str:
     """Pick attended vs confer_and_finish for conductor spawn."""
     if explicit is not None:
@@ -33,6 +34,9 @@ def resolve_summon_mode(
 
     text_lower = (summon_text or "").lower()
     if any(marker in text_lower for marker in _CONFER_MARKERS):
+        return "confer_and_finish"
+
+    if summoning_turn_count == 0:
         return "confer_and_finish"
 
     caller = (caller_agent or "").strip().lower()

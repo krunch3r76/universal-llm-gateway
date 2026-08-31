@@ -55,6 +55,10 @@ def test_wire_map_auto_by_contract():
         == "cursor/composer-2.5"
     )
     assert (
+        resolve_desired_model("auto", contract="light-bounded")["resolved_model_id"]
+        == "cursor/grok-4.6"
+    )
+    assert (
         resolve_desired_model("opus-5")["resolved_model_id"]
         == "cursor/claude-opus-5"
     )

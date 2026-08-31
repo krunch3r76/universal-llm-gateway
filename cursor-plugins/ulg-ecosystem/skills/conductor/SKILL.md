@@ -374,6 +374,12 @@ field only (a:30793) — team_dispatch 422s it.
 If the worker thread is **still live**: do not second-generate on it —
 `422 CURSOR_WORKER_THREAD_OCCUPIED`. Poll or `nest_under` the live holder.
 
+**Nest 422 (binding):** when a nested `team_dispatch` returns **422** (transport
+refusal, schema violation, occupied thread, etc.), stop **`PARKED_TRANSPORT`** —
+persist scoreboard + journal, then exit. **¬** absorb the G-row in-seat as G5;
+**¬** ghost-admit under a dead parent. Retry only after fixing the wire (keep
+`nest_under=<conductor dispatch_id>`).
+
 If the worker is **terminal**, mint a **new** top-level conductor (new
 `dispatch_id`). Nest Composer under **that** id, not a ghost parent.
 
@@ -598,6 +604,7 @@ the after-ship `cdp/opus-5` review comment (good default; ¬ a G-row).
 | Conductor judges the mission "too big"/risky and stops before any G-row, unasked — or verifies the mission is genuine then refuses it over a later step's scale (7419) | Nest Composer, drive to green; only a **named** packet exception holds the merge — scale/blast-radius/"verified legitimate" alone are never an implicit one. Execute the current step, raise the concern in the closeout, reassess only at the flagged step under standing authorization (reasoning-posture rule 6 mirror) |
 | Closes `status: partial`/`checks_failed` with zero files touched because it wanted to flag the plan first | Flag the concern on the CHECKPOINT while still driving — flagging is commentary, not a hold |
 | Independent `team_dispatch` (no `nest_under`) for mechanical G-row landing work | `nest_under=<conductor dispatch_id>` + Composer `contract=implement` — independent dispatch is judgment/spec-only |
+| Nest 422 then in-seat G5 absorb | `PARKED_TRANSPORT` + persist; fix wire and re-nest under live `dispatch_id` |
 | Close G5 because G4 said “remainder is mechanical” + empty-template green | Hang G5; read the overlay or seed a fixture — G4 withhold is not a G5 witness |
 | Fire after-ship `cdp/opus-5` review and never read it | Summoning-thread lead quotes the overlay sidecar at harvest, or names why unread |
 | Treat named hop / `packet_kind=conductor` + `source_ref=todo:X` as a recipe when the score is harvested / `NEXT_ADMIT: none` | Liaison-decide; park remints; new remit → sibling todo + Composer implement |

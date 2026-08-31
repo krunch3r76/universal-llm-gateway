@@ -683,6 +683,7 @@ def resolve_auto_seat_generate_target(
     *,
     model: str | None,
     request_id: str,
+    packet_kind: str | None = None,
 ) -> tuple[str, str, str, str]:
     """Resolve auto-dispatch seat generate target (``seat=cursor-sdk``, …).
 
@@ -714,7 +715,10 @@ def resolve_auto_seat_generate_target(
             status_code=422,
             code="sdk_substrate_required",
         )
-    resolved_model = model or profile.default_model
+    if model is None and (packet_kind or "").strip().lower() == "conductor":
+        resolved_model = "cursor/grok-4.6"
+    else:
+        resolved_model = model or profile.default_model
     if not resolved_model:
         raise FrontierEndpointError(
             request_id=request_id,
@@ -761,10 +765,11 @@ def resolve_cursor_sdk_generate_target(
     *,
     model: str | None,
     request_id: str,
+    packet_kind: str | None = None,
 ) -> tuple[str, str, str, str]:
     """Backward-compat wrapper — use resolve_auto_seat_generate_target(seat=…)."""
     return resolve_auto_seat_generate_target(
-        role, model=model, request_id=request_id
+        role, model=model, request_id=request_id, packet_kind=packet_kind
     )
 
 

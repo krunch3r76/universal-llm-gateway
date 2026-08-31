@@ -123,7 +123,7 @@ async def prepare_cursor_sdk_generate(
 
     enforce_check_review_substrate_admission(role, model, request_id=request_id)
     to_agent, family, platform, resolved_model = resolve_cursor_sdk_generate_target(
-        role, model=model, request_id=request_id
+        role, model=model, request_id=request_id, packet_kind=packet_kind
     )
     if execution_id is None or dispatch_id is None:
         minted_execution, minted_dispatch = mint_cursor_sdk_ids(request_id=request_id)

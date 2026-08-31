@@ -136,6 +136,21 @@ def test_resolve_summon_mode_caller_defaults() -> None:
     assert resolve_summon_mode(caller_agent=None) == "confer_and_finish"
 
 
+def test_resolve_summon_mode_empty_coord_turn_count_zero() -> None:
+    assert (
+        resolve_summon_mode(caller_agent="cursor", summoning_turn_count=0)
+        == "confer_and_finish"
+    )
+    assert (
+        resolve_summon_mode(caller_agent="cursor", summoning_turn_count=3)
+        == "attended"
+    )
+    assert (
+        resolve_summon_mode(caller_agent="cursor", summoning_turn_count=None)
+        == "attended"
+    )
+
+
 def test_resolve_summon_mode_confer_markers_in_text() -> None:
     assert (
         resolve_summon_mode(

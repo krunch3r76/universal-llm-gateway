@@ -196,6 +196,7 @@ def resolve_desired_model(
             "verify": "cursor/composer-2.5",
             "seed": "cursor/grok-4.6",
             "recon": "cursor/composer-2.5",
+            "light-bounded": "cursor/grok-4.6",
         }
         model_id = by_contract.get(contract, "cursor/composer-2.5")
         return {

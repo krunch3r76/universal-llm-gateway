@@ -80,6 +80,7 @@ def load_conductor_context(
     summon_mode: str | None = None,
     caller_agent: str | None = None,
     summon_text: str | None = None,
+    summoning_turn_count: int | None = None,
     fold_entry_gate: str | None = None,
     fold_missing_witnesses: dict[str, str] | None = None,
     summoning_thread_id: str | None = None,
@@ -112,6 +113,7 @@ def load_conductor_context(
         explicit=explicit_summon,
         caller_agent=caller_agent,
         summon_text=summon_text,
+        summoning_turn_count=summoning_turn_count,
     )
     return ConductorMaterializeContext(
         source_ref=source_ref,
@@ -310,6 +312,7 @@ def materialize_conductor(
     summon_mode: str | None = None,
     caller_agent: str | None = None,
     summon_text: str | None = None,
+    summoning_turn_count: int | None = None,
     fold_deps: FoldDeps | None = None,
     summoning_thread_id: str | None = None,
 ) -> MaterializedPacket:
@@ -333,6 +336,7 @@ def materialize_conductor(
                 explicit=summon_mode,
                 caller_agent=caller_agent,
                 summon_text=summon_text,
+                summoning_turn_count=summoning_turn_count,
             ),
             summoning_thread_id=fold_deps.summoning_thread_id or summoning_thread_id,
             repo=fold_deps.repo,
@@ -348,6 +352,7 @@ def materialize_conductor(
         summon_mode=summon_mode,
         caller_agent=caller_agent,
         summon_text=summon_text,
+        summoning_turn_count=summoning_turn_count,
         fold_entry_gate=fold_entry_gate,
         fold_missing_witnesses=fold_missing,
         summoning_thread_id=summoning_thread_id,

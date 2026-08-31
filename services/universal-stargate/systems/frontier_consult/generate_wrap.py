@@ -20,6 +20,7 @@ from implement_admission.source_ref import SourceRefError
 from .cursor_sdk_generate import dispatch_cursor_sdk_generate
 from .cursor_sdk_thread_reuse import (
     consolidation_split_warning,
+    probe_thread,
     resolve_cursor_sdk_thread_targets,
 )
 from .dispatch_thread_context import resolve_generate_prompt_resolution
@@ -60,6 +61,7 @@ def prepare_conductor_packet(
     role: str = "cursor-sdk",
     transport: str = "team_dispatch",
     summoning_thread_id: str | None = None,
+    summoning_turn_count: int | None = None,
 ) -> GenerateWrapResult:
     """Materialize a conductor six-block packet from ``source_ref=todo:``."""
     del request_id, role, transport
@@ -73,6 +75,7 @@ def prepare_conductor_packet(
         summon_text=summon_text,
         summon_mode=summon_mode,
         summoning_thread_id=summoning_thread_id,
+        summoning_turn_count=summoning_turn_count,
     )
     if bridge.gated:
         return GenerateWrapResult(
@@ -311,6 +314,12 @@ async def dispatch_cursor_sdk_generate_route(
             loop = asyncio.get_running_loop()
             gen_opts = getattr(body, "generation_options", None) or {}
             raw_summon = gen_opts.get("summon_mode")
+            summoning_turn_count: int | None = None
+            dispatch_tid = getattr(body, "dispatch_thread_id", None)
+            if dispatch_tid and str(dispatch_tid).strip():
+                thread_payload = await probe_thread(str(dispatch_tid).strip())
+                if thread_payload is not None:
+                    summoning_turn_count = int(thread_payload.get("turn_count") or 0)
             wrap = await loop.run_in_executor(
                 None,
                 partial(
@@ -329,6 +338,7 @@ async def dispatch_cursor_sdk_generate_route(
                         if getattr(body, "dispatch_thread_id", None)
                         else None
                     ),
+                    summoning_turn_count=summoning_turn_count,
                 ),
             )
         elif body.contract == "implement":

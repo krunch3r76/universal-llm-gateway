@@ -294,3 +294,23 @@ def test_validate_conductor_closeout_q2_fold() -> None:
     )
     assert not verdict.ok
     assert verdict.reason == Q2_SCORE_RATIFY_MISSING
+
+
+def test_resume_at_line_does_not_tokenize_consult_pending() -> None:
+    body = "resume_at: CONSULT_PENDING\nstatus: complete"
+    parsed = parse_stop_tokens(body)
+    assert "CONSULT_PENDING" not in parsed.tokens
+
+
+def test_narrative_resumed_at_does_not_classify_consult_pending() -> None:
+    body = "resumed_at: CONSULT_PENDING\nstatus: complete"
+    parsed = parse_stop_tokens(body)
+    assert "CONSULT_PENDING" not in parsed.tokens
+    assert not is_consult_pending_wait(body)
+
+
+def test_json_execution_id_is_mode_b_proof() -> None:
+    body = '{"execution_id": "abc", "poll_hint": "wait"}\nCONSULT_PENDING'
+    assert is_consult_pending_wait(body)
+    verdict = validate_conductor_closeout(body, require_mode_b_proof=True)
+    assert verdict.ok

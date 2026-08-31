@@ -54,6 +54,20 @@ _BARE_CONSULT = """\
 CONSULT_PENDING
 """
 
+_NARRATIVE_RESUME_CONSULT = """\
+resumed_at: CONSULT_PENDING
+status: complete
+"""
+
+
+def test_narrative_resumed_at_not_conductor_consult_pending() -> None:
+    reason = conductor_consult_pending_degraded_reason(
+        body=_NARRATIVE_RESUME_CONSULT,
+        packet_text=_CONDUCTOR_PACKET,
+        packet_kind="conductor",
+    )
+    assert reason is None
+
 
 def test_consult_pending_with_next_admit_is_consult_reason() -> None:
     reason = conductor_consult_pending_degraded_reason(
