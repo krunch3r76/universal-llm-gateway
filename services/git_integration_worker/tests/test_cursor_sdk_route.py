@@ -1990,6 +1990,74 @@ def test_read_only_implement_conflict_422(
     "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
     return_value=MagicMock(done=lambda: False),
 )
+def test_conductor_composer_refused_422(
+    _mock_task: MagicMock, client: TestClient
+) -> None:
+    """AC3: conductor packet + explicit Composer → CURSOR_CONDUCTOR_T0_REFUSED."""
+    resp = client.post(
+        "/api/v1/cursor/dispatch",
+        json=_dispatch_body(
+            model="cursor/composer-2.5",
+            handoff_contract="light-bounded",
+            message=(
+                "---\npacket_kind: conductor\ncontract: light-bounded\n---\n"
+                "Use the conductor skill.\n"
+            ),
+        ),
+    )
+    assert resp.status_code == 422
+    body = resp.json()
+    assert body["code"] == "CURSOR_CONDUCTOR_T0_REFUSED"
+    assert "cursor/grok-4.6" in body["message"]
+
+
+@patch(
+    "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
+    return_value=MagicMock(done=lambda: False),
+)
+def test_conductor_grok_admits_past_composer_gate(
+    _mock_task: MagicMock, client: TestClient
+) -> None:
+    """Negative: conductor + grok is not CURSOR_CONDUCTOR_T0_REFUSED."""
+    resp = client.post(
+        "/api/v1/cursor/dispatch",
+        json=_dispatch_body(
+            model="cursor/grok-4.6",
+            handoff_contract="light-bounded",
+            message=(
+                "---\npacket_kind: conductor\ncontract: light-bounded\n---\n"
+                "Use the conductor skill.\n"
+            ),
+        ),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["admitted"] is True
+
+
+@patch(
+    "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
+    return_value=MagicMock(done=lambda: False),
+)
+def test_implement_composer_not_conductor_t0_refused(
+    _mock_task: MagicMock, client: TestClient
+) -> None:
+    """AC4: implement + Composer without conductor packet_kind is not this 422."""
+    resp = client.post(
+        "/api/v1/cursor/dispatch",
+        json=_dispatch_body(
+            model="cursor/composer-2.5",
+            handoff_contract="implement",
+            message="---\ncontract: implement\n---\np",
+        ),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["admitted"] is True
+
+
+@patch(
+    "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
+    return_value=MagicMock(done=lambda: False),
+)
 def test_second_implement_writer_202(_mock_task: MagicMock, client: TestClient) -> None:
     """AC1: second implement writer on same repo returns 202 queued."""
     _seed_active_writer(dispatch_id="impl-active")

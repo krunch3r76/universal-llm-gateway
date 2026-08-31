@@ -69,6 +69,26 @@ def test_conductor_omit_model_resolves_grok() -> None:
     assert resolved == "cursor/grok-4.6"
 
 
+def test_conductor_body_kind_omit_model_resolves_grok() -> None:
+    """AC1: conductor in packet body (no wire packet_kind) + omit model → grok."""
+    from implement_admission.dispatch_topic import extract_packet_kind_from_body
+
+    body = "---\npacket_kind: conductor\ncontract: light-bounded\n---\nscope"
+    wire_kind = None
+    effective_kind = (wire_kind or "").strip().lower() or None
+    if body and not effective_kind:
+        effective_kind = extract_packet_kind_from_body(body)
+    assert effective_kind == "conductor"
+    assert extract_packet_kind_from_body(body) == "conductor"
+    _, _, _, resolved = resolve_auto_seat_generate_target(
+        "cursor-sdk",
+        model=None,
+        request_id="req-body-conductor",
+        packet_kind=effective_kind,
+    )
+    assert resolved == "cursor/grok-4.6"
+
+
 def test_omit_model_without_packet_kind_resolves_composer() -> None:
     _, _, _, resolved = resolve_auto_seat_generate_target(
         "cursor-sdk",

@@ -119,11 +119,19 @@ async def prepare_cursor_sdk_generate(
         review_opt_out_reason_code=review_opt_out_reason_code,
         auto_review_child=effective_auto_review_child,
     )
+    from implement_admission.dispatch_topic import extract_packet_kind_from_body
+
     from .admission import enforce_check_review_substrate_admission
 
     enforce_check_review_substrate_admission(role, model, request_id=request_id)
+    effective_packet_kind = (packet_kind or "").strip().lower() or None
+    if early_packet_text and not effective_packet_kind:
+        effective_packet_kind = extract_packet_kind_from_body(early_packet_text)
     to_agent, family, platform, resolved_model = resolve_cursor_sdk_generate_target(
-        role, model=model, request_id=request_id, packet_kind=packet_kind
+        role,
+        model=model,
+        request_id=request_id,
+        packet_kind=effective_packet_kind,
     )
     if execution_id is None or dispatch_id is None:
         minted_execution, minted_dispatch = mint_cursor_sdk_ids(request_id=request_id)

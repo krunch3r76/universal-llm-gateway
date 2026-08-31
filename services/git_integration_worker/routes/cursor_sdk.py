@@ -2476,6 +2476,23 @@ async def cursor_dispatch(
         )
     candidate_source_ref = req.source_ref or extract_source_ref_from_packet(packet_text)
     packet_kind = extract_packet_kind_from_packet(packet_text) if packet_text else None
+    if packet_kind == "conductor" and config.model_id == "composer-2.5":
+        return _reject_pre_admission(
+            req,
+            worker_error_code="CURSOR_CONDUCTOR_T0_REFUSED",
+            failure_layer="validation",
+            http_status=422,
+            detail_summary=(
+                "Composer is refused on packet_kind=conductor; pin T1 Grok "
+                "model=cursor/grok-4.6 model_knobs={effort:xhigh, fast:false}"
+            ),
+            invalid_fields=["model"],
+            extra_data={
+                "hint": (
+                    "model=cursor/grok-4.6 model_knobs={effort:xhigh, fast:false}"
+                ),
+            },
+        )
     candidate_work_key = req.work_key or (
         extract_work_key_from_packet(packet_text) if packet_text else None
     )

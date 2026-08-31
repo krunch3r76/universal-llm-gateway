@@ -218,7 +218,7 @@ Rates: `config/model_rates.yaml`.
 
 | Tier | Default conductor model | Effort | Use when |
 |---|---|---|---|
-| **T0 — mechanical drive** | omit `model=` → `cursor/composer-2.5` | (n/a) | Scoreboard fully bound; only nest Composer/investigate; conductor is traffic cop |
+| **T0 — mechanical drive** | **`cursor/grok-4.6`** | **`xhigh`** | Scoreboard fully bound; only nest Composer/investigate; conductor is traffic cop — omit `model=` resolves to T1 Grok, not Composer |
 | **T1 — default judgment** | **`cursor/grok-4.6`** | **`xhigh`** | **Standing default.** Multi-G orchestrate, rank, adjudicate — Cursor Models pool. Omit `fast` unless an arc pin **or the summoning continuity-doc `## Rules`** names it (card omit-path). Nested T1 judgment inherits when that house names T1 fast. |
 | **T2 — Other Models** | `cursor/claude-sonnet-5` | `xhigh`/`max` (`thinking=true`, `context=1m`) | Named trigger only — grok cannot hold the remit or the context window. **Explicit pin holds its card ceiling even unattended** — the pool cap only ever bites the *silent default* path (`resolve_desired_model`'s omit branch never resolves to Other Models for any contract), never a deliberate T2/T3 pick |
 | **T3 — premium** | `cursor/claude-opus-5` | full card (`low`→`max`) | Invariant-touching, architecture-suitability, ≥2 unranked co-primaries, recurrence — **inform-then-proceed** + one-line why (trigger is *whether to pick T3*, not the effort rung) |
@@ -405,6 +405,8 @@ pin-then-continue is never the same stream. Do not flatten: unused legal
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
+  model=cursor/grok-4.6,
+  model_knobs={effort: xhigh, fast: "false"},
   contract=light-bounded,
   packet_kind=conductor,
   source_ref=todo:{slug},
@@ -442,12 +444,12 @@ summoning thread + summoning lead relay).
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
-  model=cursor/claude-sonnet-5,   # omit for T0; terra/opus only per tier
+  model=cursor/grok-4.6,
   contract=light-bounded,
   packet_path=tmp/reviews/{slug}-conductor-packet.md,
   dispatch_thread_id={root},      # continuity root with turns, or pending-empty child of root
   # generation_options={summon_mode: confer_and_finish},  # optional; or todo attr
-  model_knobs={effort: max, thinking: "true", context: "1m"},
+  model_knobs={effort: xhigh, fast: "false"},
   lane="B",                       # DEFAULT — always pass explicitly. SOT:
                                    # consult-routing § cursor-sdk checkout lane.
                                    # omit = inherit only (nest/resume), ¬ preference.
