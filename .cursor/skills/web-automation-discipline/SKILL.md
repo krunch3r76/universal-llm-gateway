@@ -136,3 +136,14 @@ After **one** probe-backed fix attempt still blocked:
 Script pattern (Jupiter): `tmp/neogov_upload_cover_v5.py` in hub checkout — supplemental re-add flow validated 2026-07-27 (governmentjobs.com Santa Clara 26-R27-D).
 
 Cross-refs: `jupiter-browser-via-mcp` (transport) · `claude-ai-cdp-navigation` (CDP consult fire) · archive `cortex://notes/system/threads/cdp-ask-archive-new-0edef9fc.md` (NeoGov diagnosis). Site-specific runbooks (Google Messages web, Operation PAGER pairing) live in cortex `notes/system/runbooks/` — not in this skill.
+
+## Site maps (per-host)
+
+Authenticated hosts that will be driven again get a **map** (selectors + hop list) plus **named scripts**. Do not rediscover SPA selectors in chat when the map exists.
+
+| Kind | Map | Scripts |
+|---|---|---|
+| Banks / issuers | `runbook:issuer-portal-login` → `cortex://notes/runbooks/issuer-portals/{issuer}.md` | `scripts.local/issuer-portals/` |
+| Other hosts (retail, …) | `runbook:site-maps` → `cortex://notes/runbooks/site-maps/{host}.md` | `scripts.local/site-maps/{host}/` |
+
+Walgreens **shop/pickup** is `runbook:walgreens-pickup` (not ESS `scripts.local/walgreens/`). Call the hop script; probe only when the map is stale.
