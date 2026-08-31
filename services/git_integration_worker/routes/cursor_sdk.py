@@ -518,7 +518,7 @@ def _maybe_emit_giw_dispatched(
         topic=association["topic"],
         nest_under=association["nest_under"],
         packet_kind=association["packet_kind"],
-        model_knobs_requested=_stamp_model_knobs_requested(cached.model_id, req.model_knobs),
+        model_knobs_requested=_stamp_model_knobs_requested(req.model, req.model_knobs),
     )
 
 
