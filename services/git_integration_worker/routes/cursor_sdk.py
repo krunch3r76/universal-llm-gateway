@@ -28,6 +28,7 @@ from threading import Thread
 from typing import Any
 
 import httpx
+from cursor_capabilities import effective_knobs
 from cursor_sdk import Client
 from fastapi import APIRouter, FastAPI, Query, Request
 from fastapi.responses import JSONResponse
@@ -62,8 +63,6 @@ from services.git_integration_worker.cursor_home import (
     setup_cursor_dispatch_home,
     validate_repo_venv,
 )
-from cursor_capabilities import effective_knobs
-
 from services.git_integration_worker.cursor_models import (
     build_model_selection,
     resolve_cursor,
