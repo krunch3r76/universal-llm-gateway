@@ -137,6 +137,13 @@ table) and `handoff-dispatchers.mdc`. Do not re-state that table here.
 
 Per finding: disposition `verify-now` | `flag-deferred` | `spin-ticket`. Zoom-out runs inside the bug cycle; it does not block the primary fix with an open-ended redesign.
 
+**Mechanical gate (BINDING):** `/work-item-seed` stamps `bug_class_sweep_required=true`
+on every non-feature friction seed (`work-item-seed-path` § Friction-sourced override) —
+mandatory S2 Recon (Explore subagent), not a grep-only substitute, since a same-pattern
+grep misses a "nest" of related-but-textually-different issues a real investigation
+would catch. `abstraction-layering` G6 checks for the labeled closeout block before
+close — this duty is no longer prose-only.
+
 **NOT** a codified bug ticket: `agent_bus`-only thin ping; `friction()` without handoff when
 fix is required; redesign/graph-walk **before** investigate.
 

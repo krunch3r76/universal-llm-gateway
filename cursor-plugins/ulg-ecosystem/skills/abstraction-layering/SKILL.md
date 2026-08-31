@@ -243,6 +243,10 @@ Tier-1 → `cortex://notes/system/recon/{slug}/tier1-anchors.md`.
    (pillar ∈ served pillars[].id ∪ {thesis, n/a-with-reason})`. Fail ⇒ no close, reopen G3.
    G5-entry mechanical leg: accept `n/a — mechanical leg`. Presence/membership mechanical;
    aptness = seat judgment.
+   **Bug-class sweep check:** when todo attrs carry `bug_class_sweep_required=true`
+   (`work-item-seed-path` § Friction-sourced override), verify closeout carries a
+   labeled `## Secondary findings` block (`None observed.` accepted) — contract:
+   `friction-review` § Pass zoom-out duty. Fail ⇒ no close, reopen highest open gate.
 
 **Mechanical leg:** G5+G6 when no gate above open. **Escalate** (re-enter highest gate):
 architecture re-opens · ≥2 rivals · invariant/cross-agent · failure ≥2×.
@@ -297,6 +301,7 @@ after-ship `cdp/opus-5` review comment as a **good default** (not a G-row).
 ¬ non-G tokens · ¬ claim autonomous without layer when `arc_lane=path_sim` was intended
 (stamp explicit `path_sim` for deepen arcs) · ¬ G3
 implements · ¬ G6 review consult · frame >120L · bare tick w/o G-rows ·
+¬ close a `bug_class_sweep_required` todo without a labeled Secondary findings block ·
 ¬ claim G1 closed from chat inform / sidecar path alone without `derived_from` →
 `consult_kind=architecture` document · ¬ mint a second Fable G1 when that edge already
 resolves · ¬ Fable/Opus G1 without `purpose=ask` (staging owns the arch pair) ≺ densify ·

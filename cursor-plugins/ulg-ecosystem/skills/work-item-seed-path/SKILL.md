@@ -95,7 +95,7 @@ G2 frame is **Fable followup** in the G1 CSE (else `cdp/opus-5` fresh), not the 
 | Kind | Intake | Default `density_triage` |
 |---|---|---|
 | **feature-add** | Idea / feature (often `friction(feature)` first; mint only when commissioned) | `judgment_required` unless mechanical |
-| **investigate+fix** | Defect / "fix this" (often friction+todo) | `recon_pending`∨`judgment_required`; `mechanical` iff locus+fix known |
+| **investigate+fix** | Defect / "fix this" (often friction+todo) | `recon_pending`∨`judgment_required`; friction-sourced non-feature ⇒ never auto-`mechanical` (§ Friction-sourced override); non-friction defect: `mechanical` iff locus+fix known |
 
 Stamp kind on todo attrs/description until work_item registry lands.
 
@@ -160,6 +160,20 @@ Classify kind · channel · subsumption.
 **Skip:** mechanical/trivial ∨ loci known ∨ `recon_waived`.  
 **Do:** Use the `cheap-recon-before-escalation` skill. When S2 fires ∧ loci unknown / breadth open ⇒ **Explore subagent first** (`Task(subagent_type="explore")` per cheap-recon Tier-1) — ¬ Composer recon; ¬ in-seat Grep spray. Judgment residual after anchors → Grok / S3, not Explore.  
 **Exit:** facts-only anchors + open forks. ¬ S4b / ¬ rich-seed while ≥2 architecture rivals unranked. S4a identity is allowed.
+
+#### Friction-sourced override (BINDING — operator bind 2026-08-30)
+
+`∀ /work-item-seed friction a:{id}` where the friction's `category != feature`:
+stamp `bug_class_sweep_required=true` at S4a. This **removes** `mechanical` ∧
+`loci known` as S2-skip justifications for that item — a known-locus/known-fix bug
+can still sit inside a broader nest the exact locus doesn't reveal (same refactor,
+same module); a bug-class grep alone finds textual duplicates, not that nest.
+**Skip only** via explicit `recon_waived="<reason>"`. Recon scope may stay narrow
+(module/file-level Explore pass, not full-service breadth) — narrow ≠ skip.
+`bug_class_sweep_required` also gates conductor G6 (`abstraction-layering` § Gates)
+— closeout must carry a labeled `## Secondary findings` block (contract:
+`friction-review` § Pass zoom-out duty). `category == feature` frictions are
+unaffected — S2 keeps its normal optional gate.
 
 ### S3 Architecture? (optional)
 
@@ -308,6 +322,7 @@ drop list — the command stays punch-then-spawn.
 | Copy rich-seed field lists into this skill | Point `/todo` + rich-seed decision |
 | Spawn on backlog | Park until promote + re-enter |
 | Non-code Q on this path | Divert `/path-sim` at S1 |
+| Skip S2 on a non-feature friction because the friction names the exact locus/fix | § Friction-sourced override — S2 fires anyway; skip only via explicit `recon_waived` |
 | Bare `/work-item-seed` with no idea, or mint before stage table | Halt — need idea text; publish disposition |
 | S3 fired ∧ no Fable harvest → S4b / claim G1 skip | Harvest consult first; S4a already done |
 | Conductor announces Mode B then ends CHECKPOINT with no admit | Same-turn admit (`execution_id`+`poll_hint` or followup admit) or named halt |
