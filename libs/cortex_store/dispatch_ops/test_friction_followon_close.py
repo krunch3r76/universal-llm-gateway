@@ -103,6 +103,44 @@ def test_todo_done_idempotent_when_already_closed(
 
 
 @pytest.mark.offline
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (31467, 31467),
+        ("31467", 31467),
+        ("a:31467", 31467),
+        ("A:31467", 31467),
+        (" a:99 ", 99),
+        (True, None),
+        (0, None),
+        ("a:", None),
+        ("derived_from_friction", None),
+        (None, None),
+    ],
+)
+def test_parse_friction_id_aliases(raw: object, expected: int | None) -> None:
+    from cortex_store.dispatch_ops._friction_followon_close import _parse_friction_id
+
+    assert _parse_friction_id(raw) == expected
+
+
+@pytest.mark.offline
+def test_friction_id_from_attrs_seed_alias_and_canonical() -> None:
+    from cortex_store.dispatch_ops._friction_followon_close import (
+        _friction_id_from_attrs,
+    )
+
+    assert _friction_id_from_attrs({"derived_from_friction": "a:31467"}) == 31467
+    assert (
+        _friction_id_from_attrs(
+            {"spawned_by_friction": 9, "derived_from_friction": "a:31467"}
+        )
+        == 9
+    )
+    assert _friction_id_from_attrs({}) is None
+
+
+@pytest.mark.offline
 def test_no_spawned_attr_is_noop(
     migrated_db_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

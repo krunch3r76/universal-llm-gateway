@@ -55,6 +55,7 @@ Load the skill and run S1→S4a→S6 in order. **Publish stage disposition befor
 **¬ halt S4a for Mode B.** IDE does **not** fire Mode B Fable on this command.
 
 Compose `/todo` identity mint only — Problem/Scope/Acceptance may be sparse.
+Friction-sourced S4a **must** stamp `spawned_by_friction=<int>` (todo-done auto-closes that parent; `"a:{id}"` / `derived_from_friction` is not the close key).
 After S4a, spawn `packet_kind=conductor` per skill § S6 — **T1**
 `cursor/grok-4.6` @ `xhigh`. Pass `dispatch_thread_id` ∈ {continuity root with
 turns, pending-empty child of root}.

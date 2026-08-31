@@ -30,6 +30,43 @@ def _parse_attributes(raw: Any) -> dict[str, Any]:
     return {}
 
 
+def _parse_friction_id(raw: Any) -> int | None:
+    """Accept int, digit string, or ``a:31467`` / ``A:31467``."""
+    if isinstance(raw, bool) or raw is None:
+        return None
+    if isinstance(raw, int):
+        return raw if raw > 0 else None
+    text = str(raw).strip()
+    if len(text) >= 2 and text[1] == ":" and text[0] in {"a", "A"}:
+        text = text[2:].strip()
+    try:
+        value = int(text)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _friction_id_from_attrs(attrs: dict[str, Any]) -> int | None:
+    """Canonical close key is ``spawned_by_friction``; seed alias is accepted.
+
+    ``/work-item-seed`` stamped ``derived_from_friction: "a:31467"`` while the
+    hook only read integer ``spawned_by_friction`` — todo-done then left the
+    parent open (a:31467).
+    """
+    for key in ("spawned_by_friction", "derived_from_friction"):
+        if key not in attrs:
+            continue
+        parsed = _parse_friction_id(attrs.get(key))
+        if parsed is not None:
+            return parsed
+        logger.warning(
+            "todo attr %s=%r is not a friction id — skip that key",
+            key,
+            attrs.get(key),
+        )
+    return None
+
+
 def close_spawned_friction_on_todo_done(
     conn: sqlite3.Connection,
     *,
@@ -58,17 +95,8 @@ def close_spawned_friction_on_todo_done(
     if not rows:
         return None
     attrs = _parse_attributes(rows[0]["attributes"])
-    raw_fid = attrs.get("spawned_by_friction")
-    if raw_fid is None:
-        return None
-    try:
-        friction_id = int(raw_fid)
-    except (TypeError, ValueError):
-        logger.warning(
-            "todo %s has non-int spawned_by_friction=%r — skip auto-close",
-            entity_id,
-            raw_fid,
-        )
+    friction_id = _friction_id_from_attrs(attrs)
+    if friction_id is None:
         return None
 
     from ._friction_close_impl import close_friction_assertion

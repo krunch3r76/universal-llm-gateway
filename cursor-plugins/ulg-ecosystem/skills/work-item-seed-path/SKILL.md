@@ -163,6 +163,12 @@ Classify kind · channel · subsumption.
 
 #### Friction-sourced override (BINDING — operator bind 2026-08-30)
 
+`∀ /work-item-seed friction a:{id}`: S4a **must** stamp integer
+`spawned_by_friction=<id>` (not `derived_from_friction`, not `"a:{id}"`).
+Todo-done auto-`friction_close`s the parent only when that key parses as an
+int (`_friction_followon_close`). Charter conveyor mint already writes it;
+IDE seed must match.
+
 `∀ /work-item-seed friction a:{id}` where the friction's `category != feature`:
 stamp `bug_class_sweep_required=true` at S4a. This **removes** `mechanical` ∧
 `loci known` as S2-skip justifications for that item — a known-locus/known-fix bug
@@ -240,7 +246,8 @@ this *is* a mission followup. Stock skills are a prompt verb, never `skills=`.
 ### S4 Mint (exactly one)
 
 **S4a — identity mint (IDE, before spawn):** mint closable `todo:` slug + kind +
-`density_triage` only. Problem/Scope/Acceptance may be sparse. **Do not** set
+`density_triage` only. Friction-sourced: also `spawned_by_friction=<int id>`.
+Problem/Scope/Acceptance may be sparse. **Do not** set
 `implement_ready`. **Do not** hand to `/layer` yet.
 
 **S4b — rich-seed after G1 harvest (conductor):** after architecture consult
@@ -325,6 +332,7 @@ drop list — the command stays punch-then-spawn.
 | Spawn on backlog | Park until promote + re-enter |
 | Non-code Q on this path | Divert `/path-sim` at S1 |
 | Skip S2 on a non-feature friction because the friction names the exact locus/fix | § Friction-sourced override — S2 fires anyway; skip only via explicit `recon_waived` |
+| Stamp `derived_from_friction: "a:{id}"` and expect todo-done to close the friction | `spawned_by_friction=<int>` — that is the auto-`friction_close` key |
 | Bare `/work-item-seed` with no idea, or mint before stage table | Halt — need idea text; publish disposition |
 | S3 fired ∧ no Fable harvest → S4b / claim G1 skip | Harvest consult first; S4a already done |
 | Conductor announces Mode B then ends CHECKPOINT with no admit | Same-turn admit (`execution_id`+`poll_hint` or followup admit) or named halt |
