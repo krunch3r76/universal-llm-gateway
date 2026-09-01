@@ -51,6 +51,25 @@ def test_local_agent_options_load_all_setting_sources(tmp_path: Path) -> None:
     assert list(opts.setting_sources or ()) == ["all"]
 
 
+def test_local_agent_options_dirs_when_source_repo_differs(tmp_path: Path) -> None:
+    """Multi-root dispatches expose git identity via local.dirs, not a cwd list."""
+    dispatch_ws = tmp_path / "projects-root"
+    dispatch_ws.mkdir()
+    source_repo = tmp_path / "universal-llm-gateway"
+    source_repo.mkdir()
+    opts = build_local_agent_options(dispatch_ws, source_repo=source_repo)
+    assert opts.cwd == str(dispatch_ws.resolve())
+    assert list(opts.dirs or ()) == [str(source_repo.resolve())]
+
+
+def test_local_agent_options_omits_dirs_when_paths_match(tmp_path: Path) -> None:
+    dispatch_ws = tmp_path / "repo"
+    dispatch_ws.mkdir()
+    opts = build_local_agent_options(dispatch_ws, source_repo=dispatch_ws)
+    assert opts.cwd == str(dispatch_ws.resolve())
+    assert opts.dirs is None
+
+
 def test_mcp_bridge_anchors_to_source_repo(tmp_path: Path) -> None:
     """MCP stdio bridge path stays anchored to source_repo even when dispatch_workspace differs."""
     source_repo = tmp_path / "repo"

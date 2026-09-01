@@ -203,17 +203,31 @@ def _resolve_mcp_token_env(*, real_home: Path | str | None = None) -> dict[str, 
 def build_local_agent_options(
     dispatch_workspace: Path,
     *,
+    source_repo: Path | None = None,
     state_root: Path | str | None = None,
 ) -> LocalAgentOptions:
-    """Mirror IDE Composer ambient settings; cwd = dispatch write-surface anchor."""
+    """Mirror IDE Composer ambient settings; cwd = dispatch write-surface anchor.
+
+    When ``source_repo`` differs from ``dispatch_workspace`` (hub Lane-A with a
+    shared projects-root cwd, or any path where git identity != write surface),
+    the git checkout is exposed via ``local.dirs`` — cursor-sdk 1.0.27's typed
+    multi-root field replaces stuffing extra paths into the proto ``cwd`` list.
+    """
     store = None
     if state_root is not None:
         store = LocalAgentStoreConfig(
             type="sqlite",
             root_dir=str(Path(state_root).resolve()),
         )
+    cwd = str(dispatch_workspace.resolve())
+    dirs: tuple[str, ...] | None = None
+    if source_repo is not None:
+        repo_path = str(source_repo.resolve())
+        if repo_path != cwd:
+            dirs = (repo_path,)
     return LocalAgentOptions(
-        cwd=str(dispatch_workspace.resolve()),
+        cwd=cwd,
+        dirs=dirs,
         setting_sources=_SETTING_SOURCES,
         store=store,
     )
@@ -260,7 +274,11 @@ def build_agent_options(
     handoff_contract: str | None = None,
 ) -> AgentOptions:
     """Full create_agent options for IDE-parity cursor-sdk dispatch."""
-    local = build_local_agent_options(dispatch_workspace, state_root=state_root)
+    local = build_local_agent_options(
+        dispatch_workspace,
+        source_repo=source_repo,
+        state_root=state_root,
+    )
     local = merge_substrate_tools(local, substrate_ctx)
     return AgentOptions(
         model=model,
