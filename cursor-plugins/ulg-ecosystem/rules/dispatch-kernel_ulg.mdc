@@ -50,6 +50,11 @@ Binder order: `cdp/opus-5` (non-Anthropic producer) → **`cdp/fable`** (produce
 - Before **any** `team_dispatch` (incl. `role=cursor-implement`): consult-routing gate is binding; second advisor
   on a fork ⇒ name the peer in each packet; `busy_status` shows `agent_bus`+`stargate`+`git_integration_worker` up.
 - Same fix failed twice ⇒ stop; consult with the failure context — never a third variant.
+- `operator_names(dispatch_param) ∧ ¬admits(param) ⇒ report(failure) ∧ wait` — model, effort/tier, or any other
+  explicitly named value that fails to admit gets reported, not silently substituted for a different value while
+  proceeding. That substitution **is** fallback logic (standing user rule: prefer no fallback logic; prompt first
+  when it matters) — it is not a judgment call this seat gets to make unasked, even for a "just an effort knob"
+  substitution (incident: `agent-bus:9638`, Fable Max → High swap, 2026-09-01).
 
 ## Front door
 
