@@ -14,6 +14,7 @@ from ._shared import (
     _ENTITY_MUTABLE,
     _VALID_STATUS,
     _compute_content_hash,
+    _invalid_status_message,
     record,
     reject_trait_writes_at_create,
 )
@@ -98,7 +99,7 @@ def _entity_payload(item: dict[str, Any]) -> dict[str, Any]:
     if item.get("status") is not None and item["status"] not in _VALID_STATUS:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
-            f"Invalid status {item['status']!r}. Must be one of: {sorted(_VALID_STATUS)}",
+            _invalid_status_message(item["status"]),
         )
 
     payload = {key: value for key, value in item.items() if key != "if_exists"}

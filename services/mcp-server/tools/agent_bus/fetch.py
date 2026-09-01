@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 
 from mcp_events import record
 
-from ._shared import _FETCH_CONTEXT_CAP, relay
+from ._shared import _FETCH_CONTEXT_CAP, _structured_relay_error, relay
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,9 @@ def _fetch_impl(
     result = relay("agent-bus", "GET", f"/turns?{qs}")
 
     if "error" in result:
+        structured = _structured_relay_error(result, op="fetch")
+        if structured is not None:
+            return structured
         return {"error": f"agent-bus error: {result['error']}"}
 
     turns: list[Any] = result if isinstance(result, list) else result.get("turns", [])
@@ -86,6 +89,9 @@ def _fetch_unread_toc_impl(
     result = relay("agent-bus", "GET", f"/turns/unread-toc?{qs}")
 
     if isinstance(result, dict) and "error" in result:
+        structured = _structured_relay_error(result, op="fetch_unread")
+        if structured is not None:
+            return structured
         return {"error": f"agent-bus error: {result['error']}"}
 
     thread_count = len(result.get("threads", [])) if isinstance(result, dict) else 0
@@ -109,6 +115,9 @@ def _get_impl(*, thread: str, turn_number: int | str) -> dict[str, Any]:
     qs = urlencode({"thread": thread, "turn_number": turn_number})
     result = relay("agent-bus", "GET", f"/turns/by-number?{qs}")
     if isinstance(result, dict) and "error" in result:
+        structured = _structured_relay_error(result, op="get")
+        if structured is not None:
+            return structured
         return {"error": f"agent-bus error: {result['error']}"}
     record(
         "mcp.agentbus.turn.detail.fetched",

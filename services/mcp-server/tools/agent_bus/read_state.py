@@ -20,6 +20,9 @@ def _resolve_turn_id(
     qs = urlencode({"thread": thread, "turn_number": turn_number})
     result = relay("agent-bus", "GET", f"/turns/by-number?{qs}")
     if isinstance(result, dict) and "error" in result:
+        structured = _structured_relay_error(result, op="get")
+        if structured is not None:
+            return None, structured
         return None, {"error": f"agent-bus error: {result['error']}"}
     if isinstance(result, dict) and "id" in result:
         return int(result["id"]), None

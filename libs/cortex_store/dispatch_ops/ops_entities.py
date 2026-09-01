@@ -28,12 +28,14 @@ from ._shared import (
     _ENTITY_MUTABLE,
     _VALID_STATUS,
     _compute_content_hash,
+    _invalid_status_message,
     record,
     reject_trait_writes_at_create,
 )
 from ._write_validation import (
     apply_entity_create_param_aliases,
     entity_create_preflight_errors,
+    resolve_mutually_exclusive_aliases,
     validation_error_response,
 )
 
@@ -525,10 +527,7 @@ def _op_entity_create(
     if preflight:
         return validation_error_response(preflight)
     if status is not None and status not in _VALID_STATUS:
-        return {
-            "error": f"Invalid status {status!r}. "
-            f"Must be one of: {sorted(_VALID_STATUS)}"
-        }
+        return {"error": _invalid_status_message(status)}
     if source_uri is not None and content_hash is None:
         content_hash = _compute_content_hash(source_uri)
     payload: dict[str, Any] = {
@@ -656,6 +655,17 @@ def _op_entity_update(
     intent: str = "full",
     **kwargs: object,
 ) -> dict[str, Any]:
+    # ``entity_create`` aliases entity_id -> id; mirror that here so a caller
+    # reusing the same param name from create does not silently no-op (id is
+    # not in _ENTITY_MUTABLE, so it would otherwise vanish into **kwargs).
+    entity_id, alias_err = resolve_mutually_exclusive_aliases(
+        primary=entity_id,
+        alias=kwargs.pop("id", None),
+        primary_name="entity_id",
+        alias_name="id",
+    )
+    if alias_err:
+        return validation_error_response([alias_err])
     if not entity_id:
         return {"error": "entity_id is required"}
     if intent not in {"full", "card", "cluster", "impact"}:
@@ -674,10 +684,7 @@ def _op_entity_update(
     }
     status_val = updates.get("status")
     if status_val is not None and status_val not in _VALID_STATUS:
-        return {
-            "error": f"Invalid status {status_val!r}. "
-            f"Must be one of: {sorted(_VALID_STATUS)}"
-        }
+        return {"error": _invalid_status_message(str(status_val))}
     trait_error = _validate_trait_updates(updates)
     if trait_error is not None:
         return trait_error

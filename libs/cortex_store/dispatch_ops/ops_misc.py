@@ -202,6 +202,16 @@ def _op_tag_assign(
         ("agent", agent),
     ]:
         if not val and val != 0:
+            if field == "assertion_id":
+                return {
+                    "error": (
+                        "assertion_id is required — Kumiho tags pin a specific "
+                        "assertion within the entity, not the entity itself "
+                        "(UNIQUE(tag_name, entity_id) upserts by moving the "
+                        "pointer). Locate or mint the target assertion first "
+                        "(assert/observe/entity_get), then pass its id here."
+                    )
+                }
             return {"error": f"{field} is required"}
     assert entity_id is not None
     resolved_id = _resolve_tag_entity_id(

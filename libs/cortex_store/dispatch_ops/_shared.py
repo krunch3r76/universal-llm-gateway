@@ -53,6 +53,24 @@ _LIFECYCLE_AXIS_STATUS = NON_LIVE_LIFECYCLE
 _VALID_STATUS = _CONFIDENCE_AXIS_STATUS | _LIFECYCLE_AXIS_STATUS
 _VALID_CONFIDENCE = frozenset({"confirmed", "believed", "suspected", "hypothesized"})
 
+
+def _invalid_status_message(value: str) -> str:
+    """Explain the dual-axis ``status`` trap instead of dumping the raw union.
+
+    ``active`` is the default live lifecycle, not a settable token — agents
+    that just read it back off a rendered entity (``confirmed · active``)
+    naturally send it here and get a confusing "must be one of" refusal that
+    doesn't say why their guess was wrong (a:31779 row 1).
+    """
+    return (
+        f"Invalid status {value!r}. `status` is dual-axis: omit it entirely for "
+        "the default live lifecycle (there is no settable 'active' token — live "
+        "is already the default). Settable values are the confidence axis "
+        f"{sorted(_CONFIDENCE_AXIS_STATUS)} or a non-live lifecycle transition "
+        f"{sorted(_LIFECYCLE_AXIS_STATUS)}."
+    )
+
+
 # Agent slug: lowercase alnum + hyphens, must start with a letter.  Used as a
 # permissive shape check (no allowlist — agent is a routing/metadata hint).
 _AGENT_SLUG_RE_SOURCE = r"^[a-z][a-z0-9-]*$"

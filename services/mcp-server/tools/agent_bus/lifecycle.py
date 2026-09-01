@@ -28,6 +28,9 @@ def _add_tags_impl(
         payload["enroll_charter_runner"] = True
     result = relay("agent-bus", "PATCH", f"/threads/{thread}", body=payload)
     if "error" in result:
+        structured = _structured_relay_error(result, op="add_tags")
+        if structured is not None:
+            return structured
         return {"error": f"agent-bus error: {result['error']}"}
     logger.info("agent_bus add_tags: thread=%s tags=%s", thread, tags)
     record(
@@ -49,6 +52,9 @@ def _remove_tags_impl(
     payload: dict[str, Any] = {"remove_tags": tags}
     result = relay("agent-bus", "PATCH", f"/threads/{thread}", body=payload)
     if "error" in result:
+        structured = _structured_relay_error(result, op="remove_tags")
+        if structured is not None:
+            return structured
         return {"error": f"agent-bus error: {result['error']}"}
     logger.info("agent_bus remove_tags: thread=%s tags=%s", thread, tags)
     record(
@@ -73,6 +79,9 @@ def _close_impl(
         payload["summary"] = summary
     result = relay("agent-bus", "PATCH", f"/threads/{thread}/close", body=payload)
     if "error" in result:
+        structured = _structured_relay_error(result, op="close")
+        if structured is not None:
+            return structured
         return {"error": f"agent-bus error: {result['error']}"}
     logger.info("agent_bus close: thread=%s", thread)
     # Store close_thread emits mcp.agentbus.thread.closed (SoT for CLI + HTTP).
@@ -105,6 +114,9 @@ def _update_thread_impl(
         }
     result = relay("agent-bus", "PATCH", f"/threads/{thread}", body=payload)
     if "error" in result:
+        structured = _structured_relay_error(result, op="update_thread")
+        if structured is not None:
+            return structured
         return {"error": f"agent-bus error: {result['error']}"}
     logger.info("agent_bus update_thread: thread=%s status=%s", thread, status)
     record("mcp.agentbus.thread.updated", thread=thread, status=status or "")
@@ -128,6 +140,9 @@ def _delete_thread_impl(*, thread: str, force: bool) -> dict[str, Any]:
     path = f"/threads/{thread}?{qs}" if qs else f"/threads/{thread}"
     result = relay("agent-bus", "DELETE", path)
     if isinstance(result, dict) and "error" in result:
+        structured = _structured_relay_error(result, op="delete_thread")
+        if structured is not None:
+            return structured
         return {"error": f"agent-bus error: {result['error']}"}
     deleted_turns = result.get("deleted_turns", 0) if isinstance(result, dict) else 0
     logger.info(
@@ -332,6 +347,9 @@ def _wait_dispatch(
         result = relay("agent-bus", "GET", f"/threads/{thread}/wait?{qs}")
         if isinstance(result, dict) and "error" in result:
             terminal_status = "relay_error"
+            structured = _structured_relay_error(result, op="wait")
+            if structured is not None:
+                return structured
             return {"error": f"agent-bus error: {result['error']}"}
         terminal_status = (
             str(result.get("status", "")) if isinstance(result, dict) else ""

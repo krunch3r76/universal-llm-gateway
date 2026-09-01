@@ -10,7 +10,7 @@ from typing import Any
 
 from mcp_events import record
 
-from ._shared import relay
+from ._shared import _structured_relay_error, relay
 
 
 def _normalize_thread(value: str | int | None) -> str:
@@ -43,6 +43,9 @@ def _lane_bind_impl(
         body=payload,
     )
     if "error" in result:
+        structured = _structured_relay_error(result, op="lane_bind")
+        if structured is not None:
+            return structured
         return {"error": f"agent-bus error: {result['error']}"}
     record(
         "mcp.agentbus.lane_bind",
@@ -62,6 +65,9 @@ def _lane_current_impl(*, thread_id: str) -> dict[str, Any]:
         f"/threads/{thread_id}/lane-current",
     )
     if "error" in result:
+        structured = _structured_relay_error(result, op="lane_current")
+        if structured is not None:
+            return structured
         return {"error": f"agent-bus error: {result['error']}"}
     record(
         "mcp.agentbus.lane_current",

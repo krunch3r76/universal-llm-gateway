@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 
 from mcp_events import record
 
-from ._shared import relay
+from ._shared import _structured_relay_error, relay
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,9 @@ def _threads_impl(
     result = relay("agent-bus", "GET", path)
 
     if "error" in result:
+        structured = _structured_relay_error(result, op="threads")
+        if structured is not None:
+            return structured
         return {"error": f"agent-bus error: {result['error']}"}
 
     threads: list[Any] = (
@@ -100,6 +103,9 @@ def _create_thread_impl(
         payload["enroll_charter_runner"] = True
     result = relay("agent-bus", "POST", "/threads", body=payload)
     if isinstance(result, dict) and "error" in result:
+        structured = _structured_relay_error(result, op="create_thread")
+        if structured is not None:
+            return structured
         return {"error": f"agent-bus error creating thread: {result['error']}"}
     created_id = result.get("id", "") if isinstance(result, dict) else ""
     logger.info("agent_bus create_thread: thread=%s slug=%s", created_id, slug)
@@ -169,6 +175,9 @@ def _thread_get_impl(*, thread: str) -> dict[str, Any]:
                 "reason": "thread_not_found",
                 "thread": thread,
             }
+        structured = _structured_relay_error(result, op="thread_get")
+        if structured is not None:
+            return structured
         return {"error": f"agent-bus error: {result['error']}"}
     return _enrich_with_cursor_auto_job(result, thread=thread)
 

@@ -6,7 +6,7 @@ from typing import Any
 
 from mcp_events import record
 
-from ._shared import relay
+from ._shared import _structured_relay_error, relay
 
 
 def _branch_associate_impl(*, thread_id: str, branch_name: str) -> dict[str, Any]:
@@ -19,6 +19,9 @@ def _branch_associate_impl(*, thread_id: str, branch_name: str) -> dict[str, Any
         body=payload,
     )
     if "error" in result:
+        structured = _structured_relay_error(result, op="branch_associate")
+        if structured is not None:
+            return structured
         return {"error": f"agent-bus error: {result['error']}"}
     record(
         "mcp.agentbus.branch_associate",
@@ -37,6 +40,9 @@ def _branch_current_impl(*, thread_id: str) -> dict[str, Any]:
         f"/threads/{thread_id}/branch-current",
     )
     if "error" in result:
+        structured = _structured_relay_error(result, op="branch_current")
+        if structured is not None:
+            return structured
         return {"error": f"agent-bus error: {result['error']}"}
     record(
         "mcp.agentbus.branch_current",
