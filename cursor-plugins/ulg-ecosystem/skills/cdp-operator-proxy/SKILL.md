@@ -168,7 +168,7 @@ When blocked on a fact this seat cannot settle from tools alone:
 |---|---|
 | 1 | Independent observation — `agent_bus` fetch / `busy_status` / latest turns |
 | 2 | Consult **cursor** via `agent_bus.request` (investigate / verify / **code-seat ops**) — only while Auto can claim |
-| 2b | **Judgment stuck (this CDP seat unsure)** — DIRECTIVE `cursor-auto` to nest `cursor-sdk` consult: default **`cursor/grok-4.6`** (`contract=light-bounded`, Cursor Models). **`cursor/gpt-5.6-terra` only if operator/packet names Other Models** (cost, 2026-08-25). Fall through to **`cdp/fable`** if the named pin is refused, or **`cursor/claude-opus-5`** when live-checkout / premium metered judgment warrants — inform-then-proceed, inv 10. ¬ escalate to the human principal. Family-cross vs Anthropic is Grok (Cursor Models) unless Terra is named. `cursor/claude-fable-5` **blocked** (cost) — use `cdp/fable`. |
+| 2b | **Judgment stuck (this CDP seat unsure)** — DIRECTIVE `cursor-auto` to nest `cursor-sdk` consult: default **`cursor/grok-4.6`** (`contract=light-bounded`, Cursor Models). **`cursor/gpt-5.6-terra` only if operator/packet names Other Models** (cost, 2026-08-25). Fall through to **`cdp/fable`** if the named pin is refused, or **`cursor/claude-opus-5`** when live-checkout / premium metered judgment warrants — inform-then-proceed, inv 10. ¬ escalate to the human principal. Family-cross vs Anthropic is Grok (Cursor Models) unless Terra is named. `cursor/claude-fable-5{,-1}` **blocked** (cost) — use `cdp/fable`. |
 | 2c | **Auto queue is the blocker** (`serial_occupant=null` ∧ waiters, or queued_age not advancing) — `agent_bus.send(to=cursor)` attended IDE (never arms Auto). Then `COME TO IDE` only if no IDE session is live (inv 40). ¬ step 3. ¬ same-thread `request` (withdraws the queued predecessor). |
 | 3 | **Cowork Ask / push the human principal** — one question + recommended answer — **true operator-only gates only** (credentials, irreversible human acts, IDE Restart / Reload Window, Authorize-triggers click, genuine *what we want* ambiguity after 2b exhausted); ¬ routine routing because Cowork chat might be human; ¬ "I'm stuck" judgment forks; ¬ missing autonomous lifecycle (inv 39); ¬ Auto-wedge `manage` (inv 40) |
 
@@ -247,53 +247,25 @@ Auth-gate failures exhaust retry budget — unblock with `auth_gate_ack: <thread
 
 ## Interrupt / supersede (BINDING)
 
-**Rule.** **One live request per private thread — and know exactly what does and does not protect you.** A second `agent_bus.request` on a thread supersedes the *first eligible predecessor*, queued or claimed — it does not append. The candidate predicate prefers a claimed job that has not passed nested-SDK terminal, else the oldest queued peer. The claimed arm stops the process (`run_cancel`, or `pre_register_live_run` for displacement without process-stop); the queued arm withdraws the job before it ever claims (`queue_withdraw`, `terminal_status=displaced_queued`). In neither case do both run. Exceptions, both real: a continuity hop skips supersede entirely, and a claimed job already `nested_sdk_finished` is not a candidate. Scope is **per-thread, not per-requester**: a foreign seat's eligible job on your thread is a supersede candidate for the same reason yours is.
+**Rule.** One live `agent_bus.request` per private thread. A second request supersedes the *first eligible predecessor* (queued or claimed) — it does not append. Candidate: a claimed job that hasn't passed nested-SDK terminal, else the oldest queued peer. Claimed arm: `run_cancel` (process stop) or `pre_register_live_run` (displacement, no process-stop). Queued arm: `queue_withdraw` before claim (`terminal_status=displaced_queued`). Never both. Exceptions: a continuity hop skips supersede entirely; a claimed job already `nested_sdk_finished` is not a candidate. Scope is **per-thread, not per-requester** — a foreign seat's eligible job on your thread is a candidate too.
 
-**The hazard inverted.** The old text told seats a queued predecessor was safe from their re-issue and that both would run. The live path is the opposite: re-issuing against a still-queued predecessor *destroys* it, before it does any work. A seat that reasons from the old rationale will make the wrong call at exactly the moment it matters.
+**The live hazard.** Re-issuing against a still-queued predecessor *destroys it before it does any work* — the opposite of the old belief that a queued job was safe and both would run. Under backlog (slow admits looking like a lost enqueue), **wait** rather than re-issue: a missing admit turn is not a lost enqueue, and re-issuing kills a job about to start.
 
-**The protection is weakest precisely when you most want to re-issue.** A backed-up queue makes admits slow; a slow admit looks like a lost enqueue; a re-issue then lands against a predecessor that has not been claimed yet, and **withdraws it**. Under backlog: **wait** — not to avoid a dual run, but to avoid killing a job that was about to start. A missing admit turn is not a lost enqueue.
+**Reading the receipt.** `superseded: null` means no eligible predecessor was found — it does **not** mean the predecessor is queued and survives. A populated block names `method` ∈ `run_cancel` | `pre_register_live_run` | `queue_withdraw`, one-directional evidence of an interrupt *attempt*. Neither null nor populated licenses "the lane is now mine" — **the reliable detector is reading the thread**: a `status:admitted` turn for an *older* request arriving after a newer one is what caught the 7034 collision; no receipt field would have.
 
-**Reading the receipt.** `superseded: null` means no eligible predecessor was found. It no longer implies "the predecessor is queued and survives." A **populated** block names `method` ∈ `run_cancel` | `pre_register_live_run` | `queue_withdraw` — one-directional positive evidence of an interrupt **attempt** (`run_cancel` = live bridge handle cancelled; `pre_register_live_run` = displaced without process-stop; `queue_withdraw` = queued job withdrawn before claim). Neither a null nor a populated block licenses "the lane is now mine."
+**Trigger.** Issue the next `agent_bus.request` on the same private thread — no extra tool, body token, `manage`, or GIW restart.
 
-**The detector that actually works is to read the thread, not the field** — a `status:admitted` turn for an *older* request arriving after a newer one is what caught the 7034 collision. No field on the enqueue receipt would have.
+**Silent cancellation.** No error or in-flight warning fires at the moment of decision. Evidence lives in the enqueue payload's `superseded` block (`superseded_job_id`, `superseded_dispatch_id`, `method`, `reason: same_thread_request_turn_<N>`) and later as a `status:superseded` terminal turn that reads like housekeeping — a seat that fires and moves on loses work with no error unless it reads those surfaces.
 
-Parallel asks still need separate lanes, or one bundled DIRECTIVE. That imperative is unchanged — but it is now earned by a named mechanism rather than by two instances that happened to agree.
+**What fires.** Claimed arm: live nested run cancelled or displaced. Queued arm: job withdrawn before claim. Dead job closes `status:superseded`; the void episode's **git-tracked** writes revert to its admit baseline; the new DIRECTIVE opens with a `SUPERSEDE NOTICE` naming the void dispatch and residue.
 
+**What you wait on.** A superseded episode never returns `status:done` — drop that wait; hold a fresh one for the new request's CLOSEOUT.
 
-**Trigger — nothing new to learn.** Issue the next `agent_bus.request` on the **same
-private thread**. No extra tool, no body token, no `manage`, no GIW restart.
+**Scope + revert honesty.** Same-thread only (other threads queue FIFO, no cross-thread preemption). Revert restores git-tracked paths only; untracked files the void episode created are reported and **left on disk** — a shared checkout cannot safely delete unattributed paths. A missing baseline fails closed (`ok=false`), never implying a clean tree.
 
-**Silent cancellation.** When an interrupt does fire, it is **silent at the point of
-decision** — no error, no in-flight warning. Evidence lives in the enqueue payload's
-`superseded` block (e.g. `superseded_job_id`, `superseded_dispatch_id`,
-`method` ∈ `run_cancel` | `pre_register_live_run` | `queue_withdraw`, `reason: same_thread_request_turn_<N>`) and afterwards as a
-`status:superseded` terminal turn that reads like housekeeping. A seat that dispatches
-and moves on loses work with no error unless it reads those surfaces.
+**When not to interrupt.** If the in-flight job is nearly done and its output is still wanted, let it close and amend afterward — supersede voids the episode's work by design.
 
-**What you observe (when supersede fires).** Claimed arm: the live nested run is
-cancelled (`run_cancel`) or displaced without process-stop (`pre_register_live_run`);
-queued arm: the job is withdrawn before claim (`queue_withdraw`, `terminal_status=displaced_queued`).
-The dead job closes as **`status:superseded`**; the void episode's
-**git-tracked** writes revert to its admit baseline when it had any; your new DIRECTIVE opens with a
-`SUPERSEDE NOTICE` naming the void dispatch and any residue.
-
-**What you wait on.** A superseded episode never returns `status:done` — a
-`wait(completion=status:done)` held against the abandoned job will not complete, by design. Drop
-that wait; hold a fresh one for the new request's CLOSEOUT.
-
-**Scope.** Same thread only — a request on any other thread queues FIFO; there is no cross-thread
-preemption.
-
-**Revert honesty.** Only git-tracked paths are restored. Files the void episode **created** are
-reported and **left on disk** — a shared checkout cannot safely delete unattributed paths — so
-the new episode is told about them and decides. A missing baseline **fails closed** (`ok=false`)
-rather than implying a clean tree.
-
-**When not to interrupt.** If the in-flight job is nearly done and its output is still wanted,
-let it close and amend afterwards — supersede voids the episode's work by design.
-
-**Fewer, fatter commissions.** Bundling work into one DIRECTIVE is partly **enforced** by
-one-request-in-flight-per-thread — not merely round-trip efficiency advice.
+**Fewer, fatter commissions.** Bundling work into one DIRECTIVE is now **enforced** by one-request-per-thread, not just round-trip efficiency advice.
 
 ## Thread ownership (BINDING)
 
@@ -484,7 +456,7 @@ model, effort, why. Halt regardless when premium spend is paused. Fewer than fou
 | 2 | cursor-auto | — | Admit, hold the lease; every later hop is `nest_under` it (inv 19) |
 | 3 | `cursor/grok-4.6` | `investigate` | Recon. **Stop the chain here** if the tree answers it — hops 4–5 are not owed |
 | 4 | `cursor/claude-opus-5` `{xhigh\|max}` | `light-bounded` | Architecture bind: per-slice `files_expected` + acceptance criteria, ordered |
-| 5 | `cdp/fable` (default) or explicit `cursor/gpt-5.6-terra` | `light-bounded` | **Independent check** — falsify hop 4's load-bearing premises. Default is CDP Fable (not Other Models). Terra only if operator/packet names Other Models. `cursor/claude-fable-5` **blocked** (cost). Do not leave hop 5 undischarged; update peer disclosure (inv 36). |
+| 5 | `cdp/fable` (default) or explicit `cursor/gpt-5.6-terra` | `light-bounded` | **Independent check** — falsify hop 4's load-bearing premises. Default is CDP Fable (not Other Models). Terra only if operator/packet names Other Models. `cursor/claude-fable-5{,-1}` **blocked** (cost). Do not leave hop 5 undischarged; update peer disclosure (inv 36). |
 | 6 | `cursor/grok-4.6` | `light-bounded` | Densify into a Composer-ready orchestrator packet |
 | 7 | this seat | DISPOSITION | **Shape level, ≤15 lines** — ratify or one correction; ¬ absorb the packet body |
 | 8 | cursor-auto → composer-2.5 | `implement` | Run the wave |
@@ -514,66 +486,19 @@ Authoring enum + propagate template: skill `directive-authoring-standard` D2. Li
 
 | Bad | Good |
 |---|---|
-| Abort / `files_created:[]` / on-thread status trusted as world... | Negative status = claim; await cursor contradiction |
-| `wait.status=no_new_turn` (or a 55s `status:done` hold) read a... | Fetch the admit turn; `predicate_unmet` means turns advanced, ... |
-| Closeout prose without structured fields | `deltas_to_spec` / `decisions_taken`; explicit `deltas_to_spec... |
+| Trust abort / empty `files_created:[]` / on-thread status as ground truth | Negative status is a claim, not world-state — await cursor contradiction |
+| Read `wait.status=no_new_turn` (or a 55s `status:done` hold) as nothing happened | Fetch the admit turn — `predicate_unmet` means turns advanced without satisfying the wait, not silence |
+| Facts only in Cowork chat | Write them into DIRECTIVE / CLOSEOUT / CHECKPOINT |
 | Ref-only closeouts | Verdicts inline; evidence by ref |
-| Facts only in Cowork | Write them into DIRECTIVE / CLOSEOUT / CHECKPOINT |
 | `wait(first_reply_from)` after DISPOSITION | Re-`request` a sparse amend DIRECTIVE |
-| `workspaces://` forbidden because the operator is codeblind | Read sight ratified — `workspaces://` **is** readable via life... |
-| `verdict: ratify` after a synthesized closeout | `synthesized_closeout_ack:` line **before** the next DIRECTIVE... |
-| DISPOSITION names residuals / "not commissioning tonight" with... | Residual-commission gate: DIRECTIVE to cursor-auto **or** oper... |
-| `MISSION_CLOSEOUT` lists "commissioned, in flight" with no col... | Invalid close — `## Work beyond this close` with wake tokens |
-| Mint a per-mission scheduled watchdog to "remember" to harvest | Structural wake path on close — ¬ babysitters |
-| Restart `git_integration_worker` inside a dispatch whose CLOSE... | `contract: propagate` restart-only DIRECTIVE, or defer to RESI... |
+| Treat `workspaces://` as forbidden because the operator is codeblind | Read sight is ratified — `workspaces://` **is** readable via life `fs` |
 | `contract: execute` + `tool_op: manage.sync_restart` | Denied at the tier-M manifest — use `contract: propagate` |
-| `wait_seconds` above 60 (or unbounded) on Cowork / life MCP | `wait_seconds ≤ 60` (client hard ceiling); re-arm after empty ... |
-| Next `request` without `mark_read` after a cursor-auto burst | `mark_read(through_turn=N)` first — avoids 409 `unread_turns_e... |
-| Ping the human to pick T3 / Opus when the four trigger conditions hold | Fire Opus — announce model + effort + why; card knobs through `max` |
-| Fire `cursor/claude-opus-5` before the reasoner has run | Hop 3 first; a bind the tree already answers is not owed a pre... |
-| Dispositioning an Opus-authored architecture yourself as the c... | Hop 5 — Fable (default) or explicit Terra; you ... |
-| Reading the hop-6 packet body to disposition it | Shape level, ≤15 lines — the packet is for Composer, not for you |
-| Hop-6 packet paraphrases the architecture | Verbatim `files_expected` + ACs; re-verify cited line refs aga... |
-| Operational choice defaulted to an operator gate | Confer with cursor first; operator for proceed / implement / i... |
 | Guessing another seat's live `poll_hint` / open DIRECTIVE | Read the thread + gate; one open DIRECTIVE per thread |
-| Holding `wait(completion=status:done)` on a superseded episode | Superseded jobs terminate `status:superseded`; wait on the **n... |
-| Assuming supersede left a clean tree | Read the revert counts — untracked files the void episode crea... |
-| Read three files, form a hypothesis, commission a *confirmatio... | Commission the **question**; adjudicate the returned trace (in... |
-| "I think it's the drain gate — confirm?" | "What holds the lease when the restart defers? Show the eviden... |
-| A DISPOSITION that only accepts/rejects an `investigate` concl... | Name the **first wrong step** + the evidence that settles it |
-| Cowork CSE open / chatty tone ⇒ the operator is human | Inv 0: the model seat is operator until a human **explicitly d... |
-| Minting a new CDP window to deliver what a warm follow-up woul... | Refresh ≠ follow-up: pick by what is stale |
-| Treating `wall_clock_exceeded` / poller FAILED / `cdp_ask` res... | Retain; reattach by `chat_url`. Satellite process death is att... |
-| Skip `mcp`/`cdp_ask` (or any service) restart because it “woul... | Recycle; recover after `wait_healthy` — claude.ai is resilient... |
-| Ending the Cowork stream after a **leg** DISPOSITION ("Mission... | Stream stays live; next DIRECTIVE or idle wait (inv 30) |
-| On a persistent lane, emitting `MISSION_CLOSEOUT` because a ro... | Leg — stream continues; update standing handoff; carve-out (in... |
-| On a persistent lane, posting a status report then going quiet... | Report while continuing; poll/harvest/act — going quiet ≡ stop... |
-| Silent quiet with work in flight (no wake token, no TYPE) | Named park with wake, or keep driving — silent quiet is the de... |
-| Treating going-quiet as "doctrine + after-the-fact page only" ... | CDP seat self-corrects via Monitor / `send_later` — arm-and-re... |
-| Ending a persistent-lane turn with work in flight and no armed... | Arm-and-re-arm before tool-loop end — wake bounds silence; una... |
-| Retiring episodic exit-as-default fleet-wide because persisten... | Carve-out only; episodic amendment stays where earned (inv 30) |
-| Authoring the continuity handoff only at stream-end on a persi... | Update `{thread_id}-standing-handoff.md` at each Leg (inv 30) |
-| Bulk-syncing the whole skill census to claude.ai to be safe | Per-slug sync, named bodies only (inv 24 cost limit) |
-| A ticket/slug dump as the "debrief" on the pager | Architecture-first — named ULG systems, vision, what he can tr... |
-| Progress `notify` that only another CDP seat could unpack (ite... | Phone-test human so-what; dense ids in `ref` only (inv 22(g)) |
-| Mission debrief / progress page that never names which ULG sys... | Growth map: vision + Architecture naming CSE Session Registry ... |
-| Paging every DISPOSITION that only advances a conveyor ordinal | Page when fleet trust/capability moved; batch conveyor noise (... |
-| Treating the pager as an interagent status channel because thi... | Pager = human principal; bus = interagent (inv 22(g)) |
-| Ending the Cowork stream on MISSION_CLOSEOUT without saying so... | Debrief/subject opens with stream-end + why (inv 22(d)(2) · in... |
-| Cursor sees live_cse=0 after close and stays silent for an hour | Cursor backstop `cse-stream-stop` page (inv 30) |
-| Waiting for the human to notice silence / ask why / bless the ... | Fire continuity hop + awareness; human is not the wake path (i... |
-| Reading "next operator window" as a human IDE gate | Next CDP operator-proxy CSE on the lane — hop it |
-| CDP Opus/Fable stuck → Cowork Ask the human | `cursor-auto` → `cursor/grok-4.6` or `cursor/claude-opus-5`; Terra only if named |
-| Parking prose "need human judgment" on a bind fork | 2b nested consult; human only for true operator-only gates |
-| Q4 / DISPOSITION: `recovery_path=human` / no unit ⇒ `OPERATOR_GATE` / wake him | Inv 39 — implement autonomous reload. Human recovery is a deficiency, not a gate |
+| Operational choice defaulted to an operator gate | Confer with cursor first; reserve the operator for true operator-only gates (credentials, irreversible acts) |
+| Read three files, form a hypothesis, commission a *confirmation* of it ("I think it's the drain gate — confirm?") | Commission the **question**, not the hypothesis — adjudicate the returned trace (inv 28) |
+| A DISPOSITION that only accepts/rejects an `investigate` conclusion | Name the **first wrong step** + the evidence that settles it |
+| Renumbering roadmap headings to express a new priority | IDs are permanent; re-rank via the `## Rank order` line, not by renumbering |
 | Bolded "rule on this fork" AC with no `RULING` token (`contract: implement`) | `AC<n> — RULING:` then the fork. Turn 343 AC2 was a genuine withheld-lean judgment AC and still admitted `handoff=pure-mechanical` — skips reasoning-posture AND redirects a pinned reasoning model onto Composer. Coverage on agent-bus:9470: 1 of 13 implement bodies raise today. SOT: `directive-authoring-standard` **Judgment marker** |
-| "tmux 0:0 is the recipe, so the last step is his" | tmux `0:0` is a seat recipe when a seat can drive it. If none can, close the gap — ¬ wake |
-| Renumbering roadmap headings to express a new priority | IDs are permanent; re-rank the `## Rank order` line with a `wh... |
-| Closing a mission with "followup: run the tests" | Verification of your own claims is an in-mission row — insert ... |
-| Waiting for a monitor or the operator to notice what the execu... | `contract: confer` — the seat inside the mission already holds... |
-| Auto wedged ⇒ `COME TO IDE` / `only your hand` / `tag=operator-gate` / DISPOSITION `no commission fired` | inv 40 — `send(to=cursor)` the manage/restart commission; page only to open IDE |
-| `request`/`propagate`/`operator_request` again on a wedged AutoJobQueue | Those enqueue; `send` does not. Same-thread re-request `queue_withdraw`s the predecessor |
-| Trying to load a `cursor_only` slug on this seat | Name the cursor seat that owns the duty, or use the life-seat ... |
 
 ## Episode boundaries
 

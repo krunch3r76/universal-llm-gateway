@@ -18,7 +18,7 @@ Examples:
 
   # N-turn Fable consult on /new (no Project) — MUST --converse with --no-uuid
   scripts/cortex/claude-ai-sync-jupiter project-ask --register --purpose fable \\
-    --converse --no-uuid --model fable-5 \\
+    --converse --no-uuid --model fable-5.1 \\
     --prompt-file t1.md --prompt-file t2.md --prompt-file t3.md \\
     --out-dir /mnt/torus/mcp-data/files/notes/system/threads/4917-fable-review/
 
@@ -166,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--model",
         default="opus-5",
-        help="live picker name/pattern (e.g. opus-5, sonnet-5, fable-5) | leave",
+        help="live picker name/pattern (e.g. opus-5, sonnet-5, fable-5.1) | leave",
     )
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument(

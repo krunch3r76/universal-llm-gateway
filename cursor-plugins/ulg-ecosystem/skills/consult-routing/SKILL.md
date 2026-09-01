@@ -58,7 +58,7 @@ guard). Consults about claude.ai / Cowork / the picker itself prime
 | Haiku | `cdp/haiku-4.5` | — | **no recipe** until Sonnet caps | — |
 
 Standing: verifier ≠ producer; independent check ≠ author; Other Models /
-`cursor/claude-fable-5` are not substitutes. Slash commands cite this table —
+`cursor/claude-fable-5{,-1}` are not substitutes. Slash commands cite this table —
 they are not SOT.
 
 ## Dispatch targets (code surface only)
@@ -178,7 +178,7 @@ guidance that table has no room for — the two are read together.
 | `cdp/opus-5` ratifies its own output at the same tier | Escalate that artifact to **Fable** (2b) — weight-class independence |
 | Treat any two Anthropic seats as self-review and skip straight to GPT | Opus→**Fable** is a genuine check; 2b precedes 2d Grok (or explicit 2c) |
 | Silent Terra / Other Models as the next binder | 2c is **explicit pin only**; default after Fable is 2d Grok |
-| Pin `cursor/claude-fable-5` because Fable is wanted | Blocked for cost — use `cdp/fable` |
+| Pin `cursor/claude-fable-5` or `cursor/claude-fable-5-1` because Fable is wanted | Blocked for cost (both — 5.1 launched 2026-09-01 at same $/M) — use `cdp/fable` |
 | `team_dispatch(model=gpt-5.6-terra)` bare slug on code-lane bind | `seat=cursor-sdk` + `model=cursor/gpt-5.6-terra` — explicit pin only |
 | Spend `cursor/gpt-5.6-sol` on broad open-ended review | `sol` is targeted, low-token, still Other Models — explicit pin only |
 
@@ -201,7 +201,7 @@ Rule: `anthropic-dispatch-authorization_ws.mdc`. Fable = CDP only (`cdp/fable` /
 | Path | Default |
 |---|---|
 | Coding Grok (path-sim **A**, recon+investigate, closed-detent light consult) | `cursor-sdk` + `cursor/grok-4.6` + `light-bounded` |
-| Path-sim bundled **Q** (L0) | **CDP Fable** — `team_dispatch(model=cdp/fable)` (CLI `fable-5` = IF6 only; path-sim annex A); ¬ default Grok Q on full arc |
+| Path-sim bundled **Q** (L0) | **CDP Fable** — `team_dispatch(model=cdp/fable)` (CLI `fable-5.1` = IF6 only; path-sim annex A); ¬ default Grok Q on full arc |
 | API `xai/grok-4.6` on coding work | **PROHIBITED** |
 | Engineering skeptic | `role=skeptic` + `xai/grok-4.6` |
 | Writing / correspondence | Grok **PROHIBITED** — L3 annex |

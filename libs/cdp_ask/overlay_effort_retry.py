@@ -3,7 +3,7 @@
 After-ship ``cdp/opus-5`` overlays were dying on the first
 ``model select failed`` and leaving ``observer_unverified`` / unread harvest.
 Retry the same Opus High request once; if the picker still misses, one
-``fable-5`` attempt marked ``family_substituted``.
+``fable-5.1`` attempt marked ``family_substituted``.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from typing import Any, TypeVar
 
 T = TypeVar("T")
 
-FABLE_FALLBACK_MODEL = "fable-5"
+FABLE_FALLBACK_MODEL = "fable-5.1"
 
 
 def is_model_select_error(error: str | None) -> bool:

@@ -178,4 +178,4 @@ Advisory — operator may override. `route_policy.yaml` does not machine-encode 
 | Cortex schema, event vocabulary, domain modeling | Opus 5 | Low | on |
 | Adversarial/dialectical; high-rework; two failed attempts | Opus 5 | High | on |
 | Cross-family second perspective | GPT-5.5 | High | on |
-| Opus Extra truncated; ceiling quality, cost not constraint | Fable 5 | High/Max | on |
+| Opus Extra truncated; ceiling quality, cost not constraint | Fable 5.1 | High/Max | on |

@@ -18,6 +18,20 @@ orchestration lives in `conductor` (`cursor_only`). Probe SOT:
 
 Pinned manual seeds win over OpenRouter catalog projection.
 
+## Fable 5.1 (2026-09-01) — cache-read cut only, verdict splits by surface
+
+Headline $/M unchanged vs Fable 5 ($10 in / $50 out); only cache reads dropped
+75% ($1→$0.25/M). Not a blanket upgrade — verdict depends on the caller's
+usage shape:
+
+| Surface | Verdict | Why |
+|---|---|---|
+| `cursor/claude-fable-5{,-1}` (Other Models) | **No change — block stands on cost alone** | `light-bounded`/`pure-mechanical` binds are short, low-repeat-context — no sustained cached prefix to discount; $10/$50 base still dominates |
+| `cdp/fable` (claude.ai/Cowork) | **Real structural win, not just a promo** | Our usage (staged skill-floor + `--converse` N-turn) is the cache-heavy long-agentic shape the discount targets (Anthropic: ~45% cheaper on highly-agentic workloads). Shows up mainly as **weekly-usage stretch** — a cache-heavy session burns less of the shared Fable/All-models weekly pool per turn, so the same weekly cap covers more real work, independent of usage-credits mode or any temporary promo |
+
+Lease/nesting-mechanics case for a narrow `cursor/*` Fable carve-out is
+unrelated to this price change and stays a separate, open discussion.
+
 ## Conductor tier ladder (T0–T3)
 
 Cheaper model at higher effort beats premium at default effort. **Pool first:**
@@ -34,7 +48,8 @@ once the second pool is empty.
 
 Nested legs: mechanical → Composer · investigate densify → Grok @ `xhigh`
 · Other Models (Sonnet / Opus-in-cursor / Terra / Sol / Luna) only on an **explicit
-pin** · `cursor/claude-fable-5` **blocked** (cost) — use `cdp/fable` · binder when
+pin** · `cursor/claude-fable-5{,-1}` **blocked** (cost — Fable 5.1 launched
+2026-09-01 at the same headline $/M as Fable 5) — use `cdp/fable` · binder when
 unsure → `judgment-escalation-ladder` (2c Terra is explicit-only; default after
 Fable is Grok).
 

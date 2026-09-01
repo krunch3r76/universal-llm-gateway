@@ -130,7 +130,7 @@ def main() -> int:
     parser.add_argument(
         "--model",
         required=True,
-        help="Picker model slug for attestation parity (e.g. opus-5, fable-5).",
+        help="Picker model slug for attestation parity (e.g. opus-5, fable-5.1).",
     )
     parser.add_argument(
         "--paste-only",

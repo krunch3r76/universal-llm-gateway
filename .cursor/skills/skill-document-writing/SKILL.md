@@ -50,4 +50,5 @@ Discoverable set = `lifecycle=active`.
 ## Lifecycle
 
 `author ⇔ recurring ∧ past_judgment_failed`. Retire = `lifecycle=retired` + `supersedes` edge; `[universal:no-bc]` deletes the SOT directory + catalog row and keeps the entity.
+`retire(agent_skill) ∧ surface_class ∈ {shared_sync, life_local} ⇒ same_turn(claude-ai-skill-uninstall) ∧ verify(slug ∉ extra_on_ui)`. Deleting the local SOT/catalog row is one-way — it does not retract an already-uploaded Customize copy. `cursor_only` skips (never uploaded). Ground: `sms-bridge-mailbox`/`sms-tool-dispatch` survived on Customize for 2 days past local retirement because no AC named the UI surface (`a:31335` → `a:31820`).
 `self_rewrite ⇒ identical_loop` (backup → classify → rewrite SOT → sidecar → Phase D).

@@ -67,7 +67,7 @@ scan. Do not start Manual/Bulk/Deep planning until the cite is on the thread.
 |---|---|---|
 | Deep file splits | CDP `team_dispatch(model=cdp/opus-5)` modularize packet (Opus; Cursor applies) | `/modularize` (team-generate E2E) |
 | Code review | CDP `team_dispatch(model=cdp/opus-5)` review packet (Opus extract/correctness) | `/consult-review` (`code-review` pipeline) |
-| Architectural strengthen | CDP `team_dispatch(model=cdp/fable)` **Fable 5** when opportunity scan fires (see below) | same CDP Fable (not Stargate) |
+| Architectural strengthen | CDP `team_dispatch(model=cdp/fable)` **Fable 5.1** when opportunity scan fires (see below) | same CDP Fable (not Stargate) |
 | Architecture doc review | `/review-arch-doc` (CDP default) | `/review-arch-doc team-generate` |
 | Bulk split plans | `scripts/modularize plan` — one file at a time; green when plan audits clean | same, batched when user directs |
 | Doc generation | step 9 — **CDP Sonnet 5** draft (`team_dispatch(model=cdp/sonnet-5)`; red gate) — **¬** Stargate `doc-generate` | Stargate `doc-generate` (paid API — operator must approve cost) |
@@ -76,7 +76,7 @@ scan. Do not start Manual/Bulk/Deep planning until the cite is on the thread.
 ### Fable opportunity scanning (standing — operator 2026-07-19)
 
 Along the gradual arc, the lead **looks for chances to strengthen the subsystem
-architecturally**, not only to finish hygiene steps. Prefer **Fable 5 via CDP**
+architecturally**, not only to finish hygiene steps. Prefer **Fable 5.1 via CDP**
 (`team_dispatch(model=cdp/fable)`; ¬ API `anthropic/claude-fable-*`;
 ¬ `cursor/*` Fable) when an opportunity fires.
 
@@ -103,7 +103,7 @@ Fable fans recon. Log each Fable leg’s `execution_id` + `archive_uri` on the a
 |---|---|---|
 | **Green — autonomous** | Scan/vulture (confirmed dead code only), CDP dispatch, apply **audit-pass** split, ruff/compileall/rescan, docstring pass, re-scan | Lead proceeds; log evidence in CHECKPOINT |
 | **Yellow — agent concern** | Audit fail, PHANTOM symbols, scope surprise, review Critical, G5 `gap`, import-check fail, ambiguous split boundary | Lead posts **concern block** (fork + evidence + recommended bind); may proceed after self-verify or one-line operator ack |
-| **Red — high stakes (rare)** | Event `signal=` renames, cross-subsystem coupling, first live-service deploy touch, step-9 arch-doc draft, Stargate `doc-generate` (frontier only), commit, destructive vulture deletes, admission/coordination paths, **Fable structural architecture binds** | **Strong reasoning pass first** (CDP **Fable 5** for architecture forks; CDP Opus for extract/review Criticals; or in-seat Opus-class bind) → operator ratification only after that pass surfaces the fork |
+| **Red — high stakes (rare)** | Event `signal=` renames, cross-subsystem coupling, first live-service deploy touch, step-9 arch-doc draft, Stargate `doc-generate` (frontier only), commit, destructive vulture deletes, admission/coordination paths, **Fable structural architecture binds** | **Strong reasoning pass first** (CDP **Fable 5.1** for architecture forks; CDP Opus for extract/review Criticals; or in-seat Opus-class bind) → operator ratification only after that pass surfaces the fork |
 
 **Red is rare.** Default: classify as yellow and resolve in-seat. Escalate to red only
 when the fork is irreversible, cross-subsystem, or deploy-touching. Red MUST NOT
@@ -978,7 +978,7 @@ scan. Do not start Manual/Bulk/Deep planning until the cite is on the thread.
 |---|---|---|
 | Deep file splits | CDP `team_dispatch(model=cdp/opus-5)` modularize packet (Opus; Cursor applies) | `/modularize` (team-generate E2E) |
 | Code review | CDP `team_dispatch(model=cdp/opus-5)` review packet (Opus extract/correctness) | `/consult-review` (`code-review` pipeline) |
-| Architectural strengthen | CDP `team_dispatch(model=cdp/fable)` **Fable 5** when opportunity scan fires (see below) | same CDP Fable (not Stargate) |
+| Architectural strengthen | CDP `team_dispatch(model=cdp/fable)` **Fable 5.1** when opportunity scan fires (see below) | same CDP Fable (not Stargate) |
 | Architecture doc review | `/review-arch-doc` (CDP default) | `/review-arch-doc team-generate` |
 | Bulk split plans | `scripts/modularize plan` — one file at a time; green when plan audits clean | same, batched when user directs |
 | Doc generation | step 9 — **CDP Sonnet 5** draft (`team_dispatch(model=cdp/sonnet-5)`; red gate) — **¬** Stargate `doc-generate` | Stargate `doc-generate` (paid API — operator must approve cost) |
@@ -987,7 +987,7 @@ scan. Do not start Manual/Bulk/Deep planning until the cite is on the thread.
 ### Fable opportunity scanning (standing — operator 2026-07-19)
 
 Along the gradual arc, the lead **looks for chances to strengthen the subsystem
-architecturally**, not only to finish hygiene steps. Prefer **Fable 5 via CDP**
+architecturally**, not only to finish hygiene steps. Prefer **Fable 5.1 via CDP**
 (`team_dispatch(model=cdp/fable)`; ¬ API `anthropic/claude-fable-*`;
 ¬ `cursor/*` Fable) when an opportunity fires.
 
@@ -1014,7 +1014,7 @@ Fable fans recon. Log each Fable leg’s `execution_id` + `archive_uri` on the a
 |---|---|---|
 | **Green — autonomous** | Scan/vulture (confirmed dead code only), CDP dispatch, apply **audit-pass** split, ruff/compileall/rescan, docstring pass, re-scan | Lead proceeds; log evidence in CHECKPOINT |
 | **Yellow — agent concern** | Audit fail, PHANTOM symbols, scope surprise, review Critical, G5 `gap`, import-check fail, ambiguous split boundary | Lead posts **concern block** (fork + evidence + recommended bind); may proceed after self-verify or one-line operator ack |
-| **Red — high stakes (rare)** | Event `signal=` renames, cross-subsystem coupling, first live-service deploy touch, step-9 arch-doc draft, Stargate `doc-generate` (frontier only), commit, destructive vulture deletes, admission/coordination paths, **Fable structural architecture binds** | **Strong reasoning pass first** (CDP **Fable 5** for architecture forks; CDP Opus for extract/review Criticals; or in-seat Opus-class bind) → operator ratification only after that pass surfaces the fork |
+| **Red — high stakes (rare)** | Event `signal=` renames, cross-subsystem coupling, first live-service deploy touch, step-9 arch-doc draft, Stargate `doc-generate` (frontier only), commit, destructive vulture deletes, admission/coordination paths, **Fable structural architecture binds** | **Strong reasoning pass first** (CDP **Fable 5.1** for architecture forks; CDP Opus for extract/review Criticals; or in-seat Opus-class bind) → operator ratification only after that pass surfaces the fork |
 
 **Red is rare.** Default: classify as yellow and resolve in-seat. Escalate to red only
 when the fork is irreversible, cross-subsystem, or deploy-touching. Red MUST NOT

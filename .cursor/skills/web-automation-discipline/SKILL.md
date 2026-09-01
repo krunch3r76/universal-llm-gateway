@@ -7,7 +7,7 @@ description: Before Playwright/CDP form fills, uploads, or multi-step SPA intera
 
 **Invariant:** `probe → bind selectors → one bounded action → verify on page` — never guess selectors across a JS SPA; never remove persisted UI state before the replace path is proven.
 
-Load `jupiter-browser-via-mcp` for Jupiter Chrome bring-up, `browse`/`save_to`, and download transport. This skill owns **interactive form automation** (uploads, dropdowns, multi-step apply flows).
+Load `jupiter-browser-bringup` for Jupiter Chrome bring-up and `jupiter-browser-via-mcp` for `browse`/`save_to` and download transport. This skill owns **interactive form automation** (uploads, dropdowns, multi-step apply flows).
 
 ## Seat routing
 
@@ -135,7 +135,7 @@ After **one** probe-backed fix attempt still blocked:
 
 Script pattern (Jupiter): `tmp/neogov_upload_cover_v5.py` in hub checkout — supplemental re-add flow validated 2026-07-27 (governmentjobs.com Santa Clara 26-R27-D).
 
-Cross-refs: `jupiter-browser-via-mcp` (transport) · `claude-ai-cdp-navigation` (CDP consult fire) · archive `cortex://notes/system/threads/cdp-ask-archive-new-0edef9fc.md` (NeoGov diagnosis). Site-specific runbooks (Google Messages web, Operation PAGER pairing) live in cortex `notes/system/runbooks/` — not in this skill.
+Cross-refs: `jupiter-browser-via-mcp` (transport) · `jupiter-browser-bringup` (Chrome/web-fetcher/cdp-ask infra) · `claude-ai-cdp-navigation` (CDP consult fire) · archive `cortex://notes/system/threads/cdp-ask-archive-new-0edef9fc.md` (NeoGov diagnosis). Site-specific runbooks (Google Messages web, Operation PAGER pairing) live in cortex `notes/system/runbooks/` — not in this skill.
 
 ## Site maps (per-host)
 

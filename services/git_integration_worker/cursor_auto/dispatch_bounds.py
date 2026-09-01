@@ -64,6 +64,7 @@ OTHER_MODELS_BARE: frozenset[str] = frozenset(
         "claude-sonnet-5",
         "claude-sonnet-4-6",
         "claude-fable-5",
+        "claude-fable-5-1",
         "gpt-5.6-terra",
         "gpt-5.6-sol",
     }

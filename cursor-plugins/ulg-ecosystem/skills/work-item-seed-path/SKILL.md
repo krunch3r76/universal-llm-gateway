@@ -1,6 +1,6 @@
 ---
 name: work-item-seed-path
-description: "Commissioned codework → S4a identity mint then spawn conductor. Mode B is Fable-before-S4b, not Fable-before-identity. Use when no todo yet."
+description: "Commissioned codework → lookup existing todo, then S4a identity mint + spawn conductor only when none. Mode B is Fable-before-S4b, not Fable-before-identity. Slash on an already-punched idea is re-admit, not a second mint."
 lifecycle: active
 trigger_match_terms:
   - work-item-seed-path
@@ -24,7 +24,8 @@ related_skills:
 
 # Work-item seed path
 
-`∀ commissioned codework lacking a closable todo: S4a identity mint ≺ spawn conductor`.
+`∀ commissioned codework lacking a closable todo: lookup ≺ S4a identity mint ≺ spawn conductor`.
+Hit on an open todo (slug / name / same-idea stem, including a same-session NL punch) ⇒ re-admit or halt-with-pointer · ¬ remint · ¬ second spawn.
 S4b + G1–G6 live on the conductor. ¬ replace `path-sim` (non-codework). ¬ conductor
 chooser for `/path-sim` vs `/layer`. Bind: `layer-conductor-unify` §3.1.
 Rationale: `cortex://notes/system/specs/work-item-seed-path.md`.
@@ -54,7 +55,8 @@ rich_seed_field_lists ∈ /todo ∨ decision:todo-creation-rich-seed-contract �
 ## When Fable defaults (CDP — not a Cursor pool)
 
 Fable is `cdp/fable` (web product). It is **not** in Cursor Models. `cursor/claude-fable-5`
-is a carded Other Models option; we **block** it for cost — do not pin it. Use `cdp/fable`.
+and `cursor/claude-fable-5-1` (launched 2026-09-01, same headline $/M) are carded Other
+Models options; we **block** both for cost — do not pin either. Use `cdp/fable`.
 
 | Default Fable | When |
 |---|---|
@@ -69,7 +71,7 @@ is a carded Other Models option; we **block** it for cost — do not pin it. Use
 | Pool | Models | Job on a codework arc |
 |---|---|---|
 | **Cursor Models** | Grok-4.6, Composer 2.5 | G3 densify / G5 implement / T1 orchestrate / CDP-stuck 2b default — **after** Fable harvest |
-| **Other Models (secondary)** | Sonnet 5, Opus-in-cursor, Terra, Sol, Luna, `cursor/claude-fable-5` | **Explicit pin only** (cost). Includes Terra. `cursor/claude-fable-5` **blocked** (cost) → `cdp/fable`. ¬ silent G4 / ladder 2c / reviewer / hop-5 default. |
+| **Other Models (secondary)** | Sonnet 5, Opus-in-cursor, Terra, Sol, Luna, `cursor/claude-fable-5{,-1}` | **Explicit pin only** (cost). Includes Terra. `cursor/claude-fable-5{,-1}` **blocked** (cost) → `cdp/fable`. ¬ silent G4 / ladder 2c / reviewer / hop-5 default. |
 
 G2 frame is **Fable followup** in the G1 CSE (else `cdp/opus-5` fresh), not the Other Models pool. Other Models quota is not a reason to skip CDP Fable G1 or to spend T3 Opus as a Fable substitute. T2/T3 and hop-4 live-checkout Opus still need their **named** trigger — they are not silent defaults.
 
@@ -83,6 +85,7 @@ G2 frame is **Fable followup** in the G1 CSE (else `cdp/opus-5` fresh), not the 
 | Actionable friction; mint is next act | This path (cite `a:{id}`) |
 | Todo already exists ∧ **no** Mode B / arch-consult ask | Re-admit conductor at persisted G-row · ¬ remint · ¬ `/layer` |
 | Todo already exists ∧ Mode B mandatory | Re-admit conductor on **existing** slug · ¬ remint · conductor G1 → S5 → G2 |
+| `/work-item-seed {idea}` matches an open todo (exact slug, `todo:conductor-{idea}`, or name/stem) | Same as the two rows above — **S0 lookup** · ¬ punch a sibling |
 | Log-only gap, no change asked | `friction()` only · **exit** |
 | Feature ask, design open, work **not** commissioned | `friction(category=feature)` · **exit** — ¬ S4 |
 | Non-codework Q→A | `/path-sim` |
@@ -102,7 +105,8 @@ Stamp kind on todo attrs/description until work_item registry lands.
 ## Stages
 
 ```
-S1 Intake → S2 Recon? → S3 Architecture? → S4a identity → S6 spawn conductor
+S0 Lookup → S1 Intake → S2 Recon? → S3 Architecture? → S4a identity → S6 spawn conductor
+         ↳ hit existing todo → re-admit / halt · ¬ S4a · ¬ S6
          ↳ (conductor) S3 Mode B / G1 → S4b rich-seed → S5 attach → G2…
 ```
 
@@ -110,7 +114,7 @@ Skips are stage skips on **one** path. S3 consult + S4b + S5 are **conductor-own
 
 ### Stage disposition gate (BINDING — G2 falsifier mode-thrash)
 
-**Before S4a:** publish a stage disposition table (S1–S6 rows, FIRE/SKIP + one-line why).
+**Before S4a:** run **S0 lookup**, then publish a stage disposition table (S0–S6 rows, FIRE/SKIP + one-line why). S0 hit ⇒ SKIP S4a and S6 in that table.
 **Halt S4b / rich-seed** if S3 mode B is required and no harvested consult URI exists.
 **¬ halt S4a** for Mode B — identity settles nothing. IDE on this path does **not**
 fire Mode B Fable; spawn after S4a and let the conductor own admit-proof.
@@ -142,9 +146,26 @@ admit and no halt. Poll/harvest may continue on later turns; **admit itself is s
 **Mode A opt-in only:** `mode=A` (alias `seed-then-layer`) on entry — otherwise do **not** default to A when
 any row above matches. Omitting `mode=` is **not** license to skip Fable when S3 fires.
 
+### S0 Identity lookup (BINDING — before S4a)
+
+`∀ /work-item-seed {idea}` and the same NL punch: **search before mint**.
+
+1. Try `entity_get` on `todo:{idea}`, `todo:conductor-{idea}`, and any slug the idea already names.
+2. `entities(type=todo, query=<idea tokens>)` for **open** rows whose slug or name shares the stem.
+3. Same-session NL commission of that idea (friction + S4a already fired) counts as a hit even if the slash tokens are shorter than the slug.
+
+| Hit | Do |
+|---|---|
+| Open todo, no live conductor | Re-admit on that slug (`reuse_thread` if a terminal worker is reusable) · ¬ remint · ¬ sibling spawn |
+| Open todo, conductor in flight | Halt · name the worker · ¬ remint · ¬ second spawn |
+| Open todo, terminal + leftover G-row (ROW_PINNED / PARKED / consult) | Re-admit `reuse_thread` when GIW can take it · ¬ remint |
+| No hit | Continue S1 |
+
+Specimen 2026-08-31: NL “keep track of usage by movement” punched `todo:conductor-usage-by-movement` + worker 9831; later `/work-item-seed usage-by-movement` must S0-hit, not punch a sibling.
+
 ### S1 Intake
 
-Classify kind · channel · subsumption.
+Classify kind · channel · subsumption. S0 already ran.
 
 | Check | Action |
 |---|---|
@@ -341,6 +362,7 @@ drop list — the command stays punch-then-spawn.
 | Reconstruct the Fable generate from memory / path-sim Q | Copy § S3 Fable generate recipe (`purpose=ask`; do not rebuild `skills=`) |
 | Mode B under live operator-proxy CSE via fresh `team_dispatch(cdp/…)` | `cse_session(op=followup)` into attached CSE (inv 23); fresh CDP only if no live CSE |
 | Existing todo + Mode B ask → remint or bare `/layer` | Re-admit conductor · attach · G2 |
+| Slash `/work-item-seed {idea}` after same-session NL punch of that idea | S0 hit · re-admit or halt · ¬ second todo · ¬ second conductor |
 | Conductor chooses `/path-sim` vs `/layer` as a second admit | Front door already bound: codework = conductor (G-rows *are* layering) |
 | S2 breadth via Composer or in-seat Grep spray | Explore subagent first (cheap-recon Tier-1) |
 | S3 fork needs checkout depth → park on the operator for premium approval | Four-condition trigger holds ⇒ fire hop 4 and announce; effort is the card |

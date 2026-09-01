@@ -50,7 +50,7 @@ __all__ = [
     "parse_model_request",
     "picker_attests_request",
     "sealed_ask_default_effort",
-    "select_fable_5",
+    "select_fable_5_1",
     "select_from_ui",
     "select_haiku_45",
     "select_model",
@@ -350,9 +350,9 @@ async def select_opus_5(page, *, prefer_extra: bool = False) -> dict:
     return await select_from_ui(page, "opus-5", effort=effort)
 
 
-async def select_fable_5(page) -> dict:
-    """Ensure Fable 5 for protocol consult seat."""
-    return await select_model(page, "fable-5")
+async def select_fable_5_1(page) -> dict:
+    """Ensure Fable 5.1 for protocol consult seat."""
+    return await select_model(page, "fable-5.1")
 
 
 async def picker_attests_request(page, model: str) -> bool:
@@ -373,7 +373,7 @@ async def select_haiku_45(page) -> dict:
 async def select_model(page, model: str) -> dict:
     """Select by prediction then live UI discovery; or leave.
 
-    Examples: ``opus-5``, ``fable-5``, ``sonnet-5``, ``haiku-4.5``, ``leave``.
+    Examples: ``opus-5``, ``fable-5.1``, ``sonnet-5``, ``haiku-4.5``, ``leave``.
     ``PREDICTED_MODEL_LABELS`` is try-first only — availability SOT remains the picker.
     """
     wire = normalize_picker_request(model)

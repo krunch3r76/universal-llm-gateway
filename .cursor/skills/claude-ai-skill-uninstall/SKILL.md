@@ -12,3 +12,4 @@ related_skills: ["claude-ai-bundle-sync"]
 3. Step 2 uninstall — `claude-ai-sync-jupiter uninstall --slugs {a,b} [--continue-on-error]`; UI path: row → detail → "More options for {slug}" → **Uninstall** → confirm.
 4. Step 3 verify — re-run `status`; expect parity in sync, slug absent from `extra_on_ui`; closeout cites before/after status lines.
 5. Seat split — shell seats run the Jupiter wrapper; claude.ai seats hand off via bus with the slug list. Standing extras-vs-catalog uninstall is `claude-ai-sync-jupiter recon` (1:1 apply). This skill is the one-off retired-slug path. Never `--all` mass-uninstall.
+6. Mandatory trigger — `retire(agent_skill) ∧ surface_class ∈ {shared_sync, life_local}` fires this same turn, not on discovery later; SOT: `skill-document-writing` § Lifecycle. Deleting the local SOT never retracts an already-uploaded Customize copy.

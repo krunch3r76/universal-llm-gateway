@@ -25,6 +25,7 @@ no command layer.
 | Actionable friction; minting is the next act | This path (cite assertion id) |
 | Todo already exists ∧ **no** Mode B / arch-consult ask | Re-admit conductor — not this command |
 | Todo already exists ∧ Mode B / Fable / architecture consult asked | Re-admit conductor on existing slug · ¬ remint |
+| `{idea}` matches an open todo (slug / `todo:conductor-{idea}` / name stem / same-session NL punch) | **S0 lookup** in the skill · re-admit or halt · ¬ remint · ¬ second spawn |
 | Friction observation only | `friction()` via friction-review — stop |
 | Feature ask, not commissioned | `friction(category=feature)` via friction-review — stop; ¬ mint |
 | Non-codework Q→A | `/path-sim` |
@@ -51,8 +52,9 @@ Bare `/work-item-seed` with **no idea text** ⇒ halt; ask for friction/idea (or
 
 ## Lead obligations
 
-Load the skill and run S1→S4a→S6 in order. **Publish stage disposition before S4a.**
-**¬ halt S4a for Mode B.** IDE does **not** fire Mode B Fable on this command.
+Load the skill and run **S0 lookup** then S1→S4a→S6. **Publish stage disposition (S0–S6) before S4a.**
+S0 hit (open todo for this idea, including a same-session NL punch) ⇒ SKIP S4a and S6; re-admit or halt-with-pointer.
+**¬ halt S4a for Mode B** when S0 missed. IDE does **not** fire Mode B Fable on this command.
 
 Compose `/todo` identity mint only — Problem/Scope/Acceptance may be sparse.
 Friction-sourced S4a **must** stamp `spawned_by_friction=<int>` (todo-done auto-closes that parent; `"a:{id}"` / `derived_from_friction` is not the close key).

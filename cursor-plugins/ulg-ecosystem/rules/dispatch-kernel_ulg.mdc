@@ -41,7 +41,7 @@ Binder order: `cdp/opus-5` (non-Anthropic producer) → **`cdp/fable`** (produce
 
 ## Hard walls
 
-- `anthropic/*` API **PROHIBITED**; `cursor/claude-fable-5` blocked (cost) — Fable is `cdp/fable` only.
+- `anthropic/*` API **PROHIBITED**; `cursor/claude-fable-5{,-1}` blocked (cost, incl. Fable 5.1 launch 2026-09-01 — same headline $/M) — Fable is `cdp/fable` only.
 - Non-primary cursor model bind (`Task model=` or `team_dispatch model=cursor/*` not named as workflow-primary
   by a standing rule/skill) ⇒ **operator-gated**: propose slug + why, wait. Named exceptions fire with an announce.
 - `judgment_closed ∧ mechanical_remainder ⇒ split`: reasoning model **binds** (`light-bounded`), nested

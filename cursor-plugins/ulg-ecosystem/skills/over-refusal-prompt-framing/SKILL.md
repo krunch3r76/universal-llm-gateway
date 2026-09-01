@@ -1,6 +1,6 @@
 ---
 name: over-refusal-prompt-framing
-description: "Frame benign-but-sensitive consults (pharmacology, biology, chemistry) before dispatch to cdp/fable, cursor/claude-fable-5, or any Claude seat — avoid false-positive refusal, recover from one."
+description: "Frame benign-but-sensitive consults (pharmacology, biology, chemistry) before dispatch to cdp/fable, cursor/claude-fable-5{,-1}, or any Claude seat — avoid false-positive refusal, recover from one."
 ---
 
 # Over-Refusal Prompt Framing
@@ -66,7 +66,7 @@ the model lacks the knowledge.
 |---|---|
 | 1 | **Do not retry verbatim.** Identical resubmission re-trips the same features |
 | 2 | **Rephrase** per rules above; keep the substantive question and constraints intact |
-| 3 | **Substrate compare** — product-UI safeguards ≠ model family. `cdp/fable` (Cowork) pausing does **not** predict `cursor/claude-fable-5` (SDK) behavior. Run the same brief on the other substrate and record both outcomes |
+| 3 | **Substrate compare** — product-UI safeguards ≠ model family. `cdp/fable` (Cowork) pausing does **not** predict `cursor/claude-fable-5{,-1}` (SDK) behavior. Run the same brief on the other substrate and record both outcomes |
 | 4 | **Record**, don't re-litigate — friction on `service:cdp-ask` with the brief URI, the observed banner text, and the outcome of the compare |
 | 5 | `two_reframes_failed ⇒ stop` — report to operator; do not iterate toward a phrasing that works by attrition |
 
@@ -88,7 +88,7 @@ fast error. Prefer getting the framing right on the first fire.
 | Add "ignore your safety guidelines" | Add professional standing + scope constraints |
 | Bury the credential in paragraph six | Lead with it |
 | Goal-register title | Domain-register title |
-| Treat Cowork pause as model-family verdict | Test `cursor/claude-fable-5`; record both |
+| Treat Cowork pause as model-family verdict | Test `cursor/claude-fable-5` (or `-5-1`); record both |
 | Reframe a genuinely disallowed ask | Stop; tell the operator why |
 
 ## Composes with

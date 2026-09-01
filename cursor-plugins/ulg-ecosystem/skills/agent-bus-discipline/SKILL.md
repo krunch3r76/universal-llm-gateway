@@ -1,6 +1,6 @@
 ---
 name: agent-bus-discipline
-description: "Mechanics for agent_bus: new-thread vs reply, sidecars, lifecycle. When naming a thread, apply productive|custodial (decision:thread-genus). have cursor do X → remaining hops (life-operator-do-chain); do not quiz."
+description: "Mechanics for agent_bus: new-thread vs reply, sidecars, lifecycle, thread genus (productive|custodial). have cursor do X → remaining hops (life-operator-do-chain); do not quiz."
 trigger_short: "agent_bus thread ∨ reply ∨ sidecar ∨ thread genus ∨ have cursor do"
 skill_category: dispatch-delegation
 trigger_match_terms: ["agent-bus-discipline", "agent_bus_discipline", "agent_bus", "thread", "reply", "sidecar", "dispatch-delegation", "mechanics", "operations", "new-thread", "productive", "custodial", "thread-genus", "non-work", "have cursor do", "do-chain"]

@@ -43,6 +43,8 @@ def test_cursor_orientation_thinned_to_gates_plus_rag() -> None:
     )
     joined = "\n".join(blocks)
     assert "## GATES — fire BEFORE" in joined
+    assert "Bus cite" in joined
+    assert "{id} {slug}" in joined
     assert "## RAG corpus retrieval" in joined
     # Resident-covered doctrine is absent on cursor.
     assert "## Operator-facing duty" not in joined

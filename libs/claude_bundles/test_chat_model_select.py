@@ -12,7 +12,7 @@ from claude_bundles.chat_model_select import (
     label_satisfies_request,
     match_model_request,
     parse_model_request,
-    select_fable_5,
+    select_fable_5_1,
 )
 
 
@@ -68,13 +68,13 @@ def test_label_satisfies_request_effort_gates() -> None:
 
 
 @pytest.mark.asyncio
-async def test_select_fable_5_delegates_to_select_model() -> None:
+async def test_select_fable_5_1_delegates_to_select_model() -> None:
     page = object()
     with patch(
         "claude_bundles.chat_model_select.select_model",
         new_callable=AsyncMock,
         return_value={"ok": True},
     ) as select_model:
-        result = await select_fable_5(page)
-    select_model.assert_awaited_once_with(page, "fable-5")
+        result = await select_fable_5_1(page)
+    select_model.assert_awaited_once_with(page, "fable-5.1")
     assert result == {"ok": True}

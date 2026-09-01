@@ -47,7 +47,7 @@ Zoom-out on recon/investigate is **required** (template `cortex://notes/system/t
 | `thin_seeder` | Scaffold todo / OPEN FORKS / corpus pointers; ¬ `implement_ready` | Grok 4.6 High (cursor) / Sonnet 5 (mobile) |
 | `strategic_framer` | Gates / insertion / excludes; bind-shaped | Opus 4.8 High (web-anthropic) |
 | `densify_adjudicator` | Close forks, distill attrs, may stamp densify-close | Opus 4.8 Max (web-anthropic) |
-| rare escalate | Pre-codify / novel authority-class frame only | Fable 5 (credits/promo — never standing; B6 no-API-Fable-default) |
+| rare escalate | Pre-codify / novel authority-class frame only | Fable 5.1 (credits/promo — never standing; B6 no-API-Fable-default) |
 
 ```
 thin_seeder → strategic_framer → densify_adjudicator → [rare] Fable

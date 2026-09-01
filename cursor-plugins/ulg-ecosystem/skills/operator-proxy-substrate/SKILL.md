@@ -13,7 +13,7 @@ executes or must expect` · `code_body ⇒ mechanism producing that behavior`. D
 
 | Concern | Owner |
 |---|---|
-| Shared operator contract — DIRECTIVE / CLOSEOUT / DISPOSITION, invariants 0–33 | `cdp-operator-proxy` |
+| Shared operator contract — DIRECTIVE / CLOSEOUT / DISPOSITION, invariants 0, 1–40 | `cdp-operator-proxy` |
 | Protocol SOT — field tables, transport, handler wiring | `cortex://notes/system/specs/cdp-operator-proxy-v0.md` |
 | Work-posting SOT — tick admit, B1/B2, mission launch | `cortex://notes/system/specs/cursor-auto-tick-work-posting.md` |
 | CDP / Jupiter transport, harvest, converse, skill delivery | `claude-ai-cdp-navigation` (`cursor_only`) |

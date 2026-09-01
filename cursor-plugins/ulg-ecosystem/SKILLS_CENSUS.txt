@@ -16,6 +16,7 @@ completion-provenance-discipline
 consult-posture
 consult-routing
 cortex
+cursor-sdk-thread-consolidation
 dispatch-shape
 discovery-engram-opportunity-scan
 dispatch-report-discipline

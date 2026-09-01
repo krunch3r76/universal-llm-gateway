@@ -47,19 +47,36 @@ Body:
 - Skills: use trigger line + SOT deferral, OR inline only if ≤40 lines total.
 - Large reference content ⇒ canonical doc + supporting `.md` files.
 
-## Thin-stub pattern
+## Deferral: mirror, split, or inline — never redirect
 
-When `.cursor/skills/<slug>/SKILL.md` exists, Cursor trigger content should be ≤10 lines:
+`pointer_followed ⟸ mechanism, ¬ motivation`. A redirect resolves only when
+something other than the reader's judgment resolves it.
 
-```markdown
----
-name: <slug>
-description: <trigger terms>
----
-fs(sandbox="workspaces", op="read", path="universal-llm-gateway/.cursor/skills/<slug>/SKILL.md")
-```
+| Resolver | Reliable | Examples |
+|---|---|---|
+| Substrate injects the body | yes | Cursor `<available_skills>` → Read; GIW `resolve_prompt_preamble`; Stargate `<invariants>` enrich; `ensure_cdp_judgment_skills` |
+| Generated mirror | yes | plugin census `cp -a`; `shared_sync` `render_bundle` (which strips pointers on purpose) |
+| Prose pointer in a body | **no** | thin stub; "full body at X"; "detail in `runbook:foo`" |
 
-`cursor_stub.lines > 15 ⇒ convert_to_thin_stub`; never duplicate canonical content.
+**Skip-safety gate:** `defer(content) ⇒ skip(fetch) ⇏ wrong_action`. Deferred
+content must be explanatory or rare-path. If skipping the fetch changes what the
+agent *does* on the common path, it stays resident. A well-written stub reads as
+sufficient and so suppresses its own follow-through — compression quality and hop
+compliance move in opposite directions.
+
+Order of preference when a body is too large:
+1. **Split by trigger** — N narrower slugs with precise descriptions; harness
+   matching selects, no hop.
+2. **Compress in place** — delete, don't defer
+   (`preserve(normative_content) ∧ ¬add_content`).
+3. **Mirror** — cross-surface delivery is a generated copy, never a cross-tree
+   redirect. `¬ redirect(.cursor ↔ .claude)`.
+4. **Defer** — only skip-safe content, and gate the pointer on a required
+   *output* ("cannot report a claim class without X"), never on context.
+
+Resident `skill-surface_ulg` forbids fs-reading skill SOT into context. A stub
+whose body is an `fs(read SOT)` instruction contradicts it and will not be
+followed. `cursor_stub.lines > 15 ⇒ convert_to_thin_stub` is retired.
 
 ## Correct vs anti-pattern
 

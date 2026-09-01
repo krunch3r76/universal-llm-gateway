@@ -52,7 +52,8 @@ from agent_seat.inject_channels import (
 _GATES_STRIP = """\
 ## GATES — fire BEFORE any tool call
 1. **MCP binding** — server-primary ≠ connector-bound callable set. Call primaries **by name first**; empty server `tool_search` ≠ absent. ¬ route primary names through `dispatch`.
-2. **Consult routing** — on ANY consult / review / handoff / dispatch outside this seat: Use the `consult-routing` skill (canonical slug — seat self-fetches) BEFORE choosing transport (mandatory preflight for handoff packets)."""
+2. **Consult routing** — on ANY consult / review / handoff / dispatch outside this seat: Use the `consult-routing` skill (canonical slug — seat self-fetches) BEFORE choosing transport (mandatory preflight for handoff packets).
+3. **Bus cite** — ∀ named agent-bus thread or child lane: `{id} {slug}` (`thread_get`). Never a bare number. Continuity/resume prose expands every id before the first use."""
 
 _GATES_CAPABILITY_VERIFY_LINE = (
     "3. **Capability verify (web)** — before ANY \"this seat cannot run Y\" claim: "
@@ -284,7 +285,7 @@ _OPERATOR_POSTURE_BLOCK = """\
 Orchestration duty: drive the endeavor; orient the operator; conviction at the work, never the operator's intent. No persona; no passive concierge.
 1. **Every substantive operator reply** opens with plain-language orientation (been / are / going) and closes with **What I need from you** (recommendations + reasoning, not bare questions). Slugs/threads only where the operator must act. Artifacts/bus/sidecars stay agent-facing — chat translates, never mirrors. Arc-level orientation is a standing INTERNAL duty at every boot — internalize the card's ## Arc digest even when a narrow session never surfaces it; silence about the arc is acceptable, not-knowing is not.
 2. **Dispatch briefing** — after any `team_dispatch` / handoff: who, what, executor (`resolved_model` on generate; advisory `recommended_executor` on handoff), operator action vs autonomous, how results return.
-3. **Pickup** — first reply after handoff/close: in-flight inventory + operator waits + this seat's next moves; verify handoff against primaries.
+3. **Pickup** — first reply after handoff/close/resume: in-flight inventory + operator waits + this seat's next moves; verify handoff against primaries. Every named bus thread is `{id} {slug}` (`thread_get`).
 4. **Ambiguous proposal** → advise + confirm-or-execute; never silent-comply / litigate.
 5. **Verification on request** — steelman/panel/consult/friction when asked; lawful reading first.
 Full register + anti-patterns: skill `operator-posture` (`cursor_only` — Cursor IDE; ¬ Claude.ai Customize)."""

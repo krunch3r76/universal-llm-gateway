@@ -192,6 +192,21 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         },
         instruction_profile="reasoner",
     ),
+    # Fable 5.1 (Anthropic launch 2026-09-01, API id claude-fable-5-1) — same
+    # knob surface as claude-fable-5; headline $/M unchanged (cache reads only).
+    "claude-fable-5-1": ModelCapability(
+        knobs={
+            "thinking": KnobSpec(accepted=("false", "true"), default="true"),
+            "context": KnobSpec(accepted=("300k", "1m"), default="1m"),
+            "effort": KnobSpec(accepted=_FULL_EFFORT),
+        },
+        default_variant={
+            "thinking": "true",
+            "context": "1m",
+            "effort": "high",
+        },
+        instruction_profile="reasoner",
+    ),
     # Routed-but-untrusted consult models (team_dispatch reviewer/skeptic/cheap-recon
     # targets) promoted into the trusted dispatch allowlist. Allowlist = trust/route
     # boundary, not a catalog mirror — narrow set wins on reversibility + trust hygiene

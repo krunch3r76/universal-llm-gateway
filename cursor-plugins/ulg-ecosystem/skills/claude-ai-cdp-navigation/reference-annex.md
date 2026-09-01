@@ -177,14 +177,14 @@ When CDP posts on-behalf and bus returns **409 `unread_turns_exist`**, remake af
 | Job | Command |
 |---|---|
 | **Product — team_dispatch (DEFAULT)** | `team_dispatch(op=generate, model=cdp/opus-5\|cdp/fable, contract=light-bounded, prompt\|sidecar_ref=…, dispatch_thread_id=…)` → `agent_bus.wait` from `poll_hint` |
-| **Escape — CLI project-ask** | `scripts/cortex/claude-ai-sync-jupiter project-ask` (`--converse --no-uuid --model opus-5\|fable-5`) when team_dispatch CDP unavailable. MCP `project_ask` is removed. |
+| **Escape — CLI project-ask** | `scripts/cortex/claude-ai-sync-jupiter project-ask` (`--converse --no-uuid --model opus-5\|fable-5.1`) when team_dispatch CDP unavailable. MCP `project_ask` is removed. |
 | **Operator-proxy mission** | `team_dispatch(model=cdp/opus-5, purpose=operator-proxy\|mission, …)` primary |
 | Path-sim R-admit (CLI fallback) | `… project-ask --register --purpose ask --converse --no-uuid --model opus-5 --prompt-file tmp/reviews/…` |
 | Long task / multitask | Default Cowork (omit flags) |
-| Auto lane (Fable) | `… project-ask --register --purpose fable --converse --no-uuid --cowork-auto --model fable-5` |
+| Auto lane (Fable) | `… project-ask --register --purpose fable --converse --no-uuid --cowork-auto --model fable-5.1` |
 | Register / list / deregister | `… register-lane` / `list-lanes` / `deregister-lane` |
 | Bound Project ask | `… project-ask --uuid <explicitly-bound>` — only when Project named |
-| N-turn `/new` | `… project-ask --converse --no-uuid --model fable-5 --prompt-file t1.md … [--close]` |
+| N-turn `/new` | `… project-ask --converse --no-uuid --model fable-5.1 --prompt-file t1.md … [--close]` |
 | Operator Chat on `/new` | `--chat` · MCP `chat_compose=true` |
 
 ## MCP `delete_after` (retain vs delete)
@@ -250,7 +250,7 @@ Gap closed 2026-07-31 — IDE warm paste via `cse_session(op=followup)`; CLI = e
 | Opus 5 + Effort **High** | Default sealed-ask / plan |
 | Opus 5 Extra | Explicit only (`opus-5-extra`) |
 | Opus 5 Max | Ceiling (`opus-5-max` / effort `max`) |
-| Fable 5 High | Protocol consult (n-turn; keep until `--close`) |
+| Fable 5.1 High | Protocol consult (n-turn; keep until `--close`) |
 | Sonnet (live UI label) | When picker offers it |
 | `leave` | Do not touch picker |
 

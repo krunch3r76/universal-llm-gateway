@@ -5,210 +5,16 @@ description: On authenticated browser downloads (Scribd, paywalled PDFs, Cloudfl
 
 # Jupiter Browser via MCP — Agent Guide
 
-Bring up Chrome on Jupiter so the `browse` dispatch tool can fetch CF-protected
-or JS-heavy pages using Jupiter's residential IP, and download authenticated
-binary files (PDFs, documents) from sites where the user is logged in.
+Use `browse` (backed by Chrome on Jupiter) to fetch CF-protected or JS-heavy
+pages using Jupiter's residential IP, and download authenticated binary files
+(PDFs, documents) from sites where the user is logged in.
+
+**Infra down / never started?** Read `jupiter-browser-bringup` first — Chrome /
+web-fetcher / cdp-ask launch, status check, and bootstrap live there, not here.
 
 **Form fills / file uploads / multi-step SPA apply flows:** Use the `web-automation-discipline` skill — probe-first Playwright patterns, file-chooser hooks, seat routing. This skill covers transport (`browse`, `save_to`, bootstrap).
 
 **Tested**: Chrome/147.0.7727.101 on Jupiter, April 2026.
-
-## Launching (the normal human path)
-
-```bash
-scripts.local/start-jupiter-browser          # start if not running (idempotent)
-scripts.local/start-jupiter-browser --force  # kill and restart all three services
-scripts.local/start-jupiter-browser --status # check status without changing anything
-```
-
-Run from the repo root. The script SSHes to Jupiter, starts Chrome, web-fetcher,
-and cdp-ask if needed, and prints final status. Takes ~5 seconds on a fresh
-start, ~0.5 seconds if already running.
-
----
-
-## Architecture
-
-```
-dispatch(tool="browse", ...)   ← agent call
-    ↓  WEB_FETCHER_URL=http://jupiter:8765  (set in ~/.gateway/mcp.yaml)
-MCP server container
-    ↓  HTTP POST /fetch
-web-fetcher service on Jupiter  (port 8765, FastAPI, libs/web_fetcher/)
-    ↓  CDP  BROWSER_CDP_URL=http://127.0.0.1:9222
-Chrome on Jupiter  (DISPLAY=:1, cosmic-comp Wayland session)
-```
-
-```
-project_ask(op="submit", ...)  ← agent call
-    ↓  PROJECT_ASK_URL=http://jupiter:8770  (set in ~/.gateway/mcp.yaml)
-MCP server container
-    ↓  HTTP POST /project-ask/submit
-cdp-ask satellite on Jupiter  (port 8770, FastAPI, libs/cdp_ask/)
-    ↓  CDP via claude_bundles registry pool
-Chrome on Jupiter  (same :9222 session as browse)
-    ↓  harvest archive → cortex://… under CORTEX_FILES_ROOT
-```
-
-`WEB_FETCHER_URL` and `PROJECT_ASK_URL` are configured in `~/.gateway/mcp.yaml`.
-You only need to ensure Chrome, web-fetcher, and cdp-ask are running on Jupiter.
-
-**Critical**: `browse` is NOT a top-level MCP tool — it lives under `dispatch`.
-`CallMcpTool("browse")` fails. The correct call is always:
-```
-dispatch(tool="browse", arguments='{"url":"...", "mode":"browser"}')
-```
-
----
-
-## Quick Status Check (run first)
-
-```bash
-ssh <user>@<satellite-host> 'bash -s' << 'EOF'
-echo "=== Chrome CDP ==="
-curl -sf http://localhost:9222/json/version \
-  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['Browser'])" \
-  || echo "NOT running"
-echo "=== web-fetcher ==="
-curl -s http://localhost:8765/health || echo "NOT running"
-echo "=== cdp-ask ==="
-curl -s http://localhost:8770/health || echo "NOT running"
-EOF
-```
-
-Expected when healthy:
-- Chrome: `Chrome/147.0.7727.101`
-- web-fetcher: `{"status":"ok","concurrent_limit":3,"headless":null,"cdp_url_configured":true}`
-- cdp-ask: `{"status":"ok","harvest_root":"/mnt/torus/mcp-data/files","harvest_root_ok":true}`
-
-> **Note**: `cdp_url_configured: true` only means `BROWSER_CDP_URL` env var is
-> set — it does NOT confirm Chrome is running. Always probe port 9222 directly.
-
----
-
-## Bring Up Chrome
-
-**Always include `--remote-allow-origins=*`** — required for CDP WebSocket access
-from scripts (cookie extraction, `Browser.setDownloadBehavior`, etc.). Without it
-all WebSocket connections are rejected with 403.
-
-```bash
-ssh <user>@<satellite-host> 'bash -s' << 'EOF'
-pkill -f 'remote-debugging-port=9222' 2>/dev/null || true
-sleep 1
-DISPLAY=:1 nohup google-chrome \
-  --remote-debugging-port=9222 \
-  --remote-allow-origins=* \
-  --user-data-dir=/tmp/cdp-profile \
-  --no-first-run \
-  --no-default-browser-check \
-  --disable-background-timer-throttling \
-  > /tmp/chrome-cdp.log 2>&1 &
-echo "Chrome PID: $!"
-for i in 1 2 3 4 5 6 7 8 9 10; do
-  sleep 1
-  curl -sf http://localhost:9222/json/version >/dev/null 2>&1 \
-    && echo "CDP ready after ${i}s" && break
-  echo "Waiting... $i/10"
-done
-curl -s http://localhost:9222/json/version \
-  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['Browser'])"
-EOF
-```
-
-Typical output: `Chrome PID: 1033103` → `CDP ready after 1s` → `Chrome/147.0.7727.101`
-
-**Notes**:
-- `DISPLAY=:1` is Jupiter's cosmic-comp Wayland compositor — needed for a
-  real (non-headless) Chrome session that can pass Cloudflare challenges
-- `--user-data-dir=/tmp/cdp-profile` isolates the CDP session from the user
-  profile; the directory is created automatically
-- `nohup` keeps Chrome alive after the SSH session disconnects
-- `/tmp/cdp-profile` does NOT survive Jupiter reboots — sessions (cookies)
-  must be re-established after a reboot
-
----
-
-## Bring Up web-fetcher
-
-web-fetcher must be started with `BROWSER_CDP_URL` pointing at Chrome. Without
-it, it launches its own headless Chromium and loses the residential-IP advantage.
-
-```bash
-ssh <user>@<satellite-host> 'bash -s' << 'EOF'
-pkill -f 'scripts/web-fetcher' 2>/dev/null || true
-fuser -k 8765/tcp 2>/dev/null || true
-sleep 1
-PYTHONPATH=/mnt/torus/projects/universal-llm-gateway/libs \
-  BROWSER_CDP_URL=http://127.0.0.1:9222 \
-  nohup ~/.venvs/universal/bin/python \
-  /mnt/torus/projects/universal-llm-gateway/scripts/web-fetcher \
-  --port 8765 \
-  > /tmp/web-fetcher.log 2>&1 &
-echo "web-fetcher PID: $!"
-for i in 1 2 3 4 5 6; do
-  sleep 1
-  curl -sf http://localhost:8765/health >/dev/null 2>&1 && echo "ready after ${i}s" && break
-done
-curl -s http://localhost:8765/health
-EOF
-```
-
-Expected: `{"status":"ok","concurrent_limit":3,"headless":null,"cdp_url_configured":true}`
-
-> **Port conflict**: if port 8765 is already in use from a stale process, `fuser -k 8765/tcp`
-> clears it before relaunching.
-
----
-
-## cdp-ask activation (project_ask)
-
-cdp-ask is the third leg of `scripts.local/start-jupiter-browser`. It serves
-MCP `project_ask` (sealed CDP consults with cortex harvest). Requires Chrome
-:9222 **and** `CORTEX_FILES_ROOT=/mnt/torus/mcp-data/files` on Jupiter.
-
-### Production activation runbook
-
-1. Jupiter: `git pull` in the ULG checkout (confirm `libs/cdp_ask/` present).
-2. Hub: `scripts.local/start-jupiter-browser` (or `--status` first).
-3. Verify: `curl -sf http://jupiter:8770/health` → `harvest_root_ok:true`.
-4. Hub: set `PROJECT_ASK_URL: http://jupiter:8770` in `~/.gateway/mcp.yaml`;
-   remove/comment any `host.docker.internal` dev URL (fail-closed).
-5. Hub: `./scripts/sync-and-restart-mcp.sh` — **do not** use `--no-cache` unless
-   you immediately re-sync G3 paths (`libs/cdp_ask/`, `services/mcp-server/tools/project_ask.py`)
-   via the routine sync path or explicit `sync_source_into_container`. The
-   `--no-cache` branch recreates the container without post-up docker cp.
-6. Verify: `docker exec mcp-server printenv PROJECT_ASK_URL` and
-   `docker exec mcp-server curl -sf http://jupiter:8770/health`.
-7. Smoke: `project_ask(op="submit", prompt_text="Reply OK", converse=true,
-   no_project_uuid=true)` → poll until `archive_uri` is set (no
-   google-chrome/unreachable errors in poll payload).
-
-### Bring up cdp-ask manually (if needed)
-
-```bash
-ssh <user>@<satellite-host> 'bash -s' << 'EOF'
-pkill -f 'scripts/cdp-ask' 2>/dev/null || true
-sleep 1
-CORTEX_FILES_ROOT=/mnt/torus/mcp-data/files \
-  nohup ~/.venvs/universal/bin/python \
-  /mnt/torus/projects/universal-llm-gateway/scripts/cdp-ask \
-  --port 8770 \
-  > /tmp/cdp-ask.log 2>&1 &
-echo "cdp-ask PID: $!"
-for i in 1 2 3 4 5 6 7 8 9 10; do
-  sleep 1
-  curl -sf http://localhost:8770/health >/dev/null 2>&1 \
-    && echo "cdp-ask ready after ${i}s" && break
-done
-curl -s http://localhost:8770/health
-EOF
-```
-
-Expected: `{"status":"ok","harvest_root":"/mnt/torus/mcp-data/files","harvest_root_ok":true}`
-
-> **Keep-alive**: cdp-ask uses `nohup` like web-fetcher — survives SSH disconnect.
-> Re-run `--status` after disconnect to confirm `:8770/health` still responds.
 
 ---
 
@@ -414,8 +220,8 @@ Use this when:
 
 ### Prerequisites
 
-Chrome must be running with `--remote-allow-origins=*` (see launch commands above).
-Without this flag, the CDP WebSocket connection returns 403.
+Chrome must be running with `--remote-allow-origins=*` (see `jupiter-browser-bringup`
+launch commands). Without this flag, the CDP WebSocket connection returns 403.
 
 ### Workflow
 
@@ -692,6 +498,10 @@ If `screenshot_path` is missing from the response or `view_image` returns "file 
 | Cloudflare-protected but text-based | `browse` with `mode:"browser"` |
 | Need the rendered page visually (chart, map, layout) | `browse` with `screenshot=true` → `view_image(screenshot_path)` |
 | Public PDF (no auth, no DRM, no JS challenge) | `curl -sL <url> -o /path/file.pdf` — then **verify with xxd** |
+| Site returns 202 + `x-amzn-waf-action: challenge` | `dispatch(tool="browse", mode="browser", wait_for=<content selector>)` — **never** `curl_cffi`. Detail: `browse-waf-and-pagination-gotchas` |
+| `user-vortex-web_fetch` returns trafilatura-extraction-failed | Switch to `dispatch(tool="browse", mode="browser")` — `web_fetch` does not fall through |
+| Need full long-form content (court opinion, article, doc) | `dispatch(tool="browse", max_chars=200000)` → `retrieve(id="rs_*")` → read file → parse JSON |
+| Long page (>10K chars) on JS-protected site | `dispatch(tool="browse")`, **not** `cursor-ide-browser-browser_get_content` (no pagination) |
 
 ---
 
@@ -699,103 +509,25 @@ If `screenshot_path` is missing from the response or `view_image` returns "file 
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `dispatch(tool="browse")` → `WEB_FETCHER_URL not configured` | Env var missing in MCP container | Check `~/.gateway/mcp.yaml` has `WEB_FETCHER_URL: "http://jupiter:8765"` and rebuild MCP |
-| `dispatch(tool="browse")` → connection error to `jupiter:8765` | web-fetcher not running | Start web-fetcher (see above) |
-| `BrowserType.connect_over_cdp: connect ECONNREFUSED 127.0.0.1:9222` | Chrome not running | Launch Chrome (see above); restart web-fetcher after |
-| `cdp_url_configured: true` but browser fetches fail | web-fetcher env var set but Chrome is down | The health field is misleading — check CDP directly with `curl http://localhost:9222/json/version` |
-| Chrome crashes or becomes unresponsive | Memory pressure or JS crash | `pkill -f "remote-debugging-port=9222"` then re-launch |
-| SSH session drops mid-launch | Network blip | Chrome survives via nohup; verify with `pgrep -a google-chrome` |
-| Stale Chrome occupying port 9222 | Previous nohup Chrome still running | `pkill -f "remote-debugging-port=9222"` then re-launch |
-| Stale process on port 8765 | Old web-fetcher still bound | `fuser -k 8765/tcp` then re-launch web-fetcher |
 | `save_to` → `Permission denied: '$HOME'` | Jupiter can't write to local `$HOME/` | Use `/tmp/` on Jupiter, then `scp` back |
 | `save_to` → `size: 3000` (suspiciously small) | Got HTML error page instead of file | Check auth: fetch the page first and confirm content is readable |
 | `save_to` → `size: 1MB+` but `xxd -p -l 5` shows `3c21...` (HTML) | Download URL rendered a JS-challenge page; web-fetcher saved the HTML, not the binary | Use CDP `Browser.setDownloadBehavior` approach |
 | `save_to` succeeds but PDF is blank/corrupted | Download URL requires a click event, not direct navigation | Use `save_to` + `actions=[{click}]` or CDP native download |
 | Playwright `expect_download` / `wait_for_event("download")` times out | Click opened a viewer, blob URL, or delayed attachment — not a Playwright download | **Class (any site):** `dispatch(tool="browse")` + `save_to` on the signed-in Jupiter tab; if HTML, `save_to`+click `actions` or CDP `Browser.setDownloadBehavior`. `xxd` for `%PDF-`. Do not park “PDF timed out” as a standing gap |
 | Sequential Python SSH download loop times out | SSH connection timeout exceeded with >3-4 sequential 20-40s downloads | Use parallel `dispatch` MCP calls in a single agent message instead |
-| CDP WebSocket → 403 Forbidden | Chrome launched without `--remote-allow-origins=*` | Restart Chrome with that flag (see launch commands) |
+| CDP WebSocket → 403 Forbidden | Chrome launched without `--remote-allow-origins=*` | Restart Chrome with that flag — see `jupiter-browser-bringup` |
 | Extracted text is garbled (`Jdtrjd\`kg...`) | Font DRM — Scribd encodes glyphs via custom CSS font | Don't parse; use CDP native download or `save_to` to get the actual PDF |
 | `action_failure.error: "Timeout ... waiting for selector"` | Selector never resolved | Run without `actions` first and inspect the HTML / screenshot to pick a real selector |
 | `action_failure.failed_at: -1` | Top-level `wait_for` timed out | The page didn't reach the expected state — try `networkidle` or a broader selector |
 | `screenshot_path` missing from response | `screenshot=True` but the shared-image dir isn't writable | Copy via `docker cp` as fallback (see Screenshots section) |
+| Site returns HTTP 202 + `x-amzn-waf-action: challenge` header | AWS CloudFront WAF JS-challenge (NOT Cloudflare TLS) | Detail + working pattern: `browse-waf-and-pagination-gotchas` |
+| `user-vortex-web_fetch` returns trafilatura-extraction-failed | `web_fetch` is httpx-only; site requires JS execution | Detail: `browse-waf-and-pagination-gotchas` |
+| Response carries `"Stored as: rs_XXXXX"` instead of inline content | Payload exceeded 128KB threshold (expected for long content) | `retrieve(id="rs_XXXXX")` → read written file → parse JSON. Do NOT lower `max_chars` to fit inline (truncates) |
+| `cursor-ide-browser-browser_get_content` returns truncated content with no way to get the tail | Tool accepts no offset/limit/page args — no pagination exists | Use `dispatch(tool="browse", max_chars=N)` instead for any long-form extraction |
+| Playwright form/upload on authenticated site fails or selectors wrong | Used wrong seat (IDE browser) or guessed selectors | Use `web-automation-discipline` — Jupiter CDP + probe + `expect_file_chooser` |
 
----
-
-## Full Bootstrap (when starting from scratch)
-
-```bash
-ssh <user>@<satellite-host> 'bash -s' << 'EOF'
-set -e
-
-# Kill stale processes
-pkill -f 'remote-debugging-port=9222' 2>/dev/null || true
-pkill -f 'scripts/web-fetcher' 2>/dev/null || true
-fuser -k 8765/tcp 2>/dev/null || true
-sleep 1
-
-# Launch Chrome — --remote-allow-origins=* required for CDP WebSocket from scripts
-DISPLAY=:1 nohup google-chrome \
-  --remote-debugging-port=9222 \
-  --remote-allow-origins=* \
-  --user-data-dir=/tmp/cdp-profile \
-  --no-first-run \
-  --no-default-browser-check \
-  --disable-background-timer-throttling \
-  > /tmp/chrome-cdp.log 2>&1 &
-echo "Chrome PID: $!"
-
-# Wait for CDP (usually ready in 1s)
-for i in 1 2 3 4 5 6 7 8 9 10; do
-  sleep 1
-  curl -sf http://localhost:9222/json/version >/dev/null 2>&1 \
-    && echo "CDP ready after ${i}s" && break
-  echo "Waiting for CDP... $i/10"
-done
-
-# Launch web-fetcher
-PYTHONPATH=/mnt/torus/projects/universal-llm-gateway/libs \
-  BROWSER_CDP_URL=http://127.0.0.1:9222 \
-  nohup ~/.venvs/universal/bin/python \
-  /mnt/torus/projects/universal-llm-gateway/scripts/web-fetcher \
-  --port 8765 \
-  > /tmp/web-fetcher.log 2>&1 &
-echo "web-fetcher PID: $!"
-
-# Verify both
-sleep 2
-echo "--- Chrome ---"
-curl -s http://localhost:9222/json/version \
-  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['Browser'])"
-echo "--- web-fetcher ---"
-curl -s http://localhost:8765/health
-EOF
-```
-
----
-
-## Verifying End-to-End from MCP
-
-After starting Chrome and web-fetcher, confirm the full chain works:
-
-```python
-dispatch(tool="browse", arguments='{"url":"https://example.com","mode":"browser","max_chars":200}')
-```
-
-Expected response:
-```json
-{
-  "tool": "browse",
-  "result": {
-    "url": "https://example.com/",
-    "title": "Example Domain",
-    "content": "This domain is for use in documentation examples...",
-    "method": "browser",
-    "cf_bypassed": false
-  }
-}
-```
-
-If `"method": "browser"` appears — Chrome via CDP is working.
+For Jupiter infra failures (Chrome/web-fetcher/cdp-ask not running, port
+conflicts), read `jupiter-browser-bringup` instead.
 
 ---
 
@@ -803,22 +535,21 @@ If `"method": "browser"` appears — Chrome via CDP is working.
 
 | Path | Purpose |
 |---|---|
-| `scripts.local/start-jupiter-browser` | **Launch script** — start/stop/status Chrome + web-fetcher + cdp-ask |
-| `scripts/cdp-ask` | cdp-ask satellite entry point (port 8770) |
-| `libs/cdp_ask/` | cdp-ask FastAPI app + CDP project-ask runner |
-| `services/mcp-server/tools/project_ask.py` | MCP `project_ask` relay to PROJECT_ASK_URL |
-| `libs/web_fetcher/` | web-fetcher FastAPI app + Playwright browser module |
-| `libs/web_fetcher/app.py` | FastAPI surface — `FetchRequest` schema, routing logic |
 | `libs/web_fetcher/browser.py` | `fetch_with_browser` (text + actions + downloads) + `download_with_browser` (direct-URL) |
 | `libs/web_fetcher/actions.py` | Action primitives (`click`/`fill`/`press`/…) + `wait_for` dispatcher |
 | `libs/web_fetcher/cloudflare.py` | CF challenge detection + Turnstile click handling |
-| `scripts/web-fetcher` | Low-level web-fetcher entry point (called by `start-jupiter-browser`) |
 | `services/mcp-server/tools/browse.py` | `browse` MCP tool — relay + shared-image copy for `screenshot_path` |
 | `services/mcp-server/tools/web.py` | `web_search` + `web_fetch` (HTTP-only) |
-| `docker/compose/mcp-server.yml` | Declares `WEB_FETCHER_URL` + `MCP_SHARED_IMAGE_DIR` env vars |
-| `~/.gateway/mcp.yaml` | Sets `WEB_FETCHER_URL: "http://jupiter:8765"` and `PROJECT_ASK_URL: "http://jupiter:8770"` |
 
----
+Infra/bring-up files (launch script, web-fetcher/cdp-ask entry points, mcp.yaml) live
+in `jupiter-browser-bringup` § Related Files.
+
+## Related skills
+
+`jupiter-browser-bringup` (Chrome/web-fetcher/cdp-ask infra, launch, status) ·
+`browse-waf-and-pagination-gotchas` (AWS WAF, web_fetch footgun, response-store,
+pagination) · `web-automation-discipline` (interactive form automation on top of
+this transport).
 
 ## Source
 
@@ -833,125 +564,7 @@ patterns + xxd verification + port-conflict fix added in
 Distinct **AWS CloudFront WAF JS-challenge** failure mode (vs. standard Cloudflare TLS
 fingerprint), `user-vortex-web_fetch` httpx-only behavior, response-store flagging
 for large-page retrieval, and `cursor-ide-browser-browser_get_content` no-pagination
-limitation added in [Prop 19 legal corpus ingest session](cursor-2026-05-03-1730)
-(thread 879). See § May 2026 below.
-
-## May 2026 — WAF, Tool Boundaries, and Large-Page Retrieval
-
-Four findings from the BOE-19-P / `legal_prop19` corpus ingest (CourtListener,
-thread 879). Each tightens the decision tree above.
-
-### 1. AWS CloudFront WAF JS-challenge — distinct from Cloudflare TLS block
-
-Assertion #1963 (the canonical `curl_cffi` impersonate=chrome recipe) covers
-**Cloudflare TLS-fingerprint** blocks. CourtListener as of May 2026 serves a
-DIFFERENT challenge: AWS CloudFront WAF with JS execution requirement.
-
-**Signature**:
-
-| Signal | Value |
-|---|---|
-| Status code | `202 Accepted` (not 403) |
-| Response header | `x-amzn-waf-action: challenge` |
-| Response body | HTML containing `<noscript>JavaScript is disabled` |
-| `curl_cffi` impersonate=chrome | **Fails** — TLS fingerprint is fine; the block is at the JS-execution layer |
-
-**Decision rule**: any 202 + `x-amzn-waf-action: challenge` → skip `curl_cffi`
-entirely, go straight to `dispatch(tool="browse", mode="browser", wait_for=...)`.
-A real JS-executing browser is the only solver.
-
-```python
-# Working pattern for CourtListener and similar AWS-WAF-protected sites
-dispatch(tool="browse", arguments='{
-  "url": "https://www.courtlistener.com/opinion/4397103/williams-fickett-v-cnty-of-fresno/",
-  "mode": "browser",
-  "wait_for": {"type": "selector", "value": "article, .opinion, h1", "timeout_ms": 25000},
-  "max_chars": 200000
-}')
-```
-
-The `wait_for` selector is REQUIRED — without it, `browse` may return the
-challenge interstitial ("JavaScript is disabled" body) before Chrome has
-resolved the WAF check and rendered the actual opinion. 25s is a safe ceiling;
-typical resolution is 3-8s.
-
-### 2. `user-vortex-web_fetch` is httpx-only — does NOT fall through to Jupiter
-
-Footgun: the **top-level** `user-vortex-web_fetch` MCP tool and
-`dispatch(tool="browse", mode="browser")` look interchangeable but are two
-distinct paths.
-
-| Tool | Transport | Behavior on JS-protected page |
-|---|---|---|
-| `user-vortex-web_fetch` (top-level) | httpx in MCP container | Returns truncated HTML + "trafilatura extraction failed" — silent failure dressed as success |
-| `dispatch(tool="browse", mode="browser")` | Jupiter Chrome via CDP | Bypasses WAF/JS challenges |
-
-`web_fetch` does **not** transparently fall through to Jupiter Chrome. Its
-failure mode (extraction-failed message + raw HTML body) reads like a content
-problem rather than a transport problem, and is easy to misdiagnose as "page
-is malformed" when the actual issue is the WAF.
-
-**Decision rule**: any site where `web_fetch` returns trafilatura-extraction-failed,
-or where the returned content contains "JavaScript is disabled" / "Just a moment"
-/ login wall text → switch to `dispatch(tool="browse", mode="browser")` rather
-than retry `web_fetch` with different parameters.
-
-### 3. Response-store flagging is the canonical large-page retrieval pattern
-
-When `dispatch(tool="browse", max_chars=N)` returns a payload >128KB, the MCP
-relay auto-flags into `rs_XXXXX` rather than returning inline. This is
-**expected and correct** for full court opinions, long articles, etc.
-
-```
-response → "Large dispatch payload flagged. Size: 156.3KB over 128.0KB threshold.
-            Stored as: rs_a1b2c3 (expires in 10 min)."
-→ retrieve(id="rs_a1b2c3")
-→ writes JSON to $HOME/.cursor/projects/.../agent-tools/<uuid>.txt
-→ Read that file → it's the full result JSON; parse with python json.load
-```
-
-The natural agent reflex is to **lower** `max_chars` on the next call to fit
-inline. **This silently truncates the content.** The right move is to keep
-`max_chars` high (200000+) and use `retrieve` → file → parse.
-
-**Decision rule**: for content where completeness matters (legal opinions for
-cite-verification, full articles for ingestion, anything where "verbatim"
-matters) — set `max_chars: 200000` and accept the response-store hop. Only
-lower `max_chars` when you genuinely want a preview.
-
-### 4. `cursor-ide-browser-browser_get_content` has no pagination
-
-The Cursor IDE-browser MCP server's `browser_get_content` accepts NO arguments
-— no `offset`, `limit`, `format`, `max_chars`, `page`, `start_offset`,
-`truncate_at`. It returns whatever it returns and that's it. For long pages,
-the tail is unreachable through this path.
-
-**Decision rule**: long page (>10K chars expected) on a JS-protected site →
-**always** `dispatch(tool="browse", max_chars=N)`, **never**
-`cursor-ide-browser-browser_navigate` + `browser_get_content`. The IDE-browser
-path is fine for short interactive verifications (form fills, screenshots,
-small extractions); it is not fine for content-bearing extraction.
-
-### Updated Decision Guide additions
-
-Add these rows to the Text Extraction vs. Download table above:
-
-| Situation | Approach |
-|---|---|
-| Site returns 202 + `x-amzn-waf-action: challenge` | `dispatch(tool="browse", mode="browser", wait_for=<content selector>)` — **never** `curl_cffi` |
-| `user-vortex-web_fetch` returns trafilatura-extraction-failed | Switch to `dispatch(tool="browse", mode="browser")` — `web_fetch` does not fall through |
-| Need full long-form content (court opinion, article, doc) | `dispatch(tool="browse", max_chars=200000)` → `retrieve(id="rs_*")` → read file → parse JSON |
-| Long page (>10K chars) on JS-protected site | `dispatch(tool="browse")`, **not** `cursor-ide-browser-browser_get_content` (no pagination) |
-
-### Updated Failure Modes additions
-
-Add these rows to the Failure Modes table above:
-
-| Symptom | Cause | Fix |
-|---|---|---|
-| Site returns HTTP 202 + `x-amzn-waf-action: challenge` header | AWS CloudFront WAF JS-challenge (NOT Cloudflare TLS) | `dispatch(tool="browse", mode="browser", wait_for={selector})` — `curl_cffi` cannot solve this |
-| `dispatch(tool="browse")` returns body containing "JavaScript is disabled" | WAF challenge served instead of content; `wait_for` missing or timeout too short | Add `wait_for: {type: selector, value: <content selector>, timeout_ms: 25000}` |
-| `user-vortex-web_fetch` returns trafilatura-extraction-failed | `web_fetch` is httpx-only; site requires JS execution | Switch to `dispatch(tool="browse", mode="browser")`; do NOT retry `web_fetch` |
-| Response carries `"Stored as: rs_XXXXX"` instead of inline content | Payload exceeded 128KB threshold (expected for long content) | `retrieve(id="rs_XXXXX")` → read written file → parse JSON. Do NOT lower `max_chars` to fit inline (truncates) |
-| `cursor-ide-browser-browser_get_content` returns truncated content with no way to get the tail | Tool accepts no offset/limit/page args — no pagination exists | Use `dispatch(tool="browse", max_chars=N)` instead for any long-form extraction |
-| Playwright form/upload on authenticated site fails or selectors wrong | Used wrong seat (IDE browser) or guessed selectors | Use `web-automation-discipline` — Jupiter CDP + probe + `expect_file_chooser` |
+limitation found in [Prop 19 legal corpus ingest session](cursor-2026-05-03-1730)
+(thread 879) — split out into `browse-waf-and-pagination-gotchas` (2026-09-01,
+agent-bus:9853 G5). Bring-up/infra content split into `jupiter-browser-bringup`
+same date.

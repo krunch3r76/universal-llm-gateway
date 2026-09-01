@@ -1,6 +1,6 @@
 ---
 name: continuity-thread-shaping
-description: "On role:root birth, resume, catch-up, drop-on-liaison, hub wrap, or inbound LIAISON send — not work/worker/MONITOR: shape before details (thin card); walk one named hop with purpose; hub + ≥1 runbook; inbound acts by pointer."
+description: "On role:root birth, resume, catch-up, drop-on-liaison, hub wrap, or inbound LIAISON (not work/worker/MONITOR): shape before details; one named hop; hub + ≥1 runbook; inbound by pointer."
 skill_category: orchestration
 trigger_short: "role:root house ∨ inbound LIAISON/NOTE on liaison-inbox"
 trigger_match_terms:

@@ -19,7 +19,7 @@ logger = get_logger(__name__)
 # Mirrors the cost-risk roster Stargate's align_cursor_knobs warns on, so the two
 # guards cannot drift into disagreeing about what counts as expensive.
 _PREMIUM_BARE_MODELS = frozenset(
-    {"claude-opus-5", "claude-opus-4-8", "claude-fable-5"}
+    {"claude-opus-5", "claude-opus-4-8", "claude-fable-5", "claude-fable-5-1"}
 )
 
 

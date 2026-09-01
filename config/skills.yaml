@@ -280,6 +280,12 @@ skills:
   jupiter-browser-via-mcp:
     surface_class: cursor_only
     mcp_surface_required: none
+  jupiter-browser-bringup:
+    surface_class: cursor_only
+    mcp_surface_required: none
+  browse-waf-and-pagination-gotchas:
+    surface_class: cursor_only
+    mcp_surface_required: none
   jupiter-dgpu-display-blank:
     surface_class: cursor_only
     mcp_surface_required: none
@@ -374,6 +380,9 @@ skills:
     surface_class: cursor_only
     mcp_surface_required: none
   orchestrator-workflow:
+    surface_class: cursor_only
+    mcp_surface_required: code
+  cursor-sdk-thread-consolidation:
     surface_class: cursor_only
     mcp_surface_required: code
   over-refusal-prompt-framing:

@@ -144,6 +144,7 @@ _RESPONSES_DEFAULT_CONTEXT_WINDOW = 200_000
 _ANTHROPIC_ADAPTIVE_FAMILIES: frozenset[str] = frozenset(
     {
         "claude-fable-5",
+        "claude-fable-5-1",
         "claude-mythos-5",
         "claude-mythos-preview",
         "claude-opus-5",
