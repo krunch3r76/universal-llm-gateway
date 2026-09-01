@@ -32,7 +32,7 @@ from ..checkpoint_schema import (
     footer_kwargs_for_window,
     output_format_footer_requirement,
 )
-from ..executor_defaults import DEFAULT_MODEL, DEFAULT_MODEL_KNOBS
+from ..executor_defaults import JUDGMENT_MODEL, JUDGMENT_MODEL_KNOBS
 from .materializer import _work_summary, handoff_subject, materialize_resume_packet
 from .materializer_autonomous_arc import autonomous_arc_guidance
 from .materializer_closed_detent import (
@@ -67,13 +67,13 @@ _DENSIFY_FLOOR = (
 
 
 def _scope(window_index: int, root_id: str) -> str:
-    knobs = ", ".join(f"{k}={v}" for k, v in sorted(DEFAULT_MODEL_KNOBS.items()))
+    knobs = ", ".join(f"{k}={v}" for k, v in sorted(JUDGMENT_MODEL_KNOBS.items()))
     return f"""\
 <scope>
 Goal: Charter-runner AUTONOMOUS window {window_index} — background lead on
 agent-bus:{root_id}. Attendance axis = autonomous: run the full path-sim arc
 (Q → A+Gate-2 → R-admit → implement+deploy-verify → R-after → close) UNATTENDED
-across charter windows. Default executor: {DEFAULT_MODEL} ({knobs}).
+across charter windows. Default executor: {JUDGMENT_MODEL} ({knobs}).
 Selection mode: autonomous procession (todo attr attendance=autonomous).
 </scope>"""
 

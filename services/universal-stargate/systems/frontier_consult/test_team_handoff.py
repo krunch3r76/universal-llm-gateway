@@ -3364,3 +3364,15 @@ def test_diff_guard_detector_matrix() -> None:
     assert not packet_contains_diff_text("mention @@ in prose only")
     assert not packet_contains_diff_text("> ---\nProse --- separator")
     assert packet_contains_diff_text(_REAL_UNIFIED_DIFF)
+
+
+def test_handoff_other_models_still_admits_with_cost_risk_note() -> None:
+    """AC2: op=handoff does not invoke the generate pool fence; cost-risk unchanged."""
+    from systems.frontier_consult.cursor_sdk_alignment import align_cursor_knobs
+
+    result = align_cursor_knobs(
+        resolved_model="cursor/claude-opus-4-8",
+        contract="light-bounded",
+    )
+    warning = result.warnings[0].to_dict()
+    assert warning["code"] == "sdk_cost_risk"

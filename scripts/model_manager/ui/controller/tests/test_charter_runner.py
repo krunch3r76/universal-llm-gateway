@@ -558,8 +558,8 @@ def test_materializer_contains_stop_contract() -> None:
 @pytest.mark.offline
 def test_default_judgment_body_is_grok_xhigh() -> None:
     from scripts.model_manager.ui.controller.charter_runner.executor_defaults import (
-        DEFAULT_MODEL,
-        DEFAULT_MODEL_KNOBS,
+        JUDGMENT_MODEL,
+        JUDGMENT_MODEL_KNOBS,
         default_judgment_body,
     )
 
@@ -572,8 +572,8 @@ def test_default_judgment_body_is_grok_xhigh() -> None:
     )
     assert body["op"] == "generate"
     assert body["seat"] == "cursor-sdk"
-    assert body["model"] == DEFAULT_MODEL == "cursor/grok-4.6"
-    assert body["model_knobs"] == DEFAULT_MODEL_KNOBS
+    assert body["model"] == JUDGMENT_MODEL == "cursor/grok-4.6"
+    assert body["model_knobs"] == JUDGMENT_MODEL_KNOBS
     assert body["model_knobs"]["effort"] == "xhigh"
     assert body["model_knobs"]["fast"] == "false"
     assert "thinking" not in body["model_knobs"]
@@ -703,8 +703,8 @@ def test_generate_packet_has_no_autonomous_language() -> None:
 @pytest.mark.offline
 def test_autonomous_generate_body_matches_default_wire() -> None:
     from scripts.model_manager.ui.controller.charter_runner.executor_defaults import (
-        DEFAULT_MODEL,
-        DEFAULT_MODEL_KNOBS,
+        JUDGMENT_MODEL,
+        JUDGMENT_MODEL_KNOBS,
         autonomous_generate_body,
         default_judgment_body,
     )
@@ -718,8 +718,8 @@ def test_autonomous_generate_body_matches_default_wire() -> None:
     )
     assert body["op"] == "generate"
     assert body["seat"] == "cursor-sdk"
-    assert body["model"] == DEFAULT_MODEL == "cursor/grok-4.6"
-    assert body["model_knobs"] == DEFAULT_MODEL_KNOBS
+    assert body["model"] == JUDGMENT_MODEL == "cursor/grok-4.6"
+    assert body["model_knobs"] == JUDGMENT_MODEL_KNOBS
     assert "subject" not in body
     assert "tags" not in body
     # Autonomous mandate is packet-side; wire is identical to default generate.

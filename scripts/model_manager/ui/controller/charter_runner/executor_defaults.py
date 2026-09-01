@@ -36,9 +36,6 @@ JUDGMENT_MODEL_KNOBS: dict[str, str] = {
     "effort": "xhigh",
     "fast": "false",
 }
-# Compatibility aliases — materializers + tests still import these names.
-DEFAULT_MODEL = JUDGMENT_MODEL
-DEFAULT_MODEL_KNOBS = JUDGMENT_MODEL_KNOBS
 DEFAULT_CONTRACT = "light-bounded"
 
 IMPLEMENT_MODEL = "cursor/composer-2.5"
@@ -121,7 +118,7 @@ def autonomous_generate_body(
 ) -> dict[str, Any]:
     """Wire body for the autonomous background-lead window.
 
-    Same generate wire as ``default_judgment_body`` (Sonnet 5 @ xhigh).
+    Same generate wire as ``default_judgment_body`` (Grok / ``JUDGMENT_MODEL`` @ xhigh).
     The autonomous mandate lives in the materialized packet + root WIP pointer
     — generate schema rejects ``subject`` / ``tags`` (handoff-only fields).
     """

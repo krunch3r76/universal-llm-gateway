@@ -16,6 +16,7 @@ from .cursor_capabilities import (
     supported_knobs,
     to_model_card_dict,
 )
+from .model_pools import OTHER_MODELS_BARE, is_other_models_pool
 
 # Harvest nominates these manage slugs when this lib lands (package-grain).
 CONSUMERS: tuple[str, ...] = ('git_integration_worker', 'stargate')
@@ -32,6 +33,8 @@ __all__ = [
     "effective_knobs",
     "effort_knob_name",
     "is_cursor_model_denied",
+    "is_other_models_pool",
+    "OTHER_MODELS_BARE",
     "suggest_effort_knobs",
     "supported_knobs",
     "to_model_card_dict",

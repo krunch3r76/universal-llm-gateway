@@ -19,8 +19,6 @@ from services.git_integration_worker.cursor_auto.admit_gates import blocking_adm
 from services.git_integration_worker.cursor_auto.dispatch_bounds import (
     MECHANICAL_EXECUTOR_MODEL_ID,
     clamp_effort_to_model_card,
-    clamp_other_models_unattended_effort,
-    is_other_models_pool,
     is_roaming_tier,
     redirect_mechanical_executor,
     scope_waiver_allowed,
@@ -121,51 +119,6 @@ def test_grok_max_degrades_to_card_ceiling() -> None:
 def test_sonnet_5_card_accepts_max(model_id: str, requested: str) -> None:
     payload = _effort(requested)
     assert clamp_effort_to_model_card(model_id, payload) is payload
-
-
-@pytest.mark.parametrize("requested", ["xhigh", "max"])
-@pytest.mark.parametrize(
-    "model_id",
-    ["cursor/claude-sonnet-5", "cursor/claude-opus-5", "cursor/gpt-5.6-terra"],
-)
-def test_other_models_unattended_caps_above_high(model_id: str, requested: str) -> None:
-    assert is_other_models_pool(model_id)
-    out = clamp_other_models_unattended_effort(model_id, _effort(requested))
-    assert out["resolved_effort"] == "high"
-    assert out["clamped"] is True
-    assert "Other Models pool cap" in str(out["notes"])
-
-
-def test_other_models_unattended_keeps_high_and_below() -> None:
-    payload = _effort("high")
-    assert (
-        clamp_other_models_unattended_effort("cursor/claude-sonnet-5", payload)
-        is payload
-    )
-    assert (
-        clamp_other_models_unattended_effort("cursor/grok-4.6", _effort("xhigh"))[
-            "resolved_effort"
-        ]
-        == "xhigh"
-    )
-
-
-@pytest.mark.parametrize("requested", ["xhigh", "max"])
-@pytest.mark.parametrize(
-    "model_id",
-    ["cursor/claude-sonnet-5", "cursor/claude-opus-5", "cursor/gpt-5.6-terra"],
-)
-def test_other_models_explicit_pin_skips_unattended_cap(
-    model_id: str, requested: str
-) -> None:
-    """agent-bus:7405 blew the pool via the *default* path, not a named pin —
-    a caller who explicitly named the model earns the card ceiling instead."""
-    payload = _effort(requested)
-    out = clamp_other_models_unattended_effort(
-        model_id, payload, explicit_model_pin=True
-    )
-    assert out is payload
-    assert out["resolved_effort"] == requested
 
 
 def test_off_ladder_effort_falls_to_card_default() -> None:

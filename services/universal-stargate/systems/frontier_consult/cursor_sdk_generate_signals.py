@@ -10,6 +10,7 @@ from .events import (
     FrontierSdkGenerateRequested,
     FrontierSdkKnobDropped,
     FrontierSdkMaterializationIncomplete,
+    FrontierSdkPoolDenied,
     FrontierSdkReasoningEffortRejected,
     FrontierSdkWorkerDispatched,
     FrontierSdkWorkerDispatchFailed,
@@ -227,5 +228,24 @@ def emit_sdk_reasoning_effort_rejected(
         FrontierSdkReasoningEffortRejected(
             model_id=model_id,
             requested=requested,
+        )
+    )
+
+
+def emit_sdk_pool_denied(
+    *,
+    request_id: str,
+    seat: str,
+    requested_model: str | None,
+    resolved_model: str,
+) -> None:
+    publish_frontier_event(
+        FrontierSdkPoolDenied(
+            request_id=request_id,
+            seat=seat,
+            requested_model=requested_model,
+            resolved_model=resolved_model,
+            pool="other_models",
+            code="other_models_pool_denied",
         )
     )

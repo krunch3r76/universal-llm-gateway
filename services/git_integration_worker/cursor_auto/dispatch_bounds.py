@@ -15,24 +15,14 @@ Two **policy** bounds (executor + scope) plus one **capability** bound (effort):
   actionable scope, but a ``contract:`` override waives that refusal outright.
   The waiver stays for the roaming tier and is withdrawn for everything else, so
   a premium bind must arrive with scope the orchestrator actually bounded.
-* **Effort** — two gates, not one. The model card still degrades values
-  above its accepted ladder. Separately, unattended Other Models (Sonnet /
-  Opus / Terra / Sol / Fable) cap at ``high``: that is a Cursor *pool*
-  bound, not a second capability ladder. Cursor Models (Composer / Grok)
-  keep the card ceiling. ``require_attended`` skips the pool cap — so does
-  an explicit model pin (see ``clamp_other_models_unattended_effort``): the
-  incident below was the *default* path silently landing on Sonnet, never a
-  deliberate ask, so a caller who named the model pays only the card ceiling.
+* **Effort** — the model card degrades values above its accepted ladder via
+  ``clamp_effort_to_model_card``. Unattended Other Models pool entitlement is
+  enforced at Stargate prepare (``other_models_pool_denied``), not here.
 
 Observed 2026-08-09 (24h): four autonomous ``xhigh`` Opus runs consumed 13.26M of
 23.2M total Opus input tokens and two of the four failed to deliver, while
 eighteen directives were admitted on a waived empty scope — eight of them
-``implement``. Observed 2026-08-16–18: ``charter_runner``'s ``DEFAULT_MODEL``
-constant (agent-bus:7405) pinned unnamed judgment windows to Sonnet 5
-``max``/``1m`` and blew the Ultra Other Models (second) pool in ~48h — every
-omitted-model window inherited it, not just the ones that needed it. The card
-still does not invent a quality ladder; the pool cap does, and only against
-the silent-default path.
+``implement``.
 """
 
 from __future__ import annotations
@@ -40,7 +30,6 @@ from __future__ import annotations
 from typing import Any
 
 from cursor_capabilities import canonical_cursor_bare_id
-from effort_vocabulary import WIRE_LADDER
 
 from services.git_integration_worker.cursor_auto.knob_compose import (
     resolve_card_effort,
@@ -54,22 +43,6 @@ from services.git_integration_worker.cursor_auto.wire_map import (
 ROAMING_TIER_BARE_MODELS: frozenset[str] = frozenset(
     {"composer-2.5", "composer-2.5-fast", "grok-4.6"}
 )
-
-# Cursor "Other Models" / second pool (Ultra hard-cap). Luna is Other Models
-# but nano-tier; reflex stays cheap even at card max, so it is omitted here.
-OTHER_MODELS_BARE: frozenset[str] = frozenset(
-    {
-        "claude-opus-5",
-        "claude-opus-4-8",
-        "claude-sonnet-5",
-        "claude-sonnet-4-6",
-        "claude-fable-5",
-        "claude-fable-5-1",
-        "gpt-5.6-terra",
-        "gpt-5.6-sol",
-    }
-)
-OTHER_MODELS_UNATTENDED_EFFORT_CEILING = "high"
 
 # ``resolve_handoff_contract`` maps unmarked ``implement`` here; judgment-bearing
 # implement bodies raise to ``light-bounded`` instead.
@@ -97,57 +70,6 @@ def scope_waiver_allowed(model_id: str | None) -> bool:
     nobody bounded.
     """
     return is_roaming_tier(model_id)
-
-
-def is_other_models_pool(model_id: str | None) -> bool:
-    """True when *model_id* draws Cursor's capped Other Models (second) pool."""
-    try:
-        return canonical_cursor_bare_id(str(model_id or "")) in OTHER_MODELS_BARE
-    except ValueError:
-        return False
-
-
-def clamp_other_models_unattended_effort(
-    model_id: str | None,
-    effort: dict[str, Any],
-    *,
-    explicit_model_pin: bool = False,
-) -> dict[str, Any]:
-    """Cap unattended Other Models effort at ``high`` — unless explicitly named.
-
-    The capability card still accepts ``xhigh``/``max``. Ultra's Other Models
-    allowance does not: those rungs are what exhausted the second pool in
-    48h of Auto/charter-commissioned sonnet+opus. But that incident was the
-    *default* resolution path (``resolve_desired_model``'s omit branch never
-    names an Other Models model for any contract) — so a caller reaching this
-    function with ``explicit_model_pin=True`` already made a deliberate model
-    choice, not an accidental one. A deliberate pin earns the card ceiling,
-    not the pool ceiling: the pool cap exists to stop a silent default from
-    re-spending Ultra's second pool, not to second-guess an intentional ask.
-    Attended pins skip this too (handler omits the call when
-    ``require_attended``).
-    """
-    if explicit_model_pin:
-        return effort
-    if not is_other_models_pool(model_id):
-        return effort
-    resolved = str(effort.get("resolved_effort") or "").strip().lower()
-    if not resolved or resolved not in WIRE_LADDER:
-        return effort
-    ceiling = OTHER_MODELS_UNATTENDED_EFFORT_CEILING
-    if WIRE_LADDER.index(resolved) <= WIRE_LADDER.index(ceiling):
-        return effort
-    prior = str(effort.get("notes") or "").strip()
-    note = (
-        f"{resolved}→{ceiling} (unattended Other Models pool cap; "
-        f"attended pin keeps the card rung)"
-    )
-    return {
-        **effort,
-        "resolved_effort": ceiling,
-        "clamped": True,
-        "notes": f"{prior}; {note}" if prior and note else (note or prior),
-    }
 
 
 def clamp_effort_to_model_card(
@@ -221,12 +143,8 @@ def redirect_mechanical_executor(
 __all__ = [
     "MECHANICAL_EXECUTOR_MODEL_ID",
     "MECHANICAL_HANDOFF_CONTRACT",
-    "OTHER_MODELS_BARE",
-    "OTHER_MODELS_UNATTENDED_EFFORT_CEILING",
     "ROAMING_TIER_BARE_MODELS",
     "clamp_effort_to_model_card",
-    "clamp_other_models_unattended_effort",
-    "is_other_models_pool",
     "is_roaming_tier",
     "redirect_mechanical_executor",
     "scope_waiver_allowed",

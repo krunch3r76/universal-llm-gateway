@@ -133,6 +133,15 @@ async def prepare_cursor_sdk_generate(
         request_id=request_id,
         packet_kind=effective_packet_kind,
     )
+    from .cursor_sdk_pool_fence import reject_other_models_pool_generate
+
+    reject_other_models_pool_generate(
+        request_id=request_id,
+        role=role,
+        seat=None,
+        model=model,
+        resolved_model=resolved_model,
+    )
     if execution_id is None or dispatch_id is None:
         minted_execution, minted_dispatch = mint_cursor_sdk_ids(request_id=request_id)
         execution_id = execution_id or minted_execution

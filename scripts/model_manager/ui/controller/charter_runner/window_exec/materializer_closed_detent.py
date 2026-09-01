@@ -12,7 +12,7 @@ from ..checkpoint_schema import (
     footer_kwargs_for_window,
     output_format_footer_requirement,
 )
-from ..executor_defaults import DEFAULT_MODEL, DEFAULT_MODEL_KNOBS
+from ..executor_defaults import JUDGMENT_MODEL, JUDGMENT_MODEL_KNOBS
 from .materializer import _work_summary
 
 _DENSIFY_FLOOR = (
@@ -32,13 +32,13 @@ def _front_matter(source_ref: str | None) -> str:
 
 
 def _scope(window_index: int, root_id: str) -> str:
-    knobs = ", ".join(f"{k}={v}" for k, v in sorted(DEFAULT_MODEL_KNOBS.items()))
+    knobs = ", ".join(f"{k}={v}" for k, v in sorted(JUDGMENT_MODEL_KNOBS.items()))
     return f"""\
 <scope>
 Goal: Charter-runner CLOSED-DETENT window {window_index} on agent-bus:{root_id}.
 Aperture = closed (|material_sub_parts|≤2, loci known). Run the thin path-sim
 recipe UNATTENDED in this window when possible — ¬ full Q→R-admit→R-after arc.
-Default executor: {DEFAULT_MODEL} ({knobs}). Selection: detent=closed.
+Default executor: {JUDGMENT_MODEL} ({knobs}). Selection: detent=closed.
 </scope>"""
 
 

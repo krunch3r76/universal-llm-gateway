@@ -1,4 +1,4 @@
-"""Fork A falsifier: cursor model id cannot bypass SDK substrate authorization."""
+"""Route-level witness: CDP generate bypasses cursor-sdk pool fence."""
 
 from __future__ import annotations
 
@@ -8,47 +8,40 @@ import pytest
 from fastapi import Response
 from fastapi.responses import JSONResponse
 
-from .admission import FrontierEndpointError, resolve_cursor_sdk_generate_target
 from .route import TeamDispatchGenerateBody, team_dispatch
 
 
-def test_cloud_role_with_cursor_model_rejects_sdk_substrate_required() -> None:
-    with pytest.raises(FrontierEndpointError) as exc_info:
-        resolve_cursor_sdk_generate_target(
-            "reviewer",
-            model="cursor/claude-sonnet-5",
-            request_id="req-fork-a",
-        )
-    err = exc_info.value
-    assert err.code in {"sdk_substrate_required", "seat_unknown"}
-    assert err.status_code == 422
-
-
 @pytest.mark.asyncio
-async def test_team_dispatch_cloud_role_cursor_model_rejects_before_dispatch(
+async def test_cdp_generate_bypasses_cursor_sdk_pool_fence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    cdp_mock = AsyncMock(return_value={"execution_id": "cdp-exec", "thread_id": "cdp-t"})
+    monkeypatch.setattr(
+        "systems.frontier_consult.route.dispatch_cdp_generate",
+        cdp_mock,
+    )
+    fence_mock = AsyncMock()
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_pool_fence.reject_other_models_pool_generate",
+        fence_mock,
+    )
+
     body = TeamDispatchGenerateBody(
         op="generate",
-        role="reviewer",
-        model="cursor/claude-sonnet-5",
+        model="cdp/opus-5",
         dispatch_thread_id="todo:arc",
         contract="light-bounded",
+        packet_path="tmp/reviews/packet.md",
     )
     result = await team_dispatch(body, Response())
 
-    assert isinstance(result, JSONResponse)
-    assert result.status_code == 422
-    payload = result.body.decode()
-    assert (
-        "sdk_substrate_required" in payload
-        or "seat_unknown" in payload
-        or "substrate_model_role_conflict" in payload
-    )
+    assert result == {"execution_id": "cdp-exec", "thread_id": "cdp-t"}
+    cdp_mock.assert_awaited_once()
+    fence_mock.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_cursor_sdk_role_with_cursor_model_rejected_at_pool_fence(
+async def test_cursor_sdk_other_models_generate_rejected_at_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     worker = AsyncMock(return_value=(True, {"dispatch_id": "d1"}))
@@ -74,5 +67,6 @@ async def test_cursor_sdk_role_with_cursor_model_rejected_at_pool_fence(
 
     assert isinstance(result, JSONResponse)
     assert result.status_code == 422
-    assert "other_models_pool_denied" in result.body.decode()
+    payload = result.body.decode()
+    assert "other_models_pool_denied" in payload
     worker.assert_not_awaited()

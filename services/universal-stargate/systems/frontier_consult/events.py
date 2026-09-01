@@ -793,6 +793,30 @@ def FrontierSdkReasoningEffortRejected(  # noqa: N802
 
 
 @event_factory
+def FrontierSdkPoolDenied(  # noqa: N802
+    request_id: str,
+    seat: str,
+    requested_model: str | None,
+    resolved_model: str,
+    pool: str,
+    code: str,
+) -> Event:
+    """Other Models pool refused at cursor-sdk generate prepare."""
+    return Event(
+        signal="frontier.sdk.pool.denied",
+        payload={
+            "request_id": request_id,
+            "seat": seat,
+            "requested_model": requested_model,
+            "resolved_model": resolved_model,
+            "pool": pool,
+            "code": code,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def DispatchCapabilityCardMissing(  # noqa: N802
     request_id: str,
     model: str,

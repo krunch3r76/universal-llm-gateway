@@ -21,7 +21,7 @@ from ..checkpoint_schema import (
     footer_kwargs_for_window,
     output_format_footer_requirement,
 )
-from ..executor_defaults import DEFAULT_MODEL, DEFAULT_MODEL_KNOBS
+from ..executor_defaults import JUDGMENT_MODEL, JUDGMENT_MODEL_KNOBS
 
 logger = get_logger(__name__)
 
@@ -145,11 +145,11 @@ def _work_summary(parsed: ParsedCheckpoint) -> str:
 
 
 def _generate_scope(window_index: int, root_id: str) -> str:
-    knobs = ", ".join(f"{k}={v}" for k, v in sorted(DEFAULT_MODEL_KNOBS.items()))
+    knobs = ", ".join(f"{k}={v}" for k, v in sorted(JUDGMENT_MODEL_KNOBS.items()))
     return f"""\
 <scope>
 Goal: Charter-runner window {window_index} — one continuity slice on
-agent-bus:{root_id}. Default executor: {DEFAULT_MODEL} ({knobs}).
+agent-bus:{root_id}. Default executor: {JUDGMENT_MODEL} ({knobs}).
 Selection mode: targeted.
 </scope>"""
 
@@ -170,7 +170,7 @@ def _generate_invariants(root_id: str) -> str:
 [continuity] reconstitutes from latest CHECKPOINT + scoreboard only — ¬ linear
 thread read.
 [window] exactly one window; do not auto-chain a second window.
-[executor] default seat is cursor-sdk / {DEFAULT_MODEL}; do not silently switch
+[executor] default seat is cursor-sdk / {JUDGMENT_MODEL}; do not silently switch
 models. Opus-class code review is a separate CDP step — not this default window.
 {_LAYER_FLOOR}
 </invariants>"""
@@ -312,5 +312,5 @@ def handoff_subject(
             f"Charter-runner window {window_index} — agent-bus:{root_id} (attended IDE)"
         )
     return (
-        f"Charter-runner window {window_index} — agent-bus:{root_id} ({DEFAULT_MODEL})"
+        f"Charter-runner window {window_index} — agent-bus:{root_id} ({JUDGMENT_MODEL})"
     )
