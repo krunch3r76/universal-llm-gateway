@@ -63,6 +63,8 @@ def test_phase2_marks_only_displayed_turns_and_keeps_newest(
         if method == "PATCH":
             patched.append(int(path.split("/")[2]))
             return {"status": "ok", "read_at": "marked"}
+        if path.startswith("/threads/") and "?" not in path:
+            return {"id": "1138", "slug": "example-arc"}
         get_paths.append(path)
         qs = parse_qs(urlparse(path).query)
         if qs.get("unread") == ["true"]:  # phase-1 peek
@@ -87,6 +89,8 @@ def test_phase2_marks_only_displayed_turns_and_keeps_newest(
     # Phase-2 GET must NOT carry mark_read — marking is done per displayed turn.
     phase2 = [p for p in get_paths if "unread=true" not in p]
     assert phase2 and all("mark_read" not in p for p in phase2)
+    assert out["_thread_info"]["id"] == "1138"
+    assert out["_thread_info"]["slug"] == "example-arc"
 
 
 def test_unread_forwarded_without_to(capsys: pytest.CaptureFixture[str]) -> None:
@@ -96,6 +100,8 @@ def test_unread_forwarded_without_to(capsys: pytest.CaptureFixture[str]) -> None
 
     def fake_request(method: str, path: str, token: str, body=None):
         get_paths.append(path)
+        if path.startswith("/threads/") and "?" not in path:
+            return {"id": "049", "slug": "example-arc"}
         return {"turns": []}
 
     cli._request = fake_request

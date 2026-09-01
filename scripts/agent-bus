@@ -94,6 +94,16 @@ def _thread_unread_count(thread: str, token: str, to: str | None = None) -> int:
     return len(peek.get("turns", []))
 
 
+def _thread_identity(thread: str, token: str) -> dict[str, str]:
+    """Canonical id + slug from GET /threads/{id} (IDE tab titles, citations)."""
+    detail = _request("GET", f"/threads/{thread}", token)
+    thread_id = detail.get("id")
+    slug = detail.get("slug")
+    if thread_id is None or not isinstance(slug, str) or not slug:
+        raise KeyError(f"GET /threads/{thread} missing id or slug: {detail!r}")
+    return {"id": str(thread_id), "slug": slug}
+
+
 def _has_earlier_turns(turns: list[dict[str, Any]], window: int) -> bool:
     """True iff the thread has turns older than the fetched window.
 
@@ -146,6 +156,7 @@ def _cmd_fetch(args: argparse.Namespace, token: str) -> None:
                     t["read_at"] = read_resp.get("read_at")
 
         thread_info: dict[str, Any] = {
+            **_thread_identity(args.thread, token),
             "turns_in_response": len(turns),
             "unread_count": unread_count,
             "has_earlier_turns": has_earlier,
@@ -183,6 +194,7 @@ def _cmd_fetch(args: argparse.Namespace, token: str) -> None:
         turns = result.get("turns", [])
         has_earlier = _has_earlier_turns(turns, args.last)
         thread_info = {
+            **_thread_identity(args.thread, token),
             "turns_in_response": len(turns),
             # Emit unread_count on this path too so _thread_info has a stable
             # shape across both fetch paths (F8).
