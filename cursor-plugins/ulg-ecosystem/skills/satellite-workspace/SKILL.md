@@ -18,6 +18,7 @@ trigger_match_terms: ["satellite-workspace", "satellite", "email-bridge", "journ
 | 6 | **Pin drift** = corrected by re-running `install-ecosystem-plugin.sh` (roster `SATELLITES.txt` + templates). |
 | 7 | **Code cascade** = `vortex-code` on a satellite ⇒ full ULG leverage of **census-shipped** skills, including MCP playbooks (`agent-bus-discipline`, `fs`, `lead-seat-boot`, `checkpoint-discipline`, `session-close-kernel`) and cascade (`path-sim`, `consult-posture`, `claude-ai-cdp-navigation`). `config/skills.yaml` `cursor_only` means ¬Claude.ai Customize slug — **not** hub-exclusive. Skill body presence (census) is independent of whether Jupiter `project-ask` is an MCP endpoint yet. |
 | 8 | **Runtime recycle** = after a satellite code revision **or env-file edit the process loads**, restart that process in the same turn with env pickup. Bind-mount ≠ live. `--restart` is process-only (env-UNAWARE). Claudeburst: `scripts/deploy.sh --env-refresh --service perps\|bot\|cb` when `~/claudeburst/*.env` changed; `--restart` only when code changed and env did not. Proof: process start after file **and** env mtime. SOT: `restart-drain-discipline` § Code revision. |
+| 9 | **Lane-B parity = git-tracking fact, not architecture.** `team_dispatch(seat=cursor-sdk, workspace="{name}", lane="B")` mints a `git worktree add` from that satellite's own history — it reflects **exactly what that satellite's git history holds**, nothing more. A checkout-local `*_ws.mdc` (even `alwaysApply: true`) that is gitignored or simply never `git add`ed is invisible to Lane-B **and** to a fresh clone, identical to hub. This is per-repo git hygiene, not a fixed "satellites lose IDE context" property — most satellites (`journal-bridge`, `agent-bus`, `pajournal`, `cryptax`) track `.cursor/rules/` cleanly and lose nothing. Lane-A (in-place, `cwd` = the live satellite checkout) sees the real filesystem regardless of git status, so a gitignored/untracked rule still attaches there. Reconciled 2026-08-31: claudeburst's `.gitignore` blanket-ignored `.cursor/` (fixed — only `.cursor/mcp.json` needed the narrower ignore per invariant 4), email-bridge's `core_ws.mdc` was simply never committed (fixed), treasure-chest's `core_ws.mdc` was tracked but had no `alwaysApply` frontmatter at all so it likely never attached even in the IDE (fixed). |
 
 ## Partition (binary)
 
@@ -39,7 +40,7 @@ Follow `/mnt/torus/projects/.cursor/shared-workspace-setup.md`:
 1. `git init` under `/mnt/torus/projects/{name}`
 2. Add `{name}` to `cursor-plugins/ulg-ecosystem/SATELLITES.txt`
 3. Run `scripts/cursor/install-ecosystem-plugin.sh` (installs plugin **and** syncs universal-venv pin: `.vscode/settings.json` + `.envrc`)
-4. Add `{name}/.cursor/rules/core_ws.mdc` (checkout-local env/structure)
+4. Add `{name}/.cursor/rules/core_ws.mdc` (checkout-local env/structure) **and commit it** — an untracked or gitignored rule never survives a Lane-B dispatch worktree (invariant 9)
 5. Optional `{name}/AGENTS.md` pointing at this skill
 6. ¬ create a private project venv — use `$HOME/.venvs/universal` only
 7. ¬ `{name}/.cursor/mcp.json` — MCP is user-global only
