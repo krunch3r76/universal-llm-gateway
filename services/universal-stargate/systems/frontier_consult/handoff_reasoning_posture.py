@@ -7,7 +7,10 @@ handoffs get a ``reasoning-posture`` Use-line; mechanical/quick skip.
 from __future__ import annotations
 
 from implement_admission.admission_read import frontmatter_value
-from reasoning_posture_contracts import REASONING_POSTURE_SKIP_CONTRACTS
+from reasoning_posture_contracts import (
+    HYPOTHESIZE_SIMULATE_CONTRACTS,
+    REASONING_POSTURE_SKIP_CONTRACTS,
+)
 
 REASONING_POSTURE_SLUG = "reasoning-posture"
 ULG_FOR_LLMS_SLUG = "ulg-for-llms"
@@ -15,6 +18,7 @@ HYPOTHESIZE_SIMULATE_SLUG = "hypothesize-simulate"
 
 # Shared with GIW ``cursor_sdk_packet._REASONING_POSTURE_SKIP_CONTRACTS``.
 REASONING_POSTURE_SKIP_CONTRACTS = REASONING_POSTURE_SKIP_CONTRACTS
+HYPOTHESIZE_SIMULATE_CONTRACTS = HYPOTHESIZE_SIMULATE_CONTRACTS
 
 
 def handoff_wants_reasoning_posture(text: str, handoff_contract: str | None) -> bool:
@@ -31,6 +35,11 @@ def handoff_wants_reasoning_posture(text: str, handoff_contract: str | None) -> 
 
 
 def handoff_wants_hypothesize_simulate(text: str, handoff_contract: str | None) -> bool:
-    """Return True when this handoff is a consult contract (not light-bounded)."""
+    """Return True when this handoff leaves the option space open to the seat.
+
+    ``consult`` and ``light-bounded`` both qualify: a consult carries a pinned
+    Question, while ``light-bounded`` is the binding leg of a judgment split and
+    must generate its own rivals.
+    """
     raw = (handoff_contract or frontmatter_value(text, "contract") or "").strip()
-    return raw.lower() == "consult"
+    return raw.lower() in HYPOTHESIZE_SIMULATE_CONTRACTS

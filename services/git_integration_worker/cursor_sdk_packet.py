@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import re
 
-from reasoning_posture_contracts import REASONING_POSTURE_SKIP_CONTRACTS
+from reasoning_posture_contracts import (
+    HYPOTHESIZE_SIMULATE_CONTRACTS,
+    REASONING_POSTURE_SKIP_CONTRACTS,
+)
 
 _LARGE_CONTENT_CHUNK_CHARS = 40_000
 
@@ -156,7 +159,7 @@ _REASONING_POSTURE_PREAMBLE = (
 )
 _HYPOTHESIZE_SIMULATE_PREAMBLE = (
     "Use the `hypothesize-simulate` skill — structured hypothesis generation "
-    "and simulation before consult merits or transport."
+    "and simulation before merits or transport."
 )
 _ULG_FOR_LLMS_PREAMBLE = (
     "Use the `ulg-for-llms` skill — first-class client on one shared graph; "
@@ -166,6 +169,7 @@ _ULG_FOR_LLMS_PREAMBLE = (
 
 # Shared with Stargate ``handoff_reasoning_posture.REASONING_POSTURE_SKIP_CONTRACTS``.
 _REASONING_POSTURE_SKIP_CONTRACTS = REASONING_POSTURE_SKIP_CONTRACTS
+_HYPOTHESIZE_SIMULATE_CONTRACTS = HYPOTHESIZE_SIMULATE_CONTRACTS
 _REASONING_POSTURE_INVOKE_RE = re.compile(
     r"Use the `?reasoning-posture`? skill",
     re.IGNORECASE,
@@ -370,7 +374,7 @@ def resolve_prompt_preamble(
     ):
         parts.append(_ULG_FOR_LLMS_PREAMBLE)
     if (
-        contract == "consult"
+        contract in _HYPOTHESIZE_SIMULATE_CONTRACTS
         and not _already_invokes_hypothesize_simulate(prompt_preamble, existing_text)
     ):
         parts.append(_HYPOTHESIZE_SIMULATE_PREAMBLE)

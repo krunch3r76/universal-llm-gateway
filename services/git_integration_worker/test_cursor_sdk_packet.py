@@ -62,7 +62,8 @@ def test_resolve_prompt_preamble_injects_reasoning_posture_on_consult() -> None:
     assert "Use the `hypothesize-simulate` skill" in text
 
 
-def test_resolve_prompt_preamble_hypothesize_simulate_consult_only() -> None:
+def test_resolve_prompt_preamble_hypothesize_simulate_judgment_contracts() -> None:
+    """``light-bounded`` is the binding leg of a judgment split — it gets the fill."""
     consult = resolve_prompt_preamble(
         handoff_contract="consult",
         prompt_preamble=None,
@@ -74,7 +75,7 @@ def test_resolve_prompt_preamble_hypothesize_simulate_consult_only() -> None:
         prompt_preamble=None,
         inferred_contract=None,
     )
-    assert "hypothesize-simulate" not in light_bounded
+    assert "Use the `hypothesize-simulate` skill" in light_bounded
     implement = resolve_prompt_preamble(
         handoff_contract="implement",
         prompt_preamble=None,

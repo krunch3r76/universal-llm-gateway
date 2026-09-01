@@ -1,7 +1,7 @@
-"""Shared skip-set for reasoning-posture injection on cursor-sdk dispatches.
+"""Shared contract sets for judgment-skill injection on dispatch preambles.
 
-GIW ``resolve_prompt_preamble`` and Stargate handoff enrich both consult this
-frozenset so mechanical contracts skip the posture Use-line while judgment
+GIW ``resolve_prompt_preamble`` and Stargate handoff enrich both consult these
+frozensets so mechanical contracts skip the posture Use-line while judgment
 contracts receive it.
 """
 
@@ -14,4 +14,11 @@ REASONING_POSTURE_SKIP_CONTRACTS = frozenset(
     {"implement", "pure-mechanical", "propagate", "execute", "answer", "ask"}
 )
 
-__all__ = ["REASONING_POSTURE_SKIP_CONTRACTS"]
+# ``light-bounded`` leaves the option space to the seat, so it needs the rival
+# fill more than ``consult``, which arrives with a pinned Question and scope-lock.
+HYPOTHESIZE_SIMULATE_CONTRACTS = frozenset({"consult", "light-bounded"})
+
+__all__ = [
+    "HYPOTHESIZE_SIMULATE_CONTRACTS",
+    "REASONING_POSTURE_SKIP_CONTRACTS",
+]
