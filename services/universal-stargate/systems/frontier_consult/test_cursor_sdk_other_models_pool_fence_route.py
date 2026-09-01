@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi import Response
@@ -15,12 +15,14 @@ from .route import TeamDispatchGenerateBody, team_dispatch
 async def test_cdp_generate_bypasses_cursor_sdk_pool_fence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    cdp_mock = AsyncMock(return_value={"execution_id": "cdp-exec", "thread_id": "cdp-t"})
+    cdp_mock = AsyncMock(
+        return_value={"execution_id": "cdp-exec", "thread_id": "cdp-t"},
+    )
     monkeypatch.setattr(
         "systems.frontier_consult.route.dispatch_cdp_generate",
         cdp_mock,
     )
-    fence_mock = AsyncMock()
+    fence_mock = Mock()
     monkeypatch.setattr(
         "systems.frontier_consult.cursor_sdk_pool_fence.reject_other_models_pool_generate",
         fence_mock,
@@ -53,6 +55,10 @@ async def test_cursor_sdk_other_models_generate_rejected_at_route(
         "systems.frontier_consult.cursor_sdk_generate.dispatch_cursor_sdk_worker_message",
         worker,
     )
+    monkeypatch.setattr(
+        "systems.frontier_consult.generate_wrap._resolve_packet_file",
+        lambda _root, _path: __import__("pathlib").Path("/tmp/packet.md"),
+    )
 
     body = TeamDispatchGenerateBody(
         op="generate",
@@ -61,7 +67,7 @@ async def test_cursor_sdk_other_models_generate_rejected_at_route(
         dispatch_thread_id="todo:arc",
         contract="light-bounded",
         lane="B",
-        prompt="prompt body",
+        packet_path="tmp/reviews/packet.md",
     )
     result = await team_dispatch(body, Response())
 

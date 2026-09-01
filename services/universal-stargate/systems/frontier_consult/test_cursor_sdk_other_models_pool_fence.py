@@ -5,10 +5,14 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
+from cursor_capabilities import is_other_models_pool
 
 from systems.frontier_consult import cursor_sdk_generate as generate_mod
 from systems.frontier_consult import cursor_sdk_generate_prepare as prepare_mod
 from systems.frontier_consult.admission import FrontierEndpointError
+from systems.frontier_consult.cursor_sdk_pool_fence import (
+    reject_other_models_pool_generate,
+)
 
 
 def _patch_prepare_deps(
@@ -58,7 +62,11 @@ def _patch_prepare_deps(
         return "exec-minted", "disp-minted"
 
     monkeypatch.setattr(prepare_mod, "mint_cursor_sdk_ids", _mint)
-    monkeypatch.setattr(prepare_mod, "create_handoff_thread", AsyncMock(return_value="t1"))
+    monkeypatch.setattr(
+        prepare_mod,
+        "create_handoff_thread",
+        AsyncMock(return_value="t1"),
+    )
     monkeypatch.setattr(
         prepare_mod, "admit_handoff_dispatch", AsyncMock(return_value=True)
     )
@@ -132,43 +140,18 @@ async def test_prepare_other_models_refused_before_mint(
         (None, "cursor/composer-2.5"),
     ],
 )
-@pytest.mark.asyncio
-async def test_prepare_cursor_models_host_do_not_raise_fence(
-    monkeypatch: pytest.MonkeyPatch,
+def test_prepare_cursor_models_host_do_not_raise_fence(
     model: str | None,
     resolved: str,
 ) -> None:
-    probes = _patch_prepare_deps(monkeypatch, resolved_model=resolved)
-    monkeypatch.setattr(
-        prepare_mod,
-        "align_cursor_knobs",
-        lambda **_k: type(
-            "A",
-            (),
-            {
-                "aligned_knobs": None,
-                "warnings_as_dicts": lambda self: [],
-                "knob_resolution_as_dicts": lambda self: [],
-            },
-        )(),
-    )
-    monkeypatch.setattr(prepare_mod, "emit_sdk_generate_requested", lambda **_k: None)
-    monkeypatch.setattr(prepare_mod, "emit_sdk_thread_created", lambda **_k: None)
-    monkeypatch.setattr(prepare_mod, "post_coord_admit_pointer", AsyncMock())
-    handle = await prepare_mod.prepare_cursor_sdk_generate(
+    assert not is_other_models_pool(resolved)
+    reject_other_models_pool_generate(
         request_id="req-host",
         role="cursor-sdk",
+        seat="cursor-sdk",
         model=model,
-        subject="s",
-        caller_agent="dispatch",
-        contract="light-bounded",
-        packet_path=None,
-        message_text="host body",
-        execution_id=None,
-        dispatch_id=None,
+        resolved_model=resolved,
     )
-    assert handle.resolved_model == resolved
-    assert probes["mint_calls"] == ["mint"]
 
 
 @pytest.mark.asyncio

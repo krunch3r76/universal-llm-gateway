@@ -48,17 +48,17 @@ async def test_team_dispatch_cloud_role_cursor_model_rejects_before_dispatch(
 
 
 @pytest.mark.asyncio
-async def test_cursor_sdk_role_with_cursor_model_rejected_at_pool_fence(
+async def test_cursor_sdk_role_with_cursor_model_still_admits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    worker = AsyncMock(return_value=(True, {"dispatch_id": "d1"}))
+    sdk_mock = AsyncMock(return_value={"execution_id": "exec-1", "thread_id": "t1"})
     monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_generate.dispatch_cursor_sdk_worker",
-        worker,
+        "systems.frontier_consult.generate_wrap.dispatch_cursor_sdk_generate",
+        sdk_mock,
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.cursor_sdk_generate.dispatch_cursor_sdk_worker_message",
-        worker,
+        "systems.frontier_consult.generate_wrap._resolve_packet_file",
+        lambda _root, _path: __import__("pathlib").Path("/tmp/packet.md"),
     )
 
     body = TeamDispatchGenerateBody(
@@ -67,12 +67,10 @@ async def test_cursor_sdk_role_with_cursor_model_rejected_at_pool_fence(
         model="cursor/claude-sonnet-5",
         dispatch_thread_id="todo:arc",
         contract="light-bounded",
-        lane="B",
-        prompt="prompt body",
+        lane="A",
+        packet_path="tmp/reviews/packet.md",
     )
     result = await team_dispatch(body, Response())
 
-    assert isinstance(result, JSONResponse)
-    assert result.status_code == 422
-    assert "other_models_pool_denied" in result.body.decode()
-    worker.assert_not_awaited()
+    assert result == {"execution_id": "exec-1", "thread_id": "t1"}
+    sdk_mock.assert_awaited_once()
