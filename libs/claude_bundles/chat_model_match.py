@@ -19,6 +19,7 @@ PREDICTED_MODEL_LABELS: tuple[str, ...] = (
     "Opus 5",
     "Sonnet 5",
     "Haiku 4.5",
+    "Fable 5.1",
     "Fable 5",
 )
 
@@ -38,15 +39,18 @@ def sealed_ask_default_effort(family: str) -> str | None:
 
 
 # Bare dispatch aliases → canonical picker wire (team_dispatch ``cdp/fable``).
+# Fable 5.1 launched 2026-09-01 (Anthropic ``claude-fable-5-1``, same headline
+# $/M as Fable 5 — cache reads only). Bare alias tracks the recommended
+# current release; pin ``cdp/fable-5`` explicitly for the prior generation.
 _PICKER_FAMILY_ALIASES: dict[str, str] = {
-    "fable": "fable-5",
+    "fable": "fable-5.1",
 }
 
 
 def normalize_picker_request(model: str) -> str:
     """Strip ``cdp/<picker>`` and canonicalize bare aliases for UI selection.
 
-    Examples: ``cdp/fable`` → ``fable-5``, ``cdp/opus-5`` → ``opus-5``.
+    Examples: ``cdp/fable`` → ``fable-5.1``, ``cdp/opus-5`` → ``opus-5``.
     """
     key = (model or "opus-5").strip()
     if "/" in key:

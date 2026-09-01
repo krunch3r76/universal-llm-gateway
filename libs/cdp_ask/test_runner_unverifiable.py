@@ -118,7 +118,7 @@ async def test_run_execution_model_select_failed_deregisters() -> None:
     assert payload["ok"] is False
     assert payload["error"] == "model select failed: picker"
     assert payload["family_substituted"] is True
-    assert payload["overlay_select_attempts"] == ["opus-5", "opus-5", "fable-5"]
+    assert payload["overlay_select_attempts"] == ["opus-5", "opus-5", "fable-5.1"]
     assert payload["stall_stage"] == "observer_unverified"
     deregister.assert_called_once()
 

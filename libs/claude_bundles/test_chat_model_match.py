@@ -42,8 +42,9 @@ def test_label_satisfies_request_effort_rungs(
 def test_normalize_picker_request_strips_cdp_prefix() -> None:
     assert normalize_picker_request("cdp/opus-5") == "opus-5"
     assert normalize_picker_request("cdp/fable-5") == "fable-5"
-    assert normalize_picker_request("cdp/fable") == "fable-5"
-    assert normalize_picker_request("fable") == "fable-5"
+    assert normalize_picker_request("cdp/fable-5.1") == "fable-5.1"
+    assert normalize_picker_request("cdp/fable") == "fable-5.1"
+    assert normalize_picker_request("fable") == "fable-5.1"
     assert normalize_picker_request("opus-5") == "opus-5"
 
 
@@ -58,7 +59,9 @@ def test_normalize_picker_request_strips_cdp_prefix() -> None:
         ("cdp/opus-5", None, "cdp/opus-5"),
         ("cdp/opus-5", "", "cdp/opus-5"),
         ("cdp/opus-5-max", "high", "cdp/opus-5-max"),
-        ("cdp/fable", "max", "cdp/fable-5-max"),
+        ("cdp/fable", "max", "cdp/fable-5.1-max"),
+        ("cdp/fable-5", "max", "cdp/fable-5-max"),
+        ("cdp/fable-5.1", "max", "cdp/fable-5.1-max"),
         ("cdp/sonnet-5", "max", "cdp/sonnet-5-max"),
         ("cdp/sonnet-5", "extra", "cdp/sonnet-5-extra"),
     ],
@@ -82,6 +85,7 @@ def test_parse_model_request_max_effort() -> None:
     [
         ("fable-5", "high"),
         ("fable-5-max", "high"),
+        ("fable-5.1", "high"),
         ("opus-5", "high"),
         ("sonnet-5", "extra"),
         ("haiku-4.5", None),

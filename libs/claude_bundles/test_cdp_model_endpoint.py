@@ -33,7 +33,8 @@ from claude_bundles.cdp_model_endpoint_staging import (
 def test_picker_from_model_id_passthrough() -> None:
     assert picker_from_model_id("cdp/opus-4.8") == "opus-4.8"
     assert picker_from_model_id("cdp/fable-5") == "fable-5"
-    assert picker_from_model_id("cdp/fable") == "fable-5"
+    assert picker_from_model_id("cdp/fable-5.1") == "fable-5.1"
+    assert picker_from_model_id("cdp/fable") == "fable-5.1"
 
 
 def test_stage_prompt_text_writes_ephemeral(
