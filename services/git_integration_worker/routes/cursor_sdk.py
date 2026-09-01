@@ -1595,7 +1595,9 @@ async def _terminate_link(
     bus: CursorBusClient, *, thread_id: str, terminal_status: str
 ) -> None:
     result = await bus.terminate_dispatch(
-        thread_id=thread_id, terminal_status=terminal_status
+        thread_id=thread_id,
+        terminal_status=terminal_status,
+        bus_lifecycle=terminal_status,
     )
     if result.status_code >= 400:
         logger.error(

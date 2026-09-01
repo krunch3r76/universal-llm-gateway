@@ -255,7 +255,7 @@ async def test_ledger_non_authority(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     bus.terminate_dispatch.assert_awaited_once_with(
-        thread_id="1604", terminal_status="completed"
+        thread_id="1604", terminal_status="completed", bus_lifecycle="completed"
     )
 
 
