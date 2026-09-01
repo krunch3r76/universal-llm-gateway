@@ -6,6 +6,7 @@ import pytest
 from agent_bus_store.checkpoint_citation_lint import CitationToken
 from agent_bus_store.checkpoint_projection import (
     CANONICAL_RESUME_FOOTER,
+    RESUME_FOOTER_PREFIX,
     ArtifactAnchor,
     CheckpointBodyTooLargeError,
     ChildThreadRow,
@@ -243,6 +244,50 @@ def test_extract_authored_residue_strips_derived_and_footer() -> None:
     )
     assert extract_authored_residue(full) == "only this remains"
     assert authored_residue_char_count(full) == len("only this remains")
+
+
+_PARAMETERIZED_FOOTER = (
+    "— RESUME (any seat, no command): load checkpoint-discipline → read "
+    "cortex://notes/system/threads/9859-continuity.md → latest CHECKPOINT."
+)
+
+
+def test_extract_authored_residue_strips_parameterized_footer() -> None:
+    """checkpoint-discipline mandates per-arc URIs, so the literal never matches."""
+    full = f"real residue\n\n{_PARAMETERIZED_FOOTER}"
+    assert extract_authored_residue(full) == "real residue"
+
+
+def test_parameterized_footer_is_reemitted_not_duplicated() -> None:
+    """One footer out, and it keeps the author's resolved URI."""
+    body = project_checkpoint_body(
+        root_thread="6341",
+        residue=f"Settled: footer parity.\n\n{_PARAMETERIZED_FOOTER}",
+        resolvers=_resolvers(),
+    )
+    assert body.count(RESUME_FOOTER_PREFIX) == 1
+    assert _PARAMETERIZED_FOOTER in body
+    assert CANONICAL_RESUME_FOOTER not in body
+
+
+def test_canonical_footer_appended_when_author_omits_one() -> None:
+    body = project_checkpoint_body(
+        root_thread="6341",
+        residue="Settled: no authored footer.",
+        resolvers=_resolvers(),
+    )
+    assert body.count(RESUME_FOOTER_PREFIX) == 1
+    assert CANONICAL_RESUME_FOOTER in body
+
+
+def test_trailing_charter_state_fence_survives_footer_strip() -> None:
+    """Truncating to end-of-text would eat the fence harvest still validates."""
+    fence = '```charter-state\n{\n  "status": "CHECKPOINT"\n}\n```'
+    residue = f"Settled: fence parity.\n\n{_PARAMETERIZED_FOOTER}\n\n{fence}"
+    assert fence in extract_authored_residue(residue)
+    assert fence in project_checkpoint_body(
+        root_thread="6341", residue=residue, resolvers=_resolvers()
+    )
 
 
 def test_maybe_project_checkpoint_subject_gate() -> None:

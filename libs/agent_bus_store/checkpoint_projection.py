@@ -19,6 +19,12 @@ CANONICAL_RESUME_FOOTER = (
     "read the thread linearly. empty Next-pickup ≠ arc complete."
 )
 
+# checkpoint-discipline mandates parameterizing the continuity-source URI per
+# arc, so an authored footer almost never equals the canonical literal. Match on
+# the prefix `checkpoint_schema.parse` already binds as canonical (schema
+# §3.1.1 / Align-2) rather than on the constant.
+RESUME_FOOTER_PREFIX = "— RESUME (any seat, no command):"
+
 _DERIVED_HEADER = "## Derived (projected at post — do not hand-edit)"
 _RESIDUE_HEADER = "## Residue (authored"
 # CCL-4 fail-open: stamp only when a resolver raises (graph/fs unreachable).
@@ -32,6 +38,7 @@ _CLAIM_HEAD_MAX = 120
 # (CP11: backtick-wrapped handoff → sha miss → false UNPROJECTED).
 _URI_RE = re.compile(r"(?:cortex|workspaces)://[^\s)\]>`'\"]+")
 _URI_TRAIL_JUNK = ".,;:!?'\"`"
+_BLANK_RUN_RE = re.compile(r"\n{3,}")
 _CLOSED_THREAD_STATUSES = frozenset({"closed"})
 # CCL-4 staleness adjudication — closed set that survives objection (i).
 STALENESS_FIELDS = frozenset(
@@ -110,8 +117,23 @@ def is_checkpoint_subject(subject: str) -> bool:
     return subject.strip().upper().startswith("CHECKPOINT")
 
 
-def extract_authored_residue(body: str) -> str:
-    """Return authored residue text, stripping any prior derived zone and footer."""
+def _strip_resume_footer(text: str) -> str:
+    """Drop authored RESUME footer lines, keeping any trailing machine fence.
+
+    Truncating from the footer to end-of-text would swallow a trailing
+    ``charter-state`` fence, which harvest still validates on charter-runner
+    CHECKPOINTs.
+    """
+    kept = [
+        line
+        for line in text.splitlines()
+        if not line.lstrip().startswith(RESUME_FOOTER_PREFIX)
+    ]
+    return _BLANK_RUN_RE.sub("\n\n", "\n".join(kept))
+
+
+def _residue_after_derived(body: str) -> str:
+    """Return the body with any prior projected derived zone removed."""
     text = body.strip()
     derived_idx = text.find(_DERIVED_HEADER)
     if derived_idx >= 0:
@@ -121,10 +143,25 @@ def extract_authored_residue(body: str) -> str:
             text = text[residue_idx:]
             newline = text.find("\n")
             text = text[newline + 1 :] if newline >= 0 else ""
-    resume_idx = text.find(CANONICAL_RESUME_FOOTER)
-    if resume_idx >= 0:
-        text = text[:resume_idx]
-    return text.strip()
+    return text
+
+
+def extract_authored_residue(body: str) -> str:
+    """Return authored residue text, stripping any prior derived zone and footer."""
+    return _strip_resume_footer(_residue_after_derived(body)).strip()
+
+
+def extract_authored_resume_footer(body: str) -> str | None:
+    """Return the author's RESUME footer line, parameterized or literal, if present.
+
+    The projection re-emits this rather than the canonical constant so a
+    per-arc continuity URI survives the round trip instead of being replaced by
+    the constant's unresolved ``<roadmap path>`` placeholder.
+    """
+    for line in _residue_after_derived(body).splitlines():
+        if line.lstrip().startswith(RESUME_FOOTER_PREFIX):
+            return line.strip()
+    return None
 
 
 def authored_residue_char_count(body: str) -> int:
@@ -228,8 +265,9 @@ def project_checkpoint_body(
     residue: str,
     resolvers: ProjectionResolvers,
 ) -> str:
-    """Materialize derived zone + residue + canonical RESUME footer."""
+    """Materialize derived zone + residue + exactly one RESUME footer."""
     clean_residue = extract_authored_residue(residue)
+    resume_footer = extract_authored_resume_footer(residue) or CANONICAL_RESUME_FOOTER
     findings = lint_checkpoint_citations(clean_residue)
     cited_threads = _cited_thread_ids(findings.citation_tokens)
     uris = _extract_artifact_uris(clean_residue)
@@ -277,6 +315,7 @@ def project_checkpoint_body(
         unresolved_uris=tuple(unresolved_uris),
         rows=tuple(entity_rows),
         residue=clean_residue,
+        resume_footer=resume_footer,
         compress_closed_children=False,
     )
 
@@ -290,6 +329,7 @@ def _assemble_body(
     unresolved_uris: tuple[str, ...],
     rows: tuple[EntityAssertionRow, ...],
     residue: str,
+    resume_footer: str,
     compress_closed_children: bool,
 ) -> str:
     derived = _render_derived_zone(
@@ -305,7 +345,7 @@ def _assemble_body(
         [
             derived,
             f"{_RESIDUE_HEADER} — cap ~800 chars)\n{residue}",
-            CANONICAL_RESUME_FOOTER,
+            resume_footer,
         ]
     )
     if len(body) <= MAX_TURN_BODY_CHARS:
@@ -323,12 +363,14 @@ def _assemble_body(
         unresolved_uris=unresolved_uris,
         rows=rows,
         residue=residue,
+        resume_footer=resume_footer,
         compress_closed_children=True,
     )
 
 
 __all__ = [
     "CANONICAL_RESUME_FOOTER",
+    "RESUME_FOOTER_PREFIX",
     "STALENESS_FIELDS",
     "ArtifactAnchor",
     "CheckpointBodyTooLargeError",
@@ -337,6 +379,7 @@ __all__ = [
     "ProjectionResolvers",
     "authored_residue_char_count",
     "extract_authored_residue",
+    "extract_authored_resume_footer",
     "is_checkpoint_subject",
     "project_checkpoint_body",
 ]
