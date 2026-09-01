@@ -104,7 +104,7 @@ Task-unavailable fallback → Composer. `cursor/*` only on `cursor-sdk` → else
 
 **Invariant:** `judgment_closed ∧ mechanical_remainder ⇒ split_dispatch` — premium / reasoning
 models bind; **`cursor/composer-2.5`** implements nested (`seat=cursor-sdk`, omit `model=`).
-Rule stub: `bind-then-compose-dispatch_ulg.mdc`.
+Rule stub: `dispatch-kernel_ulg.mdc` § Hard walls.
 
 | Leg | Model / seat | Contract | Delivers |
 |---|---|---|---|
@@ -129,6 +129,16 @@ write step remaining.
 **Exempt:** bind-only consult (no writes) · trivial in-seat touch · dense packet already
 authored — compose leg only (`lean-context-dispatch-first` non-primary gate).
 
+**Anti-patterns:**
+
+| Bad | Good |
+|---|---|
+| `cursor/claude-opus-5` + `light-bounded` + implement acceptance in one packet | Opus bind sidecar → nested `cursor-sdk` `contract=implement` |
+| `executor_override: cursor/claude-opus-5` on mechanical implement | Omit `model=` on `seat=cursor-sdk` implement (Composer default) |
+| Ignore `sdk_cost_risk` at admit | Split or downgrade to Composer before edits |
+| Premium model runs quality_gate/pytest loops on known files | Composer leg + lead verify sample |
+| Treat the split as guidance the orchestrator may skip when in a hurry | On `cursor-auto` it is substrate; the redirect fires whether or not you meant it |
+
 ## cursor-sdk model name surfaces
 
 | Surface | Form | SoT |
@@ -139,6 +149,40 @@ authored — compose leg only (`lean-context-dispatch-first` non-primary gate).
 
 ¬ Task slugs or catalog IDs on `seat=cursor-sdk`. Non-workflow-primary `cursor/*` ⇒ **OPERATOR-GATED**
 (`decision:cursor-non-primary-model-operator-gate`).
+
+## Non-primary model gate — discriminator
+
+| Term | Meaning |
+|---|---|
+| **Workflow-primary** | A model a standing rule/skill already names as the autonomous default for that need (dispatch-kernel ladder · this skill · `path-sim` · `subagent-strategy`). Omitting `model=` when the harness inherits the session/role default counts as primary. |
+| **Non-primary** | Any other explicit bind — e.g. `gpt-5.6-sol-*`, off-table Task slugs, or a ladder model used for the **wrong** work class (Sol/Opus for mechanical work after judgment closed). |
+
+**Named exceptions** (fire without re-asking; still announce): path-sim **A** → `cursor/grok-4.6` · path-sim **Q** → `cdp/fable` · implement → `cursor/composer-2.5` · CDP trigger → `cdp/opus-5` · escalation-warranted `cursor/claude-opus-5` under the premium inform-then-proceed row.
+
+**Anti-pattern:** re-spend frontier reasoning (Sol / Opus / Fable) to *implement* amendments a prior consult already densified — that is non-primary for the mechanical class.
+
+## Judgment escalation ladder — anti-patterns
+
+Ladder + binder order live on `dispatch-kernel_ulg.mdc`. This table is the operational
+guidance that table has no room for — the two are read together.
+
+| Bad | Good |
+|---|---|
+| Ask operator which lane to enter when spec + scoreboard already bind | Enter the lane; report shape on CHECKPOINT |
+| Wait for Opus to ratify a shape cursor already built and verified | Inform Opus executed; continue on tick |
+| Park on the operator for `manage` / `charter_reload` / git-tracked implement | Seat executes or implements autonomous recovery; `charter_reload` = loop bounce only |
+| Treat every consult as operator-gated | CDP consult is **autonomous** under the dispatch-kernel CDP trigger |
+| Skip CDP and go straight to human on judgment forks | Cursor (incl. cursor/opus) → CDP/Fable first; human only when CDP/Fable flags `ESCALATE` or operator-only |
+| CDP Opus/Fable stuck → Ask the human | `cursor-auto` → `cursor/grok-4.6` or `cursor/claude-opus-5` (`cdp-operator-proxy` 2b); Terra only if named |
+| Treat `cursor/claude-opus-5` as ladder-top — ask human when Opus is unsure | Opus-in-cursor is step 1; consult an independent binder (step 2) before human |
+| `cdp/opus-5` ratifies its own output at the same tier | Escalate that artifact to **Fable** (2b) — weight-class independence |
+| Treat any two Anthropic seats as self-review and skip straight to GPT | Opus→**Fable** is a genuine check; 2b precedes 2d Grok (or explicit 2c) |
+| Silent Terra / Other Models as the next binder | 2c is **explicit pin only**; default after Fable is 2d Grok |
+| Pin `cursor/claude-fable-5` because Fable is wanted | Blocked for cost — use `cdp/fable` |
+| `team_dispatch(model=gpt-5.6-terra)` bare slug on code-lane bind | `seat=cursor-sdk` + `model=cursor/gpt-5.6-terra` — explicit pin only |
+| Spend `cursor/gpt-5.6-sol` on broad open-ended review | `sol` is targeted, low-token, still Other Models — explicit pin only |
+
+Rationale for the independence axis (weight class vs family, self-review definition): `decision:gate-independence-not-human-ness`.
 
 ## Anthropic-family substrate
 

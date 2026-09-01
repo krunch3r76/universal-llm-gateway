@@ -1,6 +1,6 @@
 ---
-description: Growth loop stub — two composed loops (inner run→reflect, inference-time/fixed substrate + outer optimize→expand, train-time/substrate change) joined by a distill link; expand = substrate/structure-search analogue (NAS·POET), not curiosity exploration. Load path-sim for machinery.
-alwaysApply: true
+description: Load when planning an optimize/expand pass or an L0-L2 restructure — two composed loops (inner run→reflect, inference-time/fixed substrate + outer optimize→expand, train-time/substrate change) joined by a distill link; expand = substrate/structure-search analogue (NAS·POET), not curiosity exploration. Load path-sim for machinery.
+alwaysApply: false
 rule_category: workflow
 apply_tier: catalog
 trigger_match_terms:

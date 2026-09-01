@@ -36,10 +36,7 @@ def _fake_dispatch_cursor_dir(tmp_path: Path) -> Path:
         "human register\n", encoding="utf-8"
     )
     for name, body in (
-        ("operator-request-front-door_ulg.mdc", "ask Kaywan\n"),
-        ("judgment-escalation-ladder_ulg.mdc", "consult human operator\n"),
         ("cdp-operator-proxy_ulg.mdc", "Kaywan explicitly declares\n"),
-        ("lean-context-dispatch-first_ulg.mdc", "CDP escalation ladder\n"),
         ("restart-drain-discipline_ulg.mdc", "same-window force classifier\n"),
         ("skill-surface_ulg.mdc", "claude.ai Customize upload\n"),
     ):
@@ -61,15 +58,6 @@ def _fake_overlay(tmp_path: Path) -> Path:
     )
     (root / "skills" / "interagent-posture" / "SKILL.md").write_text(
         "closeout register\n", encoding="utf-8"
-    )
-    (root / "rules" / "operator-request-front-door_ulg.mdc").write_text(
-        "seat=cursor-sdk soldier\n", encoding="utf-8"
-    )
-    (root / "rules" / "judgment-escalation-ladder_ulg.mdc").write_text(
-        "status: blocked ESCALATE\n", encoding="utf-8"
-    )
-    (root / "rules" / "lean-context-dispatch-first_ulg.mdc").write_text(
-        "compose leg — Explore-first\n", encoding="utf-8"
     )
     (root / "rules" / "restart-drain-discipline_ulg.mdc").write_text(
         "landed is not live\n", encoding="utf-8"
@@ -96,20 +84,9 @@ def test_human_register_pruned_and_interagent_grafted(tmp_path: Path) -> None:
     assert Path("rules") / "interagent-posture_ulg.mdc" in grafted
 
     # IDE human-framing rules replaced with SDK seat variants (or absent when prune-only).
-    assert "soldier" in (
-        plugin_root / "rules" / "operator-request-front-door_ulg.mdc"
-    ).read_text(encoding="utf-8")
-    assert "ESCALATE" in (
-        plugin_root / "rules" / "judgment-escalation-ladder_ulg.mdc"
-    ).read_text(encoding="utf-8")
     assert not (plugin_root / "rules" / "cdp-operator-proxy_ulg.mdc").exists()
 
     # Mixed rules: lead doctrine gone, the executor-actionable slice grafted back.
-    lean = (plugin_root / "rules" / "lean-context-dispatch-first_ulg.mdc").read_text(
-        encoding="utf-8"
-    )
-    assert "Explore-first" in lean
-    assert "CDP escalation ladder" not in lean
     drain = (plugin_root / "rules" / "restart-drain-discipline_ulg.mdc").read_text(
         encoding="utf-8"
     )
@@ -154,8 +131,8 @@ def test_idempotent_when_already_applied(tmp_path: Path) -> None:
     for relpath in PRUNE_ONLY_PLUGIN_PATHS:
         assert not (plugin_root / relpath).exists()
     assert grafted
-    assert "soldier" in (
-        plugin_root / "rules" / "operator-request-front-door_ulg.mdc"
+    assert "landed is not live" in (
+        plugin_root / "rules" / "restart-drain-discipline_ulg.mdc"
     ).read_text(encoding="utf-8")
 
 
@@ -181,21 +158,16 @@ def test_repo_overlay_sot_is_present_and_named() -> None:
         encoding="utf-8"
     )
     assert "agent_seat" in body
-    assert (root / "rules" / "operator-request-front-door_ulg.mdc").is_file()
-    assert (root / "rules" / "judgment-escalation-ladder_ulg.mdc").is_file()
-    ladder = (root / "rules" / "judgment-escalation-ladder_ulg.mdc").read_text(
-        encoding="utf-8"
-    )
-    assert "status: blocked" in ladder
-    assert "ESCALATE" in ladder
-    assert "Cowork Ask" not in ladder
 
-    # Thinned mixed rules keep the executor-actionable slice and shed lead doctrine.
-    lean = (root / "rules" / "lean-context-dispatch-first_ulg.mdc").read_text(
-        encoding="utf-8"
-    )
-    assert 'subagent_type="explore"' in lean
-    assert "cdp/opus-5" not in lean
+    # 2026-09-01 (alwaysApply rules-thinning G3): operator-request-front-door /
+    # judgment-escalation-ladder / lean-context-dispatch-first merged into
+    # dispatch-kernel_ulg.mdc upstream — their seat-overlay grafts were removed
+    # rather than left pointing at a dead filename. Full seat-variant
+    # re-derivation for dispatch-kernel_ulg.mdc is G6 (deferred).
+    assert not (root / "rules" / "operator-request-front-door_ulg.mdc").exists()
+    assert not (root / "rules" / "judgment-escalation-ladder_ulg.mdc").exists()
+    assert not (root / "rules" / "lean-context-dispatch-first_ulg.mdc").exists()
+
     drain = (root / "rules" / "restart-drain-discipline_ulg.mdc").read_text(
         encoding="utf-8"
     )

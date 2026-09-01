@@ -18,7 +18,7 @@ alwaysApply: false
 
 **Decision**: generic (any project) ⟹ parent `../../.cursor/rules/`. References this project's services/hosts/domain ⟹ workspace `_ws.mdc`.
 
-Base (from parent): `../.cursor/rules/index.mdc` — see parent "Always Applied" (6 rules: `system`, `provenance-discipline`, `advisor-timing`, `modularization`, `operator-posture`, `no-automatic-summaries`).
+Base (from parent): `../.cursor/rules/index.mdc` — see parent "Always Applied" (3 rules post alwaysApply rules-thinning G3, agent-bus:9848: `engineering-kernel` [merges `system` + `modularization`], `provenance-discipline`, `residual-imprint`. `advisor-timing` and `orchestrator-workflow` demoted to description-gated).
 
 ## Always Applied — Workspace
 

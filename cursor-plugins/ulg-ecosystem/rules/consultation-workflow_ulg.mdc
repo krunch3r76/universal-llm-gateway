@@ -257,7 +257,7 @@ invariants, or workspace conventions. They may suggest patterns that violate:
 
 - Python 3.12+ conventions (`python312.mdc`) — e.g., `Union[X, Y]` instead of `X | Y`
 - Exception handling policy — e.g., silent `except` blocks
-- Modularization rules (`modularization.mdc`) — e.g., naming files `utils.py`
+- Modularization rules (`engineering-kernel.mdc`) — e.g., naming files `utils.py`
 - Ecosystem rule (`core_ws.mdc`) — e.g., backward compatibility shims
 - Event contracts (`docs/event-contracts.md`) — e.g., missing required payload fields
 - Code style — e.g., comments that narrate what code does

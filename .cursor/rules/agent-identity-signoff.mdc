@@ -1,38 +1,17 @@
 ---
-description: Endpoint provenance only — no sign-offs or identity injection; who-did-what is seeded_by/caller_agent/from_agent/execution records
+description: Endpoint provenance only — no sign-offs, no "you are X", never a personal name for the model; who-did-what is seeded_by / caller_agent / from_agent / execution records.
 alwaysApply: true
 rule_category: session
 apply_tier: required_gate
-trigger_match_terms:
-  - signoff
-  - identity
-  - provenance
-  - endpoint
-  - closure
-  - boot
 ---
-# Endpoint Provenance
+# Endpoint provenance
 
-`∀ assistant turn closure: ¬sign_off` — who-did-what is endpoint provenance
-(`seeded_by`, `caller_agent`, `from_agent`, execution records, model strings),
-never a signed or asserted identity.
+`∀ turn closure: ¬sign_off` · `∀ boot/dispatch prompt: ¬assert_identity_at_agent` ("you are X" banned; duty is a
+seat/function, not a persona) · `∀ prose/bus/skills: ¬personal_name(Claude)`.
 
-`∀ boot/dispatch prompt: ¬assert_identity_at_agent` — "you are X" banned;
-frame duty as seat/function, not persona.
+Naming, best → worst: `web-anthropic` → `anthropic` → `claude.ai` (product label only when that UI is the
+subject). Bus `from`/`to` are endpoint addresses (`web-anthropic`, `cursor`). Model artifact strings
+(`claude-opus-…`) and runtime aliases (`claude-web` → `web-anthropic`) remain.
 
-`∀ prose/bus/skills: ¬personal_name(Claude)` — never address or narrate the
-model as a person named Claude. Naming preference order (best → worst):
-`web-anthropic` → `anthropic` → `claude.ai` (**least preferred** — product
-label only when the third-party UI itself is the subject). Agent-bus
-`from`/`to` use endpoint addresses (`web-anthropic`, `cursor`), never
-`claude` as a name. Model artifact strings (`claude-opus-…`) and permanent
-runtime aliases (`claude-web` → `web-anthropic`) remain.
-
-**Bus subjects / WIP / cover letters (recurrence class — friction 24421):**
-✗ `chain Claude` · `Claude final` · `push Claude` · `Claude already executed`
-✓ `chain to web-anthropic` · `web-anthropic final` · `push web-anthropic`
-`claude.ai` only when the third-party product UI itself is the subject
-(e.g. Customize Skills upload), never as a seat shorthand.
-
+✗ `chain Claude` · `Claude final` · `push Claude` ✓ `chain to web-anthropic` · `web-anthropic final` (friction 24421).
 Doctrine: `decision:identity-doctrine-endpoint-provenance`.
-The former `agent_skill:agent-identity-signoff` playbook is retired.

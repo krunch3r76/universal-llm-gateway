@@ -13,7 +13,7 @@ Core: material lead decisions require steelman plus — on hard triggers — a �
 
 | Concern | Owner |
 |---|---|
-| Binder/escalation independence (weight class ∨ family), when to escalate at all | `judgment-escalation-ladder_ulg.mdc` |
+| Binder/escalation independence (weight class ∨ family), when to escalate at all | `dispatch-kernel_ulg.mdc` § Ladder + binder order; anti-patterns on `consult-routing` skill § Judgment escalation ladder |
 | Skeptic dispatch mechanics, MCP on/off path, `FILE_EVIDENCE_PATHS` footer, recon ladder | `cheap-recon-before-escalation` § Axis 2 |
 | Every-turn steelman / calibration / courage / one-determinate-step | `reasoning-posture` |
 | Posture before transport on an operator consult | `consult-posture` |

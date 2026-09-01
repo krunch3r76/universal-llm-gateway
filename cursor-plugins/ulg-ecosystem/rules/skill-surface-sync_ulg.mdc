@@ -1,0 +1,56 @@
+---
+description: Load after editing any plugin skill/command/rule under cursor-plugins/ulg-ecosystem/ or a Claude Customize Skills body — exact install/upload steps and verification.
+alwaysApply: false
+rule_category: workflow
+apply_tier: catalog
+---
+# Skill surface sync (playbook)
+
+Detail behind `skill-surface_ulg.mdc`'s kernel duty ("Cursor owns sync, same turn"). Load this file when you have just edited plugin skills/commands/rules and need the exact steps, not just the invariant.
+
+## Plugin / local census skills
+
+Installed plugin trees are **copies** (`cp -a`), not hardlinks/symlinks to the repo. Reload Window alone does **not** pick up SoT edits.
+
+```
+∀ create|edit under cursor-plugins/ulg-ecosystem/{skills,commands,rules}/
+  ∨ census (SKILLS_CENSUS.txt | RULES_ULG_CENSUS.txt):
+    cursor MUST run scripts/cursor/install-ecosystem-plugin.sh
+    ∧ verify ~/.cursor/plugins/local/ulg-ecosystem/ matches SoT
+    ∧ ¬ ask operator to install or "sync the plugin"
+```
+
+| SoT path | Install required? |
+|---|---|
+| `…/skills/` (census) | **Yes** |
+| `…/commands/` | **Yes** |
+| `…/rules/*_ulg.mdc` (+ RULES_ULG_CENSUS) | **Yes** (same script; placement detail: `cursor-rule-placement_ulg`) |
+| `{repo}/.cursor/skills/` or `*_ws.mdc` | No (checkout-local) |
+
+¬ claim "skill/command is live in Cursor" until install has been run in this session (or verify installed copy under `~/.cursor/plugins/local/ulg-ecosystem/` matches SoT).
+
+**Reload Window:** IDE discovery cache only — optional one-line note if the picker is stale after install. **¬** an operator sync duty; **¬** a substitute for install; **¬** "please sync / please Reload so the skill is live."
+
+## Claude Customize Skills (`shared_sync` / uploadable `life_local`)
+
+```
+∀ create|edit of a Claude-slug skill body (catalog surface_class ∈
+  {shared_sync} ∨ life_local that uploads):
+    cursor MUST:
+      1. regen staging — scripts/cortex/gen_claude_bundles.py
+         (or equivalent single-slug path from claude-ai-bundle-sync)
+      2. upload/replace on Jupiter —
+         scripts/cortex/claude-ai-sync-jupiter upload --slugs <slug> --replace
+      3. verify status shows slug absent from missing_on_ui / content current
+    ∧ ¬ ask operator to /claude-ai-sync, Customize upload, or "sync the slug"
+    ∧ ¬ stop at ~/.gateway/claude-ai-sync staging copy alone (staging ≠ live UI)
+```
+
+`cursor_only` skills: **¬** Customize upload (forbidden). Plugin install above is the only live path.
+
+Runbook detail: Use the `claude-ai-bundle-sync` skill. Doctrine: `decision:claude-ai-skill-upload-automation` + assertion on this bind.
+
+## Anti-pattern
+
+¬ re-add census skills under hub `.cursor/skills/` or `.claude/skills/` — that duplexes the plugin picker. SoT = plugin tree only for census slugs. Shared_sync Customize Skills staging = `/mnt/torus/gateway/claude-ai-sync/skills/` (`CLAUDE_AI_SKILLS_STAGING` override); ¬ repo `.claude/skills/` for census. `life_local` SOT may live under `.claude/skills/` (not in `SKILLS_CENSUS`).
+¬ edit ecosystem SoT and stop without install (plugin) and/or Customize upload (Claude slug). ¬ hand those steps to the operator.

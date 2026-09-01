@@ -1,6 +1,6 @@
 ---
-description: Load pager-notify when waking/pinging the operator via SMS — email-bridge Fi /pager/notify; no personal endpoints in prose.
-alwaysApply: true
+description: Load when asked to ping, wake, or page the operator via SMS — email-bridge Fi /pager/notify; no personal endpoints in prose.
+alwaysApply: false
 rule_category: workflow
 apply_tier: catalog
 trigger_match_terms:

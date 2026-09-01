@@ -1,0 +1,36 @@
+---
+description: Checkout kernel — sole shared master, lane= on cursor-sdk generate, commit/deploy/live vocabulary, never delete or revert unattributed paths, personal helpers stay in ignored nested-git trees. Always-on; playbook is the git-posture skill.
+alwaysApply: true
+rule_category: engineering
+apply_tier: required_gate
+---
+# Checkout kernel
+
+**Invariant:** `¬attribute(path, this_session ∨ this_dispatch) ⇒ ¬delete(path) ∧ ¬revert(path)`.
+On sole shared `master` (Lane A) untracked / dirty / "noise" is usually **parallel WIP**. `??`, same-mtime,
+absent-from-`files_expected`, `status=partial` are not authorship. Cannot trace origin ⇒ leave + flag; ask
+before delete; delete only when proven yours or operator-directed. Lane-B worktrees (`cursor-sdk/lane-{thread}`)
+get the same rule.
+
+## Vocabulary
+
+`commit` = repository checkpoint, not activation, **not a completion gate** (never "waiting to commit").
+`deploy` = propagate a tree/commit identity. `activate` / `go live` = finish: path-explicit commit + recycle
+every serving process + graph stamp (`restart-drain-discipline`). Liveness proof is `fleet_liveness(code_ref=…)`;
+repo timestamps / `recent_commits` are low-confidence fallback.
+
+## Lanes
+
+Attended IDE = live shared checkout. `cursor-sdk` generate: pass `lane="B"` for in-repo implement; omit is
+**not** Lane B (empty `files_expected` + omit → Lane A); `lane="A"` is the named opt-out. Lane A: no
+intersecting parallel writers, no `git stash` to isolate or A/B against HEAD — read the tree. IDE hygiene:
+commit this-session paths often or dispatch new implement on B; do not remint A-authored dirt onto B.
+
+## Personal vs public
+
+`personal_life(helper ∨ workflow) ⇒ ¬track(public_remote) ∧ track(nested_git under *.local/)` — `scripts.local/`,
+`{satellite}/scripts.local/`, `tools/local/`, `pipelines.local/`; life skills/rules ignored in place. Never
+name an employer or matter in a `_ws`/`_ulg` rule; never bake personal defaults into public CLIs.
+
+Skill: `git-posture` (headless `git_*` MCP, `git_land`/`git_integrate` operator-gated). Doctrine:
+`decision:scripts-local-personal-helpers` · friction class a:25030. Caller recipe: `consult-routing` § cursor-sdk checkout lane.

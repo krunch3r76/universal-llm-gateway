@@ -45,16 +45,25 @@ ECOSYSTEM_PLUGIN_RELPATH = Path("plugins") / "local" / "ulg-ecosystem"
 PRUNED_PLUGIN_PATHS: tuple[Path, ...] = (
     Path("rules") / "operator-posture_ulg.mdc",
     Path("skills") / "operator-posture",
-    Path("rules") / "operator-request-front-door_ulg.mdc",
-    Path("rules") / "judgment-escalation-ladder_ulg.mdc",
     Path("rules") / "cdp-operator-proxy_ulg.mdc",  # catalog — not this seat; prune only
     # Mixed rules: each carries a slice the seat does act on (Explore-first recon;
     # landed≠live + drain-gated restart) wrapped in lead doctrine it cannot. Thinned
     # seat variants are grafted back rather than deleting the whole rule.
-    Path("rules") / "lean-context-dispatch-first_ulg.mdc",
     Path("rules") / "restart-drain-discipline_ulg.mdc",
     Path("rules") / "skill-surface_ulg.mdc",
 )
+# 2026-09-01 (alwaysApply rules-thinning G3, agent-bus:9848): the plugin-tree
+# originals for the operator-request-front-door / judgment-escalation-ladder /
+# lean-context-dispatch-first thinned grafts merged into dispatch-kernel_ulg.mdc.
+# Their seat-overlay SoT graft files were removed rather than left to graft under
+# a dead filename. dispatch-kernel_ulg.mdc and in-flight-work-guard_ulg.mdc are
+# NOT yet in either prune list below — the seat currently inherits those merged
+# kernels verbatim (same exposure as before for their resident-content sources
+# recon-default/dispatch-in-flight-supremacy; new exposure for the
+# previously-LEAD_ONLY anthropic-substrate/bind-then-compose/session-abort slices
+# now folded into the same file). Re-deriving proper thinned seat variants for the
+# merged kernels is G6 (deferred, not a correctness regression — operator-posture
+# prune is untouched); tracked on `todo:alwaysapply-rules-thinning`.
 # Subset of PRUNED with no same-name graft — must be absent after overlay.
 PRUNE_ONLY_PLUGIN_PATHS: tuple[Path, ...] = (
     Path("rules") / "operator-posture_ulg.mdc",
@@ -74,13 +83,14 @@ PRUNE_ONLY_PLUGIN_PATHS: tuple[Path, ...] = (
 # when the seat structurally cannot perform what it governs.
 LEAD_ONLY_PLUGIN_PATHS: tuple[Path, ...] = (
     Path("rules") / "expand-growth-loop_ulg.mdc",
-    Path("rules") / "dispatch-in-flight-supremacy_ulg.mdc",
     Path("rules") / "claude-ai-cdp-navigation_ulg.mdc",
-    Path("rules") / "session-abort-authorization_ulg.mdc",
-    Path("rules") / "bind-then-compose-dispatch_ulg.mdc",
     Path("rules") / "pager-notify_ulg.mdc",
-    Path("rules") / "anthropic-substrate_ulg.mdc",
 )
+# 2026-09-01: dispatch-in-flight-supremacy / session-abort-authorization merged
+# into in-flight-work-guard_ulg.mdc (resident — the seat acts on its overlap
+# guard); bind-then-compose-dispatch / anthropic-substrate merged into
+# dispatch-kernel_ulg.mdc (see note above PRUNED_PLUGIN_PATHS). Neither merged
+# file is added here — see the deferred-G6 note above.
 
 
 class SeatOverlayConfigError(RuntimeError):

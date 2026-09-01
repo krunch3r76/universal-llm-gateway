@@ -1,332 +1,40 @@
 ---
-description: Restarts drain, never kill — busy is never a reason to skip a restart. force=true is PERMITTED on every service except git_integration_worker, whose drain protects in-progress dispatch writes. Binds IDE lead and cursor-auto.
+description: Restart drain kernel — needed restart fires; busy never skips; force=true permitted on every service except git_integration_worker (drain, never force, never kill); landed ≠ live; finishing work is go-live. Recovery tables and history live on the manage envelope and runbook.
 alwaysApply: true
 rule_category: engineering
 apply_tier: required_gate
-trigger_match_terms:
-  - restart
-  - sync_restart
-  - stop service
-  - force
-  - drain
-  - busy
-  - deferred
-  - in-flight
-  - active-work
-  - landed-not-live
-  - wait_healthy
-  - mcp restart
-  - life surface
-  - live_cse
-  - same-window
-  - other window
-  - this session
-  - mcp_session_hot
-  - continuity hop
-  - ghost live_cse
-  - cdp_ask restart
-  - CSE recover
-  - go live
-  - everything live
-  - not live yet
-  - live@sha
-  - go-live-proof
-  - satellite
-  - bind-mount
-  - deploy.sh
 ---
-# Restart drain discipline
+# Restart drain
 
-**Invariant:** `needed(restart) ⇒ fire(restart)` — busy is never a reason to skip one.
-On `git_integration_worker`, busy means **drain** (never force, never kill). On every
-other service, busy that defers a needed restart is cleared with `force=true`.
-
-**Code revision (BINDING — operator 2026-08-22):**
-`edit(served_path ∨ env_loaded_by_process) ∧ running(process) ⇒ recycle(process)`
-in the same turn. Env is served config — same class as a code edit.
-`manage ∉ owners(process) ⇏ skip`. `bind_mount ⇏ live`. Process-only restart
-(`--restart` without env pickup) ⇏ env live. Fresh `import` in a new
-interpreter is not proof — quote process start after file **and** env mtime.
-
-Operator bind 2026-07-31; MCP same-window classifier 2026-08-05; **force
-generalized 2026-08-13**.
-
-## Force is permitted — GIW is the sole exception (BINDING — operator 2026-08-13)
+**Invariant:** `needed(restart) ⇒ fire(restart)` — busy, in-flight, a peer's stream, a dirty tree, an open
+Cowork tab, or "this IDE session" is never a reason to skip, park, or route the force through the operator.
+`edit(served_path ∨ env_loaded_by_process) ∧ running(process) ⇒ recycle(process)` same turn; `bind_mount ⇏ live`.
 
 ```
-∀ service ≠ git_integration_worker:  force=true PERMITTED
-service = git_integration_worker:    drain ∧ ¬force        # dispatch writes in progress
+∀ service ≠ git_integration_worker:  busy defers ⇒ re-fire force=true, announce
+service = git_integration_worker:    arm drain (status=deferred, restart_intent_id) — never force, never kill
 ```
 
-The discriminator is **what the interruption destroys**, not who owns the work:
+Discriminator: what the interruption destroys. Attach handles / retryable requests (`mcp`, `cdp_ask`,
+`stargate`, `gateway`, `rag`, `cortex_api`, `event_service`, `cloud_proxy`, …) reconnect; only GIW holds an
+in-progress durable write. Recycling `mcp`/`cdp_ask` drops attach, not the CSE (`chat_url`) or the IDE chat.
 
-| Interruption loses | Services | Force |
-|---|---|---|
-| An **attach handle** or a retryable request — reconnectable, nothing durable in flight | `mcp`, `cdp_ask`, `stargate`, `gateway`, `rag`, `cortex_api`, `event_service`, `cloud_proxy` | **Permitted** |
-| An **in-progress durable write** — a dispatch mid-commit, truncated or lost | `git_integration_worker` | **Never** — arm the durable drain, exit, let it converge |
+## Forbidden / Required
 
-Apply this discriminator to any service added later; do not read the table as a
-closed list. A seat facing `busy` on anything but GIW may force **without**
-operator authorization, without a streaming/window test, and without waiting on
-another seat. Latency is still not a *reason* to force, but it is no longer a
-prohibition needing a justification — busy that blocks a needed restart is.
-
-`busy=true` / `running_count>0` never licenses “park forever” or “skip restart.”
-The live failure class is **abandonment**, not over-eager preemption: seats leave
-fixes landed-not-live far more often than they wrongly interrupt a peer.
-
-**Historical note:** the previous posture made force narrow across all services and
-required a same-window/streaming classifier before forcing `mcp`. That classifier's
-*recovery sequence* still binds (§ MCP); its *force-vs-wait gate* is retired.
-
-## CSE vs service process (BINDING — 2026-08-12)
-
-```
-identity(CSE) = chat_url
-claude.ai / Cowork is resilient to all fleet service restarts
-Cursor IDE MCP is resilient to mcp recycle (tool surface reconnects)
-restart(mcp | cdp_ask | …) ⇒ drop(attach) ∧ ¬end(CSE ∨ IDE chat)
-open(tab) ⇏ alive(session ∨ stream)   # tab ⟂ session; decision:cse-tab-decoupled-from-session
-this_session ∨ mcp_session_hot ∨ in_flight≥1 ⇏ skip(mcp restart)
-```
-
-A Cowork CSE is a Chrome tab. Satellite `execution_id`, Playwright, and the MCP
-socket are **attach handles**. Recycling those processes is reconnect, not
-session-kill. Cowork is **not tightly coupled** to mcp, **cdp_ask**, or any other
-fleet service — the tab survives; recover after `wait_healthy`. The **Cursor IDE
-MCP session** is the same class: `mcp_session_hot` / this-turn `in_flight=1` is
-occupancy of the seat firing the recycle, not a lease. After `wait_healthy(mcp)`
-the IDE retries (`-32099` `server_restarting` is expected). `cdp_ask`
-`sync_restart` is **never coupled to mcp** (`api_dispatch._sync_restart`). After
-`cdp_ask` recycle: `wait_healthy` → `cse_session(op=followup)` / `reattach=true`
-by `chat_url` (tab should still be open). Continuity hop (new window, same
-private lane) is for **CSE MCP tooling/chip refresh**, not because a satellite
-row died, and **not** an IDE duty.
-
-Another seat's mid-turn stream is a **courtesy** consideration, not a gate — since
-2026-08-13 you may force through it. Prefer a short wait when the peer is visibly
-mid-stream and your restart is not urgent; that is judgment, not permission. Do not
-narrate `running_count` / `execution_id` gone as “the CSE is dead.” **Forbidden:** skip, park, or withhold
-`mcp` **or** `cdp_ask` (or any other) `sync_restart` because it “would drop
-Cowork attach” **or** because “this IDE/CSE session is in-flight.” Attach-loss
-is expected and recoverable.
-
-## The wrong moves
-
-| Wrong | Why | Right |
-|---|---|---|
-| `force=true` on **`git_integration_worker`** | Truncates a dispatch mid-write — the one irreversible loss | Arm the durable drain, report `restart_intent_id`, exit |
-| "Busy / a dispatch or CSE is running, so I won't restart" | Leaves the fix landed-not-live; treats `cdp_ask` attach-loss as session-kill | Arm the restart. Force it if busy defers (¬GIW). After `cdp_ask`: recover the tab by `chat_url` |
-| Asking the operator to authorize a force on a non-GIW service | Standing permission already covers it (2026-08-13); the ask is the latency | Force, announce, recover |
-| "MCP/`cdp_ask` restart would drop Cowork attach / kill the CSE" | Conflates attach handle with CSE identity (`chat_url`); claude.ai is resilient to all service restarts | Restart (force if it defers). Recover: followup/reattach or continuity hop after healthy |
-| "This session is in-flight / `mcp_session_hot` / `in_flight=1`, so I won't restart MCP" | Occupancy of the calling IDE or CSE seat is not a lifecycle lease; both surfaces recover | Force if it defers. IDE: `wait_healthy` then retry. CSE: hop after healthy if chips dropped |
-| Sit in-window polling `wait_healthy` while holding a lease | The lease you hold is what the drain waits on — never converges (friction 25989) | Arm, then **exit**; probe after |
-| Hop or keep streaming so an open Cowork tab “stays alive” | Tab ⟂ session (`decision:cse-tab-decoupled-from-session`); an idle tab is not a live stream | PARK / idle is legal; hop is MCP-refresh, never tab-keepalive |
-| Bind-mount / “operator did not say go live” / harvest wrote files ⇒ skip recycle | Python imported at process start; satellite compose is not a `manage` service | Recycle the process that loaded the path. Fleet → `manage`. Satellite → that repo’s deploy (`scripts/deploy.sh --restart --service …`) |
-| Env file edited, then `--restart` only | Process-only recycle leaves container env stale (overreaction stayed on after `PERPS_ENABLE_OVERREACTION=false`) | Recycle with env pickup (`--env-refresh` on claudeburst; fleet: restart the unit that sources the file) |
-
-## Mechanism already exists — use it, do not reinvent
-
-`manage(action="sync_restart"|"restart"|"stop", service=…)` is drain-gated at the
-shared chokepoint (`scripts/model_manager/ui/controller/restart_drain.py`), so both
-MCP agents and the TUI get the same guard. Two shapes:
-
-| Service | Behavior on busy |
+| Forbidden | Required |
 |---|---|
-| `git_integration_worker` | Durable **drain supervision** — worker stops accepting new mutating work, existing dispatches run to completion, SIGTERM only after `active_count == 0`. Returns `status=deferred, state=draining` with a `restart_intent_id`. Deadline is days, not seconds: drain is assumed inevitable |
-| `mcp` | Busy-probe deferral — **not** NullBusyProbe. Defers when `cdp_ask` reports recorded project-ask work **or** MCP `/active-work` reports in-flight HTTP or recent life `tools/call` (TTL). Container SIGTERM HTTP drain alone does **not** protect Cowork between POSTs |
-| `cdp_ask` | Busy when recorded `running_count > 0`; CDP attachment/session scalars are diagnostic only and never lifecycle leases. Product concurrency: open tabs may be many; only ≤3 may **stream** at once (`claude-ai-cdp-navigation` § Parallel Chrome) |
-| everything else | Busy-probe deferral — `status=deferred, state ∈ {busy, in_progress, probe_error}` with `retry_after_s` |
+| `pkill` / `kill` / `docker stop` for lifecycle | `manage(action="sync_restart"|"restart"|"stop")` — drain-gated chokepoint |
+| Poll `wait_healthy` in-window while holding the write lease (never converges) | Arm, **exit**, probe on a later turn; IDE waits in background |
+| Claim `live` from a commit, an import, or `status=deferred` | Process start after served-file **and** env mtime, or a live probe of the changed surface |
+| Report exact `live@<sha>` when served dirt was loaded | Report `live` + tree state; `live@<sha>` needs path-explicit commit **before** restart |
+| Hold graph stamps / todo close for `live@sha` | Close once ACs met and ordinary `live` proven (or `liveness n/a`) |
 
-Read state without touching the gate: `manage(action="busy_status")` — returns
-`busy`, `restart_would_defer`, `active_work_summary` (one-line holder identity —
-prefer it), and `restart_intent` per service. Safe to poll live.
+**Go-live = finishing.** `work_complete ⇒ commit(path-explicit) ∧ recycle(every serving process) ∧
+stamp(graph)`; "go live / activate / everything live?" are that contract, not a second permission gate.
+Mid-arc checkpoint commit and `/session-end` are not work-complete. Proof line: services · claim class
+(`live | live@sha | not_live | drain_pending`) · `restart_intent_id` or process start UTC · path probe.
+Satellites recycle via their repo's deploy script; proof is the same.
 
-## MCP / life-surface seat discipline (BINDING)
-
-`mcp.busy=false` historically meant "no probe," not "Cowork idle." Before any
-`sync_restart`/`restart`/`stop` of **mcp**, read `busy_status` (`mcp` + `cdp_ask`).
-The probe answers **GIW or not** and **what recovery to expect** — it does
-**not** answer whether you may skip. GIW code pickup does **not** require MCP
-restart. Descriptor / tooling MCP edits follow the **same-window recovery**
-below (operator bind 2026-08-05). That table is aftermath, never a skip gate.
-
-### MCP restart — recovery sequence (BINDING — 2026-08-05, force gate retired 2026-08-13)
-
-`mcp` is **not** GIW: force it whenever busy defers. The window/streaming
-classification that used to gate the force now only tells you **what recovery to
-expect** afterward. `needed(mcp restart) ⇒ fire` even when the busy reason is
-**this** IDE tools/call or **this** CSE stream.
-
-| Busy reason | Force | Expect afterward |
-|---|---|---|
-| **This IDE / cursor MCP session** (`mcp_session_hot`, `in_flight≥1` on this tools/call) | Yes | Later MCP calls in this turn may see `-32099` `server_restarting`. After `wait_healthy(mcp)`: retry. IDE reconnects. ¬ skip. ¬ Cowork hop |
-| **¬streaming** — `running_count=0`; idle CSE tabs are diagnostic only | Yes | Clean restart; CSE identity survives attach loss |
-| Streaming ∧ **this CSE** window (this seat's Cowork / life connection) | Yes | **CSE** tool chips drop mid-stream. After `wait_healthy(mcp)`: **continuity hop** (new CDP window, same private lane) — ¬ warm follow-up alone for tooling refresh. Still fire — this row is recovery, not a withhold |
-| Streaming ∧ **another** window | Permitted | Peer's in-tab tools drop mid-turn; they recover by `chat_url`. Prefer a short wait if your restart is not urgent — courtesy, not a gate |
-
-`open_attachment_count` ≠ streaming and does not gate restart. Observed CSE
-pages without an active stream are attachment telemetry; `live_cse_count` may
-deduplicate several page targets for one session. Open-tab count may be
-arbitrary; the streaming concurrency bound (≤3 simultaneous; >3 untested)
-lives in `claude-ai-cdp-navigation`.
-
-Applies to IDE lead and operator-proxy (`cdp/opus` / web-anthropic on
-`purpose=operator-proxy|mission`) alike. Operator-proxy often exercises this via
-`contract: propagate`; cursor-auto auto-applies self-preempt force when
-`allow_self_preempt` is true. **GIW is still exempt from all of it.**
-
-Tooling / descriptor restart sequence: restart → **wait mcp healthy** →
-**continuity hop** (`cdp-operator-proxy` Refresh ≠ follow-up). Commissioning
-continuity **before** healthy is a defect.
-
-Anti-patterns:
-- treat `mcp.busy=false` + `in_flight=0` as proof Cowork life is idle
-- treat an observed open attachment as a wait verdict when `running_count=0`
-- withhold a force on `mcp` because a peer window is streaming (retired gate)
-- skip `mcp` / `cdp_ask` / any service restart to “protect Cowork”; narrate `drop(attach)` as ending the CSE
-- skip `mcp` restart citing this IDE session, `mcp_session_hot`, or `in_flight=1`
-
-## Procedure (binding)
-
-1. **Probe before deciding** — `manage(action="busy_status")`. The only question the
-   probe answers is **GIW or not**: GIW ⇒ arm the durable drain, never force;
-   anything else ⇒ force is available. `mcp_session_hot` / this-session `in_flight`
-   is **not** a skip. For `mcp`, read the recovery table above so you know what
-   **drops**, then fire anyway.
-2. **Fire the restart.** On GIW, `status=deferred, state=draining` with a
-   `restart_intent_id` **is** success. On every other service, a busy deferral is
-   not an outcome to accept — re-fire with `force=true`. Do not park because
-   an attachment is observed when `running_count` is zero, and do not route the
-   force through the operator.
-3. **Then wait, per seat:**
-   - **Holding a write lease** (cursor-sdk / `cursor_sdk_gate`, or the dispatch
-     whose work the drain is waiting on): the envelope's
-     `caller_must_exit_to_release_lease` is binding — **exit now**, do not
-     `wait_healthy` in-window. Your own exit is what lets the drain converge.
-   - **IDE lead:** wait in the **background** (`presence-discipline` P4) — do not
-     pin the turn. Poll `busy_status` / `wait_healthy` on a later turn, or let the
-     `git_worker.drain.*` events land.
-   - **cursor-auto:** report the armed `restart_intent_id` on the CLOSEOUT and
-     finish. Do not block the dispatch on someone else's drain.
-4. **Verify live before claiming live.** Landed ≠ live. Confirm the restart
-   completed (process start after the served-file mtime, or a live probe of the
-   changed surface) before any claim that a fix is in effect. Operator go-live
-   uses the proof loop below — `deferred` is arm-success, not proof.
-
-## Live claim classes
-
-`live` and `live@<sha>` are different claims. Ordinary `live` needs restart,
-health, and a changed-surface probe. `live@<sha>` additionally needs a
-path-explicit commit **before** restart, `code_ref_satisfied` (equal or ancestor),
-identity movement, and relevant dirty-path disclosure. This ordering binds the
-claim, not the restart: dirty-checkout restarts remain legal and are reported as
-`live` plus tree state, never exact `live@<sha>` **when the served load
-surface was dirty**. Never withhold a needed restart because the tree is dirty
-or a busy probe defers; downgrade the claim instead.
-
-**Operator bind (2026-08-25):** recycles are permitted regardless of master
-porcelain or peer WIP on the load surface. If that dirty tree trips a process,
-the operator owns it. `¬` withhold, park, or ask. Claim class still downgrades
-(`live`, never exact `live@sha`) when served dirt was loaded.
-
-**Operator bind (2026-08-25, stamp):** dirty tree / `¬live@sha` does not hold
-graph stamps. Close the todo and friction when ACs and §5 evidence are met
-**and** ordinary `live` is proven (or `liveness n/a` — no process serves).
-Do not leave stamps pending for the operator to track.
-
-**Operator bind (2026-08-25, go-live loop):** finishing work **is** go-live.
-`work_complete ⇒ commit(path-explicit work paths) ∧ recycle(every serving
-process) ∧ stamp(graph)`. The phrases `go live` / `make live` / `activate`
-are synonyms for that completion contract, not a permission gate the
-operator must say after "done." `¬` recycle one of N serving processes and
-call it live. `¬` stamp before that proof. `¬live@sha` (foreign served dirt)
-does not hold the stamp once ordinary `live` of **this** change is proven.
-
-Carve-outs (not work-complete): a mid-arc checkpoint `commit` without
-claiming done is commit-only; `/session-end` without claiming remaining
-work done does not silent-recycle the dirty tree.
-
-A later commit does not upgrade dirty `live` to `live@<sha>` — that needs a
-**new** recycle after the commit. Never say `not live` when the process already
-loaded the files and you only lack `live@<sha>`.
-
-## Go-live proof loop
-
-**Open** when ANY:
-- this seat claims the work **done** / closes the todo or friction / ships
-- operator says `go live` / `make live` / `activate` / `everything live?` /
-  `not live yet?` (synonyms for the same loop, not a second gate)
-- a running process already imported the revised bytes — harvest / implement
-  close is not a park
-
-A mid-arc checkpoint `commit` and `/session-end` are **not** work-complete
-by themselves. Once open, all three legs are required. Doctrine:
-`decision:go-live-proof-loop`.
-
-Satellites (claudeburst and any compose service `manage` does not list) recycle
-via that repo’s deploy script, not `manage`. Proof is still process start after
-served-file mtime.
-
-```
-go_live_open ⇒
-  commit(path-explicit work paths)
-  ∧ recycle(every service that serves those paths)
-  ∧ hold(restart_intent_id) until terminal
-  ∧ edit(served_path) ⇒ stale(intent) ∧ re-arm
-  ∧ stamp(graph) once ordinary live is proven ∨ liveness_n/a
-  ∧ report exactly one class: live | live@sha | not_live | drain_pending
-```
-
-- Recycle **every** service whose load surface includes a changed path **newer
-  than the last sync** — the complete serving set, not a convenient subset.
-  Hop-cadence / wait-report → `git_integration_worker`. `mcp` / `cdp_ask` only
-  when those files postdate the last sync. Plugin / Customize / graph-only
-  deliverables: install or upload is the serve path; fleet recycle is
-  `liveness n/a`.
-- `restart_intent_id` is WIP until process start is after served-file mtime (or a
-  `fleet_liveness` path probe). `status=deferred` arms the drain; it is not live.
-- After arming GIW: do not admit new GIW-occupying work on that slice without
-  disclosing that it delays the drain.
-- Edit a served path after arm ⇒ the old intent does not cover the new bytes.
-  Re-arm, or report `live` = previous edit only.
-- Proof line (mandatory): services · claim class · `restart_intent_id` or process
-  start UTC · path probe.
-
-Session close with an unproved go-live: `session-close.mdc` §0d — imprint the
-intent and claim class; do not narrate activation.
-
-## `force=true` — permitted, one exception
-
-```
-force(service) PERMITTED  ⇔  service ≠ git_integration_worker
-```
-
-No operator authorization, no streaming test, no ownership proof. If a busy probe
-defers a restart you need on `mcp`, `cdp_ask`, `stargate`, `gateway`, `rag`,
-`cortex_api`, `event_service`, or `cloud_proxy`, re-fire with `force=true` and
-announce it.
-
-**`git_integration_worker` never.** Its drain exists because a forced stop can
-truncate a dispatch mid-commit. That is the only loss in the fleet that no
-reconnect repairs, which is why GIW gets durable drain supervision (days, not
-seconds) instead of a force path. Arm it, put the `restart_intent_id` in your
-closeout, exit so the drain can converge.
-
-Still true: force is not a response to **latency**. Nothing about the standing
-permission makes an impatient force correct when no restart is actually needed —
-but once one is needed, busy is not a reason to withhold it, and asking permission
-is not a substitute for firing it.
-
-Killing a bridge or worker process directly (`pkill`, `kill`, `docker stop`) is
-forbidden for lifecycle regardless of service — `services_ws.mdc` § Scripts.
-`force=true` through `manage` is the sanctioned path; it is not process-killing.
-
-## Composes with
-
-- `session-abort-authorization` — aborting in-flight work is operator-gated; this is its restart-side sibling
-- `dispatch-in-flight-supremacy` — do not implement the same slice a live cursor-sdk dispatch owns. MCP/`cdp_ask`/stargate recycle drops attach handles, not GIW dispatch writes. Only GIW restart can truncate a dispatch mid-commit.
-- `presence-discipline` P4 — background the wait, do not pin the turn
-- `services_ws.mdc` — manage surface, source-edit → deploy table, manage quit/start recipe
-- `git-posture` — `live` vs `live@sha`; commit is not activate
-- `session-close.mdc` §0d — unproved go-live on close
+Recovery expectations after `mcp`/`cdp_ask` recycle (IDE retry on `-32099`; CSE continuity hop for chip
+refresh; `cse_session(op=followup)` by `chat_url`): the `manage` deferral envelope + `runbook:restart-drain`.
+Doctrine: `decision:go-live-proof-loop` · `services_ws.mdc` § Scripts · `git-posture` (live vs live@sha).

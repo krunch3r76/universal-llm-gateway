@@ -1,6 +1,6 @@
 ---
-description: Load CDP navigation discipline when web-anthropic or Jupiter CDP (Cowork, project-ask) is in scope — before advising manual operator push. Also when CSE stream stops / poller retain vs operator self-stop.
-alwaysApply: true
+description: Load when web-anthropic, Jupiter CDP (Cowork, project-ask), or a stopped CSE stream is in scope — before advising manual operator push. Also when CSE stream stops / poller retain vs operator self-stop.
+alwaysApply: false
 rule_category: cortex-bus
 apply_tier: catalog
 trigger_match_terms:
@@ -62,7 +62,7 @@ Until operator override or substrate change (friction 24906):
 | Transport advice without loading CDP skill | `Use the claude-ai-cdp-navigation skill` first |
 | Claim `workspaces://` unreachable on web; or cite `.cursor/skills/…` as the skill-delivery path | Prefer `cortex://` packaging for speed; Claude-slug engage or **inline** non-slugs for skills |
 | Lead stages RAG then “merges” into deliverable when MCP `rag` is available (life or code) | Executing agent owns MCP `rag`; mapped URI is priming only |
-| Aborting a CSE / dispatch because arc path changed | Poll **private bus lane** + paste into live converse; abort only with explicit operator auth (`session-abort-authorization_ulg.mdc`) |
+| Aborting a CSE / dispatch because arc path changed | Poll **private bus lane** + paste into live converse; abort only with explicit operator auth (`in-flight-work-guard_ulg.mdc`) |
 | `active_work` empty ⇒ "CDP unreachable / arc dead" | Transport idle ≠ bus idle — operator-proxy commissions live on `agent_bus.request` thread |
 | Skip `mcp`/`cdp_ask` (or any service) restart because it “would drop Cowork attach” **or** “this IDE/CSE session is in-flight” (`mcp_session_hot`) | IDE and claude.ai are **resilient** — `drop(attach) ∧ ¬end(CSE ∨ IDE chat)`; recover after `wait_healthy` (`restart-drain-discipline` § CSE vs service) |
 | Hop or keep streaming so an open Cowork tab “stays alive” | Tab ⟂ session — PARK / idle tab is legal; hop is MCP-refresh or successor-confirmed continuity, never tab-keepalive (`decision:cse-tab-decoupled-from-session`) |

@@ -15,11 +15,12 @@ trigger_match_terms:
 
 **Seat wall.** This rule exists only inside the **cursor-sdk dispatch HOME**
 (grafted by `services/git_integration_worker/cursor_home.py` from the seat
-overlay). Its human-facing counterparts (`operator-posture_ulg`,
-`operator-request-front-door_ulg`, `judgment-escalation-ladder_ulg`) are **pruned
-or replaced** on this seat — if you recall an instruction to open with
-Been→Are→Going, ask the operator, or escalate to a human operator, that register does
-not apply here.
+overlay). Its human-facing counterpart `operator-posture_ulg` is **pruned** on
+this seat. The front-door and escalation-ladder guidance now merged into
+`dispatch-kernel_ulg.mdc` is **not yet** re-derived into a seat-specific variant
+(deferred G6, `todo:alwaysapply-rules-thinning`) — if you recall an instruction to
+open with Been→Are→Going, ask the operator, or escalate to a human operator, that
+register does not apply here regardless of which file it arrived from.
 
 **Invariant:** `∀ turn authored on this seat: audience = agent_seat` — the reader
 of your closeout is the dispatching lead (a model), the worker, and the bus. There

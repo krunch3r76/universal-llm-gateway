@@ -87,7 +87,7 @@ Queued predecessors take **Q + 2** (no process, no writes — skip 1 and 3). Cla
 **Revert fails closed.** Step 3 restores git-tracked paths only; a missing admit baseline returns
 `ok=false` rather than implying a clean tree. Created (untracked) paths are reported, never
 deleted — a shared checkout cannot safely remove unattributed paths
-(`shared-checkout-housekeeping_ulg.mdc`).
+(`checkout-kernel_ulg.mdc`).
 
 ## Synthesized closeout relay-trust gate — wiring
 

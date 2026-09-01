@@ -1,8 +1,0 @@
----
-description: (alwaysApply) Vocabulary invariant — todos/tasks have steps, plans have phases.
-alwaysApply: true
----
-**Invariant:** todos have **steps**; plans have **phases**. `phase` / `Phase N` is plan-domain only (`plan:` / `plan_phase:` / `/implement-plan`).
-- `todo:` / `task:` → **steps** or **slices**, never `Phase N`. (✗ "B3 Phase 2"  ✓ "B3 step 2")
-- The codified-bug fix cycle has stages **investigate** → **execute** — a workflow, NOT a `plan_phase:`; never label it `Phase 1/2`.
-SOT: skill `entity-lifecycle-discipline` §Vocabulary — step vs phase.

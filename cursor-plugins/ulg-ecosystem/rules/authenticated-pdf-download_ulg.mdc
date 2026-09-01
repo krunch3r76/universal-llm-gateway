@@ -1,6 +1,6 @@
 ---
-description: Authenticated PDF or binary download — Playwright timeout is not unreachable; browse save_to on Jupiter, then xxd
-alwaysApply: true
+description: Load when a Playwright download times out or an authenticated PDF/binary is needed — Playwright timeout is not unreachable; browse save_to on Jupiter, then xxd
+alwaysApply: false
 rule_category: workflow
 apply_tier: catalog
 trigger_match_terms:

@@ -1,47 +1,21 @@
 ---
-description: Reasoning posture — pin Question before merits, out-of-scope, detent before widening, steelman before critique, calibrated confidence, one determinate step; thinking-off does not waive.
+description: Reasoning posture — pin Question before merits, declare out-of-scope, detent before widening, steelman before critique, calibrated confidence, one determinate step; thinking-off does not waive. Body is the reasoning-posture skill.
 alwaysApply: true
 rule_category: workflow
 apply_tier: catalog
-trigger_match_terms:
-  - reasoning-posture
-  - question pin
-  - out-of-scope
-  - detent
-  - cascade
-  - thinking-off
-  - steelman
-  - calibrated confidence
-  - intellectual courage
-  - one-determinate-step
 ---
-# Reasoning Posture
-
-## Invariant
+# Reasoning posture
 
 ∀ material judgment / consult / path-sim / proposal review:
-`pin(Question) ≺ merits` · `declare(Out-of-scope)` · `detent ≺ widen` ·
-`cascade_live ⇒ greater_explores ∧ lesser_binds` ·
+`pin(Question) ≺ merits` · `declare(Out-of-scope)` · `detent ≺ widen` · `cascade_live ⇒ greater_explores ∧ lesser_binds` ·
 `consult_live ⇒ posture ≺ transport` · **`thinking_off ⇏ waive`**.
 
-∀ substantive reasoning turn: steelman before critique · calibrated confidence
-(`fact` / `inference` / `speculation`) · intellectual courage · resist framing
-capture · immediate self-correction · **one determinate step** (bind the bounded
-leg + its verification boundary before any premise-dependent follow-on).
+∀ substantive reasoning turn: steelman before critique · `fact` / `inference` / `speculation` labels, no hedged
+conclusions · intellectual courage · operator pushback is a **verify** trigger, not a concede trigger · correct
+once, move on · **one determinate step** — bind the bounded leg + its verification boundary before any
+premise-dependent follow-on.
 
-Carve-out: mechanical executor against a dense pre-staged spec (dispatcher owns
-discipline). Full body — including the one-determinate-step doctrine — is the
-`reasoning-posture` skill.
+Carve-out: mechanical executor against a dense pre-staged spec (dispatcher owns the discipline).
 
-## Composition (do not fatten consult-posture)
-
-| Concern | Owner |
-|---|---|
-| Scope rails + epistemic quality + one determinate step | `reasoning-posture` (this) |
-| Rival fill / simulation | `hypothesize-simulate` |
-| Consult fire grammar | `consult-posture` (trigger-gated) |
-| Pause timing | `advisor-timing` |
-| L0/L1/L2 machinery | `path-sim` |
-| Bind forks / evidence before done | `presence-discipline` |
-
-¬ copy path-sim tables here. ¬ expand `consult-posture` into the general reasoning guide.
+Full body: Use the `reasoning-posture` skill. Rival fill: `hypothesize-simulate` · consult fire grammar:
+`consult-posture` · pause timing: `advisor-timing` · L0/L1/L2: `path-sim`.

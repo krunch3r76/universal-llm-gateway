@@ -354,7 +354,7 @@ Heuristics: `bytes / 3.5 ≈ tokens`, `bytes / 45 ≈ SLOC` (typical Python/YAML
 #### 3b. Pre-flight classification (per file)
 
 Budget constant: **12,000 source tokens per batch** (matches `budget_source_tokens` in `chain.yaml`).
-SLOC limit: **500 lines** (relaxed from base `modularization.mdc` — cloud models handle up to 500 SLOC reliably).
+SLOC limit: **500 lines** (relaxed from base `engineering-kernel.mdc` — cloud models handle up to 500 SLOC reliably).
 
 For each file apply this logic in order:
 
@@ -650,7 +650,7 @@ For each suggestion, check:
 | Check | Sources |
 |---|---|
 | Python conventions | `python312.mdc` — modern syntax (`X \| Y` not `Union`), `@override`, type hints, `match/case`, `TaskGroup`) |
-| Modularization | `modularization.mdc` — SLOC limits, SRP, naming (¬ `utils/helpers/common`), domain isolation |
+| Modularization | `engineering-kernel.mdc` — SLOC limits, SRP, naming (¬ `utils/helpers/common`), domain isolation |
 | Exception handling | `quality-gates.mdc` — ∀ caught: log or re-raise, ¬ silent failure, ¬ `getattr` defaults for resources |
 | Event contracts | `event-debugging_ws.mdc`, `docs/event-contracts.md` — signal format, required payload fields, lifecycle guarantees |
 | Event implementation references | Existing subsystem event constructors/factories and nearby emission sites in touched files/modules — preserve established payload/schema patterns |

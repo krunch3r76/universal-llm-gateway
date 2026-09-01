@@ -5,7 +5,18 @@ Supersedes U/E/L three-way for **filenames**. Entity-twin `_ulg` IDs remain reti
 
 Machine-readable list: `RULES_ULG_CENSUS.txt` (assembled into plugin `rules/`).
 
-Includes `shared-checkout-housekeeping_ulg` (2026-07-18) — ¬delete unattributed untracked/dirty paths on sole shared master.
+**AlwaysApply rules thinning (2026-09-01, agent-bus:9848):** 31 → 15 always-on files across
+the three SoT trees (plugin/hub/parent), verified by `scripts/cursor/alwaysapply_rules_census.py`
+(32649 → 7554 tokens, chars/4). `judgment-escalation-ladder_ulg`, `lean-context-dispatch-first_ulg`,
+`bind-then-compose-dispatch_ulg`, `operator-request-front-door_ulg`, `recon-default_ulg`,
+`anthropic-substrate_ulg` merged into `dispatch-kernel_ulg`; `dispatch-in-flight-supremacy_ulg`,
+`session-abort-authorization_ulg` merged into `in-flight-work-guard_ulg`; `commit-and-git-scope_ulg`,
+`shared-checkout-housekeeping_ulg` merged into `checkout-kernel_ulg`; `phase-vocabulary_ulg` retired
+(boot-card + `entity-lifecycle-discipline` already own the vocabulary). Detail install/upload playbook
+split off `skill-surface_ulg` into `skill-surface-sync_ulg` (`alwaysApply: false`). Compressed-out
+detail relocated to `runbook:restart-drain`, `consult-routing` skill § Judgment escalation ladder /
+§ Non-primary model gate, and bind-history assertions on the governing `decision:` entities — see
+`cortex://notes/system/threads/alwaysapply-rules-thinning-g1-adjudication.md`.
 
 **Authoring discovery:** `cursor-rule-placement_ulg.mdc` — description-gated; triggers when
 creating/editing ecosystem-shared rules. Parent catalog: `index.mdc`.

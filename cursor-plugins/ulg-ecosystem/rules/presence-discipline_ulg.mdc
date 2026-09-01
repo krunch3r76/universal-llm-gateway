@@ -1,35 +1,28 @@
 ---
 name: presence-discipline
-description: Presence and determinacy discipline — always-applied to all Cursor-surface models. Fills the determinacy gap Opus covers through reasoning depth. Load-bearing for Sonnet 4.6, Composer 2.5, GPT-5.5, Grok 4.6, Gemini 3.5 Flash. Triggered by in-IDE work on any tier below Opus.
+description: Presence and determinacy discipline — bind forks before acting, one determinate step, evidence before any done signal, status-word provenance, never pin the turn on long waits. Always-on for every Cursor-surface model.
 alwaysApply: true
 ---
-# Presence Discipline
+# Presence discipline
 
-## Invariant — three rules, binding on every turn
+**P1 — Bind forks before acting.** Design choice or ambiguity mid-turn ⇒ name it, commit to a value, state the
+rejected alternative + reason, then act. An implicit fork does not bind itself later.
 
-**P1 — Bind forks before acting.**
-∀ design choice or ambiguity encountered mid-turn: name it, commit to a value, state the rejected alternative + reason — THEN act. Proceeding without binding is drift. A fork left implicit does not bind itself later.
+**P2 — One determinate step.** Execute one named bounded step → verify it completed → next. Never bundle
+"write A, write B, check C" into one conceptual action; bundling hides which step failed.
 
-**P2 — One determinate step at a time.**
-∀ multi-step task: execute one named, bounded step → verify it completed → move to the next. Never bundle "write A, write B, check C" into a single conceptual action. Bundling hides which step failed.
+**P3 — Evidence before any "done".** Before "done / complete / committed / passes / deployed": quote the
+observable (path, tool-response field, test line). No evidence ⇒ "unverified — check X" and halt. Silence ≠ success.
 
-**P3 — Evidence before any "done" signal.**
-Before emitting any completion signal ("done", "complete", "committed", "passes", "deployed"): state the specific observable — file at exact path, tool-response field value, test output line. No evidence → report "unverified — check X" and halt. Silence or absence of error ≠ success.
+**P3.1 — Status-word provenance.** `ratified`, `bound`, `dispatched`, `closed`, `corpus-*` appear only as
+`<status>(by=<seat|operator>, ref=<checkable artifact>)`; a seat is never a valid `by=` for ratification-class
+status on its own artifact; absent provenance write `interim` / `proposed` / `pending <binder>`.
 
-**P3.1 — Status-word provenance** (bound by=operator, ref=agent-bus:5352 G6 Fable path-sim + operator bind 2026-07-19).
-Arc-status ascriptions are completion claims (per `completion-provenance-discipline`). Reserved tokens — `ratified`, `bound`, `dispatched`, `closed`, and any `corpus-*` status — may appear in seat prose only as `<status>(by=<seat|operator>, ref=<checkable artifact>)`. Authority to confer ratification-class status is by reference to `corpus-map-authoring` (`ratify` ⇒ opus|operator). A seat is never a valid `by=` for ratification-class status on its own artifact. Absent valid provenance, write `interim` / `proposed` / `pending <binder>`.
+**P4 — Do not hold the turn on long waits.** Shell expected >~30s ⇒ `block_until_ms: 0` or a short smoke wait;
+never sit in `AwaitShell` / multi-minute polling. Exception: a CDP harvest that blocks the next action polls on
+**short** slices (≤5–10s once idle), not bare long sleeps.
 
-**P4 — Do not hold the turn on long Shell waits.**
-`∀` Shell expected to run >~30s (local 70B inference, long builds, sync_restart): start with `block_until_ms: 0` (background) ∨ a short smoke wait; **¬** sit in `AwaitShell` / multi-minute `block_until_ms` polling loops that pin the turn. Prefer end-of-turn completion notification; poll only when the *next* action is blocked on that job.
-**Exception (CDP harvest):** when the next action *is* blocked on a CDP harvest, P4 does **not** license bare long sleeps between polls — keep `agent_bus.wait` / `poll_hint` on **short slices** (≤5–10s once `turn_idle`/`stop`); see `claude-ai-cdp-navigation` § Dual-completion · Post-idle poll cadence (friction a:26348).
-
-**Structural (Shell):** project hook `.cursor/hooks/shell-timeout-cap.py` caps harness `tool_input.timeout` (agent `block_until_ms`) at 30s via `preToolUse` `updated_input`. Escape: include `# close-monitoring` (or `CLOSE_MONITORING=1`) in the command. Audit: `/tmp/cursor-shell-timeout-cap.jsonl`.
-
-**Residual (AwaitShell):** AwaitShell does **not** fire `preToolUse` (live probe 2026-07-16) — soft discipline only until Cursor exposes it to hooks.
-
-## Scope
-
-Applies to ALL Cursor-surface models (Sonnet 4.6, Composer 2.5, GPT-5.5, Grok 4.6, Gemini 3.5 Flash). Opus-class reasoning makes these implicit; below Opus they are explicit obligations.
-
-¬ scope: headless dispatch trust (anti-fabrication for unattended workers) — see `todo:cursor-sdk-dispatch-report-verification`.
-¬ scope: durable-artifact completion provenance at session close — see `provenance-discipline.mdc` (its trigger set is a strict superset of P3 for session-close events; P3 governs the in-turn behavioral layer).
+Applies to all Cursor-surface models; Opus-class makes these implicit, below Opus they are explicit obligations.
+Out of scope: headless dispatch trust (`todo:cursor-sdk-dispatch-report-verification`) · durable completion
+provenance at close (`provenance-discipline.mdc`). Shell cap hook + AwaitShell residual: `decision:` on the
+shell-timeout-cap (ref friction a:26348 · agent-bus:5352).
