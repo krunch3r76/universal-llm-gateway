@@ -628,34 +628,134 @@ def test_life_workspaces_refusal_state_aware_when_write_enabled(
     assert "not in the life workspaces grant" in refusal["error"]
 
 
-def test_life_fs_cortex_md_list_refused_by_permissions(life_server: dict) -> None:
-    """md_* on cortex is surface-gated via PERMISSIONS, not markdown overflow alone."""
+def test_life_fs_cortex_md_list_permitted(life_server: dict) -> None:
+    """md_* on cortex is permitted on /mcp/life via _CORTEX_OPS."""
     fs_fn, _ = _fs_tool_fn(life_server)
     result = fs_fn(
         op="md_list",
         sandbox="cortex",
         path="notes/system/specs/cdp-operator-proxy-v0.md",
     )
-    assert "error" in result
-    assert "md_list" in result["error"]
-    assert "/mcp/life surface" in result["error"]
-    assert "sandbox='cortex'" in result["error"]
-    assert "op_not_permitted" in result["error"]
-    assert 'fs(op="read")' in result["error"]
+    assert "op_not_permitted" not in result.get("error", "")
+    assert "not available for sandbox='cortex'" not in result.get("error", "")
+    if "error" not in result:
+        assert "sections" in result or "headings" in result
 
 
-def test_code_fs_cortex_md_list_refused_by_permissions(code_server: dict) -> None:
+def test_code_fs_cortex_md_list_permitted(code_server: dict) -> None:
+    """md_* on cortex is permitted on /mcp/code via _CORTEX_OPS."""
     fs_fn, _ = _fs_tool_fn(code_server)
     result = fs_fn(
         op="md_list",
         sandbox="cortex",
         path="notes/system/specs/cdp-operator-proxy-v0.md",
     )
+    assert "op_not_permitted" not in result.get("error", "")
+    assert "not available for sandbox='cortex'" not in result.get("error", "")
+    if "error" not in result:
+        assert "sections" in result or "headings" in result
+
+
+def test_code_fs_workspaces_md_list_permitted(code_server: dict) -> None:
+    """md_* on workspaces is permitted on /mcp/code via _WORKSPACES_OPS."""
+    fs_fn, _ = _fs_tool_fn(code_server)
+    result = fs_fn(
+        op="md_list",
+        sandbox="workspaces",
+        path=_workspaces_read_probe_path(),
+    )
+    assert "error" not in result, result.get("error")
+    assert "sections" in result or "headings" in result
+
+
+def test_life_fs_workspaces_md_replace_refused_out_of_lease(life_server: dict) -> None:
+    """md write ops stay outside the life workspaces write lease."""
+    fs_fn, _ = _fs_tool_fn(life_server)
+    result = fs_fn(
+        op="md_replace",
+        sandbox="workspaces",
+        path=_workspaces_read_probe_path(),
+        section="Overview",
+        content="probe",
+    )
     assert "error" in result
-    assert "md_list" in result["error"]
-    assert "sandbox='cortex'" in result["error"]
-    assert "op_not_permitted" in result["error"]
-    assert 'fs(op="read")' in result["error"]
+    assert "/mcp/life surface" in result["error"]
+    assert "READ-ONLY" in result["error"] or "not in the life workspaces grant" in result[
+        "error"
+    ]
+
+
+def test_life_fs_cortex_md_replace_permitted_with_write_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, life_server: dict
+) -> None:
+    """Cortex md writes are lease-held by life+code; life may mutate cortex sections."""
+    import tools.markdown_tool as markdown_mod
+
+    cortex_root = tmp_path / "cortex"
+    probe = cortex_root / "notes" / "tmp" / "md-lease-probe.md"
+    probe.parent.mkdir(parents=True)
+    probe.write_text("# Overview\n\noriginal\n", encoding="utf-8")
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(cortex_root))
+    monkeypatch.setattr(markdown_mod, "_FILES_ROOT", cortex_root)
+
+    fs_fn, _ = _fs_tool_fn(life_server)
+    result = fs_fn(
+        op="md_replace",
+        sandbox="cortex",
+        path="notes/tmp/md-lease-probe.md",
+        section="Overview",
+        content="updated",
+    )
+    assert "error" not in result, result
+    assert "updated" in probe.read_text(encoding="utf-8")
+
+
+def test_cortex_md_read_section_smaller_than_full_document(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code_server: dict
+) -> None:
+    """Section-scoped cortex md_read returns only the named section body."""
+    import tools.markdown_tool as markdown_mod
+
+    cortex_root = tmp_path / "cortex"
+    doc = cortex_root / "notes" / "tmp" / "section-probe.md"
+    doc.parent.mkdir(parents=True)
+    doc.write_text(
+        "# Intro\n\n"
+        + ("intro padding\n" * 20)
+        + "\n# Details\n\n"
+        + ("details payload with distinct content\n" * 40),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(cortex_root))
+    monkeypatch.setattr(markdown_mod, "_FILES_ROOT", cortex_root)
+
+    fs_fn, _ = _fs_tool_fn(code_server)
+    full = fs_fn(op="md_read", sandbox="cortex", path="notes/tmp/section-probe.md")
+    section = fs_fn(
+        op="md_read",
+        sandbox="cortex",
+        path="notes/tmp/section-probe.md",
+        section="Details",
+    )
+    assert "error" not in full, full
+    assert "error" not in section, section
+    full_len = len(full.get("content", ""))
+    section_len = len(section.get("content", ""))
+    assert section_len < full_len, (
+        f"section read ({section_len}) should be smaller than full doc ({full_len})"
+    )
+    assert "details payload" in section.get("content", "")
+    assert "intro padding" not in section.get("content", "")
+
+
+def test_write_ops_include_md_mutators() -> None:
+    """Table-derived _WRITE_OPS must gate md_replace/append/insert/delete."""
+    from fs_roots import _WRITE_OPS
+
+    for md_write in ("md_replace", "md_append", "md_insert", "md_delete"):
+        assert md_write in _WRITE_OPS, f"{md_write} missing from _WRITE_OPS"
+    for md_read in ("md_read", "md_list", "md_to_dict"):
+        assert md_read not in _WRITE_OPS, f"{md_read} incorrectly in _WRITE_OPS"
 
 
 def test_life_overflow_excludes_project_write_tools(life_server: dict) -> None:

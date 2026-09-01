@@ -17,6 +17,7 @@ import re
 import pytest
 
 from tools.filesystem._fs_dispatch import (
+    MD_OPS,
     OP_DOC,
     OP_SANDBOXES,
     advertised_standard_ops,
@@ -88,10 +89,17 @@ def _call(op: str) -> dict:
 
 @pytest.mark.parametrize(
     "op",
-    sorted(op for op in OP_SANDBOXES if "workspaces" in OP_SANDBOXES[op]),
+    sorted(
+        op
+        for op in OP_SANDBOXES
+        if "workspaces" in OP_SANDBOXES[op] and op not in MD_OPS
+    ),
 )
 def test_advertised_workspaces_op_dispatches(op: str) -> None:
-    """Ops advertising workspaces must not return unknown_op_error."""
+    """Ops advertising workspaces must not return unknown_op_error.
+
+    md_* ops dispatch via fs_impl's markdown overflow path, not here.
+    """
     result = _call(op)
     err = result.get("error", "")
     assert "Unknown" not in err, (
@@ -158,12 +166,13 @@ def test_ranged_read_does_not_return_unknown_op_error() -> None:
 
 
 def test_descriptor_doc_lists_exactly_table_ops() -> None:
-    """Generated fs docstring op-list must match OP_SANDBOXES (CF-3 drift canary)."""
+    """Generated fs Standard ops section lists non-md table ops (md in md_section_op_doc)."""
     doc = sandbox_op_doc()
     mentioned = set(re.findall(r"^\s+(\w+)\s+\(", doc, re.MULTILINE))
-    assert mentioned == set(OP_SANDBOXES), (
-        f"descriptor/table mismatch: extra={mentioned - set(OP_SANDBOXES)!r} "
-        f"missing={set(OP_SANDBOXES) - mentioned!r}"
+    standard_ops = set(OP_SANDBOXES) - MD_OPS
+    assert mentioned == standard_ops, (
+        f"descriptor/table mismatch: extra={mentioned - standard_ops!r} "
+        f"missing={standard_ops - mentioned!r}"
     )
 
 
@@ -180,7 +189,23 @@ WRITE_EDIT_OPS = frozenset(
 )
 
 
-def test_write_edit_ops_advertised_for_expected_sandboxes() -> None:
+def test_fs_descriptor_lists_each_md_op_once() -> None:
+    """Combined fs descriptor must mention each md op exactly once (Standard + md sections)."""
+    from fs_description import build_fs_tool_description
+
+    for surface in ("life", "code"):
+        desc = build_fs_tool_description(surface)
+        md_line_ops = re.findall(r"^\s+(md_\w+)\s+\(", desc, re.MULTILINE)
+        assert frozenset(md_line_ops) == MD_OPS, (
+            f"md section ops mismatch on {surface}: {md_line_ops!r}"
+        )
+        assert len(md_line_ops) == len(MD_OPS), (
+            f"duplicate md op lines on {surface}: {md_line_ops!r}"
+        )
+        standard_block = sandbox_op_doc()
+        for op in MD_OPS:
+            assert op not in standard_block, f"{op} leaked into Standard ops section"
+
     """Every durable write/edit op must be in OP_SANDBOXES with expected sandboxes."""
     assert WRITE_EDIT_OPS <= frozenset(OP_SANDBOXES)
     assert OP_SANDBOXES["write"] == frozenset({"cortex", "workspaces"})

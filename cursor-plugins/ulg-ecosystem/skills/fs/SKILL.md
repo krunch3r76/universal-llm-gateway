@@ -1,11 +1,11 @@
 ---
 trigger_match_terms: ["call", "write", "ops", "tooling-observability", "list", "search", "markdown", "section", "binary", "fs"]
-description: On any fs(...) call — cortex/workspaces read-write; optional thread= roots workspaces in a lane worktree; md_* are workspaces-only.
+description: On any fs(...) call — cortex/workspaces read-write; optional thread= roots workspaces in a lane worktree; md_* on both sandboxes (writes lease-gated).
 ---
 
 # Skill: MCP fs Tool
 
-**Trigger:** On any `fs(...)` call: read, write, list, search, binary ops. Markdown section ops (`md_*`) are **workspaces-only** — not on `sandbox="cortex"`.
+**Trigger:** On any `fs(...)` call: read, write, list, search, binary ops. Markdown section ops (`md_*`) are available on **both** `cortex` and `workspaces`; md writes are lease-gated (`code` for workspaces, `{life, code}` for cortex).
 
 ## Sandboxes and paths
 
@@ -64,7 +64,8 @@ File mode omits match `file`. Invalid regex returns `Invalid regex pattern: ...`
 ## Read and markdown ops
 
 `read` converts supported document formats on both sandboxes. **`md_*` section ops
-are workspaces-only** — not permitted on `sandbox="cortex"`.
+are available on both sandboxes** — use `md_list` / section-scoped `md_read` on
+cortex durable artifacts (`cortex://…`) and on workspaces repo source.
 
 Markdown section writes are text-file-only; converted formats reject.
 

@@ -15,11 +15,23 @@ if TYPE_CHECKING:
 # ∀ sandbox-capability change: update only this table.
 # The workspaces dispatcher and all error strings derive from it automatically.
 # Shared ops (both sandboxes): read, read_multi, write, append, prepend,
-#   replace, insert_at_line, list, delete, move, copy.
+#   replace, insert_at_line, list, delete, move, copy, md_* section ops.
 # Substrate-specific (capability flags, not forked ladders):
 #   write_binary, append_binary → cortex only.
 # search → both sandboxes (conversion-aware: PDF/DOCX/ODT/EML/HTML).
 # recent_commits → workspaces only (oneline subjects, no diffs).
+# md_* dispatch: fs_impl markdown overflow path (not dispatch_workspaces_op).
+MD_OPS: frozenset[str] = frozenset(
+    {
+        "md_list",
+        "md_read",
+        "md_to_dict",
+        "md_replace",
+        "md_append",
+        "md_insert",
+        "md_delete",
+    }
+)
 OP_SANDBOXES: dict[str, frozenset[str]] = {
     "read": frozenset({"cortex", "workspaces"}),
     "read_multi": frozenset({"cortex", "workspaces"}),
@@ -38,6 +50,13 @@ OP_SANDBOXES: dict[str, frozenset[str]] = {
     "write_binary": frozenset({"cortex"}),
     "append_binary": frozenset({"cortex"}),
     "resolve_sha256": frozenset({"cortex"}),
+    "md_list": frozenset({"cortex", "workspaces"}),
+    "md_read": frozenset({"cortex", "workspaces"}),
+    "md_to_dict": frozenset({"cortex", "workspaces"}),
+    "md_replace": frozenset({"cortex", "workspaces"}),
+    "md_append": frozenset({"cortex", "workspaces"}),
+    "md_insert": frozenset({"cortex", "workspaces"}),
+    "md_delete": frozenset({"cortex", "workspaces"}),
 }
 
 
@@ -87,6 +106,22 @@ OP_DOC: dict[str, tuple[str, str]] = {
         "(content)",
         "check whether a cited sha256 digest resolves in the content store",
     ),
+    "md_list": ("(path)", "list sections/TOC (see Markdown section ops below)"),
+    "md_read": ("(path, section?)", "read one section (see Markdown section ops below)"),
+    "md_to_dict": ("(path)", "nested heading dict (see Markdown section ops below)"),
+    "md_replace": (
+        "(path, section, content)",
+        "replace section body (see Markdown section ops below)",
+    ),
+    "md_append": (
+        "(path, section, content)",
+        "append to section body (see Markdown section ops below)",
+    ),
+    "md_insert": (
+        "(path, heading, level, position, section?, content?)",
+        "insert a new section (see Markdown section ops below)",
+    ),
+    "md_delete": ("(path, section)", "delete section (see Markdown section ops below)"),
 }
 
 
@@ -255,9 +290,13 @@ def _sandbox_only_note(sandboxes: frozenset[str]) -> str:
 
 
 def sandbox_op_doc() -> str:
-    """Build the fs tool docstring 'Standard ops' section from OP_SANDBOXES."""
+    """Build the fs tool docstring 'Standard ops' section from OP_SANDBOXES.
+
+    Markdown section ops are documented separately by ``md_section_op_doc()`` so
+    each md op appears exactly once in the combined fs descriptor.
+    """
     lines = ["        Standard ops:"]
-    for op in sorted(OP_SANDBOXES):
+    for op in sorted(op for op in OP_SANDBOXES if op not in MD_OPS):
         params, desc = OP_DOC[op]
         note = _sandbox_only_note(OP_SANDBOXES[op])
         if "\n" in desc:

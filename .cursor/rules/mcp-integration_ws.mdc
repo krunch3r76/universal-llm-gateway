@@ -36,7 +36,7 @@ Primary tools (directly enumerated):
 
 | Tool | When to use |
 |---|---|
-| `fs(op, sandbox?, path, ...)` | All file operations. Sandboxes: `cortex` (/data/files), `workspaces` (repo root). On `/mcp/code`, bare paths need explicit `sandbox` or a Share URI. On `/mcp/life`, omitted sandbox defaults to cortex (`cortex://` preferred); workspaces unavailable. Standard ops on both sandboxes: read, write, append, prepend, replace, insert_at_line, list, search. **Markdown section ops** (`md_list`, `md_read`, `md_replace`, `md_append`, `md_delete`) are **workspaces-only** — not on `sandbox="cortex"`. |
+| `fs(op, sandbox?, path, ...)` | All file operations. Sandboxes: `cortex` (/data/files), `workspaces` (repo root). On `/mcp/code`, bare paths need explicit `sandbox` or a Share URI. On `/mcp/life`, omitted sandbox defaults to cortex (`cortex://` preferred); workspaces read-only unless `LIFE_PROJECT_ROOT` grant. Standard ops on both sandboxes: read, write, append, prepend, replace, insert_at_line, list, search. **Markdown section ops** (`md_list`, `md_read`, `md_to_dict`, `md_replace`, `md_append`, `md_insert`, `md_delete`) on **both** sandboxes; md writes lease-gated (`code` for workspaces, `{life, code}` for cortex). |
 | `pipeline` | Run, async-dispatch, poll results, validate, or cancel pipelines. Ops: `run`, `async`, `result`, `validate`, `stats`, `cancel`. Requires `pipeline_id` (never `pipeline=` kwarg). |
 | `manage` | Start, stop, restart, rebuild, or wait_healthy on any service — requires `./manage` TUI running. Socket: `transport_utils.MANAGE_SOCKET` (default `/tmp/universal-protocol/manage.sock`); use MCP `manage(action="status")`, not shell probes on repo root or `~/.gateway/`. |
 | `sql` | Query SQLite databases (read-only) |
