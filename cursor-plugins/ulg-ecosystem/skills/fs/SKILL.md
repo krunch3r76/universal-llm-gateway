@@ -61,6 +61,33 @@ Response shape:
 
 File mode omits match `file`. Invalid regex returns `Invalid regex pattern: ...`.
 
+## Consult-class paths (cortex sandbox, write-once)
+
+Cortex-sandbox paths whose filename matches consult-artifact markers (`-architecture-bind`,
+`-independent-check`, `-fable-answer`, `opus-grok-instructions`, `cdp-ask-archive`,
+`-consult-`, `-amendment-from-`) classify as **consult-class**: immutable, one-shot
+artifacts, not living documents (bind:
+`cortex://notes/system/threads/6655-consult-artifact-uri-collision-cdp-opus-architecture-bind.md`).
+
+- The **first** `write` to a not-yet-existing consult-class path succeeds and echoes
+  `artifact_class: "consult"` + a `consult_notice` in the response — treat that as a hard
+  stop, not a formality.
+- **Every** op after that on the same path refuses unconditionally: `write` (with or
+  without `if_absent`), `append`, `prepend`, `replace`, `insert_at_line`, and every
+  `md_*` write op. A matching `expected_sha256` does **not** open a bypass — this is an
+  immutable-per-address design invariant, not a race guard you can satisfy.
+- **Consequence:** compose the entire final content before the first `write` call on a
+  consult-class path. Never plan a write-then-append (or write-then-`md_replace`)
+  sequence for one — mint a fresh seat+execution_id address (`mint_consult_artifact_rel_path`)
+  if content needs to change.
+- The `multi_section_revision` rule below is for shared/ordinary documents — it does
+  **not** apply here; `md_replace`/`md_append`/`md_insert` refuse identically to `append`
+  on an existing consult-class path.
+
+Failure mode this stanza exists to prevent: `write` of a 27KB chunk of a 45KB doc
+succeeded, the follow-up CAS-guarded `append` was refused (`consult_class.in_place_edit`),
+forcing a full 45KB re-emission at a new path (friction `a:31802`).
+
 ## Read and markdown ops
 
 `read` converts supported document formats on both sandboxes. **`md_*` section ops
@@ -75,7 +102,7 @@ Handoff implement packets use six line-anchored XML blocks (`<scope>`, `<invaria
 
 `md_insert` creates a new section: `heading`, `level ∈ 1..6`, `position ∈ {end, after, before}`. `after/before` require `section` anchor; `after` lands past the anchor's whole subtree. Use `md_insert`, not append/replace, to add a section.
 
-`multi_section_revision(existing_doc) ⇒ md_replace(each_section) ∧ ¬whole_file_reemit`; whole-file re-emission risks transcription drift. `guarded_whole_file_write ⇒ expected_sha256`.
+`multi_section_revision(existing_doc) ⇒ md_replace(each_section) ∧ ¬whole_file_reemit`; whole-file re-emission risks transcription drift. `guarded_whole_file_write ⇒ expected_sha256`. Exception: consult-class paths (above) refuse `md_replace`/`md_append`/`md_insert` on an existing file identically to `append` — this rule never applies there.
 
 Exception: when a downstream consumer needs the post-edit file hash (for example, a bus pointer), whole-file `write` returns `written_sha256`; `md_*` currently do not.
 

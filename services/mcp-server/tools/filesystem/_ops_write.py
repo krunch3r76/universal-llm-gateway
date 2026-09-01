@@ -28,7 +28,7 @@ from ._paths import (
     sha256_of_file,
 )
 from ._share_uri_response import attach_dual_carry
-from ._write_authority import evaluate_write_authority
+from ._write_authority import classify_artifact_path, evaluate_write_authority
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +160,13 @@ def write_file_impl(
     resulting file bytes. Overwrites also include ``replaced_sha256`` when prior
     bytes existed. ``expected_sha256`` accepts bare hex (``read_sha256``
     round-trip) or ``sha256:`` / ``spec_sha256:`` citation prefixes.
+
+    A successful write to a consult-class path additionally echoes
+    ``artifact_class: "consult"`` + ``consult_notice``: this class is
+    write-once, so every later op on the same path (write, append, prepend,
+    replace, insert_at_line, any ``md_*`` write) refuses unconditionally, CAS
+    match or not (friction a:31802 — the refusal previously surfaced only on
+    the doomed follow-up call, after partial content was already committed).
     """
     if expected_sha256 is not None and if_absent:
         raise ValueError("expected_sha256 and if_absent are mutually exclusive")
@@ -244,4 +251,11 @@ def write_file_impl(
     }
     if replaced_sha256 is not None:
         result["replaced_sha256"] = replaced_sha256
+    if classify_artifact_path(path, artifact_class=artifact_class) == "consult":
+        result["artifact_class"] = "consult"
+        result["consult_notice"] = (
+            "Write-once path: every later op here (write, append, prepend, "
+            "replace, insert_at_line, any md_* write) will be refused, CAS "
+            "match or not. Mint a new seat+execution_id address to revise."
+        )
     return attach_dual_carry(result, sandbox="cortex", rel_path=rel)

@@ -35,6 +35,32 @@ def test_consult_unguarded_overwrite_refuses_with_digest(
     assert (sandbox_root / rel).read_text(encoding="utf-8") == "opus-bind"
 
 
+def test_consult_first_write_echoes_advisory(
+    sandbox_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """a:31802 — the refusal must be knowable from the write that creates the
+    path, not only from the doomed follow-up append/replace/md_* call."""
+    monkeypatch.setattr(ops_write, "record", lambda *_a, **_k: None)
+    rel = "notes/system/threads/6655-demo-architecture-bind.md"
+    written = ops_text.write_file_impl(rel, "opus-bind", if_absent=True)
+    assert written["status"] == "written"
+    assert written["artifact_class"] == "consult"
+    assert "Write-once" in written["consult_notice"]
+
+
+def test_shared_write_has_no_consult_advisory(
+    sandbox_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ops_write, "record", lambda *_a, **_k: None)
+    rel = "notes/system/specs/demo-roadmap-2.md"
+    written = ops_text.write_file_impl(rel, "row-1\n", artifact_class="shared")
+    assert written["status"] == "written"
+    assert "artifact_class" not in written
+    assert "consult_notice" not in written
+
+
 def test_consult_if_absent_collision_installs_pointer(
     sandbox_root: Path,
     monkeypatch: pytest.MonkeyPatch,
