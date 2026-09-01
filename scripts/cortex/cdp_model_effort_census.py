@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Live-DOM census for cdp/opus-5 effort picker (a:31333 + a:31534).
+"""Live-DOM census for cdp/opus-5 + cdp/fable-5-max effort picker.
 
 a:31333 asked whether a trailing PUA on the Opus row caused
 ``effort_trigger_missing``. That glyph is real and benign.
 
-a:31534 is the live after-ship failure: family-click lands Opus on Max, then
-High fails. Stock ``opus-5-max`` PASS is **not** this AC-0. The High-after-Max
-leg (``set_effort("high")`` + ``select_model("opus-5")``) is the verdict that
-matters.
+a:31534 is High-after-Max on Opus: family-click lands Opus on Max, then High
+fails. Stock ``opus-5-max`` PASS is **not** that AC-0.
+
+a:31708 is Fable Max as a nested Effort flyout (``Effort High >``), not a
+missing product rung. Combined verdict is both ``verdict_high_after_max``
+and ``verdict_fable_max``.
 
 Opens a brand-new isolated tab (never touches an existing live CSE session).
 
@@ -30,6 +32,7 @@ sys.path.insert(0, str(_REPO / "libs"))
 from claude_bundles.chat_model_effort import (  # noqa: E402
     _effort_option,
     _effort_trigger,
+    _open_effort_flyout,
     set_effort,
 )
 from claude_bundles.chat_model_match import label_satisfies_request  # noqa: E402
@@ -113,6 +116,13 @@ async def main() -> int:
             trigger_loc, trigger_via = await _effort_trigger(page)
             report["effort_trigger_found"] = trigger_loc is not None
             report["effort_trigger_via"] = trigger_via
+            if trigger_loc is not None:
+                report["flyout_via"] = await _open_effort_flyout(
+                    page, trigger_loc
+                )
+                report["menu_census_after_effort_flyout"] = await _census_menu(
+                    page
+                )
             # Picker from the reopen (above) is still open here — run the real
             # set_effort against it directly for the ground-truth verdict.
             report["set_effort_max_result"] = await set_effort(page, "max")
@@ -149,7 +159,32 @@ async def main() -> int:
         )
         report["after_high_label"] = after_high
         report["verdict_high_after_max"] = "PASS" if high_ok else "FAIL"
-        report["verdict"] = report["verdict_high_after_max"]
+
+        # a:31708 — Fable Max nested flyout (not product-absent Max).
+        try:
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(300)
+            fable_result = await select_model(page, "fable-5-max")
+            report["select_model_fable5_max"] = fable_result
+            after_fable = (
+                fable_result.get("current_model")
+                or await current_model_label(page)
+            )
+            fable_ok = bool(fable_result.get("ok")) and label_satisfies_request(
+                "fable-5-max", after_fable, effort="max"
+            )
+            report["after_fable_max_label"] = after_fable
+            report["verdict_fable_max"] = "PASS" if fable_ok else "FAIL"
+        except Exception as exc:  # noqa: BLE001 — partial census beats none
+            report["fable_max_error"] = repr(exc)
+            report["verdict_fable_max"] = "FAIL"
+
+        report["verdict"] = (
+            "PASS"
+            if report.get("verdict_high_after_max") == "PASS"
+            and report.get("verdict_fable_max") == "PASS"
+            else "FAIL"
+        )
 
         print(json.dumps(report, indent=2, ensure_ascii=False))
         return 0 if report["verdict"] == "PASS" else 1

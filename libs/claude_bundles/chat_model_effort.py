@@ -12,12 +12,19 @@ recover then *lied* ``effort_trigger_missing`` while dropping ``candidates``.
 ``_effort_option`` now matches High + optional Default subtitle (including a
 newline) and polls after the trigger click; recover keeps the real inner
 ``effort_*`` step and attaches ``collect_effort_candidates``.
+
+a:31708 (2026-08-31): Fable Max is a nested Effort flyout (``Effort High >``),
+not a missing product rung. Hover the Effort row before click so Extra/Max
+mount; skip click when radios are already visible (parent click can toggle
+the flyout shut). Option text allows any trailing subtitle — Max is
+``Max\\n1.5x or more usage``, not ``Default``.
 """
 
 from __future__ import annotations
 
 import re
 
+from effort_vocabulary import PICKER_LADDER
 from effort_vocabulary import to_picker_label as _effort_label
 from effort_vocabulary import to_testid as _effort_testid
 
@@ -35,13 +42,13 @@ _EFFORT_TRIGGER_POLL_MS = 400
 
 
 def _effort_option_pattern(label: str) -> re.Pattern[str]:
-    """Match flyout option text, including ``High\\nDefault`` (a:31534).
+    """Match flyout option text plus an optional trailing subtitle.
 
-    ``^High\\b`` as a full-string match misses the Default subtitle. ``\\s``
-    covers both space and newline so ``High Default`` and ``High\\nDefault``
-    hit; ``^`` keeps Extra High from matching the High radio.
+    ``High\\nDefault`` (a:31534) and ``Max\\n1.5x or more usage`` (a:31708)
+    share one shape: rung name, then optional whitespace/newline + rest.
+    ``^`` keeps Extra High from matching the High radio.
     """
-    return re.compile(rf"^{re.escape(label)}(?:\s+Default)?$", re.I)
+    return re.compile(rf"^{re.escape(label)}(?:\s+.+)?$", re.I)
 
 
 async def _count(locator) -> int:
@@ -70,8 +77,8 @@ async def _effort_trigger(page):
     return None, None
 
 
-async def _effort_option(page, key: str, testid: str):
-    """Legacy ``effort-option-*``, else flyout label Low/Medium/High/Extra/Max."""
+async def _effort_radio(page, key: str, testid: str):
+    """Testid or ``menuitemradio`` only — never the Effort parent menuitem."""
     by_id = page.locator(f'[data-testid="{testid}"]')
     if await _count(by_id):
         return by_id, "testid"
@@ -85,6 +92,18 @@ async def _effort_option(page, key: str, testid: str):
     named_radio = page.get_by_role("menuitemradio", name=pat)
     if await _count(named_radio):
         return named_radio, "label-radio-name"
+    return None, None
+
+
+async def _effort_option(page, key: str, testid: str):
+    """Legacy ``effort-option-*``, else flyout label Low/Medium/High/Extra/Max."""
+    radio, via = await _effort_radio(page, key, testid)
+    if radio is not None:
+        return radio, via
+    label = _effort_label(key)
+    if not label:
+        return None, None
+    pat = _effort_option_pattern(label)
     item = page.locator("[role=menuitem]").filter(has_text=pat)
     if await _count(item):
         return item, "label-item"
@@ -94,8 +113,42 @@ async def _effort_option(page, key: str, testid: str):
     return None, None
 
 
+async def _any_effort_radio_visible(page) -> bool:
+    """True when any Low/Medium/High/Extra/Max flyout radio is in the DOM."""
+    for key in PICKER_LADDER:
+        testid = _effort_testid(key)
+        if not testid:
+            continue
+        opt, _ = await _effort_radio(page, key, testid)
+        if opt is not None:
+            return True
+    return False
+
+
+async def _safe_hover(loc) -> None:
+    """Hover the Effort row so a nested flyout can mount (a:31708)."""
+    target = getattr(loc, "first", loc)
+    await target.hover(force=True)
+
+
+async def _open_effort_flyout(page, trigger) -> str | None:
+    """Hover, then click only if flyout radios are still absent (a:31708)."""
+    first = trigger.first
+    await _safe_hover(first)
+    if await _any_effort_radio_visible(page):
+        return "hover"
+    await first.click(force=True)
+    for attempt in range(_EFFORT_TRIGGER_RETRIES):
+        if await _any_effort_radio_visible(page):
+            return "click"
+        if attempt < _EFFORT_TRIGGER_RETRIES - 1:
+            await _safe_hover(first)
+            await page.wait_for_timeout(_EFFORT_TRIGGER_POLL_MS)
+    return None
+
+
 async def _poll_effort_option(page, key: str, testid: str):
-    """Wait for the flyout radio after Effort click (same class as trigger)."""
+    """Wait for the flyout radio after the Effort flyout is open."""
     for attempt in range(_EFFORT_TRIGGER_RETRIES):
         opt, via = await _effort_option(page, key, testid)
         if opt is not None:
@@ -108,9 +161,9 @@ async def _poll_effort_option(page, key: str, testid: str):
 async def set_effort(page, level: str) -> dict:
     """Set Thinking Effort via the open model-picker submenu.
 
-    Prefers ``effort-menu-trigger`` / ``effort-option-*``. On miss, clicks the
-    visible ``Effort`` row then Low/Medium/High/Extra/Max (Chat and Cowork).
-    Does not click family radios; callers still recover via qualified radio.
+    Prefers ``effort-menu-trigger`` / ``effort-option-*``. On miss, hovers the
+    Effort row (nested flyout) and clicks only if radios are still absent,
+    then Low/Medium/High/Extra/Max. Does not click family radios.
     """
     key = (level or "").strip().lower()
     testid = _effort_testid(key)
@@ -120,10 +173,15 @@ async def set_effort(page, level: str) -> dict:
     trigger, trigger_via = await _effort_trigger(page)
     if trigger is None:
         return {"ok": False, "step": "effort_trigger_missing"}
-    await trigger.first.click(force=True)
+    flyout_via = await _open_effort_flyout(page, trigger)
     opt, option_via = await _poll_effort_option(page, key, testid)
     if opt is None:
-        return {"ok": False, "step": "effort_option_missing", "testid": testid}
+        return {
+            "ok": False,
+            "step": "effort_option_missing",
+            "testid": testid,
+            "flyout_via": flyout_via,
+        }
     await opt.first.click(force=True)
     await page.wait_for_timeout(800)
     return {
@@ -133,6 +191,7 @@ async def set_effort(page, level: str) -> dict:
         "testid": testid,
         "trigger_via": trigger_via,
         "option_via": option_via,
+        "flyout_via": flyout_via,
     }
 
 

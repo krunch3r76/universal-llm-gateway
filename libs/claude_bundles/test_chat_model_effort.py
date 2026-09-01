@@ -29,6 +29,7 @@ class _StaticLoc:
             self.count = AsyncMock(return_value=count_value)
         self.first = self
         self.click = AsyncMock()
+        self.hover = AsyncMock()
 
 
 class _MenuitemLocator:
@@ -46,6 +47,7 @@ class _CountLoc:
         self._n = n
         self.first = self
         self.click = AsyncMock()
+        self.hover = AsyncMock()
         self._filters: dict[str, _CountLoc] = {}
 
     async def count(self) -> int:
@@ -328,13 +330,17 @@ async def test_set_effort_clicks_effort_row_when_testid_absent() -> None:
     page = AsyncMock()
     page.wait_for_timeout = AsyncMock()
     page.locator = lambda sel, **_k: locs.get(sel, _CountLoc(0))
-    page.get_by_role = AsyncMock(return_value=_CountLoc(0))
+    page.get_by_role = lambda *_a, **_k: _CountLoc(0)
     result = await set_effort(page, "max")
     assert result["ok"] is True
     assert result["trigger_via"] == "menuitem"
     assert result["option_via"] == "label-radio"
+    assert result["flyout_via"] == "hover"
     effort_row = locs["[role=menuitem]"].filter(has_text=_EFFORT_ROW)
-    assert effort_row.click.await_count == 1
+    assert effort_row.hover.await_count == 1
+    # Stub radios match Max by pattern even before click; skip parent click
+    # so an already-open hover flyout is not toggled shut (a:31708).
+    assert effort_row.click.await_count == 0
 
 
 @pytest.mark.offline
@@ -465,25 +471,62 @@ def test_effort_option_pattern_matches_high_default_subtitle() -> None:
     assert not pat.search("Max")
 
 
-class _HighDefaultRadio:
-    """``[role=menuitemradio]`` whose filter applies the real High pattern."""
+@pytest.mark.offline
+def test_effort_option_pattern_matches_max_usage_subtitle() -> None:
+    """a:31708 — Max radio text is ``Max\\n1.5x or more usage``."""
+    pat = _effort_option_pattern("Max")
+    assert pat.search("Max")
+    assert pat.search("Max 1.5x or more usage")
+    assert pat.search("Max\n1.5x or more usage")
+    assert not pat.search("High")
+    extra = _effort_option_pattern("Extra")
+    assert extra.search("Extra")
+    assert extra.search("Extra High")
+    assert not _effort_option_pattern("High").search("Extra High")
 
-    def __init__(self) -> None:
+
+class _SubtitleRadio:
+    """``[role=menuitemradio]`` whose filter applies the real option pattern."""
+
+    def __init__(self, text: str, *, open_state: dict | None = None) -> None:
+        self._text = text
+        self._open_state = open_state
         self.click = AsyncMock()
         self.first = self
+        self.hover = AsyncMock()
         self._n = 0
+
+    def _visible(self) -> bool:
+        return self._open_state is None or bool(self._open_state.get("open"))
 
     async def count(self) -> int:
         return self._n
 
     def filter(self, has_text=None, **_kwargs):
-        text = "High\nDefault"
-        child = _HighDefaultRadio()
+        child = _SubtitleRadio(self._text, open_state=self._open_state)
         child.click = self.click
         child.first = child
-        if has_text is not None and getattr(has_text, "search", None):
-            child._n = 1 if has_text.search(text) else 0
+        matched = (
+            has_text is not None
+            and getattr(has_text, "search", None)
+            and has_text.search(self._text)
+        )
+        child._n = 1 if matched and child._visible() else 0
         return child
+
+
+class _ClickOpensTrigger:
+    """Effort trigger whose click (not hover) mounts the nested flyout."""
+
+    def __init__(self, open_state: dict) -> None:
+        self._open_state = open_state
+        self.first = self
+        self.hover = AsyncMock()
+        self.click = AsyncMock(side_effect=self._open)
+        self.count = AsyncMock(return_value=1)
+
+    async def _open(self, **_kwargs) -> None:
+        self._open_state["open"] = True
 
 
 @pytest.mark.offline
@@ -491,7 +534,7 @@ class _HighDefaultRadio:
 async def test_set_effort_high_clicks_high_default_radio() -> None:
     """a:31534 — High-after-Max flyout option is clickable without testid."""
     trigger = _StaticLoc(1)
-    radios = _HighDefaultRadio()
+    radios = _SubtitleRadio("High\nDefault")
 
     def _page_locator(sel, **_kwargs):
         if sel == '[data-testid="effort-menu-trigger"]':
@@ -512,6 +555,72 @@ async def test_set_effort_high_clicks_high_default_radio() -> None:
     result = await set_effort(page, "high")
     assert result["ok"] is True
     assert result["option_via"] == "label-radio"
+    assert result["flyout_via"] == "hover"
+    assert radios.click.await_count == 1
+    assert trigger.hover.await_count == 1
+    assert trigger.click.await_count == 0
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_set_effort_max_clicks_usage_subtitle_radio() -> None:
+    """a:31708 — Max flyout option is clickable with a usage subtitle."""
+    trigger = _StaticLoc(1)
+    radios = _SubtitleRadio("Max\n1.5x or more usage")
+
+    def _page_locator(sel, **_kwargs):
+        if sel == '[data-testid="effort-menu-trigger"]':
+            return trigger
+        if sel == '[data-testid="effort-option-max"]':
+            return _StaticLoc(0)
+        if sel == "[role=menuitemradio]":
+            return radios
+        if sel == "[role=menuitem]":
+            return _MenuitemLocator(_StaticLoc(0))
+        return _StaticLoc(0)
+
+    page = AsyncMock()
+    page.wait_for_timeout = AsyncMock()
+    page.locator = _page_locator
+    page.get_by_role = lambda *_a, **_k: _StaticLoc(0)
+
+    result = await set_effort(page, "max")
+    assert result["ok"] is True
+    assert result["option_via"] == "label-radio"
+    assert result["flyout_via"] == "hover"
+    assert radios.click.await_count == 1
+    assert trigger.click.await_count == 0
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_set_effort_clicks_trigger_when_hover_does_not_reveal() -> None:
+    """a:31708 — parent click only when hover left the flyout closed."""
+    open_state = {"open": False}
+    trigger = _ClickOpensTrigger(open_state)
+    radios = _SubtitleRadio("Max\n1.5x or more usage", open_state=open_state)
+
+    def _page_locator(sel, **_kwargs):
+        if sel == '[data-testid="effort-menu-trigger"]':
+            return trigger
+        if sel.startswith('[data-testid="effort-option-'):
+            return _StaticLoc(0)
+        if sel == "[role=menuitemradio]":
+            return radios
+        if sel == "[role=menuitem]":
+            return _MenuitemLocator(_StaticLoc(0))
+        return _StaticLoc(0)
+
+    page = AsyncMock()
+    page.wait_for_timeout = AsyncMock()
+    page.locator = _page_locator
+    page.get_by_role = lambda *_a, **_k: _StaticLoc(0)
+
+    result = await set_effort(page, "max")
+    assert result["ok"] is True
+    assert result["flyout_via"] == "click"
+    assert trigger.hover.await_count == 1
+    assert trigger.click.await_count == 1
     assert radios.click.await_count == 1
 
 
