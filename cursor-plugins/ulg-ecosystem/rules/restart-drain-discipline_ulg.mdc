@@ -1,5 +1,5 @@
 ---
-description: Restart drain kernel — needed restart fires; busy never skips; force=true permitted on every service except git_integration_worker (drain, never force, never kill); landed ≠ live; finishing work is go-live. Recovery tables and history live on the manage envelope and runbook.
+description: Restart drain kernel — needed restart fires; busy never skips; force=true permitted on every service except git_integration_worker (drain, never force, never kill); landed ≠ live; finishing work is go-live; commit of complete work auto-triggers go-live, sha-stamps follow the live proof. Recovery tables and history live on the manage envelope and runbook.
 alwaysApply: true
 rule_category: engineering
 apply_tier: required_gate
@@ -31,9 +31,14 @@ in-progress durable write. Recycling `mcp`/`cdp_ask` drops attach, not the CSE (
 
 **Go-live = finishing.** `work_complete ⇒ commit(path-explicit) ∧ recycle(every serving process) ∧
 stamp(graph)`; "go live / activate / everything live?" are that contract, not a second permission gate.
-Mid-arc checkpoint commit and `/session-end` are not work-complete. Proof line: services · claim class
-(`live | live@sha | not_live | drain_pending`) · `restart_intent_id` or process start UTC · path probe.
-Satellites recycle via their repo's deploy script; proof is the same.
+`commit(work_complete) ⇒ go_live` **autonomously** — the commit is itself the trigger; no separate
+operator utterance needed, and non-GIW busy-defer still resolves via the force+announce invariant above,
+never a skip. Mid-arc checkpoint commit and `/session-end` are not work-complete. When a stamp cites the
+landing commit (`resolution_kind=commit:{sha}`, `live@sha` claims), sequence it **after** the recycle+proof
+for that same commit, not before — cheap now that go-live is the default, and consistent with the
+forbidden-row-5 bar (`live` proven is the close condition either way; this is ordering, not a new gate).
+Proof line: services · claim class (`live | live@sha | not_live | drain_pending`) · `restart_intent_id` or
+process start UTC · path probe. Satellites recycle via their repo's deploy script; proof is the same.
 
 Recovery expectations after `mcp`/`cdp_ask` recycle (IDE retry on `-32099`; CSE continuity hop for chip
 refresh; `cse_session(op=followup)` by `chat_url`): the `manage` deferral envelope + `runbook:restart-drain`.
