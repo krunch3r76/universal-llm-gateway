@@ -44,6 +44,33 @@ def frontmatter_value(text: str, key: str) -> str | None:
     return match.group(1) if match else None
 
 
+def frontmatter_list_value(text: str, key: str) -> list[str] | None:
+    """Return a YAML frontmatter block-list value, or None if the key is absent.
+
+    Only the block-list shape is supported (``key:`` alone on its line,
+    followed by indented ``- item`` lines) — the shape packet authors already
+    use to declare an authoritative ``files_expected:`` scope (friction
+    a:31774). A present-but-empty block (``key:`` with no following ``-``
+    lines) returns ``[]``, distinct from an absent key (``None``), so an
+    author can declare an explicit empty scope.
+    """
+    region = _frontmatter_region(text)
+    if region is None:
+        return None
+    header = re.search(rf"^{re.escape(key)}:[ \t]*$", region, flags=re.MULTILINE)
+    if header is None:
+        return None
+    items: list[str] = []
+    for line in region[header.end() :].splitlines():
+        if not line.strip():
+            continue
+        item = re.match(r"^[ \t]+-[ \t]*(.+)$", line)
+        if item is None:
+            break
+        items.append(item.group(1).strip())
+    return items
+
+
 def replace_frontmatter_value(text: str, key: str, value: str) -> str:
     """Replace a frontmatter key's value; append the key if missing."""
     region = _frontmatter_region(text)

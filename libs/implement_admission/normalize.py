@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from implement_admission.admission_read import read_packet
+from implement_admission.admission_read import frontmatter_list_value, read_packet
 from implement_admission.deck_resolver import NormalizedDeck, resolve_phase_deck
 from implement_admission.routing import (
     classify_risk_tier,
@@ -472,6 +472,13 @@ def _looks_like_file_path(path: str) -> bool:
         return False
     if any(ch.isspace() for ch in candidate):
         return False
+    if candidate.startswith("/"):
+        # Absolute non-repo tokens (MCP surface names, mount roots — e.g.
+        # `/mcp/code`, `/data/files`) get backticked in prose without a file
+        # suffix; require one so they are not scraped into files_expected and
+        # then poison scope_is_single_repo (friction a:31774). A genuine
+        # absolute in-repo file (e.g. `/mnt/.../services/foo.py`) still has one.
+        return candidate.endswith(_FILE_PATH_SUFFIXES)
     return "/" in candidate or candidate.endswith(_FILE_PATH_SUFFIXES)
 
 
@@ -480,6 +487,14 @@ def _strip_fenced_blocks(text: str) -> str:
 
 
 def _files_from_packet(text: str) -> list[str]:
+    # An explicit front-matter `files_expected:` list is authoritative (friction
+    # a:31774) — it is the documented way to declare scope, and skipping the
+    # scrape entirely for these packets means prose elsewhere in the packet can
+    # never poison it. Present-but-empty means an intentional empty scope.
+    frontmatter_files = frontmatter_list_value(text, "files_expected")
+    if frontmatter_files is not None:
+        return _dedupe_preserve([f for f in frontmatter_files if f])
+
     scope_text = _extract_block(text, "scope") or ""
     seen: set[str] = set()
     files: list[str] = []

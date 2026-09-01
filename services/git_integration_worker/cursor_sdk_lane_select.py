@@ -39,28 +39,49 @@ def wire_lane_explicit(req: CursorDispatchRequest) -> Lane | None:
     return None
 
 
-def scope_is_single_repo(files_expected: list[str], source_repo: Path) -> bool:
-    """True when every expected path resolves under ``source_repo`` (or is repo-relative)."""
+def _scope_violation_reason(path: str, repo: Path) -> str | None:
+    """Classify why ``path`` fails single-repo scope, or None when it passes."""
+    if path.startswith(("cortex://", "cortex:")):
+        return "cortex:// reference, not a repo-relative path"
+    if path.startswith("workspaces://"):
+        return "workspaces:// reference, not a repo-relative path"
+    candidate = Path(path)
+    if candidate.is_absolute():
+        try:
+            candidate.resolve().relative_to(repo)
+        except ValueError:
+            return "absolute path not under source_repo"
+        return None
+    if ".." in candidate.parts:
+        return "parent-directory traversal (..)"
+    return None
+
+
+def first_scope_violation(
+    files_expected: list[str], source_repo: Path
+) -> tuple[str, str] | None:
+    """First ``(path, reason)`` out of single-repo scope, or None when clean.
+
+    Named-offender counterpart to ``scope_is_single_repo`` (friction a:31774) —
+    the bool form collapses which token failed and why, forcing guesswork at
+    the ``LaneScopeRefused`` call site.
+    """
     if not files_expected:
-        return True
+        return None
     repo = source_repo.resolve()
     for raw in files_expected:
         path = raw.strip()
         if not path:
             continue
-        if path.startswith(("cortex://", "cortex:")):
-            return False
-        if path.startswith("workspaces://"):
-            return False
-        candidate = Path(path)
-        if candidate.is_absolute():
-            try:
-                candidate.resolve().relative_to(repo)
-            except ValueError:
-                return False
-        elif ".." in candidate.parts:
-            return False
-    return True
+        reason = _scope_violation_reason(path, repo)
+        if reason is not None:
+            return path, reason
+    return None
+
+
+def scope_is_single_repo(files_expected: list[str], source_repo: Path) -> bool:
+    """True when every expected path resolves under ``source_repo`` (or is repo-relative)."""
+    return first_scope_violation(files_expected, source_repo) is None
 
 
 def lane_selection_predicate(
@@ -117,9 +138,14 @@ def select_lane(
         return "A", advisories, reason
 
     if explicit == "B":
-        if not scope_is_single_repo(files_expected, source_repo):
+        violation = first_scope_violation(files_expected, source_repo)
+        if violation is not None:
+            offending_path, violation_reason = violation
             raise LaneScopeRefused(
-                "lane='B' refused: files_expected contains paths outside source_repo"
+                f"lane='B' refused: files_expected path {offending_path!r} is out "
+                f"of scope ({violation_reason}). Declare an explicit "
+                "`files_expected:` YAML front-matter list in the packet to "
+                "override packet-scan derivation."
             )
         return "B", advisories, "explicit"
 
@@ -149,6 +175,7 @@ __all__ = [
     "Lane",
     "LaneScopeRefused",
     "LaneSelectionReason",
+    "first_scope_violation",
     "lane_selection_predicate",
     "scope_is_single_repo",
     "select_lane",

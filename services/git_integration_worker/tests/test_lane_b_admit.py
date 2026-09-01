@@ -342,13 +342,41 @@ def test_ac_s2_5_scope_veto(git_repo: Path) -> None:
     req_b = req.model_copy(update={"lane": "B"})
     from services.git_integration_worker.cursor_sdk_lane_select import LaneScopeRefused
 
-    with pytest.raises(LaneScopeRefused):
+    with pytest.raises(LaneScopeRefused) as exc_info:
         select_lane(
             req=req_b,
             regime_active=False,
             source_repo=git_repo,
             files_expected=["cortex://notes/x.md"],
         )
+    message = str(exc_info.value)
+    assert "cortex://notes/x.md" in message
+    assert "cortex:// reference" in message
+    assert "files_expected:" in message  # front-matter override hint
+
+
+def test_scope_refused_names_absolute_outside_repo_offender(git_repo: Path) -> None:
+    """LaneScopeRefused (friction a:31774) names the offending path and why."""
+    from services.git_integration_worker.cursor_sdk_lane_select import LaneScopeRefused
+
+    req_b = CursorDispatchRequest(
+        thread_id="t",
+        model="cursor/composer-2.5",
+        dispatch_id="d",
+        execution_id="e",
+        message="x",
+        lane="B",
+    )
+    with pytest.raises(LaneScopeRefused) as exc_info:
+        select_lane(
+            req=req_b,
+            regime_active=False,
+            source_repo=git_repo,
+            files_expected=["/mcp/code.py"],
+        )
+    message = str(exc_info.value)
+    assert "/mcp/code.py" in message
+    assert "absolute path not under source_repo" in message
 
 
 @patch(

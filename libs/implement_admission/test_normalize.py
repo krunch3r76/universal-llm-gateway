@@ -35,6 +35,20 @@ def test_looks_like_file_path_rejects_uri_schemes() -> None:
     assert not _looks_like_file_path("https://example.com/a/b")
 
 
+def test_looks_like_file_path_rejects_absolute_non_repo_tokens() -> None:
+    """MCP surface names / mount roots (friction a:31774) have no file suffix."""
+    assert not _looks_like_file_path("/mcp/code")
+    assert not _looks_like_file_path("/mcp/life")
+    assert not _looks_like_file_path("/data/files")
+
+
+def test_looks_like_file_path_accepts_absolute_suffixed_paths() -> None:
+    """A genuine absolute in-repo file still has a recognized suffix."""
+    assert _looks_like_file_path(
+        "/mnt/torus/projects/universal-llm-gateway/services/foo.py"
+    )
+
+
 def test_files_from_packet_ignores_fenced_code_blocks() -> None:
     packet = """
 <scope>
@@ -109,3 +123,67 @@ acceptance criteria
         "libs/implement_admission/normalize.py",
         "libs/implement_admission/test_normalize.py",
     ]
+
+
+def test_files_from_packet_ignores_absolute_surface_names_in_prose() -> None:
+    """Repro shape from friction a:31774 (evidence: tmp/prompts/md-ops-all-sandboxes.md).
+
+    Backticking MCP surface names / mount roots without a file suffix must not
+    poison the derived scope — this is what tripped CURSOR_LANE_B_SCOPE_REFUSED.
+    """
+    packet = """
+<scope>
+Repo paths: `services/mcp-server/tools/filesystem/_fs_dispatch.py`.
+</scope>
+<task_guidance>
+Use `fs` with the `/mcp/code` surface, not `/mcp/life`. The cortex share
+root is `/data/files`.
+</task_guidance>
+"""
+    assert _files_from_packet(packet) == [
+        "services/mcp-server/tools/filesystem/_fs_dispatch.py",
+    ]
+
+
+def test_files_from_packet_frontmatter_files_expected_is_authoritative() -> None:
+    """An explicit front-matter list wins outright — the scrape never runs."""
+    packet = """---
+contract: implement
+files_expected:
+  - services/mcp-server/tools/filesystem/_fs_dispatch.py
+  - services/mcp-server/fs_roots.py
+---
+
+<scope>
+Use `/mcp/code` and `/mcp/life`; a poisoning absolute token that would
+otherwise never matter since front matter is authoritative.
+</scope>
+"""
+    assert _files_from_packet(packet) == [
+        "services/mcp-server/tools/filesystem/_fs_dispatch.py",
+        "services/mcp-server/fs_roots.py",
+    ]
+
+
+def test_files_from_packet_frontmatter_empty_list_yields_empty_scope() -> None:
+    """An explicit empty front-matter list is a deliberate bind-only scope, not a fallback trigger."""
+    packet = """---
+contract: light-bounded
+files_expected:
+---
+
+<scope>
+Primary artifacts: `libs/implement_admission/normalize.py`.
+</scope>
+"""
+    assert _files_from_packet(packet) == []
+
+
+def test_files_from_packet_no_frontmatter_falls_back_to_scrape() -> None:
+    """Without front matter, today's scope-block + backtick-scrape behavior is unchanged."""
+    packet = """
+<scope>
+Primary artifacts: `libs/implement_admission/normalize.py`.
+</scope>
+"""
+    assert _files_from_packet(packet) == ["libs/implement_admission/normalize.py"]
