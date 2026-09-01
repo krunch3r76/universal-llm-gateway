@@ -162,8 +162,7 @@ def test_repo_overlay_sot_is_present_and_named() -> None:
     # 2026-09-01 (alwaysApply rules-thinning G3): operator-request-front-door /
     # judgment-escalation-ladder / lean-context-dispatch-first merged into
     # dispatch-kernel_ulg.mdc upstream — their seat-overlay grafts were removed
-    # rather than left pointing at a dead filename. Full seat-variant
-    # re-derivation for dispatch-kernel_ulg.mdc is G6 (deferred).
+    # rather than left pointing at a dead filename.
     assert not (root / "rules" / "operator-request-front-door_ulg.mdc").exists()
     assert not (root / "rules" / "judgment-escalation-ladder_ulg.mdc").exists()
     assert not (root / "rules" / "lean-context-dispatch-first_ulg.mdc").exists()
@@ -181,3 +180,18 @@ def test_repo_overlay_sot_is_present_and_named() -> None:
     surface = (root / "rules" / "skill-surface_ulg.mdc").read_text(encoding="utf-8")
     assert "install-ecosystem-plugin.sh" in surface
     assert "Reload Window" not in surface.split("## Invariant", 1)[1]
+
+
+def test_merged_kernels_stay_resident_no_seat_variant() -> None:
+    """G6 verdict: the two merged kernels bind on this seat, so nothing shadows them.
+
+    :func:`_graft_entries` globs every overlay ``*.mdc``, so dropping either filename
+    into the seat tree would silently begin grafting a thinned body over a kernel the
+    seat actually acts on. This pins the adjudicated decision rather than the
+    filesystem's current shape — see the G6 note in :mod:`cursor_seat_overlay`.
+    """
+    root = seat_overlay_root()
+    for resident in ("dispatch-kernel_ulg.mdc", "in-flight-work-guard_ulg.mdc"):
+        assert not (root / "rules" / resident).exists(), resident
+        assert Path("rules") / resident not in PRUNED_PLUGIN_PATHS, resident
+        assert Path("rules") / resident not in LEAD_ONLY_PLUGIN_PATHS, resident

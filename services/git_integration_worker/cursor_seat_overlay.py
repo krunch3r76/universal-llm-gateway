@@ -56,14 +56,23 @@ PRUNED_PLUGIN_PATHS: tuple[Path, ...] = (
 # originals for the operator-request-front-door / judgment-escalation-ladder /
 # lean-context-dispatch-first thinned grafts merged into dispatch-kernel_ulg.mdc.
 # Their seat-overlay SoT graft files were removed rather than left to graft under
-# a dead filename. dispatch-kernel_ulg.mdc and in-flight-work-guard_ulg.mdc are
-# NOT yet in either prune list below — the seat currently inherits those merged
-# kernels verbatim (same exposure as before for their resident-content sources
-# recon-default/dispatch-in-flight-supremacy; new exposure for the
-# previously-LEAD_ONLY anthropic-substrate/bind-then-compose/session-abort slices
-# now folded into the same file). Re-deriving proper thinned seat variants for the
-# merged kernels is G6 (deferred, not a correctness regression — operator-posture
-# prune is untouched); tracked on `todo:alwaysapply-rules-thinning`.
+# a dead filename.
+#
+# G6 adjudicated 2026-09-01: dispatch-kernel_ulg.mdc and in-flight-work-guard_ulg.mdc
+# stay resident, deliberately in neither prune list. Slice audit: 1029 of 1315 tok and
+# 457 of 598 tok bind on this seat — Explore-first recon, bug-class-sweep, the
+# anthropic/* wall, the non-primary-model gate, bind-then-compose `nest_under`, the
+# consult-routing pre-gate, the two-failures stop, and the whole halt-on-overlap guard
+# (whose "Lane-B worktrees do not lift the guard" binds harder here than in the IDE,
+# since this seat runs in those worktrees). Only 229 / 136 tok are lead-or-CDP-facing,
+# and a seat variant cannot buy them: the convention's `**Seat wall.**` + `## Closeout
+# duty` + trigger_match_terms cost a measured +179 tok/file, which is why all three
+# existing variants are LARGER than their IDE kernels. Best-case projection saves 44
+# tok of the ~81K resident prime and forks two more files — the same drift the note
+# above had to unwind. That surface is worth cutting UPSTREAM instead, where it also
+# pays on IDE steps and closes dispatch-kernel's 215-tok ceiling breach
+# (`decision:alwaysapply-rules-thinning-relocation-target`). Numbers: assertion on
+# `todo:alwaysapply-rules-thinning`.
 # Subset of PRUNED with no same-name graft — must be absent after overlay.
 PRUNE_ONLY_PLUGIN_PATHS: tuple[Path, ...] = (
     Path("rules") / "operator-posture_ulg.mdc",
@@ -86,11 +95,12 @@ LEAD_ONLY_PLUGIN_PATHS: tuple[Path, ...] = (
     Path("rules") / "claude-ai-cdp-navigation_ulg.mdc",
     Path("rules") / "pager-notify_ulg.mdc",
 )
-# 2026-09-01: dispatch-in-flight-supremacy / session-abort-authorization merged
-# into in-flight-work-guard_ulg.mdc (resident — the seat acts on its overlap
-# guard); bind-then-compose-dispatch / anthropic-substrate merged into
-# dispatch-kernel_ulg.mdc (see note above PRUNED_PLUGIN_PATHS). Neither merged
-# file is added here — see the deferred-G6 note above.
+# 2026-09-01: dispatch-in-flight-supremacy / session-abort-authorization merged into
+# in-flight-work-guard_ulg.mdc; bind-then-compose-dispatch / anthropic-substrate merged
+# into dispatch-kernel_ulg.mdc. Neither merged file is listed here: the seat acts on the
+# overlap guard, and the anthropic/* wall plus the bind-then-compose split stopped being
+# lead-only the moment a cursor-sdk conductor could spawn nested legs. Slice-level basis
+# is the G6 note above PRUNED_PLUGIN_PATHS.
 
 
 class SeatOverlayConfigError(RuntimeError):
