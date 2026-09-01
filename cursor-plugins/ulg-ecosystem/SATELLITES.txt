@@ -9,5 +9,4 @@ agent-bus
 pajournal
 treasure-chest
 claudeburst
-gollm
 cryptax
