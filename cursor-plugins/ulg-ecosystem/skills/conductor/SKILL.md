@@ -143,6 +143,27 @@ conductor(root) ⇒
   ∧ premium_conductor ⇒ announce(why)  # inform-then-proceed; ¬ default
 ```
 
+Hop contract (bound `a:31807`; **STAGED** until `todo:conductor-hop-reactor` lands):
+
+```
+hop(conductor) ⇒
+  boundary = gated_row_close(Gn) ∧ ¬owed(designed_stop @ Gn)
+  ∧ predecessor: journal_append ≺ CHECKPOINT(hop) ≺ closeout(stop: ROW_HOP)
+  ∧ ¬ team_dispatch(reuse_thread=<own thread>) from a live seat      # F1/F2: 422/409 by design
+  ∧ successor admitted by substrate ⇐ ledger.mark_terminal(predecessor)  # authority transition
+  ∧ successor = top-level sibling: reuse_thread=<same worker>, ¬nest_under, new dispatch_id,
+                same source_ref/packet_kind/lane/model/knobs/summon_mode, hop_seq+1
+  ∧ mission_continuation ⊥ model_behavior     # granularity is the seat's; continuation is the substrate's
+  ∧ owed(designed_stop) ⇒ that token, ¬ROW_HOP  # ROW_PINNED · HOLD_MERGE · OPERATOR_GATE · PARKED_TRANSPORT · DONE win
+  ∧ live_nested(predecessor) ⇒ ¬hop            # W3: harvest first
+```
+
+`ROW_HOP` ends **a dispatch**, never the mission — not a pause (no ack, no
+reply, no page), not a stop the operator answers, not a merge gate. The
+`¬ pause between G-rows` and `¬ second gate on the mission's own merge`
+invariants are untouched because nothing waits on anyone. Machine vocabulary
+only: grader, reactor, journal — never the liaison register or the pager.
+
 ## Run to completion (binding default)
 
 The packet admit is a **standing** authorization for the whole mission, not a
@@ -152,18 +173,34 @@ per-G-row one. Default posture once running:
   G-row to the last in one continuous commission. CHECKPOINT is a progress
   report, not a waypoint that blocks on a reply before the next G-row starts.
 - **Per-G-row checkpoint-and-hop (binding default, operator 2026-09-01,
-  `a:31787`).** "One continuous commission" names the mission, not a single
-  dispatch. At each gated G-row boundary the conductor self-fires the next
-  hop (`reuse_thread=<this worker thread>` per § Resume-if-dead) immediately —
-  no wait, no reply, no interim ack. **Not** the pause-and-ask anti-pattern
-  (7419): the mission still runs start-to-finish under one standing admit,
-  just as a chain of shorter `dispatch_id`s instead of one long-lived one.
-  Bounds each dispatch's token footprint to roughly one movement regardless
-  of mission length, and caps a bridge/infra crash's loss to the in-flight
-  G-row instead of the whole mission (`a:31786` — three same-mission crashes
-  lost 2065s+480.9s+420.2s of conductor time before this default existed). A
-  short, single-G-row mission may still land as one dispatch — the hop fires
-  on a gated *boundary*, not a fixed clock.
+  `a:31787` → bind `a:31807`).** "One continuous commission" names the
+  mission, not a single dispatch. At each gated G-row *close* (its witness
+  hangs) where no designed stop is owed, the conductor **ends its own
+  dispatch** and the substrate admits its successor on the same worker thread
+  and Lane-B checkout: append the score journal, write the hop CHECKPOINT
+  (§ Hop CHECKPOINT contract), then finish with `stop: ROW_HOP` as the last
+  line of the closeout. **Never** call
+  `team_dispatch(reuse_thread=<this thread>)` yourself — while you are live it
+  is refused (`422 CURSOR_WORKER_THREAD_OCCUPIED`, holder = you; `a:30799` /
+  9675#8) and would orphan the thread if it were not. The successor is a
+  **new top-level `dispatch_id`, ¬ `nest_under`**, same `source_ref`, same
+  branch — the same shape as crash-resume, fired by the substrate on your
+  terminal instead of by a liaison after a crash. Not the pause-and-ask
+  anti-pattern (7419): nobody is asked, nothing waits; the mission still runs
+  start-to-finish under one standing admit as a chain of short dispatches.
+  Bounds each dispatch's token footprint to roughly one movement and caps a
+  crash's loss to the in-flight row (`a:31786`). A mission that ends inside
+  one dispatch simply stops `DONE`. Owed stops win at a boundary:
+  `stop_after` ⇒ `ROW_PINNED`; attended G3→G5 ⇒ `SCORE_RESURFACE` then the
+  existing attended exit (`ROW_PINNED` per § Score journal + stops); named
+  hold ⇒ `HOLD_MERGE`. A live nested child forbids the hop (W3) — harvest,
+  then hop. If you end with the mission open and **no** token, the substrate
+  still re-admits you (budgeted) — that is the safety net, not the default.
+  **STAGED — the hop half is not live yet.** `ROW_HOP` is not in
+  `STOP_TOKENS` and no reactor admits the successor until
+  `todo:conductor-hop-reactor` lands, so emitting it today halts the mission
+  silently. Until then: never self-fire `reuse_thread` (that half is live
+  now), and keep driving the open G-rows in this dispatch.
 - **¬ a second gate on the mission's own merge.** `git-posture` gates
   `git_land` / `git_integrate` on "operator directs a merge" — for a conductor
   mission, admitting the packet **is** that direction, standing for the
@@ -358,6 +395,11 @@ is open → 409.
     `PARKED_TRANSPORT` — persist, then exit. `ROW_PINNED` after honest
     `SCORE_RESURFACE` on the summoning thread is `partial:consult`, not work
     failure.
+  - **Exit-and-continue:** `ROW_HOP` — persist (journal → CHECKPOINT), then
+    exit; the substrate admits the successor immediately. Nobody consulted;
+    not a page; not visible in the liaison register. Seventh token in
+    `STOP_TOKENS`; new class `CHAIN_STOPS`. **STAGED** — do not emit until
+    `todo:conductor-hop-reactor` lands (§ Run to completion).
   - Also: `CONFIRM_PENDING` · `DONE` (stop token only — not row Status)
 - **`CONSULT_PENDING` wait:** the generate session waits or hands off — it does
   not end. `agent_bus.wait` until `archive_uri` or `from=web-anthropic` harvest
@@ -375,7 +417,34 @@ is open → 409.
 - Mode B admit-proof on CHECKPOINT when `CONSULT_PENDING`: `execution_id`+
   `poll_hint` or honest halt.
 
+### Hop CHECKPOINT contract
+
+Authority split: the **scoreboard tip + witness fold** decides which row is
+next (`entry_gate` = first non-DONE row; a successor never rewinds a witnessed
+row). The hop CHECKPOINT is the reconstitution index for everything the fold
+cannot see. Written as read-modify-write (`expected_sha256`) of the mission's
+conductor sidecar (`cortex://notes/system/threads/<worker>-conductor.md`) plus
+a `CHECKPOINT — hop <n>` turn on the **worker** thread (`supersedes_turn` =
+prior hop CHECKPOINT, `mark_read=true`, self→self). Order: journal append ≺
+sidecar write ≺ bus tip ≺ closeout.
+
+Ten fields, index-thin: `Anchor` · `Hop` · `Mission` · `Rows` · `In-flight` ·
+`Judgment` · `Next-pickup` · `NEXT_ADMIT` · `Stop` · RESUME footer. Field-level
+content and the why-a-cold-successor-needs-it column:
+`cortex://notes/system/threads/9638-hop-architecture-bind-web-anthropic-20260901T13.md`
+§3. **Not** in it: prose narrative of the row's work (that is the journal), the
+scoreboard table itself (pointer + sha), hand-written `DONE` (witnesses render
+DONE). Exceeding roughly `9831-conductor.md` size ⇒ it is carrying journal.
+
 ### Resume-if-dead (binding)
+
+Planned hops and crash-resume are **one substrate path**: conductor row
+terminal ∧ mission open ∧ no exit-and-persist/`DONE` token ⇒ successor on the
+same thread. `ROW_HOP` = immediate; token-less terminal (crash, silent exit) =
+same successor under the crash / no-progress budgets, then `PARKED_TRANSPORT` +
+page. The liaison fires a resume only when the reactor has parked — never as
+the first responder. (Reactor-side half is STAGED; until
+`todo:conductor-hop-reactor` lands the liaison remains the first responder.)
 
 `CONSULT_PENDING` is **not** a designed-stop terminate. Exit-and-persist stops
 (`ROW_PINNED`, `HOLD_MERGE`, `OPERATOR_GATE`, `PARKED_TRANSPORT`) retain store +
@@ -614,7 +683,8 @@ the after-ship `cdp/opus-5` review comment (good default; ¬ a G-row).
 | Opus-by-default for every conductor | Tier table; T1 Grok @ `xhigh`; Opus only with trigger |
 | Omit `lane=` assuming that means "no preference" | Lane B is the default — pass `lane="B"` explicitly; name Lane A only with a reason |
 | Conductor pauses after a G-row to ask "continue?" | Drive to completion in one commission; report via CHECKPOINT, don't wait for a reply |
-| Keep driving one long-lived dispatch across gated G-row boundaries "because it's working" | Self-fire the next hop (`reuse_thread`) at each gated boundary (§ Run to completion) — bounded footprint is the point |
+| Call `team_dispatch(reuse_thread=<own thread>)` from inside the running conductor | Journal → hop CHECKPOINT → `stop: ROW_HOP`; the substrate admits the successor after your terminal (§ Run to completion — hop half STAGED) |
+| End with the mission open and no token ("done for now") | `ROW_HOP` at a boundary, or the owed designed stop — silence is a budgeted re-admit, then a park |
 | Treat the mission's own `git_land` as a second approval gate | Admit is the standing merge ack; land on green + AC met (§ Run to completion) |
 | Escalate "ok to merge?" to the human mid-mission | Land it; escalate only genuinely operator-only acts |
 | Conductor judges the mission "too big"/risky and stops before any G-row, unasked — or verifies the mission is genuine then refuses it over a later step's scale (7419) | Nest Composer, drive to green; only a **named** packet exception holds the merge — scale/blast-radius/"verified legitimate" alone are never an implicit one. Execute the current step, raise the concern in the closeout, reassess only at the flagged step under standing authorization (reasoning-posture rule 6 mirror) |
