@@ -15,6 +15,7 @@ not weight by either.
 Run:
     ~/.venvs/universal/bin/python scripts/cursor/alwaysapply_rules_census.py
     ~/.venvs/universal/bin/python scripts/cursor/alwaysapply_rules_census.py --check 10000
+    ~/.venvs/universal/bin/python scripts/cursor/alwaysapply_rules_census.py --quiet --check 10000
     ~/.venvs/universal/bin/python scripts/cursor/alwaysapply_rules_census.py --root /path/to/rules --tree adhoc
 """
 
@@ -156,6 +157,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         metavar="BUDGET",
         help="Exit 1 if the alwaysApply:true token sum exceeds BUDGET.",
     )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Skip the markdown report; --check PASS/FAIL still go to stderr.",
+    )
     args = parser.parse_args(argv)
     if bool(args.root) != bool(args.tree):
         parser.error("--root and --tree must be supplied together, same count")
@@ -172,7 +178,8 @@ def main(argv: list[str] | None = None) -> int:
         else _DEFAULT_ROOTS
     )
     files = scan_roots(roots)
-    print(render_report(files))
+    if not args.quiet:
+        print(render_report(files))
 
     if args.check is not None:
         always_tokens = sum(f.tokens for f in files if f.always_apply)

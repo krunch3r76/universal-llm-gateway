@@ -69,6 +69,15 @@ VALIDATE_SCRIPT="$SOURCE_REPO/scripts/cortex/validate_skill_catalog.py"
 if ! "$PYTHON" "$VALIDATE_SCRIPT" --root "$SOURCE_REPO"; then
   die "census↔catalog parity failed — add matching config/skills.yaml row before install"
 fi
+# alwaysApply token budget must run against the live source checkout: the census
+# derives plugin/hub/parent scan trees from Path(__file__).parents[2], so invoking
+# a worktree copy would miss the live parent pack. Fail closed at the G0 10K hard
+# ceiling so a later rule edit cannot silently regress the always-applied plane.
+CENSUS_SCRIPT="$SOURCE_REPO/scripts/cursor/alwaysapply_rules_census.py"
+[[ -f "$CENSUS_SCRIPT" ]] || CENSUS_SCRIPT="$ULG_ROOT/scripts/cursor/alwaysapply_rules_census.py"
+if ! "$PYTHON" "$CENSUS_SCRIPT" --quiet --check 10000; then
+  die "alwaysApply token budget exceeded — thin kernels before install (10K hard ceiling)"
+fi
 
 resolve_plugin_asset() {
   local rel="$1"
