@@ -66,10 +66,11 @@ from services.git_integration_worker.routes.cursor_catalog import (
     router as cursor_catalog_router,
 )
 from services.git_integration_worker.routes.cursor_sdk import (
-    router as cursor_sdk_router,
+    bridge_sweeper,
+    stale_lease_sweeper,
 )
 from services.git_integration_worker.routes.cursor_sdk import (
-    stale_lease_sweeper,
+    router as cursor_sdk_router,
 )
 from services.git_integration_worker.routes.health import router as health_router
 from services.git_integration_worker.routes.integrate import router as integrate_router
@@ -154,6 +155,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     supervise(app, "ulg_story_projector", lambda: ulg_story_projector_loop(app))
     supervise(app, "trigger_fire_loop", lambda: trigger_fire_loop(app))
     supervise(app, "lane_b_sweeper", lambda: lane_b_sweeper_loop(app))
+    supervise(app, "bridge_sweeper", lambda: bridge_sweeper(app))
     logger.info(
         "git-integration-worker started: version=%s port=%d source_repo=%s "
         "worker_id=%s startup_persistence=background "
@@ -197,6 +199,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "ulg_story_projector",
             "trigger_fire_loop",
             "lane_b_sweeper",
+            "bridge_sweeper",
         ):
             task = getattr(app.state, attr, None)
             if task is not None:

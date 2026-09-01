@@ -70,6 +70,11 @@ from services.git_integration_worker.cursor_models import (
 from services.git_integration_worker.cursor_sdk_association import (
     build_dispatch_association_fields,
 )
+from services.git_integration_worker.cursor_sdk_bridge_stderr import (
+    bridge_exit_snapshot,
+    start_bridge_stderr_drain,
+    stop_bridge_stderr_drain,
+)
 from services.git_integration_worker.cursor_sdk_capture_binding import (
     CaptureBinding,
     binding_for_dispatch,
@@ -194,6 +199,7 @@ from services.git_integration_worker.cursor_sdk_orphan import (
     mark_dispatch_orphaned,
     reap_orphan_bridge_os,
     register_active_client,
+    sweep_unowned_bridges,
 )
 from services.git_integration_worker.cursor_sdk_packet import (
     extract_packet_kind_from_packet,
@@ -349,6 +355,7 @@ _STALE_LEASE_S = float(
     )
 )
 _STALE_SWEEP_S = float(os.environ.get("CURSOR_STALE_SWEEP_S", "30"))
+_BRIDGE_SWEEP_S = float(os.environ.get("CURSOR_BRIDGE_SWEEP_S", "900"))
 # Reap horizon for a holder that took the write lease and never armed (no
 # heartbeat row at all). Must stay above _SDK_LAUNCH_TIMEOUT_S or the sweeper
 # races a bridge that is still legitimately launching.
@@ -1010,6 +1017,11 @@ def _run_sdk_sync(
                     )
                     time.sleep(backoff)
             register_active_client(dispatch_id=dispatch_id, client=client)
+            bridge_tap = start_bridge_stderr_drain(
+                dispatch_id=dispatch_id,
+                thread_id=thread_id,
+                client=client,
+            )
             if live_counter is None:
                 live_counter = _LiveToolCallCounter()
             hb_thread, hb_stop = _start_heartbeat(
@@ -1040,6 +1052,9 @@ def _run_sdk_sync(
                     "state_root": str(bridge_state),
                     "agent_id": getattr(agent, "id", None),
                     "run_id": getattr(run, "id", None),
+                    # Assertion 31706: a refused connection only says the bridge
+                    # is gone. Its exit code and dying stderr say why.
+                    **bridge_exit_snapshot(bridge_tap),
                     "note": (
                         "bridge failure, not verified run death — the underlying "
                         "cursor-agent and any remote side effects (browser "
@@ -1204,6 +1219,7 @@ def _run_sdk_sync(
                 hb_stop.set()
                 hb_thread.join(timeout=5.0)
                 unregister_live_run(dispatch_id=dispatch_id)
+                stop_bridge_stderr_drain(bridge_tap)
                 if client is not None:
                     client.close()
                 clear_dispatch_orphan_state(dispatch_id=dispatch_id)
@@ -1469,6 +1485,31 @@ async def stale_lease_sweeper(app: FastAPI) -> None:
             )
         except Exception as exc:  # sweeper must never kill the worker
             logger.warning("stale-lease sweeper failed: %s", exc)
+
+
+async def bridge_sweeper(app: FastAPI) -> None:
+    """Collect aged cursor-sdk bridges that outlived their dispatch.
+
+    Sole caller of the sweep, and it sleeps before the first pass on purpose.
+    ``startup_ledger_reconcile`` looks like the natural home, but tests invoke
+    that directly (``test_cursor_sdk_restart_orphan``), which would let a unit
+    test kill bridge processes on the host.
+    """
+    del app
+    while True:
+        await asyncio.sleep(_BRIDGE_SWEEP_S)
+        try:
+            result = await asyncio.to_thread(sweep_unowned_bridges)
+        except Exception as exc:  # sweeper must never kill the worker
+            logger.warning("bridge sweeper failed: %s", exc)
+            continue
+        if result.killed or result.kill_failed:
+            logger.info(
+                "bridge sweep scanned=%d killed=%s kill_failed=%s",
+                result.scanned,
+                result.killed,
+                result.kill_failed,
+            )
 
 
 async def startup_ledger_reconcile(app: FastAPI) -> None:

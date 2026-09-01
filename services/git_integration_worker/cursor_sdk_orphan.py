@@ -9,14 +9,21 @@ while the bridge keeps running (friction 23851).
 ``reap_orphan_bridge_os`` performs a best-effort out-of-process kill after GIW
 restart by matching ``CURSOR_SDK_DISPATCH_ID`` in the process environment and
 confirming cursor-sdk bridge identity via cmdline/exe (friction 26765).
+
+``sweep_unowned_bridges`` covers what that reap cannot see: it keys off the
+bridge processes themselves rather than off ledger rows, so a bridge whose row
+already went terminal — or which never had a row, as with test fixtures — still
+gets collected instead of surviving indefinitely (assertion 31706).
 """
 
 from __future__ import annotations
 
 import os
 import threading
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 import psutil
 from universal_logging import get_logger
@@ -37,6 +44,13 @@ _BRIDGE_MARKERS = (
 _lock = threading.Lock()
 _active_clients: dict[str, Client] = {}
 _orphaned: set[str] = set()
+
+# Mirrors ``cursor_dispatch_ledger._STATUS_TERMINAL``; a row in any other state
+# still owns its bridge.
+_TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
+# Grace before an unowned bridge is collectable. Wide enough to clear the
+# pre-arm handshake window, where a bridge is live before its row is running.
+_SWEEP_MIN_AGE_S = float(os.getenv("GIT_WORKER_BRIDGE_SWEEP_MIN_AGE_S", "1800"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,7 +117,11 @@ def reap_orphan_bridge_os(dispatch_id: str) -> BridgeReapResult:
                 dispatch_id,
                 proc.pid,
             )
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.TimeoutExpired) as exc:
+        except (
+            psutil.NoSuchProcess,
+            psutil.AccessDenied,
+            psutil.TimeoutExpired,
+        ) as exc:
             kill_failed = True
             logger.warning(
                 "restart bridge reap kill failed: dispatch_id=%s pid=%s err=%s",
@@ -112,6 +130,109 @@ def reap_orphan_bridge_os(dispatch_id: str) -> BridgeReapResult:
                 exc,
             )
     return BridgeReapResult(bridge_aborted=killed, kill_failed=kill_failed)
+
+
+@dataclass(frozen=True, slots=True)
+class BridgeSweepResult:
+    """Outcome of one unowned-bridge sweep."""
+
+    scanned: int = 0
+    killed: list[int] = field(default_factory=list)
+    kill_failed: list[int] = field(default_factory=list)
+
+
+def _default_status_lookup(dispatch_id: str) -> dict[str, Any] | None:
+    # Imported lazily: the ledger module is heavy and only this path needs it.
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+
+    return CursorDispatchLedger.instance().dispatch_status_by_id(
+        dispatch_id=dispatch_id
+    )
+
+
+def _bridge_is_owned(
+    dispatch_id: str | None,
+    status_lookup: Callable[[str], dict[str, Any] | None],
+) -> bool:
+    """Return whether some live dispatch still lays claim to this bridge."""
+    if not dispatch_id:
+        # No dispatch stamp at all: never launched by a GIW dispatch overlay
+        # (test fixtures, manual runs). Nothing in this worker can own it.
+        return False
+    with _lock:
+        if dispatch_id in _active_clients:
+            return True
+    try:
+        row = status_lookup(dispatch_id)
+    except Exception as exc:  # noqa: BLE001 — an unreadable ledger must not kill
+        logger.warning(
+            "bridge sweep ledger lookup failed; treating as owned: "
+            "dispatch_id=%s err=%s",
+            dispatch_id,
+            exc,
+        )
+        return True
+    if row is None:
+        return False
+    return str(row.get("status") or "") not in _TERMINAL_STATUSES
+
+
+def sweep_unowned_bridges(
+    *,
+    min_age_s: float = _SWEEP_MIN_AGE_S,
+    status_lookup: Callable[[str], dict[str, Any] | None] | None = None,
+) -> BridgeSweepResult:
+    """Kill aged cursor-sdk bridges that no live dispatch owns.
+
+    ``reap_orphan_bridge_os`` walks ledger rows, so it only ever reaches
+    bridges whose row is still ``running``. Once a row goes terminal — or was
+    never created — its bridge becomes unreachable by that path and survives
+    every subsequent restart. This walks the processes instead.
+
+    Best-effort and never raises: a sweep failure must not disturb dispatch.
+    """
+    lookup = status_lookup or _default_status_lookup
+    now = time.time()
+    scanned = 0
+    killed: list[int] = []
+    kill_failed: list[int] = []
+    for proc in psutil.process_iter(["pid", "environ", "create_time"]):
+        try:
+            if not is_cursor_sdk_bridge_process(proc):
+                continue
+            scanned += 1
+            age_s = now - proc.create_time()
+            if age_s < min_age_s:
+                continue
+            dispatch_id = proc.environ().get(_ENV_DISPATCH_ID)
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+        if _bridge_is_owned(dispatch_id, lookup):
+            continue
+        try:
+            proc.kill()
+            proc.wait(timeout=5.0)
+            killed.append(proc.pid)
+            logger.warning(
+                "unowned cursor-sdk bridge swept: pid=%s dispatch_id=%s age_s=%.0f",
+                proc.pid,
+                dispatch_id or "<none>",
+                age_s,
+            )
+        except (
+            psutil.NoSuchProcess,
+            psutil.AccessDenied,
+            psutil.TimeoutExpired,
+        ) as exc:
+            kill_failed.append(proc.pid)
+            logger.warning(
+                "unowned cursor-sdk bridge sweep kill failed: pid=%s err=%s",
+                proc.pid,
+                exc,
+            )
+    return BridgeSweepResult(scanned=scanned, killed=killed, kill_failed=kill_failed)
 
 
 def shutdown_active_bridges() -> int:

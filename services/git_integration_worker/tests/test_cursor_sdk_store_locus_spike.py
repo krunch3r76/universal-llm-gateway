@@ -9,7 +9,9 @@ both sides). Implement binds store-A: ``_run_sdk_sync`` reuses parent HOME on
 
 Live spike (``test_live_store_locus_home_a_vs_home_b``): create under HOME_A,
 resume under HOME_B with the same ``LocalAgentStoreConfig.root_dir`` and cwd.
-Skipped without ``CURSOR_API_KEY`` — hermetic store-A binding above stands.
+Skipped without a Cursor key in ``CURSOR_API_KEY`` or
+``~/.gateway/secrets.env`` (GIW's unit feed). The spike remaps ``HOME``, so
+``auth.json`` cannot carry the session — the process env must hold the key.
 """
 
 from __future__ import annotations
@@ -25,6 +27,35 @@ from services.git_integration_worker.cursor_home import dispatch_home_path
 from services.git_integration_worker.cursor_sdk_resume import resolve_sdk_store_dir
 
 STORE_LOCUS_VERDICT = "store-A"
+_SECRETS_ENV = Path.home() / ".gateway" / "secrets.env"
+
+
+def _read_cursor_api_key() -> str:
+    """Resolve GIW's Cursor key without printing it. Env, then secrets.env."""
+    from_env = os.environ.get("CURSOR_API_KEY", "").strip()
+    if from_env:
+        return from_env
+    if not _SECRETS_ENV.is_file():
+        return ""
+    for raw in _SECRETS_ENV.read_text(encoding="utf-8").splitlines():
+        line = raw.strip().removeprefix("export ").strip()
+        if not line or line.startswith("#"):
+            continue
+        name, sep, value = line.partition("=")
+        if sep and name.strip() == "CURSOR_API_KEY":
+            return value.strip().strip("'\"")
+    return ""
+
+
+def _cursor_api_key_available() -> bool:
+    return bool(_read_cursor_api_key())
+
+
+def _inject_cursor_api_key() -> None:
+    """Put GIW's key in this process. Spike remaps HOME; auth.json is then invisible."""
+    key = _read_cursor_api_key()
+    if key:
+        os.environ["CURSOR_API_KEY"] = key
 
 
 def test_resolve_sdk_store_dir_prefers_nonempty_state_root(tmp_path: Path) -> None:
@@ -66,7 +97,7 @@ def test_resolve_sdk_store_dir_falls_back_to_parent_home_store(
 
 
 @pytest.mark.skipif(
-    not os.environ.get("CURSOR_API_KEY"),
+    not _cursor_api_key_available(),
     reason=(
         "live SDK creds absent — store-A bound from Fable S1 + 9675 observation "
         f"(verdict={STORE_LOCUS_VERDICT})"
@@ -74,6 +105,7 @@ def test_resolve_sdk_store_dir_falls_back_to_parent_home_store(
 )
 def test_live_store_locus_home_a_vs_home_b(tmp_path: Path) -> None:
     """Discriminating spike: create HOME_A → resume HOME_B, same root_dir + cwd."""
+    _inject_cursor_api_key()
     workspace = tmp_path / "wt"
     workspace.mkdir()
     store_root = tmp_path / "shared-store"
@@ -104,13 +136,17 @@ def test_live_store_locus_home_a_vs_home_b(tmp_path: Path) -> None:
             timeout=120.0,
             local=local_opts,
         )
-        agent = client_a.create_agent(agent_options)
-        run = agent.send(prompt)
-        result = run.wait()
-        assert result.status == "finished"
-        agent_id = getattr(agent, "agent_id", None) or getattr(agent, "id", None)
-        assert agent_id
-        client_a.close()
+        # close() under finally: a failed assert here used to strand the Node
+        # bridge, which then outlived the pytest process (assertion 31706).
+        try:
+            agent = client_a.create_agent(agent_options)
+            run = agent.send(prompt)
+            result = run.wait()
+            assert result.status == "finished"
+            agent_id = getattr(agent, "agent_id", None) or getattr(agent, "id", None)
+            assert agent_id
+        finally:
+            client_a.close()
     finally:
         if prev_home is None:
             os.environ.pop("HOME", None)
@@ -125,10 +161,17 @@ def test_live_store_locus_home_a_vs_home_b(tmp_path: Path) -> None:
             timeout=120.0,
             local=local_opts,
         )
-        resumed = client_b.resume_agent(str(agent_id), agent_options)
-        cont = resumed.send("Continue: reply store-locus-resume-ok")
-        cont_result = cont.wait()
-        client_b.close()
+        try:
+            resumed = client_b.resume_agent(str(agent_id), agent_options)
+            cont = resumed.send("Continue: reply store-locus-resume-ok")
+            cont_result = cont.wait()
+        except Exception as exc:
+            if type(exc).__name__ in {"AgentNotFoundError", "NotFoundError"}:
+                assert STORE_LOCUS_VERDICT == "store-A"
+                return
+            raise
+        finally:
+            client_b.close()
     finally:
         if prev_home is None:
             os.environ.pop("HOME", None)
@@ -140,3 +183,7 @@ def test_live_store_locus_home_a_vs_home_b(tmp_path: Path) -> None:
             "store-B (root_dir honored across HOMEs): resume failed — "
             "implement should pass store correctly instead of HOME reuse"
         )
+    pytest.fail(
+        "store-B verdict: root_dir alone resumed across HOMEs — "
+        "revisit HOME reuse substrate binding"
+    )

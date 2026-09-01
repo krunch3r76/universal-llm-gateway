@@ -15,8 +15,8 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
     _connect,
 )
-from services.git_integration_worker.cursor_sdk_events import FrontierSdkWorkerResumed
 from services.git_integration_worker.cursor_home import dispatch_home_path
+from services.git_integration_worker.cursor_sdk_events import FrontierSdkWorkerResumed
 from services.git_integration_worker.cursor_sdk_resume import (
     closeout_qualifies_for_resume_retain,
     cursor_sdk_timeout_retain_s,
