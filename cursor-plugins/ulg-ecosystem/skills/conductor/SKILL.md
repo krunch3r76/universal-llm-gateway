@@ -151,6 +151,19 @@ per-G-row one. Default posture once running:
 - **¬ pause between G-rows for a "continue?" ack.** Drive from the first OPEN
   G-row to the last in one continuous commission. CHECKPOINT is a progress
   report, not a waypoint that blocks on a reply before the next G-row starts.
+- **Per-G-row checkpoint-and-hop (binding default, operator 2026-09-01,
+  `a:31787`).** "One continuous commission" names the mission, not a single
+  dispatch. At each gated G-row boundary the conductor self-fires the next
+  hop (`reuse_thread=<this worker thread>` per § Resume-if-dead) immediately —
+  no wait, no reply, no interim ack. **Not** the pause-and-ask anti-pattern
+  (7419): the mission still runs start-to-finish under one standing admit,
+  just as a chain of shorter `dispatch_id`s instead of one long-lived one.
+  Bounds each dispatch's token footprint to roughly one movement regardless
+  of mission length, and caps a bridge/infra crash's loss to the in-flight
+  G-row instead of the whole mission (`a:31786` — three same-mission crashes
+  lost 2065s+480.9s+420.2s of conductor time before this default existed). A
+  short, single-G-row mission may still land as one dispatch — the hop fires
+  on a gated *boundary*, not a fixed clock.
 - **¬ a second gate on the mission's own merge.** `git-posture` gates
   `git_land` / `git_integrate` on "operator directs a merge" — for a conductor
   mission, admitting the packet **is** that direction, standing for the
@@ -601,6 +614,7 @@ the after-ship `cdp/opus-5` review comment (good default; ¬ a G-row).
 | Opus-by-default for every conductor | Tier table; T1 Grok @ `xhigh`; Opus only with trigger |
 | Omit `lane=` assuming that means "no preference" | Lane B is the default — pass `lane="B"` explicitly; name Lane A only with a reason |
 | Conductor pauses after a G-row to ask "continue?" | Drive to completion in one commission; report via CHECKPOINT, don't wait for a reply |
+| Keep driving one long-lived dispatch across gated G-row boundaries "because it's working" | Self-fire the next hop (`reuse_thread`) at each gated boundary (§ Run to completion) — bounded footprint is the point |
 | Treat the mission's own `git_land` as a second approval gate | Admit is the standing merge ack; land on green + AC met (§ Run to completion) |
 | Escalate "ok to merge?" to the human mid-mission | Land it; escalate only genuinely operator-only acts |
 | Conductor judges the mission "too big"/risky and stops before any G-row, unasked — or verifies the mission is genuine then refuses it over a later step's scale (7419) | Nest Composer, drive to green; only a **named** packet exception holds the merge — scale/blast-radius/"verified legitimate" alone are never an implicit one. Execute the current step, raise the concern in the closeout, reassess only at the flagged step under standing authorization (reasoning-posture rule 6 mirror) |
