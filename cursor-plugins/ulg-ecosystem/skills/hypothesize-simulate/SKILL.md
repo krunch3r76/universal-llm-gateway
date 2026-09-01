@@ -21,7 +21,7 @@ Reader = answering model. Cognitive procedure only. ¬ cascade · ¬ header gram
 
 `∀ bind: procedure(1..9) ≺ bind`
 
-1. Restate Question / OOS / deliverable. Declare detent (`closed|standard|wide|frontier`).
+1. Restate Question / OOS / deliverable. Declare detent (`closed|standard|wide|frontier`). Self-select — don't wait to be told: `objection(current_stack) = wrong_kind ⇒ self_select(wide)`; `objection = wrong_tuning ⇒ standard suffices`. Operator vocabulary (§ Wide detent) is a sufficient trigger, never a necessary one.
 2. Name 2–3 approach axes that differ in kind. Code: data structure · control flow · where work happens · who reads it · what trades against what. Non-code: who bears the cost · what is actually exchanged · whose resource or attention is consumed · what would have to be true for the incumbent to be the wrong *kind* of answer. `detent=wide ⇒ ∃ axis that can kill(current_stack)`.
 3. Instantiate exactly one rival per axis. `rival_i ≈ resample(rival_j) ⇒ reject` (shared systematic error).
 4. Keep current stack as baseline. `keep_and_add ∈ rivals ∧ ¬default`.
@@ -42,7 +42,7 @@ Reader = answering model. Cognitive procedure only. ¬ cascade · ¬ header gram
 
 ## Wide detent — kill the incumbent frame
 
-`detent=wide ⇒ procedure(1..9) ∪ {F1, F2, F3}`. Operator vocabulary: extraordinary aperture · outside the box · kill the conventional frame · asymmetric search.
+`detent=wide ⇒ procedure(1..9) ∪ {F1, F2, F3}`. Operator vocabulary: extraordinary aperture · outside the box · kill the conventional frame · asymmetric search. The step-1 self-select criterion mirrors `path-sim` § Aperture detents by design — kept inline (not link-out) so wide is self-triggerable on surfaces where `path-sim` cannot load, not only when named.
 
 - **F1 — Name the incumbent frame** you are about to recede into, *before* naming axes (step 2). That frame is the baseline, never the answer. `¬named(incumbent) ⇒ ∀ rival: silently_inherits(incumbent)`.
 - **F2 — Blank-world test.** Suppose no inherited lead, pin, plan, or strategy exists — what class of move remains? Run before instantiating rivals; this is the generator for the stack-killing axis step 2 requires at `wide`.
