@@ -29,13 +29,13 @@ from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
 from cortex_store.files_path_normalize import normalize_cortex_files_path
 
 from cdp_ask.models import SubmitProjectAskRequest, classify_stall_stage
+from cdp_ask.overlay_effort_retry import run_with_overlay_retry
 from cdp_ask.page_liveness import (
     LadderAdvanceState,
     LadderCallbacks,
     advance_ladder_from_harvest,
     make_harvest_ladder_hook,
 )
-from cdp_ask.overlay_effort_retry import run_with_overlay_retry
 from cdp_ask.unverifiable import (
     converse_fail_error,
     converse_stall_stage,
