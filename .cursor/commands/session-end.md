@@ -257,25 +257,6 @@ Self-check:
 3. Is `**Continues:**` set when this session extends a prior?
 4. Is the size <10 KB?
 
-### Step 2.5: Attestation via `doc_validate` (mandatory before real close)
-
-`session_close` rejects with 422 `session_close_validate_attestation_missing` without prior PASS attestation. **Skip for `dry_run=True` only.**
-
-Call `doc_validate` with `doc_type="session_close"` and the **same flat kwargs** as the eventual close — not `text`/`path`/`source_ref` (those are for `implement_dense_spec`). Required fields: `session_id`, `agent`, `session_summary_md`, `summary`.
-
-```
-cortex(tool="doc_validate", arguments='{
-  "doc_type": "session_close",
-  "session_id": "cursor-YYYY-MM-DD-HHMMSS-{3hex}",
-  "agent": "cursor",
-  "session_summary_md": "<STRUCTURAL LAYER FROM STEP 2>",
-  "summary": "<SUMMARY FROM STEP 1>",
-  "transcript_depth": "none"
-}')
-```
-
-On `status=pass`, capture `attestation_tokens` (includes `session_close_validate:pass` and `session_id:{session_id}`). Remediate any failed preflight/audit gates before proceeding.
-
 ### Step 3: Call `session_close`
 
 Set `transcript_depth` per the table above. Include `transcript_jsonl_path`
@@ -285,7 +266,6 @@ Set `transcript_depth` per the table above. Include `transcript_jsonl_path`
 cortex(tool="session_close", arguments='{
   "session_id": "cursor-YYYY-MM-DD-HHMMSS-{3hex}",
   "agent": "cursor",
-  "validate_attestation": ["session_close_validate:pass", "session_id:cursor-YYYY-MM-DD-HHMMSS-{3hex}"],
   "transcript_depth": "none",
   "session_summary_md": "<STRUCTURAL LAYER FROM STEP 2>",
   "summary": "<SUMMARY FROM STEP 1>",
@@ -296,8 +276,6 @@ cortex(tool="session_close", arguments='{
   "prior_session_id": "<PRIOR SESSION ID or omit>"
 }')
 ```
-
-Use the exact `attestation_tokens` array from Step 2.5 — do not hand-compose tokens.
 
 For `verbatim`, add `"transcript_depth": "verbatim"` and
 `"transcript_jsonl_path": "<PATH FROM STEP 0>"`.
@@ -340,8 +318,6 @@ the operator explicitly requests a continuation handoff in the same message
 | `session.already_closed` | SUCCESS-EQUIVALENT only for same-close retry (same `session_id`, no later user turn). Quote IDs. If preflight hopped, close the successor. |
 | `handoff.requires_transcript_entity` | Re-close with `transcript_depth="light"` (or `verbatim`); omit handoff only if arc complete |
 | `handoff.missing_transcript_anchor` | Prepend the anchor block (`**Closing session:** transcript:{session_id}` + `**Load context:**` line) to `handoff_prompt`; re-call |
-| `session_close_validate_attestation_missing` | Run Step 2.5 `doc_validate(doc_type="session_close", …)`; pass `attestation_tokens` as `validate_attestation` |
-| `session_close_validate_session_mismatch` | `validate_attestation` must include `session_id:{session_id}` matching the close call |
 
 Maximum one retry on non-`already_closed` 422.
 

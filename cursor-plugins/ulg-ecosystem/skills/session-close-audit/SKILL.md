@@ -10,8 +10,6 @@ description: Pre-close audit (Step 2b) — read before session_close. Mechanical
 **History:** `entity_get(agent_skill:session-close-audit)` · normative: `cortex-v2.4.md` §1, §3  
 **Fill stage:** `enrichment-quality-discipline.md` (post-close, async).
 
-**Attestation bridge:** Step 2b inventory/remediation feeds Step 3a in `session-close-kernel.md` — run `doc_validate(doc_type="session_close", …)` with the same flat close payload (required: `session_id`, `agent`, `session_summary_md`, `summary`) immediately before `session_close`. On PASS, copy `attestation_tokens` → `validate_attestation`. `doc_validate` re-runs preflight audit gates server-side; fix failed gates before the atomic close.
-
 ## FOL
 
 ```text

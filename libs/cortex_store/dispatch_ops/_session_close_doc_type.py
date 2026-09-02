@@ -1,14 +1,11 @@
-"""session_close doc_type — template builder, attestation tokens, gate check."""
+"""session_close doc_type — template builder and gate check."""
 
 from __future__ import annotations
 
 import hashlib
-from typing import Any
 
 from .ops_review_gate import _PRE_CLOSE_GATE_KINDS
 
-_SESSION_CLOSE_VALIDATE_PASS = "session_close_validate:pass"
-_SESSION_ID_PREFIX = "session_id:"
 _SESSION_CLOSE_VERSION = "1.0.0"
 
 _SESSION_CLOSE_SKILLS: tuple[str, ...] = (
@@ -38,7 +35,6 @@ _SESSION_CLOSE_OPTIONAL_FIELDS: tuple[str, ...] = (
     "decisions",
     "open_items",
     "prior_session_id",
-    "validate_attestation",
 )
 
 _TRANSCRIPT_DEPTH_RULES = """\
@@ -129,10 +125,6 @@ def build_session_close_template(*, platform_note: str = "") -> str:
         f"{_audit_codes_block()}\n"
         f"{_skill_pointer_block()}\n"
         f"{platform_section}"
-        "## Post-fill attestation checklist\n\n"
-        "1. Run `doc_validate(doc_type=\"session_close\", …)` with the close payload.\n"
-        "2. On PASS, copy `attestation_tokens` to the `validate_attestation` arg.\n"
-        "3. Run `session_close(…, validate_attestation=[…])` — atomic write is refused without PASS.\n"
     )
 
 
@@ -161,22 +153,6 @@ def session_close_pedagogy_digest(*, platform_note: str = "") -> str:
     return _content_digest(joined.encode("utf-8"))
 
 
-def session_close_attestation_tokens(*, session_id: str) -> list[str]:
-    return [
-        _SESSION_CLOSE_VALIDATE_PASS,
-        f"{_SESSION_ID_PREFIX}{session_id}",
-    ]
-
-
-def check_session_close_validate_attestation(
-    *,
-    session_id: str,
-    validate_attestation: list[str] | None,
-) -> dict[str, Any] | None:
-    """Attestation retired — close(op=check) gates commit; kept for import stability."""
-    return None
-
-
 __all__ = [
     "_SESSION_CLOSE_OPTIONAL_FIELDS",
     "_SESSION_CLOSE_REQUIRED_FIELDS",
@@ -185,8 +161,6 @@ __all__ = [
     "build_session_close_template",
     "build_session_close_template_cursor",
     "build_session_close_template_web",
-    "check_session_close_validate_attestation",
-    "session_close_attestation_tokens",
     "session_close_pedagogy_digest",
     "skill_digest",
 ]

@@ -122,10 +122,6 @@ def test_session_close_seam_dispatches_without_failing_close() -> None:
             return_value={},
         ),
         patch(
-            "cortex_store.dispatch_ops.ops_session_close.check_session_close_validate_attestation",
-            return_value=None,
-        ),
-        patch(
             "cortex_store.dispatch_ops.ops_session_close._close_session_impl",
             return_value={"ok": True, "session_id": "sess-close"},
         ),

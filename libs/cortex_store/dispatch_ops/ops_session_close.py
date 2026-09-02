@@ -27,7 +27,6 @@ from ..transcript_assembly import (
     session_id_timing_hint,
 )
 from ._session_bus_thread_disposition import bus_thread_disposition_preflight_fields
-from ._session_close_doc_type import check_session_close_validate_attestation
 from ._session_objective_promote import promote_session_objectives
 from ._session_summary_path import resolve_session_summary_md
 from ._session_todo_reconciliation import todo_reconciliation_preflight_fields
@@ -389,7 +388,6 @@ def _op_session_close(
     source_ref_derivation: str | None = None,
     defer_gaps: dict[str, str] | None = None,
     promote_todos: list[dict[str, Any]] | None = None,
-    validate_attestation: list[str] | None = None,
     dry_run: bool = False,
     digest: dict[str, Any] | None = None,
     **_: object,
@@ -538,13 +536,6 @@ def _op_session_close(
                 bus_disp["bus_thread_disposition_warning"],
             ]
         return dry_payload
-
-    attestation_error = check_session_close_validate_attestation(
-        session_id=session_id,
-        validate_attestation=validate_attestation,
-    )
-    if attestation_error is not None:
-        return attestation_error
 
     body: dict[str, Any] = {
         "session_id": session_id,
