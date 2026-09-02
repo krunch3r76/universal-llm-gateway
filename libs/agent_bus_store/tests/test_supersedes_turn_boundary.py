@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from agent_bus_store import create_app
 from agent_bus_store.auth import require_token
 from agent_bus_store.supersedes_turn_boundary import (
