@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 from tools.agent_bus.request import (
     _merge_lane_tags,
+    _request_dispatch,
     _request_impl,
     probe_auto_liveness,
 )
@@ -629,6 +630,42 @@ def test_enqueue_omits_lane_when_unset() -> None:
         )
     payload = client.post.call_args.kwargs["json"]
     assert "lane" not in payload
+
+
+def test_request_omit_desired_effort_enqueues_auto() -> None:
+    send_payload = {
+        "send_path": "new_thread",
+        "thread": {"id": "9923", "slug": "effort-omit"},
+        "turn": {"id": 1, "thread": "9923", "turn_number": 1},
+    }
+    with (
+        patch("tools.agent_bus.request._send_dispatch", return_value=send_payload),
+        patch(
+            "tools.agent_bus.request.probe_auto_liveness",
+            return_value={
+                "live": True,
+                "reason": "ok",
+                "attempts": 1,
+                "elapsed_s": 0.1,
+            },
+        ),
+        patch("tools.agent_bus.request.enqueue_auto_job") as enqueue_mock,
+    ):
+        enqueue_mock.return_value = {
+            "ok": True,
+            "handler_status": "auto-admit-armed",
+            "enqueue": {"ok": True},
+        }
+        _request_dispatch(
+            new_slug="effort-omit",
+            thread=None,
+            to="cursor",
+            subject="DIRECTIVE",
+            body="TYPE: DIRECTIVE",
+            from_agent="web-anthropic",
+            contract="investigate",
+        )
+    assert enqueue_mock.call_args.kwargs["desired_effort"] == "auto"
 
 
 def test_enqueue_includes_lane_when_set() -> None:

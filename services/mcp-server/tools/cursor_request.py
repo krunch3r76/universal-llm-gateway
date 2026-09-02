@@ -113,7 +113,7 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         sidecar_content: str | None = None,
         sidecar_slug: str | None = None,
         desired_model: str = "auto",
-        desired_effort: str = "medium",
+        desired_effort: str = "auto",
         escalation: str | None = None,
         contract: str = "answer",
         require_attended: bool = False,
@@ -143,6 +143,8 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
 
         Coding interest or how-question → ``contract=ask`` first (omit
         ``desired_model`` / ``escalation`` / ``workspace`` unless satellite).
+        ``desired_effort``: omit or ``auto`` ⇒ per-contract default (judgment
+        contracts ``xhigh``, mechanical ``medium``); explicit rung always honored.
         Cortex/RAG ≠ checkout. ¬ sequential ``fs``/``rag`` as the unknown-loci
         hunter — that hop is ``cursor_request(ask|recon)``. After Auto CLOSEOUT
         (or a named neighborhood): oriented reads OK (anchors, siblings,
@@ -334,7 +336,7 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         sidecar_content: str | None = None,
         sidecar_slug: str | None = None,
         desired_model: str = "auto",
-        desired_effort: str = "medium",
+        desired_effort: str = "auto",
         escalation: str | None = None,
         contract: str = "answer",
         require_attended: bool = False,

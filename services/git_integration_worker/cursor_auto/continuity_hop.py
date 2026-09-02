@@ -12,6 +12,7 @@ import json
 from typing import Any
 
 from agent_seat.registry import normalize_bus_address
+from effort_vocabulary import AUTO_EFFORT
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_auto.admit_report import (
@@ -84,14 +85,14 @@ def _hop_cdp_model(job: AutoJob) -> str:
 def _hop_reasoning_effort(job: AutoJob) -> dict[str, Any]:
     """Resolve wire effort for a hop CDP commission.
 
-    Schema-default ``medium`` is treated as unpinned so sealed-ask High remains
+    Omitted (``auto``) and schema-``medium`` are unpinned so sealed-ask High remains
     the picker default. Explicit pins (incl. ``xhigh`` / ``extra`` aliases) forward.
     """
     effort = resolve_desired_effort(
         job.desired_effort, contract=job.contract or "answer"
     )
     resolved = str(effort.get("resolved_effort") or "").strip().lower()
-    if resolved == _UNPINNED_EFFORT:
+    if effort.get("requested") == AUTO_EFFORT or resolved == _UNPINNED_EFFORT:
         return {**effort, "wire_effort": None}
     return {**effort, "wire_effort": resolved or None}
 

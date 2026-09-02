@@ -238,7 +238,9 @@ async def process_job(
             contract=contract,
             handoff_contract=handoff_contract,
         )
-    wire_effort = resolve_desired_effort(job.desired_effort, contract=contract)
+    wire_effort = resolve_desired_effort(
+        job.desired_effort, contract=contract, handoff_contract=handoff_contract
+    )
     effort = clamp_effort_to_model_card(model["resolved_model_id"], wire_effort)
     escalation = resolve_escalation(job.escalation)
     contract_info = resolve_contract_disposition(contract)

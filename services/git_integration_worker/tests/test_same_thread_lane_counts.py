@@ -63,6 +63,34 @@ def _post_enqueue(client: TestClient, *, thread_id: str, turn_number: int):
     )
 
 
+def test_route_enqueue_omits_desired_effort_defaults_auto(
+    cursor_auto_client: TestClient,
+) -> None:
+    get_registry().register("9923-r2-effort-default-handler")
+    with patch(
+        "services.git_integration_worker.routes.cursor_auto.supersede_same_thread_inflight",
+        new=AsyncMock(return_value=None),
+    ):
+        resp = cursor_auto_client.post(
+            "/api/v1/git/cursor-auto/enqueue",
+            json={
+                "thread_id": "9923-r2",
+                "turn_number": 1,
+                "subject": "effort default",
+                "body": "TYPE: DIRECTIVE\nvision: probe\n",
+                "from_agent": "web-anthropic",
+                "to_agent": "cursor",
+                "desired_model": "auto",
+                "contract": "implement",
+            },
+        )
+    assert resp.status_code == 200
+    job_id = resp.json()["job_id"]
+    job = get_queue().get(job_id)
+    assert job is not None
+    assert job.desired_effort == "auto"
+
+
 def test_thread_lane_counts_alone_is_zero() -> None:
     queue = AutoJobQueue(durable=False)
     job = _enqueue(queue, thread_id="6885", turn_number=1)

@@ -73,7 +73,7 @@ class EnqueueBody(BaseModel):
     from_agent: str
     to_agent: str = "cursor"
     desired_model: str = "auto"
-    desired_effort: str = "medium"
+    desired_effort: str = "auto"
     escalation: str | None = None
     contract: str = "answer"
     require_attended: bool = False

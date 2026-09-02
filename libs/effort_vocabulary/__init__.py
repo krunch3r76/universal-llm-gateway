@@ -8,6 +8,7 @@ testid. Surfaces must not restate alias literals.
 from __future__ import annotations
 
 from effort_vocabulary.core import (
+    AUTO_EFFORT,
     EFFORT_TOKENS,
     PICKER_LADDER,
     PROVIDER_EXTENDED,
@@ -23,6 +24,7 @@ from effort_vocabulary.core import (
 CONSUMERS: tuple[str, ...] = ("git_integration_worker", "stargate")
 
 __all__ = [
+    "AUTO_EFFORT",
     "EFFORT_TOKENS",
     "PICKER_LADDER",
     "PROVIDER_EXTENDED",

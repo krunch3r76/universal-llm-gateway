@@ -725,3 +725,107 @@ def test_enqueue_body_binds_require_attended():
         require_attended=True,
     )
     assert body.require_attended is True
+
+
+def test_process_job_explicit_grok_pin_omit_effort_nests_xhigh(
+    monkeypatch,
+) -> None:
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    from services.git_integration_worker.cursor_auto.handler import process_job
+    from services.git_integration_worker.cursor_auto.queue import AutoJob
+
+    bus = AsyncMock()
+    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    submit = AsyncMock(return_value={"ok": False, "error": "stop"})
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.handler.submit_nested_dispatch",
+        submit,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.gate_serialize.sdk_dispatch_gate_stats",
+        lambda **_: {"active": 0, "queued": 0, "limit": 1},
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.admit_gates.fetch_thread_turns",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.admit_gates.fetch_thread_status",
+        AsyncMock(return_value="active"),
+    )
+
+    job = AutoJob(
+        job_id="j-grok-investigate",
+        thread_id="9923",
+        turn_number=1,
+        subject="investigate effort omit",
+        body=(
+            "TYPE: DIRECTIVE\n"
+            "density: dense\n"
+            "## Scope\n"
+            "services/git_integration_worker/cursor_auto/wire_map.py\n"
+            "vision: confirm resolve_desired_effort table\n"
+        ),
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="grok-4.6",
+        desired_effort="auto",
+        contract="investigate",
+    )
+
+    asyncio.run(process_job(job, bus=bus))
+    submit.assert_awaited_once()
+    model_knobs = submit.await_args.kwargs["model_knobs"]
+    assert model_knobs is not None
+    assert model_knobs.get("effort") == "xhigh"
+
+
+def test_hop_reasoning_effort_auto_is_unpinned() -> None:
+    from services.git_integration_worker.cursor_auto.continuity_hop import (
+        _hop_reasoning_effort,
+    )
+    from services.git_integration_worker.cursor_auto.queue import AutoJob
+
+    auto_job = AutoJob(
+        job_id="j-hop-auto",
+        thread_id="9923",
+        turn_number=1,
+        subject="hop",
+        body="",
+        from_agent="cursor-auto",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="auto",
+        contract="investigate",
+    )
+    assert _hop_reasoning_effort(auto_job)["wire_effort"] is None
+
+    xhigh_job = AutoJob(
+        job_id="j-hop-xhigh",
+        thread_id="9923",
+        turn_number=2,
+        subject="hop",
+        body="",
+        from_agent="cursor-auto",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="xhigh",
+        contract="investigate",
+    )
+    assert _hop_reasoning_effort(xhigh_job)["wire_effort"] == "xhigh"
+
+    medium_job = AutoJob(
+        job_id="j-hop-medium",
+        thread_id="9923",
+        turn_number=3,
+        subject="hop",
+        body="",
+        from_agent="cursor-auto",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="investigate",
+    )
+    assert _hop_reasoning_effort(medium_job)["wire_effort"] is None

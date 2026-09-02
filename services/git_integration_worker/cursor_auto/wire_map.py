@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from contract_vocab import CANONICAL_CONTRACTS
-from effort_vocabulary import WIRE_LADDER, normalize_effort
+from effort_vocabulary import AUTO_EFFORT, WIRE_LADDER, normalize_effort
 
 Contract = Literal[
     "answer",
@@ -151,12 +151,22 @@ BINDABLE_CDP_ESCALATIONS: tuple[str, ...] = (
 )
 _CONTRACT_EFFORT_DEFAULTS: dict[str, str] = {
     "investigate": "xhigh",
-    "recon": "medium",
-    "seed": "xhigh",
     "confer": "xhigh",
+    "seed": "xhigh",
+    "verify": "xhigh",
+    "execute": "xhigh",
+    "propagate": "xhigh",
+    "implement": "medium",
+    "recon": "medium",
     "ask": "medium",
     "answer": "medium",
 }
+_JUDGMENT_HANDOFF = "light-bounded"
+
+
+def _effort_omitted(desired_effort: str | None) -> bool:
+    raw = ("" if desired_effort is None else str(desired_effort)).strip().lower()
+    return raw == "" or raw == AUTO_EFFORT
 # Life seats often put CDP models on desired_model by mistake; map → escalation.
 _CDP_DESIRED_MODEL_ALIASES: dict[str, str] = {
     "cdp/opus-5": "cdp/opus-5",
@@ -417,21 +427,34 @@ def resolve_desired_effort(
     desired_effort: str | None,
     *,
     contract: str = "answer",
+    handoff_contract: str | None = None,
 ) -> dict[str, Any]:
     """Normalize + clamp ``desired_effort`` to canonical wire values.
 
     Canonical set: low|medium|high|xhigh|max. Surface aliases (``extra``,
     ``extra-high``, ``Extra High``) normalize to ``xhigh`` via effort_vocabulary.
 
-    When ``desired_effort`` is omitted, per-contract defaults apply (investigate/
-    seed/confer → ``xhigh``; ask/recon/answer → ``medium``) so omit-path does not
-    hedge to medium on confer.
+    ``auto``/omitted ⇒ per-contract default: investigate/confer/seed/verify/execute/
+    propagate → ``xhigh``; implement/recon/ask/answer → ``medium``; ``implement``
+    whose handoff contract is ``light-bounded`` (body declares judgment) → ``xhigh``.
+    ``requested`` echoes ``auto`` so the admit turn surfaces the rule via
+    ``admit_effort_override_rule_line``.
     """
     contract_key = (contract or "answer").strip().lower()
-    if desired_effort is None or not str(desired_effort).strip():
-        requested = _CONTRACT_EFFORT_DEFAULTS.get(contract_key, "medium")
-    else:
-        requested = desired_effort.strip().lower()
+    if _effort_omitted(desired_effort):
+        if contract_key == "implement" and handoff_contract == _JUDGMENT_HANDOFF:
+            resolved = "xhigh"
+            why = f"auto chose xhigh for contract=implement (handoff={_JUDGMENT_HANDOFF})"
+        else:
+            resolved = _CONTRACT_EFFORT_DEFAULTS.get(contract_key, "medium")
+            why = f"auto chose {resolved} for contract={contract_key}"
+        return {
+            "requested": AUTO_EFFORT,
+            "resolved_effort": resolved,
+            "clamped": False,
+            "notes": why,
+        }
+    requested = str(desired_effort).strip().lower()
     normalized = normalize_effort(requested)
     if normalized is not None and normalized in _EFFORT_VALUES:
         notes = "honored"

@@ -111,7 +111,7 @@ def _hop_dispatch(
         sidecar_content=None,
         sidecar_slug=None,
         desired_model=desired_model or "auto",
-        desired_effort=desired_effort or "medium",
+        desired_effort=desired_effort or "auto",
         contract="answer",
         require_attended=False,
         request_id=rid_intake.request_id,

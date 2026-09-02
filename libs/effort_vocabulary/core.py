@@ -5,6 +5,9 @@ from __future__ import annotations
 # Cursor / Auto wire + frontier portable intent (canonical).
 WIRE_LADDER: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
 
+# Wire omit sentinel for ``desired_effort`` (symmetric with ``desired_model="auto"``).
+AUTO_EFFORT: str = "auto"
+
 # CDP picker suffix tokens (UI Extra High maps to ``extra`` on the model id).
 PICKER_LADDER: tuple[str, ...] = ("low", "medium", "high", "extra", "max")
 

@@ -63,7 +63,7 @@ def job_from_row(row: sqlite3.Row) -> AutoJob:
         from_agent=str(data.get("from_agent") or ""),
         to_agent=str(data.get("to_agent") or "cursor"),
         desired_model=str(data.get("desired_model") or "auto"),
-        desired_effort=str(data.get("desired_effort") or "medium"),
+        desired_effort=str(data.get("desired_effort") or "auto"),
         escalation=data.get("escalation") or None,
         contract=str(data.get("contract") or "answer"),
         require_attended=bool(data.get("require_attended", False)),
