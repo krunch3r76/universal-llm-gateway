@@ -4,8 +4,8 @@ Each dispatch gets a private HOME with copied ``cli-config.json`` (identity),
 XDG ``auth.json`` (credential), ``~/.gateway/mcp.yaml`` (vortex token), and
 user-layer Cursor settings (``rules/``, ``plugins/`` (ulg-ecosystem census skills),
 ``mcp.json``) so ``setting_sources=all`` matches the IDE Composer substrate.
-The bridge subprocess inherits HOME via ``os.environ`` (see ``routes/cursor_sdk``
-Branch B — ``launch_bridge`` snapshots ``os.environ`` at ``Popen``).
+The bridge subprocess receives HOME through the /usr/bin/env argv shim
+built in cursor_sdk_bridge_launch — never through os.environ.
 """
 
 from __future__ import annotations

@@ -2,29 +2,32 @@
 
 In-memory idempotency registry state is lost on worker restart (Phase 1 scope).
 
-Phase 2 HOME isolation (T2b 2026-06-11, thread 1559): each dispatch seeds a
-private HOME with copied ``cli-config.json`` (identity), XDG ``auth.json``
-(credential), and user-layer Cursor settings for ``setting_sources=all``.
-``Client.launch_bridge`` snapshots ``os.environ`` at ``Popen`` (no ``env=``
-kwarg in cursor-sdk 0.1.8). Each dispatch records its HOME/venv override in
-thread-local storage; a monkeypatch on ``_bridge_subprocess_env`` overlays it
-into the bridge subprocess env at ``Popen`` time. The override is confined to
-the dispatch's own worker thread, so concurrent and timed-out (orphan)
-dispatches never race on shared global state and no dispatch lock is needed.
+Per-dispatch HOME isolation: each dispatch seeds a private HOME with copied
+``cli-config.json`` (identity), XDG ``auth.json`` (credential), and user-layer
+Cursor settings for ``setting_sources=all``. That HOME, the repo venv, the
+dispatch stamp, and the git identity reach the bridge through its **argv**:
+``launch_sdk_bridge`` hands ``Client.launch_bridge`` a ``command`` list of the
+form ``[/usr/bin/env, HOME=…, VIRTUAL_ENV=…, PATH=…, CURSOR_SDK_DISPATCH_ID=…,
+GIT_*=…, <bridge-bin>]``. The SDK forwards the list verbatim as ``argv[0..n]``
+and appends its own ``--workspace`` / ``--state-root`` / callback flags after
+it; ``env(1)`` applies the assignments and execs the bridge in place, so the
+``Popen`` the SDK holds *is* the bridge — its pid, its stderr, its environ.
+The subprocess env the SDK builds (``os.environ`` + SDK defaults) is not
+touched; GIW's own ``os.environ`` is never mutated; concurrent dispatches share
+no state because the command list is a pure function of one call's arguments.
 """
 
 from __future__ import annotations
 
 import os
-import threading
 import time
 from collections.abc import Mapping
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 import httpx
 from cursor_sdk import Client
+from cursor_sdk._vendor import resolve_bridge_path
 from cursor_sdk.types import LocalAgentOptions
 from universal_logging import get_logger
 
@@ -71,105 +74,63 @@ def _is_pre_discovery_transient(exc: BaseException) -> bool:
     return any(marker in msg for marker in _PRE_DISCOVERY_TRANSIENT_MARKERS)
 
 
-_dispatch_env = threading.local()
-_BRIDGE_ENV_PATCH_INSTALLED = False
-_PATH_PREPEND_KEY = "__CURSOR_SDK_PATH_PREPEND__"
+# env(1) is the exec-in-place carrier for the per-dispatch overlay. It must
+# be absolute: the PATH= assignment it applies is the dispatch PATH, not GIW's.
+_ENV_BIN = "/usr/bin/env"
 
 
-def _dispatch_env_overlay() -> dict[str, str] | None:
-    return getattr(_dispatch_env, "overrides", None)
+def resolve_bridge_bin() -> str:
+    """Absolute path of the bridge launcher, resolved under GIW's own PATH.
 
-
-def _install_bridge_env_patch() -> None:
-    """Overlay the per-dispatch HOME/venv onto the bridge subprocess env.
-
-    cursor-sdk 0.1.8 ``Bridge.launch`` builds the subprocess env from
-    ``_bridge_subprocess_env()`` (``dict(os.environ)`` + SDK setdefaults)
-    synchronously on the caller thread before ``Popen``. We wrap that function
-    so it overlays the calling thread's dispatch override (HOME, VIRTUAL_ENV,
-    PATH-prepend) read from thread-local storage, without mutating
-    process-global ``os.environ``. Idempotent; patches the sync module global
-    and the async module's imported binding.
+    ``CURSOR_SDK_BRIDGE_BIN`` wins when set; otherwise the SDK's own resolver
+    (bundled launcher, then PATH). Made absolute with ``os.path.abspath`` —
+    never ``resolve()`` — because the bundled launcher finds its ``node``
+    through ``$0``'s directory and a followed symlink would move that.
+    Raises ``cursor_sdk.errors.CursorSDKError`` when nothing resolves.
     """
-    global _BRIDGE_ENV_PATCH_INSTALLED
-    if _BRIDGE_ENV_PATCH_INSTALLED:
-        return
-
-    from cursor_sdk import _bridge as _sdk_bridge
-
-    _orig_env = _sdk_bridge._bridge_subprocess_env
-
-    def _bridge_subprocess_env_with_overlay() -> Mapping[str, str]:
-        env = dict(_orig_env())
-        overrides = _dispatch_env_overlay()
-        if overrides:
-            home = overrides.get("HOME")
-            if home is not None:
-                env["HOME"] = home
-            venv = overrides.get("VIRTUAL_ENV")
-            if venv is not None:
-                env["VIRTUAL_ENV"] = venv
-            prepend = overrides.get(_PATH_PREPEND_KEY)
-            if prepend is not None:
-                cur = env.get("PATH")
-                env["PATH"] = f"{prepend}{os.pathsep}{cur}" if cur else prepend
-            dispatch_id = overrides.get("CURSOR_SDK_DISPATCH_ID")
-            if dispatch_id is not None:
-                env["CURSOR_SDK_DISPATCH_ID"] = dispatch_id
-            for key, value in overrides.items():
-                if key.startswith("GIT_"):
-                    env[key] = value
-        return env
-
-    _sdk_bridge._bridge_subprocess_env = _bridge_subprocess_env_with_overlay
-    try:
-        from cursor_sdk import _async_bridge as _sdk_async_bridge
-
-        _sdk_async_bridge._bridge_subprocess_env = _bridge_subprocess_env_with_overlay
-    except Exception:  # async bridge optional; the worker uses the sync path
-        logger.debug("cursor-sdk async bridge env patch skipped (module absent)")
-
-    _BRIDGE_ENV_PATCH_INSTALLED = True
-    logger.info(
-        "cursor-sdk bridge subprocess-env patch installed "
-        "(thread-confined HOME overlay; no os.environ mutation)"
-    )
+    raw = _SDK_BRIDGE_BIN or resolve_bridge_path()
+    return os.path.abspath(raw)
 
 
-@contextmanager
-def _dispatch_home_overlay(
-    home: Path,
+def build_bridge_command(
     *,
-    repo_venv: Path | None = None,
-    real_home: Path | str | None = None,
-    dispatch_id: str | None = None,
-):
-    """Thread-confined HOME/venv overlay for one dispatch.
+    bridge_bin: str,
+    dispatch_home: Path,
+    repo_venv: Path | None,
+    real_home: Path | str | None,
+    dispatch_id: str | None,
+) -> list[str]:
+    """``Client.launch_bridge(command=)`` argv: ``env(1)`` assignments then the bridge.
 
-    Records the override in thread-local storage read by the patched
-    ``_bridge_subprocess_env`` during ``Client.launch_bridge`` (same thread).
-    No ``os.environ`` mutation and no lock: each dispatch runs in its own
-    ``asyncio.to_thread`` worker thread, so overrides never collide and a
-    timed-out orphan thread cannot leak HOME into a newly admitted dispatch.
+    The SDK appends ``--workspace``/``--state-root``/callback flags after the
+    last element, so the bridge binary must be last and must be safe as an
+    ``env(1)`` operand: absolute (the ``PATH=`` assignment is applied before
+    the exec, so a bare name would be searched under the dispatch PATH), no
+    ``=`` (would parse as an assignment), not ``-``-prefixed (would parse as
+    an option). ``VIRTUAL_ENV``/``PATH`` are omitted when ``repo_venv`` is
+    None; ``CURSOR_SDK_DISPATCH_ID``/``GIT_*`` when ``dispatch_id`` is None —
+    the bridge then inherits GIW's values for those keys, unchanged. PATH is
+    always complete: the dispatch prepend, then GIW's PATH when non-empty.
+    Reads ``os.environ["PATH"]`` and the operator's cursor-agent shim; writes
+    nothing.
     """
-    overrides: dict[str, str] = {"HOME": str(home)}
-    if dispatch_id is not None:
-        overrides["CURSOR_SDK_DISPATCH_ID"] = dispatch_id
-        overrides.update(dispatch_git_env_vars(dispatch_id))
-    if repo_venv is not None:
-        overrides["VIRTUAL_ENV"] = str(repo_venv)
-        overrides[_PATH_PREPEND_KEY] = build_dispatch_path_prepend(
-            repo_venv, real_home=real_home
+    if not os.path.isabs(bridge_bin) or "=" in bridge_bin or bridge_bin.startswith("-"):
+        raise ValueError(
+            "bridge_bin must be an absolute path without '=' and not '-'-prefixed: "
+            f"{bridge_bin!r}"
         )
-    prev = getattr(_dispatch_env, "overrides", None)
-    _dispatch_env.overrides = overrides
-    try:
-        yield
-    finally:
-        _dispatch_env.overrides = prev
-
-
-_install_bridge_env_patch()
+    command = [_ENV_BIN, f"HOME={dispatch_home}"]
+    if repo_venv is not None:
+        prepend = build_dispatch_path_prepend(repo_venv, real_home=real_home)
+        base = os.environ.get("PATH", "")
+        path_value = f"{prepend}{os.pathsep}{base}" if base else prepend
+        command.append(f"VIRTUAL_ENV={repo_venv}")
+        command.append(f"PATH={path_value}")
+    if dispatch_id is not None:
+        command.append(f"CURSOR_SDK_DISPATCH_ID={dispatch_id}")
+        command.extend(f"{k}={v}" for k, v in dispatch_git_env_vars(dispatch_id).items())
+    command.append(bridge_bin)
+    return command
 
 
 def launch_sdk_bridge(
@@ -182,57 +143,64 @@ def launch_sdk_bridge(
     local: LocalAgentOptions | Mapping[str, Any] | None,
     client_timeout: httpx.Timeout,
 ) -> Client:
-    """Launch the cursor-sdk bridge with dispatch HOME overlay and bounded retry.
+    """Launch the cursor-sdk bridge for one dispatch with bounded retry.
 
-    Enters ``_dispatch_home_overlay`` only around the launch retry ladder so the
-    thread-local override is visible when ``Client.launch_bridge`` calls the
-    patched ``_bridge_subprocess_env`` at ``Popen`` time. At cursor-sdk 1.0.30
-    that function is invoked only from ``Bridge.launch`` and ``AsyncBridge.launch``,
-    both during launch, so narrowing the overlay lifetime to this call is safe.
+    Builds the ``env(1)`` argv shim once (``build_bridge_command``) and passes
+    it as ``Client.launch_bridge(command=)``; the SDK appends its own flags
+    and execs it, so the bridge runs under the dispatch HOME, venv, PATH,
+    stamp, and git identity while GIW's ``os.environ`` is untouched. Bridge
+    resolution and command validation raise before attempt 1.
 
     Retries are bounded by ``_SDK_LAUNCH_ATTEMPTS`` and only re-attempt the
-    pre-discovery transient (empty tool-callback token before discovery). A launch
-    timeout fails on attempt 1 and does not consume the retry ladder.
+    pre-discovery transient (empty tool-callback token before discovery). A
+    launch timeout fails on attempt 1 and does not consume the retry ladder.
 
-    Reads ``ctx.dispatch_id`` and ``ctx.dispatch_workspace`` only; other context
-    fields are the caller's responsibility.
+    Reads ``ctx.dispatch_id`` and ``ctx.dispatch_workspace`` only; other
+    context fields are the caller's responsibility.
     """
-    with _dispatch_home_overlay(
-        dispatch_home,
+    bridge_bin = resolve_bridge_bin()
+    command = build_bridge_command(
+        bridge_bin=bridge_bin,
+        dispatch_home=dispatch_home,
         repo_venv=repo_venv,
         real_home=real_home,
         dispatch_id=ctx.dispatch_id,
-    ):
-        client = None
-        for attempt in range(_SDK_LAUNCH_ATTEMPTS):
-            try:
-                client = Client.launch_bridge(
-                    _SDK_BRIDGE_BIN,
-                    workspace=str(ctx.dispatch_workspace),
-                    state_root=str(bridge_state),
-                    timeout=_SDK_LAUNCH_TIMEOUT_S,
-                    # Friction 23057: without this the SDK's default
-                    # 600s stream read timeout kills long silent tool
-                    # legs despite healthy heartbeats.
-                    client_timeout=client_timeout,
-                    local=local,
-                )
-                break
-            except Exception as launch_exc:  # noqa: BLE001
-                is_last = attempt + 1 >= _SDK_LAUNCH_ATTEMPTS
-                if is_last or not _is_pre_discovery_transient(launch_exc):
-                    raise
-                backoff = _SDK_LAUNCH_BACKOFFS_S[
-                    min(attempt, len(_SDK_LAUNCH_BACKOFFS_S) - 1)
-                ]
-                logger.warning(
-                    "cursor sdk bridge pre-discovery transient: "
-                    "dispatch_id=%s attempt=%d/%d err=%s; retrying in %.1fs",
-                    ctx.dispatch_id,
-                    attempt + 1,
-                    _SDK_LAUNCH_ATTEMPTS,
-                    launch_exc,
-                    backoff,
-                )
-                time.sleep(backoff)
+    )
+    logger.info(
+        "cursor sdk bridge launch: dispatch_id=%s bridge_bin=%s",
+        ctx.dispatch_id,
+        bridge_bin,
+    )
+    client = None
+    for attempt in range(_SDK_LAUNCH_ATTEMPTS):
+        try:
+            client = Client.launch_bridge(
+                command=command,
+                workspace=str(ctx.dispatch_workspace),
+                state_root=str(bridge_state),
+                timeout=_SDK_LAUNCH_TIMEOUT_S,
+                # Friction 23057: without this the SDK's default
+                # 600s stream read timeout kills long silent tool
+                # legs despite healthy heartbeats.
+                client_timeout=client_timeout,
+                local=local,
+            )
+            break
+        except Exception as launch_exc:  # noqa: BLE001
+            is_last = attempt + 1 >= _SDK_LAUNCH_ATTEMPTS
+            if is_last or not _is_pre_discovery_transient(launch_exc):
+                raise
+            backoff = _SDK_LAUNCH_BACKOFFS_S[
+                min(attempt, len(_SDK_LAUNCH_BACKOFFS_S) - 1)
+            ]
+            logger.warning(
+                "cursor sdk bridge pre-discovery transient: "
+                "dispatch_id=%s attempt=%d/%d err=%s; retrying in %.1fs",
+                ctx.dispatch_id,
+                attempt + 1,
+                _SDK_LAUNCH_ATTEMPTS,
+                launch_exc,
+                backoff,
+            )
+            time.sleep(backoff)
     return client

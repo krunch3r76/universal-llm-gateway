@@ -1053,20 +1053,28 @@ def _fake_repo_venv(tmp_path: Path) -> Path:
     return venv
 
 
+def _env_from_shim(argv: list[str]) -> dict[str, str]:
+    """K=V assignments between ``/usr/bin/env`` and the bridge bin, as a dict."""
+    assert argv and argv[0] == "/usr/bin/env", argv
+    env: dict[str, str] = {}
+    for arg in argv[1:]:
+        if "=" not in arg:
+            break
+        key, value = arg.split("=", 1)
+        env[key] = value
+    return env
+
+
 def test_run_sdk_sync_injects_venv_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Bridge subprocess env must contain dispatch HOME/venv without mutating os.environ.
 
-    The thread-local overlay (_dispatch_home_overlay) sets _dispatch_env.overrides.
-    _bridge_subprocess_env_with_overlay reads those overrides when building the env
-    dict the real bridge passes to Popen.  We verify by calling _bridge_subprocess_env
-    (which is the patched overlay after _install_bridge_env_patch) inside the fake
-    launch_bridge to simulate what the real bridge would produce.
+    The dispatch HOME/venv/PATH reach the bridge as env(1) assignments in the
+    ``command`` list handed to ``Client.launch_bridge``. The fake captures
+    that list and parses the assignments; os.environ must be unchanged.
     """
     import os
-
-    from cursor_sdk import _bridge as _sdk_bridge
 
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
@@ -1083,11 +1091,11 @@ def test_run_sdk_sync_injects_venv_env(
 
     captured: dict[str, str] = {}
 
-    def _fake_launch_bridge(*_args: object, **_kwargs: object) -> MagicMock:
-        # Simulate what the real bridge does: call the patched _bridge_subprocess_env
-        # (which is _bridge_subprocess_env_with_overlay after _install_bridge_env_patch)
-        # to get the env the bridge process would receive.
-        captured.update(dict(_sdk_bridge._bridge_subprocess_env()))
+    def _fake_launch_bridge(
+        *_args: object, command: list[str], **_kwargs: object
+    ) -> MagicMock:
+        # The overlay is the env(1) assignment prefix of command=.
+        captured.update(_env_from_shim(command))
 
         class _Run:
             def wait(self) -> MagicMock:
@@ -1159,8 +1167,6 @@ def test_dispatch_path_prepend_pins_cursor_agent_before_grok(
     """Bridge PATH must prefer verified ~/.local/bin/agent over ~/.grok/bin/agent."""
     import os
 
-    from cursor_sdk import _bridge as _sdk_bridge
-
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
     operator_home = tmp_path / "operator-home"
@@ -1194,8 +1200,10 @@ def test_dispatch_path_prepend_pins_cursor_agent_before_grok(
 
     captured: dict[str, str] = {}
 
-    def _fake_launch_bridge(*_args: object, **_kwargs: object) -> MagicMock:
-        captured.update(dict(_sdk_bridge._bridge_subprocess_env()))
+    def _fake_launch_bridge(
+        *_args: object, command: list[str], **_kwargs: object
+    ) -> MagicMock:
+        captured.update(_env_from_shim(command))
 
         class _Run:
             def wait(self) -> MagicMock:

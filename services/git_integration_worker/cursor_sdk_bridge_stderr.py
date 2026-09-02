@@ -77,8 +77,7 @@ def _resolve_bridge_process(client: Any) -> subprocess.Popen[str] | None:
     """Return the Popen behind an SDK-owned bridge, or None when unavailable.
 
     Reaches a private ``cursor_sdk`` attribute because the package exposes no
-    public handle on the subprocess it launched; GIW already depends on that
-    module's internals to overlay the bridge subprocess environment.
+    public handle on the subprocess it launched.
     """
     bridge = getattr(client, "_owned_bridge", None)
     process = getattr(bridge, "process", None)

@@ -1,10 +1,8 @@
 """Tests for cursor-sdk capacity gate — thread-owned lease semantics.
 
-Covers the four correctness properties from F3 (GPT-5.5 review, agent-bus:1804):
-1. Bridge-env overlay does not mutate os.environ.
-2. Concurrent threads see their own HOME overlay.
-3. Thread reuse: overlay is absent after the context exits.
-4. Timeout/orphan: slot is held until the orphan thread's finally fires.
+1. The bridge command is a pure function of its arguments: two dispatches get
+   distinct argv and the worker's os.environ is never written.
+2. Timeout/orphan: slot is held until the orphan thread's finally fires.
 """
 
 from __future__ import annotations
@@ -17,8 +15,7 @@ from concurrent.futures import Future
 import pytest
 
 from services.git_integration_worker.cursor_sdk_bridge_launch import (
-    _dispatch_env,
-    _dispatch_home_overlay,
+    build_bridge_command,
 )
 from services.git_integration_worker.cursor_sdk_gate import (
     _STANDARD_GATE,
@@ -27,82 +24,35 @@ from services.git_integration_worker.cursor_sdk_gate import (
 )
 
 # ---------------------------------------------------------------------------
-# Test 1 — No process env mutation
+# Test 1 — Command purity: no process env mutation, no shared state
 # ---------------------------------------------------------------------------
 
 
-def test_dispatch_home_overlay_no_environ_mutation(tmp_path: pytest.FixtureDef) -> None:
-    """_dispatch_home_overlay must not mutate os.environ["HOME"]."""
-    original_home = os.environ.get("HOME")
-    fake_home = str(tmp_path / "private-home")
+def test_bridge_command_is_pure(tmp_path: pytest.FixtureDef) -> None:
+    """Two dispatches yield distinct argv; os.environ is untouched by both."""
+    import sys
 
-    with _dispatch_home_overlay(tmp_path / "private-home"):
-        assert os.environ.get("HOME") == original_home, (
-            "overlay must not write to os.environ"
-        )
-        assert getattr(_dispatch_env, "overrides", {}).get("HOME") == fake_home, (
-            "overlay must be visible via thread-local"
-        )
-
-    assert os.environ.get("HOME") == original_home
-
-
-# ---------------------------------------------------------------------------
-# Test 2 — Concurrent thread isolation
-# ---------------------------------------------------------------------------
-
-
-def test_concurrent_thread_isolation(tmp_path: pytest.FixtureDef) -> None:
-    """Two threads with different HOME overlays must see their own private HOME."""
+    before = dict(os.environ)
     home_a = tmp_path / "home-a"
     home_b = tmp_path / "home-b"
-    seen: dict[str, str | None] = {}
-    barrier = threading.Barrier(2)
-
-    def thread_fn(name: str, home: object) -> None:
-        with _dispatch_home_overlay(home):
-            barrier.wait()  # both threads inside overlay simultaneously
-            seen[name] = getattr(_dispatch_env, "overrides", {}).get("HOME")
-
-    t1 = threading.Thread(target=thread_fn, args=("a", home_a))
-    t2 = threading.Thread(target=thread_fn, args=("b", home_b))
-    t1.start()
-    t2.start()
-    t1.join()
-    t2.join()
-
-    assert seen["a"] == str(home_a), "thread A must see its own HOME"
-    assert seen["b"] == str(home_b), "thread B must see its own HOME"
-    assert seen["a"] != seen["b"]
-
-
-# ---------------------------------------------------------------------------
-# Test 3 — Thread reuse cleanup
-# ---------------------------------------------------------------------------
-
-
-def test_thread_reuse_overlay_cleanup(tmp_path: pytest.FixtureDef) -> None:
-    """After the overlay context exits the thread-local override must be absent."""
-    home = tmp_path / "dispatch-home"
-    seen_inside: list[str | None] = []
-    seen_outside: list[str | None] = []
-
-    def thread_fn() -> None:
-        with _dispatch_home_overlay(home):
-            seen_inside.append(
-                (getattr(_dispatch_env, "overrides", None) or {}).get("HOME")
-            )
-        # After exit, prev=None is restored; overrides attr is set to None.
-        seen_outside.append(
-            (getattr(_dispatch_env, "overrides", None) or {}).get("HOME")
-        )
-
-    t = threading.Thread(target=thread_fn)
-    t.start()
-    t.join()
-
-    assert seen_inside == [str(home)]
-    assert seen_outside == [None], "override must be cleared after context exits"
+    argv_a = build_bridge_command(
+        bridge_bin=sys.executable,
+        dispatch_home=home_a,
+        repo_venv=None,
+        real_home=None,
+        dispatch_id="disp-a",
+    )
+    argv_b = build_bridge_command(
+        bridge_bin=sys.executable,
+        dispatch_home=home_b,
+        repo_venv=None,
+        real_home=None,
+        dispatch_id="disp-b",
+    )
+    assert dict(os.environ) == before, "build_bridge_command must not write os.environ"
+    assert argv_a != argv_b
+    assert f"HOME={home_a}" in argv_a and f"HOME={home_b}" in argv_b
+    assert f"HOME={home_b}" not in argv_a
 
 
 # ---------------------------------------------------------------------------
