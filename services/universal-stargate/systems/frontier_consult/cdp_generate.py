@@ -30,6 +30,10 @@ from claude_bundles.operator_proxy_mission import is_operator_proxy_mission_purp
 from model_id import ModelId
 
 from .admission import FrontierEndpointError
+from .cdp_generate_mcp_stamp import (
+    publish_cdp_packet_enriched,
+    stamp_cdp_packet_mcp_default,
+)
 from .cdp_generate_reconcile import upsert_inflight_leg
 from .cdp_generate_worker import run_cdp_worker
 from .cdp_mission_provenance import observe_mission_binding
@@ -157,11 +161,13 @@ def _stage_inputs(
     packet_path: str | None,
     skills: list[str] | None = None,
     purpose: str | None = None,
+    request_id: str | None = None,
 ) -> Any:
     """Stage prompt; ``skills`` → slash manifest for + → Skills attach at runtime.
 
     Judgment-pair skills are always ensured at staging (even when ``skills`` is
-    omitted on light-bounded CDP generate).
+    omitted on light-bounded CDP generate). Stamps Block 5 MCP defaults for
+    life/web before sealing (parity handoff enrich; a:32088).
     """
     cortex_uri = None
     if isinstance(sidecar_ref, str) and sidecar_ref.startswith("cortex://"):
@@ -178,13 +184,29 @@ def _stage_inputs(
         if isinstance(sidecar_ref, str) and not sidecar_ref.startswith("cortex://")
         else None
     )
+    stamp = stamp_cdp_packet_mcp_default(
+        prompt_text=prompt,
+        prompt_uri=cortex_uri,
+        packet_path=packet_non_cortex,
+        sidecar_ref=sidecar_non_cortex,
+    )
+    if stamp.stamped and request_id:
+        publish_cdp_packet_enriched(
+            request_id=request_id,
+            source_label=stamp.source_label,
+            web_mcp_stamped=True,
+        )
+    staged_prompt = stamp.body if stamp.stamped else prompt
+    staged_uri = None if stamp.stamped else cortex_uri
+    staged_packet = None if stamp.stamped else packet_non_cortex
+    staged_sidecar = None if stamp.stamped else sidecar_non_cortex
     try:
         return stage_cdp_prompt_with_skills(
             execution_id=execution_id,
-            prompt_text=prompt,
-            prompt_uri=cortex_uri,
-            packet_path=packet_non_cortex,
-            sidecar_ref=sidecar_non_cortex,
+            prompt_text=staged_prompt,
+            prompt_uri=staged_uri,
+            packet_path=staged_packet,
+            sidecar_ref=staged_sidecar,
             skills=skills if isinstance(skills, list) else None,
             purpose=purpose,
         )
@@ -280,6 +302,7 @@ async def dispatch_cdp_generate(
             packet_path=packet_path,
             skills=skills if isinstance(skills, list) else None,
             purpose=purpose,
+            request_id=request_id,
         )
     except CdpStagingError as exc:
         field = "skills" if str(exc.code).startswith("cdp_skills") else "prompt"
@@ -367,7 +390,8 @@ async def dispatch_cdp_generate(
     opts = getattr(body, "generation_options", None) or {}
     from .cdp_dispatch_topic import extract_cdp_dispatch_topic
 
-    dispatch_topic = extract_cdp_dispatch_topic(prompt if isinstance(prompt, str) else None)
+    prompt_for_topic = prompt if isinstance(prompt, str) else None
+    dispatch_topic = extract_cdp_dispatch_topic(prompt_for_topic)
     worker_kwargs: dict[str, Any] = {
         "execution_id": execution_id,
         "model_id": str(model),

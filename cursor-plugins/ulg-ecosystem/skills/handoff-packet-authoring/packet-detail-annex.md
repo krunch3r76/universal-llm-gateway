@@ -165,6 +165,10 @@ Skill delivery ≠ corpus pointers. Inline-only receivers (`mcp=false`) keep ful
 `agent_bus(fetch/reply)`, `fs(sandbox="cortex", op="read")`; `fs(sandbox="workspaces")` when the packet
 encourages exploration. ¬ team_dispatch, pipeline, manage, observability on life-only. ¬ invent `model=` on handoff.
 
+**CDP generate (`team_dispatch model=cdp/*`, `op=generate`):** Stargate stamps the same life-on/code-off split
+before `stage_cdp_prompt_with_skills` when Block 5 lacks an explicit split — parity with handoff enrich
+(a:32088). Author thin packets; do not rely on the CDP seat inferring code-mount access from prose alone.
+
 **Code seats:** numbered plan with boot, bus/cortex fetches, `fs(read)` on openable sandboxes, live probes.
 
 ### Pre-dispatch self-check

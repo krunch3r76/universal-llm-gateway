@@ -357,6 +357,26 @@ def FrontierHandoffPacketEnriched(  # noqa: N802
 
 
 @event_factory
+def FrontierCdpPacketEnriched(  # noqa: N802
+    request_id: str,
+    packet_path: str,
+    to_agent: str,
+    web_mcp_stamped: bool,
+) -> Event:
+    """CDP generate stamped Block 5 MCP defaults before prompt staging (a:32088)."""
+    return Event(
+        signal="frontier.cdp.packet.enriched",
+        payload={
+            "request_id": request_id,
+            "packet_path": packet_path,
+            "to_agent": to_agent,
+            "web_mcp_stamped": web_mcp_stamped,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def FrontierHandoffMaterializationIncomplete(  # noqa: N802
     request_id: str,
     packet_path: str,
