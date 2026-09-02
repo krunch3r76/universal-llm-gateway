@@ -1,6 +1,6 @@
 ---
 name: cursor-model-economics
-description: "Cursor model economics — $/M rates, conductor T0–T3 tier table, Sonnet 5 vs Opus/GPT context billing, Grok effort card, Auto/Router entitlement. CDP + Cursor shared_sync annex."
+description: "Cursor model economics — $/M rates, conductor seat table, Sonnet 5 vs Opus/GPT context billing, Grok effort card, Auto/Router entitlement. CDP + Cursor shared_sync annex."
 ---
 
 # Cursor model economics
@@ -32,26 +32,27 @@ usage shape:
 Lease/nesting-mechanics case for a narrow `cursor/*` Fable carve-out is
 unrelated to this price change and stays a separate, open discussion.
 
-## Conductor tier ladder (T0–T3)
+## Conductor seat table
 
 Cheaper model at higher effort beats premium at default effort. **Pool first:**
-Grok/Composer draw Cursor Models; Sonnet/Opus/Terra draw the capped Other
+Composer draws Cursor Models; Sonnet/Opus/Terra draw the capped Other
 Models (second) pool. Rate-relative "Sonnet is 40% of Opus" does not matter
 once the second pool is empty.
 
-| Tier | Model | Effort / knobs | When |
-|---|---|---|---|
-| **T0** | omit → `cursor/composer-2.5` | — | Mechanical scoreboard drive; nest only |
-| **T1** | **`cursor/grok-4.6`** | **`xhigh`** | **Standing default** — multi-G orchestrate, rank, adjudicate (Cursor Models pool) |
-| **T2** | `cursor/claude-sonnet-5` | `high`, `thinking=true`, `context=300k` | Named trigger only — grok cannot hold the remit. Other Models |
-| **T3** | `cursor/claude-opus-5` | full card (`low`→`max`); inform-then-proceed | Invariant-touching bind (trigger is *whether to pick T3*, not the effort rung) |
+| Seat | Model / contract | Use when |
+|---|---|---|
+| **Composer (cursor_sdk)** | **`cursor/composer-2.5`** — omit `model=`; `model_knobs={"fast":"true"}` | The only cursor_sdk seat. Judgment vs implement is carried by `contract` (`light-bounded` \| `investigate` vs `implement` \| `pure-mechanical`), never by model. Multi-G orchestrate, scoreboard drive, enumerate (returns `OPEN FORK:` lines, never binds). |
+| **CDP width** | **`cdp/fable`** | Explore, hypotheses, Q, L0–L2, enumerate-fork resolution when forks are open-ended. |
+| **CDP bind / review** | **`cdp/opus-5`** (`purpose=review` when reviewing) | Bind, independent check, architecture-suitability, ≥2 co-primary unranked, invariant-touching / cross-agent bind, recurrence ≥2, external check. Execution needs → Composer `pure-mechanical` limb. |
+| **Explicit pins (never standing)** | `cursor/claude-opus-5` premium live-checkout (inform-then-proceed) · `cursor/gpt-5.6-terra\|sol` only when operator/packet names Other Models · `cursor/claude-sonnet-5` last resort (CDP lane unavailable) | Named per leg only — never a default, never a tier row. |
 
-Nested legs: mechanical → Composer · investigate densify → Grok @ `xhigh`
+> `cursor/claude-sonnet-5` — last resort, explicit `model=` pin only: fire when the CDP lane is unavailable and the leg cannot wait; CDP is preferred; never the first line of a recipe.
+
+Nested legs: mechanical → Composer · investigate densify → Composer `contract=investigate` returning `OPEN FORK:` lines
 · Other Models (Sonnet / Opus-in-cursor / Terra / Sol / Luna) only on an **explicit
 pin** · `cursor/claude-fable-5{,-1}` **blocked** (cost — Fable 5.1 launched
 2026-09-01 at the same headline $/M as Fable 5) — use `cdp/fable` · binder when
-unsure → `judgment-escalation-ladder` (2c Terra is explicit-only; default after
-Fable is Grok).
+unsure → CDP per trigger list (2c Terra is explicit-only).
 
 Detail + admit shapes: Use the `conductor` skill.
 
@@ -59,7 +60,7 @@ Detail + admit shapes: Use the `conductor` skill.
 
 | Model | Long context |
 |---|---|
-| **Sonnet 5** `1m` | No long-context surcharge vs 300k — still Other Models; do not default T1 to 1m |
+| **Sonnet 5** `1m` | No long-context surcharge vs 300k — still Other Models; Sonnet is a last-resort pin; 1m is its card default |
 | **GPT-5.6** `1m` | **2× input** vs `272k` — prefer `272k` on Terra unless 1m required |
 | **Opus** | Standard pool table rates |
 
