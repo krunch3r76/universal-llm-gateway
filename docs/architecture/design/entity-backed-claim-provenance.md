@@ -356,9 +356,9 @@ The legal-doc analog of the consensus pipeline's cross-model verification. Once 
 
 ### 5.2 Independence gate
 
-Before the verifier writes, `is_independent(target_provenance, verifier_model_id)` must return True. The originator slot for a claim assertion is captured in `seeded_by` (model identity); the verifier's `model_id` is the evaluator.
+Before the verifier writes, `is_independent(target_provenance, verifier_model_id)` must return True. The originator slot for a claim assertion is captured in `seeded_by` (model identity); the verifier's routed model id is the evaluator.
 
-**Granularity:** the check compares model identity at the family/version level (e.g. `openai/gpt-5.5`, `google/gemini-2.5-pro`, `anthropic/claude-opus-4-7`), not at the seat or platform level. Same model on different seats does not satisfy independence. (See § 10.5 for the empirical illustration from this spec's own consult.) The existing `libs/provenance::is_independent` should be audited during § 9.1 to confirm it compares at family/version granularity rather than session/seat granularity.
+**Granularity:** the check folds both sides to `ConsultantIdentity(model_identity, effort_rung)` and runs `independently_measured` (see universal spec §6 and `libs/implement_admission/check_review_substrate.py`). Same folded identity at the same measured rung does not satisfy independence; different seats of the same identity+rung pair likewise fail. Unknown identity or unmeasured rung (`None`) never certifies independence (fail-closed). (See §10.5 for the empirical illustration from this spec's own consult.)
 
 ### 5.3 Edge-endpoint implementation caveat
 
@@ -617,7 +617,7 @@ This is the load-bearing market story per assertion 9149, graded by blast radius
 6. Extend `resolve(uri, tag?)` to honor `#fragment` per § 2.2.
 7. Extend `ingest_document` to accept `authority_class` and dispatch to the correct chunker per § 3.2. **Chunker rollout sequencing:** Phase 1 ships dispatch + the subdivision-tree chunker (highest precision need; covers statutes, regulations, probate_code, the largest fraction of Phase 2 authorities). Other class chunkers ship per-class as Phase 2 entities are seeded; each authority class's first ingestion validates its chunker against the live source.
 8. Register the `brief:` synthesis-entity type.
-9. Audit `libs/provenance::is_independent` to confirm it compares model identity at family/version granularity (per § 5.2). If it currently compares at session/seat granularity, the spec's independence gate is unenforced — flag for fix before Phase 5 verification.
+9. Audit `libs/implement_admission/check_review_substrate.independently_measured` to confirm the identity+rung contract matches §5.2 (fold via `ConsultantIdentity`, fail-closed on unknown identity or unmeasured rung). If the gate compares at session/seat granularity instead, the spec's independence gate is unenforced — flag for fix before Phase 5 verification.
 
 ### 9.2 Phase 2 — Bibliographic Index seeding (one session)
 
@@ -686,9 +686,9 @@ Session web-2026-05-12-2121 observed `google/gemini-2.5-pro` returning Q6=(b) so
 
 ### 10.5 Same-model panel input non-independence
 
-Cursor's review (turn 5 on bus thread 968) was authored by Claude Opus 4.7 on the cursor seat — the same model class as the drafter (Opus 4.7 on web). `is_independent(target_provenance, verifier_model_id)` returns False for this pairing. Cursor honestly disclosed the non-blind read at the top of its reply. Operational implication: panel-review independence must be enforced at the `model_id` level, not the seat level. v2 should encode an `is_panel_independent` check that diffs on model class.
+Cursor's review (turn 5 on bus thread 968) was authored by Claude Opus 4.7 on the cursor seat — the same folded `ConsultantIdentity` as the drafter (Opus 4.7 on web at the same effort rung). `independently_measured(originator, verifier)` returns False for this pairing. Cursor honestly disclosed the non-blind read at the top of its reply. Operational implication: panel-review corroboration independence must be enforced at `(model_identity, effort_rung)`, not the seat level. R-PANEL: panel diversity counts distinct identity+rung pairs — same model at a different rung counts toward panel tally but does not automatically satisfy blind verifier corroboration against the drafter.
 
-This is a useful empirical illustration of why the consensus pipeline's independence gate compares originator IDs at the model granularity — even when a "different seat" suggests independence, the underlying model identity controls the epistemic relationship.
+This is a useful empirical illustration of why the consensus pipeline's independence gate folds originator and verifier to `ConsultantIdentity` — even when a "different seat" suggests independence, the underlying folded identity and rung control the epistemic relationship.
 
 ### 10.6 Normalization spec for quotation matching
 

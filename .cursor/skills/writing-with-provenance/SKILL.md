@@ -86,7 +86,7 @@ The table is the **compatibility relation** between epistemic class and permitte
 ## Independence — load-bearing claims
 
 - The author must not pre-select which claims get checked: decompose **all** material claims (at counterparty/filed tier: **all** claims, not only those the floor would have selected), then verify to the depth the floor allows.
-- Load-bearing verbatim/figures: prefer non-author verification against the primary, blind to the draft's framing. `same_family(author, verifier) ⇒ partial_independence` — disclose it.
+- Load-bearing verbatim/figures: prefer non-author verification against the primary, blind to the draft's framing. When author and verifier share the same folded `model_identity` **and** the same measured effort rung, disclose partial/non-independence (`independently_measured` returns False). Same model at a different rung may count toward panel diversity (R-PANEL) but does not automatically make the verifier blind to the author's framing for verbatim checks.
 - One judgment dimension per verify pass: factual accuracy and relevance/specificity are separate questions.
 - `∃ deterministic_check (ref resolves, number matches source, citation present) ⇒ run it`; `¬` ask a model to affirm what a check can prove. Check = judge; model = actuator of repairs.
 

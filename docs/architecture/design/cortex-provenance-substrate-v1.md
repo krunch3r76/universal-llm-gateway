@@ -34,13 +34,13 @@ Note on versioning convention: minor-version bumps (v1.x) stay in `cortex-proven
 
 ## Abstract
 
-This spec defines the universal write-time discipline that produces the **provenance pillar** of the Cortex epistemic substrate. Every assertion written into the graph carries (a) a confidence label drawn from a four-level ladder, (b) a derivation-type drawn from a fixed taxonomy with per-type co-requirements, (c) an evidence string and an `evidence_uris` list, (d) an audit gate that an independent LLM auditor — with no access to the originating session's context — can run against the entity card alone to validate the confidence label, AND (e) a forward-looking projection (`prospective_summary` + `events_json`) generated at write time that makes the supersession chain a feedback corpus for future agent runs, not merely an audit trail. Independence between the originator of a claim and any verifier of that claim is enforced at family/version granularity. Supersession is governed by AGM expansion / contraction / revision semantics with a field-preservation contract. Gaps between drafted artifacts and the entities they reference are surfaced as graph artifacts by a universal gap detector covering both backward-evidence and forward-projection dimensions.
+This spec defines the universal write-time discipline that produces the **provenance pillar** of the Cortex epistemic substrate. Every assertion written into the graph carries (a) a confidence label drawn from a four-level ladder, (b) a derivation-type drawn from a fixed taxonomy with per-type co-requirements, (c) an evidence string and an `evidence_uris` list, (d) an audit gate that an independent LLM auditor — with no access to the originating session's context — can run against the entity card alone to validate the confidence label, AND (e) a forward-looking projection (`prospective_summary` + `events_json`) generated at write time that makes the supersession chain a feedback corpus for future agent runs, not merely an audit trail. Independence between the originator of a claim and any verifier of that claim is enforced at `(model_identity, effort_rung)` granularity. Supersession is governed by AGM expansion / contraction / revision semantics with a field-preservation contract. Gaps between drafted artifacts and the entities they reference are surfaced as graph artifacts by a universal gap detector covering both backward-evidence and forward-projection dimensions.
 
 The spec is the architecture-layer formalization of the provenance pillar developed in the substrate paper (`artifact:epistemic-substrate-paper-draft`, drafted in `transcript:web-2026-05-13-0438`). Where the consensus pipeline gates **inter-model** verification on `originator_model_id != evaluator_model_id`, this spec generalizes the originator slot from "another model" to **any primary-source authority entity** — so the same independence gate, the same gap-detection primitive, and the same lineage tracking carry over to legal briefs, scientific papers, regulatory filings, medical charts, and any other domain where claims chain back to verifiable authorities. The brief-domain spec `document:entity-backed-claim-provenance-v1` is the first instantiation; this spec is the parent.
 
 **Provenance is dual.** The *backward-looking* dimension traces every claim to its origin (evidence_uris, derivation_type, supersession chain) and produces the auditor-validatability and cross-model independence guarantees. The *forward-looking* dimension projects future relevance and event structure (`prospective_summary`, `events_json`) and produces the substrate's claim to be a *learning substrate* — the supersede chain isn't just an audit trail, it's a feedback corpus that recalibrates future agent confidence without requiring a hosted training pipeline. Kumiho's LoCoMo-Plus benchmark established the forward primitive as load-bearing: accuracy from 61.6% (similarity-only) to 93.3% (prospective-indexed) on long-horizon recall (`service:cortex` assertion 1516).
 
-The load-bearing public claim: **structural impossibility of un-grounded `confirmed` claims by construction.** The *Mata v. Avianca* and *Park v. Kim* hallucinated-citation failure modes — and the closer-to-home single-source verbatim confabulation by SuperHeavy on BOE Annotation 625.0036 (session `web-2026-05-13-0239`) — become not "rarer with better RAG" but architecturally inaccessible. The graph refuses to consider an assertion `confirmed` if its evidence path does not satisfy the auditor-validatability gate, refuses to count two evidence sources as independent corroboration if they share family/version model identity, and flags forward-projection gaps that would degrade future-retrieval quality.
+The load-bearing public claim: **structural impossibility of un-grounded `confirmed` claims by construction.** The *Mata v. Avianca* and *Park v. Kim* hallucinated-citation failure modes — and the closer-to-home single-source verbatim confabulation by SuperHeavy on BOE Annotation 625.0036 (session `web-2026-05-13-0239`) — become not "rarer with better RAG" but architecturally inaccessible. The graph refuses to consider an assertion `confirmed` if its evidence path does not satisfy the auditor-validatability gate, refuses to count two evidence sources as independent corroboration if they share the same folded `(model_identity, effort_rung)` pair, and flags forward-projection gaps that would degrade future-retrieval quality.
 
 ---
 
@@ -103,7 +103,7 @@ An **assertion** is a typed claim about an entity, written into the graph as a r
 - `evidence` — prose summary of how the claim was obtained.
 - `evidence_uris` — list of stable, fetchable URIs pointing at the source(s) (§4).
 - `chunk_id` — required for `derivation_type` in {`quotation`, `compression`} (§3.2).
-- `seeded_by` — model identity of the originator (`family/version` granularity, §6.2).
+- `seeded_by` — model identity of the originator (`(model_identity, effort_rung)` granularity, §6.2).
 
 **Temporal provenance fields:**
 
@@ -151,7 +151,7 @@ The confidence field on every assertion takes one of four values, ordered by str
 Promotion from `believed` → `confirmed` requires ONE of three paths:
 
 1. **Direct fetch path.** The originating agent has done their own independent fetch of the source URI (not a paste-in from another seat) and confirmed the verbatim matches what's in the claim. The agent's `derivation_type` is `direct_observation` and the agent's seat is recorded in the evidence string.
-2. **Multi-source corroboration path.** A second independent source (different authoritative origin, or a verifier model at different `family/version` granularity, §6.2) has produced corroborating evidence — typically via a `corroborates` reasoning edge — and the corroboration is reflected in the evidence string and `evidence_uris` list.
+2. **Multi-source corroboration path.** A second independent source (different authoritative origin, or a verifier model whose `ConsultantIdentity` satisfies `independently_measured` against the originator, §6.2) has produced corroborating evidence — typically via a `corroborates` reasoning edge — and the corroboration is reflected in the evidence string and `evidence_uris` list.
 3. **Structural verifiability path.** The source is cryptographically or structurally verifiable without trusting any specific agent — e.g., a signed PDF whose signature has been validated; a git commit hash; a content-addressed artifact; a deterministic derivation from a known-good seed (e.g., `cortex resolve` against a known entity ID).
 
 A claim cannot be promoted to `confirmed` from `believed` solely because the originating agent restates their confidence. Promotion is evidence-bound, not assertion-bound.
@@ -546,21 +546,22 @@ The principle is captured in cortex as assertion 9715 on `document:entity-backed
 
 ## § 6. Cross-model independence gate
 
-The independence gate enforces that the originator of a claim and any verifier of that claim are independent at family/version model granularity. This section generalizes the brief-spec §5.2 independence gate from inter-model verification to the universal substrate, and resolves the family/version-vs-seat granularity question canonically.
+The independence gate enforces that the originator of a claim and any verifier of that claim are independent at `(model_identity, effort_rung)` granularity. This section generalizes the brief-spec §5.2 independence gate from inter-model verification to the universal substrate. Canonical implementation: `libs/implement_admission/check_review_substrate.py` (`ConsultantIdentity`, `independently_measured`).
 
 ### 6.1 The gate
 
 Before a verifier writes a corroborating or contradicting assertion (or seeds a `corroborates` / `contradicts` reasoning edge), the gate runs:
 
 ```python
-def is_independent(target_provenance, verifier_model_id) -> bool:
+def is_independent(target_provenance, verifier_model_id, verifier_knobs=None) -> bool:
     """
     target_provenance: the originator's provenance record for the claim under verification.
         Specifically, target_provenance.seeded_by carries the originator's model identity.
-    verifier_model_id: the model identity of the agent attempting verification.
+    verifier_model_id: the routed model id of the agent attempting verification.
+    verifier_knobs: optional effort-like knobs for the verifier seat.
 
-    Both identities are normalized to family/version granularity per §6.2.
-    Returns True iff originator and verifier are at different family/version, OR
+    Both sides fold to ConsultantIdentity per §6.2.
+    Returns True iff independently_measured(originator, verifier), OR
     target_provenance specifies a primary-source authority (non-model) origin.
     """
     if target_provenance.origin_kind == "authority_entity":
@@ -569,56 +570,57 @@ def is_independent(target_provenance, verifier_model_id) -> bool:
         # by construction — the authority does not have a model identity.
         return True
 
-    originator_normalized = normalize_to_family_version(target_provenance.seeded_by)
-    verifier_normalized = normalize_to_family_version(verifier_model_id)
-    return originator_normalized != verifier_normalized
+    originator = consultant_identity(target_provenance.seeded_by, target_provenance.knobs)
+    verifier = consultant_identity(verifier_model_id, verifier_knobs)
+    return independently_measured(originator, verifier)
 ```
 
-The gate returns False — verification is NOT independent and must NOT count as corroboration — when the verifier and originator share family/version. This applies regardless of seat, platform, dispatch shape, or session.
+The gate returns False — verification is NOT independent and must NOT count as corroboration — when `independently_measured` returns False: same folded `model_identity` and same measured `effort_rung`, or fail-closed on `"unknown"` identity or unmeasured rung (`None`) on either side. This applies regardless of seat, platform, dispatch shape, or session.
 
-### 6.2 Family/version granularity
+### 6.2 Model identity and effort rung
 
-The independence check compares model identity at the **family/version** level, not at the seat or platform level. Same model on different seats does NOT satisfy independence.
+The independence check compares seats at **`(model_identity, effort_rung)`**, not at seat or platform level. Folding is implemented in `check_review_substrate.py`:
 
-The normalization:
+- **`model_identity(model)`** — strips substrate prefixes (`cursor/`, `anthropic/`, `openai/`, …), CDP picker aliases (`cdp/fable` ≡ `cursor/claude-fable-5-1`), cloud-proxy effort suffixes, and trailing effort tokens; maps vendor spelling via catalog aliases. Unparseable or unknown catalog ids fold to `"unknown"`.
+- **`consultant_rung(model, knobs)`** — normalized effort token from explicit effort-like knobs, model-id suffixes, or substrate defaults; `None` when the seat exposes no measurable effort knob.
+- **`ConsultantIdentity(model_identity, rung)`** — the pair used everywhere the gate runs.
+- **`independently_measured(left, right)`** — True when identities differ by `model_identity` OR by `effort_rung` on the same model; False when `"unknown"` appears on either side or either `rung` is `None` (fail-closed).
 
-| Input model identity | Normalized `family/version` |
-|---|---|
-| `anthropic/claude-opus-4-7` (web seat) | `anthropic/claude-opus-4-7` |
-| `anthropic/claude-opus-4-7` (cursor seat) | `anthropic/claude-opus-4-7` |
-| `anthropic/claude-opus-4-7` (api seat) | `anthropic/claude-opus-4-7` |
-| `openai/gpt-5.5` (any seat) | `openai/gpt-5.5` |
-| `openai/gpt-5.1` (any seat) | `openai/gpt-5.1` |
-| `google/gemini-2.5-pro` (any seat) | `google/gemini-2.5-pro` |
-| `google/gemini-3-pro` (any seat) | `google/gemini-3-pro` |
-| `xai/grok-superheavy` (web seat) | `xai/grok-superheavy` |
-| `xai/grok-superheavy` (api seat) | `xai/grok-superheavy` |
+| Input routed model | Folded `model_identity` | Typical `effort_rung` |
+|---|---|---|
+| `cursor/claude-opus-4-7` (web seat) | `claude-opus-4-7` | e.g. `high` |
+| `cursor/claude-opus-4-7` (cursor seat, same rung) | `claude-opus-4-7` | same → **not independent** vs web author |
+| `cdp/fable@max` vs `cursor/claude-fable-5-1@max` | both `claude-fable-5-1` | same rung → **not independent** (alias fold) |
+| `openai/gpt-5.5` vs `openai/gpt-5.1` | different identities | independent |
+| `claude-opus-4-7@high` vs `claude-opus-4-7@low` | same identity | different rung → panel-diverse (R-PANEL), not blind verifier corroboration |
 
-Family and version BOTH matter. `gpt-5.5` and `gpt-5.1` are independent. `claude-opus-4-7` and `claude-opus-4-6` are independent. Different seats of the same family/version are NOT independent.
+Same model on different seats at the **same** folded identity **and** **same** measured rung does NOT satisfy independence for verifier corroboration. Different models (`gpt-5.5` vs `gpt-5.1`, `claude-opus-4-7` vs `claude-opus-4-6`) are independent by identity alone.
 
-The motivating case is the brief-spec's own three-reviewer consult (`agent-bus:968`, session `web-2026-05-12-2121`): Claude Opus 4.7 on cursor was added as a "third reviewer" of a draft authored by Claude Opus 4.7 on web. The cursor seat substantively converged with the gpt-5.5 reviewer on Q3 and Q5, but the convergence does NOT constitute independent corroboration of the drafter — same model identity at family/version, regardless of platform.
+The motivating case is the brief-spec's own three-reviewer consult (`agent-bus:968`, session `web-2026-05-12-2121`): Claude Opus 4.7 on cursor was added as a "third reviewer" of a draft authored by Claude Opus 4.7 on web at the same effort rung. The cursor seat substantively converged with the gpt-5.5 reviewer on Q3 and Q5, but the convergence does NOT constitute independent corroboration of the drafter — same `ConsultantIdentity`, regardless of platform.
 
-The existing `libs/provenance::is_independent` was audited during the brief-spec's §9.1 schema-registration phase to confirm normalization compares at family/version granularity rather than session/seat granularity. The brief-spec's §5.3 edge-endpoint caveat (`originator_model_id` versus `seat_id` on the reasoning-edge endpoints) is the specific implementation-side detail of how this normalization is enforced.
+The brief-spec's §5.3 edge-endpoint caveat (`originator_model_id` versus `seat_id` on the reasoning-edge endpoints) is the specific implementation-side detail of how this folding is enforced at write time.
 
 ### 6.3 The three independence paths
 
 §2.2 named three promotion paths from `believed` to `confirmed`. The independence-gate restatement of those paths:
 
-1. **Direct fetch path** — the originating agent's own fetch of the source URI is the evidence. The originator's model identity is in `seeded_by`; verification is by the auditor independently re-fetching the URI. Independence is between the agent (as originator) and the auditor (as verifier model class).
-2. **Multi-source corroboration path** — a second independent source corroborates. The second source can be (a) a second independent authoritative origin (e.g., the same statute fetched from a different official mirror), OR (b) a verifier model at different family/version corroborating against the same source. Either way, the gate runs at family/version normalization.
+1. **Direct fetch path** — the originating agent's own fetch of the source URI is the evidence. The originator's model identity is in `seeded_by`; verification is by the auditor independently re-fetching the URI. Independence is between the agent (as originator) and the auditor (as verifier `ConsultantIdentity`).
+2. **Multi-source corroboration path** — a second independent source corroborates. The second source can be (a) a second independent authoritative origin (e.g., the same statute fetched from a different official mirror), OR (b) a verifier whose `ConsultantIdentity` satisfies `independently_measured` against the originator while corroborating against the same source. Either way, the gate runs at `(model_identity, effort_rung)` folding.
 3. **Structural verifiability path** — the source is cryptographically/structurally verifiable without trusting any specific agent. Independence is trivial — the verification has no model dependency.
 
 ### 6.4 Dispatch-shape priming sensitivity
 
 A subtle independence-adjacent failure mode: the **same** model can produce different answers on the **same** substrate depending on dispatch shape (MCP loop vs frontier-inline; whether the substrate is included as a bus-message vs as an inlined file; whether the model has been primed by prior turns in the same MCP loop). The canonical anchor: `google/gemini-2.5-pro` on the brief-spec consult (thread 968) returned different Q6 answers across dispatch shapes — bus-posted MCP-loop replies returned the soft-flag option (b); `frontier_dispatch` with `mcp=False` and inline substrate returned the hard-fail option (a).
 
-Implication: even with the family/version independence gate satisfied, two verifications dispatched against the same model under different shapes are NOT guaranteed to be replicable. v1 treats this as an open issue (§11.3); v2 will specify a canonical dispatch shape for verifier consults.
+Implication: even with the `(model_identity, effort_rung)` independence gate satisfied, two verifications dispatched against the same model under different shapes are NOT guaranteed to be replicable. v1 treats this as an open issue (§11.3); v2 will specify a canonical dispatch shape for verifier consults.
 
-### 6.5 Same-model panel non-independence
+### 6.5 Panel diversity and same-identity corroboration (R-PANEL)
 
-A panel of reviewers convened to evaluate a draft fails the independence gate if any panel member shares family/version with the drafter. The brief-spec's three-reviewer consult is the canonical failure: two strictly independent reviewers (`openai/gpt-5.5`, `google/gemini-2.5-pro`) plus one same-model reviewer (`anthropic/claude-opus-4-7` cursor seat) is a TWO-vote independent panel, not a three-vote panel. The cursor seat's convergence with gpt-5.5 strengthens the two-vote view but does not add an independent third.
+Panel diversity counts **distinct `ConsultantIdentity` pairs** — per R-PANEL (`libs/agent_seat/panel_dispatch.py` Guard 3), same model at a **different effort rung** counts as a distinct panel member. Same folded identity **and** same rung does not add an independent corroboration vote.
 
-The disclosure requirement: when a same-model reviewer is included in a panel (deliberately, for converged-perspective input), the panel report MUST disclose the non-independence at the top of the reviewer's contribution and the panel's aggregate confidence MUST be computed against the independent count only. Cursor's turn-5 reply on thread 968 followed the disclosure protocol — disclosed non-blind read at the top, signed with model identity. The architectural fix going forward is the `is_panel_independent` check (deferred to §11.5 v2 work).
+The brief-spec's three-reviewer consult is the canonical same-identity-same-rung failure: two strictly independent reviewers (`openai/gpt-5.5`, `google/gemini-2.5-pro`) plus one same-identity-same-rung reviewer (`anthropic/claude-opus-4-7` cursor seat matching the web drafter) is a TWO-vote independent corroboration panel, not a three-vote panel. The cursor seat's convergence with gpt-5.5 strengthens the two-vote view but does not add an independent third for verifier corroboration.
+
+The disclosure requirement: when a same-identity-same-rung reviewer is included in a panel (deliberately, for converged-perspective input), the panel report MUST disclose the non-independence at the top of the reviewer's contribution and the panel's aggregate confidence MUST be computed against the independent corroboration count only. Cursor's turn-5 reply on thread 968 followed the disclosure protocol — disclosed non-blind read at the top, signed with model identity. Menu D `panel_families` stores identity/rung display labels; the gate tallies distinct `ConsultantIdentity` pairs, not provider families.
 
 ---
 
@@ -993,20 +995,21 @@ regulatory filing draft) MUST receive a §6-independent adversarial
 review pass before it is filed with a tribunal, opposing party, or
 regulatory authority.
 
-**Minimum independence:** the reviewer's family/version (per §6.2
-granularity) MUST be distinct from every authoring model that produced
-load-bearing content in the brief. Different version of the same family
-is INSUFFICIENT per §6.5 (same-family-non-independence).
+**Minimum independence:** the reviewer's `ConsultantIdentity` (per §6.2
+folding) MUST satisfy `independently_measured` against every authoring
+model that produced load-bearing content in the brief. Same folded
+identity at the same effort rung is INSUFFICIENT per §6.5
+(same-identity-same-rung non-corroboration).
 
 **Recommended panel composition:** for maximum rigor under §6.2,
-dispatch a two-family review panel. Example compositions:
-- Brief authored by openai/gpt-5.5 → review by anthropic/claude-opus-4-x
-  AND xai/grok-* (two-family).
-- Brief authored by anthropic/claude-opus-4-7 → review by openai/gpt-5.x
-  AND xai/grok-* (two-family).
-- Brief authored by mixed dispatch (multiple families) → review by the
-  family least represented in authoring, plus a context-breadth pass
-  via xai/grok-superheavy.
+dispatch a panel with ≥2 distinct `ConsultantIdentity` pairs. Example compositions:
+- Brief authored by `gpt-5.5@high` → review by `claude-opus-4-x@high`
+  AND `grok-*@high` (two distinct identities).
+- Brief authored by `claude-opus-4-7@high` → review by `gpt-5.x@high`
+  AND `grok-*@high` (two distinct identities).
+- Brief authored by mixed dispatch (multiple identities) → review by the
+  identity least represented in authoring, plus a context-breadth pass
+  via `grok-superheavy`.
 
 Single-reviewer minimum is acceptable but is the weaker form of the
 gate.
@@ -1109,7 +1112,7 @@ The same model on the same substrate can produce different answers depending on 
 
 ### 11.3 Cross-model independence at sub-version granularity
 
-The §6.2 family/version normalization treats `claude-opus-4-7` as a single identity across all sub-versions and dates. In practice, model behavior can shift across minor revisions, fine-tunes, and serving infrastructure. v2 may introduce a `model:` entity per (family, version, training_date, serving_endpoint) tuple, with `is_independent` configurable to require independence at that finer granularity for high-stakes verifications.
+The §6.2 `model_identity` fold treats `claude-opus-4-7` as a single identity across all sub-versions and dates. In practice, model behavior can shift across minor revisions, fine-tunes, and serving infrastructure. v2 may introduce a `model:` entity per (identity, training_date, serving_endpoint) tuple, with `independently_measured` configurable to require independence at that finer granularity for high-stakes verifications.
 
 ### 11.4 Verbatim normalization spec
 
@@ -1117,7 +1120,7 @@ The §6.2 family/version normalization treats `claude-opus-4-7` as a single iden
 
 ### 11.5 `is_panel_independent` check
 
-§6.5 requires manual disclosure when a same-model reviewer is included in a panel. v2 will introduce an `is_panel_independent` check that runs the §6 normalization across all panel members and emits a non-independence finding if any pair shares family/version. The check integrates with the consensus pipeline's panel-evaluation path.
+§6.5 requires manual disclosure when a same-identity-same-rung reviewer is included in a panel. v2 will introduce an `is_panel_independent` check that runs the §6 `ConsultantIdentity` fold across all panel members and emits a non-independence finding if any pair fails `independently_measured` for corroboration purposes. The check integrates with the consensus pipeline's panel-evaluation path.
 
 ### 11.6 Lineage serialization (OpenLineage-compatible)
 
