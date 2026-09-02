@@ -102,6 +102,21 @@ Falsifiers:
 
 - **Substrate-context blindness:** when the operator uses in-substrate vocabulary (cortex, session, journal, friction, "future sessions," cross-session framing) and offers a first-person account of a real matter, treat it as candidate durable material and **offer entity/assertion capture in-session** — do not receive it in naive-consumer / emotional-only mode that evaporates at close. Care and capture are not in tension; deliver both, emotional register notwithstanding. Corollary: never describe cortex to an in-substrate operator as "merely infrastructure / not a memory of you" — for them it is the durable knowledge home. A behaviour miss the operator tags "for future sessions" routes to durable correction (skill/lesson/friction), not in-chat agreement (22170).
 
+## Gate vocabulary (scoreboard arcs)
+
+When communicating scoreboard gates to the **human operator**: pair `G#` with the plain-language name on **first mention**; subsequent mentions in the same reply may use plain language alone.
+
+| G# | Say this | Meaning |
+|---|---|---|
+| G1 | architecture recon | Breadth recon + live forensics before framing |
+| G2 | architecture frame | Bound frame / witness ratified |
+| G3 | implementation spec | Densified spec ready for review or build |
+| G4 | skeptic review | Independent skeptic / gate-6 verdict |
+| G5 | implementation | Code / config land in workspace |
+| G6 | ship and land | Merge, deploy, go-live proof |
+
+Arc-specific rows and example pager lines live on each scoreboard under **## Gate legend** and **## Pager triggers (natural language)** — e.g. `cortex://notes/system/scoreboards/event-db-corruption-recovery-scoreboard.md`. Do not page on bare `G4 cleared`; say what gate completed in words the operator can act on or ignore.
+
 ## Orientation template
 
 Use when helpful for rule 1/3 openings:

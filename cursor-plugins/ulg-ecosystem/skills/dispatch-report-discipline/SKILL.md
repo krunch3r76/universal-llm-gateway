@@ -217,9 +217,24 @@ a failed check — even if a later row passed.
 grade. Do not substitute "did the last verification row pass?" for the graded
 outcome. When the full array matters, read every row — not only the final one.
 
+## Pager on closeout
+
+Fire a pager ping only on **terminal** dispatch states — `done`, `failed`, `timeout` — not on admit, mid-flight, or conveyor DISPOSITION bursts.
+
+| Trigger | Page? | Notes |
+|---|---|---|
+| Dispatch closeout terminal (`done` / `failed` / `timeout`) | **Yes** — when operator asked or watcher arms | Body shape: `pager-notify` § Message composition |
+| CDP harvest terminal | **Yes** — same register | Mission debrief class when debrief body is ready |
+| Conductor terminal (scoreboard gate cleared or arc failed) | **Yes** — same register | Name gate in plain language, not bare `G#` |
+| Admit / mid-flight / ordinal bump | **No** | Batch into the next human-facing page |
+
+Watcher-triggered pings (tmux pane, event watcher, `poll_hint` terminal) follow the same rule: predicate must be a **terminal** outcome, then one `POST /pager/notify`. Cross-ref `pager-notify` for subject/body/tag discipline and growth-map slots when the page is mission-shaped.
+
 ## Composes with
 
 - `completion-provenance-discipline` — tool-response binding + status/rank register (§7)
 - `cdp-operator-proxy` — operator §2 CLOSEOUT template; mission-close inv for rank acts
 - cursor-auto `reporting_contract.py` — injected L2 block (includes register one-liner)
 - `caller_auditable.py` — tiered relay enforcement on missing checklist fields
+- `pager-notify` — pager body shape on terminal closeout (§ Pager on closeout)
+- `operator-posture` — gate vocabulary when naming scoreboard gates to the operator

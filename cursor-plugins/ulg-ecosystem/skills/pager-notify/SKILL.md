@@ -52,6 +52,28 @@ Env kill-switch: `PAGER_NOTIFY_ENABLED=0` disables the lib client.
 | `body` | 4000 | Full awareness NL — **vision/architecture-shaped**, not a status dump; no secrets, no PII |
 | `tag` | 40 | Machine label for logs (`giw-clear`, `admit-gate-live`) |
 
+## Message composition
+
+Concise, pertinent, natural-flow prose — readable on a phone lock screen without the bus open.
+
+| Rule | Binding |
+|---|---|
+| Lead with outcome | State what changed or what is true now — not the process that got there |
+| Arc in plain language | Name the arc in human words (`event-db corruption recovery`); thread id is secondary ref (`thread 9582`) |
+| Close with next step | One concrete next move **or** explicit `No action needed` |
+| First sentence stands alone | ~160 chars or less — SMS-friendly; the subject line may be all they see before opening |
+| Pertinent only | Omit hop names, ordinals, DISPOSITION tokens, and bare gate ids without plain-language names |
+
+**Good / bad (event-db corruption recovery arc):**
+
+| Bad | Good |
+|---|---|
+| `G4 cleared — skeptic review done on event-db arc thread 9582` | `Event-db recovery: skeptic review passed — implementation can start. No action needed.` |
+| `DISPOSITION: wave 2 admitted · G5 OPEN · cursor-sdk 9938` | `Event-db recovery: implementation spec is locked; coding starts now. Thread 9582 if you want detail.` |
+| `Paging because dispatch closeout received status=complete` | `Event-db recovery: architecture frame is ratified — densify can proceed. No action needed.` |
+
+Pair gate ids with plain-language names on first mention (`G4 skeptic review`); see `operator-posture` § Gate vocabulary and the arc scoreboard footer for arc-specific rows.
+
 ### Body shape (BINDING — operator 2026-08-02 · growth-map 2026-08-04 · so-what 2026-08-04)
 
 Generality is welcome; **hollowness is not**. Every awareness page (progress *and*
