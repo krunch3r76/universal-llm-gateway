@@ -90,6 +90,9 @@ async def dispatch_prepared_cursor_sdk(
             lane=handle.lane,
             workspace=handle.workspace,
             refuse_if_lease_held=handle.refuse_if_lease_held,
+            hop_from=handle.hop_from,
+            hop_seq=handle.hop_seq,
+            hop_reason=handle.hop_reason,
         )
     else:
         worker_ok, worker_detail = await dispatch_cursor_sdk_worker_message(
@@ -107,6 +110,9 @@ async def dispatch_prepared_cursor_sdk(
             lane=handle.lane,
             workspace=handle.workspace,
             refuse_if_lease_held=handle.refuse_if_lease_held,
+            hop_from=handle.hop_from,
+            hop_seq=handle.hop_seq,
+            hop_reason=handle.hop_reason,
         )
 
     if not worker_ok:
@@ -222,6 +228,9 @@ async def dispatch_cursor_sdk_generate(
     prompt_turn_number: int | None = None,
     prompt_bind_mode: str | None = None,
     packet_kind: str | None = None,
+    hop_from: str | None = None,
+    hop_seq: int | None = None,
+    hop_reason: str | None = None,
 ) -> dict[str, Any]:
     """Execute cursor-sdk generate with to_thread default delivery.
 
@@ -265,5 +274,8 @@ async def dispatch_cursor_sdk_generate(
         prompt_turn_number=prompt_turn_number,
         prompt_bind_mode=prompt_bind_mode,
         packet_kind=packet_kind,
+        hop_from=hop_from,
+        hop_seq=hop_seq,
+        hop_reason=hop_reason,
     )
     return await dispatch_prepared_cursor_sdk(handle)

@@ -207,8 +207,25 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     mission_kind: str | None = None
     # Bus private-request parent lane (hop/side parent). Not SDK nest_under.
     parent_thread: str | None = None
+    # Conductor hop successor wire (bind §2.6.4): triplet admitted together on GIW.
+    hop_from: str | None = None
+    hop_seq: int | None = Field(default=None, ge=0)
+    hop_reason: (
+        Literal["spawn", "planned", "crash", "silent", "watchdog"] | None
+    ) = None
     # thread / subject MUST NOT appear — extra="forbid" rejects any caller that
     # supplies them (schema-level enforcement per Phase 0 contract).
+
+    @model_validator(mode="after")
+    def _validate_hop_triplet(self) -> Self:
+        hop_triplet = (self.hop_seq, self.hop_from, self.hop_reason)
+        if any(v is not None for v in hop_triplet) and not all(
+            v is not None for v in hop_triplet
+        ):
+            raise ValueError(
+                "hop_seq, hop_from, and hop_reason must be supplied together"
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_inline_prompt_sources(self) -> Self:

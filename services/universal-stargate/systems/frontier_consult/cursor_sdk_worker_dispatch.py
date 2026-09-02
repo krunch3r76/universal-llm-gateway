@@ -212,6 +212,9 @@ async def dispatch_cursor_sdk_worker(
     lane: Literal["A", "B"] | None = None,
     workspace: str | None = None,
     refuse_if_lease_held: bool = False,
+    hop_from: str | None = None,
+    hop_seq: int | None = None,
+    hop_reason: str | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/cursor/dispatch``; return structured ``(ok, detail)``.
 
@@ -248,6 +251,10 @@ async def dispatch_cursor_sdk_worker(
         payload["workspace"] = workspace
     if refuse_if_lease_held:
         payload["refuse_if_lease_held"] = True
+    if hop_from is not None and hop_seq is not None and hop_reason is not None:
+        payload["hop_from"] = hop_from
+        payload["hop_seq"] = hop_seq
+        payload["hop_reason"] = hop_reason
     try:
         async with make_async_client(
             worker_base_url(), timeout=_WORKER_TIMEOUT
@@ -298,6 +305,9 @@ async def dispatch_cursor_sdk_worker_message(
     lane: Literal["A", "B"] | None = None,
     workspace: str | None = None,
     refuse_if_lease_held: bool = False,
+    hop_from: str | None = None,
+    hop_seq: int | None = None,
+    hop_reason: str | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/cursor/dispatch`` with ``message`` (prompt= path)."""
     effective_dispatch_id = dispatch_id or f"{request_id}-{uuid.uuid4().hex[:8]}"
@@ -323,6 +333,10 @@ async def dispatch_cursor_sdk_worker_message(
         payload["workspace"] = workspace
     if refuse_if_lease_held:
         payload["refuse_if_lease_held"] = True
+    if hop_from is not None and hop_seq is not None and hop_reason is not None:
+        payload["hop_from"] = hop_from
+        payload["hop_seq"] = hop_seq
+        payload["hop_reason"] = hop_reason
     try:
         async with make_async_client(
             worker_base_url(), timeout=_WORKER_TIMEOUT

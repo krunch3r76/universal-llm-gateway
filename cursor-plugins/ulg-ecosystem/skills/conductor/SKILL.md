@@ -150,7 +150,7 @@ conductor(root) ⇒
   ∧ premium_conductor ⇒ announce(why)  # inform-then-proceed; ¬ default
 ```
 
-Hop contract (bound `a:31807`; **STAGED** until `todo:conductor-hop-reactor` lands):
+Hop contract (bound `a:31807`):
 
 ```
 hop(conductor) ⇒
@@ -203,11 +203,6 @@ per-G-row one. Default posture once running:
   hold ⇒ `HOLD_MERGE`. A live nested child forbids the hop (W3) — harvest,
   then hop. If you end with the mission open and **no** token, the substrate
   still re-admits you (budgeted) — that is the safety net, not the default.
-  **STAGED — the hop half is not live yet.** `ROW_HOP` is not in
-  `STOP_TOKENS` and no reactor admits the successor until
-  `todo:conductor-hop-reactor` lands, so emitting it today halts the mission
-  silently. Until then: never self-fire `reuse_thread` (that half is live
-  now), and keep driving the open G-rows in this dispatch.
 - **¬ a second gate on the mission's own merge.** `git-posture` gates
   `git_land` / `git_integrate` on "operator directs a merge" — for a conductor
   mission, admitting the packet **is** that direction, standing for the
@@ -403,8 +398,7 @@ is open → 409.
   - **Exit-and-continue:** `ROW_HOP` — persist (journal → CHECKPOINT), then
     exit; the substrate admits the successor immediately. Nobody consulted;
     not a page; not visible in the liaison register. Seventh token in
-    `STOP_TOKENS`; new class `CHAIN_STOPS`. **STAGED** — do not emit until
-    `todo:conductor-hop-reactor` lands (§ Run to completion).
+    `STOP_TOKENS`; new class `CHAIN_STOPS`.
   - Also: `CONFIRM_PENDING` · `DONE` (stop token only — not row Status)
 - **`CONSULT_PENDING` wait:** the generate session waits or hands off — it does
   not end. `agent_bus.wait` until `archive_uri` or `from=web-anthropic` harvest
@@ -448,8 +442,7 @@ terminal ∧ mission open ∧ no exit-and-persist/`DONE` token ⇒ successor on 
 same thread. `ROW_HOP` = immediate; token-less terminal (crash, silent exit) =
 same successor under the crash / no-progress budgets, then `PARKED_TRANSPORT` +
 page. The liaison fires a resume only when the reactor has parked — never as
-the first responder. (Reactor-side half is STAGED; until
-`todo:conductor-hop-reactor` lands the liaison remains the first responder.)
+the first responder.
 
 `CONSULT_PENDING` is **not** a designed-stop terminate. Exit-and-persist stops
 (`ROW_PINNED`, `HOLD_MERGE`, `OPERATOR_GATE`, `PARKED_TRANSPORT`) retain store +
@@ -686,7 +679,7 @@ the after-ship `cdp/opus-5` review comment (good default; ¬ a G-row).
 | Opus-by-default for every conductor | Seat table; Composer standing; CDP escalation; Opus only with explicit pin |
 | Omit `lane=` assuming that means "no preference" | Lane B is the default — pass `lane="B"` explicitly; name Lane A only with a reason |
 | Conductor pauses after a G-row to ask "continue?" | Drive to completion in one commission; report via CHECKPOINT, don't wait for a reply |
-| Call `team_dispatch(reuse_thread=<own thread>)` from inside the running conductor | Journal → hop CHECKPOINT → `stop: ROW_HOP`; the substrate admits the successor after your terminal (§ Run to completion — hop half STAGED) |
+| Call `team_dispatch(reuse_thread=<own thread>)` from inside the running conductor | Journal → hop CHECKPOINT → `stop: ROW_HOP`; the substrate admits the successor after your terminal (§ Run to completion) |
 | End with the mission open and no token ("done for now") | `ROW_HOP` at a boundary, or the owed designed stop — silence is a budgeted re-admit, then a park |
 | Treat the mission's own `git_land` as a second approval gate | Admit is the standing merge ack; land on green + AC met (§ Run to completion) |
 | Escalate "ok to merge?" to the human mid-mission | Land it; escalate only genuinely operator-only acts |

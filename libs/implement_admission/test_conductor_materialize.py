@@ -197,6 +197,20 @@ def test_materialize_conductor_packet_shape(tmp_path: Path) -> None:
     assert walk_journal_to_tip("layer-conductor-unify", files_root=files_root) == tip[1]
 
 
+def test_materialize_conductor_hop_contract(tmp_path: Path) -> None:
+    out_dir = tmp_path / "packets"
+    mp = materialize_conductor(
+        "todo:layer-conductor-unify",
+        cortex=_StubCortex(),
+        out_dir=out_dir,
+    )
+    assert "Per-G-row hop (binding)" in mp.text
+    assert "stop: ROW_HOP" in mp.text
+    assert "422 CURSOR_WORKER_THREAD_OCCUPIED" in mp.text
+    assert "stop: ROW_HOP | ROW_PINNED | HOLD_MERGE" in mp.text
+    assert "hop_seq: <n>" in mp.text
+
+
 def test_sparse_scoreboard_has_stops_column() -> None:
     ctx = load_conductor_context("todo:foo", cortex=_StubCortex())
     body = render_sparse_scoreboard(
