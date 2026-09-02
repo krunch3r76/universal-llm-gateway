@@ -70,7 +70,7 @@ Models options; we **block** both for cost — do not pin either. Use `cdp/fable
 
 | Pool | Models | Job on a codework arc |
 |---|---|---|
-| **Cursor Models** | Grok-4.6, Composer 2.5 | G3 densify / G5 implement / T1 orchestrate / CDP-stuck 2b default — **after** Fable harvest |
+| **Cursor Models** | Composer 2.5 | G3 densify / G5 implement / conductor orchestrate / CDP-stuck 2b default — **after** Fable harvest |
 | **Other Models (secondary)** | Sonnet 5, Opus-in-cursor, Terra, Sol, Luna, `cursor/claude-fable-5{,-1}` | **Explicit pin only** (cost). Includes Terra. `cursor/claude-fable-5{,-1}` **blocked** (cost) → `cdp/fable`. ¬ silent G4 / ladder 2c / reviewer / hop-5 default. |
 
 G2 frame is **Fable followup** in the G1 CSE (else `cdp/opus-5` fresh), not the Other Models pool. Other Models quota is not a reason to skip CDP Fable G1 or to spend T3 Opus as a Fable substitute. T2/T3 and hop-4 live-checkout Opus still need their **named** trigger — they are not silent defaults.
@@ -303,8 +303,7 @@ team_dispatch(
   lane="B",
   source_ref="todo:{slug}",
   packet_kind="conductor",
-  model="cursor/grok-4.6",
-  model_knobs={"effort": "xhigh", "fast": "false"},
+  model_knobs={"fast":"true"},
   dispatch_thread_id="{root}",   # continuity root with turns — or pending-empty child of root
 )
 ```
@@ -316,7 +315,8 @@ after terminal: `reuse_thread=<work thread>` — do not re-pass the work thread 
 
 Receipt identity **is** the admitted thread with
 `branch_current=cursor-sdk/lane-{that id}` — quote `dispatch_id` + scoreboard URI
-+ that Lane B. Spawn is **T1 Grok** (`cursor/grok-4.6` @ `xhigh`). Conductor
++ that Lane B. Spawn is **Composer** (`{fast:true}`); judgment nests CDP.
+Conductor
 drives G-ladder; IDE does not fire `/layer` or Mode B Fable on the seed path.
 
 | Condition | Enter |
@@ -388,8 +388,8 @@ in-seat after spawn.
 Cadence: fewer, fatter commissions amortize round-trip latency vs. paying it per
 micro-step. **Life seats** commission via `agent_bus.request` with `desired_model` and
 `desired_effort` on the **wire** — do not pin effort in the DIRECTIVE body
-(`effort_pin_refused`). **Code-side** `team_dispatch` shape: `seat=cursor-sdk` ·
-`model=cursor/grok-4.6` · `model_knobs={"effort":"xhigh","fast":"false"}` on the dispatch
+(`effort_pin_refused`). **Code-side** `team_dispatch` shape: `seat=cursor-sdk` · omit `model=` ·
+`model_knobs={"fast":"true"}` on the dispatch
 wire (catalog default is **`fast=true`**; `fast` has no wire param on `agent_bus.request`;
 `reasoning_effort` is rejected 422 on `seat=cursor-sdk`). Operator-proxy SOT:
 `libs/claude_bundles/operator_proxy_mission.py` § Knob relay.
@@ -400,7 +400,7 @@ wire (catalog default is **`fast=true`**; `fast` has no wire param on `agent_bus
 |---|---|
 | Cursor IDE | `/work-item-seed …` (thin command) |
 | Headless / Auto / CDP | Use the `work-item-seed-path` skill |
-| Commissioned to grok sub-PM | `agent_bus.request` (life) or `team_dispatch` (code) — see § Commissioning register |
+| Commissioned conductor | `agent_bus.request` (life) or `team_dispatch` (code) — see § Commissioning register |
 
 ```
 /work-item-seed {idea}

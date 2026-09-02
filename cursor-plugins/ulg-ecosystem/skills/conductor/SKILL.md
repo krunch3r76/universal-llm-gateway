@@ -256,44 +256,42 @@ move (`observability` dispatch-economics when spend matters). Compose with
 `lean-context-dispatch-first` + `consult-routing` — non-primary models stay
 operator-gated unless a standing rule names them.
 
-**Pool first, then rate.** Grok and Composer draw Cursor Models (generous).
-Sonnet / Opus / Terra draw the capped Other Models (second) pool. T1=Grok
-is a **quota/allowance-scarcity** call, not a verified per-token savings:
-Sonnet is the scarce Ultra allowance on a capped pool; Grok is not.
+**Pool first, then rate.** Composer draws Cursor Models (generous).
+Sonnet / Opus / Terra draw the capped Other Models (second) pool.
 Do not cite total-dollar-by-model spend as the justification when call
 volumes differ — reprice the **same token mix** at both rate cards first.
-Cache-read-heavy workloads can make Sonnet cheaper per token (`cache_read`
-`$0.2/M` vs Grok `$0.5/M`; input both `$2/M`; output `$10/M` vs `$6/M`).
+Cache-read-heavy workloads can shift relative cost by model (`cache_read`
+rates and input/output $/M differ across pools — see rate card).
 Rates: `config/model_rates.yaml`.
 
-| Tier | Default conductor model | Effort | Use when |
-|---|---|---|---|
-| **T0 — mechanical drive** | **`cursor/grok-4.6`** | **`xhigh`** | Scoreboard fully bound; only nest Composer/investigate; conductor is traffic cop — omit `model=` resolves to T1 Grok, not Composer |
-| **T1 — default judgment** | **`cursor/grok-4.6`** | **`xhigh`** | **Standing default.** Multi-G orchestrate, rank, adjudicate — Cursor Models pool. Omit `fast` unless an arc pin **or the summoning continuity-doc `## Rules`** names it (card omit-path). Nested T1 judgment inherits when that house names T1 fast. |
-| **T2 — Other Models** | `cursor/claude-sonnet-5` | `xhigh`/`max` (`thinking=true`, `context=1m`) | Named trigger only — grok cannot hold the remit or the context window. **Explicit pin holds its card ceiling even unattended** — the pool cap only ever bites the *silent default* path (`resolve_desired_model`'s omit branch never resolves to Other Models for any contract), never a deliberate T2/T3 pick |
-| **T3 — premium** | `cursor/claude-opus-5` | full card (`low`→`max`) | Invariant-touching, architecture-suitability, ≥2 unranked co-primaries, recurrence — **inform-then-proceed** + one-line why (trigger is *whether to pick T3*, not the effort rung) |
+| Seat | Model / contract | Use when |
+|---|---|---|
+| **Composer (cursor_sdk)** | **`cursor/composer-2.5`** — omit `model=`; `model_knobs={"fast":"true"}` | The only cursor_sdk seat. Judgment vs implement is carried by `contract` (`light-bounded` \| `investigate` vs `implement` \| `pure-mechanical`), never by model. Multi-G orchestrate, scoreboard drive, enumerate (returns `OPEN FORK:` lines, never binds). |
+| **CDP width** | **`cdp/fable`** | Explore, hypotheses, Q, L0–L2, enumerate-fork resolution when forks are open-ended. |
+| **CDP bind / review** | **`cdp/opus-5`** (`purpose=review` when reviewing) | Bind, independent check, architecture-suitability, ≥2 co-primary unranked, invariant-touching / cross-agent bind, recurrence ≥2, external check. Execution needs → Composer `pure-mechanical` limb. |
+| **Explicit pins (never standing)** | `cursor/claude-opus-5` premium live-checkout (inform-then-proceed) · `cursor/gpt-5.6-terra\|sol` only when operator/packet names Other Models · `cursor/claude-sonnet-5` last resort (CDP lane unavailable) | Named per leg only — never a default, never a tier row. |
 
-Terra is **not** a standing conductor tier (Other Models + mid GPT rate). Cross-family binder stays on `judgment-escalation-ladder` 2c, not the default conductor seat.
+> `cursor/claude-sonnet-5` — last resort, explicit `model=` pin only: fire when the CDP lane is unavailable and the leg cannot wait; CDP is preferred; never the first line of a recipe.
 
-**1M context is the T1→T2 trigger, not effort alone (operator bind 2026-08-18):** Grok-4.6's card has no `context` knob and tops out at `xhigh` — there is no `max` rung on Grok. When a G-row genuinely needs the wider window, that is itself the named trigger to pick T2 Sonnet-5 at `xhigh`/`max`/`context=1m`, attended or not.
+Terra is **not** a standing conductor seat (Other Models + mid GPT rate). Cross-family binder stays on `judgment-escalation-ladder` 2c, not the default conductor seat.
 
 **Nested legs (always split by cost class):**
 - Mechanical implement → Composer (`omit model=`, `contract=implement`)
-- Investigate densify → usually T1 (Grok @ `xhigh`); escalate T2/T3 only on open judgment forks
-- Independent binder when conductor unsure → ladder (`judgment-escalation-ladder`); ¬ burn Opus to rubber-stamp its own bind
+- Investigate densify → Composer `contract=investigate` returning `OPEN FORK:` lines
+- Independent binder when conductor unsure → CDP per trigger list
 
 **Anti-patterns (cost):**
 | Bad | Good |
 |---|---|
-| Default every conductor to Opus or Sonnet `max`/`1m` | T1 Grok @ `xhigh`; Other Models only on a named trigger |
+| Default every conductor to Opus or Sonnet `max`/`1m` | Composer standing; CDP or explicit pins only on a named trigger |
 | Premium model at default effort | Cheaper model at high effort **on the same pool** |
-| T1/T3 conductor that also hand-codes a mechanical remainder after a pick | Nest Composer |
-| Re-spend Opus to amend a densified packet | Composer / T1 amend |
+| Composer conductor that also hand-codes a mechanical remainder after a pick | Nest Composer |
+| Re-spend Opus to amend a densified packet | Composer amend |
 | Ignore `sdk_cost_risk` warning | Downgrade model or split bind/compose |
-| Pin Terra/Sonnet because the skill used to | Cursor Models T1 unless the remit actually needs Other Models |
-| Cite total-dollar-by-model as T1 justification when call volumes differ by an order of magnitude | Reprice the same token mix at both rate cards; justify T1 by quota/allowance scarcity, not price |
+| Pin Terra/Sonnet because the skill used to | Composer standing unless the remit needs an Other Models explicit pin |
+| Cite total-dollar-by-model when call volumes differ by an order of magnitude | Reprice the same token mix at both rate cards |
 
-`/conductor` asks model tier (Q8) when unbound; operator may pin a slug.
+`/conductor` asks standing seat / pin (Q7) when unbound; operator may pin a slug.
 
 ## Role split
 
@@ -487,8 +485,7 @@ pin-then-continue is never the same stream. Do not flatten: unused legal
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
-  model=cursor/grok-4.6,
-  model_knobs={effort: xhigh, fast: "false"},
+  model_knobs={"fast":"true"},
   contract=light-bounded,
   packet_kind=conductor,
   source_ref=todo:{slug},
@@ -521,17 +518,16 @@ summoning thread + summoning lead relay).
 ## Admit
 
 ```text
-# Default judgment conductor (T1) — prefer unless tier table says otherwise
+# Default conductor (Composer omit model=)
 # Precondition: packet <invariants> already carries "Use the conductor skill — …"
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
-  model=cursor/grok-4.6,
   contract=light-bounded,
   packet_path=tmp/reviews/{slug}-conductor-packet.md,
   dispatch_thread_id={root},      # continuity root with turns, or pending-empty child of root
   # generation_options={summon_mode: confer_and_finish},  # optional; or todo attr
-  model_knobs={effort: xhigh, fast: "false"},
+  model_knobs={"fast":"true"},
   lane="B",                       # DEFAULT — always pass explicitly. SOT:
                                    # consult-routing § cursor-sdk checkout lane.
                                    # omit = inherit only (nest/resume), ¬ preference.
@@ -553,7 +549,7 @@ instead of silently admitting on shared master. If you see `A=1` and
 admit selected Lane A (omitted/`lane="A"`) — stop nesting mechanical work onto
 a B branch that isn't this checkout.
 
-When admitting **T3 Opus**: one announce line (`Conductor T3: <trigger> — <why>`),
+When admitting **explicit `cursor/claude-opus-5` pin**: one announce line (`Conductor Opus pin: <trigger> — <why>`),
 then proceed (`lean-context-dispatch-first` inform-then-proceed).
 
 ## Gotchas
@@ -561,7 +557,7 @@ then proceed (`lean-context-dispatch-first` inform-then-proceed).
 ### When Lane A is still the right call
 
 Lane B is the default, not the only option. Name Lane A explicitly, one line
-in packet `<invariants>`, when **either**: the mission is T0-mechanical — a
+in packet `<invariants>`, when **either**: the mission is mechanical single-locus — a
 single locus, self-contained, nothing else plausibly touching that file mid-
 mission — **or** the scope is structurally incompatible with a worktree (an
 absolute mount path or non-repo URI that `CURSOR_LANE_B_SCOPE_REFUSED` cannot
@@ -623,7 +619,7 @@ work-identity — repeating it 409s `CURSOR_SOURCE_REF_IN_FLIGHT`.
 
 ### Refuse-and-close != caution — flag it, still execute
 
-**Failure class (7419, 2026-08-16 — friction 29694/29693):** a T1 conductor
+**Failure class (7419, 2026-08-16 — friction 29694/29693):** a Composer conductor
 read the full mission (28 read-only tool calls, zero files touched) then
 closed `status: partial` / `work_outcome: checks_failed` because, in its own
 words, it wanted to "lay out the concrete plan and flag that merge step
@@ -680,7 +676,7 @@ the after-ship `cdp/opus-5` review comment (good default; ¬ a G-row).
 | Drop `lane="B"` after `CURSOR_LANE_B_SCOPE_REFUSED` | Fix scope paths; re-admit with `lane="B"` |
 | Treat missing Lane-B worktree as a shared-master admit | Expect `422 CURSOR_LANE_B_WORKTREE_MISSING`; mint/inherit a tree or name Lane A |
 | Conductor on Lane A while G-row code is on `cursor-sdk/lane-*` | One regime: conductor + nests share the Lane-B worktree/branch |
-| Opus-by-default for every conductor | Tier table; T1 Grok @ `xhigh`; Opus only with trigger |
+| Opus-by-default for every conductor | Seat table; Composer standing; CDP escalation; Opus only with explicit pin |
 | Omit `lane=` assuming that means "no preference" | Lane B is the default — pass `lane="B"` explicitly; name Lane A only with a reason |
 | Conductor pauses after a G-row to ask "continue?" | Drive to completion in one commission; report via CHECKPOINT, don't wait for a reply |
 | Call `team_dispatch(reuse_thread=<own thread>)` from inside the running conductor | Journal → hop CHECKPOINT → `stop: ROW_HOP`; the substrate admits the successor after your terminal (§ Run to completion — hop half STAGED) |
