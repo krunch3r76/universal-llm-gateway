@@ -715,10 +715,7 @@ def resolve_auto_seat_generate_target(
             status_code=422,
             code="sdk_substrate_required",
         )
-    if model is None and (packet_kind or "").strip().lower() == "conductor":
-        resolved_model = "cursor/grok-4.6"
-    else:
-        resolved_model = model or profile.default_model
+    resolved_model = model or profile.default_model
     if not resolved_model:
         raise FrontierEndpointError(
             request_id=request_id,
