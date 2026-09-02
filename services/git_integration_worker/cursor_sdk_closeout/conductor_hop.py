@@ -257,7 +257,11 @@ def build_conductor_hop_idempotency_key(predecessor_dispatch_id: str) -> str:
     return f"conductor-hop:{predecessor_dispatch_id}"
 
 
-def build_hop_team_dispatch_body(row: dict[str, Any]) -> dict[str, Any] | None:
+def build_hop_team_dispatch_body(
+    row: dict[str, Any],
+    *,
+    hop_reason_override: str | None = None,
+) -> dict[str, Any] | None:
     """Clone predecessor ledger record for Stargate ``team_dispatch`` generate."""
     if not _is_conductor_row(row):
         return None
@@ -280,7 +284,7 @@ def build_hop_team_dispatch_body(row: dict[str, Any]) -> dict[str, Any] | None:
         next_seq = hop_seq + 1
     else:
         next_seq = 1
-    hop_reason = _infer_hop_reason(
+    hop_reason = hop_reason_override or _infer_hop_reason(
         closeout_tokens=closeout_tokens,
         terminal_status=str(row.get("terminal_status") or row.get("status") or ""),
     )

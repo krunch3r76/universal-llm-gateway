@@ -1313,6 +1313,11 @@ async def reconcile_stale_leases(
         )
     for lease_key in await asyncio.to_thread(queue_stall_lease_keys, ledger):
         emit_write_lease_queue_stalled(source_repo=lease_key)
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog import (
+        sweep_conductor_hop_watchdog,
+    )
+
+    await sweep_conductor_hop_watchdog(ledger)
 
 
 async def stale_lease_sweeper(app: FastAPI) -> None:

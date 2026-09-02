@@ -10,6 +10,7 @@ Unified liveness (5960): ``orphans := blocking_holders() − live_holders()``.
 from __future__ import annotations
 
 import asyncio
+import json
 import sqlite3
 from datetime import UTC, datetime
 from typing import Literal
@@ -29,6 +30,9 @@ from services.git_integration_worker.cursor_sdk_gate import (
     transfer_sdk_dispatch_slot_sync,
 )
 from services.git_integration_worker.cursor_sdk_restart_orphan import load_ledger_row
+from services.git_integration_worker.cursor_sdk_ledger_hop import (
+    hop_fields_from_record_json,
+)
 
 logger = get_logger(__name__)
 
@@ -191,6 +195,133 @@ def queue_stall_lease_keys(ledger: CursorDispatchLedger) -> list[str]:
         and _resolve_key(lease_key=r["lease_key"], source_repo=r["source_repo"])
     }
     return [key for key, depth in depth_by_key.items() if depth > 0 and key not in live_keys]
+
+
+def _terminal_epoch(row: dict) -> float | None:
+    """Wall time of predecessor terminal for reactor/watchdog grace."""
+    record_json = str(row.get("record_json") or "")
+    if record_json:
+        try:
+            data = json.loads(record_json)
+        except json.JSONDecodeError:
+            data = {}
+        if isinstance(data, dict):
+            raw = data.get("hop_last_terminal_at")
+            if isinstance(raw, (int, float)):
+                return float(raw)
+    terminal_at = row.get("terminal_at")
+    if not terminal_at:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(terminal_at))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt.timestamp()
+    except ValueError:
+        return None
+
+
+def _successor_admitted(
+    conn: sqlite3.Connection, *, predecessor_id: str, record_json: str
+) -> bool:
+    if hop_fields_from_record_json(record_json).get("hop_successor"):
+        return True
+    row = conn.execute(
+        "SELECT 1 FROM cursor_sdk_dispatches "
+        "WHERE json_extract(record_json, '$.hop_from') = ? LIMIT 1",
+        (predecessor_id,),
+    ).fetchone()
+    return row is not None
+
+
+def _latest_terminal_conductor_rows(
+    conn: sqlite3.Connection,
+) -> list[sqlite3.Row]:
+    """Last terminal conductor row per worker thread (bind §5 last_terminal_row)."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _is_conductor_row,
+    )
+
+    rows = conn.execute(
+        "SELECT * FROM cursor_sdk_dispatches "
+        "WHERE status IN ('completed','failed','cancelled') "
+        "AND thread_id IS NOT NULL AND thread_id != ''"
+    ).fetchall()
+    by_thread: dict[str, sqlite3.Row] = {}
+    for row in rows:
+        mapped = {k: row[k] for k in row.keys()}
+        if not _is_conductor_row(mapped):
+            continue
+        thread_id = str(mapped.get("thread_id") or "")
+        if not thread_id:
+            continue
+        existing = by_thread.get(thread_id)
+        if existing is None:
+            by_thread[thread_id] = row
+            continue
+        existing_map = {k: existing[k] for k in existing.keys()}
+        existing_seq = hop_fields_from_record_json(
+            str(existing_map.get("record_json") or "")
+        ).get("hop_seq")
+        row_seq = hop_fields_from_record_json(
+            str(mapped.get("record_json") or "")
+        ).get("hop_seq")
+        existing_seq_i = int(existing_seq) if isinstance(existing_seq, int) else 0
+        row_seq_i = int(row_seq) if isinstance(row_seq, int) else 0
+        if row_seq_i > existing_seq_i:
+            by_thread[thread_id] = row
+            continue
+        if row_seq_i < existing_seq_i:
+            continue
+        existing_ts = _terminal_epoch(existing_map) or 0.0
+        row_ts = _terminal_epoch(mapped) or 0.0
+        if row_ts >= existing_ts:
+            by_thread[thread_id] = row
+    return list(by_thread.values())
+
+
+def conductor_hop_watchdog_candidates(
+    ledger: CursorDispatchLedger,
+    *,
+    grace_s: float | None = None,
+    now: float | None = None,
+) -> list[str]:
+    """Terminal conductor rows past reactor grace that still owe a hop successor."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _closeout_tokens_from_row,
+        hop_owed,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+        evaluate_hop_budget,
+        load_hop_budget_config,
+    )
+
+    cfg = load_hop_budget_config()
+    grace = grace_s if grace_s is not None else cfg.reactor_grace_s
+    now_ts = now if now is not None else datetime.now(UTC).timestamp()
+    candidates: list[str] = []
+    with ledger._connect() as conn:
+        for row in _latest_terminal_conductor_rows(conn):
+            mapped = {k: row[k] for k in row.keys()}
+            dispatch_id = str(mapped.get("dispatch_id") or "")
+            record_json = str(mapped.get("record_json") or "")
+            if not dispatch_id:
+                continue
+            if _successor_admitted(
+                conn, predecessor_id=dispatch_id, record_json=record_json
+            ):
+                continue
+            terminal_ts = _terminal_epoch(mapped)
+            if terminal_ts is None or (now_ts - terminal_ts) < grace:
+                continue
+            closeout_tokens = _closeout_tokens_from_row(mapped)
+            verdict = evaluate_hop_budget(mapped, closeout_tokens=closeout_tokens)
+            if verdict.park and verdict.reason:
+                candidates.append(dispatch_id)
+                continue
+            if hop_owed(mapped, closeout_tokens=closeout_tokens):
+                candidates.append(dispatch_id)
+    return candidates
 
 
 async def transfer_capacity_after_park(
