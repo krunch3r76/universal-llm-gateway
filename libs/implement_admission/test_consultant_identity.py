@@ -8,8 +8,6 @@ from implement_admission.check_review_substrate import (
     UNKNOWN_MODEL_IDENTITY,
     consultant_identity,
     consultant_rung,
-    families_independently_measured,
-    independence_family,
     independently_measured,
     model_identity,
 )
@@ -114,8 +112,3 @@ def test_non_rung_knobs_ignored() -> None:
 
 def test_cdp_sonnet_default_rung_is_xhigh() -> None:
     assert consultant_rung("cdp/sonnet-5") == "xhigh"
-
-
-def test_legacy_family_surface_untouched_in_p0() -> None:
-    assert independence_family("cdp/fable") == "anthropic"
-    assert families_independently_measured("openai", "anthropic") is True

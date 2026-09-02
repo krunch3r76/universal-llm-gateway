@@ -104,50 +104,6 @@ def gate_action(text: str) -> RGateAction:
     return parse_r_verdict(text).action
 
 
-def parse_r_verdict_with_independence(
-    text: str,
-    *,
-    r_family: str | None = None,
-    implement_family: str | None = None,
-) -> ParsedRVerdict:
-    """Parse R verdict and reject ADVANCE when families match or are unmeasured."""
-    parsed = parse_r_verdict(text)
-    if parsed.action is not RGateAction.ADVANCE:
-        return parsed
-    rf = (r_family or "").strip().lower()
-    impl = (implement_family or "").strip().lower()
-    if rf == "unknown" or impl == "unknown":
-        return ParsedRVerdict(
-            parsed.verdict,
-            RGateAction.BLOCKED,
-            "unmeasured_family_r_pre_check",
-        )
-    if rf and impl and rf == impl:
-        return ParsedRVerdict(
-            parsed.verdict,
-            RGateAction.BLOCKED,
-            "same_family_r_pre_check_only",
-        )
-    return parsed
-
-
-def advance_allowed_with_independence(
-    text: str,
-    *,
-    r_family: str | None = None,
-    implement_family: str | None = None,
-) -> bool:
-    """True only when merits verdict advances and families differ."""
-    return (
-        parse_r_verdict_with_independence(
-            text,
-            r_family=r_family,
-            implement_family=implement_family,
-        ).action
-        is RGateAction.ADVANCE
-    )
-
-
 @dataclass(frozen=True)
 class ConsultProvenance:
     """Single ``implement_ready`` consult schema (R-admit and judgment-gap)."""

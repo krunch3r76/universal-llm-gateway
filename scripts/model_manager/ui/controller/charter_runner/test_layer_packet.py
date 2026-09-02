@@ -527,6 +527,23 @@ def test_layer_independence_same_model_g3_g4_blocks() -> None:
     assert not verdict.ok
     assert verdict.branch_b_source is None
 
+    body_rung_diverse = _G5_BLOCK_BODY + """
+## Consult provenance
+- consult_thread: agent-bus:7001
+- verdict: ADMIT
+- consultant_model: grok-4.6
+- consultant_effort: xhigh
+- consultant_substrate: web-anthropic
+- gate_id: G3
+""" + "\nG4 check consultant_model: grok-4.6-high\n"
+    verdict_rung = layer_independence_ok(
+        parsed=parsed,
+        checkpoint_body=body_rung_diverse,
+        attendance="autonomous",
+    )
+    assert verdict_rung.ok
+    assert verdict_rung.branch_b_source == "checkpoint_provenance"
+
 
 def test_layer_independence_autonomous_blocks_without_structural_reason() -> None:
     parsed = parse_checkpoint(_G5_BLOCK_BODY)
@@ -546,21 +563,23 @@ def test_layer_independence_autonomous_blocks_without_structural_reason() -> Non
     )
 
 
-def test_layer_g4_check_family_diverse_seat_bind() -> None:
+def test_layer_g4_check_identity_diverse_seat_bind() -> None:
     from scripts.model_manager.ui.controller.charter_runner.window_exec.materializer_layer import (
         LAYER_G3_SEAT,
         LAYER_G4_SEAT,
-        layer_g4_check_family_diverse,
+        layer_g4_check_identity_diverse,
     )
 
-    assert layer_g4_check_family_diverse()
-    assert not layer_g4_check_family_diverse(g3_seat=LAYER_G3_SEAT, g4_seat=LAYER_G3_SEAT)
-    assert not layer_g4_check_family_diverse(
-        g3_seat="cursor/grok-4.6", g4_seat="cursor/grok-4.6-high"
+    assert layer_g4_check_identity_diverse()
+    assert not layer_g4_check_identity_diverse(g3_seat=LAYER_G3_SEAT, g4_seat=LAYER_G3_SEAT)
+    assert layer_g4_check_identity_diverse(
+        g3_seat="cursor/grok-4.6",
+        g3_knobs={"effort": "xhigh"},
+        g4_seat="cursor/grok-4.6-high",
     )
-    assert layer_g4_check_family_diverse(
+    assert layer_g4_check_identity_diverse(
         g3_seat=LAYER_G3_SEAT, g4_seat=LAYER_G4_SEAT
     )
-    assert not layer_g4_check_family_diverse(
-        g3_seat="cursor/claude-opus-5", g4_seat="cdp/fable"
+    assert not layer_g4_check_identity_diverse(
+        g3_seat="cursor/claude-opus-5", g4_seat="cdp/opus-5"
     )

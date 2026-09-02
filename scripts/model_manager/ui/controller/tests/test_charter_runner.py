@@ -2640,28 +2640,6 @@ def test_consult_packet_materializer() -> None:
 
 
 @pytest.mark.offline
-def test_r_verdict_same_family_rejects_advance() -> None:
-    from scripts.model_manager.charter_control.r_verdict_gate import (
-        RGateAction,
-        advance_allowed_with_independence,
-        parse_r_verdict_with_independence,
-    )
-
-    body = "Merits verdict: ADMIT"
-    assert advance_allowed_with_independence(
-        body, r_family="cursor", implement_family="anthropic"
-    )
-    assert not advance_allowed_with_independence(
-        body, r_family="cursor", implement_family="cursor"
-    )
-    parsed = parse_r_verdict_with_independence(
-        body, r_family="grok", implement_family="grok"
-    )
-    assert parsed.action is RGateAction.BLOCKED
-    assert parsed.reason == "same_family_r_pre_check_only"
-
-
-@pytest.mark.offline
 def test_terminal_discipline_blocks_done_without_proof() -> None:
     from scripts.model_manager.ui.controller.charter_runner.terminal_discipline import (
         gated_step_done_allowed,

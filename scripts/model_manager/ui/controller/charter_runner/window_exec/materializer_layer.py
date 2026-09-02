@@ -21,28 +21,33 @@ logger = get_logger(__name__)
 
 REVISE_CAP_DEFAULT = 3
 
-# Layer G3/G4 seat bind — single locus for family-diversity enforcement (6524 R4).
+# Layer G3/G4 seat bind — single locus for identity/rung diversity (6524 R4).
 # G4 is explicit-only (operator 2026-08-25): LAYER_G4_SEAT is the model when G4
 # is named, not a silent default. Unpinned arcs skip G4 (G3→G5).
-LAYER_G3_SEAT = "cursor/grok-4.6"
-LAYER_G3_MODEL_KNOBS: dict[str, str] = {"effort": "xhigh", "fast": "false"}
+LAYER_G3_SEAT = "cursor/claude-sonnet-5"
+LAYER_G3_MODEL_KNOBS: dict[str, str] = {"effort": "high", "fast": "false"}
 LAYER_G4_SEAT = "cursor/gpt-5.6-terra"
 
 
-def layer_g4_check_family_diverse(
+def layer_g4_check_identity_diverse(
     *,
     g3_seat: str = LAYER_G3_SEAT,
+    g3_knobs: dict[str, str] | None = None,
     g4_seat: str = LAYER_G4_SEAT,
+    g4_knobs: dict[str, str] | None = None,
 ) -> bool:
-    """True when declared G4 Check seat family differs from G3 Densify seat family."""
+    """True when G3 Densify and G4 Check seats are independently measured."""
     from implement_admission.check_review_substrate import (
-        families_independently_measured,
-        independence_family,
+        consultant_identity,
+        independently_measured,
     )
 
-    return families_independently_measured(
-        independence_family(g3_seat),
-        independence_family(g4_seat),
+    resolved_g3_knobs = (
+        LAYER_G3_MODEL_KNOBS if g3_knobs is None and g3_seat == LAYER_G3_SEAT else (g3_knobs or {})
+    )
+    return independently_measured(
+        consultant_identity(g3_seat, resolved_g3_knobs),
+        consultant_identity(g4_seat, g4_knobs or {}),
     )
 
 _LAYER_ARC_FLOOR = (
@@ -99,7 +104,7 @@ def _invariants(root_id: str, *, thin: bool, revise_cap: int) -> str:
 [continuity] reconstitute from latest CHECKPOINT + scoreboard only — ¬ linear
 thread read.
 [layer-arc] codework runs the layering G1–G6 cascade; independence is structural
-(upstream cross-family consults + cross-family G4 Check) — not a downstream
+(upstream cross-identity consults + identity/rung-diverse G4 Check) — not a downstream
 ratification window. G5 implement requires proven independence before admit
 (layer_independence_unproven blocks at tick admission).
 {closed}[background-lead] authorized to dispatch sub-legs, deploy-verify, and
@@ -134,7 +139,7 @@ G1  Architecture     consult seat · cdp/fable — architecture verdict sidecar
 G2  Frame            consult seat · cdp/opus-5 — densifier instructions ≤120L.
 G3  Densify          {LAYER_G3_SEAT} ({", ".join(f"{k}={v}" for k, v in sorted(LAYER_G3_MODEL_KNOBS.items()))}) — dense spec + Gate-2 + implement_ready.
 G4  Check            explicit Other Models pin only ({LAYER_G4_SEAT} when named);
-                     default skip (G3→G5). Family diversity already G1 vs G3.
+                     default skip (G3→G5). Identity diversity already G1 vs G3.
 G5  Implement        cursor/composer-2.5 — contract=implement + source_ref.
 G6  Verify + close   inline — quality_gate · files_expected · ACs · docstrings.
                      Escalate to `[consult:judgment_gap]` on highest re-opened
@@ -276,7 +281,7 @@ __all__ = [
     "LAYER_G3_SEAT",
     "LAYER_G3_MODEL_KNOBS",
     "LAYER_G4_SEAT",
-    "layer_g4_check_family_diverse",
+    "layer_g4_check_identity_diverse",
     "layer_subject",
     "materialize_layer_packet",
 ]
