@@ -317,6 +317,48 @@ def test_reindex_archive_adds_index(
     assert "chat-harvest-index" in body
 
 
+def test_reindex_claude_force_rebuilds_stripped_index(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    cid = "a65cb727-bedf-4c75-bcd8-ae8279ca4b4a"
+    dest = archive_dest("claude", cid)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(
+        "# Chat harvest — claude\n\n"
+        "- site: `claude`\n"
+        f"- conversation_id: `{cid}`\n"
+        f"- url: `https://claude.ai/chat/{cid}`\n"
+        "- harvested_at: `t1`\n"
+        "- turn_count: `1`\n"
+        "- streaming_at_harvest: `false`\n\n"
+        "## Turn 1 — assistant\n"
+        "Viewed a file, used toys integration\n\n"
+        "Viewed a file, used toys integration\n\n"
+        "Yes, two places.\n",
+        encoding="utf-8",
+    )
+    first = reindex_archive("claude", cid)
+    assert first is not None
+    first_body = dest.read_text(encoding="utf-8")
+    first_index = parse_index(first_body)
+    assert first_index is not None
+    assert first_index[0][2] == turn_digest("Yes, two places.")
+    noop = reindex_archive("claude", cid, force=False)
+    assert noop == first
+    stale = first_body.replace(
+        turn_digest("Yes, two places."),
+        turn_digest("stale digest"),
+        1,
+    )
+    dest.write_text(stale, encoding="utf-8")
+    second = reindex_archive("claude", cid, force=True)
+    assert second is not None
+    rebuilt_index = parse_index(dest.read_text(encoding="utf-8"))
+    assert rebuilt_index is not None
+    assert rebuilt_index[0][2] == turn_digest("Yes, two places.")
+
+
 def test_chrome_doubled_leading_line_stripped() -> None:
     from chat_harvest.claude_chat_adapter import _strip_claude_dom_chrome
 

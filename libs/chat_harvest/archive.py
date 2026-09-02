@@ -320,12 +320,17 @@ def _cortex_uri(path: Path) -> str:
     return f"cortex://{rel}"
 
 
-def reindex_archive_file(dest: Path) -> tuple[str, str] | None:
-    """Add a machine index to a legacy archive body; no-op when already indexed."""
+def reindex_archive_file(dest: Path, *, force: bool = False) -> tuple[str, str] | None:
+    """Add or rebuild the machine index on a legacy archive body.
+
+    When *force* is false and an index already exists, returns the current
+    ``(cortex_uri, sha256)`` without rewriting. When *force* is true, rebuilds
+    the index (e.g. after chrome-strip normalization landed post-first-index).
+    """
     if not dest.is_file():
         return None
     content = dest.read_text(encoding="utf-8")
-    if parse_index(content) is not None:
+    if parse_index(content) is not None and not force:
         return _cortex_uri(dest), _sha256_of_file(dest)
     bodies = _parse_turn_bodies(content)
     if not bodies:
@@ -337,12 +342,18 @@ def reindex_archive_file(dest: Path) -> tuple[str, str] | None:
     streaming_match = re.search(r"- streaming_at_harvest: `(true|false)`", content)
     if not (site_match and cid_match and url_match):
         return None
+    site = site_match.group(1)
     turns = [
-        ChatTurn(author=author, ordinal=ordinal, text=body, source="archive")
+        ChatTurn(
+            author=author,
+            ordinal=ordinal,
+            text=_normalize_archive_turn_body(site, author, body),
+            source="archive",
+        )
         for ordinal, (author, body) in sorted(bodies.items())
     ]
     new_content = _format_transcript(
-        site=site_match.group(1),
+        site=site,
         conversation_id=cid_match.group(1),
         url=url_match.group(1),
         turns=turns,
@@ -355,9 +366,22 @@ def reindex_archive_file(dest: Path) -> tuple[str, str] | None:
     return _cortex_uri(dest), sha256
 
 
-def reindex_archive(site: str, conversation_id: str) -> tuple[str, str] | None:
-    """Reindex the canonical archive for *site* / *conversation_id* when missing an index."""
-    return reindex_archive_file(archive_dest(site, conversation_id))
+def _normalize_archive_turn_body(site: str, author: str, body: str) -> str:
+    """Apply the same claude assistant normalization as live DOM harvest."""
+    if site != "claude" or author != "assistant":
+        return body
+    from claude_bundles.project_ask import strip_thinking_prefix
+
+    from chat_harvest.claude_chat_adapter import _strip_claude_dom_chrome
+
+    return strip_thinking_prefix(_strip_claude_dom_chrome(body))
+
+
+def reindex_archive(
+    site: str, conversation_id: str, *, force: bool = False
+) -> tuple[str, str] | None:
+    """Reindex the canonical archive for *site* / *conversation_id*."""
+    return reindex_archive_file(archive_dest(site, conversation_id), force=force)
 
 
 def archive_chat_transcript(
