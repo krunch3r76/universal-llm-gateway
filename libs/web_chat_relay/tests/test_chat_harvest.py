@@ -282,9 +282,11 @@ class _FakeClaudePage:
         *,
         url: str,
         evaluate_result: dict | None = None,
+        evaluate_sequence: list[dict] | None = None,
     ) -> None:
         self.url = url
         self._evaluate_result = evaluate_result or {}
+        self._evaluate_sequence = list(evaluate_sequence or [])
         self.keyboard = _FakeKeyboard()
         self.closed = False
         self.brought_to_front = False
@@ -294,7 +296,10 @@ class _FakeClaudePage:
         return None
 
     async def evaluate(self, _js, _arg=None) -> dict:  # noqa: ANN001
-        result = dict(self._evaluate_result)
+        if self._evaluate_sequence:
+            result = dict(self._evaluate_sequence.pop(0))
+        else:
+            result = dict(self._evaluate_result)
         result.setdefault("url", self.url)
         return result
 
@@ -350,6 +355,7 @@ class _FakeContext:
             page = _FakeClaudePage(
                 url=self._new_page_result.get("url", CLAUDE_URL),
                 evaluate_result=self._new_page_result.get("evaluate_result"),
+                evaluate_sequence=self._new_page_result.get("evaluate_sequence"),
             )
         else:
             page = _FakeClaudePage(url="https://claude.ai/new")
@@ -580,12 +586,14 @@ async def test_claude_harvest_open_on_demand_incomplete_dom(
         "chat_harvest.claude_chat_adapter.connect_cdp",
         _fake_connect,
     )
-    async def _fast_poll(page, **_kwargs):
+
+    async def _empty_poll(page, *, max_attempts: int = 20, pause_s: float = 0.25):
+        del max_attempts, pause_s
         return await page.evaluate("")
 
     monkeypatch.setattr(
         "chat_harvest.claude_chat_adapter._poll_dom",
-        _fast_poll,
+        _empty_poll,
     )
     from chat_harvest.claude_chat_adapter import execute_claude_harvest
 
@@ -598,6 +606,60 @@ async def test_claude_harvest_open_on_demand_incomplete_dom(
     assert result.outcome == "unreachable"
     assert result.code == "incomplete_dom"
     assert not archive_dest("claude", CLAUDE_ID).is_file()
+
+
+@pytest.mark.asyncio
+async def test_claude_harvest_open_on_demand_partial_then_full_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """F8: priming poll may see partial DOM; harvest must use settled full transcript."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    partial = {
+        "login_wall": False,
+        "streaming": False,
+        "turns": [{"author": "user", "ordinal": 1, "text": "one"}],
+    }
+    full = {
+        "login_wall": False,
+        "streaming": False,
+        "turns": [
+            {"author": "user", "ordinal": 1, "text": "one"},
+            {"author": "assistant", "ordinal": 2, "text": "two"},
+        ],
+    }
+    context = _FakeContext(
+        [],
+        new_page_result={"evaluate_sequence": [partial, full]},
+    )
+    pw = _FakePlaywright()
+
+    async def _fake_connect(_cdp_url: str):
+        return pw, object(), context, None
+
+    async def _noop_scroll(_page, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "chat_harvest.claude_chat_adapter.connect_cdp",
+        _fake_connect,
+    )
+    monkeypatch.setattr(
+        "chat_harvest.claude_chat_adapter.scroll_stabilize",
+        _noop_scroll,
+    )
+    from chat_harvest.claude_chat_adapter import execute_claude_harvest
+
+    result = await execute_claude_harvest(
+        url=CLAUDE_URL,
+        site="claude",
+        conversation_id=CLAUDE_ID,
+        cdp_url="http://127.0.0.1:9222",
+    )
+    assert result.outcome == "harvested"
+    assert result.opened_on_demand is True
+    assert result.turn_count == 2
+    assert context.pages[-1].closed is True
 
 
 @pytest.mark.asyncio
