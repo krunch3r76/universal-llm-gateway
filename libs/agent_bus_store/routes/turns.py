@@ -15,6 +15,7 @@ from ..body_auto_spill import (
     spill_error_http,
 )
 from ..checkpoint_auto_stamp_wiring import load_thread_tags
+from ..checkpoint_windows_render import maybe_render_checkpoint_windows
 from ..db import (
     TurnAlreadyAcknowledged,
     UnreadTurnsExist,
@@ -62,6 +63,17 @@ def _turn_from_row(r: dict[str, Any]) -> Turn:
     attachments = (
         [Attachment(**a) for a in raw_attachments] if raw_attachments else None
     )
+    body = r.get("body")
+    subject = str(r["subject"])
+    thread = str(r["thread"])
+    if body:
+        thread_tags = load_thread_tags(thread)
+        body = maybe_render_checkpoint_windows(
+            thread=thread,
+            subject=subject,
+            body=body,
+            thread_tags=thread_tags,
+        )
     return Turn.model_validate(
         {
             "id": r["id"],
@@ -70,7 +82,7 @@ def _turn_from_row(r: dict[str, Any]) -> Turn:
             "from": r["from_agent"],
             "to": r["to_agent"],
             "subject": r["subject"],
-            "body": r.get("body"),
+            "body": body,
             "status": r["status"],
             "supersedes_turn": r["supersedes_turn"],
             "created_at": r["created_at"],
