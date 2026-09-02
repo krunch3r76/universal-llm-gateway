@@ -286,8 +286,11 @@ class _FakeClaudePage:
         self.url = url
         self._evaluate_result = evaluate_result or {}
         self.keyboard = _FakeKeyboard()
+        self.closed = False
+        self.brought_to_front = False
 
     async def bring_to_front(self) -> None:
+        self.brought_to_front = True
         return None
 
     async def evaluate(self, _js, _arg=None) -> dict:  # noqa: ANN001
@@ -295,8 +298,11 @@ class _FakeClaudePage:
         result.setdefault("url", self.url)
         return result
 
-    async def goto(self, url: str) -> None:
+    async def goto(self, url: str, *, wait_until: str = "") -> None:  # noqa: ARG002
         self.url = url
+
+    async def close(self) -> None:
+        self.closed = True
 
     def get_by_role(self, _role: str, *, name=None):  # noqa: ANN001
         return _FakeLocator(visible=True)
@@ -330,11 +336,23 @@ class _FakeComposer:
 
 
 class _FakeContext:
-    def __init__(self, pages: list[_FakeClaudePage]) -> None:
+    def __init__(
+        self,
+        pages: list[_FakeClaudePage],
+        *,
+        new_page_result: dict | None = None,
+    ) -> None:
         self.pages = pages
+        self._new_page_result = new_page_result
 
     async def new_page(self) -> _FakeClaudePage:
-        page = _FakeClaudePage(url="https://claude.ai/new")
+        if self._new_page_result is not None:
+            page = _FakeClaudePage(
+                url=self._new_page_result.get("url", CLAUDE_URL),
+                evaluate_result=self._new_page_result.get("evaluate_result"),
+            )
+        else:
+            page = _FakeClaudePage(url="https://claude.ai/new")
         self.pages.append(page)
         return page
 
@@ -435,11 +453,21 @@ async def test_claude_harvest_happy_path(
 
 
 @pytest.mark.asyncio
-async def test_claude_harvest_cse_only_tabs_refuses(
+async def test_claude_harvest_cse_only_tabs_opens_instead_of_refuses(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    evaluate_result = {
+        "login_wall": False,
+        "streaming": False,
+        "turns": [
+            {"author": "user", "ordinal": 1, "text": "hello"},
+            {"author": "assistant", "ordinal": 2, "text": "hi"},
+        ],
+    }
     cse_page = _FakeClaudePage(url=CSE_URL)
-    context = _FakeContext([cse_page])
+    context = _FakeContext([cse_page], new_page_result={"evaluate_result": evaluate_result})
     pw = _FakePlaywright()
 
     async def _fake_connect(_cdp_url: str):
@@ -457,8 +485,195 @@ async def test_claude_harvest_cse_only_tabs_refuses(
         conversation_id=CLAUDE_ID,
         cdp_url="http://127.0.0.1:9222",
     )
-    assert result.outcome == "refused"
-    assert result.code == "use_cse_session"
+    assert result.outcome == "harvested"
+    assert result.opened_on_demand is True
+    assert result.turn_count == 2
+    minted = [p for p in context.pages if p.url == CLAUDE_URL]
+    assert len(minted) == 1
+    assert minted[0].closed is True
+
+
+@pytest.mark.asyncio
+async def test_claude_harvest_opens_on_demand_when_no_tab(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    other = _FakeClaudePage(url="https://claude.ai/chat/other-id")
+    evaluate_result = {
+        "login_wall": False,
+        "streaming": False,
+        "turns": [
+            {"author": "user", "ordinal": 1, "text": "q"},
+            {"author": "assistant", "ordinal": 2, "text": "a"},
+        ],
+    }
+    context = _FakeContext([other], new_page_result={"evaluate_result": evaluate_result})
+    pw = _FakePlaywright()
+
+    async def _fake_connect(_cdp_url: str):
+        return pw, object(), context, other
+
+    monkeypatch.setattr(
+        "chat_harvest.claude_chat_adapter.connect_cdp",
+        _fake_connect,
+    )
+    from chat_harvest.claude_chat_adapter import execute_claude_harvest
+
+    result = await execute_claude_harvest(
+        url=CLAUDE_URL,
+        site="claude",
+        conversation_id=CLAUDE_ID,
+        cdp_url="http://127.0.0.1:9222",
+    )
+    assert result.outcome == "harvested"
+    assert result.opened_on_demand is True
+    assert result.turn_count == 2
+    minted = context.pages[-1]
+    assert minted.closed is True
+
+
+@pytest.mark.asyncio
+async def test_claude_harvest_open_on_demand_login_wall(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    evaluate_result = {"login_wall": True, "streaming": False, "turns": []}
+    context = _FakeContext([], new_page_result={"evaluate_result": evaluate_result})
+    pw = _FakePlaywright()
+
+    async def _fake_connect(_cdp_url: str):
+        return pw, object(), context, None
+
+    monkeypatch.setattr(
+        "chat_harvest.claude_chat_adapter.connect_cdp",
+        _fake_connect,
+    )
+    from chat_harvest.claude_chat_adapter import execute_claude_harvest
+
+    result = await execute_claude_harvest(
+        url=CLAUDE_URL,
+        site="claude",
+        conversation_id=CLAUDE_ID,
+        cdp_url="http://127.0.0.1:9222",
+    )
+    assert result.outcome == "unauthenticated"
+    assert result.opened_on_demand is True
+    assert context.pages[-1].closed is True
+
+
+@pytest.mark.asyncio
+async def test_claude_harvest_open_on_demand_incomplete_dom(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    from chat_harvest.archive import archive_dest
+
+    evaluate_result = {"login_wall": False, "streaming": False, "turns": []}
+    context = _FakeContext([], new_page_result={"evaluate_result": evaluate_result})
+    pw = _FakePlaywright()
+
+    async def _fake_connect(_cdp_url: str):
+        return pw, object(), context, None
+
+    monkeypatch.setattr(
+        "chat_harvest.claude_chat_adapter.connect_cdp",
+        _fake_connect,
+    )
+    async def _fast_poll(page, **_kwargs):
+        return await page.evaluate("")
+
+    monkeypatch.setattr(
+        "chat_harvest.claude_chat_adapter._poll_dom",
+        _fast_poll,
+    )
+    from chat_harvest.claude_chat_adapter import execute_claude_harvest
+
+    result = await execute_claude_harvest(
+        url=CLAUDE_URL,
+        site="claude",
+        conversation_id=CLAUDE_ID,
+        cdp_url="http://127.0.0.1:9222",
+    )
+    assert result.outcome == "unreachable"
+    assert result.code == "incomplete_dom"
+    assert not archive_dest("claude", CLAUDE_ID).is_file()
+
+
+@pytest.mark.asyncio
+async def test_claude_harvest_existing_tab_not_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    evaluate_result = {
+        "login_wall": False,
+        "streaming": False,
+        "turns": [{"author": "user", "ordinal": 1, "text": "hello"}],
+    }
+    page = _FakeClaudePage(url=CLAUDE_URL, evaluate_result=evaluate_result)
+    context = _FakeContext([page])
+    pw = _FakePlaywright()
+
+    async def _fake_connect(_cdp_url: str):
+        return pw, object(), context, page
+
+    async def _noop_scroll(_page, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "chat_harvest.claude_chat_adapter.connect_cdp",
+        _fake_connect,
+    )
+    monkeypatch.setattr(
+        "chat_harvest.claude_chat_adapter.scroll_stabilize",
+        _noop_scroll,
+    )
+    from chat_harvest.claude_chat_adapter import execute_claude_harvest
+
+    result = await execute_claude_harvest(
+        url=CLAUDE_URL,
+        site="claude",
+        conversation_id=CLAUDE_ID,
+        cdp_url="http://127.0.0.1:9222",
+    )
+    assert result.outcome == "harvested"
+    assert result.opened_on_demand is False
+    assert page.closed is False
+    assert page.brought_to_front is True
+
+
+@pytest.mark.asyncio
+async def test_claude_probe_opens_on_demand_no_archive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    evaluate_result = {
+        "login_wall": False,
+        "streaming": False,
+        "turns": [{"author": "assistant", "ordinal": 1, "text": "probe"}],
+    }
+    context = _FakeContext([], new_page_result={"evaluate_result": evaluate_result})
+    pw = _FakePlaywright()
+
+    async def _fake_connect(_cdp_url: str):
+        return pw, object(), context, None
+
+    monkeypatch.setattr(
+        "chat_harvest.claude_chat_adapter.connect_cdp",
+        _fake_connect,
+    )
+    from chat_harvest.claude_chat_adapter import execute_claude_harvest
+
+    result = await execute_claude_harvest(
+        url=CLAUDE_URL,
+        site="claude",
+        conversation_id=CLAUDE_ID,
+        cdp_url="http://127.0.0.1:9222",
+        metadata_only=True,
+    )
+    assert result.outcome == "harvested"
+    assert result.archive_uri is None
+    assert result.opened_on_demand is True
 
 
 @pytest.mark.asyncio

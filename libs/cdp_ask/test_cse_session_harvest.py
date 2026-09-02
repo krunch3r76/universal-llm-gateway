@@ -17,6 +17,18 @@ from cdp_ask.followup_envelope import FollowupCandidate
 
 
 @pytest.mark.asyncio
+async def test_cse_harvest_chat_url_refuses_use_chat_session() -> None:
+    store = ExecutionStore()
+    result = await execute_harvest(
+        HarvestRequest(chat_url="https://claude.ai/chat/thread-uuid"),
+        store,
+    )
+    assert result.outcome == "refused"
+    assert result.code == "use_chat_session"
+    assert "chat_session" in (result.reason or "")
+
+
+@pytest.mark.asyncio
 async def test_harvest_hard_cap_schema_refusal() -> None:
     with pytest.raises(ValidationError):
         HarvestRequest(registration_id="reg-x", limit=999)

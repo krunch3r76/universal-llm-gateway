@@ -23,8 +23,13 @@ def _emit_harvested(response: ChatHarvestResponse) -> None:
             archive_uri=response.archive_uri,
             archive_sha256=response.archive_sha256,
             code=response.code,
+            opened_on_demand=response.opened_on_demand,
         )
     )
+
+
+def _should_emit_harvested(req: ChatHarvestRequest, response: ChatHarvestResponse) -> bool:
+    return not req.metadata_only or response.opened_on_demand
 
 
 async def execute_harvest(req: ChatHarvestRequest) -> ChatHarvestResponse:
@@ -59,7 +64,7 @@ async def execute_harvest(req: ChatHarvestRequest) -> ChatHarvestResponse:
             supersede=req.supersede,
             metadata_only=req.metadata_only,
         )
-        if not req.metadata_only:
+        if _should_emit_harvested(req, result):
             _emit_harvested(result)
         return result
 
@@ -75,7 +80,7 @@ async def execute_harvest(req: ChatHarvestRequest) -> ChatHarvestResponse:
             supersede=req.supersede,
             metadata_only=req.metadata_only,
         )
-        if not req.metadata_only:
+        if _should_emit_harvested(req, result):
             _emit_harvested(result)
         return result
 
@@ -90,6 +95,6 @@ async def execute_harvest(req: ChatHarvestRequest) -> ChatHarvestResponse:
 
 
 async def execute_probe(req: ChatHarvestRequest) -> ChatHarvestResponse:
-    """Metadata-only probe — no sidecar write and no Event Service signal."""
+    """Metadata-only probe — no archive; emits when open-on-demand mints a tab."""
     probe_req = req.model_copy(update={"metadata_only": True})
     return await execute_harvest(probe_req)

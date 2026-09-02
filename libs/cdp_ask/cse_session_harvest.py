@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from chat_harvest.models import ClassifyRefuse, classify_chat_url
 from claude_bundles import cdp_registry
 from claude_bundles.cse_provenance import resolve as resolve_provenance
 from claude_bundles.cse_provenance_resolve import is_row_present
@@ -124,12 +125,33 @@ async def _open_detached(
     return _emit(registration_id, response)
 
 
+def _refuse_product_chat_url(chat_url: str) -> HarvestResponse | None:
+    classified = classify_chat_url(chat_url)
+    if isinstance(classified, ClassifyRefuse):
+        return None
+    token = (chat_url or "").strip()
+    if not token or classified.site != "claude" or not classified.conversation_id:
+        return None
+    if "/chat/" not in token.lower():
+        return None
+    return HarvestResponse(
+        outcome="refused",
+        reason="product-chat URLs use chat_session",
+        code="use_chat_session",
+        chat_url=token,
+    )
+
+
 async def execute_harvest(
     req: HarvestRequest,
     store: ExecutionStore,
 ) -> HarvestResponse:
     """Harvest turns from a live lane, or open chat_url and scrape it."""
+    if refused := _refuse_product_chat_url(req.chat_url or ""):
+        return _emit(None, refused)
     registration_id, chat_url, provenance, early = await _resolve_target(req, store)
+    if refused := _refuse_product_chat_url(chat_url or ""):
+        return _emit(registration_id, refused)
     url = (chat_url or req.chat_url or "").strip() or (
         await resolve_harvest_chat_url(req, store)
     ) or ""

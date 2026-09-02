@@ -19,6 +19,7 @@ def mcp_chat_session_harvested(
     archive_sha256: str | None = None,
     superseded_sha256: str | None = None,
     code: str | None = None,
+    opened_on_demand: bool = False,
 ) -> Event:
     """Emit when harvest completes, refuses, or conflicts after classifier accept."""
     payload: dict[str, object] = {
@@ -35,6 +36,8 @@ def mcp_chat_session_harvested(
         payload["superseded_sha256"] = superseded_sha256
     if code is not None:
         payload["code"] = code
+    if opened_on_demand:
+        payload["opened_on_demand"] = True
     return Event(
         signal="mcp.chat.session.harvested",
         role="observation",

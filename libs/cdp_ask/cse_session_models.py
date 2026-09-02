@@ -17,6 +17,7 @@ HarvestOutcome = Literal[
     "dormant",
     "conflict",
     "unreachable",
+    "refused",
 ]
 HarvestSource = Literal["chat", "output-file", "auto"]
 TurnSource = Literal["cse-dom", "output-file", "archive", "bus-fallback"]
@@ -99,6 +100,7 @@ class HarvestResponse(BaseModel):
     stop: bool | None = None
     tool_pause: bool | None = None
     reason: str | None = None
+    code: str | None = None
     chat_url: str | None = None
     waited_ms: int | None = None
 

@@ -230,6 +230,8 @@ when no live attach exists, scrapes, then parks the host. Pass the satellite
 id, Stargate id, or `cse_…` token — do not reason about attach. `not_attached`
 means the URL could not be opened (deleted or login miss), not “the tab closed.”
 
+**Product chat (`/chat/`):** `chat_session(op=harvest|probe, url=…)` — `/chat/` → `chat_session`; `/cowork/cse_` → `cse_session`; both open on demand when no matching tab exists. Passing a `/chat/` URL to `cse_session` returns `use_chat_session`.
+
 `wait(first_reply_from)` complete + generate `archive_uri` is **not** harvest
 proof when the archive body is an error banner. Scrape the **generate CSE's**
 `chat_url` (the URL on that archive), not a sibling retained window, and not

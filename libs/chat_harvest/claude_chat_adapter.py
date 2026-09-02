@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any
 
 from claude_bundles.chat_reply_wait import harvest_assistant, wait_assistant_reply
 from claude_bundles.project_ask import find_composer, strip_thinking_prefix
 from claude_bundles.skills_ui_panel import connect_cdp
+from playwright.async_api import Error as PlaywrightError
 from universal_logging import get_logger
 
 from chat_harvest.archive import ArchiveConflictError, archive_chat_transcript
@@ -69,17 +72,43 @@ def _live_id(live_url: str, fallback: str = "") -> str:
     )
 
 
-async def _resolve_page(context, conversation_id: str, *, paste: bool):
+async def _poll_dom(page, *, max_attempts: int = 20, pause_s: float = 0.25) -> dict[str, Any]:
+    """Wait for login wall or turns after open-on-demand navigation."""
+    raw: dict[str, Any] = {}
+    for _ in range(max_attempts):
+        raw = await page.evaluate(FULL_TRANSCRIPT_JS)
+        if raw.get("login_wall") or raw.get("turns"):
+            return raw
+        await asyncio.sleep(pause_s)
+    return await page.evaluate(FULL_TRANSCRIPT_JS)
+
+
+async def _resolve_page(
+    context,
+    conversation_id: str,
+    *,
+    paste: bool,
+    open_url: str = "",
+):
     pages = [p for p in context.pages if "claude.ai" in (p.url or "")]
     non_cse = [p for p in pages if "/cowork/cse_" not in (p.url or "").lower()]
-    if pages and not non_cse:
-        return None, "use_cse_session"
+    if pages and not non_cse and not open_url:
+        return None, "use_cse_session", False
     if not paste:
         for page in non_cse:
             if conversation_id and f"/chat/{conversation_id}" in (page.url or ""):
                 await page.bring_to_front()
-                return page, None
-        return None, "no_tab"
+                return page, None, False
+        if not open_url:
+            return None, "no_tab", False
+        page = await context.new_page()
+        try:
+            await page.goto(open_url, wait_until="domcontentloaded")
+        except Exception:
+            with suppress(Exception):
+                await page.close()
+            raise
+        return page, None, True
     scored = []
     for p in non_cse:
         u = p.url or ""
@@ -93,12 +122,12 @@ async def _resolve_page(context, conversation_id: str, *, paste: bool):
     if scored:
         page = max(scored, key=lambda x: x[0])[1]
         if "/cowork/cse_" in (page.url or "").lower():
-            return None, "use_cse_session"
+            return None, "use_cse_session", False
         await page.bring_to_front()
-        return page, None
+        return page, None, False
     page = await context.new_page()
     await page.goto("https://claude.ai/new")
-    return page, None
+    return page, None, True
 
 
 async def harvest_full_transcript(page) -> tuple[list[ChatTurn], dict[str, Any]]:
@@ -134,9 +163,16 @@ async def execute_claude_harvest(
             outcome="no_conversation", site=site, conversation_id="", url=url
         )
     pw = None
+    page = None
+    minted = False
     try:
         pw, _browser, context, _page = await connect_cdp(cdp_url)
-        page, err = await _resolve_page(context, conversation_id, paste=False)
+        page, err, minted = await _resolve_page(
+            context,
+            conversation_id,
+            paste=False,
+            open_url=url,
+        )
         if err == "use_cse_session":
             return ChatHarvestResponse(
                 outcome="refused",
@@ -155,6 +191,28 @@ async def execute_claude_harvest(
                 code="no_tab",
                 reason="no matching chat tab",
             )
+        if minted:
+            priming = await _poll_dom(page)
+            if priming.get("login_wall"):
+                return ChatHarvestResponse(
+                    outcome="unauthenticated",
+                    site=site,
+                    conversation_id=conversation_id,
+                    url=str(priming.get("url") or url),
+                    code="unauthenticated",
+                    reason="login wall",
+                    opened_on_demand=True,
+                )
+            if not priming.get("turns"):
+                return ChatHarvestResponse(
+                    outcome="unreachable",
+                    site=site,
+                    conversation_id=conversation_id,
+                    url=str(priming.get("url") or url),
+                    code="incomplete_dom",
+                    reason="no turns after open-on-demand navigation",
+                    opened_on_demand=True,
+                )
         turns, raw = await harvest_full_transcript(page)
         if raw.get("login_wall"):
             return ChatHarvestResponse(
@@ -164,6 +222,7 @@ async def execute_claude_harvest(
                 url=str(raw.get("url") or url),
                 code="unauthenticated",
                 reason="login wall",
+                opened_on_demand=minted,
             )
         live_url, live_id, streaming = (
             str(raw.get("url") or url),
@@ -181,7 +240,7 @@ async def execute_claude_harvest(
             after_turn=after_turn,
         )
         if metadata_only:
-            return build_harvest_response(**kw)
+            return build_harvest_response(**kw, opened_on_demand=minted)
         harvested_at = datetime.now(UTC).isoformat()
         try:
             archive_uri, archive_sha256 = archive_chat_transcript(
@@ -203,14 +262,16 @@ async def execute_claude_harvest(
                 existing_sha256=exc.existing_sha256,
                 code="archive_conflict",
                 reason=str(exc),
+                opened_on_demand=minted,
             )
         return build_harvest_response(
             **kw,
             harvested_at=harvested_at,
             archive_uri=archive_uri,
             archive_sha256=archive_sha256,
+            opened_on_demand=minted,
         )
-    except RuntimeError as exc:
+    except (RuntimeError, PlaywrightError) as exc:
         logger.warning("claude harvest unreachable: %s", exc)
         return ChatHarvestResponse(
             outcome="unreachable",
@@ -219,8 +280,12 @@ async def execute_claude_harvest(
             url=url,
             code="unreachable",
             reason=str(exc),
+            opened_on_demand=minted,
         )
     finally:
+        if minted and page is not None:
+            with suppress(Exception):
+                await page.close()
         if pw is not None:
             await pw.stop()
 # fmt: on
@@ -241,7 +306,7 @@ async def execute_claude_paste(
     pw = None
     try:
         pw, _browser, context, _page = await connect_cdp(cdp_url)
-        page, err = await _resolve_page(context, _live_id(url), paste=True)
+        page, err, _minted = await _resolve_page(context, _live_id(url), paste=True)
         if err == "use_cse_session":
             return ChatPasteResponse(ok=False, code="use_cse_session", reason="only CSE tabs")
         if page is None or "/cowork/cse_" in (page.url or "").lower():

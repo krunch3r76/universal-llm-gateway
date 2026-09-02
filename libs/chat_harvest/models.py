@@ -59,6 +59,7 @@ class ChatHarvestResponse(BaseModel):
     existing_sha256: str | None = None
     code: str | None = None
     reason: str | None = None
+    opened_on_demand: bool = False
 
 
 class ChatPasteRequest(BaseModel):
@@ -170,6 +171,7 @@ def build_harvest_response(
     harvested_at: str | None = None,
     archive_uri: str | None = None,
     archive_sha256: str | None = None,
+    opened_on_demand: bool = False,
 ) -> ChatHarvestResponse:
     view, truncated = project_turns_view(
         turns, include_turns=include_turns, limit=limit, after_turn=after_turn
@@ -187,6 +189,7 @@ def build_harvest_response(
         streaming=streaming,
         truncated=truncated,
         turns=view,
+        opened_on_demand=opened_on_demand,
     )
 
 
