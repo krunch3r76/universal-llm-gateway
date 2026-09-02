@@ -36,7 +36,8 @@ Load in order (stop early if operator already pasted handles):
 4. Use the `conductor` skill (role split + **model/effort tier** + admit shape).
 
 Brief the operator in Been→Are→Going (≤6 lines). Include a one-line **recommended
-conductor tier** (T0 Composer / T1 Sonnet 5 / T2 terra·sol / T3 Opus) with why.
+conductor seat** (Composer default — omit `model=`; CDP for judgment; Other-Models pin
+only with a named trigger) with why.
 
 ### 2 — Establishing questions (ask only unknowns)
 
@@ -46,7 +47,7 @@ Ask in one batch; skip any already bound in chat:
 2. **Root** — existing `agent-bus:N` or birth new `orchestrator_continuity` root?
 3. **Incident / sibling lanes** — cite-only ids (e.g. stood-down proxy lane); any
    `¬ request` / pause markers?
-4. **Checkout regime** — standing default is **Lane B** (`cursor-sdk/lane-*`);
+4. **Checkout regime** — default is **Lane B** (`cursor-sdk/lane-*`);
    confirm, or override to Lane A (shared master) with a named reason.
 5. **G-rows** — paste scoreboard or list OPEN rows + Next-pickup.
 6. **Human gates** — anything that must stay operator-only (tabs, creds,
@@ -54,10 +55,9 @@ Ask in one batch; skip any already bound in chat:
    conductor drives every G-row and lands its own verified merge without a
    separate ask (skill § Run to completion). Name an exception here if this
    mission needs its merge held for review.
-7. **Conductor model tier** — accept the standing default, or pin
-   `composer` / `claude-sonnet-5` / `claude-opus-5` (+ effort). Standing default:
-   **T1 `cursor/grok-4.6` @ `effort=xhigh`**. Sonnet/Opus draw the
-   capped Other Models pool — named T2/T3 trigger only.
+7. **Explicit seat pin?** — default none (Composer — omit `model=`, `{fast:true}`);
+   judgment nests `cdp/fable` / `cdp/opus-5` escalation or an Other-Models pin only
+   with a named trigger. Sonnet/Opus/Terra remain explicit-pin facts only — never implicit defaults.
 8. **Admit now?** — draft packet only vs admit after confirm.
 
 Default to Lane B on Q4 absent an operator override; do **not** silently carry
@@ -94,16 +94,15 @@ Show packet path + sha256 + **model tier** + admit knobs + confirm conductor
 Use-line in `<invariants>`. On operator **go** / **admit**:
 
 ```text
-# Example: T1 default — substitute model/effort from Q7
+# Example: Composer standing seat — substitute pin from Q7 if any
 # Packet MUST already carry: Use the conductor skill — …
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
-  model=cursor/claude-sonnet-5,
   contract=light-bounded,
   packet_path=tmp/reviews/{slug}-conductor-packet.md,
   dispatch_thread_id={root},  # continuity root with turns, or pending-empty child of root
-  model_knobs={effort: max, thinking: "true", context: "1m"},
+  model_knobs={"fast":"true"},
   lane="B",                    # DEFAULT (Q4) — pass explicitly even when
                                 # unopposed; omitting resolves to Lane A at GIW
 )
@@ -113,7 +112,7 @@ If `CURSOR_LANE_B_SCOPE_REFUSED`: **¬ omit `lane=`** — fix packet scope paths
 re-admit (skill § Gotchas). After admit, confirm `busy_status.active_by_lane`
 matches the bound regime.
 
-If T3 Opus: announce inform-then-proceed trigger line. Post root CHECKPOINT with
+If explicit `claude-opus-5` pin: announce inform-then-proceed trigger line. Post root CHECKPOINT with
 `execution_id` / `dispatch_id` / worker thread / queue holder if queued / **model**.
 
 ### 6 — Hand back
@@ -128,5 +127,5 @@ closeout, not a mid-mission pause. Codify residuals on the root entity.
 
 Ring **7310** (`7244-ide-resolution`): Lane A finish of 7186 residual; packet
 `tmp/reviews/7310-conductor-packet.md`; sibling 7281 cite-only. Early dogfood
-admitted Opus — standing default is **T1 `cursor/grok-4.6` @ `effort=xhigh`**
-unless a T2/T3 Other Models trigger fires.
+admitted Opus — standing seat is Composer (omit `model=`); judgment nests CDP
+(`cdp/fable` / `cdp/opus-5`) unless an Other-Models pin names a trigger.

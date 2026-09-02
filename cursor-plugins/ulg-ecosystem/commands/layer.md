@@ -37,7 +37,7 @@ Entry-gate chooser (architecture / frame / densify / check / implement, incl. th
 
 ## Lead obligations
 
-Load the skill for **gate shape**. No todo yet ⇒ `/work-item-seed` S4a → spawn conductor. Existing todo ⇒ re-admit conductor at the highest still-open gate. Conductor owns Stage 0 attach, recon, G-ladder, auto-advance. Ratification is inherited from the gate above — ¬ open path-sim admit windows on a codework arc; G6 verify is mechanical. Checkout-native after-ship overlay is layering-owned (`cursor/grok-4.6`), not a path-sim admit. Widen only under the skill's escalation predicate, re-entering at the highest re-opened gate.
+Load the skill for **gate shape**. No todo yet ⇒ `/work-item-seed` S4a → spawn conductor. Existing todo ⇒ re-admit conductor at the highest still-open gate. Conductor owns Stage 0 attach, recon, G-ladder, auto-advance. Ratification is inherited from the gate above — ¬ open path-sim admit windows on a codework arc; G6 verify is mechanical. Checkout-native after-ship overlay is layering-owned (`cdp/opus-5` `purpose=review`), not a path-sim admit. Widen only under the skill's escalation predicate, re-entering at the highest re-opened gate.
 
 ## Skills
 
