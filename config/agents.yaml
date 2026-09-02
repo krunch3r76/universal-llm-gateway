@@ -283,14 +283,14 @@ profiles:
     auto_dispatchable: true
     # F-2: intentional empty — cursor/sdk admission checks CURSOR_DENIED_MODELS only
     # (deny-list, admit-rest); knob trust lives on CURSOR_MODEL_CAPABILITIES, not here.
-    # Trusted cursor-sdk models include cursor/claude-sonnet-5 and cursor/grok-4.6 —
-    # see libs/cursor_capabilities/cursor_capabilities.py.
-    # Judgment contracts (answer/confer/investigate/seed/light-bounded) on the Auto
-    # lane resolve desired_model=auto → cursor/claude-sonnet-5 (context=1m,
-    # thinking=true; effort per contract in wire_map). cursor/grok-4.6 is an
-    # explicit pin (path-sim A, skeptic, family-cross), never the omit path.
-    # Keep default Composer for contract=implement and pure mechanical inventory
-    # (grep/list only). Do not flip default_model; do not conflate with API xai/grok-4.6.
+    # Knob trust per model id lives in libs/cursor_capabilities/cursor_capabilities.py.
+    # Every contract (answer/confer/ask/investigate/implement/verify/seed/recon/
+    # light-bounded) on the Auto lane resolves desired_model=auto → cursor/composer-2.5
+    # (wire_map.resolve_desired_model; Composer's only knob is fast). Judgment vs
+    # implement is carried by contract, not model; ranking, bind and review are
+    # outsourced to CDP (cdp/fable, cdp/opus-5). Explicit Other-Models pins admit on
+    # generate through the Stargate fence explicit-pin branch; the omit path never
+    # resolves to them. Do not flip default_model; do not conflate with API xai/grok-4.6.
     allowed_models: []
 
   subagent/subagent:
@@ -320,9 +320,9 @@ profiles:
 #     pickup; poll poll_hint (agent-bus wait). PRECONDITION — DENSE INSTRUCTIONS: the packet
 #     must be dense/complete (Composer executes mechanically, no design judgment). cursor-sdk
 #     is platform=sdk on the Cursor subscription, NOT an Anthropic-API generate lane.
-#   Recon+investigate (judgment/root-cause/suggest): same seat=cursor-sdk with
-#     contract=investigate|seed — auto resolves cursor/claude-sonnet-5 (1m, thinking).
-#     contract=recon and pure mechanical inventory stay on Composer.
+#   Recon+investigate (root-cause/suggest): same seat=cursor-sdk with
+#     contract=investigate|seed — auto resolves cursor/composer-2.5 (fast); returns
+#     facts + OPEN FORK lines, never a bind. Ranking/bind → CDP (cdp/fable, cdp/opus-5).
 #   Bound implement (operator-attended FALLBACK): team_dispatch(op="handoff", seat="cursor", contract="implement") →
 #     cursor from any dispatching seat; packet + acceptance criteria required. Use only
 #     when SDK worker unavailable or attended IDE execution is explicitly wanted.
