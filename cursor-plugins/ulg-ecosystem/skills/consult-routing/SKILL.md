@@ -51,8 +51,11 @@ guard). Consults about claude.ai / Cowork / the picker itself prime
 |---|---|---|---|---|
 | G1 / Mode B / path-sim Q / hop-5 check | `cdp/fable` | high (max when bind gates a wave) | fresh `/new`; followup only into a live op-proxy CSE | `ask` |
 | G2 frame | `cdp/fable` followup in the G1 CSE; else `cdp/opus-5` fresh | high | followup ≻ fresh | inherit `ask` |
+| BIND (score-play M1) | `cdp/fable` if architecture-open / ≥2 rivals / invariant-touching; else `cdp/opus-5` | high (Fable max when bind gates a wave) | fresh; 0 turns when zero forks ∧ G1 edge resolves ∧ mechanical | `ask` |
+| SKEPTIC@BIND (score-play M2) | `cdp/fable` high when Opus bound; **`cdp/opus-5` xhigh/max when Fable bound** | see picker | 2nd CDP, identity ≠ binder; `panel_dispatch` when M2 known pre-dispatch | `ask` or `review` |
+| GATED REVIEW pre-go-live (score-play M3) | `cdp/opus-5` | xhigh — pin `reasoning_effort="high"` minimum; xhigh on critical path | pre-LAND gate; fires on M3 predicates only | `review` |
 | R-admit / verifier / mission / M-Arch | `cdp/opus-5` | high | fresh (R); mission followup | `review` or `mission` |
-| Session / work review of **code changes** | `cdp/opus-5` | high — pin `reasoning_effort="high"` (do not inherit conductor admit `effort:max`) | **optional, recommended** — background (conductor / unattended) preferred; defer when it would block the next attended move. Stage diff + closeout to `cortex://`. Fire: `team_dispatch(model=cdp/opus-5, purpose=review, reasoning_effort="high")`. ¬ a silent G4; checkout-native R-after = same row (`purpose=review`) | `review` |
+| S1 background arc review (score-play M4) | `cdp/opus-5` | high — pin `reasoning_effort="high"` (do not inherit conductor admit `effort:max`) | **default-on, batched per arc** — background (conductor / unattended). Defer when attended-blocking; never skip when arc had CDP binds or admission-adjacent work. Stage diff + closeout to `cortex://`. Fire: `team_dispatch(model=cdp/opus-5, purpose=review, reasoning_effort="high")`. Skip only under full-skip (runbook:score-play § Explicit skip). ¬ a silent G4 | `review` |
 | Docs / closeouts / spec polish / office I/O / dashboards | `cdp/sonnet-5` | **Extra** default; **Max** via `reasoning_effort=max` | pipeline or fresh; office → `harvest_source=output-file` | `produce` |
 | Skill authoring | `cdp/opus-5` draft · `cdp/sonnet-5` revise | high / Extra | fresh, output-file → cortex staging | `produce` |
 | Haiku | `cdp/haiku-4.5` | — | **no recipe** until Sonnet caps | — |
@@ -239,8 +242,23 @@ Rule: `anthropic-dispatch-authorization_ws.mdc`. Fable = CDP only (`cdp/fable` /
 | Path-sim bundled **Q** (L0) | **CDP Fable** — `team_dispatch(model=cdp/fable)` (CLI `fable-5.1` = IF6 only; path-sim annex A) |
 | Recon+investigate judgment residual | **`seat=cursor-sdk` + `contract=investigate`** (facts + `OPEN FORK:` — never binds) |
 | API `xai/grok-4.6` on coding work | **PROHIBITED** |
-| Engineering skeptic | `role=skeptic` + `xai/grok-4.6` |
+| Engineering skeptic on **codework** | **DORMANT** — `grok-4.6` barred on codework (operator ratified agent-bus:9956). Re-evaluate when a successor model (e.g. grok-5) earns admission. Use CDP judgment slots (M1–M4, `runbook:score-play`) instead. |
+| Non-code adversarial (life/analysis) | `role=skeptic` + `xai/grok-4.6` — life/analysis lane only |
 | Writing / correspondence | Grok **PROHIBITED** — L3 annex |
+
+### Skeptic / reviewer substrate matrix (codework, R2)
+
+Judgment slots are **CDP-default**; mechanical code-lane check keeps Terra on cursor-sdk. Composer is never a checker.
+
+| Slot | CDP (opus/fable) | cursor-sdk Terra | cursor-sdk Composer | panel_dispatch | API skeptic (Grok) |
+|---|---|---|---|---|---|
+| SKEPTIC@BIND (judgment on spec/forks) | eligible, default | explicit pin only (G4-class family check) | **never** — producer-class, barred from ranking | eligible when M2 known pre-dispatch | **dormant on codework** |
+| GATED REVIEW pre-go-live (M3) | eligible, default | explicit pin only | never | — | no |
+| Code-lane diff check (`check_review`) | not this slot | **default** (`cursor/gpt-5.6-terra` per `workflows.check_review.model`) | never | — | no |
+| S1 background arc review (M4) | eligible, default | explicit pin | never | — | no |
+| Non-code adversarial (life/analysis) | eligible | no | no | eligible | per non-code row above |
+
+SoT for M1–M4 predicates and skip conditions: `runbook:score-play` (agent-bus:9956 R2 ratification).
 
 ## Implement lane — default source_ref
 
@@ -404,9 +422,11 @@ authors implement-ready at Gate-2; cite `spec_sha256:<hex>`. `density_triage` �
 
 Default `judgment_required` code lane (`decision:autonomous-work-item-spine`):
 
-`recon → settle → densify → GPT merged check → Composer`
+`recon → settle → densify → check_review (Terra, mechanical) → Composer`
 
-One merged GPT check. Gate-6 substrate, zoom-out, seeding ladder, overhaul, `authority_fork`: L3 annex § spine extensions.
+One merged mechanical check via `workflows.check_review` (`cursor/gpt-5.6-terra`). CDP judgment
+(M1–M4, batched S1) per `runbook:score-play` (R2, agent-bus:9956). Gate-6 substrate, zoom-out,
+seeding ladder, overhaul, `authority_fork`: L3 annex § spine extensions.
 
 ## Implement admission gates
 
