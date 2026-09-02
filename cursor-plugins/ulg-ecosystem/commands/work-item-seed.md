@@ -58,8 +58,8 @@ S0 hit (open todo for this idea, including a same-session NL punch) ⇒ SKIP S4a
 
 Compose `/todo` identity mint only — Problem/Scope/Acceptance may be sparse.
 Friction-sourced S4a **must** stamp `spawned_by_friction=<int>` (todo-done auto-closes that parent; `"a:{id}"` / `derived_from_friction` is not the close key).
-After S4a, spawn `packet_kind=conductor` per skill § S6 — **T1**
-`cursor/grok-4.6` @ `xhigh`. Pass `dispatch_thread_id` ∈ {continuity root with
+After S4a, spawn `packet_kind=conductor` per skill § S6 — Composer (`omit model=`,
+`{fast:true}`); judgment nests CDP. Pass `dispatch_thread_id` ∈ {continuity root with
 turns, pending-empty child of root}.
 Receipt identity is the admitted thread + `branch_current=cursor-sdk/lane-{that id}`.
 

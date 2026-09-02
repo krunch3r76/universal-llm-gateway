@@ -17,11 +17,13 @@ remains for non-path-sim work items. Skip only the closed set shared with R-admi
 | Pin | Default substrate |
 |---|---|
 | R-admit | web-anthropic CDP · Opus 4.8 (staged corpus) |
-| **R-after (this command)** | **`seat=cursor-sdk, model=cursor/grok-4.6, contract=light-bounded`** — live checkout |
+| **R-after (this command)** | **`cdp/opus-5` `purpose=review` `reasoning_effort="high"`** reading `workspaces://` — Composer `pure-mechanical` limb for execution probes |
 
-Independence trade (documented, not hidden): Grok may already have run path-sim Q;
+Independence trade (documented, not hidden): CDP may already have run path-sim Q;
 R-after is still ≠ Composer implement and has checkout the web seat lacks. Override
 with an explicit model token only when the operator asks.
+
+**Last-resort override:** `cursor/claude-sonnet-5` — last resort, explicit `model=` pin only: fire when the CDP lane is unavailable and the leg cannot wait; CDP is preferred; never the first line of a recipe.
 
 **This command owns:** *R at after-ship timing, scoped from the work item's own
 charter, on the R-after substrate above.* Everything else defers — do NOT re-derive
@@ -51,14 +53,15 @@ admitted under, across however many sessions produced it.
 /work-item-review todo:{slug}
 /work-item-review a:{assertion_id}
 /work-item-review plan:{slug}
-/work-item-review todo:{slug} [model]     # optional override — default cursor/grok-4.6
+/work-item-review todo:{slug} [model]     # optional override — default cdp/opus-5 purpose=review
 ```
 
-**Default:** `cursor/grok-4.6` on cursor-sdk (`contract=light-bounded`). Operator model
+**Default:** `cdp/opus-5` `purpose=review` `reasoning_effort="high"` reading `workspaces://`;
+Composer `pure-mechanical` limb for execution probes. Operator model
 token overrides when explicitly supplied. **¬** default to web-anthropic / CDP for
-R-after (that seat is R-admit).
+R-admit (that seat is R-admit).
 
-**Optional overlay (recommended):** after R-after (or instead of a second Grok
+**Optional overlay (recommended):** after R-after (or instead of a second CDP
 pass on non-path-sim work), fire `team_dispatch(model=cdp/opus-5, purpose=review, reasoning_effort="high")`
 on the staged delivery + session arc. Background preferred; defer when attended
 blocking. SOT: `consult-routing` § CDP transport · `abstraction-layering`
@@ -128,7 +131,7 @@ Six architecture-handoff blocks. Embed `<task_guidance>` **by reference** from
 Question + Out-of-scope (§1), the three partitions (§2).
 `<mcp_capabilities>`: cursor-sdk / code MCP on (checkout + cortex as needed).
 
-Packet path: `tmp/prompts/work-item-review-{slug}-grok-packet.md`.
+Packet path: `tmp/prompts/work-item-review-{slug}-packet.md`.
 
 Add only the **after-ship R delta** on top of the shared guidance:
 
@@ -159,17 +162,26 @@ Slug line in packet: `Use the path-sim skill` (R-after pin) · `Use the event-in
 ```
 team_dispatch(
   op=generate,
-  seat=cursor-sdk,
-  model=cursor/grok-4.6,
-  model_knobs={"effort":"xhigh","fast":"false"},
+  model=cdp/opus-5,
+  purpose=review,
+  reasoning_effort="high",
   contract=light-bounded,
   dispatch_thread_id=<bus thread id or path-sim-{slug}>,
-  packet_path=tmp/prompts/work-item-review-{slug}-grok-packet.md,
+  packet_path=tmp/prompts/work-item-review-{slug}-packet.md,
   skills=[path-sim, review-task-guidance, docstring-quality, event-instrumentation-discipline, cursor-sdk-instruction-standard]
+)
+
+# Execution probes (pure-mechanical limb):
+team_dispatch(
+  op=generate,
+  seat=cursor-sdk,
+  contract=pure-mechanical,
+  model_knobs={"fast":"true"},
+  ...
 )
 ```
 
-¬ `model=xai/grok-*` artisan · ¬ default CDP web-anthropic · ¬ `anthropic/*`.
+¬ `model=xai/grok-*` artisan · ¬ default web-anthropic R-admit · ¬ `anthropic/*`.
 Operator override model token only when explicitly supplied on the command line.
 
 Write durable verdict to
@@ -208,8 +220,8 @@ cortex(tool="assert", arguments='{"entity_id":"<work-item-id>",
 | Rubber-stamp | Acceptance ledger with cited evidence + decisive falsifier |
 | Fork the shared review body | Embed `review-task-guidance` by reference |
 | Re-catch the same finding class every item | G4 distill → mint a rule/skill |
-| Default R-after to web-anthropic / CDP Opus | `cursor/grok-4.6` on cursor-sdk (R-admit keeps web Opus) |
-| `role=artisan, model=xai/grok-*` for checkout review | `seat=cursor-sdk, model=cursor/grok-4.6` |
+| Default R-after to Composer implement | `cdp/opus-5` `purpose=review` (R-admit keeps web Opus) |
+| `role=artisan, model=xai/grok-*` for checkout review | `cdp/opus-5` `purpose=review`; Composer `pure-mechanical` for execution probes |
 | Skip after path-sim Stage-B without closed-set evidence | Path-sim fires R-after by default — run it |
 | Silent on event-bearing ON_CHARTER delivery | Challenge closeout one-liner + missed add/prune |
 | Route REVISE through `/review-apply` | Direct patch or implement dispatch (24952) |
