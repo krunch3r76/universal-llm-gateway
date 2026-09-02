@@ -179,24 +179,25 @@ def resolve_desired_model(
 ) -> dict[str, Any]:
     """Map request ``desired_model`` hint → resolved ``model_id`` + notes.
 
-    ``auto`` (default) picks by contract: answer→grok, investigate→grok,
-    implement→composer, verify→composer, ask/recon→composer. Explicit hints
-    are honored and reported.
+    ``auto`` (default) picks by contract: judgment and mechanical paths both
+    default to Composer (answer/confer/investigate/seed/light-bounded,
+    implement/verify/ask/recon). Grok is experimental explicit pin only.
+    Explicit hints are honored and reported.
     Other Models (Sonnet/Opus/Terra) are never the auto default — they draw
     Cursor's capped second pool; unattended judgment stays on Cursor Models.
     """
     raw = (desired_model or "auto").strip().lower() or "auto"
     if raw == "auto":
         by_contract = {
-            "answer": "cursor/grok-4.6",
-            "confer": "cursor/grok-4.6",
+            "answer": "cursor/composer-2.5",
+            "confer": "cursor/composer-2.5",
             "ask": "cursor/composer-2.5",
-            "investigate": "cursor/grok-4.6",
+            "investigate": "cursor/composer-2.5",
             "implement": "cursor/composer-2.5",
             "verify": "cursor/composer-2.5",
-            "seed": "cursor/grok-4.6",
+            "seed": "cursor/composer-2.5",
             "recon": "cursor/composer-2.5",
-            "light-bounded": "cursor/grok-4.6",
+            "light-bounded": "cursor/composer-2.5",
         }
         model_id = by_contract.get(contract, "cursor/composer-2.5")
         return {

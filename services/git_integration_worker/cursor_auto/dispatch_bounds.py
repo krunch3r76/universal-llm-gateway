@@ -38,6 +38,7 @@ from services.git_integration_worker.cursor_auto.wire_map import (
     resolve_desired_model,
 )
 
+# Judgment defaults (Composer): wire_map auto path for answer/confer/investigate/seed/light-bounded.
 # Roaming tier: cheap enough per agent step that an unbounded loop is affordable.
 # Every other cursor model costs multiples per step for the same walk.
 ROAMING_TIER_BARE_MODELS: frozenset[str] = frozenset(
