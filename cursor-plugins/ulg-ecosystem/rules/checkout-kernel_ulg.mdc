@@ -1,5 +1,5 @@
 ---
-description: Checkout kernel — sole shared master, lane= on cursor-sdk generate, commit/deploy/live vocabulary, never delete or revert unattributed paths, personal helpers stay in ignored nested-git trees. Always-on; playbook is the git-posture skill.
+description: Checkout kernel — sole shared master, lane= on cursor-sdk generate, commit/deploy/live vocabulary, land is merge never copy, never delete or revert unattributed paths, personal helpers stay in ignored nested-git trees. Always-on; playbook is the git-posture skill.
 alwaysApply: true
 rule_category: engineering
 apply_tier: required_gate
@@ -19,6 +19,10 @@ get the same rule.
 every serving process + graph stamp (`restart-drain-discipline`). Liveness proof is `fleet_liveness(code_ref=…)`;
 repo timestamps / `recent_commits` are low-confidence fallback.
 
+`land(lane_B) ⇒ git merge cursor-sdk/lane-{thread}` — `checkout <branch> -- <paths>` and `cherry-pick` are
+**copies, not lands**: they clobber dirty peer WIP with no conflict and leave the branch unmerged (branch debt
+on shipped work). `merge_blocked ⇒ reconcile`, never route around git (arc 9912, 2026-09-02).
+
 ## Lanes
 
 Attended IDE = live shared checkout. `cursor-sdk` generate: pass `lane="B"` for in-repo implement; omit is
@@ -32,5 +36,5 @@ commit this-session paths often or dispatch new implement on B; do not remint A-
 `{satellite}/scripts.local/`, `tools/local/`, `pipelines.local/`; life skills/rules ignored in place. Never
 name an employer or matter in a `_ws`/`_ulg` rule; never bake personal defaults into public CLIs.
 
-Skill: `git-posture` (headless `git_*` MCP, `git_land`/`git_integrate` operator-gated). Doctrine:
+Skill: `git-posture`. Doctrine:
 `decision:scripts-local-personal-helpers` · friction class a:25030. Caller recipe: `consult-routing` § cursor-sdk checkout lane.

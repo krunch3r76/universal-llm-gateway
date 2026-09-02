@@ -9,6 +9,7 @@ description: "On coding sessions — file existence, canonicality, authorship, d
 Read on:
 - "does X exist / is X canonical / is this mine / is this done?"
 - before git CLI or `git_*` MCP on the shared checkout;
+- before landing a Lane-B branch (§ Land = merge, never copy);
 - before inferring service failure from uncommitted or dirty git state;
 - before cursor-sdk implement dispatch or git-integration-worker diagnostics;
 - when handoffs, consults, reviews, or packets touch repo state.
@@ -218,15 +219,46 @@ foreign WIP. ``tree_residue: N`` counts dirty paths not in that set. Commit
 is disclosure on closeout, not a propagate/restart/done gate; ``deferred:`` stays
 legal forever.
 
+## Land = merge, never copy (operator bind 2026-09-02)
+
+`∀ land(lane_B): git merge cursor-sdk/lane-{thread}` — FF when master is clean,
+merge commit with explicit conflict resolution when it is not.
+
+**Copies are not lands.** `git checkout <branch> -- <paths>`, `cherry-pick`, and
+hand-retyping lane content all put the right bytes on master while failing the
+two things a land is for:
+
+| Failure | Why it bites |
+|---|---|
+| **Silent clobber of peer WIP** | `git checkout <branch> -- <path>` replaces the working-tree file with **no conflict raised**. Uncommitted parallel WIP on that path is gone. A merge would have stopped and asked. |
+| **Unrecorded ancestry** | The lane branch stays unmerged, so `git cherry` never marks it patch-equivalent, merged-ancestry GC never fires, and GIW keeps an attributed **branch debt** on a lane whose work is already shipped. |
+
+**A blocked merge is the signal to reconcile, not to route around git:**
+
+1. `git status --short <paths>` — is the dirt yours, traceable peer WIP, or unknown?
+2. Attribute before touching it (`checkout-kernel`: unattributed ⇒ leave + flag).
+3. Reconcile — commit this-session authorship path-explicit **then** merge, or
+   merge and resolve the conflict keeping **both** sides.
+4. Verify on master: the row's AC probes, then `git merge-base --is-ancestor
+   cursor-sdk/lane-{thread} master`.
+
+Legacy copy-lands are reconciled by merging the lane afterwards — content is
+already identical, so the merge is trivial and records the missing ancestry.
+
+Ground: arc 9912 — R2 landed by `cherry-pick` and R3 by `git checkout lane --`,
+which clobbered an uncommitted attended-in-flight block in
+`conductor/SKILL.md` (recovered only because the diff had been read first) and
+left both lanes carrying branch debt on shipped work.
+
 ## Branch ownership — a lane retires its own branch
 
 `∀ Lane-B lane: mint(branch) ⇒ own(branch) until discharged`.
 
 Everything above says commits are not gates. Branches are different: a Lane-B
 lane's branch is a **standing obligation**, because nothing else can retire it.
-The lead lands lane work from the shared checkout with its own commits, so
-`git cherry` never marks the branch patch-equivalent and merged-ancestry GC
-never fires — the branch outlives every sweep unless its lane discharges it.
+A proper merge discharges it by ancestry; a copy-land does not — that is the
+defect above, not an inevitability, and it is why the branch outlives every
+sweep unless its lane discharges it explicitly.
 
 Two honest exits, both archive-backed (`refs/tags/archive/*`), neither
 destructive:
@@ -363,8 +395,10 @@ operator asks to commit/branch/PR; a named workflow defines commit/merge/release
 | `git stash` / `git checkout -- <file>` to inspect/revert | read traceback; editor undo / revert UI |
 | `git stash` to A/B vs clean HEAD | read the tree; sole shared `master` |
 | `git_commit` / `git_land` mid-session | operator-attended apply; commit only if asked |
+| `git checkout cursor-sdk/lane-N -- <paths>` / `cherry-pick` to land a lane | `git merge cursor-sdk/lane-N` (§ Land = merge, never copy) |
 
-`∀ seat: ¬{git checkout -- ., git checkout -- <dir>, git reset --hard, git clean -fd, git stash(unowned_work)}`.
+`∀ seat: ¬{git checkout -- ., git checkout -- <dir>, git reset --hard, git clean -fd, git stash(unowned_work),
+git checkout <branch> -- <paths>(as_land)}`.
 No-force: `¬push --force` and `¬history_rewrite` on shared branches unless operator explicitly requests.
 
 **Anti-pattern — "uncommitted" as a risk trigger.** Hearing "uncommitted" / "dirty working tree" is NOT a durability signal — on-disk is already real/durable/done. Do NOT reach for `git_status` / `git_diff` / `git_*` to "check working-tree state" on that basis. Read this skill FIRST whenever git state is mentioned, before touching any git tool.

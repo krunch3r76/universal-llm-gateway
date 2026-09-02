@@ -145,7 +145,9 @@ no cross-field join) plus `@plane` qualifiers on `checkpoint:` /
 never upgrade unknown to a positive plane. **Lane-B land discipline
 (todo:lane-b-land-discipline-harvest):** when `lane: B` ∧ `commits_ahead ≥ 1` ∧
 `landed=false`, harvest is **incomplete** (`status: partial` +
-`land:lane_b_unlanded`) until FF-merge/content-land or explicit discard — do not
+`land:lane_b_unlanded`) until `git merge` of the lane branch (FF or merge commit —
+**never** `checkout <branch> -- <paths>` / `cherry-pick`; see `git-posture` § Land =
+merge, never copy) or explicit discard — do not
 treat deliberate-unlanded Lane-B as `complete`. Other planes/lanes: `status:
 complete` may still be independent of origin publish.
 
