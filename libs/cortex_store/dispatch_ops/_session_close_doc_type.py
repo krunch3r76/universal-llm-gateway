@@ -18,13 +18,13 @@ _SESSION_CLOSE_SKILLS: tuple[str, ...] = (
 )
 
 _SESSION_CLOSE_REQUIRED_FIELDS: tuple[str, ...] = (
-    "session_id",
     "agent",
     "session_summary_md",
     "summary",
 )
 
 _SESSION_CLOSE_OPTIONAL_FIELDS: tuple[str, ...] = (
+    "session_id",
     "transcript_depth",
     "transcript_jsonl_path",
     "transcript_md",

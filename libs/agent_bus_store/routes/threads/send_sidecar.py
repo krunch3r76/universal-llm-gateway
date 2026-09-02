@@ -167,6 +167,8 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
     thread_tags = load_thread_tags(thread_id)
     storage_supersedes, echo_turn_number, echo_turn_id = _resolve_send_supersedes(
         thread_id=thread_id,
+        subject=body.subject,
+        thread_tags=thread_tags,
         turn_number=body.supersedes_turn,
         turn_id_alias=body.supersedes_turn_id,
     )
@@ -245,7 +247,7 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
         superseded_turn_number=echo_turn_number,
         superseded_turn_id=echo_turn_id,
         thread_tags=thread_tags,
-        supersedes_turn=body.supersedes_turn or body.supersedes_turn_id,
+        supersedes_turn=echo_turn_number,
     )
     thread_row = get_thread(thread_id)
     if thread_row is None:

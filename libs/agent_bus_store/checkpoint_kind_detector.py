@@ -82,10 +82,31 @@ def is_birth_shaped_checkpoint(
     return supersedes_turn is None and is_checkpoint_subject(subject)
 
 
+def is_standing_root_thread(thread_tags: list[str] | None) -> bool:
+    """True when the thread carries the ``role:root`` standing-root tag."""
+    normalized = {t.strip().lower() for t in (thread_tags or []) if t and str(t).strip()}
+    return ROLE_ROOT_TAG in normalized
+
+
+def should_auto_derive_supersedes_turn(
+    *,
+    subject: str,
+    thread_tags: list[str] | None,
+    turn_number: int | None,
+    turn_id_alias: int | None,
+) -> bool:
+    """True when send/reply may omit ``supersedes_turn`` on a standing-root CHECKPOINT."""
+    if turn_number is not None or turn_id_alias is not None:
+        return False
+    return is_checkpoint_subject(subject) and is_standing_root_thread(thread_tags)
+
+
 __all__ = [
     "checkpoint_auto_stamp_enabled",
     "is_birth_shaped_checkpoint",
     "is_bootstrap_structural_checkpoint",
     "is_steady_state_structural_checkpoint",
+    "is_standing_root_thread",
     "is_structural_checkpoint",
+    "should_auto_derive_supersedes_turn",
 ]

@@ -634,6 +634,7 @@ def test_preflight_returns_copy_paste_session_id_when_supplied_differs(
 def test_derive_session_id_parses_cursor_abbrev_month_with_tz() -> None:
     """Friction 23205: ``Jul 9, 2026, 2:37 AM (UTC-7)`` must pin UTC, not race."""
     from agent_seat.session_id import session_id_time_base
+
     from cortex_store.transcript_session_id import (
         _normalize_cursor_timestamp,
         derive_session_id_from_jsonl_start,
@@ -1153,3 +1154,82 @@ def test_validate_session_close_rejects_missing_anchor(
         validate_session_close(body)
     detail = exc_info.value.detail
     assert detail.get("reason") == "handoff.missing_transcript_anchor", detail
+
+
+def test_session_close_omit_session_id_derives_from_jsonl(
+    session_env: dict[str, Path],
+) -> None:
+    """Omitted session_id + transcript_jsonl_path closes with JSONL-derived id."""
+    db_path = session_env["db_path"]
+    jsonl_path = session_env["transcripts_root"] / "cursor-uuid" / "cursor-uuid.jsonl"
+    _write_jsonl_with_timestamp(jsonl_path, stamped="2026-05-27T10:00:00+00:00")
+    summary = "Close without explicit session_id — derive from JSONL start."
+    result = ops_journals._op_session_close(
+        agent="cursor",
+        transcript_jsonl_path=str(jsonl_path),
+        session_summary_md=_session_summary(summary),
+        summary=summary,
+    )
+    assert "error" not in result, result
+    derived = result["session_id"]
+    assert derived.startswith("cursor-2026-05-27-100000-")
+    journal = _query_one(
+        db_path,
+        "SELECT session_id FROM session_journals WHERE session_id = ?",
+        (derived,),
+    )
+    assert journal is not None
+
+
+def test_session_close_explicit_session_id_stays_authoritative(
+    session_env: dict[str, Path],
+) -> None:
+    """Explicit session_id is not overwritten by JSONL session-start derivation."""
+    explicit = "cursor-2099-12-31-235959-fff"
+    jsonl_path = session_env["transcripts_root"] / "cursor-uuid" / "cursor-uuid.jsonl"
+    _write_jsonl_with_timestamp(jsonl_path, stamped="2026-05-27T10:00:00+00:00")
+    summary = "Explicit session_id must remain authoritative over JSONL start."
+    result = ops_journals._op_session_close(
+        session_id=explicit,
+        agent="cursor",
+        transcript_jsonl_path=str(jsonl_path),
+        session_summary_md=_session_summary(summary),
+        summary=summary,
+    )
+    assert "error" not in result, result
+    assert result["session_id"] == explicit
+
+
+def test_session_close_rejects_missing_session_id_and_jsonl(
+    session_env: dict[str, Path],
+) -> None:
+    """Neither session_id nor transcript_jsonl_path ⟹ structured 422."""
+    summary = "Missing session_id and JSONL path must be rejected."
+    result = ops_journals._op_session_close(
+        agent="cursor",
+        session_summary_md=_session_summary(summary),
+        summary=summary,
+    )
+    assert "error" in result
+    assert result.get("reason") == "session_id.required"
+    assert result.get("field") == "session_id"
+
+
+def test_preflight_returns_derived_session_id_when_omitted(
+    session_env: dict[str, Path],
+) -> None:
+    """Preflight exposes resolved session_id when caller omits it."""
+    jsonl_path = session_env["transcripts_root"] / "cursor-uuid" / "cursor-uuid.jsonl"
+    _write_jsonl_with_timestamp(jsonl_path, stamped="2026-05-27T10:00:00+00:00")
+    summary = "Preflight derive hint when session_id omitted."
+    result = ops_journals._op_session_close_preflight(
+        agent="cursor",
+        transcript_jsonl_path=str(jsonl_path),
+        session_summary_md=_session_summary(summary),
+        summary=summary,
+    )
+    assert result["ok"] is True
+    assert result["session_id"].startswith("cursor-2026-05-27-100000-")
+    assert result.get("session_id_from_jsonl_start", result["session_id"]).startswith(
+        "cursor-2026-05-27-100000-"
+    )

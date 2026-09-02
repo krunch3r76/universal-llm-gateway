@@ -300,7 +300,6 @@ def _validate_session_close_args(
     does not write and therefore does not need a transcript entity).
     """
     required = {
-        "session_id": session_id,
         "agent": agent,
         "summary": summary,
     }
@@ -323,6 +322,20 @@ def _validate_session_close_args(
                 "examples": [],
                 "hint": hint,
             }
+    if not session_id and not transcript_jsonl_path:
+        return {
+            "error": "session_id is required",
+            "reason": "session_id.required",
+            "field": "session_id",
+            "received": session_id,
+            "expected": "non-empty string or transcript_jsonl_path for derivation",
+            "examples": list(_SESSION_ID_EXAMPLES),
+            "hint": (
+                "Supply session_id explicitly, or pass transcript_jsonl_path "
+                "so the server can derive it from JSONL session-start "
+                "(derive_session_id_from_jsonl_start → successor hop → mint fallback)."
+            ),
+        }
     # session_summary_md may be omitted when session_summary_md_path was
     # resolved earlier (path wins if both set). Callers must resolve the path
     # before this validator so the populated text is present here.
