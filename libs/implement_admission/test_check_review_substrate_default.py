@@ -6,29 +6,30 @@ import pytest
 
 from implement_admission.check_review_substrate import (
     CHECK_REVIEW_DECISION_CITATION,
-    CHECK_REVIEW_DEFAULT_MODEL,
     coerce_check_review_omit_to_cursor_seat,
     load_check_review_default_model,
     resolve_check_review_model,
-    verify_check_review_default_conformance,
 )
-from implement_admission.routing import (
-    load_route_policy,
-    verify_check_review_default_policy,
+from implement_admission.routing import load_route_policy
+from implement_admission.workflow_registry import (
+    CHECK_REVIEW_WORKFLOW,
+    verify_workflow_registry_conformance,
 )
 
 pytestmark = pytest.mark.offline
 
 
 def test_standing_default_is_cursor_terra() -> None:
-    assert CHECK_REVIEW_DEFAULT_MODEL == "cursor/gpt-5.6-terra"
     policy = load_route_policy()
     assert load_check_review_default_model(policy) == "cursor/gpt-5.6-terra"
     assert CHECK_REVIEW_DECISION_CITATION in "decision:code-review-panel-cursor-substrate"
+    entry = policy["workflows"][CHECK_REVIEW_WORKFLOW]
+    assert entry["model"] == "cursor/gpt-5.6-terra"
+    assert entry["seat"] == "cursor-sdk"
 
 
 def test_route_policy_conformance() -> None:
-    assert verify_check_review_default_policy() == []
+    assert verify_workflow_registry_conformance() == []
 
 
 def test_resolve_reviewer_omit_uses_cursor_default() -> None:
@@ -57,10 +58,6 @@ def test_coerce_skips_when_explicit_openai() -> None:
     assert model == "openai/gpt-5.6-terra"
 
 
-def test_conformance_requires_decision_when_drifted() -> None:
-    errors = verify_check_review_default_conformance(
-        {"check_review_default_model": "openai/gpt-5.6-terra"},
-        policy_text="# no decision citation",
-    )
-    assert errors
-    assert "decision:" in errors[0] or "differs" in errors[0]
+def test_load_check_review_default_model_requires_workflow_slot() -> None:
+    with pytest.raises(ValueError, match="workflows.check_review"):
+        load_check_review_default_model({"workflows": {}})

@@ -3,21 +3,19 @@
 from __future__ import annotations
 
 from implement_admission.check_review_substrate import (
-    CHECK_REVIEW_DEFAULT_MODEL,
     CheckReviewAdmissionReject,
     evaluate_check_review_admission,
+    load_check_review_default_model,
     resolve_check_review_model,
-    verify_check_review_default_conformance,
 )
-from implement_admission.routing import (
-    load_route_policy,
-    verify_check_review_default_policy,
-)
+from implement_admission.routing import load_route_policy
+from implement_admission.workflow_registry import verify_workflow_registry_conformance
 
 
 def test_omit_model_resolves_reviewer_to_terra() -> None:
+    default_model = load_check_review_default_model(load_route_policy())
     resolution = resolve_check_review_model("reviewer", None)
-    assert resolution.resolved_model == CHECK_REVIEW_DEFAULT_MODEL
+    assert resolution.resolved_model == default_model
     # decision:code-review-panel-cursor-substrate — omit model lands on cursor-sdk, not API.
     assert resolution.substrate == "cursor-sdk"
 
@@ -60,17 +58,5 @@ def test_synthesizer_with_cursor_rejects_substrate_unsupported() -> None:
     assert verdict.code == "substrate_unsupported_for_role"
 
 
-def test_default_key_conformance_passes_on_bound_policy() -> None:
-    policy = load_route_policy()
-    assert verify_check_review_default_conformance(policy) == []
-
-
-def test_default_key_flip_without_decision_citation_fails() -> None:
-    policy = dict(load_route_policy())
-    policy["check_review_default_model"] = "openai/gpt-5.6-sol"
-    errors = verify_check_review_default_conformance(policy, policy_text="no citations")
-    assert errors
-
-
-def test_verify_check_review_default_policy_live_file() -> None:
-    assert verify_check_review_default_policy() == []
+def test_workflow_registry_conformance_passes_on_bound_policy() -> None:
+    assert verify_workflow_registry_conformance() == []

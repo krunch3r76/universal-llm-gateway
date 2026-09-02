@@ -470,17 +470,3 @@ def verify_role_substrate_vocab_conformance(
         errors.append("dispatch_lane.code.seat must be 'cursor-sdk'")
     return errors
 
-
-def verify_check_review_default_policy(
-    *,
-    policy_path: Path | None = None,
-) -> list[str]:
-    """Conformance gate for check_review_default_model (AC9)."""
-    from implement_admission.check_review_substrate import (
-        verify_check_review_default_conformance,
-    )
-
-    path = policy_path or _DEFAULT_POLICY_PATH
-    policy = load_route_policy(path)
-    policy_text = path.read_text(encoding="utf-8")
-    return verify_check_review_default_conformance(policy, policy_text=policy_text)

@@ -8,7 +8,6 @@ identity or unmeasured rung never certifies.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -27,12 +26,8 @@ from cursor_capabilities import (
 from effort_vocabulary import normalize_effort
 from model_id import ModelId
 
-# Code-lane standing default (decision:code-review-panel-cursor-substrate).
-# Explicit model=openai/* still admits on role=reviewer API path.
-CHECK_REVIEW_DEFAULT_MODEL = "cursor/gpt-5.6-terra"
-CHECK_REVIEW_POLICY_KEY = "check_review_default_model"
+# Code-lane standing default citation (decision:code-review-panel-cursor-substrate).
 CHECK_REVIEW_DECISION_CITATION = "decision:code-review-panel-cursor-substrate"
-CHECK_REVIEW_ASSERTION_CITATION = "assertion:26392"
 
 CHECK_REVIEW_API_ROLES = frozenset({"reviewer", "skeptic"})
 CURSOR_CHECK_REVIEW_MODELS = frozenset(
@@ -49,8 +44,6 @@ MECHANICAL_CURSOR_MODELS = frozenset(
 SYNTHESIZER_ROLE = "synthesizer"
 _MECHANICAL_PROFILE = "mechanical"
 _JUDGMENT_ROLES = frozenset({"reviewer", "skeptic"})
-
-_DECISION_CITATION_RE = re.compile(r"decision:[a-z0-9][-a-z0-9_]*", re.IGNORECASE)
 
 # Identity token when no catalogued model matches. Must never equal a
 # substrate slug or a real bare id — a later ``!=`` must not certify it.
@@ -93,32 +86,19 @@ class CheckReviewResolution:
 
 
 def load_check_review_default_model(policy: dict[str, Any]) -> str:
-    """Return the configured check/review default model, or the standing cursor pin."""
-    value = policy.get(CHECK_REVIEW_POLICY_KEY)
-    if not isinstance(value, str) or not value.strip():
-        return CHECK_REVIEW_DEFAULT_MODEL
-    return value.strip()
+    """Return the configured check/review default model from ``workflows.check_review``."""
+    from implement_admission.workflow_registry import CHECK_REVIEW_WORKFLOW
 
-
-def verify_check_review_default_conformance(
-    policy: dict[str, Any],
-    *,
-    policy_text: str | None = None,
-) -> list[str]:
-    """Return errors when default key drifts without covering decision citation."""
-    errors: list[str] = []
-    if CHECK_REVIEW_POLICY_KEY not in policy:
-        errors.append(f"missing required policy key {CHECK_REVIEW_POLICY_KEY!r}")
-        return errors
-    live = load_check_review_default_model(policy)
-    if live != CHECK_REVIEW_DEFAULT_MODEL:
-        haystack = policy_text or ""
-        if not _DECISION_CITATION_RE.search(haystack):
-            errors.append(
-                f"{CHECK_REVIEW_POLICY_KEY}={live!r} differs from bound "
-                f"{CHECK_REVIEW_DEFAULT_MODEL!r} without a covering decision:* citation"
-            )
-    return errors
+    workflows = policy.get("workflows")
+    if not isinstance(workflows, dict):
+        raise ValueError("route policy missing workflows mapping")
+    entry = workflows.get(CHECK_REVIEW_WORKFLOW)
+    if not isinstance(entry, dict):
+        raise ValueError(f"route policy missing workflows.{CHECK_REVIEW_WORKFLOW}")
+    model = entry.get("model")
+    if not isinstance(model, str) or not model.strip():
+        raise ValueError(f"workflows.{CHECK_REVIEW_WORKFLOW}.model must be a non-empty string")
+    return model.strip()
 
 
 def is_check_review_api_role(role: str) -> bool:

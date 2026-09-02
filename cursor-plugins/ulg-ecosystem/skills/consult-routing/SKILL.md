@@ -144,6 +144,7 @@ authored — compose leg only (`lean-context-dispatch-first` non-primary gate).
 | Surface | Form | SoT |
 |---|---|---|
 | cursor-sdk `team_dispatch` | `cursor/{bare}` + knobs | `CURSOR_MODEL_CAPABILITIES` |
+| Code-lane check/review default | `workflows.check_review.model` | `config/routing/route_policy.yaml` |
 | Task subagent | kebab slug | Task roster |
 | Cloud API | `provider/model` | `capability_dispatch` |
 

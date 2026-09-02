@@ -16,6 +16,7 @@ from implement_admission.routing import default_policy_path, load_route_policy
 
 AUTO_OMIT_CONTRACTS: frozenset[str] = frozenset(CANONICAL_CONTRACTS) | {"light-bounded"}
 MECHANICAL_WORKFLOW = "mechanical_implement"
+CHECK_REVIEW_WORKFLOW = "check_review"
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,6 +242,8 @@ def registry_errors(policy: dict[str, Any]) -> list[str]:
 
     if MECHANICAL_WORKFLOW not in workflow_keys:
         errors.append(f"workflows must include {MECHANICAL_WORKFLOW!r} slot")
+    if CHECK_REVIEW_WORKFLOW not in workflow_keys:
+        errors.append(f"workflows must include {CHECK_REVIEW_WORKFLOW!r} slot")
 
     return errors
 

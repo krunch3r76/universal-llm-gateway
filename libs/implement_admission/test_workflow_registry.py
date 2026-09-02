@@ -9,6 +9,7 @@ import pytest
 from implement_admission.routing import load_route_policy
 from implement_admission.workflow_registry import (
     AUTO_OMIT_CONTRACTS,
+    CHECK_REVIEW_WORKFLOW,
     MECHANICAL_WORKFLOW,
     load_workflow_registry,
     parse_workflow_registry,
@@ -28,6 +29,7 @@ def test_load_live_registry_slots_and_roaming() -> None:
     reg = load_workflow_registry()
     assert set(reg.workflows) == {
         MECHANICAL_WORKFLOW,
+        CHECK_REVIEW_WORKFLOW,
         "investigate",
         "auto_judgment",
     }

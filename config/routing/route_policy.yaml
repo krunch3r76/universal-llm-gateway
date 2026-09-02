@@ -6,14 +6,6 @@ lead_claim_authority: server_contract_overrides_packet_prose
 # Auto-dispatch default seat for code-lane generate (seat= selector, not role=).
 default_seat: cursor-sdk
 
-# Check/review standing default (decision:code-review-panel-cursor-substrate).
-# Code-lane automated review → cursor/* (checkout present). Explicit model=openai/*
-# on role=reviewer still admits API (life / checkout-free). Omit-model on
-# role=reviewer coerces to seat=cursor-sdk + this key when the key is cursor/*.
-# CDP (cdp/opus-5 / Fable) remains judgment / path-sim R-admit — not this default.
-# Prior API-default bind: assertion:23920 (superseded for code-lane default).
-check_review_default_model: cursor/gpt-5.6-terra  # decision:code-review-panel-cursor-substrate
-
 # Doc-layer dispatch_lane (advisory, not a RoleProfile or hard gate).
 # Derive code vs non-code from platform: sdk ⇒ code (checkout present);
 # API roles (reviewer/skeptic/synthesizer/artisan) ⇒ non-code.
@@ -99,6 +91,14 @@ workflows:
     seat: cursor-sdk
     model: cursor/composer-2.5
     contracts: [answer, confer, ask, verify, execute, propagate, light-bounded]
+  check_review:
+    # Code-lane standing check/review default (decision:code-review-panel-cursor-substrate).
+    # role=reviewer omit-model coerces to seat=cursor-sdk + this model. Explicit
+    # model=openai/* keeps API (life / checkout-free). CDP remains judgment /
+    # path-sim R-admit — not this slot.
+    seat: cursor-sdk
+    model: cursor/gpt-5.6-terra
+    contracts: []
 
 # Per-model policy keyed by bare cursor id (CURSOR_MODEL_CAPABILITIES key).
 # roaming: cheap enough per agent step that a contract: override may waive the
