@@ -1,6 +1,8 @@
 """Build the Resume-step-0 six-block packet for one charter window.
 
-Default executor is cursor-sdk ``cursor/grok-4.6`` (effort=xhigh, fast=false).
+Default executor is the cursor-sdk judgment bind from ``executor_defaults``
+(``JUDGMENT_MODEL`` @ ``JUDGMENT_MODEL_KNOBS``); this module already imports and
+renders those symbols rather than restating them.
 Attended handoff mode uses ``from=cursor`` and IDE-open language instead.
 The packet encodes Resume step 0, names one unit of work, and binds the stop
 contract — post CHECKPOINT on the charter root, then stop (no auto-chain).

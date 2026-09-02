@@ -7,6 +7,7 @@ import re
 from pager_notify.tick import ClosedAttribution, task_hint_from_next_pickup
 
 from .checkpoint_schema import parse_checkpoint
+from .executor_defaults import IMPLEMENT_MODEL, JUDGMENT_MODEL
 
 _GATED_ID_RE = re.compile(r"\b([GR]\d+[a-z]?)\b")
 _CONSULT_ROLE_SNIFF_RE = re.compile(
@@ -20,7 +21,10 @@ def executor_slug_for_sms(
     executor_lane: str | None,
     consult_role: str | None,
 ) -> str:
-    """Map admit mode + checkpoint lane to the SMS executor slug."""
+    """Map admit mode and checkpoint lane to an SMS executor slug.
+
+    The cursor-sdk generate and implement slugs come from ``executor_defaults``.
+    """
     del consult_role  # both consult roles host cdp/opus-5 as reviewer
     mode = (admission_mode or "generate").strip().lower()
     if mode == "consult":
@@ -28,8 +32,8 @@ def executor_slug_for_sms(
     if mode == "handoff":
         return "cursor"
     if (executor_lane or "").strip().lower() == "implement":
-        return "cursor/composer-2.5"
-    return "cursor/grok-4.6"
+        return IMPLEMENT_MODEL
+    return JUDGMENT_MODEL
 
 
 def consult_role_from_pickup(next_pickup: list[str]) -> str | None:
