@@ -46,7 +46,8 @@ async def test_panel_dispatch_distinct_member_dispatch_keys(
 
     async def _capture(body: dict[str, Any]) -> dict[str, Any]:
         relay_calls.append(body)
-        return {"execution_id": f"exec-{body['role']}"}
+        role = body.get("role") or str(body["dispatch_thread_id"]).rsplit(":", 1)[-1]
+        return {"execution_id": f"exec-{role}"}
 
     with patch(
         "tools.panel_dispatch._relay_team_dispatch",
@@ -91,7 +92,8 @@ async def test_panel_dispatch_member_models_forwarded_per_member(
 
     async def _capture(body: dict[str, Any]) -> dict[str, Any]:
         relay_calls.append(body)
-        return {"execution_id": f"exec-{body['role']}"}
+        role = body.get("role") or str(body["dispatch_thread_id"]).rsplit(":", 1)[-1]
+        return {"execution_id": f"exec-{role}"}
 
     with patch(
         "tools.panel_dispatch._relay_team_dispatch",
@@ -107,7 +109,7 @@ async def test_panel_dispatch_member_models_forwarded_per_member(
     by_role = {call["role"]: call for call in relay_calls}
     assert by_role["reviewer"]["model"] == "openai/gpt-5.5"
     assert result["member_models"]["reviewer"] == "openai/gpt-5.5"
-    assert set(result["panel_families"]) == {"Grok", "GPT"}
+    assert set(result["panel_families"]) == {"grok-4.6@?", "gpt-5.5@?"}
 
 
 @pytest.mark.asyncio
@@ -133,7 +135,8 @@ async def test_panel_dispatch_rejects_role_keys_in_generation_options(
 @pytest.mark.asyncio
 async def test_panel_dispatch_poll_envelope_partial(panel_dispatch_fn: Any) -> None:
     async def _capture(body: dict[str, Any]) -> dict[str, Any]:
-        return {"execution_id": f"exec-{body['role']}"}
+        role = body.get("role") or str(body["dispatch_thread_id"]).rsplit(":", 1)[-1]
+        return {"execution_id": f"exec-{role}"}
 
     def _poll(execution_id: str, wait_seconds: float) -> dict[str, Any]:
         if execution_id == "exec-skeptic":
@@ -198,7 +201,7 @@ def _sample_stored_envelope() -> dict[str, Any]:
     return {
         "disposition": "panel",
         "panel_executions": {"skeptic": "exec-skeptic", "reviewer": "exec-reviewer"},
-        "panel_families": ["Grok", "GPT"],
+        "panel_families": ["grok-4.6@?", "gpt-5.6-terra@medium"],
         "status": "dispatched",
         "member_status": {"skeptic": "running", "reviewer": "running"},
     }

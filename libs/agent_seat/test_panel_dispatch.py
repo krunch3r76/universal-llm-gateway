@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 from agent_seat.panel_dispatch import (
@@ -16,6 +17,7 @@ from agent_seat.panel_dispatch import (
     effective_model_for_member,
     lint_panel_messages,
     member_dispatch_thread_id,
+    panel_identity_labels,
     panel_provider_families,
     panel_result_envelope,
     resolve_panel_members,
@@ -33,7 +35,7 @@ def test_resolve_panel_members_default_two_roles() -> None:
     members = resolve_panel_members()
     roles = [m.role for m in members]
     assert roles == ["skeptic", "reviewer"]
-    assert members[1].model == "openai/gpt-5.6-terra"
+    assert members[1].model == "cursor/gpt-5.6-terra"
 
 
 def test_resolve_panel_members_optional_synthesizer() -> None:
@@ -41,15 +43,16 @@ def test_resolve_panel_members_optional_synthesizer() -> None:
     assert [m.role for m in members] == ["skeptic", "reviewer", "synthesizer"]
 
 
-def test_panel_provider_families_distinct_providers() -> None:
+def test_panel_identity_labels_distinct_identities() -> None:
     models = {
         "skeptic": "xai/grok-4.6",
         "reviewer": "openai/gpt-5.6-terra",
     }
-    families = panel_provider_families(models)
-    assert len(families) >= MIN_PANEL_PROVIDER_FAMILIES
-    assert "Grok" in families
-    assert "GPT" in families
+    labels = panel_identity_labels(models)
+    assert len(labels) >= MIN_PANEL_PROVIDER_FAMILIES
+    assert "grok-4.6@?" in labels
+    assert "gpt-5.6-terra@?" in labels
+    assert panel_provider_families(models) == labels
 
 
 def test_admit_panel_plan_rejects_non_panel() -> None:
@@ -64,8 +67,8 @@ def test_admit_panel_plan_accepts_panel() -> None:
     assert len(result.members) == 2
 
 
-def test_admit_panel_plan_member_models_honored_in_families() -> None:
-    """Friction 23301: explicit per-role overrides participate in family gate."""
+def test_admit_panel_plan_member_models_honored_in_identities() -> None:
+    """Friction 23301: explicit per-role overrides participate in identity gate."""
     result = admit_panel_plan(
         disposition="panel",
         member_models={
@@ -77,22 +80,36 @@ def test_admit_panel_plan_member_models_honored_in_families() -> None:
     models = {m.role: effective_model_for_member(m) for m in result.members}
     assert models["skeptic"] == "xai/grok-4.6"
     assert models["reviewer"] == "openai/gpt-5.5"
-    families = panel_provider_families(models)
-    assert set(families) == {"Grok", "GPT"}
+    labels = panel_identity_labels(models)
+    assert set(labels) == {"grok-4.6@?", "gpt-5.5@?"}
 
 
-def test_admit_panel_plan_member_models_single_family_rejected() -> None:
-    """Overrides collapsing to one family reject at the ≥2-family gate."""
+def test_admit_panel_plan_same_model_different_rung_passes() -> None:
+    """R-PANEL: same grok-4.6 identity at cloud vs cursor effort rung counts distinct."""
+    result = admit_panel_plan(
+        disposition="panel",
+        member_models={
+            "skeptic": "xai/grok-4.6",
+            "reviewer": "cursor/grok-4.6",
+        },
+    )
+    assert not isinstance(result, dict)
+    models = {m.role: effective_model_for_member(m) for m in result.members}
+    assert set(panel_identity_labels(models)) == {"grok-4.6@?", "grok-4.6@high"}
+
+
+def test_admit_panel_plan_same_identity_rejected() -> None:
+    """Duplicate consultant identity on both roster roles rejects at Guard 3."""
     result = admit_panel_plan(
         disposition="panel",
         member_models={
             "skeptic": "openai/gpt-5.6-terra",
-            "reviewer": "openai/gpt-5.5",
+            "reviewer": "openai/gpt-5.6-terra",
         },
     )
     assert isinstance(result, dict)
     assert result["error"]["code"] == "validation_error"
-    assert "distinct provider" in result["error"]["message"]
+    assert "distinct consultant identities" in result["error"]["message"]
 
 
 def test_admit_panel_plan_member_models_unknown_role_rejected() -> None:
@@ -163,7 +180,7 @@ def test_validate_panel_assert_requires_artifact_and_falsifier() -> None:
     errors = validate_panel_assert_attributes(
         {
             "consensus_disposition": "panel",
-            "panel_families": ["Grok", "GPT"],
+            "panel_families": ["grok-4.6@?", "gpt-5.6-terra@medium"],
             "panel_executions": {"skeptic": "eb94f022", "reviewer": "fe7abdb4"},
             "decisive_falsifier": "",
             "panel_adjudication_artifact": "",
@@ -178,7 +195,7 @@ def test_validate_panel_assert_accepts_deprecated_alias() -> None:
     errors = validate_panel_assert_attributes(
         {
             "consensus_disposition": "panel",
-            "panel_families": ["Grok", "GPT"],
+            "panel_families": ["grok-4.6@?", "gpt-5.6-terra@medium"],
             "panel_executions": {"skeptic": "eb94f022", "reviewer": "fe7abdb4"},
             "decisive_falsifier": "falsifier text",
             "lead_adjudication_artifact": "cortex:notes/system/threads/1206-lead.md",
@@ -381,6 +398,8 @@ def test_panel_result_envelope_poll_summary_do_not_resubmit() -> None:
 
 
 def test_team_dispatch_yaml_concurrency_respond_floor() -> None:
+    if not _TEAM_DISPATCH_YAML.is_file():
+        pytest.skip(f"missing local pipeline fixture {_TEAM_DISPATCH_YAML}")
     data = yaml.safe_load(_TEAM_DISPATCH_YAML.read_text(encoding="utf-8"))
     concurrency_timeout = data["concurrency"]["timeout_seconds"]
     respond_timeout = next(

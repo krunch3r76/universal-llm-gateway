@@ -23,7 +23,7 @@ from agent_seat.panel_dispatch import (
     effective_model_for_member,
     lint_panel_messages,
     member_dispatch_thread_id,
-    panel_provider_families,
+    panel_identity_labels,
     panel_result_envelope,
 )
 from agent_seat.panel_idempotency import (
@@ -391,7 +391,7 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
         record(
             "mcp.panel.dispatch.called",
             roles=",".join(member_models),
-            families=",".join(panel_provider_families(member_models)),
+            identities=",".join(panel_identity_labels(member_models)),
         )
 
         async def _one(

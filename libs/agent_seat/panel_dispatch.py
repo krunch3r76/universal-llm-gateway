@@ -1,10 +1,13 @@
-"""Consensus panel dispatch helpers — role specs, provider families, stamp validation.
+"""Consensus panel dispatch helpers — role specs, consultant identities, stamp validation.
 
 Phase 2 (thread 1206): orchestrates ``team_dispatch(op=generate)`` panel members
 (skeptic + reviewer, optional synthesizer tiebreaker) and builds Menu D assert
 attributes. Generate-only by design — no ``to_thread``/``handoff`` fan-out (Guard 2:
 lead adjudication precedes any bus delivery). HTTP relay lives in
 ``services/mcp-server/tools/panel_dispatch.py``.
+
+Guard 3 counts distinct ``ConsultantIdentity`` (model + effort rung), not provider
+family — same model at a different effort rung is a distinct panel member (R-PANEL).
 """
 
 from __future__ import annotations
@@ -12,21 +15,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from implement_admission.check_review_substrate import ConsultantIdentity
 from llm_adapters.capability_dispatch import project_knob_resolution
 from model_id import ModelId
 
 from agent_seat.profiles import get_profile, get_role
 from agent_seat.registry import resolve_agent_model
 from agent_seat.role_entity_sync import resolve_dispatch_capabilities
-
-# Guard 3: independent family := distinct provider (display labels for asserts).
-# Google/Gemini is optional third-family — not required for default panel coverage.
-_PROVIDER_FAMILY_LABEL: dict[str, str] = {
-    "anthropic": "Claude",
-    "openai": "GPT",
-    "xai": "Grok",
-    "google": "Gemini",
-}
 
 DEFAULT_PANEL_MEMBERS: tuple[tuple[str, str | None], ...] = (
     ("skeptic", None),
@@ -160,28 +155,44 @@ def verify_panel_role_model_resolution(
     return errors
 
 
-def provider_family_label(model: str) -> str:
-    """Display family label from effective model (Guard 3 — distinct provider).
+def panel_member_identity(model: str) -> ConsultantIdentity:
+    from implement_admission.check_review_substrate import consultant_identity
 
-    Cursor-substrate models use weight-class family (gpt→GPT, grok→Grok), not
-    the substrate provider label ``cursor``.
-    """
-    from implement_admission.check_review_substrate import independence_family
-
-    family = independence_family(model)
-    return _PROVIDER_FAMILY_LABEL.get(family, family)
+    return consultant_identity(model, None)
 
 
-def panel_provider_families(member_models: dict[str, str]) -> list[str]:
-    """Distinct provider-family labels for panel_executions keys (role → model)."""
-    seen: set[str] = set()
+def panel_identity_label(ident: ConsultantIdentity) -> str:
+    rung = ident.rung if ident.rung is not None else "?"
+    return f"{ident.model_identity}@{rung}"
+
+
+def panel_identity_labels(member_models: dict[str, str]) -> list[str]:
+    """Distinct identity/rung display labels for Menu D ``panel_families`` cache."""
+    seen: set[tuple[str, str | None]] = set()
     out: list[str] = []
     for model in member_models.values():
-        label = provider_family_label(model)
-        if label not in seen:
-            seen.add(label)
-            out.append(label)
+        ident = panel_member_identity(model)
+        key = (ident.model_identity, ident.rung)
+        if key not in seen:
+            seen.add(key)
+            out.append(panel_identity_label(ident))
     return out
+
+
+def distinct_panel_identities(member_models: dict[str, str]) -> list[ConsultantIdentity]:
+    """Distinct consultant identities among panel members (Guard 3)."""
+    seen: set[tuple[str, str | None]] = set()
+    out: list[ConsultantIdentity] = []
+    for model in member_models.values():
+        ident = panel_member_identity(model)
+        key = (ident.model_identity, ident.rung)
+        if key not in seen:
+            seen.add(key)
+            out.append(ident)
+    return out
+
+
+panel_provider_families = panel_identity_labels  # deprecated alias — use panel_identity_labels
 
 
 def member_dispatch_thread_id(base: str, role: str) -> str:
@@ -313,14 +324,15 @@ def admit_panel_plan(
                     "field": "member_models",
                 }
     models = {m.role: effective_model_for_member(m) for m in members}
-    families = panel_provider_families(models)
-    if len(families) < MIN_PANEL_PROVIDER_FAMILIES:
+    identities = distinct_panel_identities(models)
+    if len(identities) < MIN_PANEL_PROVIDER_FAMILIES:
         return {
             "error": {
                 "code": "validation_error",
                 "message": (
-                    f"panel requires >= {MIN_PANEL_PROVIDER_FAMILIES} distinct provider "
-                    f"families; resolved {families!r} from {models!r}"
+                    f"panel requires >= {MIN_PANEL_PROVIDER_FAMILIES} distinct consultant "
+                    f"identities; resolved "
+                    f"{[panel_identity_label(i) for i in identities]!r} from {models!r}"
                 ),
             },
         }
@@ -348,10 +360,8 @@ def validate_panel_assert_attributes(attributes: dict[str, Any]) -> list[str]:
     families = attributes.get("panel_families") or []
     if not isinstance(families, list):
         errors.append("panel_families must be a list")
-    elif len({f for f in families if isinstance(f, str)}) < MIN_PANEL_PROVIDER_FAMILIES:
-        errors.append(
-            f"panel_families needs >= {MIN_PANEL_PROVIDER_FAMILIES} distinct providers"
-        )
+    elif not families:
+        errors.append("panel_families must be a non-empty list for panel disposition")
 
     falsifier = attributes.get("decisive_falsifier")
     if not falsifier or not str(falsifier).strip():
@@ -397,7 +407,7 @@ def build_panel_assert_attributes(
     return {
         "consensus_disposition": "panel",
         "material": material,
-        "panel_families": panel_provider_families(member_models),
+        "panel_families": panel_identity_labels(member_models),
         "panel_executions": panel_executions,
         "decisive_falsifier": decisive_falsifier,
         PANEL_ADJUDICATION_KEY: panel_adjudication_artifact,
@@ -529,7 +539,7 @@ def panel_result_envelope(
 
     out: dict[str, Any] = {
         "disposition": plan.disposition,
-        "panel_families": panel_provider_families(member_models),
+        "panel_families": panel_identity_labels(member_models),
         "panel_executions": executions,
         "panel_capabilities": {
             role: resolve_dispatch_capabilities(model=model)
