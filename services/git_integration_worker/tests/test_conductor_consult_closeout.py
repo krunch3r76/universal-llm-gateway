@@ -234,8 +234,11 @@ def test_should_page_row_pinned() -> None:
     assert should_page_conductor_silence(
         degraded_reason=CONDUCTOR_NEST_IN_FLIGHT, nest_under=None
     )
+    assert should_page_conductor_silence(
+        degraded_reason=None, nest_under=None, is_conductor=True
+    )
     assert not should_page_conductor_silence(
-        degraded_reason=None, nest_under=None
+        degraded_reason=None, nest_under=None, is_conductor=False
     )
 
 

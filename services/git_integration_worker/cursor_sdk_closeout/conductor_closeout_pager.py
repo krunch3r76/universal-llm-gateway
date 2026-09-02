@@ -32,11 +32,14 @@ def should_page_conductor_silence(
     *,
     degraded_reason: str | None,
     nest_under: str | None,
+    is_conductor: bool = False,
 ) -> bool:
     """True when a conductor hop stopped and the operator would not otherwise know.
 
     Liaison IDE is not operator-present. ``live_summoning_chat`` does not suppress.
     """
+    if is_conductor:
+        return True
     if degraded_reason in CONDUCTOR_CONSULT_REASONS:
         return True
     if nest_under and _parent_already_terminal(nest_under):
@@ -50,16 +53,19 @@ async def page_conductor_silence(
     nest_under: str | None,
     dispatch_id: str,
     thread_id: str,
+    is_conductor: bool = False,
 ) -> bool:
     """Page on consult-class conductor closeout or orphan nest. Fail-open."""
     if not should_page_conductor_silence(
-        degraded_reason=degraded_reason, nest_under=nest_under
+        degraded_reason=degraded_reason,
+        nest_under=nest_under,
+        is_conductor=is_conductor,
     ):
         return False
     key = f"conductor-stop:{degraded_reason or nest_under or dispatch_id}"
     if not claim_closeout_page(thread_id, key):
         return False
-    reason = degraded_reason or "orphan-nest"
+    reason = degraded_reason or ("conductor-hop" if is_conductor else "orphan-nest")
     subject = clip(f"Conductor stopped — {reason}", SMS_SUBJECT_MAX)
     body = clip(
         "Vision: ULG is a house that remembers; silence with work in flight "

@@ -1632,11 +1632,13 @@ async def _deliver_sdk_closeout(
         page_conductor_silence,
     )
 
+    packet_kind = extract_packet_kind_from_packet(packet_text or "")
     await page_conductor_silence(
         degraded_reason=degraded_reason,
         nest_under=req.nest_under,
         dispatch_id=req.dispatch_id,
         thread_id=req.thread_id,
+        is_conductor=(packet_kind == "conductor"),
     )
     baseline = await asyncio.to_thread(
         CursorDispatchLedger.instance().read_wt_baseline,
@@ -1775,11 +1777,6 @@ async def _deliver_sdk_closeout(
             controller=controller,
             emit_tag="CURSOR_CLOSEOUT_COMPLETED",
         )
-        from services.git_integration_worker.cursor_sdk_packet import (
-            extract_packet_kind_from_packet,
-        )
-
-        packet_kind = extract_packet_kind_from_packet(packet_text or "")
         if closeout_qualifies_for_resume_retain(
             closeout_body=delivery.body,
             packet_kind=packet_kind,
