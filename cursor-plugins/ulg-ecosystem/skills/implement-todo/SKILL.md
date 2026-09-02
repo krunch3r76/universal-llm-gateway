@@ -147,7 +147,7 @@ PATH-SIM only on the §3 trigger set (non-codework / `arc_lane=path_sim` / named
 
 `DISPATCH ∧ contract=implement ∧ density_triage=judgment_required ∧ check_requested ⇒ finish this checklist before team_dispatch`. Gate contracts: consult-routing § Implement admission gates; lifecycle: todo-lifecycle §6–7.
 
-**Gate-6 substrate (friction a24082):** before dispatching the check — if the packet cites `workspaces://` or needs live-code verify ⇒ `seat=cursor-sdk` + `model=cursor/grok-4.6` (Cursor Models default), `contract=light-bounded`. `cursor/gpt-5.6-terra|sol|luna` only if the operator/packet **names** Other Models. API `role=reviewer` only when every required artifact is inlined (`code-on-api`). Access-only REVISE (missing fs/checkout / note-body 404) ⇒ re-dispatch on cursor-sdk; ¬ Gate-6 close; ¬ Composer. Densify `implement_ready` ≠ ratification. Bound: address the SDK peer via `seat=cursor-sdk` on `op=generate` (role≠substrate; `todo:team-dispatch-role-substrate-cohesion`).
+**Gate-6 substrate (friction a24082):** before dispatching the check — if the packet cites `workspaces://` or needs live-code verify ⇒ `team_dispatch(model=cdp/opus-5, purpose=review, reasoning_effort="high")` (CDP default). `cursor/gpt-5.6-terra|sol|luna` only if the operator/packet **names** Other Models. API `role=reviewer` only when every required artifact is inlined (`code-on-api`). Access-only REVISE (missing fs/checkout / note-body 404) ⇒ re-dispatch on cursor-sdk; ¬ Gate-6 close; ¬ Composer. Densify `implement_ready` ≠ ratification. Bound: address the SDK peer via `seat=cursor-sdk` on `op=generate` (role≠substrate; `todo:team-dispatch-role-substrate-cohesion`).
 
 **Happy path**
 

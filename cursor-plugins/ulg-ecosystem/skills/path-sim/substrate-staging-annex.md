@@ -18,10 +18,10 @@ thread 6179 @ 08:23:27Z (`frontier.sdk.generate.requested`).
 | Fable remaining (≤~1 week from 2026-07-16) | Fable 5 Max | Grok-4.5 High (transport bind) | Opus 5 (CDP) |
 | Post-Fable (no pay-for-usage Fable) | Fable unavailable ⇒ **Q-CASCADE fallback** Opus 5 Max (rare) | Grok-4.5 High | Opus 5 (CDP) |
 
-- **Default bundled Q transport:** CDP Fable (`cdp/fable`) — operator 2026-07-28 (a:26714). Grok Q only under closed detent or explicit skip.
-- **Default A transport:** `cursor/grok-4.6` on cursor-sdk — unchanged across Fable window.
+- **Default bundled Q transport:** CDP Fable (`cdp/fable`) — operator 2026-07-28 (a:26714).
+- **Default A transport:** Composer enumerate → **`cdp/fable` bind** — operator bind 2026-09-02 (a:31976).
 - **Default R-admit transport:** CDP Opus (`cdp/opus-5`) — **always Opus on bundled arcs**; this is the common Opus dispatch in event history, not L0.
-- **Fable→Opus (cascade principle):** greater pass explores question space; lesser pass answers under narrower aperture — implemented as **Fable Q → Grok A → Opus R-admit**, not Opus-for-Q by default.
+- **Fable→Opus (cascade principle):** greater pass explores question space; lesser pass answers under narrower aperture — implemented as **Fable Q → Composer enumerate + Fable A-bind → Opus R-admit**, not Opus-for-Q by default.
 - **Post-Fable Q fallback only:** when Fable is unavailable, Q-CASCADE may sharpen via Opus Max (annex A § Q-cascade) — not the standing bundled default.
 - Window params carry `operator ratify 2026-07-16 (a:24764)`; they name **effort**, not dispatch seat. ¬ rewrite annex A transport binds.
 
@@ -44,8 +44,8 @@ Window params above name **quality** (Grok-4.5 High). Transport on the code lane
 
 | Path | Default |
 |---|---|
-| Path-sim **A** (L1+L2) / coding-lane Grok judgment / closed-detent light consult | **`seat=cursor-sdk, model=cursor/grok-4.6, contract=light-bounded`** |
-| Path-sim bundled **Q** (L0) | **CDP Fable** — `team_dispatch(model=cdp/fable)` (CLI `fable-5.1` = IF6 only; annex A); Grok Q only under closed detent or explicit skip |
+| Path-sim **A** (L1+L2) / closed-detent light consult | **Composer enumerate → `cdp/fable` bind** |
+| Path-sim bundled **Q** (L0) | **CDP Fable** — `team_dispatch(model=cdp/fable)` (CLI `fable-5.1` = IF6 only; annex A) |
 | `team_dispatch` `role=artisan, model=xai/grok-4.6` for checkout-present coding consult | **PROHIBITED** |
 | Engineering axis-2 skeptic (specs / design) | **OK** — `xai/grok-4.6` |
 | Writing / correspondence / outbound prose | **PROHIBITED** for Grok — Terra+Gemini (or lead/web); `openai/gpt-5.5` operator-gated (`consult-routing` § Writing consult substrate) |

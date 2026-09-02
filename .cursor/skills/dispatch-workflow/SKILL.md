@@ -105,11 +105,11 @@ sensitive_domain ∨ content_preservation_critical ∨ high_fidelity_review ⇒ 
 peer_design_review ⇒ openai/gpt-5.5
 bulk_3M_context_single_pass ⇒ SuperHeavy
 seat=cursor-sdk ∧ contract=implement ⇒ cursor/composer-2.5 (role default; no model= required)
-seat=cursor-sdk ∧ (recon|investigate-emphasis) ⇒ model=cursor/grok-4.6 (contract=light-bounded typical)
+seat=cursor-sdk ∧ (recon|investigate-emphasis) ⇒ contract=investigate (facts + OPEN FORK: — never binds)
 seat=cursor-sdk ∧ pure_mechanical_inventory ⇒ Composer OK
 ```
 
-Origin: GPT-5.4 failed 28/29 tool-loop skill rewrites by budget exhaustion; GPT-5.5 succeeded 28/28 retry. Use 5.4 only for certain no-tools single-shot calls. cursor-sdk model split: implement stays Composer default; recon+investigate judgment overrides to `cursor/grok-4.6` (not API `xai/grok-4.6`).
+Origin: GPT-5.4 failed 28/29 tool-loop skill rewrites by budget exhaustion; GPT-5.5 succeeded 28/28 retry. Use 5.4 only for certain no-tools single-shot calls. cursor-sdk model split: implement stays Composer default; recon+investigate judgment overrides to **`contract=investigate`** (not API `xai/grok-4.6`).
 
 ## 3. Prompt shape
 

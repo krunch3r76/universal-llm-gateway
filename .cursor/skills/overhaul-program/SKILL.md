@@ -93,7 +93,7 @@ Use the `consult-routing` skill before any handoff. Anthropic-family models
 route to manual seats (`web-anthropic` / `cursor`), not API `generate` lanes.
 Consult/review steps stay `web-consult` handoff when R1; only the **implement**
 lane defaults to `cursor-sdk` Composer. `cursor-sdk` is **not** a prohibited API
-generate lane — it runs `cursor/composer-2.5` (or `cursor/grok-4.6` for
+generate lane — it runs `cursor/composer-2.5` (or **`contract=investigate`** for
 light-bounded recon/scaffold) via Cursor's subscription substrate
 (`substrate=sdk`), so the manual-seat directive is preserved.
 
