@@ -261,6 +261,104 @@ async def test_reconcile_poll_error_no_stalled(
 
 
 @pytest.mark.asyncio
+async def test_finalize_stalled_deliverable_present_from_archive_uri(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stalled_kwargs: list[dict[str, Any]] = []
+
+    def _capture(factory: Any, **kwargs: Any) -> None:
+        if factory.__name__ == "CdpGenerateStalled":
+            stalled_kwargs.append(kwargs)
+
+    monkeypatch.setattr(reconcile, "publish_cdp_kwargs", _capture)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.deliver_cdp_result_turn",
+        AsyncMock(return_value=True),
+    )
+    upsert_inflight_leg(
+        execution_id="exec-stalled-deliv",
+        request_id="req-1",
+        thread_id="5583",
+        pointer_turn=1,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    archive = "cortex://notes/system/threads/cdp-ask-archive-new.md"
+    result = CdpGenerateResult(
+        ok=False,
+        body="SKILLS_PROBE_OK",
+        execution_id="exec-stalled-deliv",
+        satellite_execution_id="sat-stalled",
+        prompt_uri="cortex://p.md",
+        picker_model="fable-5",
+        archive_uri=archive,
+        stall_stage="completed_without_proof",
+        error="chat harvest lacks attested_model",
+    )
+    await finalize_cdp_generate(
+        result=result,
+        request_id="req-1",
+        thread_id="5583",
+        to_agent="dispatch",
+        pointer_turn=1,
+        via="reconcile",
+    )
+    assert len(stalled_kwargs) == 1
+    assert stalled_kwargs[0]["deliverable_present"] is True
+    assert stalled_kwargs[0]["archive_uri"] == archive
+
+
+@pytest.mark.asyncio
+async def test_finalize_stalled_deliverable_present_from_extras_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stalled_kwargs: list[dict[str, Any]] = []
+
+    def _capture(factory: Any, **kwargs: Any) -> None:
+        if factory.__name__ == "CdpGenerateStalled":
+            stalled_kwargs.append(kwargs)
+
+    monkeypatch.setattr(reconcile, "publish_cdp_kwargs", _capture)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.deliver_cdp_result_turn",
+        AsyncMock(return_value=True),
+    )
+    upsert_inflight_leg(
+        execution_id="exec-stalled-extras",
+        request_id="req-1",
+        thread_id="5583",
+        pointer_turn=1,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    result = CdpGenerateResult(
+        ok=False,
+        body="partial harvest",
+        execution_id="exec-stalled-extras",
+        satellite_execution_id="sat-extras",
+        prompt_uri="cortex://p.md",
+        picker_model="fable-5",
+        stall_stage="completed_without_proof",
+        error="chat harvest lacks attested_model",
+        extras={"deliverable_present_unproven": True},
+    )
+    await finalize_cdp_generate(
+        result=result,
+        request_id="req-1",
+        thread_id="5583",
+        to_agent="dispatch",
+        pointer_turn=1,
+        via="reconcile",
+    )
+    assert len(stalled_kwargs) == 1
+    assert stalled_kwargs[0]["deliverable_present"] is True
+
+
+@pytest.mark.asyncio
 async def test_finalize_idempotent_second_tick(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

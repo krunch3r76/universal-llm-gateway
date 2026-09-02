@@ -60,6 +60,62 @@ async def test_followup_stamps_attested_model() -> None:
 
 
 @pytest.mark.asyncio
+async def test_compose_success_stamps_attested_model() -> None:
+    page = AsyncMock()
+    page.url = "https://claude.ai/new"
+    state = {
+        "body": "compose reply",
+        "url": page.url,
+        "model_label": "Model: Opus 5",
+    }
+    harvest = HarvestBody(content="compose reply", provenance="chat")
+
+    with (
+        patch(
+            "claude_bundles.project_ask_conversation.connect_cdp",
+            new=AsyncMock(return_value=(AsyncMock(), None, None, None)),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.pick_chat_page",
+            new=AsyncMock(return_value=page),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation._compose_model_selected",
+            new=AsyncMock(return_value={"ok": True, "current_model": "Model: Opus 5"}),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.harvest_assistant",
+            new=AsyncMock(return_value={"count": 0}),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.send_prompt",
+            new=AsyncMock(),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.wait_assistant_reply",
+            new=AsyncMock(return_value=state),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation.resolve_harvest_body",
+            new=AsyncMock(return_value=harvest),
+        ),
+        patch(
+            "claude_bundles.project_ask_conversation._attest_model",
+            return_value="Model: Opus 5",
+        ) as attest,
+    ):
+        results = await run_project_conversation(
+            ["first prompt"],
+            model="opus-5",
+        )
+
+    attest.assert_called_once()
+    assert len(results) == 1
+    assert results[0].ok is True
+    assert results[0].attested_model == "Model: Opus 5"
+
+
+@pytest.mark.asyncio
 async def test_compose_attestation_mismatch_returns_ok_false_list() -> None:
     page = AsyncMock()
     page.url = "https://claude.ai/new"
