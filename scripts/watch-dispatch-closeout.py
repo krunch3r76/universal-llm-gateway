@@ -425,35 +425,34 @@ def main() -> int:
                     f"outcome={outcome} duration_s={duration} elapsed_s={elapsed_s:.0f} model={model}",
                     flush=True,
                 )
-                if not args.no_page:
-                    if args.come_to_ide:
-                        page_subject = f"COME TO IDE — {args.label}"
-                        page_body = (
-                            f"thread {thread_id} closeout · {outcome}"
-                            f" · friction 529 bind — return to Cursor IDE"
-                            f" · elapsed {elapsed_s:.0f}s"
-                            f"{f' · {subject}' if subject else ''}"
-                        )
-                    elif closeout_json or parent_subj:
-                        page_subject, page_body = _arc_outcome_line(
-                            closeout_json,
-                            label=args.label,
-                            parent_harvest_subject=parent_subj,
-                        )
-                    else:
-                        page_subject = f"ULG dispatch done — {args.label}"
-                        page_body = (
-                            f"thread {thread_id} · {outcome}"
-                            f" · elapsed {elapsed_s:.0f}s"
-                            f"{f' · worker {duration:.0f}s' if isinstance(duration, (int, float)) else ''}"
-                            f"{f' · {model}' if model else ''}"
-                            f"{f' · {subject}' if subject else ''}"
-                        )
-                    _page_operator(
-                        subject=page_subject,
-                        body=page_body,
-                        tag="dispatch-done",
+                if args.come_to_ide:
+                    page_subject = f"COME TO IDE — {args.label}"
+                    page_body = (
+                        f"thread {thread_id} closeout · {outcome}"
+                        f" · friction 529 bind — return to Cursor IDE"
+                        f" · elapsed {elapsed_s:.0f}s"
+                        f"{f' · {subject}' if subject else ''}"
                     )
+                elif closeout_json or parent_subj:
+                    page_subject, page_body = _arc_outcome_line(
+                        closeout_json,
+                        label=args.label,
+                        parent_harvest_subject=parent_subj,
+                    )
+                else:
+                    page_subject = f"ULG dispatch done — {args.label}"
+                    page_body = (
+                        f"thread {thread_id} · {outcome}"
+                        f" · elapsed {elapsed_s:.0f}s"
+                        f"{f' · worker {duration:.0f}s' if isinstance(duration, (int, float)) else ''}"
+                        f"{f' · {model}' if model else ''}"
+                        f"{f' · {subject}' if subject else ''}"
+                    )
+                _page_operator(
+                    subject=page_subject,
+                    body=page_body,
+                    tag="dispatch-done",
+                )
                 return 0
 
             turn_count = snap.get("turn_count")
