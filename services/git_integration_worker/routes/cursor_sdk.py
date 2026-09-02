@@ -2978,12 +2978,22 @@ async def cursor_branch_discharge(
     req: BranchDischargeRequest, request: Request
 ) -> dict:
     """One call, both honest exits — the clean path a lane is asked to take."""
+    from services.git_integration_worker.cursor_sdk_branch_debt import (
+        get_branch_debt,
+        resolve_debt_source_repo,
+    )
     from services.git_integration_worker.cursor_sdk_branch_discharge import discharge
 
     cfg = _config(request)
+    debt = get_branch_debt(branch_name=req.branch)
+    discharge_repo = resolve_debt_source_repo(
+        debt.source_repo if debt is not None else None,
+        hub=cfg.source_repo,
+        projects_root=cfg.dispatch_workspace,
+    )
     result = await asyncio.to_thread(
         discharge,
-        repo=cfg.source_repo,
+        repo=discharge_repo,
         branch_name=req.branch,
         verb=req.verb,
         reason=req.reason,

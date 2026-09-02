@@ -15,6 +15,7 @@ import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from services.git_integration_worker.cursor_dispatch_ledger import _connect
@@ -31,9 +32,14 @@ CREATE TABLE IF NOT EXISTS cursor_sdk_branch_debts (
     escalated_at   TEXT,
     discharged_at  TEXT,
     discharge_verb TEXT,
-    discharge_note TEXT
+    discharge_note TEXT,
+    source_repo    TEXT
 );
 """
+
+_DEBT_COLUMN_MIGRATIONS = (
+    ("source_repo", "TEXT"),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +57,7 @@ class BranchDebt:
     discharged_at: str | None = None
     discharge_verb: str | None = None
     discharge_note: str | None = None
+    source_repo: str | None = None
 
     @property
     def open(self) -> bool:
@@ -81,6 +88,18 @@ def _age_s(stamp: str | None, *, now: datetime | None = None) -> float | None:
 def ensure_debt_schema(conn: sqlite3.Connection) -> None:
     """Create the debt table when missing."""
     conn.executescript(_DEBT_DDL)
+    cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(cursor_sdk_branch_debts)")
+    }
+    for name, decl in _DEBT_COLUMN_MIGRATIONS:
+        if name not in cols:
+            try:
+                conn.execute(
+                    f"ALTER TABLE cursor_sdk_branch_debts ADD COLUMN {name} {decl}"
+                )
+            except sqlite3.OperationalError as exc:
+                if "duplicate column" not in str(exc).lower():
+                    raise
 
 
 def _row_to_debt(row: sqlite3.Row) -> BranchDebt:
@@ -89,6 +108,8 @@ def _row_to_debt(row: sqlite3.Row) -> BranchDebt:
         files = list(json.loads(raw_files)) if raw_files else []
     except (TypeError, ValueError):
         files = []
+    keys = row.keys()
+    source_repo = row["source_repo"] if "source_repo" in keys else None
     return BranchDebt(
         branch_name=row["branch_name"],
         thread_id=row["thread_id"],
@@ -101,6 +122,51 @@ def _row_to_debt(row: sqlite3.Row) -> BranchDebt:
         discharged_at=row["discharged_at"],
         discharge_verb=row["discharge_verb"],
         discharge_note=row["discharge_note"],
+        source_repo=source_repo,
+    )
+
+
+def workspace_token_for_repo(
+    source_repo: Path,
+    *,
+    hub: Path,
+    projects_root: Path,
+) -> str | None:
+    """Return allowlist workspace name for *source_repo*, or ``None`` for hub."""
+    from services.git_integration_worker.cursor_sdk_satellite_workspace import (
+        load_satellite_allowlist,
+    )
+
+    resolved = source_repo.resolve()
+    if resolved == hub.resolve():
+        return None
+    allowlist = load_satellite_allowlist(hub=hub)
+    for name in allowlist:
+        if (projects_root / name).resolve() == resolved:
+            return name
+    return str(resolved)
+
+
+def resolve_debt_source_repo(
+    stored: str | None,
+    *,
+    hub: Path,
+    projects_root: Path,
+) -> Path:
+    """Resolve a debt row's stored workspace token back to a git repo root."""
+    from services.git_integration_worker.cursor_sdk_satellite_workspace import (
+        resolve_dispatch_source_repo,
+    )
+
+    if not stored or not str(stored).strip():
+        return hub.resolve()
+    token = str(stored).strip()
+    if token.startswith("/") or "\\" in token:
+        return Path(token).resolve()
+    return resolve_dispatch_source_repo(
+        token,
+        hub=hub,
+        projects_root=projects_root,
     )
 
 
@@ -112,6 +178,7 @@ def open_branch_debt(
     caller_agent: str | None = None,
     tip_sha: str | None = None,
     files: list[str] | None = None,
+    source_repo: str | None = None,
 ) -> BranchDebt:
     """Open a debt for *branch_name*, or return the existing open one.
 
@@ -129,7 +196,8 @@ def open_branch_debt(
             "INSERT OR REPLACE INTO cursor_sdk_branch_debts "
             "(branch_name, thread_id, dispatch_id, caller_agent, tip_sha, "
             "files_json, opened_at, escalated_at, discharged_at, discharge_verb, "
-            "discharge_note) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)",
+            "discharge_note, source_repo) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?)",
             (
                 branch_name,
                 thread_id,
@@ -138,6 +206,7 @@ def open_branch_debt(
                 tip_sha,
                 json.dumps(sorted(files or [])),
                 opened_at,
+                source_repo,
             ),
         )
     return BranchDebt(
@@ -148,6 +217,7 @@ def open_branch_debt(
         tip_sha=tip_sha,
         files=sorted(files or []),
         opened_at=opened_at,
+        source_repo=source_repo,
     )
 
 
@@ -264,6 +334,7 @@ def lane_hygiene_snapshot(*, now: datetime | None = None) -> dict[str, Any]:
                 "dispatch_id": debt.dispatch_id,
                 "caller_agent": debt.caller_agent,
                 "tip_sha": debt.tip_sha,
+                "source_repo": debt.source_repo,
                 "age_s": age_s,
             }
         )

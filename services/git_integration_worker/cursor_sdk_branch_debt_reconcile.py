@@ -233,10 +233,43 @@ def reconcile_open_branch_debts(
     is retired — the rows this sweep resolves are, by construction, ones no
     living branch explains.
     """
-    repo = source_repo.resolve()
-    verdicts = [_classify(repo=repo, debt=debt) for debt in list_open_debts()]
+    from services.git_integration_worker.config import load_config
+    from services.git_integration_worker.cursor_sdk_branch_debt import (
+        resolve_debt_source_repo,
+    )
+
+    cfg = load_config()
+    hub = cfg.source_repo.resolve()
+    projects_root = cfg.dispatch_workspace
+    sweep_repo = source_repo.resolve()
+    debts = list_open_debts()
+    verdicts: list[DebtVerdict] = []
+    for debt in debts:
+        if debt.source_repo:
+            repo = resolve_debt_source_repo(
+                debt.source_repo,
+                hub=hub,
+                projects_root=projects_root,
+            )
+        else:
+            repo = sweep_repo
+        verdicts.append(_classify(repo=repo, debt=debt))
     if apply:
-        verdicts = [_apply(repo=repo, verdict=row) for row in verdicts]
+        verdicts = [
+            _apply(
+                repo=(
+                    resolve_debt_source_repo(
+                        debt.source_repo,
+                        hub=hub,
+                        projects_root=projects_root,
+                    )
+                    if debt.source_repo
+                    else sweep_repo
+                ),
+                verdict=row,
+            )
+            for debt, row in zip(debts, verdicts, strict=True)
+        ]
     report = ReconcileReport(verdicts=verdicts, applied=apply)
     logger.info(
         "branch debt reconcile apply=%s summary=%s", apply, report.summary()

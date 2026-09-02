@@ -17,7 +17,10 @@ from pathlib import Path
 
 from universal_logging import get_logger
 
-from services.git_integration_worker.cursor_sdk_branch_debt import open_branch_debt
+from services.git_integration_worker.cursor_sdk_branch_debt import (
+    open_branch_debt,
+    workspace_token_for_repo,
+)
 from services.git_integration_worker.cursor_sdk_branch_debt_tags import (
     add_land_required_tag,
     remove_land_required_tag,
@@ -83,6 +86,7 @@ def _caller_agent_for(dispatch_id: str) -> str | None:
 
 def _open_debt(
     *,
+    source_repo: Path,
     branch_name: str,
     thread_id: str | None,
     dispatch_id: str,
@@ -90,6 +94,14 @@ def _open_debt(
     files: list[str] | None,
     detail: str,
 ) -> LaneBranchSettlement:
+    from services.git_integration_worker.config import load_config
+
+    cfg = load_config()
+    workspace_token = workspace_token_for_repo(
+        source_repo,
+        hub=cfg.source_repo,
+        projects_root=cfg.dispatch_workspace,
+    )
     caller_agent = _caller_agent_for(dispatch_id)
     open_branch_debt(
         branch_name=branch_name,
@@ -98,6 +110,7 @@ def _open_debt(
         caller_agent=caller_agent,
         tip_sha=tip_sha,
         files=files,
+        source_repo=workspace_token,
     )
     add_land_required_tag(thread_id=thread_id)
     emit_sdk_lane_b_debt_opened(
@@ -205,6 +218,7 @@ def _settle(
             )
         # A declaration the tree contradicts is residue, not a clean exit.
         return _open_debt(
+            source_repo=source_repo,
             branch_name=branch_name,
             thread_id=thread_id,
             dispatch_id=dispatch_id,
@@ -215,6 +229,7 @@ def _settle(
 
     if verb is not None:
         return _open_debt(
+            source_repo=source_repo,
             branch_name=branch_name,
             thread_id=thread_id,
             dispatch_id=dispatch_id,
@@ -225,6 +240,7 @@ def _settle(
 
     if (commits_ahead or 0) >= 1 and landed is not True:
         return _open_debt(
+            source_repo=source_repo,
             branch_name=branch_name,
             thread_id=thread_id,
             dispatch_id=dispatch_id,
