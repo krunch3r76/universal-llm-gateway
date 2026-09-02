@@ -28,6 +28,7 @@ domains:
 - fleet_liveness
 - operator_request
 - cse_session
+- chat_session
 - recycle_giw
 tools:
 - canonical_name: cortex_entities
@@ -5328,6 +5329,108 @@ tools:
   - mcp_claude
   skill_uri: agent_skill:claude-ai-cdp-navigation
   cache_priority: on_demand
+- canonical_name: chat_session_harvest
+  domain: chat_session
+  operation: harvest
+  dispatcher_call_shape:
+    tool: chat_session
+    dispatch_key: op
+    dispatch_value: harvest
+  flat_call_shape:
+    tool: chat_session_harvest
+    substrate_qualified: user-vortex__chat_session_harvest
+  fol_descriptor: "Read-only product-chat harvest — grok.com and claude.ai/chat URLs;
+    pointer-first sidecar. See cortex://notes/system/specs/chat-session-harvest-grok.md.\n"
+  json_schema:
+    type: object
+    properties:
+      op:
+        type: string
+        enum:
+        - harvest
+      url:
+        type: string
+      limit:
+        type: integer
+      after_turn:
+        type: integer
+    required:
+    - op
+  mandate_safety: read_only
+  seat_visibility:
+  - mcp
+  skill_uri: agent_skill:web-automation-discipline
+  cache_priority: on_demand
+  introduced: '2026-08-25'
+  endpoint_visibility:
+  - life
+  - code
+- canonical_name: chat_session_probe
+  domain: chat_session
+  operation: probe
+  dispatcher_call_shape:
+    tool: chat_session
+    dispatch_key: op
+    dispatch_value: probe
+  flat_call_shape:
+    tool: chat_session_probe
+    substrate_qualified: user-vortex__chat_session_probe
+  fol_descriptor: "Read-only product-chat metadata probe — no sidecar write.
+    See cortex://notes/system/specs/chat-session-harvest-grok.md.\n"
+  json_schema:
+    type: object
+    properties:
+      op:
+        type: string
+        enum:
+        - probe
+      url:
+        type: string
+    required:
+    - op
+  mandate_safety: read_only
+  seat_visibility:
+  - mcp
+  skill_uri: agent_skill:web-automation-discipline
+  cache_priority: on_demand
+  introduced: '2026-08-25'
+  endpoint_visibility:
+  - life
+  - code
+- canonical_name: chat_session_paste
+  domain: chat_session
+  operation: paste
+  dispatcher_call_shape:
+    tool: chat_session
+    dispatch_key: op
+    dispatch_value: paste
+  flat_call_shape:
+    tool: chat_session_paste
+    substrate_qualified: user-vortex__chat_session_paste
+  fol_descriptor: "Mutating grant-gated product-chat paste — explicit or operator grant.
+    See cortex://notes/system/specs/chat-session-harvest-grok.md.\n"
+  json_schema:
+    type: object
+    properties:
+      op:
+        type: string
+        enum:
+        - paste
+      url:
+        type: string
+      grant:
+        type: string
+    required:
+    - op
+  mandate_safety: write
+  seat_visibility:
+  - mcp
+  skill_uri: agent_skill:web-automation-discipline
+  cache_priority: on_demand
+  introduced: '2026-08-25'
+  endpoint_visibility:
+  - life
+  - code
 domain_endpoints:
   default:
   - life
@@ -5394,6 +5497,7 @@ surface_primary_domains:
   - fleet_liveness
   - operator_request
   - cse_session
+  - chat_session
   - recycle_giw
   code:
   - cortex
@@ -5414,6 +5518,7 @@ surface_primary_domains:
   - fleet_liveness
   - operator_request
   - cse_session
+  - chat_session
 cortex_families:
   defaults:
     read:

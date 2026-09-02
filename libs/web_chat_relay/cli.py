@@ -8,24 +8,25 @@ import json
 import sys
 from pathlib import Path
 
+from chat_harvest.grok_adapter import execute_grok_harvest, execute_grok_paste
+from chat_harvest.models import ClassifyRefuse, classify_chat_url
+
 from web_chat_relay import grok_session
 from web_chat_relay.grok_session import GrokAuthError
 from web_chat_relay.loop import RelayConfig, run_relay
 
-DEFAULT_GROK_URL = (
-    "https://grok.com/c/47794c69-9fcc-4481-b1a6-f6c9cbf8b768"
-)
+DEFAULT_GROK_URL = "https://grok.com/c/47794c69-9fcc-4481-b1a6-f6c9cbf8b768"
 
 
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Cursor one-shot grok.com send/harvest, or grok.com ↔ Cowork relay"
     )
-    p.add_argument("--probe", action="store_true", help="Dump grok DOM; do not relay")
+    p.add_argument("--probe", action="store_true", help="Compact grok metadata JSON")
     p.add_argument(
         "--send",
         default="",
-        help="Paste one message into grok.com, wait idle, print last assistant",
+        help="Paste one message into grok.com, wait idle, print harvest pointer",
     )
     p.add_argument(
         "--send-file",
@@ -35,7 +36,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--harvest",
         action="store_true",
-        help="Print last assistant from the signed-in tab; do not paste",
+        help="Harvest full transcript to cortex sidecar; print pointer JSON",
     )
     p.add_argument("--run", action="store_true", help="Open Cowork and poll/relay")
     p.add_argument(
@@ -74,33 +75,8 @@ def _parser() -> argparse.ArgumentParser:
     return p
 
 
-async def _probe(grok_url: str, cdp_url: str, wait_auth_s: float = 0.0) -> int:
-    substr = grok_session.conversation_id_from_url(grok_url) or grok_url
-    deadline = asyncio.get_event_loop().time() + max(wait_auth_s, 0.0)
-    while True:
-        pw, _b, _c, page = await grok_session.attach_grok_page(
-            cdp_url=cdp_url, url_substr=substr
-        )
-        try:
-            dump = await grok_session.probe_dom(page)
-            dump["signed_in"] = grok_session.is_signed_in(dump)
-            if dump["signed_in"] or wait_auth_s <= 0:
-                print(json.dumps(dump, indent=2)[:12000])
-                return 0 if dump["signed_in"] else 2
-        except GrokAuthError as exc:
-            if wait_auth_s <= 0:
-                print(f"AUTH_MISSING {exc}", file=sys.stderr)
-                return 2
-        finally:
-            await pw.stop()
-        if asyncio.get_event_loop().time() >= deadline:
-            print("AUTH_MISSING wait-auth timeout", file=sys.stderr)
-            return 2
-        await asyncio.sleep(5.0)
-
-
 def _print_harvest(shot: grok_session.GrokHarvest) -> None:
-    """Stdout JSON for a one-shot Cursor send/harvest."""
+    """Stdout JSON for relay ``--run`` idle-detect (last-assistant shape unchanged)."""
     print(
         json.dumps(
             {
@@ -109,67 +85,136 @@ def _print_harvest(shot: grok_session.GrokHarvest) -> None:
                 "signed_in": shot.signed_in,
                 "n": shot.n,
                 "streaming": shot.streaming,
-                "last_assistant": grok_session.strip_chrome(shot.last_assistant)[:20000],
+                "last_assistant": grok_session.strip_chrome(shot.last_assistant)[
+                    :20000
+                ],
             },
             indent=2,
         )
     )
 
 
-async def _one_shot(
-    grok_url: str,
-    cdp_url: str,
-    *,
-    text: str = "",
-    harvest_only: bool = False,
-    wait_auth_s: float = 0.0,
-) -> int:
-    """Attach the attended grok tab, optionally paste, then print last assistant."""
-    substr = grok_session.conversation_id_from_url(grok_url) or grok_url
+def _print_pointer_json(payload: dict) -> None:
+    print(json.dumps(payload, indent=2))
+
+
+def _classify_refuse_response(refuse: ClassifyRefuse) -> dict:
+    return {
+        "outcome": "refused",
+        "code": refuse.code,
+        "reason": refuse.reason,
+    }
+
+
+async def _probe(grok_url: str, cdp_url: str, wait_auth_s: float = 0.0) -> int:
     deadline = asyncio.get_event_loop().time() + max(wait_auth_s, 0.0)
-    pw = page = None
     while True:
+        substr = grok_session.conversation_id_from_url(grok_url) or grok_url
+        pw = None
         try:
-            pw, _b, _c, page = await grok_session.attach_grok_page(
+            pw, _browser, _context, page = await grok_session.attach_grok_page(
                 cdp_url=cdp_url, url_substr=substr
             )
-            await grok_session.require_signed_in(page, grok_url=grok_url)
-            break
+            shot = await grok_session.harvest(page)
+            meta = {
+                "outcome": "probe",
+                "site": "grok",
+                "conversation_id": grok_session.conversation_id_from_url(shot.url),
+                "url": shot.url,
+                "signed_in": shot.signed_in,
+                "streaming": shot.streaming,
+                "stop": shot.stop,
+                "login_wall": shot.login_wall,
+                "n": shot.n,
+            }
         except GrokAuthError as exc:
+            meta = {
+                "outcome": "no_tab",
+                "site": "grok",
+                "conversation_id": grok_session.conversation_id_from_url(grok_url),
+                "url": grok_url,
+                "signed_in": False,
+                "code": "no_tab",
+                "reason": str(exc),
+            }
+        finally:
             if pw is not None:
                 await pw.stop()
-                pw = page = None
-            if wait_auth_s <= 0:
-                print(f"AUTH_MISSING {exc}", file=sys.stderr)
-                return 2
-            if asyncio.get_event_loop().time() >= deadline:
-                print("AUTH_MISSING wait-auth timeout", file=sys.stderr)
-                return 2
-            await asyncio.sleep(5.0)
-    try:
-        assert page is not None
-        if text.strip() and not harvest_only:
-            await grok_session.paste_and_send(page, text.strip())
-            shot = await grok_session.wait_idle(page)
-        else:
-            shot = await grok_session.harvest(page)
-            if shot.streaming or shot.stop:
-                shot = await grok_session.wait_idle(page)
-        _print_harvest(shot)
-        return 0
-    except GrokAuthError as exc:
-        print(f"AUTH_MISSING {exc}", file=sys.stderr)
+
+        signed_in = bool(meta.get("signed_in"))
+        if signed_in or wait_auth_s <= 0:
+            _print_pointer_json(meta)
+            return 0 if signed_in else 2
+        if asyncio.get_event_loop().time() >= deadline:
+            print("AUTH_MISSING wait-auth timeout", file=sys.stderr)
+            return 2
+        await asyncio.sleep(5.0)
+
+
+async def _harvest(grok_url: str, cdp_url: str) -> int:
+    classified = classify_chat_url(grok_url)
+    if isinstance(classified, ClassifyRefuse):
+        _print_pointer_json(_classify_refuse_response(classified))
         return 2
-    finally:
-        if pw is not None:
-            await pw.stop()
+
+    if not classified.conversation_id:
+        _print_pointer_json(
+            {
+                "outcome": "no_conversation",
+                "site": classified.site,
+                "conversation_id": classified.conversation_id,
+                "url": classified.url,
+            }
+        )
+        return 0
+
+    if classified.site != "grok":
+        refuse = ClassifyRefuse(
+            code="unsupported_site",
+            reason=f"CLI harvest supports grok only in G5a (got {classified.site!r})",
+        )
+        _print_pointer_json(_classify_refuse_response(refuse))
+        return 2
+
+    response = await execute_grok_harvest(
+        url=classified.url,
+        site=classified.site,
+        conversation_id=classified.conversation_id,
+        cdp_url=cdp_url,
+    )
+    payload = response.model_dump(exclude_none=True)
+    _print_pointer_json(payload)
+    if response.outcome in ("unauthenticated", "no_tab", "refused"):
+        return 2
+    return 0
 
 
-def _read_text_arg(inline: str, file_path: str) -> str:
-    """File content wins when both are given; empty when neither is set."""
-    if file_path:
-        return Path(file_path).read_text(encoding="utf-8")
-    return inline
+async def _send(grok_url: str, cdp_url: str, text: str) -> int:
+    classified = classify_chat_url(grok_url)
+    if isinstance(classified, ClassifyRefuse):
+        _print_pointer_json(_classify_refuse_response(classified))
+        return 2
+
+    if classified.site != "grok":
+        refuse = ClassifyRefuse(
+            code="unsupported_site",
+            reason=f"CLI send supports grok only in G5a (got {classified.site!r})",
+        )
+        _print_pointer_json(_classify_refuse_response(refuse))
+        return 2
+
+    response = await execute_grok_paste(
+        url=classified.url,
+        prompt_text=text,
+        cdp_url=cdp_url,
+        grant="operator",
+    )
+    payload = {
+        "outcome": "pasted" if response.ok else "refused",
+        **response.model_dump(),
+    }
+    _print_pointer_json(payload)
+    return 0 if response.ok else 2
 
 
 async def _run(args: argparse.Namespace) -> int:
@@ -195,12 +240,21 @@ async def _run(args: argparse.Namespace) -> int:
     return 0 if state.stop_reason != "auth_missing" else 2
 
 
+def _read_text_arg(inline: str, file_path: str) -> str:
+    """File content wins when both are given; empty when neither is set."""
+    if file_path:
+        return Path(file_path).read_text(encoding="utf-8")
+    return inline
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     send_text = _read_text_arg(args.send, args.send_file)
     modes = [args.probe, bool(send_text), args.harvest, args.run]
     if sum(bool(m) for m in modes) > 1:
-        print("Pick one of --probe, --send/--send-file, --harvest, --run", file=sys.stderr)
+        print(
+            "Pick one of --probe, --send/--send-file, --harvest, --run", file=sys.stderr
+        )
         return 2
     if args.probe:
         return asyncio.run(_probe(args.grok_url, args.cdp_url, args.wait_auth))
@@ -212,23 +266,9 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
     if send_text:
-        return asyncio.run(
-            _one_shot(
-                args.grok_url,
-                args.cdp_url,
-                text=send_text,
-                wait_auth_s=args.wait_auth,
-            )
-        )
+        return asyncio.run(_send(args.grok_url, args.cdp_url, send_text))
     if args.harvest:
-        return asyncio.run(
-            _one_shot(
-                args.grok_url,
-                args.cdp_url,
-                harvest_only=True,
-                wait_auth_s=args.wait_auth,
-            )
-        )
+        return asyncio.run(_harvest(args.grok_url, args.cdp_url))
     if args.run:
         return asyncio.run(_run(args))
     _parser().print_help()
