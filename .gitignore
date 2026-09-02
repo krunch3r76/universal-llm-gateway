@@ -235,6 +235,7 @@ libs/cortex_store/migrations/
 .cursor/skills/legal-opinion-corpus-ingestion/
 .cursor/skills/w2-ingestion/
 .cursor/skills/messages-check/
+.cursor/skills/voicemail-check/
 .cursor/rules/walgreens-shift-sync_ws.mdc
 
 # Ecosystem plugin SoT — skills, commands, seat overlays (markdown re-included)
