@@ -11,6 +11,7 @@ from .events import (
     FrontierSdkKnobDropped,
     FrontierSdkMaterializationIncomplete,
     FrontierSdkPoolDenied,
+    FrontierSdkPoolExempted,
     FrontierSdkReasoningEffortRejected,
     FrontierSdkWorkerDispatched,
     FrontierSdkWorkerDispatchFailed,
@@ -239,6 +240,7 @@ def emit_sdk_pool_denied(
     requested_model: str | None,
     resolved_model: str,
 ) -> None:
+    """Publish ``frontier.sdk.pool.denied`` when omit path resolves to Other Models."""
     publish_frontier_event(
         FrontierSdkPoolDenied(
             request_id=request_id,
@@ -247,5 +249,25 @@ def emit_sdk_pool_denied(
             resolved_model=resolved_model,
             pool="other_models",
             code="other_models_pool_denied",
+        )
+    )
+
+
+def emit_sdk_pool_exempted(
+    *,
+    request_id: str,
+    seat: str,
+    requested_model: str,
+    resolved_model: str,
+) -> None:
+    """Publish ``frontier.sdk.pool.exempted`` for an explicit Other Models model pin."""
+    publish_frontier_event(
+        FrontierSdkPoolExempted(
+            request_id=request_id,
+            seat=seat,
+            requested_model=requested_model,
+            resolved_model=resolved_model,
+            pool="other_models",
+            code="other_models_pool_exempted",
         )
     )

@@ -8,6 +8,8 @@ import pytest
 from fastapi import Response
 from fastapi.responses import JSONResponse
 
+from systems.frontier_consult import cursor_sdk_generate_prepare as prepare_mod
+
 from .route import TeamDispatchGenerateBody, team_dispatch
 
 
@@ -43,9 +45,67 @@ async def test_cdp_generate_bypasses_cursor_sdk_pool_fence(
 
 
 @pytest.mark.asyncio
-async def test_cursor_sdk_other_models_generate_rejected_at_route(
+async def test_cursor_sdk_omit_path_other_models_generate_rejected_at_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    worker = AsyncMock(return_value=(True, {"dispatch_id": "d1"}))
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_generate.dispatch_cursor_sdk_worker",
+        worker,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_generate.dispatch_cursor_sdk_worker_message",
+        worker,
+    )
+    monkeypatch.setattr(
+        prepare_mod,
+        "resolve_cursor_sdk_generate_target",
+        lambda *_a, **_k: (
+            "cursor-sdk:dispatch:x",
+            "cursor",
+            "sdk",
+            "cursor/claude-sonnet-5",
+        ),
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.generate_wrap._resolve_packet_file",
+        lambda _root, _path: __import__("pathlib").Path("/tmp/packet.md"),
+    )
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        seat="cursor-sdk",
+        model=None,
+        dispatch_thread_id="todo:arc",
+        contract="light-bounded",
+        lane="B",
+        packet_path="tmp/reviews/packet.md",
+    )
+    result = await team_dispatch(body, Response())
+
+    assert isinstance(result, JSONResponse)
+    assert result.status_code == 422
+    payload = result.body.decode()
+    assert "other_models_pool_denied" in payload
+    worker.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cursor_sdk_explicit_other_models_generate_passes_fence_at_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import Mock
+
+    fence_spy = Mock(
+        wraps=__import__(
+            "systems.frontier_consult.cursor_sdk_pool_fence",
+            fromlist=["x"],
+        ).reject_other_models_pool_generate
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_pool_fence.reject_other_models_pool_generate",
+        fence_spy,
+    )
     worker = AsyncMock(return_value=(True, {"dispatch_id": "d1"}))
     monkeypatch.setattr(
         "systems.frontier_consult.cursor_sdk_generate.dispatch_cursor_sdk_worker",
@@ -59,7 +119,6 @@ async def test_cursor_sdk_other_models_generate_rejected_at_route(
         "systems.frontier_consult.generate_wrap._resolve_packet_file",
         lambda _root, _path: __import__("pathlib").Path("/tmp/packet.md"),
     )
-
     body = TeamDispatchGenerateBody(
         op="generate",
         seat="cursor-sdk",
@@ -70,9 +129,7 @@ async def test_cursor_sdk_other_models_generate_rejected_at_route(
         packet_path="tmp/reviews/packet.md",
     )
     result = await team_dispatch(body, Response())
-
-    assert isinstance(result, JSONResponse)
-    assert result.status_code == 422
-    payload = result.body.decode()
-    assert "other_models_pool_denied" in payload
-    worker.assert_not_awaited()
+    fence_spy.assert_called_once()
+    assert fence_spy.call_args.kwargs["model"] == "cursor/claude-sonnet-5"
+    if isinstance(result, JSONResponse):
+        assert "other_models_pool_denied" not in result.body.decode()

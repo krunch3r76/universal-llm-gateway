@@ -93,43 +93,63 @@ def _patch_prepare_deps(
 
 
 @pytest.mark.parametrize(
-    "model,resolved",
+    "model",
     [
-        ("cursor/claude-sonnet-5", "cursor/claude-sonnet-5"),
-        ("cursor/gpt-5.6-terra", "cursor/gpt-5.6-terra"),
-        ("cursor/gpt-5.6-luna", "cursor/gpt-5.6-luna"),
-        ("cursor/claude-fable-5", "cursor/claude-fable-5"),
+        "cursor/claude-sonnet-5",
+        "cursor/gpt-5.6-terra",
+        "cursor/gpt-5.6-luna",
+        "cursor/claude-fable-5",
     ],
 )
-@pytest.mark.asyncio
-async def test_prepare_other_models_refused_before_mint(
-    monkeypatch: pytest.MonkeyPatch,
-    model: str,
-    resolved: str,
+def test_fence_explicit_other_models_pin_admitted_with_exempted_event(
+    monkeypatch: pytest.MonkeyPatch, model: str
 ) -> None:
-    probes = _patch_prepare_deps(monkeypatch, resolved_model=resolved)
+    published: list[object] = []
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_generate_signals.publish_frontier_event",
+        lambda event: published.append(event),
+    )
+    reject_other_models_pool_generate(
+        request_id="req-exempt",
+        role="cursor-sdk",
+        seat=None,
+        model=model,
+        resolved_model=model,
+    )
+    signals = [getattr(ev, "signal", "") for ev in published]
+    assert signals == ["frontier.sdk.pool.exempted"]
+    payload = published[0].payload
+    assert payload["code"] == "other_models_pool_exempted"
+    assert payload["requested_model"] == model
+    assert payload["resolved_model"] == model
+    assert payload["pool"] == "other_models"
+
+
+@pytest.mark.parametrize("model", [None, "", "   "])
+def test_fence_omit_path_other_models_refused(
+    monkeypatch: pytest.MonkeyPatch, model: str | None
+) -> None:
+    published: list[object] = []
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_generate_signals.publish_frontier_event",
+        lambda event: published.append(event),
+    )
     with pytest.raises(FrontierEndpointError) as excinfo:
-        await prepare_mod.prepare_cursor_sdk_generate(
-            request_id="req-pool",
+        reject_other_models_pool_generate(
+            request_id="req-omit",
             role="cursor-sdk",
+            seat=None,
             model=model,
-            subject="s",
-            caller_agent="dispatch",
-            contract="light-bounded",
-            packet_path="tmp/reviews/packet.md",
-            message_text=None,
-            execution_id=None,
-            dispatch_id=None,
+            resolved_model="cursor/claude-sonnet-5",
         )
     err = excinfo.value
     assert err.status_code == 422
     assert err.code == "other_models_pool_denied"
     assert err.field == "model"
-    assert probes["mint_calls"] == []
-    assert probes["context_writes"] == []
-    signals = [getattr(ev, "signal", "") for ev in probes["published"]]
-    assert signals == ["frontier.sdk.pool.denied"]
-    assert "frontier.endpoint.option.rejected" not in signals
+    assert err.details["requested_model"] == model
+    assert [getattr(ev, "signal", "") for ev in published] == [
+        "frontier.sdk.pool.denied"
+    ]
 
 
 @pytest.mark.parametrize(
@@ -154,18 +174,91 @@ def test_prepare_cursor_models_host_do_not_raise_fence(
     )
 
 
+@pytest.mark.parametrize(
+    "model,resolved",
+    [
+        ("cursor/claude-sonnet-5", "cursor/claude-sonnet-5"),
+        ("cursor/gpt-5.6-terra", "cursor/gpt-5.6-terra"),
+        ("cursor/gpt-5.6-luna", "cursor/gpt-5.6-luna"),
+        ("cursor/claude-fable-5", "cursor/claude-fable-5"),
+    ],
+)
 @pytest.mark.asyncio
-async def test_e2e_generate_worker_not_called_for_other_models(
+async def test_prepare_explicit_other_models_pin_reaches_mint(
+    monkeypatch: pytest.MonkeyPatch, model: str, resolved: str
+) -> None:
+    probes = _patch_prepare_deps(monkeypatch, resolved_model=resolved)
+    try:
+        await prepare_mod.prepare_cursor_sdk_generate(
+            request_id="req-pool",
+            role="cursor-sdk",
+            model=model,
+            subject="s",
+            caller_agent="dispatch",
+            contract="light-bounded",
+            packet_path="tmp/reviews/packet.md",
+            message_text=None,
+            execution_id=None,
+            dispatch_id=None,
+        )
+    except FrontierEndpointError as exc:  # downstream fixture gaps are not this fence
+        assert exc.code != "other_models_pool_denied"
+    assert probes["mint_calls"] == ["mint"]
+    signals = [getattr(ev, "signal", "") for ev in probes["published"]]
+    assert "frontier.sdk.pool.exempted" in signals
+    assert "frontier.sdk.pool.denied" not in signals
+
+
+@pytest.mark.asyncio
+async def test_prepare_omit_path_other_models_refused_before_mint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probes = _patch_prepare_deps(
+        monkeypatch, resolved_model="cursor/claude-sonnet-5"
+    )
+    with pytest.raises(FrontierEndpointError) as excinfo:
+        await prepare_mod.prepare_cursor_sdk_generate(
+            request_id="req-omit",
+            role="cursor-sdk",
+            model=None,
+            subject="s",
+            caller_agent="dispatch",
+            contract="light-bounded",
+            packet_path="tmp/reviews/packet.md",
+            message_text=None,
+            execution_id=None,
+            dispatch_id=None,
+        )
+    assert excinfo.value.code == "other_models_pool_denied"
+    assert probes["mint_calls"] == []
+    assert probes["context_writes"] == []
+    assert [getattr(ev, "signal", "") for ev in probes["published"]] == [
+        "frontier.sdk.pool.denied"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_e2e_generate_worker_not_called_for_omit_path_other_models(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     worker = AsyncMock(return_value=(True, {"dispatch_id": "d1"}))
     monkeypatch.setattr(generate_mod, "dispatch_cursor_sdk_worker", worker)
     monkeypatch.setattr(generate_mod, "dispatch_cursor_sdk_worker_message", worker)
+    monkeypatch.setattr(
+        prepare_mod,
+        "resolve_cursor_sdk_generate_target",
+        lambda *_a, **_k: (
+            "cursor-sdk:dispatch:x",
+            "cursor",
+            "sdk",
+            "cursor/claude-sonnet-5",
+        ),
+    )
     with pytest.raises(FrontierEndpointError) as excinfo:
         await generate_mod.dispatch_cursor_sdk_generate(
             request_id="req-e2e",
             role="cursor-sdk",
-            model="cursor/claude-sonnet-5",
+            model=None,
             subject="s",
             caller_agent="dispatch",
             contract="light-bounded",

@@ -817,6 +817,30 @@ def FrontierSdkPoolDenied(  # noqa: N802
 
 
 @event_factory
+def FrontierSdkPoolExempted(  # noqa: N802
+    request_id: str,
+    seat: str,
+    requested_model: str | None,
+    resolved_model: str,
+    pool: str,
+    code: str,
+) -> Event:
+    """Explicit Other Models pin admitted at cursor-sdk generate prepare."""
+    return Event(
+        signal="frontier.sdk.pool.exempted",
+        payload={
+            "request_id": request_id,
+            "seat": seat,
+            "requested_model": requested_model,
+            "resolved_model": resolved_model,
+            "pool": pool,
+            "code": code,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def DispatchCapabilityCardMissing(  # noqa: N802
     request_id: str,
     model: str,
@@ -848,7 +872,7 @@ def FrontierReviewChildPromptBind(  # noqa: N802
     bound_prompt_class: str,
     bound_prompt_digest: str,
 ) -> Event:
-    """Spawn-hook prompt bind instrumentation — Path-1 vs Path-2 discriminator (6655)."""
+    """Spawn-hook prompt bind instrumentation — Path-1 vs Path-2 (6655)."""
     return Event(
         signal="frontier.review_child.prompt_bind",
         payload={
