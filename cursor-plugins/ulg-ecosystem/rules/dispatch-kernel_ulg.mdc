@@ -26,8 +26,8 @@ sweeps the service for P before it is complete (`[quality:bug-class-sweep]`).
 | Need | Path | Autonomy |
 |---|---|---|
 | Mechanical implement | `team_dispatch(op=generate, seat=cursor-sdk)` → Composer (omit `model=`) | autonomous |
-| Investigate / judgment · **T1 conductor** | `cursor/grok-4.6` @ `xhigh` (card ceiling); Sonnet 5 is T2, named-trigger only | in-seat or gated switch |
-| Greater reasoning / independent check | `team_dispatch(model=cdp/opus-5 \| cdp/fable)` — announce one line `CDP: <trigger> — <why>`, then proceed | autonomous on trigger |
+| Investigate residual · conductor drive | Composer (omit `model=`, `contract=light-bounded\|investigate`) — returns `OPEN FORK:` lines, never binds | autonomous |
+| Greater reasoning / independent check | **`cdp/fable`** width · **`cdp/opus-5`** bind/review — `team_dispatch(model=…)` announce one line `CDP: <trigger> — <why>`, then proceed | autonomous on trigger |
 | Premium live checkout | `cursor/claude-opus-5` — inform-then-proceed (wait only if premium spend is paused) | announce |
 
 CDP trigger (any): architecture-suitability live · ≥2 co-primary hypotheses unranked · invariant-touching /
@@ -35,9 +35,9 @@ cross-agent bind · recurrence ≥2 · external check needed. Anti-trigger: mech
 
 `seat_unsure ⇒ consult(independent_binder)`; `binder_unsure ⇒ human` (rare — true operator-only gates).
 Binder order: `cdp/opus-5` (non-Anthropic producer) → **`cdp/fable`** (producer is Opus, or Opus unsure) →
-`cursor/grok-4.6` (default family-cross) → `cursor/gpt-5.6-terra|sol` **only on explicit Other-Models pin**.
+`cursor/gpt-5.6-terra|sol` **only on explicit Other-Models pin**.
 `cursor/claude-opus-5` is step 1, not ladder-top. CDP operator seat stuck ⇒ `cursor-auto` → nested
-`cursor-sdk` (grok / cursor-opus), never a Cowork Ask to the human.
+`cursor-sdk` (Composer `contract=light-bounded` limb / `cursor/claude-opus-5` explicit premium), never a Cowork Ask to the human.
 
 ## Hard walls
 
