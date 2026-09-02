@@ -61,6 +61,7 @@ class ReapSweepResult:
     stale_metadata_pruned: bool = False
     salvage_refused: int = 0
     debts_escalated: int = 0
+    debts_reconciled: int = 0
     worktrees_reconciled: int = 0
     worktrees_surfaced: int = 0
 
@@ -324,6 +325,9 @@ def reap_orphan_worktrees(
     )
     stale_metadata_pruned = _git_worktree_prune(source_repo=source_repo)
     branches_gc = gc_merged_dispatch_branches(source_repo=source_repo)
+    # Before escalation: a debt this resolves is discharged, so the aged sweep
+    # does not announce residue that no longer needs an owner's attention.
+    debts_reconciled = _reconcile_orphaned_debts(source_repo=source_repo)
     debts_escalated = _escalate_aged_debts()
     return ReapSweepResult(
         reaped=reaped,
@@ -333,9 +337,24 @@ def reap_orphan_worktrees(
         stale_metadata_pruned=stale_metadata_pruned,
         salvage_refused=salvage_refused,
         debts_escalated=debts_escalated,
+        debts_reconciled=debts_reconciled,
         worktrees_reconciled=reconciled,
         worktrees_surfaced=surfaced,
     )
+
+
+def _reconcile_orphaned_debts(*, source_repo: Path) -> int:
+    """Retire debts whose branch ref is gone; never fatal to the sweep."""
+    from services.git_integration_worker.cursor_sdk_branch_debt_reconcile import (
+        reconcile_open_branch_debts,
+    )
+
+    try:
+        report = reconcile_open_branch_debts(source_repo=source_repo, apply=True)
+    except Exception as exc:
+        logger.warning("branch debt reconcile sweep failed: %s", exc)
+        return 0
+    return sum(1 for row in report.verdicts if row.applied)
 
 
 def _escalate_aged_debts() -> int:
