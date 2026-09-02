@@ -259,6 +259,189 @@ def _ok_result() -> CdpGenerateResult:
     )
 
 
+def _ok_result_no_archive(*, body: str = "harvest body") -> CdpGenerateResult:
+    return CdpGenerateResult(
+        ok=True,
+        body=body,
+        execution_id="abcdef0123456789",
+        satellite_execution_id="sat-1",
+        prompt_uri="cortex://notes/system/threads/r-prompt.md",
+        picker_model="fable-5",
+        archive_uri=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_deliver_oversized_with_archive_posts_pointer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC-1 — prefer existing archive_uri; no sidecar write."""
+    from systems.frontier_consult import cdp_onbehalf_delivery as delivery
+
+    sidecar_calls: list[dict[str, object]] = []
+    posted_bodies: list[str] = []
+
+    async def fake_sidecar(**kwargs: object) -> None:
+        sidecar_calls.append(dict(kwargs))
+
+    async def fake_post(**kwargs: object) -> bool:
+        posted_bodies.append(str(kwargs.get("body")))
+        return True
+
+    huge = "x" * 170_000
+    result = CdpGenerateResult(
+        ok=True,
+        body=huge,
+        execution_id="b9357ba901234567",
+        satellite_execution_id="sat-1",
+        prompt_uri="cortex://notes/system/threads/r-prompt.md",
+        picker_model="fable-5",
+        archive_uri="cortex://notes/system/threads/cdp-ask-archive-existing.md",
+        content_proof_sha256="abc123sha256",
+    )
+
+    monkeypatch.setattr(delivery, "write_cdp_harvest_sidecar", fake_sidecar)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.post_cdp_turn",
+        fake_post,
+    )
+
+    ok = await deliver_cdp_result_turn(
+        result=result,
+        thread_id="9880",
+        to_agent="dispatch",
+        request_id="r-oversized-archive",
+    )
+    assert ok is True
+    assert sidecar_calls == []
+    assert len(posted_bodies) == 1
+    body = posted_bodies[0]
+    assert len(body) <= delivery.BUS_MAX_BODY_CHARS
+    assert "cortex://notes/system/threads/cdp-ask-archive-existing.md" in body
+    assert "abc123sha256" in body
+    assert huge not in body
+    assert "relocated to cortex" in body
+
+
+@pytest.mark.asyncio
+async def test_deliver_oversized_without_archive_writes_sidecar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC-2 — thread_sidecar_write then pointer citing returned uri+sha256."""
+    from systems.frontier_consult import cdp_onbehalf_delivery as delivery
+    from systems.frontier_consult.cdp_onbehalf_delivery import SidecarResult
+
+    sidecar_calls: list[dict[str, object]] = []
+    posted_bodies: list[str] = []
+
+    async def fake_sidecar(**kwargs: object) -> SidecarResult:
+        sidecar_calls.append(dict(kwargs))
+        return SidecarResult(
+            uri="cortex://notes/system/threads/9880-sidecar.md",
+            sha256="deadbeefsha256",
+            body_chars=len(str(kwargs.get("content"))),
+        )
+
+    async def fake_post(**kwargs: object) -> bool:
+        posted_bodies.append(str(kwargs.get("body")))
+        return True
+
+    huge = "y" * 170_000
+    result = _ok_result_no_archive(body=huge)
+
+    monkeypatch.setattr(delivery, "write_cdp_harvest_sidecar", fake_sidecar)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.post_cdp_turn",
+        fake_post,
+    )
+
+    ok = await deliver_cdp_result_turn(
+        result=result,
+        thread_id="9880",
+        to_agent="dispatch",
+        request_id="r-oversized-sidecar",
+    )
+    assert ok is True
+    assert len(sidecar_calls) == 1
+    assert sidecar_calls[0]["oversized"] is True
+    assert sidecar_calls[0]["content"] == huge
+    assert len(posted_bodies) == 1
+    body = posted_bodies[0]
+    assert len(body) <= delivery.BUS_MAX_BODY_CHARS
+    assert "cortex://notes/system/threads/9880-sidecar.md" in body
+    assert "deadbeefsha256" in body
+    assert huge not in body
+
+
+@pytest.mark.asyncio
+async def test_deliver_under_limit_inline_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC-3 — metadata headers then harvest inline, byte-for-byte."""
+    posted_bodies: list[str] = []
+
+    async def fake_post(**kwargs: object) -> bool:
+        posted_bodies.append(str(kwargs.get("body")))
+        return True
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.post_cdp_turn",
+        fake_post,
+    )
+    result = _ok_result_no_archive(body="harvest body")
+    ok = await deliver_cdp_result_turn(
+        result=result,
+        thread_id="5583",
+        to_agent="dispatch",
+        request_id="r-inline",
+    )
+    assert ok is True
+    assert len(posted_bodies) == 1
+    metadata = format_cdp_result_body(result)
+    assert posted_bodies[0] == f"{metadata}\n\nharvest body"
+
+
+@pytest.mark.asyncio
+async def test_deliver_oversized_sidecar_fail_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC-4 — sidecar write failed: no success post; DELIVERY FAILED terminal."""
+    from systems.frontier_consult import cdp_onbehalf_delivery as delivery
+
+    sidecar_calls: list[dict[str, object]] = []
+    subjects: list[str] = []
+
+    async def fake_sidecar(**kwargs: object) -> None:
+        sidecar_calls.append(dict(kwargs))
+        return None
+
+    async def fake_post(**kwargs: object) -> bool:
+        subjects.append(str(kwargs.get("subject")))
+        return False
+
+    huge = "z" * 170_000
+    result = _ok_result_no_archive(body=huge)
+
+    monkeypatch.setattr(delivery, "write_cdp_harvest_sidecar", fake_sidecar)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.post_cdp_turn",
+        fake_post,
+    )
+    monkeypatch.setattr(delivery.asyncio, "sleep", AsyncMock())
+
+    ok = await deliver_cdp_result_turn(
+        result=result,
+        thread_id="9880",
+        to_agent="dispatch",
+        request_id="r-sidecar-fail",
+    )
+    assert ok is False
+    assert len(sidecar_calls) == 1
+    assert all("cdp reply" not in s for s in subjects)
+    assert subjects[0].startswith("cdp DELIVERY FAILED —")
+    assert ONBEHALF_POST_FAILED_STALL in format_onbehalf_delivery_failed_body(result)
+
+
 @pytest.mark.asyncio
 async def test_deliver_retries_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
@@ -272,7 +455,7 @@ async def test_deliver_retries_then_succeeds(monkeypatch: pytest.MonkeyPatch) ->
         fake_post,
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.cdp_generate_worker.asyncio.sleep",
+        "systems.frontier_consult.cdp_onbehalf_delivery.asyncio.sleep",
         AsyncMock(),
     )
     ok = await deliver_cdp_result_turn(
@@ -303,12 +486,12 @@ async def test_deliver_terminal_delivery_failed_when_posts_false(
         fake_post,
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.cdp_generate_worker.asyncio.sleep",
+        "systems.frontier_consult.cdp_onbehalf_delivery.asyncio.sleep",
         AsyncMock(),
     )
     crit = MagicMock()
     monkeypatch.setattr(
-        "systems.frontier_consult.cdp_generate_worker.logger.critical",
+        "systems.frontier_consult.cdp_onbehalf_delivery.logger.critical",
         crit,
     )
     ok = await deliver_cdp_result_turn(
@@ -408,6 +591,7 @@ def test_cdp_result_subject_reconcile_abandoned_unverifiable() -> None:
         picker_model="opus-5",
         stall_stage="reconcile_abandoned_unverifiable",
         error="horizon unverifiable",
+        extras={"chat_url": "https://claude.ai/cowork/cse_abc"},
     )
     assert cdp_result_subject(result).startswith("cdp UNVERIFIED")
 

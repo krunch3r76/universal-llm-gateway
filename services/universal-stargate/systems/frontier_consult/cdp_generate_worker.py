@@ -20,7 +20,6 @@ from universal_logging import get_logger
 
 from .cdp_events import (
     CdpGenerateAdmitted,
-    CdpGenerateDeliveryFailed,
     CdpGenerateSubmitted,
     publish_cdp_kwargs,
 )
@@ -77,7 +76,6 @@ def format_cdp_result_body(result: CdpGenerateResult) -> str:
             lines.append(f"- archive_uri: `{result.archive_uri}`")
         if result.content_proof_uri:
             lines.append(f"- content_proof_uri: `{result.content_proof_uri}`")
-        lines.extend(["", result.body or "_empty harvest_"])
         return "\n".join(lines)
     heading = "UNVERIFIED" if cdp_result_unverified(result) else "FAILED"
     lines = [
@@ -293,66 +291,7 @@ def format_onbehalf_delivery_failed_body(result: CdpGenerateResult) -> str:
     return "\n".join(lines)
 
 
-async def deliver_cdp_result_turn(
-    *,
-    result: CdpGenerateResult,
-    thread_id: str,
-    to_agent: str,
-    request_id: str,
-    pointer_turn: int = 1,
-) -> bool:
-    """Post result with one retry; then terminal DELIVERY FAILED (fail-closed)."""
-    subject = cdp_result_subject(result)
-    body = format_cdp_result_body(result)
-    posted = await post_cdp_turn(
-        thread_id=thread_id,
-        to_agent=to_agent,
-        subject=subject,
-        body=body,
-        request_id=request_id,
-        pointer_turn=pointer_turn,
-    )
-    if posted:
-        return True
-    await asyncio.sleep(_POST_RETRY_SLEEP_S)
-    posted = await post_cdp_turn(
-        thread_id=thread_id,
-        to_agent=to_agent,
-        subject=subject,
-        body=body,
-        request_id=request_id,
-        pointer_turn=pointer_turn,
-    )
-    if posted:
-        return True
-    fail_subject = f"cdp DELIVERY FAILED — {result.execution_id[:8]}"
-    fail_body = format_onbehalf_delivery_failed_body(result)
-    final = await post_cdp_turn(
-        thread_id=thread_id,
-        to_agent=to_agent,
-        subject=fail_subject,
-        body=fail_body,
-        request_id=request_id,
-        pointer_turn=pointer_turn,
-    )
-    if not final:
-        logger.critical(
-            "cdp on-behalf DELIVERY FAILED post also failed "
-            "(bus unreachable residual): thread=%s execution_id=%s "
-            "stall_stage=%s request_id=%s",
-            thread_id,
-            result.execution_id,
-            ONBEHALF_POST_FAILED_STALL,
-            request_id,
-        )
-        publish_cdp_kwargs(
-            CdpGenerateDeliveryFailed,
-            request_id=request_id,
-            execution_id=result.execution_id,
-            thread_id=thread_id,
-            stall_stage=ONBEHALF_POST_FAILED_STALL,
-        )
-    return final
+from .cdp_onbehalf_delivery import deliver_cdp_result_turn  # noqa: E402, F401
 
 
 async def _emit_upstream_overload_friction(
