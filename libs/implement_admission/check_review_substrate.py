@@ -4,14 +4,32 @@ Callers (review-child spawn, layer G3/G4 diversity, panel Guard 3) compare
 ``independence_family`` outputs. Routing prefixes must never become family
 labels — unmeasured ids return ``unknown`` so a later inequality cannot
 certify a pair this module did not measure.
+
+``ConsultantIdentity`` / ``independently_measured`` are the (model, effort-rung)
+independence key: two seats are independent when their folded model identities
+differ, or when they are the same model at different effort rungs; unknown
+identity or unmeasured rung never certifies.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from claude_bundles.chat_model_match import (
+    normalize_picker_request,
+    parse_model_request,
+    sealed_ask_default_effort,
+)
+from cursor_capabilities import (
+    CURSOR_MODEL_CAPABILITIES,
+    default_variant,
+    effective_knobs,
+    effort_knob_name,
+)
+from effort_vocabulary import normalize_effort
 from model_id import ModelId
 
 # Code-lane standing default (decision:code-review-panel-cursor-substrate).
@@ -47,6 +65,38 @@ UNMEASURED_INDEPENDENCE_FAMILY = "unknown"
 # carry. First-party catalog: ``anthropic/claude-fable-5`` and
 # ``claude-fable-5`` / ``claude-opus-5`` capability cards.
 _ANTHROPIC_BARE_PREFIXES = ("claude", "fable", "opus", "sonnet", "haiku")
+
+# Identity token when no catalogued model matches. Must never equal a
+# substrate slug or a real bare id — a later ``!=`` must not certify it.
+UNKNOWN_MODEL_IDENTITY = "unknown"
+
+# Vendor-spelling fold: CDP picker slugs → cursor/API bare wire id (the
+# ``CURSOR_MODEL_CAPABILITIES`` key). One locus; ``normalize_picker_request``
+# owns the floating ``fable`` alias, this table owns spelling only.
+_IDENTITY_ALIASES: dict[str, str] = {
+    "fable-5.1": "claude-fable-5-1",
+    "fable-5": "claude-fable-5",
+    "opus-5": "claude-opus-5",
+    "sonnet-5": "claude-sonnet-5",
+    "haiku-4.5": "claude-haiku-4-5",
+}
+
+# Knob names that carry a reasoning-effort rung, in precedence order.
+_EFFORT_KNOB_KEYS: tuple[str, ...] = ("effort", "reasoning", "reasoning_effort")
+
+
+@dataclass(frozen=True, slots=True)
+class ConsultantIdentity:
+    """Independence key for one consultant seat: ``(model_identity, rung)``.
+
+    ``model_identity`` is the substrate-free, effort-free, alias-folded bare
+    model id (``claude-fable-5-1``), or ``"unknown"``. ``rung`` is a
+    ``normalize_effort`` token, or ``None`` when the seat exposes no effort
+    knob — a pair with a ``None`` rung on the same model is never independent.
+    """
+
+    model_identity: str
+    rung: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +187,105 @@ def independence_family(model: str) -> str:
     if bare.startswith("composer"):
         return "composer"
     return UNMEASURED_INDEPENDENCE_FAMILY
+
+
+def _bare_and_backend(model: str) -> tuple[str, str | None]:
+    """Return ``(bare_wire_id, backend_type)`` or ``("", None)`` on failure."""
+    raw = (model or "").strip()
+    if not raw:
+        return "", None
+    try:
+        parsed = ModelId.parse(raw)
+    except ValueError:
+        return "", None
+    bare = parsed.api_model_id.lower()
+    backend_type = parsed.backend_type
+    if backend_type == "cdp":
+        bare = normalize_picker_request(raw).lower()
+    if "__effort_" in bare:
+        bare = bare.partition("__effort_")[0]
+    return bare, backend_type
+
+
+def model_identity(model: str) -> str:
+    """Fold a routed model id to its catalogued bare wire identity.
+
+    Strips substrate prefixes, CDP picker aliases, cloud-proxy effort suffixes,
+    and trailing effort tokens, then maps vendor spelling via ``_IDENTITY_ALIASES``.
+    Returns ``UNKNOWN_MODEL_IDENTITY`` when parsing fails or the id is absent from
+    ``CURSOR_MODEL_CAPABILITIES`` — prefix heuristics are intentionally refused.
+    """
+    bare, _backend = _bare_and_backend(model)
+    if not bare:
+        return UNKNOWN_MODEL_IDENTITY
+    family, _suffix_effort = parse_model_request(bare)
+    folded = _IDENTITY_ALIASES.get(family, family)
+    if folded in CURSOR_MODEL_CAPABILITIES:
+        return folded
+    return UNKNOWN_MODEL_IDENTITY
+
+
+def consultant_rung(model: str, knobs: Mapping[str, str] | None = None) -> str | None:
+    """Return the normalized effort rung for one consultant seat, or ``None``.
+
+    Explicit effort-like knobs win over id suffixes and substrate defaults.
+    Cloud API paths and models without an effort knob fail closed (``None``).
+    Unknown catalog identity always yields ``None``.
+    """
+    bare, backend_type = _bare_and_backend(model)
+    if not bare or backend_type is None:
+        return None
+    _family, suffix_effort = parse_model_request(bare)
+    identity = model_identity(model)
+    if identity == UNKNOWN_MODEL_IDENTITY:
+        return None
+    knob_map = knobs or {}
+    value: str | None = None
+    for key in _EFFORT_KNOB_KEYS:
+        raw_knob = knob_map.get(key)
+        if raw_knob and str(raw_knob).strip():
+            value = str(raw_knob).strip()
+            break
+    if value is None and suffix_effort is not None:
+        value = suffix_effort
+    if value is None:
+        if backend_type == "cdp":
+            family, _ = parse_model_request(bare)
+            value = sealed_ask_default_effort(family)
+        elif backend_type == "cursor_sdk":
+            knob = effort_knob_name(identity)
+            if knob is None:
+                return None
+            value = effective_knobs(identity, {}).get(knob) or default_variant(
+                identity
+            ).get(knob)
+        elif backend_type == "cloud_api":
+            return None
+    return normalize_effort(value)
+
+
+def consultant_identity(
+    model: str, knobs: Mapping[str, str] | None = None
+) -> ConsultantIdentity:
+    """Pair the folded model identity with its measured effort rung."""
+    return ConsultantIdentity(model_identity(model), consultant_rung(model, knobs))
+
+
+def independently_measured(
+    left: ConsultantIdentity, right: ConsultantIdentity
+) -> bool:
+    """True when two seats differ by model identity or by effort rung on the same model.
+
+    ``UNKNOWN_MODEL_IDENTITY`` or an unmeasured rung (``None``) on either side
+    never certifies independence — the predicate is fail-closed.
+    """
+    if UNKNOWN_MODEL_IDENTITY in (left.model_identity, right.model_identity):
+        return False
+    if left.model_identity != right.model_identity:
+        return True
+    if left.rung is None or right.rung is None:
+        return False
+    return left.rung != right.rung
 
 
 def families_independently_measured(left: str, right: str) -> bool:
