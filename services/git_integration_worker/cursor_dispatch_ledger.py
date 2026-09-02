@@ -967,6 +967,10 @@ class CursorDispatchLedger:
         concurrency_posture: str | None = None,
         write_lease_slot_limit: int = 1,
         isolation_materialized: bool | None = None,
+        hop_seq: int | None = None,
+        hop_from: str | None = None,
+        hop_reason: str | None = None,
+        hop_declared: bool | None = None,
     ) -> CursorDispatchResponse | None:
         """Durable idempotency (F2). Returns cached admission on hit, None on first
         admitted insert, or a queued ticket when the write-lease is held.
@@ -999,6 +1003,23 @@ class CursorDispatchLedger:
             record_json = stamp_isolation_on_record_json(
                 record_json,
                 isolation_materialized=isolation_materialized,
+            )
+        hop_triplet = (hop_seq, hop_from, hop_reason)
+        if any(v is not None for v in hop_triplet):
+            if not all(v is not None for v in hop_triplet):
+                raise ValueError(
+                    "admit hop kwargs require hop_seq, hop_from, and hop_reason together"
+                )
+            from services.git_integration_worker.cursor_sdk_ledger_hop import (
+                stamp_hop_on_record_json,
+            )
+
+            record_json = stamp_hop_on_record_json(
+                record_json,
+                hop_seq=hop_seq,  # type: ignore[arg-type]
+                hop_from=hop_from,  # type: ignore[arg-type]
+                hop_reason=hop_reason,  # type: ignore[arg-type]
+                hop_declared=hop_declared,
             )
         writer_key = _resolve_lease_key(lease_key=lease_key, source_repo=source_repo)
         with self._connect() as conn:
@@ -1431,7 +1452,11 @@ class CursorDispatchLedger:
             )
 
     def merge_record_json(self, *, dispatch_id: str, patch: dict[str, Any]) -> None:
-        """Shallow-merge ``patch`` into the durable ``record_json`` blob."""
+        """Shallow-merge ``patch`` into the durable ``record_json`` blob.
+
+        R3 conductor hop reactor merges ``hop_successor``, ``hop_admit_error``,
+        and closeout ``hop_declared`` via ``merge_hop_patch`` or this method.
+        """
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
