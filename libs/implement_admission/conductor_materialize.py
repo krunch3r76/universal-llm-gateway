@@ -28,8 +28,17 @@ from implement_admission.materialize import MaterializedPacket, _extract_block
 from implement_admission.source_ref import parse_source_ref, todo_slug_from_ref
 
 _CONDUCTOR_USE_LINE = (
-    "Use the conductor skill — nest specialists; ¬ hand-code mechanical G-rows; "
-    "cost tier from this skill."
+    "Use the conductor skill — nest specialists; ¬ hand-code mechanical G-rows."
+)
+_SCORE_PLAY_SEAT_LINES = (
+    "- Enumerate · implement · drive: `cursor/composer-2.5` — omit `model=`; "
+    "only cursor_sdk seat.",
+    "- Intelligence (architecture, ranking, fork resolution): CDP "
+    "`cdp/opus-5`, `cdp/fable`.",
+    "- Composer enumerates and does not rank rival designs — write "
+    "`OPEN FORK:` and stop.",
+    "- BIND is one CDP turn; a second CDP turn on one row means ENUMERATE "
+    "was underspecified.",
 )
 _G_ROWS = G_ROWS
 
@@ -62,11 +71,14 @@ class ConductorMaterializeContext:
 def resolve_entry_gate(
     *,
     density_triage: str | None,
+    derived_from: str | None = None,
     fold_entry_gate: str | None = None,
 ) -> str:
     """Pick the G-row entry gate from a witness fold or sparse birth defaults."""
     if fold_entry_gate:
         return fold_entry_gate
+    if derived_from:
+        return "G2"
     triage = (density_triage or "").strip().lower()
     if triage == "mechanical":
         return "G5"
@@ -102,6 +114,7 @@ def load_conductor_context(
     stop_after = str(stop_raw).strip() if stop_raw else None
     entry_gate = resolve_entry_gate(
         density_triage=attrs.get("density_triage"),
+        derived_from=derived_from,
         fold_entry_gate=fold_entry_gate,
     )
     explicit_summon = summon_mode
@@ -159,6 +172,7 @@ def _render_scope(ctx: ConductorMaterializeContext) -> str:
 def _render_invariants(ctx: ConductorMaterializeContext) -> str:
     lines = [
         _CONDUCTOR_USE_LINE,
+        *list(_SCORE_PLAY_SEAT_LINES),
         "- DONE is rendered from witnesses; you hang witnesses, you do not write DONE.",
         "- Run to completion: admit authorizes landing this mission Lane-B branch on green.",
         "- Nest Composer for mechanical G-rows (`nest_under` this conductor dispatch_id).",
@@ -166,7 +180,9 @@ def _render_invariants(ctx: ConductorMaterializeContext) -> str:
         '- lane="B" — pass explicitly on nested mechanical legs.',
     ]
     if ctx.derived_from:
-        lines.append(f"- G1 skip note: derived_from edge exists → `{ctx.derived_from}`.")
+        lines.append(
+            f"- G1 CLOSED by derived_from:{ctx.derived_from}. Do not re-derive architecture."
+        )
     if ctx.density_triage:
         lines.append(f"- density_triage: {ctx.density_triage} (≠ implement_ready until G5).")
     return "\n".join(lines)
@@ -215,6 +231,7 @@ def _render_mcp_capabilities(ctx: ConductorMaterializeContext) -> str:
     return "\n".join(
         [
             "Use the `conductor` skill",
+            "Use runbook `score-play` — cortex://notes/runbooks/score-play.md",
             "Use the `work-item-seed-path` skill",
             "Use the `architecture-invariants` skill",
             "Use the `ulg-architecture` skill",

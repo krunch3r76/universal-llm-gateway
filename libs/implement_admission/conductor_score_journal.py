@@ -86,6 +86,12 @@ def render_sparse_scoreboard(
             "| ID | Artifact URI | What it is |",
             "|---|---|---|",
             f"| S1 | (overlay) | {_AFTER_SHIP_OVERLAY} |",
+            "| F1 | (pending) | G2 frame witness slot |",
+            "| S7 | (pending) | G2 frame witness slot |",
+            "| S4b | (pending) | G3 spec witness slot |",
+            "| S9 | (pending) | G3 spec witness slot |",
+            "| G4 | (pending) | G4 skeptic verdict slot |",
+            "| L1 | (pending) | G6 land sha slot |",
             "",
         ]
     )

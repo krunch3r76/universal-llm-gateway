@@ -54,6 +54,74 @@ def test_resolve_entry_gate_g5_mechanical_without_fold() -> None:
     assert resolve_entry_gate(density_triage="mechanical") == "G5"
 
 
+def test_resolve_entry_gate_derived_from_skips_g1() -> None:
+    assert (
+        resolve_entry_gate(
+            density_triage="judgment_required",
+            derived_from="document:harvest-architecture",
+        )
+        == "G2"
+    )
+
+
+def test_resolve_entry_gate_fold_wins_over_derived_from() -> None:
+    assert (
+        resolve_entry_gate(
+            density_triage="judgment_required",
+            derived_from="document:harvest-architecture",
+            fold_entry_gate="G4",
+        )
+        == "G4"
+    )
+
+
+def test_sparse_scoreboard_seeds_witness_slots() -> None:
+    body = render_sparse_scoreboard(
+        source_ref="todo:foo",
+        slug="foo",
+        entry_gate="G1",
+        stop_after=None,
+    )
+    for slot in ("F1", "S7", "S4b", "S9", "G4", "L1"):
+        assert f"| {slot} | (pending) |" in body
+
+
+def test_materialize_derived_from_entry_gate_and_invariants(tmp_path: Path) -> None:
+    files_root = tmp_path / "cortex"
+    out_dir = tmp_path / "packets"
+    mp = materialize_conductor(
+        "todo:derived-from-skip",
+        cortex=_StubCortex({"derived_from": "document:8978-architecture"}),
+        out_dir=out_dir,
+        files_root=files_root,
+    )
+    assert "Entry gate: G2" in mp.text
+    assert (
+        "G1 CLOSED by derived_from:document:8978-architecture. "
+        "Do not re-derive architecture."
+    ) in mp.text
+    tip = read_tip("derived-from-skip", files_root=files_root)
+    assert tip is not None
+    assert "**Entry gate:** G2" in tip[0]
+
+
+def test_materialize_score_play_seat_language_no_tier_pointer(tmp_path: Path) -> None:
+    out_dir = tmp_path / "packets"
+    mp = materialize_conductor(
+        "todo:layer-conductor-unify",
+        cortex=_StubCortex(),
+        out_dir=out_dir,
+    )
+    assert "cost tier" not in mp.text.lower()
+    assert "tier table" not in mp.text.lower()
+    assert "cursor-model-economics" not in mp.text
+    assert "`cdp/opus-5`" in mp.text
+    assert "`cdp/fable`" in mp.text
+    assert "`OPEN FORK:`" in mp.text
+    assert "score-play" in mp.text
+    assert "runbook:score-play" not in mp.text  # inline URI, not a pointer phrase
+
+
 def test_materialize_conductor_packet_shape(tmp_path: Path) -> None:
     files_root = tmp_path / "cortex"
     out_dir = tmp_path / "packets"
