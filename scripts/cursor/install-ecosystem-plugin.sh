@@ -61,6 +61,16 @@ if [[ ! -x "$PYTHON" ]]; then
 fi
 SOURCE_REPO="${GIT_INTEGRATION_SOURCE_REPO:-/mnt/torus/projects/universal-llm-gateway}"
 SOURCE_REPO="$(cd "$SOURCE_REPO" 2>/dev/null && pwd || echo "$SOURCE_REPO")"
+PATCH_BLOCKS="$SOURCE_REPO/scripts/cursor/patch_ecosystem_policy_blocks.py"
+[[ -f "$PATCH_BLOCKS" ]] || PATCH_BLOCKS="$ULG_ROOT/scripts/cursor/patch_ecosystem_policy_blocks.py"
+[[ -f "$PATCH_BLOCKS" ]] || die "patch_ecosystem_policy_blocks.py missing"
+CONSULT_ROUTING_SOT="$PLUGIN_SRC/skills/consult-routing/SKILL.md"
+if [[ -f "$CONSULT_ROUTING_SOT" ]]; then
+  echo "==> Checking workflow-registry block in repo consult-routing SoT"
+  if ! "$PYTHON" "$PATCH_BLOCKS" --check --skill "$CONSULT_ROUTING_SOT"; then
+    die "consult-routing/SKILL.md workflow-registry block drift-stale — run: $PYTHON $PATCH_BLOCKS --skill $CONSULT_ROUTING_SOT"
+  fi
+fi
 # SOT parity must run against the live source checkout: gitignored life_local and
 # .cursor/skills bodies exist on that disk, and validate_skill_catalog must load
 # catalog.py from the same tree (worktree libs pin _REPO_ROOT to the arc checkout).
@@ -155,9 +165,6 @@ done < "$CENSUS"
 
 [[ "$MISSING" -eq 0 ]] || die "$MISSING skill(s) missing from census"
 
-PATCH_BLOCKS="$SOURCE_REPO/scripts/cursor/patch_ecosystem_policy_blocks.py"
-[[ -f "$PATCH_BLOCKS" ]] || PATCH_BLOCKS="$ULG_ROOT/scripts/cursor/patch_ecosystem_policy_blocks.py"
-[[ -f "$PATCH_BLOCKS" ]] || die "patch_ecosystem_policy_blocks.py missing"
 CONSULT_ROUTING_SKILL="$STAGING/skills/consult-routing/SKILL.md"
 if [[ -f "$CONSULT_ROUTING_SKILL" ]]; then
   echo "==> Patching workflow-registry block in consult-routing"

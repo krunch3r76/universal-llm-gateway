@@ -16,6 +16,9 @@ from uuid import uuid4
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from git_integrate.events import register_uds_publisher
+from implement_admission.workflow_registry import (
+    assert_workflow_registry_boot_conformance,
+)
 from universal_logging import get_logger
 
 from services.git_integration_worker.admission import WorkAdmissionController
@@ -106,6 +109,7 @@ def _resolve_version() -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    assert_workflow_registry_boot_conformance()
     path_report = apply_toolchain_path()
     app.state.toolchain_path = path_report
     register_uds_publisher(publish_lib_signal)

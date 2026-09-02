@@ -9,14 +9,17 @@ import pytest
 
 from implement_admission.routing import load_route_policy
 from implement_admission.workflow_registry import (
+    AUTO_JUDGMENT_WORKFLOW,
     AUTO_OMIT_CONTRACTS,
     CHECK_REVIEW_WORKFLOW,
     MECHANICAL_WORKFLOW,
+    assert_workflow_registry_boot_conformance,
     embed_workflow_registry_block,
     load_workflow_registry,
     parse_workflow_registry,
     registry_errors,
     render_workflow_registry_block,
+    verify_seat_default_parity,
     verify_workflow_registry_conformance,
     verify_workflow_registry_drift,
 )
@@ -30,6 +33,35 @@ pytestmark = pytest.mark.offline
 
 def test_live_file_conformance() -> None:
     assert verify_workflow_registry_conformance() == []
+
+
+def test_verify_seat_default_parity_live() -> None:
+    assert verify_seat_default_parity() == []
+
+
+def test_r9_seat_default_mismatch(tmp_path: Path) -> None:
+    policy = _base_policy()
+    policy["workflows"][AUTO_JUDGMENT_WORKFLOW]["model"] = "cursor/gpt-5.6-terra"
+    agents = tmp_path / "agents.yaml"
+    agents.write_text(
+        "profiles:\n  cursor/sdk:\n    default_model: cursor/composer-2.5\n",
+        encoding="utf-8",
+    )
+    errors = verify_seat_default_parity(policy=policy, agents_path=agents)
+    assert any("R9:" in e and "cursor/composer-2.5" in e for e in errors)
+
+
+def test_assert_workflow_registry_boot_conformance_passes() -> None:
+    assert_workflow_registry_boot_conformance()
+
+
+def test_committed_skill_block_is_drift_free() -> None:
+    skill = (
+        Path(__file__).resolve().parents[2]
+        / "cursor-plugins/ulg-ecosystem/skills/consult-routing/SKILL.md"
+    )
+    assert skill.is_file()
+    assert verify_workflow_registry_drift(skill) is True
 
 
 def test_load_live_registry_slots_and_roaming() -> None:
@@ -96,7 +128,9 @@ def test_r2_invalid_seat() -> None:
     policy = _base_policy()
     policy["workflows"]["investigate"]["seat"] = "unknown-seat"
     errors = registry_errors(policy)
-    assert any("workflows.investigate.seat" in e and "unknown-seat" in e for e in errors)
+    assert any(
+        "workflows.investigate.seat" in e and "unknown-seat" in e for e in errors
+    )
 
 
 def test_r3_invalid_model_for_cursor_sdk_seat() -> None:
@@ -138,7 +172,10 @@ def test_r5_allowed_workflows_unknown_slot() -> None:
     policy = _base_policy()
     policy["models"]["composer-2.5"]["allowed_workflows"] = ["ghost-slot"]
     errors = registry_errors(policy)
-    assert any("allowed_workflows references unknown workflow 'ghost-slot'" in e for e in errors)
+    assert any(
+        "allowed_workflows references unknown workflow 'ghost-slot'" in e
+        for e in errors
+    )
 
 
 def test_r6_deprecated_model_without_allowed_workflow() -> None:
@@ -156,7 +193,9 @@ def test_r7_mechanical_workflow_required() -> None:
     policy = _base_policy()
     del policy["workflows"][MECHANICAL_WORKFLOW]
     errors = registry_errors(policy)
-    assert any(f"workflows must include {MECHANICAL_WORKFLOW!r} slot" in e for e in errors)
+    assert any(
+        f"workflows must include {MECHANICAL_WORKFLOW!r} slot" in e for e in errors
+    )
 
 
 def test_r8_contract_effort_missing_block() -> None:
@@ -202,9 +241,12 @@ def test_falsifier_contract_effort_yaml_without_wire_map_edit() -> None:
     reg = parse_workflow_registry(policy)
     out = resolve_desired_effort(None, contract="answer", registry=reg)
     assert out["resolved_effort"] == "high"
-    assert resolve_desired_effort(None, contract="implement", registry=reg)[
-        "resolved_effort"
-    ] == "medium"
+    assert (
+        resolve_desired_effort(None, contract="implement", registry=reg)[
+            "resolved_effort"
+        ]
+        == "medium"
+    )
 
 
 def test_render_workflow_registry_block_lists_live_slots() -> None:
@@ -230,6 +272,8 @@ def test_embed_and_drift_roundtrip(tmp_path: Path) -> None:
 
 def test_workflow_registry_drift_fails_on_divergence(tmp_path: Path) -> None:
     skill = tmp_path / "SKILL.md"
-    block = render_workflow_registry_block().replace("auto_judgment", "auto_judgment-stale")
+    block = render_workflow_registry_block().replace(
+        "auto_judgment", "auto_judgment-stale"
+    )
     skill.write_text(f"# skill\n\n{block}\n", encoding="utf-8")
     assert verify_workflow_registry_drift(skill) is False

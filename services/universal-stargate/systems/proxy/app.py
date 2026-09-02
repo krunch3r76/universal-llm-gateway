@@ -7,6 +7,9 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from implement_admission.workflow_registry import (
+    assert_workflow_registry_boot_conformance,
+)
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from universal_logging import get_logger
 
@@ -22,13 +25,13 @@ from systems.federation.common.middleware import (
 from systems.frontier_consult.densify_routes import (
     densify_router as frontier_consult_densify_router,
 )
+from systems.frontier_consult.life_intent_routes import life_intent_router
 from systems.frontier_consult.route import (
     frontier_router as frontier_consult_frontier_router,
 )
 from systems.frontier_consult.route import (
     implement_router as frontier_consult_implement_router,
 )
-from systems.frontier_consult.life_intent_routes import life_intent_router
 from systems.frontier_consult.route import (
     team_router as frontier_consult_team_router,
 )
@@ -147,6 +150,7 @@ async def lifespan(app: FastAPI):
 
     # Startup
     logger.info("🔍 Lifespan: Starting startup phase...")
+    assert_workflow_registry_boot_conformance()
     proxy = init_proxy(_federation_config)
     shutdown_reason = "unknown"
 

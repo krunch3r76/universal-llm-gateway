@@ -8,6 +8,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import yaml
 from contract_vocab import CANONICAL_CONTRACTS
 from cursor_capabilities import CURSOR_MODEL_CAPABILITIES, canonical_cursor_bare_id
 from effort_vocabulary import WIRE_LADDER
@@ -15,9 +16,17 @@ from model_id import ModelId
 
 from implement_admission.routing import default_policy_path, load_route_policy
 
+_ULG_ROOT = Path(__file__).resolve().parents[2]
+_DEFAULT_AGENTS_PATH = _ULG_ROOT / "config" / "agents.yaml"
+_CONSULT_ROUTING_SKILL_SOT = (
+    _ULG_ROOT / "cursor-plugins/ulg-ecosystem/skills/consult-routing/SKILL.md"
+)
+
 AUTO_OMIT_CONTRACTS: frozenset[str] = frozenset(CANONICAL_CONTRACTS) | {"light-bounded"}
 MECHANICAL_WORKFLOW = "mechanical_implement"
 CHECK_REVIEW_WORKFLOW = "check_review"
+AUTO_JUDGMENT_WORKFLOW = "auto_judgment"
+_CURSOR_SDK_SEAT_KEY = "cursor/sdk"
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,7 +138,9 @@ def registry_errors(policy: dict[str, Any]) -> list[str]:
             try:
                 bare = canonical_cursor_bare_id(model.strip())
             except ValueError as exc:
-                errors.append(f"workflows.{slug}.model={model!r} bare id invalid: {exc}")
+                errors.append(
+                    f"workflows.{slug}.model={model!r} bare id invalid: {exc}"
+                )
                 bare = None
             if bare is not None and bare not in CURSOR_MODEL_CAPABILITIES:
                 errors.append(
@@ -264,9 +275,7 @@ def registry_errors(policy: dict[str, Any]) -> list[str]:
                 continue
             ckey = contract.strip().lower()
             if ckey not in CANONICAL_CONTRACTS:
-                errors.append(
-                    f"contract_effort.{ckey!r} is not a canonical contract"
-                )
+                errors.append(f"contract_effort.{ckey!r} is not a canonical contract")
             if not isinstance(effort, str) or not effort.strip():
                 errors.append(f"contract_effort.{ckey} must be a non-empty string")
                 continue
@@ -278,9 +287,7 @@ def registry_errors(policy: dict[str, Any]) -> list[str]:
             seen_effort.add(ckey)
         for contract in CANONICAL_CONTRACTS:
             if contract not in seen_effort:
-                errors.append(
-                    f"contract {contract!r} missing from contract_effort"
-                )
+                errors.append(f"contract {contract!r} missing from contract_effort")
 
     return errors
 
@@ -339,10 +346,77 @@ def load_workflow_registry(path: Path | None = None) -> WorkflowRegistry:
     return parse_workflow_registry(load_route_policy(policy_path))
 
 
-def verify_workflow_registry_conformance(*, policy_path: Path | None = None) -> list[str]:
+def default_agents_path() -> Path:
+    """Return the repo ``config/agents.yaml`` path."""
+    return _DEFAULT_AGENTS_PATH
+
+
+def verify_seat_default_parity(
+    *,
+    policy: dict[str, Any] | None = None,
+    agents_path: Path | None = None,
+) -> list[str]:
+    """R9 — ``agents.yaml`` ``cursor/sdk.default_model`` == ``workflows.auto_judgment.model``."""
+    errors: list[str] = []
+    loaded = policy if policy is not None else load_route_policy()
+    workflows = loaded.get("workflows") or {}
+    auto = workflows.get(AUTO_JUDGMENT_WORKFLOW)
+    if not isinstance(auto, dict):
+        errors.append(
+            "R9: workflows.auto_judgment missing — cannot verify seat default parity"
+        )
+        return errors
+    expected_raw = auto.get("model")
+    if not isinstance(expected_raw, str) or not expected_raw.strip():
+        errors.append("R9: workflows.auto_judgment.model must be a non-empty string")
+        return errors
+    expected = expected_raw.strip()
+
+    path = agents_path or default_agents_path()
+    if not path.is_file():
+        errors.append(f"R9: agents.yaml not found at {path}")
+        return errors
+    with path.open(encoding="utf-8") as fh:
+        agents = yaml.safe_load(fh) or {}
+    profiles = agents.get("profiles") or {}
+    seat_entry = profiles.get(_CURSOR_SDK_SEAT_KEY)
+    if not isinstance(seat_entry, dict):
+        errors.append(f"R9: agents.yaml profiles.{_CURSOR_SDK_SEAT_KEY} missing")
+        return errors
+    seat_default = seat_entry.get("default_model")
+    if not isinstance(seat_default, str) or not seat_default.strip():
+        errors.append(
+            f"R9: agents.yaml profiles.{_CURSOR_SDK_SEAT_KEY}.default_model missing"
+        )
+        return errors
+    if seat_default.strip() != expected:
+        errors.append(
+            f"R9: agents.yaml profiles.{_CURSOR_SDK_SEAT_KEY}.default_model="
+            f"{seat_default.strip()!r} != workflows.auto_judgment.model={expected!r}"
+        )
+    return errors
+
+
+def verify_workflow_registry_conformance(
+    *, policy_path: Path | None = None
+) -> list[str]:
     """Conformance gate — returns error strings (empty when live file is valid)."""
     path = policy_path or default_policy_path()
-    return registry_errors(load_route_policy(path))
+    policy = load_route_policy(path)
+    errors = registry_errors(policy)
+    errors.extend(verify_seat_default_parity(policy=policy))
+    return errors
+
+
+def assert_workflow_registry_boot_conformance(
+    *, policy_path: Path | None = None
+) -> None:
+    """Deploy-time refusal — raise when the live registry or R9 parity is invalid."""
+    errors = verify_workflow_registry_conformance(policy_path=policy_path)
+    if errors:
+        raise ValueError(
+            "workflow registry boot conformance failed:\n" + "\n".join(errors)
+        )
 
 
 _WORKFLOW_REGISTRY_MARKER_START = "<!-- workflow-registry:v1:start -->"
@@ -383,7 +457,9 @@ def render_workflow_registry_block(policy: dict[str, Any] | None = None) -> str:
         if isinstance(entry, dict) and entry.get("roaming")
     ]
     if roaming:
-        lines.extend(["", "**Roaming bare ids:** " + ", ".join(f"`{b}`" for b in roaming)])
+        lines.extend(
+            ["", "**Roaming bare ids:** " + ", ".join(f"`{b}`" for b in roaming)]
+        )
     effort = loaded.get("contract_effort") or {}
     if isinstance(effort, dict) and effort:
         lines.extend(
@@ -419,7 +495,9 @@ def verify_workflow_registry_drift(
     return embedded.strip() == expected.strip()
 
 
-def embed_workflow_registry_block(text: str, policy: dict[str, Any] | None = None) -> str:
+def embed_workflow_registry_block(
+    text: str, policy: dict[str, Any] | None = None
+) -> str:
     """Replace or insert the generated workflow-registry block in skill markdown."""
     block = render_workflow_registry_block(policy)
     start = text.find(_WORKFLOW_REGISTRY_MARKER_START)
