@@ -219,10 +219,17 @@ foreign WIP. ``tree_residue: N`` counts dirty paths not in that set. Commit
 is disclosure on closeout, not a propagate/restart/done gate; ``deferred:`` stays
 legal forever.
 
-## Land = merge, never copy (operator bind 2026-09-02)
+## Land = merge, never copy (operator bind a:29557, re-bound 2026-09-02)
 
 `∀ land(lane_B): git merge cursor-sdk/lane-{thread}` — FF when master is clean,
 merge commit with explicit conflict resolution when it is not.
+
+Authority: **a:29557** (`confirmed`, `user_statement`, 2026-08-15, ring
+agent-bus:7281) — *"lane work reaches master by MERGING the lane branch … not by
+`git checkout <branch> -- <paths>` + commit on the shared master checkout."*
+That bind lived only as an assertion on an unrelated todo, so it never reached
+this skill or the resident kernel and the copy shape recurred twice more
+(arc 9912 R2/R3). It is doctrine here now.
 
 **Copies are not lands.** `git checkout <branch> -- <paths>`, `cherry-pick`, and
 hand-retyping lane content all put the right bytes on master while failing the
@@ -244,6 +251,13 @@ two things a land is for:
 
 Legacy copy-lands are reconciled by merging the lane afterwards — content is
 already identical, so the merge is trivial and records the missing ancestry.
+
+**Do not reach for `git_land` to land a lane branch.** `validate_land` /
+`validate_integrate` compute `expected_branch = f"arc/{arc}"` and reject
+`cursor-sdk/lane-*` outright (a:29587), which is what pushes seats into copy
+shapes. Plain `git merge` from the shared checkout is the ordinary path;
+`git_land` needs an `arc/<slug>` worktree minted from the lane branch first and
+is reserved for operator-gated arc lands (§ `git_*` MCP).
 
 Ground: arc 9912 — R2 landed by `cherry-pick` and R3 by `git checkout lane --`,
 which clobbered an uncommitted attended-in-flight block in

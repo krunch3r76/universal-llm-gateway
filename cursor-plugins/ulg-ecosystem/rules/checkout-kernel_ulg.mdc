@@ -21,7 +21,7 @@ repo timestamps / `recent_commits` are low-confidence fallback.
 
 `land(lane_B) ⇒ git merge cursor-sdk/lane-{thread}` — `checkout <branch> -- <paths>` and `cherry-pick` are
 **copies, not lands**: they clobber dirty peer WIP with no conflict and leave the branch unmerged (branch debt
-on shipped work). `merge_blocked ⇒ reconcile`, never route around git (arc 9912, 2026-09-02).
+on shipped work). `merge_blocked ⇒ reconcile`, never route around git; `git_land` is `arc/*`-only. Bind a:29557.
 
 ## Lanes
 
