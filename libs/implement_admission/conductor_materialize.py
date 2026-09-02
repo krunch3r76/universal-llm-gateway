@@ -204,6 +204,20 @@ def _render_invariants(ctx: ConductorMaterializeContext) -> str:
         "- Nest Composer for mechanical G-rows (`nest_under` this conductor dispatch_id).",
         "- Forward-only score mutation; journal every tip write.",
         '- lane="B" — pass explicitly on nested mechanical legs.',
+        (
+            "- Per-G-row hop (binding): at each gated G-row close with no designed stop "
+            "owed, append the score journal, write the hop CHECKPOINT on this worker "
+            "thread (Anchor · Hop · Mission · Rows · In-flight · Judgment · "
+            "Next-pickup · NEXT_ADMIT · RESUME footer), then end this dispatch with "
+            "`stop: ROW_HOP` as the last line of your closeout. Do NOT call "
+            "team_dispatch with reuse_thread=<this thread> — it is refused while you "
+            "are live (422 CURSOR_WORKER_THREAD_OCCUPIED, holder = you). The substrate "
+            "admits your successor on this same thread and Lane-B checkout after your "
+            "row goes terminal. ROW_HOP is not a pause and not a page; the mission "
+            "continues under this admit. Owed stops win: stop_after ⇒ ROW_PINNED; "
+            "attended G3→G5 ⇒ SCORE_RESURFACE + ROW_PINNED; a live nested child "
+            "forbids the hop — harvest first."
+        ),
     ]
     if ctx.derived_from:
         lines.append(
@@ -322,6 +336,8 @@ def _render_packet(ctx: ConductorMaterializeContext) -> str:
 CLOSEOUT JSON with status, G-row progress, scoreboard tip sha, journal record id.
 Include recon_method when breadth recon was owed.
 Declare land_disposition on Lane-B branch retirement.
+Designed stop tokens (last lines of final message when owed): stop: ROW_HOP | ROW_PINNED | HOLD_MERGE | OPERATOR_GATE | PARKED_TRANSPORT | DONE
+On ROW_HOP closeout include hop_seq: <n> as the last line after stop: ROW_HOP.
 </output_format>
 
 <corpus>

@@ -622,6 +622,7 @@ def _resolve_prompt(req: CursorDispatchRequest, source_repo: Path) -> str:
         dispatch_id=req.dispatch_id,
         has_packet_path=req.packet_path is not None,
         caller_agent=req.caller_agent,
+        thread_id=req.thread_id,
         hop_seq=req.hop_seq,
         hop_from=req.hop_from,
         hop_reason=req.hop_reason,

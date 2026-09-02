@@ -101,6 +101,24 @@ _CONDUCTOR_RUN_TO_COMPLETION_TEMPLATE = (
     "land on green."
 )
 
+_CONDUCTOR_HOP_TEMPLATE = (
+    "CONDUCTOR HOP (mandatory): You are hop {hop_seq} of this mission on worker thread "
+    "{thread_id}{lineage}. You have NO memory of earlier hops: before acting, read the "
+    "scoreboard tip, its journal, and the latest CHECKPOINT on thread {thread_id}; rows "
+    "the fold shows DONE are done -- attach missing witnesses, never re-derive. Drive from "
+    "the entry gate. When the current gated G-row closes (its witness hangs) and no designed "
+    "stop is owed, do exactly this, in order: (1) append the score journal; (2) write the "
+    "hop CHECKPOINT as a tip supersede on thread {thread_id} (Anchor, Hop, Mission, Rows, "
+    "In-flight, Judgment, Next-pickup, NEXT_ADMIT, RESUME footer); (3) end this dispatch "
+    "with `stop: ROW_HOP` and `hop_seq: {hop_seq}` as the last lines of your final message. "
+    "Do NOT call team_dispatch with reuse_thread={thread_id} -- while you are live it is "
+    "refused (422 CURSOR_WORKER_THREAD_OCCUPIED, holder = you). The substrate admits your "
+    "successor on this thread after your row goes terminal. ROW_HOP ends only this dispatch, "
+    "never the mission: no ack, no reply, no page. A live nested child forbids the hop -- "
+    "harvest it first (W3). Owed stops win over ROW_HOP: stop_after => ROW_PINNED; attended "
+    "G3->G5 => SCORE_RESURFACE + ROW_PINNED; named hold => HOLD_MERGE; G6 landed => DONE."
+)
+
 _CONDUCTOR_ATTENDED_RESURFACE_TEMPLATE = (
     "CONDUCTOR ATTENDED RESURFACE (mandatory): summon_mode is attended — the "
     "summoning IDE chat is live. At G3→G5: post SCORE_RESURFACE to "
@@ -297,6 +315,7 @@ def resolve_prompt_preamble(
     dispatch_id: str | None = None,
     has_packet_path: bool = False,
     caller_agent: str | None = None,
+    thread_id: str | None = None,
     hop_seq: int | None = None,
     hop_from: str | None = None,
     hop_reason: str | None = None,
@@ -319,10 +338,10 @@ def resolve_prompt_preamble(
     every G-row and landing on green without an interim plan/merge pause
     (friction 29694/29693).
 
-    ``hop_seq`` / ``hop_from`` / ``hop_reason`` are wired through for R5 hop
-    preamble stamping; R4 does not yet render them into the prefix text.
+    ``thread_id`` / ``hop_seq`` / ``hop_from`` stamp the conductor hop preamble
+    when the admit is a Lane-B conductor packet (bind ``a:31807`` §2.4).
     """
-    del hop_seq, hop_from, hop_reason
+    del hop_reason
     contract = (handoff_contract or inferred_contract or "consult").lower()
     if prompt_preamble:
         preamble = prompt_preamble.strip()
@@ -370,6 +389,23 @@ def resolve_prompt_preamble(
             )
         else:
             parts.append(_CONDUCTOR_AWAY_SCORE_RATIFY_PREAMBLE)
+        if thread_id:
+            effective_hop_seq = hop_seq if hop_seq is not None else 1
+            if hop_from:
+                lineage = (
+                    f" (predecessor dispatch {hop_from} is terminal; "
+                    f"your dispatch_id {dispatch_id} supersedes it — "
+                    f"nest_under={dispatch_id}, never {hop_from})"
+                )
+            else:
+                lineage = " (first dispatch of this mission)"
+            parts.append(
+                _CONDUCTOR_HOP_TEMPLATE.format(
+                    hop_seq=effective_hop_seq,
+                    thread_id=thread_id,
+                    lineage=lineage,
+                )
+            )
     if (
         contract not in _REASONING_POSTURE_SKIP_CONTRACTS
         and not _already_invokes_reasoning_posture(prompt_preamble, existing_text)

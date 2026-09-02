@@ -273,3 +273,58 @@ def test_conductor_run_to_completion_fires_on_message_body_marker() -> None:
     )
     assert "CONDUCTOR RUN TO COMPLETION" in text
     assert "nest_under=" + dispatch_id in text
+
+
+def test_conductor_hop_preamble_first_spawn() -> None:
+    dispatch_id = "hop-dispatch-1"
+    thread_id = "9968"
+    text = resolve_prompt_preamble(
+        handoff_contract="light-bounded",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        dispatch_id=dispatch_id,
+        has_packet_path=True,
+        thread_id=thread_id,
+        hop_seq=1,
+    )
+    assert "CONDUCTOR HOP (mandatory)" in text
+    assert f"You are hop 1 of this mission on worker thread {thread_id}" in text
+    assert "first dispatch of this mission" in text
+    assert f"reuse_thread={thread_id}" in text
+    assert "stop: ROW_HOP" in text
+    assert "hop_seq: 1" in text
+
+
+def test_conductor_hop_preamble_successor_lineage() -> None:
+    dispatch_id = "hop-dispatch-2"
+    predecessor = "hop-dispatch-1"
+    thread_id = "9968"
+    text = resolve_prompt_preamble(
+        handoff_contract="light-bounded",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        dispatch_id=dispatch_id,
+        has_packet_path=True,
+        thread_id=thread_id,
+        hop_seq=2,
+        hop_from=predecessor,
+    )
+    assert "CONDUCTOR HOP (mandatory)" in text
+    assert f"You are hop 2 of this mission on worker thread {thread_id}" in text
+    assert f"predecessor dispatch {predecessor} is terminal" in text
+    assert f"nest_under={dispatch_id}, never {predecessor}" in text
+    assert "hop_seq: 2" in text
+
+
+def test_conductor_hop_preamble_absent_without_thread_id() -> None:
+    text = resolve_prompt_preamble(
+        handoff_contract="light-bounded",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        dispatch_id="d1",
+        has_packet_path=True,
+    )
+    assert "CONDUCTOR HOP" not in text
