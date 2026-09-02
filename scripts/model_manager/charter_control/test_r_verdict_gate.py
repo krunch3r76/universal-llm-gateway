@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from scripts.model_manager.charter_control.r_verdict_gate import (
-    RGateAction,
     ConsultProvenance,
+    RGateAction,
     consult_provenance_from_r_admit,
     format_consult_provenance_md,
     parse_r_verdict,

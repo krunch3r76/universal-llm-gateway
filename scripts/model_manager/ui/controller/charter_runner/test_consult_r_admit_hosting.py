@@ -9,19 +9,19 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from scripts.model_manager.ui.controller.charter_runner.checkpoint_schema import (
-    parse_checkpoint,
+from scripts.model_manager.charter_control.r_verdict_gate import (
+    consult_provenance_from_r_admit,
 )
 from scripts.model_manager.ui.controller.charter_runner.admission import (
     evaluate_root,
+)
+from scripts.model_manager.ui.controller.charter_runner.checkpoint_schema import (
+    parse_checkpoint,
 )
 from scripts.model_manager.ui.controller.charter_runner.executor_defaults import (
     consult_handoff_body,
     consult_host_generate_body,
     r_admit_consult_generate_body,
-)
-from scripts.model_manager.charter_control.r_verdict_gate import (
-    consult_provenance_from_r_admit,
 )
 
 _FIXTURE_J = """\
@@ -402,11 +402,11 @@ async def test_harvest_cdp_commits_model_and_effort(
         _fake_commit,
     )
 
-    from scripts.model_manager.ui.controller.charter_runner.harvest_cdp import (
-        _maybe_commit_todo_keyed_record,
-    )
     from scripts.model_manager.ui.controller.charter_runner.consult_lane import (
         ConsultProvenanceRecord,
+    )
+    from scripts.model_manager.ui.controller.charter_runner.harvest_cdp import (
+        _maybe_commit_todo_keyed_record,
     )
 
     record = ConsultProvenanceRecord(
@@ -482,8 +482,8 @@ def test_tick_admits_r_admit_consult_generate_wire(
     from scripts.model_manager.ui.controller.charter_runner import (
         dispatch_client as dc,
     )
-    from scripts.model_manager.ui.controller.charter_runner import r_corpus_sha as rcs
     from scripts.model_manager.ui.controller.charter_runner import kernel as tl
+    from scripts.model_manager.ui.controller.charter_runner import r_corpus_sha as rcs
     from scripts.model_manager.ui.controller.charter_runner import window_log as wl
     from scripts.model_manager.ui.controller.charter_runner.admission import CapStore
     from scripts.model_manager.ui.controller.shutdown_gate import ManageShutdownGate

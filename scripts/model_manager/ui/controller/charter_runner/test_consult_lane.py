@@ -814,7 +814,6 @@ async def test_tip_declared_r_admit_queues_under_r_admit_despite_judgment_gap_ro
         EnvSnapshot,
     )
     from scripts.model_manager.ui.controller.charter_runner.root_ledger import (
-        RootLedgerRow,
         SeedConfirm,
         open_default_ledger,
         seed_from_confirm,
