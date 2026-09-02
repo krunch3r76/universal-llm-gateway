@@ -7,12 +7,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from implement_admission.conductor_score_journal import _SCOREBOARD_ROW_ID
+
 _ROW_STATUS_RE = re.compile(
-    r"^\|\s*(G[1-6])\s*\|[^|]*\|\s*(?P<status>[A-Za-z_()]+)",
+    rf"^\|\s*({_SCOREBOARD_ROW_ID})\s*\|[^|]*\|\s*(?P<status>[A-Za-z_()]+)",
     re.MULTILINE,
 )
 _G_DONE_CLAIM_RE = re.compile(
-    r"^\|\s*(G[1-6])\s*\|[^|]*\|\s*DONE\b",
+    rf"^\|\s*({_SCOREBOARD_ROW_ID})\s*\|[^|]*\|\s*DONE\b",
     re.IGNORECASE | re.MULTILINE,
 )
 

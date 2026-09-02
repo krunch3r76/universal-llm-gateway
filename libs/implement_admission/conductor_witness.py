@@ -9,6 +9,7 @@ from implement_admission.conductor_score_journal import (
     G_ROWS,
     forward_mutate_tip,
     read_tip,
+    resolve_scoreboard_rows,
     tip_sha256,
 )
 from implement_admission.conductor_witness_defaults import (
@@ -49,23 +50,41 @@ __all__ = [
 ]
 
 
-def _missing_witness_message(gid: str) -> str:
-    if gid == "G1":
+def _missing_witness_message(row_id: str) -> str:
+    if row_id == "G1":
         return "hang active derived_from todo→document:* (consult_kind=architecture)"
-    if gid == "G2":
+    if row_id == "G2":
         return "hang F1 or S7 frame URI on the tip"
-    if gid == "G3":
+    if row_id == "G3":
         return "hang S4b or S9 spec URI on the tip"
-    if gid == "G4":
+    if row_id == "G4":
         return "hang a G4 verdict that clears G5 (URI whose body does not withhold/FAIL)"
-    if gid == "G5":
+    if row_id == "G5":
         return "post SCORE_RESURFACE on summoning thread after G3 journal"
-    if gid == "G6":
+    if row_id == "G6":
         return "land L-sha on master"
-    return f"witness missing for {gid}"
+    if row_id.startswith("R"):
+        return f"hang {row_id}-BIND URI or {row_id}-LAND sha on the tip"
+    return f"witness missing for {row_id}"
 
 
-def _render_folded_body(body: str, row_status: dict[str, str]) -> str:
+def _scoreboard_rows(
+    slug: str,
+    *,
+    deps: FoldDeps,
+    files_root: Path,
+) -> tuple[str, ...]:
+    source_ref = deps.source_ref or f"todo:{slug}"
+    entity = deps.cortex.entity_get(source_ref, intent="card")
+    attrs = entity.get("attributes") or {}
+    return resolve_scoreboard_rows(attrs)
+
+
+def _render_folded_body(
+    body: str,
+    row_status: dict[str, str],
+    rows: tuple[str, ...],
+) -> str:
     lines = body.splitlines()
     out: list[str] = []
     in_gated = False
@@ -75,10 +94,10 @@ def _render_folded_body(body: str, row_status: dict[str, str]) -> str:
         elif line.startswith("## "):
             in_gated = False
         if in_gated:
-            for gid in G_ROWS:
-                prefix = f"| {gid} |"
-                if line.startswith(prefix) or line.startswith(f"| {gid.lower()} |"):
-                    status = row_status.get(gid)
+            for row_id in rows:
+                prefix = f"| {row_id} |"
+                if line.startswith(prefix) or line.startswith(f"| {row_id.lower()} |"):
+                    status = row_status.get(row_id)
                     if status:
                         parts = line.split("|")
                         if len(parts) >= 4:
@@ -90,11 +109,12 @@ def _render_folded_body(body: str, row_status: dict[str, str]) -> str:
 
 
 def resolve_entry_gate_from_fold(fold: FoldResult) -> str:
-    """First G-row whose folded status is not DONE."""
-    for gid in G_ROWS:
-        if fold.row_status.get(gid) != "DONE":
-            return gid
-    return G_ROWS[-1]
+    """First scoreboard row whose folded status is not DONE."""
+    rows = tuple(fold.row_status.keys())
+    for row_id in rows:
+        if fold.row_status.get(row_id) != "DONE":
+            return row_id
+    return rows[-1]
 
 
 def fold_scoreboard(
@@ -110,30 +130,37 @@ def fold_scoreboard(
     if prior is None:
         return None
     raw_body = prior[0]
-    witnesses = row_witnesses(slug, tip_body=raw_body, deps=deps, files_root=root)
-    witnessed_done = frozenset(gid for gid, w in witnesses.items() if w is not None)
+    rows = _scoreboard_rows(slug, deps=deps, files_root=root)
+    witnesses = row_witnesses(
+        slug,
+        tip_body=raw_body,
+        deps=deps,
+        files_root=root,
+        rows=rows,
+    )
+    witnessed_done = frozenset(row_id for row_id, w in witnesses.items() if w is not None)
     row_status: dict[str, str] = {}
     rows_claimed: set[str] = set()
     missing: dict[str, str] = {}
-    for gid in G_ROWS:
-        raw_status = (row_status_in_tip(raw_body, gid) or "OPEN").upper()
-        if witnesses.get(gid) is not None:
-            row_status[gid] = "DONE"
+    for row_id in rows:
+        raw_status = (row_status_in_tip(raw_body, row_id) or "OPEN").upper()
+        if witnesses.get(row_id) is not None:
+            row_status[row_id] = "DONE"
         elif raw_status in {"DONE", "CLAIMED"}:
-            row_status[gid] = "CLAIMED"
-            rows_claimed.add(gid)
-            missing[gid] = _missing_witness_message(gid)
+            row_status[row_id] = "CLAIMED"
+            rows_claimed.add(row_id)
+            missing[row_id] = _missing_witness_message(row_id)
         else:
-            row_status[gid] = raw_status if raw_status != "DONE" else "OPEN"
+            row_status[row_id] = raw_status if raw_status != "DONE" else "OPEN"
 
-    folded_body = _render_folded_body(raw_body, row_status)
-    sources = {gid: w.source for gid, w in witnesses.items() if w is not None}
+    folded_body = _render_folded_body(raw_body, row_status, rows)
+    sources = {row_id: w.source for row_id, w in witnesses.items() if w is not None}
     journal_applied = False
     if folded_body != raw_body and write_journal:
         delta = " ".join(
-            f"{gid} {row_status_in_tip(raw_body, gid) or 'OPEN'}→{row_status[gid]}"
-            for gid in G_ROWS
-            if (row_status_in_tip(raw_body, gid) or "OPEN") != row_status[gid]
+            f"{row_id} {row_status_in_tip(raw_body, row_id) or 'OPEN'}→{row_status[row_id]}"
+            for row_id in rows
+            if (row_status_in_tip(raw_body, row_id) or "OPEN") != row_status[row_id]
         )
         result = forward_mutate_tip(
             slug,
@@ -142,9 +169,9 @@ def fold_scoreboard(
             dispatch_id=None,
             reason="witness_fold",
             rows=tuple(
-                gid
-                for gid in G_ROWS
-                if row_status[gid] != (row_status_in_tip(raw_body, gid) or "OPEN")
+                row_id
+                for row_id in rows
+                if row_status[row_id] != (row_status_in_tip(raw_body, row_id) or "OPEN")
             ),
             delta=delta or "witness fold render",
             files_root=root,
@@ -167,8 +194,8 @@ def fold_scoreboard(
         witnessed_done=witnessed_done,
         rows_claimed=frozenset(rows_claimed),
         entry_gate=next(
-            (gid for gid in G_ROWS if row_status.get(gid) != "DONE"),
-            G_ROWS[-1],
+            (row_id for row_id in rows if row_status.get(row_id) != "DONE"),
+            rows[-1],
         ),
         missing_witnesses=missing,
         journal_applied=journal_applied,

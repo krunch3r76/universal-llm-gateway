@@ -24,12 +24,14 @@ if TYPE_CHECKING:
 _SCOREBOARDS_DIR = "notes/system/scoreboards"
 _WRITER_ID = "implement_admission.conductor_score_journal"
 _RECORD_SEP = "\n---\n"
+# G-ladder ids (G1–G6) or per-finding row ids (R1, R2, …) minted from acceptance_criteria.
+_SCOREBOARD_ROW_ID = r"(?:G[1-6]|R\d+)"
 _CLOSED_ROW_RE = re.compile(
-    r"^\|\s*(G[1-6])\s*\|[^|]*\|\s*DONE\b",
+    rf"^\|\s*({_SCOREBOARD_ROW_ID})\s*\|[^|]*\|\s*DONE\b",
     re.IGNORECASE | re.MULTILINE,
 )
 _ROW_STATUS_RE = re.compile(
-    r"^\|\s*(G[1-6])\s*\|[^|]*\|\s*(?P<status>[A-Za-z_()]+)",
+    rf"^\|\s*({_SCOREBOARD_ROW_ID})\s*\|[^|]*\|\s*(?P<status>[A-Za-z_()]+)",
     re.MULTILINE,
 )
 STATUS_VOCABULARY: frozenset[str] = frozenset(
@@ -48,6 +50,82 @@ _AFTER_SHIP_OVERLAY = (
     "After-ship `cdp/opus-5` `purpose=review` of the landed diff — good default; "
     "¬ a gated G-row (done-claim must not wait on it)."
 )
+_WITNESS_KIND_BIND = "BIND"
+_WITNESS_KIND_LAND = "LAND"
+
+
+def is_g_ladder_rows(rows: tuple[str, ...]) -> bool:
+    """True when rows are the default six-row G-ladder."""
+    return rows == G_ROWS
+
+
+def resolve_scoreboard_rows(attrs: dict[str, Any]) -> tuple[str, ...]:
+    """Return scoreboard row ids from attrs.rows or acceptance_criteria fallback."""
+    raw_rows = attrs.get("rows")
+    if isinstance(raw_rows, list) and raw_rows:
+        cleaned = tuple(str(row).strip() for row in raw_rows if str(row).strip())
+        if cleaned:
+            return cleaned
+    derived = attrs.get("derived_from")
+    acceptance = attrs.get("acceptance_criteria")
+    if derived and isinstance(acceptance, list) and acceptance:
+        labels = [str(item).strip() for item in acceptance if str(item).strip()]
+        if labels:
+            return tuple(f"R{i}" for i in range(1, len(labels) + 1))
+    return G_ROWS
+
+
+def resolve_row_labels(
+    rows: tuple[str, ...],
+    attrs: dict[str, Any],
+) -> dict[str, str]:
+    """Map row ids to deliverable labels for scoreboard rendering."""
+    if is_g_ladder_rows(rows):
+        return dict(_G_LABELS)
+    raw_rows = attrs.get("rows")
+    if isinstance(raw_rows, list) and len(raw_rows) == len(rows):
+        labels = {
+            str(row_id).strip(): str(label).strip()
+            for row_id, label in zip(rows, raw_rows, strict=False)
+            if str(row_id).strip() and str(label).strip()
+        }
+        if len(labels) == len(rows):
+            return labels
+    acceptance = attrs.get("acceptance_criteria")
+    if isinstance(acceptance, list) and len(acceptance) == len(rows):
+        return {
+            row_id: str(label).strip()
+            for row_id, label in zip(rows, acceptance, strict=False)
+            if str(label).strip()
+        }
+    return {row_id: row_id for row_id in rows}
+
+
+def _witness_sidecar_lines(
+    rows: tuple[str, ...],
+    row_labels: dict[str, str],
+) -> list[str]:
+    """Seed sidecar placeholder rows keyed by witness kind."""
+    if is_g_ladder_rows(rows):
+        return [
+            f"| S1 | (overlay) | {_AFTER_SHIP_OVERLAY} |",
+            "| F1 | (pending) | G2 frame witness slot |",
+            "| S7 | (pending) | G2 frame witness slot |",
+            "| S4b | (pending) | G3 spec witness slot |",
+            "| S9 | (pending) | G3 spec witness slot |",
+            "| G4 | (pending) | G4 skeptic verdict slot |",
+            "| L1 | (pending) | G6 land sha slot |",
+        ]
+    lines = [f"| S1 | (overlay) | {_AFTER_SHIP_OVERLAY} |"]
+    for row_id in rows:
+        label = row_labels.get(row_id, row_id)
+        lines.append(
+            f"| {row_id}-{_WITNESS_KIND_BIND} | (pending) | {label} bind witness slot |"
+        )
+        lines.append(
+            f"| {row_id}-{_WITNESS_KIND_LAND} | (pending) | {label} land sha slot |"
+        )
+    return lines
 
 
 def render_sparse_scoreboard(
@@ -56,12 +134,19 @@ def render_sparse_scoreboard(
     slug: str,
     entry_gate: str,
     stop_after: str | None,
+    rows: tuple[str, ...] = G_ROWS,
+    row_labels: dict[str, str] | None = None,
 ) -> str:
     """Build the forward-only sparse scoreboard tip for a todo conductor session."""
     tip_uri = scoreboard_tip_uri(slug)
     journal_uri = scoreboard_journal_uri(slug)
     stop_after_line = f"- **stop_after:** {stop_after}" if stop_after else ""
-    rows = "\n".join(f"| {gid} | {_G_LABELS[gid]} | OPEN | |" for gid in G_ROWS)
+    labels = row_labels or (
+        dict(_G_LABELS) if is_g_ladder_rows(rows) else {row_id: row_id for row_id in rows}
+    )
+    table_rows = "\n".join(
+        f"| {row_id} | {labels.get(row_id, row_id)} | OPEN | |" for row_id in rows
+    )
     parts = [
         f"# Scoreboard — {source_ref}",
         "",
@@ -79,19 +164,13 @@ def render_sparse_scoreboard(
             "",
             "| ID | Deliverable | Status | Stops |",
             "|---|---|---|---|",
-            rows,
+            table_rows,
             "",
             "## Sidecars",
             "",
             "| ID | Artifact URI | What it is |",
             "|---|---|---|",
-            f"| S1 | (overlay) | {_AFTER_SHIP_OVERLAY} |",
-            "| F1 | (pending) | G2 frame witness slot |",
-            "| S7 | (pending) | G2 frame witness slot |",
-            "| S4b | (pending) | G3 spec witness slot |",
-            "| S9 | (pending) | G3 spec witness slot |",
-            "| G4 | (pending) | G4 skeptic verdict slot |",
-            "| L1 | (pending) | G6 land sha slot |",
+            *_witness_sidecar_lines(rows, labels),
             "",
         ]
     )

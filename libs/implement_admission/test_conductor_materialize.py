@@ -21,6 +21,8 @@ from implement_admission.conductor_score_journal import (
     forward_mutate_tip,
     load_journal,
     read_tip,
+    resolve_row_labels,
+    resolve_scoreboard_rows,
     scoreboard_tip_uri,
     walk_journal_to_tip,
 )
@@ -84,6 +86,49 @@ def test_sparse_scoreboard_seeds_witness_slots() -> None:
     )
     for slot in ("F1", "S7", "S4b", "S9", "G4", "L1"):
         assert f"| {slot} | (pending) |" in body
+
+
+def test_resolve_scoreboard_rows_from_acceptance_criteria() -> None:
+    attrs = {
+        "derived_from": "document:harvest-architecture",
+        "acceptance_criteria": [
+            "F1/F2 fix",
+            "F3 fix",
+            "pytest pass",
+        ],
+    }
+    rows = resolve_scoreboard_rows(attrs)
+    assert rows == ("R1", "R2", "R3")
+    labels = resolve_row_labels(rows, attrs)
+    assert labels["R1"] == "F1/F2 fix"
+    assert labels["R3"] == "pytest pass"
+
+
+def test_materialize_acceptance_criteria_rows_when_derived_from(
+    tmp_path: Path,
+) -> None:
+    files_root = tmp_path / "cortex"
+    out_dir = tmp_path / "packets"
+    mp = materialize_conductor(
+        "todo:per-finding-rows",
+        cortex=_StubCortex(
+            {
+                "derived_from": "document:8978-architecture",
+                "acceptance_criteria": ["F1/F2", "F3", "pytest"],
+            }
+        ),
+        out_dir=out_dir,
+        files_root=files_root,
+    )
+    assert "Entry gate: R1" in mp.text
+    assert "| R1 | F1/F2 | OPEN |" in mp.text
+    assert "| R3 | pytest | OPEN |" in mp.text
+    assert "| R1-BIND | (pending) |" in mp.text
+    assert "| R1-LAND | (pending) |" in mp.text
+    assert "| G1 |" not in mp.text
+    tip = read_tip("per-finding-rows", files_root=files_root)
+    assert tip is not None
+    assert "**Entry gate:** R1" in tip[0]
 
 
 def test_materialize_derived_from_entry_gate_and_invariants(tmp_path: Path) -> None:

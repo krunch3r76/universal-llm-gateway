@@ -18,8 +18,11 @@ from implement_admission.admission_read import (
 from implement_admission.conductor_score_journal import (
     G_ROWS,
     birth_scoreboard,
+    is_g_ladder_rows,
     read_tip,
     render_sparse_scoreboard,
+    resolve_row_labels,
+    resolve_scoreboard_rows,
     scoreboard_tip_uri,
 )
 from implement_admission.conductor_summon import resolve_summon_mode
@@ -40,7 +43,21 @@ _SCORE_PLAY_SEAT_LINES = (
     "- BIND is one CDP turn; a second CDP turn on one row means ENUMERATE "
     "was underspecified.",
 )
-_G_ROWS = G_ROWS
+
+
+def _default_entry_gate(
+    *,
+    density_triage: str | None,
+    derived_from: str | None,
+    rows: tuple[str, ...],
+) -> str:
+    """Pick the first open row for custom lists; preserve G-ladder defaults."""
+    if derived_from:
+        return "G2" if is_g_ladder_rows(rows) else rows[0]
+    triage = (density_triage or "").strip().lower()
+    if triage == "mechanical":
+        return "G5" if is_g_ladder_rows(rows) else rows[0]
+    return "G1" if is_g_ladder_rows(rows) else rows[0]
 
 
 class CortexReader(Protocol):
@@ -66,6 +83,8 @@ class ConductorMaterializeContext:
     acceptance: str | None
     fold_missing_witnesses: dict[str, str] | None = None
     summoning_thread_id: str | None = None
+    rows: tuple[str, ...] = G_ROWS
+    row_labels: dict[str, str] | None = None
 
 
 def resolve_entry_gate(
@@ -73,16 +92,16 @@ def resolve_entry_gate(
     density_triage: str | None,
     derived_from: str | None = None,
     fold_entry_gate: str | None = None,
+    rows: tuple[str, ...] = G_ROWS,
 ) -> str:
     """Pick the G-row entry gate from a witness fold or sparse birth defaults."""
     if fold_entry_gate:
         return fold_entry_gate
-    if derived_from:
-        return "G2"
-    triage = (density_triage or "").strip().lower()
-    if triage == "mechanical":
-        return "G5"
-    return "G1"
+    return _default_entry_gate(
+        density_triage=density_triage,
+        derived_from=derived_from,
+        rows=rows,
+    )
 
 
 def load_conductor_context(
@@ -112,10 +131,13 @@ def load_conductor_context(
     derived_from = str(derived).strip() if derived else None
     stop_raw = attrs.get("stop_after")
     stop_after = str(stop_raw).strip() if stop_raw else None
+    rows = resolve_scoreboard_rows(attrs)
+    row_labels = resolve_row_labels(rows, attrs)
     entry_gate = resolve_entry_gate(
         density_triage=attrs.get("density_triage"),
         derived_from=derived_from,
         fold_entry_gate=fold_entry_gate,
+        rows=rows,
     )
     explicit_summon = summon_mode
     if explicit_summon is None:
@@ -142,6 +164,8 @@ def load_conductor_context(
         acceptance=attrs.get("acceptance") or attrs.get("Acceptance"),
         fold_missing_witnesses=fold_missing_witnesses,
         summoning_thread_id=summoning_thread_id,
+        rows=rows,
+        row_labels=row_labels,
     )
 
 
@@ -161,9 +185,11 @@ def _render_scope(ctx: ConductorMaterializeContext) -> str:
         )
     if ctx.fold_missing_witnesses:
         lines.append("CLAIMED rows — attach witnesses, do not re-derive:")
-        for gid in G_ROWS:
-            if gid in ctx.fold_missing_witnesses:
-                lines.append(f"- {gid} CLAIMED: {ctx.fold_missing_witnesses[gid]}.")
+        for row_id in ctx.rows:
+            if row_id in ctx.fold_missing_witnesses:
+                lines.append(
+                    f"- {row_id} CLAIMED: {ctx.fold_missing_witnesses[row_id]}."
+                )
     if ctx.stop_after:
         lines.append(f"stop_after pin: {ctx.stop_after}.")
     return " ".join(lines)
@@ -222,6 +248,8 @@ def _render_task_guidance(ctx: ConductorMaterializeContext) -> str:
                 slug=ctx.slug,
                 entry_gate=ctx.entry_gate,
                 stop_after=ctx.stop_after,
+                rows=ctx.rows,
+                row_labels=ctx.row_labels,
             ),
         ]
     )
@@ -388,6 +416,8 @@ def materialize_conductor(
             slug=ctx.slug,
             entry_gate=ctx.entry_gate,
             stop_after=ctx.stop_after,
+            rows=ctx.rows,
+            row_labels=ctx.row_labels,
         )
         birth_scoreboard(
             slug,
@@ -395,7 +425,7 @@ def materialize_conductor(
             seat="materializer",
             dispatch_id=None,
             reason="conductor spawn birth",
-            rows=tuple(_G_ROWS),
+            rows=tuple(ctx.rows),
             delta="sparse birth",
             files_root=files_root,
         )

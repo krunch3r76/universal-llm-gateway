@@ -179,7 +179,7 @@ Classify kind · channel · subsumption. S0 already ran.
 
 **Fire:** locus unknown ∨ root cause open ∨ sparse idea/bug ∨ would be `recon_pending`.  
 **Skip:** mechanical/trivial ∨ loci known ∨ `recon_waived`.  
-**Do:** Use the `cheap-recon-before-escalation` skill. When S2 fires ∧ loci unknown / breadth open ⇒ **Explore subagent first** (`Task(subagent_type="explore")` per cheap-recon Tier-1) — ¬ Composer recon; ¬ in-seat Grep spray. Judgment residual after anchors → Grok / S3, not Explore.  
+**Do:** Use the `cheap-recon-before-escalation` skill. When S2 fires ∧ loci unknown / breadth open ⇒ **Explore subagent first** (`Task(subagent_type="explore")` per cheap-recon Tier-1) — ¬ Composer recon; ¬ in-seat Grep spray. Judgment residual after anchors → CDP / S3, not Explore.  
 **Exit:** facts-only anchors + open forks. ¬ S4b / ¬ rich-seed while ≥2 architecture rivals unranked. S4a identity is allowed.
 
 #### Friction-sourced override (BINDING — operator bind 2026-08-30)
@@ -365,15 +365,16 @@ drop list — the command stays punch-then-spawn.
 | Slash `/work-item-seed {idea}` after same-session NL punch of that idea | S0 hit · re-admit or halt · ¬ second todo · ¬ second conductor |
 | Conductor chooses `/path-sim` vs `/layer` as a second admit | Front door already bound: codework = conductor (G-rows *are* layering) |
 | S2 breadth via Composer or in-seat Grep spray | Explore subagent first (cheap-recon Tier-1) |
+| S2 residual routed to Grok instead of CDP / S3 | Judgment residual after Explore → CDP / S3 (a:31995) |
 | S3 fork needs checkout depth → park on the operator for premium approval | Four-condition trigger holds ⇒ fire hop 4 and announce; effort is the card |
 | Premium S3 bind ratified by the seat that commissioned it | Independent check is mandatory (terra/Fable) — see the chain SOT |
 
 ## Commissioning register (operator bind 2026-08-02)
 
 This path is the **IDE identity mint** before spawn. After S4a the **conductor** owns
-S2/S3/S4b/S5 and the G-ladder — Explore (S2), Fable (G1 / Mode B), Grok densify, Composer
-G5. `¬` a second admit machine. `¬` a hard rule that grok-as-sub-PM must re-run S1–S6
-in-seat after spawn.
+S2/S3/S4b/S5 and the G-ladder — Explore (S2), Fable (G1 / Mode B), Composer densify /
+G5 implement. `¬` a second admit machine. `¬` a hard rule that the conductor-as-sub-PM
+must re-run S1–S6 in-seat after spawn.
 
 `commission(idea) ≻ commission(decomposition)` — the commissioner's job is **enablement**:
 

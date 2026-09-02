@@ -6,7 +6,12 @@ import re
 from pathlib import Path
 
 from implement_admission.closeout_helpers import cortex_files_root
-from implement_admission.conductor_score_journal import G_ROWS, load_journal
+from implement_admission.conductor_score_journal import (
+    G_ROWS,
+    _SCOREBOARD_ROW_ID,
+    is_g_ladder_rows,
+    load_journal,
+)
 from implement_admission.conductor_witness_types import (
     FoldDeps,
     Witness,
@@ -24,10 +29,12 @@ _G4_BLOCKS_DONE_RE = re.compile(
     r"(?is)does not clear G5|withhold G5|withhold(?:s)? completeness"
     r"|AC-\d+\s*\|\s*\*\*FAIL\*\*"
 )
-_G_ROW_URI_RE = re.compile(
-    r"^\|\s*(?P<gid>G[23])\s*\|.*?(?P<uri>cortex://[^\s|`]+)",
+_ROW_URI_RE = re.compile(
+    rf"^\|\s*(?P<rid>{_SCOREBOARD_ROW_ID})\s*\|.*?(?P<uri>cortex://[^\s|`]+)",
     re.MULTILINE | re.IGNORECASE,
 )
+_WITNESS_KIND_BIND = "BIND"
+_WITNESS_KIND_LAND = "LAND"
 _G2_ARTIFACT_IDS = ("F1", "S7")
 _G3_ARTIFACT_IDS = ("S4b", "S9")
 
@@ -46,11 +53,26 @@ def _first_resolving_artifact(
     return None, None
 
 
-def _tip_row_uri(tip_body: str, gid: str) -> str | None:
-    for match in _G_ROW_URI_RE.finditer(tip_body):
-        if match.group("gid").upper() == gid:
+def _tip_row_uri(tip_body: str, row_id: str) -> str | None:
+    for match in _ROW_URI_RE.finditer(tip_body):
+        if match.group("rid").upper() == row_id.upper():
             return match.group("uri")
     return None
+
+
+def _bind_artifact_keys(row_id: str) -> tuple[str, ...]:
+    """Sidecar artifact ids that witness BIND for one scoreboard row."""
+    if row_id == "G2":
+        return _G2_ARTIFACT_IDS
+    if row_id == "G3":
+        return _G3_ARTIFACT_IDS
+    return (f"{row_id}-{_WITNESS_KIND_BIND}",)
+
+
+def _land_artifact_key(row_id: str) -> str:
+    if row_id == "G6":
+        return "L1"
+    return f"{row_id}-{_WITNESS_KIND_LAND}"
 
 
 def _artifact_map(tip_body: str) -> dict[str, str]:
@@ -141,22 +163,99 @@ def row_witnesses(
     tip_body: str,
     deps: FoldDeps,
     files_root: Path | None = None,
+    rows: tuple[str, ...] = G_ROWS,
 ) -> dict[str, Witness | None]:
-    """Evaluate v1 witness table for each G-row against graph/bus/git readers."""
+    """Evaluate witness table for each scoreboard row against graph/bus/git readers."""
     root = files_root if files_root is not None else cortex_files_root()
     repo = deps.repo
     source_ref = deps.source_ref or f"todo:{slug}"
     artifacts = _artifact_map(tip_body)
-    witnesses: dict[str, Witness | None] = {gid: None for gid in G_ROWS}
+    witnesses: dict[str, Witness | None] = {row_id: None for row_id in rows}
 
+    if is_g_ladder_rows(rows):
+        return _row_witnesses_g_ladder(
+            slug,
+            tip_body=tip_body,
+            deps=deps,
+            files_root=root,
+            repo=repo,
+            source_ref=source_ref,
+            artifacts=artifacts,
+            witnesses=witnesses,
+        )
+    return _row_witnesses_custom(
+        tip_body=tip_body,
+        deps=deps,
+        files_root=root,
+        repo=repo,
+        artifacts=artifacts,
+        rows=rows,
+        witnesses=witnesses,
+    )
+
+
+def _row_witnesses_custom(
+    *,
+    tip_body: str,
+    deps: FoldDeps,
+    files_root: Path,
+    repo: Path | None,
+    artifacts: dict[str, str],
+    rows: tuple[str, ...],
+    witnesses: dict[str, Witness | None],
+) -> dict[str, Witness | None]:
+    for row_id in rows:
+        bind_id, bind_uri = _first_resolving_artifact(
+            artifacts,
+            _bind_artifact_keys(row_id),
+            files_root=files_root,
+            repo=repo,
+        )
+        if bind_id is None:
+            bind_uri = _tip_row_uri(tip_body, row_id)
+            if bind_uri and _uri_resolves(bind_uri, files_root=files_root, repo=repo):
+                bind_id = "tip"
+        if bind_id and bind_uri:
+            witnesses[row_id] = Witness(
+                row=row_id,
+                source=f"witness:{_WITNESS_KIND_BIND}:{bind_id}",
+                detail=bind_uri,
+            )
+            continue
+        land_uri = artifacts.get(_land_artifact_key(row_id))
+        if (
+            land_uri
+            and deps.git is not None
+            and _SHA_RE.fullmatch(land_uri)
+            and deps.git.is_ancestor(land_uri, "master")
+        ):
+            witnesses[row_id] = Witness(
+                row=row_id,
+                source=f"witness:{_WITNESS_KIND_LAND}",
+                detail=land_uri,
+            )
+    return witnesses
+
+
+def _row_witnesses_g_ladder(
+    slug: str,
+    *,
+    tip_body: str,
+    deps: FoldDeps,
+    files_root: Path,
+    repo: Path | None,
+    source_ref: str,
+    artifacts: dict[str, str],
+    witnesses: dict[str, Witness | None],
+) -> dict[str, Witness | None]:
     witnesses["G1"] = _witness_g1(source_ref=source_ref, cortex=deps.cortex)
 
     g2_id, g2_uri = _first_resolving_artifact(
-        artifacts, _G2_ARTIFACT_IDS, files_root=root, repo=repo
+        artifacts, _G2_ARTIFACT_IDS, files_root=files_root, repo=repo
     )
     if g2_id is None:
         g2_uri = _tip_row_uri(tip_body, "G2")
-        if g2_uri and _uri_resolves(g2_uri, files_root=root, repo=repo):
+        if g2_uri and _uri_resolves(g2_uri, files_root=files_root, repo=repo):
             g2_id = "tip"
     if g2_id and g2_uri:
         witnesses["G2"] = Witness(
@@ -164,11 +263,11 @@ def row_witnesses(
         )
 
     g3_id, g3_uri = _first_resolving_artifact(
-        artifacts, _G3_ARTIFACT_IDS, files_root=root, repo=repo
+        artifacts, _G3_ARTIFACT_IDS, files_root=files_root, repo=repo
     )
     if g3_id is None:
         g3_uri = _tip_row_uri(tip_body, "G3")
-        if g3_uri and _uri_resolves(g3_uri, files_root=root, repo=repo):
+        if g3_uri and _uri_resolves(g3_uri, files_root=files_root, repo=repo):
             g3_id = "tip"
     if g3_id and g3_uri:
         entity = deps.cortex.entity_get(source_ref, intent="card")
@@ -181,8 +280,8 @@ def row_witnesses(
     g4_uri = artifacts.get("G4")
     if (
         g4_uri
-        and _uri_resolves(g4_uri, files_root=root, repo=repo)
-        and _g4_body_clears(g4_uri, files_root=root)
+        and _uri_resolves(g4_uri, files_root=files_root, repo=repo)
+        and _g4_body_clears(g4_uri, files_root=files_root)
     ):
         witnesses["G4"] = Witness(row="G4", source="artifact:G4", detail=g4_uri)
 
@@ -191,7 +290,7 @@ def row_witnesses(
     if g4_blocked:
         witnesses["G5"] = None
     elif summon == "attended" and deps.bus is not None and deps.summoning_thread_id:
-        after = _g3_journal_written_at(slug, files_root=root)
+        after = _g3_journal_written_at(slug, files_root=files_root)
         if deps.bus.has_score_resurface_after(
             thread_id=deps.summoning_thread_id,
             after_written_at=after,
@@ -212,7 +311,7 @@ def row_witnesses(
                 detail=dispatch_id,
             )
 
-    land_sha = artifacts.get("L1")
+    land_sha = artifacts.get(_land_artifact_key("G6"))
     if land_sha and deps.git is not None and deps.git.is_ancestor(land_sha, "master"):
         witnesses["G6"] = Witness(row="G6", source=f"git:{land_sha}", detail=land_sha)
 
