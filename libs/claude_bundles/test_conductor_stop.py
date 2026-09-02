@@ -8,6 +8,7 @@ from claude_bundles.conductor_score_ratify import (
     validate_q2_away_score_ratify,
 )
 from claude_bundles.conductor_stop import (
+    CHAIN_STOPS,
     EXIT_PERSIST_STOPS,
     S4B_G1_PIN_MISSING,
     STOP_TOKENS,
@@ -265,6 +266,15 @@ def test_row_pinned_is_exit_persist_not_wait() -> None:
     assert "ROW_PINNED" not in WAIT_STOPS
     assert is_exit_persist_stop("| G3 | x | OPEN | ROW_PINNED |")
     assert not is_exit_persist_stop("CONSULT_PENDING\nexecution_id: x")
+
+
+def test_row_hop_is_chain_stop_not_exit_persist() -> None:
+    assert "ROW_HOP" in STOP_TOKENS
+    assert "ROW_HOP" in CHAIN_STOPS
+    assert "ROW_HOP" not in EXIT_PERSIST_STOPS
+    assert validate_stop_token("ROW_HOP")
+    parsed = parse_stop_tokens("stop: ROW_HOP\nhop_seq: 2")
+    assert parsed.tokens == frozenset({"ROW_HOP"})
 
 
 def test_consult_pending_wait_needs_admit_and_no_archive() -> None:

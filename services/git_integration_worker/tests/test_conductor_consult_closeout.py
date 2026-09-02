@@ -13,6 +13,7 @@ from services.git_integration_worker.cursor_sdk_closeout.closeout_records import
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
     CONDUCTOR_NEST_IN_FLIGHT,
+    CONDUCTOR_ROW_HOP,
     CONDUCTOR_ROW_PINNED,
 )
 from services.git_integration_worker.cursor_sdk_closeout.degraded_reasons import (
@@ -124,6 +125,32 @@ ROW_PINNED
 resume_at: G3
 SCORE_RESURFACE posted on summoning_thread_id=9638
 """
+
+
+_ROW_HOP = """\
+stop: ROW_HOP
+hop_seq: 2
+row_closed: G3
+status: complete
+"""
+
+
+def test_row_hop_is_consult_reason() -> None:
+    reason = conductor_closeout_degraded_reason(
+        body=_ROW_HOP,
+        packet_text=_CONDUCTOR_PACKET,
+        packet_kind="conductor",
+    )
+    assert reason == CONDUCTOR_ROW_HOP
+    incomplete = classify_status_incomplete_class(
+        status=CloseoutStatus.PARTIAL,
+        work_outcome=WorkOutcome.CHECKS_FAILED,
+        capture_status="partial",
+        escalation_harvest="none",
+        deviations=["gate_d:no_expected_files_touched"],
+        degraded_reason=CONDUCTOR_ROW_HOP,
+    )
+    assert incomplete == "consult"
 
 
 def test_row_pinned_is_consult_reason() -> None:

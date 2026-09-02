@@ -13,9 +13,12 @@ STOP_TOKENS: frozenset[str] = frozenset(
         "HOLD_MERGE",
         "OPERATOR_GATE",
         "PARKED_TRANSPORT",
+        "ROW_HOP",
         "DONE",
     }
 )
+
+CHAIN_STOPS: frozenset[str] = frozenset({"ROW_HOP"})
 
 WAIT_STOPS: frozenset[str] = frozenset({"CONSULT_PENDING"})
 SESSION_STOPS: frozenset[str] = STOP_TOKENS - WAIT_STOPS

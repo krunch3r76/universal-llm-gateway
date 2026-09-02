@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 CONDUCTOR_ROW_PINNED = "conductor_row_pinned"
+CONDUCTOR_ROW_HOP = "conductor_row_hop"
 CONDUCTOR_EXIT_PERSIST = "conductor_exit_persist"
 CONDUCTOR_NEST_IN_FLIGHT = "conductor_nest_in_flight"
 
@@ -21,6 +22,22 @@ def _packet_is_conductor(
 
         return extract_packet_kind_from_packet(packet_text) == "conductor"
     return False
+
+
+def conductor_row_hop_degraded_reason(
+    *,
+    body: str,
+    packet_text: str | None = None,
+    packet_kind: str | None = None,
+) -> str | None:
+    """ROW_HOP grades as a designed exit-and-continue, not gate_d/work."""
+    if not _packet_is_conductor(packet_kind, packet_text):
+        return None
+    from claude_bundles.conductor_stop import parse_stop_tokens
+
+    if "ROW_HOP" in parse_stop_tokens(body).tokens:
+        return CONDUCTOR_ROW_HOP
+    return None
 
 
 def conductor_row_pinned_degraded_reason(
