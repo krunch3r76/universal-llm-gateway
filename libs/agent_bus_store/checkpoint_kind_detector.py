@@ -15,14 +15,20 @@ import os
 from .checkpoint_projection import is_checkpoint_subject
 from .thread_classification import ROLE_ROOT_TAG
 
-# Env flag for P1 auto-stamp (default off). Undo via remove_tags(["role:root"]).
-_CHECKPOINT_AUTO_STAMP_TRUTHY = frozenset({"1", "true", "yes", "on"})
+# Env flags (default off). Undo auto-stamp via remove_tags(["role:root"]).
+_CHECKPOINT_ENV_TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 
 def checkpoint_auto_stamp_enabled() -> bool:
     """Return True when ``AGENT_BUS_CHECKPOINT_AUTO_STAMP`` is truthy (default off)."""
     raw = os.environ.get("AGENT_BUS_CHECKPOINT_AUTO_STAMP", "").strip().lower()
-    return raw in _CHECKPOINT_AUTO_STAMP_TRUTHY
+    return raw in _CHECKPOINT_ENV_TRUTHY
+
+
+def checkpoint_auto_supersede_enabled() -> bool:
+    """Return True when ``AGENT_BUS_CHECKPOINT_AUTO_SUPERSEDE`` is truthy (default off)."""
+    raw = os.environ.get("AGENT_BUS_CHECKPOINT_AUTO_SUPERSEDE", "").strip().lower()
+    return raw in _CHECKPOINT_ENV_TRUTHY
 
 
 def is_bootstrap_structural_checkpoint(
@@ -96,6 +102,8 @@ def should_auto_derive_supersedes_turn(
     turn_id_alias: int | None,
 ) -> bool:
     """True when send/reply may omit ``supersedes_turn`` on a standing-root CHECKPOINT."""
+    if not checkpoint_auto_supersede_enabled():
+        return False
     if turn_number is not None or turn_id_alias is not None:
         return False
     return is_checkpoint_subject(subject) and is_standing_root_thread(thread_tags)
@@ -103,6 +111,7 @@ def should_auto_derive_supersedes_turn(
 
 __all__ = [
     "checkpoint_auto_stamp_enabled",
+    "checkpoint_auto_supersede_enabled",
     "is_birth_shaped_checkpoint",
     "is_bootstrap_structural_checkpoint",
     "is_steady_state_structural_checkpoint",

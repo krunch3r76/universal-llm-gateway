@@ -12,7 +12,11 @@ import pytest
 from agent_seat.session_id import session_id_time_base
 
 from cortex_store.dispatch_ops import ops_journals
-from cortex_store.session_close_successor_hop import HOP_REASON
+from cortex_store.session_close_successor_hop import (
+    HOP_REASON,
+    parse_utc_timestamp,
+    resolve_session_id_for_close,
+)
 from cortex_store.transcript_session_id import derive_session_id_from_jsonl_start
 
 pytestmark = pytest.mark.offline
@@ -263,3 +267,25 @@ def test_hop_uses_first_post_lid_timestamp_not_wall_clock(
     _seal(session_env["db_path"], _SEALED)
     result = _preflight(_SEALED, jsonl)
     assert session_id_time_base(result["session_id"]) == "cursor-2026-08-25-190000"
+
+
+def test_parse_utc_timestamp_honors_positive_offset() -> None:
+    parsed = parse_utc_timestamp("2026-08-25T17:28:00+00:00")
+    assert parsed is not None
+    assert parsed.tzinfo is UTC
+    assert parsed.hour == 17
+    assert parsed.minute == 28
+
+
+def test_resolve_session_id_for_close_without_jsonl_start_returns_none(
+    tmp_path: Path,
+) -> None:
+    jsonl = tmp_path / "uuid" / "uuid.jsonl"
+    jsonl.parent.mkdir(parents=True)
+    jsonl.write_text("", encoding="utf-8")
+    resolution = resolve_session_id_for_close(
+        session_id=None,
+        agent="cursor",
+        transcript_jsonl_path=str(jsonl),
+    )
+    assert resolution is None

@@ -1215,6 +1215,19 @@ def test_session_close_rejects_missing_session_id_and_jsonl(
     assert result.get("field") == "session_id"
 
 
+def test_apply_session_id_resolution_without_jsonl_start_keeps_none() -> None:
+    from cortex_store.dispatch_ops.ops_session_close import _apply_session_id_resolution
+
+    session_id, _prior, meta = _apply_session_id_resolution(
+        session_id=None,
+        agent="cursor",
+        transcript_jsonl_path="/tmp/does-not-exist/uuid/uuid.jsonl",
+        prior_session_id=None,
+    )
+    assert session_id is None
+    assert meta == {}
+
+
 def test_preflight_returns_derived_session_id_when_omitted(
     session_env: dict[str, Path],
 ) -> None:

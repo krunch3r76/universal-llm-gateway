@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
+from .checkpoint_auto_stamp_wiring import load_thread_tags
 from .checkpoint_projection import (
     _RESIDUE_HEADER,
     RESUME_FOOTER_PREFIX,
@@ -53,6 +55,25 @@ class JournalFetcher(Protocol):
 
 class CheckpointTurnLister(Protocol):
     def __call__(self, *, thread_id: str) -> tuple[CheckpointTurnRow, ...]: ...
+
+
+def timestamp_to_utc_instant(raw: str) -> datetime | None:
+    """Normalize bus or journal timestamp strings to a comparable UTC instant."""
+    text = raw.strip()
+    if not text:
+        return None
+    iso = text[:-1] + "+00:00" if text.endswith("Z") else text
+    try:
+        parsed = datetime.fromisoformat(iso)
+    except ValueError:
+        parsed = None
+    if parsed is not None:
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
+    from cortex_store.session_close_successor_hop import parse_utc_timestamp
+
+    return parse_utc_timestamp(text)
 
 
 def extract_arc_from_summary(summary: str) -> str | None:
@@ -100,21 +121,32 @@ def list_checkpoint_turns(*, thread_id: str) -> tuple[CheckpointTurnRow, ...]:
     return tuple(out)
 
 
-def fetch_journals_for_thread(*, thread_id: str) -> tuple[dict[str, Any], ...]:
+def fetch_journals_for_thread(
+    *,
+    thread_id: str,
+    limit: int | None = None,
+) -> tuple[dict[str, Any], ...]:
     """Return session journal rows whose ``entity_ids`` cite *thread_id*."""
     from cortex_store.db import cortex_conn, decode_row, query
 
     json_fields = frozenset({"domains", "decisions", "open_items", "entity_ids"})
+    agent_bus_ref = f"agent-bus:{thread_id}"
+    sql = (
+        "SELECT * FROM session_journals "
+        "WHERE entity_ids IS NOT NULL "
+        "AND ("
+        "  EXISTS (SELECT 1 FROM json_each(entity_ids) WHERE value = ?) "
+        "  OR EXISTS (SELECT 1 FROM json_each(entity_ids) WHERE value = ?)"
+        ") "
+        "ORDER BY id ASC"
+    )
+    params: list[Any] = [agent_bus_ref, thread_id]
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
     with cortex_conn() as conn:
-        rows = query(conn, "SELECT * FROM session_journals ORDER BY id ASC")
-    matched: list[dict[str, Any]] = []
-    for row in rows:
-        decoded = decode_row(row, json_fields)
-        if journal_cites_thread(
-            entity_ids=decoded.get("entity_ids"), thread_id=thread_id
-        ):
-            matched.append(decoded)
-    return tuple(matched)
+        rows = query(conn, sql, tuple(params))
+    return tuple(decode_row(row, json_fields) for row in rows)
 
 
 def join_windows(
@@ -126,18 +158,26 @@ def join_windows(
     if not checkpoint_turns:
         return ()
 
-    sorted_journals = sorted(journals, key=lambda j: str(j.get("timestamp") or ""))
+    sorted_journals = sorted(
+        journals,
+        key=lambda j: timestamp_to_utc_instant(str(j.get("timestamp") or ""))
+        or datetime.min.replace(tzinfo=UTC),
+    )
     out: list[WindowRow] = []
     for idx, cp in enumerate(checkpoint_turns):
-        window_start = cp.created_at
+        window_start = timestamp_to_utc_instant(cp.created_at)
         window_end = (
-            checkpoint_turns[idx + 1].created_at
+            timestamp_to_utc_instant(checkpoint_turns[idx + 1].created_at)
             if idx + 1 < len(checkpoint_turns)
             else None
         )
+        if window_start is None:
+            window_start = datetime.min.replace(tzinfo=UTC)
         matched: list[dict[str, Any]] = []
         for journal in sorted_journals:
-            ts = str(journal.get("timestamp") or "")
+            ts = timestamp_to_utc_instant(str(journal.get("timestamp") or ""))
+            if ts is None:
+                continue
             if ts < window_start:
                 continue
             if window_end is not None and ts >= window_end:
@@ -221,6 +261,80 @@ def should_render_windows(*, subject: str, thread_tags: list[str] | None) -> boo
     return classification["spine"] == "root"
 
 
+def apply_checkpoint_windows_to_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Render CHECKPOINT windows once per thread batch for list/read hot paths."""
+    if not rows:
+        return rows
+    thread = str(rows[0]["thread"])
+    if any(str(row["thread"]) != thread for row in rows):
+        return [_render_checkpoint_row(row) for row in rows]
+
+    thread_tags = load_thread_tags(thread)
+    if classify_thread(thread_tags)["spine"] != "root":
+        return rows
+
+    checkpoint_ids = {
+        int(row["id"])
+        for row in rows
+        if row.get("body")
+        and should_render_windows(
+            subject=str(row["subject"]),
+            thread_tags=thread_tags,
+        )
+    }
+    if not checkpoint_ids:
+        return rows
+
+    checkpoint_turns = list_checkpoint_turns(thread_id=thread)
+    if not checkpoint_turns:
+        return rows
+
+    journal_limit = max(len(checkpoint_turns) * 4, 32)
+    unrendered = False
+    try:
+        journals = fetch_journals_for_thread(thread_id=thread, limit=journal_limit)
+        window_rows = join_windows(checkpoint_turns=checkpoint_turns, journals=journals)
+    except Exception:
+        window_rows = tuple(
+            WindowRow(
+                cp_ordinal=cp.cp_ordinal,
+                turn=cp.turn_number,
+                session_id=None,
+                arc=None,
+                journal_row_id=None,
+            )
+            for cp in checkpoint_turns
+        )
+        unrendered = True
+
+    windows_md = render_windows_section(rows=window_rows, unrendered=unrendered)
+    rendered: list[dict[str, Any]] = []
+    for row in rows:
+        if int(row["id"]) not in checkpoint_ids:
+            rendered.append(row)
+            continue
+        updated = dict(row)
+        updated["body"] = inject_windows_section(str(row["body"]), windows_md)
+        rendered.append(updated)
+    return rendered
+
+
+def _render_checkpoint_row(row: dict[str, Any]) -> dict[str, Any]:
+    body = row.get("body")
+    if not body:
+        return row
+    thread = str(row["thread"])
+    thread_tags = load_thread_tags(thread)
+    updated = dict(row)
+    updated["body"] = maybe_render_checkpoint_windows(
+        thread=thread,
+        subject=str(row["subject"]),
+        body=str(body),
+        thread_tags=thread_tags,
+    )
+    return updated
+
+
 def render_checkpoint_windows(
     *,
     thread_id: str,
@@ -285,6 +399,7 @@ __all__ = [
     "CheckpointTurnLister",
     "JournalFetcher",
     "WindowRow",
+    "apply_checkpoint_windows_to_rows",
     "extract_arc_from_summary",
     "fetch_journals_for_thread",
     "inject_windows_section",
@@ -296,4 +411,5 @@ __all__ = [
     "render_windows_section",
     "render_windows_table",
     "should_render_windows",
+    "timestamp_to_utc_instant",
 ]
