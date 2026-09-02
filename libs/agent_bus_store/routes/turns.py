@@ -15,6 +15,7 @@ from ..body_auto_spill import (
     spill_error_http,
 )
 from ..checkpoint_auto_stamp_wiring import load_thread_tags
+from ..checkpoint_windows_render import apply_checkpoint_windows_to_rows
 from ..db import (
     TurnAlreadyAcknowledged,
     UnreadTurnsExist,
@@ -78,6 +79,12 @@ def _turn_from_row(r: dict[str, Any]) -> Turn:
             "attachments": attachments,
         }
     )
+
+
+def _rows_to_turns(rows: list[dict[str, Any]]) -> list[Turn]:
+    """Map turn rows to API models with batched CHECKPOINT windows rendering."""
+    rendered = apply_checkpoint_windows_to_rows(rows)
+    return [_turn_from_row(r) for r in rendered]
 
 
 @router.post(
@@ -234,7 +241,7 @@ async def list_turns(
         include_superseded=include_superseded,
         after_turn=after_turn,
     )
-    return TurnList(turns=[_turn_from_row(r) for r in rows])
+    return TurnList(turns=_rows_to_turns(rows))
 
 
 @router.get(
@@ -339,7 +346,7 @@ async def update_turn_route(turn_id: int, body: TurnUpdate) -> Turn:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Turn {turn_id} not found",
         )
-    return _turn_from_row(row)
+    return _rows_to_turns([row])[0]
 
 
 @router.patch("/turns/{turn_id}/status")
@@ -430,7 +437,7 @@ async def get_turn_by_number_route(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Turn {turn_number} not found in thread {thread}",
         )
-    return _turn_from_row(row)
+    return _rows_to_turns([row])[0]
 
 
 @router.patch(

@@ -48,15 +48,14 @@ Enrollment tag is SOT. `tick_charter` = machine consumer (base + T extras; malfo
 | Body | WIP + pointers; Next-pickup = gated G-rows only; tangent by pointer |
 | Primary OPEN vs WIP | Name G-rows separately from seat WIP; divergence without bind/child = named fork |
 | Delta gate board | Carry settled `[x]` by reference; emit open/delta rows; evidence in sidecar |
-| Scoreboard birth | **Chartered root** (`charter-runner` enrolled): mint `cortex://notes/system/threads/<id>-charter-scoreboard.md` from template **before** first CP if absent (includes empty `## Windows`). `Scoreboard: none` = violation. **Unchartered orchestrator_continuity root**: omit scoreboard birth — mint `## Windows` on the continuity-doc instead |
+| Scoreboard birth | **Chartered root** (`charter-runner` enrolled): mint `cortex://notes/system/threads/<id>-charter-scoreboard.md` from template **before** first CP if absent. `Scoreboard: none` = violation. **Unchartered orchestrator_continuity root**: omit scoreboard birth — continuity-doc only |
 | Scoreboard write-back | `retract ∨ flip(status) ⇒ update scoreboard BEFORE next CP` (chartered roots only; unchartered roots have no standing scoreboard file) |
 | G-row prefix order | `DONE(Gₙ) ⇒ ∀k<n: DONE(Gₖ)` — gated IDs are an ordered prefix, not birth stickers. Skip / out-of-order land ⇒ **renumber** open rows to the end (or retract to Tangentials) in the **same** scoreboard write before the next CP. `OPEN` mid-table above later `DONE` = hygiene defect (operator bind 2026-08-10 · agent-bus:7059). Distinct from mission-roadmap permanent ordinals (`cdp-operator-proxy` inv 29). |
 | Terminal-block coherence | Appending a terminal verdict block (`ARC COMPLETE`, closure table) ⇒ refresh the file's `RESUME` / next-actor footer in the **same** write. A footer naming actors the block just closed makes the file contradict itself, and R12 computes against the **file**, not the newest block — either verdict is pickable (friction `27099`) |
 | Side-quest | Multi-step ∉ OPEN G-row ⇒ operator bind or child thread before act |
 | Residual sweep | Checkpoint-time: named residuals still in chat only? → Use the `residual-imprint` skill |
 | Myelinate | Checkpoint-time graph: both-ends-known missing links → `relationship_create` / `edge_create` now; load-bearing existing edges → `edge_update` if judgment changed. `¬` defer to session-close (close is not automatic). Detail: `cortex-orientation` § Myelinate |
-| Windows append | On each CHECKPOINT **post**, append one row to `## Windows` on the charter surface (scoreboard if chartered, continuity-doc if unchartered): `cp_ordinal`, turn, `session_id` if known, State one-liner if Arc empty. Tip **pointers** at that table — ¬ paste it. Schema §3.5. `/session-end` fills Arc later. |
-| IDE tab on post | Attended Cursor IDE: after CHECKPOINT post (or `checkpoint <n>`), `rename_chat` to `. {n} {slug}` (`operator-posture`). Headless / no chat tab ⇒ no-op. |
+| Windows log | Server renders `## Windows` on **read** of role:root CHECKPOINT turns (bus CP ordinals joined with `session_journals` via `entity_ids`). Author **¬** append a Windows table on post. Birth CHECKPOINT without prior windows is valid. Session-close `Arc:` + `journal_row_id` land via journal join. Schema §3.5 |
 
 ## Tip hygiene (spine=root)
 
@@ -79,7 +78,7 @@ Enrollment tag is SOT. `tick_charter` = machine consumer (base + T extras; malfo
 | Operator asks / `--all` / `--context N` | As asked |
 | Unread `from≠self` ∧ subject ¬CHECKPOINT | That body (+ optional context) |
 | Tip lacks Next-pickup / Anchor / stale vs known child activity | Prior 2–3 CPs or named sidecar |
-| Review / audit of whole-history | Charter-surface `## Windows` (schema §3.5) — not linear thread read |
+| Review / audit of whole-history | Fetch role:root CHECKPOINT turns (server-rendered `## Windows` on read; schema §3.5) — not linear thread read |
 | Execute on child lane | Open **that** thread separately |
 
 **Operator-facing:** Mission + In/Out first (`operator-posture` Rule 3 · `decision:continuity-resume-mission-open`). Then `orchestrator_continuity` → Been→Are→Going → `In one line:` → settled·live·next · next. `tick_charter` → Mission + Scope, then wave · in-flight · next pickup.

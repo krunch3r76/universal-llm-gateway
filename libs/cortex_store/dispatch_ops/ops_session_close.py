@@ -38,6 +38,61 @@ from .ops_review_gate import _run_session_audit_or_block, summarize_audit_outcom
 logger = get_logger(__name__)
 
 
+def _apply_session_id_resolution(
+    *,
+    session_id: str | None,
+    agent: str | None,
+    transcript_jsonl_path: str | None,
+    prior_session_id: str | None,
+) -> tuple[str | None, str | None, dict[str, Any]]:
+    """Resolve omitted session_id from JSONL; merge hop prior when unset."""
+    from ..session_close_successor_hop import resolve_session_id_for_close
+
+    if not agent:
+        return session_id, prior_session_id, {}
+    resolution = resolve_session_id_for_close(
+        session_id=session_id,
+        agent=agent,
+        transcript_jsonl_path=transcript_jsonl_path,
+    )
+    if resolution is None:
+        return session_id, prior_session_id, {}
+    meta: dict[str, Any] = {}
+    if resolution.session_id_derived:
+        meta["session_id_derived"] = True
+        if resolution.session_id_from_jsonl_start is not None:
+            meta["session_id_from_jsonl_start"] = resolution.session_id_from_jsonl_start
+        if resolution.jsonl_start_reason is not None:
+            meta["jsonl_start_reason"] = resolution.jsonl_start_reason
+        if resolution.hop_reason is not None:
+            meta["hop_reason"] = resolution.hop_reason
+    resolved_prior = prior_session_id
+    if resolution.prior_session_id and not prior_session_id:
+        resolved_prior = resolution.prior_session_id
+        meta["prior_session_id"] = resolved_prior
+    return resolution.session_id, resolved_prior, meta
+
+
+def _merge_resolution_preflight_fields(
+    preflight: dict[str, Any], meta: dict[str, Any], *, session_id: str
+) -> None:
+    """Attach derived-session_id hints to a successful preflight payload."""
+    if not meta.get("session_id_derived"):
+        return
+    preflight["session_id"] = session_id
+    for key in (
+        "session_id_from_jsonl_start",
+        "jsonl_start_reason",
+        "hop_reason",
+        "prior_session_id",
+    ):
+        if key in meta:
+            preflight[key] = meta[key]
+    from ._session_summary_path import summary_path_hint
+
+    preflight["summary_path_hint"] = summary_path_hint(session_id=session_id)
+
+
 def _append_session_close_warnings(
     result: dict[str, Any],
     *,
@@ -229,6 +284,9 @@ def _op_session_close_preflight(
     ``session_summary_md_path`` (optional) loads the structural summary from
     a CORTEX_FILES_ROOT-relative file. When both path and inline
     ``session_summary_md`` are set, **path wins**.
+
+    ``session_id`` may be omitted when ``transcript_jsonl_path`` is set — the
+    server derives it from JSONL session-start (successor hop, then mint).
     """
     session_summary_md, path_err = resolve_session_summary_md(
         session_summary_md=session_summary_md,
@@ -236,6 +294,14 @@ def _op_session_close_preflight(
     )
     if path_err is not None:
         return {"ok": False, **path_err}
+
+    session_id, _prior_resolved, resolution_meta = _apply_session_id_resolution(
+        session_id=session_id,
+        agent=agent,
+        transcript_jsonl_path=transcript_jsonl_path,
+        prior_session_id=None,
+    )
+    session_id_was_supplied = not resolution_meta.get("session_id_derived")
 
     arg_error = _validate_session_close_args(
         session_id=session_id,
@@ -352,15 +418,20 @@ def _op_session_close_preflight(
             preflight["ok"] = False
             preflight["reason"] = handoff_preview.get("reason") or "handoff.invalid"
     if preflight.get("ok"):
-        from ..session_close_successor_hop import apply_successor_hop_fields
+        if session_id_was_supplied:
+            from ..session_close_successor_hop import apply_successor_hop_fields
 
-        apply_successor_hop_fields(
-            preflight,
-            supplied_session_id=session_id,
-            agent=agent,
-            transcript_jsonl_path=transcript_jsonl_path,
-            jsonl_resolved=jsonl_resolved,
-        )
+            apply_successor_hop_fields(
+                preflight,
+                supplied_session_id=session_id,
+                agent=agent,
+                transcript_jsonl_path=transcript_jsonl_path,
+                jsonl_resolved=jsonl_resolved,
+            )
+        else:
+            _merge_resolution_preflight_fields(
+                preflight, resolution_meta, session_id=session_id
+            )
     return preflight
 
 
@@ -418,6 +489,9 @@ def _op_session_close(
     a CORTEX_FILES_ROOT-relative file. When both path and inline
     ``session_summary_md`` are set, **path wins**.
 
+    ``session_id`` may be omitted when ``transcript_jsonl_path`` is set — the
+    server derives it from JSONL session-start (successor hop, then mint).
+
     See session-close-server-side-transcript Phase 2 for the architecture
     rewrite; the route handler in `routes/session_journals.py` is the
     single atomic boundary.
@@ -430,6 +504,13 @@ def _op_session_close(
         if dry_run:
             return {"dry_run": True, "would_fail": True, **path_err}
         return path_err
+
+    session_id, prior_session_id, _resolution_meta = _apply_session_id_resolution(
+        session_id=session_id,
+        agent=agent,
+        transcript_jsonl_path=transcript_jsonl_path,
+        prior_session_id=prior_session_id,
+    )
 
     arg_error = _validate_session_close_args(
         session_id=session_id,

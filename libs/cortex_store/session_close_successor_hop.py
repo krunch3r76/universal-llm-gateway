@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from agent_seat.session_id import derive_session_id_from_timestamp, mint_session_id
+from agent_seat.session_id import derive_session_id_from_timestamp
 
 from .transcript_session_id import _JSONL_TIMESTAMP_TAG_RE, _normalize_cursor_timestamp
 
@@ -42,6 +42,18 @@ class SuccessorHop:
     hop_reason: str = HOP_REASON
 
 
+@dataclass(frozen=True)
+class SessionIdResolution:
+    """Resolved ``session_id`` for close/preflight when caller omitted it."""
+
+    session_id: str
+    prior_session_id: str | None = None
+    hop_reason: str | None = None
+    session_id_from_jsonl_start: str | None = None
+    jsonl_start_reason: str | None = None
+    session_id_derived: bool = False
+
+
 def conversation_uuid_from_jsonl_path(jsonl_path: Path) -> str:
     """Cursor layout is ``<conversation-uuid>/<conversation-uuid>.jsonl``."""
     return jsonl_path.parent.name
@@ -49,8 +61,19 @@ def conversation_uuid_from_jsonl_path(jsonl_path: Path) -> str:
 
 def parse_utc_timestamp(raw: str) -> datetime | None:
     """Parse a journal or JSONL ``<timestamp>`` into an aware UTC datetime."""
-    text = _normalize_cursor_timestamp(raw.strip())
-    match = _TS_RE.search(text)
+    text = raw.strip()
+    if not text:
+        return None
+    iso = text[:-1] + "+00:00" if text.endswith("Z") else text
+    try:
+        parsed = datetime.fromisoformat(iso)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
+    except ValueError:
+        pass
+    normalized = _normalize_cursor_timestamp(text)
+    match = _TS_RE.search(normalized)
     if not match:
         return None
     year, mon, day, hour, minute, second = match.groups()
@@ -168,14 +191,14 @@ def mint_successor_session_id(
     agent: str,
     at: datetime | None,
     conversation_uuid: str,
-) -> str:
+) -> str | None:
     """Mint the hop ``session_id`` from the first post-lid user timestamp.
 
-    When *at* is missing or unparseable, live-mint a random suffix. Never
-    ``st_mtime``. Never wall-clock ``date -u`` at the caller.
+    Returns ``None`` when *at* is missing or unparseable — never live-mint a
+    random suffix that bypasses hop invariants.
     """
     if at is None:
-        return mint_session_id(agent)
+        return None
     return derive_session_id_from_timestamp(
         agent,
         at.strftime("%Y-%m-%d %H:%M:%S"),
@@ -219,8 +242,73 @@ def resolve_successor_hop(
             at=first,
             conversation_uuid=conversation_uuid_from_jsonl_path(jsonl_path),
         )
+        if successor is None:
+            if index == 0:
+                return None
+            continue
         return SuccessorHop(session_id=successor, prior_session_id=tip.session_id)
     return None
+
+
+def resolve_session_id_for_close(
+    *,
+    session_id: str | None,
+    agent: str,
+    transcript_jsonl_path: str | None,
+) -> SessionIdResolution | None:
+    """Derive ``session_id`` when omitted but ``transcript_jsonl_path`` is set.
+
+    Chain: ``derive_session_id_from_jsonl_start`` → ``resolve_successor_hop``.
+    Explicit *session_id* is authoritative and returned unchanged. Returns
+    ``None`` when both *session_id* and a derivable JSONL start are absent.
+    """
+    if session_id:
+        return SessionIdResolution(session_id=session_id)
+    if not transcript_jsonl_path:
+        return None
+
+    from .transcript_assembly import TranscriptPathError, resolve_jsonl_path
+    from .transcript_session_id import derive_session_id_from_jsonl_start
+
+    jsonl_path: Path | None = None
+    try:
+        jsonl_path = resolve_jsonl_path(transcript_jsonl_path)
+    except TranscriptPathError:
+        jsonl_path = None
+
+    from_jsonl: str | None = None
+    jsonl_start_reason: str | None = None
+    if jsonl_path is not None:
+        from_jsonl = derive_session_id_from_jsonl_start(jsonl_path=jsonl_path, agent=agent)
+        if from_jsonl is None:
+            jsonl_start_reason = "missing_jsonl_start_timestamp"
+
+    if from_jsonl is None:
+        return None
+
+    candidate = from_jsonl
+    prior_session_id: str | None = None
+    hop_reason: str | None = None
+    if jsonl_path is not None:
+        hop = resolve_successor_hop(
+            supplied_session_id=candidate,
+            jsonl_start_id=from_jsonl,
+            jsonl_path=jsonl_path,
+            agent=agent,
+        )
+        if hop is not None:
+            candidate = hop.session_id
+            prior_session_id = hop.prior_session_id
+            hop_reason = hop.hop_reason
+
+    return SessionIdResolution(
+        session_id=candidate,
+        prior_session_id=prior_session_id,
+        hop_reason=hop_reason,
+        session_id_from_jsonl_start=from_jsonl,
+        jsonl_start_reason=jsonl_start_reason,
+        session_id_derived=True,
+    )
 
 
 def apply_successor_hop_fields(
@@ -261,8 +349,10 @@ def apply_successor_hop_fields(
 __all__ = [
     "HOP_REASON",
     "SealedJournal",
+    "SessionIdResolution",
     "SuccessorHop",
     "apply_successor_hop_fields",
+    "resolve_session_id_for_close",
     "conversation_uuid_from_jsonl_path",
     "first_user_timestamp_after",
     "iter_jsonl_user_timestamps",

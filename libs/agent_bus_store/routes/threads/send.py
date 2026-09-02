@@ -189,6 +189,8 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
     thread_tags = load_thread_tags(thread_id)
     storage_supersedes, echo_turn_number, echo_turn_id = _resolve_send_supersedes(
         thread_id=thread_id,
+        subject=body.subject,
+        thread_tags=thread_tags,
         turn_number=body.supersedes_turn,
         turn_id_alias=body.supersedes_turn_id,
     )
@@ -200,7 +202,7 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             from_agent=body.from_agent,
             allow_long_body=body.allow_long_body,
             thread_tags=thread_tags,
-            supersedes_turn=body.supersedes_turn or body.supersedes_turn_id,
+            supersedes_turn=echo_turn_number,
         )
     except Exception as exc:
         _raise_spill_http(exc, thread_id=thread_id)
@@ -247,7 +249,7 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
         superseded_turn_number=echo_turn_number,
         superseded_turn_id=echo_turn_id,
         thread_tags=thread_tags,
-        supersedes_turn=body.supersedes_turn or body.supersedes_turn_id,
+        supersedes_turn=echo_turn_number,
     )
     thread_row = get_thread(thread_id) or thread_row
     return TurnSendCreated(

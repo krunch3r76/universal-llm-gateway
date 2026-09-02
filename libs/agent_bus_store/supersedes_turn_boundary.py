@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .checkpoint_kind_detector import should_auto_derive_supersedes_turn
+from .checkpoint_projection import is_checkpoint_subject
+
 
 @dataclass(frozen=True, slots=True)
 class SupersedesTurnResolved:
@@ -43,6 +46,83 @@ class SupersedesTurnNotFoundError(Exception):
         if self.turn_id is not None:
             detail["turn_id"] = self.turn_id
         return detail
+
+
+def find_latest_checkpoint_turn_number(*, thread: str) -> int | None:
+    """Return the highest turn_number whose subject is CHECKPOINT-shaped, if any."""
+    from .db.connection import connect
+
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT turn_number, subject FROM turns "
+            "WHERE thread = ? ORDER BY turn_number DESC",
+            (thread,),
+        ).fetchall()
+    for row in rows:
+        if is_checkpoint_subject(str(row["subject"])):
+            return int(row["turn_number"])
+    return None
+
+
+def resolve_latest_checkpoint_supersedes(*, thread: str) -> SupersedesTurnResolved | None:
+    """Atomically resolve the latest CHECKPOINT turn for auto-supersede sends."""
+    from .db.connection import connect
+
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT id, turn_number, subject FROM turns "
+            "WHERE thread = ? ORDER BY turn_number DESC",
+            (thread,),
+        ).fetchall()
+    for row in rows:
+        if is_checkpoint_subject(str(row["subject"])):
+            return SupersedesTurnResolved(
+                turn_number=int(row["turn_number"]),
+                turn_id=int(row["id"]),
+            )
+    return None
+
+
+def resolve_send_supersedes(
+    *,
+    thread: str,
+    subject: str,
+    thread_tags: list[str] | None,
+    turn_number: int | None,
+    turn_id_alias: int | None,
+) -> SupersedesTurnResolved | None:
+    """Resolve supersede target for send/reply, including gated auto-derive."""
+    if should_auto_derive_supersedes_turn(
+        subject=subject,
+        thread_tags=thread_tags,
+        turn_number=turn_number,
+        turn_id_alias=turn_id_alias,
+    ):
+        return resolve_latest_checkpoint_supersedes(thread=thread)
+    return resolve_supersedes_turn(
+        thread=thread,
+        turn_number=turn_number,
+        turn_id_alias=turn_id_alias,
+    )
+
+
+def derive_supersedes_turn_for_send(
+    *,
+    thread: str,
+    subject: str,
+    thread_tags: list[str] | None,
+    turn_number: int | None = None,
+    turn_id_alias: int | None = None,
+) -> int | None:
+    """Auto-derive wire ``supersedes_turn`` for standing-root CHECKPOINT continue sends."""
+    if not should_auto_derive_supersedes_turn(
+        subject=subject,
+        thread_tags=thread_tags,
+        turn_number=turn_number,
+        turn_id_alias=turn_id_alias,
+    ):
+        return turn_number
+    return find_latest_checkpoint_turn_number(thread=thread)
 
 
 def resolve_supersedes_turn(
@@ -85,5 +165,9 @@ def resolve_supersedes_turn(
 __all__ = [
     "SupersedesTurnNotFoundError",
     "SupersedesTurnResolved",
+    "derive_supersedes_turn_for_send",
+    "find_latest_checkpoint_turn_number",
+    "resolve_latest_checkpoint_supersedes",
+    "resolve_send_supersedes",
     "resolve_supersedes_turn",
 ]

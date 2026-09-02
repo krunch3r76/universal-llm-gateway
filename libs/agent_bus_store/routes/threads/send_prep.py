@@ -12,7 +12,7 @@ from ...db.lane_associations import (
 )
 from ...supersedes_turn_boundary import (
     SupersedesTurnNotFoundError,
-    resolve_supersedes_turn,
+    resolve_send_supersedes,
 )
 from ...turns_models import TurnSendCreate
 
@@ -52,13 +52,17 @@ def _raise_spill_http(exc: BaseException, *, thread_id: str | None = None) -> No
 def _resolve_send_supersedes(
     *,
     thread_id: str,
+    subject: str,
+    thread_tags: list[str],
     turn_number: int | None,
     turn_id_alias: int | None,
 ) -> tuple[int | None, int | None, int | None]:
     """Return (storage_row_id, echo_turn_number, echo_turn_id) for send/supersede."""
     try:
-        resolved = resolve_supersedes_turn(
+        resolved = resolve_send_supersedes(
             thread=thread_id,
+            subject=subject,
+            thread_tags=thread_tags,
             turn_number=turn_number,
             turn_id_alias=turn_id_alias,
         )
