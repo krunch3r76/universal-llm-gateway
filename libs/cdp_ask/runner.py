@@ -531,6 +531,8 @@ async def run_execution(
                         archive_uri=archive_uri,
                         attested_model=last.attested_model,
                         harvest_provenance=last.harvest_provenance,
+                        artifact_cards=last.artifact_cards,
+                        artifact_cards_unresolved=last.artifact_cards_unresolved,
                     )
                     results[-1] = backfilled
                     last = backfilled

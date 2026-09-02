@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from claude_bundles.project_ask import ProjectAskResult
 
 from cdp_ask.models import SubmitProjectAskRequest
-from cdp_ask.runner import default_archive_path, resolve_stargate_execution_id
+from cdp_ask.runner import (
+    default_archive_path,
+    resolve_stargate_execution_id,
+    run_execution,
+)
 
 pytestmark = pytest.mark.offline
 
@@ -79,3 +85,61 @@ def test_default_archive_path_honors_explicit_archive_path(
         archive_path=explicit,
     )
     assert default_archive_path(req, execution_id="deadbeef" * 4) == explicit
+
+
+@pytest.mark.asyncio
+async def test_backfill_preserves_all_fields_and_sets_archive_uri() -> None:
+    """B1 — converse archive backfill forwards all 14 ProjectAskResult fields."""
+    reg = MagicMock()
+    reg.registration_id = "reg-backfill"
+    reg.cdp_url = "http://127.0.0.1:9222"
+    cards = ({"title": "Spec", "kind": "MD"},)
+    converse_result = ProjectAskResult(
+        ok=True,
+        body="harvest body",
+        url="https://claude.ai/cowork/cse_backfill",
+        project_uuid="",
+        project_url="https://claude.ai/new",
+        model={"ok": True, "current_model": "Model: Opus 5"},
+        body_len=12,
+        delete_after={"deleted": False},
+        error=None,
+        archive_uri=None,
+        attested_model="Model: Opus 5",
+        harvest_provenance="chat",
+        artifact_cards=cards,
+        artifact_cards_unresolved=True,
+    )
+    archived = "cortex://notes/system/threads/cdp-ask-archive-backfill.md"
+    with (
+        patch("cdp_ask.runner.bind_execution_lane", return_value=reg),
+        patch(
+            "cdp_ask.runner.run_project_conversation",
+            new=AsyncMock(return_value=[converse_result]),
+        ),
+        patch("cdp_ask.runner.archive_harvest", return_value=archived),
+        patch("cdp_ask.runner.deregister_on_exit"),
+        patch("cdp_ask.runner.registration_has_wake_debt", return_value=False),
+        patch("cdp_ask.runner.cdp_registry.bind_session_address"),
+        patch("cdp_ask.runner._wake_debt_extras", return_value={}),
+    ):
+        payload = await run_execution(
+            SubmitProjectAskRequest(
+                prompt_text="ping",
+                converse=True,
+                no_project_uuid=True,
+                purpose="review",
+            ),
+            execution_id="exec-backfill",
+            abort_check=AsyncMock(return_value=False),
+        )
+
+    assert payload["ok"] is True
+    assert payload["archive_uri"] == archived
+    backfilled = payload["results"][0]
+    assert backfilled["archive_uri"] == archived
+    assert backfilled["attested_model"] == "Model: Opus 5"
+    assert backfilled["artifact_cards"] == cards
+    assert backfilled["artifact_cards_unresolved"] is True
+    assert backfilled["harvest_provenance"] == "chat"
+    assert backfilled["delete_after"] == {"deleted": False}
