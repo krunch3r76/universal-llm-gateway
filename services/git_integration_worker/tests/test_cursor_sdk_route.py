@@ -31,6 +31,7 @@ from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
     CursorDispatchResponse,
 )
+from services.git_integration_worker.tests.conftest import _ctx
 
 
 def _sdk_outcome(**kwargs: object) -> SdkRunOutcome:
@@ -438,8 +439,12 @@ async def test_dispatch_large_result_posts_bounded_closeout_with_sidecar(
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         bus=bus,
         controller=_make_controller(),
     )
@@ -503,8 +508,12 @@ async def test_dispatch_reply_413_emits_delivery_failed_and_terminates_failed(
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         bus=bus,
         controller=_make_controller(),
     )
@@ -562,8 +571,12 @@ async def test_dispatch_implement_stub_degraded(
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         bus=bus,
         controller=_make_controller(),
     )
@@ -626,8 +639,12 @@ async def test_dispatch_implement_success_ok(
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         bus=bus,
         controller=_make_controller(),
     )
@@ -697,8 +714,12 @@ async def test_dispatch_implement_pin_satisfied_cortex_uri_first(
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         bus=bus,
         controller=_make_controller(),
     )
@@ -739,8 +760,12 @@ async def test_dispatch_reply_targets_caller_agent(
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=route_mod._CONFIG.source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            route_mod._CONFIG.source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         bus=bus,
         controller=_make_controller(),
     )
@@ -772,8 +797,12 @@ async def test_dispatch_reply_defaults_to_dispatch(
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=route_mod._CONFIG.source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            route_mod._CONFIG.source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         bus=bus,
         controller=_make_controller(),
     )
@@ -818,8 +847,12 @@ async def test_dispatch_consult_zero_tool_calls_not_degraded(
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         bus=bus,
         controller=_make_controller(),
     )
@@ -864,8 +897,12 @@ async def test_dispatch_exception_posts_failure_turn_and_event(
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=route_mod._CONFIG.source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            route_mod._CONFIG.source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         bus=bus,
         controller=_make_controller(),
     )
@@ -984,8 +1021,12 @@ async def test_dispatch_home_config_error_posts_bus_reply(
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=route_mod._CONFIG.source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            route_mod._CONFIG.source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         bus=bus,
         controller=_make_controller(),
     )
@@ -1086,13 +1127,15 @@ def test_run_sdk_sync_injects_venv_env(
     )
 
     route_mod._run_sdk_sync(
-        source_repo=route_mod._CONFIG.source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            route_mod._CONFIG.source_repo,
+            dispatch_id="disp-venv",
+            thread_id="1752",
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         prompt="hello",
         config_model_id="cursor/composer-2.5",
         selection_overrides=None,
-        dispatch_id="disp-venv",
-        thread_id="1752",
         resolved_model="composer-2.5",
         gate_loop=MagicMock(),
     )
@@ -1193,13 +1236,15 @@ def test_dispatch_path_prepend_pins_cursor_agent_before_grok(
     )
 
     route_mod._run_sdk_sync(
-        source_repo=route_mod._CONFIG.source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            route_mod._CONFIG.source_repo,
+            dispatch_id="disp-path-pin",
+            thread_id="1752",
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         prompt="hello",
         config_model_id="cursor/composer-2.5",
         selection_overrides=None,
-        dispatch_id="disp-path-pin",
-        thread_id="1752",
         resolved_model="composer-2.5",
         gate_loop=MagicMock(),
     )
@@ -1256,8 +1301,12 @@ async def test_dispatch_venv_config_error_posts_bus_reply(
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=route_mod._CONFIG.source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            route_mod._CONFIG.source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         bus=bus,
         controller=_make_controller(),
     )
@@ -1307,8 +1356,12 @@ async def test_dispatch_timeout_posts_failure_and_terminates(
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=route_mod._CONFIG.source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            route_mod._CONFIG.source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         bus=bus,
         controller=_make_controller(),
     )
@@ -1630,8 +1683,12 @@ async def test_dispatch_idle_timeout_payload_fields(
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=route_mod._CONFIG.source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            route_mod._CONFIG.source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         bus=bus,
         controller=_make_controller(),
     )
@@ -1679,8 +1736,12 @@ async def test_closeout_fires_trigger_on_success(
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         bus=bus,
         controller=_make_controller(),
     )
@@ -1727,8 +1788,12 @@ async def test_closeout_no_trigger_on_delivery_failure(
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         bus=bus,
         controller=_make_controller(),
     )
@@ -1812,8 +1877,12 @@ async def test_worker_base_exception_marks_terminal_and_delivers(
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=route_mod._CONFIG.source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            route_mod._CONFIG.source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         bus=bus,
         controller=_make_controller(),
     )
@@ -1862,8 +1931,12 @@ async def test_closeout_exception_marks_terminal_and_delivers(
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         bus=bus,
         controller=_make_controller(),
     )
@@ -2204,11 +2277,15 @@ async def test_gated_pure_mechanical_captures_wt_baseline(
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=tmp_path,
-        dispatch_workspace=tmp_path,
+        ctx=_ctx(
+            tmp_path,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=tmp_path,
+            contract="pure-mechanical",
+        ),
         bus=AsyncMock(),
         controller=_make_controller(),
-        contract="pure-mechanical",
     )
 
     assert len(set_calls) == 1
@@ -2263,11 +2340,15 @@ async def test_gated_light_bounded_captures_wt_baseline(
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=tmp_path,
-        dispatch_workspace=tmp_path,
+        ctx=_ctx(
+            tmp_path,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=tmp_path,
+            contract="light-bounded",
+        ),
         bus=AsyncMock(),
         controller=_make_controller(),
-        contract="light-bounded",
     )
 
     assert len(set_calls) == 1
@@ -2323,11 +2404,15 @@ async def test_gated_pure_mechanical_read_only_still_captures_wt_baseline(
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=tmp_path,
-        dispatch_workspace=tmp_path,
+        ctx=_ctx(
+            tmp_path,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=tmp_path,
+            contract="pure-mechanical",
+        ),
         bus=AsyncMock(),
         controller=_make_controller(),
-        contract="pure-mechanical",
     )
 
     assert len(set_calls) == 1
@@ -2377,11 +2462,15 @@ async def test_gated_consult_read_only_skips_wt_baseline(
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=tmp_path,
-        dispatch_workspace=tmp_path,
+        ctx=_ctx(
+            tmp_path,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=tmp_path,
+            contract="consult",
+        ),
         bus=AsyncMock(),
         controller=_make_controller(),
-        contract="consult",
     )
 
     assert capture_calls == []
@@ -2504,8 +2593,12 @@ async def test_finalize_implement_null_baseline_reports_unavailable(
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         bus=bus,
         controller=_make_controller(),
     )
@@ -2551,8 +2644,12 @@ async def test_closeout_failure_is_retryable_and_non_lossy(
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         bus=bus,
         controller=_make_controller(),
     )
@@ -2649,13 +2746,15 @@ def test_run_sdk_sync_folds_stream_paths_and_artifacts(
     monkeypatch.setattr(route_mod, "observe_run_stream", lambda *_a, **_k: stream_capture)
 
     outcome = route_mod._run_sdk_sync(
-        source_repo=route_mod._CONFIG.source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            route_mod._CONFIG.source_repo,
+            dispatch_id="disp-stream-fold",
+            thread_id="1752",
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         prompt="hello",
         config_model_id="cursor/composer-2.5",
         selection_overrides=None,
-        dispatch_id="disp-stream-fold",
-        thread_id="1752",
         resolved_model="composer-2.5",
         gate_loop=MagicMock(),
     )
@@ -2712,8 +2811,12 @@ async def test_dispatch_success_emits_sdk019_completed_fields(
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         bus=bus,
         controller=_make_controller(),
     )
@@ -2801,13 +2904,15 @@ def test_run_sdk_sync_local_bridge_post_wait_request_id(
     monkeypatch.setattr(route_mod, "observe_run_stream", lambda *_a, **_k: stream_capture)
 
     outcome = route_mod._run_sdk_sync(
-        source_repo=route_mod._CONFIG.source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            route_mod._CONFIG.source_repo,
+            dispatch_id="disp-post-wait-req",
+            thread_id="1752",
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         prompt="hello",
         config_model_id="cursor/composer-2.5",
         selection_overrides=None,
-        dispatch_id="disp-post-wait-req",
-        thread_id="1752",
         resolved_model="composer-2.5",
         gate_loop=MagicMock(),
     )
@@ -2855,8 +2960,12 @@ async def test_dispatch_success_emits_post_wait_request_id_fields(
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         bus=bus,
         controller=_make_controller(),
     )
@@ -2926,13 +3035,15 @@ def test_finalize_request_id_wire_point_receives_run_and_result(
     monkeypatch.setattr(route_mod, "validate_repo_venv", lambda _v: None)
 
     route_mod._run_sdk_sync(
-        source_repo=route_mod._CONFIG.source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            route_mod._CONFIG.source_repo,
+            dispatch_id="wire-point",
+            thread_id="t",
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         prompt="x",
         config_model_id="cursor/composer-2.5",
         selection_overrides=None,
-        dispatch_id="wire-point",
-        thread_id="t",
         resolved_model="composer-2.5",
         gate_loop=MagicMock(),
     )
@@ -3042,8 +3153,12 @@ async def test_failure_paths_emit_one_terminal_before_lease(
         monkeypatch.setattr(route_mod, "_run_sdk_sync", _raise_home)
         await route_mod._run_sdk_dispatch_gated(
             req=req,
-            source_repo=route_mod._CONFIG.source_repo,
-            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+            ctx=_ctx(
+                route_mod._CONFIG.source_repo,
+                dispatch_id=req.dispatch_id,
+                thread_id=req.thread_id,
+                dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+            ),
             bus=bus,
             controller=_make_controller(),
         )
@@ -3064,8 +3179,12 @@ async def test_failure_paths_emit_one_terminal_before_lease(
         monkeypatch.setattr(route_mod, "_run_sdk_sync", _raise_venv)
         await route_mod._run_sdk_dispatch_gated(
             req=req,
-            source_repo=route_mod._CONFIG.source_repo,
-            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+            ctx=_ctx(
+                route_mod._CONFIG.source_repo,
+                dispatch_id=req.dispatch_id,
+                thread_id=req.thread_id,
+                dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+            ),
             bus=bus,
             controller=_make_controller(),
         )
@@ -3415,8 +3534,12 @@ async def test_success_path_single_completed_no_unclassified(
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         bus=bus,
         controller=_make_controller(),
     )

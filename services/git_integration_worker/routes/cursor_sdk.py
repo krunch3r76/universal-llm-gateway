@@ -130,6 +130,9 @@ from services.git_integration_worker.cursor_sdk_deliverables import (
 from services.git_integration_worker.cursor_sdk_deliverables_expected import (
     compute_deliverables_expected,
 )
+from services.git_integration_worker.cursor_sdk_dispatch_context import (
+    SdkDispatchContext,
+)
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_closeout_reconciled,
     emit_sdk_implement_unresolved_source_ref,
@@ -910,24 +913,19 @@ def _start_heartbeat(
 
 def _run_sdk_sync(
     *,
-    source_repo: Path,
-    binding: CaptureBinding | None = None,
-    dispatch_workspace: Path,
+    ctx: SdkDispatchContext,
     prompt: str,
     config_model_id: str,
     selection_overrides: dict[str, str] | None,
-    dispatch_id: str,
-    thread_id: str,
     resolved_model: str,
     execution_id: str | None = None,
     gate_loop: asyncio.AbstractEventLoop,
     live_counter: _LiveToolCallCounter | None = None,
-    handoff_contract: str | None = None,
 ) -> SdkRunOutcome:
     # Pin operator home via passwd — never trust process HOME (may be a leaked
     # dispatch overlay; CURSOR_VENV_CONFIG / agent-bus:6468).
     real_home = operator_real_home()
-    resume_ctx = load_resume_run_context(dispatch_id=dispatch_id)
+    resume_ctx = load_resume_run_context(dispatch_id=ctx.dispatch_id)
     if resume_ctx is not None:
         dispatch_home = dispatch_home_path(resume_ctx.resume_of)
         if not dispatch_home.is_dir():
@@ -939,61 +937,58 @@ def _run_sdk_sync(
         )
         store_path = record_resolved_store_roots(
             parent_id=resume_ctx.resume_of,
-            child_id=dispatch_id,
+            child_id=ctx.dispatch_id,
             parent_state_root=parent.state_root if parent else resume_ctx.state_root,
         )
         bridge_state = Path(store_path or resume_ctx.state_root)
     else:
-        dispatch_home = setup_cursor_dispatch_home(dispatch_id, real_home=real_home)
+        dispatch_home = setup_cursor_dispatch_home(ctx.dispatch_id, real_home=real_home)
         bridge_state = dispatch_home / "bridge-state"
         bridge_state.mkdir(parents=True, exist_ok=True)
         CursorDispatchLedger.instance().record_state_root(
-            dispatch_id=dispatch_id, state_root=str(bridge_state)
+            dispatch_id=ctx.dispatch_id, state_root=str(bridge_state)
         )
     repo_venv = resolve_repo_venv(real_home=real_home)
     validate_repo_venv(repo_venv)
     try:
         config = resolve_cursor(config_model_id)
         selection = build_model_selection(config, selection_overrides)
-        parity = validate_dispatch_context(source_repo)
+        parity = validate_dispatch_context(ctx.hub)
         knob_summary = {p.id: p.value for p in selection.params}
         logger.info(
             "cursor sdk dispatch start: dispatch_id=%s model=%s knobs=%s parity=%s",
-            dispatch_id,
+            ctx.dispatch_id,
             config.model_id,
             knob_summary,
             parity,
         )
         substrate_ctx = SubstrateDispatchContext(
-            dispatch_id=dispatch_id,
-            thread_id=thread_id,
-        )
-        workspace_root = (
-            binding.write_tree if binding is not None else source_repo
+            dispatch_id=ctx.dispatch_id,
+            thread_id=ctx.thread_id,
         )
         agent_options = build_agent_options(
-            source_repo,
-            dispatch_workspace,
+            ctx.hub,
+            ctx.dispatch_workspace,
             selection,
-            workspace_root=workspace_root,
+            workspace_root=ctx.workspace_root,
             real_home=real_home,
             substrate_ctx=substrate_ctx,
             state_root=str(bridge_state),
-            handoff_contract=handoff_contract,
+            handoff_contract=ctx.handoff_contract,
         )
 
         with _dispatch_home_overlay(
             dispatch_home,
             repo_venv=repo_venv,
             real_home=real_home,
-            dispatch_id=dispatch_id,
+            dispatch_id=ctx.dispatch_id,
         ):
             client = None
             for attempt in range(_SDK_LAUNCH_ATTEMPTS):
                 try:
                     client = Client.launch_bridge(
                         _SDK_BRIDGE_BIN,
-                        workspace=str(dispatch_workspace),
+                        workspace=str(ctx.dispatch_workspace),
                         state_root=str(bridge_state),
                         timeout=_SDK_LAUNCH_TIMEOUT_S,
                         # Friction 23057: without this the SDK's default
@@ -1013,24 +1008,24 @@ def _run_sdk_sync(
                     logger.warning(
                         "cursor sdk bridge pre-discovery transient: "
                         "dispatch_id=%s attempt=%d/%d err=%s; retrying in %.1fs",
-                        dispatch_id,
+                        ctx.dispatch_id,
                         attempt + 1,
                         _SDK_LAUNCH_ATTEMPTS,
                         launch_exc,
                         backoff,
                     )
                     time.sleep(backoff)
-            register_active_client(dispatch_id=dispatch_id, client=client)
+            register_active_client(dispatch_id=ctx.dispatch_id, client=client)
             bridge_tap = start_bridge_stderr_drain(
-                dispatch_id=dispatch_id,
-                thread_id=thread_id,
+                dispatch_id=ctx.dispatch_id,
+                thread_id=ctx.thread_id,
                 client=client,
             )
             if live_counter is None:
                 live_counter = _LiveToolCallCounter()
             hb_thread, hb_stop = _start_heartbeat(
-                dispatch_id=dispatch_id,
-                thread_id=thread_id,
+                dispatch_id=ctx.dispatch_id,
+                thread_id=ctx.thread_id,
                 resolved_model=resolved_model,
                 execution_id=execution_id,
                 tool_call_count_fn=live_counter.value,
@@ -1078,13 +1073,13 @@ def _run_sdk_sync(
                 )
                 # Local bridge Send rejects Idempotency-Key (cloud-only in SDK v1).
                 register_live_run(
-                    dispatch_id=dispatch_id,
-                    thread_id=thread_id,
-                    source_repo=str(source_repo),
+                    dispatch_id=ctx.dispatch_id,
+                    thread_id=ctx.thread_id,
+                    source_repo=str(ctx.hub),
                     run=run,
                 )
                 CursorDispatchLedger.instance().record_sdk_identity(
-                    dispatch_id=dispatch_id,
+                    dispatch_id=ctx.dispatch_id,
                     agent_id=sdk_agent_id_from_agent(agent),
                     run_id=getattr(run, "id", None),
                 )
@@ -1095,8 +1090,8 @@ def _run_sdk_sync(
                 # truncates/rejects upstream of conversation() (friction 21654).
                 stream_capture = observe_run_stream(
                     run,
-                    dispatch_id=dispatch_id,
-                    thread_id=thread_id,
+                    dispatch_id=ctx.dispatch_id,
+                    thread_id=ctx.thread_id,
                     resolved_model=resolved_model,
                     execution_id=execution_id,
                     on_tool_call=live_counter.bump,
@@ -1115,7 +1110,7 @@ def _run_sdk_sync(
                 )
                 persist_dispatch_usage(
                     CursorDispatchLedger.instance(),
-                    dispatch_id=dispatch_id,
+                    dispatch_id=ctx.dispatch_id,
                     record=usage_record,
                 )
                 assert run is not None and result is not None
@@ -1132,16 +1127,16 @@ def _run_sdk_sync(
                 artifact_paths = list(post_wait.artifact_paths)
                 capture_branch = classify_mcp_capture_branch(turns)
                 effects_manifest = build_effects_manifest(
-                    dispatch_id=dispatch_id,
-                    thread_id=thread_id,
+                    dispatch_id=ctx.dispatch_id,
+                    thread_id=ctx.thread_id,
                     turns=turns,
                     capture_branch=capture_branch,
-                    contract=handoff_contract,
+                    contract=ctx.handoff_contract,
                 )
                 effects_manifest = merge_stream_tool_calls(
                     effects_manifest,
                     stream_capture.tool_calls,
-                    source_repo=source_repo,
+                    source_repo=ctx.hub,
                 )
                 effects_manifest = merge_stream_subagent_calls(
                     effects_manifest,
@@ -1151,7 +1146,7 @@ def _run_sdk_sync(
                     effects_manifest = merge_artifact_paths(
                         effects_manifest,
                         artifact_paths,
-                        source_repo=source_repo,
+                        source_repo=ctx.hub,
                     )
                 conversation_tool_call_count = count_tool_calls(turns)
                 tool_call_count = (
@@ -1162,7 +1157,7 @@ def _run_sdk_sync(
                         "cursor sdk stream/conversation tool-call count delta: "
                         "dispatch_id=%s stream=%d conversation=%d delta=%d "
                         "truncated_calls=%d",
-                        dispatch_id,
+                        ctx.dispatch_id,
                         stream_capture.tool_call_count,
                         conversation_tool_call_count,
                         stream_capture.tool_call_count - conversation_tool_call_count,
@@ -1177,7 +1172,7 @@ def _run_sdk_sync(
                 extra_reasons = git_probe_degraded_reasons(
                     probe=git_probe,
                     sdk_git=post_wait.sdk_git,
-                    source_repo=source_repo,
+                    source_repo=ctx.hub,
                 )
                 stream_deviations = stream_only_effect_deviations(
                     stream_tool_calls=stream_capture.tool_calls,
@@ -1209,7 +1204,7 @@ def _run_sdk_sync(
                     logger.info(
                         "cursor sdk error request_id captured: dispatch_id=%s "
                         "sdk_request_id=%s source=%s",
-                        dispatch_id,
+                        ctx.dispatch_id,
                         sdk_request_id,
                         request_id_source,
                     )
@@ -1222,16 +1217,16 @@ def _run_sdk_sync(
             finally:
                 hb_stop.set()
                 hb_thread.join(timeout=5.0)
-                unregister_live_run(dispatch_id=dispatch_id)
+                unregister_live_run(dispatch_id=ctx.dispatch_id)
                 stop_bridge_stderr_drain(bridge_tap)
                 if client is not None:
                     client.close()
-                clear_dispatch_orphan_state(dispatch_id=dispatch_id)
+                clear_dispatch_orphan_state(dispatch_id=ctx.dispatch_id)
     finally:
         # Release the capacity slot from this thread — not from the async
         # coroutine — so a timed-out orphan thread holds the slot until exit.
         # A1: if a parked parent waits for this child, transfer (no waiter wake).
-        release_or_restore_for_child_sync(gate_loop, dispatch_id=dispatch_id)
+        release_or_restore_for_child_sync(gate_loop, dispatch_id=ctx.dispatch_id)
 
 
 async def _mark_terminal_and_promote(
@@ -1340,6 +1335,14 @@ async def _start_promoted_dispatch(
         source_repo=cfg.source_repo,
         cfg=cfg,
     )
+    ctx = SdkDispatchContext(
+        dispatch_id=req.dispatch_id,
+        thread_id=req.thread_id,
+        handoff_contract=contract,
+        hub=cfg.source_repo,
+        dispatch_workspace=dispatch_workspace,
+        capture_binding=binding,
+    )
     # Friction 23001: baseline capture deferred into _run_sdk_dispatch_gated
     # (post slot acquisition) — also fixes misattribution where a queued
     # dispatch's baseline included none of its predecessor's edits.
@@ -1362,12 +1365,9 @@ async def _start_promoted_dispatch(
         _close_ticket_after(
             _run_sdk_dispatch_gated(
                 req=req,
-                source_repo=cfg.source_repo,
-                binding=binding,
-                dispatch_workspace=dispatch_workspace,
+                ctx=ctx,
                 bus=bus,
                 controller=controller,
-                contract=contract,
                 worktree_isolated=req.worktree_isolated,
             ),
             controller=controller,
@@ -1380,7 +1380,7 @@ async def _start_promoted_dispatch(
     await asyncio.to_thread(ledger.mark_running, dispatch_id=promoted.dispatch_id)
     packet_text = req.message or ""
     if req.packet_path:
-        packet_text = _read_packet_text(req, cfg.source_repo) or packet_text
+        packet_text = _read_packet_text(req, ctx.hub) or packet_text
     _maybe_emit_giw_dispatched(req=req, packet_text=packet_text)
 
 
@@ -1871,12 +1871,9 @@ async def _close_ticket_after(
 async def _run_sdk_dispatch_gated(
     *,
     req: CursorDispatchRequest,
-    source_repo: Path,
-    binding: CaptureBinding | None = None,
-    dispatch_workspace: Path,
+    ctx: SdkDispatchContext,
     bus: CursorBusClient,
     controller: WorkAdmissionController,
-    contract: str = "consult",
     worktree_isolated: bool = False,
 ) -> None:
     reply_to = req.caller_agent or "dispatch"
@@ -1895,14 +1892,14 @@ async def _run_sdk_dispatch_gated(
         capacity_wait_emitted = True
         association = build_dispatch_association_fields(
             req=req,
-            packet_text=_read_packet_text(req, source_repo)
+            packet_text=_read_packet_text(req, ctx.hub)
             if req.packet_path
             else (req.message or ""),
         )
         emit_sdk_worker_queued(
             dispatch_id=req.dispatch_id,
             thread_id=req.thread_id,
-            source_repo=str(source_repo.resolve()),
+            source_repo=str(ctx.hub.resolve()),
             queue_position=None,
             execution_id=req.execution_id,
             resolved_model=req.model,
@@ -1983,15 +1980,14 @@ async def _run_sdk_dispatch_gated(
     # 599 on slow dirty-checkout baselines).
     # cursor-auto maps operator implement → handoff_contract pure-mechanical
     # (wire_map.resolve_handoff_contract); both need admit_head for lane git_refs.
-    if contract in ("implement", "pure-mechanical") or not _effective_read_only(
-        req, contract
+    if ctx.handoff_contract in ("implement", "pure-mechanical") or not _effective_read_only(
+        req, ctx.handoff_contract
     ):
-        write_tree = binding.write_tree if binding else source_repo
         baseline_map = await asyncio.to_thread(
             capture_wt_baseline_with_hashes,
-            write_tree,
-            mount_root=binding.mount_root if binding else None,
-            repo_roots=binding.repo_roots if binding else None,
+            ctx.workspace_root,
+            mount_root=ctx.capture_binding.mount_root,
+            repo_roots=ctx.capture_binding.repo_roots,
         )
         if baseline_map is not None:
             await asyncio.to_thread(
@@ -2000,25 +1996,20 @@ async def _run_sdk_dispatch_gated(
                 wt_baseline=json.dumps(baseline_map),
             )
 
-    prompt = _resolve_prompt(req, source_repo)
+    prompt = _resolve_prompt(req, ctx.hub)
 
     live_counter = _LiveToolCallCounter()
     worker_task = controller.create_tracked_task(
         asyncio.to_thread(
             _run_sdk_sync,
-            source_repo=source_repo,
-            binding=binding,
-            dispatch_workspace=dispatch_workspace,
+            ctx=ctx,
             prompt=prompt,
             config_model_id=req.model,
             selection_overrides=req.model_knobs,
-            dispatch_id=req.dispatch_id,
-            thread_id=req.thread_id,
             resolved_model=req.model,
             execution_id=req.execution_id,
             gate_loop=gate_loop,
             live_counter=live_counter,
-            handoff_contract=contract,
         ),
         op_id=f"{req.dispatch_id}:worker",
     )
@@ -2169,8 +2160,8 @@ async def _run_sdk_dispatch_gated(
     try:
         await _finalize_success(
             req=req,
-            source_repo=source_repo,
-            binding=binding,
+            source_repo=ctx.hub,
+            binding=ctx.capture_binding,
             outcome=outcome,
             bus=bus,
             reply_to=reply_to,
@@ -2678,6 +2669,14 @@ async def cursor_dispatch(
         lease_key=lease_key,
         dispatch_source_repo=resolved_source_repo,
     )
+    ctx = SdkDispatchContext(
+        dispatch_id=req.dispatch_id,
+        thread_id=req.thread_id,
+        handoff_contract=contract,
+        hub=cfg.source_repo,
+        dispatch_workspace=dispatch_workspace,
+        capture_binding=binding,
+    )
     gate_lane = sdk_dispatch_lane(
         caller_agent=req.caller_agent,
         dispatch_id=req.dispatch_id,
@@ -3067,12 +3066,9 @@ async def cursor_dispatch(
         _close_ticket_after(
             _run_sdk_dispatch_gated(
                 req=req,
-                source_repo=cfg.source_repo,
-                binding=binding,
-                dispatch_workspace=dispatch_workspace,
+                ctx=ctx,
                 bus=bus,
                 controller=controller,
-                contract=contract,
                 worktree_isolated=req.lane == "B" or req.worktree_isolated,
             ),
             controller=controller,

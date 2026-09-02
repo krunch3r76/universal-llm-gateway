@@ -26,6 +26,7 @@ from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
     CursorDispatchResponse,
 )
+from services.git_integration_worker.tests.conftest import _ctx
 
 
 @pytest.fixture(autouse=True)
@@ -248,8 +249,12 @@ async def test_ledger_non_authority(monkeypatch: pytest.MonkeyPatch) -> None:
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
-        source_repo=route_mod._CONFIG.source_repo,
-        dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ctx=_ctx(
+            route_mod._CONFIG.source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
         bus=bus,
         controller=_make_controller(),
     )
