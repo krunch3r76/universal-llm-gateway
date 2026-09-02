@@ -366,6 +366,8 @@ async def prepare_cursor_sdk_generate(
         has_explicit_prompt_source=has_explicit_prompt_source,
     )
 
+    from implement_admission.check_review_substrate import consultant_rung
+
     from .generate_admission_context_store import write_admission_context
 
     write_admission_context(
@@ -381,6 +383,7 @@ async def prepare_cursor_sdk_generate(
         suppress_review_spawn=suppress_review_spawn,
         prompt_turn_number=prompt_turn_number,
         prompt_bind_mode=prompt_bind_mode,
+        resolved_effort=consultant_rung(resolved_model, aligned_knobs),
     )
 
     if claimed_via_atomic:

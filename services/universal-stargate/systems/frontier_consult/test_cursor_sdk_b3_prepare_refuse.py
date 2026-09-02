@@ -250,3 +250,60 @@ async def test_b3_explicit_external_standing_arc_admits(
     assert coord_kwargs["prompt_bind_mode"] == "explicit_external"
     signals = [getattr(ev, "signal", "") for ev in probes["published"]]
     assert "frontier.admit_pointer.loop_closure" not in signals
+
+
+@pytest.mark.asyncio
+async def test_prepare_stamps_resolved_effort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[dict] = []
+
+    def _capture_write(**kwargs: object) -> None:
+        captured.append(dict(kwargs))
+
+    _patch_prepare_deps(monkeypatch)
+    monkeypatch.setattr(
+        "systems.frontier_consult.generate_admission_context_store.write_admission_context",
+        _capture_write,
+    )
+    monkeypatch.setattr(
+        prepare_mod,
+        "resolve_cursor_sdk_generate_target",
+        lambda *_a, **_k: (
+            "cursor-sdk:dispatch:exec-effort",
+            "cursor",
+            "sdk",
+            "cursor/claude-sonnet-5",
+        ),
+    )
+    monkeypatch.setattr(
+        prepare_mod,
+        "align_cursor_knobs",
+        lambda **_k: type(
+            "A",
+            (),
+            {
+                "aligned_knobs": {"effort": "low"},
+                "warnings_as_dicts": lambda self: [],
+                "knob_resolution_as_dicts": lambda self: [],
+            },
+        )(),
+    )
+    handle = await prepare_mod.prepare_cursor_sdk_generate(
+        request_id="req-effort",
+        role="cursor-sdk",
+        model="cursor/claude-sonnet-5",
+        subject="s",
+        caller_agent="dispatch",
+        contract="light-bounded",
+        packet_path=None,
+        message_text="nest",
+        parent_dispatch_thread_id="7435",
+        dispatch_thread_id="7436",
+        prompt_bind_mode="explicit_inline",
+        prompt_turn_number=None,
+        model_knobs={"effort": "low"},
+    )
+    assert handle.thread_id == "thread-worker"
+    assert captured
+    assert captured[-1]["resolved_effort"] == "low"

@@ -22,7 +22,7 @@ _CONSULT_PROVENANCE_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 _PROVENANCE_FIELD_RE = re.compile(
-    r"^\s*[-*]\s*(consultant_substrate|consultant_family|gate_id)\s*:\s*(\S+)",
+    r"^\s*[-*]\s*(consultant_substrate|consultant_model|consultant_effort|gate_id)\s*:\s*(\S+)",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -140,13 +140,13 @@ def _provenance_fields(body: str) -> dict[str, str]:
     return fields
 
 
-def _gate_family(body: str, gate_id: str) -> str | None:
+def _gate_model(body: str, gate_id: str) -> str | None:
     fields = _provenance_fields(body)
     tagged = fields.get("gate_id", "").upper()
-    if tagged == gate_id.upper() and fields.get("consultant_family"):
-        return fields["consultant_family"].lower()
+    if tagged == gate_id.upper() and fields.get("consultant_model"):
+        return fields["consultant_model"].lower()
     section_match = re.search(
-        rf"{gate_id.upper()}[^\n]*consultant_family\s*[:=]\s*(\S+)",
+        rf"{gate_id.upper()}[^\n]*consultant_model\s*[:=]\s*(\S+)",
         body or "",
         re.IGNORECASE,
     )
@@ -178,9 +178,9 @@ def layer_independence_ok(
         (R3a: today implies web-anthropic CDP operator vs cursor executor;
         if operator_proxy ever runs on a cursor-substrate operator seat,
         (C) must become a substrate comparison);
-    (B) G4 Check family ≠ G3 densifier family when G4 is pinned in
-        the checkpoint; unpinned G4 is skipped (``g4_unpinned``) and
-        family diversity is already G1 Fable vs G3 Grok.
+    (B) G4 Check model identity ≠ G3 densifier model identity when G4 is pinned
+        in the checkpoint; unpinned G4 is skipped (``g4_unpinned``) and
+        model diversity is already G1 Fable vs G3 Grok.
     """
     if parsed is None:
         return LayerIndependenceVerdict(False, None, None)
@@ -195,10 +195,10 @@ def layer_independence_ok(
         structural_reason = "derived_from_architecture"
     if structural_reason is None and attendance_norm == "operator_proxy":
         structural_reason = "operator_proxy_attends"
-    g3_family = _gate_family(body, "G3") or "grok"
-    g4_family = _gate_family(body, "G4")
-    if g4_family is not None:
-        branch_b = g4_family != g3_family
+    g3_model = _gate_model(body, "G3") or "grok-4.6"
+    g4_model = _gate_model(body, "G4")
+    if g4_model is not None:
+        branch_b = g4_model != g3_model
         branch_b_source = "checkpoint_provenance"
     else:
         # G4 is explicit-only (operator 2026-08-25). Unpinned ⇒ skip;

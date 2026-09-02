@@ -2762,8 +2762,11 @@ def test_tick_admits_consult_pending(
 
 
 @pytest.mark.offline
-def test_consult_boundary_dogfood_fixture_trace() -> None:
+def test_consult_boundary_dogfood_fixture_trace(tmp_path: Path) -> None:
     """Fixture trace for AC7 — live dogfood evidence pending G7 close."""
+    import hashlib
+    import os
+
     from implement_admission.dense_spec_schema import dense_spec_hash_uri
     from implement_admission.implement_ready import evaluate_implement_ready
 
@@ -2774,6 +2777,12 @@ def test_consult_boundary_dogfood_fixture_trace() -> None:
     spec_text = _VALID_DENSE_SPEC_FOR_DOGFOOD
     spec_uri = "notes/system/specs/charter-window-consult-hooks.md"
     spec_hash = dense_spec_hash_uri(spec_text)
+    archive_body = b"dogfood archive\n"
+    archive_rel = Path("notes/system/threads/archives/dogfood.md")
+    archive_path = tmp_path / archive_rel
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    archive_path.write_bytes(archive_body)
+    os.environ["CORTEX_FILES_ROOT"] = str(tmp_path)
 
     consult_cp = _CONSULT_CHECKPOINT_BODY
     consult_decision = evaluate_root(
@@ -2788,7 +2797,8 @@ def test_consult_boundary_dogfood_fixture_trace() -> None:
         "\n## Consult provenance\n"
         "- consult_thread: agent-bus:8801\n"
         "- verdict: proceed_with_amendments\n"
-        "- consultant_family: anthropic\n"
+        "- consultant_model: claude-opus-5\n"
+        "- consultant_effort: high\n"
         "- consultant_substrate: web-anthropic\n"
         "- evidence: cortex://notes/system/threads/8801-consult-reply.md\n"
     )
@@ -2816,10 +2826,21 @@ def test_consult_boundary_dogfood_fixture_trace() -> None:
         dense_spec_text=spec_text,
         files_expected=["scripts/model_manager/ui/controller/charter_runner/eligibility.py"],
         acceptance_criteria=["Consult hooks land."],
-        consult_thread="agent-bus:8801",
-        verdict="proceed_with_amendments",
-        consultant_family="anthropic",
-        consultant_substrate="web-anthropic",
+        consult_provenance_record={
+            "todo": "todo:charter-window-consult-hooks",
+            "consult_thread": "agent-bus:8801#12",
+            "verdict": "ADMIT",
+            "adjudication_assertion_id": 1,
+            "consultant_model": "claude-opus-5",
+            "consultant_effort": "high",
+            "consultant_substrate": "web-anthropic",
+            "archive_uri": f"cortex://{archive_rel.as_posix()}",
+            "archive_sha256": hashlib.sha256(archive_body).hexdigest(),
+            "satellite_execution_id": "sat-1",
+            "stargate_execution_id": "sg-1",
+            "written_by": "test",
+            "written_at": "2026-07-22T00:00:00Z",
+        },
         skeptic_ratified=True,
     )
     assert verdict.admitted is True

@@ -302,7 +302,8 @@ _CONSULT_PROVENANCE_BLOCK = """\
 ## Consult provenance
 - consult_thread: agent-bus:5990
 - verdict: ADMIT_WITH_AMENDMENTS
-- consultant_family: anthropic
+- consultant_model: claude-opus-5
+- consultant_effort: high
 - consultant_substrate: cdp/opus-5
 """
 

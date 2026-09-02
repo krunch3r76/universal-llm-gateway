@@ -176,7 +176,7 @@ _EXCLUDE_CASES = {
     "consult_provenance": lambda b: b.replace(
         "## What happened",
         "## Consult provenance\n- consult_thread: agent-bus:9000\n- verdict: ADMIT\n"
-        "- consultant_family: anthropic\n- consultant_substrate: web-anthropic\n\n## What happened",
+        "- consultant_model: claude-opus-5\n- consultant_effort: high\n- consultant_substrate: web-anthropic\n\n## What happened",
     ),
     "subject_window_suffix": lambda b: b,
     "materialized_window_line": lambda b: b.replace(

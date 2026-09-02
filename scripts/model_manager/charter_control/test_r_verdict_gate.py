@@ -6,7 +6,9 @@ import pytest
 
 from scripts.model_manager.charter_control.r_verdict_gate import (
     RGateAction,
+    ConsultProvenance,
     consult_provenance_from_r_admit,
+    format_consult_provenance_md,
     parse_r_verdict,
     parse_r_verdict_with_independence,
 )
@@ -27,7 +29,8 @@ def test_parse_r_verdict_prefers_bold_merits_over_scope_ratify() -> None:
     prov = consult_provenance_from_r_admit(
         consult_thread="agent-bus:5975",
         harvest_text=body,
-        consultant_family="anthropic",
+        consultant_model="claude-opus-5",
+        consultant_effort="high",
         consultant_substrate="cdp",
     )
     assert prov is not None
@@ -72,3 +75,31 @@ def test_parse_r_verdict_with_independence_blocks_unmeasured_family() -> None:
         body, r_family="xai", implement_family="anthropic"
     )
     assert ok.action is RGateAction.ADVANCE
+
+
+@pytest.mark.offline
+def test_format_consult_provenance_md_emits_model_and_effort() -> None:
+    prov = ConsultProvenance(
+        consult_thread="agent-bus:1",
+        verdict="ADMIT",
+        consultant_model="claude-fable-5-1",
+        consultant_effort="high",
+        consultant_substrate="web-anthropic",
+    )
+    md = format_consult_provenance_md(prov)
+    assert "- consult_thread: agent-bus:1" in md
+    assert "- verdict: ADMIT" in md
+    assert "- consultant_model: claude-fable-5-1" in md
+    assert "- consultant_effort: high" in md
+    assert "- consultant_substrate: web-anthropic" in md
+    assert "consultant_family" not in md
+
+    unmeasured = ConsultProvenance(
+        consult_thread="agent-bus:2",
+        verdict="ADMIT",
+        consultant_model="composer-2.5",
+        consultant_effort=None,
+        consultant_substrate="cursor",
+    )
+    md2 = format_consult_provenance_md(unmeasured)
+    assert "- consultant_effort: unmeasured" in md2

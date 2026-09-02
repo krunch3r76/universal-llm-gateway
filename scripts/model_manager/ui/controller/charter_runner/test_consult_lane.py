@@ -412,6 +412,61 @@ async def test_env_snapshot_carries_giw_sync_restart_residue(
 
 
 @pytest.mark.offline
+def test_provenance_from_cdp_harvest_folds_identity_and_rung() -> None:
+    from implement_admission.check_review_substrate import consultant_identity
+
+    worker_turns = [
+        {
+            "turn_number": 2,
+            "from": "cdp",
+            "body": "Merits verdict: ADMIT\nScope is bounded.",
+        },
+        {
+            "turn_number": 3,
+            "body": json.dumps(
+                {
+                    "status": "complete",
+                    "cdp_model": "cdp/opus-5",
+                    "consult_thread": "agent-bus:9001",
+                }
+            ),
+        },
+    ]
+    result = parse_cdp_consult_harvest(
+        worker_turns,
+        executor={"reviewer_model": "cdp/opus-5"},
+        worker_thread="9001",
+    )
+    assert result is not None
+    record = provenance_from_cdp_harvest(result, consultant_substrate="web-anthropic")
+    assert record is not None
+    assert record.consultant_model == "claude-opus-5"
+    expected_rung = consultant_identity("cdp/opus-5").rung
+    assert record.consultant_effort == expected_rung
+    assert expected_rung == "high"
+
+
+@pytest.mark.offline
+def test_provenance_from_cdp_harvest_refuses_unknown_identity() -> None:
+    worker_turns = [
+        {
+            "turn_number": 2,
+            "from": "cdp",
+            "body": "Merits verdict: ADMIT",
+        },
+    ]
+    result = parse_cdp_consult_harvest(
+        worker_turns,
+        executor={"reviewer_model": "cdp/not-a-model"},
+        worker_thread="9001",
+    )
+    assert result is not None
+    assert provenance_from_cdp_harvest(
+        result, consultant_substrate="web-anthropic"
+    ) is None
+
+
+@pytest.mark.offline
 def test_parse_cdp_harvest_primary_path() -> None:
     worker_turns = [
         {
@@ -439,11 +494,11 @@ def test_parse_cdp_harvest_primary_path() -> None:
     assert not result.escape_path
     assert result.model_id == "cdp/opus-5"
     prov = provenance_from_cdp_harvest(
-        result, consultant_family="anthropic", consultant_substrate="cdp"
+        result, consultant_substrate="cdp"
     )
     assert prov is not None
     assert prov.verdict == "ADMIT"
-    assert prov.consultant_family == "anthropic"
+    assert prov.consultant_model == "claude-opus-5"
     assert prov.consultant_substrate == "cdp"
 
 
@@ -492,11 +547,11 @@ def test_parse_cdp_harvest_reads_root_delivery_turns() -> None:
     assert result.consult_thread == "agent-bus:5975"
     assert result.model_id == "cdp/opus-5"
     prov = provenance_from_cdp_harvest(
-        result, consultant_family="anthropic", consultant_substrate="cdp"
+        result, consultant_substrate="cdp"
     )
     assert prov is not None
     assert prov.verdict == "ADMIT_WITH_AMENDMENTS"
-    assert prov.consultant_family == "anthropic"
+    assert prov.consultant_model == "claude-opus-5"
     assert prov.consultant_substrate == "cdp"
 
 
@@ -533,7 +588,7 @@ def test_parse_cdp_harvest_ignores_machine_closeout_summary() -> None:
     assert result is not None
     assert "ADMIT_WITH_AMENDMENTS" in result.harvest_text
     prov = provenance_from_cdp_harvest(
-        result, consultant_family="anthropic", consultant_substrate="cdp"
+        result, consultant_substrate="cdp"
     )
     assert prov is not None
     assert prov.verdict == "ADMIT_WITH_AMENDMENTS"
@@ -559,7 +614,7 @@ def test_parse_cdp_harvest_project_ask_is_escape() -> None:
 
 
 @pytest.mark.offline
-def test_write_consult_provenance_four_fields(
+def test_write_consult_provenance_fields(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
 
@@ -579,9 +634,9 @@ def test_write_consult_provenance_four_fields(
         ConsultProvenanceRecord(
             consult_thread="agent-bus:9003",
             verdict="ADMIT",
-            consultant_family="anthropic",
+            consultant_model="claude-opus-5",
+            consultant_effort="high",
             consultant_substrate="web-anthropic",
-            consultant_model="cdp/opus-5",
         ),
         root_id="5975",
     )
@@ -589,7 +644,9 @@ def test_write_consult_provenance_four_fields(
     assert loaded is not None
     assert loaded["consult_thread"] == "agent-bus:9003"
     assert loaded["verdict"] == "ADMIT"
-    assert loaded["consultant_family"] == "anthropic"
+    assert loaded["consultant_model"] == "claude-opus-5"
+    assert loaded["consultant_effort"] == "high"
+    assert "consultant_family" not in loaded
     assert loaded["consultant_substrate"] == "web-anthropic"
     assert uri.startswith("cortex://notes/system/threads/charter-consult-provenance/")
 
@@ -616,9 +673,9 @@ def test_write_consult_provenance_home_only_quarantines_pointer(
         ConsultProvenanceRecord(
             consult_thread="agent-bus:9004",
             verdict="ADMIT",
-            consultant_family="anthropic",
+            consultant_model="claude-opus-5",
+            consultant_effort="high",
             consultant_substrate="web-anthropic",
-            consultant_model="cdp/opus-5",
         ),
         root_id="5976",
     )

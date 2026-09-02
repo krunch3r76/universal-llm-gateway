@@ -154,22 +154,26 @@ class ConsultProvenance:
 
     consult_thread: str
     verdict: str
-    consultant_family: str
+    consultant_model: str
+    consultant_effort: str | None
     consultant_substrate: str
+
+
+_EFFORT_UNMEASURED_TOKEN = "unmeasured"
 
 
 def consult_provenance_from_r_admit(
     *,
     consult_thread: str,
     harvest_text: str,
-    consultant_family: str,
+    consultant_model: str,
+    consultant_effort: str | None,
     consultant_substrate: str,
 ) -> ConsultProvenance | None:
     """Map an R-admit harvest into the shared consult provenance schema.
 
-    Family and substrate come verbatim from the admit payload (a:29377).
     Returns ``None`` when the harvest has no parseable verdict token or when
-    either admit field is empty — no ``web-anthropic`` / ``anthropic`` default.
+    model or substrate is empty or model is ``unknown``.
     """
     thread = (consult_thread or "").strip()
     if not thread:
@@ -177,25 +181,32 @@ def consult_provenance_from_r_admit(
     parsed = parse_r_verdict(harvest_text)
     if not parsed.verdict:
         return None
-    family = (consultant_family or "").strip()
+    model = (consultant_model or "").strip()
     substrate = (consultant_substrate or "").strip()
-    if not family or not substrate:
+    if not model or model == "unknown" or not substrate:
         return None
     return ConsultProvenance(
         consult_thread=thread,
         verdict=parsed.verdict,
-        consultant_family=family,
+        consultant_model=model,
+        consultant_effort=consultant_effort,
         consultant_substrate=substrate,
     )
 
 
 def format_consult_provenance_md(prov: ConsultProvenance, *, evidence: str | None = None) -> str:
     """CHECKPOINT markdown block for the shared consult provenance schema."""
+    effort_display = (
+        prov.consultant_effort
+        if prov.consultant_effort is not None
+        else _EFFORT_UNMEASURED_TOKEN
+    )
     lines = [
         "## Consult provenance",
         f"- consult_thread: {prov.consult_thread}",
         f"- verdict: {prov.verdict}",
-        f"- consultant_family: {prov.consultant_family}",
+        f"- consultant_model: {prov.consultant_model}",
+        f"- consultant_effort: {effort_display}",
         f"- consultant_substrate: {prov.consultant_substrate}",
     ]
     if evidence:

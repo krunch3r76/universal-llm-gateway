@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import re
 
+from implement_admission.check_review_substrate import consultant_identity
+
 from ..checkpoint_schema import (
     ParsedCheckpoint,
     append_footer_to_packet,
@@ -25,6 +27,10 @@ from ..checkpoint_schema import (
 from ..residue_fingerprint import normalize_next_pickup
 
 ConsultRole = str  # r_admit | judgment_gap
+
+_CONSULT_IDENT = consultant_identity("cdp/opus-5")
+_CONSULT_MODEL = _CONSULT_IDENT.model_identity
+_CONSULT_EFFORT = _CONSULT_IDENT.rung or "unmeasured"
 
 _CONSULT_PENDING_RE = re.compile(r"\bCONSULT_PENDING\b", re.I)
 
@@ -104,8 +110,8 @@ def _task_guidance_layer_judgment(
 ## Layer {gate_id} consult work (this seat owns submit→poll→provenance)
 - Ask shape: {ask}
 - Primary: team_dispatch(op=generate, model={seat}, contract=light-bounded, …)
-- Record shared provenance (consult_thread, verdict, consultant_family,
-  consultant_substrate) on the root CHECKPOINT.
+- Record shared provenance (consult_thread, verdict, consultant_model,
+  consultant_effort, consultant_substrate) on the root CHECKPOINT.
 - G1 exit duty: stamp architecture ``document:`` + ``derived_from`` edge when
   architecture verdict closes (abstraction-layering § Stage 0 attach).
 
@@ -175,8 +181,9 @@ judgment; state assumptions; ¬ blocking wait for clarifying questions; ESCALATE
 flag allowed when self-resolution fails (see [escalate-channel]).
 [depth-1] cdp/ generate is the single depth-1 external boundary. Harvest one
 consult reply; write shared provenance (consult_thread, verdict,
-consultant_family, consultant_substrate) with consultant_family=anthropic /
-consultant_substrate=web-anthropic (reviewer family, not this firing seat).
+consultant_model, consultant_effort, consultant_substrate) with
+consultant_model={_CONSULT_MODEL} / consultant_effort={_CONSULT_EFFORT} /
+consultant_substrate=web-anthropic (reviewer identity, not this firing seat).
 [escalate-channel] Sealed ¬ clarifying-questions forbids BLOCKING on a question,
 not forbidding an escalation flag. When Opus cannot self-resolve, CHECKPOINT
 verdict MAY be:
@@ -214,10 +221,11 @@ Opus still answers with best judgment + provisional_verdict; ESCALATE flags
 human confirm. Do not wait for human in-window. Transport of the flag is
 pager/operator-proxy (out of this packet) — emit the shape so transport can carry it.
 [depth-1] cdp/ generate is the single depth-1 external boundary (cross-family
-model-endpoint ≠ nested SDK consult). Harvest one R reply; write the shared four-field
-consult schema via `r_verdict_gate.consult_provenance_from_r_admit` with
-consultant_family=anthropic / consultant_substrate=web-anthropic (reviewer family,
-not this firing seat).
+model-endpoint ≠ nested SDK consult). Harvest one R reply; write the shared consult
+schema (consult_thread, verdict, consultant_model, consultant_effort,
+consultant_substrate) via `r_verdict_gate.consult_provenance_from_r_admit` with
+consultant_model={_CONSULT_MODEL} / consultant_effort={_CONSULT_EFFORT} /
+consultant_substrate=web-anthropic (reviewer identity, not this firing seat).
 [OF2-resume] if the window ends mid-poll, Next-pickup MUST keep CONSULT_PENDING +
 consult_role: r_admit + poll_hint / from=web-anthropic bus-turn reference (replaces
 execution_id-only resume used by CLI IF6) so the next tick re-admits.
@@ -260,10 +268,11 @@ def _task_guidance_judgment(
 - If fresh: team_dispatch(op=generate, model=cdp/opus-5, contract=light-bounded,
   prompt=<scope-locked Question + OOS + detent + layers + corpus>,
   dispatch_thread_id=…) → poll via agent_bus.wait from poll_hint (from_agent=web-anthropic).
-- Record on the root CHECKPOINT / todo attrs the **shared** provenance schema
-  (same fields G3 R-admit writes): consult_thread, verdict, consultant_family,
-  consultant_substrate (and evidence URI for the reply).
-  consultant_family=anthropic / consultant_substrate=web-anthropic.
+- Record on the root CHECKPOINT / todo attrs the **shared** consult schema
+  (consult_thread, verdict, consultant_model, consultant_effort,
+  consultant_substrate) (and evidence URI for the reply).
+  consultant_model={_CONSULT_MODEL} / consultant_effort={_CONSULT_EFFORT} /
+  consultant_substrate=web-anthropic.
 - On incomplete poll: Next-pickup = CONSULT_PENDING + consult_role: judgment_gap +
   poll_hint / from=web-anthropic bus-turn anchor (OF2).
 
@@ -318,8 +327,9 @@ def _task_guidance_r_admit(
 - Parse merits verdict with fail-closed gate (ADMIT/RATIFY advance; amendments fold first).
   Question-shaped harvest without a merits enum ⇒ incomplete / keep CONSULT_PENDING
   (a:26156) — ¬ invent a verdict; ¬ auto-reply to Cowork clarifying questions.
-- Write E2 via `consult_provenance_from_r_admit` — consultant_family=anthropic,
-  consultant_substrate=web-anthropic regardless of this seat's substrate.
+- Write E2 via `consult_provenance_from_r_admit` — consultant_model={_CONSULT_MODEL},
+  consultant_effort={_CONSULT_EFFORT}, consultant_substrate=web-anthropic regardless
+  of this seat's substrate.
 - On incomplete poll: Next-pickup = CONSULT_PENDING + consult_role: r_admit +
   poll_hint / from=web-anthropic bus-turn anchor (OF2).
 
@@ -369,7 +379,8 @@ def _output_format_judgment(root_id: str, window_index: int) -> str:
     return f"""\
 <output_format>
 Post the CHECKPOINT on agent-bus:{root_id} with consult provenance fields filled.
-Include consult_thread URI + verdict + consultant_family + consultant_substrate.
+Include consult_thread URI + verdict + consultant_model + consultant_effort +
+consultant_substrate.
 On incomplete poll preserve CONSULT_PENDING + consult_role: judgment_gap +
 poll_hint / from=web-anthropic bus-turn (or CLI harvest id on IF6).
 When self-resolution fails, emit ESCALATE(reason=…, minimal_question=…,
@@ -384,8 +395,9 @@ def _output_format_r_admit(root_id: str, window_index: int) -> str:
     footer_req = output_format_footer_requirement(window_id=window_id)
     return f"""\
 <output_format>
-Post the CHECKPOINT on agent-bus:{root_id} with the four shared consult provenance
-fields (consult_thread, verdict, consultant_family, consultant_substrate).
+Post the CHECKPOINT on agent-bus:{root_id} with the shared consult provenance
+fields (consult_thread, verdict, consultant_model, consultant_effort,
+consultant_substrate).
 On incomplete poll preserve CONSULT_PENDING + consult_role: r_admit + poll_hint /
 from=web-anthropic bus-turn (or CLI harvest id on IF6).
 When self-resolution fails, emit ESCALATE(reason=…, minimal_question=…,

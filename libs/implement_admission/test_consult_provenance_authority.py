@@ -109,7 +109,8 @@ def _complete_record(root: Path, **overrides: object) -> dict[str, object]:
         "consult_thread": "agent-bus:8801#12",
         "verdict": "ADMIT",
         "adjudication_assertion_id": 29377,
-        "consultant_family": "anthropic",
+        "consultant_model": "claude-fable-5-1",
+        "consultant_effort": "high",
         "consultant_substrate": "cdp",
         "archive_uri": uri,
         "archive_sha256": sha,
@@ -159,6 +160,66 @@ def test_sha_mismatch_yields_unverifiable(
 
 
 @pytest.mark.offline
+def test_record_effort_key_absent_is_unverifiable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    record = _complete_record(tmp_path)
+    del record["consultant_effort"]
+    verdict = evaluate_implement_ready(
+        **_ready_kwargs(consult_provenance_record=record)
+    )
+    assert verdict.admitted is False
+    assert verdict.code == "implement_consult_provenance_unverifiable"
+    assert "consultant_effort" in (verdict.reason or "")
+
+
+@pytest.mark.offline
+def test_record_effort_null_admits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    record = _complete_record(tmp_path, consultant_effort=None)
+    verdict = evaluate_implement_ready(
+        **_ready_kwargs(consult_provenance_record=record)
+    )
+    assert verdict.admitted is True
+
+
+@pytest.mark.offline
+def test_record_effort_enum_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    record = _complete_record(tmp_path, consultant_effort="turbo")
+    verdict = evaluate_implement_ready(
+        **_ready_kwargs(consult_provenance_record=record)
+    )
+    assert verdict.admitted is False
+    assert verdict.code == "implement_consult_provenance_unverifiable"
+
+
+@pytest.mark.offline
+def test_record_model_unknown_or_unfolded_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    unknown = _complete_record(tmp_path, consultant_model="unknown")
+    verdict = evaluate_implement_ready(
+        **_ready_kwargs(consult_provenance_record=unknown)
+    )
+    assert verdict.admitted is False
+    assert verdict.code == "implement_consult_provenance_unverifiable"
+
+    unfolded = _complete_record(tmp_path, consultant_model="cdp/fable")
+    verdict2 = evaluate_implement_ready(
+        **_ready_kwargs(consult_provenance_record=unfolded)
+    )
+    assert verdict2.admitted is False
+    assert verdict2.code == "implement_consult_provenance_unverifiable"
+
+
+@pytest.mark.offline
 def test_complete_record_admits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -204,6 +265,9 @@ def test_commit_refuses_incomplete_payload(tmp_path: Path, monkeypatch: pytest.M
     record = _complete_record(tmp_path)
     del record["adjudication_assertion_id"]
     assert commit_todo_consult_provenance(record, files_root=tmp_path) is None
+    record2 = _complete_record(tmp_path)
+    del record2["consultant_model"]
+    assert commit_todo_consult_provenance(record2, files_root=tmp_path) is None
 
 
 @pytest.mark.offline
@@ -225,6 +289,8 @@ def test_commit_writes_record_and_builds_event(
     assert loaded is not None
     assert loaded["todo"] == _TODO
     assert loaded["adjudication_assertion_id"] == 29377
+    assert loaded["consultant_effort"] == "high"
+    assert "consultant_family" not in loaded
 
 
 @pytest.mark.offline

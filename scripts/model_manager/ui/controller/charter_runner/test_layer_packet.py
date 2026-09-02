@@ -152,7 +152,8 @@ _PROVENANCE_BODY = """
 ## Consult provenance
 - consult_thread: agent-bus:7001
 - verdict: ADMIT
-- consultant_family: anthropic
+- consultant_model: claude-fable-5-1
+- consultant_effort: high
 - consultant_substrate: web-anthropic
 - gate_id: G2
 """
@@ -403,8 +404,8 @@ def test_layer_g5_blocked_without_independence_evidence() -> None:
     )
     assert transition.value == "BLOCK"
     provenance_body = _G5_BLOCK_BODY + _PROVENANCE_BODY + (
-        "\nG3 densifier consultant_family: grok\n"
-        "G4 check consultant_family: openai\n"
+        "\nG3 densifier consultant_model: grok-4.6\n"
+        "G4 check consultant_model: gpt-5.6-terra\n"
     )
     assert layer_independence_ok(parsed=parsed, checkpoint_body=provenance_body).ok
     assert not layer_independence_unproven(
@@ -459,8 +460,8 @@ def test_layer_g5_operator_proxy_admitted_without_provenance() -> None:
 def test_layer_independence_reason_consult_provenance() -> None:
     parsed = parse_checkpoint(_G5_BLOCK_BODY)
     body = _G5_BLOCK_BODY + _PROVENANCE_BODY + (
-        "\nG3 densifier consultant_family: grok\n"
-        "G4 check consultant_family: openai\n"
+        "\nG3 densifier consultant_model: grok-4.6\n"
+        "G4 check consultant_model: gpt-5.6-terra\n"
     )
     verdict = layer_independence_ok(
         parsed=parsed,
@@ -476,7 +477,7 @@ def test_layer_independence_reason_derived_from_architecture() -> None:
     parsed = parse_checkpoint(_G5_BLOCK_BODY)
     body = _G5_BLOCK_BODY + (
         "\nderived_from: architecture-consult-doc\n"
-        "G4 check consultant_family: openai\n"
+        "G4 check consultant_model: gpt-5.6-terra\n"
     )
     verdict = layer_independence_ok(
         parsed=parsed,
@@ -486,6 +487,45 @@ def test_layer_independence_reason_derived_from_architecture() -> None:
     assert verdict.ok
     assert verdict.structural_reason == "derived_from_architecture"
     assert verdict.branch_b_source == "checkpoint_provenance"
+
+
+def test_consult_provenance_md_round_trips_model_and_effort() -> None:
+    from scripts.model_manager.charter_control.r_verdict_gate import (
+        ConsultProvenance,
+        format_consult_provenance_md,
+    )
+    from scripts.model_manager.ui.controller.charter_runner.admission.decide import (
+        _provenance_fields,
+    )
+
+    prov = ConsultProvenance(
+        consult_thread="agent-bus:99",
+        verdict="ADMIT",
+        consultant_model="claude-fable-5-1",
+        consultant_effort="high",
+        consultant_substrate="web-anthropic",
+    )
+    md = format_consult_provenance_md(prov)
+    fields = _provenance_fields(md)
+    assert fields["consultant_model"] == "claude-fable-5-1"
+    assert fields["consultant_effort"] == "high"
+    assert fields["consultant_substrate"] == "web-anthropic"
+    assert "consultant_family" not in fields
+
+
+def test_layer_independence_same_model_g3_g4_blocks() -> None:
+    parsed = parse_checkpoint(_G5_BLOCK_BODY)
+    body = _G5_BLOCK_BODY + _PROVENANCE_BODY + (
+        "\nG3 densifier consultant_model: grok-4.6\n"
+        "G4 check consultant_model: grok-4.6\n"
+    )
+    verdict = layer_independence_ok(
+        parsed=parsed,
+        checkpoint_body=body,
+        attendance="autonomous",
+    )
+    assert not verdict.ok
+    assert verdict.branch_b_source is None
 
 
 def test_layer_independence_autonomous_blocks_without_structural_reason() -> None:

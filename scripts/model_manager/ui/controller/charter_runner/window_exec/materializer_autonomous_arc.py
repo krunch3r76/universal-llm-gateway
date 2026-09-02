@@ -6,6 +6,12 @@ Emitted packet bodies append ``charter-state`` via
 
 from __future__ import annotations
 
+from implement_admission.check_review_substrate import consultant_identity
+
+_CONSULT_IDENT = consultant_identity("cdp/opus-5")
+_CONSULT_MODEL = _CONSULT_IDENT.model_identity
+_CONSULT_EFFORT = _CONSULT_IDENT.rung or "unmeasured"
+
 
 def autonomous_arc_guidance(*, revise_cap: int) -> str:
     """Return the G-row decomposition block for autonomous task guidance."""
@@ -30,7 +36,8 @@ G3  R-admit          Consult seat only (admitted by the next tick from G2's
                      team_dispatch(model=cdp/opus-5)→poll_hint (from_agent=web-anthropic);
                      IF6 = CLI (MCP project_ask removed). Consult seat writes shared
                      provenance via consult_provenance_from_r_admit
-                     (consultant_family=anthropic / consultant_substrate=web-anthropic).
+                     (consultant_model={_CONSULT_MODEL} / consultant_effort={_CONSULT_EFFORT} /
+                     consultant_substrate=web-anthropic).
                      Parse with fail-closed gate before worker resumes to G4.
                      The holder NEVER fires R-admit transport.
 G4  implement +      implement the R-admitted bind, then deploy-verify:

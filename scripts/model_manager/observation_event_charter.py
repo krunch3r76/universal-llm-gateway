@@ -238,9 +238,9 @@ async def emit_manage_charter_tick_consult_harvested(
     window_index: int,
     consult_thread: str,
     verdict: str,
-    consultant_family: str,
+    consultant_model: str,
+    consultant_effort: str | None,
     consultant_substrate: str,
-    consultant_model: str | None = None,
     cortex_mirror: str | None = None,
 ) -> None:
     """B8 consult provenance harvested — ``manage.charter.tick.consult.harvested``."""
@@ -249,11 +249,10 @@ async def emit_manage_charter_tick_consult_harvested(
         "window_index": window_index,
         "consult_thread": consult_thread,
         "verdict": verdict,
-        "consultant_family": consultant_family,
+        "consultant_model": consultant_model,
+        "consultant_effort": consultant_effort,
         "consultant_substrate": consultant_substrate,
     }
-    if consultant_model:
-        payload["consultant_model"] = consultant_model
     if cortex_mirror:
         payload["cortex_mirror"] = cortex_mirror
     await _emit("manage.charter.tick.consult.harvested", payload)

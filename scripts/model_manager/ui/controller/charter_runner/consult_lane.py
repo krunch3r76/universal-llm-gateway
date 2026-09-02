@@ -56,9 +56,9 @@ class CdpHarvestResult:
 class ConsultProvenanceRecord:
     consult_thread: str
     verdict: str
-    consultant_family: str
-    consultant_substrate: str
     consultant_model: str
+    consultant_effort: str | None
+    consultant_substrate: str
     evidence_uri: str | None = None
 
 
@@ -269,9 +269,9 @@ def write_consult_provenance(
         "root_id": root_id,
         "consult_thread": record.consult_thread,
         "verdict": record.verdict,
-        "consultant_family": record.consultant_family,
-        "consultant_substrate": record.consultant_substrate,
         "consultant_model": record.consultant_model,
+        "consultant_effort": record.consultant_effort,
+        "consultant_substrate": record.consultant_substrate,
         "evidence_uri": record.evidence_uri,
         "written_at": time.time(),
     }
@@ -413,19 +413,31 @@ def _harvest_text_from_turns(
 def provenance_from_cdp_harvest(
     result: CdpHarvestResult,
     *,
-    consultant_family: str,
     consultant_substrate: str,
 ) -> ConsultProvenanceRecord | None:
+    from implement_admission.check_review_substrate import (
+        UNKNOWN_MODEL_IDENTITY,
+        consultant_identity,
+    )
+
     from scripts.model_manager.charter_control.r_verdict_gate import (
         consult_provenance_from_r_admit,
     )
 
     if result.escape_path:
         return None
+    ident = consultant_identity(result.model_id)
+    if ident.model_identity == UNKNOWN_MODEL_IDENTITY:
+        logger.info(
+            "cdp consult provenance refused: unknown identity for %s",
+            result.model_id,
+        )
+        return None
     prov = consult_provenance_from_r_admit(
         consult_thread=result.consult_thread,
         harvest_text=result.harvest_text,
-        consultant_family=consultant_family,
+        consultant_model=ident.model_identity,
+        consultant_effort=ident.rung,
         consultant_substrate=consultant_substrate,
     )
     if prov is None:
@@ -433,9 +445,9 @@ def provenance_from_cdp_harvest(
     return ConsultProvenanceRecord(
         consult_thread=prov.consult_thread,
         verdict=prov.verdict,
-        consultant_family=prov.consultant_family,
+        consultant_model=prov.consultant_model,
+        consultant_effort=prov.consultant_effort,
         consultant_substrate=prov.consultant_substrate,
-        consultant_model=result.model_id,
         evidence_uri=result.harvest_text
         if result.harvest_text.startswith("cortex://")
         else None,

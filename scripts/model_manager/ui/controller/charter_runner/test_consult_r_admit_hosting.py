@@ -209,7 +209,7 @@ def test_judgment_and_r_admit_packets_both_host_cdp() -> None:
         assert primary_idx >= 0
         assert escape_idx > primary_idx
         assert submit_idx < 0 or submit_idx > escape_idx
-    assert "consultant_family=anthropic" in r_packet
+    assert "consultant_model=claude-opus-5" in r_packet
     assert "consult_provenance_from_r_admit" in r_packet
     assert "judgment_gap" in j_packet
     assert "IF6" in j_packet
@@ -357,15 +357,17 @@ def test_fire_window_consult_dual_wire(
 
 
 @pytest.mark.offline
-def test_consult_provenance_reviewer_family() -> None:
+def test_consult_provenance_reviewer_model() -> None:
     prov = consult_provenance_from_r_admit(
         consult_thread="agent-bus:5610",
         harvest_text="Merits verdict: ADMIT",
-        consultant_family="anthropic",
+        consultant_model="claude-opus-5",
+        consultant_effort="high",
         consultant_substrate="cdp",
     )
     assert prov is not None
-    assert prov.consultant_family == "anthropic"
+    assert prov.consultant_model == "claude-opus-5"
+    assert prov.consultant_effort == "high"
     assert prov.consultant_substrate == "cdp"
     assert prov.verdict == "ADMIT"
 
@@ -376,11 +378,100 @@ def test_consult_provenance_missing_admit_fields_returns_none() -> None:
         consult_provenance_from_r_admit(
             consult_thread="agent-bus:5610",
             harvest_text="Merits verdict: ADMIT",
-            consultant_family="",
+            consultant_model="",
+            consultant_effort="high",
             consultant_substrate="cdp",
         )
         is None
     )
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_harvest_cdp_commits_model_and_effort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[dict] = []
+
+    def _fake_commit(record: dict, **kwargs: object) -> str:
+        captured.append(dict(record))
+        return "cortex://notes/system/threads/todo-consult-provenance/todo-test.json"
+
+    monkeypatch.setattr(
+        "implement_admission.consult_provenance_record.commit_todo_consult_provenance",
+        _fake_commit,
+    )
+
+    from scripts.model_manager.ui.controller.charter_runner.harvest_cdp import (
+        _maybe_commit_todo_keyed_record,
+    )
+    from scripts.model_manager.ui.controller.charter_runner.consult_lane import (
+        ConsultProvenanceRecord,
+    )
+
+    record = ConsultProvenanceRecord(
+        consult_thread="agent-bus:5610",
+        verdict="ADMIT",
+        consultant_model="claude-opus-5",
+        consultant_effort="high",
+        consultant_substrate="web-anthropic",
+    )
+    _maybe_commit_todo_keyed_record(
+        admission_meta={
+            "adjudication_assertion_id": 1,
+            "archive_uri": "cortex://x",
+            "archive_sha256": "abc",
+        },
+        record=record,
+        root_id="5610",
+        todo_ref="todo:harvest-test",
+    )
+    assert len(captured) == 1
+    payload = captured[0]
+    assert payload["consultant_model"] == "claude-opus-5"
+    assert payload["consultant_effort"] == "high"
+    assert "consultant_family" not in payload
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_harvest_cdp_no_model_no_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called: list[str] = []
+
+    def _fake_commit(record: dict, **kwargs: object) -> str | None:
+        called.append("commit")
+        return None
+
+    monkeypatch.setattr(
+        "implement_admission.consult_provenance_record.commit_todo_consult_provenance",
+        _fake_commit,
+    )
+
+    from scripts.model_manager.ui.controller.charter_runner.harvest_cdp import (
+        maybe_harvest_cdp_consult_provenance,
+    )
+
+    result = await maybe_harvest_cdp_consult_provenance(
+        root_id="5610",
+        window_index=1,
+        worker_thread="9001",
+        worker_turns=[
+            {
+                "turn_number": 2,
+                "from": "cursor-sdk",
+                "body": "Merits verdict: ADMIT",
+            },
+        ],
+        admission_meta={
+            "admission_mode": "consult",
+            "consultant_substrate": "web-anthropic",
+            "source_ref": "todo:harvest-test",
+        },
+    )
+    assert result is None
+    assert called == []
 
 
 @pytest.mark.offline

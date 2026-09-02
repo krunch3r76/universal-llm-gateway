@@ -460,7 +460,8 @@ def _gate_distill_prepared() -> GateDistillationInputs:
 _CONSULT_PROVENANCE = {
     "consult_thread": "agent-bus:8801",
     "verdict": "proceed_with_amendments",
-    "consultant_family": "anthropic",
+    "consultant_model": "claude-fable-5-1",
+    "consultant_effort": "high",
     "consultant_substrate": "web-anthropic",
 }
 
@@ -539,7 +540,8 @@ def test_evaluate_from_persisted_honors_matching_recon_waiver(
             "consult_thread": "agent-bus:8801#12",
             "verdict": "ADMIT",
             "adjudication_assertion_id": 1,
-            "consultant_family": "anthropic",
+            "consultant_model": "claude-fable-5-1",
+    "consultant_effort": "high",
             "consultant_substrate": "cdp",
             "archive_uri": "cortex://notes/system/threads/archives/x.md",
             "archive_sha256": "deadbeef",

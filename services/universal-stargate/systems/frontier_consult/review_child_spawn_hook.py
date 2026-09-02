@@ -311,6 +311,8 @@ async def _dispatch_review_child(
         return {}
     child_exec = result.get("execution_id")
     if child_exec:
+        from implement_admission.check_review_substrate import consultant_rung
+
         from .generate_admission_context_store import write_admission_context
 
         write_admission_context(
@@ -323,6 +325,7 @@ async def _dispatch_review_child(
             dispatch_thread_id=delivery_thread,
             spawn_template_provenance=_SPAWN_PROVENANCE,
             suppress_review_spawn=True,
+            resolved_effort=consultant_rung(reviewer.model, None),
         )
     return result
 

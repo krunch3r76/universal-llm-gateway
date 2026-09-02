@@ -38,7 +38,6 @@ async def maybe_harvest_cdp_consult_provenance(
                     parts = line.split("=", 1)
                     if len(parts) == 2:
                         executor[parts[0].strip()] = parts[1].strip()
-    executor.setdefault("reviewer_model", "cdp/opus-5")
     root_turns: list[dict] = []
     try:
         root_turns = await bus_client.fetch_turns(root_id)
@@ -55,11 +54,9 @@ async def maybe_harvest_cdp_consult_provenance(
     )
     if parsed is None or parsed.escape_path:
         return None
-    family = str(admission_meta.get("consultant_family") or "").strip()
     substrate = str(admission_meta.get("consultant_substrate") or "").strip()
     record = provenance_from_cdp_harvest(
         parsed,
-        consultant_family=family,
         consultant_substrate=substrate,
     )
     if record is None:
@@ -90,10 +87,10 @@ async def maybe_harvest_cdp_consult_provenance(
     return {
         "consult_thread": record.consult_thread,
         "verdict": record.verdict,
-        "consultant_family": record.consultant_family,
+        "consultant_model": record.consultant_model,
+        "consultant_effort": record.consultant_effort,
         "consultant_substrate": record.consultant_substrate,
         "cortex_mirror": uri,
-        "consultant_model": record.consultant_model,
     }
 
 
@@ -118,7 +115,8 @@ def _maybe_commit_todo_keyed_record(
         "consult_thread": getattr(record, "consult_thread", ""),
         "verdict": getattr(record, "verdict", ""),
         "adjudication_assertion_id": admission_meta.get("adjudication_assertion_id"),
-        "consultant_family": getattr(record, "consultant_family", ""),
+        "consultant_model": getattr(record, "consultant_model", ""),
+        "consultant_effort": getattr(record, "consultant_effort", None),
         "consultant_substrate": getattr(record, "consultant_substrate", ""),
         "archive_uri": str(admission_meta.get("archive_uri") or evidence or ""),
         "archive_sha256": str(admission_meta.get("archive_sha256") or ""),

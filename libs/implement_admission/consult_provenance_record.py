@@ -2,7 +2,9 @@
 
 Charter-root JSON (``charter-consult-provenance/{root_id}.json``) stays a
 sibling home. This module owns the todo-keyed record the implement-ready
-gate reads. Display-cache attrs are stamped here and have no gate effect.
+gate reads. The record carries the (model identity, effort rung) independence
+key written at consult harvest. Display-cache attrs are stamped here and have
+no gate effect.
 """
 
 from __future__ import annotations
@@ -16,7 +18,12 @@ from pathlib import Path
 from typing import Any
 
 from durable_io.atomic import durable_write_text
+from effort_vocabulary.core import PROVIDER_EXTENDED, WIRE_LADDER
 
+from implement_admission.check_review_substrate import (
+    UNKNOWN_MODEL_IDENTITY,
+    model_identity,
+)
 from implement_admission.closeout_helpers import cortex_files_root, workspaces_root
 
 logger = logging.getLogger(__name__)
@@ -29,7 +36,7 @@ REQUIRED_FIELDS: tuple[str, ...] = (
     "consult_thread",
     "verdict",
     "adjudication_assertion_id",
-    "consultant_family",
+    "consultant_model",
     "consultant_substrate",
     "archive_uri",
     "archive_sha256",
@@ -55,9 +62,12 @@ _THREAD_TURN_RE_PREFIX = "agent-bus:"
 DISPLAY_CACHE_KEYS: tuple[str, ...] = (
     "consult_thread",
     "verdict",
-    "consultant_family",
+    "consultant_model",
+    "consultant_effort",
     "consultant_substrate",
 )
+
+_EFFORT_TOKENS = frozenset(WIRE_LADDER) | PROVIDER_EXTENDED
 
 
 def todo_slug(todo_id: str) -> str:
@@ -144,6 +154,17 @@ def structural_gaps(
         body = _archive_bytes(uri, files_root=files_root)
         if body is None or archive_sha256_hex(body) != expected_sha:
             gaps.append("archive_sha256")
+    model = str(record.get("consultant_model") or "").strip()
+    if model and model == UNKNOWN_MODEL_IDENTITY:
+        gaps.append("consultant_model_unknown")
+    elif model and model_identity(model) != model:
+        gaps.append("consultant_model_unfolded")
+    if "consultant_effort" not in record:
+        gaps.append("consultant_effort")
+    else:
+        effort = record["consultant_effort"]
+        if effort is not None and str(effort) not in _EFFORT_TOKENS:
+            gaps.append("consultant_effort_enum")
     return gaps
 
 
@@ -164,7 +185,7 @@ def load_todo_consult_provenance(
 
 
 def _stamp_display_cache(todo_id: str, record: Mapping[str, Any]) -> bool:
-    """Best-effort four-attr display cache. Never a second writer of the record."""
+    """Best-effort display-cache attrs. Never a second writer of the record."""
     cache = {key: record.get(key) for key in DISPLAY_CACHE_KEYS}
     try:
         from cortex_store.dispatch_ops.ops_entities import (
