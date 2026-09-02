@@ -27,6 +27,39 @@ or otherwise isolate the tree to A/B against clean HEAD or to “protect”
 phantom peers — read the on-disk tree; treat out-of-scope test/git noise as
 pre-existing.
 
+## `git stash` is repo-global — banned on every substrate, not just the shared checkout
+
+`refs/stash` lives in the repository's **common** `.git` dir, shared by
+**every** worktree — the attended shared checkout, every Lane-A dispatch,
+and every Lane-B isolated worktree alike. A Lane-B worktree isolates the
+working tree and index; it does **not** isolate `refs/stash`. `git stash
+pop` inside one lane can silently apply a **different lane's** (possibly
+stale or crashed) stash entry.
+
+Ground: agent-bus:9880 turn 24 (cdp/fable-5.1-high REVIEW, 2026-09-02) — a
+Phase-1 implement dispatch (thread 9882) crashed mid-`git stash pop` and
+left its `stash -u` entry unpopped. A **later, unrelated** Phase-2 implement
+dispatch (thread 9895, different lane, different day-part) ran its own
+`git stash && pytest && git stash pop` as a self-devised A/B check against
+already-committed work; since it had nothing of its own to stash, the pop
+grabbed thread 9882's stray entry instead, producing a spurious merge
+conflict the dispatch then had to `checkout --ours` / `reset` / `checkout
+HEAD --` its way out of. The commit landed clean only because the
+dispatch's recovery happened to discard exactly the conflict artifacts and
+nothing else — verified after the fact via `git diff --stat` against the
+branch point and a reflog read; it was not verified *during* the recovery.
+This is the **second** dispatch in the same arc bitten by stash
+(`agent-bus:9882` crashed inside the pop the first time).
+
+`∀ substrate ∈ {Cursor IDE, cursor-sdk Lane A, cursor-sdk Lane B}: ¬git_stash`
+for A/B, verification, or "protect my edits" purposes. Use instead:
+
+| Need | Use |
+|---|---|
+| Compare current work against a baseline commit | `git diff <base-sha> <head-sha> -- <paths>`, or a **second, throwaway** `git worktree add --detach <sha> <tmp-dir>` — never touch the live worktree's stash |
+| "Did my change break this test?" | Run the test at HEAD, then at `<base-sha>` in a separate detached worktree; diff the two result sets. Delete the throwaway worktree when done (`git worktree remove --force <tmp-dir>`) |
+| Preserve uncommitted edits before a destructive op | Commit them (path-explicit) — commit is cheap and never a gate (see Commit posture below); do not reach for stash as a "cheap commit" |
+
 ## Shared checkout concurrency (G6 — operator bind 2026-08-04)
 
 Evidence: `todo:concurrency-policy-honesty` gate refused at N=1 (agent-bus:6792).
@@ -254,6 +287,68 @@ dispatch(cdp ∨ any_frontier_seat, git_history_question) ∧ ¬confirmed(real_g
 ```
 
 Same discipline as "never submit git diffs to LLMs" above, in the other direction: under-supplying context and trusting a frontier seat's tool loop to backfill it from git internals is a worse failure than over-supplying a diff — it can silently burn an unbounded amount of wall-clock and tokens with no forcing function to stop. Render the actual comparison (whole files, or `git show`/`git diff` output already converted to plain text) into the packet yourself; never leave "diff two commits" as homework for a sandboxed seat.
+
+**"If available" is not confirmation.** Recurrence, same day, same arc
+(agent-bus:9880 turns 18–24, ~30min after the incident above landed): a
+REVIEW packet's `<mcp_capabilities>` block said "code-mount read access via
+toys integration **if available**" and `<task_guidance>` said "re-derive
+the diff … don't trust my summary." The dispatch (`cdp/fable-5.1-high`)
+had no real git CLI either — it read `.git/objects/**` and manually
+rebuilt both commits from loose objects into a **local scratch git repo**
+before it could run `git diff`. It succeeded (unlike the 90+-minute
+unproductive first incident) only because it happened to reconstruct
+correctly, but the session still spent a material fraction of its ~75min
+wall-clock on reconstruction the dispatcher could have rendered in
+seconds. `¬confirmed(real_git_cli_in_sandbox)` is the **default** — a
+conditional capability note ("if available") does not discharge it. Bind:
+
+```
+mcp_capabilities("code-mount … if available") ⇏ confirmed(real_git_cli_in_sandbox)
+⇒ inline_the_comparison_anyway
+```
+
+**Recipe — render a comparison into a packet, every time, regardless of
+claimed sandbox tools:**
+
+```bash
+# whole-file before/after (small-to-medium files):
+git show <base-sha>:<path> > /tmp/before.txt
+git show <head-sha>:<path> > /tmp/after.txt
+# then paste both, or the unified diff already as plain text, into the packet:
+git diff <base-sha> <head-sha> -- <path1> <path2> > /tmp/comparison.diff
+```
+
+Paste the file contents (or the diff's plain text) directly into
+`<task_guidance>` or `<corpus>`. Do not paste a `workspaces://` pointer and
+trust the receiving seat to resolve it into a real diff — resolve it
+yourself first.
+
+**`<mcp_capabilities>` needs a specific vocabulary, not a prose phrase.**
+Ground: the same review above still hit this gap even after the packet
+tried to name the capability — it said "code-mount read access via toys
+integration," which the receiving seat correctly parsed as *some* file
+access, then discovered (only by trying) permitted zero git commands. "Read
+files at head" and "run git" are different capabilities and only one of
+them can verify a refactor. State exactly one:
+
+| Phrase | Means |
+|---|---|
+| `fs-read-only` | Seat can read individual file contents/paths. No shell, no git commands — even `git show`/`git log` will fail. Inline every comparison yourself (recipe above). |
+| `fs-read + shell (git CLI unconfirmed)` | Seat may have a shell, but real git CLI in that sandbox is **not** verified — treat as `fs-read-only` for anything git-history-shaped; the seat may nest-dispatch to a git-capable seat for on-demand queries (see below) but should not be told to "read the commit yourself." |
+| `fs-read + shell + git-cli-confirmed` | You (the packet author) have verified a real `git` binary and object db are reachable from that exact sandbox, this session. Rare — most CDP/Cowork sandboxes do not have this. |
+
+**Nest-dispatch to a git-capable seat is a valid alternative to inlining
+everything upfront** — Opus's REVIEW (agent-bus:9880) needed several
+different git queries (`diff --stat`, `show --stat`, `log`, `merge-base`,
+`merge-tree`, per-function `diff -u`) that would have been wasteful to
+pre-render exhaustively; it nested a read-only recon dispatch to a seat with
+a real worktree and got exactly what it needed in ~3 minutes. This
+satisfies the "never reconstruct from raw objects" invariant just as well
+as inlining — the model never touches `.git/**` either way. Known gap
+(`friction #31958`, `service:cdp-ask`): a follow-up dispatch to the **same**
+nested seat after it closes out is currently refused
+(`seat.identity_unresolvable`) rather than re-minted — plan for **one**
+nested recon per distinct question, not a reusable handle.
 
 ## Git CLI allowed only when
 

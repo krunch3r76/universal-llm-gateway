@@ -118,6 +118,7 @@ commissioned to write.
 | Hardcode `is_life_to_code` for tiering | `caller_auditable(from_agent=…)` deny-by-default allowlist |
 | Allowlist grows by lane nickname | Allowlist entries name re-observability, not correlate labels |
 | Long reporting block executor will skim | Terse checklist + skill reference for depth |
+| Auto-fix tool (`ruff --fix`, `--unsafe-fixes`) silently mutates a file beyond the hand-edited diff; closeout reports `scope_deviations: none` | Name every auto-fix side-effect in SCOPE DELTA even when net-behavior-neutral — Rule 3/4 bind to *method*, not just outcome (agent-bus:9880 turn 24: `ruff check --fix` on a Phase-2 implement dispatch dropped a pre-existing unused import from a file the packet said would otherwise be untouched; behavior-neutral, unreported) |
 
 ## Claim register on status language (member 6)
 
