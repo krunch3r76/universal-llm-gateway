@@ -184,7 +184,7 @@ def register_event_tools(mcp: FastMCP) -> None:
           operations           ()                    — list all available operations
           raw_sql              (sql, params?, limit?) — raw SQL SELECT query
 
-        Default time window: since most recent system.started (session boundary).
+        Default time window: since most recent event.service.started (session boundary).
         Override with params={"since_ts": <unix_ms>} or params={"minutes": N}.
 
         Example:

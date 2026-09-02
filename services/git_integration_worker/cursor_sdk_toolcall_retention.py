@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-# Observation-tier events inherit the event-store session prune (~2 ``system.started``
+# Observation-tier events inherit the event-store session prune (~2 ``event.service.started``
 # boundaries). The window is stated on every emitted row so callers know when the
 # body stops being queryable from SQLite / observability.
 RESULT_RETENTION_WINDOW_S = 7 * 24 * 3600
@@ -29,7 +29,7 @@ RESULT_BODY_ABSENT_ERROR = "absent_error"
 
 _PAST_RETENTION = (
     "Body no longer retained: observation-tier events are pruned at the event-store "
-    "session boundary (older than the two most recent ``system.started`` markers). "
+    "session boundary (older than the two most recent ``event.service.started`` markers). "
     "Query ``result_body_status`` on surviving rows; absent fields mean expired or "
     "never captured."
 )
