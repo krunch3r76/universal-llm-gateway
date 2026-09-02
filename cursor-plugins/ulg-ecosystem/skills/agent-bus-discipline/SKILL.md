@@ -294,6 +294,25 @@ Guardrails:
 
 F6a (safety): measure reply/reopen-within-7d on triage-closed threads from lifecycle events + bus turns; breach >2% ⇒ raise floors or drop `close`. F6b (sunset): if steady-state unread <30 and triage fires <1×/month post-cleanup, retire `close` at +90d review.
 
+## Gate 1 audit leg (thread 191)
+
+**Invariant (BINDING):** `post(Gate1_audit, thread=191)` on the same leg implies
+`wake(web-anthropic) ∧ arm_watcher(191) ∧ transition_pager("audit in flight")`.
+Post without wake + watcher on the **same leg** is incomplete — the operator never
+says "wake" separately; movement is implied.
+
+| Leg element | Requirement |
+|---|---|
+| Post | Structured audit to thread **191** (no diff inline) — files changed, what it does, risk controls touched, assumptions |
+| Wake | CDP wake web-anthropic on the same leg (`team_dispatch(model=cdp/…)` or escape per `claude-ai-cdp-navigation`) |
+| Watcher | Arm thread-191 consult watcher before leg close |
+| Pager | Transition awareness page: audit in flight |
+
+Mechanical entry: `scripts/post-gate1-audit.sh --subject … --body-file …`
+(default `--watch-label watch-191`, `--thread 191`).
+
+Doctrine: `decision:gate1-audit-implied-movement` · claudeburst `audit_ws.mdc` Step 1.
+
 ## Related
 
 - `checkpoint-discipline` — CHECKPOINT author/resume/tip hygiene/profiles (standing roots).
