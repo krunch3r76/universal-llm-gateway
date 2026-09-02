@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from itertools import groupby
 from typing import Any, Protocol
 
 from .checkpoint_auto_stamp_wiring import load_thread_tags
@@ -121,6 +122,11 @@ def list_checkpoint_turns(*, thread_id: str) -> tuple[CheckpointTurnRow, ...]:
     return tuple(out)
 
 
+def compute_journal_fetch_limit(*, checkpoint_turn_count: int) -> int:
+    """Bound journal fetch for window join; keeps newest rows when truncated."""
+    return max(checkpoint_turn_count * 4, 32)
+
+
 def fetch_journals_for_thread(
     *,
     thread_id: str,
@@ -131,6 +137,7 @@ def fetch_journals_for_thread(
 
     json_fields = frozenset({"domains", "decisions", "open_items", "entity_ids"})
     agent_bus_ref = f"agent-bus:{thread_id}"
+    order = "ORDER BY id DESC" if limit is not None else "ORDER BY id ASC"
     sql = (
         "SELECT * FROM session_journals "
         "WHERE entity_ids IS NOT NULL "
@@ -138,7 +145,7 @@ def fetch_journals_for_thread(
         "  EXISTS (SELECT 1 FROM json_each(entity_ids) WHERE value = ?) "
         "  OR EXISTS (SELECT 1 FROM json_each(entity_ids) WHERE value = ?)"
         ") "
-        "ORDER BY id ASC"
+        f"{order}"
     )
     params: list[Any] = [agent_bus_ref, thread_id]
     if limit is not None:
@@ -146,7 +153,20 @@ def fetch_journals_for_thread(
         params.append(limit)
     with cortex_conn() as conn:
         rows = query(conn, sql, tuple(params))
-    return tuple(decode_row(row, json_fields) for row in rows)
+    decoded = tuple(decode_row(row, json_fields) for row in rows)
+    if limit is not None:
+        decoded = tuple(sorted(decoded, key=lambda row: int(row["id"])))
+    return decoded
+
+
+def fetch_journals_for_checkpoint_windows(
+    *,
+    thread_id: str,
+    checkpoint_turns: tuple[CheckpointTurnRow, ...],
+) -> tuple[dict[str, Any], ...]:
+    """Fetch journals with the shared limit policy for all render entry points."""
+    limit = compute_journal_fetch_limit(checkpoint_turn_count=len(checkpoint_turns))
+    return fetch_journals_for_thread(thread_id=thread_id, limit=limit)
 
 
 def join_windows(
@@ -265,10 +285,18 @@ def apply_checkpoint_windows_to_rows(rows: list[dict[str, Any]]) -> list[dict[st
     """Render CHECKPOINT windows once per thread batch for list/read hot paths."""
     if not rows:
         return rows
-    thread = str(rows[0]["thread"])
-    if any(str(row["thread"]) != thread for row in rows):
-        return [_render_checkpoint_row(row) for row in rows]
+    if len({str(row["thread"]) for row in rows}) == 1:
+        return _apply_checkpoint_windows_to_single_thread_rows(rows)
+    rendered: list[dict[str, Any]] = []
+    for _, group in groupby(rows, key=lambda row: str(row["thread"])):
+        rendered.extend(_apply_checkpoint_windows_to_single_thread_rows(list(group)))
+    return rendered
 
+
+def _apply_checkpoint_windows_to_single_thread_rows(
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    thread = str(rows[0]["thread"])
     thread_tags = load_thread_tags(thread)
     if classify_thread(thread_tags)["spine"] != "root":
         return rows
@@ -289,10 +317,12 @@ def apply_checkpoint_windows_to_rows(rows: list[dict[str, Any]]) -> list[dict[st
     if not checkpoint_turns:
         return rows
 
-    journal_limit = max(len(checkpoint_turns) * 4, 32)
     unrendered = False
     try:
-        journals = fetch_journals_for_thread(thread_id=thread, limit=journal_limit)
+        journals = fetch_journals_for_checkpoint_windows(
+            thread_id=thread,
+            checkpoint_turns=checkpoint_turns,
+        )
         window_rows = join_windows(checkpoint_turns=checkpoint_turns, journals=journals)
     except Exception:
         window_rows = tuple(
@@ -319,22 +349,6 @@ def apply_checkpoint_windows_to_rows(rows: list[dict[str, Any]]) -> list[dict[st
     return rendered
 
 
-def _render_checkpoint_row(row: dict[str, Any]) -> dict[str, Any]:
-    body = row.get("body")
-    if not body:
-        return row
-    thread = str(row["thread"])
-    thread_tags = load_thread_tags(thread)
-    updated = dict(row)
-    updated["body"] = maybe_render_checkpoint_windows(
-        thread=thread,
-        subject=str(row["subject"]),
-        body=str(body),
-        thread_tags=thread_tags,
-    )
-    return updated
-
-
 def render_checkpoint_windows(
     *,
     thread_id: str,
@@ -346,9 +360,14 @@ def render_checkpoint_windows(
         if checkpoint_turns is not None
         else list_checkpoint_turns(thread_id=thread_id)
     )
-    fetch = journal_fetcher or fetch_journals_for_thread
     try:
-        journals = fetch(thread_id=thread_id)
+        if journal_fetcher is not None:
+            journals = journal_fetcher(thread_id=thread_id)
+        else:
+            journals = fetch_journals_for_checkpoint_windows(
+                thread_id=thread_id,
+                checkpoint_turns=turns,
+            )
     except Exception:
         return ()
     return join_windows(checkpoint_turns=turns, journals=journals)
@@ -373,10 +392,15 @@ def maybe_render_checkpoint_windows(
     )
     if not turns:
         return body
-    fetch = journal_fetcher or fetch_journals_for_thread
     unrendered = False
     try:
-        journals = fetch(thread_id=thread)
+        if journal_fetcher is not None:
+            journals = journal_fetcher(thread_id=thread)
+        else:
+            journals = fetch_journals_for_checkpoint_windows(
+                thread_id=thread,
+                checkpoint_turns=turns,
+            )
         rows = join_windows(checkpoint_turns=turns, journals=journals)
     except Exception:
         rows = tuple(
@@ -400,7 +424,9 @@ __all__ = [
     "JournalFetcher",
     "WindowRow",
     "apply_checkpoint_windows_to_rows",
+    "compute_journal_fetch_limit",
     "extract_arc_from_summary",
+    "fetch_journals_for_checkpoint_windows",
     "fetch_journals_for_thread",
     "inject_windows_section",
     "join_windows",

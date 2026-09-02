@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
 import time
+from datetime import timedelta
 
 import pytest
 from agent_bus_store.checkpoint_projection import RESUME_FOOTER_PREFIX
 from agent_bus_store.checkpoint_windows_render import (
     CheckpointTurnRow,
     WindowRow,
+    apply_checkpoint_windows_to_rows,
     extract_arc_from_summary,
+    fetch_journals_for_thread,
     inject_windows_section,
     join_windows,
     journal_cites_thread,
@@ -334,6 +336,197 @@ def test_list_turns_renders_windows_for_multiple_checkpoint_rows(
             assert "cursor-2099-01-02-1230-bbb" in body
             assert "first window closed" in body
             assert "second window closed" in body
+
+
+def test_fetch_journals_for_thread_limit_keeps_newest_rows(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    import json
+    import sqlite3
+
+    from cortex_store import db as cortex_db
+
+    cortex_path = tmp_path / "cortex.db"
+    conn = sqlite3.connect(cortex_path)
+    conn.execute(
+        "CREATE TABLE session_journals ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "timestamp TEXT NOT NULL, "
+        "agent TEXT NOT NULL, "
+        "summary TEXT NOT NULL, "
+        "entity_ids TEXT DEFAULT '[]', "
+        "session_id TEXT)"
+    )
+    thread_id = "6341"
+    for idx in range(40):
+        conn.execute(
+            "INSERT INTO session_journals "
+            "(timestamp, agent, summary, entity_ids, session_id) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                f"2026-09-01T{idx:02d}:00:00",
+                "cursor",
+                f"Arc: journal-{idx}",
+                json.dumps([f"agent-bus:{thread_id}"]),
+                f"sess-{idx}",
+            ),
+        )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(cortex_db, "_CORTEX_DB", cortex_path)
+
+    limited = fetch_journals_for_thread(thread_id=thread_id, limit=32)
+    assert len(limited) == 32
+    ids = [int(row["id"]) for row in limited]
+    assert ids == list(range(9, 41))
+    assert limited[-1]["session_id"] == "sess-39"
+
+
+def test_apply_checkpoint_windows_groups_by_thread_with_mocked_fetch(
+    monkeypatch,
+) -> None:
+    list_calls: list[str] = []
+    fetch_calls: list[str] = []
+
+    def _list(*, thread_id: str) -> tuple[CheckpointTurnRow, ...]:
+        list_calls.append(thread_id)
+        return (CheckpointTurnRow(1, 1, "2026-09-01T10:00:00", "CHECKPOINT v1"),)
+
+    def _fetch(*, thread_id: str, checkpoint_turns: tuple[CheckpointTurnRow, ...]):
+        fetch_calls.append(thread_id)
+        return (
+            {
+                "id": 1,
+                "timestamp": "2026-09-01T10:30:00",
+                "summary": f"Arc: {thread_id}",
+                "session_id": f"sess-{thread_id}",
+                "entity_ids": [f"agent-bus:{thread_id}"],
+            },
+        )
+
+    monkeypatch.setattr(
+        "agent_bus_store.checkpoint_windows_render.load_thread_tags",
+        lambda thread: ["role:root"],
+    )
+    monkeypatch.setattr(
+        "agent_bus_store.checkpoint_windows_render.list_checkpoint_turns",
+        _list,
+    )
+    monkeypatch.setattr(
+        "agent_bus_store.checkpoint_windows_render.fetch_journals_for_checkpoint_windows",
+        _fetch,
+    )
+
+    rows = [
+        {
+            "id": 10,
+            "thread": "1111",
+            "subject": "CHECKPOINT v1",
+            "body": "## Residue\nA",
+        },
+        {
+            "id": 20,
+            "thread": "2222",
+            "subject": "CHECKPOINT v1",
+            "body": "## Residue\nB",
+        },
+    ]
+    out = apply_checkpoint_windows_to_rows(rows)
+    assert list_calls == ["1111", "2222"]
+    assert fetch_calls == ["1111", "2222"]
+    assert "## Windows (rendered at read" in out[0]["body"]
+    assert "## Windows (rendered at read" in out[1]["body"]
+    assert "sess-1111" in out[0]["body"]
+    assert "sess-2222" in out[1]["body"]
+
+
+def test_list_turns_to_filter_renders_windows_per_thread(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """GET /turns?to= without thread batches windows once per thread (B1/B2)."""
+    import json
+    import sqlite3
+
+    from agent_bus_store import create_app
+    from agent_bus_store.auth import require_token
+    from cortex_store import db as cortex_db
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    cortex_path = tmp_path / "cortex.db"
+    conn = sqlite3.connect(cortex_path)
+    conn.execute(
+        "CREATE TABLE session_journals ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "timestamp TEXT NOT NULL, "
+        "agent TEXT NOT NULL, "
+        "summary TEXT NOT NULL, "
+        "entity_ids TEXT DEFAULT '[]', "
+        "session_id TEXT)"
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(cortex_db, "_CORTEX_DB", cortex_path)
+
+    app = create_app(db_path=str(tmp_path / "bus.db"))
+    app.dependency_overrides[require_token] = lambda: None
+
+    thread_ids: list[str] = []
+    with TestClient(app) as client:
+        for slug in ("inbox-a", "inbox-b"):
+            created = client.post(
+                "/threads/with-turn",
+                json={
+                    "slug": slug,
+                    "from": "cursor",
+                    "to": "web",
+                    "subject": "CHECKPOINT v1",
+                    "body": "## Residue (authored — cap ~800 chars)\nWIP",
+                    "tags": ["role:root"],
+                },
+            )
+            assert created.status_code == 201, created.text
+            thread_id = created.json()["thread"]["id"]
+            thread_ids.append(thread_id)
+
+            conn = sqlite3.connect(cortex_path)
+            try:
+                conn.execute(
+                    "INSERT INTO session_journals "
+                    "(timestamp, agent, summary, entity_ids, session_id) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (
+                        "2026-09-01T11:00:00",
+                        "cursor",
+                        f"Arc: {slug} closed",
+                        json.dumps([f"agent-bus:{thread_id}"]),
+                        f"cursor-{slug}",
+                    ),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+        resp = client.get(
+            "/turns",
+            params={"to": "web", "include_superseded": "true"},
+        )
+        assert resp.status_code == 200, resp.text
+        turns = resp.json()["turns"]
+        assert len(turns) >= 2
+        threads_seen = {turn["thread"] for turn in turns}
+        assert len(threads_seen) >= 2
+        checkpoint_bodies = [
+            turn["body"]
+            for turn in turns
+            if turn["subject"].startswith("CHECKPOINT")
+        ]
+        assert len(checkpoint_bodies) >= 2
+        for body in checkpoint_bodies:
+            assert "## Windows (rendered at read" in body
+            assert "UNRENDERED" not in body
 
 
 def test_read_route_renders_windows(tmp_path, monkeypatch) -> None:
