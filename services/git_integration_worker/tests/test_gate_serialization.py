@@ -170,7 +170,7 @@ async def test_concurrent_cursor_sdk_dispatch_serializes(
         time.sleep(0.15)
         order.append("end")
         release_or_restore_for_child_sync(
-            kwargs["gate_loop"], dispatch_id=kwargs["dispatch_id"]
+            kwargs["gate_loop"], dispatch_id=kwargs["ctx"].dispatch_id
         )
         return SdkRunOutcome(
             body="done",
