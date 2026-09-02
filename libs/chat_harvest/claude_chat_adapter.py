@@ -14,7 +14,11 @@ from claude_bundles.skills_ui_panel import connect_cdp
 from playwright.async_api import Error as PlaywrightError
 from universal_logging import get_logger
 
-from chat_harvest.archive import ArchiveConflictError, archive_chat_transcript
+from chat_harvest.archive import (
+    ArchiveConflictError,
+    ArchiveRefusalError,
+    archive_chat_transcript,
+)
 from chat_harvest.grok_adapter import scroll_stabilize
 from chat_harvest.models import (
     ChatHarvestResponse,
@@ -260,8 +264,20 @@ async def execute_claude_harvest(
                 url=live_url,
                 turn_count=len(turns),
                 existing_sha256=exc.existing_sha256,
+                conflict=exc.detail,
                 code="archive_conflict",
                 reason=str(exc),
+                opened_on_demand=minted,
+            )
+        except ArchiveRefusalError as exc:
+            return ChatHarvestResponse(
+                outcome="refused",
+                site=site,
+                conversation_id=live_id,
+                url=live_url,
+                turn_count=len(turns),
+                code=exc.code,
+                reason=exc.reason,
                 opened_on_demand=minted,
             )
         return build_harvest_response(

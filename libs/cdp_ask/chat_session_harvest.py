@@ -14,6 +14,7 @@ from cdp_ask.chat_session_models import ChatHarvestRequest, ChatHarvestResponse
 def _emit_harvested(response: ChatHarvestResponse) -> None:
     if not response.site:
         return
+    conflict_ordinal = response.conflict.ordinal if response.conflict else None
     emit(
         mcp_chat_session_harvested(
             site=response.site,
@@ -23,6 +24,7 @@ def _emit_harvested(response: ChatHarvestResponse) -> None:
             archive_uri=response.archive_uri,
             archive_sha256=response.archive_sha256,
             code=response.code,
+            conflict_ordinal=conflict_ordinal,
             opened_on_demand=response.opened_on_demand,
         )
     )

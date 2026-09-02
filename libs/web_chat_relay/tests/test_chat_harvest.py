@@ -8,10 +8,13 @@ from pathlib import Path
 import pytest
 from chat_harvest.archive import (
     ArchiveConflictError,
+    ArchiveRefusalError,
+    align_transcripts,
     archive_chat_transcript,
     archive_dest,
-    is_prefix_superset,
-    parse_turns_from_archive,
+    build_turn_index,
+    parse_index,
+    turn_digest,
 )
 from chat_harvest.models import (
     ChatTurn,
@@ -94,11 +97,12 @@ def test_writer_first_write(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
     body = dest.read_text(encoding="utf-8")
     assert "## Turn 1 — user" in body
     assert "## Turn 2 — assistant" in body
+    assert "chat-harvest-index" in body
     assert uri.startswith("cortex://notes/system/threads/chat-harvest-grok-")
     assert len(sha) == 64
 
 
-def test_writer_prefix_superset_reharvest(
+def test_writer_extension_reharvest(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
@@ -115,11 +119,12 @@ def test_writer_prefix_superset_reharvest(
     )
     body = archive_dest("grok", GROK_ID).read_text(encoding="utf-8")
     assert "## Turn 3 — user" in body
+    assert "chat-harvest-index" in body
     assert uri.endswith(".md")
     assert len(sha) == 64
 
 
-def test_writer_conflict_on_non_superset(
+def test_writer_conflict_on_divergent(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
@@ -130,11 +135,13 @@ def test_writer_conflict_on_non_superset(
     changed = [
         ChatTurn(author="user", ordinal=1, text="beta", source="dom"),
     ]
-    with pytest.raises(ArchiveConflictError):
+    with pytest.raises(ArchiveConflictError) as exc_info:
         archive_chat_transcript("grok", GROK_ID, GROK_URL, changed, harvested_at="t2")
+    assert exc_info.value.detail.ordinal == 1
+    assert exc_info.value.detail.existing_digest != exc_info.value.detail.new_digest
 
 
-def test_writer_supersede_writes_v2(
+def test_writer_supersede_moves_existing_to_v2_and_writes_canonical(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
@@ -148,8 +155,14 @@ def test_writer_supersede_writes_v2(
         harvested_at="t2",
         supersede=True,
     )
-    assert "-v2.md" in uri
-    assert archive_dest("grok", GROK_ID, version=2).is_file()
+    canonical = archive_dest("grok", GROK_ID)
+    v2 = archive_dest("grok", GROK_ID, version=2)
+    assert canonical.is_file()
+    assert v2.is_file()
+    assert canonical.read_text(encoding="utf-8") != v2.read_text(encoding="utf-8")
+    assert "y" in canonical.read_text(encoding="utf-8")
+    assert "x" in v2.read_text(encoding="utf-8")
+    assert uri == f"cortex://{canonical.relative_to(tmp_path).as_posix()}"
 
 
 def test_writer_empty_id_does_not_write(
@@ -186,24 +199,190 @@ def test_grok_fixture_user_assistant_ordinals() -> None:
     assert turns[1].text == strip_chrome("Worked for 3s\n\nanswer")
 
 
-def test_prefix_superset_helper() -> None:
-    existing = [(1, "user", "a"), (2, "assistant", "b")]
-    assert is_prefix_superset(existing, existing)
-    assert is_prefix_superset(existing, existing + [(3, "user", "c")])
-    assert not is_prefix_superset(existing, [(1, "user", "x")])
+def test_index_compare_survives_turn_heading_in_body() -> None:
+    body_with_heading = "## Turn 99 — user\nnested heading in body"
+    plain = "plain body"
+    assert turn_digest(body_with_heading) != turn_digest(plain)
+    turns_a = [ChatTurn(author="user", ordinal=1, text=body_with_heading, source="dom")]
+    turns_b = [ChatTurn(author="user", ordinal=1, text=body_with_heading, source="dom")]
+    assert build_turn_index(turns_a) == build_turn_index(turns_b)
 
 
-def test_parse_turns_from_archive() -> None:
-    content = """# Chat harvest — grok
+def test_identical_reharvest_does_not_rewrite(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    turns = [
+        ChatTurn(author="user", ordinal=1, text="hello", source="dom"),
+        ChatTurn(author="assistant", ordinal=2, text="world", source="dom"),
+    ]
+    _uri1, sha1 = archive_chat_transcript(
+        "grok", GROK_ID, GROK_URL, turns, harvested_at="t1"
+    )
+    dest = archive_dest("grok", GROK_ID)
+    mtime_before = dest.stat().st_mtime
+    body_before = dest.read_text(encoding="utf-8")
+    _uri2, sha2 = archive_chat_transcript(
+        "grok", GROK_ID, GROK_URL, turns, harvested_at="t2"
+    )
+    assert sha1 == sha2
+    assert dest.read_text(encoding="utf-8") == body_before
+    assert dest.stat().st_mtime == mtime_before
 
-## Turn 1 — user
-hello
 
-## Turn 2 — assistant
-world
-"""
-    parsed = parse_turns_from_archive(content)
-    assert parsed == [(1, "user", "hello"), (2, "assistant", "world")]
+def test_narrower_capture_does_not_overwrite(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    full = [
+        ChatTurn(author="user", ordinal=1, text="one", source="dom"),
+        ChatTurn(author="assistant", ordinal=2, text="two", source="dom"),
+        ChatTurn(author="user", ordinal=3, text="three", source="dom"),
+    ]
+    archive_chat_transcript("grok", GROK_ID, GROK_URL, full, harvested_at="t1")
+    partial = full[:2]
+    with pytest.raises(ArchiveRefusalError) as exc_info:
+        archive_chat_transcript("grok", GROK_ID, GROK_URL, partial, harvested_at="t2")
+    assert exc_info.value.code == "narrower_capture"
+    body = archive_dest("grok", GROK_ID).read_text(encoding="utf-8")
+    assert "## Turn 3 — user" in body
+
+
+def test_head_extension_rewrites_in_place_renumbered(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    existing = [
+        ChatTurn(author="user", ordinal=3, text="mid", source="dom"),
+        ChatTurn(author="assistant", ordinal=4, text="reply", source="dom"),
+    ]
+    archive_chat_transcript("grok", GROK_ID, GROK_URL, existing, harvested_at="t1")
+    extended = [
+        ChatTurn(author="user", ordinal=1, text="early", source="dom"),
+        ChatTurn(author="assistant", ordinal=2, text="early-reply", source="dom"),
+        ChatTurn(author="user", ordinal=3, text="mid", source="dom"),
+        ChatTurn(author="assistant", ordinal=4, text="reply", source="dom"),
+    ]
+    archive_chat_transcript("grok", GROK_ID, GROK_URL, extended, harvested_at="t2")
+    body = archive_dest("grok", GROK_ID).read_text(encoding="utf-8")
+    assert "## Turn 1 — user" in body
+    assert "early" in body
+    assert "## Turn 4 — assistant" in body
+    index = parse_index(body)
+    assert index is not None
+    assert index[0][0] == 1
+    assert index[-1][0] == 4
+
+
+def test_divergent_conflict_reports_first_ordinal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    first = [
+        ChatTurn(author="user", ordinal=1, text="alpha", source="dom"),
+        ChatTurn(author="assistant", ordinal=2, text="two", source="dom"),
+    ]
+    archive_chat_transcript("grok", GROK_ID, GROK_URL, first, harvested_at="t1")
+    changed = [
+        ChatTurn(author="user", ordinal=1, text="alpha", source="dom"),
+        ChatTurn(author="assistant", ordinal=2, text="changed", source="dom"),
+    ]
+    with pytest.raises(ArchiveConflictError) as exc_info:
+        archive_chat_transcript("grok", GROK_ID, GROK_URL, changed, harvested_at="t2")
+    detail = exc_info.value.detail
+    assert detail.ordinal == 2
+    assert detail.existing_snippet
+    assert detail.new_snippet
+    assert detail.existing_digest != detail.new_digest
+
+
+def test_unindexed_archive_refuses_without_supersede(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    dest = archive_dest("grok", GROK_ID)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(
+        "# Chat harvest — grok\n\n## Turn 1 — user\nlegacy without index\n",
+        encoding="utf-8",
+    )
+    turns = [ChatTurn(author="user", ordinal=1, text="legacy without index", source="dom")]
+    with pytest.raises(ArchiveRefusalError) as exc_info:
+        archive_chat_transcript("grok", GROK_ID, GROK_URL, turns, harvested_at="t2")
+    assert exc_info.value.code == "archive_unindexed"
+
+
+@pytest.mark.asyncio
+async def test_conflict_emits_event_with_ordinal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    turns = [ChatTurn(author="user", ordinal=1, text="stored", source="dom")]
+    archive_chat_transcript("grok", GROK_ID, GROK_URL, turns, harvested_at="t1")
+
+    emitted: list[dict] = []
+
+    def _capture(event) -> None:  # noqa: ANN001
+        emitted.append(dict(event.payload))
+
+    monkeypatch.setattr("cdp_ask.chat_session_harvest.emit", _capture)
+
+    evaluate_result = {
+        "login_wall": False,
+        "streaming": False,
+        "turns": [{"author": "user", "ordinal": 1, "text": "different"}],
+    }
+
+    class _FakePw:
+        async def stop(self) -> None:
+            return None
+
+    class _FakePage:
+        async def evaluate(self, _js):  # noqa: ANN001
+            return evaluate_result
+
+    async def _fake_attach(**_kwargs):
+        return _FakePw(), object(), object(), _FakePage()
+
+    async def _noop_scroll(_page, **_kw) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "chat_harvest.grok_adapter.grok_session.attach_grok_page",
+        _fake_attach,
+    )
+    monkeypatch.setattr(
+        "chat_harvest.grok_adapter.scroll_stabilize",
+        _noop_scroll,
+    )
+
+    from cdp_ask.chat_session_harvest import execute_harvest
+    from cdp_ask.chat_session_models import ChatHarvestRequest
+
+    result = await execute_harvest(
+        ChatHarvestRequest(url=GROK_URL, site="grok", cdp_url="http://127.0.0.1:9222")
+    )
+    assert result.outcome == "archive_conflict"
+    assert result.conflict is not None
+    assert result.conflict.ordinal == 1
+    assert emitted
+    assert emitted[0]["conflict_ordinal"] == 1
+    assert emitted[0]["outcome"] == "archive_conflict"
+
+
+def test_align_transcripts_enum_cases() -> None:
+    existing = build_turn_index(
+        [ChatTurn(author="user", ordinal=1, text="a", source="dom")]
+    )
+    identical = [ChatTurn(author="user", ordinal=1, text="a", source="dom")]
+    assert align_transcripts(existing, identical).value == "identical"
+
+    extension = identical + [
+        ChatTurn(author="assistant", ordinal=2, text="b", source="dom")
+    ]
+    assert align_transcripts(existing, extension).value == "extension"
+
+    assert align_transcripts(build_turn_index(extension), identical).value == "window"
 
 
 def test_cli_harvest_json_shape(monkeypatch: pytest.MonkeyPatch) -> None:
