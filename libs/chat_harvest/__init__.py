@@ -11,6 +11,8 @@ from chat_harvest.archive import (
     conv12,
     cortex_files_root,
     parse_index,
+    reindex_archive,
+    reindex_archive_file,
     turn_digest,
 )
 from chat_harvest.claude_chat_adapter import (
@@ -66,6 +68,8 @@ __all__ = [
     "execute_grok_paste",
     "harvest_full_transcript",
     "parse_index",
+    "reindex_archive",
+    "reindex_archive_file",
     "project_turns_view",
     "relay_lock_fresh",
     "scroll_stabilize",

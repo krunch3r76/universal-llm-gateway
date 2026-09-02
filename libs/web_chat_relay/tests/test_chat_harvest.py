@@ -14,6 +14,7 @@ from chat_harvest.archive import (
     archive_dest,
     build_turn_index,
     parse_index,
+    reindex_archive,
     turn_digest,
 )
 from chat_harvest.models import (
@@ -248,7 +249,7 @@ def test_narrower_capture_does_not_overwrite(
     assert "## Turn 3 — user" in body
 
 
-def test_head_extension_rewrites_in_place_renumbered(
+def test_head_extension_refuses_no_write(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
@@ -263,15 +264,75 @@ def test_head_extension_rewrites_in_place_renumbered(
         ChatTurn(author="user", ordinal=3, text="mid", source="dom"),
         ChatTurn(author="assistant", ordinal=4, text="reply", source="dom"),
     ]
-    archive_chat_transcript("grok", GROK_ID, GROK_URL, extended, harvested_at="t2")
+    with pytest.raises(ArchiveRefusalError) as exc_info:
+        archive_chat_transcript("grok", GROK_ID, GROK_URL, extended, harvested_at="t2")
+    assert exc_info.value.code == "head_extension"
     body = archive_dest("grok", GROK_ID).read_text(encoding="utf-8")
-    assert "## Turn 1 — user" in body
-    assert "early" in body
-    assert "## Turn 4 — assistant" in body
-    index = parse_index(body)
-    assert index is not None
-    assert index[0][0] == 1
-    assert index[-1][0] == 4
+    assert "## Turn 3 — user" in body
+    assert "early" not in body
+
+
+def test_window_slide_refuses_with_overlap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    existing = [
+        ChatTurn(author="user", ordinal=1, text="t1", source="dom"),
+        ChatTurn(author="assistant", ordinal=2, text="t2", source="dom"),
+        ChatTurn(author="user", ordinal=3, text="t3", source="dom"),
+    ]
+    archive_chat_transcript("grok", GROK_ID, GROK_URL, existing, harvested_at="t1")
+    slid = [
+        ChatTurn(author="assistant", ordinal=1, text="t2", source="dom"),
+        ChatTurn(author="user", ordinal=2, text="t3", source="dom"),
+        ChatTurn(author="assistant", ordinal=3, text="t4", source="dom"),
+    ]
+    with pytest.raises(ArchiveRefusalError) as exc_info:
+        archive_chat_transcript("grok", GROK_ID, GROK_URL, slid, harvested_at="t2")
+    assert exc_info.value.code == "window_slide"
+    assert "overlap=1" in exc_info.value.reason
+
+
+def test_reindex_archive_adds_index(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    dest = archive_dest("grok", GROK_ID)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(
+        "# Chat harvest — grok\n\n"
+        "- site: `grok`\n"
+        f"- conversation_id: `{GROK_ID}`\n"
+        f"- url: `{GROK_URL}`\n"
+        "- harvested_at: `t1`\n"
+        "- turn_count: `1`\n"
+        "- streaming_at_harvest: `false`\n\n"
+        "## Turn 1 — user\nlegacy body\n",
+        encoding="utf-8",
+    )
+    result = reindex_archive("grok", GROK_ID)
+    assert result is not None
+    body = dest.read_text(encoding="utf-8")
+    assert parse_index(body) is not None
+    assert "chat-harvest-index" in body
+
+
+def test_chrome_doubled_leading_line_stripped() -> None:
+    from chat_harvest.claude_chat_adapter import _strip_claude_dom_chrome
+
+    raw = (
+        "Viewed a file, used toys integration\n\n"
+        "Viewed a file, used toys integration\n\n"
+        "Yes, two places."
+    )
+    assert _strip_claude_dom_chrome(raw) == "Yes, two places."
+
+
+def test_chrome_thought_for_duration_stripped() -> None:
+    from chat_harvest.claude_chat_adapter import _strip_claude_dom_chrome
+
+    raw = "Thought for 18s\n\nThought for 18s\n\nbody"
+    assert _strip_claude_dom_chrome(raw) == "body"
 
 
 def test_divergent_conflict_reports_first_ordinal(
@@ -368,6 +429,26 @@ async def test_conflict_emits_event_with_ordinal(
     assert emitted
     assert emitted[0]["conflict_ordinal"] == 1
     assert emitted[0]["outcome"] == "archive_conflict"
+    assert "snippet" not in emitted[0]
+    assert "existing_digest" not in emitted[0]
+
+
+def test_conflict_event_carries_no_snippet() -> None:
+    """M2 D6 — conversation text must not enter Event Service payloads."""
+    from cdp_ask.chat_session_events import mcp_chat_session_harvested
+
+    event = mcp_chat_session_harvested(
+        site="grok",
+        conversation_id=GROK_ID,
+        outcome="archive_conflict",
+        turn_count=1,
+        conflict_ordinal=1,
+        code="archive_conflict",
+    )
+    payload = dict(event.payload)
+    forbidden = {"snippet", "existing_snippet", "new_snippet", "existing_digest", "new_digest"}
+    assert forbidden.isdisjoint(payload.keys())
+    assert payload.get("conflict_ordinal") == 1
 
 
 def test_align_transcripts_enum_cases() -> None:
@@ -587,7 +668,7 @@ def test_claude_turns_from_dom_strip_thinking_prefix() -> None:
     assert turns[0].ordinal == 1
     assert turns[1].author == "assistant"
     assert turns[1].ordinal == 2
-    assert turns[1].text == strip_thinking_prefix(raw_turns[1]["text"])
+    assert turns[1].text == "Worked for 3s\n\nanswer"
 
 
 @pytest.mark.asyncio

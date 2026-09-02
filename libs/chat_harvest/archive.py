@@ -32,6 +32,7 @@ class Alignment(StrEnum):
     EXTENSION = "extension"
     WINDOW = "window"
     HEAD_EXTENSION = "head_extension"
+    WINDOW_SLIDE = "window_slide"
     DIVERGENT = "divergent"
 
 
@@ -175,7 +176,32 @@ def align_transcripts(
             if new_body[offset : offset + len(existing_body)] == existing_body:
                 return Alignment.HEAD_EXTENSION
 
+    slide = _window_slide_overlap(existing_index, new_index)
+    if slide is not None:
+        return Alignment.WINDOW_SLIDE
+
     return Alignment.DIVERGENT
+
+
+def _window_slide_overlap(
+    existing_index: list[list[object]],
+    new_index: list[list[object]],
+) -> int | None:
+    """Return k>0 when existing[k:] author+digest rows match new prefix (tail window shift)."""
+    if len(existing_index) < 2 or len(new_index) < 2:
+        return None
+
+    def _body_rows(index: list[list[object]]) -> list[tuple[object, object]]:
+        return [(row[1], row[2]) for row in index]
+
+    existing_body = _body_rows(existing_index)
+    new_body = _body_rows(new_index)
+    for k in range(1, len(existing_body)):
+        tail = existing_body[k:]
+        window = new_body[: len(tail)]
+        if tail and window == tail:
+            return k
+    return None
 
 
 def _conflict_detail(
@@ -236,13 +262,6 @@ def _conflict_detail(
     )
 
 
-def _renumber_turns(turns: list[ChatTurn]) -> list[ChatTurn]:
-    return [
-        ChatTurn(author=t.author, ordinal=i + 1, text=t.text, source=t.source)
-        for i, t in enumerate(turns)
-    ]
-
-
 def _index_comment(turns: list[ChatTurn]) -> str:
     payload = {"turns": build_turn_index(turns)}
     return f"<!-- chat-harvest-index {json.dumps(payload, separators=(',', ':'))} -->"
@@ -301,6 +320,46 @@ def _cortex_uri(path: Path) -> str:
     return f"cortex://{rel}"
 
 
+def reindex_archive_file(dest: Path) -> tuple[str, str] | None:
+    """Add a machine index to a legacy archive body; no-op when already indexed."""
+    if not dest.is_file():
+        return None
+    content = dest.read_text(encoding="utf-8")
+    if parse_index(content) is not None:
+        return _cortex_uri(dest), _sha256_of_file(dest)
+    bodies = _parse_turn_bodies(content)
+    if not bodies:
+        return None
+    site_match = re.search(r"- site: `([^`]+)`", content)
+    cid_match = re.search(r"- conversation_id: `([^`]+)`", content)
+    url_match = re.search(r"- url: `([^`]+)`", content)
+    harvested_match = re.search(r"- harvested_at: `([^`]+)`", content)
+    streaming_match = re.search(r"- streaming_at_harvest: `(true|false)`", content)
+    if not (site_match and cid_match and url_match):
+        return None
+    turns = [
+        ChatTurn(author=author, ordinal=ordinal, text=body, source="archive")
+        for ordinal, (author, body) in sorted(bodies.items())
+    ]
+    new_content = _format_transcript(
+        site=site_match.group(1),
+        conversation_id=cid_match.group(1),
+        url=url_match.group(1),
+        turns=turns,
+        harvested_at=harvested_match.group(1)
+        if harvested_match
+        else datetime.now(UTC).isoformat(),
+        streaming=streaming_match.group(1) == "true" if streaming_match else False,
+    )
+    sha256 = durable_write_text(dest, new_content)
+    return _cortex_uri(dest), sha256
+
+
+def reindex_archive(site: str, conversation_id: str) -> tuple[str, str] | None:
+    """Reindex the canonical archive for *site* / *conversation_id* when missing an index."""
+    return reindex_archive_file(archive_dest(site, conversation_id))
+
+
 def archive_chat_transcript(
     site: str,
     conversation_id: str,
@@ -353,6 +412,21 @@ def archive_chat_transcript(
                 reason="new harvest is a narrower window than the archived transcript",
             )
 
+        if alignment == Alignment.WINDOW_SLIDE:
+            overlap = _window_slide_overlap(existing_index, build_turn_index(write_turns))
+            raise ArchiveRefusalError(
+                path=dest,
+                code="window_slide",
+                reason=f"tail window slide overlap={overlap}",
+            )
+
+        if alignment == Alignment.HEAD_EXTENSION:
+            raise ArchiveRefusalError(
+                path=dest,
+                code="head_extension",
+                reason="head extension detected; write deferred until completeness capture",
+            )
+
         if alignment == Alignment.DIVERGENT:
             detail = _conflict_detail(existing_index, write_turns, existing_content)
             raise ArchiveConflictError(
@@ -360,9 +434,6 @@ def archive_chat_transcript(
                 existing_sha256=_sha256_of_file(dest),
                 detail=detail,
             )
-
-        if alignment == Alignment.HEAD_EXTENSION:
-            write_turns = _renumber_turns(write_turns)
 
     when = harvested_at or datetime.now(UTC).isoformat()
     content = _format_transcript(

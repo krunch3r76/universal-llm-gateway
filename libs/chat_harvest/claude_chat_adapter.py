@@ -31,6 +31,25 @@ from chat_harvest.models import (
 
 logger = get_logger(__name__)
 
+_THOUGHT_FOR_LINE_RE = re.compile(r"^Thought for \d+s$")
+
+
+def _strip_claude_dom_chrome(text: str) -> str:
+    """Drop claude.ai DOM chrome lines before digest/archive (M2 D2)."""
+    lines = [
+        line
+        for line in text.split("\n")
+        if not _THOUGHT_FOR_LINE_RE.match(line.strip())
+    ]
+    text = "\n".join(lines).strip()
+    if not text:
+        return text
+    blocks = [block.strip() for block in text.split("\n\n") if block.strip()]
+    if len(blocks) >= 2 and blocks[0] == blocks[1]:
+        blocks = blocks[2:]
+    return "\n\n".join(blocks).strip()
+
+
 # fmt: off
 FULL_TRANSCRIPT_JS = "()=>{const url=location.href;const loginWall=/\\/login/i.test(url)||/\\/logout/i.test(url);const stop=[...document.querySelectorAll('button')].some(b=>/^(stop|stop generating)$/i.test(((b.innerText||'')+' '+(b.getAttribute('aria-label')||'')).trim()));const streaming=stop||!!document.querySelector(\"[aria-busy='true']\");const seen=new Set();const nodes=[];for(const sel of [\"[data-testid='user-message']\",\"[data-testid='assistant-message']\",\"div[class*='font-claude']\"]){for(const el of document.querySelectorAll(sel)){if(!seen.has(el)){seen.add(el);nodes.push(el);}}}nodes.sort((a,b)=>(a.compareDocumentPosition(b)&Node.DOCUMENT_POSITION_FOLLOWING)?-1:1);let ordinal=0;const turns=nodes.map(el=>{const testid=el.getAttribute('data-testid')||'';ordinal+=1;return{author:testid==='user-message'?'user':'assistant',ordinal,text:(el.innerText||'').trim()};});return{url,login_wall:loginWall,streaming,stop,turns};}"
 # fmt: on
@@ -40,11 +59,11 @@ def _turns_from_dom(raw_turns: list[dict[str, Any]]) -> list[ChatTurn]:
     turns: list[ChatTurn] = []
     for item in raw_turns:
         author = str(item.get("author") or "assistant")
-        text = (
-            strip_thinking_prefix(str(item.get("text") or ""))
-            if author == "assistant"
-            else str(item.get("text") or "")
-        )
+        raw_text = str(item.get("text") or "")
+        if author == "assistant":
+            text = strip_thinking_prefix(_strip_claude_dom_chrome(raw_text))
+        else:
+            text = raw_text
         turns.append(
             ChatTurn(
                 author="user" if author == "user" else "assistant",
