@@ -502,6 +502,12 @@ skills:
   ulg-for-llms:
     surface_class: shared_sync
     mcp_surface_required: none
+  voicemail-check:
+    # Checkout-local IDE router stub under .cursor/skills/; card SoT is cortex
+    # (runbook:voicemail-check, body cortex://notes/system/capabilities/voicemail-check.md).
+    # ¬ ulg-ecosystem census unless operator asks. Same pattern as messages-check.
+    surface_class: cursor_only
+    mcp_surface_required: none
   writing-with-provenance:
     # Demoted from shared_sync 2026-08-02 — claim-record drafting on-demand,
     # ¬ every web/Customize open (opening-context cost).

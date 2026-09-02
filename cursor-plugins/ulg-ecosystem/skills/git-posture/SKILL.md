@@ -242,6 +242,19 @@ fs(sandbox="workspaces", op="md_read", path="universal-llm-gateway/…", section
 
 Life/CDP catch-up is `fs(op="recent_commits")` (oneline subjects, no diffs) — not `git_log`, not a project index. Its HEAD and `authored_at` fields are a deprecated, lower-confidence timestamp fallback during migration; they never produce a validated-live claim. For “is the service running this commit?” use the dual-surface `fleet_liveness(code_ref=...)` query. `git_*` remains life-banned.
 
+## Never dispatch "go read the commit yourself" to a CDP/Cowork seat
+
+Ground: agent-bus:9887 (2026-09-02) — a `cdp/opus-5` review packet gave commit SHAs + prose and said "read the actual files/commits on disk," trusting the seat to fetch its own context. The Cowork sandbox's `fs` tool has no git awareness — it treats `.git/` as an ordinary directory. The seat pulled raw objects (`fs(op="read", binary=true, path=".../.git/objects/da/f6cb0f9…")`) and tried to manually zlib-inflate + parse git's commit/tree/blob framing in Python to reconstruct a diff. That is binary, content-addressed internal storage, not source content — reconstructing "what changed" from it by hand is orders of magnitude more expensive than a single file read, and the dispatch ran **100+ minutes** producing nothing before the operator caught it from the Cowork step log.
+
+```text
+dispatch(cdp ∨ any_frontier_seat, git_history_question) ∧ ¬confirmed(real_git_cli_in_sandbox)
+  ⇒ inline(before/after file content ∨ rendered `git show`/`git diff` text) IN the prompt/packet
+  ∧ ¬instruct("read the commit/file yourself") on unverified sandbox capability
+∀ path ∈ .git/**: ¬give_to_model(raw_read ∨ fs_tool_path) — binary object storage, never source content
+```
+
+Same discipline as "never submit git diffs to LLMs" above, in the other direction: under-supplying context and trusting a frontier seat's tool loop to backfill it from git internals is a worse failure than over-supplying a diff — it can silently burn an unbounded amount of wall-clock and tokens with no forcing function to stop. Render the actual comparison (whole files, or `git show`/`git diff` output already converted to plain text) into the packet yourself; never leave "diff two commits" as homework for a sandboxed seat.
+
 ## Git CLI allowed only when
 
 operator asks to commit/branch/PR; a named workflow defines commit/merge/release; or staging deliberate tracked-config/source change for rebuild-persistence. Otherwise do not reach for git.
