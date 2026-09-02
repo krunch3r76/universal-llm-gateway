@@ -358,6 +358,55 @@ async def post_queue_owner_restart_terminal(
     )
 
 
+def bus_post_succeeded(post_result: dict[str, Any] | None) -> bool:
+    """True when a ``post_terminal_status``-shaped reply reached the bus (HTTP < 400)."""
+    if not isinstance(post_result, dict):
+        return False
+    code = post_result.get("status_code")
+    return isinstance(code, int) and code < 400
+
+
+async def post_reconcile_inflight_lost_terminal(
+    job: AutoJob,
+    *,
+    client: CursorBusClient,
+    queue: Any,
+    dispatch_id: str,
+) -> dict[str, Any]:
+    """Notify waiters that a claimed+dispatched job died with no bus closeout.
+
+    Distinct wording from :func:`post_queue_owner_restart_terminal` — this row
+    *was* dispatched (the honor consult found no closeout after restart), not
+    lost before ever reaching a worker.
+    """
+    summary = (
+        "Auto job was dispatched but no closeout was found on the bus after "
+        "git_integration_worker restarted (reconcile_inflight_lost); "
+        "re-issue the DIRECTIVE if the work is still needed."
+    )
+    payload: dict[str, Any] = {
+        "summary": summary,
+        "reason": "reconcile_inflight_lost",
+        "job_id": job.job_id,
+        "dispatch_id": dispatch_id,
+        "request_turn": job.turn_number,
+    }
+    if job.request_id:
+        payload["request_id"] = job.request_id
+    return await post_terminal_status(
+        job,
+        client=client,
+        queue=queue,
+        summary=summary,
+        disposition="failed",
+        contract=job.contract,
+        terminal_status="status:failed",
+        payload=payload,
+        failed=True,
+        dispatch_id=dispatch_id,
+    )
+
+
 async def post_queue_owner_restart_recovered(
     job: AutoJob,
     *,

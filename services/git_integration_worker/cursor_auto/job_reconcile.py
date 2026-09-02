@@ -256,6 +256,8 @@ async def _terminalize_job(
             job,
             queue=queue,
             ledger=ledger,
+            client=client,
+            post_bus=post_bus,
         )
     terminal = ledger.mark_terminal(
         job.job_id,
@@ -306,8 +308,13 @@ async def reconcile_open_auto_jobs(
     rehydrate: bool = False,
     restart_intent_id: str | None = None,
 ) -> list[AutoJob]:
-    """Terminalize every open claimed job; keep (and at startup, rehydrate)
-    every open queued-never-claimed job. Optional bus notify for waiters."""
+    """Terminalize every open claimed-never-dispatched job; keep (and at
+    startup, rehydrate) every open queued-never-claimed job. A claimed
+    *and* dispatched job is left alone at shutdown (``rehydrate=False``) and,
+    at startup, is honor-consulted against the bus before being terminalized
+    (see ``honor_claimed_dispatched_job``) rather than terminalized outright.
+    Optional bus notify for waiters on every terminal path, including honor's
+    ``reconcile_inflight_lost``."""
     del reason
     queue = get_queue()
     ledger = get_ledger()

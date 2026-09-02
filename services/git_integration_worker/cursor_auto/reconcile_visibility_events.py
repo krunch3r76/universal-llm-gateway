@@ -164,8 +164,56 @@ def emit_reconcile_inflight_lost(
     )
 
 
+@event_factory
+def GiwCursorAutoReconcileInflightLostBusUnposted(  # noqa: N802
+    job_id: str,
+    thread_id: str,
+    dispatch_id: str,
+    status_code: int | None,
+) -> Event:
+    """The inflight_lost terminal died with no waiter-visible bus turn.
+
+    Distinct signal from ``queue_owner_restart.bus_unposted`` — this row was
+    dispatched (unlike a never-dispatched claim), so the same reason string
+    would mislabel telemetry on a mixed reconcile batch.
+    """
+    return Event(
+        signal="giw.cursor_auto.reconcile.inflight_lost_bus_unposted",
+        payload={
+            "job_id": job_id,
+            "thread_id": thread_id,
+            "dispatch_id": dispatch_id,
+            "status_code": status_code,
+        },
+        scope="node",
+        role="observation",
+    )
+
+
+def emit_reconcile_inflight_lost_bus_unposted(
+    *, job_id: str, thread_id: str, dispatch_id: str, status_code: int | None
+) -> None:
+    emit_frontier_event(
+        GiwCursorAutoReconcileInflightLostBusUnposted(
+            job_id=job_id,
+            thread_id=thread_id,
+            dispatch_id=dispatch_id,
+            status_code=status_code,
+        )
+    )
+    logger.warning(
+        "cursor-auto reconcile inflight_lost bus_unposted job=%s thread=%s "
+        "dispatch=%s status_code=%s",
+        job_id,
+        thread_id,
+        dispatch_id,
+        status_code,
+    )
+
+
 __all__ = [
     "emit_reconcile_inflight_lost",
+    "emit_reconcile_inflight_lost_bus_unposted",
     "emit_reconcile_rehydrate_exhausted",
     "emit_reconcile_rehydrated",
     "emit_reconcile_superseded",

@@ -188,6 +188,64 @@ def test_startup_no_closeout_stamps_inflight_lost() -> None:
     assert view["terminal_reason"] == TERMINAL_REASON_RECONCILE_INFLIGHT_LOST
 
 
+def test_inflight_lost_posts_bus_notify_when_requested() -> None:
+    """Regression: the honor path must notify the waiter like every sibling
+    terminal branch — it silently dropped ``post_bus`` entirely before this.
+    """
+    job = _claimed_dispatched()
+
+    with patch(
+        "services.git_integration_worker.cursor_auto.job_reconcile.is_never_dispatched",
+        return_value=False,
+    ), patch(
+        "services.git_integration_worker.cursor_auto.job_reconcile_honor.fetch_turns_from",
+        new_callable=AsyncMock,
+        return_value=([], None),
+    ), patch(
+        "services.git_integration_worker.cursor_auto.job_reconcile_honor."
+        "post_reconcile_inflight_lost_terminal",
+        new_callable=AsyncMock,
+        return_value={"status_code": 200},
+    ) as post_terminal:
+        terminalized = asyncio.run(
+            reconcile_open_auto_jobs(post_bus=True, rehydrate=True)
+        )
+
+    assert len(terminalized) == 1
+    assert post_terminal.await_count == 1
+    row = get_ledger().read_relay_state(job.job_id)
+    assert row["status"] == "failed"
+
+
+def test_inflight_lost_bus_post_failure_marks_notify_pending() -> None:
+    """Failed/unreachable bus post on the honor path must fall back to a
+    durable ``bus_notify_pending`` mark, same as the other terminal branches.
+    """
+    job = _claimed_dispatched()
+
+    with patch(
+        "services.git_integration_worker.cursor_auto.job_reconcile.is_never_dispatched",
+        return_value=False,
+    ), patch(
+        "services.git_integration_worker.cursor_auto.job_reconcile_honor.fetch_turns_from",
+        new_callable=AsyncMock,
+        return_value=([], None),
+    ), patch(
+        "services.git_integration_worker.cursor_auto.job_reconcile_honor."
+        "post_reconcile_inflight_lost_terminal",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("bus unreachable"),
+    ):
+        terminalized = asyncio.run(
+            reconcile_open_auto_jobs(post_bus=True, rehydrate=True)
+        )
+
+    assert len(terminalized) == 1
+    record = get_ledger().read_record_json(job.job_id)
+    assert record.get("bus_notify_pending") is True
+    assert record.get("bus_notify_mark") == "reconcile_inflight_lost_death"
+
+
 def test_ac8_skip_outbox_marks_done_not_lost() -> None:
     job = _claimed_dispatched()
     get_ledger().set_relay_phase(job.job_id, relay_phase=RELAY_PHASE_SDK_TERMINAL)
