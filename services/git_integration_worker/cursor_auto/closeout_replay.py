@@ -367,6 +367,9 @@ async def _triage_sdk_terminal_without_outbox(
             skip_outbox_persist=True,
             replay_mode=True,
         )
+        terminal = ledger.mark_terminal(job.job_id, status="done", terminal_reason=None)
+        if terminal is not None:
+            get_queue().mark_done(job.job_id, failed=False)
 
 
 def job_should_skip_loss_report(job_id: str) -> bool:
@@ -380,11 +383,13 @@ def job_has_pending_outbox(job_id: str) -> bool:
 
 
 def relay_phase_for_job(job_id: str) -> tuple[str | None, str | None]:
+    """Return ``(dispatch_id, relay_phase)`` from the durable auto-job ledger row."""
     state = get_ledger().read_relay_state(job_id)
     return state.get("dispatch_id"), state.get("relay_phase")
 
 
 def is_never_dispatched(job_id: str) -> bool:
+    """True when the job was claimed but never bound to a live SDK dispatch row."""
     dispatch_id, phase = relay_phase_for_job(job_id)
     if not dispatch_id:
         return True

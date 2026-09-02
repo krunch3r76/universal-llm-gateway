@@ -11,7 +11,11 @@ from services.git_integration_worker.cursor_auto.closeout_outbox import (
     CloseoutOutboxStore,
     get_outbox_store,
 )
+from services.git_integration_worker.cursor_auto.closeout_replay import (
+    startup_closeout_outbox_replay,
+)
 from services.git_integration_worker.cursor_auto.job_ledger import (
+    RELAY_PHASE_SDK_TERMINAL,
     AutoJobLedger,
     get_ledger,
 )
@@ -23,6 +27,7 @@ from services.git_integration_worker.cursor_auto.queue import (
     reset_queue_for_tests,
 )
 from services.git_integration_worker.cursor_auto.terminal_reason_codec import (
+    TERMINAL_REASON_RECONCILE_INFLIGHT_LOST,
     TERMINAL_REASON_RESTART_RECONCILE_SUPERSEDED,
 )
 
@@ -50,6 +55,171 @@ def _enqueue(*, turn: int = 1):
         desired_effort="medium",
         contract="implement",
     )
+
+
+def _claimed_dispatched(*, dispatch_id: str = "auto-deadbeef") -> object:
+    job = _enqueue()
+    get_queue().claim_next()
+    get_ledger().bind_dispatch(job.job_id, dispatch_id=dispatch_id)
+    return job
+
+
+class _App:
+    state: object
+
+    def __init__(self, worker_id: str = "new-worker") -> None:
+        self.state = type("S", (), {"worker_id": worker_id, "worker_boot_ts": "t"})()
+
+
+def test_shutdown_claimed_dispatched_stays_open() -> None:
+    job = _claimed_dispatched()
+
+    with patch(
+        "services.git_integration_worker.cursor_auto.job_reconcile.is_never_dispatched",
+        return_value=False,
+    ), patch(
+        "services.git_integration_worker.cursor_auto.job_reconcile_honor.fetch_turns_from",
+        new_callable=AsyncMock,
+    ) as fetch:
+        terminalized = asyncio.run(
+            reconcile_open_auto_jobs(post_bus=True, rehydrate=False)
+        )
+        fetch.assert_not_called()
+
+    assert terminalized == []
+    assert get_ledger().list_open()
+    row = get_ledger().read_relay_state(job.job_id)
+    assert row["status"] == "claimed"
+
+
+def test_startup_honors_auto_closeout_turn() -> None:
+    job = _claimed_dispatched()
+    dispatch_id = "auto-deadbeef"
+    turn = {
+        "from": "cursor-auto",
+        "turn_number": 2,
+        "body": f"TYPE: CLOSEOUT\ndispatch_id: {dispatch_id}\n",
+    }
+
+    with patch(
+        "services.git_integration_worker.cursor_auto.job_reconcile.is_never_dispatched",
+        return_value=False,
+    ), patch(
+        "services.git_integration_worker.cursor_auto.job_reconcile_honor.fetch_turns_from",
+        new_callable=AsyncMock,
+        return_value=([turn], None),
+    ):
+        terminalized = asyncio.run(
+            reconcile_open_auto_jobs(post_bus=False, rehydrate=True)
+        )
+
+    assert len(terminalized) == 1
+    row = get_ledger().read_relay_state(job.job_id)
+    assert row["status"] == "done"
+
+
+def test_startup_honors_cursor_sdk_turn() -> None:
+    job = _claimed_dispatched()
+    dispatch_id = "auto-deadbeef"
+    turn = {
+        "from": "cursor-sdk",
+        "turn_number": 2,
+        "subject": f"closeout {dispatch_id}",
+        "body": "status: complete\n",
+    }
+
+    with patch(
+        "services.git_integration_worker.cursor_auto.job_reconcile.is_never_dispatched",
+        return_value=False,
+    ), patch(
+        "services.git_integration_worker.cursor_auto.job_reconcile_honor.fetch_turns_from",
+        new_callable=AsyncMock,
+        return_value=([turn], None),
+    ):
+        terminalized = asyncio.run(
+            reconcile_open_auto_jobs(post_bus=False, rehydrate=True)
+        )
+
+    assert len(terminalized) == 1
+    row = get_ledger().read_relay_state(job.job_id)
+    assert row["status"] == "done"
+
+
+def test_startup_bus_unreachable_leaves_claimed() -> None:
+    job = _claimed_dispatched()
+
+    with patch(
+        "services.git_integration_worker.cursor_auto.job_reconcile.is_never_dispatched",
+        return_value=False,
+    ), patch(
+        "services.git_integration_worker.cursor_auto.job_reconcile_honor.fetch_turns_from",
+        new_callable=AsyncMock,
+        return_value=(None, "bus_http_503"),
+    ):
+        terminalized = asyncio.run(
+            reconcile_open_auto_jobs(post_bus=False, rehydrate=True)
+        )
+
+    assert terminalized == []
+    row = get_ledger().read_relay_state(job.job_id)
+    assert row["status"] == "claimed"
+
+
+def test_startup_no_closeout_stamps_inflight_lost() -> None:
+    job = _claimed_dispatched()
+
+    with patch(
+        "services.git_integration_worker.cursor_auto.job_reconcile.is_never_dispatched",
+        return_value=False,
+    ), patch(
+        "services.git_integration_worker.cursor_auto.job_reconcile_honor.fetch_turns_from",
+        new_callable=AsyncMock,
+        return_value=([], None),
+    ):
+        terminalized = asyncio.run(
+            reconcile_open_auto_jobs(post_bus=False, rehydrate=True)
+        )
+
+    assert len(terminalized) == 1
+    row = get_ledger().read_relay_state(job.job_id)
+    assert row["status"] == "failed"
+    view = get_ledger().observer_state(job_id=job.job_id)
+    assert view is not None
+    assert view["terminal_reason"] == TERMINAL_REASON_RECONCILE_INFLIGHT_LOST
+
+
+def test_ac8_skip_outbox_marks_done_not_lost() -> None:
+    job = _claimed_dispatched()
+    get_ledger().set_relay_phase(job.job_id, relay_phase=RELAY_PHASE_SDK_TERMINAL)
+
+    with patch(
+        "services.git_integration_worker.cursor_auto.job_reconcile.is_never_dispatched",
+        return_value=False,
+    ), patch(
+        "services.git_integration_worker.cursor_auto.closeout_replay.fetch_sdk_closeout_body",
+        new_callable=AsyncMock,
+        return_value="status: complete\n",
+    ), patch(
+        "services.git_integration_worker.cursor_auto.closeout_replay.post_operator_closeout",
+        new_callable=AsyncMock,
+    ), patch(
+        "services.git_integration_worker.cursor_auto.closeout_replay.read_repo_closeout_sidecar",
+        return_value=None,
+    ), patch(
+        "services.git_integration_worker.cursor_auto.closeout_replay."
+        "CursorDispatchLedger.instance",
+    ) as dispatch_ledger_cls:
+        dispatch_ledger_cls.return_value.dispatch_status_by_id.return_value = {
+            "status": "complete",
+        }
+        asyncio.run(startup_closeout_outbox_replay(_App()))
+        terminalized = asyncio.run(
+            reconcile_open_auto_jobs(post_bus=False, rehydrate=True)
+        )
+
+    row = get_ledger().read_relay_state(job.job_id)
+    assert row["status"] == "done"
+    assert terminalized == []
 
 
 def test_never_dispatched_posts_queue_owner_restart() -> None:
