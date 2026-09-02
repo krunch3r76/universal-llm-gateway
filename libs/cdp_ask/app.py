@@ -498,6 +498,11 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
     async def poll_execution(execution_id: str) -> ExecutionPollResponse:
         record = await execution_store.get(execution_id)
         if record is None:
+            from cdp_ask.poll_recovery import recover_poll_snapshot
+
+            recovered = await recover_poll_snapshot(execution_id, execution_store)
+            if recovered is not None:
+                return ExecutionPollResponse(**recovered)
             raise HTTPException(404, f"unknown execution_id: {execution_id}")
         payload = record.result or {}
         live = record.status == "running"

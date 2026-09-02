@@ -1303,6 +1303,51 @@ def test_run_cdp_generate_unverifiable_stall_skips_abort(
     assert "UNVERIFIED" in cdp_result_subject(result)
 
 
+def test_run_cdp_generate_store_miss_recovers_on_poll(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Store-miss 404 on satellite poll recovers when cdp-ask returns completed body."""
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-store-miss")
+    cse = "https://claude.ai/cowork/cse_recover1"
+    archive = "cortex://notes/system/threads/cdp-ask-archive-cdp-fable-sat-recover.md"
+    running = {
+        "execution_id": "sat-recover",
+        "status": "running",
+        "completion_phase": "running",
+        "body_len": 1,
+        "url": cse,
+    }
+    recovered = {
+        "execution_id": "sat-recover",
+        "status": "completed",
+        "completion_phase": "terminal",
+        "archive_uri": archive,
+        "body": "## Bind record\n\nBOUND: F1 = A",
+        "attested_model": "Fable 5 High",
+        "harvest_provenance": "chat",
+    }
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-recover", "status": "running"},
+            running,
+            {"error": "cdp-ask HTTP 404: unknown execution_id: sat-recover"},
+            recovered,
+        ]
+    )
+    result = run_cdp_generate(
+        execution_id="dispatch-store-miss",
+        model_id="cdp/fable-5",
+        prompt_text="ping",
+        purpose="review",
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert result.ok is True
+    assert result.body.startswith("## Bind record")
+    assert result.archive_uri == archive
+
+
 def test_run_cdp_generate_transport_miss_no_witness_aborts(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
