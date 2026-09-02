@@ -89,14 +89,15 @@ async def _retention_loop(
         debug_deleted = await store.prune_debug_events()
         heartbeat_deleted = await store.prune_heartbeat_signals()
         session_deleted = await store.run_session_retention(max_sessions)
-        age_deleted = 0 if startup else await store.run_retention(max_age_ms)
+        age_deleted = await store.run_retention(max_age_ms)
         if debug_deleted or heartbeat_deleted or session_deleted or age_deleted:
             if startup:
                 logger.info(
-                    "Retention (startup): debug=%d heartbeat=%d session=%d (keeping %d sessions)",
+                    "Retention (startup): debug=%d heartbeat=%d session=%d age=%d (keeping %d sessions)",
                     debug_deleted,
                     heartbeat_deleted,
                     session_deleted,
+                    age_deleted,
                     max_sessions,
                 )
                 return

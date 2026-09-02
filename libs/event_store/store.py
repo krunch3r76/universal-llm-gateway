@@ -22,12 +22,23 @@ import time
 from collections import deque
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .retention import HEARTBEAT_SIGNALS
 from .schema import _SCHEMA_SQL, migrate_correlation_taxonomy_columns
 
 logger = logging.getLogger(__name__)
+
+_SESSION_BOUNDARY_SIGNAL = "event.service.started"
+_write_fail_hook: Callable[[int, list[str], str], None] | None = None
+
+
+def register_write_fail_hook(
+    hook: Callable[[int, list[str], str], None] | None,
+) -> None:
+    """Register a callback invoked when insert_events drops a batch on sqlite error."""
+    global _write_fail_hook
+    _write_fail_hook = hook
 
 _REALTIME_BUFFER_SIZE = int(os.environ.get("REALTIME_BUFFER_SIZE", "10000"))
 _SQLITE_CACHE_KIB = int(os.environ.get("EVENTS_SQLITE_CACHE_KIB", "1048576"))
@@ -77,6 +88,8 @@ class EventStore:
         self._db = sqlite3.connect(self._db_path, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         try:
+            if os.environ.get("EVENTS_SQLITE_NFS_PIN") == "1":
+                self._db.execute("PRAGMA locking_mode=EXCLUSIVE")
             self._db.execute("PRAGMA journal_mode=WAL")
             self._db.execute("PRAGMA synchronous=NORMAL")
             self._db.execute("PRAGMA auto_vacuum=INCREMENTAL")
@@ -103,12 +116,17 @@ class EventStore:
     @staticmethod
     def _configure_connection(db: sqlite3.Connection) -> None:
         """Apply RAM-oriented read settings without changing write durability."""
-        db.execute(f"PRAGMA cache_size={-_SQLITE_CACHE_KIB}")
-        db.execute(f"PRAGMA mmap_size={_SQLITE_MMAP_BYTES}")
+        if os.environ.get("EVENTS_SQLITE_NFS_PIN") == "1":
+            db.execute("PRAGMA mmap_size=0")
+        else:
+            db.execute(f"PRAGMA cache_size={-_SQLITE_CACHE_KIB}")
+            db.execute(f"PRAGMA mmap_size={_SQLITE_MMAP_BYTES}")
         db.execute("PRAGMA temp_store=MEMORY")
 
     def _reader_connection(self) -> sqlite3.Connection:
         """Return one read-only connection per worker thread."""
+        if os.environ.get("EVENTS_SQLITE_NFS_PIN") == "1" and self._db is not None:
+            return self._db
         connection = getattr(self._reader_local, "connection", None)
         if connection is not None:
             return connection
@@ -199,6 +217,15 @@ class EventStore:
                 [ev.get("signal") for ev in accepted[:5]],
                 e,
             )
+            if _write_fail_hook is not None:
+                try:
+                    _write_fail_hook(
+                        len(rows),
+                        [str(ev.get("signal", "unknown")) for ev in accepted[:5]],
+                        str(e),
+                    )
+                except Exception:
+                    logger.exception("write_fail_hook raised")
             return []
         except Exception as e:
             logger.exception("Unexpected event insert failure: %s", e)
@@ -325,7 +352,8 @@ class EventStore:
             return 0
 
         rows = await self.query(
-            "SELECT MAX(ts_unix_ms) AS ts FROM events WHERE signal = 'system.started'",
+            "SELECT MAX(ts_unix_ms) AS ts FROM events WHERE signal = ?",
+            (_SESSION_BOUNDARY_SIGNAL,),
             (),
             limit=1,
         )
@@ -363,7 +391,8 @@ class EventStore:
             return 0
 
         rows = await self.query(
-            "SELECT MAX(ts_unix_ms) AS ts FROM events WHERE signal = 'system.started'",
+            "SELECT MAX(ts_unix_ms) AS ts FROM events WHERE signal = ?",
+            (_SESSION_BOUNDARY_SIGNAL,),
             (),
             limit=1,
         )
@@ -389,7 +418,7 @@ class EventStore:
             return 0
 
     async def run_session_retention(self, max_sessions: int) -> int:
-        """Delete rows older than the Nth most recent system.started boundary.
+        """Delete rows older than the Nth most recent event.service.started boundary.
 
         For max_sessions=2 this keeps rows from the two most recent Stargate
         sessions. Uses OFFSET max_sessions - 1 to identify the oldest boundary
@@ -402,9 +431,9 @@ class EventStore:
             return 0
 
         rows = await self.query(
-            "SELECT ts_unix_ms FROM events WHERE signal = 'system.started' "
+            "SELECT ts_unix_ms FROM events WHERE signal = ? "
             "ORDER BY ts_unix_ms DESC LIMIT 1 OFFSET ?",
-            (max_sessions - 1,),
+            (_SESSION_BOUNDARY_SIGNAL, max_sessions - 1),
             limit=1,
         )
         if not rows:

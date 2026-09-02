@@ -22,7 +22,6 @@ _STARTUP_SIGNALS: tuple[str, ...] = (
     "cloud.proxy.started",
     "event.service.started",
     "rag.started",
-    "system.started",
 )
 
 
@@ -407,7 +406,7 @@ async def _stack_last_started(
     )
     session_start_ts = await _get_session_start_ts(store)
     session_timestamp = next(
-        (r.get("timestamp") for r in rows if r.get("signal") == "system.started"),
+        (r.get("timestamp") for r in rows if r.get("signal") == "event.service.started"),
         None,
     )
     return {

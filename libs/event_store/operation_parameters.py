@@ -3,7 +3,7 @@
 The helpers in this module centralize permissive user-input coercion shared by
 named operations. They preserve the invariant that invalid optional values fall
 back to safe defaults instead of raising, while session-aware windows prefer the
-most recent ``system.started`` boundary when available.
+most recent ``event.service.started`` boundary when available.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from universal_logging import get_logger
 from .store import EventStore
 
 logger = get_logger(__name__)
-_SESSION_BOUNDARY_SIGNAL = "system.started"
+_SESSION_BOUNDARY_SIGNAL = "event.service.started"
 
 
 def _coerce_limit(value: Any, default: int = 20) -> int:
@@ -107,7 +107,7 @@ def _coerce_since_ts(value: Any) -> int | None:
 async def _get_session_start_ts(store: EventStore) -> int | None:
     """Return the Unix-millisecond timestamp of the latest session boundary.
 
-    The event-store session boundary is the newest ``system.started`` signal.
+    The event-store session boundary is the newest ``event.service.started`` signal.
     ``None`` is returned when the store has no such event, allowing callers to
     choose an operation-specific fallback window.
     """

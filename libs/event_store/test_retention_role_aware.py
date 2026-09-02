@@ -28,8 +28,8 @@ def test_session_retention_preserves_coordination_deletes_observation() -> None:
                 [
                     # Two session boundaries; max_sessions=2 → cutoff = ts 1000,
                     # deleting rows with ts < 1000.
-                    _ev("system.started", "coordination", 1000),
-                    _ev("system.started", "coordination", 3000),
+                    _ev("event.service.started", "coordination", 1000),
+                    _ev("event.service.started", "coordination", 3000),
                     # Pre-cutoff rows (ts=500): the contract under test.
                     _ev("mcp.request.started", "coordination", 500),
                     _ev("mcp.transport.request.started", "observation", 500),

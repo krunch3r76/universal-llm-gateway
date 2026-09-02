@@ -21,7 +21,7 @@ async def test_pipeline_trace_not_found_includes_retention_floor() -> None:
         await store.insert_events(
             [
                 {
-                    "signal": "system.started",
+                    "signal": "event.service.started",
                     "role": "coordination",
                     "scope": "global",
                     "timestamp": "2026-05-16T00:00:00Z",
