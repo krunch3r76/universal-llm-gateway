@@ -295,3 +295,81 @@ def verify_workflow_registry_conformance(*, policy_path: Path | None = None) -> 
     """Conformance gate — returns error strings (empty when live file is valid)."""
     path = policy_path or default_policy_path()
     return registry_errors(load_route_policy(path))
+
+
+_WORKFLOW_REGISTRY_MARKER_START = "<!-- workflow-registry:v1:start -->"
+_WORKFLOW_REGISTRY_MARKER_END = "<!-- workflow-registry:v1:end -->"
+_SKILL_EMBED_ANCHOR = "## cursor-sdk model name surfaces"
+
+
+def render_workflow_registry_block(policy: dict[str, Any] | None = None) -> str:
+    """Render the workflow-registry table block from ``route_policy.yaml``."""
+    loaded = policy or load_route_policy()
+    lines = [
+        _WORKFLOW_REGISTRY_MARKER_START,
+        "### Workflow registry (generated from config/routing/route_policy.yaml)",
+        "",
+        f"- **policy_version:** `{loaded.get('policy_version', '')}`",
+        "",
+        "**Stargate seat default:** `agents.yaml` `cursor/sdk.default_model` is the",
+        "Stargate omit-model authority for `team_dispatch(seat=cursor-sdk)`; it must",
+        "match `workflows.auto_judgment.model` below (documented invariant — not folded).",
+        "",
+        "| workflow | seat | model | contracts |",
+        "|---|---|---|---|",
+    ]
+    workflows = loaded.get("workflows") or {}
+    for slug, entry in sorted(workflows.items()):
+        if not isinstance(entry, dict):
+            continue
+        contracts = entry.get("contracts") or []
+        contract_cell = ", ".join(str(c) for c in contracts) if contracts else "—"
+        lines.append(
+            f"| {slug} | {entry.get('seat', '')} | {entry.get('model', '')} | "
+            f"{contract_cell} |"
+        )
+    models = loaded.get("models") or {}
+    roaming = [
+        bare_id
+        for bare_id, entry in sorted(models.items())
+        if isinstance(entry, dict) and entry.get("roaming")
+    ]
+    if roaming:
+        lines.extend(["", "**Roaming bare ids:** " + ", ".join(f"`{b}`" for b in roaming)])
+    lines.append(_WORKFLOW_REGISTRY_MARKER_END)
+    return "\n".join(lines)
+
+
+def verify_workflow_registry_drift(
+    skill_path: Path,
+    *,
+    policy_path: Path | None = None,
+) -> bool:
+    """Return True when the skill embed matches the machine-readable registry."""
+    expected = render_workflow_registry_block(load_route_policy(policy_path))
+    text = skill_path.read_text(encoding="utf-8")
+    if expected in text:
+        return True
+    start = text.find(_WORKFLOW_REGISTRY_MARKER_START)
+    end = text.find(_WORKFLOW_REGISTRY_MARKER_END)
+    if start == -1 or end == -1:
+        return False
+    embedded = text[start : end + len(_WORKFLOW_REGISTRY_MARKER_END)]
+    return embedded.strip() == expected.strip()
+
+
+def embed_workflow_registry_block(text: str, policy: dict[str, Any] | None = None) -> str:
+    """Replace or insert the generated workflow-registry block in skill markdown."""
+    block = render_workflow_registry_block(policy)
+    start = text.find(_WORKFLOW_REGISTRY_MARKER_START)
+    end = text.find(_WORKFLOW_REGISTRY_MARKER_END)
+    if start != -1 and end != -1:
+        return text[:start] + block + text[end + len(_WORKFLOW_REGISTRY_MARKER_END) :]
+    anchor = text.find(_SKILL_EMBED_ANCHOR)
+    if anchor == -1:
+        msg = f"skill body missing anchor {_SKILL_EMBED_ANCHOR!r}"
+        raise ValueError(msg)
+    next_heading = text.find("\n## ", anchor + len(_SKILL_EMBED_ANCHOR))
+    if next_heading == -1:
+        return text.rstrip() + "\n\n" + block + "\n"
+    return text[:next_heading].rstrip() + "\n\n" + block + "\n" + text[next_heading:]

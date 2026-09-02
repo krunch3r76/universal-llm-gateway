@@ -155,6 +155,17 @@ done < "$CENSUS"
 
 [[ "$MISSING" -eq 0 ]] || die "$MISSING skill(s) missing from census"
 
+PATCH_BLOCKS="$SOURCE_REPO/scripts/cursor/patch_ecosystem_policy_blocks.py"
+[[ -f "$PATCH_BLOCKS" ]] || PATCH_BLOCKS="$ULG_ROOT/scripts/cursor/patch_ecosystem_policy_blocks.py"
+[[ -f "$PATCH_BLOCKS" ]] || die "patch_ecosystem_policy_blocks.py missing"
+CONSULT_ROUTING_SKILL="$STAGING/skills/consult-routing/SKILL.md"
+if [[ -f "$CONSULT_ROUTING_SKILL" ]]; then
+  echo "==> Patching workflow-registry block in consult-routing"
+  if ! "$PYTHON" "$PATCH_BLOCKS" --skill "$CONSULT_ROUTING_SKILL"; then
+    die "workflow-registry skill patch failed"
+  fi
+fi
+
 # Commands from plugin SoT (sole Cursor discovery for shared commands)
 cmd_count=0
 shopt -s nullglob

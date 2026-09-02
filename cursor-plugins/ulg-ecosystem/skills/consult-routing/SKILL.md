@@ -151,6 +151,25 @@ authored — compose leg only (`lean-context-dispatch-first` non-primary gate).
 ¬ Task slugs or catalog IDs on `seat=cursor-sdk`. Non-workflow-primary `cursor/*` ⇒ **OPERATOR-GATED**
 (`decision:cursor-non-primary-model-operator-gate`).
 
+<!-- workflow-registry:v1:start -->
+### Workflow registry (generated from config/routing/route_policy.yaml)
+
+- **policy_version:** `2026-09-02`
+
+**Stargate seat default:** `agents.yaml` `cursor/sdk.default_model` is the
+Stargate omit-model authority for `team_dispatch(seat=cursor-sdk)`; it must
+match `workflows.auto_judgment.model` below (documented invariant — not folded).
+
+| workflow | seat | model | contracts |
+|---|---|---|---|
+| auto_judgment | cursor-sdk | cursor/composer-2.5 | answer, confer, ask, verify, execute, propagate, light-bounded |
+| check_review | cursor-sdk | cursor/gpt-5.6-terra | — |
+| investigate | cursor-sdk | cursor/composer-2.5 | investigate, recon, seed |
+| mechanical_implement | cursor-sdk | cursor/composer-2.5 | implement |
+
+**Roaming bare ids:** `composer-2.5`, `composer-2.5-fast`, `grok-4.6`
+<!-- workflow-registry:v1:end -->
+
 ## Non-primary model gate — discriminator
 
 | Term | Meaning |

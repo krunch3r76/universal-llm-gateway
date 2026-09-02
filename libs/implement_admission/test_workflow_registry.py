@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from pathlib import Path
 
 import pytest
 
@@ -11,10 +12,13 @@ from implement_admission.workflow_registry import (
     AUTO_OMIT_CONTRACTS,
     CHECK_REVIEW_WORKFLOW,
     MECHANICAL_WORKFLOW,
+    embed_workflow_registry_block,
     load_workflow_registry,
     parse_workflow_registry,
     registry_errors,
+    render_workflow_registry_block,
     verify_workflow_registry_conformance,
+    verify_workflow_registry_drift,
 )
 from services.git_integration_worker.cursor_auto.wire_map import resolve_desired_model
 
@@ -150,3 +154,30 @@ def test_r7_mechanical_workflow_required() -> None:
     del policy["workflows"][MECHANICAL_WORKFLOW]
     errors = registry_errors(policy)
     assert any(f"workflows must include {MECHANICAL_WORKFLOW!r} slot" in e for e in errors)
+
+
+def test_render_workflow_registry_block_lists_live_slots() -> None:
+    block = render_workflow_registry_block()
+    assert "| check_review |" in block
+    assert "| auto_judgment |" in block
+    assert "workflows.auto_judgment.model" in block
+    assert "not folded" in block
+
+
+def test_embed_and_drift_roundtrip(tmp_path: Path) -> None:
+    skill = tmp_path / "SKILL.md"
+    skill.write_text(
+        "# Consult Routing\n\n## cursor-sdk model name surfaces\n\n| Surface | SoT |\n"
+        "|---|---|\n| foo | bar |\n\n## Next\n",
+        encoding="utf-8",
+    )
+    patched = embed_workflow_registry_block(skill.read_text(encoding="utf-8"))
+    skill.write_text(patched, encoding="utf-8")
+    assert verify_workflow_registry_drift(skill) is True
+
+
+def test_workflow_registry_drift_fails_on_divergence(tmp_path: Path) -> None:
+    skill = tmp_path / "SKILL.md"
+    block = render_workflow_registry_block().replace("auto_judgment", "auto_judgment-stale")
+    skill.write_text(f"# skill\n\n{block}\n", encoding="utf-8")
+    assert verify_workflow_registry_drift(skill) is False

@@ -271,6 +271,8 @@ profiles:
     # Automated SDK executor — team_dispatch(op=generate, seat=cursor-sdk) routes
     # to git_integration_worker (platform=sdk); NOT cloud CapabilityDispatch.
     provider: cursor
+    # Seat-level Stargate omit-model default (distinct from workflows.* — not folded).
+    # Must match route_policy.yaml workflows.auto_judgment.model; drift: install-ecosystem-plugin.
     default_model: cursor/composer-2.5
     tool_surface: sdk
     mcp_surface: code
