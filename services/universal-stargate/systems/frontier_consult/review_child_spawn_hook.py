@@ -93,7 +93,6 @@ def select_independent_reviewer(
         ConsultantIdentity,
         consultant_identity,
         consultant_rung,
-        independence_family,
         independently_measured,
         model_identity,
     )
@@ -101,7 +100,7 @@ def select_independent_reviewer(
     effort = resolved_effort or consultant_rung(resolved_model, None)
     executor = ConsultantIdentity(model_identity(resolved_model), effort)
     exec_id = model_identity(resolved_model)
-    if exec_id.startswith("gpt-") or independence_family(resolved_model) == "openai":
+    if exec_id.startswith(("gpt-", "o1", "o3", "o4")):
         model = _OPENAI_EXECUTOR_ALTERNATE
     else:
         model = _default_independent_reviewer_model()

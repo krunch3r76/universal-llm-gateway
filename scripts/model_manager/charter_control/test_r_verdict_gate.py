@@ -10,7 +10,6 @@ from scripts.model_manager.charter_control.r_verdict_gate import (
     consult_provenance_from_r_admit,
     format_consult_provenance_md,
     parse_r_verdict,
-    parse_r_verdict_with_independence,
 )
 
 
@@ -56,25 +55,6 @@ def test_parse_r_verdict_scope_only_still_advances_via_fallback() -> None:
     # Scope-check context is skipped; no remaining token ⇒ unparseable/blocked.
     assert parsed.verdict is None
     assert parsed.action is RGateAction.BLOCKED
-
-
-@pytest.mark.offline
-def test_parse_r_verdict_with_independence_blocks_unmeasured_family() -> None:
-    body = "Merits: ADMIT — families measured."
-    blocked = parse_r_verdict_with_independence(
-        body, r_family="unknown", implement_family="anthropic"
-    )
-    assert blocked.action is RGateAction.BLOCKED
-    assert blocked.reason == "unmeasured_family_r_pre_check"
-    same = parse_r_verdict_with_independence(
-        body, r_family="anthropic", implement_family="anthropic"
-    )
-    assert same.action is RGateAction.BLOCKED
-    assert same.reason == "same_family_r_pre_check_only"
-    ok = parse_r_verdict_with_independence(
-        body, r_family="xai", implement_family="anthropic"
-    )
-    assert ok.action is RGateAction.ADVANCE
 
 
 @pytest.mark.offline

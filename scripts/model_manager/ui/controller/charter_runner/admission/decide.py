@@ -6,8 +6,16 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal, NamedTuple
 
+from implement_admission.check_review_substrate import (
+    UNKNOWN_MODEL_IDENTITY,
+    ConsultantIdentity,
+    consultant_identity,
+    independently_measured,
+)
+
 from ..checkpoint_schema import ParsedCheckpoint
 from ..root_ledger import RootLedgerRow, RootStatus, Transition
+from ..window_exec.materializer_layer import LAYER_G3_MODEL_KNOBS, LAYER_G3_SEAT
 from .caps import CapStore
 
 Lane = Literal["mechanical", "judgment", "consult"]
@@ -155,6 +163,40 @@ def _gate_model(body: str, gate_id: str) -> str | None:
     return None
 
 
+def _gate_effort(body: str, gate_id: str) -> str | None:
+    fields = _provenance_fields(body)
+    if fields.get("gate_id", "").upper() != gate_id.upper():
+        return None
+    raw = fields.get("consultant_effort")
+    if raw is None or raw.lower() == "unmeasured":
+        return None
+    return raw.strip()
+
+
+def _normalize_consultant_model(model: str) -> str:
+    cleaned = model.strip().lower()
+    if "/" in cleaned:
+        return cleaned
+    return f"cursor/{cleaned}"
+
+
+def _gate_consultant_identity(
+    body: str,
+    gate_id: str,
+    *,
+    default_model: str | None = None,
+    default_knobs: dict[str, str] | None = None,
+) -> ConsultantIdentity:
+    model = _gate_model(body, gate_id) or default_model
+    if not model:
+        return ConsultantIdentity(UNKNOWN_MODEL_IDENTITY, None)
+    effort = _gate_effort(body, gate_id)
+    knobs = dict(default_knobs or {})
+    if effort is not None:
+        knobs["effort"] = effort
+    return consultant_identity(_normalize_consultant_model(model), knobs or None)
+
+
 class LayerIndependenceVerdict(NamedTuple):
     """Observability for layer G5 independence (6524 R3 bind)."""
 
@@ -178,9 +220,9 @@ def layer_independence_ok(
         (R3a: today implies web-anthropic CDP operator vs cursor executor;
         if operator_proxy ever runs on a cursor-substrate operator seat,
         (C) must become a substrate comparison);
-    (B) G4 Check model identity ≠ G3 densifier model identity when G4 is pinned
-        in the checkpoint; unpinned G4 is skipped (``g4_unpinned``) and
-        model diversity is already G1 Fable vs G3 Grok.
+    (B) G4 Check consultant identity independently measured from G3 densifier
+        when G4 is pinned in the checkpoint; unpinned G4 is skipped
+        (``g4_unpinned``) and identity diversity is G1 vs G3 when structural_ok.
     """
     if parsed is None:
         return LayerIndependenceVerdict(False, None, None)
@@ -195,16 +237,33 @@ def layer_independence_ok(
         structural_reason = "derived_from_architecture"
     if structural_reason is None and attendance_norm == "operator_proxy":
         structural_reason = "operator_proxy_attends"
-    g3_model = _gate_model(body, "G3") or "grok-4.6"
+    g3_ident = _gate_consultant_identity(
+        body,
+        "G3",
+        default_model=LAYER_G3_SEAT,
+        default_knobs=LAYER_G3_MODEL_KNOBS,
+    )
     g4_model = _gate_model(body, "G4")
     if g4_model is not None:
-        branch_b = g4_model != g3_model
+        g4_ident = _gate_consultant_identity(body, "G4")
+        branch_b = independently_measured(g3_ident, g4_ident)
         branch_b_source = "checkpoint_provenance"
     else:
-        # G4 is explicit-only (operator 2026-08-25). Unpinned ⇒ skip;
-        # family diversity is G1 vs G3 when structural_ok.
-        branch_b = True
         branch_b_source = "g4_unpinned"
+        if structural_reason == "operator_proxy_attends":
+            branch_b = True
+        elif structural_reason is not None:
+            g1_ident = _gate_consultant_identity(body, "G1")
+            if g1_ident.model_identity == UNKNOWN_MODEL_IDENTITY:
+                prov = _provenance_fields(body)
+                if prov.get("consultant_model"):
+                    g1_ident = _gate_consultant_identity(
+                        body,
+                        prov.get("gate_id", "G1"),
+                    )
+            branch_b = independently_measured(g1_ident, g3_ident)
+        else:
+            branch_b = True
     structural_ok = structural_reason is not None
     ok = structural_ok and branch_b
     return LayerIndependenceVerdict(
