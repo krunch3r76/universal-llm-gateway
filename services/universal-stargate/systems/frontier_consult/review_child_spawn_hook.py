@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from fastapi import Response
+from implement_admission.check_review_substrate import ConsultantIdentity
 from universal_logging import get_logger
 
 from .cursor_sdk_generate_signals import publish_frontier_event
@@ -48,7 +49,19 @@ _PENDING_RECONCILE_INTERVAL_SECONDS = 5.0
 @dataclass(frozen=True, slots=True)
 class ReviewerSelection:
     model: str
-    family: str
+    identity: ConsultantIdentity
+
+
+def _executor_identity(ctx: AdmissionContext) -> ConsultantIdentity:
+    from implement_admission.check_review_substrate import (
+        consultant_rung,
+        model_identity,
+    )
+
+    return ConsultantIdentity(
+        model_identity(ctx.resolved_model),
+        ctx.resolved_effort or consultant_rung(ctx.resolved_model, None),
+    )
 
 
 def is_generate_review_child_lane_wired() -> bool:
@@ -59,14 +72,7 @@ def is_generate_review_child_lane_wired() -> bool:
     return _wired()
 
 
-def resolve_executor_family(resolved_model: str) -> str:
-    """Independence family for cross-family review (model weight-class, ¬ substrate)."""
-    from implement_admission.check_review_substrate import independence_family
-
-    return independence_family(resolved_model)
-
-
-def _default_cross_family_reviewer_model() -> str:
+def _default_independent_reviewer_model() -> str:
     from implement_admission.check_review_substrate import (
         load_check_review_default_model,
     )
@@ -75,28 +81,36 @@ def _default_cross_family_reviewer_model() -> str:
     return load_check_review_default_model(load_route_policy())
 
 
-def select_cross_family_reviewer(resolved_model: str) -> ReviewerSelection | None:
-    """Pick a reviewer whose measured weight-class family differs from the executor.
+def select_independent_reviewer(
+    resolved_model: str, resolved_effort: str | None = None
+) -> ReviewerSelection | None:
+    """Pick a reviewer independently measured from the executor seat.
 
-    Returns ``None`` when no admitted alternate exists or either family is
-    unmeasured — a pair must not certify independence this function did not
-    measure.
+    Returns ``None`` when no admitted alternate exists or either identity or
+    rung is unmeasured — fail-closed.
     """
-    family = resolve_executor_family(resolved_model)
-    if family == "openai":
-        model = _OPENAI_EXECUTOR_ALTERNATE
-    else:
-        model = _default_cross_family_reviewer_model()
-    reviewer_family = resolve_executor_family(model)
     from implement_admission.check_review_substrate import (
-        families_independently_measured,
+        ConsultantIdentity,
+        consultant_identity,
+        consultant_rung,
+        independence_family,
+        independently_measured,
+        model_identity,
     )
 
-    if not families_independently_measured(family, reviewer_family):
+    effort = resolved_effort or consultant_rung(resolved_model, None)
+    executor = ConsultantIdentity(model_identity(resolved_model), effort)
+    exec_id = model_identity(resolved_model)
+    if exec_id.startswith("gpt-") or independence_family(resolved_model) == "openai":
+        model = _OPENAI_EXECUTOR_ALTERNATE
+    else:
+        model = _default_independent_reviewer_model()
+    reviewer_identity = consultant_identity(model, None)
+    if not independently_measured(executor, reviewer_identity):
         return None
     if not _reviewer_model_admitted(model):
         return None
-    return ReviewerSelection(model=model, family=reviewer_family)
+    return ReviewerSelection(model=model, identity=reviewer_identity)
 
 
 def _reviewer_model_admitted(model: str) -> bool:
@@ -294,7 +308,7 @@ async def _dispatch_review_child(
             role=_REVIEWER_ROLE,
             dispatch_thread_id=delivery_thread,
             thread=delivery_thread,
-            subject=f"generate cross-family review — {request_id[:8]}",
+            subject=f"generate independent review — {request_id[:8]}",
             contract="light-bounded",
             model=reviewer.model,
             auto_review_child=True,
@@ -398,6 +412,7 @@ def _emit_review_child_spawned(
     parent_execution_id: str,
     parent_thread_id: str,
     reviewer: ReviewerSelection,
+    executor: ConsultantIdentity,
     dedupe_key: str,
 ) -> None:
     publish_frontier_event(
@@ -406,7 +421,10 @@ def _emit_review_child_spawned(
             parent_execution_id=parent_execution_id,
             parent_thread_id=parent_thread_id,
             reviewer_model=reviewer.model,
-            reviewer_family=reviewer.family,
+            reviewer_identity=reviewer.identity.model_identity,
+            reviewer_rung=reviewer.identity.rung,
+            executor_identity=executor.model_identity,
+            executor_rung=executor.rung,
             dedupe_key=dedupe_key,
         )
     )
@@ -436,10 +454,12 @@ async def _attempt_spawn_for_completion(
     if existing is not None and existing.state == "final":
         return False
 
-    reviewer = select_cross_family_reviewer(ctx.resolved_model)
+    reviewer = select_independent_reviewer(
+        ctx.resolved_model, ctx.resolved_effort
+    )
     if reviewer is None:
         logger.warning(
-            "review_child spawn fail-closed: no cross-family reviewer for %s",
+            "review_child spawn fail-closed: no independent reviewer for %s",
             ctx.resolved_model,
         )
         return False
@@ -481,6 +501,7 @@ async def _attempt_spawn_for_completion(
         parent_execution_id=execution_id,
         parent_thread_id=thread_id,
         reviewer=reviewer,
+        executor=_executor_identity(ctx),
         dedupe_key=execution_id,
     )
     return True

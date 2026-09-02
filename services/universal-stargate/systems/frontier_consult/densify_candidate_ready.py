@@ -255,7 +255,8 @@ async def handle_densify_candidate_ready(
                     draft_adequacy=body.draft_adequacy,
                     opt_out=False,
                     opt_out_reason_code=None,
-                    reviewer_family=None,
+                    reviewer_identity=None,
+                    reviewer_rung=None,
                     reviewer_model=None,
                     target_thread_id=None,
                     review_execution_id=None,
@@ -303,9 +304,10 @@ async def handle_densify_candidate_ready(
         )
 
     if event_publisher is not None and default_on:
-        from implement_admission.check_review_substrate import independence_family
+        from implement_admission.check_review_substrate import consultant_identity
 
         spawned_model = _default_reviewer_model() if should_spawn else None
+        ident = consultant_identity(spawned_model, None) if spawned_model else None
         event_publisher(
             FrontierDensifyReviewAdmitted(
                 parent_request_id=parent_request_id,
@@ -318,9 +320,8 @@ async def handle_densify_candidate_ready(
                 draft_adequacy=body.draft_adequacy,
                 opt_out=opted_out,
                 opt_out_reason_code=body.review_opt_out_reason_code,
-                reviewer_family=(
-                    independence_family(spawned_model) if spawned_model else None
-                ),
+                reviewer_identity=ident.model_identity if ident else None,
+                reviewer_rung=ident.rung if ident else None,
                 reviewer_model=spawned_model,
                 target_thread_id=densify_thread_id if should_spawn else None,
                 review_execution_id=review_execution_id,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any, Literal
 
-from .claim_batch_verify import model_family
+from implement_admission.check_review_substrate import model_identity
 
 ExtractBackend = Literal["stargate", "cdp"]
 
@@ -26,7 +26,7 @@ def validate_digest_backend_config() -> str | None:
     extract_model = os.environ.get("CORTEX_DIGEST_EXTRACT_MODEL", "").strip()
 
     if backend == "cdp":
-        if model_family(verify_model) == "anthropic":
+        if model_identity(verify_model).startswith("claude-"):
             return (
                 "CORTEX_DIGEST_EXTRACT_BACKEND=cdp requires a non-anthropic "
                 "CORTEX_DIGEST_VERIFY_MODEL (cross-family invariant)."

@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from implement_admission.check_review_substrate import consultant_identity
 
 from systems.frontier_consult.densify_candidate_ready import build_reviewer_prompt
 from systems.frontier_consult.generate_admission_context_store import (
@@ -26,8 +27,7 @@ from systems.frontier_consult.review_child_spawn_hook import (
     handle_worker_completed_event,
     is_review_child_execution,
     reset_review_child_spawn_hook_for_tests,
-    resolve_executor_family,
-    select_cross_family_reviewer,
+    select_independent_reviewer,
     should_spawn_review_child,
 )
 from systems.frontier_consult.skill_suggest_durable_state import DurableTerminalEvent
@@ -85,27 +85,36 @@ def test_d7_admission_context_round_trip() -> None:
 
 
 def test_d3_cross_family_openai_executor_gets_cursor_opus() -> None:
-    sel = select_cross_family_reviewer("openai/gpt-5.5")
+    sel = select_independent_reviewer("openai/gpt-5.5")
     assert sel is not None
     assert sel.model == "cursor/claude-opus-5"
-    assert sel.family == "anthropic"
+    assert sel.identity.model_identity == "claude-opus-5"
 
 
 def test_d3_cross_family_cursor_executor_gets_openai() -> None:
-    sel = select_cross_family_reviewer("cursor/claude-sonnet-5")
+    sel = select_independent_reviewer("cursor/claude-sonnet-5")
     assert sel is not None
-    # Anthropic-family executor → check/review default (terra = openai-family).
     assert sel.model == "cursor/gpt-5.6-terra"
-    assert sel.family == "openai"
+    assert sel.identity.model_identity == "gpt-5.6-terra"
 
 
-def test_cdp_fable_executor_does_not_echo_substrate_as_family() -> None:
-    """cdp/fable is anthropic-family; reviewer must be a measured other family."""
-    assert resolve_executor_family("cdp/fable") == "anthropic"
-    sel = select_cross_family_reviewer("cdp/fable")
+def test_cdp_fable_executor_gets_independent_reviewer() -> None:
+    """cdp/fable executor must not echo substrate; reviewer is independent."""
+    sel = select_independent_reviewer("cdp/fable")
     assert sel is not None
-    assert sel.family != "cdp"
-    assert sel.family != "anthropic"
+    assert sel.identity.model_identity != "fable"
+    exec_id = consultant_identity("cdp/fable", None)
+    assert sel.identity.model_identity != exec_id.model_identity or (
+        sel.identity.rung != exec_id.rung
+    )
+
+
+def test_d3_same_model_same_rung_fail_closed() -> None:
+    with patch(
+        "systems.frontier_consult.review_child_spawn_hook._default_independent_reviewer_model",
+        return_value="cursor/claude-sonnet-5",
+    ):
+        assert select_independent_reviewer("cursor/claude-sonnet-5") is None
 
 
 def test_d3_fail_closed_when_alternate_not_admitted() -> None:
@@ -113,7 +122,7 @@ def test_d3_fail_closed_when_alternate_not_admitted() -> None:
         "systems.frontier_consult.review_child_spawn_hook._reviewer_model_admitted",
         return_value=False,
     ):
-        assert select_cross_family_reviewer("openai/gpt-5.5") is None
+        assert select_independent_reviewer("openai/gpt-5.5") is None
 
 
 def test_d2_review_child_predicate_blocks_grandchild() -> None:
@@ -381,7 +390,10 @@ async def test_a24105_spawn_body_thread_is_coord() -> None:
             request_id="req-a24105b",
             ctx=ctx,
             parent_thread_id="thread:worker-closed",
-            reviewer=ReviewerSelection(model="openai/gpt-5.5", family="openai"),
+            reviewer=ReviewerSelection(
+                model="openai/gpt-5.5",
+                identity=consultant_identity("openai/gpt-5.5", None),
+            ),
         )
     assert result["execution_id"] == "child-a24105"
     assert len(captured) == 1
@@ -439,7 +451,8 @@ async def test_openai_executor_review_child_uses_cursor_sdk_generate() -> None:
             ctx=ctx,
             parent_thread_id="thread:worker-closed",
             reviewer=ReviewerSelection(
-                model="cursor/claude-opus-5", family="cursor"
+                model="cursor/claude-opus-5",
+                identity=consultant_identity("cursor/claude-opus-5", None),
             ),
         )
     assert result["execution_id"] == "child-cursor-opus"
@@ -483,7 +496,10 @@ async def test_a24105_fail_closed_without_coord_thread() -> None:
         request_id="req-a24105c",
         ctx=ctx,
         parent_thread_id="thread:worker-only",
-        reviewer=ReviewerSelection(model="openai/gpt-5.5", family="openai"),
+        reviewer=ReviewerSelection(
+            model="openai/gpt-5.5",
+            identity=consultant_identity("openai/gpt-5.5", None),
+        ),
     )
     assert result == {}
 
@@ -615,10 +631,6 @@ def test_render_and_diff_sidecar_vs_source_prompts() -> None:
     assert FOOTER_BY_SURFACE["source"] in source_prompt
 
 
-def test_resolve_executor_family_openai() -> None:
-    assert resolve_executor_family("openai/gpt-5.5") == "openai"
-
-
 def test_d4_pending_claim_idempotent() -> None:
     assert try_claim_spawn_pending(
         parent_execution_id="exec-claim",
@@ -723,7 +735,10 @@ async def test_a6655_spawn_fail_closed_on_frozen_read_failure() -> None:
             request_id="req-fc",
             ctx=ctx,
             parent_thread_id="thread:worker",
-            reviewer=ReviewerSelection(model="openai/gpt-5.5", family="openai"),
+            reviewer=ReviewerSelection(
+                model="openai/gpt-5.5",
+                identity=consultant_identity("openai/gpt-5.5", None),
+            ),
         )
     assert result == {}
     dispatch_mock.assert_not_awaited()
@@ -766,7 +781,10 @@ async def test_a6655_spawn_uses_frozen_turn_not_latest() -> None:
             request_id="req-frozen",
             ctx=ctx,
             parent_thread_id="thread:worker",
-            reviewer=ReviewerSelection(model="openai/gpt-5.5", family="openai"),
+            reviewer=ReviewerSelection(
+                model="openai/gpt-5.5",
+                identity=consultant_identity("openai/gpt-5.5", None),
+            ),
         )
     read_at.assert_awaited_once()
     assert read_at.await_args.kwargs["turn_number"] == frozen_turn
@@ -808,6 +826,9 @@ async def test_a6655_prompt_bind_instrumentation_emitted() -> None:
             request_id="req-inst",
             ctx=ctx,
             parent_thread_id="thread:worker",
-            reviewer=ReviewerSelection(model="openai/gpt-5.5", family="openai"),
+            reviewer=ReviewerSelection(
+                model="openai/gpt-5.5",
+                identity=consultant_identity("openai/gpt-5.5", None),
+            ),
         )
     assert "frontier.review_child.prompt_bind" in published

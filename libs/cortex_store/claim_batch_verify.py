@@ -1,4 +1,4 @@
-"""Generic claim-batch verifier kernel — family split, parse, reconcile."""
+"""Generic claim-batch verifier kernel — identity independence, parse, reconcile."""
 
 from __future__ import annotations
 
@@ -26,23 +26,6 @@ class ClaimBatchVerifyConfig:
     correctable_claim_keys: frozenset[str]
     pass_only_keys: frozenset[str] = frozenset()
     pass_metadata_resolver: PassMetadataResolver | None = None
-
-
-def model_family(model: str) -> str:
-    """Provider/family token before the first ``/``, lowercased."""
-    stripped = model.strip()
-    if not stripped:
-        return ""
-    return stripped.split("/", 1)[0].lower()
-
-
-def enforce_family_split(extract_model: str, verify_model: str) -> bool:
-    """True iff both non-empty and different families."""
-    extract_family = model_family(extract_model)
-    verify_family = model_family(verify_model)
-    if not extract_family or not verify_family:
-        return False
-    return extract_family != verify_family
 
 
 def _strip_json_fences(text: str) -> str:
@@ -255,10 +238,18 @@ def verify_claim_batch(
         )
         return None
 
-    if not enforce_family_split(extract_model, verify_model):
+    from implement_admission.check_review_substrate import (
+        consultant_identity,
+        independently_measured,
+    )
+
+    if not independently_measured(
+        consultant_identity(extract_model, None),
+        consultant_identity(verify_model, None),
+    ):
         logger.error(
             "Claim batch verify rejected: extract model %r and verify model %r "
-            "must be different families (prefix before '/')",
+            "must be independently measured (different identity or effort rung)",
             extract_model,
             verify_model,
         )

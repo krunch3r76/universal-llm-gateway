@@ -1,4 +1,4 @@
-"""Hermetic tests for claim_batch_verify family-split, parse, reconcile, adversarial."""
+"""Hermetic tests for claim_batch_verify identity gate, parse, reconcile, adversarial."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ import pytest
 
 from cortex_store.claim_batch_verify import (
     ClaimBatchVerifyConfig,
-    enforce_family_split,
     parse_verifier_response,
     reconcile_batch,
     verify_claim_batch,
@@ -124,41 +123,42 @@ ALL_PASS_VERIFIER_RESPONSE = json.dumps(
 
 
 @pytest.mark.offline
-def test_enforce_family_split_different_families() -> None:
-    assert enforce_family_split("openai/gpt-4", "anthropic/claude-3") is True
-    assert enforce_family_split("xai/grok-2", "google/gemini-pro") is True
-
-
-@pytest.mark.offline
-def test_enforce_family_split_same_family() -> None:
-    assert enforce_family_split("openai/gpt-4", "openai/gpt-4o") is False
-    assert (
-        enforce_family_split("anthropic/claude-3", "anthropic/claude-sonnet") is False
-    )
-
-
-@pytest.mark.offline
-def test_enforce_family_split_empty_model() -> None:
-    assert enforce_family_split("", "anthropic/claude-3") is False
-    assert enforce_family_split("openai/gpt-4", "") is False
-
-
-@pytest.mark.offline
-def test_verify_claim_batch_same_family_skips_without_call() -> None:
+def test_verify_claim_batch_same_identity_skips_without_call() -> None:
     batch = _fixture_batch(_BASE_CLAIM)
     mock_complete = __import__("unittest.mock").mock.MagicMock()
     result = verify_claim_batch(
         _ENTRY_TEXT,
         batch,
         source_anchor=_ENTRY_ANCHOR,
-        extract_model="openai/gpt-4",
-        verify_model="openai/gpt-4o",
+        extract_model="cursor/gpt-5.6-terra",
+        verify_model="cursor/gpt-5.6-terra",
         system_prompt="system",
         complete=mock_complete,
         config=_digest_config(),
     )
     assert result is None
     mock_complete.assert_not_called()
+
+
+@pytest.mark.offline
+def test_verify_claim_batch_same_model_different_rung_proceeds() -> None:
+    batch = _fixture_batch(_BASE_CLAIM)
+    mock_complete = __import__("unittest.mock").mock.MagicMock(
+        return_value=ALL_PASS_VERIFIER_RESPONSE
+    )
+    result = verify_claim_batch(
+        _ENTRY_TEXT,
+        batch,
+        source_anchor=_ENTRY_ANCHOR,
+        extract_model="cdp/opus-5-extra",
+        verify_model="cdp/opus-5",
+        system_prompt="system",
+        complete=mock_complete,
+        config=_digest_config(),
+    )
+    assert result is not None
+    mock_complete.assert_called_once()
+    assert result["claims"][0]["verify_verdict"] == "pass"
 
 
 @pytest.mark.offline
@@ -171,8 +171,8 @@ def test_verify_claim_batch_happy_path_all_pass() -> None:
         _ENTRY_TEXT,
         batch,
         source_anchor=_ENTRY_ANCHOR,
-        extract_model="openai/gpt-4",
-        verify_model="anthropic/claude-3",
+        extract_model="cursor/gpt-5.6-terra",
+        verify_model="cursor/claude-opus-5",
         system_prompt="system",
         complete=mock_complete,
         config=_digest_config(),
@@ -196,8 +196,8 @@ def test_adversarial_self_test_flags_hallucination_and_misclassification() -> No
         _ENTRY_TEXT,
         batch,
         source_anchor=_ENTRY_ANCHOR,
-        extract_model="openai/gpt-4",
-        verify_model="anthropic/claude-3",
+        extract_model="cursor/gpt-5.6-terra",
+        verify_model="cursor/claude-opus-5",
         system_prompt="system",
         complete=mock_complete,
         config=_digest_config(),
