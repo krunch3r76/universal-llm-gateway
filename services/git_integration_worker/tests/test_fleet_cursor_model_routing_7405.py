@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 from cursor_capabilities import default_variant, supported_knobs
-
 from effort_vocabulary import AUTO_EFFORT
+
 from services.git_integration_worker.cursor_auto.knob_compose import compose_model_knobs
 from services.git_integration_worker.cursor_auto.wire_map import (
     _CONTRACT_EFFORT_DEFAULTS,
     resolve_desired_effort,
 )
-from services.git_integration_worker.cursor_models import build_model_selection, resolve_cursor
+from services.git_integration_worker.cursor_models import (
+    build_model_selection,
+    resolve_cursor,
+)
 
 
 def test_grok_omit_path_fast_false() -> None:
