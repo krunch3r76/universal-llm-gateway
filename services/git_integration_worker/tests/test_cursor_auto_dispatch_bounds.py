@@ -102,7 +102,11 @@ def test_non_roaming_when_bare_id_not_in_registry() -> None:
         for bare, policy in reg.models.items()
         if bare != "grok-4.6"
     }
-    reg_without_grok = WorkflowRegistry(workflows=reg.workflows, models=stripped_models)
+    reg_without_grok = WorkflowRegistry(
+        workflows=reg.workflows,
+        models=stripped_models,
+        contract_effort=reg.contract_effort,
+    )
     assert not is_roaming_tier("cursor/grok-4.6", registry=reg_without_grok)
 
 

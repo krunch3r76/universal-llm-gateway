@@ -20,7 +20,10 @@ from implement_admission.workflow_registry import (
     verify_workflow_registry_conformance,
     verify_workflow_registry_drift,
 )
-from services.git_integration_worker.cursor_auto.wire_map import resolve_desired_model
+from services.git_integration_worker.cursor_auto.wire_map import (
+    resolve_desired_effort,
+    resolve_desired_model,
+)
 
 pytestmark = pytest.mark.offline
 
@@ -156,12 +159,61 @@ def test_r7_mechanical_workflow_required() -> None:
     assert any(f"workflows must include {MECHANICAL_WORKFLOW!r} slot" in e for e in errors)
 
 
+def test_r8_contract_effort_missing_block() -> None:
+    policy = _base_policy()
+    del policy["contract_effort"]
+    errors = registry_errors(policy)
+    assert any("contract_effort must be a non-empty mapping" in e for e in errors)
+
+
+def test_r8_contract_effort_unknown_contract() -> None:
+    policy = _base_policy()
+    policy["contract_effort"]["not-a-contract"] = "medium"
+    errors = registry_errors(policy)
+    assert any("contract_effort.'not-a-contract'" in e for e in errors)
+
+
+def test_r8_contract_effort_invalid_rung() -> None:
+    policy = _base_policy()
+    policy["contract_effort"]["answer"] = "bogus"
+    errors = registry_errors(policy)
+    assert any("contract_effort.answer='bogus'" in e for e in errors)
+
+
+def test_r8_contract_effort_unclaimed_canonical() -> None:
+    policy = _base_policy()
+    del policy["contract_effort"]["answer"]
+    errors = registry_errors(policy)
+    assert any("contract 'answer' missing from contract_effort" in e for e in errors)
+
+
+def test_contract_effort_live_defaults_match_omit_path() -> None:
+    reg = load_workflow_registry()
+    assert reg.default_effort_for_contract("investigate") == "xhigh"
+    assert reg.default_effort_for_contract("answer") == "medium"
+    out = resolve_desired_effort(None, contract="investigate", registry=reg)
+    assert out["resolved_effort"] == "xhigh"
+    assert "via contract_effort" in out["notes"]
+
+
+def test_falsifier_contract_effort_yaml_without_wire_map_edit() -> None:
+    policy = _base_policy()
+    policy["contract_effort"]["answer"] = "high"
+    reg = parse_workflow_registry(policy)
+    out = resolve_desired_effort(None, contract="answer", registry=reg)
+    assert out["resolved_effort"] == "high"
+    assert resolve_desired_effort(None, contract="implement", registry=reg)[
+        "resolved_effort"
+    ] == "medium"
+
+
 def test_render_workflow_registry_block_lists_live_slots() -> None:
     block = render_workflow_registry_block()
     assert "| check_review |" in block
     assert "| auto_judgment |" in block
     assert "workflows.auto_judgment.model" in block
     assert "not folded" in block
+    assert "| answer | medium |" in block
 
 
 def test_embed_and_drift_roundtrip(tmp_path: Path) -> None:

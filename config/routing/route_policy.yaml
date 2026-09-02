@@ -109,3 +109,20 @@ models:
   composer-2.5:      {roaming: true}
   composer-2.5-fast: {roaming: true}
   grok-4.6:          {roaming: true}
+
+# Per-contract omit-effort defaults (todo:model-workflow-config-first, P3).
+# Authority for resolve_desired_effort auto/omit — contract-keyed, not workflow-keyed
+# (workflows.* aggregate contracts with differing effort tiers, e.g. recon=medium vs
+# investigate=xhigh within workflows.investigate). implement+light-bounded handoff
+# override stays in wire_map (handoff context, not this table).
+contract_effort:
+  investigate: xhigh
+  confer: xhigh
+  seed: xhigh
+  verify: xhigh
+  execute: xhigh
+  propagate: xhigh
+  implement: medium
+  recon: medium
+  ask: medium
+  answer: medium

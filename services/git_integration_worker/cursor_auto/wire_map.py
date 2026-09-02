@@ -1,7 +1,8 @@
 """Pure wire-map for agent_bus.request desired_model / effort / contract.
 
 Inline projection of dense-spec Impl §4. Auto branch reads the process-cached
-workflow registry (``route_policy.yaml workflows.*``). Unit-tested.
+workflow registry (``route_policy.yaml workflows.*``; omit-effort via
+``contract_effort``). Unit-tested.
 """
 
 from __future__ import annotations
@@ -154,18 +155,6 @@ BINDABLE_CDP_ESCALATIONS: tuple[str, ...] = (
     "cdp/fable",
     "cdp/sonnet-5",
 )
-_CONTRACT_EFFORT_DEFAULTS: dict[str, str] = {
-    "investigate": "xhigh",
-    "confer": "xhigh",
-    "seed": "xhigh",
-    "verify": "xhigh",
-    "execute": "xhigh",
-    "propagate": "xhigh",
-    "implement": "medium",
-    "recon": "medium",
-    "ask": "medium",
-    "answer": "medium",
-}
 _JUDGMENT_HANDOFF = "light-bounded"
 
 
@@ -431,15 +420,17 @@ def resolve_desired_effort(
     *,
     contract: str = "answer",
     handoff_contract: str | None = None,
+    registry: WorkflowRegistry | None = None,
 ) -> dict[str, Any]:
     """Normalize + clamp ``desired_effort`` to canonical wire values.
 
     Canonical set: low|medium|high|xhigh|max. Surface aliases (``extra``,
     ``extra-high``, ``Extra High``) normalize to ``xhigh`` via effort_vocabulary.
 
-    ``auto``/omitted ⇒ per-contract default: investigate/confer/seed/verify/execute/
-    propagate → ``xhigh``; implement/recon/ask/answer → ``medium``; ``implement``
-    whose handoff contract is ``light-bounded`` (body declares judgment) → ``xhigh``.
+    ``auto``/omitted ⇒ per-contract default from ``route_policy.yaml contract_effort``
+    (process-cached registry): investigate/confer/seed/verify/execute/propagate →
+    ``xhigh``; implement/recon/ask/answer → ``medium``; ``implement`` whose handoff
+    contract is ``light-bounded`` (body declares judgment) → ``xhigh``.
     ``requested`` echoes ``auto`` so the admit turn surfaces the rule via
     ``admit_effort_override_rule_line``.
     """
@@ -449,8 +440,9 @@ def resolve_desired_effort(
             resolved = "xhigh"
             why = f"auto chose xhigh for contract=implement (handoff={_JUDGMENT_HANDOFF})"
         else:
-            resolved = _CONTRACT_EFFORT_DEFAULTS.get(contract_key, "medium")
-            why = f"auto chose {resolved} for contract={contract_key}"
+            reg = registry or load_workflow_registry()
+            resolved = reg.default_effort_for_contract(contract_key)
+            why = f"auto chose {resolved} for contract={contract_key} via contract_effort"
         return {
             "requested": AUTO_EFFORT,
             "resolved_effort": resolved,

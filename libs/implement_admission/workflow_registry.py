@@ -1,4 +1,4 @@
-"""Workflow registry — authority: ``route_policy.yaml`` ``workflows`` / ``models``."""
+"""Workflow registry — authority: ``route_policy.yaml`` ``workflows`` / ``models`` / ``contract_effort``."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from typing import Any
 
 from contract_vocab import CANONICAL_CONTRACTS
 from cursor_capabilities import CURSOR_MODEL_CAPABILITIES, canonical_cursor_bare_id
+from effort_vocabulary import WIRE_LADDER
 from model_id import ModelId
 
 from implement_admission.routing import default_policy_path, load_route_policy
@@ -41,6 +42,7 @@ class WorkflowRegistry:
 
     workflows: Mapping[str, WorkflowBinding]
     models: Mapping[str, ModelPolicy]
+    contract_effort: Mapping[str, str]
 
     def workflow_for_contract(self, contract: str) -> WorkflowBinding | None:
         """Return the workflow that claims *contract*, or ``None``."""
@@ -55,6 +57,11 @@ class WorkflowRegistry:
         return frozenset(
             bare_id for bare_id, policy in self.models.items() if policy.roaming
         )
+
+    def default_effort_for_contract(self, contract: str) -> str:
+        """Omit/auto effort default for *contract*; fallback ``medium``."""
+        key = (contract or "").strip().lower()
+        return self.contract_effort.get(key, "medium")
 
 
 def _valid_models_block_key(bare_id: str) -> bool:
@@ -75,7 +82,7 @@ def _valid_seats(policy: dict[str, Any]) -> frozenset[str]:
 
 
 def registry_errors(policy: dict[str, Any]) -> list[str]:
-    """Collect R1–R7 validation errors; never raises."""
+    """Collect R1–R8 validation errors; never raises."""
     errors: list[str] = []
     valid_seats = _valid_seats(policy)
 
@@ -245,6 +252,36 @@ def registry_errors(policy: dict[str, Any]) -> list[str]:
     if CHECK_REVIEW_WORKFLOW not in workflow_keys:
         errors.append(f"workflows must include {CHECK_REVIEW_WORKFLOW!r} slot")
 
+    valid_effort = frozenset(WIRE_LADDER)
+    raw_effort = policy.get("contract_effort")
+    if not isinstance(raw_effort, dict) or not raw_effort:
+        errors.append("contract_effort must be a non-empty mapping")
+    else:
+        seen_effort: set[str] = set()
+        for contract, effort in raw_effort.items():
+            if not isinstance(contract, str) or not contract.strip():
+                errors.append("contract_effort keys must be non-empty strings")
+                continue
+            ckey = contract.strip().lower()
+            if ckey not in CANONICAL_CONTRACTS:
+                errors.append(
+                    f"contract_effort.{ckey!r} is not a canonical contract"
+                )
+            if not isinstance(effort, str) or not effort.strip():
+                errors.append(f"contract_effort.{ckey} must be a non-empty string")
+                continue
+            erung = effort.strip().lower()
+            if erung not in valid_effort:
+                errors.append(
+                    f"contract_effort.{ckey}={effort!r} not in {sorted(valid_effort)!r}"
+                )
+            seen_effort.add(ckey)
+        for contract in CANONICAL_CONTRACTS:
+            if contract not in seen_effort:
+                errors.append(
+                    f"contract {contract!r} missing from contract_effort"
+                )
+
     return errors
 
 
@@ -281,7 +318,18 @@ def parse_workflow_registry(policy: dict[str, Any]) -> WorkflowRegistry:
                 allowed_workflows=allowed,
             )
 
-    return WorkflowRegistry(workflows=workflows, models=models)
+    raw_effort = policy.get("contract_effort") or {}
+    contract_effort: dict[str, str] = {}
+    if isinstance(raw_effort, dict):
+        for contract, effort in raw_effort.items():
+            if isinstance(contract, str) and isinstance(effort, str):
+                contract_effort[contract.strip().lower()] = effort.strip().lower()
+
+    return WorkflowRegistry(
+        workflows=workflows,
+        models=models,
+        contract_effort=contract_effort,
+    )
 
 
 @lru_cache(maxsize=4)
@@ -336,6 +384,19 @@ def render_workflow_registry_block(policy: dict[str, Any] | None = None) -> str:
     ]
     if roaming:
         lines.extend(["", "**Roaming bare ids:** " + ", ".join(f"`{b}`" for b in roaming)])
+    effort = loaded.get("contract_effort") or {}
+    if isinstance(effort, dict) and effort:
+        lines.extend(
+            [
+                "",
+                "**contract_effort** (omit/auto defaults; contract-keyed, not per-workflow):",
+                "",
+                "| contract | effort |",
+                "|---|---|",
+            ]
+        )
+        for contract, erung in sorted(effort.items()):
+            lines.append(f"| {contract} | {erung} |")
     lines.append(_WORKFLOW_REGISTRY_MARKER_END)
     return "\n".join(lines)
 

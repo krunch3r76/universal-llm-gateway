@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
+from contract_vocab import CANONICAL_CONTRACTS
 from cursor_capabilities import default_variant, supported_knobs
 from effort_vocabulary import AUTO_EFFORT
 
 from services.git_integration_worker.cursor_auto.knob_compose import compose_model_knobs
-from services.git_integration_worker.cursor_auto.wire_map import (
-    _CONTRACT_EFFORT_DEFAULTS,
-    resolve_desired_effort,
-)
+from services.git_integration_worker.cursor_auto.wire_map import resolve_desired_effort
 from services.git_integration_worker.cursor_models import (
     build_model_selection,
     resolve_cursor,
@@ -73,7 +71,7 @@ def test_omit_effort_answer_stays_medium() -> None:
 
 
 def test_auto_sentinel_equals_omit() -> None:
-    keys = tuple(_CONTRACT_EFFORT_DEFAULTS) + ("unknown",)
+    keys = tuple(CANONICAL_CONTRACTS) + ("unknown",)
     for contract in keys:
         baseline = resolve_desired_effort(None, contract=contract)
         assert resolve_desired_effort("auto", contract=contract) == baseline

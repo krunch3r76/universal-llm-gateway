@@ -168,6 +168,21 @@ match `workflows.auto_judgment.model` below (documented invariant — not folded
 | mechanical_implement | cursor-sdk | cursor/composer-2.5 | implement |
 
 **Roaming bare ids:** `composer-2.5`, `composer-2.5-fast`, `grok-4.6`
+
+**contract_effort** (omit/auto defaults; contract-keyed, not per-workflow):
+
+| contract | effort |
+|---|---|
+| answer | medium |
+| ask | medium |
+| confer | xhigh |
+| execute | xhigh |
+| implement | medium |
+| investigate | xhigh |
+| propagate | xhigh |
+| recon | medium |
+| seed | xhigh |
+| verify | xhigh |
 <!-- workflow-registry:v1:end -->
 
 ## Non-primary model gate — discriminator
