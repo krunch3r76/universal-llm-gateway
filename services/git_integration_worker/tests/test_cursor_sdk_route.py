@@ -2066,10 +2066,10 @@ def test_read_only_implement_conflict_422(
     "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
     return_value=MagicMock(done=lambda: False),
 )
-def test_conductor_composer_refused_422(
+def test_conductor_composer_admits(
     _mock_task: MagicMock, client: TestClient
 ) -> None:
-    """AC3: conductor packet + explicit Composer → CURSOR_CONDUCTOR_T0_REFUSED."""
+    """AC3: conductor packet + explicit Composer admits."""
     resp = client.post(
         "/api/v1/cursor/dispatch",
         json=_dispatch_body(
@@ -2081,20 +2081,20 @@ def test_conductor_composer_refused_422(
             ),
         ),
     )
-    assert resp.status_code == 422
+    assert resp.status_code == 200
     body = resp.json()
-    assert body["code"] == "CURSOR_CONDUCTOR_T0_REFUSED"
-    assert "cursor/grok-4.6" in body["message"]
+    assert body["admitted"] is True
+    assert body["model_id"] == "composer-2.5"
 
 
 @patch(
     "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
     return_value=MagicMock(done=lambda: False),
 )
-def test_conductor_grok_admits_past_composer_gate(
+def test_conductor_explicit_grok_pin_admits(
     _mock_task: MagicMock, client: TestClient
 ) -> None:
-    """Negative: conductor + grok is not CURSOR_CONDUCTOR_T0_REFUSED."""
+    """Explicit grok pin on conductor packet still admits (rare pin path)."""
     resp = client.post(
         "/api/v1/cursor/dispatch",
         json=_dispatch_body(
@@ -2114,10 +2114,10 @@ def test_conductor_grok_admits_past_composer_gate(
     "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
     return_value=MagicMock(done=lambda: False),
 )
-def test_implement_composer_not_conductor_t0_refused(
+def test_implement_composer_admits(
     _mock_task: MagicMock, client: TestClient
 ) -> None:
-    """AC4: implement + Composer without conductor packet_kind is not this 422."""
+    """AC4: implement + Composer without conductor packet_kind admits."""
     resp = client.post(
         "/api/v1/cursor/dispatch",
         json=_dispatch_body(
