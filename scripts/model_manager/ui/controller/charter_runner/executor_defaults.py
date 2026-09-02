@@ -1,20 +1,20 @@
 """Charter-runner executor binds — judgment (default) and implement.
 
-Operator bind 2026-07-20: default agent = **Grok 4.6** on the coding
-substrate. Wire: ``seat=cursor-sdk``, ``model=cursor/grok-4.6``.
+Judgment windows run on the cursor-sdk seat with ``JUDGMENT_MODEL`` (Sonnet 5)
+at ``JUDGMENT_MODEL_KNOBS`` — the fleet standing judgment/conductor default
+(operator ruling 2026-09-02, ``decision:grok-4-6-fleet-default`` a:31939).
+The knob set is the Sonnet 5 card (``libs/cursor_capabilities``): ``effort``,
+``thinking``, ``context``; there is no ``fast`` knob, and ``align_cursor_knobs``
+drops unrecognized knobs silently, so do not carry one here.
 
-Operator bind 2026-08-18: judgment windows stay on the Cursor Models pool
-(``cursor/grok-4.6`` @ ``effort=xhigh``, ``fast=false``). The 2026-08-16
-Sonnet 5 ``xhigh``/``1m`` pin (agent-bus:7405) drew Ultra Other Models
-and exhausted the second pool in ~48h; Sonnet/Opus/Terra are explicit
-pins only. Consult/CDP host shells stay on Composer (I/O-only — no effort
-knob).
+``cursor/grok-4.6`` is an explicit pin only — path-sim A, ``role=skeptic``, and
+family-cross checks — never this module's default. Layer-arc G3 keeps its own
+family-diversity locus in ``window_exec.materializer_layer``.
+
+Consult/CDP host shells stay on Composer (I/O-only — no effort knob).
 
 Composer still pins ``fast=true`` explicitly so window_log / admit notes record
 the bind.
-
-Grok exposes ``effort`` + ``fast`` only (no ``thinking`` knob — live
-ListModels / ``cursor_capabilities``).
 
 The implement bind pins ``cursor/composer-2.5``, which is already the seat
 default (``config/agents.yaml`` ``cursor/sdk.default_model``, bound there
@@ -31,10 +31,11 @@ from __future__ import annotations
 from typing import Any
 
 DEFAULT_SEAT = "cursor-sdk"
-JUDGMENT_MODEL = "cursor/grok-4.6"
+JUDGMENT_MODEL = "cursor/claude-sonnet-5"
 JUDGMENT_MODEL_KNOBS: dict[str, str] = {
     "effort": "xhigh",
-    "fast": "false",
+    "thinking": "true",
+    "context": "1m",
 }
 DEFAULT_CONTRACT = "light-bounded"
 
@@ -57,7 +58,7 @@ def default_judgment_body(
     subject: str,
     caller_agent: str,
 ) -> dict[str, Any]:
-    """Wire body for ``POST /api/v1/team/dispatch`` (default Grok window).
+    """Wire body for ``POST /api/v1/team/dispatch`` (default judgment window).
 
     ``subject`` is accepted for call-site symmetry with handoff but is **not**
     on the generate schema (handoff-only). WIP subject is posted on the root bus
@@ -118,7 +119,7 @@ def autonomous_generate_body(
 ) -> dict[str, Any]:
     """Wire body for the autonomous background-lead window.
 
-    Same generate wire as ``default_judgment_body`` (Grok / ``JUDGMENT_MODEL`` @ xhigh).
+    Same generate wire as ``default_judgment_body`` (``JUDGMENT_MODEL`` @ ``JUDGMENT_MODEL_KNOBS``).
     The autonomous mandate lives in the materialized packet + root WIP pointer
     — generate schema rejects ``subject`` / ``tags`` (handoff-only fields).
     """
