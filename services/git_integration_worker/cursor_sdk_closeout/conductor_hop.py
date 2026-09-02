@@ -7,6 +7,7 @@ Fires after ``ledger.mark_terminal`` on the closeout hot path. Closeout authorit
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from typing import Any
@@ -31,6 +32,12 @@ from services.git_integration_worker.cursor_sdk_conductor_conflict import (
 from services.git_integration_worker.cursor_sdk_ledger_hop import (
     hop_fields_from_record_json,
     merge_hop_patch,
+)
+from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+    budget_ok_for_hop,
+    build_budget_authority_patch,
+    evaluate_hop_budget,
+    park_conductor_hop_mission,
 )
 from services.git_integration_worker.cursor_sdk_hop_events import (
     emit_frontier_sdk_conductor_hop_admit_failed,
@@ -156,11 +163,6 @@ def mission_open_for_row(
         return "DONE" not in closeout_tokens
 
 
-def budget_ok_for_hop(row: dict[str, Any]) -> bool:  # noqa: ARG001
-    """R6 stub — full caps land in a follow-on row."""
-    return True
-
-
 def hop_owed(
     row: dict[str, Any],
     *,
@@ -185,7 +187,7 @@ def hop_owed(
         return False
     if not mission_open_for_row(row, closeout_tokens=tokens):
         return False
-    if not budget_ok_for_hop(row):
+    if not budget_ok_for_hop(row, closeout_tokens=tokens):
         return False
     hop_fields = hop_fields_from_record_json(str(row.get("record_json") or ""))
     if hop_fields.get("hop_successor"):
@@ -200,6 +202,14 @@ def _write_record_json(dispatch_id: str, record_json: str) -> None:
             "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",
             (record_json, dispatch_id),
         )
+
+
+def _write_budget_authority(dispatch_id: str, row: dict[str, Any]) -> None:
+    ledger = CursorDispatchLedger.instance()
+    ledger.merge_record_json(
+        dispatch_id=dispatch_id,
+        patch=build_budget_authority_patch(row),
+    )
 
 
 def merge_conductor_closeout_hop_authority(
@@ -338,8 +348,19 @@ async def maybe_fire_conductor_hop_reactor(*, dispatch_id: str) -> None:
     if row is None or not _is_conductor_row(row):
         return
     closeout_tokens = _closeout_tokens_from_row(row)
+    _write_budget_authority(dispatch_id, row)
+    row = _load_row(dispatch_id) or row
+    verdict = evaluate_hop_budget(row, closeout_tokens=closeout_tokens)
+    if verdict.park and verdict.reason:
+        await park_conductor_hop_mission(
+            row,
+            reason=verdict.reason,
+        )
+        return
     if not hop_owed(row, closeout_tokens=closeout_tokens):
         return
+    if verdict.backoff_s > 0:
+        await asyncio.sleep(verdict.backoff_s)
     body = build_hop_team_dispatch_body(row)
     if body is None:
         return
@@ -397,6 +418,7 @@ async def maybe_fire_conductor_hop_reactor(*, dispatch_id: str) -> None:
 __all__ = [
     "build_conductor_hop_idempotency_key",
     "build_hop_team_dispatch_body",
+    "budget_ok_for_hop",
     "hop_owed",
     "live_conductor_row_on_thread",
     "merge_conductor_closeout_hop_authority",
