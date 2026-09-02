@@ -725,9 +725,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         # Agent substrates may be role/seat-less (model prefix selects transport).
         cursor_model_only = (
-            op == "generate"
-            and isinstance(model, str)
-            and model.startswith("cursor/")
+            op == "generate" and isinstance(model, str) and model.startswith("cursor/")
         )
         cdp_roleless = (
             op in {"generate", "to_thread"}
@@ -974,7 +972,10 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             ("bus_lifecycle", bus_lifecycle),
             ("cost_intent", cost_intent),
             ("cost_intent_reason", cost_intent_reason),
-            ("suppress_cost_warning", suppress_cost_warning if suppress_cost_warning else None),
+            (
+                "suppress_cost_warning",
+                suppress_cost_warning if suppress_cost_warning else None,
+            ),
         ):
             if val is not None:
                 body[key] = val
