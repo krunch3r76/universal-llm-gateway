@@ -20,9 +20,18 @@ discipline, and `srm`.
 
 `substantive_reasoning_turn ∧ frontier_class_seat ⇒ apply(this)`.
 
-Resident on Cursor via alwaysApply stub. Load this body on demand (or on
-claude.ai via Customize Skills / `Use the reasoning-posture skill`) when
-material judgment, consult, path-sim, or proposal review is live.
+**Attended IDE** (thinking models — currently all sessions): `reasoning-posture_ulg.mdc`
+is `alwaysApply` + `required_gate`; read and apply this body on substantive turns.
+
+**Headless dispatch** (`team_dispatch` → `cursor-sdk`, `cursor-auto` admit/nest): the
+alwaysApply rule is **pruned** from the dispatch HOME; judgment contracts receive the
+shared preamble invoke (`REASONING_POSTURE_PREAMBLE` in `libs/reasoning_posture_contracts.py`)
+from GIW `resolve_prompt_preamble` or cursor-auto admit. Mechanical / quick contracts
+skip (`implement` / `pure-mechanical` / `answer` / `ask` / `execute` / `propagate`). The
+skill directory stays in the dispatch HOME for on-demand body reads.
+
+On claude.ai: Customize Skills / `Use the reasoning-posture skill` when material
+judgment, consult, path-sim, or proposal review is live.
 
 Lead, reviewer, skeptic, artisan, and gatherer seats all apply it. Not
 load-bearing for purely mechanical subagent execution against a pre-staged
@@ -154,18 +163,16 @@ Scope-lock field shape (consult/path-sim): `cortex://notes/system/specs/consult-
 
 ## Always-on injection
 
-A short summary renders in non-subagent `cortex_brief` operational context. This
-file is the full body for trigger reads. Scope is **fleet-wide cursor + CDP
-judgment dispatch**, not Auto/life-only. Life/operator-proxy was the break-in
-that underscored the gap; `team_dispatch` generate/handoff and other cursor
-workflows bind the same rails.
+A short summary renders in non-subagent `cortex_brief` operational context. Scope is
+**fleet-wide cursor + CDP judgment dispatch**, not Auto/life-only.
 
 | Surface | How the body is invoked |
 |---|---|
+| **Attended IDE** + in-seat Task subagents | `reasoning-posture_ulg.mdc` `alwaysApply` + `required_gate` — read this skill body on substantive turns |
 | CDP generate (`model=cdp/…`, including `panel_dispatch` CDP legs) | Staging always merges `reasoning-posture` into `skills=` (`ensure_cdp_judgment_skills`, including light-bounded / omitted `skills`) |
-| `team_dispatch` generate `seat=cursor-sdk` (any caller — IDE, charter-runner, Auto nested) | GIW `resolve_prompt_preamble` prepends `Use the reasoning-posture skill` on non-mechanical contracts (`light-bounded` / `consult`); skip `implement` / `pure-mechanical` and quick (`answer` / `execute` / `propagate`). Idempotent when the packet already carries the invoke. `skills=` mount is a no-op on cursor-sdk. |
-| `team_dispatch` `op=handoff` consult / light-bounded (`cursor-consult`, `web-consult`) | Stargate enrich inserts the same Use-line into `<invariants>`; skip implement / `cursor-implement`. |
-| In-seat IDE / Task subagents | alwaysApply stub `reasoning-posture_ulg.mdc` points here; load the body on `Use the reasoning-posture skill`. No GIW preamble. |
+| `team_dispatch` generate `seat=cursor-sdk` | GIW `resolve_prompt_preamble` prepends `REASONING_POSTURE_PREAMBLE` on judgment contracts; skip mechanical/quick. `skills=` mount is a no-op. alwaysApply rule pruned from dispatch HOME |
+| `team_dispatch` `op=handoff` consult / light-bounded | Stargate enrich inserts the same Use-line into `<invariants>`; skip implement / `cursor-implement` |
+| `cursor-auto` admit (first episode) | Admit report appends `REASONING_POSTURE_PREAMBLE` when `handoff_contract` warrants; nested cursor-sdk also gets GIW preamble |
 
 ## Related skills
 

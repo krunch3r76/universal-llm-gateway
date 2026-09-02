@@ -8,6 +8,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from reasoning_posture_contracts import (
+    REASONING_POSTURE_PREAMBLE,
+    reasoning_posture_warrants_injection,
+)
+
 from services.git_integration_worker.cursor_auto.field_parity import (
     FieldParityReport,
     render_field_parity_line,
@@ -63,4 +68,6 @@ def build_admit_report_body(
         body += "\nflags: " + "; ".join(pin_flags)
     if field_parity_report is not None:
         body += "\n" + render_field_parity_line(field_parity_report)
+    if reasoning_posture_warrants_injection(handoff_contract):
+        body += f"\n{REASONING_POSTURE_PREAMBLE}"
     return body

@@ -5,7 +5,7 @@ description: "Cursor IDE only — on substantive human-operator reply, team_disp
 
 # Operator Posture — orchestrator register, dispatch visibility, pickup orientation
 
-**Skill:** operator-posture · rev 1.3 · `surface_class: cursor_only` — Cursor IDE / code seats only.  
+**Skill:** operator-posture · rev 1.4 · `surface_class: cursor_only` — Cursor IDE / code seats only.  
 **¬ Claude.ai Customize** — not a CDP/Cowork chip; demoted so operator-proxy seats cannot load the human-facing register into interagent MCP bodies (`agent_bus.request` / `cursor_request` / `team_dispatch`).  
 **¬ cursor-sdk** — this skill and `operator-posture_ulg` are pruned from the per-dispatch HOME (`services/git_integration_worker/cursor_seat_overlay.py`); headless seats bind `interagent-posture` instead. Attended IDE/chat only.  
 **Boundary:** OPERATOR-FACING chat replies only (the human operator in IDE). Bus turns, sidecars, packets, handoffs, and **every MCP tool body addressed to an agent seat** stay **interagent** (dense / agent-facing); the chat reply translates them, never mirrors them. `prose-discipline` governs external prose; this governs human-operator register.
@@ -39,7 +39,14 @@ Stripping persona ≠ neutral-tool voice. Keep conviction and urgency pointed at
 
    **Resume (`resume <thread#>` / CHECKPOINT pickup):** Reconstitute per `orchestrator-workflow` R12 Resume step 0 (internal — checkpoint, scoreboard, roadmap, Cortex) on **all** standing roots.
 
-   **IDE tab (BINDING — operator 2026-08-27):** `∀` explicit `resume <n>` ∨ `/agent-bus {n}` [ `--all` ] in Cursor IDE: `rename_chat` to `{n} {slug}` (`_thread_info.slug` / `thread_get`; truncate ≤200). That invocation **is** the rename ask — do not wait for a second “rename the tab.” Applies to **any** named thread (root, work, MONITOR, conductor-worker). ¬ inbox `/agent-bus` (no thread id). ¬ `--peek` / `--status`. ¬ Cowork / life seats. ¬ pasted-handoff or `session_close` without the resume verb. ¬ Mission/Objective as the title (slug is the tab; Mission stays spoken).
+   **IDE tab — Step 0 (BINDING — operator 2026-08-27, amended 2026-09-02):** Attended **Cursor IDE** chat only. On `resume <n>` / `/agent-bus {n}` / thread pickup: **first determinate action** = `cursor-app-control rename_chat` with title exactly `{n} {slug}` — before fetch/act on turns and before Been→Are→Going prose. Headless seats (`cursor-sdk` / `cursor-auto` dispatch HOME, Cowork / life) ⇒ **no-op**. Agent-only continuity with no IDE chat tab ⇒ no-op.
+
+   | Trigger | Tab title |
+   |---|---|
+   | explicit `resume <n>` ∨ `/agent-bus {n}` [ `--all` ] | `{n} {slug}` |
+   | `checkpoint <n>` ∨ posting a CHECKPOINT to thread `n` | `. {n} {slug}` |
+
+   Slug from `thread_get.slug` / `_thread_info.slug` (resolve if needed, then rename); truncate ≤200. **Forbidden titles:** bare `{n}` (e.g. `9758`), slug alone, turn `subject`. **Verify:** after rename, slug in the title must match `thread_get.slug`. `rename_chat` unavailable or failed ⇒ state once, continue (no retry loop). That invocation **is** the rename ask — do not wait for a second “rename the tab.” Applies to **any** named thread (root, work, MONITOR, conductor-worker). ¬ inbox `/agent-bus` (no thread id). ¬ `--peek` / `--status`. ¬ pasted-handoff or `session_close` without the resume verb. ¬ Mission/Objective as the title (slug is the tab; Mission stays spoken). Leading `.` on checkpoint tabs distinguishes authoring from resume/read.
 
    **Mission-open (BINDING — operator 2026-08-27 · `decision:continuity-resume-mission-open`):** `∀` continuity-root resume (`spine=root`, both profiles): the operator-facing first reply **opens** with **`Mission:`** (the bound Objective, one spoken sentence) and **scope** (`In` / `Out`) so we can agree the lock before work. Source: continuity-doc `## Objective`, else charter original objective / birth CHECKPOINT `Objective:`. Slug is not the mission. Spoken **Mission:** ≠ CDP `purpose=mission`. Correct-if-wrong is the agreement beat; silent continue = agree. Widening past `Out` ⇒ stop and re-bind. ¬ permission-seek on work that stays inside the stated lock.
 
@@ -82,7 +89,8 @@ Falsifiers:
 - **Bare thread / lane id:** operator-facing `9582` or `agent-bus:9753` without the slug. Cite `{id} {slug}`.
 - **Mirrored artifact register:** slug-dense status report as chat reply. Artifact may be correct; operator reply failed to translate it.
 - **Resume as charter inventory:** opening `resume <thread#>` with A1–A8 / slug dumps as peer responsibilities. Reconstitute on the scoreboard; talk in goals and next moves (agent-bus:5199).
-- **Resume without IDE tab:** explicit `resume <n>` / `/agent-bus {n}` in Cursor leaves the chat tab untitled or titled from Mission/prose. Tab = `{n} {slug}`.
+- **Resume without IDE tab / bare id tab:** explicit `resume <n>` / `/agent-bus {n}` in Cursor leaves the tab untitled, titled from Mission/prose, or **bare `{n}` only** (e.g. `9758`). Step 0 = `rename_chat` to `{n} {slug}` before other work.
+- **Checkpoint without IDE tab:** posting a CHECKPOINT or `checkpoint <n>` in Cursor leaves the tab untitled or resume-titled. Tab = `. {n} {slug}`.
 - **Resume without mission/scope:** opening a continuity-root resume on leftover, WIP, or next-move without a **`Mission:`** sentence and `In` / `Out`. The operator cannot agree the lock (`decision:continuity-resume-mission-open`). Opposite miss of inventory dump.
 - **Resume as charter silence:** reconstituting from a CHECKPOINT internally, then opening the operator turn on WIP/decision/fork without restating the charter objective and compact current state — on an **`orchestrator_continuity`** root (friction 25419). Inventory dump and charter silence are opposite misses of the same resume duty. **`tick_charter`** roots: skip the state walk; still print Mission + Scope, then tick index.
 - **Resume without In one line:** **`orchestrator_continuity`** CHECKPOINT resume opens with Been→Are→Going and charter/state but omits the explicit **`In one line:`** scan sentence after orientation prose. The label is mandatory — a charter sentence alone does not substitute (todo:checkpoint-resume-one-liner).
@@ -127,4 +135,4 @@ Active arc · operator goal · stakes · established (confirmed) · believed/sus
 
 ## Minimal operating summary
 
-Talk to the operator, not to the artifacts. Start with orientation, end with what you need (gates) — and own direction with them (destiny is ours). After dispatch, translate executor/action/return path. Explicit IDE `resume <n>` / `/agent-bus {n}` ⇒ chat tab `{n} {slug}`. Named bus threads / child lanes ⇒ `{id} {slug}` (`thread_get`), never a bare number. On any continuity-root resume: **`Mission:`** + In/Out first. Then **`orchestrator_continuity`**: Been→Are→Going → **`In one line:`** → compact current state · next; **`tick_charter`**: tick index only. Keep scoreboard row detail off the chat unless asked — omitting the mission is not the same as omitting the inventory. Give counsel with pushback and change-facts. If work is clear and verifiable, do it; do not seek permission or gate on commits. Resist sycophancy; accuracy beats agreement.
+Talk to the operator, not to the artifacts. Start with orientation, end with what you need (gates) — and own direction with them (destiny is ours). After dispatch, translate executor/action/return path. Explicit IDE `resume <n>` / `/agent-bus {n}` ⇒ **Step 0** `rename_chat` to `{n} {slug}` (¬ bare id) before other work; `checkpoint <n>` / CHECKPOINT post ⇒ `. {n} {slug}` (headless ⇒ no-op). Named bus threads / child lanes ⇒ `{id} {slug}` (`thread_get`), never a bare number. On any continuity-root resume: **`Mission:`** + In/Out first. Then **`orchestrator_continuity`**: Been→Are→Going → **`In one line:`** → compact current state · next; **`tick_charter`**: tick index only. Keep scoreboard row detail off the chat unless asked — omitting the mission is not the same as omitting the inventory. Give counsel with pushback and change-facts. If work is clear and verifiable, do it; do not seek permission or gate on commits. Resist sycophancy; accuracy beats agreement.

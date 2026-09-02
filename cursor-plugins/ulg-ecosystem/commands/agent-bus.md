@@ -125,16 +125,21 @@ decision table into this command.
 | `/agent-bus --peek` | Fetch but do NOT mark read or act — just show the turn |
 | `/agent-bus --status` | Show thread list |
 
-### IDE tab (thread-scoped resume)
+### IDE tab (thread-scoped resume) — Step 0
 
-`∀` `/agent-bus {n}` ∨ `/agent-bus {n} --all` in Cursor IDE: after fetch,
-`rename_chat` to `{id} {slug}` from `_thread_info` (truncate ≤200). That
-invocation **is** the rename ask — `rename_chat`'s "only when the user asks"
-gate is already satisfied; do not wait for a second “rename the tab.” Sticky
-re-injection of this command is the same ask (idempotent). ¬ inbox `/agent-bus`
-(multi-thread) · ¬ `--peek` · ¬ `--status`. ¬ Mission/Objective as the title
-(slug is the tab; Mission stays spoken). Same bind as operator-posture
-`resume <n>`.
+Attended Cursor IDE only — headless seats / agent-only continuity ⇒ no-op.
+
+`∀` `/agent-bus {n}` ∨ `/agent-bus {n} --all` in Cursor IDE: **first determinate
+action** (before acting on turns) = `cursor-app-control rename_chat` to exactly
+`{n} {slug}` — slug from `thread_get` / fetch `_thread_info` (truncate ≤200).
+**¬** bare `{n}` · slug alone · turn `subject`. Verify slug matches
+`thread_get.slug`; tool unavailable ⇒ state once, continue. That invocation
+**is** the rename ask — `rename_chat`'s "only when the user asks" gate is
+already satisfied; do not wait for a second “rename the tab.” Sticky
+re-injection is idempotent. ¬ inbox `/agent-bus` (multi-thread) · ¬ `--peek` ·
+¬ `--status`. ¬ Mission/Objective as the title (slug is the tab; Mission stays
+spoken). Same bind as operator-posture `resume <n>`. CHECKPOINT authoring uses
+`. {id} {slug}` instead — see `checkpoint-discipline` / operator-posture Rule 3.
 
 ### `/agent-bus {thread}`
 

@@ -46,6 +46,7 @@ PRUNED_PLUGIN_PATHS: tuple[Path, ...] = (
     Path("rules") / "operator-posture_ulg.mdc",
     Path("skills") / "operator-posture",
     Path("rules") / "cdp-operator-proxy_ulg.mdc",  # catalog — not this seat; prune only
+    Path("rules") / "reasoning-posture_ulg.mdc",  # IDE alwaysApply; GIW preamble on judgment
     # Mixed rules: each carries a slice the seat does act on (Explore-first recon;
     # landed≠live + drain-gated restart) wrapped in lead doctrine it cannot. Thinned
     # seat variants are grafted back rather than deleting the whole rule.
@@ -78,6 +79,9 @@ PRUNE_ONLY_PLUGIN_PATHS: tuple[Path, ...] = (
     Path("rules") / "operator-posture_ulg.mdc",
     Path("skills") / "operator-posture",
     Path("rules") / "cdp-operator-proxy_ulg.mdc",
+    # alwaysApply stub is IDE-attended only; judgment contracts get the GIW
+    # preamble invoke instead (skill dir stays for on-demand body reads).
+    Path("rules") / "reasoning-posture_ulg.mdc",
 )
 
 # Lead/orchestrator-only rules pruned for context economy, not register correctness.

@@ -2,9 +2,15 @@
 description: Reasoning posture — pin Question before merits, declare out-of-scope, detent before widening, steelman before critique, calibrated confidence, one determinate step; thinking-off does not waive. Body is the reasoning-posture skill.
 alwaysApply: true
 rule_category: workflow
-apply_tier: catalog
+apply_tier: required_gate
 ---
-# Reasoning posture
+# Reasoning posture — attended IDE
+
+**Seat wall.** `alwaysApply` here binds **attended IDE** and in-seat Task subagents on
+thinking models. **Pruned** from the cursor-sdk dispatch HOME — headless
+`team_dispatch` / `cursor-sdk` / `cursor-auto` admit wires the same rails via
+contract-scoped preamble injection (judgment contracts only; mechanical/quick skip).
+SOT: skill `reasoning-posture` § Always-on injection.
 
 ∀ material judgment / consult / path-sim / proposal review:
 `pin(Question) ≺ merits` · `declare(Out-of-scope)` · `detent ≺ widen` · `cascade_live ⇒ greater_explores ∧ lesser_binds` ·

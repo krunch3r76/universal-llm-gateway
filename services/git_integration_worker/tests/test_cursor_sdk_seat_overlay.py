@@ -46,6 +46,13 @@ def _fake_dispatch_cursor_dir(tmp_path: Path) -> Path:
     (plugin_root / "rules" / "presence-discipline_ulg.mdc").write_text(
         "unrelated\n", encoding="utf-8"
     )
+    (plugin_root / "rules" / "reasoning-posture_ulg.mdc").write_text(
+        "alwaysApply stub\n", encoding="utf-8"
+    )
+    (plugin_root / "skills" / "reasoning-posture").mkdir(parents=True)
+    (plugin_root / "skills" / "reasoning-posture" / "SKILL.md").write_text(
+        "skill body\n", encoding="utf-8"
+    )
     return tmp_path / ".cursor"
 
 
@@ -97,6 +104,10 @@ def test_human_register_pruned_and_interagent_grafted(tmp_path: Path) -> None:
     )
     assert "install-ecosystem-plugin.sh" in surface
     assert "Customize upload" not in surface
+
+    # Judgment posture: alwaysApply rule pruned; skill dir kept for preamble reads.
+    assert not (plugin_root / "rules" / "reasoning-posture_ulg.mdc").exists()
+    assert (plugin_root / "skills" / "reasoning-posture" / "SKILL.md").is_file()
 
     # Lead-only doctrine costs a re-send per agent step and governs nothing here.
     for relpath in LEAD_ONLY_PLUGIN_PATHS:

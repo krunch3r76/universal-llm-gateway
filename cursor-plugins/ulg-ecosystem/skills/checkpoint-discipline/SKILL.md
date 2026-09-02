@@ -56,6 +56,7 @@ Enrollment tag is SOT. `tick_charter` = machine consumer (base + T extras; malfo
 | Residual sweep | Checkpoint-time: named residuals still in chat only? → Use the `residual-imprint` skill |
 | Myelinate | Checkpoint-time graph: both-ends-known missing links → `relationship_create` / `edge_create` now; load-bearing existing edges → `edge_update` if judgment changed. `¬` defer to session-close (close is not automatic). Detail: `cortex-orientation` § Myelinate |
 | Windows append | On each CHECKPOINT **post**, append one row to `## Windows` on the charter surface (scoreboard if chartered, continuity-doc if unchartered): `cp_ordinal`, turn, `session_id` if known, State one-liner if Arc empty. Tip **pointers** at that table — ¬ paste it. Schema §3.5. `/session-end` fills Arc later. |
+| IDE tab on post | Attended Cursor IDE: after CHECKPOINT post (or `checkpoint <n>`), `rename_chat` to `. {n} {slug}` (`operator-posture`). Headless / no chat tab ⇒ no-op. |
 
 ## Tip hygiene (spine=root)
 
@@ -81,7 +82,9 @@ Enrollment tag is SOT. `tick_charter` = machine consumer (base + T extras; malfo
 | Review / audit of whole-history | Charter-surface `## Windows` (schema §3.5) — not linear thread read |
 | Execute on child lane | Open **that** thread separately |
 
-**Operator-facing:** Mission + In/Out first (`operator-posture` Rule 3 · `decision:continuity-resume-mission-open`). Then `orchestrator_continuity` → Been→Are→Going → `In one line:` → settled·live·next · next. `tick_charter` → Mission + Scope, then wave · in-flight · next pickup. Explicit IDE `resume <n>` ⇒ chat tab `{n} {slug}` (`operator-posture`).
+**Operator-facing:** Mission + In/Out first (`operator-posture` Rule 3 · `decision:continuity-resume-mission-open`). Then `orchestrator_continuity` → Been→Are→Going → `In one line:` → settled·live·next · next. `tick_charter` → Mission + Scope, then wave · in-flight · next pickup.
+
+**IDE tab (attended Cursor only — `operator-posture`):** explicit IDE `resume <n>` ⇒ `{n} {slug}`; `checkpoint <n>` or CHECKPOINT post to thread `n` ⇒ `. {n} {slug}`. Headless / agent-only continuity ⇒ no-op.
 
 ## MONITOR / mission resume — fast successor (BINDING — 2026-08-02)
 

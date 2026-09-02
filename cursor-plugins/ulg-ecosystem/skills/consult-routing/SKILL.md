@@ -78,13 +78,18 @@ Use admit `reply_from_agent` for `wait(from_agent=…)` — ¬ infer from `resol
 
 ## Judgment skill (BINDING)
 
-Non-mechanical cursor `team_dispatch` auto-invokes `reasoning-posture` — fleet-wide,
-independent of life/operator-proxy. Mechanical implement skips.
+**Attended IDE:** `reasoning-posture_ulg.mdc` is `alwaysApply` + `required_gate` on
+thinking models — read the skill body on substantive turns.
+
+**Headless** (`team_dispatch` / `cursor-sdk` / `cursor-auto`): alwaysApply rule
+pruned from the cursor-sdk dispatch HOME; judgment contracts get preamble injection
+only (mechanical/quick skip). `skills=` on cursor-sdk generate is a no-op.
 
 | Path | How |
 |---|---|
-| `op=generate` `seat=cursor-sdk` | GIW preamble on `light-bounded` / `consult`; skip `implement` / `pure-mechanical` / quick (`answer` / `execute` / `propagate`). `skills=` is a no-op on cursor-sdk. |
-| `op=handoff` consult / light-bounded | Enrich Block 2 `Use the reasoning-posture skill`; skip implement / `cursor-implement`. |
+| `op=generate` `seat=cursor-sdk` | GIW `resolve_prompt_preamble` on judgment `handoff_contract`; skip mechanical/quick |
+| `cursor-auto` admit | Admit report appends `REASONING_POSTURE_PREAMBLE` when `handoff_contract` warrants |
+| `op=handoff` consult / light-bounded | Enrich Block 2 `Use the reasoning-posture skill`; skip implement / `cursor-implement` |
 | CDP `model=cdp/…` generate | `skills=` merge (`ensure_cdp_judgment_skills`, purpose-keyed — § CDP transport) |
 
 Packet MAY still open with the invoke as belt-and-suspenders. SOT: skill `reasoning-posture` § Always-on injection.

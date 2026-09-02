@@ -13,7 +13,9 @@ import re
 
 from reasoning_posture_contracts import (
     HYPOTHESIZE_SIMULATE_CONTRACTS,
+    REASONING_POSTURE_PREAMBLE,
     REASONING_POSTURE_SKIP_CONTRACTS,
+    reasoning_posture_warrants_injection,
 )
 
 _LARGE_CONTENT_CHUNK_CHARS = 40_000
@@ -153,10 +155,6 @@ _IMPLEMENT_PREAMBLE = (
 
 # Cursor-sdk analog of CDP ``ensure_cdp_judgment_skills`` — prompt invoke, not
 # ``skills=`` mount (cursor-sdk skips skills_mount). Mechanical/quick skip.
-_REASONING_POSTURE_PREAMBLE = (
-    "Use the `reasoning-posture` skill — pin Question/OOS/detent before merits; "
-    "steelman / calibrate / courage; thinking_off does not waive."
-)
 _HYPOTHESIZE_SIMULATE_PREAMBLE = (
     "Use the `hypothesize-simulate` skill — structured hypothesis generation "
     "and simulation before merits or transport."
@@ -363,15 +361,13 @@ def resolve_prompt_preamble(
             )
         else:
             parts.append(_CONDUCTOR_AWAY_SCORE_RATIFY_PREAMBLE)
-    if (
-        contract not in _REASONING_POSTURE_SKIP_CONTRACTS
-        and not _already_invokes_reasoning_posture(prompt_preamble, existing_text)
-    ):
-        parts.append(_REASONING_POSTURE_PREAMBLE)
-    if (
-        contract not in _REASONING_POSTURE_SKIP_CONTRACTS
-        and not _already_invokes_ulg_for_llms(prompt_preamble, existing_text)
-    ):
+    if reasoning_posture_warrants_injection(
+        contract
+    ) and not _already_invokes_reasoning_posture(prompt_preamble, existing_text):
+        parts.append(REASONING_POSTURE_PREAMBLE)
+    if reasoning_posture_warrants_injection(
+        contract
+    ) and not _already_invokes_ulg_for_llms(prompt_preamble, existing_text):
         parts.append(_ULG_FOR_LLMS_PREAMBLE)
     if (
         contract in _HYPOTHESIZE_SIMULATE_CONTRACTS
