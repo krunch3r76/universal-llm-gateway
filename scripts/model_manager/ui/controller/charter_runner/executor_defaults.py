@@ -1,26 +1,29 @@
 """Charter-runner executor binds — judgment (default) and implement.
 
-Judgment windows run on the cursor-sdk seat with ``JUDGMENT_MODEL`` (Sonnet 5)
-at ``JUDGMENT_MODEL_KNOBS`` — the fleet standing judgment/conductor default
-(operator ruling 2026-09-02, ``decision:grok-4-6-fleet-default`` a:31939).
-The knob set is the Sonnet 5 card (``libs/cursor_capabilities``): ``effort``,
-``thinking``, ``context``; there is no ``fast`` knob, and ``align_cursor_knobs``
-drops unrecognized knobs silently, so do not carry one here.
+Judgment and implement windows both run on the cursor-sdk seat with
+``cursor/composer-2.5`` (operator ruling 2026-09-02, superseding the same-day
+Sonnet-5 bind — ``decision:grok-4-6-fleet-default`` a:31939 amended). Composer
+has one knob (``fast``); there is no ``effort``/``thinking``/``context`` knob to
+carry, and ``align_cursor_knobs`` drops unrecognized knobs silently.
+
+The judgment/implement split now lives in ``contract``, not ``model``:
+``JUDGMENT_MODEL`` dispatches at ``DEFAULT_CONTRACT`` (``light-bounded``), which
+GIW ``resolve_prompt_preamble`` auto-scaffolds with ``Use the reasoning-posture
+skill`` + ``Use the hypothesize-simulate skill`` on every cursor-sdk generate —
+Composer's reasoning space is squeezed via those two skills rather than by a
+heavier model. Hard reasoning gaps are caught by the fleet's extensive external
+CDP (Fable/Opus) consultation elsewhere, not by this in-seat default.
+``IMPLEMENT_MODEL`` dispatches at ``IMPLEMENT_CONTRACT`` (``implement``) — no
+skill scaffolding, mechanical execution against a pre-densified packet.
 
 ``cursor/grok-4.6`` is an explicit pin only — path-sim A, ``role=skeptic``, and
 family-cross checks — never this module's default. Layer-arc G3 keeps its own
 family-diversity locus in ``window_exec.materializer_layer``.
 
-Consult/CDP host shells stay on Composer (I/O-only — no effort knob).
-
-Composer still pins ``fast=true`` explicitly so window_log / admit notes record
-the bind.
-
-The implement bind pins ``cursor/composer-2.5``, which is already the seat
-default (``config/agents.yaml`` ``cursor/sdk.default_model``, bound there
-specifically to ``contract=implement``) — this pins the existing default rather
-than introducing a new model. Passing it explicitly is still right so the
-executor note and ``window_log`` record a concrete bind.
+This module's locus is independent of the GIW Auto-lane's own ``wire_map``
+resolution (``config/agents.yaml`` judgment-contract comments describe that
+separate mechanism) — the two may legitimately diverge; charter_runner is
+decommissioned (a:31919), so this bind is inert today regardless.
 
 Step overrides (not this module): CDP Opus for Opus-class code review;
 attended Composer handoff when eyes-on is required.
@@ -31,12 +34,8 @@ from __future__ import annotations
 from typing import Any
 
 DEFAULT_SEAT = "cursor-sdk"
-JUDGMENT_MODEL = "cursor/claude-sonnet-5"
-JUDGMENT_MODEL_KNOBS: dict[str, str] = {
-    "effort": "xhigh",
-    "thinking": "true",
-    "context": "1m",
-}
+JUDGMENT_MODEL = "cursor/composer-2.5"
+JUDGMENT_MODEL_KNOBS: dict[str, str] = {"fast": "true"}
 DEFAULT_CONTRACT = "light-bounded"
 
 IMPLEMENT_MODEL = "cursor/composer-2.5"
