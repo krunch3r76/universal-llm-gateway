@@ -634,6 +634,7 @@ def test_preflight_returns_copy_paste_session_id_when_supplied_differs(
 def test_derive_session_id_parses_cursor_abbrev_month_with_tz() -> None:
     """Friction 23205: ``Jul 9, 2026, 2:37 AM (UTC-7)`` must pin UTC, not race."""
     from agent_seat.session_id import session_id_time_base
+
     from cortex_store.transcript_session_id import (
         _normalize_cursor_timestamp,
         derive_session_id_from_jsonl_start,
