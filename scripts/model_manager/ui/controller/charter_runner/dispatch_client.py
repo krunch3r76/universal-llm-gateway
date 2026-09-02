@@ -2,7 +2,7 @@
 
 Writes a Resume-step-0 packet under the gateway checkout, then either:
 
-- ``POST /api/v1/team/dispatch`` (default generate: Sonnet-5 cursor-sdk), or
+- ``POST /api/v1/team/dispatch`` (default generate: ``JUDGMENT_MODEL`` / cursor-sdk), or
 - ``POST /api/v1/team/handoff`` (attended: ``role=cursor-consult`` + packet_path).
 
 Response carries ``thread_id`` / ``execution_id`` for the worker surface + transcript.

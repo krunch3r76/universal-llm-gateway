@@ -104,9 +104,9 @@ SOT: `libs/cdp_ask/work_projection.py` `drain_projection()` and
 | `live_cse_count` | Unique normalized CSE session URLs on qualifying page targets |
 | `live_port_count` | Every responding registry-pool CDP `/json/version` port, including unrelated tabs |
 | `effective_count` | Recorded `running_count` alias — restart-drain only |
-| `soft_limit` / `hard_limit` | 2 / 3 |
-| `free_slots` | Recorded **stream** admission headroom from `admission_count` — **¬** ask-mint room (a:30435) |
-| `at_soft_limit` / `at_hard_limit` | Recorded stream admission thresholds, not browser occupancy, not ask-mint room |
+| `soft_limit` / `hard_limit` | 2 / 3 — **advisory**; do not refuse admission |
+| `free_slots` | Recorded **stream** headroom from `admission_count` — pacing signal |
+| `at_soft_limit` / `at_hard_limit` | Derived advisory thresholds — **not** submit/hop gates |
 | `other_count` | Pending/running non-seat (advisor / `purpose=ask`) rows |
 | `advisor_reserve` | Reserved advisor slot count (today `1`). For `purpose=ask`, compare `other_count` to this — not `free_slots` |
 

@@ -8,6 +8,7 @@ frontier.sdk.worker.completed via Event Service.
 Usage:
   scripts/watch-dispatch-closeout-tmux.sh --latest --label 'my arc'
   scripts/watch-dispatch-closeout.py --thread 6361 --dispatch-id 74874a907d5d-9beddd66
+  scripts/watch-dispatch-closeout.py --thread 9916 --execution-id 78b387c6-73e7-43f5-bd34-f05f413d3b45
   scripts/watch-dispatch-closeout.py --latest
 """
 
@@ -113,19 +114,21 @@ def _fetch_closeout_subject(client: httpx.Client, thread_id: str, turn: int) -> 
     return ""
 
 
-def _dispatch_id_prefix(dispatch_id: str) -> str:
-    return dispatch_id.split("-", 1)[0]
+def _watch_id_prefix(watch_id: str) -> str:
+    return watch_id.split("-", 1)[0]
 
 
-def _latest_event_payload(dispatch_id: str, signal: str) -> dict[str, Any] | None:
-    prefix = _dispatch_id_prefix(dispatch_id)
+def _latest_event_payload(watch_id: str, signal: str) -> dict[str, Any] | None:
+    prefix = _watch_id_prefix(watch_id)
     rows = _query_events(
         "SELECT payload FROM events "
         "WHERE signal = ? "
         "AND (json_extract(payload, '$.dispatch_id') LIKE ? "
-        "OR json_extract(payload, '$.request_id') LIKE ?) "
+        "OR json_extract(payload, '$.request_id') LIKE ? "
+        "OR json_extract(payload, '$.execution_id') LIKE ?) "
         "ORDER BY seq DESC LIMIT 1",
         signal,
+        f"{prefix}%",
         f"{prefix}%",
         f"{prefix}%",
     )
@@ -134,22 +137,22 @@ def _latest_event_payload(dispatch_id: str, signal: str) -> dict[str, Any] | Non
     return json.loads(str(rows[0].get("payload") or "{}"))
 
 
-def _worker_completed(dispatch_id: str) -> dict[str, Any] | None:
-    return _latest_event_payload(dispatch_id, "frontier.sdk.worker.completed")
+def _worker_completed(watch_id: str) -> dict[str, Any] | None:
+    return _latest_event_payload(watch_id, "frontier.sdk.worker.completed")
 
 
-def _queue_status_line(dispatch_id: str, thread_id: str) -> str:
+def _queue_status_line(watch_id: str, thread_id: str) -> str:
     """Human-readable queue / run phase from Event Service (non-terminal)."""
-    completed = _worker_completed(dispatch_id)
+    completed = _worker_completed(watch_id)
     if completed:
         outcome = str(completed.get("outcome") or "unknown")
         duration = completed.get("duration_s")
         dur = f" · {duration:.0f}s" if isinstance(duration, (int, float)) else ""
         return f"phase=completed outcome={outcome}{dur}"
 
-    promoted = _latest_event_payload(dispatch_id, "frontier.sdk.worker.lease.promoted")
+    promoted = _latest_event_payload(watch_id, "frontier.sdk.worker.lease.promoted")
     if promoted:
-        progress = _latest_event_payload(dispatch_id, "frontier.sdk.worker.progress")
+        progress = _latest_event_payload(watch_id, "frontier.sdk.worker.progress")
         if progress:
             elapsed = progress.get("elapsed_s")
             tools = progress.get("tool_call_count")
@@ -158,7 +161,7 @@ def _queue_status_line(dispatch_id: str, thread_id: str) -> str:
             return f"phase=running{el}{tc}"
         return "phase=running (lease promoted)"
 
-    queued = _latest_event_payload(dispatch_id, "frontier.sdk.worker.queued")
+    queued = _latest_event_payload(watch_id, "frontier.sdk.worker.queued")
     if queued:
         pos = queued.get("queue_position")
         holder = queued.get("holder_dispatch_id") or queued.get("holder_thread_id")
@@ -222,7 +225,14 @@ def _page_operator(*, subject: str, body: str, tag: str) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--thread", help="agent-bus worker thread id")
-    parser.add_argument("--dispatch-id", help="cursor-sdk dispatch_id")
+    parser.add_argument(
+        "--dispatch-id",
+        help="team_dispatch dispatch_id (preferred for event correlation)",
+    )
+    parser.add_argument(
+        "--execution-id",
+        help="team_dispatch execution_id (alias; matches frontier.sdk.worker.* events)",
+    )
     parser.add_argument(
         "--after-turn",
         type=int,
@@ -258,16 +268,20 @@ def main() -> int:
 
     thread_id = str(args.thread or "").strip()
     dispatch_id = str(args.dispatch_id or "").strip()
-    if args.latest or not thread_id or not dispatch_id:
+    execution_id = str(args.execution_id or "").strip()
+    if dispatch_id and execution_id:
+        raise SystemExit("pass only one of --dispatch-id or --execution-id")
+    watch_id = dispatch_id or execution_id
+    if args.latest or not thread_id or not watch_id:
         latest_thread, latest_dispatch = _resolve_latest_dispatch()
         thread_id = thread_id or latest_thread
-        dispatch_id = dispatch_id or latest_dispatch
+        watch_id = watch_id or latest_dispatch
 
     token = _token()
     from_agent = str(args.from_agent or "cursor-sdk").strip()
     started_at = time.monotonic()
     print(
-        f"watching thread={thread_id} dispatch={dispatch_id} "
+        f"watching thread={thread_id} watch_id={watch_id} "
         f"after_turn={args.after_turn} from_agent={from_agent} label={args.label!r} "
         f"started_at={time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}",
         flush=True,
@@ -275,8 +289,8 @@ def main() -> int:
 
     with _bus_client(token) as client:
         while True:
-            if from_agent == "cursor-sdk" and not _worker_completed(dispatch_id):
-                print(_queue_status_line(dispatch_id, thread_id), flush=True)
+            if from_agent == "cursor-sdk" and not _worker_completed(watch_id):
+                print(_queue_status_line(watch_id, thread_id), flush=True)
             elif from_agent != "cursor-sdk":
                 print(f"phase=waiting for {from_agent} reply on thread {thread_id}", flush=True)
             snap = _wait_closeout(
@@ -288,7 +302,7 @@ def main() -> int:
             if snap.get("complete"):
                 reply_turn = int(snap.get("qualifying_reply_turn") or 0)
                 subject = _fetch_closeout_subject(client, thread_id, reply_turn)
-                completed = _worker_completed(dispatch_id) or {}
+                completed = _worker_completed(watch_id) or {}
                 outcome = str(completed.get("outcome") or "unknown")
                 if from_agent != "cursor-sdk":
                     outcome = f"{from_agent}-reply"

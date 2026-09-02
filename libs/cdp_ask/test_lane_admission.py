@@ -60,20 +60,20 @@ def test_admission_regime_boundary() -> None:
 _STATE_TABLE: list[tuple[str, str | None, int, int, bool, str | None]] = [
     # incoming_purpose_class, purpose_arg, seat, other, unattended, expected_refusal
     ("seat", "operator-proxy", 1, 0, True, None),  # 1 ADMIT
-    ("seat", "operator-proxy", 2, 0, True, "seat_cap"),  # 2 REFUSE seat_cap
-    ("seat", "operator-proxy", 2, 1, True, "abs_hard"),  # 3
-    ("seat", "operator-proxy", 3, 0, True, "abs_hard"),  # 4 additive
+    ("seat", "operator-proxy", 2, 0, True, None),  # 2 ADMIT (global cap advisory)
+    ("seat", "operator-proxy", 2, 1, True, None),  # 3 ADMIT
+    ("seat", "operator-proxy", 3, 0, True, None),  # 4 ADMIT
     ("advisor", "ask", 0, 0, True, None),  # 5
-    ("advisor", "ask", 2, 0, True, None),  # 6 ADMIT reserved
-    ("advisor", "ask", 2, 1, True, "abs_hard"),  # 7
-    ("advisor", "ask", 3, 0, True, None),  # 8 additive ADMIT (changed)
-    ("advisor", "ask", 1, 1, True, "soft"),  # 9 reserved held
-    ("any", "ask", 1, 2, True, "abs_hard"),  # 10 total>=3 carved
-    ("hop", None, 2, 0, True, None),  # 11 hop free_slots>=1
-    ("hop", None, 3, 0, True, "hard"),  # 12 hop at hard
+    ("advisor", "ask", 2, 0, True, None),  # 6 ADMIT
+    ("advisor", "ask", 2, 1, True, None),  # 7 ADMIT
+    ("advisor", "ask", 3, 0, True, None),  # 8 ADMIT
+    ("advisor", "ask", 1, 1, True, None),  # 9 ADMIT (soft advisory)
+    ("any", "ask", 1, 2, True, None),  # 10 ADMIT
+    ("hop", None, 2, 0, True, None),  # 11 hop ADMIT
+    ("hop", None, 3, 0, True, None),  # 12 hop ADMIT
     ("unknown", None, 1, 0, True, None),  # 14 fail-closed seat, room
     ("advisor_soft_bypass", "ask", 2, 0, True, None),  # 15
-    ("advisor_soft_held", "ask", 1, 1, True, "soft"),  # 16
+    ("advisor_soft_held", "ask", 1, 1, True, None),  # 16 ADMIT
 ]
 
 
@@ -107,12 +107,12 @@ def test_state_table_row(
 
 
 def test_row8_additive_only_changes_verdict() -> None:
-    """Row 8: steady carved at total=3 refuses; additive at seat=3 admits advisor."""
+    """Global hard ceiling is advisory — carved and additive both admit."""
     steady_admit, steady_ref = evaluate_new_admission(
         "ask", seat_count=2, other_count=1, unattended=True
     )
-    assert steady_admit is False
-    assert steady_ref == "abs_hard"
+    assert steady_admit is True
+    assert steady_ref is None
     assert admission_regime(3) == "additive"
     additive_admit, additive_ref = evaluate_new_admission(
         "ask", seat_count=3, other_count=0, unattended=True
@@ -122,16 +122,16 @@ def test_row8_additive_only_changes_verdict() -> None:
 
 
 def test_operator_proxy_never_consumes_reserve() -> None:
-    """AC1: seat at cap cannot use reserved slot in carved regime."""
+    """Global seat stream cap is advisory — carved regime still admits."""
     admit, label = evaluate_new_admission(
         "operator-proxy", seat_count=2, other_count=0, unattended=True
     )
-    assert admit is False
-    assert label == "seat_cap"
+    assert admit is True
+    assert label is None
 
 
 def test_boundary_walk_occupancy_convergence() -> None:
-    """AC3: walk seat occupancy down through the regime boundary."""
+    """Walk occupancy — global limits advisory; all evaluate paths admit."""
     steps: list[tuple[int, int, bool, str]] = []
 
     def _probe(seat: int, other: int) -> tuple[bool, str | None]:
@@ -142,33 +142,28 @@ def test_boundary_walk_occupancy_convergence() -> None:
         steps.append((seat, other, admit, regime))
         return admit, label
 
-    # Grandfather: 3 OP seats, no advisor — additive admits advisor
     admit, label = _probe(3, 0)
     assert admit is True
     assert admission_regime(3) == "additive"
 
-    # After advisor occupies additive slot: total=4, refuse
     admit, label = _probe(3, 1)
-    assert admit is False
-    assert label == "abs_hard"
+    assert admit is True
+    assert label is None
 
-    # One OP releases: carved regime, total=3, advisor full — refuse
     admit, label = _probe(2, 1)
     assert admission_regime(2) == "carved"
-    assert admit is False
-    assert label == "abs_hard"
+    assert admit is True
+    assert label is None
 
-    # OP at carve line, reserve empty — admit into reserved slot
     admit, label = _probe(2, 0)
     assert admission_regime(2) == "carved"
     assert admit is True
 
-    # Steady carved: seat cap blocks OP, advisor uses reserve
     seat_admit, seat_label = evaluate_new_admission(
         "operator-proxy", seat_count=2, other_count=0, unattended=True
     )
-    assert seat_admit is False
-    assert seat_label == "seat_cap"
+    assert seat_admit is True
+    assert seat_label is None
     adv_admit, _ = evaluate_new_admission(
         "ask", seat_count=2, other_count=0, unattended=True
     )
@@ -198,18 +193,18 @@ def test_escalation_lane_refusal_carved_hard_full() -> None:
     rows = [_row("operator-proxy") for _ in range(2)] + [_row("ask")]
     snap = _snap(rows)
     refuse, label = escalation_lane_refusal(snap, unattended=True, purpose="ask")
-    assert refuse is True
-    assert label == "hard"
+    assert refuse is False
+    assert label is None
 
 
-def test_purpose_lane_refusal_blocks_seat_at_cap() -> None:
+def test_purpose_lane_refusal_global_seats_advisory() -> None:
     rows = [_row("operator-proxy") for _ in range(2)]
     snap = _snap(rows)
     refuse, label = purpose_lane_refusal(
         snap, purpose="operator-proxy", unattended=True
     )
-    assert refuse is True
-    assert label == "seat_cap"
+    assert refuse is False
+    assert label is None
 
 
 def test_purpose_lane_refusal_wires_hop_succession() -> None:
@@ -301,12 +296,12 @@ def test_dual_advisor_no_seat_admits() -> None:
     assert label is None
 
 
-def test_third_advisor_no_seat_is_advisor_cap() -> None:
+def test_third_advisor_no_seat_admits() -> None:
     admit, label = evaluate_new_admission(
         "ask", seat_count=0, other_count=2, unattended=True
     )
-    assert admit is False
-    assert label == "advisor_cap"
+    assert admit is True
+    assert label is None
 
 
 def test_attended_seat_plus_advisor_admits_second_advisor() -> None:
@@ -317,12 +312,12 @@ def test_attended_seat_plus_advisor_admits_second_advisor() -> None:
     assert label is None
 
 
-def test_purpose_lane_refusal_advisor_cap_not_hard() -> None:
+def test_purpose_lane_refusal_advisor_cap_advisory() -> None:
     rows = [_row("ask") for _ in range(2)]
     snap = _snap(rows)
     refuse, label = purpose_lane_refusal(snap, purpose="ask", unattended=True)
-    assert refuse is True
-    assert label == "advisor_cap"
+    assert refuse is False
+    assert label is None
 
 
 def test_seat_floor_constant() -> None:

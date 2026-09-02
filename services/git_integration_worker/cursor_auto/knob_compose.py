@@ -21,10 +21,8 @@ from effort_vocabulary import WIRE_LADDER
 
 from services.git_integration_worker.cursor_auto.wire_map import _MODEL_TABLE
 
-_JUDGMENT_CONTRACTS = frozenset({"investigate", "seed"})
-# Leanest accepted Anthropic window. Catalog default is 1m; leaving context
-# unset re-primes the capped Other Models pool on every judgment step.
-_ANTHROPIC_JUDGMENT_KNOBS = {"thinking": "true", "context": "300k"}
+# Sonnet-5 auto defaults always pin 1m context (operator directive 2026-09-01).
+_SONNET_AUTO_KNOBS = {"thinking": "true", "context": "1m"}
 
 
 def clamp_effort_to_accepted(
@@ -127,10 +125,10 @@ def compose_model_knobs(
 
     Grok's ListModels catalog default is ``fast=true`` (speed over quality). Auto
     fills ``fast=false`` when the knob is absent so the bridge never inherits
-    that catalog speed default. This is a **default, not a pin** — an explicit
-    ``fast`` already on ``model_knobs`` is preserved. Catalog
-    ``default_variant`` stays ListModels-true for freshness parity. No standing
-    Auto intent uses grok-4.6 ``fast=true``.
+    that catalog speed default. Composer omit-path fills ``fast=true`` on every
+    surface so mechanical dispatches stay on the fast variant unless explicitly
+    pinned ``fast=false``. This is a **default, not a pin** — an explicit
+    ``fast`` already on ``model_knobs`` is preserved.
     """
     knobs: dict[str, str] = dict(model.get("model_knobs") or {})
     model_id = str(model.get("resolved_model_id") or "").strip()
@@ -147,6 +145,17 @@ def compose_model_knobs(
                 and "fast" not in knobs
             ):
                 knobs["fast"] = "false"
+            if (
+                bare == "composer-2.5"
+                and "fast" in supported_knobs(bare)
+                and "fast" not in knobs
+            ):
+                knobs["fast"] = "true"
+            if bare == "claude-sonnet-5":
+                card_knobs = supported_knobs(bare)
+                for knob_name, knob_value in _SONNET_AUTO_KNOBS.items():
+                    if knob_name in card_knobs and knob_name not in knobs:
+                        knobs[knob_name] = knob_value
     requested = str(effort.get("resolved_effort") or "").strip().lower()
     if not model_id or not requested:
         return knobs
@@ -157,10 +166,4 @@ def compose_model_knobs(
     if name is None:
         return knobs
     knobs[name] = value
-    contract_key = (contract or "answer").strip().lower()
-    if contract_key in _JUDGMENT_CONTRACTS and bare is not None:
-        card_knobs = supported_knobs(bare)
-        for knob_name, knob_value in _ANTHROPIC_JUDGMENT_KNOBS.items():
-            if knob_name in card_knobs and knob_name not in knobs:
-                knobs[knob_name] = knob_value
     return knobs

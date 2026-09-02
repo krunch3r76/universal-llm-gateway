@@ -169,12 +169,12 @@ def _capacity_fields_from_snapshot(snap: dict[str, Any]) -> dict[str, Any]:
 
 
 def evaluate_capacity_gate(snap: dict[str, Any]) -> CapacityGateResult:
-    """Evaluate hop capacity gate from an already-read CDP lane snapshot."""
+    """Report capacity scalars from a CDP lane snapshot.
+
+    ``at_hard_limit`` / ``free_slots`` are advisory — hop cadence does not block
+    on global lane limits (operator directive 2026-09-01).
+    """
     fields = _capacity_fields_from_snapshot(snap)
-    if fields["at_hard_limit"]:
-        return CapacityGateResult(blocked=True, label="hard", **fields)
-    if fields["free_slots"] < 1:
-        return CapacityGateResult(blocked=True, label="hard", **fields)
     return CapacityGateResult(blocked=False, label=None, **fields)
 
 
@@ -185,10 +185,8 @@ def capacity_blocks_hop(
 ) -> CapacityGateResult:
     """Return capacity verdict + snapshot fields for a hop-cadence admit decision.
 
-    Hop cadence is a seat *replacement* within hard=3: admit when ``free_slots >= 1``
-    so a successor window can occupy the last hard slot while the predecessor
-    streams out. The generic unattended soft gate (``escalation_lane_refusal`` with
-    ``at_soft_limit``) requires ``free_slots >= 2`` and must not apply here.
+    Capacity scalars are recorded on the hop decision for observability; global
+    ``LANE_HARD_LIMIT`` no longer blocks succession fires.
     """
     if snap is not None:
         return evaluate_capacity_gate(snap)

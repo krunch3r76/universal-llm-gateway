@@ -266,17 +266,17 @@ body + `cortex://`* explicitly so the seat does not answer into an artifact card
 ## Parallel Chrome (BINDING)
 
 **DEFAULT:** `register_lane` / `project-ask --register`. Soft=**2**, hard=**3**
-concurrent for recorded **stream** admission.
+are **advisory** metrics on recorded **stream** admission (`at_soft_limit`,
+`at_hard_limit`, `free_slots`) — they do **not** refuse submit-path or hop-cadence
+admission (operator directive 2026-09-01). Per-lane seat uniqueness still applies
+(one holder per `parent_thread`, plus one hop-succession overlap).
 
-**purpose=ask (BINDING — a:30435):** read `other_count` vs `advisor_reserve`,
-not `free_slots` / `at_hard_limit`. Current gate: a second unattended ask is
-refused when `other_count >= advisor_reserve` (today `1`) even if
-`free_slots=2` and `at_hard_limit=false`. Those two fields are **stream**
-headroom (seat / operator-proxy), not ask-mint room. Occupancy-policy change
-is a separate todo — describe the live gate, do not assume two asks are legal.
+**purpose=ask:** `other_count` / `advisor_reserve` describe occupancy class — global
+count ceilings no longer block mint. Use `free_slots` / `at_hard_limit` as **signals**
+for orchestrator pacing, not hard gates.
 
 Use `free_slots` / `at_hard_limit` from the recorded admission projection
-for stream (seat) capacity, not drain-only `effective_count`.
+for stream headroom telemetry, not drain-only `effective_count`.
 `effective_count` is the recorded execution count for restart state; live
 browser attachments are diagnostic evidence only. `live_cse_count` remains
 unique normalized session URLs and `live_cse_target_count` preserves duplicate

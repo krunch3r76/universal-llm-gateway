@@ -1,5 +1,5 @@
 ---
-description: Gateway commit extensions — journal awareness, doc-check, RAG indexing
+description: Gateway commit extensions — agent-transcript/bus-thread intent trace, doc-check
 alwaysApply: false
 globs: []
 ---
@@ -21,13 +21,31 @@ is self-contained without relying on the hook mutating the index mid-commit.
 
 Skip when the commit touches neither event sources nor `docs/event-contracts.md`.
 
-## Pre-Commit: Journal Cross-Reference
+## Pre-Commit: Intent Trace (Agent-Transcript / Bus-Thread)
 
-Before writing commit messages, surface relevant journal entries from `tasks/journal/index.yaml`:
-1. **Timestamp**: `git log -1 --format="%ct"` → include entries where `opened_ts` > last commit timestamp
-2. **File overlap**: include entries whose `files` list intersects staged files (secondary signal)
+`tasks/journal/index.yaml` is gitignored (`tasks/*` in `.gitignore`), local-only, and stale —
+last touched 2026-05-28 while journal `.md` entries kept being written after that (e.g.
+`tasks/journal/2026-08-15-7244-lane-mint-unbrick.md`) without ever being indexed. It is not a
+reliable intent source for commit messages. Trace intent from the two live provenance channels
+instead:
 
-Union both sets; prefer timestamp as the primary signal.
+1. **Agent-transcript overlap**: for each changed file (or natural group sharing one causal
+   change), `rg -l '<exact path>' <agent-transcripts dir>` (per `cursor-environment_ws.mdc`:
+   `~/.cursor/projects/<workspace-slug>/agent-transcripts/`). Multiple hits → prefer the
+   transcript with the newest mtime. Read the turns around the match for the stated goal, not
+   just the tool-call args.
+2. **Bus-thread overlap**: search bus threads for the same paths/slug (e.g.
+   `agent_bus_read(tool="threads", arguments={"query": "<path or slug>"})`). A thread whose
+   body or `files_expected` names the changed paths carries commissioning intent a transcript
+   alone may not.
+3. **Both resolve** → use both — transcript for local narrative, thread for cross-agent/commission
+   context. Do not discard one in favor of the other.
+4. **Neither resolves** (manual edit, pre-existing dirty tree, tooling-only touch) → fall back to
+   diff-only inference: describe *what* changed, do not invent a *why*. Expected for a fraction
+   of any real commit, not an error condition — do not block the commit on it.
+
+`SearchConversations` is a fallback when a literal path grep misses (renamed file, narrative-only
+mention) — query on the slug/feature name, not the raw path.
 
 ## Pre-Commit: Architecture Doc Check
 
@@ -37,15 +55,3 @@ Follow the `/doc-check` procedure. Use changed files already collected — no re
 - Uncertain: note in commit body: "docs/architecture/{file}.md may need updating"
 
 Skip for documentation-only or config-only changes.
-
-## Post-Commit: Journal Back-References
-
-For each overlapping journal entry:
-- Append to `## Commits` section: `- {hash}: {one-line summary}`
-- Best-effort RAG re-index:
-  ```bash
-  curl -sf -X POST http://localhost:8100/index \
-    -H 'Content-Type: application/json' \
-    -d '{"path": "ABSOLUTE_PATH_TO_JOURNAL_FILE"}'
-  ```
-  If RAG is down, note and move on. Files on disk are ground truth.

@@ -324,7 +324,7 @@ async def test_launch_path_registers_lane(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 @pytest.mark.asyncio
-async def test_hard_limit_skips_register(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_at_hard_limit_still_mints_lane(monkeypatch: pytest.MonkeyPatch) -> None:
     lanes = [_reg(f"reg-{i}") for i in range(LANE_HARD_LIMIT)]
     monkeypatch.setattr(
         "claude_bundles.cdp_registry.list_active",
@@ -334,19 +334,19 @@ async def test_hard_limit_skips_register(monkeypatch: pytest.MonkeyPatch) -> Non
         "claude_bundles.cdp_registry.count_capacity_lanes",
         lambda: LANE_HARD_LIMIT,
     )
-    register = MagicMock()
+    fake_reg = _reg("reg-new")
+    register = MagicMock(return_value=fake_reg)
     monkeypatch.setattr(
         "cdp_ask.followup_reattach.cdp_registry.register_lane", register
     )
     monkeypatch.setattr(
         "cdp_ask.followup_reattach.connect_cdp",
-        _connect_factory(fail=True),
+        _connect_factory(),
     )
 
     outcome = await ensure_cse_attached(CSE_A, holder="h")
-    assert outcome.ok is False
-    assert outcome.error == "lane_capacity_exhausted"
-    register.assert_not_called()
+    assert outcome.ok is True
+    assert outcome.error != "lane_capacity_exhausted"
 
 
 @pytest.mark.asyncio

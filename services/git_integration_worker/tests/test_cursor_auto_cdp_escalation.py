@@ -74,7 +74,7 @@ def test_assess_escalation_pin_refuses_unknown_wire():
         assert value in block
 
 
-def test_escalation_lane_refusal_hard():
+def test_escalation_lane_refusal_hard_advisory():
     rows = [
         {"purpose": "operator-proxy", "status": "running"},
         {"purpose": "operator-proxy", "status": "running"},
@@ -84,11 +84,11 @@ def test_escalation_lane_refusal_hard():
         {"rows": rows, "at_hard_limit": True, "at_soft_limit": True, "free_slots": 0},
         unattended=True,
     )
-    assert refuse is True
-    assert lane == "hard"
+    assert refuse is False
+    assert lane is None
 
 
-def test_escalation_lane_refusal_soft_unattended():
+def test_escalation_lane_refusal_soft_unattended_advisory():
     rows = [
         {"purpose": "operator-proxy", "status": "running"},
         {"purpose": "ask", "status": "running"},
@@ -97,8 +97,8 @@ def test_escalation_lane_refusal_soft_unattended():
         {"rows": rows, "at_hard_limit": False, "at_soft_limit": True, "free_slots": 1},
         unattended=True,
     )
-    assert refuse is True
-    assert lane == "soft"
+    assert refuse is False
+    assert lane is None
 
 
 def test_escalation_lane_refusal_soft_attended_ok():
@@ -222,13 +222,14 @@ def test_process_job_commissions_cdp_on_answer(monkeypatch):
     assert "reasoning_effort" in commission.await_args.kwargs
 
 
-def test_process_job_cdp_lane_full_terminalizes(monkeypatch):
-    """AC-S2-lane: hard limit refuses unattended escalation without holding."""
+def test_process_job_cdp_escalation_proceeds_at_reported_hard_limit(monkeypatch):
+    """Hard-limit telemetry no longer blocks unattended CDP escalation."""
     from services.git_integration_worker.cursor_auto.handler import process_job
+    from services.git_integration_worker.tests.commission_spy import commission_spy
 
     bus = AsyncMock()
     bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
-    commission = AsyncMock()
+    commission = commission_spy(execution_id="exec-at-hard")
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.handler.commission_cdp_escalation",
         commission,
@@ -246,6 +247,10 @@ def test_process_job_cdp_lane_full_terminalizes(monkeypatch):
             "free_slots": 0,
         },
     )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.handler.emit_cdp_effort_bind",
+        lambda **_: None,
+    )
 
     job = AutoJob(
         job_id="j-lane-full",
@@ -261,12 +266,8 @@ def test_process_job_cdp_lane_full_terminalizes(monkeypatch):
         contract="answer",
     )
     result = asyncio.run(process_job(job, bus=bus))
-    assert result["terminal_status"] == "status:blocked"
-    commission.assert_not_awaited()
-    payload = json.loads(bus.reply.await_args_list[-1].kwargs["body"])
-    assert payload["reason"] == "cdp_lane_full"
-    assert payload["lane"] == "hard"
-    assert payload["free_slots"] == 0
+    assert result["terminal_status"] == "status:done"
+    commission.assert_awaited_once()
 
 
 def test_process_job_desired_model_cdp_coalesces_to_escalation(monkeypatch):

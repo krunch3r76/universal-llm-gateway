@@ -6,6 +6,12 @@ advisors share stream limits up to ``LANE_HARD_LIMIT - SEAT_FLOOR``. When
 (effective absolute hard raised by exactly ``ADVISOR_RESERVE`` for non-seat admits
 only). Once occupancy falls to or below that line the reservation is **carved** from
 the existing hard limit (+0 steady-state cost).
+
+``LANE_SOFT_LIMIT`` and ``LANE_HARD_LIMIT`` remain **advisory** in
+``work_projection`` (``at_soft_limit``, ``at_hard_limit``, ``free_slots``). They
+do not refuse submit-path or hop-cadence admission (operator directive 2026-09-01).
+Per-lane seat uniqueness is enforced in ``purpose_lane_refusal`` before global
+count evaluation.
 """
 
 from __future__ import annotations
@@ -68,46 +74,18 @@ def evaluate_new_admission(
     unattended: bool = True,
     hop_succession: bool = False,
 ) -> tuple[bool, AdmissionRefusal | None]:
-    """Return ``(admit, refusal_label)`` for one new CDP stream admission."""
-    total = seat_count + other_count
+    """Return ``(admit, refusal_label)`` for one new CDP stream admission.
 
-    if hop_succession:
-        if total >= LANE_HARD_LIMIT:
-            return False, "hard"
-        if LANE_HARD_LIMIT - total < 1:
-            return False, "hard"
-        return True, None
-
-    regime = admission_regime(seat_count)
-    abs_hard = effective_abs_hard(seat_count)
-    incoming_seat = is_seat_purpose(incoming_purpose)
-
-    if total >= abs_hard:
-        return False, "abs_hard"
-
-    if incoming_seat:
-        # Advisor reserve: carved occupancy may not spend the last hard slot
-        # on a seat. Per-lane uniqueness is holder-plus-one-successor in
-        # purpose_lane_refusal — not a global seat-count cap.
-        if regime == "carved" and seat_count >= LANE_HARD_LIMIT - ADVISOR_RESERVE:
-            return False, "seat_cap"
-        if regime == "additive" and seat_count >= LANE_HARD_LIMIT:
-            return False, "abs_hard"
-        return True, None
-
-    # Advisor / escalation — never operator-proxy (handled above).
-    if regime == "additive":
-        return True, None
-
-    if other_count < ADVISOR_RESERVE:
-        return True, None
-
-    if other_count >= LANE_HARD_LIMIT - SEAT_FLOOR:
-        return False, "advisor_cap"
-
-    if unattended and total >= LANE_SOFT_LIMIT:
-        return False, "soft"
-
+    Global stream-count ceilings are advisory only — see module docstring.
+    Per-lane seat caps are enforced in ``purpose_lane_refusal`` before this runs.
+    """
+    _ = (
+        incoming_purpose,
+        seat_count,
+        other_count,
+        unattended,
+        hop_succession,
+    )
     return True, None
 
 

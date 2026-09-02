@@ -1,6 +1,6 @@
 Stage changes and write a commit message.
 
-**Workspace extensions** (this repo): read `.cursor/rules/commit_ws.mdc` — event-catalog sync (`gen-event-catalog`), journal cross-reference, `/doc-check` on changed files, post-commit journal back-references and optional RAG re-index. Cursor `@commit_ws.mdc` resolves to the same file; do not rely on repo-root globs for `commit_ws.mdc` (it lives under `.cursor/rules/`).
+**Workspace extensions** (this repo): read `.cursor/rules/commit_ws.mdc` — event-catalog sync (`gen-event-catalog`), agent-transcript/bus-thread intent trace, `/doc-check` on changed files. Cursor `@commit_ws.mdc` resolves to the same file; do not rely on repo-root globs for `commit_ws.mdc` (it lives under `.cursor/rules/`).
 
 ## Instructions
 
@@ -55,8 +55,8 @@ EOF
 
 ### 6. Workspace Post-Commit
 
-Follow `.cursor/rules/commit_ws.mdc` post-commit steps (journal `## Commits` lines,
-RAG index curl, etc.). If that file is missing, skip this step.
+Follow any post-commit steps defined in `.cursor/rules/commit_ws.mdc`. If that file is
+missing or defines none, skip this step.
 
 ### 7. Report
 

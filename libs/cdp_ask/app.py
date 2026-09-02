@@ -140,8 +140,8 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         """Return recorded executions, stream-admission capacity, and listable seats.
 
         ``busy`` describes pending/running satellite executions only. Lane
-        admission uses ``free_slots`` / ``at_hard_limit`` (soft=2, hard=3)
-        for recorded streams only — not Xvfb window-mint room. ``x_clients`` /
+        ``soft_limit`` / ``hard_limit`` (2/3) and ``free_slots`` / ``at_hard_limit``
+        are **advisory** stream-admission metrics — they do not refuse submits.
         ``x_exhausted`` on the same snapshot are the display-capacity axis. ``rows`` lists
         per-flight ``registration_id`` / ``holder`` / ``purpose``. ``seated_rows``
         is always a list (including ``[]``) from this host's registry
