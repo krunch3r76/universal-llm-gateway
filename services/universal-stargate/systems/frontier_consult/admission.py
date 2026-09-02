@@ -536,6 +536,23 @@ def resolve_handoff_contract(
     return "consult", "role_default"
 
 
+def _cursor_sdk_omit_model(*, request_id: str) -> str:
+    """Resolve omit-model for ``seat=cursor-sdk`` from the workflow registry."""
+    from implement_admission.routing import load_route_policy
+    from implement_admission.workflow_registry import load_auto_judgment_default_model
+
+    try:
+        return load_auto_judgment_default_model(load_route_policy())
+    except ValueError as exc:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="model",
+            reason=str(exc),
+            status_code=422,
+            code="sdk_generate_model_invalid",
+        ) from exc
+
+
 def resolve_handoff_seat(
     *,
     seat: str,
@@ -567,7 +584,7 @@ def resolve_cursor_sdk_handoff_seat(
                  ∧ tool_surface == sdk
 
     Returns ``(to_agent, family, platform, resolved_model)`` where
-    ``resolved_model`` is the profile ``default_model``.
+    ``resolved_model`` is ``workflows.auto_judgment.model``.
     """
     canonical = normalize_agent_slug(seat)
     if canonical != "cursor-sdk":
@@ -604,15 +621,7 @@ def resolve_cursor_sdk_handoff_seat(
             status_code=422,
             code="handoff_seat_invalid",
         )
-    default_model = profile.default_model
-    if not default_model:
-        raise FrontierEndpointError(
-            request_id=request_id,
-            field="seat",
-            reason="cursor-sdk profile has no default_model",
-            status_code=422,
-            code="handoff_seat_invalid",
-        )
+    default_model = _cursor_sdk_omit_model(request_id=request_id)
     return "cursor-sdk", "cursor", "sdk", default_model
 
 
@@ -715,12 +724,15 @@ def resolve_auto_seat_generate_target(
             status_code=422,
             code="sdk_substrate_required",
         )
-    resolved_model = model or profile.default_model
+    resolved_model = model or _cursor_sdk_omit_model(request_id=request_id)
     if not resolved_model:
         raise FrontierEndpointError(
             request_id=request_id,
             field="model",
-            reason="cursor-sdk requires default_model or explicit model=",
+            reason=(
+                "cursor-sdk requires explicit model= or "
+                "workflows.auto_judgment.model"
+            ),
             status_code=422,
             code="sdk_generate_model_invalid",
         )

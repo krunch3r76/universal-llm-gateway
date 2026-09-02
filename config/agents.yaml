@@ -271,9 +271,8 @@ profiles:
     # Automated SDK executor — team_dispatch(op=generate, seat=cursor-sdk) routes
     # to git_integration_worker (platform=sdk); NOT cloud CapabilityDispatch.
     provider: cursor
-    # Seat-level Stargate omit-model default (distinct from workflows.* — not folded).
-    # Must match route_policy.yaml workflows.auto_judgment.model (R9 verify_seat_default_parity at boot).
-    default_model: cursor/composer-2.5
+    # Omit-model default: config/routing/route_policy.yaml workflows.auto_judgment.model
+    # (Stargate admission + GIW Auto lane share this registry SOT — F1 fold).
     tool_surface: sdk
     mcp_surface: code
     delivery: auto
@@ -292,7 +291,7 @@ profiles:
     # implement is carried by contract, not model; ranking, bind and review are
     # outsourced to CDP (cdp/fable, cdp/opus-5). Explicit Other-Models pins admit on
     # generate through the Stargate fence explicit-pin branch; the omit path never
-    # resolves to them. Do not flip default_model; do not conflate with API xai/grok-4.6.
+    # resolves to them.
     allowed_models: []
 
   subagent/subagent:

@@ -9,17 +9,16 @@ import pytest
 
 from implement_admission.routing import load_route_policy
 from implement_admission.workflow_registry import (
-    AUTO_JUDGMENT_WORKFLOW,
     AUTO_OMIT_CONTRACTS,
     CHECK_REVIEW_WORKFLOW,
     MECHANICAL_WORKFLOW,
     assert_workflow_registry_boot_conformance,
     embed_workflow_registry_block,
+    load_auto_judgment_default_model,
     load_workflow_registry,
     parse_workflow_registry,
     registry_errors,
     render_workflow_registry_block,
-    verify_seat_default_parity,
     verify_workflow_registry_conformance,
     verify_workflow_registry_drift,
 )
@@ -35,20 +34,8 @@ def test_live_file_conformance() -> None:
     assert verify_workflow_registry_conformance() == []
 
 
-def test_verify_seat_default_parity_live() -> None:
-    assert verify_seat_default_parity() == []
-
-
-def test_r9_seat_default_mismatch(tmp_path: Path) -> None:
-    policy = _base_policy()
-    policy["workflows"][AUTO_JUDGMENT_WORKFLOW]["model"] = "cursor/gpt-5.6-terra"
-    agents = tmp_path / "agents.yaml"
-    agents.write_text(
-        "profiles:\n  cursor/sdk:\n    default_model: cursor/composer-2.5\n",
-        encoding="utf-8",
-    )
-    errors = verify_seat_default_parity(policy=policy, agents_path=agents)
-    assert any("R9:" in e and "cursor/composer-2.5" in e for e in errors)
+def test_load_auto_judgment_default_model_live() -> None:
+    assert load_auto_judgment_default_model(load_route_policy()) == "cursor/composer-2.5"
 
 
 def test_assert_workflow_registry_boot_conformance_passes() -> None:
@@ -254,7 +241,7 @@ def test_render_workflow_registry_block_lists_live_slots() -> None:
     assert "| check_review |" in block
     assert "| auto_judgment |" in block
     assert "workflows.auto_judgment.model" in block
-    assert "not folded" in block
+    assert "GIW Auto lane" in block
     assert "| answer | medium |" in block
 
 

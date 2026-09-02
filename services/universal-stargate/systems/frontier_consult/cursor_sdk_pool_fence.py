@@ -28,7 +28,8 @@ def reject_other_models_pool_generate(
       admit(model, resolved) ⟺ ¬other_models(resolved) ∨ explicit_pin(model)
 
     ``model`` is the raw request pin; it is ``None`` on the omit path, where
-    ``resolved_model`` came from ``profile.default_model``. An explicit pin naming
+    ``resolved_model`` came from ``workflows.auto_judgment.model``. An explicit
+    pin naming
     an Other Models id is a deliberate, sparing operator choice (``assertion:31945``)
     and is admitted with an advisory ``frontier.sdk.pool.exempted`` event. The omit
     path may never drift onto the capped pool through a profile default: hard 422

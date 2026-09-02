@@ -7,7 +7,8 @@ from typing import Any
 import pytest
 from agent_seat import AgentMeta, HydrationBundle
 from agent_seat.dispatch_role_catalog import auto_seats, generate_roles
-from agent_seat.profiles import get_profile
+from implement_admission.routing import load_route_policy
+from implement_admission.workflow_registry import load_auto_judgment_default_model
 
 from .admission import (
     FrontierEndpointError,
@@ -68,7 +69,7 @@ def test_conductor_omit_model_resolves_profile_default() -> None:
         packet_kind="conductor",
     )
     assert resolved == "cursor/composer-2.5"
-    assert resolved == get_profile("cursor", "sdk").default_model
+    assert resolved == load_auto_judgment_default_model(load_route_policy())
 
 
 def test_conductor_body_kind_omit_model_resolves_composer() -> None:

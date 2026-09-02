@@ -159,9 +159,8 @@ authored — compose leg only (`lean-context-dispatch-first` non-primary gate).
 
 - **policy_version:** `2026-09-02`
 
-**Stargate seat default:** `agents.yaml` `cursor/sdk.default_model` is the
-Stargate omit-model authority for `team_dispatch(seat=cursor-sdk)`; it must
-match `workflows.auto_judgment.model` below (documented invariant — not folded).
+**Stargate omit-model default:** `workflows.auto_judgment.model` (same SOT as
+GIW Auto lane `resolve_desired_model(auto)` for judgment contracts).
 
 | workflow | seat | model | contracts |
 |---|---|---|---|

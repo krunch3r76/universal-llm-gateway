@@ -8,7 +8,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import yaml
 from contract_vocab import CANONICAL_CONTRACTS
 from cursor_capabilities import CURSOR_MODEL_CAPABILITIES, canonical_cursor_bare_id
 from effort_vocabulary import WIRE_LADDER
@@ -17,7 +16,6 @@ from model_id import ModelId
 from implement_admission.routing import default_policy_path, load_route_policy
 
 _ULG_ROOT = Path(__file__).resolve().parents[2]
-_DEFAULT_AGENTS_PATH = _ULG_ROOT / "config" / "agents.yaml"
 _CONSULT_ROUTING_SKILL_SOT = (
     _ULG_ROOT / "cursor-plugins/ulg-ecosystem/skills/consult-routing/SKILL.md"
 )
@@ -26,7 +24,6 @@ AUTO_OMIT_CONTRACTS: frozenset[str] = frozenset(CANONICAL_CONTRACTS) | {"light-b
 MECHANICAL_WORKFLOW = "mechanical_implement"
 CHECK_REVIEW_WORKFLOW = "check_review"
 AUTO_JUDGMENT_WORKFLOW = "auto_judgment"
-_CURSOR_SDK_SEAT_KEY = "cursor/sdk"
 
 
 @dataclass(frozen=True, slots=True)
@@ -346,55 +343,20 @@ def load_workflow_registry(path: Path | None = None) -> WorkflowRegistry:
     return parse_workflow_registry(load_route_policy(policy_path))
 
 
-def default_agents_path() -> Path:
-    """Return the repo ``config/agents.yaml`` path."""
-    return _DEFAULT_AGENTS_PATH
-
-
-def verify_seat_default_parity(
-    *,
-    policy: dict[str, Any] | None = None,
-    agents_path: Path | None = None,
-) -> list[str]:
-    """R9 — ``agents.yaml`` ``cursor/sdk.default_model`` == ``workflows.auto_judgment.model``."""
-    errors: list[str] = []
-    loaded = policy if policy is not None else load_route_policy()
-    workflows = loaded.get("workflows") or {}
-    auto = workflows.get(AUTO_JUDGMENT_WORKFLOW)
-    if not isinstance(auto, dict):
-        errors.append(
-            "R9: workflows.auto_judgment missing — cannot verify seat default parity"
+def load_auto_judgment_default_model(policy: dict[str, Any]) -> str:
+    """Return cursor-sdk omit-model default from ``workflows.auto_judgment``."""
+    workflows = policy.get("workflows")
+    if not isinstance(workflows, dict):
+        raise ValueError("route policy missing workflows mapping")
+    entry = workflows.get(AUTO_JUDGMENT_WORKFLOW)
+    if not isinstance(entry, dict):
+        raise ValueError(f"route policy missing workflows.{AUTO_JUDGMENT_WORKFLOW}")
+    model = entry.get("model")
+    if not isinstance(model, str) or not model.strip():
+        raise ValueError(
+            f"workflows.{AUTO_JUDGMENT_WORKFLOW}.model must be a non-empty string"
         )
-        return errors
-    expected_raw = auto.get("model")
-    if not isinstance(expected_raw, str) or not expected_raw.strip():
-        errors.append("R9: workflows.auto_judgment.model must be a non-empty string")
-        return errors
-    expected = expected_raw.strip()
-
-    path = agents_path or default_agents_path()
-    if not path.is_file():
-        errors.append(f"R9: agents.yaml not found at {path}")
-        return errors
-    with path.open(encoding="utf-8") as fh:
-        agents = yaml.safe_load(fh) or {}
-    profiles = agents.get("profiles") or {}
-    seat_entry = profiles.get(_CURSOR_SDK_SEAT_KEY)
-    if not isinstance(seat_entry, dict):
-        errors.append(f"R9: agents.yaml profiles.{_CURSOR_SDK_SEAT_KEY} missing")
-        return errors
-    seat_default = seat_entry.get("default_model")
-    if not isinstance(seat_default, str) or not seat_default.strip():
-        errors.append(
-            f"R9: agents.yaml profiles.{_CURSOR_SDK_SEAT_KEY}.default_model missing"
-        )
-        return errors
-    if seat_default.strip() != expected:
-        errors.append(
-            f"R9: agents.yaml profiles.{_CURSOR_SDK_SEAT_KEY}.default_model="
-            f"{seat_default.strip()!r} != workflows.auto_judgment.model={expected!r}"
-        )
-    return errors
+    return model.strip()
 
 
 def verify_workflow_registry_conformance(
@@ -404,14 +366,13 @@ def verify_workflow_registry_conformance(
     path = policy_path or default_policy_path()
     policy = load_route_policy(path)
     errors = registry_errors(policy)
-    errors.extend(verify_seat_default_parity(policy=policy))
     return errors
 
 
 def assert_workflow_registry_boot_conformance(
     *, policy_path: Path | None = None
 ) -> None:
-    """Deploy-time refusal — raise when the live registry or R9 parity is invalid."""
+    """Deploy-time refusal — raise when the live registry is invalid."""
     errors = verify_workflow_registry_conformance(policy_path=policy_path)
     if errors:
         raise ValueError(
@@ -433,9 +394,8 @@ def render_workflow_registry_block(policy: dict[str, Any] | None = None) -> str:
         "",
         f"- **policy_version:** `{loaded.get('policy_version', '')}`",
         "",
-        "**Stargate seat default:** `agents.yaml` `cursor/sdk.default_model` is the",
-        "Stargate omit-model authority for `team_dispatch(seat=cursor-sdk)`; it must",
-        "match `workflows.auto_judgment.model` below (documented invariant — not folded).",
+        "**Stargate omit-model default:** `workflows.auto_judgment.model` (same SOT as",
+        "GIW Auto lane `resolve_desired_model(auto)` for judgment contracts).",
         "",
         "| workflow | seat | model | contracts |",
         "|---|---|---|---|",
