@@ -83,6 +83,9 @@ async def prepare_cursor_sdk_generate(
     prompt_turn_number: int | None = None,
     prompt_bind_mode: str | None = None,
     packet_kind: str | None = None,
+    hop_from: str | None = None,
+    hop_seq: int | None = None,
+    hop_reason: str | None = None,
 ) -> PreparedCursorSdkHandle:
     """Validate, mint/reuse IDs, create pending thread; do not POST the worker."""
     from .light_bounded_ac_observer import (
@@ -509,4 +512,7 @@ async def prepare_cursor_sdk_generate(
         prompt_turn_number=prompt_turn_number,
         prompt_bind_mode=prompt_bind_mode,
         poll_after_turn=poll_after_turn,
+        hop_from=hop_from,
+        hop_seq=hop_seq,
+        hop_reason=hop_reason,
     )

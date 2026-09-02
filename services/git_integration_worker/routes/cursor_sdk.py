@@ -92,6 +92,9 @@ from services.git_integration_worker.cursor_sdk_closeout_trigger import (
     extract_turn_number,
     normalize_closeout_source_ref,
 )
+from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+    merge_conductor_closeout_hop_authority,
+)
 from services.git_integration_worker.cursor_sdk_concurrency_posture import (
     b_worktree_materialized,
     derive_concurrency_posture,
@@ -619,6 +622,9 @@ def _resolve_prompt(req: CursorDispatchRequest, source_repo: Path) -> str:
         dispatch_id=req.dispatch_id,
         has_packet_path=req.packet_path is not None,
         caller_agent=req.caller_agent,
+        hop_seq=req.hop_seq,
+        hop_from=req.hop_from,
+        hop_reason=req.hop_reason,
     )
     return f"{preamble}{packet_text}"
 
@@ -1074,6 +1080,11 @@ async def _mark_terminal_and_promote(
         dispatch_id=dispatch_id,
         terminal_status=terminal_status,
     )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        maybe_fire_conductor_hop_reactor,
+    )
+
+    await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
     if not terminal_emitted(dispatch_id):
         orphan_row = await asyncio.to_thread(
             load_ledger_row, ledger, dispatch_id=dispatch_id
@@ -1600,6 +1611,12 @@ async def _deliver_sdk_closeout(
             ),
         )
         await _terminate_link(bus, thread_id=req.thread_id, terminal_status="completed")
+        await asyncio.to_thread(
+            merge_conductor_closeout_hop_authority,
+            dispatch_id=req.dispatch_id,
+            closeout_body=delivery.body,
+            thread_id=req.thread_id,
+        )
         await _mark_terminal_and_promote(
             dispatch_id=req.dispatch_id,
             terminal_status="completed",
@@ -2573,28 +2590,36 @@ async def cursor_dispatch(
                 },
             )
     try:
-        cached = await asyncio.to_thread(
-            ledger.admit,
-            req=req,
-            fingerprint=fingerprint,
-            execution_id=req.execution_id,
-            caller_agent=req.caller_agent,
-            resolved_model=config.model_id,
-            admission=admission,
-            contract=contract,
-            source_repo=dispatch_git_str,
-            lease_key=lease_key,
-            read_only=effective_read_only,
-            worker_instance=controller.worker_id,
-            source_ref=candidate_source_ref,
-            work_key=candidate_work_key,
-            force=req.force,
-            nest_under=req.nest_under,
-            refuse_if_lease_held=req.refuse_if_lease_held,
-            concurrency_posture=concurrency_posture,
-            write_lease_slot_limit=slot_limit,
-            isolation_materialized=isolation_materialized,
-        )
+        admit_kwargs: dict[str, object] = {
+            "req": req,
+            "fingerprint": fingerprint,
+            "execution_id": req.execution_id,
+            "caller_agent": req.caller_agent,
+            "resolved_model": config.model_id,
+            "admission": admission,
+            "contract": contract,
+            "source_repo": dispatch_git_str,
+            "lease_key": lease_key,
+            "read_only": effective_read_only,
+            "worker_instance": controller.worker_id,
+            "source_ref": candidate_source_ref,
+            "work_key": candidate_work_key,
+            "force": req.force,
+            "nest_under": req.nest_under,
+            "refuse_if_lease_held": req.refuse_if_lease_held,
+            "concurrency_posture": concurrency_posture,
+            "write_lease_slot_limit": slot_limit,
+            "isolation_materialized": isolation_materialized,
+        }
+        if (
+            req.hop_seq is not None
+            and req.hop_from is not None
+            and req.hop_reason is not None
+        ):
+            admit_kwargs["hop_seq"] = req.hop_seq
+            admit_kwargs["hop_from"] = req.hop_from
+            admit_kwargs["hop_reason"] = req.hop_reason
+        cached = await asyncio.to_thread(ledger.admit, **admit_kwargs)
     except WriteLeaseHeld as exc:
         await _rollback_lane_b_mint_if_needed(
             dispatch_id=req.dispatch_id,

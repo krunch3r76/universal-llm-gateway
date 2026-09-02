@@ -297,6 +297,9 @@ def resolve_prompt_preamble(
     dispatch_id: str | None = None,
     has_packet_path: bool = False,
     caller_agent: str | None = None,
+    hop_seq: int | None = None,
+    hop_from: str | None = None,
+    hop_reason: str | None = None,
 ) -> str:
     """Assemble the worker prompt prefix for one cursor-sdk dispatch.
 
@@ -315,7 +318,11 @@ def resolve_prompt_preamble(
     gate also restates run-to-completion: the admit already authorizes driving
     every G-row and landing on green without an interim plan/merge pause
     (friction 29694/29693).
+
+    ``hop_seq`` / ``hop_from`` / ``hop_reason`` are wired through for R5 hop
+    preamble stamping; R4 does not yet render them into the prefix text.
     """
+    del hop_seq, hop_from, hop_reason
     contract = (handoff_contract or inferred_contract or "consult").lower()
     if prompt_preamble:
         preamble = prompt_preamble.strip()

@@ -461,6 +461,9 @@ async def dispatch_cursor_sdk_generate_route(
             read_only=getattr(body, "read_only", False),
             refuse_if_lease_held=getattr(body, "refuse_if_lease_held", False),
             packet_kind=getattr(body, "packet_kind", None),
+            hop_from=getattr(body, "hop_from", None),
+            hop_seq=getattr(body, "hop_seq", None),
+            hop_reason=getattr(body, "hop_reason", None),
         )
         if isinstance(result, dict):
             split_warning = consolidation_split_warning(

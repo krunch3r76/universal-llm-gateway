@@ -49,6 +49,9 @@ class PreparedCursorSdkHandle:
     prompt_turn_number: int | None = None
     prompt_bind_mode: str | None = None
     poll_after_turn: int | None = None
+    hop_from: str | None = None
+    hop_seq: int | None = None
+    hop_reason: str | None = None
 
 
 def mint_cursor_sdk_ids(*, request_id: str) -> tuple[str, str]:
@@ -108,6 +111,9 @@ def handle_to_dict(handle: PreparedCursorSdkHandle) -> dict[str, Any]:
         "prompt_turn_number": handle.prompt_turn_number,
         "prompt_bind_mode": handle.prompt_bind_mode,
         "poll_after_turn": handle.poll_after_turn,
+        "hop_from": handle.hop_from,
+        "hop_seq": handle.hop_seq,
+        "hop_reason": handle.hop_reason,
     }
 
 
@@ -152,4 +158,7 @@ def handle_from_dict(data: dict[str, Any]) -> PreparedCursorSdkHandle:
         prompt_turn_number=data.get("prompt_turn_number"),
         prompt_bind_mode=data.get("prompt_bind_mode"),
         poll_after_turn=data.get("poll_after_turn"),
+        hop_from=data.get("hop_from"),
+        hop_seq=data.get("hop_seq"),
+        hop_reason=data.get("hop_reason"),
     )
