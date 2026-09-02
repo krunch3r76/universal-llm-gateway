@@ -152,10 +152,10 @@ async def test_concurrent_cursor_sdk_dispatch_serializes(
         CursorDispatchLedger,
     )
     from services.git_integration_worker.cursor_sdk_closeout import SdkRunOutcome
+    from services.git_integration_worker.cursor_sdk_lane_regime import set_lane_b_regime
     from services.git_integration_worker.cursor_sdk_park import (
         release_or_restore_for_child_sync,
     )
-    from services.git_integration_worker.cursor_sdk_lane_regime import set_lane_b_regime
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
     monkeypatch.setenv("DATA_DIR", str(tmp_path))

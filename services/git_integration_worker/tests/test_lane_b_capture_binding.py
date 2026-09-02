@@ -14,11 +14,13 @@ from services.git_integration_worker.cursor_sdk_capture_binding import (
     CaptureBinding,
     binding_for_dispatch,
 )
-from services.git_integration_worker.cursor_sdk_dispatch_context import SdkDispatchContext
 from services.git_integration_worker.cursor_sdk_closeout import (
     SdkRunOutcome,
     capture_wt_baseline_with_hashes,
     prepare_closeout_delivery,
+)
+from services.git_integration_worker.cursor_sdk_dispatch_context import (
+    SdkDispatchContext,
 )
 from services.git_integration_worker.cursor_sdk_manifest import (
     registered_repo_roots,
