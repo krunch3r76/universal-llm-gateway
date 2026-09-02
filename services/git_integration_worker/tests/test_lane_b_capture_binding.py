@@ -19,6 +19,9 @@ from services.git_integration_worker.cursor_sdk_closeout import (
     capture_wt_baseline_with_hashes,
     prepare_closeout_delivery,
 )
+from services.git_integration_worker.cursor_sdk_dispatch_context import (
+    SdkDispatchContext,
+)
 from services.git_integration_worker.cursor_sdk_manifest import (
     registered_repo_roots,
     resolve_mount_root,
@@ -174,7 +177,7 @@ async def test_ac_s0_4_promoted_dispatch_rebuilds_lane_b_binding(
     captured: dict[str, object] = {}
 
     async def _capture_gated(**kwargs: object) -> None:
-        captured["binding"] = kwargs.get("binding")
+        captured["ctx"] = kwargs.get("ctx")
 
     monkeypatch.setattr(route_mod, "_run_sdk_dispatch_gated", _capture_gated)
     monkeypatch.setattr(route_mod, "_maybe_emit_giw_dispatched", lambda **_kw: None)
@@ -226,7 +229,10 @@ async def test_ac_s0_4_promoted_dispatch_rebuilds_lane_b_binding(
         request=None,
     )
 
-    binding = captured.get("binding")
+    ctx = captured.get("ctx")
+    assert isinstance(ctx, SdkDispatchContext)
+    binding = ctx.capture_binding
     assert isinstance(binding, CaptureBinding)
     assert binding.write_tree == wt.resolve()
     assert binding.write_tree != cfg.source_repo.resolve()
+    assert ctx.workspace_root == wt.resolve()

@@ -8,6 +8,7 @@ import pytest
 from cursor_sdk.types import ModelSelection
 
 from services.git_integration_worker.config import _DIFF_SCOPED_GATE_SCRIPT, load_config
+from services.git_integration_worker.cursor_sdk_capture_binding import CaptureBinding
 from services.git_integration_worker.cursor_sdk_context import (
     CursorSdkParityError,
     build_agent_options,
@@ -281,7 +282,16 @@ def test_build_agent_options_wires_model_and_local(
     dispatch_ws.mkdir()
     model = ModelSelection(id="composer-2.5")
 
-    opts = build_agent_options(repo, dispatch_ws, model)
+    binding = CaptureBinding(
+        lane="A",
+        write_tree=repo.resolve(),
+        receipt_tree=repo.resolve(),
+        mount_root=repo.resolve(),
+        repo_roots=(repo.resolve(),),
+    )
+    opts = build_agent_options(
+        repo, dispatch_ws, model, workspace_root=binding.write_tree
+    )
     assert opts.model == model
     assert opts.mode == "agent"
     assert opts.local is not None

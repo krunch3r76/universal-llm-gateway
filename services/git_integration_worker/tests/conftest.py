@@ -8,9 +8,47 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from services.git_integration_worker.cursor_sdk_capture_binding import CaptureBinding
+from services.git_integration_worker.cursor_sdk_dispatch_context import (
+    SdkDispatchContext,
+)
+
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
+
+
+def _ctx(
+    hub: Path,
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    dispatch_workspace: Path | None = None,
+    binding: CaptureBinding | None = None,
+    contract: str = "consult",
+) -> SdkDispatchContext:
+    """Build an SdkDispatchContext for route tests without touching the filesystem.
+
+    Defaults to a hub Lane-A binding whose write tree, receipt tree and mount
+    root are all ``hub`` — the shape the large majority of route tests assume.
+    Pass ``binding`` explicitly for Lane-B or satellite cases.
+    """
+    resolved = hub.resolve()
+    return SdkDispatchContext(
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        handoff_contract=contract,
+        hub=hub,
+        dispatch_workspace=dispatch_workspace if dispatch_workspace is not None else hub,
+        capture_binding=binding
+        or CaptureBinding(
+            lane="A",
+            write_tree=resolved,
+            receipt_tree=resolved,
+            mount_root=resolved,
+            repo_roots=(resolved,),
+        ),
+    )
 
 
 @pytest.fixture(scope="session", autouse=True)

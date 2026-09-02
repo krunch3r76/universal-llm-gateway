@@ -269,7 +269,7 @@ def build_agent_options(
     dispatch_workspace: Path,
     model: ModelSelection,
     *,
-    workspace_root: Path | None = None,
+    workspace_root: Path,
     real_home: Path | str | None = None,
     substrate_ctx: SubstrateDispatchContext | None = None,
     state_root: Path | str | None = None,
@@ -278,7 +278,7 @@ def build_agent_options(
     """Full create_agent options for IDE-parity cursor-sdk dispatch."""
     local = build_local_agent_options(
         dispatch_workspace,
-        workspace_root=workspace_root if workspace_root is not None else source_repo,
+        workspace_root=workspace_root,
         state_root=state_root,
     )
     local = merge_substrate_tools(local, substrate_ctx)
