@@ -968,10 +968,14 @@ def _run_sdk_sync(
             dispatch_id=dispatch_id,
             thread_id=thread_id,
         )
+        workspace_root = (
+            binding.write_tree if binding is not None else source_repo
+        )
         agent_options = build_agent_options(
             source_repo,
             dispatch_workspace,
             selection,
+            workspace_root=workspace_root,
             real_home=real_home,
             substrate_ctx=substrate_ctx,
             state_root=str(bridge_state),

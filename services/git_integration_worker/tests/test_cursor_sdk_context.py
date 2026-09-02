@@ -55,19 +55,52 @@ def test_local_agent_options_dirs_when_source_repo_differs(tmp_path: Path) -> No
     """Multi-root dispatches expose git identity via local.dirs, not a cwd list."""
     dispatch_ws = tmp_path / "projects-root"
     dispatch_ws.mkdir()
-    source_repo = tmp_path / "universal-llm-gateway"
-    source_repo.mkdir()
-    opts = build_local_agent_options(dispatch_ws, source_repo=source_repo)
+    workspace_root = tmp_path / "universal-llm-gateway"
+    workspace_root.mkdir()
+    opts = build_local_agent_options(dispatch_ws, workspace_root=workspace_root)
     assert opts.cwd == str(dispatch_ws.resolve())
-    assert list(opts.dirs or ()) == [str(source_repo.resolve())]
+    assert list(opts.dirs or ()) == [str(workspace_root.resolve())]
 
 
 def test_local_agent_options_omits_dirs_when_paths_match(tmp_path: Path) -> None:
     dispatch_ws = tmp_path / "repo"
     dispatch_ws.mkdir()
-    opts = build_local_agent_options(dispatch_ws, source_repo=dispatch_ws)
+    opts = build_local_agent_options(dispatch_ws, workspace_root=dispatch_ws)
     assert opts.cwd == str(dispatch_ws.resolve())
     assert opts.dirs is None
+
+
+def test_local_agent_options_lane_b_omits_dirs_when_write_tree_matches_cwd(
+    tmp_path: Path,
+) -> None:
+    """Lane-B: write_tree == dispatch_workspace ⇒ no extra dirs entry."""
+    worktree = tmp_path / "lane-worktree"
+    worktree.mkdir()
+    opts = build_local_agent_options(worktree, workspace_root=worktree)
+    assert opts.cwd == str(worktree.resolve())
+    assert opts.dirs is None
+
+
+def test_local_agent_options_satellite_workspace_root(tmp_path: Path) -> None:
+    """Lane-A satellite: cwd=projects-root, workspace_root=satellite ⇒ dirs=(satellite,)."""
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    satellite = tmp_path / "satellite-repo"
+    satellite.mkdir()
+    opts = build_local_agent_options(projects_root, workspace_root=satellite)
+    assert opts.cwd == str(projects_root.resolve())
+    assert list(opts.dirs or ()) == [str(satellite.resolve())]
+
+
+def test_local_agent_options_hub_lane_a_workspace_root(tmp_path: Path) -> None:
+    """Hub Lane-A: cwd=projects-root, workspace_root=hub ⇒ dirs=(hub,)."""
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir()
+    hub = tmp_path / "universal-llm-gateway"
+    hub.mkdir()
+    opts = build_local_agent_options(projects_root, workspace_root=hub)
+    assert opts.cwd == str(projects_root.resolve())
+    assert list(opts.dirs or ()) == [str(hub.resolve())]
 
 
 def test_mcp_bridge_anchors_to_source_repo(tmp_path: Path) -> None:
