@@ -1,0 +1,42 @@
+---
+description: Load when the deliverable is outbound text the operator will send — ghostwriting, replies, emails, correspondence, workplace comments, or life-representation liaison on vortex-life / personal matters. Use outbound-voice-spec; pair prose-discipline.
+alwaysApply: false
+rule_category: workflow
+apply_tier: catalog
+trigger_match_terms:
+  - outbound
+  - ghostwrite
+  - correspondence
+  - send-ready
+  - life representation
+  - vortex-life
+  - wconnect
+  - outbound-voice-spec
+  - write as me
+  - liaison
+  - operator voice
+---
+# Outbound Voice Spec (life surfaces)
+
+## Invariant
+
+`outbound_artifact(operator_will_send) ⇒ Use the outbound-voice-spec skill` ∧ `Use the prose-discipline skill` — bind **OUTBOUND SPEC** before the first sentence; `¬ instruct(model_identity)`.
+
+**Scope gate (OR):** fires when **either** a claude.ai life session **or** a Cursor **life-representation** seat holds the work (correspondence liaison, `vortex-life` MCP, agent_bus on personal/outbound deliverables). Code-lane engineering without life rep → per-task OUTBOUND SPEC only when an outbound artifact is in scope.
+
+Full binding (L1–L6, OUTBOUND SPEC fields, liaison pack, verifier): Use the `outbound-voice-spec` skill. Register and tells: Use the `prose-discipline` skill.
+
+## Life-session placement
+
+| Layer | Surface | Loads |
+|---|---|---|
+| Session orientation | `cortex_brief` once | Lean seat card, deadlines, skills index |
+| Matter facts | `recall(op="matter", q=<matter>)` when outbound ties to hub correspondence | Scoped factual recall only |
+| Per draft | OUTBOUND SPEC Signer + Standing limits + Material attested | Attested for *this* message only |
+| Persistence | claude.ai Project instructions or Customize skills | Across phone sessions — template: `docs/agent-guides/templates/life-project-instructions.md` |
+
+**Avoid:** bare person-entity recall seeds alone as standing boot — cross-domain graph noise invites invention from records not attested for this message.
+
+## Liaison (Cursor, operator not at IDE)
+
+Harvest thread → operator attests material + limits → insert OUTBOUND SPEC + skill invokes → deliverable = **one outbound body** (liaison does not rewrite in liaison voice on the bus).

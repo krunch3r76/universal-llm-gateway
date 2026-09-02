@@ -319,6 +319,9 @@ skills:
     # (claudeburst, etc.) ship the Sketch hop via the ulg-ecosystem plugin.
     surface_class: shared_sync
     mcp_surface_required: none
+  life-session-engagement:
+    surface_class: life_local
+    mcp_surface_required: none
   local-chat-completions:
     surface_class: cursor_only
     mcp_surface_required: code
@@ -410,6 +413,9 @@ skills:
     mcp_surface_required: none
   produce-uml:
     surface_class: cursor_only
+    mcp_surface_required: none
+  outbound-voice-spec:
+    surface_class: life_local
     mcp_surface_required: none
   prose-discipline:
     surface_class: life_local

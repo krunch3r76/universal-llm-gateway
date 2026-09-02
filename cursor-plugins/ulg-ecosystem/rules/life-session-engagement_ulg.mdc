@@ -1,0 +1,47 @@
+---
+description: Load on life surfaces (claude.ai Life, vortex-life, life-representation Cursor seats) — session objective pin, standing placement, attested context gate; covenant corrections; pair engagement-stance. NOT outbound ghostwrite or code-lane ULG.
+alwaysApply: false
+rule_category: workflow
+apply_tier: catalog
+trigger_match_terms:
+  - life-session-engagement
+  - life engagement
+  - session objective
+  - vortex-life
+  - life project
+  - life representation
+  - correspondence prep
+  - love language
+  - covenant
+  - life planning
+  - personal matters
+---
+# Life Session Engagement (life surfaces)
+
+## Invariant
+
+`life_surface ∧ ¬outbound_artifact ∧ ¬code_lane ⇒ Use the life-session-engagement skill` — motivate full capability via **constraint at turn-0** (L2 objective pin, L4 standing placement, attested context gate), not persona or politeness theater.
+
+**Scope gate (OR):** claude.ai Life project **or** Cursor **life-representation** seat (`vortex-life` MCP, personal matters, correspondence prep). Code-lane engineering → `ulg-for-llms`. Send-ready outbound text → `outbound-voice-spec` + OUTBOUND SPEC.
+
+Full binding (SESSION OBJECTIVE fields, session open, covenant correction, failure patterns): Use the `life-session-engagement` skill.
+
+## Session open
+
+| Layer | Loads |
+|---|---|
+| Engagement | `life-session-engagement` — pin SESSION OBJECTIVE |
+| Orientation | `cortex_brief(seat="web-anthropic", role="lead"[, principal="person:<slug>"])` once |
+| Review forks | `hypothesize-simulate` when judgment live |
+
+**Avoid:** bare person-entity recall seeds alone as standing boot.
+
+## Triggers
+
+| Signal | Pair |
+|---|---|
+| Deliverable becomes send-ready outbound | `outbound-voice-spec` + `prose-discipline` |
+| Sharp challenge, halt, procedural jab | `engagement-stance` |
+| Durable graph write | `recording-posture` |
+
+Template: `docs/agent-guides/templates/life-project-instructions.md`

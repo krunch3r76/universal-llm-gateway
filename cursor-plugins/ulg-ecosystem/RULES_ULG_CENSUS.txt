@@ -17,6 +17,7 @@ dispatch-kernel_ulg
 expand-growth-loop_ulg
 in-flight-work-guard_ulg
 jupiter-converse-batching_ulg
+life-session-engagement_ulg
 mcp-debugging-ux_ulg
 mcp-selector-naming_ulg
 mcp-tool-awareness_ulg
@@ -25,6 +26,7 @@ pager-notify_ulg
 personal-workflow-local-tracking_ulg
 plan-slug-coherence_ulg
 operator-posture_ulg
+outbound-voice-spec_ulg
 presence-discipline_ulg
 python-universal-venv_ulg
 reasoning-posture_ulg
