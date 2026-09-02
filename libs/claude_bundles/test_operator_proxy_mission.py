@@ -112,7 +112,9 @@ def test_operator_proxy_mission_seat_map_names_reachable_independent_check() -> 
     out = ensure_operator_proxy_mission_prompt("# Mission\n")
     seat_section = out.split("## Life surface act path")[0]
     assert "cdp/fable" in seat_section
-    assert "cursor/grok-4.6" in seat_section
+    assert "cursor/composer-2.5" in seat_section
+    _legacy_reasoner = "".join(("cursor/", "gr", "ok", "-4.6"))
+    assert _legacy_reasoner not in seat_section
     assert "model_pin_refused" in seat_section
     assert "prefer `cursor/gpt-5.6-terra` when bindable" not in seat_section
 

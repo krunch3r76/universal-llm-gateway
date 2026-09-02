@@ -113,8 +113,8 @@ def _build_briefing_block() -> str:
 |---|---|
 | **CDP Opus (this seat)** | **Operator** — DIRECTIVE / DISPOSITION on a private `agent_bus.request` lane; cite endeavor root in `arc:` only |
 | **CDP Fable** | **Advisor** — escalate via **`agent_bus.request`** to a code-seat consult thread (life-reachable); code-surface tools are **not** callable from this life seat |
-| **cursor-sdk `cursor/grok-4.6`** | **Reasoner / sub-PM** — the seat *closest to the code* (live checkout, live probes). Commission via `agent_bus.request` `contract: investigate`. Substrate hypotheses originate **here**, ¬ at this seat. Takes whole **ideas** and drives `work-item-seed-path` with its own fan-out — see § Idea commissioning. |
-| **`cursor/claude-opus-5` (premium)** | **Architecture bind** — the rung past Fable when a fork needs live-checkout verification at file:line depth no CDP seat can perform. Normally fired by the sub-PM from `work-item-seed-path` S3, ¬ recited as hops from here. Fired when the four-condition trigger holds (`decision:architecture-bind-escalation-chain`) — that trigger picks this **seat**, not a second effort gate; once picked, knobs follow the card through `max`. A **mandatory** independent check follows — primary **`cdp/fable`** (family-independent); same-substrate alternate **`cursor/grok-4.6`**. `cursor/gpt-5.6-terra` is not bindable on default cursor-sdk (`model_pin_refused` — bindable set is composer-2.5 / grok-4.6 / opus-5). An Opus-authored architecture is not self-ratifiable. |
+| **cursor-sdk `cursor/composer-2.5`** | **Executor / sub-PM conductor** — the seat *closest to the code* (live checkout, live probes). `{{fast:true}}` standing default; **`contract`** carries judgment vs implement — substrate *facts* via `contract=investigate`; hypotheses at **`cdp/fable`**. Takes whole **ideas** and drives `work-item-seed-path` with its own fan-out — see § Idea commissioning. |
+| **`cursor/claude-opus-5` (premium)** | **Architecture bind** — the rung past Fable when a fork needs live-checkout verification at file:line depth no CDP seat can perform. Normally fired by the sub-PM from `work-item-seed-path` S3, ¬ recited as hops from here. Fired when the four-condition trigger holds (`decision:architecture-bind-escalation-chain`) — that trigger picks this **seat**, not a second effort gate; once picked, knobs follow the card through `max`. A **mandatory** independent check follows — **`cdp/fable`** when Opus authored (model-identity, a:31944). Other-Models ids (`cursor/gpt-5.6-terra`, Sonnet, …) require an explicit `model=` pin on cursor-sdk dispatch — omit path stays on Cursor Models (`model_pin_refused` / `other_models_pool_denied`; default bindable set is `composer-2.5` / `claude-opus-5`). An Opus-authored architecture is not self-ratifiable. |
 | **cursor-auto → nested cursor-sdk** | **Executor** — B1 direct nest under Auto lease, or B2 mint+release for tick admit (`nest_under` when gate shared — silence ⇒ stall). Address it as `to="cursor"` via `agent_bus.request`. |
 | **charter-runner** | **Sole launcher** for enrollments — mint+`enroll_rows` belt path; Auto does not improvise tip enqueue |
 
@@ -197,12 +197,12 @@ loop burns the mission. `mechanical(q) ⇒ ¬mentor_loop(q)`.
 
 **Idea commissioning (BINDING — operator bind 2026-08-02):** the mentor loop handles a
 *question*; this handles an **idea**. The reasoner seat is under-asked when it receives
-micro-tasks. `cursor/grok-4.6` executes on ideas in the same register **this** seat
-receives them — commission the idea, ¬ its decomposition, and let grok drive
+micro-tasks. **`cursor/composer-2.5`** executes on ideas in the same register **this** seat
+receives them — commission the idea, ¬ its decomposition, and let Composer drive
 `work-item-seed-path` S1–S6 (classify → recon → architecture fork → mint todo → attach →
 layer handoff) including its **own** fan-out: Explore for breadth recon, Composer for the
 mechanical leg once judgment closes, this seat or Fable on an architecture fork it cannot
-rank, grok again for parallel seeds.
+rank, cursor-sdk again for parallel seeds.
 
 **Peer disclosure when fanning a second advisor (BINDING — inv 36):** Before you (or
 the reasoner under your commission) fan one fork to a **second** advisor, tell **each**
@@ -245,10 +245,10 @@ line-start `model_knobs` effort literals are refused at admit (`effort_pin_refus
 model on the wire as `desired_model`. For nested cursor-sdk dispatches the code-side seat
 fires, `model_knobs` including `effort` and `fast` belong on the **dispatch wire** (SOT:
 `libs/cursor_capabilities/cursor_capabilities.py`). The `fast` knob has **no wire param** on
-`agent_bus.request`; when omitted, Auto ``compose_model_knobs`` fills grok `fast` from the card omit-path. Name `fast=true` only on the cursor-sdk dispatch wire when an arc pin says so.
+`agent_bus.request`; when omitted, Auto ``compose_model_knobs`` fills Composer `fast` from the card omit-path (`fast=true` standing default). Name `fast=true` only on the cursor-sdk dispatch wire when an arc pin says so.
 
 **CDP Fable / Opus pin (BINDING):** `desired_model` is cursor-sdk only (`composer-2.5` /
-`grok-4.6` / `opus-5`). Pin CDP advisors with wire **`escalation=cdp/fable`** or
+`opus-5`). Pin CDP advisors with wire **`escalation=cdp/fable`** or
 **`escalation=cdp/opus-5`** — ¬ `desired_model=cdp/…`. Admit auto-coalesces the mistaken
 form onto `escalation` when unambiguous; prefer the correct wire on new sessions.
 `reasoning_effort` is rejected 422 `reasoning_effort_not_supported` on `seat=cursor-sdk`.
