@@ -342,7 +342,8 @@ def test_admit_model_override_rule_line_auto_ladder():
     assert line is not None
     assert line.startswith("model_override_rule:")
     assert model["notes"] in line
-    assert "auto chose cursor/composer-2.5 for contract=investigate" in line
+    assert "via workflows.investigate" in line
+    assert "for contract=investigate" in line
 
 
 def test_admit_model_override_rule_line_honored_explicit_bare_pin():

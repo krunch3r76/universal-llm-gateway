@@ -16,8 +16,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from services.git_integration_worker.cursor_auto.admit_gates import blocking_admit_gate
+from implement_admission.workflow_registry import MECHANICAL_WORKFLOW, load_workflow_registry
 from services.git_integration_worker.cursor_auto.dispatch_bounds import (
-    MECHANICAL_EXECUTOR_MODEL_ID,
     clamp_effort_to_model_card,
     is_roaming_tier,
     redirect_mechanical_executor,
@@ -93,6 +93,19 @@ def test_non_roaming_models_lose_the_scope_waiver(model_id: str | None) -> None:
     assert not scope_waiver_allowed(model_id)
 
 
+def test_non_roaming_when_bare_id_not_in_registry() -> None:
+    from implement_admission.workflow_registry import ModelPolicy, WorkflowRegistry
+
+    reg = load_workflow_registry()
+    stripped_models = {
+        bare: ModelPolicy(bare_id=bare, roaming=False)
+        for bare, policy in reg.models.items()
+        if bare != "grok-4.6"
+    }
+    reg_without_grok = WorkflowRegistry(workflows=reg.workflows, models=stripped_models)
+    assert not is_roaming_tier("cursor/grok-4.6", registry=reg_without_grok)
+
+
 @pytest.mark.parametrize("requested", ["low", "medium", "high", "xhigh", "max"])
 def test_opus_card_accepts_full_effort_ladder(requested: str) -> None:
     payload = _effort(requested)
@@ -160,7 +173,9 @@ def test_reasoning_model_never_runs_the_mechanical_leg() -> None:
         handoff_contract=resolve_handoff_contract("implement"),
     )
     assert displaced == "cursor/claude-opus-5"
-    assert out["resolved_model_id"] == MECHANICAL_EXECUTOR_MODEL_ID
+    assert out["resolved_model_id"] == load_workflow_registry().workflows[
+        MECHANICAL_WORKFLOW
+    ].model
     # Opus-intrinsic knobs must not ride along onto the compose tier.
     assert out.get("model_knobs") == {}
     assert out["honored"] is False

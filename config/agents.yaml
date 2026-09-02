@@ -285,8 +285,9 @@ profiles:
     # (deny-list, admit-rest); knob trust lives on CURSOR_MODEL_CAPABILITIES, not here.
     # Knob trust per model id lives in libs/cursor_capabilities/cursor_capabilities.py.
     # Every contract (answer/confer/ask/investigate/implement/verify/seed/recon/
-    # light-bounded) on the Auto lane resolves desired_model=auto → cursor/composer-2.5
-    # (wire_map.resolve_desired_model; Composer's only knob is fast). Judgment vs
+    # light-bounded) on the Auto lane resolves desired_model=auto per
+    # `config/routing/route_policy.yaml workflows.*.contracts`
+    # (wire_map.resolve_desired_model reads the registry). Judgment vs
     # implement is carried by contract, not model; ranking, bind and review are
     # outsourced to CDP (cdp/fable, cdp/opus-5). Explicit Other-Models pins admit on
     # generate through the Stargate fence explicit-pin branch; the omit path never

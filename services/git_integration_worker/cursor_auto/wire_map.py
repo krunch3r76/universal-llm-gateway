@@ -1,6 +1,7 @@
 """Pure wire-map for agent_bus.request desired_model / effort / contract.
 
-Inline projection of dense-spec Impl §4 — no I/O. Unit-tested.
+Inline projection of dense-spec Impl §4. Auto branch reads the process-cached
+workflow registry (``route_policy.yaml workflows.*``). Unit-tested.
 """
 
 from __future__ import annotations
@@ -9,6 +10,10 @@ from typing import Any, Literal
 
 from contract_vocab import CANONICAL_CONTRACTS
 from effort_vocabulary import AUTO_EFFORT, WIRE_LADDER, normalize_effort
+from implement_admission.workflow_registry import (
+    WorkflowRegistry,
+    load_workflow_registry,
+)
 
 Contract = Literal[
     "answer",
@@ -186,35 +191,33 @@ def resolve_desired_model(
     desired_model: str | None,
     *,
     contract: str = "answer",
+    registry: WorkflowRegistry | None = None,
 ) -> dict[str, Any]:
     """Map request ``desired_model`` hint → resolved ``model_id`` + notes.
 
-    ``auto`` (default) picks by contract: judgment and mechanical paths both
-    default to Composer (answer/confer/investigate/seed/light-bounded,
-    implement/verify/ask/recon). Grok is experimental explicit pin only.
-    Explicit hints are honored and reported.
+    ``auto`` (default) picks by contract per ``workflows.*.contracts`` in
+    ``route_policy.yaml``. Explicit hints are honored and reported.
     Other Models (Sonnet/Opus/Terra) are never the auto default — they draw
     Cursor's capped second pool; unattended judgment stays on Cursor Models.
     """
     raw = (desired_model or "auto").strip().lower() or "auto"
     if raw == "auto":
-        by_contract = {
-            "answer": "cursor/composer-2.5",
-            "confer": "cursor/composer-2.5",
-            "ask": "cursor/composer-2.5",
-            "investigate": "cursor/composer-2.5",
-            "implement": "cursor/composer-2.5",
-            "verify": "cursor/composer-2.5",
-            "seed": "cursor/composer-2.5",
-            "recon": "cursor/composer-2.5",
-            "light-bounded": "cursor/composer-2.5",
-        }
-        model_id = by_contract.get(contract, "cursor/composer-2.5")
+        reg = registry or load_workflow_registry()
+        binding = reg.workflow_for_contract(contract) or reg.workflow_for_contract(
+            "answer"
+        )
+        if binding is None:
+            msg = "workflow registry has no binding for contract or answer fallback"
+            raise ValueError(msg)
+        model_id = binding.model
         return {
             "requested": "auto",
             "resolved_model_id": model_id,
             "honored": True,
-            "notes": f"auto chose {model_id} for contract={contract}",
+            "notes": (
+                f"auto chose {model_id} via workflows.{binding.slug} "
+                f"for contract={contract}"
+            ),
         }
     model_id = _lookup_explicit_model(raw)
     if model_id is None:

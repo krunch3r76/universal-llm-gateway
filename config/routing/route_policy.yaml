@@ -1,6 +1,6 @@
 # Machine-readable routing policy — single source for resolver + consult-routing drift check.
 policy_source: consult-routing
-policy_version: "2026-07-06"
+policy_version: "2026-09-02"
 lead_claim_authority: server_contract_overrides_packet_prose
 
 # Auto-dispatch default seat for code-lane generate (seat= selector, not role=).
@@ -78,3 +78,34 @@ routes:
       transport: team_dispatch
       autonomy: auto_executed
       operator_pickup_required: false
+
+# Workflow → {seat, model} registry (todo:model-workflow-config-first, P0).
+# Sole authority for every GIW cursor-auto omit-model resolution. Readers cache
+# at process start: edit here → verify_workflow_registry_conformance() →
+# `manage sync_restart git_integration_worker`. Loader rejects the file when
+# any Auto contract is unclaimed or claimed twice.
+workflows:
+  mechanical_implement:
+    # Compose leg of bind-then-compose: redirect_mechanical_executor lands here
+    # whatever model the orchestrator named (unless that model is roaming).
+    seat: cursor-sdk
+    model: cursor/composer-2.5
+    contracts: [implement]
+  investigate:
+    seat: cursor-sdk
+    model: cursor/composer-2.5
+    contracts: [investigate, recon, seed]
+  auto_judgment:
+    seat: cursor-sdk
+    model: cursor/composer-2.5
+    contracts: [answer, confer, ask, verify, execute, propagate, light-bounded]
+
+# Per-model policy keyed by bare cursor id (CURSOR_MODEL_CAPABILITIES key).
+# roaming: cheap enough per agent step that a contract: override may waive the
+# empty-scope refusal (dispatch_bounds.scope_waiver_allowed).
+# deprecated: true + allowed_workflows: [slug, …] → loader rejects any other
+# workflows.*.model reference to it. Re-enable = drop the flag or add the slot.
+models:
+  composer-2.5:      {roaming: true}
+  composer-2.5-fast: {roaming: true}
+  grok-4.6:          {roaming: true}
