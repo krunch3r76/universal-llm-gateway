@@ -16,15 +16,14 @@ from concurrent.futures import Future
 
 import pytest
 
+from services.git_integration_worker.cursor_sdk_bridge_launch import (
+    _dispatch_env,
+    _dispatch_home_overlay,
+)
 from services.git_integration_worker.cursor_sdk_gate import (
     _STANDARD_GATE,
     acquire_sdk_dispatch_slot,
-    release_sdk_dispatch_slot,
     release_sdk_dispatch_slot_sync,
-)
-from services.git_integration_worker.routes.cursor_sdk import (
-    _dispatch_env,
-    _dispatch_home_overlay,
 )
 
 # ---------------------------------------------------------------------------

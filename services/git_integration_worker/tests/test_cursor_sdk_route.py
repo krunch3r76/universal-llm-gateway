@@ -14,6 +14,9 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from services.git_integration_worker import (
+    cursor_sdk_bridge_launch as bridge_launch_mod,
+)
 from services.git_integration_worker.admission import WorkAdmissionController
 from services.git_integration_worker.app import create_app
 from services.git_integration_worker.cursor_bus import CursorBusClient
@@ -1121,7 +1124,7 @@ def test_run_sdk_sync_injects_venv_env(
         "build_agent_options",
         lambda *_a, **_k: MagicMock(local=True),
     )
-    monkeypatch.setattr(route_mod.Client, "launch_bridge", _fake_launch_bridge)
+    monkeypatch.setattr(bridge_launch_mod.Client, "launch_bridge", _fake_launch_bridge)
     monkeypatch.setattr(
         route_mod, "_start_heartbeat", lambda **_kw: (MagicMock(), MagicMock())
     )
@@ -1229,7 +1232,7 @@ def test_dispatch_path_prepend_pins_cursor_agent_before_grok(
         "build_agent_options",
         lambda *_a, **_k: MagicMock(local=True),
     )
-    monkeypatch.setattr(route_mod.Client, "launch_bridge", _fake_launch_bridge)
+    monkeypatch.setattr(bridge_launch_mod.Client, "launch_bridge", _fake_launch_bridge)
     monkeypatch.setattr(route_mod, "operator_real_home", lambda: operator_home)
     monkeypatch.setattr(
         route_mod, "_start_heartbeat", lambda **_kw: (MagicMock(), MagicMock())
@@ -1297,7 +1300,7 @@ async def test_dispatch_venv_config_error_posts_bus_reply(
         "build_agent_options",
         lambda *_a, **_k: MagicMock(local=True),
     )
-    monkeypatch.setattr(route_mod.Client, "launch_bridge", _track_launch)
+    monkeypatch.setattr(bridge_launch_mod.Client, "launch_bridge", _track_launch)
 
     await route_mod._run_sdk_dispatch_gated(
         req=req,
@@ -2739,7 +2742,7 @@ def test_run_sdk_sync_folds_stream_paths_and_artifacts(
         "build_agent_options",
         lambda *_a, **_k: MagicMock(local=True),
     )
-    monkeypatch.setattr(route_mod.Client, "launch_bridge", _fake_launch_bridge)
+    monkeypatch.setattr(bridge_launch_mod.Client, "launch_bridge", _fake_launch_bridge)
     monkeypatch.setattr(
         route_mod, "_start_heartbeat", lambda **_kw: (MagicMock(), MagicMock())
     )
@@ -2897,7 +2900,7 @@ def test_run_sdk_sync_local_bridge_post_wait_request_id(
         "build_agent_options",
         lambda *_a, **_k: MagicMock(local=True),
     )
-    monkeypatch.setattr(route_mod.Client, "launch_bridge", _fake_launch_bridge)
+    monkeypatch.setattr(bridge_launch_mod.Client, "launch_bridge", _fake_launch_bridge)
     monkeypatch.setattr(
         route_mod, "_start_heartbeat", lambda **_kw: (MagicMock(), MagicMock())
     )
@@ -3029,7 +3032,7 @@ def test_finalize_request_id_wire_point_receives_run_and_result(
     monkeypatch.setattr(route_mod, "resolve_cursor", lambda _m: MagicMock(model_id="m"))
     monkeypatch.setattr(route_mod, "build_model_selection", lambda _c, _o: MagicMock(params=[]))
     monkeypatch.setattr(route_mod, "build_agent_options", lambda *_a, **_k: MagicMock(local=True))
-    monkeypatch.setattr(route_mod.Client, "launch_bridge", _fake_launch_bridge)
+    monkeypatch.setattr(bridge_launch_mod.Client, "launch_bridge", _fake_launch_bridge)
     monkeypatch.setattr(route_mod, "_start_heartbeat", lambda **_k: (MagicMock(), MagicMock()))
     monkeypatch.setattr(route_mod, "resolve_repo_venv", lambda **_k: Path("/tmp/venv"))
     monkeypatch.setattr(route_mod, "validate_repo_venv", lambda _v: None)
