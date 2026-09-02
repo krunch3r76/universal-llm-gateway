@@ -792,8 +792,7 @@ tools:
   fol_descriptor: "∀ session_id ∈ str ∧ agent ∈ str ∧ (transcript_jsonl_path ∨ transcript_md)
     ≠ ∅:\n  session_close(...) ⟹\n    transcript_entity_id ∈ Cortex ∧ journal_row_id ∈ ℕ ∧
     content_hash ∈ sha256.\nAtomic. Mutating. Idempotent by session_id (second close → 422
-    session.already_closed).\nRequires validate_attestation from doc_validate(session_close)
-    PASS before atomic write.\nBEFORE close: Use the `session-close-kernel` skill (+ skill
+    session.already_closed).\nBEFORE close: Use the `session-close-kernel` skill (+ skill
     `session-close-audit` for web/API).\nCursor: session-close.mdc. See agent_skill:session-close-kernel.\n"
   json_schema:
     type: object
@@ -840,14 +839,6 @@ tools:
           required:
           - slug
           - name
-      validate_attestation:
-        type: array
-        description: 'Attestation tokens from doc_validate(doc_type=session_close) PASS —
-          must include session_close_validate:pass and session_id:{id}.
-
-          '
-        items:
-          type: string
     required:
     - session_id
     - agent
@@ -998,8 +989,7 @@ tools:
     On pass, attestation_tokens[] additive (doc_validate:pass, template_version, spec_sha256,
     skill_digest).
 
-    session_close variants: delegates to session_close_preflight; pass emits session-keyed
-    session_close_validate tokens.
+    session_close variant: delegates to session_close_preflight for gate report.
 
     See agent_skill:implement-todo.
 

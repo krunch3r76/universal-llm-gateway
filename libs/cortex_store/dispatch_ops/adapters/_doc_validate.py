@@ -22,7 +22,6 @@ from .._doc_validate_support import (
 )
 from .._session_close_validate import (
     merge_session_close_payload,
-    session_close_validate_attestation_tokens,
     validate_session_close_payload,
 )
 from ._doc_template import _DOC_TYPE_REGISTRY
@@ -212,10 +211,6 @@ def _validate_session_close_doc(
         **({"reason": verdict.reason} if verdict.reason else {}),
         **({"variant": resolved.variant} if resolved.variant else {}),
     }
-    if verdict.passed:
-        result["attestation_tokens"] = session_close_validate_attestation_tokens(
-            payload=payload
-        )
     return result
 
 

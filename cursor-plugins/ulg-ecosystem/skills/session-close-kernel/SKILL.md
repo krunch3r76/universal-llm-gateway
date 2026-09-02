@@ -14,7 +14,7 @@ Close only on the operator's close word — never auto-close. Plain "close sessi
 | Seat | Live verb | Do NOT call |
 |---|---|---|
 | **Life / web-claude** (MCP `close` on tools/list) | `close(op=stage\|draft\|check\|commit)` then optional `close(op=handoff)` | `cortex(tool="session_close")` as the primary path |
-| **Cursor IDE** | `cortex(tool="session_close")` after `session_close_preflight` / `doc_validate` per `session-close.mdc` + `/session-end` | `close(op=…)` (not on code-seat tools/list); ¬ `fs(… agent-skills/session-close*.md)` (mirror retired) |
+| **Cursor IDE** | `cortex(tool="session_close")` after `session_close_preflight` per `session-close.mdc` + `/session-end` | `close(op=…)` (not on code-seat tools/list); ¬ `fs(… agent-skills/session-close*.md)` (mirror retired) |
 
 ### Life — `close` pipeline
 
@@ -30,7 +30,7 @@ Handoff after commit: `close(op=handoff)`.
 1. Load `session-close.mdc` (and `/session-end` when invoked). Depth dial + JSONL Step 0 live there — not in retired `agent-skills/` paths.
 2. Resolve JSONL only at `verbatim` (metadata-first `transcript_id`; if harness omits it, one `ls -lt` + hollow gate — ¬ title-grep across dirs).
 3. Resolve `session_id`: boot-held `cortex_brief` ID, else `session_close_preflight` with **full required args** (placeholder `summary` + `session_summary_md` OK for ID probe — never ID-only). When preflight returns `hop_reason=session_id_already_journaled`, use the returned successor `session_id` + `prior_session_id` (discard the sealed boot id; summarize only work since the last lid; do not ask). Persist of a sealed id still echoes `already_closed`.
-4. Compose structural layer → `doc_validate(doc_type="session_close", …)` → `cortex(tool="session_close", …)`.
+4. Compose structural layer → `session_close_preflight` → `cortex(tool="session_close", …)`.
 
 ## Editorial (the part that is genuinely yours)
 

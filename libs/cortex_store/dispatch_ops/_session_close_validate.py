@@ -9,7 +9,6 @@ from typing import Any
 from ._session_close_doc_type import (
     _SESSION_CLOSE_OPTIONAL_FIELDS,
     _SESSION_CLOSE_REQUIRED_FIELDS,
-    session_close_attestation_tokens,
 )
 
 _SESSION_CLOSE_PAYLOAD_KEYS = frozenset(
@@ -188,17 +187,9 @@ def validate_session_close_payload(payload: dict[str, Any]) -> SessionCloseValid
     )
 
 
-def session_close_validate_attestation_tokens(*, payload: dict[str, Any]) -> list[str]:
-    session_id = payload.get("session_id")
-    if not isinstance(session_id, str) or not session_id.strip():
-        return []
-    return session_close_attestation_tokens(session_id=session_id.strip())
-
-
 __all__ = [
     "SessionCloseValidateVerdict",
     "extract_session_close_payload",
     "merge_session_close_payload",
-    "session_close_validate_attestation_tokens",
     "validate_session_close_payload",
 ]

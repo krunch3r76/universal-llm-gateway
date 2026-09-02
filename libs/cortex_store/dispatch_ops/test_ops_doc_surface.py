@@ -17,9 +17,6 @@ from implement_admission.implement_ready import (
 from implement_admission.implement_ready_preflight import preflight_implement_ready
 from implement_admission.recon_waiver import build_structured_waiver
 
-from cortex_store.dispatch_ops._session_close_doc_type import (
-    session_close_attestation_tokens,
-)
 from cortex_store.dispatch_ops._todo_gate_distillation_impl import (
     _evaluate_from_persisted,
 )
@@ -190,9 +187,6 @@ def test_session_close_doc_validate_delegates_preflight(
         transcript_depth="light",
     )
     assert result["status"] == "pass"
-    assert result["attestation_tokens"] == session_close_attestation_tokens(
-        session_id="cursor-2026-06-30-1200-abc"
-    )
     assert captured["session_id"] == "cursor-2026-06-30-1200-abc"
 
 
