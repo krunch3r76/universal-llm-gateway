@@ -103,15 +103,114 @@ def _wait_closeout(
     return resp.json()
 
 
-def _fetch_closeout_subject(client: httpx.Client, thread_id: str, turn: int) -> str:
+def _fetch_closeout_turn(
+    client: httpx.Client, thread_id: str, turn: int,
+) -> dict[str, Any]:
     resp = client.get(
-        f"http://localhost/turns?{urlencode({'thread': thread_id, 'last': 3, 'compact': 'true'})}"
+        f"http://localhost/turns?{urlencode({'thread': thread_id, 'last': 5, 'compact': 'false'})}"
     )
     resp.raise_for_status()
     for row in resp.json().get("turns") or []:
         if row.get("turn_number") == turn:
-            return str(row.get("subject") or "")
-    return ""
+            return row
+    return {}
+
+
+def _fetch_closeout_subject(client: httpx.Client, thread_id: str, turn: int) -> str:
+    row = _fetch_closeout_turn(client, thread_id, turn)
+    return str(row.get("subject") or "")
+
+
+def _parse_closeout_json(body: str) -> dict[str, Any]:
+    text = (body or "").strip()
+    if not text.startswith("{") or "schema_version" not in text:
+        return {}
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _arc_outcome_line(
+    closeout: dict[str, Any],
+    *,
+    label: str,
+    parent_harvest_subject: str | None,
+) -> tuple[str, str]:
+    """Return (subject, body) for operator pager — outcome-first NL."""
+    summary = str(closeout.get("summary") or "").strip()
+    work_outcome = str(closeout.get("work_outcome") or "").strip()
+    offgit = closeout.get("files_offgit_produced") or []
+    spec_uri = ""
+    for item in offgit:
+        s = str(item)
+        if "g3-spec" in s.lower() or s.endswith("g3-spec.md"):
+            spec_uri = s
+            break
+    if not spec_uri and offgit:
+        spec_uri = str(offgit[0])
+
+    spec_landed = bool(spec_uri and "g3-spec" in spec_uri.lower())
+    checks_failed = work_outcome == "checks_failed"
+
+    if parent_harvest_subject:
+        lead = parent_harvest_subject
+    elif spec_landed and checks_failed:
+        lead = f"{label}: implementation spec revised and landed (capture partial)"
+    elif spec_landed:
+        lead = f"{label}: implementation spec landed"
+    elif work_outcome == "complete":
+        lead = f"{label}: dispatch complete"
+    elif checks_failed:
+        lead = f"{label}: dispatch finished with capture gaps"
+    else:
+        lead = f"{label}: dispatch closeout"
+
+    subject = lead[:120]
+    vision = (
+        "ULG event-store durability: embedded SQLite DBs must survive off NFS "
+        "with retention and visible write-fail signals for trading audit."
+    )
+    architecture = (
+        "Cortex spec + agent-bus scoreboard on the event-db corruption recovery "
+        "arc — G3 locks files_expected before G4 skeptic and G5 implement."
+    )
+    body_parts = [vision, architecture]
+    if spec_uri:
+        body_parts.append(f"Spec: {spec_uri}")
+    if summary:
+        body_parts.append(summary[:500])
+    if checks_failed:
+        body_parts.append(
+            "Worker closeout flagged capture partial (typical: off-git Cortex deliverables). "
+            "Verify spec sha on thread 9938 before G4."
+        )
+    body_parts.append(
+        "Next: G4 Opus skeptic re-run on rev 3 spec. Thread 9938 for detail."
+    )
+    return subject, "\n\n".join(body_parts)
+
+
+def _parent_harvest_subject(
+    client: httpx.Client,
+    parent_thread: str,
+    *,
+    after_turn: int,
+) -> str | None:
+    if not parent_thread:
+        return None
+    resp = client.get(
+        f"http://localhost/turns?{urlencode({'thread': parent_thread, 'last': 5, 'compact': 'true'})}"
+    )
+    resp.raise_for_status()
+    for row in resp.json().get("turns") or []:
+        if int(row.get("turn_number") or 0) <= after_turn:
+            continue
+        subj = str(row.get("subject") or "")
+        if row.get("from") == "cursor-sdk" and subj:
+            return subj
+    return None
 
 
 def _watch_id_prefix(watch_id: str) -> str:
@@ -255,9 +354,14 @@ def main() -> int:
         help="resolve thread+dispatch from newest worker.dispatched event",
     )
     parser.add_argument(
-        "--no-page",
-        action="store_true",
-        help="print closeout only; do not SMS",
+        "--parent-thread",
+        help="arc thread id — harvest subject from latest cursor-sdk turn after worker closeout",
+    )
+    parser.add_argument(
+        "--parent-after-turn",
+        type=int,
+        default=0,
+        help="only consider parent turns after this number (default: 0)",
     )
     parser.add_argument(
         "--come-to-ide",
@@ -301,7 +405,14 @@ def main() -> int:
             )
             if snap.get("complete"):
                 reply_turn = int(snap.get("qualifying_reply_turn") or 0)
-                subject = _fetch_closeout_subject(client, thread_id, reply_turn)
+                closeout_row = _fetch_closeout_turn(client, thread_id, reply_turn)
+                subject = str(closeout_row.get("subject") or "")
+                closeout_json = _parse_closeout_json(str(closeout_row.get("body") or ""))
+                parent_subj = _parent_harvest_subject(
+                    client,
+                    str(args.parent_thread or "").strip(),
+                    after_turn=args.parent_after_turn,
+                )
                 completed = _worker_completed(watch_id) or {}
                 outcome = str(completed.get("outcome") or "unknown")
                 if from_agent != "cursor-sdk":
@@ -322,6 +433,12 @@ def main() -> int:
                             f" · friction 529 bind — return to Cursor IDE"
                             f" · elapsed {elapsed_s:.0f}s"
                             f"{f' · {subject}' if subject else ''}"
+                        )
+                    elif closeout_json or parent_subj:
+                        page_subject, page_body = _arc_outcome_line(
+                            closeout_json,
+                            label=args.label,
+                            parent_harvest_subject=parent_subj,
                         )
                     else:
                         page_subject = f"ULG dispatch done — {args.label}"
