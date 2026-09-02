@@ -61,7 +61,7 @@ reference-annex packet-class row *ULG service home / placement / extract / hosti
 ## Autonomous work-item spine — extensions
 
 **Gate-6 substrate (a24082):** code-lane live-source / `workspaces://` citations ⇒
-`team_dispatch(op=generate, seat=cursor-sdk, model=cursor/gpt-5.6-terra|sol|luna|cursor/grok-4.6,
+`team_dispatch(op=generate, seat=cursor-sdk, model=cursor/gpt-5.6-terra|sol|luna,
 contract=light-bounded, …)`; poll `reply_from_agent` from admit. API `role=reviewer` + terra only when
 **all** reading pre-staged inline (`code-on-api`). Access-only REVISE ≠ Gate-6 close.
 

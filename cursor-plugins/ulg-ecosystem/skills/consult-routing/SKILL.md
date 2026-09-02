@@ -52,7 +52,7 @@ guard). Consults about claude.ai / Cowork / the picker itself prime
 | G1 / Mode B / path-sim Q / hop-5 check | `cdp/fable` | high (max when bind gates a wave) | fresh `/new`; followup only into a live op-proxy CSE | `ask` |
 | G2 frame | `cdp/fable` followup in the G1 CSE; else `cdp/opus-5` fresh | high | followup ≻ fresh | inherit `ask` |
 | R-admit / verifier / mission / M-Arch | `cdp/opus-5` | high | fresh (R); mission followup | `review` or `mission` |
-| Session / work review of **code changes** | `cdp/opus-5` | high — pin `reasoning_effort="high"` (do not inherit conductor admit `effort:max`) | **optional, recommended** — background (conductor / unattended) preferred; defer when it would block the next attended move. Stage diff + closeout to `cortex://`. Fire: `team_dispatch(model=cdp/opus-5, purpose=review, reasoning_effort="high")`. ¬ a silent G4; ¬ a substitute for checkout-native R-after (`cursor/grok-4.6`) | `review` |
+| Session / work review of **code changes** | `cdp/opus-5` | high — pin `reasoning_effort="high"` (do not inherit conductor admit `effort:max`) | **optional, recommended** — background (conductor / unattended) preferred; defer when it would block the next attended move. Stage diff + closeout to `cortex://`. Fire: `team_dispatch(model=cdp/opus-5, purpose=review, reasoning_effort="high")`. ¬ a silent G4; checkout-native R-after = same row (`purpose=review`) | `review` |
 | Docs / closeouts / spec polish / office I/O / dashboards | `cdp/sonnet-5` | **Extra** default; **Max** via `reasoning_effort=max` | pipeline or fresh; office → `harvest_source=output-file` | `produce` |
 | Skill authoring | `cdp/opus-5` draft · `cdp/sonnet-5` revise | high / Extra | fresh, output-file → cortex staging | `produce` |
 | Haiku | `cdp/haiku-4.5` | — | **no recipe** until Sonnet caps | — |
@@ -97,8 +97,8 @@ SoT: `config/routing/route_policy.yaml`. Substrate-derived — ¬ role prolifera
 
 Settled implement/recon/review → `cursor-sdk` (R2). **Model split:** `implement` → Composer;
 IDE/Task breadth recon → **Explore subagent** (`Task(subagent_type="explore")`; ¬ tool);
-recon+investigate judgment residual → `cursor/grok-4.6` + `light-bounded`; pure inventory /
-Task-unavailable fallback → Composer. `cursor/*` only on `cursor-sdk` → else `422`.
+recon+investigate judgment residual → Composer `contract=investigate` (facts + `OPEN FORK:` — never binds);
+pure inventory / Task-unavailable fallback → Composer. `cursor/*` only on `cursor-sdk` → else `422`.
 
 ## Bind-then-compose split (judgment closed → nested Composer)
 
@@ -108,7 +108,7 @@ Rule stub: `dispatch-kernel_ulg.mdc` § Hard walls.
 
 | Leg | Model / seat | Contract | Delivers |
 |---|---|---|---|
-| Bind | `cdp/opus-5`, `cdp/fable`, `cursor/grok-4.6`, `cursor/claude-opus-5` (bind scope only) | `light-bounded` | Dense packet / spec: `files_expected`, `acceptance_criteria`, invariants — ¬ repo implement |
+| Bind | `cdp/opus-5`, `cdp/fable`, `cursor/claude-opus-5` (bind scope only) | `light-bounded` | Dense packet / spec: `files_expected`, `acceptance_criteria`, invariants — ¬ repo implement |
 | Compose | `seat=cursor-sdk` (Composer default) | `implement` \| `pure-mechanical` | Mechanical edits + verify |
 
 ```python
@@ -157,7 +157,7 @@ authored — compose leg only (`lean-context-dispatch-first` non-primary gate).
 | **Workflow-primary** | A model a standing rule/skill already names as the autonomous default for that need (dispatch-kernel ladder · this skill · `path-sim` · `subagent-strategy`). Omitting `model=` when the harness inherits the session/role default counts as primary. |
 | **Non-primary** | Any other explicit bind — e.g. `gpt-5.6-sol-*`, off-table Task slugs, or a ladder model used for the **wrong** work class (Sol/Opus for mechanical work after judgment closed). |
 
-**Named exceptions** (fire without re-asking; still announce): path-sim **A** → `cursor/grok-4.6` · path-sim **Q** → `cdp/fable` · implement → `cursor/composer-2.5` · CDP trigger → `cdp/opus-5` · escalation-warranted `cursor/claude-opus-5` under the premium inform-then-proceed row.
+**Named exceptions** (fire without re-asking; still announce): path-sim **A** → Composer enumerate + **`cdp/fable` bind** · path-sim **Q** → `cdp/fable` · implement → `cursor/composer-2.5` · CDP trigger → `cdp/opus-5` · escalation-warranted `cursor/claude-opus-5` under the premium inform-then-proceed row.
 
 **Anti-pattern:** re-spend frontier reasoning (Sol / Opus / Fable) to *implement* amendments a prior consult already densified — that is non-primary for the mechanical class.
 
@@ -173,11 +173,11 @@ guidance that table has no room for — the two are read together.
 | Park on the operator for `manage` / `charter_reload` / git-tracked implement | Seat executes or implements autonomous recovery; `charter_reload` = loop bounce only |
 | Treat every consult as operator-gated | CDP consult is **autonomous** under the dispatch-kernel CDP trigger |
 | Skip CDP and go straight to human on judgment forks | Cursor (incl. cursor/opus) → CDP/Fable first; human only when CDP/Fable flags `ESCALATE` or operator-only |
-| CDP Opus/Fable stuck → Ask the human | `cursor-auto` → `cursor/grok-4.6` or `cursor/claude-opus-5` (`cdp-operator-proxy` 2b); Terra only if named |
+| CDP Opus/Fable stuck → Ask the human | `cursor-auto` → nested `cursor-sdk` (`cursor/claude-opus-5` or explicit Other Models pin) (`cdp-operator-proxy` 2b); Terra only if named |
 | Treat `cursor/claude-opus-5` as ladder-top — ask human when Opus is unsure | Opus-in-cursor is step 1; consult an independent binder (step 2) before human |
 | `cdp/opus-5` ratifies its own output at the same tier | Escalate that artifact to **Fable** (2b) — weight-class independence |
-| Treat any two Anthropic seats as self-review and skip straight to GPT | Opus→**Fable** is a genuine check; 2b precedes 2d Grok (or explicit 2c) |
-| Silent Terra / Other Models as the next binder | 2c is **explicit pin only**; default after Fable is 2d Grok |
+| Treat any two Anthropic seats as self-review and skip straight to GPT | Opus→**Fable** is a genuine check; 2b precedes explicit Other Models (2c) |
+| Silent Terra / Other Models as the next binder | 2c is **explicit pin only**; default after Fable is **`cursor/claude-opus-5`** on cursor-sdk |
 | Pin `cursor/claude-fable-5` or `cursor/claude-fable-5-1` because Fable is wanted | Blocked for cost (both — 5.1 launched 2026-09-01 at same $/M) — use `cdp/fable` |
 | `team_dispatch(model=gpt-5.6-terra)` bare slug on code-lane bind | `seat=cursor-sdk` + `model=cursor/gpt-5.6-terra` — explicit pin only |
 | Spend `cursor/gpt-5.6-sol` on broad open-ended review | `sol` is targeted, low-token, still Other Models — explicit pin only |
@@ -200,8 +200,9 @@ Rule: `anthropic-dispatch-authorization_ws.mdc`. Fable = CDP only (`cdp/fable` /
 
 | Path | Default |
 |---|---|
-| Coding Grok (path-sim **A**, recon+investigate, closed-detent light consult) | `cursor-sdk` + `cursor/grok-4.6` + `light-bounded` |
-| Path-sim bundled **Q** (L0) | **CDP Fable** — `team_dispatch(model=cdp/fable)` (CLI `fable-5.1` = IF6 only; path-sim annex A); ¬ default Grok Q on full arc |
+| Path-sim **A** (L1+L2) / closed-detent light consult | Composer enumerate → **`cdp/fable` bind** |
+| Path-sim bundled **Q** (L0) | **CDP Fable** — `team_dispatch(model=cdp/fable)` (CLI `fable-5.1` = IF6 only; path-sim annex A) |
+| Recon+investigate judgment residual | **`seat=cursor-sdk` + `contract=investigate`** (facts + `OPEN FORK:` — never binds) |
 | API `xai/grok-4.6` on coding work | **PROHIBITED** |
 | Engineering skeptic | `role=skeptic` + `xai/grok-4.6` |
 | Writing / correspondence | Grok **PROHIBITED** — L3 annex |

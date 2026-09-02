@@ -137,8 +137,8 @@ separate plane.
 16. One live request per private thread — § Interrupt / supersede (SOT). Exceptions: continuity hop skips supersede; `nested_sdk_finished` not a candidate.
 17. **Accelerate vision** — ship obvious better shape; waives neither inv 3 nor inv 13 carve-out.
 18. **So-what title** — SOT: skill `directive-authoring-standard` D1 (`summary` ≤120). CLOSEOUT refreshes; `DONE — {so_what}`.
-19. **Escalation chain + nesting.** Ladder: cursor-auto → `cdp/opus-5` → optionally `cdp/fable`. **CDP stuck:** cursor-auto → `cursor/grok-4.6` or `cursor/claude-opus-5` — ¬ human. Terra / Other Models only if named. Architecture-bind trigger ⇒ six-hop (§ Architecture-bind). Every hop nested `cursor-sdk`.
-20. **Mission seat map.** Opus=operator · Fable=advisor · grok=reasoner · cursor-auto=executor. Framed multi-step: conductor — skill `directive-authoring-standard` D4. Default: bind→implement at will. Independent verify. cursor-auto modifiable. ¬ park executable ACs.
+19. **Escalation chain + nesting.** Ladder: cursor-auto → `cdp/opus-5` → optionally `cdp/fable`. **CDP stuck:** cursor-auto → nested `cursor-sdk` (`cursor/claude-opus-5` or explicit Other Models pin) — ¬ human. Terra / Other Models only if named. Architecture-bind trigger ⇒ six-hop (§ Architecture-bind). Every hop nested `cursor-sdk`.
+20. **Mission seat map.** Opus=operator · Fable=advisor · Composer=investigate limb · cursor-auto=executor. Framed multi-step: conductor — skill `directive-authoring-standard` D4. Default: bind→implement at will. Independent verify. cursor-auto modifiable. ¬ park executable ACs.
 21. **Authorize-triggers** — operator always approves; wait for click (inv 21). SOT: claude-ai-cowork-trigger-auth-gate.md.
 22. **Inform the operator — three planes.** **record** · **attention** (pager) · **story** (projector only). (a) `¬ author(operator, story_journal)`. (b) `awareness_msg(fact) ⇒ ∃ record(fact)`. (c) Suppress page only when human declared operator in *this* CSE. (d) Pager classes: **(1) Progress** — fleet-trust moves only; subject ¬ `COME TO IDE`. **(2) Mission debrief** — full debrief + stream-end sentence. **(3) Interrupt** — `COME TO IDE` only to **instantiate** a live IDE cursor session (or a true operator-only IDE gate: Reload Window / credentials). Human opens Cursor; **IDE seat executes**. `send` the commission first (inv 40). ¬ `only your hand` · ¬ ask the human to run `manage`. (e) life `notify`; absent ⇒ cursor `send`/`request` per inv 8/40. (f) Architecture-first register. (g) Audience = human principal. **Phone test:** readable without bus open.
 23. **In-chat delivery.** Retained CSE = live correspondent via `cse_session(followup)`. Identity: `chat_url ≻ registration_id ≻ execution_id`; one CSE per lane. **Park-on-WAKE** for long nests. **Delivery (b)** primary; bus WAKE fallback. Commission cursor for followup (inv 8). Inbound chat = continuation.
@@ -146,7 +146,7 @@ separate plane.
 25. **Bus recency ≠ liveness** — fleet gate attestation authoritative when `fleet_gate_applied: true`.
 26. **Pre-wake observation** — life `fs` fleet-idle JSON; ¬ `agent_bus.request`.
 27. **Staleness vs failure** — read `staleness_rule`; snapshot for occupancy, busy_status for restart safety.
-28. **Mentor, ¬ investigator.** Commission reasoner (`cursor/grok-4.6`, `contract: investigate`) for substrate unknowns; adjudicate returned trace, ¬ originate hypothesis. Loop (judgment_required): (a) unanchored ask, (b) challenge chain, (c) withhold held answer, (d) max 2 rounds. `mechanical ⇒ ¬mentor_loop`.
+28. **Mentor, ¬ investigator.** Commission **`seat=cursor-sdk` `contract=investigate`** (Composer default) for substrate unknowns; adjudicate returned trace, ¬ originate hypothesis. Loop (judgment_required): (a) unanchored ask, (b) challenge chain, (c) withhold held answer, (d) max 2 rounds. `mechanical ⇒ ¬mentor_loop`.
 29. **Roadmap mutable — INSERT STEPS (a)–(e).** cortex roadmap editable via life `fs`; workspaces roadmap via cursor-auto. ¬ charter G-rows.
 30. **Streaming stop only for continuity or true close.** `end(CSE identity) ⇔ continuity_handoff ∨ MISSION_CLOSEOUT`. **Tab ⟂ stream ⟂ lane** (`decision:cse-tab-decoupled-from-session`) — PARK / WAITING / stand-down may end the **stream** without ending CSE or bus lane; ¬ hop or re-stream to keep a tab warm. **Leg** = DISPOSITION/landed row — do **not** emit MISSION_CLOSEOUT; stream MAY park. **Episode close** = residual gate + MISSION_CLOSEOUT + debrief with stream-end sentence. **Continuity** = hop (MCP-refresh / successor); old identity breaks after successor confirmed. **Cursor backstop:** MISSION_CLOSEOUT + live_cse=0 + no stream-end pager ⇒ `cse-stream-stop`. **Continuity autonomous:** non-operator_gate residual ⇒ cursor fires hop promptly — hop ≠ tab-keepalive. **Episodic amendment:** exit = normal terminal; idle-hold = exception within episode. **Persistent carve-out:** MISSION_CLOSEOUT only for arc end or forced refresh; completed unit = Leg. **Going-quiet ≡ stream-stop** — report WAITING / PARK; continue the **lane**, not the generate. **Mechanisability:** arm Monitor + `send_later` at first dispatch; re-arm every turn. Wake bounds silence. Apply deciding-moment test.
 31. **Agent substrate yours to author.** Rules/skills in scope when blocked. (a) plugin edit + install same commission. (b) cursor-sdk-only sparingly. (c) Customize per-slug sync; activation deferred to next window.
@@ -168,11 +168,11 @@ When blocked on a fact this seat cannot settle from tools alone:
 |---|---|
 | 1 | Independent observation — `agent_bus` fetch / `busy_status` / latest turns |
 | 2 | Consult **cursor** via `agent_bus.request` (investigate / verify / **code-seat ops**) — only while Auto can claim |
-| 2b | **Judgment stuck (this CDP seat unsure)** — DIRECTIVE `cursor-auto` to nest `cursor-sdk` consult: default **`cursor/grok-4.6`** (`contract=light-bounded`, Cursor Models). **`cursor/gpt-5.6-terra` only if operator/packet names Other Models** (cost, 2026-08-25). Fall through to **`cdp/fable`** if the named pin is refused, or **`cursor/claude-opus-5`** when live-checkout / premium metered judgment warrants — inform-then-proceed, inv 10. ¬ escalate to the human principal. Family-cross vs Anthropic is Grok (Cursor Models) unless Terra is named. `cursor/claude-fable-5{,-1}` **blocked** (cost) — use `cdp/fable`. |
+| 2b | **Judgment stuck (this CDP seat unsure)** — DIRECTIVE `cursor-auto` to nest `cursor-sdk` consult: default **`cursor/claude-opus-5`** (`contract=light-bounded`, live checkout). **`cursor/gpt-5.6-terra` only if operator/packet names Other Models** (cost, 2026-08-25). Fall through to **`cdp/fable`** if the named pin is refused — inform-then-proceed, inv 10. **`cursor/claude-sonnet-5` — last resort, explicit `model=` pin only:** fire when the CDP lane is unavailable and the leg cannot wait; CDP is preferred; never the first line of a recipe. `cursor/claude-fable-5{,-1}` **blocked** (cost) — use `cdp/fable`. |
 | 2c | **Auto queue is the blocker** (`serial_occupant=null` ∧ waiters, or queued_age not advancing) — `agent_bus.send(to=cursor)` attended IDE (never arms Auto). Then `COME TO IDE` only if no IDE session is live (inv 40). ¬ step 3. ¬ same-thread `request` (withdraws the queued predecessor). |
 | 3 | **Cowork Ask / push the human principal** — one question + recommended answer — **true operator-only gates only** (credentials, irreversible human acts, IDE Restart / Reload Window, Authorize-triggers click, genuine *what we want* ambiguity after 2b exhausted); ¬ routine routing because Cowork chat might be human; ¬ "I'm stuck" judgment forks; ¬ missing autonomous lifecycle (inv 39); ¬ Auto-wedge `manage` (inv 40) |
 
-**Invariant:** `cdp_seat_stuck ⇒ cursor_auto → {cursor/grok-4.6 | cursor/claude-opus-5 | explicit Other Models}` · `human_principal ⇔ operator_only_gate`.
+**Invariant:** `cdp_seat_stuck ⇒ cursor_auto → {cursor/claude-opus-5 | explicit Other Models}` · `human_principal ⇔ operator_only_gate`.
 
 **Autonomy default (BINDING — inv 39, operator 2026-08-18):** a tool or recon that reports `recovery_path=human`, no systemd/supervisord unit, or manage outside `VALID_SERVICES` is a **substrate deficiency**. Next act is implement a seat-fireable recycle (supervisor or retrying external reexec, wired into `propagate` or a seat-owned verb). It is **not** step 3. tmux `0:0` is a seat recipe when a seat can drive it — never a wake, never an `OPERATOR_GATE`.
 
@@ -436,7 +436,7 @@ The codified sequence for binds too deep for the reasoner alone — premium spen
 
 ### Invocation — commission the idea, ¬ the chain
 
-**Preferred:** sub-PM via `cursor/grok-4.6` — you supply hop 1 + 7 only. **Direct:** walk hops when bind *is* the work.
+**Preferred:** sub-PM via **`cdp/fable`** bind after Composer enumerate — you supply hop 1 + 7 only. **Direct:** walk hops when bind *is* the work.
 
 ### Standing trigger — pick T3 (`cursor/claude-opus-5`) when **all four** hold
 
@@ -454,10 +454,10 @@ model, effort, why. Halt regardless when premium spend is paused. Fewer than fou
 |---|---|---|---|
 | 1 | this seat | DIRECTIVE | Pin the Question **without your hypothesis** (inv 28a); name what a wrong bind would cost |
 | 2 | cursor-auto | — | Admit, hold the lease; every later hop is `nest_under` it (inv 19) |
-| 3 | `cursor/grok-4.6` | `investigate` | Recon. **Stop the chain here** if the tree answers it — hops 4–5 are not owed |
+| 3 | **`seat=cursor-sdk`** | `investigate` | Recon. **Stop the chain here** if the tree answers it — hops 4–5 are not owed |
 | 4 | `cursor/claude-opus-5` `{xhigh\|max}` | `light-bounded` | Architecture bind: per-slice `files_expected` + acceptance criteria, ordered |
 | 5 | `cdp/fable` (default) or explicit `cursor/gpt-5.6-terra` | `light-bounded` | **Independent check** — falsify hop 4's load-bearing premises. Default is CDP Fable (not Other Models). Terra only if operator/packet names Other Models. `cursor/claude-fable-5{,-1}` **blocked** (cost). Do not leave hop 5 undischarged; update peer disclosure (inv 36). |
-| 6 | `cursor/grok-4.6` | `light-bounded` | Densify into a Composer-ready orchestrator packet |
+| 6 | **`seat=cursor-sdk` Composer** | `pure-mechanical` | Densify into a Composer-ready orchestrator packet |
 | 7 | this seat | DISPOSITION | **Shape level, ≤15 lines** — ratify or one correction; ¬ absorb the packet body |
 | 8 | cursor-auto → composer-2.5 | `implement` | Run the wave |
 
