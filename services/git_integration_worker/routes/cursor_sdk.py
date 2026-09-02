@@ -1,16 +1,6 @@
 """Cursor SDK dispatch route — admits dispatches via cursor-sdk-bridge.
 
 In-memory idempotency registry state is lost on worker restart (Phase 1 scope).
-
-Phase 2 HOME isolation (T2b 2026-06-11, thread 1559): each dispatch seeds a
-private HOME with copied ``cli-config.json`` (identity), XDG ``auth.json``
-(credential), and user-layer Cursor settings for ``setting_sources=all``.
-``Client.launch_bridge`` snapshots ``os.environ`` at ``Popen`` (no ``env=``
-kwarg in cursor-sdk 0.1.8). Each dispatch records its HOME/venv override in
-thread-local storage; a monkeypatch on ``_bridge_subprocess_env`` overlays it
-into the bridge subprocess env at ``Popen`` time. The override is confined to
-the dispatch's own worker thread, so concurrent and timed-out (orphan)
-dispatches never race on shared global state and no dispatch lock is needed.
 """
 
 from __future__ import annotations
@@ -18,10 +8,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import threading
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from contextlib import contextmanager
 from pathlib import Path
 from threading import Event as _ThreadEvent
 from threading import Thread
@@ -29,7 +17,6 @@ from typing import Any
 
 import httpx
 from cursor_capabilities import effective_knobs
-from cursor_sdk import Client
 from fastapi import APIRouter, FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 from implement_admission.closeout_helpers import cortex_files_root
@@ -54,8 +41,6 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
 from services.git_integration_worker.cursor_home import (
     CursorHomeConfigError,
     CursorVenvConfigError,
-    build_dispatch_path_prepend,
-    dispatch_git_env_vars,
     dispatch_home_path,
     operator_real_home,
     prune_stale_dispatch_homes,
@@ -69,6 +54,9 @@ from services.git_integration_worker.cursor_models import (
 )
 from services.git_integration_worker.cursor_sdk_association import (
     build_dispatch_association_fields,
+)
+from services.git_integration_worker.cursor_sdk_bridge_launch import (
+    launch_sdk_bridge,
 )
 from services.git_integration_worker.cursor_sdk_bridge_stderr import (
     bridge_exit_snapshot,
@@ -297,7 +285,6 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/cursor", tags=["cursor-sdk"])
 
 _CONFIG: WorkerConfig = load_config()
-_SDK_BRIDGE_BIN = os.environ.get("CURSOR_SDK_BRIDGE_BIN", "").strip() or None
 _SDK_TIMEOUT_S = float(os.environ.get("CURSOR_SDK_TIMEOUT", "1800"))
 _SDK_TIMEOUT_BUFFER_S = 120.0
 # Bounded slice for the idle-since-progress outer wait loop. Overshoot on
@@ -360,36 +347,15 @@ _STALE_LEASE_S = float(
 _STALE_SWEEP_S = float(os.environ.get("CURSOR_STALE_SWEEP_S", "30"))
 _BRIDGE_SWEEP_S = float(os.environ.get("CURSOR_BRIDGE_SWEEP_S", "900"))
 # Reap horizon for a holder that took the write lease and never armed (no
-# heartbeat row at all). Must stay above _SDK_LAUNCH_TIMEOUT_S or the sweeper
-# races a bridge that is still legitimately launching.
+# heartbeat row at all). Must stay above
+# cursor_sdk_bridge_launch._SDK_LAUNCH_TIMEOUT_S or the sweeper races a bridge
+# that is still legitimately launching.
 _SDK_ARM_TIMEOUT_S = float(os.environ.get("CURSOR_SDK_ARM_TIMEOUT", "300"))
 _DEAD_RUN_GRACE_S = float(
     os.environ.get("CURSOR_DEAD_RUN_GRACE_S", str(2.0 * _SDK_HEARTBEAT_S))
 )
 # Retry-After hint (seconds) on the 503 returned while draining.
 _DRAIN_RETRY_AFTER_S = int(os.environ.get("GIT_WORKER_DRAIN_RETRY_AFTER", "5"))
-
-# Bounded retry for the pre-discovery bridge-launch transient: cursor-sdk
-# intermittently exits the bridge BEFORE the discovery handshake with an empty
-# "--tool-callback-auth-token" (the local callback token is momentarily
-# unavailable at launch, e.g. while the cursor credential is mid-rotation).
-# Pre-discovery => the agent never ran and nothing was written, so re-seeding the
-# dispatch HOME (to pick up the rotated credential) and relaunching is
-# side-effect-free and safe. Confirmed self-recovering 2026-06-15
-# (79cc476a->e4afe1fe, 69eededb->0ae492ce); see cortex assertion 19136 /
-# notes/system/threads/cursor-sdk-bridge-token-fix.md.
-_SDK_LAUNCH_ATTEMPTS = max(1, int(os.environ.get("CURSOR_SDK_LAUNCH_ATTEMPTS", "3")))
-_SDK_LAUNCH_BACKOFFS_S = (2.0, 5.0)
-
-# Bridge handshake deadline — deliberately NOT _SDK_TIMEOUT_S. launch_bridge only
-# spawns the bridge subprocess and completes discovery; the 1800s run/wait budget
-# is for the agent's work. Sharing it meant a bridge that never armed could hold
-# the exclusive write lease for half an hour before any deadline noticed, and the
-# heartbeat that would reveal it does not start until launch returns
-# (_start_heartbeat, below). Healthy launch-to-first-toolcall measures ~13s.
-# A launch timeout is not a pre-discovery transient, so it fails on attempt 1
-# rather than consuming the retry ladder.
-_SDK_LAUNCH_TIMEOUT_S = float(os.environ.get("CURSOR_SDK_LAUNCH_TIMEOUT", "180"))
 
 # Deadline for taking the FIFO capacity slot inside a gated dispatch. Reaching
 # _run_sdk_dispatch_gated means the ledger already named this dispatch the write
@@ -400,13 +366,6 @@ _SDK_LAUNCH_TIMEOUT_S = float(os.environ.get("CURSOR_SDK_LAUNCH_TIMEOUT", "180")
 _SDK_SLOT_ACQUIRE_TIMEOUT_S = float(
     os.environ.get("CURSOR_SDK_SLOT_ACQUIRE_TIMEOUT", "300")
 )
-_PRE_DISCOVERY_TRANSIENT_MARKERS = ("before discovery", "--tool-callback-auth-token")
-
-
-def _is_pre_discovery_transient(exc: BaseException) -> bool:
-    """True iff exc is the safe-to-retry pre-discovery bridge launch transient."""
-    msg = str(exc)
-    return any(marker in msg for marker in _PRE_DISCOVERY_TRANSIENT_MARKERS)
 
 
 def _config(request: Request) -> WorkerConfig:
@@ -687,107 +646,6 @@ async def _rollback_lane_b_mint_if_needed(
         )
 
 
-_dispatch_env = threading.local()
-_BRIDGE_ENV_PATCH_INSTALLED = False
-_PATH_PREPEND_KEY = "__CURSOR_SDK_PATH_PREPEND__"
-
-
-def _dispatch_env_overlay() -> dict[str, str] | None:
-    return getattr(_dispatch_env, "overrides", None)
-
-
-def _install_bridge_env_patch() -> None:
-    """Overlay the per-dispatch HOME/venv onto the bridge subprocess env.
-
-    cursor-sdk 0.1.8 ``Bridge.launch`` builds the subprocess env from
-    ``_bridge_subprocess_env()`` (``dict(os.environ)`` + SDK setdefaults)
-    synchronously on the caller thread before ``Popen``. We wrap that function
-    so it overlays the calling thread's dispatch override (HOME, VIRTUAL_ENV,
-    PATH-prepend) read from thread-local storage, without mutating
-    process-global ``os.environ``. Idempotent; patches the sync module global
-    and the async module's imported binding.
-    """
-    global _BRIDGE_ENV_PATCH_INSTALLED
-    if _BRIDGE_ENV_PATCH_INSTALLED:
-        return
-
-    from cursor_sdk import _bridge as _sdk_bridge
-
-    _orig_env = _sdk_bridge._bridge_subprocess_env
-
-    def _bridge_subprocess_env_with_overlay() -> Mapping[str, str]:
-        env = dict(_orig_env())
-        overrides = _dispatch_env_overlay()
-        if overrides:
-            home = overrides.get("HOME")
-            if home is not None:
-                env["HOME"] = home
-            venv = overrides.get("VIRTUAL_ENV")
-            if venv is not None:
-                env["VIRTUAL_ENV"] = venv
-            prepend = overrides.get(_PATH_PREPEND_KEY)
-            if prepend is not None:
-                cur = env.get("PATH")
-                env["PATH"] = f"{prepend}{os.pathsep}{cur}" if cur else prepend
-            dispatch_id = overrides.get("CURSOR_SDK_DISPATCH_ID")
-            if dispatch_id is not None:
-                env["CURSOR_SDK_DISPATCH_ID"] = dispatch_id
-            for key, value in overrides.items():
-                if key.startswith("GIT_"):
-                    env[key] = value
-        return env
-
-    _sdk_bridge._bridge_subprocess_env = _bridge_subprocess_env_with_overlay
-    try:
-        from cursor_sdk import _async_bridge as _sdk_async_bridge
-
-        _sdk_async_bridge._bridge_subprocess_env = _bridge_subprocess_env_with_overlay
-    except Exception:  # async bridge optional; the worker uses the sync path
-        logger.debug("cursor-sdk async bridge env patch skipped (module absent)")
-
-    _BRIDGE_ENV_PATCH_INSTALLED = True
-    logger.info(
-        "cursor-sdk bridge subprocess-env patch installed "
-        "(thread-confined HOME overlay; no os.environ mutation)"
-    )
-
-
-@contextmanager
-def _dispatch_home_overlay(
-    home: Path,
-    *,
-    repo_venv: Path | None = None,
-    real_home: Path | str | None = None,
-    dispatch_id: str | None = None,
-):
-    """Thread-confined HOME/venv overlay for one dispatch.
-
-    Records the override in thread-local storage read by the patched
-    ``_bridge_subprocess_env`` during ``Client.launch_bridge`` (same thread).
-    No ``os.environ`` mutation and no lock: each dispatch runs in its own
-    ``asyncio.to_thread`` worker thread, so overrides never collide and a
-    timed-out orphan thread cannot leak HOME into a newly admitted dispatch.
-    """
-    overrides: dict[str, str] = {"HOME": str(home)}
-    if dispatch_id is not None:
-        overrides["CURSOR_SDK_DISPATCH_ID"] = dispatch_id
-        overrides.update(dispatch_git_env_vars(dispatch_id))
-    if repo_venv is not None:
-        overrides["VIRTUAL_ENV"] = str(repo_venv)
-        overrides[_PATH_PREPEND_KEY] = build_dispatch_path_prepend(
-            repo_venv, real_home=real_home
-        )
-    prev = getattr(_dispatch_env, "overrides", None)
-    _dispatch_env.overrides = overrides
-    try:
-        yield
-    finally:
-        _dispatch_env.overrides = prev
-
-
-_install_bridge_env_patch()
-
-
 class SdkRunAbortedError(RuntimeError):
     """SDK run aborted mid-flight (e.g. bridge ReadTimeout) — carries forensics.
 
@@ -977,251 +835,222 @@ def _run_sdk_sync(
             handoff_contract=ctx.handoff_contract,
         )
 
-        with _dispatch_home_overlay(
-            dispatch_home,
+        client = launch_sdk_bridge(
+            ctx,
+            bridge_state=bridge_state,
+            dispatch_home=dispatch_home,
             repo_venv=repo_venv,
             real_home=real_home,
+            local=agent_options.local,
+            client_timeout=_SDK_CLIENT_TIMEOUT,
+        )
+        register_active_client(dispatch_id=ctx.dispatch_id, client=client)
+        bridge_tap = start_bridge_stderr_drain(
             dispatch_id=ctx.dispatch_id,
-        ):
-            client = None
-            for attempt in range(_SDK_LAUNCH_ATTEMPTS):
-                try:
-                    client = Client.launch_bridge(
-                        _SDK_BRIDGE_BIN,
-                        workspace=str(ctx.dispatch_workspace),
-                        state_root=str(bridge_state),
-                        timeout=_SDK_LAUNCH_TIMEOUT_S,
-                        # Friction 23057: without this the SDK's default
-                        # 600s stream read timeout kills long silent tool
-                        # legs despite healthy heartbeats.
-                        client_timeout=_SDK_CLIENT_TIMEOUT,
-                        local=agent_options.local,
-                    )
-                    break
-                except Exception as launch_exc:  # noqa: BLE001
-                    is_last = attempt + 1 >= _SDK_LAUNCH_ATTEMPTS
-                    if is_last or not _is_pre_discovery_transient(launch_exc):
-                        raise
-                    backoff = _SDK_LAUNCH_BACKOFFS_S[
-                        min(attempt, len(_SDK_LAUNCH_BACKOFFS_S) - 1)
-                    ]
-                    logger.warning(
-                        "cursor sdk bridge pre-discovery transient: "
-                        "dispatch_id=%s attempt=%d/%d err=%s; retrying in %.1fs",
-                        ctx.dispatch_id,
-                        attempt + 1,
-                        _SDK_LAUNCH_ATTEMPTS,
-                        launch_exc,
-                        backoff,
-                    )
-                    time.sleep(backoff)
-            register_active_client(dispatch_id=ctx.dispatch_id, client=client)
-            bridge_tap = start_bridge_stderr_drain(
+            thread_id=ctx.thread_id,
+            client=client,
+        )
+        if live_counter is None:
+            live_counter = _LiveToolCallCounter()
+        hb_thread, hb_stop = _start_heartbeat(
+            dispatch_id=ctx.dispatch_id,
+            thread_id=ctx.thread_id,
+            resolved_model=resolved_model,
+            execution_id=execution_id,
+            tool_call_count_fn=live_counter.value,
+        )
+        run_started = time.monotonic()
+        agent = None
+        run = None
+        stream_capture = None
+
+        def _abort_forensics(exc: BaseException) -> dict[str, Any]:
+            # Friction 23050: preserve knowledge of a mid-flight bridge death.
+            last_calls: list[dict[str, str]] = []
+            if stream_capture is not None:
+                last_calls = [
+                    {"tool_name": tc.tool_name, "status": tc.status}
+                    for tc in stream_capture.tool_calls[-3:]
+                ]
+            return {
+                "cause": f"{type(exc).__name__}: {exc}",
+                "elapsed_s": round(time.monotonic() - run_started, 1),
+                "stream_tool_call_count": live_counter.value(),
+                "last_tool_calls": last_calls,
+                "state_root": str(bridge_state),
+                "agent_id": getattr(agent, "id", None),
+                "run_id": getattr(run, "id", None),
+                # Assertion 31706: a refused connection only says the bridge
+                # is gone. Its exit code and dying stderr say why.
+                **bridge_exit_snapshot(bridge_tap),
+                "note": (
+                    "bridge failure, not verified run death — the underlying "
+                    "cursor-agent and any remote side effects (browser "
+                    "automation, ssh legs) may have continued or partially "
+                    "applied; verify outcome independently. Per-call telemetry: "
+                    "frontier.sdk.worker.{progress,toolcall} events for this "
+                    "dispatch_id."
+                ),
+            }
+
+        try:
+            agent, run = start_or_resume_agent(
+                client=client,
+                agent_options=agent_options,
+                prompt=prompt,
+                resume_ctx=resume_ctx,
+            )
+            # Local bridge Send rejects Idempotency-Key (cloud-only in SDK v1).
+            register_live_run(
                 dispatch_id=ctx.dispatch_id,
                 thread_id=ctx.thread_id,
-                client=client,
+                source_repo=str(ctx.hub),
+                run=run,
             )
-            if live_counter is None:
-                live_counter = _LiveToolCallCounter()
-            hb_thread, hb_stop = _start_heartbeat(
+            CursorDispatchLedger.instance().record_sdk_identity(
+                dispatch_id=ctx.dispatch_id,
+                agent_id=sdk_agent_id_from_agent(agent),
+                run_id=getattr(run, "id", None),
+            )
+            # Drain the live stream BEFORE wait() — safe/additive: a fully
+            # consumed stream leaves Run._terminal_result cached, so wait()
+            # below returns it directly instead of issuing a second RPC.
+            # This is the ONLY channel that can see a tool call the runtime
+            # truncates/rejects upstream of conversation() (friction 21654).
+            stream_capture = observe_run_stream(
+                run,
                 dispatch_id=ctx.dispatch_id,
                 thread_id=ctx.thread_id,
                 resolved_model=resolved_model,
                 execution_id=execution_id,
-                tool_call_count_fn=live_counter.value,
+                on_tool_call=live_counter.bump,
             )
-            run_started = time.monotonic()
-            agent = None
-            run = None
-            stream_capture = None
-
-            def _abort_forensics(exc: BaseException) -> dict[str, Any]:
-                # Friction 23050: preserve knowledge of a mid-flight bridge death.
-                last_calls: list[dict[str, str]] = []
-                if stream_capture is not None:
-                    last_calls = [
-                        {"tool_name": tc.tool_name, "status": tc.status}
-                        for tc in stream_capture.tool_calls[-3:]
-                    ]
-                return {
-                    "cause": f"{type(exc).__name__}: {exc}",
-                    "elapsed_s": round(time.monotonic() - run_started, 1),
-                    "stream_tool_call_count": live_counter.value(),
-                    "last_tool_calls": last_calls,
-                    "state_root": str(bridge_state),
-                    "agent_id": getattr(agent, "id", None),
-                    "run_id": getattr(run, "id", None),
-                    # Assertion 31706: a refused connection only says the bridge
-                    # is gone. Its exit code and dying stderr say why.
-                    **bridge_exit_snapshot(bridge_tap),
-                    "note": (
-                        "bridge failure, not verified run death — the underlying "
-                        "cursor-agent and any remote side effects (browser "
-                        "automation, ssh legs) may have continued or partially "
-                        "applied; verify outcome independently. Per-call telemetry: "
-                        "frontier.sdk.worker.{progress,toolcall} events for this "
-                        "dispatch_id."
-                    ),
-                }
-
-            try:
-                agent, run = start_or_resume_agent(
-                    client=client,
-                    agent_options=agent_options,
-                    prompt=prompt,
-                    resume_ctx=resume_ctx,
-                )
-                # Local bridge Send rejects Idempotency-Key (cloud-only in SDK v1).
-                register_live_run(
-                    dispatch_id=ctx.dispatch_id,
-                    thread_id=ctx.thread_id,
-                    source_repo=str(ctx.hub),
-                    run=run,
-                )
-                CursorDispatchLedger.instance().record_sdk_identity(
-                    dispatch_id=ctx.dispatch_id,
-                    agent_id=sdk_agent_id_from_agent(agent),
-                    run_id=getattr(run, "id", None),
-                )
-                # Drain the live stream BEFORE wait() — safe/additive: a fully
-                # consumed stream leaves Run._terminal_result cached, so wait()
-                # below returns it directly instead of issuing a second RPC.
-                # This is the ONLY channel that can see a tool call the runtime
-                # truncates/rejects upstream of conversation() (friction 21654).
-                stream_capture = observe_run_stream(
-                    run,
-                    dispatch_id=ctx.dispatch_id,
-                    thread_id=ctx.thread_id,
-                    resolved_model=resolved_model,
-                    execution_id=execution_id,
-                    on_tool_call=live_counter.bump,
-                )
-                result = run.wait()
-                usage_record = finalize_dispatch_usage(
-                    stream_capture, run=run, result=result
-                )
-                stream_capture = StreamCapture(
-                    tool_calls=stream_capture.tool_calls,
-                    usage=usage_record.usage,
-                    usage_capture_status=usage_record.usage_capture_status,
-                    usage_total_derived=False,
-                    sdk_request_id=stream_capture.sdk_request_id,
-                    request_id_source=stream_capture.request_id_source,
-                )
-                persist_dispatch_usage(
-                    CursorDispatchLedger.instance(),
-                    dispatch_id=ctx.dispatch_id,
-                    record=usage_record,
-                )
-                assert run is not None and result is not None
-                stream_capture = finalize_request_id_capture(
-                    stream_capture, run=run, result=result
-                )
-                post_wait = read_post_wait_snapshot(
-                    run=run,
-                    agent=agent,
-                    result=result,
-                    poll_fallback=True,
-                )
-                turns = post_wait.conversation
-                artifact_paths = list(post_wait.artifact_paths)
-                capture_branch = classify_mcp_capture_branch(turns)
-                effects_manifest = build_effects_manifest(
-                    dispatch_id=ctx.dispatch_id,
-                    thread_id=ctx.thread_id,
-                    turns=turns,
-                    capture_branch=capture_branch,
-                    contract=ctx.handoff_contract,
-                )
-                effects_manifest = merge_stream_tool_calls(
+            result = run.wait()
+            usage_record = finalize_dispatch_usage(
+                stream_capture, run=run, result=result
+            )
+            stream_capture = StreamCapture(
+                tool_calls=stream_capture.tool_calls,
+                usage=usage_record.usage,
+                usage_capture_status=usage_record.usage_capture_status,
+                usage_total_derived=False,
+                sdk_request_id=stream_capture.sdk_request_id,
+                request_id_source=stream_capture.request_id_source,
+            )
+            persist_dispatch_usage(
+                CursorDispatchLedger.instance(),
+                dispatch_id=ctx.dispatch_id,
+                record=usage_record,
+            )
+            assert run is not None and result is not None
+            stream_capture = finalize_request_id_capture(
+                stream_capture, run=run, result=result
+            )
+            post_wait = read_post_wait_snapshot(
+                run=run,
+                agent=agent,
+                result=result,
+                poll_fallback=True,
+            )
+            turns = post_wait.conversation
+            artifact_paths = list(post_wait.artifact_paths)
+            capture_branch = classify_mcp_capture_branch(turns)
+            effects_manifest = build_effects_manifest(
+                dispatch_id=ctx.dispatch_id,
+                thread_id=ctx.thread_id,
+                turns=turns,
+                capture_branch=capture_branch,
+                contract=ctx.handoff_contract,
+            )
+            effects_manifest = merge_stream_tool_calls(
+                effects_manifest,
+                stream_capture.tool_calls,
+                source_repo=ctx.hub,
+            )
+            effects_manifest = merge_stream_subagent_calls(
+                effects_manifest,
+                stream_capture.tool_calls,
+            )
+            if artifact_paths:
+                effects_manifest = merge_artifact_paths(
                     effects_manifest,
-                    stream_capture.tool_calls,
+                    artifact_paths,
                     source_repo=ctx.hub,
                 )
-                effects_manifest = merge_stream_subagent_calls(
-                    effects_manifest,
-                    stream_capture.tool_calls,
+            conversation_tool_call_count = count_tool_calls(turns)
+            tool_call_count = (
+                stream_capture.tool_call_count or conversation_tool_call_count
+            )
+            if stream_capture.tool_call_count != conversation_tool_call_count:
+                logger.info(
+                    "cursor sdk stream/conversation tool-call count delta: "
+                    "dispatch_id=%s stream=%d conversation=%d delta=%d "
+                    "truncated_calls=%d",
+                    ctx.dispatch_id,
+                    stream_capture.tool_call_count,
+                    conversation_tool_call_count,
+                    stream_capture.tool_call_count - conversation_tool_call_count,
+                    len(stream_capture.truncated_tool_calls),
                 )
-                if artifact_paths:
-                    effects_manifest = merge_artifact_paths(
-                        effects_manifest,
-                        artifact_paths,
-                        source_repo=ctx.hub,
-                    )
-                conversation_tool_call_count = count_tool_calls(turns)
-                tool_call_count = (
-                    stream_capture.tool_call_count or conversation_tool_call_count
+            sdk_request_id = stream_capture.sdk_request_id
+            request_id_source = stream_capture.request_id_source or "absent"
+            git_probe = probe_run_git_info(
+                path_label=LOCAL_BRIDGE_PATH_LABEL,
+                result=result,
+            )
+            extra_reasons = git_probe_degraded_reasons(
+                probe=git_probe,
+                sdk_git=post_wait.sdk_git,
+                source_repo=ctx.hub,
+            )
+            stream_deviations = stream_only_effect_deviations(
+                stream_tool_calls=stream_capture.tool_calls,
+                conversation_tool_call_count=conversation_tool_call_count,
+            )
+            return SdkRunOutcome(
+                body=resolve_run_body(result.result, turns),
+                status=str(result.status),
+                duration_ms=result.duration_ms,
+                tool_call_count=tool_call_count,
+                effects_manifest=effects_manifest,
+                capture_branch=capture_branch,
+                tool_calls=stream_capture.tool_calls,
+                usage=stream_capture.usage,
+                usage_capture_status=stream_capture.usage_capture_status,
+                sdk_request_id=sdk_request_id,
+                request_id_source=request_id_source,
+                sdk_run_id=getattr(run, "id", None) or getattr(result, "id", None),
+                sdk_agent_id=(
+                    getattr(agent, "id", None) or getattr(result, "agent_id", None)
+                ),
+                degraded_reasons=extra_reasons,
+                sdk_git=post_wait.sdk_git,
+                stream_only_deviations=stream_deviations,
+            )
+        except BaseException as exc:
+            sdk_request_id, request_id_source = request_id_from_sdk_error(exc)
+            if sdk_request_id:
+                logger.info(
+                    "cursor sdk error request_id captured: dispatch_id=%s "
+                    "sdk_request_id=%s source=%s",
+                    ctx.dispatch_id,
+                    sdk_request_id,
+                    request_id_source,
                 )
-                if stream_capture.tool_call_count != conversation_tool_call_count:
-                    logger.info(
-                        "cursor sdk stream/conversation tool-call count delta: "
-                        "dispatch_id=%s stream=%d conversation=%d delta=%d "
-                        "truncated_calls=%d",
-                        ctx.dispatch_id,
-                        stream_capture.tool_call_count,
-                        conversation_tool_call_count,
-                        stream_capture.tool_call_count - conversation_tool_call_count,
-                        len(stream_capture.truncated_tool_calls),
-                    )
-                sdk_request_id = stream_capture.sdk_request_id
-                request_id_source = stream_capture.request_id_source or "absent"
-                git_probe = probe_run_git_info(
-                    path_label=LOCAL_BRIDGE_PATH_LABEL,
-                    result=result,
-                )
-                extra_reasons = git_probe_degraded_reasons(
-                    probe=git_probe,
-                    sdk_git=post_wait.sdk_git,
-                    source_repo=ctx.hub,
-                )
-                stream_deviations = stream_only_effect_deviations(
-                    stream_tool_calls=stream_capture.tool_calls,
-                    conversation_tool_call_count=conversation_tool_call_count,
-                )
-                return SdkRunOutcome(
-                    body=resolve_run_body(result.result, turns),
-                    status=str(result.status),
-                    duration_ms=result.duration_ms,
-                    tool_call_count=tool_call_count,
-                    effects_manifest=effects_manifest,
-                    capture_branch=capture_branch,
-                    tool_calls=stream_capture.tool_calls,
-                    usage=stream_capture.usage,
-                    usage_capture_status=stream_capture.usage_capture_status,
-                    sdk_request_id=sdk_request_id,
-                    request_id_source=request_id_source,
-                    sdk_run_id=getattr(run, "id", None) or getattr(result, "id", None),
-                    sdk_agent_id=(
-                        getattr(agent, "id", None) or getattr(result, "agent_id", None)
-                    ),
-                    degraded_reasons=extra_reasons,
-                    sdk_git=post_wait.sdk_git,
-                    stream_only_deviations=stream_deviations,
-                )
-            except BaseException as exc:
-                sdk_request_id, request_id_source = request_id_from_sdk_error(exc)
-                if sdk_request_id:
-                    logger.info(
-                        "cursor sdk error request_id captured: dispatch_id=%s "
-                        "sdk_request_id=%s source=%s",
-                        ctx.dispatch_id,
-                        sdk_request_id,
-                        request_id_source,
-                    )
-                # Friction 23050: wrap any mid-flight abort (APITimeoutError /
-                # bridge ReadTimeout / dying SDK) with partial forensics so the
-                # failure envelope does not destroy all knowledge of the run.
-                raise SdkRunAbortedError(
-                    str(exc), forensics=_abort_forensics(exc)
-                ) from exc
-            finally:
-                hb_stop.set()
-                hb_thread.join(timeout=5.0)
-                unregister_live_run(dispatch_id=ctx.dispatch_id)
-                stop_bridge_stderr_drain(bridge_tap)
-                if client is not None:
-                    client.close()
-                clear_dispatch_orphan_state(dispatch_id=ctx.dispatch_id)
+            # Friction 23050: wrap any mid-flight abort (APITimeoutError /
+            # bridge ReadTimeout / dying SDK) with partial forensics so the
+            # failure envelope does not destroy all knowledge of the run.
+            raise SdkRunAbortedError(
+                str(exc), forensics=_abort_forensics(exc)
+            ) from exc
+        finally:
+            hb_stop.set()
+            hb_thread.join(timeout=5.0)
+            unregister_live_run(dispatch_id=ctx.dispatch_id)
+            stop_bridge_stderr_drain(bridge_tap)
+            if client is not None:
+                client.close()
+            clear_dispatch_orphan_state(dispatch_id=ctx.dispatch_id)
     finally:
         # Release the capacity slot from this thread — not from the async
         # coroutine — so a timed-out orphan thread holds the slot until exit.
