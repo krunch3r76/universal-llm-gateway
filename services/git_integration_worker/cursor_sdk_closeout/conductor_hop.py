@@ -7,7 +7,6 @@ Fires after ``ledger.mark_terminal`` on the closeout hot path. Closeout authorit
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 from typing import Any
@@ -26,23 +25,24 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
 from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
     conductor_has_live_nested,
 )
-from services.git_integration_worker.cursor_sdk_conductor_conflict import (
-    _record_packet_kind,
-)
-from services.git_integration_worker.cursor_sdk_ledger_hop import (
-    hop_fields_from_record_json,
-    merge_hop_patch,
-)
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
     budget_ok_for_hop,
     build_budget_authority_patch,
     evaluate_hop_budget,
     park_conductor_hop_mission,
 )
+from services.git_integration_worker.cursor_sdk_conductor_conflict import (
+    _record_packet_kind,
+)
 from services.git_integration_worker.cursor_sdk_hop_events import (
     emit_frontier_sdk_conductor_hop_admit_failed,
     emit_frontier_sdk_conductor_hop_admitted,
     emit_frontier_sdk_conductor_hop_declared,
+    emit_frontier_sdk_conductor_hop_skipped,
+)
+from services.git_integration_worker.cursor_sdk_ledger_hop import (
+    hop_fields_from_record_json,
+    merge_hop_patch,
 )
 
 logger = get_logger(__name__)
@@ -51,7 +51,9 @@ _LIVE_STATUSES = frozenset(
     {"queued", "admitted", "running", "parked_waiting"}
 )
 _CLOSEOUT_TOKENS_KEY = "closeout_stop_tokens"
-_HOP_SEQ_LINE_RE = re.compile(r"(?im)^hop_seq:\s*(\d+)\s*$")
+_HOP_SEQ_LINE_RE = re.compile(
+    r"(?im)^(?:\*\*)?hop_seq(?:\*\*)?:\s*(\d+)\s*$"
+)
 _RELAY_TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=15.0, pool=5.0)
 
 
@@ -69,11 +71,95 @@ def _load_row(dispatch_id: str) -> dict[str, Any] | None:
 
 def _is_conductor_row(row: dict[str, Any]) -> bool:
     record_json = str(row.get("record_json") or "")
-    packet_kind = _record_packet_kind(record_json)
-    if packet_kind == "conductor":
-        return True
-    contract = str(row.get("contract") or "").lower()
-    return contract == "light-bounded" and bool(row.get("work_key"))
+    return _record_packet_kind(record_json) == "conductor"
+
+
+def _record_data(row: dict[str, Any]) -> dict[str, Any]:
+    record_json = str(row.get("record_json") or "")
+    try:
+        data = json.loads(record_json) if record_json else {}
+    except json.JSONDecodeError:
+        data = {}
+    return data if isinstance(data, dict) else {}
+
+
+def _resolve_source_ref(row: dict[str, Any], rec: dict[str, Any]) -> str:
+    for candidate in (
+        rec.get("source_ref"),
+        row.get("source_ref"),
+        row.get("work_key"),
+    ):
+        text = str(candidate or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _successor_hop_seq(row: dict[str, Any], rec: dict[str, Any]) -> int:
+    """Closeout ``hop_seq`` is this row's seq; successor is +1."""
+    closeout_seq = rec.get("closeout_hop_seq")
+    if isinstance(closeout_seq, int):
+        return closeout_seq + 1
+    hop_fields = hop_fields_from_record_json(str(row.get("record_json") or ""))
+    prior_seq = hop_fields.get("hop_seq")
+    if isinstance(prior_seq, int):
+        return prior_seq + 1
+    return 1
+
+
+def _hop_skip_gate(
+    row: dict[str, Any],
+    *,
+    closeout_tokens: frozenset[str],
+) -> str | None:
+    """Return skip gate name when hop reactor must not POST successor."""
+    if not hop_owed(row, closeout_tokens=closeout_tokens):
+        status = str(row.get("status") or "")
+        if status not in ("completed", "failed", "cancelled"):
+            return "mission_closed"
+        tokens = closeout_tokens
+        if tokens & (EXIT_PERSIST_STOPS | frozenset({"DONE"})):
+            return "mission_closed"
+        thread_id = str(row.get("thread_id") or "")
+        dispatch_id = str(row.get("dispatch_id") or "")
+        if thread_id and dispatch_id and live_conductor_row_on_thread(
+            thread_id=thread_id, exclude_dispatch_id=dispatch_id
+        ):
+            return "live_sibling"
+        if dispatch_id and conductor_has_live_nested(dispatch_id=dispatch_id):
+            return "live_nested"
+        if not mission_open_for_row(row, closeout_tokens=tokens):
+            return "mission_closed"
+        if not budget_ok_for_hop(row, closeout_tokens=tokens):
+            return "budget"
+        hop_fields = hop_fields_from_record_json(str(row.get("record_json") or ""))
+        if hop_fields.get("hop_successor"):
+            return "already_hopped"
+        return "mission_closed"
+    return None
+
+
+def _emit_hop_skipped(
+    row: dict[str, Any],
+    *,
+    gate: str,
+    hop_seq: int | None = None,
+) -> None:
+    dispatch_id = str(row.get("dispatch_id") or "")
+    thread_id = str(row.get("thread_id") or "")
+    if not dispatch_id or not thread_id:
+        return
+    if hop_seq is None:
+        rec = _record_data(row)
+        hop_seq = _successor_hop_seq(row, rec) - 1
+        if hop_seq < 1:
+            hop_seq = 1
+    emit_frontier_sdk_conductor_hop_skipped(
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        hop_seq=int(hop_seq),
+        gate=gate,
+    )
 
 
 def _closeout_tokens_from_row(row: dict[str, Any]) -> frozenset[str]:
@@ -234,17 +320,25 @@ def merge_conductor_closeout_hop_authority(
     data[_CLOSEOUT_TOKENS_KEY] = sorted(tokens)
     if "ROW_HOP" in tokens:
         data["hop_declared"] = True
+        hop_seq = _parse_hop_seq_from_closeout(closeout_body)
+        if hop_seq is None:
+            prior = hop_fields_from_record_json(str(row.get("record_json") or ""))
+            prior_seq = prior.get("hop_seq")
+            hop_seq = int(prior_seq) if isinstance(prior_seq, int) else 1
+        data["closeout_hop_seq"] = hop_seq
     _write_record_json(
         dispatch_id,
         json.dumps(data, sort_keys=True, separators=(",", ":")),
     )
     row = _load_row(dispatch_id) or row
     if "ROW_HOP" in tokens:
-        hop_seq = _parse_hop_seq_from_closeout(closeout_body)
+        hop_seq = data.get("closeout_hop_seq")
+        if not isinstance(hop_seq, int):
+            hop_seq = _parse_hop_seq_from_closeout(closeout_body)
         if hop_seq is None:
             prior = hop_fields_from_record_json(str(row.get("record_json") or ""))
             prior_seq = prior.get("hop_seq")
-            hop_seq = int(prior_seq) + 1 if isinstance(prior_seq, int) else 1
+            hop_seq = int(prior_seq) if isinstance(prior_seq, int) else 1
         emit_frontier_sdk_conductor_hop_declared(
             dispatch_id=dispatch_id,
             thread_id=thread_id,
@@ -272,18 +366,15 @@ def build_hop_team_dispatch_body(
         rec = {}
     if not isinstance(rec, dict):
         rec = {}
-    hop_fields = hop_fields_from_record_json(record_json)
     closeout_tokens = _closeout_tokens_from_row(row)
     predecessor_id = str(row.get("dispatch_id") or "")
     thread_id = str(row.get("thread_id") or "")
-    source_ref = str(row.get("source_ref") or row.get("work_key") or "")
-    if not thread_id or not source_ref:
+    source_ref = _resolve_source_ref(row, rec)
+    if not thread_id:
         return None
-    hop_seq = hop_fields.get("hop_seq")
-    if isinstance(hop_seq, int):
-        next_seq = hop_seq + 1
-    else:
-        next_seq = 1
+    if not source_ref:
+        return None
+    next_seq = _successor_hop_seq(row, rec)
     hop_reason = hop_reason_override or _infer_hop_reason(
         closeout_tokens=closeout_tokens,
         terminal_status=str(row.get("terminal_status") or row.get("status") or ""),
@@ -297,17 +388,20 @@ def build_hop_team_dispatch_body(
     generation_options["idempotency_key"] = build_conductor_hop_idempotency_key(
         predecessor_id
     )
+    summoning_thread_id = str(rec.get("summoning_thread_id") or "").strip()
+    dispatch_thread_id = summoning_thread_id or thread_id
+    routing_model = rec.get("model") or row.get("resolved_model")
     body: dict[str, Any] = {
         "op": "generate",
         "seat": "cursor-sdk",
         "contract": "light-bounded",
         "caller_agent": "conductor-hop",
-        "dispatch_thread_id": thread_id,
+        "dispatch_thread_id": dispatch_thread_id,
         "reuse_thread": thread_id,
         "source_ref": source_ref,
         "packet_kind": "conductor",
         "lane": rec.get("lane") or "B",
-        "model": row.get("resolved_model"),
+        "model": routing_model,
         "generation_options": generation_options,
     }
     if rec.get("model_knobs"):
@@ -349,7 +443,10 @@ async def post_conductor_hop_team_dispatch(
 async def maybe_fire_conductor_hop_reactor(*, dispatch_id: str) -> None:
     """Evaluate ``hop_owed`` and POST successor admit when due (after terminal)."""
     row = _load_row(dispatch_id)
-    if row is None or not _is_conductor_row(row):
+    if row is None:
+        return
+    if not _is_conductor_row(row):
+        _emit_hop_skipped(row, gate="not_conductor_row")
         return
     closeout_tokens = _closeout_tokens_from_row(row)
     _write_budget_authority(dispatch_id, row)
@@ -361,12 +458,15 @@ async def maybe_fire_conductor_hop_reactor(*, dispatch_id: str) -> None:
             reason=verdict.reason,
         )
         return
-    if not hop_owed(row, closeout_tokens=closeout_tokens):
+    skip_gate = _hop_skip_gate(row, closeout_tokens=closeout_tokens)
+    if skip_gate is not None:
+        _emit_hop_skipped(row, gate=skip_gate)
         return
-    if verdict.backoff_s > 0:
-        await asyncio.sleep(verdict.backoff_s)
     body = build_hop_team_dispatch_body(row)
     if body is None:
+        rec = _record_data(row)
+        gate = "missing_source_ref" if not _resolve_source_ref(row, rec) else "body_build_failed"
+        _emit_hop_skipped(row, gate=gate)
         return
     thread_id = str(row.get("thread_id") or "")
     hop_seq = int(body.get("hop_seq") or 1)

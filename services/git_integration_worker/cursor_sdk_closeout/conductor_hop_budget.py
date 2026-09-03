@@ -164,10 +164,7 @@ def _is_conductor_row(row: dict[str, Any]) -> bool:
     )
 
     record_json = str(row.get("record_json") or "")
-    if _record_packet_kind(record_json) == "conductor":
-        return True
-    contract = str(row.get("contract") or "").lower()
-    return contract == "light-bounded" and bool(row.get("work_key"))
+    return _record_packet_kind(record_json) == "conductor"
 
 
 def list_mission_terminal_chain(

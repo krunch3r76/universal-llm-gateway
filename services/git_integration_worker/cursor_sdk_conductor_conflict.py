@@ -45,17 +45,8 @@ def find_open_conductor_holder_conn(
     if row is None:
         return None
     record_json = row["record_json"] if "record_json" in row.keys() else "{}"
-    contract = str(row["contract"] or "").lower()
     packet_kind = _record_packet_kind(record_json or "")
-    is_conductor = packet_kind == "conductor" or (
-        contract == "light-bounded" and packet_kind == "conductor"
-    )
-    if not is_conductor and contract == "light-bounded":
-        # Fallback: light-bounded rows with matching work_key are conductor sessions
-        # once packet_kind is stamped at admit; until then treat as conductor when
-        # contract is light-bounded and work_key is set (spawn wire shape).
-        is_conductor = bool(row["work_key"])
-    if not is_conductor:
+    if packet_kind != "conductor":
         return None
     return OpenConductorHolder(
         dispatch_id=row["dispatch_id"],

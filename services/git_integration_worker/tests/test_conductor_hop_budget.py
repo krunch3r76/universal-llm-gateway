@@ -337,10 +337,7 @@ async def test_maybe_fire_planned_hop_no_backoff() -> None:
         record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
     )
     with (
-        patch(
-            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.asyncio.sleep",
-            AsyncMock(),
-        ) as sleep_mock,
+        patch("asyncio.sleep", AsyncMock()) as sleep_mock,
         patch(
             "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
             AsyncMock(return_value=(True, {"dispatch_id": "succ-2"})),
