@@ -338,6 +338,50 @@ def test_derive_supersedes_turn_for_send_requires_role_root() -> None:
     )
 
 
+def test_reply_auto_derives_supersedes_like_send(tmp_path, monkeypatch) -> None:
+    """POST /turns (reply op) must share send-path auto-derive when flag is on."""
+    monkeypatch.setenv("AGENT_BUS_CHECKPOINT_AUTO_SUPERSEDE", "1")
+    app = _app(tmp_path, monkeypatch)
+    with TestClient(app) as client:
+        seed = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "sup-reply-auto",
+                "from": "cursor",
+                "to": "web",
+                "subject": "CHECKPOINT v1",
+                "body": "cp1",
+                "tags": ["role:root"],
+            },
+        )
+        thread_id = seed.json()["thread"]["id"]
+        client.post(
+            "/threads/send",
+            json={
+                "thread": thread_id,
+                "from": "cursor",
+                "to": "web",
+                "subject": "CHECKPOINT v2",
+                "body": "cp2",
+                "supersedes_turn": 1,
+            },
+        )
+        resp = client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "cursor",
+                "to": "web",
+                "subject": "CHECKPOINT v3",
+                "body": "cp3",
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        turn = resp.json()
+        assert turn["superseded_turn_number"] == 2
+        assert turn["superseded_turn_id"] > 0
+
+
 def test_auto_derive_supersedes_disabled_by_default(tmp_path, monkeypatch) -> None:
     app = _app(tmp_path, monkeypatch)
     with TestClient(app) as client:

@@ -33,10 +33,7 @@ from ..db import (
     update_turn_status,
 )
 from ..models import AgentName
-from ..supersedes_turn_boundary import (
-    SupersedesTurnNotFoundError,
-    resolve_supersedes_turn,
-)
+from ..routes.threads.send_prep import _resolve_send_supersedes
 from ..turns_models import (
     Attachment,
     Turn,
@@ -97,20 +94,13 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
     """Create one turn, enforcing unread and status invariants from storage logic."""
     turn.thread = normalize_thread_id(turn.thread)
     thread_tags = load_thread_tags(turn.thread)
-    try:
-        resolved = resolve_supersedes_turn(
-            thread=turn.thread,
-            turn_number=turn.supersedes_turn,
-            turn_id_alias=turn.supersedes_turn_id,
-        )
-    except SupersedesTurnNotFoundError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=exc.to_http_detail(),
-        ) from exc
-    storage_supersedes = resolved.turn_id if resolved else None
-    echo_turn_number = resolved.turn_number if resolved else None
-    echo_turn_id = resolved.turn_id if resolved else None
+    storage_supersedes, echo_turn_number, echo_turn_id = _resolve_send_supersedes(
+        thread_id=turn.thread,
+        subject=turn.subject,
+        thread_tags=thread_tags,
+        turn_number=turn.supersedes_turn,
+        turn_id_alias=turn.supersedes_turn_id,
+    )
     try:
         prepared = prepare_body_for_insert(
             thread=turn.thread,
@@ -119,7 +109,7 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
             from_agent=turn.from_agent,
             allow_long_body=turn.allow_long_body,
             thread_tags=thread_tags,
-            supersedes_turn=turn.supersedes_turn or turn.supersedes_turn_id,
+            supersedes_turn=echo_turn_number,
         )
     except Exception as exc:
         mapped = spill_error_http(exc, thread_id=turn.thread)
