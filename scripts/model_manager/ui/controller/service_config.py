@@ -147,6 +147,8 @@ def build_service_env(
     env = dict(os.environ)
     env.update(load_env_file(workspace_root / ".env.local"))
     env.update(load_env_file(GATEWAY_DIR / "secrets.env"))
+    # CURSOR_API_KEY_OTHER_MODELS — secondary Cursor API key for Other Models pool
+    # dispatches via git-integration-worker (see cursor_sdk_context.resolve_cursor_api_key).
     if node_env_path:
         env.update(load_env_file(node_env_path))
     cfg = load_mcp_config()

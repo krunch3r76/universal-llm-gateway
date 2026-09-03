@@ -67,12 +67,15 @@ def _stub_dispatch_parity(monkeypatch: pytest.MonkeyPatch) -> None:
 
     Individual tests may override ``validate_dispatch_context`` (e.g. parity-failure 422).
     """
+    from services.git_integration_worker.cursor_sdk_context import (
+        CursorApiKeyResolution,
+    )
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
     monkeypatch.setattr(
         route_mod,
         "validate_dispatch_context",
-        lambda _repo: {
+        lambda *_a, **_k: {
             "setting_sources": ["projectSettings", "user"],
             "mcp_server": "vortex",
             "mcp_bridge": "scripts/mcp-fastmcp-remote-bridge.py",
@@ -81,6 +84,11 @@ def _stub_dispatch_parity(monkeypatch: pytest.MonkeyPatch) -> None:
             "cursor_auth_source": "test",
             "user_rules_dir_present": False,
         },
+    )
+    monkeypatch.setattr(
+        route_mod,
+        "resolve_cursor_api_key",
+        lambda *_a, **_k: CursorApiKeyResolution(provenance="env:CURSOR_API_KEY"),
     )
 
 
@@ -1118,7 +1126,7 @@ def test_run_sdk_sync_injects_venv_env(
     monkeypatch.setattr(
         route_mod, "setup_cursor_dispatch_home", lambda _did, **_: dispatch_home
     )
-    monkeypatch.setattr(route_mod, "validate_dispatch_context", lambda _repo: {})
+    monkeypatch.setattr(route_mod, "validate_dispatch_context", lambda *_a, **_k: {})
     monkeypatch.setattr(
         route_mod, "resolve_cursor", lambda _mid: MagicMock(model_id="composer-2.5")
     )
@@ -1226,7 +1234,7 @@ def test_dispatch_path_prepend_pins_cursor_agent_before_grok(
     monkeypatch.setattr(
         route_mod, "setup_cursor_dispatch_home", lambda _did, **_: dispatch_home
     )
-    monkeypatch.setattr(route_mod, "validate_dispatch_context", lambda _repo: {})
+    monkeypatch.setattr(route_mod, "validate_dispatch_context", lambda *_a, **_k: {})
     monkeypatch.setattr(
         route_mod, "resolve_cursor", lambda _mid: MagicMock(model_id="composer-2.5")
     )
@@ -1294,7 +1302,7 @@ async def test_dispatch_venv_config_error_posts_bus_reply(
     monkeypatch.setattr(
         route_mod, "setup_cursor_dispatch_home", lambda _did, **_: dispatch_home
     )
-    monkeypatch.setattr(route_mod, "validate_dispatch_context", lambda _repo: {})
+    monkeypatch.setattr(route_mod, "validate_dispatch_context", lambda *_a, **_k: {})
     monkeypatch.setattr(
         route_mod, "resolve_cursor", lambda _mid: MagicMock(model_id="composer-2.5")
     )
@@ -2736,7 +2744,7 @@ def test_run_sdk_sync_folds_stream_paths_and_artifacts(
     monkeypatch.setattr(
         route_mod, "setup_cursor_dispatch_home", lambda _did, **_: dispatch_home
     )
-    monkeypatch.setattr(route_mod, "validate_dispatch_context", lambda _repo: {})
+    monkeypatch.setattr(route_mod, "validate_dispatch_context", lambda *_a, **_k: {})
     monkeypatch.setattr(
         route_mod, "resolve_cursor", lambda _mid: MagicMock(model_id="composer-2.5")
     )
@@ -2894,7 +2902,7 @@ def test_run_sdk_sync_local_bridge_post_wait_request_id(
     monkeypatch.setattr(
         route_mod, "setup_cursor_dispatch_home", lambda _did, **_: dispatch_home
     )
-    monkeypatch.setattr(route_mod, "validate_dispatch_context", lambda _repo: {})
+    monkeypatch.setattr(route_mod, "validate_dispatch_context", lambda *_a, **_k: {})
     monkeypatch.setattr(
         route_mod, "resolve_cursor", lambda _mid: MagicMock(model_id="composer-2.5")
     )
@@ -3036,7 +3044,7 @@ def test_finalize_request_id_wire_point_receives_run_and_result(
     monkeypatch.setattr(
         route_mod, "setup_cursor_dispatch_home", lambda _d, **_: Path("/tmp/dhome")
     )
-    monkeypatch.setattr(route_mod, "validate_dispatch_context", lambda _r: {})
+    monkeypatch.setattr(route_mod, "validate_dispatch_context", lambda *_a, **_k: {})
     monkeypatch.setattr(route_mod, "resolve_cursor", lambda _m: MagicMock(model_id="m"))
     monkeypatch.setattr(route_mod, "build_model_selection", lambda _c, _o: MagicMock(params=[]))
     monkeypatch.setattr(route_mod, "build_agent_options", lambda *_a, **_k: MagicMock(local=True))

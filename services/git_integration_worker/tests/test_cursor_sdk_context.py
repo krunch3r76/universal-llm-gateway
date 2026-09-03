@@ -294,6 +294,7 @@ def test_build_agent_options_wires_model_and_local(
     )
     assert opts.model == model
     assert opts.mode == "agent"
+    assert opts.api_key is None
     assert opts.local is not None
     assert opts.mcp_servers is not None
     assert "user-vortex" in opts.mcp_servers

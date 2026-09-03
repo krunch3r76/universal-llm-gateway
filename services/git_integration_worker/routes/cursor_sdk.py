@@ -109,6 +109,7 @@ from services.git_integration_worker.cursor_sdk_conductor_conflict import (
 from services.git_integration_worker.cursor_sdk_context import (
     CursorSdkParityError,
     build_agent_options,
+    resolve_cursor_api_key,
     validate_dispatch_context,
 )
 from services.git_integration_worker.cursor_sdk_deliverable_truth import (
@@ -820,14 +821,18 @@ def _run_sdk_sync(
     try:
         config = resolve_cursor(config_model_id)
         selection = build_model_selection(config, selection_overrides)
-        parity = validate_dispatch_context(ctx.hub)
+        key_res = resolve_cursor_api_key(resolved_model, real_home=real_home)
+        parity = validate_dispatch_context(
+            ctx.hub, resolved_model=resolved_model, real_home=real_home
+        )
         knob_summary = {p.id: p.value for p in selection.params}
         logger.info(
-            "cursor sdk dispatch start: dispatch_id=%s model=%s knobs=%s parity=%s",
+            "cursor sdk dispatch start: dispatch_id=%s model=%s knobs=%s parity=%s cursor_auth=%s",
             ctx.dispatch_id,
             config.model_id,
             knob_summary,
             parity,
+            key_res.provenance,
         )
         substrate_ctx = SubstrateDispatchContext(
             dispatch_id=ctx.dispatch_id,
@@ -842,6 +847,7 @@ def _run_sdk_sync(
             substrate_ctx=substrate_ctx,
             state_root=str(bridge_state),
             handoff_contract=ctx.handoff_contract,
+            api_key=key_res.api_key,
         )
 
         client = launch_sdk_bridge(
@@ -2291,7 +2297,9 @@ async def cursor_dispatch(
             invalid_fields=["packet_path"] if req.packet_path else ["message"],
         )
     try:
-        parity = validate_dispatch_context(cfg.source_repo)
+        parity = validate_dispatch_context(
+            cfg.source_repo, resolved_model=config.model_id
+        )
     except CursorSdkParityError as exc:
         return _reject_pre_admission(
             req,

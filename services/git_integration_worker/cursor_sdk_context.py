@@ -14,8 +14,11 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
+from cursor_capabilities.model_pools import is_other_models_pool
 from cursor_sdk.types import (
     AgentOptions,
     LocalAgentOptions,
@@ -41,6 +44,16 @@ ULG_MCP_CONTRACT_ENV = "ULG_MCP_CONTRACT"
 _CONTRACT_MCP_FILTER: frozenset[str] = frozenset({"implement", "pure-mechanical"})
 _MCP_YAML_REL = Path(".gateway") / "mcp.yaml"
 _CURSOR_XDG_AUTH = Path(".config") / "cursor" / "auth.json"
+CURSOR_API_KEY_OTHER_MODELS_ENV = "CURSOR_API_KEY_OTHER_MODELS"
+_SECRETS_ENV_HINT = "~/.gateway/secrets.env"
+
+
+@dataclass(frozen=True, slots=True)
+class CursorApiKeyResolution:
+    """Effective Cursor credential for one dispatch — provenance only in logs."""
+
+    provenance: str
+    api_key: str | None = None
 
 
 class CursorSdkParityError(ValueError):
@@ -106,6 +119,46 @@ def resolve_cursor_auth_source(*, real_home: Path | str | None = None) -> str:
     return ""
 
 
+def resolve_cursor_api_key(
+    resolved_model: str,
+    *,
+    real_home: Path | str | None = None,
+    env: Mapping[str, str] | None = None,
+) -> CursorApiKeyResolution:
+    """Resolve effective Cursor auth for *resolved_model* without mutating GIW env.
+
+    Other Models pool members require ``CURSOR_API_KEY_OTHER_MODELS`` in the
+    worker unit environment (typically via ``~/.gateway/secrets.env``); the
+    value is carried on ``AgentOptions.api_key``. Primary-pool models
+    (Composer, Grok, …) return ``api_key=None`` so the SDK falls back to
+    ``CURSOR_API_KEY`` or dispatch-home ``auth.json``.
+    """
+    environ = env if env is not None else os.environ
+    if is_other_models_pool(resolved_model):
+        secondary = environ.get(CURSOR_API_KEY_OTHER_MODELS_ENV, "").strip()
+        if not secondary:
+            raise CursorSdkParityError(
+                f"Other Models dispatch requires {CURSOR_API_KEY_OTHER_MODELS_ENV} "
+                f"in the git-integration-worker unit environment "
+                f"(e.g. {_SECRETS_ENV_HINT})"
+            )
+        return CursorApiKeyResolution(
+            provenance=f"env:{CURSOR_API_KEY_OTHER_MODELS_ENV}",
+            api_key=secondary,
+        )
+    if environ.get("CURSOR_API_KEY", "").strip():
+        return CursorApiKeyResolution(provenance="env:CURSOR_API_KEY")
+    auth_path = _operator_home(real_home) / _CURSOR_XDG_AUTH
+    if auth_path.is_file():
+        return CursorApiKeyResolution(provenance=f"file:{auth_path}")
+    home = _operator_home(real_home)
+    raise CursorSdkParityError(
+        "Cursor credential not configured — set CURSOR_API_KEY or "
+        f"seed {auth_path} "
+        f"(observed_home_kind={observed_home_kind(home)})"
+    )
+
+
 def resolve_fastmcp_remote_cmd() -> str:
     """Locate ``fastmcp-remote`` for parity + stdio exec.
 
@@ -145,6 +198,7 @@ def resolve_mcp_bridge(source_repo: Path) -> Path:
 def validate_dispatch_context(
     source_repo: Path,
     *,
+    resolved_model: str | None = None,
     real_home: Path | str | None = None,
 ) -> dict[str, object]:
     """Verify IDE-parity substrate before admitting a dispatch."""
@@ -160,13 +214,17 @@ def validate_dispatch_context(
             f"(observed_home_kind={home_kind})"
         )
 
-    cursor_auth = resolve_cursor_auth_source(real_home=home)
-    if not cursor_auth:
-        raise CursorSdkParityError(
-            "Cursor credential not configured — set CURSOR_API_KEY or "
-            f"seed {home / _CURSOR_XDG_AUTH} "
-            f"(observed_home_kind={home_kind})"
-        )
+    if resolved_model is not None:
+        key_res = resolve_cursor_api_key(resolved_model, real_home=home)
+        cursor_auth = key_res.provenance
+    else:
+        cursor_auth = resolve_cursor_auth_source(real_home=home)
+        if not cursor_auth:
+            raise CursorSdkParityError(
+                "Cursor credential not configured — set CURSOR_API_KEY or "
+                f"seed {home / _CURSOR_XDG_AUTH} "
+                f"(observed_home_kind={home_kind})"
+            )
 
     user_rules = home / ".cursor" / "rules"
     return {
@@ -274,6 +332,7 @@ def build_agent_options(
     substrate_ctx: SubstrateDispatchContext | None = None,
     state_root: Path | str | None = None,
     handoff_contract: str | None = None,
+    api_key: str | None = None,
 ) -> AgentOptions:
     """Full create_agent options for IDE-parity cursor-sdk dispatch."""
     local = build_local_agent_options(
@@ -284,6 +343,7 @@ def build_agent_options(
     local = merge_substrate_tools(local, substrate_ctx)
     return AgentOptions(
         model=model,
+        api_key=api_key,
         mode="agent",
         local=local,
         mcp_servers=build_mcp_servers(
