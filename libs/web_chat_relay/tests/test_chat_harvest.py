@@ -370,6 +370,30 @@ def test_chrome_doubled_leading_line_stripped() -> None:
     assert _strip_claude_dom_chrome(raw) == "Yes, two places."
 
 
+def test_chrome_doubled_with_icon_glyph_stripped() -> None:
+    from chat_harvest.claude_chat_adapter import _strip_claude_dom_chrome
+
+    raw = (
+        "Viewed a file, used toys integration\n"
+        "\ue02a\n"
+        "Viewed a file, used toys integration\n\n"
+        "Yes, two places."
+    )
+    assert _strip_claude_dom_chrome(raw) == "Yes, two places."
+
+
+def test_chrome_searched_web_icon_glyph_stripped() -> None:
+    from chat_harvest.claude_chat_adapter import _strip_claude_dom_chrome
+
+    raw = (
+        "Searched the web\n"
+        "\ue027\n"
+        "Searched the web\n\n"
+        "Probably not off the shelf."
+    )
+    assert _strip_claude_dom_chrome(raw) == "Probably not off the shelf."
+
+
 def test_chrome_thought_for_duration_stripped() -> None:
     from chat_harvest.claude_chat_adapter import _strip_claude_dom_chrome
 

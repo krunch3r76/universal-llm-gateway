@@ -34,6 +34,30 @@ logger = get_logger(__name__)
 _THOUGHT_FOR_LINE_RE = re.compile(r"^Thought for \d+s$")
 
 
+def _is_dom_chrome_separator_line(line: str) -> bool:
+    """True for blank lines or lone icon glyphs between doubled chrome lines."""
+    stripped = line.strip()
+    return not stripped or len(stripped) == 1
+
+
+def _strip_doubled_leading_lines(lines: list[str]) -> list[str]:
+    """Drop ``chrome [icon] chrome`` leading prefix (claude.ai DOM artifact)."""
+    if len(lines) < 2:
+        return lines
+    lead = lines[0].strip()
+    if not lead:
+        return lines
+    idx = 1
+    while idx < len(lines) and _is_dom_chrome_separator_line(lines[idx]):
+        idx += 1
+    if idx >= len(lines) or lines[idx].strip() != lead:
+        return lines
+    idx += 1
+    while idx < len(lines) and _is_dom_chrome_separator_line(lines[idx]):
+        idx += 1
+    return lines[idx:]
+
+
 def _strip_claude_dom_chrome(text: str) -> str:
     """Drop claude.ai DOM chrome lines before digest/archive (M2 D2)."""
     lines = [
@@ -41,6 +65,7 @@ def _strip_claude_dom_chrome(text: str) -> str:
         for line in text.split("\n")
         if not _THOUGHT_FOR_LINE_RE.match(line.strip())
     ]
+    lines = _strip_doubled_leading_lines(lines)
     text = "\n".join(lines).strip()
     if not text:
         return text
