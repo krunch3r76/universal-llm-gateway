@@ -68,9 +68,28 @@ def _read_journal_uri(uri: str) -> str | None:
         return None
     rest = uri[len("journal://") :].lstrip("/")
     url = f"{base}/{rest}"
+    token = os.environ.get("BRIDGE_TOKEN", "").strip()
+    headers = {"Authorization": f"Bearer {token}"}
+    req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(url, timeout=5) as resp:
-            return resp.read().decode("utf-8")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            raw = resp.read().decode("utf-8")
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                logger.warning("journal bridge non-JSON for %s", uri)
+                return None
+            if not isinstance(payload, dict):
+                return None
+            content = payload.get("content")
+            if content is None:
+                return None
+            return str(content)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 401:
+            return None
+        logger.warning("journal bridge read failed for %s", uri, exc_info=True)
+        return None
     except (OSError, urllib.error.URLError, TimeoutError):
         logger.warning("journal bridge read failed for %s", uri, exc_info=True)
         return None
@@ -144,6 +163,32 @@ def _digest_triple_key(payload: dict[str, Any]) -> tuple[str, str] | None:
     return None
 
 
+def _close_hook_enabled() -> bool:
+    import os
+
+    return os.environ.get("CORTEX_DIGEST_CLOSE_HOOK", "").strip() == "1"
+
+
+def _emit_close_payload_telemetry(
+    *,
+    session_id: str | None,
+    derived_count: int,
+    enqueued_count: int,
+    skipped: int,
+    reason: str = "",
+) -> None:
+    from .dispatch_ops._shared import record
+
+    record(
+        "cortex.digest.close_payload",
+        session_id=session_id or "",
+        derived_count=derived_count,
+        enqueued_count=enqueued_count,
+        skipped=skipped,
+        reason=reason,
+    )
+
+
 def dispatch_close_digests(
     *,
     entity_ids: list[str],
@@ -151,8 +196,25 @@ def dispatch_close_digests(
     session_id: str | None,
 ) -> None:
     """Merge auto-derived and explicit digest payloads; enqueue fail-open."""
+    if not _close_hook_enabled():
+        _emit_close_payload_telemetry(
+            session_id=session_id,
+            derived_count=0,
+            enqueued_count=0,
+            skipped=len(entity_ids),
+            reason="hook_disabled",
+        )
+        return
+
+    derived_count = 0
+    enqueued_count = 0
+    skipped = 0
+    reason = ""
     try:
         auto_payloads = derive_payloads_from_entity_ids(entity_ids)
+        derived_count = len(auto_payloads)
+        contributing = {str(p.get("journal_entity_id")) for p in auto_payloads}
+        skipped = sum(1 for entity_id in entity_ids if entity_id not in contributing)
         auto_by_key = {
             key: payload
             for payload in auto_payloads
@@ -169,14 +231,26 @@ def dispatch_close_digests(
                 dispatch_digest_background(explicit_digest, session_id=session_id)
             else:
                 dispatch_digest_background(payload, session_id=session_id)
+            enqueued_count += 1
 
         if explicit_key is not None and explicit_key not in auto_by_key:
             dispatch_digest_background(explicit_digest, session_id=session_id)
+            enqueued_count += 1
         elif explicit_digest is not None and explicit_key is None:
             dispatch_digest_background(explicit_digest, session_id=session_id)
+            enqueued_count += 1
     except Exception:
+        reason = "exception"
         logger.warning(
             "dispatch_close_digests failed open for session %s",
             session_id,
             exc_info=True,
+        )
+    finally:
+        _emit_close_payload_telemetry(
+            session_id=session_id,
+            derived_count=derived_count,
+            enqueued_count=enqueued_count,
+            skipped=skipped,
+            reason=reason,
         )
