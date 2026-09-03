@@ -32,6 +32,16 @@ class ChatTurn(BaseModel):
     source: TurnSource
 
 
+class ConflictDetail(BaseModel):
+    ordinal: int
+    existing_digest: str
+    new_digest: str
+    existing_len: int
+    new_len: int
+    existing_snippet: str
+    new_snippet: str
+
+
 class ChatHarvestRequest(BaseModel):
     url: str
     site: Site | None = None
@@ -57,6 +67,7 @@ class ChatHarvestResponse(BaseModel):
     truncated: bool = False
     turns: list[ChatTurn] = Field(default_factory=list)
     existing_sha256: str | None = None
+    conflict: ConflictDetail | None = None
     code: str | None = None
     reason: str | None = None
     opened_on_demand: bool = False

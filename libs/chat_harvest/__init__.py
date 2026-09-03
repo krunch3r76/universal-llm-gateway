@@ -1,13 +1,19 @@
 """Site-neutral chat session harvest — classifier, archive writer, grok adapter."""
 
 from chat_harvest.archive import (
+    Alignment,
     ArchiveConflictError,
+    ArchiveRefusalError,
+    align_transcripts,
     archive_chat_transcript,
     archive_dest,
+    build_turn_index,
     conv12,
     cortex_files_root,
-    is_prefix_superset,
-    parse_turns_from_archive,
+    parse_index,
+    reindex_archive,
+    reindex_archive_file,
+    turn_digest,
 )
 from chat_harvest.claude_chat_adapter import (
     execute_claude_harvest,
@@ -29,13 +35,16 @@ from chat_harvest.models import (
     ClassifyOk,
     ClassifyRefuse,
     ClassifyResult,
+    ConflictDetail,
     classify_chat_url,
     project_turns_view,
     relay_lock_fresh,
 )
 
 __all__ = [
+    "Alignment",
     "ArchiveConflictError",
+    "ArchiveRefusalError",
     "ChatHarvestRequest",
     "ChatHarvestResponse",
     "ChatPasteRequest",
@@ -44,9 +53,12 @@ __all__ = [
     "ClassifyOk",
     "ClassifyRefuse",
     "ClassifyResult",
+    "ConflictDetail",
     "DEFAULT_RELAY_STATE_FILE",
+    "align_transcripts",
     "archive_chat_transcript",
     "archive_dest",
+    "build_turn_index",
     "classify_chat_url",
     "conv12",
     "cortex_files_root",
@@ -55,9 +67,11 @@ __all__ = [
     "execute_grok_harvest",
     "execute_grok_paste",
     "harvest_full_transcript",
-    "is_prefix_superset",
-    "parse_turns_from_archive",
+    "parse_index",
+    "reindex_archive",
+    "reindex_archive_file",
     "project_turns_view",
     "relay_lock_fresh",
     "scroll_stabilize",
+    "turn_digest",
 ]

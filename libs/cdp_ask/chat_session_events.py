@@ -19,6 +19,7 @@ def mcp_chat_session_harvested(
     archive_sha256: str | None = None,
     superseded_sha256: str | None = None,
     code: str | None = None,
+    conflict_ordinal: int | None = None,
     opened_on_demand: bool = False,
 ) -> Event:
     """Emit when harvest completes, refuses, or conflicts after classifier accept."""
@@ -36,6 +37,8 @@ def mcp_chat_session_harvested(
         payload["superseded_sha256"] = superseded_sha256
     if code is not None:
         payload["code"] = code
+    if conflict_ordinal is not None:
+        payload["conflict_ordinal"] = conflict_ordinal
     if opened_on_demand:
         payload["opened_on_demand"] = True
     return Event(

@@ -11,7 +11,11 @@ from claude_bundles.skills_ui_panel import connect_cdp
 from web_chat_relay import grok_session
 from web_chat_relay.grok_session import GrokAuthError
 
-from chat_harvest.archive import ArchiveConflictError, archive_chat_transcript
+from chat_harvest.archive import (
+    ArchiveConflictError,
+    ArchiveRefusalError,
+    archive_chat_transcript,
+)
 from chat_harvest.models import (
     DEFAULT_RELAY_STATE_FILE,
     ChatHarvestResponse,
@@ -161,8 +165,19 @@ async def execute_grok_harvest(
                 url=live_url,
                 turn_count=len(turns),
                 existing_sha256=exc.existing_sha256,
+                conflict=exc.detail,
                 code="archive_conflict",
                 reason=str(exc),
+            )
+        except ArchiveRefusalError as exc:
+            return ChatHarvestResponse(
+                outcome="refused",
+                site=site,
+                conversation_id=live_id,
+                url=live_url,
+                turn_count=len(turns),
+                code=exc.code,
+                reason=exc.reason,
             )
 
         return build_harvest_response(
