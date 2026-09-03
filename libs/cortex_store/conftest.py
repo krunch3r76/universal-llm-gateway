@@ -66,7 +66,6 @@ def session_env(
     migrated_db_template: Path,
 ) -> dict[str, Path]:
     """Isolated head-schema DB + files root for session-close integration tests."""
-    from cortex_store import db
     from cortex_store._test_db_bootstrap import copy_template_db
     from cortex_store.dispatch_ops import ops_journals
     from cortex_store.routes import (
