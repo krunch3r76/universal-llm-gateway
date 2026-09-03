@@ -375,7 +375,7 @@ async def page_hop_budget_parked(
     """Awareness page when hop budgets exhaust (bind §2.6.6 / §6)."""
     from pager_notify.client import notify_pager
     from pager_notify.mission_page import format_mission_awareness_page
-    from pager_notify.so_what import clip, SMS_SUBJECT_MAX
+    from pager_notify.so_what import SMS_SUBJECT_MAX, clip
 
     subject = clip(f"Conductor hop parked — {reason}", SMS_SUBJECT_MAX)
     _subj, body, tag = format_mission_awareness_page(

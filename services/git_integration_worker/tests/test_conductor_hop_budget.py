@@ -12,10 +12,10 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
     maybe_fire_conductor_hop_reactor,
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
-    HopBudgetConfig,
     _PARK_REASON_CRASH_CAP,
     _PARK_REASON_MISSION_CAP,
     _PARK_REASON_NO_PROGRESS_CAP,
+    HopBudgetConfig,
     build_parked_transport_body,
     evaluate_hop_budget,
     load_hop_budget_config,
