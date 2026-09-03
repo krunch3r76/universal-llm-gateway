@@ -133,7 +133,7 @@ def test_session_close_seam_dispatches_without_failing_close() -> None:
             return_value=None,
         ),
         patch(
-            "cortex_store.dispatch_ops.ops_session_close.dispatch_digest_background",
+            "cortex_store.dispatch_ops.ops_session_close.dispatch_close_digests",
         ) as dispatch_mock,
     ):
         from cortex_store.dispatch_ops.ops_session_close import _op_session_close
@@ -146,6 +146,10 @@ def test_session_close_seam_dispatches_without_failing_close() -> None:
             digest=_VALID_DIGEST,
         )
 
-    dispatch_mock.assert_called_once_with(_VALID_DIGEST, session_id="sess-close")
+    dispatch_mock.assert_called_once_with(
+        entity_ids=[],
+        explicit_digest=_VALID_DIGEST,
+        session_id="sess-close",
+    )
     assert result.get("ok") is True
     assert "error" not in result

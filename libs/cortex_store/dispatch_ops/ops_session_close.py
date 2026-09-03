@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import HTTPException
 from universal_logging import get_logger
 
-from ..digest_dispatch import dispatch_digest_background
+from ..digest_close_payload import dispatch_close_digests
 from ..routes.session_handoff import _upsert_session_handoff_impl
 from ..routes.session_journals import _close_session_impl
 from ..session_close_validation import (
@@ -709,8 +709,11 @@ def _op_session_close(
     if promoted:
         result["promoted_todos"] = promoted
 
-    if digest:
-        dispatch_digest_background(digest, session_id=session_id)
+    dispatch_close_digests(
+        entity_ids=entity_ids or [],
+        explicit_digest=digest,
+        session_id=session_id,
+    )
 
     return result
 
