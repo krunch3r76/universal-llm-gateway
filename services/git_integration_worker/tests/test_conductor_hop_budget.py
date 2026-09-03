@@ -12,10 +12,10 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
     maybe_fire_conductor_hop_reactor,
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
-    HopBudgetConfig,
     _PARK_REASON_CRASH_CAP,
     _PARK_REASON_MISSION_CAP,
     _PARK_REASON_NO_PROGRESS_CAP,
+    HopBudgetConfig,
     build_parked_transport_body,
     evaluate_hop_budget,
     load_hop_budget_config,
@@ -337,10 +337,7 @@ async def test_maybe_fire_planned_hop_no_backoff() -> None:
         record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
     )
     with (
-        patch(
-            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.asyncio.sleep",
-            AsyncMock(),
-        ) as sleep_mock,
+        patch("asyncio.sleep", AsyncMock()) as sleep_mock,
         patch(
             "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
             AsyncMock(return_value=(True, {"dispatch_id": "succ-2"})),

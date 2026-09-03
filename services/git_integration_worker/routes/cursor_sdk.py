@@ -83,6 +83,9 @@ from services.git_integration_worker.cursor_sdk_closeout import (
     resolve_run_outcome_label,
     stream_only_effect_deviations,
 )
+from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+    merge_conductor_closeout_hop_authority,
+)
 from services.git_integration_worker.cursor_sdk_closeout_subject import (
     build_sdk_closeout_subject,
 )
@@ -91,9 +94,6 @@ from services.git_integration_worker.cursor_sdk_closeout_trigger import (
     emit_implement_closeout_trigger,
     extract_turn_number,
     normalize_closeout_source_ref,
-)
-from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
-    merge_conductor_closeout_hop_authority,
 )
 from services.git_integration_worker.cursor_sdk_concurrency_posture import (
     b_worktree_materialized,
@@ -198,6 +198,8 @@ from services.git_integration_worker.cursor_sdk_orphan import (
 from services.git_integration_worker.cursor_sdk_packet import (
     extract_packet_kind_from_packet,
     extract_source_ref_from_packet,
+    extract_summon_mode_from_packet,
+    extract_summoning_thread_id_from_packet,
     extract_work_key_from_packet,
     infer_contract_from_text,
     resolve_prompt_preamble,
@@ -1085,7 +1087,13 @@ async def _mark_terminal_and_promote(
         maybe_fire_conductor_hop_reactor,
     )
 
-    await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
+    try:
+        await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
+    except Exception:  # noqa: BLE001 — reactor is advisory; terminal path must proceed
+        logger.exception(
+            "conductor hop reactor failed dispatch_id=%s",
+            dispatch_id,
+        )
     if not terminal_emitted(dispatch_id):
         orphan_row = await asyncio.to_thread(
             load_ledger_row, ledger, dispatch_id=dispatch_id
@@ -1620,7 +1628,7 @@ async def _deliver_sdk_closeout(
         await asyncio.to_thread(
             merge_conductor_closeout_hop_authority,
             dispatch_id=req.dispatch_id,
-            closeout_body=delivery.body,
+            closeout_body=outcome.body,
             thread_id=req.thread_id,
         )
         await _mark_terminal_and_promote(
@@ -2775,12 +2783,23 @@ async def cursor_dispatch(
         return JSONResponse(status_code=status_code, content=cached.model_dump())
 
     if packet_kind == "conductor":
+        conductor_patch: dict[str, object] = {
+            "packet_kind": "conductor",
+            "work_key": candidate_work_key,
+        }
+        identity_ref = candidate_work_key or candidate_source_ref or req.source_ref
+        if identity_ref:
+            conductor_patch["source_ref"] = identity_ref
+        summon_mode = extract_summon_mode_from_packet(packet_text or "")
+        if summon_mode:
+            conductor_patch["summon_mode"] = summon_mode
+            conductor_patch["generation_options"] = {"summon_mode": summon_mode}
+        summoning_thread_id = extract_summoning_thread_id_from_packet(packet_text or "")
+        if summoning_thread_id:
+            conductor_patch["summoning_thread_id"] = summoning_thread_id
         ledger.merge_record_json(
             dispatch_id=req.dispatch_id,
-            patch={
-                "packet_kind": "conductor",
-                "work_key": candidate_work_key,
-            },
+            patch=conductor_patch,
         )
 
     if req.resume_of:

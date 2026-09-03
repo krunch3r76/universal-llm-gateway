@@ -20,11 +20,19 @@ from fastapi.testclient import TestClient
 from services.git_integration_worker.app import create_app
 from services.git_integration_worker.config import WorkerConfig
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
-from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
-    merge_conductor_closeout_hop_authority,
-    maybe_fire_conductor_hop_reactor,
+from services.git_integration_worker.cursor_sdk_closeout.closeout_records import (
+    SdkRunOutcome,
 )
-from services.git_integration_worker.cursor_sdk_ledger_hop import hop_fields_from_record_json
+from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+    maybe_fire_conductor_hop_reactor,
+    merge_conductor_closeout_hop_authority,
+)
+from services.git_integration_worker.cursor_sdk_closeout.implement_body import (
+    build_implement_closeout_body,
+)
+from services.git_integration_worker.cursor_sdk_ledger_hop import (
+    hop_fields_from_record_json,
+)
 from services.git_integration_worker.cursor_sdk_packet import resolve_prompt_preamble
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
@@ -39,7 +47,7 @@ _LANE_BRANCH = "cursor-sdk/lane-probe2"
 _ROW_HOP_CLOSEOUT = """\
 status: complete
 stop: ROW_HOP
-hop_seq: 2
+**hop_seq:** 1
 """
 _CONDUCTOR_PACKET = (
     "---\n"
@@ -47,6 +55,8 @@ _CONDUCTOR_PACKET = (
     f"source_ref: {_WORK_KEY}\n"
     "contract: light-bounded\n"
     "lane: B\n"
+    "summon_mode: confer-and-finish\n"
+    "summoning_thread_id: 9638\n"
     "---\n"
     "Use the conductor skill.\n"
     "<scope>Probe 2 scratch mission.</scope>\n"
@@ -190,6 +200,10 @@ def _admit_predecessor(
             "packet_kind": "conductor",
             "lane": "B",
             "lane_branch": _LANE_BRANCH,
+            "source_ref": _WORK_KEY,
+            "summon_mode": "confer_and_finish",
+            "summoning_thread_id": "9638",
+            "generation_options": {"summon_mode": "confer_and_finish"},
         },
     )
     with ledger._connect() as conn:
@@ -204,9 +218,13 @@ def _admit_predecessor(
 def _hop_dispatch_payload(body: dict[str, Any]) -> dict[str, Any]:
     successor_id = f"succ-{uuid.uuid4().hex[:12]}"
     exec_id = f"exec-{successor_id}"
+    model = body.get("model") or "cursor/composer-2.5"
+    assert str(model).startswith("cursor/"), (
+        f"team_dispatch relay must forward prefixed model verbatim, got {model!r}"
+    )
     return {
         "thread_id": body["reuse_thread"],
-        "model": f"cursor/{body.get('model') or 'composer-2.5'}",
+        "model": model,
         "dispatch_id": successor_id,
         "execution_id": exec_id,
         "handoff_contract": body.get("contract") or "light-bounded",
@@ -247,8 +265,10 @@ async def test_probe2_two_row_mechanical_conductor_mission(
     ledger.mark_terminal(dispatch_id=predecessor_id, terminal_status="completed")
 
     admitted_events: list[dict[str, Any]] = []
+    relay_bodies: list[dict[str, Any]] = []
 
     async def _stargate_relay(body: dict[str, Any], **_kwargs: object) -> tuple[bool, dict]:
+        relay_bodies.append(body)
         payload = _hop_dispatch_payload(body)
         resp = giw_client.post("/api/v1/cursor/dispatch", json=payload)
         if resp.status_code >= 400:
@@ -327,6 +347,30 @@ async def test_probe2_two_row_mechanical_conductor_mission(
     assert admitted_events[0]["predecessor_dispatch_id"] == predecessor_id
     assert admitted_events[0]["successor_dispatch_id"] == succ["dispatch_id"]
     assert admitted_events[0]["hop_seq"] == 2
+    assert len(relay_bodies) == 1
+    assert relay_bodies[0]["model"] == "cursor/composer-2.5"
+    assert relay_bodies[0]["dispatch_thread_id"] == "9638"
+    assert relay_bodies[0]["reuse_thread"] == _THREAD_ID
+    assert relay_bodies[0]["generation_options"]["summon_mode"] == "confer_and_finish"
+
+
+def test_probe2_production_closeout_json_has_no_row_hop_tokens() -> None:
+    outcome = SdkRunOutcome(
+        body=_ROW_HOP_CLOSEOUT,
+        status="finished",
+        duration_ms=500,
+        tool_call_count=2,
+    )
+    json_body = build_implement_closeout_body(
+        dispatch_id="probe2-json-check",
+        outcome=outcome,
+        degraded_reason="conductor_row_hop",
+        sidecar_ref="workspaces://x/probe2.md",
+        result_bytes=120,
+        thread_id=_THREAD_ID,
+        work_item_ref=_WORK_KEY,
+    )
+    assert "ROW_HOP" not in json_body
 
 
 @pytest.mark.asyncio

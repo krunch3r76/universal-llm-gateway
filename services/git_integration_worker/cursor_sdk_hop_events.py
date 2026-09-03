@@ -111,6 +111,26 @@ def FrontierSdkConductorHopParked(  # noqa: N802
 
 
 @event_factory
+def FrontierSdkConductorHopSkipped(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    hop_seq: int,
+    gate: str,
+) -> Event:
+    """Reactor exited without POST — observability for silent skip paths."""
+    return Event(
+        signal="frontier.sdk.conductor.hop.skipped",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "hop_seq": hop_seq,
+            "gate": gate,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def FrontierSdkConductorHopWatchdogFired(  # noqa: N802
     last_dispatch_id: str,
     thread_id: str,
@@ -210,6 +230,24 @@ def emit_frontier_sdk_conductor_hop_parked(
             thread_id=thread_id,
             hop_seq=hop_seq,
             reason=reason,
+        )
+    )
+
+
+def emit_frontier_sdk_conductor_hop_skipped(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    hop_seq: int,
+    gate: str,
+) -> None:
+    """Publish hop reactor skip (gate names silent return path)."""
+    emit_frontier_event(
+        FrontierSdkConductorHopSkipped(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            hop_seq=hop_seq,
+            gate=gate,
         )
     )
 

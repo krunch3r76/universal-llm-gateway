@@ -164,10 +164,7 @@ def _is_conductor_row(row: dict[str, Any]) -> bool:
     )
 
     record_json = str(row.get("record_json") or "")
-    if _record_packet_kind(record_json) == "conductor":
-        return True
-    contract = str(row.get("contract") or "").lower()
-    return contract == "light-bounded" and bool(row.get("work_key"))
+    return _record_packet_kind(record_json) == "conductor"
 
 
 def list_mission_terminal_chain(
@@ -378,7 +375,7 @@ async def page_hop_budget_parked(
     """Awareness page when hop budgets exhaust (bind §2.6.6 / §6)."""
     from pager_notify.client import notify_pager
     from pager_notify.mission_page import format_mission_awareness_page
-    from pager_notify.so_what import clip, SMS_SUBJECT_MAX
+    from pager_notify.so_what import SMS_SUBJECT_MAX, clip
 
     subject = clip(f"Conductor hop parked — {reason}", SMS_SUBJECT_MAX)
     _subj, body, tag = format_mission_awareness_page(
