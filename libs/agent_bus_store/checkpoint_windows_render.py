@@ -14,6 +14,7 @@ from typing import Any, Protocol
 
 from .checkpoint_auto_stamp_wiring import load_thread_tags
 from .checkpoint_projection import (
+    CHECKPOINT_SUBJECT_SQL,
     _RESIDUE_HEADER,
     RESUME_FOOTER_PREFIX,
     is_checkpoint_subject,
@@ -100,23 +101,19 @@ def list_checkpoint_turns(*, thread_id: str) -> tuple[CheckpointTurnRow, ...]:
 
     with connect() as conn:
         rows = conn.execute(
-            "SELECT turn_number, subject, created_at FROM turns "
-            "WHERE thread = ? ORDER BY turn_number ASC",
+            f"SELECT turn_number, subject, created_at FROM turns "
+            f"WHERE thread = ? AND {CHECKPOINT_SUBJECT_SQL} "
+            f"ORDER BY turn_number ASC",
             (thread_id,),
         ).fetchall()
     out: list[CheckpointTurnRow] = []
-    ordinal = 0
-    for row in rows:
-        subject = str(row["subject"])
-        if not is_checkpoint_subject(subject):
-            continue
-        ordinal += 1
+    for ordinal, row in enumerate(rows, start=1):
         out.append(
             CheckpointTurnRow(
                 turn_number=int(row["turn_number"]),
                 cp_ordinal=ordinal,
                 created_at=str(row["created_at"]),
-                subject=subject,
+                subject=str(row["subject"]),
             )
         )
     return tuple(out)

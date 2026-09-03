@@ -117,6 +117,10 @@ def is_checkpoint_subject(subject: str) -> bool:
     return subject.strip().upper().startswith("CHECKPOINT")
 
 
+# Keep in sync with ``is_checkpoint_subject`` — used in SQL WHERE clauses.
+CHECKPOINT_SUBJECT_SQL = "UPPER(TRIM(subject)) LIKE 'CHECKPOINT%'"
+
+
 def _strip_resume_footer(text: str) -> str:
     """Drop authored RESUME footer lines, keeping any trailing machine fence.
 

@@ -332,6 +332,7 @@ class AgentBusConfig:
     """Parsed ~/.gateway/agent-bus.yaml."""
 
     db_path: str = "~/.agent-bus/messages.db"
+    checkpoint_auto_supersede: bool = False
 
 
 @dataclass(slots=True, kw_only=True)
@@ -385,6 +386,9 @@ _AGENT_BUS_CONFIG_TEMPLATE = """\
 # Override db_path if you want the TUI-managed Agent Bus to use a different file.
 #
 # db_path: ~/.agent-bus/messages.db
+#
+# Auto-derive supersedes_turn on standing-root CHECKPOINT send/reply (G2 rollout).
+# checkpoint_auto_supersede: true
 """
 
 
@@ -498,7 +502,13 @@ def load_agent_bus_config() -> AgentBusConfig:
     if not isinstance(raw, dict):
         return default
     db_path = str(raw.get("db_path", default.db_path)).strip() or default.db_path
-    return AgentBusConfig(db_path=db_path)
+    checkpoint_auto_supersede = _parse_bool(
+        raw.get("checkpoint_auto_supersede"), default=default.checkpoint_auto_supersede
+    )
+    return AgentBusConfig(
+        db_path=db_path,
+        checkpoint_auto_supersede=checkpoint_auto_supersede,
+    )
 
 
 def _parse_bool(value: object, *, default: bool = False) -> bool:

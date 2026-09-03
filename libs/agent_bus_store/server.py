@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 
 from .db import init_db
 from .reconcile import reconcile_orphaned_dispatches
+from .runtime_config import apply_runtime_config_env
 from .routes.messages import router as messages_router
 from .routes.threads import router as threads_router
 from .routes.turns import router as turns_router
@@ -34,6 +35,7 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
 
     If db_path is provided, it overrides AGENT_BUS_DB_PATH.
     """
+    apply_runtime_config_env()
     if db_path is not None:
         os.environ["AGENT_BUS_DB_PATH"] = db_path
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .checkpoint_kind_detector import should_auto_derive_supersedes_turn
-from .checkpoint_projection import is_checkpoint_subject
+from .checkpoint_projection import CHECKPOINT_SUBJECT_SQL, is_checkpoint_subject
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,15 +53,15 @@ def find_latest_checkpoint_turn_number(*, thread: str) -> int | None:
     from .db.connection import connect
 
     with connect() as conn:
-        rows = conn.execute(
-            "SELECT turn_number, subject FROM turns "
-            "WHERE thread = ? ORDER BY turn_number DESC",
+        row = conn.execute(
+            f"SELECT turn_number FROM turns "
+            f"WHERE thread = ? AND {CHECKPOINT_SUBJECT_SQL} "
+            f"ORDER BY turn_number DESC LIMIT 1",
             (thread,),
-        ).fetchall()
-    for row in rows:
-        if is_checkpoint_subject(str(row["subject"])):
-            return int(row["turn_number"])
-    return None
+        ).fetchone()
+    if row is None:
+        return None
+    return int(row["turn_number"])
 
 
 def resolve_latest_checkpoint_supersedes(*, thread: str) -> SupersedesTurnResolved | None:
@@ -69,18 +69,18 @@ def resolve_latest_checkpoint_supersedes(*, thread: str) -> SupersedesTurnResolv
     from .db.connection import connect
 
     with connect() as conn:
-        rows = conn.execute(
-            "SELECT id, turn_number, subject FROM turns "
-            "WHERE thread = ? ORDER BY turn_number DESC",
+        row = conn.execute(
+            f"SELECT id, turn_number FROM turns "
+            f"WHERE thread = ? AND {CHECKPOINT_SUBJECT_SQL} "
+            f"ORDER BY turn_number DESC LIMIT 1",
             (thread,),
-        ).fetchall()
-    for row in rows:
-        if is_checkpoint_subject(str(row["subject"])):
-            return SupersedesTurnResolved(
-                turn_number=int(row["turn_number"]),
-                turn_id=int(row["id"]),
-            )
-    return None
+        ).fetchone()
+    if row is None:
+        return None
+    return SupersedesTurnResolved(
+        turn_number=int(row["turn_number"]),
+        turn_id=int(row["id"]),
+    )
 
 
 def resolve_send_supersedes(

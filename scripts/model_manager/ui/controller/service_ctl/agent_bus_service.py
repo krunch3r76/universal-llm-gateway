@@ -50,6 +50,8 @@ def _agent_bus_runtime_env() -> tuple[dict[str, str], str | None]:
         "AGENT_BUS_DB_PATH": str(db_path),
         "AGENT_BUS_SOCK": str(_AGENT_BUS_SOCKET),
     }
+    if cfg.checkpoint_auto_supersede:
+        env["AGENT_BUS_CHECKPOINT_AUTO_SUPERSEDE"] = "1"
     mcp_cfg = load_mcp_config()
     if mcp_cfg is not None and mcp_cfg.agent_bus_token:
         env["AGENT_BUS_TOKEN"] = mcp_cfg.agent_bus_token
