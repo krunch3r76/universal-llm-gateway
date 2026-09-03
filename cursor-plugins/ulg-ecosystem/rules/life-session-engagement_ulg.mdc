@@ -15,12 +15,15 @@ trigger_match_terms:
   - covenant
   - life planning
   - personal matters
+  - tAIm
+  - net-additive
+  - additive ledger
 ---
 # Life Session Engagement (life surfaces)
 
 ## Invariant
 
-`life_surface ∧ ¬outbound_artifact ∧ ¬code_lane ⇒ Use the life-session-engagement skill` — motivate full capability via **constraint at turn-0** (L2 objective pin, L4 standing placement, attested context gate), not persona or politeness theater.
+`life_surface ∧ ¬outbound_artifact ∧ ¬code_lane ⇒ Use the life-session-engagement skill` — motivate full capability via **constraint at turn-0** (L2 objective pin, L4 standing placement, attested context gate, net-additive gate on action advice), not persona or politeness theater.
 
 **Scope gate (OR):** claude.ai Life project **or** Cursor **life-representation** seat (`vortex-life` MCP, personal matters, correspondence prep). Code-lane engineering → `ulg-for-llms`. Send-ready outbound text → `outbound-voice-spec` + OUTBOUND SPEC.
 
@@ -30,7 +33,7 @@ Full binding (SESSION OBJECTIVE fields, session open, covenant correction, failu
 
 | Layer | Loads |
 |---|---|
-| Engagement | `life-session-engagement` — pin SESSION OBJECTIVE |
+| Engagement | `life-session-engagement` — pin SESSION OBJECTIVE; net-additive gate on action advice |
 | Orientation | `cortex_brief(seat="web-anthropic", role="lead"[, principal="person:<slug>"])` once |
 | Review forks | `hypothesize-simulate` when judgment live |
 
@@ -42,6 +45,7 @@ Full binding (SESSION OBJECTIVE fields, session open, covenant correction, failu
 |---|---|
 | Deliverable becomes send-ready outbound | `outbound-voice-spec` + `prose-discipline` |
 | Sharp challenge, halt, procedural jab | `engagement-stance` |
+| Action fork (spend, complaint, vendor, outbound) | Net-additive gate — rank by additive story; state bind gate |
 | Durable graph write | `recording-posture` |
 
 Template: `docs/agent-guides/templates/life-project-instructions.md`

@@ -157,6 +157,7 @@ README_REVISED.md
 !/docs/agm-compliance-report.md
 # Agent guidance docs — public agent surface (operator-directed; see docs-write-guard_ws.mdc)
 !/docs/agent-guides/skills/*.md
+!/docs/agent-guides/templates/*.md
 !/docs/tool-reference.md
 !/docs/cortex-spec.md
 !/docs/event-contracts.md
