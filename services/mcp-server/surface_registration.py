@@ -28,6 +28,7 @@ from tools.frontier import register_frontier_tools
 from tools.frontier_imagine import register_imagine_tools
 from tools.git_integrate import register_git_integrate_tools
 from tools.imprint import register_imprint_tools
+from tools.life_dispatch import register_life_dispatch_tools
 from tools.manage import register_manage_tools
 from tools.markdown_tool import register_markdown_tools
 from tools.model_status import register_model_status_tools
@@ -110,6 +111,7 @@ def register_tools_for_surface(mcp: FastMCP, surface: Surface) -> None:
         register_delegate_tools(mcp)
         register_delegate_schema_transform(mcp)
         register_notify_tools(mcp)
+        register_life_dispatch_tools(mcp)
         register_trigger_tool(mcp)
         register_recycle_giw_tools(mcp)
 

@@ -30,6 +30,7 @@ domains:
 - cse_session
 - chat_session
 - recycle_giw
+- life_dispatch
 tools:
 - canonical_name: cortex_entities
   domain: cortex
@@ -5158,6 +5159,41 @@ tools:
   introduced: '2026-07-28'
   endpoint_visibility:
   - life
+- canonical_name: life_dispatch
+  domain: life_dispatch
+  operation: dispatch
+  dispatcher_call_shape:
+    tool: life_dispatch
+    dispatch_key: op
+    dispatch_value: dispatch
+  flat_call_shape:
+    tool: life_dispatch
+    substrate_qualified: user-vortex__life_dispatch
+  fol_descriptor: "Life CDP dispatch — relay POST /api/v1/life/dispatch; Life Cowork project compose (server-pinned UUID). Params: prompt or thread, optional model/skills. See agent_skill:cdp-operator-proxy.\n"
+  json_schema:
+    type: object
+    properties:
+      prompt:
+        type: string
+        description: Inline prompt or cortex:// sidecar ref.
+      thread:
+        type: string
+        description: agent_bus thread id; latest turn is prompt.
+      model:
+        type: string
+        default: cdp/opus-5
+      skills:
+        type: array
+        items:
+          type: string
+  skill_uri: agent_skill:cdp-operator-proxy
+  seat_visibility:
+  - mcp
+  mandate_safety: mutating
+  cache_priority: on_demand
+  introduced: '2026-09-03'
+  endpoint_visibility:
+  - life
 - canonical_name: cse_session_provenance
   domain: cse_session
   operation: provenance
@@ -5466,6 +5502,8 @@ domain_endpoints:
     - life
     notify:
     - life
+    life_dispatch:
+    - life
     recycle_giw:
     - life
 surface_primary_domains:
@@ -5484,6 +5522,7 @@ surface_primary_domains:
   - recall
   - delegate
   - notify
+  - life_dispatch
   - fleet_liveness
   - operator_request
   - cse_session

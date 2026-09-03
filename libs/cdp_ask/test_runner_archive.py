@@ -87,6 +87,26 @@ def test_default_archive_path_honors_explicit_archive_path(
     assert default_archive_path(req, execution_id="deadbeef" * 4) == explicit
 
 
+def test_default_archive_path_scopes_project_uuid_by_execution_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = tmp_path / "files"
+    root.mkdir()
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(root))
+    life_uuid = "01a05c28-733b-72ee-bba6-c72e81ed6d41"
+    req = SubmitProjectAskRequest(
+        converse=True,
+        no_project_uuid=False,
+        project_uuid=life_uuid,
+        model="opus-5",
+    )
+    path_a = default_archive_path(req, execution_id="a" * 32)
+    path_b = default_archive_path(req, execution_id="b" * 32)
+    assert path_a != path_b
+    assert life_uuid in path_a and ("a" * 32) in path_a
+    assert life_uuid in path_b and ("b" * 32) in path_b
+
+
 @pytest.mark.asyncio
 async def test_backfill_preserves_all_fields_and_sets_archive_uri() -> None:
     """B1 — converse archive backfill forwards all 14 ProjectAskResult fields."""

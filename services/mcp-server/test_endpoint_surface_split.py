@@ -35,7 +35,9 @@ LIFE_PRIMARY = frozenset(
         "recall",
         "delegate",
         "notify",
+        "life_dispatch",
         "cse_session",
+        "chat_session",
         "recycle_giw",
     }
 )
@@ -52,7 +54,7 @@ CODE_EXTRA = frozenset(
 # overflow/relay, never surface_primary (d946 test overclaim; a505 promoted
 # cursor_request into both primaries without updating this gate).
 CODE_PRIMARY = (
-    LIFE_PRIMARY - frozenset({"imprint", "delegate", "notify", "recall", "recycle_giw"})
+    LIFE_PRIMARY - frozenset({"imprint", "delegate", "notify", "life_dispatch", "recall", "recycle_giw"})
 ) | CODE_EXTRA
 
 
@@ -168,6 +170,15 @@ def test_delegate_present_on_life_absent_on_code(
     assert "delegate" in life_server["primary"]
     assert "delegate" not in code_server["tool_names"]
     assert "delegate" not in code_server["primary"]
+
+
+def test_life_dispatch_present_on_life_absent_on_code(
+    life_server: dict, code_server: dict
+) -> None:
+    assert "life_dispatch" in life_server["tool_names"]
+    assert "life_dispatch" in life_server["primary"]
+    assert "life_dispatch" not in code_server["tool_names"]
+    assert "life_dispatch" not in code_server["primary"]
 
 
 def test_life_cortex_entity_merge_rejected() -> None:

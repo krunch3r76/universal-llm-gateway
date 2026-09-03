@@ -322,8 +322,9 @@ def default_archive_path(
     root = verify_harvest_root()
     seat = _seat_token_for_archive(req)
     if req.project_uuid:
-        # Project-scoped archives remain UUID-keyed; seat disambiguates advisors.
-        name = f"cdp-ask-archive-{seat}-{req.project_uuid}.md"
+        # Project-scoped archives: seat + project UUID + execution_id (F-1b).
+        exec_suffix = execution_id or "unknown"
+        name = f"cdp-ask-archive-{seat}-{req.project_uuid}-{exec_suffix}.md"
     elif execution_id:
         name = f"cdp-ask-archive-{seat}-{execution_id}.md"
     else:

@@ -219,6 +219,7 @@ async def dispatch_cdp_generate(
     request_id: str,
     body: TeamDispatchGenerateBody,
     response: Response,
+    project_uuid: str | None = None,
 ) -> dict[str, Any]:
     """Admit CDP generate: return poll_hint immediately; proof posts later."""
     model = compose_cdp_model_with_effort(
@@ -413,6 +414,8 @@ async def dispatch_cdp_generate(
             worker_kwargs["expected_size"] = opts["expected_size"]
         if "download_output" in opts:
             worker_kwargs["download_output"] = opts["download_output"]
+    if project_uuid:
+        worker_kwargs["project_uuid"] = project_uuid
     worker_task = asyncio.create_task(
         run_cdp_worker(**worker_kwargs),
         name=f"cdp-worker-{execution_id[:8]}",

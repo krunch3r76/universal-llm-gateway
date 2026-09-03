@@ -25,6 +25,7 @@ from systems.federation.common.middleware import (
 from systems.frontier_consult.densify_routes import (
     densify_router as frontier_consult_densify_router,
 )
+from systems.frontier_consult.life_dispatch_routes import life_dispatch_router
 from systems.frontier_consult.life_intent_routes import life_intent_router
 from systems.frontier_consult.route import (
     frontier_router as frontier_consult_frontier_router,
@@ -520,6 +521,7 @@ app.include_router(frontier_consult_frontier_router)  # /api/v1/frontier/generat
 app.include_router(frontier_consult_implement_router)  # /api/v1/implement/closeout
 app.include_router(frontier_consult_densify_router)  # /api/v1/team/densify/*
 app.include_router(life_intent_router)  # /api/v1/life/intent/*
+app.include_router(life_dispatch_router)  # /api/v1/life/dispatch
 app.include_router(
     cloud_passthrough.router
 )  # /api/models, /api/select, /api/refresh (cloud passthrough)

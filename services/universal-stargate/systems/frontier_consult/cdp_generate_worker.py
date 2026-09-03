@@ -360,6 +360,7 @@ async def run_cdp_worker(
     mission_kind: str | None = None,
     parent_thread: str | None = None,
     topic: str | None = None,
+    project_uuid: str | None = None,
 ) -> None:
     """Stage already done at admit; run adapter and post proof/failure turn."""
     from .cdp_generate_reconcile import (
@@ -408,6 +409,7 @@ async def run_cdp_worker(
             purpose=purpose,
             mission_kind=mission_kind,
             parent_thread=parent_thread,
+            project_uuid=project_uuid,
             on_submitted=_on_submitted,
         )
     except asyncio.CancelledError:
