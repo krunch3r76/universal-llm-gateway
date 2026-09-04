@@ -9,6 +9,7 @@ from claude_bundles.conductor_score_ratify import (
 )
 from claude_bundles.conductor_stop import (
     CHAIN_STOPS,
+    DESIGNED_STOP_MISSING,
     EXIT_PERSIST_STOPS,
     S4B_G1_PIN_MISSING,
     STOP_TOKENS,
@@ -23,6 +24,7 @@ from claude_bundles.conductor_stop import (
     pings_for_stops,
     resume_row_from_closeout,
     validate_conductor_closeout,
+    validate_conductor_packet,
     validate_s4b_g1_pin,
     validate_score_ratify_packet,
     validate_stop_token,
@@ -54,7 +56,7 @@ def test_mode_b_admit_proof_required_on_consult_pending() -> None:
 
 
 def test_mode_b_admit_proof_passes_with_execution_id() -> None:
-    body = "CONSULT_PENDING\nexecution_id: exec-abc\npoll_hint: wait 5s"
+    body = "CONSULT_PENDING\nexecution_id: exec-abc\npoll_hint: wait 5s\nstop: CONSULT_PENDING"
     verdict = validate_conductor_closeout(body, require_mode_b_proof=True)
     assert verdict.ok
 
@@ -109,23 +111,26 @@ Scope: libs/claude_bundles/conductor_stop.py only
 Acceptance: pytest green on targeted files
 density_triage: judgment_required
 status: complete
+stop: ROW_PINNED
 """
 
 _G1_PIN_NO_S4B = """\
 | G1 | Architecture consult | DONE | ROW_PINNED |
 status: complete
 ROW_PINNED
+stop: ROW_PINNED
 """
 
 _G3_PIN_NO_S4B = """\
 | G3 | Densify | OPEN | ROW_PINNED |
 resume_at: G3
 status: complete
+stop: ROW_PINNED
 """
 
 
 def test_g1_pin_with_s4b_markers_ok() -> None:
-    verdict = validate_conductor_closeout(_G1_PIN_S4B_OK)
+    verdict = validate_conductor_closeout(_G1_PIN_S4B_OK, packet_text=_CONDUCTOR_PACKET)
     assert verdict.ok
     assert is_g1_pin(_G1_PIN_S4B_OK)
     assert has_s4b_evidence(_G1_PIN_S4B_OK)
@@ -133,7 +138,7 @@ def test_g1_pin_with_s4b_markers_ok() -> None:
 
 
 def test_g1_pin_without_s4b_fails() -> None:
-    verdict = validate_conductor_closeout(_G1_PIN_NO_S4B)
+    verdict = validate_conductor_closeout(_G1_PIN_NO_S4B, packet_text=_CONDUCTOR_PACKET)
     assert not verdict.ok
     assert verdict.reason == S4B_G1_PIN_MISSING
 
@@ -143,20 +148,20 @@ def test_g1_pin_with_implement_ready_fails() -> None:
         _G1_PIN_NO_S4B
         + "\nProblem: x\nScope: y\nAcceptance: z\ndensity_triage: implement_ready"
     )
-    verdict = validate_conductor_closeout(body)
+    verdict = validate_conductor_closeout(body, packet_text=_CONDUCTOR_PACKET)
     assert not verdict.ok
     assert verdict.reason == S4B_G1_PIN_MISSING
 
 
 def test_g3_row_pinned_without_s4b_still_ok() -> None:
-    verdict = validate_conductor_closeout(_G3_PIN_NO_S4B)
+    verdict = validate_conductor_closeout(_G3_PIN_NO_S4B, packet_text=_CONDUCTOR_PACKET)
     assert verdict.ok
     assert not is_g1_pin(_G3_PIN_NO_S4B)
 
 
 def test_g1_pin_from_stop_after_in_packet() -> None:
     packet = "stop_after pin: G1.\ncontract: light-bounded"
-    body = "status: complete\nROW_PINNED"
+    body = "status: complete\nROW_PINNED\nstop: ROW_PINNED"
     assert is_g1_pin(body, packet_text=packet)
     verdict = validate_conductor_closeout(body, packet_text=packet)
     assert not verdict.ok
@@ -183,18 +188,21 @@ _G3_DONE_AWAY_NO_MARKERS = """\
 | G3 | Densify | DONE |
 status: complete
 land_disposition: landed
+stop: DONE
 """
 
 _G3_DONE_AWAY_WITH_MARKERS = """\
 | G3 | Densify | DONE |
 Posture: do-not-fight; likely-optimal completion.
 status: complete
+stop: DONE
 """
 
 _G3_ROW_PINNED_SEE_SCORE = """\
 | G3 | Densify | OPEN | ROW_PINNED |
 resume_at: G3
 status: complete
+stop: ROW_PINNED
 """
 
 _G3_GATE_G5 = """\
@@ -321,7 +329,7 @@ def test_narrative_resumed_at_does_not_classify_consult_pending() -> None:
 
 
 def test_json_execution_id_is_mode_b_proof() -> None:
-    body = '{"execution_id": "abc", "poll_hint": "wait"}\nCONSULT_PENDING'
+    body = '{"execution_id": "abc", "poll_hint": "wait"}\nCONSULT_PENDING\nstop: CONSULT_PENDING'
     assert is_consult_pending_wait(body)
     verdict = validate_conductor_closeout(body, require_mode_b_proof=True)
     assert verdict.ok
@@ -356,3 +364,48 @@ def test_parse_stop_tokens_scoreboard_row_pinned_unchanged() -> None:
     parsed = parse_stop_tokens(body)
     assert "ROW_PINNED" in parsed.tokens
     assert parsed.rows.get("G3") == frozenset({"ROW_PINNED"})
+
+
+_FENCED_STOP_DONE_TRAP = """\
+| G1 | Architecture / recon | DONE |
+status: complete
+Example closeout footer:
+```
+stop: DONE
+```
+stop: ROW_HOP
+hop_seq: 2
+"""
+
+
+def test_parse_designed_stop_tokens_ignores_fenced_stop_done_example() -> None:
+    parsed = parse_designed_stop_tokens(_FENCED_STOP_DONE_TRAP)
+    assert parsed.tokens == frozenset({"ROW_HOP"})
+    assert "DONE" not in parsed.designed_tokens
+
+
+def test_parse_designed_stop_tokens_footer_variants() -> None:
+    variants = [
+        "**stop:** ROW_PINNED",
+        "  stop: ROW_PINNED",
+        "- stop: ROW_PINNED",
+        "> stop: ROW_PINNED",
+    ]
+    for footer in variants:
+        body = f"| G1 | x | DONE |\n{footer}"
+        parsed = parse_designed_stop_tokens(body)
+        assert parsed.tokens == frozenset({"ROW_PINNED"}), footer
+
+
+def test_validate_conductor_packet_requires_designed_stop_doc() -> None:
+    ok_packet = _CONDUCTOR_PACKET + "\nDesigned stop tokens: stop: ROW_HOP | ROW_PINNED | DONE"
+    assert validate_conductor_packet(ok_packet).ok
+    assert not validate_conductor_packet(_CONDUCTOR_PACKET).ok
+    assert validate_conductor_packet(_CONDUCTOR_PACKET).reason == DESIGNED_STOP_MISSING
+
+
+def test_validate_conductor_closeout_requires_designed_footer_on_conductor() -> None:
+    body = "| G3 | Densify | OPEN | ROW_PINNED |"
+    verdict = validate_conductor_closeout(body, packet_text=_CONDUCTOR_PACKET)
+    assert not verdict.ok
+    assert verdict.reason == DESIGNED_STOP_MISSING

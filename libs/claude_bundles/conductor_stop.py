@@ -44,11 +44,20 @@ _STOP_CELL_RE = re.compile(
     r"\b(" + "|".join(re.escape(t) for t in STOP_TOKENS) + r")\b"
 )
 _G_ROW_RE = re.compile(r"^\|\s*(G[1-6])\s*\|", re.MULTILINE)
+_FENCE_OPEN_RE = re.compile(r"^[ \t]*(?P<marker>`{3,}|~{3,})")
 _DESIGNED_STOP_LINE_RE = re.compile(
-    r"(?im)^(?:\*\*)?stop(?:\*\*)?:\s*("
+    r"(?im)^[ \t]*(?:>\s+|[-*+]\s+)?"
+    r"(?:\*\*stop\*\*:\s*|\*\*stop:\*\*\s*|stop:\s*)("
     + "|".join(re.escape(t) for t in STOP_TOKENS)
     + r")\b"
 )
+_PACKET_KIND_RE = re.compile(r"(?im)^packet_kind:\s*(\S+)")
+_DESIGNED_STOP_DOC_RE = re.compile(
+    r"(?im)\bstop:\s*("
+    + "|".join(re.escape(t) for t in STOP_TOKENS)
+    + r")\b"
+)
+DESIGNED_STOP_MISSING = "designed_stop_missing"
 _RESUME_ROW_RE = re.compile(
     r"(?im)^(?:resume_at|entry_gate|persisted_row):\s*(G[1-6])\b"
 )
@@ -115,6 +124,61 @@ def _strip_narrative_resume_at(text: str) -> str:
     return _RESUME_AT_JSON_RE.sub("", stripped)
 
 
+def _fenced_spans(body: str) -> tuple[tuple[int, int], ...]:
+    """Return source offsets enclosed by Markdown backtick or tilde fences."""
+    spans: list[tuple[int, int]] = []
+    fence_start: int | None = None
+    marker_char = ""
+    marker_width = 0
+    offset = 0
+    for line in body.splitlines(keepends=True):
+        match = _FENCE_OPEN_RE.match(line)
+        if match is not None:
+            marker = match.group("marker")
+            if fence_start is None:
+                fence_start = offset
+                marker_char = marker[0]
+                marker_width = len(marker)
+            elif marker[0] == marker_char and len(marker) >= marker_width:
+                spans.append((fence_start, offset + len(line)))
+                fence_start = None
+                marker_char = ""
+                marker_width = 0
+        offset += len(line)
+    if fence_start is not None:
+        spans.append((fence_start, len(body)))
+    return tuple(spans)
+
+
+def _in_fenced_span(spans: tuple[tuple[int, int], ...], offset: int) -> bool:
+    """True when *offset* starts inside a fenced region."""
+    return any(start <= offset < end for start, end in spans)
+
+
+def _is_conductor_packet(
+    packet_text: str | None,
+    *,
+    packet_kind: str | None = None,
+) -> bool:
+    """True when packet is a conductor mission."""
+    if packet_kind == "conductor":
+        return True
+    if packet_text:
+        match = _PACKET_KIND_RE.search(packet_text)
+        if match and match.group(1).strip().lower() == "conductor":
+            return True
+    return False
+
+
+def _iter_designed_stop_matches(text: str):
+    """Yield designed-stop regex matches outside fenced code blocks."""
+    body = text or ""
+    fenced = _fenced_spans(body)
+    for match in _DESIGNED_STOP_LINE_RE.finditer(body):
+        if not _in_fenced_span(fenced, match.start()):
+            yield match
+
+
 def parse_stop_tokens(text: str) -> StopParseResult:
     """Extract stop tokens from scoreboard markdown or closeout prose."""
     scan_text = _strip_narrative_resume_at(text)
@@ -155,7 +219,7 @@ def parse_designed_stop_tokens(text: str) -> StopParseResult:
     """
     designed: set[str] = set()
     malformed: list[str] = []
-    for match in _DESIGNED_STOP_LINE_RE.finditer(text or ""):
+    for match in _iter_designed_stop_matches(text or ""):
         token = match.group(1).upper()
         if token in STOP_TOKENS:
             designed.add(token)
@@ -174,6 +238,22 @@ def parse_designed_stop_tokens(text: str) -> StopParseResult:
 def validate_stop_token(token: str) -> bool:
     """True when token is in the sealed stop catalog."""
     return token.strip().upper() in STOP_TOKENS
+
+
+def validate_conductor_packet(
+    packet_text: str,
+    *,
+    packet_kind: str | None = None,
+) -> CloseoutStopVerdict:
+    """Require conductor spawn packets to document at least one designed stop."""
+    if not _is_conductor_packet(packet_text, packet_kind=packet_kind):
+        return CloseoutStopVerdict(ok=True)
+    if _DESIGNED_STOP_DOC_RE.search(packet_text or ""):
+        return CloseoutStopVerdict(ok=True)
+    return CloseoutStopVerdict(
+        ok=False,
+        reason=DESIGNED_STOP_MISSING,
+    )
 
 
 def is_exit_persist_stop(body: str) -> bool:
@@ -287,8 +367,16 @@ def validate_conductor_closeout(
     live_summoning_chat: bool = False,
     operator_present: bool = False,
     packet_text: str | None = None,
+    packet_kind: str | None = None,
 ) -> CloseoutStopVerdict:
     """Validate closeout stop vocabulary + optional Mode B admit-proof."""
+    if _is_conductor_packet(packet_text, packet_kind=packet_kind):
+        designed = parse_designed_stop_tokens(body)
+        if not designed.designed_tokens:
+            return CloseoutStopVerdict(
+                ok=False,
+                reason=DESIGNED_STOP_MISSING,
+            )
     parsed = parse_stop_tokens(body)
     if parsed.malformed:
         return CloseoutStopVerdict(
