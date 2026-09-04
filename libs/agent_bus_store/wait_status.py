@@ -30,6 +30,10 @@ import re
 from typing import Any, Literal, TypedDict
 
 from agent_seat.registry import normalize_bus_address
+from chat_harvest.chrome import (
+    is_failed_relay_envelope_subject,
+    substantive_reply_body,
+)
 
 from .close_on_read import CLOSE_ON_READ_TAG
 from .disposition import first_line_is_disposition_type, resolve_bus_lifecycle
@@ -48,6 +52,7 @@ STATUS_COMPLETION_MODES: frozenset[str] = frozenset(
 )
 CompletionMode = Literal[
     "first_reply_from",
+    "proof_reply_from",
     "thread_closed",
     "status:done",
     "status:failed",
@@ -60,7 +65,7 @@ class Completion(TypedDict, total=False):
     """Caller completion spec. ``mode`` selects the predicate."""
 
     mode: CompletionMode
-    from_agent: str  # required when mode == "first_reply_from"
+    from_agent: str  # required when mode == first_reply_from | proof_reply_from
 
 
 _STATUS_SUBJECT_PREFIX = re.compile(
@@ -171,6 +176,31 @@ def qualifying_reply(
     return None
 
 
+def qualifying_proof_reply(
+    turns: list[dict[str, Any]],
+    *,
+    after_turn: int,
+    from_agent: str | None,
+) -> dict[str, Any] | None:
+    """First qualifying turn whose body is substantive after chrome strip.
+
+    Like ``qualifying_reply``, but rejects CDP relay envelopes whose subject is
+    FAILED/UNVERIFIED and bodies that are chrome-only (streaming tool-badge stubs).
+    """
+    reply = qualifying_reply(
+        turns, after_turn=after_turn, from_agent=from_agent
+    )
+    if reply is None:
+        return None
+    subject = str(reply.get("subject") or "")
+    if is_failed_relay_envelope_subject(subject):
+        return None
+    body = str(reply.get("body") or "")
+    if not substantive_reply_body(body):
+        return None
+    return reply
+
+
 def build_suggested_next(
     thread_row: dict[str, Any],
     *,
@@ -194,7 +224,8 @@ def build_suggested_next(
     """
     if not complete or thread_row["status"] == ThreadStatus.CLOSED:
         return None
-    if completion.get("mode", "first_reply_from") != "first_reply_from":
+    mode = completion.get("mode", "first_reply_from")
+    if mode not in {"first_reply_from", "proof_reply_from"}:
         return None
     if qualifying_reply_turn is None:
         return None
@@ -297,6 +328,13 @@ def is_complete(
         return (
             qualifying_status_turn(
                 turns, after_turn=after_turn, status_token=str(mode)
+            )
+            is not None
+        )
+    if mode == "proof_reply_from":
+        return (
+            qualifying_proof_reply(
+                turns, after_turn=after_turn, from_agent=completion.get("from_agent")
             )
             is not None
         )

@@ -32,6 +32,7 @@ EMAIL_BRIDGE_SOCK = os.environ.get(
 )
 WAIT_S = 55
 POLL_GAP_S = 2.0
+_DEFAULT_COMPLETION = "proof_reply_from"
 
 
 def log(msg: str) -> None:
@@ -104,11 +105,12 @@ def wait_leg(
     thread: str,
     after_turn: int,
     from_agent: str,
+    completion: str = _DEFAULT_COMPLETION,
 ) -> dict[str, Any]:
     params = {
         "after_turn": after_turn,
         "wait": WAIT_S,
-        "completion": "first_reply_from",
+        "completion": completion,
         "from_agent": from_agent,
     }
     resp = client.get(
@@ -224,6 +226,10 @@ def main() -> int:
                         tag="path-sim-harvest",
                     )
                 return 0
+            if data.get("status") == "predicate_unmet":
+                log(
+                    "predicate_unmet — chrome-only or envelope stub; keep polling"
+                )
             time.sleep(POLL_GAP_S)
     finally:
         client.close()

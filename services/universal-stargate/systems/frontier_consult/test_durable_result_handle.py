@@ -77,6 +77,24 @@ def test_build_poll_hint_wait_respects_wait_seconds() -> None:
     assert '"wait_seconds":0' in snap["arguments_json"]
 
 
+def test_build_poll_hint_wait_proof_reply_from() -> None:
+    hint = build_poll_hint_wait(
+        thread_id="cdp-1",
+        from_agent="web-anthropic",
+        completion="proof_reply_from",
+    )
+    assert hint["arguments"]["completion"] == "proof_reply_from"
+
+
+def test_build_handoff_result_forwards_completion() -> None:
+    cdp = build_handoff_result(
+        thread_id="cdp-t",
+        to_agent="web-anthropic",
+        completion="proof_reply_from",
+    )
+    assert cdp["poll_hint"]["arguments"]["completion"] == "proof_reply_from"
+
+
 def test_build_handoff_result_forwards_poll_wait_seconds() -> None:
     web = build_handoff_result(thread_id="t10", to_agent="reviewer")
     assert web["poll_hint"]["arguments"]["wait_seconds"] == 60

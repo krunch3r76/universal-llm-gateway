@@ -21,6 +21,7 @@ from cdp_ask.unverifiable import (
     failed_snapshot_fields,
     transport_miss_fields,
 )
+from chat_harvest.chrome import is_chrome_only, is_prompt_echo
 
 from claude_bundles.cdp_model_endpoint_staging import (
     CdpStagingError,
@@ -124,28 +125,12 @@ def picker_from_model_id(model_id: str) -> str:
 
 def _is_user_prompt_echo_body(body: str) -> bool:
     """True when harvested text is Cowork user-turn chrome (a:27801 / 083e6e4a)."""
-    return (body or "").lstrip().lower().startswith("you said:")
+    return is_prompt_echo(body)
 
 
 def _is_chrome_only_body(body: str) -> bool:
     """True when body is skill-chip / manifest chrome without assistant prose."""
-    text = (body or "").strip()
-    if not text:
-        return False
-    if _is_user_prompt_echo_body(text):
-        return True
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    if not lines:
-        return False
-    for line in lines:
-        if line.startswith("<!--") and line.endswith("-->"):
-            continue
-        if line.startswith("/") and " " not in line.rstrip("/"):
-            continue
-        if line.startswith("#"):
-            continue
-        return False
-    return True
+    return is_chrome_only(body)
 
 
 def _has_unresolved_artifact_card(snapshot: dict[str, Any]) -> bool:
@@ -830,6 +815,10 @@ def run_cdp_generate(
             )
 
         if _completed_without_proof(snapshot):
+            body = str(snapshot.get("body") or "")
+            if _is_chrome_only_body(body):
+                sleep(poll_interval_s)
+                continue
             abort_info = _abort_then_sweep(
                 sat_id,
                 execution_id,

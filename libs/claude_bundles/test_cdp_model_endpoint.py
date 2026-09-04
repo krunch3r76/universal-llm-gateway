@@ -1205,6 +1205,54 @@ def test_run_cdp_generate_non_mission_completed_without_proof_aborts(
     assert retain_calls == [False]
 
 
+def test_run_cdp_generate_chrome_only_completed_without_proof_keeps_polling(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Chrome-only completed snapshot must not abort — wait for substantive proof."""
+    from chat_harvest.test_chrome import SPECIMEN_346_BODY
+
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-chrome-stub")
+    client = _FakeClient(
+        [
+            {"execution_id": "sat-chrome", "status": "running"},
+            {
+                "execution_id": "sat-chrome",
+                "status": "completed",
+                "body": SPECIMEN_346_BODY,
+                "completion_phase": "terminal",
+                "archive_uri": "cortex://notes/system/threads/stub.md",
+            },
+            {
+                "execution_id": "sat-chrome",
+                "status": "running",
+                "body": "Here is the substantive bind record.",
+                "attested_model": "Model: Fable 5 High",
+                "harvest_provenance": "chat",
+            },
+        ]
+    )
+    abort_calls: list[bool] = []
+    from claude_bundles import cdp_model_endpoint as mod
+
+    def _no_abort(*_args, **_kwargs):
+        abort_calls.append(True)
+        return {"abort_skipped": False}
+
+    monkeypatch.setattr(mod, "_abort_then_sweep", _no_abort)
+    result = run_cdp_generate(
+        execution_id="dispatch-chrome-stub",
+        model_id="cdp/fable-5.1",
+        prompt_text="ping",
+        purpose="ask",
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert result.ok is True
+    assert abort_calls == []
+    assert "substantive" in result.body.lower() or "bind record" in result.body.lower()
+
+
 def test_run_cdp_generate_mission_overload_retain_cse(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

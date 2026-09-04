@@ -13,6 +13,7 @@ from claude_bundles.cowork_output_download import resolve_harvest_body
 from claude_bundles.cse_turns_harvest import harvest_turns
 from claude_bundles.cse_url import normalize_cse_url
 from claude_bundles.overload_only_harvest import is_error_banner_only_harvest
+from chat_harvest.chrome import is_chrome_only, substantive_reply_body
 
 from cdp_ask.cse_session_ack import classify_ack
 from cdp_ask.cse_session_models import CseSessionTurn, HarvestRequest, HarvestResponse
@@ -102,7 +103,7 @@ async def _try_body_harvest(
         return None
     try:
         preview = enrich_dom(await harvest_turns(page, limit=1))
-        if preview.get("loading"):
+        if preview.get("loading") or preview.get("in_flight") or preview.get("streaming"):
             return None
         chat_body = ""
         if preview.get("turns"):
@@ -116,8 +117,10 @@ async def _try_body_harvest(
         )
         if not body_result or not body_result.content:
             return None
+        if not substantive_reply_body(body_result.content):
+            return None
         post = enrich_dom(await harvest_turns(page, limit=1))
-        if post.get("loading"):
+        if post.get("loading") or post.get("in_flight") or post.get("streaming"):
             return None
         if req.source == "auto" and is_error_banner_only_harvest(body_result.content):
             return None
@@ -186,8 +189,18 @@ def _dom_to_harvested(
             provenance=provenance,
             waited_ms=waited_ms or None,
         )
+    last = turns[-1]
+    if last.author == "assistant" and is_chrome_only(last.text):
+        return HarvestResponse(
+            outcome="streaming",
+            provenance=provenance,
+            streaming=True,
+            stop=bool(dom.get("stop")),
+            tool_pause=True,
+            waited_ms=waited_ms or None,
+        )
     ack = classify_ack(
-        turns[-1].text,
+        last.text,
         marker=req.marker,
         successor_birth_id=req.successor_birth_id,
     )

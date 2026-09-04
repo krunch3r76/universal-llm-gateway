@@ -28,6 +28,7 @@ from ..wait_status import (
     derive_status,
     is_complete,
     is_dead_wait_no_auto_producer,
+    qualifying_proof_reply,
     qualifying_reply,
     qualifying_status_turn,
 )
@@ -70,6 +71,10 @@ def _snapshot(
     if mode in STATUS_COMPLETION_MODES:
         reply = qualifying_status_turn(
             turns, after_turn=after_turn, status_token=str(mode)
+        )
+    elif mode == "proof_reply_from":
+        reply = qualifying_proof_reply(
+            turns, after_turn=after_turn, from_agent=completion.get("from_agent")
         )
     else:
         reply = qualifying_reply(
@@ -115,28 +120,33 @@ async def wait_thread_route(
 ) -> dict[str, Any]:
     """Bounded server-side wait. ``wait=0`` is an immediate snapshot.
 
-    ``completion`` ∈ {first_reply_from, thread_closed, status:done,
-    status:failed, status:needs-attended, status:superseded}. ``from_agent`` is
-    required for first_reply_from. Incomplete status is ``no_new_turn``
+    ``completion`` ∈ {first_reply_from, proof_reply_from, thread_closed,
+    status:done, status:failed, status:needs-attended, status:superseded}.
+    ``from_agent`` is required for first_reply_from and proof_reply_from.
     when no turn exists after ``after_turn``, else ``predicate_unmet`` (turns
     advanced, predicate still false). Push state is not inferred from read_at.
     """
     thread_id = normalize_thread_id(thread_id)
-    allowed = ("first_reply_from", "thread_closed", *sorted(STATUS_COMPLETION_MODES))
+    allowed = (
+        "first_reply_from",
+        "proof_reply_from",
+        "thread_closed",
+        *sorted(STATUS_COMPLETION_MODES),
+    )
     if completion not in allowed:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=(
                 f"unknown completion mode {completion!r}; "
-                "expected first_reply_from | thread_closed | "
+                "expected first_reply_from | proof_reply_from | thread_closed | "
                 "status:done | status:failed | status:needs-attended | "
                 "status:superseded"
             ),
         )
-    if completion == "first_reply_from" and not from_agent:
+    if completion in {"first_reply_from", "proof_reply_from"} and not from_agent:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="completion=first_reply_from requires from_agent",
+            detail=f"completion={completion} requires from_agent",
         )
 
     comp: Completion = {"mode": completion}  # type: ignore[typeddict-item]

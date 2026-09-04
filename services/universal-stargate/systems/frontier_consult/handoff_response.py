@@ -119,6 +119,7 @@ def build_poll_hint_wait(
     from_agent: str,
     after_turn: int = 1,
     wait_seconds: int = _DEFAULT_POLL_WAIT_SECONDS,
+    completion: str = "first_reply_from",
 ) -> dict[str, Any]:
     """Canonical poll_hint (Phase 2+): server-side wait args.
 
@@ -134,7 +135,7 @@ def build_poll_hint_wait(
         "thread": thread_id,
         "after_turn": after_turn,
         "wait_seconds": wait_seconds,
-        "completion": "first_reply_from",
+        "completion": completion,
         "from_agent": from_agent,
     }
     return {
@@ -267,6 +268,7 @@ def build_handoff_result(
     reply_from_agent: str | None = None,
     after_turn: int = 1,
     poll_wait_seconds: int = _DEFAULT_POLL_WAIT_SECONDS,
+    completion: str = "first_reply_from",
 ) -> dict[str, Any]:
     """Assemble the three additive handoff-response fields.
 
@@ -293,6 +295,7 @@ def build_handoff_result(
             from_agent=reply_from_agent or to_agent,
             after_turn=after_turn,
             wait_seconds=poll_wait_seconds,
+            completion=completion,
         ),
     }
 

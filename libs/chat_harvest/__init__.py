@@ -15,6 +15,16 @@ from chat_harvest.archive import (
     reindex_archive_file,
     turn_digest,
 )
+from chat_harvest.chrome import (
+    RELAY_ENVELOPE_SUBJECT_RE,
+    TOOL_BADGE_LINE_RE,
+    is_chrome_only,
+    is_failed_relay_envelope_subject,
+    is_prompt_echo,
+    is_relay_envelope_subject,
+    strip_chrome,
+    substantive_reply_body,
+)
 from chat_harvest.claude_chat_adapter import (
     execute_claude_harvest,
     execute_claude_paste,
@@ -61,6 +71,14 @@ __all__ = [
     "build_turn_index",
     "classify_chat_url",
     "conv12",
+    "is_chrome_only",
+    "is_failed_relay_envelope_subject",
+    "is_prompt_echo",
+    "is_relay_envelope_subject",
+    "RELAY_ENVELOPE_SUBJECT_RE",
+    "strip_chrome",
+    "substantive_reply_body",
+    "TOOL_BADGE_LINE_RE",
     "cortex_files_root",
     "execute_claude_harvest",
     "execute_claude_paste",

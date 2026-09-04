@@ -38,6 +38,21 @@ def test_snapshot_from_archive_token(tmp_path: Path) -> None:
     assert snap["url"].endswith("cse_testRecovery1")
 
 
+def test_snapshot_from_archive_token_rejects_chrome_only(tmp_path: Path) -> None:
+    from chat_harvest.test_chrome import SPECIMEN_346_BODY
+
+    exe = "93f3d511a30e4de08a1de65bf6320c0e"
+    archive = tmp_path / f"cdp-ask-archive-cdp-recover-{exe}.md"
+    archive.write_text(
+        "# CDP ask harvest\n\n"
+        f"- execution_id: `{exe}`\n"
+        "- url: `https://claude.ai/cowork/cse_chromeOnly`\n"
+        f"\n## Body\n\n{SPECIMEN_346_BODY}\n",
+        encoding="utf-8",
+    )
+    assert snapshot_from_archive_token(exe, archive_dir=tmp_path) is None
+
+
 @pytest.mark.asyncio
 async def test_recover_poll_snapshot_prefers_archive(tmp_path: Path) -> None:
     exe = "68a8129ca2264fe088ec267a20d88376"

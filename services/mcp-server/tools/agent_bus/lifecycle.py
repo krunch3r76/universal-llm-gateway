@@ -308,16 +308,21 @@ def _wait_dispatch(
         thread = str(thread)
     if not thread:
         return {"error": 'wait requires: thread (str, e.g. "1234")'}
-    if completion == "first_reply_from" and not from_agent:
-        return {"error": "wait with completion=first_reply_from requires from_agent"}
+    if completion in {"first_reply_from", "proof_reply_from"} and not from_agent:
+        return {"error": f"wait with completion={completion} requires from_agent"}
     from agent_bus_store.wait_status import STATUS_COMPLETION_MODES
 
-    allowed = {"first_reply_from", "thread_closed", *STATUS_COMPLETION_MODES}
+    allowed = {
+        "first_reply_from",
+        "proof_reply_from",
+        "thread_closed",
+        *STATUS_COMPLETION_MODES,
+    }
     if completion not in allowed:
         return {
             "error": (
                 f"wait: unknown completion mode {completion!r}; "
-                "expected first_reply_from | thread_closed | "
+                "expected first_reply_from | proof_reply_from | thread_closed | "
                 "status:done | status:failed | status:needs-attended | "
                 "status:superseded"
             ),

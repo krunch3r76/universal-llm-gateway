@@ -484,14 +484,14 @@ Authoring enum + propagate template: skill `directive-authoring-standard` D2. Li
 
 **Degrade ladder:** `auto-admit-armed` → poll · `no-auto-handler` → re-request · `status:blocked` → fix_hint · `status:needs-attended` → surface · `disposition:declined` → routing_hint · propagated/executed/queued → read `executions[]`.
 
-**Liveness reads (codeblind):** (1) fetch admit/terminal turn — not thread_count. (2) `job_state include_terminal=true`. (3) `wait.status` is predicate — read completion field. (4) `wait(first_reply_from, from_agent=cursor-auto)` for admit-visible wait.
+**Liveness reads (codeblind):** (1) fetch admit/terminal turn — not thread_count. (2) `job_state include_terminal=true`. (3) `wait.status` is predicate — read completion field (`proof_reply_from` on CDP poll_hint; `predicate_unmet` = chrome-only envelope, keep polling). (4) `wait(first_reply_from, from_agent=cursor-auto)` for admit-visible wait.
 
 ## Anti-patterns
 
 | Bad | Good |
 |---|---|
 | Trust abort / empty `files_created:[]` / on-thread status as ground truth | Negative status is a claim, not world-state — await cursor contradiction |
-| Read `wait.status=no_new_turn` (or a 55s `status:done` hold) as nothing happened | Fetch the admit turn — `predicate_unmet` means turns advanced without satisfying the wait, not silence |
+| Read `wait.status=no_new_turn` (or a 55s `status:done` hold) as nothing happened | Fetch the admit turn — `predicate_unmet` means turns advanced without satisfying the wait (e.g. chrome-only CDP envelope under `proof_reply_from`), not silence |
 | Facts only in Cowork chat | Write them into DIRECTIVE / CLOSEOUT / CHECKPOINT |
 | Ref-only closeouts | Verdicts inline; evidence by ref |
 | `wait(first_reply_from)` after DISPOSITION | Re-`request` a sparse amend DIRECTIVE |

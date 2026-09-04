@@ -3,11 +3,22 @@
 from __future__ import annotations
 
 from agent_bus_store.turns_models import ThreadStatus
-from agent_bus_store.wait_status import build_suggested_next, derive_status, is_complete
+from agent_bus_store.wait_status import (
+    build_suggested_next,
+    derive_status,
+    is_complete,
+    qualifying_proof_reply,
+)
+from chat_harvest.test_chrome import SPECIMEN_346_BODY, SPECIMEN_347_BODY
 
 
-def _turn(n, frm, read_at=None, status="open"):
-    return {"turn_number": n, "from_agent": frm, "read_at": read_at, "status": status}
+def _turn(n, frm, read_at=None, status="open", *, subject="", body=""):
+    row = {"turn_number": n, "from_agent": frm, "read_at": read_at, "status": status}
+    if subject:
+        row["subject"] = subject
+    if body:
+        row["body"] = body
+    return row
 
 
 def test_first_reply_from_incomplete_then_complete():
@@ -265,3 +276,58 @@ def test_dead_wait_clears_when_cursor_already_replied():
         after_turn=20,
         completion={"mode": "first_reply_from", "from_agent": "cursor"},
     )
+
+
+def test_proof_reply_from_specimen_346_predicate_unmet():
+    """#346 — chrome-only CDP envelope must not complete proof_reply_from."""
+    thread = {"status": ThreadStatus.ACTIVE}
+    comp = {"mode": "proof_reply_from", "from_agent": "web-anthropic"}
+    turns = [
+        _turn(1, "cursor"),
+        _turn(
+            2,
+            "web-anthropic",
+            subject="cdp reply — a76a67d3",
+            body=SPECIMEN_346_BODY,
+        ),
+    ]
+    assert not is_complete(thread, turns, after_turn=1, completion=comp)
+    assert qualifying_proof_reply(turns, after_turn=1, from_agent="web-anthropic") is None
+    assert derive_status(thread, turns, after_turn=1, completion=comp) == "predicate_unmet"
+
+
+def test_proof_reply_from_specimen_347_complete():
+    """#347 — substantive prose after envelope completes proof_reply_from."""
+    thread = {"status": ThreadStatus.ACTIVE}
+    comp = {"mode": "proof_reply_from", "from_agent": "web-anthropic"}
+    turns = [
+        _turn(1, "cursor"),
+        _turn(
+            2,
+            "web-anthropic",
+            subject="cdp reply — b87b78e4",
+            body=SPECIMEN_347_BODY,
+        ),
+    ]
+    assert is_complete(thread, turns, after_turn=1, completion=comp)
+    reply = qualifying_proof_reply(turns, after_turn=1, from_agent="web-anthropic")
+    assert reply is not None
+    assert reply["turn_number"] == 2
+    assert derive_status(thread, turns, after_turn=1, completion=comp) == "complete"
+
+
+def test_proof_reply_from_failed_envelope_predicate_unmet():
+    """FAILED CDP envelope subject never satisfies proof_reply_from."""
+    thread = {"status": ThreadStatus.ACTIVE}
+    comp = {"mode": "proof_reply_from", "from_agent": "web-anthropic"}
+    turns = [
+        _turn(1, "cursor"),
+        _turn(
+            2,
+            "web-anthropic",
+            subject="cdp FAILED — deadbeef",
+            body=SPECIMEN_347_BODY,
+        ),
+    ]
+    assert not is_complete(thread, turns, after_turn=1, completion=comp)
+    assert derive_status(thread, turns, after_turn=1, completion=comp) == "predicate_unmet"
