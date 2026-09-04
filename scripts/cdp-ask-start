@@ -20,15 +20,62 @@ _listening_pid() {
     | head -1
 }
 
-_refresh_pidfile_if_healthy() {
-  if ! curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
-    return 1
-  fi
+# True when /health JSON has a non-empty standing_pins object (at least one key).
+_standing_pins_populated() {
+  body="$1"
+  printf '%s' "$body" \
+    | grep -q '"standing_pins"[[:space:]]*:[[:space:]]*{[[:space:]]*"'
+}
+
+_pid_has_ulg_repo() {
+  pid="$1"
+  [ -r "/proc/${pid}/environ" ] || return 1
+  tr '\0' '\n' < "/proc/${pid}/environ" | grep -q '^ULG_REPO=.'
+}
+
+# Echo adoptable listener pid on stdout, or return 1.
+# Adoption requires HTTP /health + non-empty standing_pins + ULG_REPO in environ.
+# Empty pins is the ULG_REPO-less orphan signature (pass-6 residual).
+_adoptable_listener_pid() {
+  body="$(curl -sf "http://127.0.0.1:${PORT}/health" 2>/dev/null)" || return 1
+  _standing_pins_populated "$body" || return 1
   live_pid="$(_listening_pid)"
-  if [ -z "$live_pid" ]; then
+  [ -n "$live_pid" ] || return 1
+  _pid_has_ulg_repo "$live_pid" || return 1
+  printf '%s\n' "$live_pid"
+  return 0
+}
+
+_refresh_pidfile_if_healthy() {
+  live_pid="$(_adoptable_listener_pid)" || return 1
+  echo "$live_pid" > "$PIDFILE"
+  return 0
+}
+
+# Kill a :PORT listener that answers but is not adoptable so a fresh start can bind.
+# Returns 0 when port is clear (or nothing listened). Returns 1 if listener became
+# adoptable mid-check (pidfile already refreshed — caller should exit 0).
+_kill_unadoptable_listener() {
+  live_pid="$(_listening_pid)"
+  [ -n "$live_pid" ] || return 0
+  if adoptable_pid="$(_adoptable_listener_pid)"; then
+    echo "$adoptable_pid" > "$PIDFILE"
     return 1
   fi
-  echo "$live_pid" > "$PIDFILE"
+  echo "cdp-ask-start: refusing adopt of pid=${live_pid} (empty standing_pins or missing ULG_REPO); killing for fresh start" >&2
+  kill "$live_pid" 2>/dev/null || true
+  i=0
+  while [ "$i" -lt 30 ]; do
+    [ -z "$(_listening_pid)" ] && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  leftover="$(_listening_pid)"
+  if [ -n "$leftover" ]; then
+    kill -9 "$leftover" 2>/dev/null || true
+    sleep 0.1
+  fi
+  rm -f "$PIDFILE"
   return 0
 }
 
@@ -44,6 +91,11 @@ if [ -f "$PIDFILE" ]; then
       exit 0
     fi
   fi
+fi
+
+# Listener may still hold :PORT after a refused adopt — clear it before spawn.
+if ! _kill_unadoptable_listener; then
+  exit 0
 fi
 
 mkdir -p /tmp/logs/cdp-ask "${HOME}/.gateway"
