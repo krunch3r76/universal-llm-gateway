@@ -49,7 +49,8 @@ import sys, tomllib
 from pathlib import Path
 
 pins_path, systemd_user = Path(sys.argv[1]), Path(sys.argv[2])
-lanes = tomllib.loads(pins_path.read_bytes()).get("lanes", {})
+with pins_path.open("rb") as f:
+    lanes = tomllib.load(f).get("lanes", {})
 for name, row in lanes.items():
     display = str(row["display"]).lstrip(":")
     drop = systemd_user / f"cdp-lane@{name}.service.d"
@@ -73,7 +74,8 @@ systemctl --user enable jupiter-cdp.target
 
 python3 - "$SRC/pins.toml" <<'PY'
 import subprocess, sys, tomllib
-lanes = tomllib.loads(open(sys.argv[1], "rb").read()).get("lanes", {})
+with open(sys.argv[1], "rb") as f:
+    lanes = tomllib.load(f).get("lanes", {})
 for name, row in lanes.items():
     if row.get("standing"):
         subprocess.run(

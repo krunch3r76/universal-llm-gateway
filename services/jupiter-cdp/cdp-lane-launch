@@ -34,7 +34,8 @@ def _expand(path: str) -> Path:
 def _load_pin(lane_name: str) -> dict:
     repo = os.environ.get("ULG_REPO", str(_REPO))
     pins_path = Path(repo) / "services" / "jupiter-cdp" / "pins.toml"
-    table = tomllib.loads(pins_path.read_bytes())
+    with pins_path.open("rb") as f:
+        table = tomllib.load(f)
     lanes = table.get("lanes", {})
     if lane_name not in lanes:
         raise SystemExit(f"unknown lane: {lane_name!r}")

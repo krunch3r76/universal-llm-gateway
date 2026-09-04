@@ -41,7 +41,8 @@ def _pins_path() -> Path:
 
 
 def _load_pins() -> dict[str, dict]:
-    return tomllib.loads(_pins_path().read_bytes()).get("lanes", {})
+    with _pins_path().open("rb") as f:
+        return tomllib.load(f).get("lanes", {})
 
 
 def _iso_now() -> str:

@@ -9,7 +9,8 @@ PINS="$REPO/services/jupiter-cdp/pins.toml"
 if ! python3 - "$PINS" "$LANE" <<'PY'
 import sys, tomllib
 pins, lane = sys.argv[1], sys.argv[2]
-lanes = tomllib.loads(open(pins, "rb").read()).get("lanes", {})
+with open(pins, "rb") as f:
+    lanes = tomllib.load(f).get("lanes", {})
 sys.exit(0 if lane in lanes else 1)
 PY
 then
@@ -20,7 +21,8 @@ fi
 PORT=$(python3 - "$PINS" "$LANE" <<'PY'
 import sys, tomllib
 pins, lane = sys.argv[1], sys.argv[2]
-print(tomllib.loads(open(pins, "rb").read())["lanes"][lane]["port"])
+with open(pins, "rb") as f:
+    print(tomllib.load(f)["lanes"][lane]["port"])
 PY
 )
 
