@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
+from agent_bus_store.sdk_liveness import (
+    LivenessVerdict,
+    ProbeResult,
+    classify_probe,
+    probe_dispatch_status,
+)
 from claude_bundles.conductor_stop import parse_stop_tokens
 
 from bus_watch.park_harvest import (
@@ -13,33 +20,36 @@ from bus_watch.park_harvest import (
 )
 
 
-def live_sdk_on_thread(*, thread_snapshot: dict[str, Any], thread_id: str = "") -> bool:
-    """True when agent-bus snapshot indicates a non-terminal cursor-sdk dispatch."""
-    _ = thread_id
-    for key in ("live_sdk", "cursor_sdk_live", "sdk_live"):
-        if thread_snapshot.get(key):
-            return True
-    live_count = thread_snapshot.get("live_dispatch_count")
-    if isinstance(live_count, int) and live_count > 0:
-        return True
-    executions = thread_snapshot.get("active_executions") or thread_snapshot.get(
-        "live_executions"
+def live_sdk_on_thread(
+    *,
+    thread_id: str,
+    probe_fn: Callable[[str], ProbeResult] = probe_dispatch_status,
+    link_execution_id: str | None = None,
+) -> bool:
+    """True when GIW dispatch-status indicates non-terminal cursor-sdk dispatch.
+
+    Authority: ``probe_dispatch_status`` → ``classify_probe``.
+    ``SKIP_LIVE`` and ``DEFER`` (fail-closed) ⇒ live; otherwise not live.
+    """
+    if not thread_id:
+        return False
+    probe = probe_fn(thread_id)
+    verdict, _reason, _terminal = classify_probe(
+        probe, link_execution_id=link_execution_id
     )
-    if isinstance(executions, list) and executions:
-        return True
-    if isinstance(executions, int) and executions > 0:
-        return True
-    return False
+    return verdict in (LivenessVerdict.SKIP_LIVE, LivenessVerdict.DEFER)
 
 
 def stall_predicate(
     *,
     thread_snapshot: dict[str, Any],
+    thread_id: str = "",
     scoreboard_body: str = "",
     closeout_body: str = "",
     wait_slice_s: float = 20.0,
     predicate_unmet_slices: int = 0,
     last_turn_count: int | None = None,
+    probe_fn: Callable[[str], ProbeResult] = probe_dispatch_status,
 ) -> tuple[bool, str]:
     """Return (should_stall_pop, reason) for watcher incomplete branch."""
     closeout_tokens = parse_stop_tokens(closeout_body).tokens
@@ -47,7 +57,10 @@ def stall_predicate(
         return False, ""
 
     open_mission = mission_open(scoreboard_body=scoreboard_body) if scoreboard_body else True
-    live = live_sdk_on_thread(thread_snapshot=thread_snapshot)
+    live = live_sdk_on_thread(
+        thread_id=thread_id,
+        probe_fn=probe_fn,
+    )
     owed = successor_owed(closeout_tokens=closeout_tokens)
 
     if not (open_mission and not live and not owed):

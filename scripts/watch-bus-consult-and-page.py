@@ -288,6 +288,7 @@ def main() -> int:
 
         should_pop, reason = stall_predicate(
             thread_snapshot=snap,
+            thread_id=thread_id,
             scoreboard_body=scoreboard_body,
             closeout_body=closeout_body,
             wait_slice_s=slice_s,
