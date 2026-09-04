@@ -49,6 +49,35 @@ def load_benign_allowlist() -> dict[str, Any]:
     return json.loads(ALLOWLIST_PATH.read_text())
 
 
+def apply_canonical_schema_snapshot(conn: sqlite3.Connection) -> None:
+    """Materialize head-schema DDL from the canonical snapshot fixture.
+
+    Lane-B worktrees and CI sandboxes only track incremental migrations under
+    ``libs/cortex_store/migrations/``; the 001–038 base chain lives gitignored
+    on the shared checkout. Tests bootstrap from this snapshot, then apply the
+    tracked incremental migration files idempotently via ``run_migrations``.
+    """
+    snapshot = load_canonical_live_snapshot()
+    conn.execute("PRAGMA foreign_keys=ON")
+
+    def _exec_idempotent(sql: str) -> None:
+        try:
+            conn.execute(sql)
+        except sqlite3.OperationalError as exc:
+            if "already exists" not in str(exc):
+                raise
+
+    for table in sorted(snapshot["tables"]):
+        sql = snapshot["tables"][table].get("sql")
+        if sql:
+            _exec_idempotent(sql)
+    for index in sorted(snapshot["indexes"]):
+        sql = snapshot["indexes"][index].get("sql")
+        if sql:
+            _exec_idempotent(sql)
+    conn.commit()
+
+
 def open_live_db_readonly(db_path: Path | None = None) -> sqlite3.Connection:
     """Read-only connection to the live cortex DB (never mutates)."""
     path = db_path or DEFAULT_LIVE_DB_PATH

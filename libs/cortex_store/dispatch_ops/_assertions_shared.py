@@ -36,7 +36,10 @@ def _project_seeded_by(seeded_by: str) -> tuple[str, str]:
 
 
 def _emit_predicate_form_normalize_events(
-    *, assertion_id: int | None, normalize_payload: dict[str, Any] | None
+    *,
+    assertion_id: int | None,
+    normalize_payload: dict[str, Any] | None,
+    session_id: str | None = None,
 ) -> None:
     """Emit mcp.cortex.predicate.* signals from a route's normalize envelope.
 
@@ -49,12 +52,18 @@ def _emit_predicate_form_normalize_events(
     """
     if not normalize_payload:
         return
+    flag_reasons = list(normalize_payload.get("flag_reasons") or [])
     common: dict[str, Any] = {
         "assertion_id": assertion_id,
         "predicate_form_in": normalize_payload.get("predicate_form_in"),
         "canonical_form": normalize_payload.get("canonical_form"),
         "classes_applied": normalize_payload.get("classes_applied") or [],
         "normalized": bool(normalize_payload.get("normalized")),
+        "reason": ", ".join(flag_reasons) if flag_reasons else None,
+        "session_id": session_id,
+        "normalization_decision": normalize_payload.get("normalization_decision"),
+        "suppression_effect": normalize_payload.get("suppression_effect"),
+        "_next": normalize_payload.get("_next") or normalize_payload.get("next_remedy"),
     }
     record(
         "mcp.cortex.predicate.normalized",

@@ -178,6 +178,27 @@ class CardAssertion(BaseModel):
     observed_at: str | None = None
     evidence_uris: list[str] | None = None
     entrenchment_score: float | None = None
+    epistemic_state: str | None = None
+
+
+class WithheldStatusEntry(BaseModel):
+    """Flagged newer status row withheld from the qualified pin ``served`` slot."""
+
+    assertion_id: int
+    state: str | None = None
+    reason: str | None = None
+    observed_at: str | None = None
+
+
+class CurrentStatus(BaseModel):
+    """Qualified current-status projection (Wave 1 graduation honesty)."""
+
+    served: CardAssertion | None = None
+    review_status: str | None = None
+    observed_at: str | None = None
+    source: str | None = None
+    withheld_newer: list[WithheldStatusEntry] = Field(default_factory=list)
+    withheld_count: int = 0
 
 
 class CardEdgeTypeCount(BaseModel):
@@ -215,6 +236,7 @@ class EntityCard(BaseModel):
     summary_row: str | None = None
     status_summary: dict[str, Any] | None = None
     top_k_assertions: list[CardAssertion] = Field(default_factory=list)
+    current_status: CurrentStatus = Field(default_factory=CurrentStatus)
     assertion_counts: CardAssertionCounts = Field(default_factory=CardAssertionCounts)
     edge_type_summary: list[CardEdgeTypeCount] = Field(default_factory=list)
     archives_to_count: int = 0

@@ -64,6 +64,7 @@ from .entities import (
     CardDebug,
     CardEdgeTypeCount,
     CardSection,
+    CurrentStatus,
     EntityCard,
     EntityCreate,
     EntityDetail,
@@ -75,6 +76,7 @@ from .entities import (
     RetentionPolicy,
     SupersededBreadcrumb,
     SupersededCorrection,
+    WithheldStatusEntry,
 )
 from .extraction import (
     ExtractionCheckRequest,
@@ -107,19 +109,6 @@ from .reflective import (
     ReflectiveEntryList,
     ReflectiveKind,
 )
-from .seat_claims import (
-    SeatClaimEndReason,
-    SeatClaimHolder,
-    SeatClaimRequest,
-    SeatClaimResponse,
-    SeatClaimRow,
-    SeatClaimStatus,
-    SeatClaimsListResponse,
-    SeatHeartbeatRequest,
-    SeatHeartbeatResponse,
-    SeatReleaseRequest,
-    SeatReleaseResponse,
-)
 from .relationships import (
     RelationshipCreate,
     RelationshipCreateResponse,
@@ -132,6 +121,19 @@ from .search import (
     AssertionSearchItem,
     AssertionSearchResult,
     AssertionSearchSummaryItem,
+)
+from .seat_claims import (
+    SeatClaimEndReason,
+    SeatClaimHolder,
+    SeatClaimRequest,
+    SeatClaimResponse,
+    SeatClaimRow,
+    SeatClaimsListResponse,
+    SeatClaimStatus,
+    SeatHeartbeatRequest,
+    SeatHeartbeatResponse,
+    SeatReleaseRequest,
+    SeatReleaseResponse,
 )
 from .staging import (
     ProposalAction,
@@ -205,6 +207,7 @@ __all__ = [
     "CardDebug",
     "CardEdgeTypeCount",
     "CardSection",
+    "CurrentStatus",
     "EntityCard",
     "EntityCreate",
     "EntityDetail",
@@ -214,6 +217,9 @@ __all__ = [
     "EntitySummary",
     "EntityUpdate",
     "RetentionPolicy",
+    "SupersededBreadcrumb",
+    "SupersededCorrection",
+    "WithheldStatusEntry",
     # extraction
     "ExtractionCheckRequest",
     "ExtractionCheckResponse",

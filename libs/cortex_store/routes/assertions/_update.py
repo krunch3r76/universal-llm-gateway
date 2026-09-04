@@ -341,7 +341,7 @@ def _update_assertion_impl(
     item_dump = result.item.model_dump(mode="json")
     if result.predicate_form_normalize is not None:
         item_dump["predicate_form_normalize"] = (
-            result.predicate_form_normalize.model_dump(mode="json")
+            result.predicate_form_normalize.model_dump(mode="json", by_alias=True)
         )
     return item_dump
 

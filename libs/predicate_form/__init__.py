@@ -71,8 +71,14 @@ from .invention_resubjection_guards import (
     check_resubjection,
 )
 from .parser import Predicate, PredicateParseError, parse, unparse
+from .registry import (
+    STATUS_FUNCTOR_FAMILY,
+    is_status_functor,
+    status_current_predicate_sql_where,
+    status_functor_state_token,
+)
 
-NORMALIZER_VERSION = "v1.3.1"
+NORMALIZER_VERSION = "v1.4.0"
 
 
 def _strip_prefixes(p: Predicate) -> Predicate:
@@ -259,13 +265,17 @@ __all__ = [
     "PredicateParseError",
     "ResolutionResult",
     "StaticEntityResolver",
+    "STATUS_FUNCTOR_FAMILY",
     "SupersededByCandidate",
     "detect_contradictions",
     "dry_run_enrich_assertions",
     "enrich_action_predicate_from_claim",
+    "is_status_functor",
     "normalize_predicate_domain",
     "parse",
     "parse_action_predicate",
     "party_from_entity_id",
+    "status_current_predicate_sql_where",
+    "status_functor_state_token",
     "unparse",
 ]

@@ -12,6 +12,7 @@ import sqlite3
 
 import pytest
 
+from predicate_form import NORMALIZER_VERSION
 from cortex_store.routes.assertions import _update_assertion_impl
 
 _ENTITY = "person:camelia-mahmoudi"
@@ -84,7 +85,7 @@ def test_assertion_update_populates_all_four_ledger_columns(
     assert row[
         "candidate_set_fingerprint"
     ]  # non-empty for this case (has eligible arg)
-    assert row["normalizer_version"] == "v1.3.1"
+    assert row["normalizer_version"] == NORMALIZER_VERSION
 
     # Also ensure the read model path works (via full select in update)
     assert (

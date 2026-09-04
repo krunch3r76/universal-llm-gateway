@@ -74,3 +74,32 @@ CLASS_6_WORKFLOW_ENTITY_TYPES: frozenset[str] = frozenset(
         "plan_phase",
     }
 )
+
+# Status-functor family shared by class_6 slot selection and card pin WHERE.
+# Wave 1 graduation honesty (todo:cortex-predicate-normalize-graduation-honesty):
+# one constant consumed by classes.py + card.py — not a fifth grammar mirror.
+STATUS_FUNCTOR_FAMILY: frozenset[str] = frozenset({"status"})
+
+
+def is_status_functor(predicate_name: str) -> bool:
+    """True for ``status`` and ``*_status`` functors (arity-3 state slot)."""
+    return predicate_name in STATUS_FUNCTOR_FAMILY or predicate_name.endswith("_status")
+
+
+def status_functor_state_token(args: tuple[str, ...], predicate_name: str) -> str | None:
+    """Return the state-slot token for status-functor predicates."""
+    if not args:
+        return None
+    if is_status_functor(predicate_name) and len(args) >= 3:
+        return args[1]
+    return args[-1]
+
+
+def status_current_predicate_sql_where() -> str:
+    """SQL fragment matching status(%, current) and %_status(%, current) rows."""
+    return (
+        "predicate_form IS NOT NULL AND ("
+        "LOWER(predicate_form) LIKE 'status(%, current)' "
+        "OR LOWER(predicate_form) LIKE '%\\_status(%, current)' ESCAPE '\\'"
+        ")"
+    )

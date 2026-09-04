@@ -98,6 +98,7 @@ def _op_assert(
     attributes: dict[str, Any] | None = None,
     resolve_aliases: bool = True,
     raw_id: bool = False,
+    session_id: str | None = None,
     **_: object,
 ) -> dict[str, Any]:
     missing = collect_missing_required(
@@ -211,6 +212,7 @@ def _op_assert(
         _emit_predicate_form_normalize_events(
             assertion_id=(result.get("item") or {}).get("id"),
             normalize_payload=result.get("predicate_form_normalize"),
+            session_id=session_id,
         )
         if result.get("validation_warnings"):
             warnings = result["validation_warnings"]

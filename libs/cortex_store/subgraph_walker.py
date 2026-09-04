@@ -381,7 +381,7 @@ def _root_predicate_summary(conn: sqlite3.Connection, root: str) -> str:
         "WHERE from_entity = ? AND type = 'archives_to' AND active = 1",
         (root,),
     )
-    return aggregate_predicate_summary(
+    summary, _withheld = aggregate_predicate_summary(
         top_k_assertions=[dict(r) for r in a_rows],
         et_type_counts=[
             {"type_id": str(r["type_id"]), "count": int(r["n"])} for r in et_rows
@@ -389,6 +389,7 @@ def _root_predicate_summary(conn: sqlite3.Connection, root: str) -> str:
         archives_to_children=[str(r["to_entity"]) for r in arc_rows],
         entity_id=root,
     )
+    return summary
 
 
 def _build_nodes(

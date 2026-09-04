@@ -47,14 +47,22 @@ PREFERRED_VOCABULARY: frozenset[str] = _PREFERRED_PREDICATE_NAMES | _PREFERRED_M
 
 
 def _token_variants(token: str) -> set[str]:
-    """Lowercase hyphen/underscore variants for substring search."""
+    """Lowercase hyphen/underscore/space variants for substring search."""
     lower = token.lower()
-    return {lower, lower.replace("_", "-"), lower.replace("-", "_")}
+    variants = {lower, lower.replace("_", "-"), lower.replace("-", "_")}
+    spaced = lower.replace("_", " ").replace("-", " ")
+    variants.add(spaced)
+    variants.add(" ".join(spaced.split()))
+    return variants
 
 
 def _token_in_claim(token: str, claim_text: str) -> bool:
-    claim_lower = claim_text.lower()
-    return any(v in claim_lower for v in _token_variants(token))
+    claim_norm = claim_text.lower().replace("-", " ").replace("_", " ")
+    for variant in _token_variants(token):
+        variant_norm = variant.replace("-", " ").replace("_", " ")
+        if variant_norm in claim_norm:
+            return True
+    return False
 
 
 def _is_entity_reference(arg: str) -> bool:

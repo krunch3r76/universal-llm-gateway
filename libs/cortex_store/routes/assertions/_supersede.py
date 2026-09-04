@@ -46,7 +46,9 @@ from ._shared import (
     _ASSERTION_COLS,
     _JSON_FIELDS,
     _VALID_CONFIDENCE,
+    _build_predicate_form_normalize,
     _embed_assertion_background,
+    _flag_predicate_normalize_review,
     _normalize_predicate_form_for_write,
     _payload_validation_exception,
     logger,
@@ -387,6 +389,9 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
             )
             new_id = cur.lastrowid
 
+            if normalize_result and normalize_result.get("requires_human_review"):
+                _flag_predicate_normalize_review(conn, new_id, normalize_result)
+
             # Atomic compare-and-swap on superseded_by: by tightening the
             # WHERE clause to require `superseded_by IS NULL`, two
             # concurrent supersede passes against the same old_assertion_id
@@ -534,11 +539,18 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
         + (provenance_warnings or [])
     )
 
+    predicate_form_normalize_out = None
+    if normalize_result is not None and predicate_form_explicit and body.predicate_form is not None:
+        predicate_form_normalize_out = _build_predicate_form_normalize(
+            body.predicate_form, normalize_result
+        )
+
     return SupersedeResponse(
         old=AssertionItem(**decode_row(old_result[0], _JSON_FIELDS)),
         new=AssertionItem(**decode_row(new_result[0], _JSON_FIELDS)),
         impact_warning=impact_warning,
         validation_warnings=combined_warnings or None,
+        predicate_form_normalize=predicate_form_normalize_out,
     )
 
 
