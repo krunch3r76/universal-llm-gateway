@@ -11,7 +11,9 @@ closed rather than unmapped.
 
 from .atomic import (
     PreImageMismatchError,
+    RmwResult,
     WriteVerifyError,
+    durable_rmw_text,
     durable_write_bytes,
     durable_write_text,
     finalize_atomic_replace,
@@ -34,7 +36,9 @@ CONSUMERS: tuple[str, ...] = (
 __all__ = [
     "CONSUMERS",
     "PreImageMismatchError",
+    "RmwResult",
     "WriteVerifyError",
+    "durable_rmw_text",
     "durable_write_bytes",
     "durable_write_text",
     "finalize_atomic_replace",

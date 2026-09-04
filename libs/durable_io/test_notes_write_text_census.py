@@ -92,6 +92,9 @@ OUT_OF_CLASS: dict[str, str] = {
     "libs/implement_admission/materialize.py": (
         "writes dispatch packets to caller out_dir, not the notes tree"
     ),
+    "libs/implement_admission/conductor_materialize.py": (
+        "writes conductor packet to caller out_dir, not the notes tree"
+    ),
 }
 
 

@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from durable_io.atomic import (
     PreImageMismatchError,
+    RmwResult,
     WriteVerifyError,
+    durable_rmw_text,
     durable_write_bytes,
     durable_write_text,
     finalize_atomic_replace,
@@ -23,7 +25,9 @@ from durable_io.atomic import (
 
 __all__ = [
     "PreImageMismatchError",
+    "RmwResult",
     "WriteVerifyError",
+    "durable_rmw_text",
     "durable_write_bytes",
     "durable_write_text",
     "finalize_atomic_replace",

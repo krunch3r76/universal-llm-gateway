@@ -14,8 +14,9 @@ import hashlib
 import logging
 import os
 import secrets
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +63,24 @@ class PreImageMismatchError(Exception):
             f"Pre-image CAS failed for {path}: "
             f"expected sha256 {expected_sha256!r}, got {actual_sha256!r}"
         )
+
+
+_SHA256_CITATION_PREFIXES = ("sha256:", "spec_sha256:")
+
+
+def _normalize_sha256_hex(value: str) -> str:
+    stripped = value.strip()
+    lower = stripped.lower()
+    for prefix in _SHA256_CITATION_PREFIXES:
+        if lower.startswith(prefix):
+            return stripped[len(prefix) :].lower()
+    return lower
+
+
+def _sha256_hex_equal(left: str | None, right: str | None) -> bool:
+    if left is None or right is None:
+        return left is right
+    return _normalize_sha256_hex(left) == _normalize_sha256_hex(right)
 
 
 def _sha256_hex_of_bytes(data: bytes) -> str:
@@ -223,6 +242,72 @@ def durable_write_text(
         already_locked=already_locked,
         retain_store_root=retain_store_root,
     )
+
+
+@dataclass(frozen=True)
+class RmwResult:
+    """Outcome of a flock-serialised read-modify-write on a text file."""
+
+    pre_image_sha256: str | None
+    written_sha256: str
+    replaced_sha256: str | None
+    before_text: str
+    after_text: str
+
+
+def durable_rmw_text(
+    dest: Path,
+    transform: Callable[[str], str],
+    *,
+    expected_sha256: str | None = None,
+    retain_store_root: Path | None = None,
+    create_if_absent: bool = False,
+    encoding_errors: str = "replace",
+) -> RmwResult:
+    """Read *dest*, apply *transform*, write back — all under one ``path_flock``.
+
+    Caller ``expected_sha256`` is compared against the on-disk digest immediately
+    after the read, still under the lock. The write uses auto-CAS against that
+    same pre-image. ``verify_persisted`` runs before the lock is released.
+    """
+    with path_flock(dest):
+        if not dest.is_file():
+            if not create_if_absent:
+                raise FileNotFoundError(f"File not found: {dest}")
+            raw = b""
+            pre_image: str | None = None
+        else:
+            raw = dest.read_bytes()
+            pre_image = _sha256_hex_of_bytes(raw)
+        if expected_sha256 is not None and not _sha256_hex_equal(
+            pre_image, expected_sha256
+        ):
+            raise PreImageMismatchError(
+                dest,
+                expected_sha256=expected_sha256,
+                actual_sha256=pre_image or "",
+            )
+        before_text = raw.decode("utf-8", errors=encoding_errors)
+        after_text = transform(before_text)
+        replaced_sha256 = (
+            retain_existing(dest, retain_store_root)
+            if retain_store_root is not None
+            else None
+        )
+        written_sha256 = durable_write_bytes(
+            dest,
+            after_text.encode("utf-8"),
+            expected_pre_image=pre_image,
+            already_locked=True,
+        )
+        verify_persisted(dest, written_sha256)
+        return RmwResult(
+            pre_image_sha256=pre_image,
+            written_sha256=written_sha256,
+            replaced_sha256=replaced_sha256,
+            before_text=before_text,
+            after_text=after_text,
+        )
 
 
 def verify_persisted(dest: Path, expected_sha256: str) -> None:

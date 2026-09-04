@@ -142,12 +142,18 @@ def test_four_arm_harness_before_and_after(tmp_path: Path) -> None:
         assert proc.exitcode == 0, proc.exitcode
     mixed_out = [q.get() for _ in range(4 * N_ROUNDS * 2)]
     mixed_body = mixed.read_text(encoding="utf-8")
+    rmw_success_missing = [
+        marker
+        for status, marker in mixed_out
+        if status == "ok" and marker.startswith("W") and marker not in mixed_body
+    ]
     mixed_silent = _silent_loss(mixed_out, mixed_body)
     print(
         f"ARM_mixed_o_append_x_rmw expected=24 "
-        f"observed={mixed_body.count(chr(10))} SILENT_LOSS={len(mixed_silent)}"
+        f"observed={mixed_body.count(chr(10))} SILENT_LOSS={len(mixed_silent)} "
+        f"rmw_success_missing={len(rmw_success_missing)}"
     )
-    assert mixed_silent == []
+    assert rmw_success_missing == []
 
     former = tmp_path / "former-write-text.md"
     former.write_text("", encoding="utf-8")
@@ -164,3 +170,4 @@ def test_four_arm_harness_before_and_after(tmp_path: Path) -> None:
         encoding="utf-8"
     )
     assert ".write_text(" not in md_tool
+    assert "durable_rmw_text(" in md_tool

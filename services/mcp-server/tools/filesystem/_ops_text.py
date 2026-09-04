@@ -226,6 +226,7 @@ def _edit_file_impl_locked(
             line=line,
             target_str=target,
             all_occurrences=all_occurrences,
+            expected_sha256=expected_sha256,
         )
         event_payload: dict[str, str | int | bool] = {
             "sandbox": "cortex",

@@ -20,7 +20,7 @@ from tools._durable_write import (
     path_flock,
     verify_persisted,
 )
-from tools._hashing import sha256_hex_of_bytes, sha256_hex_of_file
+from tools._hashing import sha256_hex_equal, sha256_hex_of_bytes, sha256_hex_of_file
 
 __all__ = ["PreImageMismatchError", "perform_edit"]
 
@@ -33,6 +33,7 @@ def perform_edit(
     line: int | None = None,
     target_str: str | None = None,
     all_occurrences: bool = False,
+    expected_sha256: str | None = None,
 ) -> dict[str, str | int]:
     """Read a file, apply a text operation, write it back.
 
@@ -80,6 +81,7 @@ def perform_edit(
             line=line,
             target_str=target_str,
             all_occurrences=all_occurrences,
+            expected_sha256=expected_sha256,
         )
 
 
@@ -91,10 +93,19 @@ def _perform_edit_locked(
     line: int | None,
     target_str: str | None,
     all_occurrences: bool,
+    expected_sha256: str | None = None,
 ) -> dict[str, str | int]:
     """RMW body; caller holds ``path_flock``."""
     raw = path.read_bytes()
     pre_image_sha256 = sha256_hex_of_bytes(raw)
+    if expected_sha256 is not None and not sha256_hex_equal(
+        pre_image_sha256, expected_sha256
+    ):
+        raise PreImageMismatchError(
+            path,
+            expected_sha256=expected_sha256,
+            actual_sha256=pre_image_sha256,
+        )
     original = raw.decode("utf-8", errors="replace")
     modified: str
     replacements_made = 0

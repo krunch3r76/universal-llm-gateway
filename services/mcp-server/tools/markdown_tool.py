@@ -33,7 +33,14 @@ from markdown_sections import (
 )
 from mcp_events import record
 
-from ._durable_write import durable_write_text
+from tools._hashing import format_sha256_uri
+
+from ._durable_write import (
+    PreImageMismatchError,
+    WriteVerifyError,
+    durable_rmw_text,
+    write_verify_error_dict,
+)
 from ._file_helpers import extract_text_content, is_converted_format
 from ._pdf_sections import (
     PdfSectionError,
@@ -105,35 +112,53 @@ def _load_text(resolved: Path) -> tuple[str | None, str | None]:
         return None, str(e)
 
 
-def _write_file(resolved: Path, text: str) -> None:
-    durable_write_text(resolved, text)
+def _retain_root_for_sandbox(sandbox: str) -> Path | None:
+    if sandbox == "cortex":
+        return _FILES_ROOT.resolve()
+    return None
 
 
-def _mutate_document(
-    resolved: Path, transform: Callable[[str], str | tuple[str, bool]]
-) -> tuple[str | None, bool]:
-    if is_converted_format(resolved):
-        return (
-            f"Cannot modify {resolved.suffix} files via section ops — "
-            "converted formats are read-only (use md_list / md_read)",
-            False,
+def _rmw_error_payload(
+    path: str,
+    resolved: Path,
+    exc: PreImageMismatchError | WriteVerifyError,
+) -> dict[str, Any]:
+    if isinstance(exc, PreImageMismatchError):
+        return {
+            "error": str(exc),
+            "reason": "file_sha256.mismatch",
+            "path": path,
+            "expected_sha256": format_sha256_uri(exc.expected_sha256),
+            "actual_sha256": format_sha256_uri(exc.actual_sha256),
+        }
+    payload = write_verify_error_dict(exc)
+    payload["path"] = path
+    return payload
+
+
+def _durable_markdown_rmw(
+    resolved: Path,
+    path: str,
+    sandbox: str,
+    transform: Callable[[str], str],
+    *,
+    create_if_absent: bool = False,
+) -> dict[str, Any] | None:
+    """Run *transform* under ``durable_rmw_text``; return error dict or None."""
+    try:
+        durable_rmw_text(
+            resolved,
+            transform,
+            retain_store_root=_retain_root_for_sandbox(sandbox),
+            create_if_absent=create_if_absent,
         )
-    text, err = _load_text(resolved)
-    if err:
-        return err, False
-    try:
-        result = transform(text)
-    except SectionError as e:
-        return str(e), False
-    if isinstance(result, tuple):
-        updated, normalized = result
-    else:
-        updated, normalized = result, False
-    try:
-        _write_file(resolved, updated)
-    except OSError as e:
-        return f"Failed to write {resolved}: {e}", False
-    return None, normalized
+    except FileNotFoundError as exc:
+        return {"error": str(exc)}
+    except (PreImageMismatchError, WriteVerifyError) as exc:
+        return _rmw_error_payload(path, resolved, exc)
+    except OSError as exc:
+        return {"error": f"Failed to write {resolved}: {exc}"}
+    return None
 
 
 def _section_write_result(
@@ -143,7 +168,7 @@ def _section_write_result(
     section: str,
     signal: str,
     status: str,
-    transform: Callable[[str], tuple[str, bool]],
+    transform: Callable[[str], str | tuple[str, bool]],
     *,
     mutation_op: str | None = None,
     warn_on_shrink: bool = False,
@@ -155,29 +180,35 @@ def _section_write_result(
                 "converted formats are read-only (use md_list / md_read)"
             )
         }
-    text, err = _load_text(resolved)
-    if err:
-        return {"error": err}
-    try:
-        prior_body = md_read_section(text, section)
-    except SectionError as exc:
-        return {"error": str(exc)}
-    try:
+    normalized = False
+
+    def _apply_transform(text: str) -> str:
+        nonlocal normalized
         raw = transform(text)
+        if isinstance(raw, tuple):
+            updated, normalized = raw
+            return updated
+        return raw
+
+    try:
+        rmw = durable_rmw_text(
+            resolved,
+            _apply_transform,
+            retain_store_root=_retain_root_for_sandbox(sandbox),
+        )
+    except FileNotFoundError as exc:
+        return {"error": str(exc)}
     except SectionError as exc:
         return {"error": str(exc)}
-    if isinstance(raw, tuple):
-        updated, normalized = raw
-    else:
-        updated, normalized = raw, False
-    try:
-        new_body = md_read_section(updated, section)
-    except SectionError as exc:
-        return {"error": str(exc)}
-    try:
-        _write_file(resolved, updated)
+    except (PreImageMismatchError, WriteVerifyError) as exc:
+        return _rmw_error_payload(path, resolved, exc)
     except OSError as exc:
         return {"error": f"Failed to write {resolved}: {exc}"}
+    try:
+        prior_body = md_read_section(rmw.before_text, section)
+        new_body = md_read_section(rmw.after_text, section)
+    except SectionError as exc:
+        return {"error": str(exc)}
     record(signal, path=path, sandbox=sandbox, section=section)
     result: dict[str, Any] = {
         "status": status,
@@ -207,21 +238,28 @@ def _section_delete_result(
                 "converted formats are read-only (use md_list / md_read)"
             )
         }
-    text, err = _load_text(resolved)
-    if err:
-        return {"error": err}
+
+    def _delete_transform(text: str) -> str:
+        return md_delete_section(text, section)
+
     try:
-        prior_body = md_read_section(text, section)
+        rmw = durable_rmw_text(
+            resolved,
+            _delete_transform,
+            retain_store_root=_retain_root_for_sandbox(sandbox),
+        )
+    except FileNotFoundError as exc:
+        return {"error": str(exc)}
     except SectionError as exc:
         return {"error": str(exc)}
-    try:
-        updated = md_delete_section(text, section)
-    except SectionError as exc:
-        return {"error": str(exc)}
-    try:
-        _write_file(resolved, updated)
+    except (PreImageMismatchError, WriteVerifyError) as exc:
+        return _rmw_error_payload(path, resolved, exc)
     except OSError as exc:
         return {"error": f"Failed to write {resolved}: {exc}"}
+    try:
+        prior_body = md_read_section(rmw.before_text, section)
+    except SectionError as exc:
+        return {"error": str(exc)}
     record(
         "mcp.tool.markdown.section.deleted",
         path=path,
@@ -459,9 +497,17 @@ def register_markdown_tools(mcp: FastMCP) -> None:
             try:
                 data = dict_from_json(content)
                 md_text = dict_to_markdown(data)
-                _write_file(resolved, md_text)
-            except (SectionError, OSError) as e:
+            except SectionError as e:
                 return {"error": str(e)}
+            rmw_err = _durable_markdown_rmw(
+                resolved,
+                path,
+                sandbox,
+                lambda _: md_text,
+                create_if_absent=True,
+            )
+            if rmw_err is not None:
+                return rmw_err
             record(
                 "mcp.tool.markdown.converted.from.dict",
                 path=path,

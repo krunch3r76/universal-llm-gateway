@@ -169,9 +169,9 @@ def test_durable_helper_invoked_for_cortex_write(
     calls: list[tuple[Path, str]] = []
     real = durable_mod.durable_write_text
 
-    def _track(dest: Path, content: str) -> str:
+    def _track(dest: Path, content: str, **kwargs: object) -> str:
         calls.append((dest, content))
-        return real(dest, content)
+        return real(dest, content, **kwargs)
 
     monkeypatch.setattr(ops_write, "durable_write_text", _track)
     ops_text.write_file_impl("notes/new.md", "hello")
