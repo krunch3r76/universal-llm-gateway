@@ -3,22 +3,100 @@
 from __future__ import annotations
 
 import sqlite3
-from unittest.mock import patch
 
 import pytest
-
-from cortex_store._intent_card_test_fixtures import insert_entity
-from cortex_store.card import get_entity_card
-from cortex_store.dispatch_ops._assertions_shared import _emit_predicate_form_normalize_events
-from cortex_store.renormalize import dry_run_stratify, t0_adjudicate_flagged
-from cortex_store.routes.assertions import _create_assertion_impl, _update_assertion_impl
-from cortex_store.routes.assertions._shared import _build_predicate_form_normalize
 from predicate_form.classes import class_6_check
 from predicate_form.entity_resolve import StaticEntityResolver
 from predicate_form.invention_resubjection_guards import check_invention
 from predicate_form.parser import parse
 
-from cortex_store.test_assertion_predicate_form_normalize import _insert_assertion, _patch_update
+from cortex_store._intent_card_test_fixtures import insert_entity
+from cortex_store.card import get_entity_card
+from cortex_store.dispatch_ops._assertions_shared import (
+    _emit_predicate_form_normalize_events,
+)
+from cortex_store.renormalize import dry_run_stratify, t0_adjudicate_flagged
+from cortex_store.routes.assertions import (
+    _create_assertion_impl,
+    _update_assertion_impl,
+)
+from cortex_store.routes.assertions._shared import _build_predicate_form_normalize
+from cortex_store.test_assertion_predicate_form_normalize import (
+    _insert_assertion,
+    _patch_update,
+)
+
+
+class _NoCloseConn:
+    """Wrapper so route code that closes cortex_conn does not tear down the fixture."""
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def __getattr__(self, name: str):  # noqa: ANN001
+        return getattr(self._conn, name)
+
+    def close(self) -> None:
+        return None
+
+    def __enter__(self) -> sqlite3.Connection:
+        return self._conn
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+
+def _seed_session_edge_types(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO session_edge_types (type, description, directional) "
+        "VALUES ('supersedes', 'supersession edge', 1)"
+    )
+    conn.commit()
+
+
+def _patch_create_and_supersede(
+    monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection
+) -> None:
+    wrapper = _NoCloseConn(conn)
+    for mod in ("_create", "_supersede", "_update"):
+        prefix = f"cortex_store.routes.assertions.{mod}"
+        monkeypatch.setattr(f"{prefix}.cortex_conn", lambda w=wrapper: w)
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._create.guard_assertion_write",
+        lambda *a, **kw: type(
+            "G",
+            (),
+            {
+                "allowed": True,
+                "block_detail": "",
+                "review_status": None,
+                "contradiction_warnings": [],
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._create.check_contradictions",
+        lambda *a, **kw: type("C", (), {"flagged": False})(),
+    )
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._create.check_near_duplicate",
+        lambda *a, **kw: None,
+    )
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._create.record_near_duplicate",
+        lambda *a, **kw: None,
+    )
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._supersede.analyze_assertion_impact",
+        lambda *a, **kw: type(
+            "I", (), {"likely_supersedes": [], "touched_assertions": []}
+        )(),
+    )
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._supersede.enrich_old_assertion_events",
+        lambda *a, **kw: None,
+    )
+    _seed_session_edge_types(conn)
 
 
 @pytest.mark.parametrize(
@@ -86,18 +164,21 @@ def test_ac5_three_producers_distinct_review_notes(
     migrated_conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _patch_update(monkeypatch, migrated_conn)
-    entity_id = "person:review-notes-fixture"
-    insert_entity(migrated_conn, entity_id=entity_id, entity_type="person", name="R")
-    pf_class6 = "status(unknown_subject_xyz, ready_to_file)"
+    _patch_create_and_supersede(monkeypatch, migrated_conn)
+    entity_id = "service:review-notes-fixture"
+    insert_entity(migrated_conn, entity_id=entity_id, entity_type="service", name="R")
+    pf_class6 = f"status({entity_id}, pending, current)"
 
     create_result = _create_assertion_impl(
         {
             "entity_id": entity_id,
-            "claim": "Phase D fixture claim.",
+            "claim": "Service pending status observed.",
             "confidence": "believed",
             "evidence": "test",
             "predicate_form": pf_class6,
+            "derivation_type": "direct_observation",
+            "observed_at": "2026-01-01T00:00:00Z",
+            "reasoning_summary": "Graduation honesty AC5 fixture.",
         }
     )
     create_id = int(create_result["item"]["id"])
@@ -147,7 +228,7 @@ def test_ac7_supersede_flags_on_explicit_predicate_form(
 ) -> None:
     from cortex_store.routes.assertions._supersede import _supersede_assertion_impl
 
-    _patch_update(monkeypatch, migrated_conn)
+    _patch_create_and_supersede(monkeypatch, migrated_conn)
     entity_id = "person:supersede-parity"
     insert_entity(migrated_conn, entity_id=entity_id, entity_type="person", name="S")
     old_id = _insert_assertion(migrated_conn, entity_id=entity_id)
@@ -155,10 +236,14 @@ def test_ac7_supersede_flags_on_explicit_predicate_form(
         {
             "old_assertion_id": old_id,
             "entity_id": entity_id,
-            "claim": "Superseding with explicit predicate.",
+            "claim": "Phase D fixture claim.",
             "confidence": "believed",
             "evidence": "test",
             "predicate_form": "status(unknown_subject_xyz, ready_to_file)",
+            "derivation_type": "direct_observation",
+            "observed_at": "2026-01-01T00:00:00Z",
+            "session_id": "graduation-test-session",
+            "agent": "test",
         }
     )
     new_id = int(result["new"]["id"])

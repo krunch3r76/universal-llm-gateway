@@ -13,17 +13,18 @@ from pathlib import Path
 import pytest
 
 from cortex_store.db import run_migrations
+from cortex_store.schema_snapshot import apply_canonical_schema_snapshot
 
 _TEMPLATE: Path | None = None
 _TEMPLATE_LOCK = False
 
 
 def materialize_head_schema_template(dest: Path) -> None:
-    """Build a head-schema DB at *dest* by replaying migrations on an empty file."""
+    """Build a head-schema DB at *dest* from snapshot + tracked incremental migrations."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(dest)
     try:
-        conn.execute("PRAGMA foreign_keys=ON")
+        apply_canonical_schema_snapshot(conn)
         run_migrations(conn)
         conn.commit()
     finally:

@@ -13,7 +13,6 @@ import pytest
 
 from cortex_store._intent_card_test_fixtures import insert_entity
 from cortex_store.card import (
-    _fetch_current_status_row,
     _fetch_main_top_k,
     _merge_current_status_slot,
     get_entity_card,
@@ -121,7 +120,7 @@ def test_a_only_insufficient(
 
     recency_rows = query(
         migrated_conn,
-        f"SELECT id FROM assertions WHERE entity_id = ? AND superseded_by IS NULL "
+        "SELECT id FROM assertions WHERE entity_id = ? AND superseded_by IS NULL "
         "ORDER BY "
         "  (CASE WHEN LOWER(claim) LIKE LOWER(?) THEN 0 ELSE 1 END) ASC, "
         "  (CASE WHEN LOWER(claim) LIKE LOWER(?) THEN 1 ELSE 0 END) ASC, "
@@ -162,7 +161,7 @@ def test_predicate_summary_input_unchanged_by_e(
     snapshot_fixture: dict[str, int],
 ) -> None:
     with patch("cortex_store.card.aggregate_predicate_summary") as mock_agg:
-        mock_agg.return_value = ""
+        mock_agg.return_value = ("", 0)
         get_entity_card(migrated_conn, entity_id=_FIXTURE_ENTITY, top_k=7)
         mock_agg.assert_called_once()
         passed_rows = mock_agg.call_args.kwargs["top_k_assertions"]
