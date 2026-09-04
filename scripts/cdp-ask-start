@@ -14,6 +14,13 @@ REPO="${ULG_REPO:?ULG_REPO required in cdp-ask.env}"
 PORT="${PORT:-8770}"
 PIDFILE="${HOME}/.gateway/cdp-ask.pid"
 
+# systemd user units set INVOCATION_ID on ExecStart. Type=forking refuses a
+# MainPID that was not born in this service cgroup ("PID does not belong to
+# service … Refusing"), so adopt-in-place is illegal under systemd.
+_under_systemd() {
+  [ -n "${INVOCATION_ID:-}" ]
+}
+
 _listening_pid() {
   ss -tlnp "sport = :${PORT}" 2>/dev/null \
     | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' \
@@ -52,9 +59,30 @@ _refresh_pidfile_if_healthy() {
   return 0
 }
 
+# Unconditionally clear :PORT so a cgroup-born spawn can bind (systemd path).
+_kill_port_listener() {
+  live_pid="$(_listening_pid)"
+  [ -n "$live_pid" ] || return 0
+  echo "cdp-ask-start: clearing pid=${live_pid} on :${PORT} before cgroup spawn" >&2
+  kill "$live_pid" 2>/dev/null || true
+  i=0
+  while [ "$i" -lt 30 ]; do
+    [ -z "$(_listening_pid)" ] && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  leftover="$(_listening_pid)"
+  if [ -n "$leftover" ]; then
+    kill -9 "$leftover" 2>/dev/null || true
+    sleep 0.1
+  fi
+  rm -f "$PIDFILE"
+}
+
 # Kill a :PORT listener that answers but is not adoptable so a fresh start can bind.
 # Returns 0 when port is clear (or nothing listened). Returns 1 if listener became
 # adoptable mid-check (pidfile already refreshed — caller should exit 0).
+# Manage/SSH path only — never used under systemd (see _under_systemd).
 _kill_unadoptable_listener() {
   live_pid="$(_listening_pid)"
   [ -n "$live_pid" ] || return 0
@@ -79,23 +107,29 @@ _kill_unadoptable_listener() {
   return 0
 }
 
-if _refresh_pidfile_if_healthy; then
-  exit 0
-fi
+if ! _under_systemd; then
+  # Direct manage/SSH invoke may adopt a healthy listener it already owns.
+  if _refresh_pidfile_if_healthy; then
+    exit 0
+  fi
 
-if [ -f "$PIDFILE" ]; then
-  old_pid="$(cat "$PIDFILE")"
-  if kill -0 "$old_pid" 2>/dev/null \
-    && curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
-    if _refresh_pidfile_if_healthy; then
-      exit 0
+  if [ -f "$PIDFILE" ]; then
+    old_pid="$(cat "$PIDFILE")"
+    if kill -0 "$old_pid" 2>/dev/null \
+      && curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+      if _refresh_pidfile_if_healthy; then
+        exit 0
+      fi
     fi
   fi
-fi
 
-# Listener may still hold :PORT after a refused adopt — clear it before spawn.
-if ! _kill_unadoptable_listener; then
-  exit 0
+  # Listener may still hold :PORT after a refused adopt — clear it before spawn.
+  if ! _kill_unadoptable_listener; then
+    exit 0
+  fi
+else
+  # systemd Type=forking: MainPID must be born under this ExecStart cgroup.
+  _kill_port_listener
 fi
 
 mkdir -p /tmp/logs/cdp-ask "${HOME}/.gateway"

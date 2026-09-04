@@ -141,8 +141,9 @@ def _port() -> int:
 async def start_cdp_ask_remote(root: Path) -> str:  # noqa: ARG001
     """Start cdp-ask on the remote CDP host from the shared NFS checkout.
 
-    Writes ``~/.gateway/cdp-ask.env`` (incl. ``ULG_REPO``) then invokes
-    ``scripts/cdp-ask-start`` so manage-SSH and the Jupiter unit share one path.
+    Writes ``~/.gateway/cdp-ask.env`` (incl. ``ULG_REPO``) then starts the
+    user unit via ``systemctl --user`` so Type=forking owns the MainPID cgroup
+    (direct script invoke left the unit inactive / failed on adopt).
     """
     port = _port()
     ingest_tcp = resolve_hub_events_ingest_tcp()
@@ -158,7 +159,10 @@ async def start_cdp_ask_remote(root: Path) -> str:  # noqa: ARG001
         "ULG_REPO=$REPO\n"
         f"PORT={port}\n"
         "EOF\n"
-        '"$REPO/scripts/cdp-ask-start"; '
+        # Unit ExecStart → scripts/cdp-ask-start (setsid under INVOCATION_ID).
+        "systemctl --user reset-failed cdp-ask.service 2>/dev/null || true; "
+        "systemctl --user start cdp-ask.service; "
+        "systemctl --user is-active cdp-ask.service; "
         "echo started"
     )
     code, text = await _run_ssh(cmd)
@@ -168,14 +172,18 @@ async def start_cdp_ask_remote(root: Path) -> str:  # noqa: ARG001
 
 
 async def stop_cdp_ask_remote(root: Path) -> str:  # noqa: ARG001
-    """Stop remote cdp-ask via pidfile kill and port ``fuser``; returns SSH status text."""
+    """Stop remote cdp-ask via systemctl kill, then pidfile/port fallback."""
     port = _port()
     cmd = (
+        # RefuseManualStop blocks `systemctl stop`; kill still reaches MainPID.
+        "systemctl --user kill -s SIGTERM cdp-ask.service 2>/dev/null || true; "
+        "sleep 0.5; "
         "if test -f ~/.gateway/cdp-ask.pid; then "
         "kill $(cat ~/.gateway/cdp-ask.pid) 2>/dev/null || true; "
         "rm -f ~/.gateway/cdp-ask.pid; "
         "fi; "
         f"fuser -k {port}/tcp 2>/dev/null || true; "
+        "systemctl --user reset-failed cdp-ask.service 2>/dev/null || true; "
         "echo stopped"
     )
     code, text = await _run_ssh(cmd)

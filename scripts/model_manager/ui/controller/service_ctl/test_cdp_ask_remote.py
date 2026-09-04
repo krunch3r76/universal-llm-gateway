@@ -32,16 +32,16 @@ def _start_cmd_static_text() -> str:
     raise AssertionError("cmd assignment not found in start_cdp_ask_remote")
 
 
-def test_start_command_detaches_with_setsid_not_ampersand_and_chain() -> None:
-    """Start cmd must setsid-detach; ``A && daemon &`` pins SSH / fleet_deploy."""
+def test_start_command_goes_through_user_unit() -> None:
+    """Start must systemctl --user the unit (setsid lives in cdp-ask-start under INVOCATION_ID)."""
     cmd = _start_cmd_static_text()
-    assert "setsid" in cmd
-    assert "</dev/null" in cmd
+    # Direct script/& daemon in the SSH cmd pins fleet_deploy and leaves the unit inactive.
+    assert "systemctl --user start cdp-ask.service" in cmd
+    assert "systemctl --user is-active cdp-ask.service" in cmd
     assert "nohup" not in cmd
-    # Daemon line must not be chained with && before & (shell precedence trap).
-    assert "&& setsid" not in cmd
-    assert cmd.index("setsid") < cmd.index("&")
-    # Hub Event Service TCP ingest must be exported for Jupiter followup AC-2.
+    # Existence check is fine; direct ExecStart of the script (bypassing the unit) is not.
+    assert '"$REPO/scripts/cdp-ask-start";' not in cmd
+    # Hub Event Service TCP ingest must be written into the unit EnvironmentFile.
     assert "EVENTS_INGEST_TCP=" in cmd
     # Seal process code_version at start so /health is not permanently unknown.
     assert "ULG_CODE_VERSION=" in cmd
